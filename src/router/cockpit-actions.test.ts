@@ -107,34 +107,10 @@ describe("cockpit actions", () => {
     ).toBe(true);
   });
 
-  it("route with a session writes and clears that session's override only", async () => {
+  it("the cockpit routing section is read-only: there is no route action", async () => {
     const tmp = newDir();
-    const deps = { ...(testDeps(tmp, emptyCalls()) as object), configPath: process.env.PAI_CONFIG_FILE } as never;
-    const { readProfiles } = await import("../workers/session-profile-store.js");
-    const r = await runCockpitAction({ action: "route", class: "implement", session: "sess-x", models: ["anthropic/sonnet"] }, deps);
-    expect(r.ok).toBe(true);
-    expect(readProfiles()["sess-x"]?.routes).toEqual({ worker: ["anthropic/sonnet"] });
-    const { readWorkersSection } = await import("../workers/config.js");
-    const { classRoute } = await import("../workers/route-lists.js");
-    expect(classRoute(readWorkersSection(process.env.PAI_CONFIG_FILE).workers.classes, "implement")).not.toEqual(["anthropic/sonnet"]);
-    expect((await runCockpitAction({ action: "route", class: "implement", session: "sess-x", clear: true }, deps)).ok).toBe(true);
-    expect(readProfiles()["sess-x"]?.routes).toBeUndefined();
-  });
-
-  it("route validates models (an unknown class is a Worker), writes the list to the (temp) config, ledgers ROUTE-SET", async () => {
-    const tmp = newDir();
-    const deps = { ...(testDeps(tmp, emptyCalls()) as object), configPath: process.env.PAI_CONFIG_FILE } as never;
-    const r = await runCockpitAction({ action: "route", class: "implement", models: ["anthropic/opus", "anthropic/haiku"] }, deps);
-    expect(r.ok).toBe(true);
-    const { readWorkersSection } = await import("../workers/config.js");
-    const { classRoute } = await import("../workers/route-lists.js");
-    expect(classRoute(readWorkersSection(process.env.PAI_CONFIG_FILE).workers.classes, "implement")).toEqual(["anthropic/opus", "anthropic/haiku"]);
-    const lines = parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8"));
-    expect(lines.some((l) => l.event === "ROUTE-SET" && l.fields.class === "implement" && l.fields.models === "anthropic/opus>anthropic/haiku")).toBe(true);
-    expect((await runCockpitAction({ action: "route", class: "implement", models: [] }, deps)).ok).toBe(false);
-    expect((await runCockpitAction({ action: "route", class: "implement", models: "anthropic" }, deps)).ok).toBe(false);
-    expect((await runCockpitAction({ action: "route", class: "implement", models: ["nobody/x"] }, deps)).ok).toBe(false);
-    expect((await runCockpitAction({ action: "route", class: "implement", models: ["anthropic/gpt9"] }, deps)).ok).toBe(false);
+    const r = await runCockpitAction({ action: "route", class: "implement", models: ["anthropic/opus"] }, testDeps(tmp, emptyCalls()));
+    expect(r.ok).toBe(false);
   });
 
   it("local.switch on an unknown tier refuses and still writes the ledger", async () => {

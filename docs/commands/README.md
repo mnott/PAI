@@ -408,7 +408,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker roles list` | List classes and where each one runs |
 | `pai worker roles set` | Send a class to a provider, or give it routing limits |
 | `pai worker roles unset` | Remove a class (runs then use the active provider) |
-| `pai worker route` | Print the routing table: per role the ordered models |
+| `pai worker route` | Print the routing table: per delegation tier the ordered models |
 | `pai worker run` | Run one task on a worker (another provider or model) |
 | `pai worker say` | Send a message to a running worker |
 | `pai worker status-line` | One-line worker summary for a status bar |

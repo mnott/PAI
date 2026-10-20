@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
-import { migrateClassRoutes, migrateLegacyChains } from "./route-lists.js";
+import { migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
 
 // ---------------------------------------------------------------------------
@@ -450,6 +450,8 @@ export interface WorkersConfig {
   providers: Record<string, WorkerProvider>;
   /** Class → target; see ClassTarget. (Reads the legacy `roles` key.) */
   classes: Record<string, ClassTarget>;
+  /** Delegation tiers (route-lists.ts TierDef): names, ordered model lists, class -> tier mapping, session-start flag. Config only. */
+  tiers: TierDef[];
   /** MCP set name → server names; `--mcp <set>` and class `mcp` expand these. */
   mcpSets: Record<string, string[]>;
   /**
@@ -606,6 +608,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     active: null,
     providers: {},
     classes: {},
+    tiers: [],
     mcpSets: { ...DEFAULT_MCP_SETS },
     capabilities: {},
     pane: { ...DEFAULT_PANE },
@@ -1335,6 +1338,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     active,
     providers,
     classes,
+    tiers: parseTiersValue(w.tiers, "workers.tiers"),
     mcpSets,
     capabilities,
     pane,
@@ -1368,6 +1372,7 @@ function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
     active: workers.active,
     providers: workers.providers,
     classes: workers.classes,
+    tiers: workers.tiers,
     mcpSets: workers.mcpSets,
     capabilities: workers.capabilities,
     nativeModels: workers.nativeModels,
@@ -1402,14 +1407,16 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
     workers.active = yaml.data.active;
     workers.providers = yaml.data.providers;
     workers.classes = yaml.data.classes;
+    workers.tiers = yaml.data.tiers;
     workers.mcpSets = yaml.data.mcpSets;
     workers.capabilities = yaml.data.capabilities;
     workers.nativeModels = yaml.data.nativeModels;
   }
   // the retired rank chains (workers.chains) become the class lists; the next write drops the key
-  // the nine per-class lists become the three role lists (orchestrator / worker / quick); the next write drops the class lists
+  // the nine per-class lists become the three role lists, those the `tiers` (t0 / t1 / t2); the next write stores them
   migrateClassRoutes(workers.classes);
   migrateLegacyChains((raw.workers as { chains?: unknown } | undefined)?.chains, workers.classes);
+  migrateToTiers(workers);
   return { raw, workers };
 }
 

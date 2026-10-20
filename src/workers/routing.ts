@@ -123,7 +123,7 @@ export function clearCooldown(logDir: string, provider: string): void {
  */
 export function autoOrder(config: WorkersConfig, cls?: { order?: string[] }): string[] {
   if (cls?.order?.length) return cls.order;
-  const listed = classRoute(config.classes ?? {}, "implement").map(entryProvider).filter((n) => !isLocalProvider(getProviderOrNative(config, n)?.baseUrl ?? ""));
+  const listed = classRoute(config.tiers ?? [], "implement").map(entryProvider).filter((n) => !isLocalProvider(getProviderOrNative(config, n)?.baseUrl ?? ""));
   if (listed.length > 1) return [...new Set(listed)];
   if (config.routing.policy === "order") return config.routing.order;
   if (config.routing.priority.length) return config.routing.priority;
@@ -309,7 +309,8 @@ export function resolveTarget(
   if (opts.className && clsTarget === undefined) {
     // a standard class may simply be unconfigured (it then routes like a run
     // without a class); anything else is a typo and must not pass silently
-    if (!(WORKER_CLASSES as readonly string[]).includes(opts.className)) {
+    const cn = opts.className;
+    if (!(WORKER_CLASSES as readonly string[]).includes(cn) && !(config.tiers ?? []).some((t) => t.id === cn || t.classes?.includes(cn))) {
       throw new NoProviderError(
         `no class named "${opts.className}". Standard classes: ${WORKER_CLASSES.join(", ")}.` +
           `Defined: ${Object.keys(config.classes).join(", ") || "(none)"}.` +
@@ -372,7 +373,7 @@ export function resolveTarget(
 
   // the class's routing list (route-lists.ts): the first entry that qualifies serves; a local entry is
   // only ever pinned by routeRun (policy.ts), which knows whether its server runs
-  const list = opts.className ? classRoute(config.classes ?? {}, opts.className) : [];
+  const list = opts.className ? classRoute(config.tiers ?? [], opts.className) : [];
   const listed = list.length > 0;
   if (opts.className && listed) {
     const state = readRoutingState(logDir);

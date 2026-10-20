@@ -50,7 +50,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
-.chips.lowmodels{margin-top:6px}.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:8px;min-width:0;align-items:start}.pgrid .downs{grid-column:1/-1}.pgrid .pgroup{margin:0}.pgsub{margin-top:10px}.rtrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:4px 0;border-top:1px solid var(--line)}.rtrow:first-child{border-top:0}.rtlabel{min-width:96px;font-weight:600}.rtchips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;min-width:0}.rtarrow{color:var(--dim)}.rtchip{display:inline-flex;gap:6px;align-items:center;padding:1px 4px 1px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;cursor:grab;white-space:nowrap}.rtchip.available{background:color-mix(in srgb,var(--ok) 22%,var(--card));border-color:var(--ok)}.rtchip.tight{background:color-mix(in srgb,var(--warn) 25%,var(--card));border-color:var(--warn)}.rtchip.idle{background:var(--bg);color:var(--dim)}.rtchip.unavailable{background:color-mix(in srgb,var(--bad) 22%,var(--card));border-color:var(--bad)}.rtchip:focus{outline:2px solid var(--acc)}.rtx,.rtadd{background:none;border:0;color:var(--dim);cursor:pointer;font:inherit;padding:0 4px}.rtx:hover,.rtadd:hover{color:var(--acc)}.rtadd{border:1px dashed var(--line);border-radius:12px;padding:0 9px}.rtlist{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px}.rtlist button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font:inherit;font-size:12px;cursor:pointer}.rtlist button:hover{border-color:var(--acc);color:var(--acc)}.rtmsg{color:var(--dim);font-size:11px}.rtmsg.bad{color:var(--bad)}
+.chips.lowmodels{margin-top:6px}.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:8px;min-width:0;align-items:start}.pgrid .downs{grid-column:1/-1}.pgrid .pgroup{margin:0}.pgsub{margin-top:10px}.rtrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:4px 0;border-top:1px solid var(--line)}.rtrow:first-child{border-top:0}.rtlabel{min-width:96px;font-weight:600}.rtchips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;min-width:0}.rtarrow{color:var(--dim)}.rtchip{display:inline-flex;gap:6px;align-items:center;padding:1px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;white-space:nowrap}.rtflow{font-weight:600;padding:2px 0 6px}.rtchip.available{background:color-mix(in srgb,var(--ok) 22%,var(--card));border-color:var(--ok)}.rtchip.tight{background:color-mix(in srgb,var(--warn) 25%,var(--card));border-color:var(--warn)}.rtchip.idle{background:var(--bg);color:var(--dim)}.rtchip.unavailable{background:color-mix(in srgb,var(--bad) 22%,var(--card));border-color:var(--bad)}
 .ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
@@ -106,7 +106,7 @@ svg text{fill:var(--dim);font-size:10px}
 <span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
 <section data-section="cloud" class="card c12"><h2>Cloud</h2><h2 class="pgsub">Local</h2><div class="pgrid" id="local"></div><h2 class="pgsub">Cloud</h2><div class="pgrid" id="cloud"></div></section>
-<section data-section="routing" class="card c12"><h2>Routing<span class="tip" tabindex="0" aria-label="Per class the models in the order they serve: the first one, then the fallback order. A local model that is not running is skipped, not started. Drag a chip, or Alt+Left / Alt+Right on a focused chip, to reorder; × removes; + adds." data-tip="Per class the models in the order they serve: the first one, then the fallback order. A local model that is not running is skipped, not started. Drag a chip, or Alt+Left / Alt+Right on a focused chip, to reorder; × removes; + adds.">ⓘ</span></h2><div id="routing"></div></section>
+<section data-section="routing" class="card c12"><h2>Routing<span class="tip" tabindex="0" aria-label="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. The top line shows what each tier resolves to now. A local model that is not running is skipped, not started. Read-only: edit workers.yaml or run pai worker route set." data-tip="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. The top line shows what each tier resolves to now. A local model that is not running is skipped, not started. Read-only: edit workers.yaml or run pai worker route set.">ⓘ</span></h2><div id="routing"></div></section>
 <section data-section="workers" class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
 <section data-section="models" class="card c12"><h2>Models — runtimes<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
@@ -243,59 +243,16 @@ function renderLimits(){
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
-/** Routing section: one row per role (Orchestrator / Worker / Quick check; a grey caption lists the classes it covers), the ordered model chips with arrows, coloured by state; drag / Alt+arrows reorder, × removes, + adds. Every change posts the whole row and the row re-renders from the saved state. */
-var rtOpen=null,rtMsg={},rtFocus=null,rtDrag=null;
-function rtEntries(cls,sess){var rows=(lim&&lim.routing&&lim.routing.rows)||[];for(var i=0;i<rows.length;i++)if(rows[i].cls===cls){if(!sess)return rows[i].chips.map(function(c){return c.entry});var ss=rows[i].sessions||[];for(var j=0;j<ss.length;j++)if(ss[j].session===sess)return ss[j].chips.map(function(c){return c.entry})}return[]}
-function postRoute(cls,models,cb,sess,clear){
- var b={action:"route",class:cls,models:models};if(sess)b.session=sess;if(clear)b.clear=true;
- fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b),cache:"no-store"})
-  .then(function(r){return r.json()}).then(cb).catch(function(){cb({ok:false,message:"action failed"})});
-}
-function saveRoute(cls,models,focusAt,sess,clear){
- postRoute(cls,models,function(j){rtMsg[cls]={t:(j&&j.message)||"",ok:!!(j&&j.ok)};if(j&&j.ok)rtOpen=null;rtFocus=j&&j.ok&&focusAt!=null?{cls:cls,i:focusAt,s:sess||""}:null;loadLimits()},sess,clear);
-}
-function moveEntry(cls,from,to,sess){
- var e=rtEntries(cls,sess);if(from===to||to<0||to>=e.length)return;
- var m=e.splice(from,1)[0];e.splice(to,0,m);saveRoute(cls,e,to,sess);
-}
+/** Routing section, read-only: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers) and the sessions overriding it. Edited in workers.yaml or with pai worker route set. */
 function renderRouting(){
- var r=lim&&lim.routing;if(!r||rtDrag||!document.querySelector('[data-section="routing"]'))return;
- var rows=r.rows||[],choices=r.choices||[];
- /* the model picker of a row or of a session override line (key = class + session); the + button and the list are shared */
- var rtKey=function(cls,sess){return cls+"|"+(sess||"")};
- var rtAddBtn=function(cls,sess,label){return'<button class="rtadd" data-cls="'+esc(cls)+'"'+(sess?' data-s="'+esc(sess)+'"':"")+' aria-label="add a model to '+esc(label)+'">+</button>'};
- var rtPicker=function(cls,sess,chips,choices){
-  if(rtOpen!==rtKey(cls,sess))return"";
-  var have=chips.map(function(c){return c.entry});
-  return'<div class="rtlist">'+choices.filter(function(c){return have.indexOf(c.entry)<0}).map(function(c){return'<button data-cls="'+esc(cls)+'"'+(sess?' data-s="'+esc(sess)+'"':"")+' data-add="'+esc(c.entry)+'">'+esc(c.label)+'</button>'}).join("")+'</div>'};
- $("routing").innerHTML=rows.length?rows.map(function(row){
-  var chipsOf=function(cs,sess){return cs.map(function(c,i){
-   var at=' data-cls="'+esc(row.cls)+'" data-i="'+i+'"'+(sess?' data-s="'+esc(sess)+'"':"");
-   return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" draggable="true" tabindex="0"'+at+' title="'+esc(c.why||c.state)+'">'+esc(c.label)+'<button class="rtx"'+at+' aria-label="remove '+esc(c.label)+'">×</button></span>'}).join("")};
-  var chips=chipsOf(row.chips);
-  var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" data-cls="'+esc(row.cls)+'" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips,s.session)+'<button class="rtclear" data-cls="'+esc(row.cls)+'" data-s="'+esc(s.session)+'" aria-label="clear the override of '+esc(s.session)+'" title="clear this session override">×</button>'+rtAddBtn(row.cls,s.session,s.session+" override")+'</span>'+rtPicker(row.cls,s.session,s.chips,choices)+'</div>'}).join("");
-  var list=rtPicker(row.cls,"",row.chips,choices);
-  var m=rtMsg[row.cls];
-  return'<div class="rtrow" data-cls="'+esc(row.cls)+'"><span class="rtlabel"'+(row.note?' title="'+esc(row.note)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chips+rtAddBtn(row.cls,"",row.label)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+list+'<span class="rtmsg'+(m&&!m.ok?" bad":"")+'">'+esc(m?m.t:"")+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>';
- var xs=document.querySelectorAll("#routing .rtx"),i;
- for(i=0;i<xs.length;i++)xs[i].onclick=function(e){e.stopPropagation();var cls=this.getAttribute("data-cls"),n=Number(this.getAttribute("data-i")),sess=this.getAttribute("data-s")||"",en=rtEntries(cls,sess);en.splice(n,1);if(sess&&!en.length)saveRoute(cls,[],null,sess,true);else saveRoute(cls,en,null,sess)};
- var cl=document.querySelectorAll("#routing .rtclear");
- for(i=0;i<cl.length;i++)cl[i].onclick=function(e){e.stopPropagation();saveRoute(this.getAttribute("data-cls"),[],null,this.getAttribute("data-s"),true)};
- var ad=document.querySelectorAll("#routing .rtadd");
- for(i=0;i<ad.length;i++)ad[i].onclick=function(){var k=rtKey(this.getAttribute("data-cls"),this.getAttribute("data-s"));rtOpen=rtOpen===k?null:k;renderRouting()};
- var ls=document.querySelectorAll("#routing .rtlist button");
- for(i=0;i<ls.length;i++)ls[i].onclick=function(){var cls=this.getAttribute("data-cls"),sess=this.getAttribute("data-s")||"",en=rtEntries(cls,sess);en.push(this.getAttribute("data-add"));saveRoute(cls,en,en.length-1,sess)};
- var cs=document.querySelectorAll("#routing .rtchip");
- for(i=0;i<cs.length;i++)(function(ch){
-  var cls=ch.getAttribute("data-cls"),n=Number(ch.getAttribute("data-i")),sess=ch.getAttribute("data-s")||"";
-  ch.ondragstart=function(e){rtDrag={cls:cls,i:n,s:sess};if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",cls+":"+n)}catch(x){}}};
-  ch.ondragover=function(e){if(rtDrag&&rtDrag.cls===cls&&rtDrag.s===sess){e.preventDefault();ch.style.outline="2px solid var(--acc)"}};
-  ch.ondragleave=function(){ch.style.outline=""};
-  ch.ondrop=function(e){e.preventDefault();ch.style.outline="";if(rtDrag&&rtDrag.cls===cls&&rtDrag.s===sess)moveEntry(cls,rtDrag.i,n,sess);rtDrag=null};
-  ch.ondragend=function(){rtDrag=null};
-  ch.onkeydown=function(e){if(e.altKey&&(e.key==="ArrowLeft"||e.key==="ArrowRight")){e.preventDefault();moveEntry(cls,n,n+(e.key==="ArrowLeft"?-1:1),sess)}};
-  if(rtFocus&&rtFocus.cls===cls&&rtFocus.i===n&&(rtFocus.s||"")===sess){rtFocus=null;ch.focus()}
- })(cs[i]);
+ var r=lim&&lim.routing;if(!r||!document.querySelector('[data-section="routing"]'))return;
+ var rows=r.rows||[];
+ var chipsOf=function(cs){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+'</span>'}).join("")};
+ var flow=rows.length?'<div class="rtflow" id="rtflow">'+esc(r.flow||"")+'</div>':"";
+ $("routing").innerHTML=rows.length?flow+rows.map(function(row){
+  var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips)+'</span></div>'}).join("");
+  var tip=[row.description,row.note].filter(Boolean).join(" — ");
+  return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>';
 }
 var mdl=null;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");

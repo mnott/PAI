@@ -1,13 +1,14 @@
 /**
  * route-table.ts — the routing table (cockpit "routing" section, `pai worker route`).
  *
- * Three rows, one per role (Orchestrator / Worker / Quick check), each an
- * ordered list of models (route-lists.ts): element 0 serves, the rest is the
- * fallback order. Every class resolves to its role's row (ROLE_OF_CLASS). Local models are entries like any
- * other; a local entry whose server is not running is skipped at routing time
- * (policy.ts listRoute), never started. Routing (routeRun / resolveTarget) and
- * this display read the same lists from `workers.classes`; the cockpit and the
- * CLI write through setRoute, so there is one code path.
+ * One row per delegation tier, as configured in workers.yaml `tiers:`
+ * (route-lists.ts TierDef): each an ordered list of models, the first
+ * available one serves, the rest is the fallback order. Every class resolves
+ * to its tier through the config's class -> tier mapping. Local models are
+ * entries like any other; a local entry whose server is not running is skipped
+ * at routing time (policy.ts listRoute), never started. Routing (routeRun /
+ * resolveTarget) and this display read the same lists; `route set` writes
+ * through setRoute, so there is one code path.
  */
 
 import {
@@ -31,18 +32,13 @@ import { readProfiles, updateProfile, type Profiles, type SessionProfile } from 
 import { pingLocal, type PolicyMode } from "./policy.js";
 import {
   MAX_ROUTE_MODELS,
-  CLASSES_OF_ROLE,
-  POLICY_ROLES,
-  ROUTE_LABELS,
-  ROUTE_ROLES,
-  classNote,
-  classRoute,
+  applyRouteOverrides,
   entryProvider,
-  listForPolicy,
+  findTier,
   parseEntry,
-  roleOf,
-  targetForRoute,
-  type RouteRole,
+  sessionTier,
+  listForPolicy,
+  type TierDef,
 } from "./route-lists.js";
 
 /** Window percent above which a chip turns amber (budget tight). */
@@ -70,9 +66,14 @@ export interface SessionRouteRow {
 }
 
 export interface RouteRow {
-  /** The role key ("orchestrator" | "worker" | "quick"). */
-  cls: RouteRole;
+  /** The tier id ("t0", "t1", ...). */
+  id: string;
+  /** "t1 Orchestrator". */
   label: string;
+  /** What the tier is for (config). */
+  description?: string;
+  /** PAI starts sessions on this tier. */
+  session?: boolean;
   /** The classes this row covers (grey caption). */
   classes: string[];
   chips: RouteChip[];
@@ -135,27 +136,31 @@ export function validateRoute(workers: WorkersConfig, row: string, models: unkno
 }
 
 export interface RouteChange {
-  cls: RouteRole;
+  /** The tier id. */
+  id: string;
   entries: string[];
   /** Ledger text of the change. */
   text: string;
 }
 
-/** Set one row (a role, or a class: it sets its role's row) and persist it through the config writers (`path` overrides the main config, tests). */
+const tierFor = (workers: WorkersConfig, name: string): TierDef => {
+  const t = findTier(workers.tiers, name);
+  if (!t) throw new Error(`no tier or class "${name}" (tiers: ${workers.tiers.map((x) => x.id).join(", ") || "none configured"})`);
+  return t;
+};
+
+/** Set one row (a tier id, or a class: it sets its tier's row) and persist it through the config writers (`path` overrides the main config, tests). */
 export function setRoute(name: string, models: unknown, path?: string, note?: string): RouteChange {
-  const cls = roleOf(name);
   const { raw, workers } = readWorkersSection(path);
-  const entries = validateRoute(workers, cls, models);
-  const target = targetForRoute(workers.classes[cls], entries);
-  if (target !== undefined) workers.classes[cls] = target;
+  const tier = tierFor(workers, name);
+  const entries = validateRoute(workers, tier.id, models);
+  tier.models = entries;
   if (note !== undefined) {
-    const { note: _old, ...rest } = typeof workers.classes[cls] === "object" ? (workers.classes[cls] as Exclude<ClassTarget, string>) : {};
-    workers.classes[cls] = note.trim()
-      ? { ...rest, provider: entryProvider(entries[0]), models: [...entries], note: note.trim() }
-      : (targetForRoute(rest, entries) ?? rest);
+    if (note.trim()) tier.note = note.trim();
+    else delete tier.note;
   }
-  if (cls === "orchestrator") {
-    // the chat side runs on the first model's provider (session profile), as the active provider always did
+  if (tier.session) {
+    // the chat side runs on the session tier's first model (session profile), as the active provider always did
     const session = (raw.session ?? {}) as Record<string, unknown>;
     const profile = (session.profile ?? {}) as Record<string, unknown>;
     profile.chat = { ...((profile.chat ?? {}) as Record<string, unknown>), provider: entryProvider(entries[0]) };
@@ -163,7 +168,7 @@ export function setRoute(name: string, models: unknown, path?: string, note?: st
     raw.session = session;
   }
   writeWorkersSection(raw, workers, path);
-  return { cls, entries, text: `${cls}=${entries.join(">")}` };
+  return { id: tier.id, entries, text: `${tier.id}=${entries.join(">")}` };
 }
 
 /** Resolve a session argument: a name, or "self" / empty for this session. */
@@ -176,8 +181,8 @@ export async function resolveSessionArg(session: string | undefined, env: NodeJS
 
 /** Override one routing row for a session (stored in its profile, the global table is untouched). */
 export function setSessionRoute(session: string, name: string, models: unknown, opts: { note?: string; path?: string; profilesPath?: string } = {}): RouteChange {
-  const cls = roleOf(name);
   const { workers } = readWorkersSection(opts.path);
+  const cls = tierFor(workers, name).id;
   const entries = validateRoute(workers, cls, models);
   const cur = readProfiles(opts.profilesPath)[session] ?? {};
   const notes = { ...(cur.route_notes ?? {}) };
@@ -186,12 +191,12 @@ export function setSessionRoute(session: string, name: string, models: unknown, 
     else delete notes[cls];
   }
   updateProfile(session, { routes: { ...(cur.routes ?? {}), [cls]: entries }, route_notes: Object.keys(notes).length ? notes : null }, opts.profilesPath);
-  return { cls, entries, text: `${session}: ${cls}=${entries.join(">")}` };
+  return { id: cls, entries, text: `${session}: ${cls}=${entries.join(">")}` };
 }
 
 /** Drop one override (or all of a session's); the global row applies again. */
-export function clearSessionRoute(session: string, name?: string, profilesPath?: string): string {
-  const cls = name ? roleOf(name) : undefined;
+export function clearSessionRoute(session: string, name?: string, profilesPath?: string, path?: string): string {
+  const cls = name ? tierFor(readWorkersSection(path).workers, name).id : undefined;
   const cur = readProfiles(profilesPath)[session];
   if (!cur?.routes || (cls && !cur.routes[cls])) return cls ? `${session}: no override for ${cls}` : `${session}: no overrides`;
   const routes = { ...cur.routes };
@@ -211,30 +216,26 @@ export function configuredLocal(workers: WorkersConfig): string | null {
   return pref && locals.includes(pref) ? pref : (locals[0] ?? null);
 }
 
-/** A policy mode rewrites the Worker and Quick check rows (prefer-local: the `local:` provider to the front). */
+/** A policy mode rewrites the default tier's row (prefer-local: the `local:` provider to the front); the session and orchestrator tiers stay. */
 export function applyPolicyToRoutes(mode: PolicyMode, path?: string): string {
   const { raw, workers } = readWorkersSection(path);
   const local = configuredLocal(workers);
   const done: string[] = [];
-  for (const cls of POLICY_ROLES) {
-    const current = classRoute(workers.classes, cls);
-    if (!current.length) continue;
-    const next = listForPolicy(mode, current, (n) => isLocalName(workers, n), local);
-    const target = targetForRoute(workers.classes[cls], next);
-    if (target !== undefined) workers.classes[cls] = target;
-    done.push(`${cls}=${next.join(">")}`);
+  for (const tier of workers.tiers.filter((t) => t.default)) {
+    tier.models = listForPolicy(mode, tier.models, (n) => isLocalName(workers, n), local);
+    done.push(`${tier.id}=${tier.models.join(">")}`);
   }
   if (done.length) writeWorkersSection(raw, workers, path);
   return done.join(" ");
 }
 
 /** "local gyro-m" or "glm/glm-5.3-flash": the model an entry resolves to for its class. */
-export function entryLabel(workers: WorkersConfig, cls: string, entry: string): string {
+export function entryLabel(workers: WorkersConfig, tier: TierDef, entry: string): string {
   const { provider, model } = parseEntry(entry);
   const p = providerOf(workers, provider);
   if (p && isLocalProvider(p.baseUrl)) return `local ${provider}`;
   if (!p) return entry;
-  const shown = model ? (p.models[model] ?? model) : resolveModelCapability(p, classModelCapability(cls === "orchestrator" ? undefined : cls === "quick" ? "simple" : "implement"));
+  const shown = model ? (p.models[model] ?? model) : resolveModelCapability(p, classModelCapability(tier.classes?.[0]));
   return `${provider}/${shown}`;
 }
 
@@ -250,10 +251,10 @@ export interface ViewDeps {
   profiles?: Profiles;
 }
 
-async function chipOf(workers: WorkersConfig, cls: string, entry: string, deps: ViewDeps, state: ReturnType<typeof readRoutingState>): Promise<RouteChip> {
+async function chipOf(workers: WorkersConfig, tier: TierDef, entry: string, deps: ViewDeps, state: ReturnType<typeof readRoutingState>): Promise<RouteChip> {
   const { provider } = parseEntry(entry);
   const p = providerOf(workers, provider);
-  const base = { entry, label: entryLabel(workers, cls, entry), provider };
+  const base = { entry, label: entryLabel(workers, tier, entry), provider };
   if (!p) return { ...base, local: false, state: "unavailable", why: "not configured" };
   if (isLocalProvider(p.baseUrl)) {
     if (!p.enabled) return { ...base, local: true, state: "idle", why: "disabled" };
@@ -277,20 +278,28 @@ async function chipOf(workers: WorkersConfig, cls: string, entry: string, deps: 
 export async function routeRows(workers: WorkersConfig, deps: ViewDeps): Promise<RouteRow[]> {
   const state = readRoutingState(deps.logDir);
   const rows: RouteRow[] = [];
-  for (const cls of ROUTE_ROLES) {
-    const own = deps.session?.routes?.[cls];
-    let entries = own ?? classRoute(workers.classes, cls);
-    if (cls === "orchestrator" && !entries.length) entries = [ANTHROPIC_NATIVE];
+  for (const tier of workers.tiers) {
+    const own = deps.session?.routes?.[tier.id];
+    const entries = own ?? tier.models;
     if (!entries.length) continue;
-    const note = (own ? deps.session?.route_notes?.[cls] : undefined) ?? classNote(workers.classes, cls);
-    const row: RouteRow = { cls, label: ROUTE_LABELS[cls], classes: CLASSES_OF_ROLE[cls], chips: await Promise.all(entries.map((e) => chipOf(workers, cls, e, deps, state))), ...(note ? { note } : {}), ...(own ? { overridden: true } : {}) };
-    const sessions = Object.entries(deps.profiles ?? {}).filter(([, p]) => p.routes?.[cls]);
+    const note = (own ? deps.session?.route_notes?.[tier.id] : undefined) ?? tier.note;
+    const row: RouteRow = {
+      id: tier.id,
+      label: `${tier.id} ${tier.name}`,
+      ...(tier.description ? { description: tier.description } : {}),
+      ...(tier.session ? { session: true } : {}),
+      classes: tier.classes ?? (tier.default ? ["(any other class)"] : []),
+      chips: await Promise.all(entries.map((e) => chipOf(workers, tier, e, deps, state))),
+      ...(note ? { note } : {}),
+      ...(own ? { overridden: true } : {}),
+    };
+    const sessions = Object.entries(deps.profiles ?? {}).filter(([, p]) => p.routes?.[tier.id]);
     if (sessions.length) {
       row.sessions = await Promise.all(
         sessions.map(async ([session, p]) => ({
           session,
-          chips: await Promise.all(p.routes![cls].map((e) => chipOf(workers, cls, e, deps, state))),
-          ...(p.route_notes?.[cls] ? { note: p.route_notes[cls] } : {}),
+          chips: await Promise.all(p.routes![tier.id].map((e) => chipOf(workers, tier, e, deps, state))),
+          ...(p.route_notes?.[tier.id] ? { note: p.route_notes[tier.id] } : {}),
         }))
       );
     }
@@ -299,14 +308,38 @@ export async function routeRows(workers: WorkersConfig, deps: ViewDeps): Promise
   return rows;
 }
 
-/** `pai worker route`: one line per role, "label  a → b → c [classes]", with the reason after a chip that is not available. */
+/** The chip serving a row right now: the first one that is not unavailable / down. "Anthropic out" (budget, cooldown, quota) skips to the next entry. */
+export const servingChip = (chips: RouteChip[]): RouteChip | undefined => chips.find((c) => c.state === "available" || c.state === "tight");
+
+/** The flow line steps: each tier in config order with what it resolves to now (null: nothing available). */
+export function tierFlow(rows: RouteRow[]): { id: string; label: string; resolved: string | null }[] {
+  const short = (l: string) => l.replace(/^anthropic\//, "");
+  return rows.map((r) => ({ id: r.id, label: r.label, resolved: ((c) => (c ? short(c.label) : null))(servingChip(r.chips)) }));
+}
+
+/** "t0 Session: opus → t1 Orchestrator: sonnet → t2 Worker: local gyro-m". */
+export const flowText = (rows: RouteRow[]): string => tierFlow(rows).map((f) => `${f.label}: ${f.resolved ?? "none available"}`).join(" → ");
+
+/** Where PAI starts a session: the session tier's first available entry (running sessions are not touched). */
+export async function sessionStartTarget(workers: WorkersConfig, deps: ViewDeps): Promise<{ entry: string; provider: string; model: string | null; tier: string } | null> {
+  const tier = sessionTier(workers.tiers);
+  if (!tier) return null;
+  const chip = servingChip((await routeRows({ ...workers, tiers: [tier] }, { ...deps, session: null, profiles: undefined }))[0]?.chips ?? []);
+  if (!chip) return null;
+  const { provider, model } = parseEntry(chip.entry);
+  return { entry: chip.entry, provider, model, tier: tier.id };
+}
+
+/** `pai worker route`: the flow line, then one line per tier, "label  a → b → c [classes]", with the reason after a chip that is not available. */
 export function routeText(rows: RouteRow[]): string {
   const grey = (t: string) => (process.stdout.isTTY ? `\x1b[90m${t}\x1b[0m` : t);
   const chips = (cs: RouteChip[]) => cs.map((c) => `${c.label}${c.state === "available" ? "" : ` (${c.why || c.state})`}`).join(" → ");
-  return rows
-    .flatMap((r) => [
-      `  ${r.label.padEnd(12)} ${chips(r.chips)}  ${grey(`[${r.classes.join(", ")}]`)}${r.overridden ? "  [session override]" : ""}${r.note ? `  # ${r.note}` : ""}`,
-      ...(r.sessions ?? []).map((s) => `    ${s.session}: ${chips(s.chips)}${s.note ? `  # ${s.note}` : ""}`),
-    ])
-    .join("\n");
+  const width = Math.max(0, ...rows.map((r) => r.label.length));
+  return [
+    `  ${flowText(rows)}`,
+    ...rows.flatMap((r) => [
+      `  ${r.label.padEnd(width)}  ${chips(r.chips)}${r.classes.length ? `  ${grey(`[${r.classes.join(", ")}]`)}` : ""}${r.session ? "  (session start)" : ""}${r.overridden ? "  [session override]" : ""}${r.note ? `  # ${r.note}` : ""}`,
+      ...(r.sessions ?? []).map((x) => `    ${x.session}: ${chips(x.chips)}${x.note ? `  # ${x.note}` : ""}`),
+    ]),
+  ].join("\n");
 }

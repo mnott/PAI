@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { realSessionProfileDeps, sessionProfileGet, sessionProfileSet, type SessionProfileDeps } from "../daemon-mcp/tools/session-profile.js";
 import type { BudgetMap } from "./budget.js";
-import { NATIVE_ANTHROPIC_MODELS } from "./config.js";
+import { NATIVE_ANTHROPIC_MODELS, readWorkersSection, writeWorkersSection } from "./config.js";
 import {
   getProfile,
   profilesPath,
@@ -162,13 +162,22 @@ describe("session_profile_get / set", () => {
     expect(now.content[0].text).toContain("sent /model opus");
     expect(sent).toEqual(["job-search:/model opus"]);
   });
-  it("route overrides round trip: set (a class sets its role), shown in get, one row cleared, all cleared", async () => {
+  it("route overrides round trip: set (a class sets its tier), shown in get, one row cleared, all cleared", async () => {
+    // the tiers are config: the guarded test home's config carries a fixture pair
+    const { raw, workers } = readWorkersSection();
+    workers.tiers = [
+      { id: "t1", name: "Orchestrator", models: ["anthropic/sonnet"], classes: ["orchestrate", "plan"] },
+      { id: "t2", name: "Worker", models: ["gyro-m"], classes: ["implement", "spotcheck"], default: true },
+    ];
+    writeWorkersSection(raw, workers);
     const set = await sessionProfileSet({ routes: { implement: ["anthropic/sonnet"], spotcheck: ["anthropic/haiku"] } }, d);
     expect(set.isError).toBeUndefined();
-    expect(getProfile("job-search", d.path)?.routes).toEqual({ worker: ["anthropic/sonnet"], quick: ["anthropic/haiku"] });
-    expect((await sessionProfileGet({}, d)).content[0].text).toContain("route overrides: worker=anthropic/sonnet, quick=anthropic/haiku");
+    expect(getProfile("job-search", d.path)?.routes).toEqual({ t2: ["anthropic/haiku"] });
+    expect((await sessionProfileGet({}, d)).content[0].text).toContain("route overrides: t2=anthropic/haiku");
+    await sessionProfileSet({ routes: { orchestrate: ["anthropic/opus"] } }, d);
+    expect(getProfile("job-search", d.path)?.routes).toEqual({ t1: ["anthropic/opus"], t2: ["anthropic/haiku"] });
     await sessionProfileSet({ routes: { spotcheck: null } }, d);
-    expect(getProfile("job-search", d.path)?.routes).toEqual({ worker: ["anthropic/sonnet"] });
+    expect(getProfile("job-search", d.path)?.routes).toEqual({ t1: ["anthropic/opus"] });
     await sessionProfileSet({ routes: null }, d);
     expect(getProfile("job-search", d.path)?.routes).toBeUndefined();
   });
