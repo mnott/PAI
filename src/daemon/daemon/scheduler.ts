@@ -15,6 +15,9 @@ import { sweepRuns } from "../../workers/run-events.js";
 import { auditTick } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
+import { buildsDir, listBuildsSync } from "../../builds/queue.js";
+import { stallMinutes } from "../../builds/config.js";
+import { buildStallTick } from "../../builds/stall.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
 import { cliEntry } from "../pass-priority.js";
@@ -575,6 +578,19 @@ export function startWorkerSupervisor(): void {
     void timedTask("local-idle", () => localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w)))).catch(() => undefined);
   }, 30_000);
   localIdle.unref();
+
+  // a build job whose output stands still holds its key: flagged and its owner told, never killed
+  const buildStall = setInterval(() => {
+    const dir = workersLogDir(readWorkersSection().workers);
+    const msg = runMessenger(dir);
+    void timedTask("build-stall", () =>
+      buildStallTick(buildsDir(), stallMinutes(), async (t, text) => {
+        const st = t.worker ? loadStatus(dir, t.worker) : null;
+        return msg.toSession({ iterm: st?.term || undefined, name: st?.session?.name || t.session }, text);
+      }, listBuildsSync(buildsDir()))
+    ).catch(() => undefined);
+  }, 30_000);
+  buildStall.unref();
 
   let ticking = false; // a slow tick must not overlap the next one
   const tick = () => {

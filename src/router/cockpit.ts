@@ -460,7 +460,7 @@ function sessionGroup(s: WorkerStatus): string {
 export interface CockpitBuilds {
   slots: number;
   testSlots: number;
-  running: Array<{ kind: string; id: string; label: string; key?: string; session: string; mode: string; ageSec: number }>;
+  running: Array<{ kind: string; id: string; label: string; key?: string; session: string; mode: string; ageSec: number; stalledSec?: number }>;
   waiting: Array<{ kind: string; id: string; label: string; key?: string; why?: string; session: string; mode: string; waitedSec: number; position: number }>;
 }
 
@@ -477,7 +477,7 @@ export function cockpitBuilds(now = Date.now()): CockpitBuilds {
   return {
     slots: buildSlots(),
     testSlots: testSlots(),
-    running: tickets.filter((t) => t.state === "running").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, session: t.session, mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt) })),
+    running: tickets.filter((t) => t.state === "running").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, session: t.session, mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt), ...(t.stalledAt ? { stalledSec: sec(t.stalledAt) } : {}) })),
     waiting: tickets.filter((t) => t.state === "waiting").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, why: waitReason(t, tickets) ?? undefined, session: t.session, mode: t.mode, waitedSec: sec(t.enqueuedAt), position: (pos[ticketKind(t)] = (pos[ticketKind(t)] ?? 0) + 1) })),
   };
 }

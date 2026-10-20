@@ -46,6 +46,10 @@ export interface BuildTicket {
   /** Process group of the running build. */
   pgid?: number;
   log?: string;
+  /** Extra log files the door declared (PAI_BUILD_LOG, "log: <path>" in its output); watched for stall detection. */
+  logs?: string[];
+  /** Epoch ms the stall watcher found the output not growing; cleared when it grows again. */
+  stalledAt?: number;
 }
 
 export interface QueueDeps {
@@ -293,7 +297,7 @@ export function renderBuildQueue(tickets: BuildTicket[], slots: number | PoolSlo
     for (const t of mine) {
       const mode = t.mode === "full" ? " [full]" : "";
       const key = t.key ? ` [${t.key}]` : "";
-      if (t.state === "running") lines.push(`  running  ${t.label}${mode}${key} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}  ${t.id}`);
+      if (t.state === "running") lines.push(`  running  ${t.label}${mode}${key} — ${t.session}, ${mins(now - (t.startedAt ?? t.enqueuedAt))}${t.stalledAt ? `  STALLED ${mins(now - t.stalledAt)}` : ""}  ${t.id}`);
       else {
         const why = waitReason(t, tickets);
         lines.push(`  ${++pos}. waiting ${t.label}${mode}${key} — ${t.session}, ${mins(now - t.enqueuedAt)}${why ? `, ${why}` : ""}  ${t.id}`);
