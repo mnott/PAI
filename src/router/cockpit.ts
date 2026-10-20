@@ -13,7 +13,7 @@ import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, typ
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
-import { buildsDir, listBuildsSync, ticketKind } from "../builds/queue.js";
+import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory } from "../workers/model-inventory.js";
@@ -460,8 +460,8 @@ function sessionGroup(s: WorkerStatus): string {
 export interface CockpitBuilds {
   slots: number;
   testSlots: number;
-  running: Array<{ kind: string; id: string; label: string; session: string; mode: string; ageSec: number }>;
-  waiting: Array<{ kind: string; id: string; label: string; session: string; mode: string; waitedSec: number; position: number }>;
+  running: Array<{ kind: string; id: string; label: string; key?: string; session: string; mode: string; ageSec: number }>;
+  waiting: Array<{ kind: string; id: string; label: string; key?: string; why?: string; session: string; mode: string; waitedSec: number; position: number }>;
 }
 
 /** The machine-wide build queue, for its own block in the worker panel. */
@@ -477,8 +477,8 @@ export function cockpitBuilds(now = Date.now()): CockpitBuilds {
   return {
     slots: buildSlots(),
     testSlots: testSlots(),
-    running: tickets.filter((t) => t.state === "running").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, session: t.session, mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt) })),
-    waiting: tickets.filter((t) => t.state === "waiting").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, session: t.session, mode: t.mode, waitedSec: sec(t.enqueuedAt), position: (pos[ticketKind(t)] = (pos[ticketKind(t)] ?? 0) + 1) })),
+    running: tickets.filter((t) => t.state === "running").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, session: t.session, mode: t.mode, ageSec: sec(t.startedAt ?? t.enqueuedAt) })),
+    waiting: tickets.filter((t) => t.state === "waiting").map((t) => ({ kind: ticketKind(t), id: t.id, label: t.label, key: t.key, why: waitReason(t, tickets) ?? undefined, session: t.session, mode: t.mode, waitedSec: sec(t.enqueuedAt), position: (pos[ticketKind(t)] = (pos[ticketKind(t)] ?? 0) + 1) })),
   };
 }
 
