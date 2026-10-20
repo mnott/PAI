@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { idleText, type RunLogEntry } from "./plan-runner.js";
+import { guardedPailot } from "./pailot-guard.js";
 import type { QueueItem } from "./queue.js";
 
 /** The session that started a run: where its events go. */
@@ -71,16 +72,17 @@ export function aibrokerMessenger(
     const { sendToSession } = await import("../cli/lib/aibroker-client.js");
     return sendToSession(target, text);
   },
-  toPailot: (text: string) => Promise<boolean> = async (text) => {
-    try {
-      const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
-      await callAiBroker("pailot_send", { text }, 8_000);
-      return true;
-    } catch (e) {
-      warn(`run report not delivered to PAILot: ${String(e)}`);
-      return false;
-    }
-  },
+  toPailot: (text: string) => Promise<boolean> = (text) =>
+    guardedPailot(logDir, text, async (t) => {
+      try {
+        const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
+        await callAiBroker("pailot_send", { text: t }, 8_000);
+        return true;
+      } catch (e) {
+        warn(`run report not delivered to PAILot: ${String(e)}`);
+        return false;
+      }
+    }),
 ): Messenger {
   const self: Messenger = {
     async toSession(origin, text) {
