@@ -1294,6 +1294,147 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
   });
 });
 
+describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)", () => {
+  const PAL = (COCKPIT_HTML.match(/var KINDS=[\s\S]*?PAL=\[([^\]]+)\]/)![1]).split(",").map((s) => s.replace(/"/g, ""));
+  const colorSrc = [
+    COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
+    COCKPIT_HTML.match(/function assignColors\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function colorOf\([^\n]*\n/)![0],
+  ].join("\n");
+  const store: Record<string, string> = {};
+  const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
+  const colorApi = () => {
+    const fn = new Function("localStorage", "PAL", `var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]];\n${colorSrc}\nreturn {assign:function(ms){return assignColors(ms)},colorOf:colorOf,colors:colors};`);
+    return fn(ls, PAL) as { assign: (ms: string[]) => void; colorOf: (k: string) => string; colors: Record<string, string> };
+  };
+  beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
+
+  it("the palette is config-driven, at least 16 colours, and the first four are the kind colours", () => {
+    expect(PAL.length).toBeGreaterThanOrEqual(16);
+    expect(new Set(PAL).size).toBe(PAL.length);
+    for (const c of PAL) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    for (const k of COCKPIT_HTML.match(/var KINDS=\[[^\]]+\]/)![0].match(/#[0-9a-f]{6}/g)!) expect(PAL).toContain(k);
+  });
+
+  it("12 visible models get 12 distinct palette colours; a re-render in a different order keeps them", () => {
+    const a = colorApi();
+    const models = Array.from({ length: 12 }, (_, i) => `m${i}`);
+    a.assign(models);
+    const first = models.map((m) => a.colorOf(m));
+    expect(new Set(first).size).toBe(12);
+    for (const c of first) expect(PAL).toContain(c);
+    // the same models in a different order: same colours (kept from storage, sorted-name assignment)
+    const b = colorApi();
+    b.assign(models.slice().reverse());
+    expect(models.map((m) => b.colorOf(m))).toEqual(first);
+    // a fresh browser (empty storage) assigns in sorted-name order, independent of data order
+    for (const k of Object.keys(store)) delete store[k];
+    const c = colorApi();
+    c.assign(models.slice().reverse());
+    expect(models.map((m) => c.colorOf(m))).toEqual(first);
+  });
+
+  it("colours persist per model name in localStorage and a model leaving the view loses its entry", () => {
+    const a = colorApi();
+    a.assign(["x", "y"]);
+    const saved = JSON.parse(store["pai.cockpit.modelColors.v1"]);
+    expect(saved.x).toMatch(/^#[0-9a-f]{6}$/);
+    expect(saved.y).toMatch(/^#[0-9a-f]{6}$/);
+    const b = colorApi();
+    b.assign(["x"]);
+    expect(Object.keys(b.colors).filter((k) => k.indexOf("@ts") < 0)).toEqual(["x"]);
+  });
+
+  it("axis labels are compact (784M, 1.57G, not 783.98M) and the left padding grows with the widest label", () => {
+    const fmtAxis = new Function(`${COCKPIT_HTML.match(/function fmtAxis\([^\n]*\n/)![0]}; return fmtAxis;`)() as (n: number) => string;
+    expect(fmtAxis(783_980_000)).toBe("784M");
+    expect(fmtAxis(1_570_000_000)).toBe("1.57G");
+    expect(fmtAxis(12_300_000_000)).toBe("12G");
+    expect(fmtAxis(12_300)).toBe("12k");
+    expect(fmtAxis(1_230)).toBe("1.2k");
+    expect(fmtAxis(42)).toBe("42");
+    const padFor = new Function(`${COCKPIT_HTML.match(/function padFor\([^\n]*\n/)![0]}; return padFor;`)() as (l: string[]) => number;
+    expect(padFor(["42"])).toBe(30);
+    expect(padFor(["784M"])).toBeGreaterThan(padFor(["42"]));
+    expect(padFor(["1.57G"])).toBeGreaterThan(padFor(["784M"]));
+    // the bar charts size their left padding from the formatted max label
+    const bars = COCKPIT_HTML.match(/function stackedBars\([\s\S]*?\n\}\n/)![0];
+    expect(bars).toContain("padL=padFor([fmtAxis(max)])");
+    expect(bars).toContain("fmtAxis(max*g/3)");
+    expect(COCKPIT_HTML.match(/function twoToneModelBars\([\s\S]*?\n\}\n/)![0]).toContain("padL=padFor([fmtAxis(max)])");
+  });
+
+  it("no legend item says idle compressed; the caption appears once, only when buckets were compressed", () => {
+    expect(COCKPIT_HTML).not.toContain("idle compressed");
+    const cap = COCKPIT_HTML.match(/function chartCap\([^\n]*\n/)![0];
+    expect(cap).toContain("idle hours compressed");
+    expect(COCKPIT_HTML).toContain('chartCap($("seriescap"),gap)');
+    expect(COCKPIT_HTML).toContain('chartCap($("dailycap"),dgap)');
+    // chartCap is called with the compressed flag: on writes the caption once, off clears it
+    const el: any = { innerHTML: "" };
+    new Function("el", `${SH}\n${cap}\nchartCap(el,true);`)(el);
+    expect(el.innerHTML).toContain("idle hours compressed");
+    expect(el.innerHTML).toContain('class="cap dim"');
+    expect((el.innerHTML.match(/idle hours compressed/g) ?? []).length).toBe(1);
+    new Function("el", `${SH}\n${cap}\nchartCap(el,false);`)(el);
+    expect(el.innerHTML).toBe("");
+  });
+
+  it("the tokens legend is two captioned lines (kinds with weights, models) and the daily legend has no extra items", () => {
+    const legendLine = new Function("esc", `${COCKPIT_HTML.match(/function legendLine\([^\n]*\n/)![0]}; return legendLine;`)((s: unknown) => String(s ?? "")) as (cap: string, items: string) => string;
+    const line = legendLine("kinds", '<span><i style="background:#3b6fe0"></i>fresh input x1</span>');
+    expect(line).toContain('class="lgline"');
+    expect(line).toContain('class="lgcap"');
+    expect(line).toContain("kinds");
+    const render = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
+    expect(render).toContain('legendLine("kinds"');
+    expect(render).toContain('legendLine("models"');
+    expect(render).toContain("x'+W[k[0]]");
+    expect(render).toContain('chartCap($("seriescap"),gap)');
+    expect(render).toContain('legend($("dlegend"),dm)');
+    expect(render).not.toContain("idle compressed");
+    expect(COCKPIT_HTML).toContain('<div id="seriescap"></div>');
+    expect(COCKPIT_HTML).toContain('<div id="dailycap"></div>');
+  });
+
+  it("a ring is titled by the model's short name, the alias wins, the provider is the small second line", () => {
+    const src = [
+      COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}\n/)![0],
+      COCKPIT_HTML.match(/function ringName\([\s\S]*?\n\}\n/)![0],
+    ].join("\n");
+    const ringName = new Function("mdl", `${src}\nreturn ringName;`)({
+      runtimes: [{ modelLabels: { "huggingface.co/org/qwen3:8b": "My Qwen" } }],
+      consumers: [{ model: "glm-5.3", label: "Orchestrator" }],
+    }) as (m: string) => string;
+    expect(ringName("huggingface.co/org/qwen3:8b")).toBe("My Qwen");
+    expect(ringName("glm-5.3")).toBe("Orchestrator");
+    expect(ringName("huggingface.co/org/other-model")).toBe("other-model");
+    const ringTiles = new Function(
+      "mdl", "$", "esc", "donut", "emptyRing", "lowChips", "assignColors", "ringName", "ageMark", "lim", "LOW_REQ", "SRV_STALE_SEC",
+      `function setHtml(el,h){el.innerHTML=h;return true}\n${src}\n${COCKPIT_HTML.match(/function ringTiles\([\s\S]*?\n\}\n/)![0]}\nreturn ringTiles;`
+    )(
+      { runtimes: [{ modelLabels: { "glm/glm-5.3": "Orch" } }], consumers: [] },
+      () => ({ innerHTML: "" }),
+      (s: unknown) => String(s ?? ""),
+      () => "<svg></svg>",
+      () => "<svg></svg>",
+      () => "",
+      () => {},
+      (m: string) => (m === "glm/glm-5.3" ? "Orch" : m),
+      () => "",
+      {},
+      5,
+      60
+    ) as (ms: Record<string, unknown>, servers: unknown[]) => string;
+    const html = ringTiles(
+      { a: { provider: "glm", model: "glm/glm-5.3", cacheRead: 80, cacheWrite: 10, input: 10, requests: 20 } },
+      []
+    );
+    expect(html).toContain('<div class="n">Orch</div>');
+    expect(html).toContain('<div class="s">glm · 20 req</div>');
+  });
+});
+
 describe("cockpit refresh keeps the page still", () => {
   const helper = COCKPIT_HTML.match(/function dataKey[\s\S]*?\nfunction setHtml[\s\S]*?\n\}\n/)![0];
   function env(opts: { anchorTops?: number[]; onWrite?: () => void } = {}) {
