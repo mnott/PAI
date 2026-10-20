@@ -1,5 +1,7 @@
 # Local routing and the local worker contract
 
+Which model serves a run is decided by the [route table](concepts/delegation-tiers.md) and the [routing policy](concepts/routing-policy.md) (`pai worker policy`, `--local`, `--cloud`, `--urgent`). This page covers what the policy does not: the classifier that keeps unsuitable tasks off a local model, and the rules a local worker gets. Local models themselves: [local models](concepts/local-models.md).
+
 ## Route classifier
 
 When a run targets a local model (`--where local`, MCP `where: "local"`, a local-first session profile, a plan whose provider is `local`), PAI first decides whether the task belongs there. The rules are deterministic and the decision is printed and logged: `route: cloud (install/device task)`. MCP delegation tools return the same reason at the start of their result.
@@ -16,7 +18,9 @@ Override: `--where local --force-local` (CLI), `force_local: true` (MCP), `pai p
 
 ## Escalation
 
-After 2 failed local attempts (rc != 0, deadline, loop-stop, kill) on the same label, the next start goes to the cloud automatically and says so (`route: cloud (escalated: 2 failed local attempts)`). `pai worker run --label X` counts them from the routing ledger (WORKER-END lines of local providers; a success resets). The plan runner does the same per part: two local attempts, then one cloud (Sonnet) attempt, with or without `--escalate`. `--force-local` disables it.
+After 2 failed local attempts (`LOCAL_FAILURE_LIMIT` in `src/workers/route-classifier.ts`; rc != 0, deadline, loop-stop, kill) on the same `--label`, the next `pai worker run` with that label goes to the cloud automatically and says so (`route: cloud (escalated: 2 failed local attempts)`). The count comes from the routing ledger (WORKER-END lines of local providers); a success resets it. This applies only when no `--provider`, `--where`, `--local`, `--cloud` or `--local-ok` is given. `--force-local` turns it off.
+
+The plan runner and the queue apply the same limit in their own way: see [plan-runner.md](plan-runner.md#failure-ladder) and [queue.md](queue.md#states). The whole escalation picture is in [escalation](concepts/escalation.md).
 
 ## Local worker contract
 

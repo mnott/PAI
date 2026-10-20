@@ -1,13 +1,15 @@
 # config.yaml
 
-The main PAI config — everything `src/daemon/config.ts`'s `loadConfig()`
-returns (search defaults, storage backend, notifications, task bus,
-identity, the non-provider `workers` settings) plus whatever else a writer
-has stashed in the file. Before 2026-09-20 this was JSON only, undocumented
-in place, with no CLI or MCP surface to read or change a single value
-without opening the file. `pai config yaml` converts it to YAML with
-comments; `pai config list/get/set/unset` and the matching `config_*` MCP
-tools work whether the file is YAML or JSON.
+The main PAI config: search defaults, storage backend, notifications, task bus, identity, the non-provider `workers` settings, the router and cockpit, plus whatever else a writer has stashed in the file. `pai config list|get|set|unset` and the matching `config_*` MCP tools read and change it whether the file is YAML or JSON; `pai config yaml` converts an old `config.json` to commented YAML; `pai config migrate` moves old per-user files into the PAI home.
+
+## Shipped defaults and precedence
+
+PAI ships its policy values as default files (`src/config/defaults/config.yaml` and `workers.yaml`). Lowest to highest:
+
+1. the shipped defaults;
+2. your `config.yaml` (and `workers.yaml` for the worker keys), deep-merged on top: objects merge, arrays replace, your values win.
+
+So `config.yaml` only needs the keys you changed. `pai config get PATH --source` prints the value and says whether it came from your file or the shipped defaults; `pai config unset PATH` drops your value so the shipped one applies again. What the shipped defaults are, where they live and the key map by area: [config-defaults.md](config-defaults.md).
 
 ## File map
 
@@ -15,16 +17,12 @@ tools work whether the file is YAML or JSON.
 |---|---|---|
 | `config.yaml` | YAML, comment-preserving | preferred whenever it exists — `readMainConfigRaw`/`writeMainConfigRaw` (`src/daemon/config.ts`) |
 | `config.json` | JSON | fallback when no `config.yaml` exists; unchanged pre-2026-09-20 behaviour |
-| `workers.yaml` | YAML, comment-preserving | `providers`/`classes`/`mcp_sets`/`active` only — see [docs/workers-config.md](workers-config.md) |
+| `workers.yaml` | YAML, comment-preserving | providers, tiers, classes, capabilities, mcp_sets, local tiers — see [workers-config.md](workers-config.md) |
 | `voices.yaml` | YAML, comment-preserving | preferred whenever it exists — `loadVoicesConfig`/`migrateVoicesToYaml` (`src/config/voices-config.ts`) |
-| `voices.json` | JSON | fallback; currently an orphan (nothing in `src/` reads it) |
+| `voices.json` | JSON | fallback when no `voices.yaml` exists |
 
 All five live under the PAI_HOME namespace dir (`~/.pai` by default,
 `PAI_HOME=<dir>` to move it; `pai config path` prints the resolved paths).
-
-### Known external readers
-
-`~/.claude/statusline-command.sh` (outside the repo) reads `workers.providers` from the config file using `jq` and therefore sees only JSON. Since `providers` moved into `workers.yaml` on 2026-09-19, that lookup now falls back to `anthropic` (a pre-existing default), which is fine — the file is for display and already treats missing providers gracefully.
 
 **State files stay JSON** — they are written many times a second by the
 daemon or hooks, never hand-edited, and gain nothing from comments:
@@ -133,12 +131,17 @@ written mode `0600`.
 ```
 pai config path                                # resolved paths for every PAI_HOME file
 pai config yaml [--dry-run] [--force]           # convert config.json/voices.json → YAML
-pai config list [--all] [--json]                # file-set values as YAML (--all: defaults merged in too)
+pai config list [--all] [--json]                # file-set values as YAML (--all: every default too)
 pai config get search.recencyBoostDays          # one value, defaults-merged, masked if secret
+pai config get search.recencyBoostDays --source # ... and whether it came from your file or the shipped defaults
+pai config get workers.pool --json              # an object or array prints as YAML, --json for JSON
 pai config set search.recencyBoostDays 45       # writes config.yaml, comment-preserving
 pai config set some.newThing 1 --force          # allow an unknown top-level key / type mismatch
-pai config unset search.recencyBoostDays        # revert to the built-in default
+pai config unset search.recencyBoostDays        # revert to the default
+pai config migrate [--dry-run] [--logs] [--history]   # move old per-user files into the PAI home
 ```
+
+`migrate` copies each old file, verifies it byte for byte and renames the old one `<name>.migrated-<date>` (never deletes); it is idempotent. `--logs` and `--history` also move the worker logs and the hook-written history, and refuse while workers run (they cannot see other interactive sessions, so check first). Layout of the PAI home: [pai-home.md](pai-home.md).
 
 `pai config set` value parsing: `true`/`false`, `null`, bare numbers,
 `[...]`/`{...}` parsed as JSON, everything else a plain string. `set`

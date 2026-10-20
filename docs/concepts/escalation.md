@@ -21,9 +21,13 @@ Escalation is work moving up a level when a lower one cannot finish it.
 **Automatic, per plan or queue**
 
 `pai plan run` gives a failed part one local retry with the failure tail
-appended; a second failure is `needs-decision`. With `--escalate sonnet` one
-Sonnet worker runs instead. `pai queue run --escalate sonnet` runs the items
-marked cloud the same way.
+appended. In a plan that runs on a local provider the third attempt is one
+Sonnet worker (`--force-local` turns this off); a part the route classifier
+sends to the cloud gets two Sonnet attempts; `--escalate sonnet` adds the
+Sonnet attempt to a plan that is not local. If the last attempt fails the part
+is `needs-decision`. `pai queue run` makes two local attempts per item and then
+stops at `needs-decision`; the cloud step is manual: two `again` rounds mark the
+item `cloud`, and `pai queue run --escalate sonnet` runs one Sonnet worker on it.
 
 ## Tier to tier: manual today
 

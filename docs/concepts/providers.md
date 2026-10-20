@@ -29,6 +29,36 @@ probe URL and extra environment.
 no API key. Its shipped models are the CLI's aliases: `default: sonnet`,
 `fast: haiku`.
 
+## Adding a provider, worked example
+
+Three shapes, all a YAML edit or one `add` command (keys: [workers-config.md](../workers-config.md)).
+
+1. **Anthropic-compatible endpoint** (GLM, Kimi, ...): a base URL and a token.
+
+```
+mkdir -p ~/.config/kimi && chmod 700 ~/.config/kimi
+echo "TOKEN" > ~/.config/kimi/api_key && chmod 600 ~/.config/kimi/api_key
+pai worker providers add kimi --url https://api.kimi.ai/coding/ \
+  --key-file ~/.config/kimi/api_key --model 'k3[1m]' --fast-model 'kimi-for-coding[1m]' --cost-tier 3
+pai worker providers test kimi
+```
+
+   `--key TOKEN` stores the token inline in `workers.yaml` instead. The same provider in YAML:
+
+```yaml
+providers:
+  kimi:
+    url: https://api.kimi.ai/coding/
+    key_file: ~/.config/kimi/api_key
+    tier: 3
+    models: {default: "k3[1m]", fast: "kimi-for-coding[1m]"}
+```
+
+2. **OpenAI-compatible remote**: `--protocol openai --upstream-url https://api.openai.com/v1`, token and `--model` as above. It runs through the local proxy.
+3. **Local server** (Ollama, LM Studio, llama.cpp): the same openai shape on loopback with no key, for example `--protocol openai --upstream-url http://localhost:11434/v1 --model llama3.3`. For engines PAI starts itself, see [local models](local-models.md).
+
+Then put the provider where you want it: add `kimi/k3[1m]` to a tier with `pai worker route set t2 ...` ([delegation tiers](delegation-tiers.md)). `pai worker providers use kimi` makes it the active provider and repoints classes pinned to another provider. `pai worker config check` validates the file.
+
 ## Protocols and engines
 
 | Option on `add` | Values |

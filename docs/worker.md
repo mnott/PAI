@@ -1,841 +1,136 @@
-# Worker Providers
-
-> Overview: [concepts/workers.md](concepts/workers.md). Routing: [concepts/delegation-tiers.md](concepts/delegation-tiers.md). This page is the long reference.
-
-PAI can run every subagent on a provider you configure — any endpoint that
-speaks the Anthropic API, any endpoint that speaks the OpenAI Chat
-Completions API (through the built-in proxy), or the Codex CLI — instead of
-on the Anthropic account of the main session. This replaces the earlier
-hard-wired `glm` wrapper with something provider-neutral, and keeps the same
-daily commands.
-
-## Supervision
-
-An orchestrating session must keep an eye on its workers without sleeping —
-the Worker skill forbids busy-waiting — the same way the AIBroker daemon
-keeps an eye on sessions. So the PAI daemon does the watching: one tick every
-30 s over the workers ledger (`src/workers/supervision.ts`, daemon-side code
-only, no model calls ever) detects three conditions per worker — chain
-stages included, each with its own status file — and pushes one line to the
-owning session:
-
-| Event | Condition |
-|-------|-----------|
-| `worker <id> <label> finished rc=0` | the run ended clean (state `done`, rc 0) |
-| `worker <id> <label> failed rc=N` / `failed runner gone` | non-zero rc or error state, or the runner pid vanished while state was still `running` |
-| `worker <id> <label> stalled Nm no turns` | state `running` but no new turn for the stall threshold |
-
-The stall threshold defaults to 10 minutes and is configurable via
-`PAI_WORKER_STALL_MINUTES`. Every line ends with `- see pai worker replay <id>`.
-
-Delivery is a push, in order of preference:
-
-1. **AIBroker `send_to_session`** — the one-liner typed into the
-   orchestrator's terminal, arriving as a user turn without the orchestrator
-   asking for it. The iTerm identity comes from the worker's own status
-   (`session.id`) or from the status line's session map, which bridges a
-   claude session id back to its terminal (`scope.ts`).
-2. **Event file + hook — the fallback, always written** — one JSON line per
-   event, append-only, in `<workers.logDir>/supervision/<claude-session-id>.events`
-   (default `~/.claude/logs/workers/supervision/`). The `worker-supervision`
-   UserPromptSubmit hook (`src/hooks/ts/user-prompt/`, registered in
-   `plugins/productivity/hooks/hooks.json`) surfaces the lines a session has
-   not yet seen as context on its next prompt, skipping any AIBroker already
-   pushed (receipts in `<session>.pushed`).
-
-Exactly-once holds across daemon restarts: delivered event ids persist per
-worker in `<workers.logDir>/supervision/state.json`; a first run adopts
-already-terminal workers instead of replaying history; a stall re-arms only
-when a new turn arrives. The daemon log mirrors every event
-(`[pai-daemon] Supervision: …`).
-
-```
-main session (Anthropic)          workers (configured provider)
-┌──────────────────────┐          ┌──────────────────────────┐
-│ orchestration,       │  deny    │ pai worker run …         │
-│ review, synthesis    │ ───────▶ │ (claude -p, headless,    │
-└──────────────────────┘  Agent   │  strict MCP, streamed,   │
-                          tool    │  followed in a pane)     │
-                                  └──────────────────────────┘
-```
-
-## Config
-
-Providers, model roles, class routing and MCP sets live in one hand-editable
-file, `~/.pai/workers.yaml` (per-user state, kept 0600, never
-committed — `PAI_WORKERS_YAML` overrides it, `PAI_HOME` moves the whole
-namespace) — see **docs/workers-config.md** for the full reference (the
-annotated example, how to add a provider, the load order, and
-`pai worker config migrate` for configs still on the old JSON shape or an
-old `workers.yaml` location). Everything else worker-related (pane, log
-dir, routing cooldown, cache-keepalive cadence, fallback) stays in
-`~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`)'s `workers` section.
-
-Quick summary of workers.yaml:
-
-```yaml
-active: glm
-
-providers:
-  anthropic:
-    builtin: true
-    models:
-      default: claude-sonnet-5
-      fast: claude-haiku-4-5-20251001
-  glm:
-    url: https://api.z.ai/api/anthropic
-    key: "sk-…"        # or key_file: ~/.config/zai/api_key
-    tier: 2
-    models:
-      default: glm-5.3
-      fast: glm-5.3-flash
-
-classes:
-  implement: glm
-  spotcheck: glm/fast
-
-mcp_sets:
-  office: [memory, github]
-```
-
-- `key` holds the API token inline (quoted; wins over `key_file` when both
-  are set). `key_file` points at a 0600 file holding it instead, if you'd
-  rather keep the secret out of this file. Either way it is never printed
-  back — `pai worker providers`/`config check` show `key ****`+ last 4.
-- `active` is one provider name, `"auto"` to walk `routing.order` (still in
-  the JSON config), or the built-in `anthropic`.
-- `protocol: openai` (plus `upstream_url`) routes the provider through the
-  built-in proxy (next section); `engine: codex` runs it on the Codex CLI
-  instead of Claude Code. `tier` (1 cheapest … 5 most expensive, default 3)
-  and `tags` describe a provider for routing constraints. These, and a
-  provider's `env`/`note`/`quota_probe`/`context_window`/`model_tiers`, are
-  optional advanced fields not shown in the starter — docs/workers-config.md
-  lists them all.
-- A class target is `provider[/role]`; the object form (`provider` + `mcp`
-  allowlist, or routing-only constraints `maxCostTier`/`requireTags`/`order`)
-  is still supported for advanced routing.
-
-Or add a provider from the CLI (writes workers.yaml once it exists, else the
-JSON `workers` section):
-
-```
-pai worker providers add glm \
-  --base-url https://api.z.ai/api/anthropic \
-  --key-file ~/.config/zai/api_key \
-  --model glm-5.3 --fast-model glm-5.3-flash \
-  --env API_TIMEOUT_MS=3000000 \
-  --cost-tier 2 --tags code,long-context
-pai worker providers add oai \
-  --upstream-url https://api.openai.com/v1 \
-  --key-file ~/.pai/keys/oai --model gpt-5.2
-pai worker providers update glm --cost-tier 1   # tiers/tags change later
-```
-
-The first provider also sets `enabled: true`, makes itself active and seeds
-the nine classes. Then:
-
-```
-pai worker install     # Agent hook in settings.json + glm* shims + cleanup
-```
-
-## Task classes
-
-Roles were renamed to **classes** — task classes pick the provider for a kind
-of work. The nine standard classes: `draft`, `plan`, `implement`, `review`,
-`research`, `spotcheck`, `simple`, `complex`, `image` (any other name can be
-defined too). Configs with the old `roles` key keep parsing; the key migrates
-to `classes` on the first write.
-
-```
-pai worker classes                          # list
-pai worker classes set implement glm        # pin a provider
-pai worker classes set spotcheck glm/fast   # …its fast model
-pai worker classes set research --max-cost-tier 2 --require-tags long-context
-pai worker classes unset research
-```
-
-Every provider carries a **cost tier** (1 cheapest … 5 most expensive,
-default 3) and **tags** (`code`, `vision`, `image-gen`, `long-context`,
-`fast`, `reasoning`). A class resolves its provider as:
-
-1. `--provider` (explicit flag) wins;
-2. else the class mapping when it pins a provider;
-3. else auto-routing (see below) restricted to providers within the class's
-   `maxCostTier` and carrying all its `requireTags`;
-4. nothing qualifies → the run fails with a message listing why every
-   provider was excluded.
-
-`classes.<name>.order` overrides `routing.order` for that class. Cooldown and
-quota logic is unchanged.
-
-### Preferences from chat
-
-The Worker skill maps phrases onto the MCP tools — the answer is one or two
-lines, and the user is never told to edit a file:
-
-- "use X for image generation" / "route research to kimi" →
-  `worker_classes set <class>=<provider>`
-- "prefer the flash model for simple tasks" / "cheap only for drafts" →
-  `worker_classes set simple|draft=<provider>/fast` (or `max_cost_tier`)
-- "reviews should use a reasoning model" → `worker_classes set review` with
-  `require_tags: ["reasoning"]`
-- "what handles reviews" / "show the routing table" → `worker_classes list`
-
-## The proxy (OpenAI-protocol providers)
-
-A provider with `protocol: "openai"` cannot be talked to by Claude Code
-directly, so PAI ships a translating proxy: Anthropic Messages API on the
-front (loopback only), OpenAI Chat Completions on the back. System prompts,
-multi-turn text, tool_use/tool_result ↔ tool_calls, tools ↔ functions,
-streaming SSE (including streamed tool-call arguments), usage and error
-mapping (429 → `rate_limit_error`, 401 → `authentication_error`, 5xx →
-`api_error`) are translated in both directions.
-
-- One proxy serves every openai provider: the provider name in the URL path
-  selects the upstream. `run` points `ANTHROPIC_BASE_URL` at
-  `http://127.0.0.1:8797/<provider>` and starts the proxy on demand
-  (detached, pid file under the logDir). The worker config is re-read per
-  request, so provider edits apply without a restart.
-- The proxy holds the real token (from the provider's `keyFile`) and injects
-  it upstream; the worker itself runs with a placeholder, so a leaked worker
-  env leaks nothing.
-- `pai worker proxy [--port N]` starts it by hand (default 8797, loopback
-  only), `pai worker proxy stop` stops it again. `providers test` on an
-  openai provider goes through the proxy too.
-
-## The codex engine
-
-A ChatGPT plan gives no API key, only Codex CLI access — such a provider
-sets `engine: "codex"` and `run` shells out to `codex exec --json <prompt>`
-(non-interactive) instead of Claude Code. The Codex JSONL events are folded
-into the same status fields and the same transcript shape, so `ps`, `follow`,
-`replay`, the ledger and the final `--output-format` print work unchanged.
-
-Differences: `--allowedTools` and MCP flags have no Codex equivalent and are
-dropped with a `WORKER-NOTE` ledger line; resume continues a Claude session,
-so it is unavailable for codex workers (their thread id is kept, but
-`pai worker resume` refuses with an explanation). `providers test` reports
-`codex not installed` (exit 0) when the CLI is missing.
-
-## The image engine
-
-Claude cannot generate images; a provider that can sets `engine: "image"`
-and `--capability image` runs it directly instead of spawning any process:
-
-```
-pai worker providers add pictures --engine image \
-  --url https://api.example.com/v1 --key sk-… --model example-image-model
-pai worker model image example-image-model --provider pictures
-pai worker run --capability image -p "a red circle on white" --out ./circle.png
-```
-
-This POSTs `{model, prompt, size, n: 1, response_format: "b64_json"}` to
-`{url}/images/generations`, decodes the PNG, and writes it — no worktree, no
-MCP, no follow pane. `--capability` (alias `--for`) picks the provider by
-capability instead of by class/`--provider`; see `docs/workers-config.md`'s
-"Capabilities" section for the full resolution order, `pai worker
-capability` (cross-provider preference) vs. `pai worker model` (one
-provider's own model ids), and what happens with no image provider
-configured.
-
-## Daily use
-
-```
-pai worker run --label "fix black buttons" -p '<task spec>' \
-  --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json \
-  --mcp office
-pai worker run --chain draft,implement -p '<brief>'   # spec-first (below)
-pai worker run --agent engineer -p '<task>'           # agent library (below)
-pai worker ps                    # this session's workers
-pai worker follow [id]           # live transcript (type to talk to it)
-pai worker replay <id>           # transcript of one worker
-pai worker say <id> "<text>"     # message a running worker
-pai worker goal <id> "<text>"    # re-goal a running worker (ps/pane label), no message sent
-pai worker resume <id> "<text>"  # continue a finished one, context intact
-pai worker kill <id>             # SIGTERM a running worker
-pai worker mcp list              # MCP servers + sets usable in --mcp
-pai worker proxy [--port N|stop] # the translating proxy, by hand
-pai worker log [all|tail|<id>]   # raw streams + routing ledger
-```
-
-Classes pick the provider for a task class: `--class implement|research|spotcheck|…`
-(`--role` still works as its alias). `--capability <name>` (alias `--for`)
-picks the provider by capability instead — e.g. `--capability image` runs
-the configured image engine (above) regardless of the active provider or
-class. `--no-pane` suppresses the iTerm follow pane; `--provider <name>`
-bypasses classes and capabilities entirely. If you bring your own
-`--append-system-prompt`, the worker contract below is added alongside it, not
-instead.
-
-## Chains (draft → implement → review)
-
-```
-pai worker run --chain draft,implement -p '<brief>'
-pai worker run --chain draft,implement,review -p '<brief>'   # + review pass
-```
-
-- The **draft** class turns the brief into a full spec file under
-  `<logDir>/specs/<chain id>.md` — goal, constraints, files likely touched,
-  acceptance checks, verification commands. It reads the repository first and
-  implements nothing.
-- **implement** (or any other stage class) runs with that spec as its prompt
-  and the original brief attached.
-- **review** reads the spec and the working-tree diff and produces the
-  structured report.
-- Each stage is its own worker: own id, own pane, `parent` set to the chain
-  id — `ps` shows the chain as a tree.
-- A stage that fails stops the chain (the exit code is the first failing
-  stage's); a draft that produces no spec stops it with a message telling the
-  caller to write the spec and re-run without the draft stage.
-- `--class` alongside `--chain` overrides the class of every stage; `--label`
-  names the chain (stages render as `<label> · <stage>`).
-
-## Agent definitions as workers
-
-`pai worker run --agent <name>` loads `~/.claude/agents/<name>.md` and runs it
-on a worker: the front matter's `model` maps to a class (haiku→simple,
-sonnet→implement, opus→complex — `--class` overrides), `tools` becomes
-`--allowedTools`, and the body is passed via `--append-system-prompt` (your
-own flags on the command line still win). The label defaults to
-`<agent>: <first 50 chars of prompt>`.
-
-The agent library therefore runs on workers, not on the orchestrator's
-Anthropic account — same hooks, same classes, same `ps`/`follow`/`replay`.
-
-The old habits keep working: `glm`, `glm-run`, `glm-ps`, `glm-log` are shims
-to the pai commands (`pai worker install` moves any previous versions to
-`<name>.pre-pai`).
-
-## Routing
-
-A run resolves its provider as: `--provider` > `--capability`/a class implying
-one > `--class` > `active`. `--capability` (and a class whose implied
-capability is not `default` and names no provider of its own, e.g. `image`)
-resolves cross-provider through `capabilities:` instead of this chain — see
-`docs/workers-config.md`'s "Capabilities" section.
-
-With `active: "auto"`, providers are tried in `routing.order` (or the class's
-own `order`), skipping:
-
-- disabled providers,
-- providers in a cooldown (set for `cooldownMinutes` after a quota failure),
-- providers whose `quotaProbe` URL reports ≥ `quotaSkipAt` (default 95),
-- providers above the class's `maxCostTier` or missing one of its
-  `requireTags`.
-
-Nothing qualifying fails the run with the exclusion reason of every provider
-in the order.
-
-### Budget policy (default)
-
-By default the auto walk is budget-aware (`routing.policy: "budget"`,
-`"order"` restores the plain walk above): candidates come from
-`routing.priority` — falling back to `routing.order`, else
-`anthropic, glm, kimi` — and every provider whose **live budget** reads at or
-above its wall is skipped, so a run waits a full provider out on the next one
-with room:
-
-- budgets are read from each provider's `usage:` endpoint (anthropic: the
-  OAuth usage endpoint), cached for 5 minutes, fullest window wins; a failed
-  probe reads as "unknown" and never walls anyone,
-- walls default to `anthropic: 95, glm: 90, kimi: 85` (95 for any other
-  provider) and are overridden per provider by `routing.budgetWalls`; a value
-  is a number (every window) or a map by window name
-  (`glm: {"5h": 95, "7d": 70}`): a provider is full when ANY window it reports
-  is at or above that window's wall, a window without an entry using the
-  provider's number, else the default,
-- a run started from a session is sticky to the session's provider: it stays
-  there until that provider is disabled, cooling down or full, then walks the
-  priority list (class pins and `active:` ignored, loopback providers never
-  picked) — the route line reads `anthropic full (5h 96% >= 95) -> glm`;
-  with every provider full it falls through to the configured routing,
-- a walled provider gets a cooldown until `max(now + 10 min, resetAt)`, so it
-  re-enters on its own once its window resets,
-- the chosen worker's status carries a one-line `switchReason` when budget
-  moved it ("`glm: anthropic 96% until 08:02`"), shown by `pai worker ps`,
-
-A run's provider is resolved once, at spawn: a running worker is never
-switched mid-flight. A quota reroute applies the same walls.
-
-A quota failure before the first tool call is re-run on the next provider and
-logged as `WORKER-REROUTE`. `pai worker providers enable <name>` clears a
-cooldown by hand.
-
-## When the Anthropic plan runs out
-
-`pai worker fallback on [provider]` switches the whole machine: every NEW
-Claude Code process — interactive sessions, task-bus sessions, the daemon's
-headless summarizer — runs on that worker provider instead of the Anthropic
-login, until `pai worker fallback off`. Use it when the plan budget is gone
-but work must continue.
-
-What `on` does:
-
-- Writes the provider into the `env` block of `~/.claude/settings.json`:
-  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, the three
-  `ANTHROPIC_DEFAULT_*_MODEL` pins (fast model as haiku, default as sonnet
-  and opus), the provider's own env (`API_TIMEOUT_MS` …), plus
-  `ENABLE_TOOL_SEARCH=true` and
-  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
-- Pins the top-level `model` key to the provider's default model.
-- Saves the replaced values under `workers.fallback.saved` in
-  `~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`) and writes a `FALLBACK-ACTIVE.md` note into the
-  workers log dir telling running sessions what to do.
-
-Notes:
-
-- **The token sits in settings.json.** `on` reads it from the provider's key
-  file at switch time; `off` removes it again. That is the price of switching
-  every process without touching each one's environment.
-- `off` restores settings.json exactly — only the keys `on` touched change.
-  Both files are written atomically; `CLAUDE_SETTINGS_PATH` points `on`/`off`
-  at a copy for dry runs.
-- **Running sessions are not switched.** A Claude Code process keeps the
-  provider it started with until restarted. `pai worker fallback status`
-  lists running sessions (AIBroker registry when populated, else `ps`) and
-  the note path; its one-line instruction for each of them: restart the
-  session in its project directory, keep the same AIBroker name.
-- The Agent hook is unchanged: subagents keep routing to `pai worker run`
-  workers, which set their own per-provider env.
-- `on` is idempotent (re-applying heals an interrupted switch), and switching
-  providers while on restores the first switch's savings before saving fresh.
-- MCP: `worker_fallback` (action `on`/`off`/`status`, optional `provider`);
-  chat phrases "switch everything to glm", "fallback on", "back to
-  anthropic", "fallback off", "is fallback on" are mapped in the Worker
-  skill.
+# Workers: reference
+
+> Overview: [concepts/workers.md](concepts/workers.md). Routing: [delegation tiers](concepts/delegation-tiers.md), [routing policy](concepts/routing-policy.md). Every flag: [commands/worker.md](commands/worker.md). Provider and tier keys: [workers-config.md](workers-config.md).
+
+This page holds what the concept pages and the generated command page do not: the shipped defaults, how a worker process is built, supervision, chains, and the details of sub-workers, merge and cleanup.
+
+## Config summary
+
+Two files, both under the PAI home (`pai config path`, `pai worker config path`):
+
+| File | Holds |
+|---|---|
+| `workers.yaml` | `providers`, `tiers`, `classes`, `capabilities`, `mcp_sets`, `active`, `local`, `local_tiers`, `merge.verify` ([keys](workers-config.md)) |
+| `config.yaml`, section `workers` | everything else: `enabled`, `pane`, `routing`, `tree`, `supervision`, `pool`, `cacheKeepaliveSecs`, `defaultMaxMinutes`, `gcOlderThanHours`, `worktreesMaxGb`, `caveman`, ... |
+
+Both are layered over shipped defaults ([config-defaults.md](config-defaults.md)). A fresh install has workers **off** (`workers.enabled: false`), one provider (the built-in `anthropic`, models `default: sonnet`, `fast: haiku`), the three shipped tiers `t0`/`t1`/`t2` and `classes: {}` (the class-to-tier mapping lives in each tier's `classes` list). `pai worker on` enables workers; `pai worker config init` writes a starter `workers.yaml`.
+
+Selected `workers` keys and their shipped values:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `defaultMaxMinutes` | `60` | Time limit of every run; 0 = none. |
+| `waitAlarmMinutes` | `120` | Minutes a run may queue for a slot before the owner is told. |
+| `tree.maxDepth` / `tree.maxChildren` | `2` / `4` | Sub-worker nesting and concurrent children per parent. |
+| `supervision.stallMinutes` | `10` | Minutes without a tool call before a run counts as stalled. |
+| `supervision.push` | `harness` | Which alerts reach the session: `harness` or `all`. |
+| `supervision.pointer` | `false` | Type "N worker alerts pending" lines into session panes. |
+| `pane.enabled` / `pane.autoExitSecs` | `true` / `5` | Follow pane, and its countdown after the worker ends. |
+| `gcOlderThanHours` / `worktreesMaxGb` | `6` / `20` | Hourly gc archives finished worktrees older than this, or the oldest ones past the size cap. |
+| `stagger.*`, `capacity.*` | on | Start gate and per-provider concurrency cap (local default cap 1, uncapped queue cap 3). |
+| `cacheKeepaliveSecs` | `0` | Daemon cache heartbeat; off. See [cache-keepalive.md](cache-keepalive.md). |
+| `reaper` | `true` | Daemon reaper for orphaned worker processes. |
+| `caveman` | `false` | Run native-Anthropic workers through `caveman claude`; off pins them to `api.anthropic.com`. |
+
+Read or change any of them with `pai config get|set workers.<key>`.
+
+### Pool keys
+
+Under `workers.pool` (behaviour: [concepts/pool.md](concepts/pool.md)):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Pool routing; `pai worker pool on|off` sets it. |
+| `spares` | `1` | Pre-started task-less workers per (repo, provider) key; 0 = off. |
+| `idleKillSec` | `1800` | Seconds before an unclaimed spare is retired; 0 = never. |
+| `maxSlots` | `3` | Most slot processes the host keeps across all keys. |
+| `idleSecs` | `900` | Idle seconds before a slot is killed; 0 = never. |
+| `port` | `8798` | Loopback port of the pool host. |
+| `native` | `true` | Native Anthropic runs may use pooled slots; worktree runs never do. |
+| `continuation` | `false` | Old path where one slot serves successive tasks. |
 
 ## What a worker is
 
-- One `claude -p … --output-format stream-json --verbose` process per call,
-  run with `--input-format stream-json` and its stdin held open: the task
-  arrives as the first user message on stdin, and further lines (see `say`
-  below) continue the conversation while it runs.
-- Env: `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` from the provider (token
-  read from `keyFile`, never from the environment; openai providers point at
-  the local proxy instead), `ANTHROPIC_API_KEY` stripped so nothing can fall
-  back to Anthropic billing, the three `ANTHROPIC_DEFAULT_*_MODEL` vars, the
-  provider's `env`, and `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`.
-- Route pinning: the `env` block of `~/.claude/settings.json` outranks the
-  process env (measured 2026-09-22: a machine-wide caveman proxy route in
-  settings.json swallowed a glm worker's `ANTHROPIC_BASE_URL`, and its
-  bearer token ended at Anthropic with a 401). So every spawn repeats the
-  route with `--settings '{"env":{"ANTHROPIC_BASE_URL":…}}'`, which outranks
-  user settings. A native-Anthropic run with no route is pinned to
-  `https://api.anthropic.com`, unless `workers.caveman: true` in
-  `config.yaml`, in which case it launches as `caveman claude` (falls back to
-  plain `claude` with a stderr note when the CLI is not on PATH). The AG2
-  re-ask and `pai worker providers test` use the same argv head.
-- Headless runs get `--strict-mcp-config --mcp-config <config>` and
-  `PAI_WORKER=1` so PAI's per-session hooks leave them alone. Interactive
-  runs keep full MCP and get `ENABLE_TOOL_SEARCH=true`.
-- Every mirrored event carries an ISO `_ts` stamp; the stream lands in
-  `<logDir>/<id>.jsonl`, live state in `<id>.status`, every event in
-  `<logDir>/ledger.log`.
+- One `claude -p ... --output-format stream-json --verbose` process per call, with `--input-format stream-json` and stdin held open: the task is the first user message and `say` lines continue it.
+- Environment from the provider: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (read from the key, never from the caller's environment), the three `ANTHROPIC_DEFAULT_*_MODEL` pins, the provider's `env`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. `ANTHROPIC_API_KEY` is stripped so nothing falls back to Anthropic billing. OpenAI-protocol providers point at the local proxy instead.
+- The route is repeated with `--settings '{"env":{...}}'`, which outranks the `env` block of `~/.claude/settings.json`; a machine-wide proxy there cannot swallow a worker's route. A native-Anthropic run with no route is pinned to `https://api.anthropic.com`.
+- Headless runs get `--strict-mcp-config --mcp-config <file>` and `PAI_WORKER=1`, which makes PAI's per-session hooks leave them alone.
+- The stream lands in `<logDir>/<id>.jsonl`, live state in `<id>.status`, every event in `<logDir>/ledger.log` (`logDir` defaults to `~/.claude/logs/workers`). Context use (`contextTokens` of `contextWindow`) shows in `ps` past 60 %.
 
-### The worker contract
+A worker's final message follows the report contract described in [concepts/workers.md](concepts/workers.md); the exact system-prompt text is `WORKER_CONTRACT_PROMPT` in `src/workers/report.ts`. `.pai/worker.md` in the project root is appended after it under a `## Project worker rules` header (see [worker-project-setup.md](worker-project-setup.md)); a file over 16 KB is refused.
 
-A worker owns its task: it finishes the work itself in its own process,
-never hands the whole thing to a single child and steps back. Children exist
-for two things only — parallelising independent parts of the task (each a
-self-contained spec), or cheaper bounded sub-tasks (probes, renders, test
-runs, lookups) run one tier down with `--class spotcheck`/`simple`. A worker
-owns its children's results too: run them in the foreground or poll until
-each finishes, verify, fold into the report — ending the parent's turn ends
-the run and kills any child still going, so nothing is ever left running
-unattended. `WORKER_CONTRACT_PROMPT` in `src/workers/report.ts` is the exact
-text appended to every headless run's system prompt.
+## Supervision
 
-Headless runs append a system prompt that fixes the shape of the final
-answer: act, verify, then stop with ONE JSON message
+The daemon watches the workers ledger every 30 seconds (`src/workers/supervision.ts`, no model calls) and pushes one line to the owning session for each of:
 
-```json
-{"changed":[{"path":"…","summary":"…"}],"commands":["…"],
- "checks":[{"name":"…","ok":true,"detail":"…"}],"open":["…"],"notes":"one line"}
-```
+| Event | Condition |
+|---|---|
+| `worker <id> <label> finished rc=0` | clean end |
+| `worker <id> <label> failed rc=N` / `failed runner gone` | non-zero rc, error state, or the runner pid vanished while `running` |
+| `worker <id> <label> stalled Nm no turns` | no new turn for `supervision.stallMinutes` (env `PAI_WORKER_STALL_MINUTES` overrides) |
 
-The runner parses it: `notes` becomes the one-line `last` the table shows,
-and `--output-format json` carries the parsed `report` next to the raw
-`result`. `follow`/`replay` render it as a compact block (changed paths,
-✓/✗ checks, open items). A final message that is not the contract stays raw
-text — nothing is lost either way.
+Delivery goes through AIBroker `send_to_session` when the session is reachable; otherwise, and always as a record, one JSON line per event is appended to `<logDir>/supervision/<session>.events` and the `worker-supervision` UserPromptSubmit hook shows unseen lines on the next prompt. Delivered ids persist in `supervision/state.json`, so a daemon restart does not repeat them. Which alerts count is `supervision.push`.
 
-### Talking to a worker (say / resume)
+## Chains and agents
 
-While a headless worker runs, `pai worker say <id> "<text>"` (or the MCP
-tool `worker_say`) forwards the text to the child as a user message over the
-per-worker Unix socket `<logDir>/<id>.sock`; it is mirrored into the
-transcript as an `operator` event (`»` marker). After the worker's result,
-stdin closes two seconds later unless another message arrives — after that
-`say` refuses and points at `resume`.
+`pai worker run --chain draft,implement[,review] -p BRIEF` runs stages one after the other, each its own worker with its own pane, `parent` set to the chain id. `draft` writes a spec under `<logDir>/specs/<chain id>.md`; `implement` takes the spec as its prompt; `review` reads the spec and the diff. A failing stage stops the chain; `--class` overrides every stage's class; `--label` names the chain. Only the implement stage gets a worktree.
 
-`pai worker resume <id> "<text>"` continues the same Claude session (the id
-recorded from the init event) on the same provider, labelled `↩ <original>`,
-and prints a fresh worker id with `--print-id`.
+`pai worker run --agent NAME` loads `~/.claude/agents/NAME.md` (front-matter `model`: haiku to `simple`, sonnet to `implement`, opus to `complex`; `tools` to `--allowedTools`; body appended to the system prompt) and runs it as a worker.
 
-A `follow <id>` pane on a TTY is a chat, not a tail: the transcript lives in
-a scroll region that ends two rows above the pane's bottom, the last two rows
-are fixed — the prompt row (`› `, full readline editing: arrows, backspace,
-Ctrl-A/E, Ctrl-U) and the ticker row — and every transcript line is inserted
-above them with a save-cursor / restore-cursor write, so the cursor never
-leaves the prompt. Enter sends the line: said to the worker while it runs,
-`resume`d into the same session once it has finished (the pane follows the
-fresh run id and keeps the chat). The sent line is echoed into the transcript
-as a `»` row with its time gutter, exactly once — the mirrored `operator`
-event is swallowed. `/help` lists the commands:
+`--class plan` runs a small orchestration: a planner writes `<logDir>/plans/<id>.json` (5-50 sub-tasks), the runner spawns them as its children up to `tree.maxChildren` at a time, their reports return as `result` handoffs, and the run ends with an `n/m sub-tasks ok` summary. For scripted plans see [plan-runner.md](plan-runner.md).
 
-| key | action |
-| --- | --- |
-| `/quit` | close the pane |
-| `/resume <text>` | resume the finished worker with `<text>` |
-| `/status` | one-line worker status |
-| anything else | a message — said, or resumed |
+## Sub-workers and handoffs
 
-Ctrl-C on an empty prompt leaves the pane, on a draft it clears the prompt;
-Ctrl-D leaves. The auto-exit countdown never fires while the prompt holds
-unsent text. Without a TTY (piped output) the pane keeps the plain scrolling
-behaviour — no prompt row, no ticker, stdin still the operator channel.
+Every worker has `PAI_WORKER_ID` in its environment; a `pai worker run` launched inside one records `parent`, so `ps` shows a tree. Handoffs travel up only: `pai worker handoff '{"kind":"proposal|question|blocker","text":"..."}'` appends to `<logDir>/<parent>.inbox.jsonl` and, if the parent runs, arrives as `[handoff from <id>]`. `ps` shows `◆N` for N handoffs. Depth and breadth are capped by `tree.maxDepth` and `tree.maxChildren`; a launch past the depth cap fails and suggests a handoff. A chain id is not a worker and is never depth-capped.
 
-### Sub-workers and handoffs
+## Talking to a worker
 
-Any worker may start its own workers: the runner exports `PAI_WORKER_ID` in
-every worker's environment, and a `pai worker run` launched from inside one
-records `parent` in its status — so the forest is visible in `ps` (children
-indented under their parent, `├`/`└` connectors) and each child gets its own
-follow pane. Handoffs travel **up
-only**, from a child to its parent:
+`pai worker say ID TEXT` writes to the worker over `<logDir>/<id>.sock` while it runs; stdin closes two seconds after the result, after which `say` refuses and points at `resume`. `pai worker resume ID TEXT` continues the same Claude session on the same provider (not available for `engine: codex` workers). `pai worker goal ID TEXT` relabels a running worker without a message. In a `follow` pane on a terminal, typed lines are said or resumed; `/quit`, `/resume TEXT` and `/status` are the commands.
 
-```
-pai worker handoff '{"kind":"proposal","text":"run this on a cheap provider","data":{…}}'
-```
+## Worktrees, merge, gc
 
-(or the MCP tool `worker_handoff`; kinds `proposal`, `question`, `blocker` —
-`result` is sent automatically when a child finishes). The handoff is appended
-to `<logDir>/<parent>.inbox.jsonl` (durable, ordered) and, when the parent is
-running, also delivered as an operator message `[handoff from <child id>]`. The
-parent sees it in its pane (`◆ from <id> · kind: text`, magenta), `ps` shows
-`◆N` for an inbox with N handoffs, and `replay`/`follow`
-merge them into the transcript by timestamp. There is no sideways channel:
-siblings never see each other, everything goes up.
+A run that writes files (`implement`, `complex`, `plan`) in a git repo gets `<logDir>/worktrees/<id>` on branch `worker/<id>` from HEAD; if git refuses, it runs in place and says so. `ps` marks an unmerged branch `⎇<commits>`.
 
-Two caps keep the tree bounded (`workers.tree`):
+- `pai worker merge ID` merges with `--no-ff`. `--verify CMD` (or `merge.verify` in `workers.yaml`) runs on the merged tree; a non-zero exit reverts with `git revert` and keeps the branch. `--no-verify` skips the configured default with a warning. A stub scan of added `src/` lines (`TODO: implement`, empty stubs, `not implemented` throws) always runs and reverts the same way.
+- `pai worker discard ID` removes worktree and branch.
+- `pai worker gc` moves old finished worktrees to `refs/pai-archive/ID` (flag default 24 h; the hourly automatic gc uses `gcOlderThanHours`). Gitignored knowledge files such as `Notes/` are copied into the main checkout first; a worktree that cannot be salvaged is kept.
+- `pai worker usage [--since WHEN]` sums exact tokens and cost per provider and model.
 
-- `maxDepth` (default 2) — how deep sub-workers may nest; a launch one level
-  past the cap fails with a message that suggests a handoff instead,
-- `maxChildren` (default 4) — how many children of one parent may run at the
-  same time (finished children do not count).
+## Waiting
 
-Chain stages and planner sub-tasks carry a parent too, but a parent without a
-status file (a chain id) is not a worker and is never capped by depth.
-
-### Worktrees and merge
-
-A run whose class writes files (`implement`, `complex`, `plan`) in a git repo,
-with a prompt that is not read-only, gets **its own git worktree** by default:
-`<logDir>/worktrees/<id>` on branch `worker/<id>` from the current HEAD. The
-worker commits its work on that branch (the no-commit rule applies to the main
-branch only — the appended system prompt says so); when git refuses (no
-commits yet, detached setup) the run degrades to in place with a note on
-stderr and in the ledger.
-
-```
-pai worker merge <id>     # git merge --no-ff worker/<id> + remove the worktree
-pai worker discard <id>   # remove worktree and branch, keep nothing
-```
-
-```
-pai worker merge <id> --verify "npx tsc --noEmit && npx vitest run"
-pai worker merge <id> --no-verify
-```
-
-`--verify CMD` (or `merge.verify` in `workers.yaml`, see
-[workers-config.md](workers-config.md)) runs on the merged tree; when it exits
-non-zero the merge is reverted with `git revert` (never reset) and the branch
-is kept. `--no-verify` skips the configured default and prints a warning. A
-built-in stub scan of the added `src/` lines (`TODO: implement`, empty stubs,
-`not implemented` throws) runs after every merge and reverts it the same way.
-Before a worktree is removed, gitignored knowledge files (such as `Notes/`)
-are copied into the main checkout.
-
-`ps` marks a worker with an unmerged branch `⎇<commits>` (yellow); the status
-file records `branch`, `commits` and `worktreeDir`. Chains give a worktree to
-the implement stage only; `--worktree` forces one on, `--no-worktree` opts
-out.
-
-### Usage tallies
-
-`pai worker usage [--label PREFIX] [--since WHEN] [--until WHEN] [--json]` sums
-the exact tokens of the selected workers per provider and model: input, cache
-read, cache write (5m and 1h), output and the reported cost. Local providers
-are marked and carry no cost; cloud providers show their cost. The top
-session's side of the comparison is `pai audit tokens usage <transcript>`.
-
-```
-pai worker usage --since 2h
-```
-
-### Worker pool
-
-`pai worker pool on|off|status` keeps long-lived headless claude slots warm so
-that successive small runs share the provider's prompt cache. `on` starts the
-background host and enables routing, `off` stops both, `status` (default)
-shows the slots, tasks served and cache savings. Each slot runs in its own
-slot worktree; a pooled run still gets a pane, and the per-provider capacity
-cap and the stagger gate are honoured: a run over the cap waits in the queue
-(`--no-queue` and `--no-stagger` on `worker run` opt out). The pool is off by
-default.
-
-### Cleaning up: `pai worker gc`
-
-`pai worker gc [--older-than HOURS] [--all-finished] [--dry-run]` moves the
-worktrees of old finished workers (default 24 h; `--all-finished` ignores
-age) to `refs/pai-archive/<id>`, so no commit is lost. `--dry-run` changes
-nothing and reports what each worktree carries, including gitignored
-knowledge files. Those (`Notes/` and the like, not `node_modules`, `dist`,
-logs) are salvaged into the main checkout before removal; a worktree that
-cannot be salvaged is kept. A daily gc runs on its own.
-
-### Waiting
-
-Never sleep-poll. The wait verbs return within `--max` seconds (default
-100-110, up to 590; waits over about 110 s need the Bash timeout raised, which
-the PAI hook does automatically). Exit 0 means ready, 3 means not yet, call
-again.
+Never sleep-poll. Each wait verb returns within `--max` seconds (default about 100, up to 590); exit 0 means ready, 3 means not yet, call again.
 
 | Verb | Waits for |
-|------|-----------|
-| `pai worker wait <ids...>` | child workers; returns when ANY finishes (`--timeout` waits for all) |
-| `pai worker wait-on <pid>` | a detached process (`--log` prints its last lines) |
-| `pai worker wait-file <paths...>` | every path to exist |
-| `pai worker wait-url <url>` | the URL to answer, polled with backoff |
+|---|---|
+| `pai worker wait IDS` | child workers; returns when any finishes |
+| `pai worker wait-on PID` | a detached process (`--log` prints its tail) |
+| `pai worker wait-file PATHS` | every path to exist |
+| `pai worker wait-url URL` | the URL to answer |
 
-### The planner class
+## Engines
 
-`--class plan` runs a small orchestration, not one worker:
+- **Proxy.** A provider with `protocol: openai` goes through a loopback translating proxy (default port 8797, started on demand; `pai worker proxy [--port N|stop]`). It holds the real token; the worker runs with a placeholder.
+- **Codex.** `engine: codex` runs `codex exec --json`. `--allowedTools` and MCP flags are dropped with a `WORKER-NOTE`; `resume` is unavailable.
+- **Image.** `engine: image` plus `--capability image` POSTs to `{url}/images/generations` and writes the PNG (`--out`, `--size`); no process, worktree or pane. Capability preference: [workers-config.md](workers-config.md#capabilities).
 
-1. a planner worker reads the repository and writes
-   `<logDir>/plans/<planner id>.json` — sub-tasks (`title`, `brief`, `class`,
-   `files`, `acceptance`), 5–50 of them, fewer only when the goal names a
-   smaller count;
-2. the runner validates the plan and spawns the sub-tasks as children of the
-   planner, at most `workers.tree.maxChildren` at a time;
-3. each child's structured report arrives in the planner's inbox as a
-   `kind: "result"` handoff;
-4. the run finishes with a summary report (`n/m sub-tasks ok`) and the
-   `pai worker merge` lines for any unmerged branches.
+## Budget routing
 
-The planner's prompt carries the prompt rules that make plans executable:
-domain-specific instructions only (real files, real commands), constraints
-over step lists, explicit quantity ranges, no checkbox style.
+With `active: auto`, or when a session's provider is full, the walk follows `routing.policy` (`budget` by default, `order` for the plain walk). Candidates come from `routing.priority`, else `routing.order`, else `routing.budgetPriority` (`anthropic, glm, kimi`). A provider whose live budget reaches its wall is skipped (`routing.budgetPercent`: anthropic 95, glm 90, kimi 85; override per provider in `routing.budgetWalls`). Budgets come from each provider's `usage` endpoint, cached five minutes; a failed probe counts as unknown. A walled provider is in cooldown until `max(now + 10 min, resetAt)`; a quota failure before the first tool call reruns on the next provider (`WORKER-REROUTE`, `routing.retryOnQuota`, cooldown `routing.cooldownMinutes` 30). The provider is fixed at spawn and never switched mid-run.
 
-### SampleTool controls (desktop set)
+## Machine-wide fallback
 
-The default `mcpSets` ship one set: `desktop = ["sampletool"]`. A worker launched
-`--mcp desktop` receives the sampletool MCP server — screen control for GUI work
-— and follows the same control handover as a session:
+`pai worker fallback on [PROVIDER]` writes the provider into the `env` block of `~/.claude/settings.json`, so every new Claude Code process runs on it until `pai worker fallback off` restores the file. The token sits in settings.json while it is on. Running sessions are not switched; `pai worker fallback status` lists them. To start one session on another provider use `pai launch --provider NAME`.
 
-```
-pai worker controls <id> you    # hand control of the desktop to the worker
-pai worker controls <id> me     # take it back
-```
+## Visibility and enforcement
 
-`controls` runs the `sampletool controls you|me` CLI and the worker's screenshot
-and input tools honour it. Control starts with the operator: a worker cannot
-drive the desktop until it is handed over.
+`ps`, `follow` and the status line show the workers of the asking session; `--all` widens. `ps` also appends a `scope: MACHINE` section for live workers of other sessions, so none is hidden. A headless run opens and verifies a visible pane or is refused ([panes](concepts/panes.md)); the operator can allow hidden runs with `PAI_WORKER_ALLOW_HIDDEN=1` in their own shell or the file `~/.pai/headless-ok`.
 
-### Context meter
-
-Status files carry `contextTokens` (input + cache read + cache creation +
-output of the last assistant turn) and `contextWindow` (from the init event,
-else the provider's `contextWindow`, else 200 000). The `ps` table shows
-`ctx 84k/200k (42%)` once it passes 60 % — yellow past 70 %, red past
-85 % — and the pane's liveness line always shows it.
-
-### MCP for workers
-
-Headless workers start with **no MCP servers by default**: every server
-definition lands in the system prompt and costs context (and often a
-startup process) before the worker has done anything. When a task genuinely
-needs servers, opt in per run:
-
-```
-pai worker run --mcp office …      # a set, or names: --mcp memory,github
-```
-
-`--mcp` takes server names and/or `mcpSets` names (comma-separated,
-repeatable); the filtered config is written from `~/.claude.json`'s
-`mcpServers` to `<logDir>/<id>.mcp.json` and passed with
-`--strict-mcp-config --mcp-config`. Class targets may add `"mcp": ["office"]`
-on top. An unknown name fails fast, listing what exists;
-`pai worker mcp list` shows servers and sets. A caller-provided
-`--mcp-config` always wins; MCP is chosen at launch, not mid-run.
-
-`claude-in-chrome` is not an MCP server — it rides the Chrome native-host
-bridge, which no config file loads and which is off in a spawned worker
-until `--chrome` is passed. Allowlisting any
-`mcp__claude-in-chrome__<tool>` (or the bare name) in `--allowedTools`
-appends `--chrome` automatically; a `--chrome` passed by hand is kept
-rather than duplicated.
-
-### Project preamble: `.pai/worker.md`
-
-A project keeps its standing worker rules in `.pai/worker.md` at the project
-root (the git toplevel of the cwd; the cwd itself outside git). Headless
-`pai worker run` appends its raw content to the system prompt, in the same single
-`--append-system-prompt`, right after the worker contract and under a fixed
-`## Project worker rules` header — no ids, paths or hashes, so every worker of a
-project shares one cacheable prefix. The spec stays in the user message. A
-missing or empty file adds nothing; a file over 16 KB is refused (stderr, ledger
-note, rc 1), never truncated. Each run prints `preamble: .pai/worker.md (N lines)`
-(or `preamble: none`) at start, mirrors it into the event log, and records the
-path and a short hash in the worker status.
-
-## Scoping (who sees whose workers)
-
-`ps`/`follow`/status line show the workers of the asking terminal:
-
-1. AIBroker session id (from `~/.aibroker/session-names.json`) — every pane of
-   a named session sees its workers,
-2. else the iTerm tab key (`w<n>t<n>` of `ITERM_SESSION_ID`).
-
-`--all` (or no iTerm at all) widens to every worker.
-
-### No hidden workers (machine view)
-
-Scoping is a VIEW, never a hiding place: whenever live workers of other
-sessions exist, `pai worker ps` appends a `scope: MACHINE` section listing
-every live spawned worker on the host, each row tagged with its owner session
-(`[AIBroker]`, `[PAI]`, …), so every session sees one machine truth. The
-status line counts the same machine-wide set — `▶N` is the number of live
-worker panes on the host, identical in every session. A pgrep-level
-cross-check reports any `pai worker run` process no live status file owns, so
-stripping a status file cannot hide a run either.
-
-Pane enforcement is deterministic: a headless run either opens and verifies a
-visible pane in the spawning session's window (a cross-session spawn attaches
-its pane to ITS session's window), or it is refused. The only ways to run
-hidden are the operator's: `PAI_WORKER_ALLOW_HIDDEN=1` in the operator's own
-shell (stripped from every spawned worker, so it never flows down through
-sessions), or the override file `~/.pai/headless-ok`. A daemon — which
-has no window to attach a pane to — cannot start workers unless the operator
-granted one of those. `pai worker run --no-pane` is refused on the same terms.
-
-## Follow, replay and the pane
-
-`follow` renders the live transcript with a `HH:MM:SS │ ` gutter (dim; the
-worker's short id in front when several run at once, a `── date ──`
-separator when the day changes) and, on a TTY, a liveness line
-`⋯ 12s since last event · Bash: npm test` that is overwritten in place and
-erased before the next event. `replay` shows a finished transcript with the
-same gutter.
-
-The pane wraps rows itself at the terminal width (re-read on resize, so a
-narrower pane re-wraps what arrives after the resize): breaks on whitespace
-where it can, hard-wraps a long token otherwise, never splits an ANSI escape
-(it measures printable columns, not string length), and carries diff colours
-onto every continuation row. Each continuation row carries a blank-time
-gutter with the `│` bar kept — the bar runs unbroken down the pane and no
-content ever lands left of it. In the chat layout the transcript scrolls
-inside an ANSI scroll region (`ESC[1;rows-2r`, reset on exit and re-set on
-resize) so the prompt and ticker rows stay fixed; piped output keeps the
-terminal's own wrapping instead.
-
-The pane command is `exec pai worker follow …` so the pane holds exactly one
-process — signals reach the follow directly, and when the worker finishes
-the pane counts down its `auto-exit` (default 60 s, `pane.autoExitSecs`).
-
-Panes run under the `pai-worker` dynamic profile, written to
-`~/Library/Application Support/iTerm2/DynamicProfiles/pai-worker.json`:
-the font family of iTerm's default profile at `pane.fontSize` points
-(default 13; a legacy `pane.fontScale` is ignored), inheriting everything
-else from that profile. When iTerm's preferences cannot be read the profile
-is still written, with `Menlo-Regular <fontSize>` and no parent, and the
-reason lands on stderr. `pai worker pane <id> --check` prints the profile
-file's path, whether it exists, and the font it contains or would write.
-
-## The Agent-tool hook
-
-With workers on, a PreToolUse hook denies every `Agent` call and the deny
-reason tells the orchestrator to delegate via `pai worker run` in the
-background instead. Decisions are ledgered (`DENIED-ANTHROPIC-AGENT`,
-`ALLOWED-ANTHROPIC-AGENT`).
-
-- `pai worker off` — Agent subagents run on Anthropic again.
-- `ALLOW_ANTHROPIC_AGENTS=1` — bypass for one session.
-
-## Whisper rules: `@orchestrator` / `@worker` tags
-
-Whisper rules are injected into every claude process, spawned workers
-included, but some rules only make sense for one side — "delegate to
-workers" means nothing inside a worker that cannot spawn more workers past
-the tree cap. A comment line `# @orchestrator` in whisper-rules.md marks
-every rule that follows as orchestrator-only, `# @worker` marks worker-only,
-and the next section header (`# N. TITLE`) resets to untagged (reaches
-both); a section's own header/divider box does not count as that reset. A
-process tells which side it is on from `PAI_WORKER=1` in its environment —
-set by the worker runner on every spawn (see "What a worker is" above) and
-absent on the interactive orchestrating session. Manage tags with the
-Whisper skill (`/whisper`); the parsing lives in
-`src/hooks/ts/user-prompt/whisper-rules.ts`.
-
-## MCP tools
-
-`worker_status`, `worker_providers`
-(list/add/update/remove/use/enable/disable/test — `update` changes
-`cost_tier`/`tags`), `worker_classes` (list/set/unset), `worker_run` (start a
-worker or chain from chat, returns the id immediately), `worker_toggle`,
-`worker_ps`, `worker_replay`, `worker_say` (message a running worker),
-`worker_resume` (continue a finished one), `worker_handoff` (from inside a
-worker: send a proposal/question/blocker up to its parent) — the same library
-the CLI calls.
-`worker_providers add` accepts a raw `key`, parks it in
-`~/.pai/keys/<name>` (mode 0600) and stores only the path.
+With workers on, a PreToolUse hook denies the `Agent` tool and tells the orchestrator to use `pai worker run`. `pai worker off` or `ALLOW_ANTHROPIC_AGENTS=1` (one session) lifts it. Whisper rules tagged `# @orchestrator` or `# @worker` reach only that side; a process knows its side from `PAI_WORKER=1`.
 
 ## Status line
 
-Line 4 of the statusline is the worker bar, prefixed 🐝: a summary of every
-running worker plus today's ✓/✗ tally, never one row per worker — three
-workers used to spell out three goals, three ages and three models on one
-line and none of it fit. It prefers the standalone
-`~/.claude/worker-status-line.mjs` (plain node, built by `bun run build`)
-and falls back to `pai worker status-line`.
+Line 4 of the status line, prefixed 🐝, summarises workers: provider head, `▶N` live worker panes on the machine, distinct models with `×N`, `oldest Nm`, and today's `✓ ✗` tally. It uses `~/.claude/worker-status-line.mjs` when present, else `pai worker status-line`. Per-worker detail lives in each pane's bottom row and in `pai worker ps`.
 
-Example: `anthropic ▶3 · sonnet-5 ×2 · haiku-4.5 · oldest 7m   ✓35 ✗11 today`
+## MCP
 
-Segment by segment (`renderStatusLine` in `src/workers/render.ts`):
-
-- head (`anthropic`) — the live routing choice (`workers.active`) when it
-  names one provider; else the chat pane's provider; else `workers` when
-  several providers are running and there is no tracked chat pane
-- `▶3` — this terminal's running spawned workers: `state=running` **and** a
-  live pid **and** not the chat pane; nothing at zero, so an idle terminal
-  shows just the head
-- `sonnet-5 ×2 · haiku-4.5` — distinct short model names of the running
-  workers, most-populous first, each suffixed `×N` past one; a legacy
-  status with no recorded model counts under `?` rather than vanishing;
-  this segment alone shrinks to fit known terminal width, so the head, the
-  `▶N` count and the today tally never get cut
-- `oldest 7m` — age of the longest-running worker
-- `✓35 ✗11 today` — today's finished workers: done vs failed
-
-The chat pane itself contributes only its provider — its age, state and
-inbox live in `pai worker ps`, never in the bar. The per-worker detail that
-used to live in the bar — goal, age, current tool — moved to each worker's
-own pane bottom line and to `pai worker ps`:
-
-```
-<goal> · <model> · started HH:MM · <age>
-```
-
-`paneStatusRow` in `src/workers/render.ts` renders it; the goal is the
-worker's `--label` (else the first chars of the prompt, `unlabeled` when
-the run had neither), shrunk first when the pane is narrow so the fixed
-`model · started · age` tail always survives. Re-goal a running worker
-without sending it a message — `pai worker goal <id> "<text>"` — or relabel
-and message it in one call with `pai worker say --goal "<text>" <id>
-"<message>"`. Both update the row in `ps`, the pane, and the bar's tally.
-
-The worker forest (`↳` depth) and `◆N` inbox marks are `ps` territory too.
-A status file from before the `origin` flag (a running entry with no
-origin, the unlabeled placeholder and zero turns) is treated as the chat
-pane so it does not render as a phantom worker — that shim goes away once
-every pane runs code that writes `origin`.
+`worker_status`, `worker_providers`, `worker_classes`, `worker_run`, `worker_toggle`, `worker_ps`, `worker_replay`, `worker_say`, `worker_resume`, `worker_handoff`, `worker_fallback`, `worker_capability`, `worker_model` call the same library as the CLI. Headless workers start with no MCP servers; opt in per run with `--mcp NAMES` (server names or `mcp_sets` names; `pai worker mcp list`). Allowlisting any `mcp__claude-in-chrome__*` tool adds `--chrome`.

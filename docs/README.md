@@ -41,14 +41,15 @@ PAI keeps session memory in a local database (SQLite, or PostgreSQL with pgvecto
 
 ## Reference
 
-- [Configuration](config.md) · [Config defaults](config-defaults.md)
+- [Configuration](config.md) · [Shipped defaults](config-defaults.md) · [workers.yaml keys](workers-config.md) · [Listing models](model-catalogue.md)
 - [Commands](commands/README.md): one generated page per `pai` command. Read them in the terminal with `pai help` (daily commands), `pai more` (all, grouped), `pai help <command>`.
 - [Release history](release-history.md) · [CHANGELOG](../CHANGELOG.md)
 
 ## Developers
 
 - [Design notes](design/postgres-only.md) · [registry method map](design/registry-method-map.md)
-- [MCP skill guide](mcp-skill-guide.md)
+- [MCP skill guide](dev/mcp-skill-guide.md)
+- [Config migration log](dev/config-migration-log.md): constants moved from code into the shipped defaults
 - [ARCHITECTURE](../ARCHITECTURE.md) · [Plugin architecture](../PLUGIN-ARCHITECTURE.md)
 - Building from a checkout needs Bun (`bun install && bun run build`); the installed `pai` runs on Node 20 or newer.
 

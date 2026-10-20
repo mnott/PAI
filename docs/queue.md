@@ -40,9 +40,11 @@ Without a `gate` no build or test runs at all; the queue never runs a full test 
 | running | a worker is on it |
 | ready | committed branch within the limits; gate (if any) passed; diff stat, proof and report stored |
 | too-big | the diff exceeds `max_files`/`max_lines`; not retried, a candidate for a bigger tier |
-| needs-decision | failed twice (one local retry with the failure tail appended) or the spawn was refused |
+| needs-decision | two local attempts failed (the second with the failure tail appended; the queue never goes to the cloud on its own) or the spawn was refused |
 | cloud | two `again` rounds done; `pai queue run --escalate sonnet` runs one Sonnet worker on it |
 | accepted / rejected | done |
+
+The escalation path is the operator's: two `again` rounds, then `cloud`, then `--escalate sonnet` ([escalation](concepts/escalation.md)). Unlike a local plan, the queue adds no automatic cloud attempt.
 
 `run` reuses the plan runner's machinery (`pai plan`, see [plan-runner.md](plan-runner.md)): `pai worker run --worktree`, the real-commit check, spawn-refusal handling, and `pai worker merge --verify` on accept. Items that name the same file never run together.
 
