@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,17 +7,12 @@ import { aibrokerMessenger, detachRun, listRuns, markRunDone, originFromEnv, ori
 import { detachedArgv, reportOrigin, reportOriginWithHost } from "./run-report-wiring.js";
 import * as pane from "./pane.js";
 
-// The messenger's dynamic import of the AIBroker client is redirected to a
-// temp module: tests never touch the live socket.
-const stubClient = (): Array<[string, string]> => {
+// The messenger takes its sender as a parameter: tests never touch the live socket.
+const fakeSend = (): Array<[string, string]> => {
   const sent: Array<[string, string]> = [];
-  const dir = mkdtempSync(join(tmpdir(), "aibroker-stub-"));
-  const file = join(dir, "aibroker-client.js");
-  writeFileSync(file, `export async function sendToSession(target, text) { return globalThis.__paiSend(target, text); }\nexport async function callAiBroker() { return {}; }\n`, "utf8");
-  vi.stubEnv("AIBROKER_CLIENT_STUB", file);
-  (globalThis as Record<string, unknown>).__paiSend = async (target: string, text: string) => (sent.push([target, text]), { ok: true });
   return sent;
 };
+const sendOf = (sent: Array<[string, string]>) => async (target: string, text: string) => (sent.push([target, text]), { ok: true });
 import { parsePlan } from "./plan.js";
 import { runPlan, type RunnerDeps } from "./plan-runner.js";
 import type { QueueItem } from "./queue.js";
@@ -177,25 +172,23 @@ describe("origin and detach", () => {
   });
 
   it("a background origin with a recorded host delivers to that uuid; nothing resolvable fails the same way", async () => {
-    const sent = stubClient();
-    const m = aibrokerMessenger("/tmp", () => undefined);
+    const sent = fakeSend();
+    const m = aibrokerMessenger("/tmp", () => undefined, async () => "", sendOf(sent));
     // origin.iterm empty, host recorded at run start -> the host uuid is the target
     expect(await m.toSession({ claudeSession: "cc1", host: "HOST-7" }, "hi")).toBe(true);
     expect(sent[0]?.[0]).toBe("HOST-7");
     // nothing resolvable -> the same "no originating session" failure
     expect(await m.toSession({ name: "" }, "hi")).toBe(false);
     expect(m.lastError).toBe("the run has no originating session");
-    vi.unstubAllEnvs();
   });
 
   it("the delivery-time resolver is the fallback when no host was recorded", async () => {
-    const sent = stubClient();
-    const m = aibrokerMessenger("/tmp", () => undefined, async (cid) => (cid === "cc1" ? "HOST-9" : ""));
+    const sent = fakeSend();
+    const m = aibrokerMessenger("/tmp", () => undefined, async (cid) => (cid === "cc1" ? "HOST-9" : ""), sendOf(sent));
     expect(await m.toSession({ claudeSession: "cc1" }, "hi")).toBe(true);
     expect(sent[0]?.[0]).toBe("HOST-9");
     expect(await m.toSession({ claudeSession: "other" }, "hi")).toBe(false);
     expect(m.lastError).toBe("the run has no originating session");
-    vi.unstubAllEnvs();
   });
 
   it("originTarget prefers iterm, then the recorded host, then the name", () => {
