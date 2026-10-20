@@ -7,7 +7,9 @@
  * engine rejects the prompt as too long, (b) a tool it needs is missing (tool
  * call refused / MCP server absent / report says `needs-tool: <name>`), or
  * (c) it failed `escalate.failures` times on the same task (loop-guard stop,
- * invalid report, failed checks). t2 -> t1 re-runs the task on the tier above
+ * invalid report, failed checks), or (d) the loop guard stopped it after it
+ * left committed or salvaged work: that escalates at once, without waiting for
+ * a second failure (trigger `loop-stop`, off by removing it from the list). t2 -> t1 re-runs the task on the tier above
  * with a handoff summary prepended and the salvage merge instruction first —
  * the ended run's commits stay on its branch and the escalated run merges
  * them ("Continue, do not restart: first git merge <branch>"); t1 -> t0
@@ -19,7 +21,7 @@
 import { appendLedger } from "./ledger.js";
 import type { TierDef } from "./route-lists.js";
 
-export type TriggerKind = "context" | "missing-tool" | "repeated-failure";
+export type TriggerKind = "context" | "missing-tool" | "repeated-failure" | "loop-stop";
 export type { TierDef };
 
 export type Tier = string;
@@ -34,7 +36,7 @@ export interface EscalateConfig {
   triggers: TriggerKind[];
 }
 
-const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure"];
+const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop"];
 
 /** Fallbacks of the escalate block when workers.yaml omits a key; the shipped defaults file carries the policy values. */
 export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS };
@@ -75,6 +77,10 @@ export interface TriggerInput {
   /** Failed attempts of this task so far, this one included. */
   failures?: number;
   loopStopped?: boolean;
+  /** Commit lines the run left on its branch (salvage commits included). */
+  commits?: string[];
+  /** Uncommitted edits were salvaged into a commit on exit. */
+  salvaged?: boolean;
   reportValid?: boolean;
   checksFailed?: boolean;
 }
@@ -88,7 +94,7 @@ export function contextPercentOf(tokens: number | null | undefined, window: numb
   return Math.round((tokens / window) * 100);
 }
 
-/** First trigger that applies, in order: context, missing tool, repeated failure; null when none. */
+/** First trigger that applies, in order: context, missing tool, loop stop with saved work, repeated failure; null when none. */
 export function detectTrigger(i: TriggerInput): Trigger | null {
   const cfg = i.cfg ?? DEFAULT_ESCALATE;
   const frac = cfg.contextFraction;
@@ -102,6 +108,9 @@ export function detectTrigger(i: TriggerInput): Trigger | null {
   if (needs) return { kind: "missing-tool", reason: `missing tool ${needs}` };
   for (const e of on("missing-tool") ? (i.toolErrors ?? []) : []) {
     if (TOOL_MISSING.test(e)) return { kind: "missing-tool", reason: `missing tool: ${e.replace(/\s+/g, " ").slice(0, 80)}` };
+  }
+  if (on("loop-stop") && i.loopStopped && ((i.commits?.length ?? 0) > 0 || i.salvaged)) {
+    return { kind: "loop-stop", reason: "loop-guard stop with saved work" };
   }
   if (on("repeated-failure") && (i.failures ?? 0) >= cfg.failures) {
     const what = i.loopStopped ? "loop-guard stop" : i.reportValid === false ? "invalid report" : i.checksFailed ? "failed checks" : "failed run";
@@ -250,7 +259,7 @@ export function planEscalation(i: PlanInput): EscalationPlan | null {
   if (i.keptForReview) return null;
   const tier = tierOf(i.tiers, i.className);
   const base = detectTrigger({ ...i, failures: i.failures });
-  const trigger = base?.kind === "repeated-failure" && i.failureWhy ? { ...base, reason: `${i.failureWhy}` } : base;
+  const trigger = (base?.kind === "repeated-failure" || base?.kind === "loop-stop") && i.failureWhy ? { ...base, reason: `${i.failureWhy}` } : base;
   const action = decideEscalation(i.tiers, tier, trigger, i.state, i.cfg);
   if (action.action === "none" || !trigger || !tier) return null;
   const summary = escalationSummary({ id: i.id, label: i.label, from: action.from, to: action.to.id, trigger, done: i.done, commits: i.commits, branch: i.branch });

@@ -134,8 +134,10 @@ workers:
     contextFraction: 0.7
     # Failed attempts of one task that escalate it.
     failures: 2
-    # Which triggers are on: context, missing-tool, repeated-failure.
-    triggers: [context, missing-tool, repeated-failure]
+    # Which triggers are on: context, missing-tool, repeated-failure, and
+    # loop-stop (a loop-guard stop that left committed or salvaged work
+    # escalates at once, without waiting for `failures`).
+    triggers: [context, missing-tool, repeated-failure, loop-stop]
   # Runs strip browser tools unless --browser is passed.
   noBrowserByDefault: false
   # Hourly gc archives finished workers' worktrees older than this many hours.

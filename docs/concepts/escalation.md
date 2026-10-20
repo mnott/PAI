@@ -31,12 +31,15 @@ item `cloud`, and `pai queue run --escalate sonnet` runs one Sonnet worker on it
 
 ## Tier to tier
 
-A run that ends in trouble goes one tier up on its own when one of three
+A run that ends in trouble goes one tier up on its own when one of four
 triggers fires:
 
 - **context**: the run used more than `contextFraction` of its model's window;
 - **missing tool**: it needed a tool it does not have;
-- **repeated failure**: the same task failed `failures` times.
+- **repeated failure**: the same task failed `failures` times;
+- **loop stop**: the loop guard stopped the run and it left committed or salvaged
+  work. It escalates at once, without waiting for a second failure; a loop stop
+  with nothing saved falls back to the repeated-failure rule.
 
 What happens then depends on the tier the run was on:
 
@@ -57,7 +60,7 @@ The keys sit under `workers.escalate` in workers.yaml (shipped defaults shown):
 | `workers.escalate.enabled` | `true` | Escalation on or off. |
 | `workers.escalate.contextFraction` | `0.7` | Share of the context window that triggers it. |
 | `workers.escalate.failures` | `2` | Failed attempts of one task that trigger it. |
-| `workers.escalate.triggers` | `[context, missing-tool, repeated-failure]` | Which triggers are on. |
+| `workers.escalate.triggers` | `[context, missing-tool, repeated-failure, loop-stop]` | Which triggers are on; drop `loop-stop` to make loop stops wait for `failures`. |
 
 ## Doing it by hand
 
