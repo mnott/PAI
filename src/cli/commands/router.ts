@@ -3,6 +3,7 @@
  * See src/router/router.ts. Names, flags and stdout match the old CLI.
  */
 
+import { parkConfigFrom, setParkConfigSource, sharedParker } from "../../router/parking.js";
 import http from "node:http";
 import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -112,6 +113,14 @@ const runCommand: CommandDef = {
       }
       return schedCache.cfg;
     });
+    setParkConfigSource(() => {
+      try {
+        return parkConfigFrom(loadConfig().router.parking);
+      } catch {
+        return parkConfigFrom(undefined);
+      }
+    });
+    sharedParker().sweep();
     if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
     const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
     const system = new SystemMonitor();

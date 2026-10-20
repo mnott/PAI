@@ -30,6 +30,7 @@ import { workersLogDir } from "../workers/paths.js";
 import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
+import { sharedParker } from "./parking.js";
 import { newPrefill, schedEnabled, sharedScheduler, PING_MS } from "./scheduler.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
@@ -551,7 +552,7 @@ export function routerHandler(
       const mayCount = target.kind === "provider" && !isCount && isLocal(up.url);
       const counted: Promise<number | null> = mayCount ? promptTokenCount(safeBody(up.body) ?? {}, target.model) : Promise.resolve(null);
       const mod = up.url.protocol === "https:" ? https : http;
-      const forward = (release: (u?: Usage) => void): void => {
+      const forward = (release: (u?: Usage, opts?: { gate?: boolean }) => void): void => {
       const ureq = mod.request(
         up.url,
         { method: "POST", headers: up.headers },
@@ -610,7 +611,7 @@ export function routerHandler(
             const ended = Date.now();
             const first = sniff?.firstContentAt;
             const usage = sniff ? sniff.finish() : emptyUsage();
-            release(sniff ? usage : undefined);
+            release(sniff ? usage : undefined, sniff?.buildCall ? { gate: true } : undefined);
             record(
               ures.statusCode ?? 502,
               usage,
@@ -643,6 +644,8 @@ export function routerHandler(
       if (target.kind === "provider" && !isCount && isLocal(up.url) && schedEnabled()) {
         try {
           const sched = sharedScheduler();
+          sharedParker().noteEngine(prov, up.url.origin);
+          sched.idleHook ??= (e, w, n) => sharedParker().maybePark(e, w, n);
           const sess = headerValue(req.headers["x-pai-session"], 80) || "anon";
           const worker = headerValue(req.headers["x-pai-worker"], 80) || `conn:${sessionId?.slice(0, 8) ?? req.socket.remotePort ?? "?"}`;
           const streaming = safeBody(up.body)?.stream === true;
@@ -673,7 +676,10 @@ export function routerHandler(
             .then(
               (ticket) => {
                 stopPings();
-                forward((u) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined));
+                const go = () =>
+                  forward((u, opts) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined, opts));
+                // a parked conversation is restored while this request holds the engine (active time), never failing it
+                sharedParker().restoreIfParked(prov, worker, sched.slotHolder(prov)).then(go, go);
               },
               () => {
                 stopPings();

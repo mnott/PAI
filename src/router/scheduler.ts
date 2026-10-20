@@ -66,8 +66,16 @@ export interface Ticket {
   /** ms spent queued (0 when granted at once) */
   waitedMs: number;
   /** Free the engine. Idempotent; the first call's `served` is what the session is charged. */
-  release(served?: Served): void;
+  release(served?: Served, opts?: ReleaseOpts): void;
 }
+
+export interface ReleaseOpts {
+  /** the response just ended in a build-gate call: the worker will idle a while (parking candidate) */
+  gate?: boolean;
+}
+
+/** Runs while the engine is still held after a gate-bound response; the engine frees when it settles. */
+export type IdleHook = (engine: string, worker: string, waiting: number) => Promise<void>;
 
 interface Waiter {
   seq: number;
@@ -86,6 +94,8 @@ interface Flight {
 
 interface Engine {
   inflight: Flight | null;
+  /** worker whose conversation the engine holds (its last response) */
+  lastWorker?: string;
   waiting: Waiter[];
 }
 
@@ -117,6 +127,8 @@ export class RequestScheduler {
   private seq = 0;
   /** called after any state change (the router mirrors the snapshot to disk) */
   onChange?: () => void;
+  /** parking: see parking.ts */
+  idleHook?: IdleHook;
 
   constructor(private cfg: () => SchedConfig = () => DEFAULT_SCHED, private now: () => number = Date.now) {}
 
@@ -141,6 +153,11 @@ export class RequestScheduler {
     a.session = session;
     a.engine = engine;
     return a;
+  }
+
+  /** The worker whose conversation the engine's slot holds, if known. */
+  slotHolder(engineName: string): string | undefined {
+    return this.engines.get(engineName)?.lastWorker;
   }
 
   private isWarm(worker: string): boolean {
@@ -231,11 +248,19 @@ export class RequestScheduler {
       const flight = eng.inflight;
       w.grant({
         waitedMs,
-        release: (served) => {
+        release: (served, opts) => {
           if (done) return;
           done = true;
           const end = this.now();
-          if (eng.inflight === flight) eng.inflight = null;
+          eng.lastWorker = w.worker;
+          const hook = opts?.gate ? this.idleHook : undefined;
+          let parking: Promise<void> | undefined;
+          if (hook && eng.inflight === flight) {
+            // keep the engine held while the conversation is saved, then admit the next worker
+            parking = hook(engineName, w.worker, eng.waiting.length).catch(() => undefined);
+            eng.inflight = { session: w.session, worker: w.worker, since: end };
+          } else if (eng.inflight === flight) eng.inflight = null;
+          const parkFlight = eng.inflight;
           a.activeSince = 0;
           a.lastServiceMs = end - start;
           a.serviceMsTotal += end - start;
@@ -247,7 +272,12 @@ export class RequestScheduler {
             const c = this.ctr(engineName);
             c.set(w.session, (c.get(w.session) ?? 0) + cost);
           }
-          this.dispatch(engineName);
+          if (parking) {
+            void parking.then(() => {
+              if (eng.inflight === parkFlight) eng.inflight = null;
+              this.dispatch(engineName);
+            });
+          } else this.dispatch(engineName);
           this.changed();
         },
       });

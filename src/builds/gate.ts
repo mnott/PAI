@@ -14,6 +14,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, existsSync, realpathSync } from "node:fs";
 import { cpus } from "node:os";
+import { recordDuration } from "./durations.js";
 import { basename, dirname, resolve } from "node:path";
 import {
   buildLogPath,
@@ -219,6 +220,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
     }
     if (o.handleSignals) for (const s of sigs) process.off(s, onSig);
     if (startedAt) {
+      if (!aborted) recordDuration(o.dir, key, (Date.now() - startedAt) / 1000);
       const others = (await listBuilds(o.dir, o.deps)).filter((t) => t.id !== ticket.id).flatMap((t) => t.paths ?? []);
       await reapJob(paths, others, (Date.now() - startedAt) / 1000, o.reap);
     }
