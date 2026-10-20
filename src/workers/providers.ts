@@ -40,7 +40,7 @@ import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { admitCap, LOCAL_DEFAULT_CAP, resolveCap } from "./capacity.js";
+import { admitCap, resolveCap } from "./capacity.js";
 import { LOCAL_MECHANISM_LINE, probeLoopback, type PortCheck } from "./local-provider.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 

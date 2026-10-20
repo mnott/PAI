@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { capacityGate, liveQueue, moveUp, providerCap, queueRows, queuedText, reorderQueue, reorderQueueTo, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
-import { defaultWorkersConfig } from "./config.js";
+import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
+import { capacityGate, effectiveCap, fairOrder, liveQueue, moveUp, providerCap, queueRows, queuedText, reorderQueue, reorderQueueTo, resolveCap, setFront, type CapacityConfig, type CapacityInfo } from "./capacity.js";
+import { defaultWorkersConfig, readWorkersSection } from "./config.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const DEAD = 999999;
@@ -33,8 +33,108 @@ function harness(statuses: (elapsedMs: number) => WorkerStatus[], self: string, 
     load: () => statuses(t),
     isAlive: (pid: number) => pid !== DEAD,
   };
-  return { base, lines, waits, elapsed: () => t };
+  return { base, lines, waits, elapsed: () => t, advance: (ms: number) => (t += ms) };
 }
+
+// CONFIG_FILE and workersYamlPath() resolve once at module load, so the temp
+// PAI_HOME must exist BEFORE those modules are first imported (the trick of
+// shipped-defaults.test.ts): each case writes its user workers.yaml there and
+// reads it through readWorkersSection.
+const savedHome = process.env.HOME;
+const savedPaiHome = process.env.PAI_HOME;
+const savedConfigFile = process.env.PAI_CONFIG_FILE;
+const savedWorkersYaml = process.env.PAI_WORKERS_YAML;
+const cfgDirs: string[] = [];
+let cfgHome: string;
+let cfgYamlPath: string;
+
+beforeAll(() => {
+  process.env.HOME = mkdtempSync(join(tmpdir(), "cap-home-"));
+  cfgDirs.push(process.env.HOME!);
+  cfgHome = mkdtempSync(join(tmpdir(), "cap-paihome-"));
+  cfgDirs.push(cfgHome);
+  process.env.PAI_HOME = cfgHome;
+  process.env.PAI_CONFIG_FILE = join(cfgHome, "config.json");
+  cfgYamlPath = join(cfgHome, "workers.yaml");
+  process.env.PAI_WORKERS_YAML = cfgYamlPath;
+});
+
+afterAll(() => {
+  while (cfgDirs.length) rmSync(cfgDirs.pop()!, { recursive: true, force: true });
+  if (savedHome === undefined) delete process.env.HOME;
+  else process.env.HOME = savedHome;
+  if (savedPaiHome === undefined) delete process.env.PAI_HOME;
+  else process.env.PAI_HOME = savedPaiHome;
+  if (savedConfigFile === undefined) delete process.env.PAI_CONFIG_FILE;
+  else process.env.PAI_CONFIG_FILE = savedConfigFile;
+  if (savedWorkersYaml === undefined) delete process.env.PAI_WORKERS_YAML;
+  else process.env.PAI_WORKERS_YAML = savedWorkersYaml;
+});
+
+/** The user's config.yaml (a temp PAI_HOME, never the live files) with one
+ *  `workers.capacity` key set; the shipped defaults merge under it. */
+function userCapacity(yaml: string): CapacityConfig {
+  const configPath = join(cfgHome, "config.yaml");
+  writeFileSync(configPath, yaml);
+  try {
+    return readWorkersSection(undefined, () => undefined).workers.capacity;
+  } finally {
+    rmSync(configPath, { force: true });
+  }
+}
+
+describe("workers.capacity values from config", () => {
+  it("localDefaultCap from a user config changes the loopback cap", () => {
+    const capacity = userCapacity("workers:\n  capacity:\n    localDefaultCap: 2\n");
+    expect(capacity.localDefaultCap).toBe(2);
+    expect(resolveCap(undefined, true, capacity.localDefaultCap)).toBe(2); // not the default 1
+    expect(providerCap({ providers: { p: { baseUrl: "http://127.0.0.1:8035" } }, capacity }, "p")).toBe(2);
+  });
+
+  it("uncappedQueueCap from a user config changes the cap of an uncapped provider", () => {
+    const capacity = userCapacity("workers:\n  capacity:\n    uncappedQueueCap: 7\n");
+    expect(capacity.uncappedQueueCap).toBe(7);
+    expect(effectiveCap(undefined, false, undefined, capacity)).toBe(7); // not the default 3
+  });
+
+  it("maxTotalWaitMs from a user config raises the alarm at the configured wait", async () => {
+    const capacity = userCapacity("workers:\n  capacity:\n    maxTotalWaitMs: 5000\n");
+    expect(capacity.maxTotalWaitMs).toBe(5_000);
+    // cap 1: three holders keep the gate waiting, so the alarm can fire; they
+    // free their slots one by one, so the gate ends instead of looping
+    const h = harness((ms) => [
+      st("a", { state: ms >= 2000 ? "done" : "running", started: ms >= 2000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 2000 ? DEAD : 100 }),
+      st("b", { state: ms >= 4000 ? "done" : "running", started: ms >= 4000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 4000 ? DEAD : 100 }),
+      st("c", { state: ms >= 6000 ? "done" : "running", started: ms >= 6000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 6000 ? DEAD : 100 }),
+      st("d"),
+    ], "self", 1);
+    let alarmed = 0;
+    // no alarmMs override: the gate's own bound must come from the config
+    const r = await capacityGate({ ...h.base, cap: 1, config: capacity, onAlarm: () => alarmed++ });
+    expect(r).not.toBeNull();
+    expect(alarmed).toBe(1); // at the configured 5 s, not the default 2 h
+  });
+
+  it("heartbeatMs from a user config beats the log at the configured interval", async () => {
+    const capacity = userCapacity("workers:\n  capacity:\n    heartbeatMs: 1000\n");
+    expect(capacity.heartbeatMs).toBe(1_000);
+    const h = harness((elapsed) => [st("a"), st("b"), st("c"), st("d", { started: elapsed > 1500 ? nowStamp() : "2020-01-01 00:00:00" })], "self");
+    await capacityGate({ ...h.base, cap: 1, config: capacity });
+    expect(h.lines.filter((l) => l.includes("still waiting")).length).toBeGreaterThanOrEqual(1); // beats at 1 s, not the default 60 s
+  });
+
+  it("agingMs from a user config ages a ticket ahead at the configured bound", () => {
+    const capacity = userCapacity("workers:\n  capacity:\n    agingMs: 300000\n");
+    expect(capacity.agingMs).toBe(300_000);
+    const now = 10_000_000;
+    const entries = [
+      { id: "a1", pid: 1, front: false, since: now - capacity.agingMs - 1 },
+      { id: "b1", pid: 1, front: false, since: now - 1000 },
+    ];
+    const order = fairOrder({ entries, sessionOf: (id) => (id.startsWith("a") ? "A" : "B"), running: [], now, agingMs: capacity.agingMs });
+    expect(order.map((e) => e.id)).toEqual(["a1", "b1"]); // aged at 5 min, not the default 15
+  });
+});
 
 describe("capacityGate", () => {
   it("queues the 4th run behind 3 live ones and releases when one ends", async () => {

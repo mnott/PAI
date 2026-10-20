@@ -246,7 +246,7 @@ export async function resolvePlanProvider(
 
 /**
  * The provider a delegation tool's `local: true` runs on: the resolved one,
- * with its parallel cap (the provider's own maxConcurrent, LOCAL_DEFAULT_CAP
+ * with its parallel cap (the provider's own maxConcurrent, the loopback default cap
  * on loopback).
  */
 export async function localProviderForDelegation(

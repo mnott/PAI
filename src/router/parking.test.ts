@@ -1,9 +1,10 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadConfig } from "../daemon/config.js";
 import { durationP50, overallP50, recordDuration } from "../builds/durations.js";
 import type { BuildTicket } from "../builds/queue.js";
 import { NO_SAVE_PATH, Parker, parkConfigFrom, type ParkConfig } from "./parking.js";
@@ -169,6 +170,33 @@ describe("Parker", () => {
     const n = eng.calls.length;
     await parker.restoreIfParked("gyro", "w1", "w1");
     expect(eng.calls.length).toBe(n);
+  });
+});
+
+describe("router.parking values from config", () => {
+  it("parkAfterSec from a user config changes when a worker gets parked", async () => {
+    // A temp PAI_HOME/config.yaml (PAI_CONFIG_FILE, never the live files): the
+    // shipped defaults merged under it, read through loadConfig → parkConfigFrom.
+    const savedHome = process.env.PAI_HOME;
+    const savedFile = process.env.PAI_CONFIG_FILE;
+    const cfgDir = mkdtempSync(join(tmpdir(), "park-cfg-"));
+    process.env.PAI_HOME = cfgDir;
+    process.env.PAI_CONFIG_FILE = join(cfgDir, "config.yaml");
+    writeFileSync(process.env.PAI_CONFIG_FILE, "router:\n  parking:\n    enabled: true\n    parkAfterSec: 10\n");
+    try {
+      const eng = await fakeEngine();
+      // the build's p50 is 25 s: over the configured 10 s, under the default 120 s
+      const { parker } = rig(parkConfigFrom(loadConfig().router.parking));
+      parker.noteEngine("gyro", eng.origin);
+      await parker.maybePark("gyro", "w1", 1);
+      expect(eng.calls.some((c) => c.startsWith("save w1.bin"))).toBe(true);
+    } finally {
+      if (savedHome === undefined) delete process.env.PAI_HOME;
+      else process.env.PAI_HOME = savedHome;
+      if (savedFile === undefined) delete process.env.PAI_CONFIG_FILE;
+      else process.env.PAI_CONFIG_FILE = savedFile;
+      rmSync(cfgDir, { recursive: true, force: true });
+    }
   });
 });
 

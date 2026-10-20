@@ -20,7 +20,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { providerCap, LOCAL_DEFAULT_CAP } from "../workers/capacity.js";
+import { capacityOf, providerCap } from "../workers/capacity.js";
 import { providerHostPort } from "../workers/local-provider.js";
 import { isLoopbackProvider } from "../workers/run-env.js";
 import { loadStatusesCached, isLive, type WorkerStatus } from "../workers/status.js";
@@ -30,12 +30,35 @@ import type { WorkersConfig } from "../workers/config.js";
 import type { ModelInventory } from "../workers/model-inventory.js";
 import type { SchedSnapshot } from "./scheduler.js";
 
-/** Sampling cadence of the ring (the page polls /cockpit/models every 5 s too). */
-export const RUNTIME_SAMPLE_MS = 5_000;
-/** Samples kept per runtime: 60 × 5 s = the last 5 minutes. */
-export const RUNTIME_HISTORY_LEN = 60;
-/** An engine's own status endpoint must answer within this; a slow engine is simply not reported. */
-export const ENGINE_STATUS_TIMEOUT_MS = 1_000;
+/**
+ * The fallback used when the config cannot be read. The policy values live in
+ * the shipped defaults file (src/config/defaults/config.yaml, `router.samples`)
+ * and reach the sampler through `loadConfig().router.samples` → `runtimeSampleSettings`.
+ */
+export interface RuntimeSampleSettings {
+  /** Sampling cadence of the ring (the page polls /cockpit/models every 5 s too), ms. */
+  sampleMs: number;
+  /** Samples kept per runtime: 60 × 5 s = the last 5 minutes. */
+  historyLen: number;
+  /** An engine's own status endpoint must answer within this, ms; a slow engine is simply not reported. */
+  engineStatusTimeoutMs: number;
+  /** How old the card reading served from /cockpit/models may be before a new one is taken, ms. */
+  cardReadingMaxAgeMs: number;
+}
+
+export const DEFAULT_RUNTIME_SAMPLES: RuntimeSampleSettings = { sampleMs: 5_000, historyLen: 60, engineStatusTimeoutMs: 1_000, cardReadingMaxAgeMs: 2_000 };
+
+/** Merge a raw `router.samples` config block over the fallback; bad values fall back. */
+export function runtimeSampleSettings(raw: unknown): RuntimeSampleSettings {
+  const out = { ...DEFAULT_RUNTIME_SAMPLES };
+  if (!raw || typeof raw !== "object") return out;
+  const r = raw as Record<string, unknown>;
+  for (const k of ["sampleMs", "historyLen", "engineStatusTimeoutMs", "cardReadingMaxAgeMs"] as const) {
+    const v = r[k];
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[k] = v;
+  }
+  return out;
+}
 
 export interface RuntimeSample {
   /** epoch ms of the sample */
@@ -131,6 +154,8 @@ export interface RuntimeSamplerInput {
   gpuMemTotalFallback?: number | null;
   /** the machine's memory pressure % (0-100) from the system monitor, for the Memory tile */
   pressurePct?: number | null;
+  /** the sampler's policy values (router.samples); default when absent */
+  settings?: RuntimeSampleSettings;
   now: number;
 }
 
@@ -216,7 +241,7 @@ export function runtimeLive(rt: RuntimeSamplerInput["inventory"]["runtimes"][num
   const live: RuntimeLive = {
     workers: [],
     queued: 0,
-    cap: providerCap(workers, engine) ?? (rt.port != null ? LOCAL_DEFAULT_CAP : null),
+    cap: providerCap(workers, engine) ?? (rt.port != null ? capacityOf(workers.capacity).localDefaultCap : null),
     conversationSlots: workers.providers[engine]?.conversationSlots ?? null,
     sparesReady: 0,
     sparesConfig: pool.spares,
@@ -238,9 +263,10 @@ export function runtimeLive(rt: RuntimeSamplerInput["inventory"]["runtimes"][num
 
 /** The whole payload: live per runtime + the ring's history, oldest sample first. */
 export function buildRuntimePayload(input: RuntimeSamplerInput, history: Record<string, RuntimeSample[]>) {
+  const historyLen = input.settings?.historyLen ?? DEFAULT_RUNTIME_SAMPLES.historyLen;
   const runtimes = input.inventory.runtimes.map((rt) => {
     const live = runtimeLive(rt, input);
-    const ring = (history[keyOf(rt)] ?? []).slice(-RUNTIME_HISTORY_LEN);
+    const ring = (history[keyOf(rt)] ?? []).slice(-historyLen);
     const col = (k: keyof RuntimeSample) => ring.map((s) => s[k] ?? null);
     return {
       name: rt.name,
@@ -254,6 +280,7 @@ export function buildRuntimePayload(input: RuntimeSamplerInput, history: Record<
 
 /** One tick: a sample per running runtime (engine gaps stay null). */
 export function sampleRuntimes(input: RuntimeSamplerInput, history: Record<string, RuntimeSample[]>, now: number): void {
+  const historyLen = input.settings?.historyLen ?? DEFAULT_RUNTIME_SAMPLES.historyLen;
   for (const rt of input.inventory.runtimes) {
     if (rt.status === "stopped") continue;
     const live = runtimeLive(rt, input);
@@ -278,7 +305,7 @@ export function sampleRuntimes(input: RuntimeSamplerInput, history: Record<strin
     };
     const ring = (history[keyOf(rt)] ??= []);
     ring.push(s);
-    if (ring.length > RUNTIME_HISTORY_LEN) ring.splice(0, ring.length - RUNTIME_HISTORY_LEN);
+    if (ring.length > historyLen) ring.splice(0, ring.length - historyLen);
   }
 }
 
@@ -374,7 +401,7 @@ export async function freshEngineReadings(
   return out;
 }
 
-export function routerSamplerDeps(sched: () => SchedSnapshot | null): SamplerDeps {
+export function routerSamplerDeps(sched: () => SchedSnapshot | null, engineStatusTimeoutMs: () => number = () => DEFAULT_RUNTIME_SAMPLES.engineStatusTimeoutMs): SamplerDeps {
   const exec = (cmd: string, args: string[]): Promise<string | null> =>
     new Promise((resolve) => {
       try {
@@ -393,7 +420,7 @@ export function routerSamplerDeps(sched: () => SchedSnapshot | null): SamplerDep
     poolState: (logDir) => readPoolState(logDir),
     async getJson(url) {
       try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(ENGINE_STATUS_TIMEOUT_MS) });
+        const r = await fetch(url, { signal: AbortSignal.timeout(engineStatusTimeoutMs()) });
         return r.ok ? await r.json() : null;
       } catch {
         return null;
@@ -409,9 +436,6 @@ export function routerSamplerDeps(sched: () => SchedSnapshot | null): SamplerDep
     now: () => Date.now(),
   };
 }
-
-/** How old the card reading served from /cockpit/models may be before a new one is taken. */
-export const CARD_READING_MAX_AGE_MS = 2_000;
 
 /** The fresh engine reading behind the card's current values (probes + RSS + the GPU total). */
 export interface CardReading {
@@ -440,22 +464,24 @@ export function createRuntimeSampler(
   readConfig: () => WorkersConfig,
   logDir: () => string,
   /** machine memory pressure % used (system monitor); null/undefined = not reported */
-  pressure: () => number | null = () => null
+  pressure: () => number | null = () => null,
+  /** the sampler's policy values (router.samples); default when absent */
+  settings: () => RuntimeSampleSettings = () => DEFAULT_RUNTIME_SAMPLES
 ): RuntimeSampler {
   const history: Record<string, RuntimeSample[]> = {};
   let last: { inventory: ModelInventory; engine: Record<string, RuntimeLive["engine"]>; at: number } | null = null;
   const dialects: EngineDialects = new Map();
   let ticking: Promise<void> | null = null;
-  /** the card reading served from /cockpit/models: fresh engine probes, cached at most CARD_READING_MAX_AGE_MS */
+  /** the card reading served from /cockpit/models: fresh engine probes, cached at most settings().cardReadingMaxAgeMs */
   let card: CardReading | null = null;
   let cardPending: Promise<CardReading | null> | null = null;
   /** the last reading in which an engine spoke; a failed probe is a gap, never a blank card */
   let lastEngine: Record<string, RuntimeLive["engine"]> = {};
 
   /** A fresh reading of the engines (1 s probes in parallel + the RSS tree of each port);
-   *  served from cache while it is younger than CARD_READING_MAX_AGE_MS. */
+   *  served from cache while it is younger than settings().cardReadingMaxAgeMs. */
   const cardReading = async (): Promise<CardReading | null> => {
-    if (card && deps.now() - card.at < CARD_READING_MAX_AGE_MS) return card;
+    if (card && deps.now() - card.at < settings().cardReadingMaxAgeMs) return card;
     if (cardPending) return cardPending;
     const startedAt = deps.now();
     const run = async (): Promise<CardReading | null> => {
@@ -505,7 +531,7 @@ export function createRuntimeSampler(
         const engine = await probeEngines({ inventory, workers }, deps.getJson, dialects);
         last = { inventory, engine, at: deps.now() };
         sampleRuntimes(
-          { inventory, sched: deps.sched(), statuses: deps.statuses(logDir()), poolState: deps.poolState(logDir()), pool: poolSettings(workers), workers, engine, pressurePct: pressure(), now: last.at },
+          { inventory, sched: deps.sched(), statuses: deps.statuses(logDir()), poolState: deps.poolState(logDir()), pool: poolSettings(workers), workers, engine, pressurePct: pressure(), settings: settings(), now: last.at },
           history,
           last.at
         );
@@ -541,12 +567,13 @@ export function createRuntimeSampler(
           rss: reading?.rss,
           gpuMemTotalFallback: reading?.gpuTotalBytes ?? null,
           pressurePct: pressure(),
+          settings: settings(),
           now: deps.now(),
         },
         history
       );
     },
-    start: (ms = RUNTIME_SAMPLE_MS) => {
+    start: (ms = settings().sampleMs) => {
       void tick();
       const timer = setInterval(() => void tick(), ms);
       timer.unref();

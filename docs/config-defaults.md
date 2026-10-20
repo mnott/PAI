@@ -46,6 +46,15 @@ The pane values live in `defaults/config.yaml` under `panes`, read at call time 
 | `panes.tailLines` | `TAIL_LINES` (pane-run.ts) | `40` |
 | `panes.audit.startGraceSecs` / `endGraceSecs` / `launchGraceSecs` | `START_GRACE_MS` / `END_GRACE_MS` / `LAUNCH_GRACE_MS` (pane-audit.ts) | `30 s` / `60 s` / `15 s` |
 
+## Moved into the defaults files
+
+| area | key path | values |
+|---|---|---|
+| Router request scheduling (`src/router/scheduler.ts`) | `router.scheduling` (defaults/config.yaml) | `enabled` true, `wTokIn` 1, `wTokOut` 2, `agingSec` 120, `sessionWeights` {}, `warmMs` 300000, `pingMs` 15000 |
+| Router parking (`src/router/parking.ts`) | `router.parking` (defaults/config.yaml) | `enabled` false, `parkAfterSec` 120 |
+| Router runtime sampling (`src/router/runtime-samples.ts`) | `router.samples` (defaults/config.yaml) | `sampleMs` 5000, `historyLen` 60, `engineStatusTimeoutMs` 1000, `cardReadingMaxAgeMs` 2000 |
+| Worker admission gate (`src/workers/capacity.ts`) | `workers.capacity` (defaults/workers.yaml) | `enabled` true, `localDefaultCap` 1, `uncappedQueueCap` 3, `maxTotalWaitMs` 7200000, `heartbeatMs` 60000, `agingMs` 900000 |
+
 ## Backlog: policy constants still in code
 
 Each later topic commit moves one area into the defaults files. Generated from `NAME = number/list` constants in non-test sources.
@@ -185,9 +194,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/route-classifier.ts:17 | `LOCAL_FAILURE_LIMIT` | `2` |
 | src/workers/result-grace.ts:12 | `RESULT_GRACE_MS` | `20_000` |
 | src/workers/run-env.ts:90 | `COPY_MAX_AGE_MS` | `7 * 24 * 3600 * 1000` |
-| src/workers/capacity.ts:75 | `MAX_TOTAL_WAIT_MS` | `2 * 3_600_000` |
-| src/workers/capacity.ts:78 | `HEARTBEAT_MS` | `60_000` |
-| src/workers/capacity.ts:113 | `AGING_MS` | `15 * 60_000` |
 | src/workers/model-runtimes.ts:77 | `RUNTIME_READY_TIMEOUT_MS` | `120_000` |
 | src/workers/model-runtimes.ts:78 | `RUNTIME_READY_POLL_MS` | `2_000` |
 | src/workers/run.ts:1198 | `SIGNAL_SALVAGE_MS` | `5_000` |
@@ -201,15 +207,10 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/session/checkpoint-block.ts:83 | `ARCHIVE_LIMIT` | `5` |
 | src/session/checkpoint-block.ts:613 | `AUTHORED_GRACE_MS` | `60 * 60 * 1000` |
 | src/router/pool-panel.ts:82 | `DAY_MS` | `24 * 3600_000` |
-| src/router/scheduler.ts:37 | `WARM_MS` | `5 * 60_000` |
-| src/router/scheduler.ts:38 | `PING_MS` | `15_000` |
 | src/router/limits.ts:80 | `BACKOFF_MAX` | `30 * 60_000` |
 | src/router/limits.ts:82 | `ANTHROPIC_POLL_MS` | `5 * 60_000` |
 | src/router/limits.ts:462 | `PREFIX_STATS_TIMEOUT_MS` | `15_000` |
 | src/router/limits.ts:601 | `PREFIX_STALE_MS` | `10 * 60_000` |
-| src/router/runtime-samples.ts:34 | `RUNTIME_SAMPLE_MS` | `5_000` |
-| src/router/runtime-samples.ts:38 | `ENGINE_STATUS_TIMEOUT_MS` | `1_000` |
-| src/router/runtime-samples.ts:414 | `CARD_READING_MAX_AGE_MS` | `2_000` |
 | src/router/system.ts:40 | `SLOW_TTL` | `5 * MIN` |
 | src/router/system.ts:42 | `TOP_TTL` | `10_000` |
 | src/router/cockpit.ts:52 | `RETRY_WITHIN_MS` | `120_000` |

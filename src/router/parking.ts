@@ -26,6 +26,11 @@ export interface ParkConfig {
   parkAfterSec: number;
 }
 
+/**
+ * The fallback used when the config cannot be read. The policy values live in
+ * the shipped defaults file (src/config/defaults/config.yaml, `router.parking`)
+ * and reach the parker through `loadConfig().router.parking` → `parkConfigFrom`.
+ */
 export const DEFAULT_PARK: ParkConfig = { enabled: false, parkAfterSec: 120 };
 export const NO_SAVE_PATH = "parking unavailable: engine has no slot save path";
 const PROBE_FILE = "pai-park-probe-none.bin";

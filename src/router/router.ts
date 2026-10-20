@@ -31,13 +31,13 @@ import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { sharedParker } from "./parking.js";
-import { newPrefill, schedEnabled, sharedScheduler, PING_MS } from "./scheduler.js";
+import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
 export const ROUTER_PORT = 8790;
 
-/** Queued-stream ping interval; PAI_ROUTER_PING_MS shortens it for tests. */
-const pingMs = (): number => Number(process.env.PAI_ROUTER_PING_MS) || PING_MS;
+/** Queued-stream ping interval (router.scheduling.pingMs); PAI_ROUTER_PING_MS shortens it for tests. */
+const pingMs = (): number => Number(process.env.PAI_ROUTER_PING_MS) || sharedScheduler().pingMs();
 export const CLAUDE_UPSTREAM = "http://127.0.0.1:8787/w/claude";
 
 export type Target =

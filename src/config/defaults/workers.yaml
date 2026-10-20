@@ -99,6 +99,20 @@ workers:
   # Per-provider concurrency cap.
   capacity:
     enabled: true
+    # Admission cap of a loopback provider that exposes none (one local engine
+    # serves one request at a time).
+    localDefaultCap: 1
+    # Cap used for a provider with no cap at all (cloud, unset) by the queue
+    # and plan runners.
+    uncappedQueueCap: 3
+    # A run queued this long raises the max-total-wait alarm (milliseconds);
+    # the alarm only tells the owner, it never kills or skips the run.
+    maxTotalWaitMs: 7200000
+    # Longest silence of the log while queued, in milliseconds.
+    heartbeatMs: 60000
+    # A ticket waiting longer than this jumps ahead of newer tickets of any
+    # session (milliseconds).
+    agingMs: 900000
   # Local-model idle watcher.
   localIdle:
     enabled: true
