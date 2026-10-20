@@ -67,18 +67,19 @@ svg text{fill:var(--dim);font-size:10px}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
 .mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums}
 .mt-spark{display:block;width:100%;max-width:100%;height:32px;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
-.rt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}
+.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}
 .rt-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
-.rt-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
-.rt-head b{font-size:14px;font-weight:600;min-width:0;overflow-wrap:anywhere}
-.rt-sub{color:var(--dim);font-size:11px;min-width:0;overflow-wrap:anywhere}
+.rt-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap}
+.rt-head b{font-size:14px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-head .badge{flex:0 0 auto}
+.rt-sub{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
 .rt-dot.idle{background:var(--warn)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
-.rt-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}
+.rt-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;min-width:0}
 .rt-tiles .mt{padding:8px 9px}
 .rt-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
-.rt-chips .chip{max-width:100%;overflow-wrap:anywhere}
+.rt-chips .chip{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
@@ -183,8 +184,13 @@ function renderLimits(){
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 var mdl=null;
+/** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
+ * the full id rides in the title attribute. */
+function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>=0?s.slice(i+1):s}
 /** Models section: one card per running runtime with live tiles (Speed, Memory, Workers, Conversation cache);
- * stopped runtimes and not-loaded models collapse to one chip row. A value the runtime does not report shows "–". */
+ * an idle / not-loaded runtime gets a compact card (header + Memory/size + users, no empty tiles); a runtime
+ * with a loaded model keeps all four tiles — a "–" there means the engine did not report it, not an idle runtime;
+ * stopped runtimes collapse to one chip row that never repeats a card. A value the runtime does not report shows "–". */
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  function mem(m){return m==null?"–":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
@@ -192,19 +198,29 @@ function modelsHtml(inv){
  function n0(v){return v==null?"–":Math.round(v)}
  function gb(v){return v==null?"–":(v/1024).toFixed(1)}
  function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l||null}
- var cards="",idle=[],stopped=[];
+ var cards="",stopped=[];
  inv.runtimes.forEach(function(r){
   if(r.status==="stopped"){stopped.push(r);return}
-  r.models.forEach(function(m){if(!m.loaded)idle.push([esc(r.name),esc(m.model),esc(m.kind),mem(m.sizeMb)])});
   var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
-  var head='<div class="rt-head"><span class="rt-dot'+(r.status==="idle"?" idle":"")+'"></span><b>'+esc(r.models.length?r.models[0].model:r.name)+'</b>'+
-   '<span class="badge">'+esc(r.kind)+'</span>'+(r.status==="idle"?'<span class="badge">idle</span>':"")+'</div>'+
-   '<div class="rt-sub">'+esc(r.name)+(r.port==null?"":" :"+r.port)+(r.users&&r.users.length?" · used by "+esc(r.users.join(", ")):"")+'</div>';
+  var loaded=r.models.filter(function(m){return m.loaded});
+  var head='<div class="rt-head"><span class="rt-dot'+(r.status==="idle"?" idle":"")+'"></span><b'+(r.models.length?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(r.models.length?shortModel(r.models[0].model):r.name)+'</b>'+
+   '<span class="badge">'+esc(r.kind)+'</span><span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
+   '<span class="badge">'+(r.status==="idle"?"idle":"running")+'</span></div>'+
+   '<div class="rt-sub"'+(r.users&&r.users.length?' title="'+esc(r.users.join(", "))+'"':"")+'>'+(r.users&&r.users.length?"used by "+esc(r.users.join(", ")):"")+'</div>';
+  // compact card: nothing loaded (idle runtime) — no Speed / Conversation cache tiles that would show only "–"
+  if(!loaded.length){
+   var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
+   cards+='<div class="rt-card">'+head+'<div class="rt-tiles">'+
+    metricTile({title:"Memory / size",value:mem(size),unit:"",sub:r.models.length+" model"+(r.models.length===1?"":"s")+" not loaded",series:[]})+
+    metricTile({title:"Users",value:(r.users||[]).length,unit:"",sub:(r.users||[]).length?esc(r.users.join(", ")):"no declared consumer",series:[]})+
+    '</div></div>';
+   return;
+  }
   var tiles='<div class="rt-tiles">'+
    metricTile({title:"Speed",value:n1(eng&&eng.decode),unit:eng&&eng.decode!=null?"t/s":"",sub:(eng&&eng.phase?esc(eng.phase)+" · ":"")+"Decode",
     secondary:{value:n1(eng&&eng.prefill),unit:eng&&eng.prefill!=null?"t/s":"",sub:"Prefill"},
     series:[{data:h.decode||[]},{data:h.prefill||[]}]})+
-   metricTile({title:"Memory",value:gb(r.models.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null),unit:"GB",sub:"Resident"+(r.models[0]&&r.models[0].mappedMb?" · "+gb(r.models[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
+   metricTile({title:"Memory",value:gb(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null),unit:"GB",sub:"Resident"+(loaded[0]&&loaded[0].mappedMb?" · "+gb(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
     series:[{data:h.memoryMb||[]}]})+
    metricTile({title:"Workers",value:w.length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
     series:[{data:h.queued||[]}]})+
@@ -214,10 +230,10 @@ function modelsHtml(inv){
   cards+='<div class="rt-card">'+head+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+'</div>';
  });
  var h='<div class="rt-grid">'+(cards||'<span class="dim">no runtime running</span>')+'</div>';
- var parts=[];
- if(stopped.length)parts.push("stopped: "+stopped.map(function(r){return esc(r.name)+(r.port==null?"":" :"+r.port)}).join(", "));
- if(idle.length)parts.push("not loaded: "+idle.map(function(o){return o[1]+" "+o[2]+" ("+o[0]+")"}).join(", "));
- if(parts.length)h+='<div class="rt-chips dim" style="margin-top:6px">'+parts.map(function(p){return'<span class="chip">'+p+'</span>'}).join("")+'</div>';
+ // one chip per stopped runtime (no card): never repeats a card, each chip ellipsised inside the card width
+ if(stopped.length)h+='<div class="rt-chips dim" style="margin-top:6px">'+stopped.map(function(r){
+  var t=esc(r.name)+(r.port==null?"":" :"+r.port)+(r.users&&r.users.length?" · used by "+esc(r.users.join(", ")):"");
+  return'<span class="chip" title="'+t+'">'+t+'</span>'}).join("")+'</div>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
 }
