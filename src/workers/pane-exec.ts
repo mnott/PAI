@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
+import { startPaneBar, type PaneBar, type PaneBarDeps, type StatusLineSpec } from "./pane-bar.js";
 
 export const PANE_EXEC_ENV = "PAI_PANE_EXEC";
 /** Pid of the wrapper that spawned the process; only that wrapper's direct child is "already in its pane". */
@@ -147,6 +148,8 @@ export interface StartSpec {
   /** plain: child output as is; stream: claude stream-json rendered like `worker follow`. */
   render?: "plain" | "stream";
   title?: string;
+  /** Pin the status line (and, for a worker, the input line) at the pane's bottom. */
+  statusLine?: StatusLineSpec;
   /** Seconds the pane stays after the child ended (0: closes with it). */
   linger?: number;
 }
@@ -167,6 +170,9 @@ export interface ExecDeps {
   connectMs?: number;
   killGraceMs?: number;
   now?: () => number;
+  /** Pane bar overrides (tests); a bar is drawn only when `tty` (default: stdout is a terminal). */
+  tty?: boolean;
+  bar?: Partial<PaneBarDeps>;
 }
 
 const SIG_NUM: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 };
@@ -260,7 +266,37 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   }
   const sp: StartSpec = spec;
   if (sp.title) d.setTitle?.(sp.title);
-  const render = await renderer(sp, id, out, err);
+  let bar: PaneBar | null = null;
+  let show = out;
+  let showErr = err;
+  if (sp.statusLine && (d.tty ?? process.stdout.isTTY === true)) {
+    const { loadStatus } = await import("./status.js");
+    const { sayToWorker } = await import("./operator.js");
+    const b = startPaneBar({
+      spec: sp.statusLine,
+      write: (x) => out(x),
+      rows: () => process.stdout.rows || 24,
+      columns: () => process.stdout.columns || null,
+      input: process.stdin,
+      loadStatus,
+      say: sayToWorker,
+      now,
+      onResize: (cb) => void process.stdout.on("resize", cb),
+      ...d.bar,
+    });
+    bar = b;
+    const lines = (emit: (l: string) => void): ((x: string | Buffer) => void) => {
+      let buf = "";
+      return (x) => {
+        const parts = (buf + x.toString()).split("\n");
+        buf = parts.pop() ?? "";
+        parts.forEach(emit);
+      };
+    };
+    show = lines((l) => b.line(l));
+    showErr = show;
+  }
+  const render = await renderer(sp, id, show, showErr);
   const t0 = now();
   const argv = sp.argv;
   try {
@@ -310,7 +346,8 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   cleanup();
   render.end();
   const took = Math.round((now() - t0) / 1000);
-  err(`\n[exit ${code}${stopReason ? ` (${stopReason})` : ""} after ${took}s]\n`);
+  showErr(`\n[exit ${code}${stopReason ? ` (${stopReason})` : ""} after ${took}s]\n`);
+  bar?.stop();
   const rec: Omit<ExitRecord, "id" | "endedMs"> = { code, ...(stopReason ? { reason: stopReason } : {}), ...(spawnError ? { reason: (spawnError as Error).message } : {}) };
   writeJson(exitFilePath(id), { id, endedMs: now(), ...rec } satisfies ExitRecord);
   send("X", JSON.stringify({ code }));

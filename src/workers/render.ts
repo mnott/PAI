@@ -829,3 +829,11 @@ export function renderStatusLine(
   const mid = [providers, oldestPart].filter(Boolean).join(" · ");
   return `${head} · ${mid}${tail}`;
 }
+
+/** The bottom line of a `pai pane run` pane: label · started HH:MM · elapsed. */
+export function paneRunStatusRow(label: string, startedMs: number, now: Date = new Date()): string {
+  const d = new Date(startedMs);
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const ts = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:${hhmm.slice(3)}:${String(d.getSeconds()).padStart(2, "0")}`;
+  return [goalOf({ label }), `started ${hhmm}`, elapsedOf(ts, now)].join(" · ");
+}

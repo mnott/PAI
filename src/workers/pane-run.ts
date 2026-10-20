@@ -207,7 +207,7 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
   let child: ChildProcess;
   try {
     child = pane
-      ? (await pane.start({ argv, cwd, env: childEnv, stdin: "ignore", render: "plain", title: paneTitle(label) })).asChild()
+      ? (await pane.start({ argv, cwd, env: childEnv, stdin: "ignore", render: "plain", title: paneTitle(label), statusLine: { kind: "run", label, startedMs: status.startedMs } })).asChild()
       : spawn(argv[0], argv.slice(1), { cwd, env: childEnv, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
     err(`[pai pane] ${id}: ${e instanceof Error ? e.message : String(e)}`);

@@ -132,6 +132,7 @@ import { runImageCapability } from "./engines/image.js";
 import { headlessAllowed, paneBackend, resolveHostSession } from "./pane.js";
 import { launchPane, noTerminalReasons } from "./pane-launch.js";
 import type { OwnedPane } from "./pane-exec.js";
+import type { StatusLineSpec } from "./pane-bar.js";
 import { paneTitle } from "./pane-title.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
@@ -1513,12 +1514,12 @@ export async function requireVisiblePane(
 export async function spawnOwned(
   wid: string,
   cmd: string[],
-  o: { env: NodeJS.ProcessEnv; cwd: string; stdio: ["pipe" | "ignore", "pipe", "pipe" | "inherit"] | "inherit"; render?: "plain" | "stream"; title: string }
+  o: { env: NodeJS.ProcessEnv; cwd: string; stdio: ["pipe" | "ignore", "pipe", "pipe" | "inherit"] | "inherit"; render?: "plain" | "stream"; title: string; statusLine?: StatusLineSpec }
 ): Promise<ReturnType<typeof spawn>> {
   const pane = paneHandles.get(wid);
   if (!pane || o.stdio === "inherit") return spawn(cmd[0], cmd.slice(1), { env: o.env, cwd: o.cwd, stdio: o.stdio });
   paneHandles.delete(wid);
-  const proc = (await pane.start({ argv: cmd, cwd: o.cwd, env: o.env as Record<string, string | undefined>, stdin: o.stdio[0] === "pipe" ? "pipe" : "ignore", render: o.render ?? "plain", title: o.title })).asChild();
+  const proc = (await pane.start({ argv: cmd, cwd: o.cwd, env: o.env as Record<string, string | undefined>, stdin: o.stdio[0] === "pipe" ? "pipe" : "ignore", render: o.render ?? "plain", title: o.title, ...(o.statusLine ? { statusLine: o.statusLine } : {}) })).asChild();
   if (o.stdio[2] === "inherit") proc.stderr?.pipe(process.stderr);
   return proc;
 }
@@ -2221,6 +2222,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
       render: "stream",
       title: paneTitle(label, target.providerName),
+      statusLine: { kind: "worker", id: wid, logDir },
     });
   } catch (e) {
     markStartFailed(logDir, status, e);
