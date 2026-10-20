@@ -71,15 +71,22 @@ export function effectiveWorkersYamlDoc(userPath: string): Document {
  *  module's directory). A standalone bundle (dist/hooks/*.mjs) finds them one
  *  level up in config/defaults; PAI_DEFAULTS_DIR names them explicitly (an
  *  esbuild test bundle sitting in a temp dir). */
-export function shippedDefaultsDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    process.env.PAI_DEFAULTS_DIR,
+export function shippedDefaultsDir(here: string = dirname(fileURLToPath(import.meta.url))): string {
+  const candidates: string[] = [];
+  if (process.env.PAI_DEFAULTS_DIR) candidates.push(process.env.PAI_DEFAULTS_DIR);
+  candidates.push(
     join(here, "defaults"),
+    join(here, "config", "defaults"), // bundled chunk at the dist root
     join(here, "..", "config", "defaults"),
-  ];
-  for (const dir of candidates) if (dir && existsSync(join(dir, "workers.yaml"))) return dir;
-  return join(process.cwd(), "src/config/defaults");
+  );
+  // walk up from the module to the package root (the directory holding package.json)
+  let root = here;
+  while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
+  if (existsSync(join(root, "package.json"))) {
+    candidates.push(join(root, "dist", "config", "defaults"), join(root, "src", "config", "defaults"));
+  }
+  for (const dir of candidates) if (existsSync(join(dir, "workers.yaml"))) return dir;
+  throw new ShippedDefaultsError(`Shipped defaults not found; tried: ${candidates.join(", ")}`);
 }
 
 /** The shipped defaults file for the main config. */
