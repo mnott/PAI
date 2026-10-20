@@ -27,6 +27,8 @@ export interface RunOrigin {
 export interface Messenger {
   /** Type a message into the originating session. */
   toSession(origin: RunOrigin, text: string): Promise<boolean>;
+  /** Why the last toSession returned false, when known. */
+  lastError?: string;
   /** Short plain sentence to the operator's phone. */
   toPailot(text: string): Promise<boolean>;
 }
@@ -54,26 +56,30 @@ export function originFromEnv(env: NodeJS.ProcessEnv = process.env): RunOrigin {
 
 /** Real messenger over AIBroker's socket; unreachable AIBroker is logged and ignored. */
 export function aibrokerMessenger(logDir: string, warn: (s: string) => void = (s) => process.stderr.write(s + "\n")): Messenger {
-  return {
+  const self: Messenger = {
     async toSession(origin, text) {
+      self.lastError = undefined;
+      const fail = (why: string): false => {
+        self.lastError = why;
+        warn(`run report not delivered to the session: ${why}`);
+        return false;
+      };
       try {
         const { sendToSession } = await import("../cli/lib/aibroker-client.js");
-        let target = origin.iterm;
+        let target = origin.iterm?.split(":").pop() || undefined; // ITERM_SESSION_ID form "w8t0p0:<uuid>" -> the uuid
         if (!target && origin.claudeSession) {
           const { itermForClaudeSession } = await import("./scope.js");
           target = itermForClaudeSession(logDir, origin.claudeSession) ?? undefined;
         }
         target = target ?? origin.name;
         if (!target) {
-          warn("run report not delivered: the run has no originating session");
-          return false;
+          return fail("the run has no originating session");
         }
         const r = await sendToSession(target, text);
-        if (!r.ok && !r.timedOut) warn(`run report not delivered to the session: ${r.error}`);
+        if (!r.ok && !r.timedOut) return fail(`${target}: ${r.error}`);
         return r.ok || r.timedOut === true;
       } catch (e) {
-        warn(`run report not delivered to the session: ${String(e)}`);
-        return false;
+        return fail(String(e));
       }
     },
     async toPailot(text) {
@@ -87,6 +93,7 @@ export function aibrokerMessenger(logDir: string, warn: (s: string) => void = (s
       }
     },
   };
+  return self;
 }
 
 const short = (s: string | undefined, n = 160): string => (s ?? "").replace(/\s+/g, " ").trim().slice(0, n);

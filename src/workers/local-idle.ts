@@ -4,7 +4,7 @@
  * two slots were free and nothing was queued. The daemon samples every 30 s (GPU utilisation, what each
  * running local worker is doing, free slots, queued local work); when the GPU stays under the threshold
  * for `minutes`, every running local worker is blocked in a build/test (or none runs), a slot is free and
- * nothing local is queued, it nudges each owning session ONCE (then backs off) and writes LOCAL-IDLE to the
+ * nothing local is queued, it nudges each owning session (every backoff while the spell lasts, max 6 per hour) and writes LOCAL-IDLE to the
  * ledger. The latest sample is persisted for `pai worker ps` and the cockpit. Read-only towards the engine.
  */
 
@@ -40,6 +40,16 @@ export interface LocalWorker {
   /** Where a nudge goes: the owning session. */
   iterm?: string;
   name?: string;
+  /** Claude Code session of the orchestrator that spawned the worker (fallback owner). */
+  claudeSession?: string;
+}
+
+/** AIBroker targets the bare iTerm session uuid; a status `term` is ITERM_SESSION_ID ("w8t0p0:<uuid>"). */
+export const itermUuid = (term: string | undefined | null): string | undefined => term?.split(":").pop() || undefined;
+
+/** The owning session of a worker status: its terminal uuid, its session name, its spawning Claude session. */
+export function ownerOf(s: Pick<WorkerStatus, "term" | "session" | "spawnerSession" | "claudeSession">): { iterm?: string; name?: string; claudeSession?: string } {
+  return { iterm: itermUuid(s.term), name: s.session?.name || undefined, claudeSession: s.spawnerSession || undefined };
 }
 
 export interface LocalProviderSample {
@@ -61,14 +71,18 @@ export interface LocalIdleState {
   idleSince: number | null;
   /** provider -> epoch ms of the last nudge. */
   lastNudge: Record<string, number>;
+  /** session key -> epoch ms of the nudges sent in the last hour (cap per session). */
+  sent?: Record<string, number[]>;
 }
+
+export const MAX_NUDGES_PER_HOUR = 6;
 
 export interface Nudge {
   provider: string;
   free: number;
   workers: LocalWorker[];
   /** One entry per owning session. */
-  targets: Array<{ iterm?: string; name?: string; ids: string[] }>;
+  targets: Array<{ iterm?: string; name?: string; claudeSession?: string; ids: string[] }>;
 }
 
 /** "Device Utilization %"=N out of `ioreg -r -d 1 -c IOAccelerator`; null when absent. */
@@ -119,7 +133,7 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
     providers.push({
       provider: name,
       cap,
-      workers: mine.map((s) => ({ id: s.id, activity: activityOf(s, tickets), iterm: s.term || undefined, name: s.session?.name })),
+      workers: mine.map((s) => ({ id: s.id, activity: activityOf(s, tickets), ...ownerOf(s) })),
       queued,
     });
   }
@@ -129,21 +143,31 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
 /** One step of the rule; pure. Returns the next state and the nudges due now. */
 export function evaluate(state: LocalIdleState, sample: LocalSample, cfg: LocalIdleConfig, muted: ReadonlySet<string> = new Set()): { state: LocalIdleState; nudges: Nudge[] } {
   const idle = sample.gpuPct !== null && sample.gpuPct < cfg.gpuBelowPct;
-  const next: LocalIdleState = { idleSince: idle ? (state.idleSince ?? sample.at) : null, lastNudge: { ...state.lastNudge } };
+  const sent: Record<string, number[]> = {};
+  for (const [k, v] of Object.entries(state.sent ?? {})) {
+    const recent = v.filter((t) => sample.at - t < 3_600_000);
+    if (recent.length) sent[k] = recent;
+  }
+  const next: LocalIdleState = { idleSince: idle ? (state.idleSince ?? sample.at) : null, lastNudge: { ...state.lastNudge }, sent };
   const nudges: Nudge[] = [];
   if (!cfg.enabled || next.idleSince === null || sample.at - next.idleSince < cfg.minutes * 60_000) return { state: next, nudges };
   for (const p of sample.providers) {
     const free = p.cap - p.workers.length;
     if (free <= 0 || p.queued > 0 || p.workers.some((w) => w.activity === "generating")) continue;
     if (sample.at - (next.lastNudge[p.provider] ?? -Infinity) < cfg.backoffMinutes * 60_000) continue;
-    const targets = new Map<string, { iterm?: string; name?: string; ids: string[] }>();
+    const targets = new Map<string, { iterm?: string; name?: string; claudeSession?: string; ids: string[] }>();
     for (const w of p.workers) {
-      if ((w.name && muted.has(w.name)) || (w.iterm && muted.has(w.iterm))) continue;
-      const key = w.iterm ?? w.name;
+      if ((w.name && muted.has(w.name)) || (w.iterm && muted.has(w.iterm)) || (w.claudeSession && muted.has(w.claudeSession))) continue;
+      const key = w.iterm ?? w.name ?? w.claudeSession;
       if (!key) continue;
-      const t = targets.get(key) ?? { iterm: w.iterm, name: w.name, ids: [] };
+      if ((sent[key]?.length ?? 0) >= MAX_NUDGES_PER_HOUR) continue;
+      const t = targets.get(key) ?? { iterm: w.iterm, name: w.name, claudeSession: w.claudeSession, ids: [] };
       t.ids.push(w.id);
       targets.set(key, t);
+    }
+    for (const t of targets.values()) {
+      const key = (t.iterm ?? t.name ?? t.claudeSession) as string;
+      sent[key] = [...(sent[key] ?? []), sample.at];
     }
     next.lastNudge[p.provider] = sample.at; // the idle spell is logged once per backoff even with nobody to tell
     nudges.push({ provider: p.provider, free, workers: p.workers, targets: [...targets.values()] });
@@ -239,7 +263,17 @@ export async function localIdleTick(logDir: string, workers: WorkersConfig, msg:
   }
   for (const n of nudges) {
     appendLedger(ledgerPath(logDir), "LOCAL-IDLE", { provider: n.provider, free: n.free, workers: n.workers.map((w) => `${w.id}:${w.activity}`).join(",") || "-" }, new Date(sample.at));
-    for (const t of n.targets) await msg.toSession({ iterm: t.iterm, name: t.name }, nudgeText(n, t.ids, cfg.minutes)).catch(() => false);
+    for (const t of n.targets) {
+      const who = t.iterm ?? t.name ?? t.claudeSession ?? "?";
+      let reason = "";
+      try {
+        const ok = await msg.toSession({ iterm: t.iterm, name: t.name, claudeSession: t.claudeSession }, nudgeText(n, t.ids, cfg.minutes));
+        if (!ok) reason = msg.lastError || "AIBroker did not accept the message";
+      } catch (e) {
+        reason = String(e);
+      }
+      if (reason) appendLedger(ledgerPath(logDir), "LOCAL-IDLE-UNDELIVERED", { provider: n.provider, target: who, workers: t.ids.join(","), reason: reason.replace(/\s+/g, " ").slice(0, 200) }, new Date(sample.at));
+    }
   }
   return nudges;
 }
