@@ -437,8 +437,29 @@ export const fmtMem = (m?: number): string => (m == null ? "-" : m >= 1024 ? `${
 export const fmtMemMapped = (m: { memoryMb?: number; mappedMb?: number }): string =>
   m.mappedMb ? `${fmtMem(m.memoryMb)} (+${fmtMem(m.mappedMb).replace(/\.0 /, " ")} file mapped)` : fmtMem(m.memoryMb);
 
+/** The models.labels config block (runtime → label or {model → label}); empty when unset. */
+export function readModelLabels(): Record<string, unknown> {
+  try {
+    const raw = readMainConfigRaw() as { models?: { labels?: unknown } };
+    const l = raw.models?.labels;
+    return l && typeof l === "object" && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The label of a runtime/model pair: the model's own label, else the runtime's, else "". */
+export function modelLabel(labels: Record<string, unknown>, runtime: string, model?: string): string {
+  const v = labels[runtime];
+  if (model && v && typeof v === "object" && !Array.isArray(v)) {
+    const m = (v as Record<string, unknown>)[model];
+    return typeof m === "string" ? m : "";
+  }
+  return typeof v === "string" ? v : "";
+}
+
 /** One row per model (a runtime with no models gets one row); loaded models come first, then installed-only ones, stopped runtimes last. */
-export function inventoryRows(inv: ModelInventory): string[][] {
+export function inventoryRows(inv: ModelInventory, labels: Record<string, unknown> = readModelLabels()): string[][] {
   const rows: string[][] = [];
   const rank = (r: InventoryRuntime): number => (r.status === "stopped" ? 2 : r.models.some((m) => m.loaded) ? 0 : 1);
   const ordered = [...inv.runtimes].sort((a, b) => rank(a) - rank(b));
@@ -446,17 +467,18 @@ export function inventoryRows(inv: ModelInventory): string[][] {
     const port = r.port != null ? String(r.port) : "-";
     if (r.status === "stopped") {
       // stopped runtimes collapse to one row
-      rows.push([r.name, r.status, r.models.map((m) => m.model).join(", ") || "-", [...new Set(r.models.map((m) => m.kind))].join(", ") || "-", "-", r.users.join(", ") || "-", port]);
+      rows.push([r.name, r.status, r.models.map((m) => m.model).join(", ") || "-", modelLabel(labels, r.name) || "-", [...new Set(r.models.map((m) => m.kind))].join(", ") || "-", "-", r.users.join(", ") || "-", port]);
       continue;
     }
     const status = r.status === "idle" ? "idle (not loaded)" : r.status;
     const notServed = (r.notServed ?? []).map((n) => `${n} (not served)`);
-    if (!r.models.length) rows.push([r.name, status, "-", "-", "-", [...r.users, ...notServed].join(", ") || "-", port]);
+    if (!r.models.length) rows.push([r.name, status, "-", modelLabel(labels, r.name) || "-", "-", "-", [...r.users, ...notServed].join(", ") || "-", port]);
     for (const m of [...r.models].sort((a, b) => Number(b.loaded) - Number(a.loaded))) {
       rows.push([
         r.name,
         status,
         m.loaded ? m.model : `${m.model} (installed)`,
+        modelLabel(labels, r.name, m.model) || modelLabel(labels, r.name) || "-",
         m.kind,
         // loaded: footprint (+ mapped model file); installed only: size on disk
         m.loaded ? fmtMemMapped(m) : fmtMem(m.sizeMb),
@@ -468,7 +490,7 @@ export function inventoryRows(inv: ModelInventory): string[][] {
   return rows;
 }
 
-export const INVENTORY_HEADERS = ["runtime", "status", "model", "kind", "memory / on disk", "used by", "port"];
+export const INVENTORY_HEADERS = ["runtime", "status", "model", "label", "kind", "memory / on disk", "used by", "port"];
 
 export function inventoryText(inv: ModelInventory, table: (headers: string[], rows: string[][]) => string): string {
   const lines = [table(INVENTORY_HEADERS, inventoryRows(inv))];

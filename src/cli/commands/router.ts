@@ -9,7 +9,7 @@ import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
-import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setRuntimeSampler } from "../../router/cockpit.js";
+import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, setRuntimeSampler } from "../../router/cockpit.js";
 import { createRuntimeSampler, routerSamplerDeps } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
 import { listenRetry } from "../../router/listen.js";
@@ -137,6 +137,20 @@ const runCommand: CommandDef = {
     );
     sampler.start();
     setRuntimeSampler(sampler);
+    // cockpit action endpoint: local server start/stop runs the same code path
+    // as `pai worker local <tier>` / `off` (spawn + wait, detached from the request)
+    setActionHooks({
+      runLocalJob: async (kind, tier) => {
+        const { startTier, stopAll } = await import("./worker-config.js");
+        const { readLocalConfig } = await import("../../workers/local-tiers.js");
+        const { workersYamlPath } = await import("../../workers/workers-config.js");
+        const cfg = readLocalConfig(workersYamlPath());
+        if (kind === "off") return void (await stopAll(cfg));
+        const t = cfg.tiers[tier];
+        if (!t) throw new Error(`no tier "${tier}"`);
+        await startTier(cfg, tier, t);
+      },
+    });
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);

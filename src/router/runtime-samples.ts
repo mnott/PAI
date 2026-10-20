@@ -62,7 +62,7 @@ export interface RuntimeSample {
 }
 
 /** The ring's last N samples, oldest first; nulls are gaps (failed probes). */
-export type RuntimeHistory = Record<"decode" | "prefill" | "memoryMb" | "queued" | "pressurePct", Array<number | null>>;
+export type RuntimeHistory = Record<"decode" | "prefill" | "memoryMb" | "queued" | "pressurePct" | "reusedPct", Array<number | null>>;
 
 export interface RuntimeLive {
   /** workers with a live slot on this engine, by the session that started them */
@@ -191,7 +191,7 @@ export function buildRuntimePayload(input: RuntimeSamplerInput, history: Record<
       name: rt.name,
       status: rt.status,
       live,
-      history: { decode: col("decode"), prefill: col("prefill"), memoryMb: col("memoryMb"), queued: col("queued"), pressurePct: col("pressurePct") },
+      history: { decode: col("decode"), prefill: col("prefill"), memoryMb: col("memoryMb"), queued: col("queued"), pressurePct: col("pressurePct"), reusedPct: col("reusedPct") },
     };
   });
   return { at: input.now, runtimes };

@@ -39,7 +39,7 @@ describe("cockpit page compression", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
-      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml",
+      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "actRow", "wireAct", "loadLimits", "document",
       `${body}\nrenderLimits();`
     );
     const lim = {
@@ -48,7 +48,8 @@ describe("cockpit page compression", () => {
         ...Array.from({ length: 18 }, (_, i) => ({ provider: `dead${i}`, kind: "local", up: false })),
       ],
     };
-    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "");
+    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "",
+      (_cls: string, _attrs: string, btns: string) => btns, () => {}, () => {}, { querySelectorAll: () => [] });
     const html = els.local!.innerHTML;
     expect(html).toContain("up1");
     expect(html).toContain("<details");
@@ -293,6 +294,7 @@ describe("cockpit Models cards", () => {
     COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function actRow[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
   ].join("\n");
   const modelsHtml = new Function("esc", "pct", `${src}; return modelsHtml;`)(
@@ -313,8 +315,8 @@ describe("cockpit Models cards", () => {
     live: {
       at: 1,
       runtimes: [
-        { name: "strata", status: "running", engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reused: 900, prompt: 1000 }, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
-        { name: "ollama", status: "idle", engine: null, workers: [], queued: 0, cap: 1, conversationSlots: null, sparesReady: 0, sparesConfig: 1, history: { decode: [], prefill: [], memoryMb: [], queued: [], pressurePct: [] } },
+        { name: "strata", status: "running", live: { engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90 }, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1 }, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
+        { name: "ollama", status: "idle", live: { engine: null, workers: [], queued: 0, cap: 1, conversationSlots: null, sparesReady: 0, sparesConfig: 1 }, history: { decode: [], prefill: [], memoryMb: [], queued: [], pressurePct: [] } },
       ],
     },
   };
@@ -324,7 +326,8 @@ describe("cockpit Models cards", () => {
     const h = modelsHtml(inv);
     expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(2);
     expect(h).toContain('<b title="flash-next">flash-next</b>');
-    expect(h).toContain('<span class="badge">strata</span>');
+    // kind differs from the name: one separate kind chip, the name shows once
+    expect(h).toContain('<span class="badge">strata :8035</span>');
     expect(h).toContain("strata :8035");
     expect(h).toContain("used by worker:flashnext-iq3");
     expect(h).toContain('<span class="rt-dot"></span>');
@@ -371,6 +374,30 @@ describe("cockpit Models cards", () => {
     expect(h).not.toContain("Speed");
     expect(h).not.toContain("–");
   });
+  it("the runtime name never repeats: a kind equal to the name (or name:port) shows no kind chip", () => {
+    const h = modelsHtml(inv);
+    // strata: the kind equals the name, so the name appears once in the header
+    const strataHead = h.slice(h.indexOf('<b title="flash-next">flash-next</b>'), h.indexOf('<div class="rt-sub'));
+    expect(strataHead).toContain('<span class="badge">strata :8035</span>');
+    expect(strataHead).not.toContain('<span class="badge">strata</span>');
+    const dup = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "docker-model-runner", kind: "docker-model-runner", status: "idle", port: 8090, users: [], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
+      live: { at: 1, runtimes: [] },
+    });
+    // kind equals the runtime name: no kind chip at all, the name shows once in the header
+    const dupHead = dup.slice(dup.indexOf('<div class="rt-head">'), dup.indexOf('<div class="rt-sub'));
+    expect((dupHead.match(/<span class="badge">[^<]*<\/span>/g) ?? []).length).toBe(2); // runtime chip + status chip, no kind chip
+    expect(dupHead).toContain('<span class="badge">docker-model-runner :8090</span>');
+    expect(dupHead).not.toContain('<span class="badge">docker-model-runner</span><span class="badge">docker-model-runner');
+    const fold = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "e5", kind: "e5 :8090", status: "idle", port: 8090, users: [], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
+      live: { at: 1, runtimes: [] },
+    });
+    expect(fold).toContain('<span class="badge">e5 :8090</span>');
+    expect(fold).not.toContain('<span class="badge">e5 :8090</span><span class="badge">e5 :8090');
+  });
   it("worker chips name the sessions with workers on the runtime", () => {
     const h = modelsHtml(inv);
     expect(h).toContain("fix-x");
@@ -392,7 +419,15 @@ describe("cockpit Models cards", () => {
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
     expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
-    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;min-width:0}");
+    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}");
+    // four tiles in one row only when the card itself is wide; a balanced 2x2 below 720px,
+    // one column under ~340px — explicit columns per range via a container query on the card, never 3+1
+    expect(COCKPIT_HTML).toMatch(/\.rt-card\{[^}]*container-type:inline-size/);
+    expect(COCKPIT_HTML).toMatch(/@container \(min-width:720px\)\{\.rt-tiles\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}/);
+    expect(COCKPIT_HTML).toMatch(/@container \(max-width:339px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+    // sparklines align at the bottom of every tile; value + unit never break apart
+    expect(COCKPIT_HTML).toMatch(/\.mt-spark\{[^}]*margin-top:auto[^}]*\}/);
+    expect(COCKPIT_HTML).toMatch(/\.mt-value\{[^}]*white-space:nowrap/);
     expect(COCKPIT_HTML).toMatch(/\.rt-card\{[^}]*min-width:0[^}]*max-width:100%/);
     // header on one line: the name ellipsises, chips stay inline; the used-by line ellipsises too
     expect(COCKPIT_HTML).toMatch(/\.rt-head\{[^}]*flex-wrap:nowrap\}/);
