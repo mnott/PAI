@@ -9,7 +9,8 @@
  * orchestrator); when it is written, the legacy keys are derived from it.
  */
 
-import { findLocal, readPolicy, routeRun } from "./policy.js";
+import type { PolicyMode } from "./policy.js";
+import { explicitWorkersChain, findLocal, readPolicy, routeRun } from "./policy.js";
 import { workersLogDir } from "./paths.js";
 import { DEFAULT_BUDGET_PRIORITY, isLocalProvider, readWorkersSection, writeWorkersSection, type WorkersConfig } from "./config.js";
 
@@ -31,6 +32,7 @@ export function parseRank(v: unknown): Rank | null {
 /** The provider the orchestrator side runs on per the session profile ("" = built-in anthropic). */
 export function chatProviderOf(raw: Record<string, unknown>, workers: WorkersConfig): string {
   const p = (raw as { session?: { profile?: { chat?: { provider?: unknown } } } }).session?.profile?.chat?.provider;
+  if (workers.chains.orchestrator.length) return workers.chains.orchestrator[0];
   if (typeof p === "string" && p) return p;
   return workers.active && workers.active !== "auto" ? workers.active : "anthropic";
 }
@@ -63,7 +65,7 @@ export async function effectiveChains(
   const base = deriveChains(workers, chatProviderOf(raw, workers));
   const logDir = deps.logDir ?? workersLogDir(workers);
   const policy = readPolicy(logDir);
-  if (!policy || workers.chains.workers.length) return base;
+  if (!policy || explicitWorkersChain(workers).length) return base;
   const cloud = base.workers.filter((m) => !isLocalProvider(workers.providers[m]?.baseUrl ?? ""));
   const found = policy.mode === "cloud-only" ? { name: null } : await findLocal(workers, logDir, deps.ping);
   const routed = await routeRun(workers, logDir, {}, deps).catch(() => null);
@@ -74,6 +76,28 @@ export async function effectiveChains(
   else if (routed?.providerFlag) list = [routed.providerFlag, ...cloud];
   else list = local && policy.mode === "prefer-cloud" ? [...cloud, local] : cloud;
   return { workers: list.slice(0, MAX_RANKS), orchestrator: base.orchestrator };
+}
+
+/**
+ * The Workers chain a policy mode stands for: local t0 (prefer-local, auto),
+ * local last (prefer-cloud), no local (cloud-only), local alone (local-only).
+ * The cloud order is the current chain's.
+ */
+export function chainForPolicy(mode: PolicyMode, current: string[], local: string | null): string[] {
+  const cloud = current.filter((m) => m !== local);
+  if (mode === "cloud-only" || !local) return cloud;
+  if (mode === "local-only") return [local];
+  return (mode === "prefer-cloud" ? [...cloud, local] : [local, ...cloud]).slice(0, MAX_RANKS);
+}
+
+/** Set a role's whole chain and persist it (legacy keys derived as in setModelRank). */
+export function setChain(role: ChainRole, models: string[], path?: string): RankChange {
+  const { raw, workers } = readWorkersSection(path);
+  const known = rankableModels(workers).map((m) => m.name);
+  for (const m of models) if (!known.includes(m)) throw new Error(`no model named "${m}"`);
+  const chains = deriveChains(workers, chatProviderOf(raw, workers));
+  chains[role] = [...new Set(models)].slice(0, MAX_RANKS);
+  return persistChains(raw, workers, chains, `${role} chain=${chains[role].join(">") || "-"}`, path);
 }
 
 /** Place `model` at `rank` in `chain` (others shift, no duplicates, no gaps); "off" removes it. */
@@ -118,6 +142,10 @@ export function setModelRank(role: ChainRole, model: string, rank: Rank, path?: 
   if (!known.includes(model)) throw new Error(`no model named "${model}"`);
   const chains = deriveChains(workers, chatProviderOf(raw, workers));
   chains[role] = applyRank(chains[role], model, rank);
+  return persistChains(raw, workers, chains, `${role} ${model}=${rank === "off" ? "off" : "t" + rank} chain=${chains[role].join(">") || "-"}`, path);
+}
+
+function persistChains(raw: Record<string, unknown>, workers: WorkersConfig, chains: Chains, text: string, path?: string): RankChange {
   workers.chains = { ...chains };
   const local = new Set(rankableModels(workers).filter((m) => m.local).map((m) => m.name));
   workers.routing.priority = chains.workers.filter((m) => !local.has(m));
@@ -131,7 +159,7 @@ export function setModelRank(role: ChainRole, model: string, rank: Rank, path?: 
     raw.session = session;
   }
   writeWorkersSection(raw, workers, path);
-  return { chains, text: `${role} ${model}=${rank === "off" ? "off" : "t" + rank} chain=${chains[role].join(">") || "-"}` };
+  return { chains, text };
 }
 
 /** "Workers: a → b · Orchestrator: c → d" */

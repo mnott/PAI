@@ -148,11 +148,13 @@ export async function pingLocal(baseUrl: string, timeoutMs = 4000): Promise<bool
 export async function findLocal(
   config: WorkersConfig,
   logDir: string,
-  ping: (url: string) => Promise<boolean> = pingLocal
+  ping: (url: string) => Promise<boolean> = pingLocal,
+  only?: string[]
 ): Promise<{ name: string | null; why: string }> {
   const state = readRoutingState(logDir);
   const candidates = Object.entries(config.providers).filter(
-    ([name, p]) => p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl) && cooldownRemaining(state, name) === 0
+    ([name, p]) =>
+      (!only || only.includes(name)) && p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl) && cooldownRemaining(state, name) === 0
   );
   if (!candidates.length) return { name: null, why: "no local provider" };
   for (const [name, p] of candidates) if (await ping(p.baseUrl)) return { name, why: "" };
@@ -165,10 +167,55 @@ export interface RouteFlags {
   cloud?: boolean;
 }
 
+/** The Workers chain set explicitly (cockpit rank, `pai worker chains set`, a policy mode), or []. */
+export function explicitWorkersChain(config: WorkersConfig): string[] {
+  return config.chains?.workers ?? [];
+}
+
 /**
- * The policy decision for one run: null when no policy is set (class/active
- * routing stands), else the provider to pin (null = cloud, normal routing)
- * and the RouteInfo to record.
+ * The route of an explicit Workers chain: the single source of truth, the
+ * policy modes are views of it. Local at t0 -> local first (prefer-local);
+ * local at a lower rank -> the cloud entries above it first, the local one
+ * reached by the auto walk at its rank (prefer-cloud); no local -> cloud only;
+ * no cloud -> local only. Per-run --urgent/--cloud/--local-ok still apply.
+ */
+async function chainRoute(
+  config: WorkersConfig,
+  logDir: string,
+  chain: string[],
+  flags: RouteFlags,
+  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean }
+): Promise<{ providerFlag: string | null; route: RouteInfo }> {
+  const isLocal = (m: string) => isLocalProvider(config.providers[m]?.baseUrl ?? "");
+  const locals = chain.filter(isLocal);
+  const res = (mode: PolicyMode, reason: string, local: string | null) => ({
+    providerFlag: local,
+    route: { policy: mode, reason, local: local !== null },
+  });
+  if (!locals.length) return res("cloud-only", "chain: no local model", null);
+  const found = await findLocal(config, logDir, deps.ping, locals);
+  const idx = chain.indexOf(locals[0]);
+  if (locals.length === chain.length) {
+    if (!found.name) throw new WorkersConfigError(`chain: ${found.why} — start a local server or change the Workers chain (pai worker chains)`);
+    return res("local-only", "chain: local only", found.name);
+  }
+  if (idx === 0) {
+    const auto = readPolicy(logDir)?.mode === "auto";
+    if (auto && (deps.battery ?? onBattery)()) return res("auto", "battery", null);
+    if (flags.urgent) return res("prefer-local", "urgent", null);
+    if (flags.cloud) return res("prefer-local", "--cloud", null);
+    if (!found.name) return res("prefer-local", found.why, null);
+    return res("prefer-local", "chain: t0", found.name);
+  }
+  if (flags.localOk && !flags.cloud && found.name) return res("prefer-cloud", "--local-ok", found.name);
+  return res("prefer-cloud", `chain: ${locals[0]} at t${idx}`, null);
+}
+
+/**
+ * The policy decision for one run: null when no chain and no policy is set
+ * (class/active routing stands), else the provider to pin (null = cloud,
+ * normal routing) and the RouteInfo to record. An explicit Workers chain
+ * decides before the policy file.
  */
 export async function routeRun(
   config: WorkersConfig,
@@ -176,6 +223,8 @@ export async function routeRun(
   flags: RouteFlags,
   deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
+  const chain = explicitWorkersChain(config);
+  if (chain.length) return chainRoute(config, logDir, chain, flags, deps);
   const policy = readPolicy(logDir);
   if (!policy) return null;
   const mode = policy.mode;

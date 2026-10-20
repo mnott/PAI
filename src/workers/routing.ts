@@ -379,8 +379,8 @@ export function resolveTarget(
       routeWhy: `class: ${opts.className}`,
     };
   }
-  if (config.active !== "auto") {
-    // nothing active and no class entry: the built-in provider, no config written
+  if (config.active !== "auto" && !config.chains?.workers.length) {
+    // `active` only applies when no Workers chain is set. Nothing active and no class entry: the built-in provider, no config written
     const name = config.active ?? ANTHROPIC_NATIVE;
     return {
       providerName: name,

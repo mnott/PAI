@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
-import { chainSummary, effectiveChains } from "../../workers/chains.js";
+import { chatProviderOf, deriveChains, CHAIN_ROLES, chainForPolicy, chainSummary, effectiveChains, rankableModels, setChain, type ChainRole } from "../../workers/chains.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
 import {
@@ -904,7 +904,13 @@ export const workerPolicyCommand: CommandDef = {
           throw new Error(`policy: expected one of ${POLICY_MODES.join(", ")}, clear — got "${mode}"`);
         }
         const p = writePolicy(dir, mode as PolicyMode, ctx.opts.for ? parseDuration(String(ctx.opts.for)) : undefined);
-        return void out(`policy: ${p.mode}${p.until ? ` until ${p.until}` : ""}`);
+        // one setting: the policy rewrites the Workers chain (local at t0, last, absent or alone)
+        const { raw, workers } = readWorkersSection();
+        const local = rankableModels(workers).find((m) => m.local && workers.providers[m.name]?.enabled)?.name ?? null;
+        const current = deriveChains(workers, chatProviderOf(raw, workers)).workers;
+        const rc = setChain("workers", chainForPolicy(p.mode, current, local));
+        out(`policy: ${p.mode}${p.until ? ` until ${p.until}` : ""}`);
+        return void out(`chain:  ${rc.text}`);
       }
       const p = readPolicy(dir);
       out(`policy: ${p ? `${p.mode}${p.until ? ` until ${p.until}` : ""}` : "none (class/active routing)"}`);
@@ -930,11 +936,21 @@ export const workerChainsCommand: CommandDef = {
   description:
     "Same function as the cockpit's rank line: the derived chains with the routing policy applied (`pai worker policy`).\n" +
     "`active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.",
-  args: [],
-  examples: ["pai worker chains", "pai worker policy prefer-local && pai worker chains"],
+  args: [
+    { name: "ACTION", summary: "set (omit to print)" },
+    { name: "ROLE", summary: CHAIN_ROLES.join(" or ") },
+    { name: "MODELS", summary: "Comma-separated models, t0 first" },
+  ],
+  examples: ["pai worker chains", "pai worker chains set workers anthropic,glm,gyro-m"],
   seeAlso: ["pai worker policy"],
-  async run() {
+  async run(ctx) {
     try {
+      if (ctx.args.ACTION === "set") {
+        const role = ctx.args.ROLE as string;
+        if (!(CHAIN_ROLES as readonly string[]).includes(role)) throw new Error(`chains set: role must be ${CHAIN_ROLES.join(" or ")}`);
+        const models = String(ctx.args.MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+        return void out(setChain(role as ChainRole, models).text);
+      }
       const { raw, workers } = readWorkersSection();
       const dir = workersLogDir(workers);
       const p = readPolicy(dir);
