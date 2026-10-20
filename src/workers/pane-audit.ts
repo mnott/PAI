@@ -14,7 +14,7 @@ import { readWorkersSection } from "./config.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { loadStatusesCached, isLive, isChatPane, ownsPidCached, spawnTimeOf } from "./status.js";
+import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
@@ -36,7 +36,12 @@ export interface AuditProc {
   ended?: boolean;
   /** False when the process has ended: an ended worker is never reopened. */
   live?: boolean;
+  /** When the process ended (ms), for an ended worker: it gets the end grace. */
+  endedMs?: number;
 }
+
+/** A worker that ended, or whose pane closed, within this window is not judged: the pane closes itself before the final status lands. */
+export const END_GRACE_MS = 60_000;
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
 export const START_GRACE_MS = 30_000;
@@ -71,6 +76,8 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     const e = registry.find((x) => x.worker === p.id);
     const host = e?.host ?? p.host;
     const v: PaneVerdict = { id: p.id, kind: p.kind, mark: "ok", session: e?.session, host };
+    // an ended worker runs nothing: it owns no pane, whatever the registry says
+    if (p.kind === "worker" && p.live === false) return { ...v, why: "ended" };
     if (nowMs !== undefined) {
       // registry stamps are UTC (toISOString); a recent start or a recent registration opens the grace
       const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < START_GRACE_MS);
@@ -103,7 +110,7 @@ export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
   for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
-    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
+    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
   // ended pane runs too: their pane must have closed itself, and one still open is a fault
@@ -211,6 +218,8 @@ export async function auditTick(
     now?: () => Date;
     /** Reopen seam: opens the worker's follow pane (the `pai worker pane <id>` path); returns its message or throws. */
     reopen?: (wid: string) => Promise<string>;
+    /** Fresh liveness at the moment of the check: false when the worker's status is terminal or its process is gone. */
+    running?: (wid: string) => boolean;
   } = {}
 ): Promise<PaneVerdict[]> {
   let tabs: TabMap;
@@ -225,6 +234,19 @@ export async function auditTick(
   const nowMs = now.getTime();
   const procs = (deps.procs ?? (() => runningProcs(logDir)))();
   const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes);
+  // re-read the status right before judging: a worker that ended since the listing was taken (its pane closes first) is no violation
+  const running =
+    deps.running ??
+    ((wid: string) => {
+      const s = loadStatus(logDir, wid);
+      return !s || isLive(s, ownsPid);
+    });
+  for (const v of verdicts) {
+    if (v.kind !== "worker" || v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
+    const proc = procs.find((p) => p.id === v.id);
+    const recent = proc?.endedMs !== undefined && nowMs - proc.endedMs < END_GRACE_MS;
+    if (recent || !running(v.id)) Object.assign(v, { mark: "ok", reopenable: undefined, tab: undefined, hostTab: undefined, why: "ended, pane closed" });
+  }
   // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
   const seen = readJson(pendingFile(logDir));
   const failing: Record<string, string> = {};
