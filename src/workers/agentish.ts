@@ -119,7 +119,9 @@ export function ag2ToWorkerReport(parsed: ParsedAg2): WorkerReport {
   const f = parsed.fields;
   const out: WorkerReport = { format: "ag2" };
 
-  if (f.c) {
+  // `c=none` is the contract's "no changes" spelling — it must parse to [] so
+  // verifyReportChanges sees no claim and a read-only worker is never marked R?
+  if (f.c && f.c.trim().toLowerCase() !== "none") {
     out.changed = f.c
       .split("|")
       .map((s) => s.trim())
