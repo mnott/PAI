@@ -13,7 +13,7 @@ import { loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { loadStatuses, isLive, isChatPane } from "./status.js";
+import { loadStatuses, isLive, isChatPane, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
@@ -25,7 +25,12 @@ export interface AuditProc {
   kind: "worker" | "plan" | "pane";
   /** The starting session's iTerm id (status.term), when known. */
   host?: string;
+  /** When the process started (ms); a young process gets the start grace. */
+  startedMs?: number;
 }
+
+/** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
+export const START_GRACE_MS = 30_000;
 
 export interface PaneVerdict {
   id: string;
@@ -43,12 +48,19 @@ export type TabMap = Map<string, string>;
 
 const norm = (id: string): string => itermUuid(id) || id;
 
-export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap): PaneVerdict[] {
+const stampMs = (t: string | undefined, utc: boolean): number => (t ? Date.parse(t.replace(" ", "T") + (utc ? "Z" : "")) : NaN);
+
+export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number): PaneVerdict[] {
   const tabOf = (id: string | undefined): string | undefined => (id ? tabs.get(norm(id)) : undefined);
   return procs.map((p) => {
     const e = registry.find((x) => x.worker === p.id);
     const host = e?.host ?? p.host;
     const v: PaneVerdict = { id: p.id, kind: p.kind, mark: "ok", session: e?.session, host };
+    if (nowMs !== undefined) {
+      // registry stamps are UTC (toISOString); a recent start or a recent registration opens the grace
+      const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < START_GRACE_MS);
+      if (young) return { ...v, why: "within the start grace" };
+    }
     if (!e) return { ...v, mark: "NO PANE", why: "no pane recorded for a running process" };
     const tab = tabOf(e.session);
     if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
@@ -64,10 +76,10 @@ export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
   for (const s of loadStatuses(logDir)) {
     if (isChatPane(s) || !isLive(s) || s.state === "queued" || s.pane?.opened === false) continue;
-    procs.push({ id: s.id, kind: "worker", host: s.term || undefined });
+    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false) });
   }
-  for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan" });
-  for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running") procs.push({ id: p.id, kind: "pane" });
+  for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
+  for (const p of loadPaneRunStatuses(logDir)) if (p.state === "running") procs.push({ id: p.id, kind: "pane", startedMs: p.startedMs });
   return procs;
 }
 
@@ -107,6 +119,7 @@ export interface AuditFile {
 }
 
 const auditFile = (logDir: string): string => join(logDir, "pane-audit.json");
+const pendingFile = (logDir: string): string => join(logDir, "pane-audit-pending.json");
 const toldFile = (logDir: string): string => join(logDir, "pane-audit-told.json");
 
 export function readAudit(logDir: string): PaneVerdict[] {
@@ -123,13 +136,15 @@ export function markOf(verdicts: PaneVerdict[], id: string): string {
   return v && v.mark !== "ok" ? v.mark : "";
 }
 
-function readTold(logDir: string): Record<string, string> {
+function readJson(file: string): Record<string, string> {
   try {
-    return JSON.parse(readFileSync(toldFile(logDir), "utf8")) as Record<string, string>;
+    return JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
   } catch {
     return {};
   }
 }
+
+const readTold = (logDir: string): Record<string, string> => readJson(toldFile(logDir));
 
 /**
  * One audit round: judge, persist, and report each new violation once (ledger PANE-VIOLATION, the
@@ -147,8 +162,17 @@ export async function auditTick(
     return []; // iTerm unreadable: no verdict, no false alarm
   }
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
-  const verdicts = auditPanes((deps.procs ?? (() => runningProcs(logDir)))(), (deps.registry ?? (() => loadRegistry(logDir)))(), tabs);
   const now = deps.now?.() ?? new Date();
+  const verdicts = auditPanes((deps.procs ?? (() => runningProcs(logDir)))(), (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, now.getTime());
+  // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
+  const seen = readJson(pendingFile(logDir));
+  const failing: Record<string, string> = {};
+  for (const v of verdicts) {
+    if (v.mark === "ok") continue;
+    failing[v.id] = v.mark;
+    if (seen[v.id] !== v.mark) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "first failed check, confirming" });
+  }
+  writeFileSync(pendingFile(logDir), JSON.stringify(failing), "utf8");
   writeFileSync(auditFile(logDir), JSON.stringify({ at: now.toISOString(), verdicts } satisfies AuditFile), "utf8");
   const told = readTold(logDir);
   const next: Record<string, string> = {};
