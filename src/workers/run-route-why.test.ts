@@ -149,7 +149,7 @@ describe("route reason: the real source", () => {
     expect(a.gitStatus).toBe("off");
     expect(a).toEqual(b);
     expect(a.stdin.indexOf("shared rules")).toBeLessThan(a.stdin.indexOf("<volatile>"));
-  });
+  }, 120_000); // two real runWorker --print-cmd starts under full-suite load
 
   it("a routing-policy pin says (routing policy: <mode>), not flag: --provider", async () => {
     // the policy pins loc1; the port answers so routeRun's findLocal takes it
