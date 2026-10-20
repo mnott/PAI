@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -64,10 +65,27 @@ describe("build keys", () => {
   });
 
   it("derives a key from door + last argument; explicit key and env win", () => {
-    expect(deriveKey(["tools/build.sh", "test", "mac"], "/x/CaseLeaf")).toBe("CaseLeaf:tools/build.sh:mac");
-    expect(deriveKey(["./tools/build.sh", "install", "mac"], "/x/CaseLeaf")).toBe("CaseLeaf:tools/build.sh:mac");
-    expect(deriveKey(["xcodebuild", "-scheme", "App", "build"], "/x/P")).toBe("P:xcodebuild:App");
+    expect(deriveKey(["tools/build.sh", "test", "mac"], "/x/CaseLeaf")).toBe("/x/CaseLeaf:tools/build.sh:mac");
+    expect(deriveKey(["./tools/build.sh", "install", "mac"], "/x/CaseLeaf")).toBe("/x/CaseLeaf:tools/build.sh:mac");
+    expect(deriveKey(["xcodebuild", "-scheme", "App", "build"], "/x/P")).toBe("/x/P:xcodebuild:App");
     expect(deriveKey(["sleep", "1"], "/x/P")).toBeUndefined();
+  });
+
+  it("derived key is shared by worktrees of one repo and differs between repos", () => {
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd, stdio: "ignore" });
+    const a = join(dir, "a");
+    const b = join(dir, "b");
+    for (const r of [a, b]) {
+      mkdirSync(r);
+      git(r, "init", "-q");
+      git(r, "commit", "-q", "--allow-empty", "-m", "i");
+    }
+    const wt = join(dir, "a-wt");
+    git(a, "worktree", "add", "-q", wt, "-b", "wt");
+    const cmd = ["tools/build.sh", "test", "mac"];
+    expect(deriveKey(cmd, wt)).toBe(deriveKey(cmd, a));
+    expect(deriveKey(cmd, b)).not.toBe(deriveKey(cmd, a));
+    expect(deriveKey(["xcodebuild", "-scheme", "S"], wt)).toBe(deriveKey(["xcodebuild", "-scheme", "S"], a));
   });
 
   it("PAI_BUILD_KEY is used when no key is given", async () => {
