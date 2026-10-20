@@ -1482,16 +1482,14 @@ export function headlessOverridePath(): string {
 
 /**
  * Why this process may run a worker without a verified pane, null when it may
- * not. Three reasons only: it is itself a worker (PAI_WORKER=1: a child
- * spawned inside its parent's pane may stay headless), the operator set
- * PAI_WORKER_ALLOW_HIDDEN=1 in their own shell (buildRunEnv strips it from
- * every spawned worker, so the consent ends at the process it was set for),
- * or the operator created the override file.
+ * not. Two reasons only, both the operator's: PAI_WORKER_ALLOW_HIDDEN=1 in
+ * their own shell (buildRunEnv strips it from every spawned worker, so the
+ * consent ends at the process it was set for), or the override file. A worker's
+ * own child worker is not a reason: it opens its own pane like any other start.
  */
 export const ALLOW_HIDDEN_ENV = "PAI_WORKER_ALLOW_HIDDEN";
 
 export function headlessAllowed(env: NodeJS.ProcessEnv = process.env, file: string = headlessOverridePath()): string | null {
-  if (env.PAI_WORKER === "1") return "PAI_WORKER=1 (child of a worker, runs inside its parent's pane)";
   if (env[ALLOW_HIDDEN_ENV] === "1") return `${ALLOW_HIDDEN_ENV}=1 (operator override)`;
   if (existsSync(file)) return `operator override file ${file}`;
   return null;

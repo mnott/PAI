@@ -462,10 +462,10 @@ describe("fail-closed visibility", () => {
     await expect(verifyPane("H", "P", "w1", async () => ({ stdout: "", stderr: "boom" }), () => true, 1)).rejects.toThrow("boom");
   });
 
-  it("headlessAllowed: only a worker or the operator's file", () => {
+  it("headlessAllowed: only the operator's env or file; a worker is not a reason", () => {
     const none = join(tmpdir(), "pai-no-such-override");
     expect(headlessAllowed({}, none)).toBeNull();
-    expect(headlessAllowed({ PAI_WORKER: "1" }, none)).toContain("PAI_WORKER=1");
+    expect(headlessAllowed({ PAI_WORKER: "1" }, none)).toBeNull();
     expect(headlessAllowed({}, process.execPath)).toContain("operator override file");
   });
 
