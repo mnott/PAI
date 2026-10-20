@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COCKPIT_FAVICON_SVG, COCKPIT_HTML, cockpitHtml } from "./cockpit-page.js";
 
 const COLLAPSE_KEY_TEST = "pai.cockpit.collapsed";
@@ -275,7 +278,7 @@ describe("cockpit favicon and dark mode", () => {
 });
 
 describe("cockpit kept prefix-cache reading", () => {
-  const ageMark = new Function(`${COCKPIT_HTML.match(/function ageMark[\s\S]*?\n\}/)![0]}; return ageMark;`)() as (s: unknown) => string;
+  const ageMark = new Function(`var SRV_STALE_SEC=60;\n${COCKPIT_HTML.match(/function ageMark[\s\S]*?\n\}/)![0]}; return ageMark;`)() as (s: unknown) => string;
 
   it("shows no marker for a fresh reading, a small '(Ns old)' beyond one poll interval", () => {
     expect(ageMark({ prefixCache: {} })).toBe("");
@@ -1003,5 +1006,208 @@ describe("router.cockpit.sections", () => {
     expect(cockpitHtml()).toBe(COCKPIT_HTML);
     expect(cockpitHtml([])).toBe(COCKPIT_HTML);
     expect(cockpitHtml(["nope"])).toBe(COCKPIT_HTML);
+  });
+});
+
+describe("cockpit layout values from config (router.cockpit.layout)", () => {
+  // a temp user config only — never the live files; PAI_CONFIG_FILE points at it
+  let dir = "";
+  const prevConfigFile = process.env.PAI_CONFIG_FILE;
+  const prevHome = process.env.PAI_HOME;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-cockpit-layout-"));
+    process.env.PAI_CONFIG_FILE = join(dir, "config.json");
+    delete process.env.PAI_HOME;
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (prevConfigFile === undefined) delete process.env.PAI_CONFIG_FILE;
+    else process.env.PAI_CONFIG_FILE = prevConfigFile;
+    if (prevHome === undefined) delete process.env.PAI_HOME;
+    else process.env.PAI_HOME = prevHome;
+  });
+  const write = (layout: Record<string, unknown>) => {
+    writeFileSync(join(dir, "config.yaml"), `router:\n  cockpit:\n    layout:\n${Object.entries(layout).map(([k, v]) => `      ${k}: ${v}`).join("\n")}\n`);
+  };
+
+  it("gridBreakpointPx moves the card-collapse media query", () => {
+    write({ gridBreakpointPx: 1234 });
+    expect(cockpitHtml()).toContain("@media(max-width:1234px){.c8,.c6,.c4{grid-column:span 12}}");
+  });
+
+  it("gaugeMinWidthPx and gaugeMaxWidthPx move the gauge tile widths", () => {
+    write({ gaugeMinWidthPx: 150, gaugeMaxWidthPx: 160 });
+    expect(cockpitHtml()).toMatch(/\.gauge\{[^}]*flex:1 1 150px[^}]*max-width:min\(160px,100%\)/);
+  });
+
+  it("providerTileMinPx moves the provider grid's min column width", () => {
+    write({ providerTileMinPx: 300 });
+    expect(cockpitHtml()).toContain(".pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))");
+  });
+
+  it("runtimeCardMinPx moves the runtime grid's min column width", () => {
+    write({ runtimeCardMinPx: 500 });
+    expect(cockpitHtml()).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(500px,100%),1fr))");
+  });
+
+  it("tilesWideBreakpointPx and tilesWideCols move the metric-tile container query", () => {
+    write({ tilesWideBreakpointPx: 800, tilesWideCols: 3 });
+    expect(cockpitHtml()).toMatch(/@container \(min-width:800px\)\{\.rt-tiles\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/);
+  });
+
+  it("tilesNarrowCols moves the metric-tile base column count", () => {
+    write({ tilesNarrowCols: 3 });
+    expect(cockpitHtml()).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))");
+  });
+
+  it("tilesOneColBreakpointPx moves the one-column container query", () => {
+    write({ tilesOneColBreakpointPx: 400 });
+    expect(cockpitHtml()).toMatch(/@container \(max-width:400px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+  });
+
+  it("ringMinWidthPx moves the cache rings grid", () => {
+    write({ ringMinWidthPx: 120 });
+    expect(cockpitHtml()).toContain(".rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr))");
+  });
+
+  it("sessionTitleMaxWidthPx moves the sessions title column cap", () => {
+    write({ sessionTitleMaxWidthPx: 600 });
+    expect(cockpitHtml()).toContain("#sessions td:first-child span[title]{display:inline-block;max-width:600px");
+  });
+
+  it("sparkHeightPx moves the sparkline height and viewBox", () => {
+    write({ sparkHeightPx: 40 });
+    expect(cockpitHtml()).toContain(".mt-spark{display:block;width:100%;max-width:100%;height:40px");
+    expect(cockpitHtml()).toContain('viewBox="0 0 100 40"');
+  });
+
+  it("sparkViewMaxPx moves the sparkline viewBox width and x scale", () => {
+    write({ sparkViewMaxPx: 120 });
+    expect(cockpitHtml()).toContain('viewBox="0 0 120 32"');
+    expect(cockpitHtml()).toContain("i/(n-1)*120");
+  });
+
+  it("sparkPlotHeightPx and sparkPlotTopPx move the sparkline plot geometry", () => {
+    write({ sparkPlotHeightPx: 24, sparkPlotTopPx: 26 });
+    expect(cockpitHtml()).toContain("26-valAt(i)/max*24");
+  });
+
+  it("bigDonutSizePx moves the solo donut size", () => {
+    write({ bigDonutSizePx: 200 });
+    expect(cockpitHtml()).toContain("donut(dn?m.cacheRead/dn:0,200)");
+  });
+
+  it("donutSizePx moves the ring donut default size", () => {
+    write({ donutSizePx: 96 });
+    expect(cockpitHtml()).toContain("sz=sz||96");
+  });
+
+  it("donutRadiusPx moves the donut radius", () => {
+    write({ donutRadiusPx: 40 });
+    expect(cockpitHtml()).toContain("var r=40,c=2*Math.PI*r");
+  });
+
+  it("donutStrokePx moves the donut stroke width", () => {
+    write({ donutStrokePx: 12 });
+    expect(cockpitHtml()).toContain('stroke-width="12"');
+  });
+
+  it("donutViewBoxPx moves the donut viewBox and centre", () => {
+    write({ donutViewBoxPx: 160 });
+    expect(cockpitHtml()).toContain("viewBox=\"0 0 '+160+' '+160+'\"");
+    expect(cockpitHtml()).toContain("var cx=160/2");
+  });
+
+  it("tokensChartWidthPx and tokensChartHeightPx move the tokens chart canvas", () => {
+    write({ tokensChartWidthPx: 900, tokensChartHeightPx: 260 });
+    expect(cockpitHtml()).toContain("twoToneModelBars($(\"series\"),labs,buckets,models,900,260)");
+  });
+
+  it("powerChartWidthPx and powerChartHeightPx move the power chart canvas", () => {
+    write({ powerChartWidthPx: 800, powerChartHeightPx: 180 });
+    expect(cockpitHtml()).toContain("lineChart($(\"power\"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,800,180)");
+  });
+
+  it("dailyChartWidthPx and dailyChartHeightPx move the daily chart canvas", () => {
+    write({ dailyChartWidthPx: 600, dailyChartHeightPx: 240 });
+    expect(cockpitHtml()).toContain("ds,dm,600,240)");
+  });
+
+  it("dailyDays moves the daily header and the chart's day window", () => {
+    write({ dailyDays: 21 });
+    const html = cockpitHtml();
+    expect(html).toContain("Tokens per day per model (21 d)");
+    expect(html).toContain("DAILY_DAYS=21");
+    expect(html).toContain("d.daily.days.slice(-DAILY_DAYS)");
+  });
+
+  it("sessionsRows moves the sessions table row limit", () => {
+    write({ sessionsRows: 30 });
+    expect(cockpitHtml()).toContain("SESSION_ROWS=30");
+    expect(cockpitHtml()).toContain("d.bySession.slice(0,SESSION_ROWS)");
+  });
+
+  it("workerRows moves the worker runs table row limit", () => {
+    write({ workerRows: 25 });
+    expect(cockpitHtml()).toContain("WORKER_ROWS=25");
+    expect(cockpitHtml()).toContain("d.workers.slice(0,WORKER_ROWS)");
+  });
+
+  it("lowRequestMin moves the low-request chip threshold", () => {
+    write({ lowRequestMin: 8 });
+    expect(cockpitHtml()).toContain("LOW_REQ=8");
+  });
+
+  it("pollMs moves the data/system/models/queue refresh interval", () => {
+    write({ pollMs: 7000 });
+    expect(cockpitHtml()).toContain("setInterval(function(){load();loadSystem()},7000)");
+    expect(cockpitHtml()).toContain("setInterval(loadModels,7000)");
+  });
+
+  it("limitsPollMs moves the limits refresh interval", () => {
+    write({ limitsPollMs: 45000 });
+    expect(cockpitHtml()).toContain("setInterval(loadLimits,45000)");
+  });
+
+  it("poolPollMs moves the pool refresh interval", () => {
+    write({ poolPollMs: 20000 });
+    expect(cockpitHtml()).toContain("setInterval(loadPool,20000)");
+  });
+
+  it("clockTickMs moves the stamp tick interval", () => {
+    write({ clockTickMs: 2000 });
+    expect(cockpitHtml()).toContain("setInterval(tick,2000)");
+  });
+
+  it("stampStaleSecs moves the stale-stamp threshold", () => {
+    write({ stampStaleSecs: 30 });
+    expect(cockpitHtml()).toContain("STALE_SEC=30");
+    expect(cockpitHtml()).toContain("age>=STALE_SEC");
+  });
+
+  it("jobFirstDelayMs, jobPollMs and jobMaxTries move the job watcher", () => {
+    write({ jobFirstDelayMs: 3000, jobPollMs: 6000, jobMaxTries: 60 });
+    const html = cockpitHtml();
+    expect(html).toContain("JOB_TRIES=60");
+    expect(html).toContain("JOB_POLL=6000");
+    expect(html).toContain("JOB_FIRST=3000");
+  });
+
+  it("serverCounterStaleSecs moves the prefix-cache age mark threshold", () => {
+    write({ serverCounterStaleSecs: 90 });
+    expect(cockpitHtml()).toContain("SRV_STALE_SEC=90");
+    expect(cockpitHtml()).toContain("s.prefixCacheAgeSec>SRV_STALE_SEC");
+  });
+
+  it("foldDefaultKind moves the model-card fold default", () => {
+    write({ foldDefaultKind: "chat" });
+    const html = cockpitHtml();
+    // the card markup: a running card with a coding model carries the configured kind
+    expect(html).toContain('coding?"chat":"other"');
+    // the fold logic: only a card whose data-def equals the configured kind opens
+    expect(html).toContain('open=d==="chat"');
+    // the shipped default still opens a running coding card and folds the rest
+    expect(COCKPIT_HTML).toContain('coding?"coding":"other"');
+    expect(COCKPIT_HTML).toContain('open=d==="coding"');
   });
 });
