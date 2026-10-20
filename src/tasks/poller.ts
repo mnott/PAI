@@ -263,43 +263,12 @@ async function escalate(
 }
 
 /**
- * One best-effort PAILot alert at the moment a task transitions into parked.
- *
- * Parking is silent from the phone's point of view: the tracker note and the
- * scheduler log both say PARKED, but the only person who reads either is the
- * one who already knows. On 2026-09-27 both morning sweeps were parked on a
- * FALSE unreachable (the hub misread a statusline) and nothing surfaced it
- * until the day's run simply did not happen — the exact failure parking's own
- * docs promise to prevent.
- *
- * Deliberately NOT rate-limited beyond its call sites: it runs exactly once
- * per parking event (on the transition, not on every poll while parked), and
- * a re-park after a release is a new event that deserves a new alert. The
- * escalate() quiet window is untouched — this is the announcement, that is
- * the daily reminder.
- *
- * Never allowed to throw or linger: the hub gets a short deadline, and an
- * unreachable hub falls back to the poller log (launchd sends both streams to
- * /tmp/pai-scheduler.log, which already carries every PARKED line).
+ * The poller-log line written once when a task transitions into parked (launchd sends it to
+ * /tmp/pai-scheduler.log). Never sent to PAILot: an automatic system notice does not go to the
+ * phone (operator rule 2026-10-20). A re-park after a release is a new event and logs again.
  */
 async function alertParked(task: Task, reason: string): Promise<void> {
-  const text =
-    `PAI parked "${task.title}" (${task.id}) — the scheduler will not retry it.\n` +
-    `Reason: ${reason}\n` +
-    `To release it: fix the cause, then move the due date — due_string, natural ` +
-    `language only (e.g. "tomorrow 9am").`;
-  try {
-    const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
-    const { readWorkersSection } = await import("../workers/config.js");
-    const { workersLogDir } = await import("../workers/paths.js");
-    const { guardedPailot } = await import("../workers/pailot-guard.js");
-    await guardedPailot(workersLogDir(readWorkersSection().workers), text, async (t) => (await callAiBroker("pailot_send", { text: t }, 8_000), true), Date.now, false); // a re-park is a new event: rate cap only
-  } catch (e) {
-    console.error(
-      `[pai-poller] parked-task alert not delivered to PAILot ` +
-        `(${e instanceof Error ? e.message : String(e)}): ${text}`
-    );
-  }
+  console.error(`[pai-poller] PARKED "${task.title}" (${task.id}) - the scheduler will not retry it. Reason: ${reason}`);
 }
 
 /**

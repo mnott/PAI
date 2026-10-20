@@ -3,7 +3,8 @@
  *
  * The operator never polls: a run reports the moments that need them to the
  * session that started it (AIBroker send_to_session, so the session wakes and
- * can talk to the operator) and, for blocked/finished, to PAILot. A run
+ * can talk to the operator). Automatic notices never go to PAILot (operator
+ * rule 2026-10-20). A run
  * started with --detach is registered under <logDir>/runs and keeps going
  * after the starting session ends. Everything outside the process (AIBroker,
  * clock, spawning) goes through injected functions; tests never send.
@@ -33,6 +34,7 @@ export interface Messenger {
   /** Why the last toSession returned false, when known. */
   lastError?: string;
   /** Short plain sentence to the operator's phone. */
+  /** Explicit, operator-requested sends only. No automatic notice may call this (operator rule 2026-10-20). */
   toPailot(text: string): Promise<boolean>;
 }
 
@@ -127,10 +129,9 @@ export function eventLine(id: string, kind: string, fields: Record<string, strin
 abstract class Reporter {
   private chain: Promise<unknown> = Promise.resolve();
   constructor(protected readonly msg: Messenger, protected readonly origin: RunOrigin, protected readonly now: () => number) {}
-  protected send(text: string, pailot?: string): void {
+  protected send(text: string): void {
     this.chain = this.chain.then(async () => {
       await this.msg.toSession(this.origin, text).catch(() => false);
-      if (pailot) await this.msg.toPailot(pailot).catch(() => false);
     });
   }
   /** Wait for every queued message; call before the process exits. */
@@ -205,7 +206,7 @@ export class PlanReporter extends Reporter {
           ? `${this.job} is blocked after ${wall}: ${this.merged} of ${this.totalParts} parts merged, the rest wait on ${this.nd.join(", ") || "a failed check"}. It needs your decision.`
           : `${this.job} ended with failures after ${wall}: ${this.merged} of ${this.totalParts} parts merged${this.nd.length ? `, ${this.nd.join(", ")} need your decision` : ""}.`;
     const extra = ` Escalations ${this.escalations}, ${fmtTok(this.localTokens)} local tokens, ${fmtTok(this.cloudTokens)} cloud tokens; ${idle}.`;
-    this.send(eventLine(this.id, "run-" + outcome, stats, what + extra), what);
+    this.send(eventLine(this.id, "run-" + outcome, stats, what + extra));
   }
 }
 
@@ -330,7 +331,7 @@ export function markRunDone(logDir: string, id: string, now: () => number = Date
 
 /**
  * Daemon tick: a registered run whose process is gone without a done marker
- * died silently; tell its session (and PAILot) once.
+ * died silently; tell its session once.
  */
 export async function sweepRuns(logDir: string, msg: Messenger, isAlive: (pid: number) => boolean, now: () => number = Date.now): Promise<string[]> {
   const told: string[] = [];
@@ -340,7 +341,6 @@ export async function sweepRuns(logDir: string, msg: Messenger, isAlive: (pid: n
     markRunDone(logDir, r.id, now);
     const what = `The detached ${r.kind} run ${r.id} stopped without finishing; see ${r.output}.`;
     await msg.toSession(r.origin, eventLine(r.id, "run-died", { output: r.output }, what)).catch(() => false);
-    await msg.toPailot(what).catch(() => false);
     told.push(r.id);
   }
   return told;
