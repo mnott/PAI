@@ -17,17 +17,21 @@
  * Code.
  */
 
-import { DEFAULT_CAPACITY, type CapacityConfig } from "./capacity.js";
-import { DEFAULT_LOCAL_IDLE, type LocalIdleConfig } from "./local-idle.js";
-import { DEFAULT_STAGGER, type StaggerConfig } from "./stagger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
+import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults } from "../config/shipped-defaults.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { foldLegacyRoles, migrateClassPins, migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
-import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
+import {
+  effectiveWorkersYamlData,
+  readWorkersYaml,
+  workersYamlPath,
+  writeWorkersYaml,
+  type WorkersYamlData,
+} from "./workers-config.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,7 +133,8 @@ export interface WorkerProvider {
   engine?: WorkerEngine;
   /** Optional shell command printing 0–100 (percent of quota used). */
   quotaProbe?: string;
-  /** Auto-routing skips the provider at or above this percentage. Default 95. */
+  /** Auto-routing skips the provider at or above this percentage. Unset falls
+   *  back to workers.quotaSkipAt in the shipped defaults file. */
   quotaSkipAt?: number;
   /**
    * Context window of the provider's model, for the context meter. No
@@ -153,7 +158,8 @@ export interface WorkerProvider {
    * more makes conversations evict each other every turn. Default: maxConcurrent.
    */
   conversationSlots?: number;
-  /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier. */
+  /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier.
+   *  Unset falls back to workers.costTier in the shipped defaults file. */
   costTier?: number;
   /** Capability tags; classes filter auto-routing via requireTags. */
   tags?: ProviderTag[];
@@ -176,9 +182,11 @@ export interface WorkerProvider {
 export const ANTHROPIC_NATIVE = "anthropic";
 
 /**
- * Models the built-in provider runs on. This is the only place a model id is
- * named for it: run.ts resolves the class capability against this table like
- * it does for any configured provider and passes `--model` explicitly.
+ * Models the built-in provider runs on — read from the shipped defaults file
+ * (`providers.anthropic.models` in defaults/workers.yaml). This is the only
+ * place a model id is named for it: run.ts resolves the class capability
+ * against this table like it does for any configured provider and passes
+ * `--model` explicitly.
  *
  * Workers exist to parallelise and to save cost, so they must never inherit
  * the orchestrator's model. A bare headless `claude` takes the interactive
@@ -186,23 +194,30 @@ export const ANTHROPIC_NATIVE = "anthropic";
  * the chat session had been switched to it. Sonnet is the working tier;
  * haiku serves the fast classes (spotcheck, simple). These are the Claude
  * Code CLI's own tier aliases, not pinned ids: the CLI resolves each to its
- * newest model on every run, so the tier tracks a release without a code
+ * newest model on every run, so the tier tracks a release without a config
  * change here (adoptInitModel in run.ts swaps the alias for the init event's
  * resolved id once the run announces one).
  */
-export const NATIVE_ANTHROPIC_MODELS: WorkerProvider["models"] = {
-  default: "sonnet",
-  fast: "haiku",
-};
+export function nativeAnthropicModels(): WorkerProvider["models"] {
+  const d = shippedWorkersDefaults();
+  const providers = d.providers as Record<string, unknown> | undefined;
+  const anthropic = providers?.anthropic as Record<string, unknown> | undefined;
+  const models = anthropic?.models as Record<string, unknown> | undefined;
+  const def = typeof models?.default === "string" ? models.default : "sonnet";
+  const out: WorkerProvider["models"] = { default: def };
+  if (typeof models?.fast === "string") out.fast = models.fast;
+  if (typeof models?.image === "string") out.image = models.image;
+  return out;
+}
 
 /**
  * The synthetic provider object for ANTHROPIC_NATIVE. `baseUrl` is empty and
  * there is no key file, so buildRunEnv strips every provider env override;
- * the models come from NATIVE_ANTHROPIC_MODELS so a run always names its
- * model on the command line.
+ * the models come from the shipped defaults (nativeAnthropicModels) so a run
+ * always names its model on the command line.
  */
 export function nativeAnthropicProvider(
-  models: WorkerProvider["models"] = NATIVE_ANTHROPIC_MODELS
+  models: WorkerProvider["models"] = nativeAnthropicModels()
 ): WorkerProvider {
   return {
     enabled: true,
@@ -259,14 +274,50 @@ export interface WorkersRoutingConfig {
   priority: string[];
   /**
    * Per-provider usage percent at or above which budget routing treats the
-   * provider as full (default DEFAULT_BUDGET_WALL). From the provider's
-   * `usage` block (anthropic: the OAuth usage endpoint). A number applies to
-   * every window; a map by window name ({"5h": 95, "7d": 70}) walls each
-   * window on its own, a window with no entry using the provider's number
-   * (map form has none) and then DEFAULT_BUDGET_WALLS. A provider is full
-   * when ANY window it reports is at or above that window's wall.
+   * provider as full. From the provider's `usage` block (anthropic: the OAuth
+   * usage endpoint). A number applies to every window; a map by window name
+   * ({"5h": 95, "7d": 70}) walls each window on its own, a window with no
+   * entry using the provider's number (map form has none), then the shipped
+   * routing.budgetPercent, then routing.budgetWall. A provider is full when
+   * ANY window it reports is at or above that window's wall.
    */
   budgetWalls: Record<string, number | Record<string, number>>;
+  /**
+   * Shipped budget-routing preference order (defaults/workers.yaml
+   * `routing.budgetPriority`): walked when neither priority nor order is set.
+   */
+  budgetPriority: string[];
+  /** Shipped per-provider budget walls (defaults/workers.yaml `routing.budgetPercent`). */
+  budgetPercent: Record<string, number>;
+  /** Budget wall for a provider neither budgetWalls nor budgetPercent names. */
+  budgetWall: number;
+}
+
+/** Start gate for same-provider runs (workers.stagger); values in defaults/workers.yaml. */
+export interface StaggerConfig {
+  enabled: boolean;
+  /** Limit without history, per provider kind (seconds). */
+  localDefaultSec: number;
+  remoteDefaultSec: number;
+  /** Clamp of the learned limit (seconds). */
+  minSec: number;
+  maxSec: number;
+}
+
+/** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
+export interface CapacityConfig {
+  enabled: boolean;
+}
+
+/** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
+export interface LocalIdleConfig {
+  enabled: boolean;
+  /** GPU busy percent under which local models count as idle. */
+  gpuBelowPct: number;
+  /** Minutes idle before the watcher fires. */
+  minutes: number;
+  /** Minutes between repeat notices. */
+  backoffMinutes: number;
 }
 
 /** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
@@ -494,132 +545,110 @@ export interface WorkersConfig {
   fallback: WorkersFallback | null;
   /**
    * Model ids for the built-in `anthropic` provider, when workers.yaml
-   * documents an override under `providers.anthropic.models`. Defaults to
-   * NATIVE_ANTHROPIC_MODELS.
+   * documents an override under `providers.anthropic.models`. Defaults to the
+   * shipped defaults file's table (nativeAnthropicModels).
    */
   nativeModels: WorkerProvider["models"];
+  /** Cost tier used when a provider names none (workers.costTier). */
+  costTier: number;
+  /** Budget-routing skip percentage used when a provider names none (workers.quotaSkipAt). */
+  quotaSkipAt: number;
 }
 
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_GC_OLDER_THAN_HOURS = 6;
-export const DEFAULT_WORKTREES_MAX_GB = 20;
-
-export const DEFAULT_LOG_DIR ="~/.claude/logs/workers";
-
-export const DEFAULT_PANE: WorkersPaneConfig = {
-  enabled: true,
-  fontSize: 13,
-  autoExitSecs: 5,
-};
-
 /**
- * Budget routing's default preference order (policy "budget" with neither
- * routing.priority nor routing.order set): Anthropic while it has budget,
- * then the cloud relays. Providers that are not configured are simply
- * skipped, so this degrades to plain Anthropic on a fresh install.
+ * The workers defaults live in the shipped defaults file
+ * (src/config/defaults/workers.yaml, copied into dist by the build) and are
+ * deep-merged UNDER the user's config — see src/config/shipped-defaults.ts.
+ * defaultWorkersConfig() reads that file; the code keeps only the types and
+ * the loader.
  */
-export const DEFAULT_BUDGET_PRIORITY = ["anthropic", "glm", "kimi"];
-
-/**
- * Budget walls when routing.budgetWalls names none for a provider: Anthropic
- * Max-plan 5h, the z.ai 5h window, Kimi — percent used at which budget
- * routing treats the provider as full.
- */
-export const DEFAULT_BUDGET_WALLS: Record<string, number> = {
-  anthropic: 95,
-  glm: 90,
-  kimi: 85,
-};
-
-/** Budget wall when neither routing.budgetWalls nor DEFAULT_BUDGET_WALLS knows a provider. */
-export const DEFAULT_BUDGET_WALL = 95;
-
-export const DEFAULT_ROUTING: WorkersRoutingConfig = {
-  order: [],
-  cooldownMinutes: 30,
-  retryOnQuota: true,
-  policy: "budget",
-  priority: [],
-  budgetWalls: {},
-};
-
-export const DEFAULT_TREE: WorkersTreeConfig = {
-  maxDepth: 2,
-  maxChildren: 4,
-};
-
-/**
- * Session-pool defaults when the config names none. OFF: the pool changes
- * where a task's turns run (a shared, warm claude session), which deserves
- * an explicit operator call. idleSecs 900 = 15 min — the provider prompt
- * cache the pool exists to carry is gone by then anyway.
- */
-export const DEFAULT_POOL: WorkersPoolConfig = {
-  enabled: false,
-  maxSlots: 3,
-  idleSecs: 900,
-  port: 8798,
-  native: true,
-  spares: 1,
-  idleKillSec: 1800,
-  continuation: false,
-};
-
-/**
- * Cache-keepalive cadence when the config names none. Measured 2026-09-18
- * (pair probes through the real worker spawn path, numbers in
- * docs/cache-keepalive.md): the implicit provider cache only serves a fresh
- * worker warm within roughly the first minute (positive back-to-back, gone
- * at 2 min), and it covers only ~2.6k of the ~18k-token prefix. Holding it
- * needs a beat every <2 min — a continuous bill for a small saving — so the
- * default is OFF and arming it is the operator's explicit call (set e.g.
- * "cacheKeepaliveSecs": 60).
- */
-export const DEFAULT_CACHE_KEEPALIVE_SECS = 0;
-export const DEFAULT_MAX_MINUTES = 60;
-
-/**
- * The default MCP sets every config starts from. `desktop` names the clickr
- * server so `--mcp desktop` hands a worker the machine controls (read-only
- * tools always; actuating ones after the operator hands the controls over,
- * see `pai worker controls`). A user's mcpSets section is merged over this,
- * so `desktop: []` removes the set deliberately.
- */
-export const DEFAULT_MCP_SETS: Record<string, string[]> = {
-  desktop: ["clickr"],
-};
-
 export function defaultWorkersConfig(): WorkersConfig {
+  const d = shippedWorkersDefaults();
+  const w = (d.workers ?? {}) as Record<string, unknown>;
+  const obj = (v: unknown): Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const num = (v: unknown, dflt: number): number => (typeof v === "number" ? v : dflt);
+  const bool = (v: unknown, dflt: boolean): boolean => (typeof v === "boolean" ? v : dflt);
+  const strArr = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
+  const pane = obj(w.pane);
+  const routing = obj(w.routing);
+  const tree = obj(w.tree);
+  const supervision = obj(w.supervision);
+  const pool = obj(w.pool);
+  const stagger = obj(w.stagger);
+  const capacity = obj(w.capacity);
+  const localIdle = obj(w.localIdle);
   return {
-    enabled: false,
+    enabled: bool(w.enabled, false),
     active: null,
     providers: {},
     classes: {},
     tiers: [],
-    mcpSets: { ...DEFAULT_MCP_SETS },
+    mcpSets: obj(d.mcp_sets) as Record<string, string[]>,
     capabilities: {},
-    pane: { ...DEFAULT_PANE },
-    logDir: DEFAULT_LOG_DIR,
-    routing: { ...DEFAULT_ROUTING, order: [] },
-    tree: { ...DEFAULT_TREE },
-    supervision: { pointer: false, push: "harness", stallMinutes: 10 },
-    pool: { ...DEFAULT_POOL },
-    cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
-    defaultMaxMinutes: DEFAULT_MAX_MINUTES,
-    waitAlarmMinutes: 120,
-    stagger: { ...DEFAULT_STAGGER },
-    capacity: { ...DEFAULT_CAPACITY },
-    localIdle: { ...DEFAULT_LOCAL_IDLE },
-    noBrowserByDefault: false,
-    gcOlderThanHours: DEFAULT_GC_OLDER_THAN_HOURS,
-    worktreesMaxGb: DEFAULT_WORKTREES_MAX_GB,
-    reaper: true,
-    caveman: false,
+    pane: {
+      enabled: bool(pane.enabled, true),
+      fontSize: num(pane.fontSize, 13),
+      autoExitSecs: num(pane.autoExitSecs, 5),
+    },
+    logDir: typeof w.logDir === "string" ? w.logDir : "~/.claude/logs/workers",
+    routing: {
+      order: strArr(routing.order),
+      cooldownMinutes: num(routing.cooldownMinutes, 30),
+      retryOnQuota: bool(routing.retryOnQuota, true),
+      policy: routing.policy === "order" ? "order" : "budget",
+      priority: strArr(routing.priority),
+      budgetWalls: obj(routing.budgetWalls) as WorkersRoutingConfig["budgetWalls"],
+      budgetPriority: strArr(routing.budgetPriority),
+      budgetPercent: obj(routing.budgetPercent) as Record<string, number>,
+      budgetWall: num(routing.budgetWall, 95),
+    },
+    tree: { maxDepth: num(tree.maxDepth, 2), maxChildren: num(tree.maxChildren, 4) },
+    supervision: {
+      pointer: bool(supervision.pointer, false),
+      push: supervision.push === "all" ? "all" : "harness",
+      stallMinutes: num(supervision.stallMinutes, 10),
+    },
+    pool: {
+      enabled: bool(pool.enabled, false),
+      maxSlots: num(pool.maxSlots, 3),
+      idleSecs: num(pool.idleSecs, 900),
+      port: num(pool.port, 8798),
+      native: bool(pool.native, true),
+      spares: num(pool.spares, 1),
+      idleKillSec: num(pool.idleKillSec, 1800),
+      continuation: bool(pool.continuation, false),
+    },
+    cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
+    defaultMaxMinutes: num(w.defaultMaxMinutes, 60),
+    waitAlarmMinutes: num(w.waitAlarmMinutes, 120),
+    stagger: {
+      enabled: bool(stagger.enabled, true),
+      localDefaultSec: num(stagger.localDefaultSec, 20),
+      remoteDefaultSec: num(stagger.remoteDefaultSec, 8),
+      minSec: num(stagger.minSec, 3),
+      maxSec: num(stagger.maxSec, 120),
+    },
+    capacity: { enabled: bool(capacity.enabled, true) },
+    localIdle: {
+      enabled: bool(localIdle.enabled, true),
+      gpuBelowPct: num(localIdle.gpuBelowPct, 10),
+      minutes: num(localIdle.minutes, 2),
+      backoffMinutes: num(localIdle.backoffMinutes, 10),
+    },
+    noBrowserByDefault: bool(w.noBrowserByDefault, false),
+    gcOlderThanHours: num(w.gcOlderThanHours, 6),
+    worktreesMaxGb: num(w.worktreesMaxGb, 20),
+    reaper: bool(w.reaper, true),
+    caveman: bool(w.caveman, false),
     fallback: null,
-    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+    nativeModels: nativeAnthropicModels(),
+    costTier: num(w.costTier, 3),
+    quotaSkipAt: num(w.quotaSkipAt, 95),
   };
 }
 
@@ -884,8 +913,12 @@ export function parseClassesValue(
   classesRaw: unknown,
   badPathPrefix: string
 ): Record<string, ClassTarget> {
+  // The shipped defaults file's classes apply only when the key is absent;
+  // a user's map replaces it wholesale (HEAD semantics — the map is the
+  // routing table, not a patch; a shipped row would shadow repointed classes
+  // at read time).
   const classes: Record<string, ClassTarget> = {};
-  if (classesRaw === undefined) return classes;
+  if (classesRaw === undefined) return {};
   if (typeof classesRaw !== "object" || classesRaw === null || Array.isArray(classesRaw)) {
     bad(badPathPrefix, "must be an object of class → provider[/alias] or {provider, mcp, maxCostTier, requireTags, order}");
   }
@@ -963,11 +996,15 @@ export function parseClassesValue(
 
 /**
  * Parse an `mcpSets` (or `mcp_sets`) value shared by JSON and YAML loading.
- * Always merged over DEFAULT_MCP_SETS, so an omitted `desktop` key keeps the
- * built-in clickr set (see DEFAULT_MCP_SETS).
+ * Always merged over the shipped defaults file's `mcp_sets`, so an omitted
+ * `desktop` key keeps the built-in clickr set.
  */
 export function parseMcpSetsValue(raw: unknown, badPathPrefix: string): Record<string, string[]> {
-  const mcpSets: Record<string, string[]> = { ...DEFAULT_MCP_SETS };
+  // The shipped defaults file's sets start the map; a user's entries replace
+  // them per set, so `desktop: []` removes the set deliberately.
+  const mcpSets: Record<string, string[]> = {
+    ...((shippedWorkersDefaults().mcp_sets as Record<string, string[]>) ?? {}),
+  };
   if (raw === undefined) return mcpSets;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     bad(badPathPrefix, "must be an object of set name → [server names]");
@@ -1031,12 +1068,15 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
   // classes is canonical; a config that still carries the pre-classes `roles`
   // key is migrated by reading it here — the next write stores only `classes`.
   const classesRaw = w.classes !== undefined ? w.classes : w.roles;
-  const classes = parseClassesValue(classesRaw, w.classes !== undefined ? ".classes" : ".roles");
+  const classes =
+    classesRaw === undefined
+      ? { ...d.classes }
+      : parseClassesValue(classesRaw, w.classes !== undefined ? ".classes" : ".roles");
 
   const mcpSets = parseMcpSetsValue(w.mcpSets, ".mcpSets");
   const capabilities = parseCapabilitiesValue(w.capabilities, ".capabilities");
 
-  let pane = { ...DEFAULT_PANE };
+  let pane = { ...d.pane };
   if (w.pane !== undefined) {
     if (typeof w.pane !== "object" || w.pane === null) bad(".pane", "must be an object");
     const pc = w.pane as Record<string, unknown>;
@@ -1049,13 +1089,13 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     // legacy fontScale (a relative scale, superseded by fontSize) is tolerated and ignored
     pane = {
-      enabled: pc.enabled === undefined ? DEFAULT_PANE.enabled : pc.enabled === true,
-      fontSize: pc.fontSize === undefined ? DEFAULT_PANE.fontSize : pc.fontSize,
-      autoExitSecs: pc.autoExitSecs === undefined ? DEFAULT_PANE.autoExitSecs : pc.autoExitSecs,
+      enabled: pc.enabled === undefined ? d.pane.enabled : pc.enabled === true,
+      fontSize: pc.fontSize === undefined ? d.pane.fontSize : pc.fontSize,
+      autoExitSecs: pc.autoExitSecs === undefined ? d.pane.autoExitSecs : pc.autoExitSecs,
     };
   }
 
-  let routing = { ...DEFAULT_ROUTING, order: [] as string[] };
+  let routing = { ...d.routing, order: [] as string[] };
   if (w.routing !== undefined) {
     if (typeof w.routing !== "object" || w.routing === null) bad(".routing", "must be an object");
     const r = w.routing as Record<string, unknown>;
@@ -1096,16 +1136,19 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     routing = {
       order: routing.order,
-      cooldownMinutes: r.cooldownMinutes === undefined ? DEFAULT_ROUTING.cooldownMinutes : r.cooldownMinutes,
-      retryOnQuota: r.retryOnQuota === undefined ? DEFAULT_ROUTING.retryOnQuota : r.retryOnQuota === true,
-      policy: (r.policy as WorkersRoutingConfig["policy"]) ?? DEFAULT_ROUTING.policy,
+      cooldownMinutes: r.cooldownMinutes === undefined ? d.routing.cooldownMinutes : r.cooldownMinutes,
+      retryOnQuota: r.retryOnQuota === undefined ? d.routing.retryOnQuota : r.retryOnQuota === true,
+      policy: (r.policy as WorkersRoutingConfig["policy"]) ?? d.routing.policy,
       priority: r.priority === undefined ? [] : [...(r.priority as string[])],
       budgetWalls:
         r.budgetWalls === undefined ? {} : ({ ...(r.budgetWalls as WorkersRoutingConfig["budgetWalls"]) }),
+      budgetPriority: [...d.routing.budgetPriority],
+      budgetPercent: { ...d.routing.budgetPercent },
+      budgetWall: d.routing.budgetWall,
     };
   }
 
-  let supervision: WorkersSupervisionConfig = { pointer: false, push: "harness", stallMinutes: 10 };
+  let supervision: WorkersSupervisionConfig = { ...d.supervision };
   if (w.supervision !== undefined) {
     if (typeof w.supervision !== "object" || w.supervision === null || Array.isArray(w.supervision)) {
       bad(".supervision", "must be an object");
@@ -1119,11 +1162,11 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     supervision = {
       pointer: sv.pointer === true,
       push: sv.push === "all" ? "all" : "harness",
-      stallMinutes: typeof sv.stallMinutes === "number" ? sv.stallMinutes : 10,
+      stallMinutes: typeof sv.stallMinutes === "number" ? sv.stallMinutes : d.supervision.stallMinutes,
     };
   }
 
-  let tree = { ...DEFAULT_TREE };
+  let tree = { ...d.tree };
   if (w.tree !== undefined) {
     if (typeof w.tree !== "object" || w.tree === null || Array.isArray(w.tree)) {
       bad(".tree", "must be an object");
@@ -1140,12 +1183,12 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       }
     }
     tree = {
-      maxDepth: t.maxDepth === undefined ? DEFAULT_TREE.maxDepth : t.maxDepth,
-      maxChildren: t.maxChildren === undefined ? DEFAULT_TREE.maxChildren : t.maxChildren,
+      maxDepth: t.maxDepth === undefined ? d.tree.maxDepth : t.maxDepth,
+      maxChildren: t.maxChildren === undefined ? d.tree.maxChildren : t.maxChildren,
     };
   }
 
-  let pool = { ...DEFAULT_POOL };
+  let pool = { ...d.pool };
   if (w.pool !== undefined) {
     if (typeof w.pool !== "object" || w.pool === null || Array.isArray(w.pool)) {
       bad(".pool", "must be an object");
@@ -1180,18 +1223,18 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       }
     }
     pool = {
-      enabled: pc.enabled === undefined ? DEFAULT_POOL.enabled : pc.enabled === true,
-      maxSlots: pc.maxSlots === undefined ? DEFAULT_POOL.maxSlots : pc.maxSlots,
-      idleSecs: pc.idleSecs === undefined ? DEFAULT_POOL.idleSecs : pc.idleSecs,
-      port: pc.port === undefined ? DEFAULT_POOL.port : pc.port,
-      native: pc.native === undefined ? DEFAULT_POOL.native : pc.native === true,
-      spares: pc.spares === undefined ? DEFAULT_POOL.spares : (pc.spares as number),
-      idleKillSec: pc.idleKillSec === undefined ? DEFAULT_POOL.idleKillSec : (pc.idleKillSec as number),
-      continuation: pc.continuation === undefined ? DEFAULT_POOL.continuation : pc.continuation === true,
+      enabled: pc.enabled === undefined ? d.pool.enabled : pc.enabled === true,
+      maxSlots: pc.maxSlots === undefined ? d.pool.maxSlots : pc.maxSlots,
+      idleSecs: pc.idleSecs === undefined ? d.pool.idleSecs : pc.idleSecs,
+      port: pc.port === undefined ? d.pool.port : pc.port,
+      native: pc.native === undefined ? d.pool.native : pc.native === true,
+      spares: pc.spares === undefined ? d.pool.spares : (pc.spares as number),
+      idleKillSec: pc.idleKillSec === undefined ? d.pool.idleKillSec : (pc.idleKillSec as number),
+      continuation: pc.continuation === undefined ? d.pool.continuation : pc.continuation === true,
     };
   }
 
-  let cacheKeepaliveSecs = DEFAULT_CACHE_KEEPALIVE_SECS;
+  let cacheKeepaliveSecs = d.cacheKeepaliveSecs;
   if (w.cacheKeepaliveSecs !== undefined) {
     if (
       typeof w.cacheKeepaliveSecs !== "number" ||
@@ -1203,21 +1246,21 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     cacheKeepaliveSecs = w.cacheKeepaliveSecs;
   }
 
-  let defaultMaxMinutes = DEFAULT_MAX_MINUTES;
+  let defaultMaxMinutes = d.defaultMaxMinutes;
   if (w.defaultMaxMinutes !== undefined) {
     if (typeof w.defaultMaxMinutes !== "number" || !Number.isInteger(w.defaultMaxMinutes) || w.defaultMaxMinutes < 0) {
       bad(".defaultMaxMinutes", "must be a non-negative integer (minutes, 0 = no limit)");
     }
     defaultMaxMinutes = w.defaultMaxMinutes;
   }
-  let waitAlarmMinutes = 120;
+  let waitAlarmMinutes = d.waitAlarmMinutes;
   if (w.waitAlarmMinutes !== undefined) {
     if (typeof w.waitAlarmMinutes !== "number" || !Number.isInteger(w.waitAlarmMinutes) || w.waitAlarmMinutes < 1) {
       bad(".waitAlarmMinutes", "must be a positive integer (minutes)");
     }
     waitAlarmMinutes = w.waitAlarmMinutes;
   }
-  const stagger = { ...DEFAULT_STAGGER };
+  const stagger = { ...d.stagger };
   if (w.stagger !== undefined) {
     if (typeof w.stagger !== "object" || w.stagger === null || Array.isArray(w.stagger)) {
       bad(".stagger", "must be an object");
@@ -1235,7 +1278,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       stagger[k] = t[k] as number;
     }
   }
-  const capacity = { ...DEFAULT_CAPACITY };
+  const capacity = { ...d.capacity };
   if (w.capacity !== undefined) {
     if (typeof w.capacity !== "object" || w.capacity === null || Array.isArray(w.capacity)) {
       bad(".capacity", "must be an object");
@@ -1246,7 +1289,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       capacity.enabled = t.enabled as boolean;
     }
   }
-  const localIdle = { ...DEFAULT_LOCAL_IDLE };
+  const localIdle = { ...d.localIdle };
   if (w.localIdle !== undefined) {
     if (typeof w.localIdle !== "object" || w.localIdle === null || Array.isArray(w.localIdle)) {
       bad(".localIdle", "must be an object");
@@ -1271,8 +1314,8 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) bad(`.${key}`, "must be a positive number");
     return v as number;
   };
-  const gcOlderThanHours = positive("gcOlderThanHours", w.gcOlderThanHours, DEFAULT_GC_OLDER_THAN_HOURS);
-  const worktreesMaxGb = positive("worktreesMaxGb", w.worktreesMaxGb, DEFAULT_WORKTREES_MAX_GB);
+  const gcOlderThanHours = positive("gcOlderThanHours", w.gcOlderThanHours, d.gcOlderThanHours);
+  const worktreesMaxGb = positive("worktreesMaxGb", w.worktreesMaxGb, d.worktreesMaxGb);
   if (w.reaper !== undefined && typeof w.reaper !== "boolean") {
     bad(".reaper", "must be true or false");
   }
@@ -1349,7 +1392,9 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     reaper,
     caveman,
     fallback,
-    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+    nativeModels: { ...d.nativeModels },
+    costTier: d.costTier,
+    quotaSkipAt: d.quotaSkipAt,
   };
 }
 
@@ -1392,19 +1437,30 @@ export function readWorkersSection(
   raw: Record<string, unknown>;
   workers: WorkersConfig;
 } {
+  // The main config's `workers` section is read against the shipped defaults
+  // file first (defaults/config.yaml merged under the user's file), so the
+  // non-provider settings (pane, routing, tree, pool, …) come from config.
+  const merged = effectiveMainConfig(path);
   const raw = readMainConfigRaw(path);
-  const yaml = readWorkersYaml(workersYamlPath());
-  // the providers live in workers.yaml: a flat chain of the earlier format is split by them
-  const workers = parseWorkersConfig(raw.workers, yaml?.data.providers);
+  // The providers live in workers.yaml when the user file exists (defaults
+  // merged under it); otherwise they fall back to the JSON `workers` section.
+  // Classes/mcpSets always ride the shipped defaults merged under whatever the
+  // user wrote. A flat chain of the earlier JSON format is split by providers.
+  const yaml = existsSync(workersYamlPath()) ? effectiveWorkersYamlData(workersYamlPath()) : null;
+  const workers = parseWorkersConfig(merged.workers, yaml?.providers);
   if (yaml) {
-    workers.active = yaml.data.active;
-    workers.providers = yaml.data.providers;
-    workers.classes = yaml.data.classes;
-    workers.tiers = yaml.data.tiers;
-    workers.mcpSets = yaml.data.mcpSets;
-    workers.capabilities = yaml.data.capabilities;
-    workers.nativeModels = yaml.data.nativeModels;
+    workers.active = yaml.active;
+    workers.providers = yaml.providers;
+    workers.tiers = yaml.tiers;
+    workers.capabilities = yaml.capabilities;
+    workers.nativeModels = yaml.nativeModels;
   }
+  // classes/mcpSets ride workers.yaml when the user file names them; the JSON
+  // section (or the shipped defaults via parseWorkersConfig) stands otherwise.
+  workers.classes =
+    yaml && Object.keys(yaml.classes).length ? yaml.classes : workers.classes;
+  workers.mcpSets =
+    yaml && Object.keys(yaml.mcpSets).length ? yaml.mcpSets : workers.mcpSets;
   // the retired rank chains (workers.chains) become the class lists; the next write drops the key
   // the nine per-class lists become the three role lists, those the `tiers` (t0 / t1 / t2); the next write stores them
   migrateClassRoutes(workers.classes);
@@ -1521,9 +1577,14 @@ export function maskKey(key: string): string {
 
 export { DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 
-/** Cost tier of a provider for class filtering (unset = 3, the middle). */
+/** Cost tier of a provider for class filtering (unset = workers.costTier, the middle). */
 export function providerCostTier(p: WorkerProvider): number {
-  return p.costTier ?? DEFAULT_COST_TIER;
+  return p.costTier ?? defaultWorkersConfig().costTier;
+}
+
+/** Budget-routing skip percentage of a provider (unset = workers.quotaSkipAt). */
+export function providerQuotaSkipAt(p: WorkerProvider): number {
+  return p.quotaSkipAt ?? defaultWorkersConfig().quotaSkipAt;
 }
 
 /**

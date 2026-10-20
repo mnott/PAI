@@ -35,6 +35,7 @@ import {
   setConfigValueOp,
   unsetConfigValueOp,
   formatConfigGetOutput,
+  formatConfigSource,
   MainConfigOpsError,
 } from "../../config/main-config-ops.js";
 import { workersYamlPath, relocateWorkersYaml } from "../../workers/workers-config.js";
@@ -227,7 +228,7 @@ export function configListCmd(opts: { all?: boolean; json?: boolean }): number {
   return 0;
 }
 
-export function configGetCmd(path: string, opts: { json?: boolean }): number {
+export function configGetCmd(path: string, opts: { json?: boolean; source?: boolean }): number {
   try {
     const r = getConfigValueOp(path);
     if (!r.found) {
@@ -235,6 +236,7 @@ export function configGetCmd(path: string, opts: { json?: boolean }): number {
       return 1;
     }
     console.log(formatConfigGetOutput(r.value, { json: opts.json }));
+    if (opts.source) console.log(dim(`  source: ${formatConfigSource(r.source)}`));
   } catch (e) {
     console.error(err((e instanceof MainConfigOpsError ? e.message : String(e instanceof Error ? e.message : e))));
     return 1;

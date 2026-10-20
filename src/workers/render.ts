@@ -13,7 +13,7 @@ import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
 import { queuedText } from "./capacity.js";
 import { relative, basename } from "node:path";
-import { ANTHROPIC_NATIVE, NATIVE_ANTHROPIC_MODELS, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
+import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
 import { denialMark, parseDenialText } from "./denials.js";
 import { bashExitCode, WAIT_EXIT_STILL_RUNNING } from "./wait.js";
@@ -688,7 +688,7 @@ function safeWorkers(): Pick<WorkersConfig, "providers" | "nativeModels"> {
   try {
     return readWorkersSection().workers;
   } catch {
-    return { providers: {}, nativeModels: NATIVE_ANTHROPIC_MODELS };
+    return { providers: {}, nativeModels: nativeAnthropicModels() };
   }
 }
 

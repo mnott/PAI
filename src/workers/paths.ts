@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { expandHome, DEFAULT_LOG_DIR, type WorkersConfig } from "./config.js";
+import { defaultWorkersConfig, expandHome, type WorkersConfig } from "./config.js";
 import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
 
 /**
@@ -19,7 +19,9 @@ import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
  */
 export function workersLogDir(config: Pick<WorkersConfig, "logDir">): string {
   const expanded = expandHome(config.logDir);
-  if (config.logDir !== DEFAULT_LOG_DIR) return expanded;
+  // the shipped default is the sentinel: an explicit user logDir (whatever it
+  // says) is honored verbatim; only the unset default resolves through PAI_HOME
+  if (config.logDir !== defaultWorkersConfig().logDir) return expanded;
   return resolvePaiFile(paiHomePath("logs", "workers"), [expanded], "pai config migrate --logs");
 }
 

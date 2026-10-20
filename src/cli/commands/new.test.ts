@@ -2,7 +2,7 @@ import { existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
+import { nativeAnthropicModels } from "../../workers/config.js";
 import { makeStyle } from "../help.js";
 import { looksLikePath, prepareDir, resolveDir } from "../lib/new-dir.js";
 import { builtinSetups } from "../lib/setups.js";
@@ -11,7 +11,7 @@ import { startSession } from "./root.js";
 const prov = (baseUrl: string, enabled = true) => ({ enabled, protocol: "anthropic" as const, baseUrl, keyFile: null, env: {}, models: { default: "m", fast: "f" } });
 const cfg = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: {
     glm: prov("https://glm.invalid"),
     flashnext: prov("http://127.0.0.1:8080"),

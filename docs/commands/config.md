@@ -97,7 +97,7 @@ pai config get PATH [options]
 
 Print one setting.
 
-Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON.
+Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON. Pass --source to also show whether the value came from the user's config file or the shipped defaults file.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -106,10 +106,11 @@ Print one config value (dotted path, e.g. search.recencyBoostDays), masked if it
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--json` | flag | — | Print an object/array value as JSON instead of YAML |
+| `--source` | flag | — | Also print where the value came from (user config / shipped defaults) |
 
 ```sh
 pai config get search.recencyBoostDays
-pai config get search.recencyBoostDays --json
+pai config get search.recencyBoostDays --source
 ```
 
 See also: `pai config set`, `pai config list`

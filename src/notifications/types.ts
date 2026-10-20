@@ -102,13 +102,6 @@ export type RoutingTable = {
   [K in NotificationEvent]: ChannelId[];
 };
 
-export const DEFAULT_ROUTING: RoutingTable = {
-  error:      ["whatsapp", "macos", "ntfy", "cli"],
-  completion: ["whatsapp", "macos", "ntfy", "cli"],
-  info:       ["cli"],
-  progress:   ["cli"],
-  debug:      [],
-};
 
 // ---------------------------------------------------------------------------
 // Top-level notification config (embedded in PaiDaemonConfig)
@@ -123,33 +116,6 @@ export interface NotificationConfig {
   routing: RoutingTable;
 }
 
-export const DEFAULT_CHANNELS: ChannelConfigs = {
-  ntfy: {
-    enabled: false,
-    url: undefined,
-    priority: "default",
-  },
-  whatsapp: {
-    enabled: true,
-    recipient: undefined,
-  },
-  macos: {
-    enabled: true,
-  },
-  voice: {
-    enabled: false,
-    voiceName: "bm_george",
-  },
-  cli: {
-    enabled: true,
-  },
-};
-
-export const DEFAULT_NOTIFICATION_CONFIG: NotificationConfig = {
-  mode: "auto",
-  channels: DEFAULT_CHANNELS,
-  routing: DEFAULT_ROUTING,
-};
 
 // ---------------------------------------------------------------------------
 // Notification payload

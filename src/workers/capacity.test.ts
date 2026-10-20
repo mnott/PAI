@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_CAPACITY, capacityGate, liveQueue, moveUp, providerCap, queueRows, queuedText, reorderQueue, reorderQueueTo, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
+import { capacityGate, liveQueue, moveUp, providerCap, queueRows, queuedText, reorderQueue, reorderQueueTo, resolveCap, setFront, type CapacityInfo } from "./capacity.js";
+import { defaultWorkersConfig } from "./config.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const DEAD = 999999;
@@ -22,7 +23,7 @@ function harness(statuses: (elapsedMs: number) => WorkerStatus[], self: string, 
     logDir,
     self: { id: self, provider: "p", pid: 200 },
     cap,
-    config: DEFAULT_CAPACITY,
+    config: defaultWorkersConfig().capacity,
     log: (l: string) => lines.push(l),
     onWait: (w: CapacityInfo | null) => waits.push(w),
     now: () => t,
@@ -155,7 +156,7 @@ describe("queue pull-forward", () => {
       logDir,
       self: { id: "w-late", provider: "p", pid: process.pid },
       cap: 1,
-      config: DEFAULT_CAPACITY,
+      config: defaultWorkersConfig().capacity,
       now: () => t,
       sleep: async (ms) => {
         t += ms;
@@ -179,7 +180,7 @@ describe("queue pull-forward", () => {
         logDir,
         self: { id: "w-late", provider: "p", pid: process.pid },
         cap: 1,
-        config: DEFAULT_CAPACITY,
+        config: defaultWorkersConfig().capacity,
         now: () => t,
         sleep: async (ms) => {
           t += ms;
@@ -294,7 +295,7 @@ describe("waiting since", () => {
       logDir,
       self: { id: "w", provider: "p", pid: process.pid },
       cap: 1,
-      config: DEFAULT_CAPACITY,
+      config: defaultWorkersConfig().capacity,
       now: () => t,
       sleep: async () => {
         t += 60_000;

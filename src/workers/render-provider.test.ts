@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { renderTable, makeColor } from "./render.js";
-import { NATIVE_ANTHROPIC_MODELS } from "./config.js";
+import { nativeAnthropicModels } from "./config.js";
 import type { WorkerStatus } from "./status.js";
 
-const workers = { providers: {}, nativeModels: NATIVE_ANTHROPIC_MODELS };
+const workers = { providers: {}, nativeModels: nativeAnthropicModels() };
 const row = (model: string | null) =>
   ({
     id: "w1", provider: "anthropic", model, state: "running", started: new Date().toISOString(), updated: new Date().toISOString(), term: "", last: "", rc: null,
@@ -17,7 +17,7 @@ describe("ps provider tag", () => {
     expect(render("glm-5.3")).toContain("[anthropic/glm-5.3]");
   });
   it("provider default model stays plain", () => {
-    const o = render(NATIVE_ANTHROPIC_MODELS.default);
+    const o = render(nativeAnthropicModels().default);
     expect(o).toContain("[anthropic]");
     expect(o).not.toContain("[anthropic/");
   });

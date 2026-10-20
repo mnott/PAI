@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS, type WorkersConfig } from "./config.js";
+import { nativeAnthropicModels, type WorkersConfig } from "./config.js";
 import {
   LOCAL_PROBE_TIMEOUT_MS,
   probeLoopback,
@@ -90,7 +90,7 @@ describe("resolveLocalProvider", () => {
   });
 
   it("resolvePlanProvider passes a named provider through and resolves `local`", async () => {
-    const full = { ...(cfg as object), active: null, nativeModels: { ...NATIVE_ANTHROPIC_MODELS } } as WorkersConfig;
+    const full = { ...(cfg as object), active: null, nativeModels: { ...nativeAnthropicModels() } } as WorkersConfig;
     expect(await resolvePlanProvider(full, tmp(), "glm")).toBe("glm");
     expect(await resolvePlanProvider(full, tmp(), "local", { check: only8035 })).toBe("up");
   });

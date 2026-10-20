@@ -10,17 +10,23 @@
  */
 
 import { expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { shippedMainDefaults } from "../config/shipped-defaults.js";
 import type {
   NotificationConfig,
   ChannelConfigs,
   RoutingTable,
   NotificationMode,
 } from "./types.js";
-import {
-  DEFAULT_NOTIFICATION_CONFIG,
-  DEFAULT_CHANNELS,
-  DEFAULT_ROUTING,
-} from "./types.js";
+
+/** The notification defaults live in the shipped defaults file
+ * (src/config/defaults/config.yaml, `notifications:`). */
+function defaultNotificationConfig(): NotificationConfig {
+  return (shippedMainDefaults().notifications ?? {
+    mode: "auto",
+    channels: {},
+    routing: {},
+  }) as NotificationConfig;
+}
 
 // ---------------------------------------------------------------------------
 // Deep merge helper (same approach as daemon/config.ts)
@@ -66,16 +72,16 @@ export function loadNotificationConfig(): NotificationConfig {
   try {
     parsed = readMainConfigRaw();
   } catch {
-    return { ...DEFAULT_NOTIFICATION_CONFIG };
+    return { ...defaultNotificationConfig() };
   }
 
   const stored = parsed["notifications"];
   if (!stored || typeof stored !== "object") {
-    return { ...DEFAULT_NOTIFICATION_CONFIG };
+    return { ...defaultNotificationConfig() };
   }
 
   return deepMerge(
-    DEFAULT_NOTIFICATION_CONFIG,
+    defaultNotificationConfig(),
     stored as Record<string, unknown>
   );
 }
@@ -139,6 +145,6 @@ export function patchNotificationConfig(patch: {
   return current;
 }
 
-// Re-export defaults for convenience
-export { DEFAULT_NOTIFICATION_CONFIG, DEFAULT_CHANNELS, DEFAULT_ROUTING };
+// Re-export the defaults accessor for convenience
+export { defaultNotificationConfig };
 export { expandHome };

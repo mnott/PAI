@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
+import { nativeAnthropicModels } from "../../workers/config.js";
 import { makeStyle } from "../help.js";
 import { providerHealth } from "../lib/health.js";
 import { allSetups, builtinSetups, findSetup, loadSaved, saveSetup, shortModel } from "../lib/setups.js";
@@ -33,9 +33,9 @@ const row = (o: Partial<SessionRow>): SessionRow => ({
 const mk = (enabled = true, fast = "f") => ({ enabled, protocol: "anthropic" as const, baseUrl: "https://x.invalid", keyFile: null, env: {}, models: { default: "m", fast } });
 const cfg = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: { glm: mk(), kimi: mk(), off: mk(false) },
-  routing: { budgetWalls: {} } as never,
+  routing: { budgetWalls: {}, budgetPercent: {}, budgetWall: 95 } as never,
 };
 
 describe("matching", () => {
@@ -196,9 +196,9 @@ describe("local setup rows", () => {
   const local = (port: number, enabled = true) => ({ ...mk(enabled), baseUrl: `http://127.0.0.1:${port}` });
   const lcfg = (providers: Record<string, ReturnType<typeof local>>) => ({
     active: null as unknown as string,
-    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+    nativeModels: { ...nativeAnthropicModels() },
     providers,
-    routing: { budgetWalls: {} } as never,
+    routing: { budgetWalls: {}, budgetPercent: {}, budgetWall: 95 } as never,
     logDir: "/nonexistent-pai-test-logs",
   });
   const rows = (c: ReturnType<typeof lcfg>, down: Set<string>, resolved?: string) =>

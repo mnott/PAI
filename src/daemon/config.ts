@@ -12,10 +12,9 @@ import { existsSync, mkdirSync, writeFileSync, chmodSync, readdirSync } from "no
 import { homedir, userInfo } from "node:os";
 import { join, dirname, basename } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
-import { DEFAULT_NOTIFICATION_CONFIG } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
-import { DEFAULT_TASK_CONFIG } from "../tasks/types.js";
 import { paiSocketPath } from "../runtime-paths.js";
+import { effectiveMainConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import {
   paiHomePath,
   resolvePaiFile,
@@ -305,57 +304,28 @@ function perUserConnectionString(): string {
 // ---------------------------------------------------------------------------
 
 /**
- * idleMinutes=50 sits under the 60-minute ephemeral-1h TTL with margin for
- * scheduler jitter; maxBeats=6 (~5h of coverage at one beat per idle stretch)
- * and activeHours 08:00-22:00 keep an unattended overnight machine from
- * beating all night for a session nobody will return to before the cache
- * would have expired anyway.
+ * The main-config defaults live in the shipped defaults file
+ * (src/config/defaults/config.yaml, copied into dist by the build) and are
+ * deep-merged UNDER the user's config.yaml/config.json — see
+ * src/config/shipped-defaults.ts. Only values COMPUTED at load time stay in
+ * code: the socket path (PAI_SOCKET_PATH) and the per-user Postgres
+ * connection string.
  */
-export const DEFAULT_SESSIONS_CACHE_KEEPALIVE: SessionsCacheKeepaliveConfig = {
-  enabled: false,
-  idleMinutes: 50,
-  maxBeats: 6,
-  activeHours: "08:00-22:00",
-  minContextTokens: 20_000,
-  prompt: "keepalive",
-};
+function computedDefaults(): Record<string, unknown> {
+  return {
+    socketPath: paiSocketPath(),
+    postgres: { connectionString: perUserConnectionString() },
+  };
+}
 
-export const DEFAULTS: PaiDaemonConfig = {
-  socketPath: paiSocketPath(),
-  indexIntervalSecs: 300,
-  embedIntervalSecs: 600,
-  obsidianSyncIntervalSecs: 1800,
-  embedOnStartup: false,
-  embedMaxMinutes: 60,
-  embedMaxLoad: 8,
-  passPriority: "background",
-  storageBackend: "sqlite",
-  postgres: {
-    connectionString: perUserConnectionString(),
-    maxConnections: 5,
-    connectionTimeoutMs: 5000,
-  },
-  embeddingModel: "Snowflake/snowflake-arctic-embed-m-v1.5",
-  embedding: { backend: "transformers-cpu-q8", ollama: { baseUrl: "http://127.0.0.1:11434" } },
-  logLevel: "info",
-  notifications: DEFAULT_NOTIFICATION_CONFIG,
-  tasks: DEFAULT_TASK_CONFIG,
-  // Deliberately empty. An install must not guess who the user is: a wrong
-  // guess here is an address that can be mailed without review.
-  identity: { selfEmails: [] },
-  sessions: { cacheKeepalive: { ...DEFAULT_SESSIONS_CACHE_KEEPALIVE } },
-  dashboard: { enabled: true, port: 8770, bind: "127.0.0.1" },
-  obsidian: { enabled: false },
-  vaultIndex: { enabled: true },
-  router: { enabled: false, bind: "loopback" },
-  search: {
-    mode: "keyword",
-    rerank: true,
-    recencyBoostDays: 90,
-    defaultLimit: 10,
-    snippetLength: 200,
-  },
-};
+/** The effective defaults: the shipped file plus the load-time computed
+ *  values, as the typed shape. */
+export function defaults(): PaiDaemonConfig {
+  return deepMerge(
+    deepMerge(shippedMainDefaults(), computedDefaults()) as unknown as PaiDaemonConfig,
+    {}
+  );
+}
 
 /** Config template — generated at runtime so the DB name is per-user */
 function configTemplate(): string {
@@ -520,35 +490,38 @@ function deepMerge<T extends object>(
 // ---------------------------------------------------------------------------
 
 /**
- * Load configuration: config.yaml (see paiConfigYamlFilePath) if it exists,
- * else CONFIG_FILE (see paiConfigFilePath), else defaults. Returns defaults
- * deep-merged with any values found in the file.
+ * Load configuration: the shipped defaults file (defaults/config.yaml) with
+ * the load-time computed values over it, then the user's config.yaml (see
+ * paiConfigYamlFilePath) or CONFIG_FILE deep-merged over that — user values
+ * win, arrays replace, objects merge. Missing user file → the defaults alone.
  */
 export function loadConfig(): PaiDaemonConfig {
-  if (!existsSync(CONFIG_FILE) && !existsSync(paiConfigYamlFilePath())) {
-    return { ...DEFAULTS };
-  }
-
-  let parsed: Record<string, unknown>;
+  let merged: Record<string, unknown>;
   try {
-    parsed = readMainConfigRaw();
+    // paiConfigFilePath() at call time, not the module-load CONFIG_FILE:
+    // tests re-point PAI_CONFIG_FILE after import (see paiConfigFilePath).
+    merged = effectiveMainConfig(paiConfigFilePath());
   } catch (e) {
     process.stderr.write(
       `[pai-daemon] Could not read config: ${e instanceof Error ? e.message : String(e)}\n`
     );
-    return { ...DEFAULTS };
+    // The user's file is damaged: fall back to the shipped defaults alone
+    // (plus the computed values), same as the old defaults-only behaviour.
+    merged = deepMerge(shippedMainDefaults(), computedDefaults());
   }
+  // the computed values are defaults too: the user's file wins
+  merged = deepMerge(computedDefaults(), merged);
 
   // Compat: config.json may use "obsidianVaultPath" (legacy key) instead of "vaultPath".
   // Map it across so the daemon picks it up correctly.
-  if (parsed.obsidianVaultPath && !parsed.vaultPath) {
-    parsed.vaultPath = parsed.obsidianVaultPath;
+  if (merged.obsidianVaultPath && !merged.vaultPath) {
+    merged.vaultPath = merged.obsidianVaultPath;
     process.stderr.write(
-      `[pai-daemon] Config: mapped obsidianVaultPath → vaultPath (${parsed.vaultPath})\n`
+      `[pai-daemon] Config: mapped obsidianVaultPath → vaultPath (${merged.vaultPath})\n`
     );
   }
 
-  return deepMerge(DEFAULTS, parsed);
+  return merged as unknown as PaiDaemonConfig;
 }
 
 /**

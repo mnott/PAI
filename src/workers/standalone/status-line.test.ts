@@ -85,6 +85,8 @@ const runBar = (env: Record<string, string>) =>
       PAI_WORKERS_YAML: join(home, "workers.yaml"),
       // the one-time "old location" notices would pollute the stderr check
       PAI_QUIET_NOTICES: "1",
+      // the bundle sits in a temp dir: name the shipped defaults explicitly
+      PAI_DEFAULTS_DIR: join(process.cwd(), "src", "config", "defaults"),
       ...env,
     },
     encoding: "utf8",

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import {
   ANTHROPIC_NATIVE,
   classModelCapability,
-  NATIVE_ANTHROPIC_MODELS,
+  nativeAnthropicModels,
   parseWorkersConfig,
   resolveCapability,
   resolveModelCapability,
@@ -281,7 +281,7 @@ describe("describeModels", () => {
 describe("resolveCapability", () => {
   const base = (): Pick<WorkersConfig, "providers" | "active" | "capabilities" | "nativeModels"> => ({
     active: "glm",
-    nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+    nativeModels: { ...nativeAnthropicModels() },
     capabilities: {},
     providers: {
       glm: provider({ default: "glm-default" }),
@@ -338,7 +338,7 @@ describe("resolveCapability", () => {
     const r = resolveCapability(w, "fast");
     expect(r).toEqual({
       provider: ANTHROPIC_NATIVE,
-      model: NATIVE_ANTHROPIC_MODELS.fast,
+      model: nativeAnthropicModels().fast,
       engine: "claude",
       fellBack: false,
     });

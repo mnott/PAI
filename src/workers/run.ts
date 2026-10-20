@@ -61,7 +61,7 @@ import {
   getProviderOrNative,
   isLocalProvider,
   isModelCapability,
-  NATIVE_ANTHROPIC_MODELS,
+  nativeAnthropicModels,
   readWorkersSection,
   resolveModelCapability,
   type WorkerProvider,
@@ -444,10 +444,11 @@ export function toolResultFailed(block: { is_error?: boolean; content?: unknown 
   return m !== null && Number(m[1]) !== 0;
 }
 
-/** CLI aliases the built-in provider hands to `--model` (NATIVE_ANTHROPIC_MODELS'
- *  values): a bare name like "sonnet", not a concrete id, so the init event's
- *  resolved id is always the more useful thing to display. */
-const NATIVE_MODEL_ALIASES = new Set(Object.values(NATIVE_ANTHROPIC_MODELS));
+/** CLI aliases the built-in provider hands to `--model` (the shipped
+ *  defaults file's `providers.anthropic.models` values): a bare name like
+ *  "sonnet", not a concrete id, so the init event's resolved id is always the
+ *  more useful thing to display. */
+const NATIVE_MODEL_ALIASES = new Set(Object.values(nativeAnthropicModels()));
 
 /**
  * The model the init event announces, adopted into the status when the spawn

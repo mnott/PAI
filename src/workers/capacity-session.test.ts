@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_CAPACITY, capacityGate, providerCap, resolveCap, sessionScopeKey, type CapacityOpts } from "./capacity.js";
+import { capacityGate, providerCap, resolveCap, sessionScopeKey, type CapacityOpts } from "./capacity.js";
+import { defaultWorkersConfig } from "./config.js";
 import { getProfile, updateProfile } from "./session-profile-store.js";
 import type { WorkerStatus } from "./status.js";
 
@@ -21,7 +22,7 @@ function harness(statuses: (ms: number) => WorkerStatus[], self: WorkerStatus, s
     logDir,
     self: { id: self.id, provider: self.provider, pid: 200 },
     cap: undefined, // cloud provider: unlimited
-    config: DEFAULT_CAPACITY,
+    config: defaultWorkersConfig().capacity,
     log: (l) => lines.push(l),
     now: () => t,
     sleep: async (ms) => {

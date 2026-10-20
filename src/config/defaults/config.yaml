@@ -1,0 +1,118 @@
+# PAI shipped defaults — the main config (config.yaml / config.json).
+#
+# Loaded FIRST and deep-merged UNDER the user's ~/.pai/config.yaml (or
+# config.json): user values win, arrays replace, objects merge. Edit the user
+# file, never this one; `pai config get <key> --source` shows which file a
+# value came from. Policy values live here, not in code — the code keeps only
+# the types and the loader (src/config/shipped-defaults.ts).
+#
+# Values computed at load time (never stored here): socketPath (PAI_SOCKET_PATH
+# or /tmp/pai.sock), postgres.connectionString (per-user database name).
+
+# How often the daemon re-indexes changed files, in seconds.
+indexIntervalSecs: 300
+# How often the daemon runs the embedding pass, in seconds.
+embedIntervalSecs: 600
+# Obsidian sync interval, in seconds; syncs only if a hook flagged a change.
+obsidianSyncIntervalSecs: 1800
+# Run an embed pass 60s after daemon start. Off by default: with a large
+# backlog it makes every restart a CPU storm.
+embedOnStartup: false
+# Wall-clock budget of one embed pass in minutes; the backlog continues next cycle.
+embedMaxMinutes: 60
+# Load average above which an embed pass yields. Also yields while a
+# local-model worker runs.
+embedMaxLoad: 8
+# Priority of scheduled index/embed passes: "background" (low-priority child
+# process) or "normal" (in-process).
+passPriority: background
+# Storage backend: "sqlite" or "postgres".
+storageBackend: sqlite
+# PostgreSQL connection settings, used when storageBackend is "postgres"
+# (connectionString is derived per user at load time).
+postgres:
+  maxConnections: 5
+  connectionTimeoutMs: 5000
+# Embedding model name, used for semantic/hybrid search.
+embeddingModel: Snowflake/snowflake-arctic-embed-m-v1.5
+# Embedding backend: backend ("transformers-cpu-q8" or "ollama-f16"), model,
+# ollama.baseUrl. Switching needs `pai memory reembed`.
+embedding:
+  backend: transformers-cpu-q8
+  ollama:
+    baseUrl: http://127.0.0.1:11434
+# Daemon log level: debug, info, warn, or error.
+logLevel: info
+# Notification subsystem configuration.
+notifications:
+  mode: auto
+  channels:
+    ntfy:
+      enabled: false
+      priority: default
+    whatsapp:
+      enabled: true
+    macos:
+      enabled: true
+    voice:
+      enabled: false
+      voiceName: bm_george
+    cli:
+      enabled: true
+  routing:
+    error: [whatsapp, macos, ntfy, cli]
+    completion: [whatsapp, macos, ntfy, cli]
+    info: [cli]
+    progress: [cli]
+    debug: []
+# Search defaults, applied when an MCP tool or CLI call doesn't specify one.
+search:
+  mode: keyword
+  rerank: true
+  recencyBoostDays: 90
+  defaultLimit: 10
+  snippetLength: 200
+# Task bus — optional external tracker for cross-session work.
+tasks:
+  enabled: false
+  providers:
+    todoist:
+      enabled: false
+  autoDispatch: false
+# Who "me" is — addresses that count as the user's own. Empty by default and
+# never guessed: nothing is self-addressed until this is set.
+identity:
+  selfEmails: []
+# Interactive-session settings (currently just the cache keepalive).
+sessions:
+  cacheKeepalive:
+    # Off by default — arming it is the operator's explicit call.
+    enabled: false
+    # Beat a session once it has been idle at least this long; must be < the
+    # provider's cache TTL (60 for the 1h ephemeral cache).
+    idleMinutes: 50
+    # Cap on consecutive beats per idle stretch.
+    maxBeats: 6
+    # Local time window outside which no beats are sent.
+    activeHours: "08:00-22:00"
+    # Skip sessions whose context is too small to be worth a beat.
+    minContextTokens: 20000
+    # The exact word typed into the session.
+    prompt: keepalive
+# Read-only status dashboard.
+dashboard:
+  enabled: true
+  port: 8770
+  bind: 127.0.0.1
+# Obsidian sync into the PAI-generated vault. Gates only writing; vault
+# indexing is vaultIndex.
+obsidian:
+  enabled: false
+# Read-only indexing of vaultPath for memory search. Independent of
+# obsidian.enabled.
+vaultIndex:
+  enabled: true
+# Keep `pai router` (127.0.0.1:8790) running under the daemon.
+router:
+  enabled: false
+  bind: loopback

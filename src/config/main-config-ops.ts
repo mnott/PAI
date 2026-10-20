@@ -8,25 +8,16 @@
 import { existsSync } from "node:fs";
 import { Document } from "yaml";
 import {
-  DEFAULTS,
+  defaults as loadConfigDefaults,
   loadConfig,
   paiConfigFilePath,
   paiConfigYamlFilePath,
   readMainConfigRaw,
   writeMainConfigRaw,
 } from "../daemon/config.js";
-import {
-  readWorkersSection,
-  DEFAULT_PANE,
-  DEFAULT_LOG_DIR,
-  DEFAULT_ROUTING,
-  DEFAULT_TREE,
-  DEFAULT_CACHE_KEEPALIVE_SECS,
-  DEFAULT_GC_OLDER_THAN_HOURS,
-  DEFAULT_WORKTREES_MAX_GB,
-  DEFAULT_MAX_MINUTES,
-  maskKey,
-} from "../workers/config.js";
+import { readWorkersSection, defaultWorkersConfig, maskKey } from "../workers/config.js";
+import { workersYamlPath } from "../workers/workers-config.js";
+import { userWorkersYamlRaw } from "./shipped-defaults.js";
 import { migrateMainConfigToYaml } from "./main-config.js";
 import { writeYamlFileAtomic } from "./yaml-store.js";
 
@@ -132,8 +123,8 @@ export function maskSecretsDeep(value: unknown, path: (string | number)[] = []):
 }
 
 // ---------------------------------------------------------------------------
-// Schema (DEFAULTS + the non-provider `workers` shape) for type validation
-// and the effective (defaults-merged) view
+// Schema (the shipped defaults file + the non-provider `workers` shape) for
+// type validation and the effective (defaults-merged) view
 // ---------------------------------------------------------------------------
 
 /** The non-provider `workers` sub-object every writer persists to the main
@@ -159,25 +150,16 @@ function workersMainConfigShape(): Record<string, unknown> {
 
 function schemaRoot(): Record<string, unknown> {
   return {
-    ...(DEFAULTS as unknown as Record<string, unknown>),
-    workers: {
-      enabled: false,
-      pane: DEFAULT_PANE,
-      logDir: DEFAULT_LOG_DIR,
-      routing: DEFAULT_ROUTING,
-      tree: DEFAULT_TREE,
-      cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
-      defaultMaxMinutes: DEFAULT_MAX_MINUTES,
-      noBrowserByDefault: false,
-      gcOlderThanHours: DEFAULT_GC_OLDER_THAN_HOURS,
-      worktreesMaxGb: DEFAULT_WORKTREES_MAX_GB,
-      reaper: true,
-    },
+    // the shipped file plus the load-time computed values (per-user Postgres
+    // connection string, socket path) — the same shape loadConfig() starts from
+    ...(loadConfigDefaults() as unknown as Record<string, unknown>),
+    workers: workersMainConfigShape(),
   };
 }
 
-/** loadConfig() (typed, defaults-merged) plus the workers subset — the
- *  "effective" view `pai config list --all` / `get` resolve against. */
+/** loadConfig() (typed, shipped defaults merged under the user file) plus the
+ *  workers subset — the "effective" view `pai config list --all` / `get`
+ *  resolve against. */
 function effectiveConfigRoot(): Record<string, unknown> {
   return {
     ...(loadConfig() as unknown as Record<string, unknown>),
@@ -187,9 +169,10 @@ function effectiveConfigRoot(): Record<string, unknown> {
 
 /**
  * Refuse an unset top-level key (typo protection) unless --force, and — when
- * DEFAULTS names a scalar at this exact path — refuse a value of a different
- * JS type unless --force. Nested unknown keys (e.g. under `tasks.providers`)
- * are always allowed: DEFAULTS does not enumerate every provider shape.
+ * the shipped defaults file names a scalar at this exact path — refuse a
+ * value of a different JS type unless --force. Nested unknown keys (e.g.
+ * under `tasks.providers`) are always allowed: the defaults file does not
+ * enumerate every provider shape.
  */
 function validateAgainstSchema(segments: string[], value: unknown, opts: { force?: boolean }): void {
   const schema = schemaRoot();
@@ -234,6 +217,8 @@ export function listConfigOp(opts: { all?: boolean } = {}): ListConfigResult {
 export interface GetConfigResult {
   found: boolean;
   value: unknown;
+  /** Where the value came from: the user's file or the shipped defaults file. */
+  source?: "user" | "defaults";
 }
 
 /** `pai config get <path>` / `config_get`: resolves against the
@@ -241,8 +226,26 @@ export interface GetConfigResult {
  *  answers with its default), masked if the path looks like a secret. */
 export function getConfigValueOp(dottedPath: string): GetConfigResult {
   const segments = splitConfigPath(dottedPath);
-  const { value, found } = getAtPath(effectiveConfigRoot(), segments);
-  return { found, value: found ? maskSecretsDeep(value, segments) : undefined };
+  const root = effectiveConfigRoot();
+  const { value, found } = getAtPath(root, segments);
+  let source: "user" | "defaults" | undefined;
+  if (found) {
+    // The user's raw main config (config.yaml/config.json) plus the workers
+    // section as the user actually wrote it (workers.yaml or the JSON
+    // `workers` key — NOT the defaults-merged parse); anything not present
+    // there comes from the shipped defaults file.
+    // Explicit CONFIG_FILE argument: the default parameter binds at module
+    // load, and tests re-point PAI_CONFIG_FILE afterwards (see
+    // paiConfigFilePath).
+    const rawMain = readMainConfigRaw(paiConfigFilePath());
+    const userWorkersRaw = rawMain.workers ?? userWorkersYamlRaw(workersYamlPath());
+    const userRoot: Record<string, unknown> = {
+      ...rawMain,
+      ...(userWorkersRaw !== undefined && userWorkersRaw !== null ? { workers: userWorkersRaw } : {}),
+    };
+    source = getAtPath(userRoot, segments).found ? "user" : "defaults";
+  }
+  return { found, value: found ? maskSecretsDeep(value, segments) : undefined, source };
 }
 
 /** `pai config get`'s CLI text: a scalar prints as-is, an object/array
@@ -263,7 +266,8 @@ export interface SetConfigResult {
 
 /**
  * `pai config set <path> <value>` / `config_set`: parses `value`, validates
- * its type against DEFAULTS (refusable with `force`), converts config.json
+ * its type against the shipped defaults (refusable with `force`), converts
+ * config.json
  * to config.yaml first if neither exists yet, then writes through
  * writeMainConfigRaw (comment-preserving when config.yaml exists).
  */
@@ -291,6 +295,13 @@ export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { f
 
 export interface UnsetConfigResult {
   existed: boolean;
+}
+
+/** Which file a `pai config get` value came from, for `--source`. */
+export function formatConfigSource(source: "user" | "defaults" | undefined): string {
+  if (source === "user") return "user config";
+  if (source === "defaults") return "shipped defaults";
+  return "unknown";
 }
 
 /** `pai config unset <path>` / `config_unset`: no-ops (existed=false) when

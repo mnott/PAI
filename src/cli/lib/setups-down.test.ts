@@ -1,13 +1,13 @@
 import { createServer, type ServerResponse } from "node:http";
 import { describe, expect, it } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
+import { nativeAnthropicModels } from "../../workers/config.js";
 import { resolveSetup } from "../commands/root.js";
 import { allSetups, downLocalProviders, httpModelsCheck, PORT_TIMEOUT_MS, type PortCheck } from "./setups.js";
 
 const prov = (baseUrl: string, enabled = true) => ({ enabled, protocol: "anthropic" as const, baseUrl, keyFile: null, env: {}, models: { default: "m", fast: "f" } });
 const cfg = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: {
     glm: prov("https://glm.invalid"),
     up: prov("http://127.0.0.1:8035"),

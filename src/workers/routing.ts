@@ -11,7 +11,7 @@
  * (ledger: WORKER-REROUTE).
  *
  * Policy "budget" (the default) orders candidates by routing.priority —
- * falling back to routing.order, else DEFAULT_BUDGET_PRIORITY — sorted by
+ * falling back to routing.order, else the shipped routing.budgetPriority — sorted by
  * percent ascending within equal priority, and additionally skips every
  * provider whose live budget reading (budget.ts) reads at or above its wall
  * (routing.budgetWalls). A walled provider gets a cooldown until
@@ -35,10 +35,10 @@ import {
   type ProviderTag,
   WORKER_CLASSES,
   ANTHROPIC_NATIVE,
-  DEFAULT_BUDGET_PRIORITY,
   WorkersConfigError,
   classModelCapability,
   providerCostTier,
+  providerQuotaSkipAt,
   getProviderOrNative,
   resolveCapability,
   isLocalProvider,
@@ -57,7 +57,6 @@ import { routingStatePath } from "./paths.js";
 import { detectSessionProvider } from "./session-provider.js";
 import { isLoopbackProvider } from "./run-env.js";
 
-const QUOTA_SKIP_DEFAULT = 95;
 const PROBE_TIMEOUT_MS = 10_000;
 /** Minimum minutes a budget-walled provider stays in cooldown, even when its reset is closer. */
 export const BUDGET_COOLDOWN_MIN = 10;
@@ -118,8 +117,8 @@ export function clearCooldown(logDir: string, provider: string): void {
 
 /**
  * The candidate order for auto-routing: the class's own order, else — policy
- * "budget" — routing.priority, falling back to routing.order, else
- * DEFAULT_BUDGET_PRIORITY. Policy "order" uses routing.order as before.
+ * "budget" — routing.priority, falling back to routing.order, else the
+ * shipped routing.budgetPriority. Policy "order" uses routing.order as before.
  */
 export function autoOrder(config: WorkersConfig, cls?: { order?: string[] }): string[] {
   if (cls?.order?.length) return cls.order;
@@ -128,7 +127,7 @@ export function autoOrder(config: WorkersConfig, cls?: { order?: string[] }): st
   if (config.routing.policy === "order") return config.routing.order;
   if (config.routing.priority.length) return config.routing.priority;
   if (config.routing.order.length) return config.routing.order;
-  return [...DEFAULT_BUDGET_PRIORITY];
+  return [...config.routing.budgetPriority];
 }
 
 /**
@@ -153,7 +152,7 @@ export function probeQuota(provider: WorkerProvider): number | null {
 }
 
 export function quotaSkipThreshold(provider: WorkerProvider): number {
-  return provider.quotaSkipAt ?? QUOTA_SKIP_DEFAULT;
+  return providerQuotaSkipAt(provider);
 }
 
 /** Does this provider exceed its quota threshold right now? */

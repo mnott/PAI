@@ -18,14 +18,20 @@
 import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { Document, Scalar, parseDocument, type Node } from "yaml";
+import { Document, Scalar, parseDocument, isScalar, isSeq, isMap, type Node } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { writeYamlFileAtomic, YamlStoreError } from "../config/yaml-store.js";
 import { parseTiersValue, type TierDef } from "./route-lists.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import {
+  effectiveWorkersYamlDoc,
+  effectiveWorkersYamlRaw,
+  shippedWorkersDefaults,
+  userWorkersYamlRaw,
+} from "../config/shipped-defaults.js";
+import {
   ANTHROPIC_NATIVE,
-  NATIVE_ANTHROPIC_MODELS,
+  nativeAnthropicModels,
   WorkersConfigError,
   expandHome,
   isModelCapability,
@@ -192,8 +198,8 @@ function parseBuiltinAnthropic(raw: unknown, pathPrefix: string): WorkerProvider
       `${pathPrefix}: a builtin provider cannot set ${disallowed.join(", ")} — it runs on Claude Code's own login`
     );
   }
-  if (p.models === undefined) return { ...NATIVE_ANTHROPIC_MODELS };
-  return { ...NATIVE_ANTHROPIC_MODELS, ...parseModelsBlock(`${pathPrefix}.models`, p.models) };
+  if (p.models === undefined) return { ...nativeAnthropicModels() };
+  return { ...nativeAnthropicModels(), ...parseModelsBlock(`${pathPrefix}.models`, p.models) };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +241,7 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
   const r = root as Record<string, unknown>;
 
   const providers: Record<string, WorkerProvider> = {};
-  let nativeModels: WorkerProvider["models"] = { ...NATIVE_ANTHROPIC_MODELS };
+  let nativeModels: WorkerProvider["models"] = { ...nativeAnthropicModels() };
   const providersRaw = r.providers;
   if (providersRaw !== undefined) {
     if (typeof providersRaw !== "object" || providersRaw === null || Array.isArray(providersRaw)) {
@@ -254,18 +260,31 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     }
   }
 
-  let classes: Record<string, ClassTarget> = {};
-  if (r.classes !== undefined) {
-    try {
-      classes = parseClassesValue(r.classes, "classes");
-    } catch (e) {
-      withLine(doc, ["classes"], yamlPath, e);
-    }
-    // Cross-validate: every class must name a known provider (or "anthropic")
-    // and, if it names a role, a capability that provider actually declares.
-    // Unlike the JSON path (where a provider can be removed out from under a
-    // class and the error surfaces at spawn time), workers.yaml catches this
-    // at load time.
+  // classes: the user's block is the whole map (the map is the routing table,
+  // not a patch — a shipped row would shadow a repointed class at read time);
+  // the shipped class map lives in the MAIN config's defaults (config.yaml's
+  // workers.classes), which readWorkersSection applies when the yaml file
+  // names none. Cross-validation runs over the USER's entries only: every
+  // class must name a known provider (or "anthropic") and, if it names a
+  // role, a capability that provider actually declares. The defaults'
+  // anthropic targets are code-side (getProviderOrNative), so they may not be
+  // checked against the user's providers. Unlike the JSON path (where a
+  // provider can be removed out from under a class and the error surfaces at
+  // spawn time), workers.yaml catches this at load time — and the merged doc
+  // keeps the user file's node ranges, so the error names `<path>:<line>` of
+  // the user's file.
+  const userRaw = existsSync(yamlPath) ? userWorkersYamlRaw(yamlPath) : {};
+  const userClassesRaw = userRaw.classes;
+  let classes: Record<string, ClassTarget>;
+  try {
+    classes =
+      userClassesRaw !== undefined
+        ? parseClassesValue(userClassesRaw, "classes")
+        : {};
+  } catch (e) {
+    withLine(doc, ["classes"], yamlPath, e);
+  }
+  if (userClassesRaw !== undefined) {
     for (const [cls, target] of Object.entries(classes)) {
       const provider = typeof target === "string" ? target.split("/")[0] : target.provider;
       const alias = typeof target === "string" ? target.split("/")[1] : undefined;
@@ -304,7 +323,9 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
               doc,
               ["classes", cls],
               yamlPath,
-              new WorkersConfigError(`classes.${cls}: provider "${provider}" has no "${alias}" model configured`)
+              new WorkersConfigError(
+                `classes.${cls}: provider "${provider}" has no "${alias}" model configured`
+              )
             );
           }
         }
@@ -321,15 +342,14 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     }
   }
 
-  let mcpSets: Record<string, string[]> = {};
-  if (r.mcp_sets !== undefined) {
-    try {
-      mcpSets = parseMcpSetsValue(r.mcp_sets, "mcp_sets");
-    } catch (e) {
-      withLine(doc, ["mcp_sets"], yamlPath, e);
-    }
-  } else {
-    mcpSets = parseMcpSetsValue(undefined, "mcp_sets");
+  // The shipped defaults file's sets ride in the merged root; a user file
+  // replaced entries per set there (desktop: [] removes the set). A user file
+  // that names no mcp_sets keeps the shipped defaults whole.
+  let mcpSets: Record<string, string[]>;
+  try {
+    mcpSets = parseMcpSetsValue(r.mcp_sets, "mcp_sets");
+  } catch (e) {
+    withLine(doc, ["mcp_sets"], yamlPath, e);
   }
 
   mergeVerifyOf(r, (m) => withLine(doc, ["merge", "verify"], yamlPath, new WorkersConfigError(m)));
@@ -367,32 +387,35 @@ function mergeVerifyOf(root: Record<string, unknown>, fail: (msg: string) => nev
   return v;
 }
 
-/** The default `pai worker merge` gate from workers.yaml `merge.verify`; undefined when the file or key is absent. */
+/** The default `pai worker merge` gate from workers.yaml `merge.verify`; undefined when the key is absent. */
 export function readMergeVerify(yamlPath: string = workersYamlPath()): string | undefined {
-  const loaded = readWorkersYaml(yamlPath);
-  if (!loaded) return undefined;
-  return mergeVerifyOf((loaded.doc.toJS() ?? {}) as Record<string, unknown>, (m) => {
+  return mergeVerifyOf(effectiveWorkersYamlRaw(yamlPath), (m) => {
     throw new WorkersConfigError(`${yamlPath}: ${m}`);
   });
 }
 
-/** Read + parse workers.yaml. Returns null if the file does not exist. */
+/**
+ * Read + parse workers.yaml: the shipped defaults file
+ * (src/config/defaults/workers.yaml) deep-merged UNDER the user's file — user
+ * values win, arrays replace, objects merge. Returns null only when the user
+ * file does not exist AND the shipped defaults are absent (nothing to parse).
+ * The Document is the merged mapping, so callers that write back through it
+ * (writeWorkersYaml's diff) only ever see user entries — the defaults are
+ * never written into the user's file.
+ */
 export function readWorkersYaml(yamlPath: string): { doc: Document; data: WorkersYamlData } | null {
   if (!existsSync(yamlPath)) return null;
-  let text: string;
-  try {
-    text = readFileSync(yamlPath, "utf8");
-  } catch (e) {
-    throw new WorkersConfigError(
-      `Could not read ${yamlPath}: ${e instanceof Error ? e.message : String(e)}`
-    );
-  }
-  const doc = parseDocument(text);
-  if (doc.errors.length) {
-    throw new WorkersConfigError(`${yamlPath}: ${doc.errors[0].message}`);
-  }
-  const data = parseWorkersYamlDocument(doc, yamlPath);
-  return { doc, data };
+  const doc = effectiveWorkersYamlDoc(yamlPath);
+  return { doc, data: parseWorkersYamlDocument(doc, yamlPath) };
+}
+
+/** The effective workers.yaml data: the shipped defaults file deep-merged
+ *  UNDER the user's file (user wins, arrays replace, objects merge). The
+ *  builtin `providers.anthropic` block (defaults or user) routes to
+ *  nativeModels via parseBuiltinAnthropic, never into the providers map, so
+ *  the writers never persist it as a user provider. */
+export function effectiveWorkersYamlData(yamlPath: string): WorkersYamlData {
+  return parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -505,10 +528,13 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
  * committing; on failure the previous bytes are left untouched.
  */
 export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void {
-  const existing = readWorkersYaml(yamlPath);
-  const doc = existing ? existing.doc : new Document({});
-  const before: WorkersYamlData = existing
-    ? existing.data
+  // The Document is the RAW user file: setIn/deleteIn only ever touch user
+  // entries, so the shipped defaults are never written into the user's file.
+  // `before` is the effective (defaults-merged) data: a class or set the user
+  // never named already equals its shipped value, so the diff leaves it alone.
+  const doc = existsSync(yamlPath) ? parseDocument(readFileSync(yamlPath, "utf8")) : new Document({});
+  const before: WorkersYamlData = existsSync(yamlPath)
+    ? parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath)
     : {
         active: null,
         providers: {},
@@ -516,7 +542,7 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
         tiers: [],
         capabilities: {},
         mcpSets: {},
-        nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+        nativeModels: { ...nativeAnthropicModels() },
       };
   syncWorkersYamlDocument(doc, before, after);
   writeWorkersYamlText(yamlPath, String(doc));
@@ -589,8 +615,8 @@ providers:
   anthropic:
     builtin: true          # Claude Code's own login: no url, no key file
     models:
-      default: ${NATIVE_ANTHROPIC_MODELS.default}
-      fast: ${NATIVE_ANTHROPIC_MODELS.fast}
+      default: ${nativeAnthropicModels().default}
+      fast: ${nativeAnthropicModels().fast}
   glm:
     url: https://api.z.ai/api/anthropic
     key: "<your-api-key>"   # or key_file: <path to a 0600 file>

@@ -20,14 +20,6 @@ export interface StaggerConfig {
   maxSec: number;
 }
 
-export const DEFAULT_STAGGER: StaggerConfig = {
-  enabled: true,
-  localDefaultSec: 20,
-  remoteDefaultSec: 8,
-  minSec: 3,
-  maxSec: 120,
-};
-
 export const WARMUP_WINDOW = 20;
 const POLL_STEPS_MS = [250, 500, 1000, 2000];
 

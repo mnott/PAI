@@ -249,15 +249,6 @@ export interface TaskConfig {
   defaultOwner?: string;
 }
 
-export const DEFAULT_TASK_CONFIG: TaskConfig = {
-  enabled: false,
-  providers: {
-    todoist: {
-      enabled: false,
-    },
-  },
-  autoDispatch: false,
-};
 
 // ---------------------------------------------------------------------------
 // Dispatch results

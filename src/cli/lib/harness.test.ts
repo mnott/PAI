@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
+import { nativeAnthropicModels, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { buildLaunchPlan } from "../../workers/launch.js";
 import { buildHarness, execLine, nameArgs } from "./harness.js";
 
@@ -16,7 +16,7 @@ const provider = (o: Partial<WorkerProvider>): WorkerProvider => ({
 
 const workers: Pick<WorkersConfig, "providers" | "nativeModels" | "logDir"> = {
   logDir: "/nonexistent-pai-test-logs",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: {
     alpha: provider({ models: { default: "alpha-1", fast: "alpha-fast" } }),
     beta: provider({ baseUrl: "https://beta.example.invalid/", key: "beta-key-abcdefghij", models: { default: "beta-1" } }),
