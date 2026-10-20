@@ -1299,13 +1299,16 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
   const colorSrc = [
     COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
     COCKPIT_HTML.match(/function assignColors\([\s\S]*?\n\}\n/)![0],
-    COCKPIT_HTML.match(/function colorOf\([^\n]*\n/)![0],
+    COCKPIT_HTML.match(/function hslHex\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function genColor\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function hueOf\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function colorOf\([\s\S]*?\n\}\n/)![0],
   ].join("\n");
   const store: Record<string, string> = {};
   const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
-  const colorApi = () => {
-    const fn = new Function("localStorage", "PAL", `var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]];\n${colorSrc}\nreturn {assign:function(ms){return assignColors(ms)},colorOf:colorOf,colors:colors};`);
-    return fn(ls, PAL) as { assign: (ms: string[]) => void; colorOf: (k: string) => string; colors: Record<string, string> };
+  const colorApi = (pruneDays = 90) => {
+    const fn = new Function("localStorage", "PAL", "COLOR_PRUNE_DAYS", `var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]];\n${colorSrc}\nreturn {assign:function(ms){return assignColors(ms)},colorOf:colorOf,colors:colors};`);
+    return fn(ls, PAL, pruneDays) as { assign: (ms: string[]) => void; colorOf: (k: string) => string; colors: Record<string, string> };
   };
   beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
 
@@ -1334,7 +1337,7 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
     expect(models.map((m) => c.colorOf(m))).toEqual(first);
   });
 
-  it("colours persist per model name in localStorage and a model leaving the view loses its entry", () => {
+  it("colours persist per model name; a model not visible right now keeps its saved colour", () => {
     const a = colorApi();
     a.assign(["x", "y"]);
     const saved = JSON.parse(store["pai.cockpit.modelColors.v1"]);
@@ -1342,7 +1345,81 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
     expect(saved.y).toMatch(/^#[0-9a-f]{6}$/);
     const b = colorApi();
     b.assign(["x"]);
-    expect(Object.keys(b.colors).filter((k) => k.indexOf("@ts") < 0)).toEqual(["x"]);
+    expect(b.colors.y).toBe(saved.y); // not deleted: merely not visible right now
+    // it reappears with the same colour
+    b.assign(["x", "y"]);
+    expect(b.colorOf("y")).toBe(saved.y);
+  });
+
+  it("two charts with different model sets keep all colours distinct and stable across re-renders in either order", () => {
+    const winModels = ["claude-haiku-4-5", "claude-sonnet-5-5", "k3"];
+    const dailyModels = ["claude-haiku-4-5", "glm-5.3", "qwen3-coder-30b-8bit", "k3"];
+    const union = Array.from(new Set(winModels.concat(dailyModels))).sort();
+    // daily first, then the window chart (the live order that wiped the daily colours)
+    const a = colorApi();
+    a.assign(dailyModels);
+    a.assign(winModels);
+    const first = union.map((m) => a.colorOf(m));
+    expect(new Set(first).size).toBe(union.length);
+    // window first, then daily, in a fresh session over the same storage
+    const b = colorApi();
+    b.assign(winModels);
+    b.assign(dailyModels);
+    expect(union.map((m) => b.colorOf(m))).toEqual(first);
+    // re-render either chart again: nothing changes
+    b.assign(dailyModels);
+    b.assign(winModels);
+    expect(union.map((m) => b.colorOf(m))).toEqual(first);
+  });
+
+  it("20 models get 20 distinct colours, past the palette by generated hues", () => {
+    const a = colorApi();
+    const models = Array.from({ length: 20 }, (_, i) => `mm${i}`);
+    a.assign(models);
+    const cs = models.map((m) => a.colorOf(m));
+    expect(new Set(cs).size).toBe(20);
+    for (const c of cs) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    // a re-render keeps them
+    const b = colorApi();
+    b.assign(models);
+    expect(models.map((m) => b.colorOf(m))).toEqual(cs);
+  });
+
+  it("colorOf assigns an unassigned model on the spot and never returns PAL[0] silently", () => {
+    const a = colorApi();
+    a.assign(["p"]); // p takes PAL[0]
+    expect(a.colorOf("p")).toBe(PAL[0]);
+    const c = a.colorOf("late-model");
+    expect(c).not.toBe(PAL[0]);
+    expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    expect(a.colors["late-model"]).toBe(c);
+    expect(JSON.parse(store["pai.cockpit.modelColors.v1"])["late-model"]).toBe(c);
+    // the kind colours still resolve by kind name
+    expect(a.colorOf("input")).toBe("#3b6fe0");
+  });
+
+  it("saved colours older than colorPruneDays are pruned by their @ts stamp", () => {
+    const DAY = 864e5;
+    const old = JSON.stringify({ gone: "#2bb3c0", "gone@ts": Date.now() - 100 * DAY, keep: "#d64570", "keep@ts": Date.now() - 10 * DAY });
+    store["pai.cockpit.modelColors.v1"] = old;
+    const a = colorApi(90);
+    a.assign(["fresh"]);
+    expect(a.colors.gone).toBeUndefined();
+    expect(a.colors.keep).toBe("#d64570");
+    // the prune window is config-driven
+    store["pai.cockpit.modelColors.v1"] = old;
+    const b = colorApi(200);
+    b.assign(["fresh"]);
+    expect(b.colors.gone).toBe("#2bb3c0");
+  });
+
+  it("the page assigns colours once over the union of every model shown", () => {
+    const render = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
+    expect(render).toContain("d.byModel.forEach(function(m){um[m.model]=1})");
+    expect(render).toContain("(d.speed||[]).forEach(function(r){um[r.model]=1})");
+    expect(render).toContain("dm.forEach(function(m){um[m]=1})");
+    expect(render).toContain("assignColors(Object.keys(um))");
+    expect(COCKPIT_HTML).toContain("COLOR_PRUNE_DAYS=90");
   });
 
   it("axis labels are compact (784M, 1.57G, not 783.98M) and the left padding grows with the widest label", () => {
