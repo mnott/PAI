@@ -661,6 +661,7 @@ export function initContextWindow(e: StreamEvent): number | null {
  * Throws WorkersConfigError-shaped Errors for configuration problems.
  */
 export async function runWorker(opts: RunOptions): Promise<number> {
+  const runT0 = Date.now();
   const { raw: _raw, workers: config } = readWorkersSection();
   void _raw;
   if (!config.enabled) {
@@ -934,6 +935,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         limit,
         noBrowser,
         opts,
+        runT0,
       };
       // the session pool (workers.pool) gets first crack: an eligible task
       // runs as one more turn of a warm claude instead of a fresh spawn
@@ -1550,6 +1552,10 @@ export interface ExecuteArgs {
   opts: RunOptions;
   /** Set once the follow pane was handled (tryPoolRun); executeRun then neither opens nor verifies a second one. */
   panePrepared?: { verified: boolean };
+  /** Epoch ms the run started: setupMs counts from here to the worker process holding its first turn. */
+  runT0?: number;
+  /** Why the spare claim missed (the pool was asked, this run spawned fresh); recorded on the WORKER-END line. */
+  spareMiss?: string;
 }
 
 /**
@@ -1565,6 +1571,9 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   const settings = poolSettings(a.config);
   if (!settings.enabled || a.orchestrate) return null; // an orchestrator needs its own env and contract, not a warm slot
   const cwd = a.cwd ?? process.cwd();
+  // spares are the pool's default use; the multi-task continuation path only runs behind workers.pool.continuation
+  const claim = !settings.continuation;
+  if (claim && settings.spares <= 0) return null;
   const reason = poolIneligibleReason({
     headless: a.parsed.headless,
     prompt: a.parsed.prompt,
@@ -1573,7 +1582,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     nativeAllowed: settings.native,
     worktreeWanted:
       a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
-    slotWorktree: isLoopbackProvider(a.target.provider),
+    slotWorktree: claim || isLoopbackProvider(a.target.provider),
     resumeOf: a.resumeOf,
     printCmd: a.printCmd,
     parsed: a.parsed,
@@ -1583,6 +1592,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     cwd,
   });
   if (reason) {
+    if (claim) a.spareMiss = reason;
     appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
       id: a.id ?? "-",
       provider: a.target.providerName,
@@ -1592,8 +1602,10 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     return null;
   }
   const wid = a.id ?? newWorkerId();
-  // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this
-  if (!a.panePrepared) {
+  // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this.
+  // A spare claim starts the task first and opens the pane alongside it: the pane never delays the task.
+  const preparePane = async (): Promise<void> => {
+    if (a.panePrepared) return;
     const term = (await resolveHostSession()).term;
     const ledger = ledgerPath(a.logDir);
     const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
@@ -1606,7 +1618,9 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     } else if (!verified) {
       await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger);
     }
-  }
+  };
+  const panePending = claim ? preparePane() : null;
+  if (!claim) await preparePane();
   const limitMinutes = a.limit && a.limit.minutes > 0 ? a.limit.minutes : null;
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
@@ -1632,22 +1646,30 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
         maxMinutes: limitMinutes,
         trailer: promptTrailer(a.reportFormat),
         worktree: a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
+        ...(claim ? { runStartedAt: a.runT0 ?? Date.now() } : {}),
       },
-      timeoutMs
+      timeoutMs,
+      claim ? "/claim" : "/task"
     );
   } catch {
     resp = null;
   }
+  await panePending; // a miss falls back to executeRun, which reuses the prepared pane
   if (resp === null) {
+    a.spareMiss = "host-unreachable";
     process.stderr.write(`[pai worker] pool: host unreachable on port ${settings.port} — spawning fresh\n`);
     return null;
   }
   if (!resp.pooled) {
-    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
-      id: a.id ?? "-",
-      provider: a.target.providerName,
-      reason: resp.reason ?? "refused",
-    });
+    a.spareMiss = resp.reason ?? "refused";
+    // a claim miss is already on the ledger as WORKER-POOL-MISS (host side)
+    if (!claim) {
+      appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
+        id: a.id ?? "-",
+        provider: a.target.providerName,
+        reason: resp.reason ?? "refused",
+      });
+    }
     if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${resp.reason ?? "refused"}) — spawning fresh\n`);
     return null;
   }
@@ -2227,10 +2249,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   let troubleTimer: ReturnType<typeof setInterval> | undefined;
   const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
+  // setup ends when the worker process holds its first turn; the first answer is timed from there
+  const timing: { readyAt: number; firstAt: number | null } = { readyAt: Date.now(), firstAt: null };
   if (headless) {
     // the first user message carries the prompt (the -p value was stripped)
     if (promptText !== null) {
       try {
+        timing.readyAt = Date.now();
         proc.stdin!.write(stdinUserMessage(promptText) + "\n");
       } catch {
         /* child died instantly; the close handler reports it */
@@ -2272,6 +2297,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         saveStatus(logDir, status);
       } else if (e.type === "assistant") {
         status.turns += 1;
+        timing.firstAt ??= Date.now();
         if (status.turns === 1) recordWarmup(logDir, status.provider, (Date.now() - t0) / 1000);
         bumpContextTokens(status, usageContextTokens(e.message?.usage));
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
@@ -2465,6 +2491,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       turns: status.turns,
       tools: status.tools,
       label,
+      ...(a.runT0 ? { setupMs: Math.max(0, timing.readyAt - a.runT0) } : {}),
+      ...(timing.firstAt !== null ? { firstAnswerMs: timing.firstAt - timing.readyAt } : {}),
+      ...(a.spareMiss ? { spare: "miss", spareMiss: a.spareMiss } : {}),
     },
     report: ctx.resultReport,
     fallbackText: resultEvent?.result,

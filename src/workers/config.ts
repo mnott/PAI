@@ -307,6 +307,12 @@ export interface WorkersPoolConfig {
   port: number;
   /** Native anthropic (Claude Code's own login) runs may use pooled slots; worktree runs never do. */
   native: boolean;
+  /** Spares per (repo, provider) key: pre-started task-less workers, one task each (0 = off). */
+  spares?: number;
+  /** Idle seconds before an unclaimed spare is retired (0 = never). */
+  idleKillSec?: number;
+  /** The old multi-task continuation path (one warm conversation serving many tasks); default off. */
+  continuation?: boolean;
 }
 
 /** The tier aliases the CLI and daemon tables understand — class proxies, not
@@ -560,6 +566,9 @@ export const DEFAULT_POOL: WorkersPoolConfig = {
   idleSecs: 900,
   port: 8798,
   native: true,
+  spares: 1,
+  idleKillSec: 1800,
+  continuation: false,
 };
 
 /**
@@ -1146,6 +1155,17 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
         bad(".pool.idleSecs", "must be a non-negative integer (seconds, 0 = never)");
       }
     }
+    if (pc.continuation !== undefined && typeof pc.continuation !== "boolean") bad(".pool.continuation", "must be boolean");
+    if (pc.spares !== undefined) {
+      if (typeof pc.spares !== "number" || !Number.isInteger(pc.spares) || pc.spares < 0 || pc.spares > 4) {
+        bad(".pool.spares", "must be an integer 0 … 4 (0 = off)");
+      }
+    }
+    if (pc.idleKillSec !== undefined) {
+      if (typeof pc.idleKillSec !== "number" || !Number.isInteger(pc.idleKillSec) || pc.idleKillSec < 0) {
+        bad(".pool.idleKillSec", "must be a non-negative integer (seconds, 0 = never)");
+      }
+    }
     if (pc.port !== undefined) {
       if (typeof pc.port !== "number" || !Number.isInteger(pc.port) || pc.port <= 0 || pc.port > 65535) {
         bad(".pool.port", "must be a TCP port (1 … 65535)");
@@ -1157,6 +1177,9 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
       idleSecs: pc.idleSecs === undefined ? DEFAULT_POOL.idleSecs : pc.idleSecs,
       port: pc.port === undefined ? DEFAULT_POOL.port : pc.port,
       native: pc.native === undefined ? DEFAULT_POOL.native : pc.native === true,
+      spares: pc.spares === undefined ? DEFAULT_POOL.spares : (pc.spares as number),
+      idleKillSec: pc.idleKillSec === undefined ? DEFAULT_POOL.idleKillSec : (pc.idleKillSec as number),
+      continuation: pc.continuation === undefined ? DEFAULT_POOL.continuation : pc.continuation === true,
     };
   }
 

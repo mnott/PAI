@@ -50,7 +50,7 @@ const listen = async (reply: object): Promise<number> => {
 
 const args = (logDir: string, port: number, noPane: boolean) =>
   ({
-    config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port }, capacity: { enabled: true }, pane: { enabled: true } },
+    config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port, continuation: true }, capacity: { enabled: true }, pane: { enabled: true } },
     logDir,
     quiet: true,
     id: "w-pane",
