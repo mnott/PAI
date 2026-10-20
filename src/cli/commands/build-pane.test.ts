@@ -23,15 +23,17 @@ describe("pai build run/lock and the pane", () => {
     expect(pane).toHaveBeenCalledTimes(1);
     expect(build).not.toHaveBeenCalled();
   });
-  it("from a worker it runs directly", async () => {
+  it("from a PAI_WORKER=1 process that is not the wrapper's child it goes through the pane", async () => {
     vi.stubEnv("PAI_WORKER", "1");
+    vi.stubEnv("PAI_PANE_EXEC", "");
+    vi.stubEnv("PAI_BUILD_TICKET", "");
     await run("run");
-    expect(pane).not.toHaveBeenCalled();
-    expect(build).toHaveBeenCalledTimes(1);
+    expect(pane).toHaveBeenCalledTimes(1);
+    expect(build).not.toHaveBeenCalled();
   });
-  it("inside a pane run it runs directly", async () => {
-    vi.stubEnv("PAI_WORKER", "");
-    vi.stubEnv("PAI_PANE_RUN", "1");
+  it("as the pane wrapper's direct child it runs directly", async () => {
+    vi.stubEnv("PAI_PANE_EXEC", "r1");
+    vi.stubEnv("PAI_PANE_EXEC_PID", String(process.ppid));
     await run("lock");
     expect(pane).not.toHaveBeenCalled();
     expect(build).toHaveBeenCalledTimes(1);

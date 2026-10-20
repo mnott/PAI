@@ -51,6 +51,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { itermUuid, scopeKey } from "./scope.js";
 import { psTable, psTableOrNull } from "./ps-table.js";
 import { escapePaneTitle, paneTitle } from "./pane-title.js";
+import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV } from "./pane-exec.js";
 
 export const PROFILE_NAME = "pai-worker";
 
@@ -1493,6 +1494,15 @@ export function headlessAllowed(env: NodeJS.ProcessEnv = process.env, file: stri
   if (env[ALLOW_HIDDEN_ENV] === "1") return `${ALLOW_HIDDEN_ENV}=1 (operator override)`;
   if (existsSync(file)) return `operator override file ${file}`;
   return null;
+}
+
+/**
+ * The one rule for "this process is already the pane's own child": only the direct child of the pane-exec
+ * wrapper is (the wrapper's pid is in the env and equals our ppid). A grandchild inherits the variables but
+ * opens its own pane; PAI_WORKER=1 or PAI_PANE_RUN=1 alone decide nothing.
+ */
+export function inVisiblePane(env: NodeJS.ProcessEnv = process.env, ppid: number = process.ppid): boolean {
+  return Boolean(env[PANE_EXEC_ENV]) && Number(env[PANE_EXEC_PID_ENV]) === ppid;
 }
 
 // Reports where the pane sits, without raising or focusing anything: a window

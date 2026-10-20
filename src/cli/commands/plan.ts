@@ -10,7 +10,8 @@ import { getProviderOrNative, readWorkersSection } from "../../workers/config.js
 import { workersLogDir } from "../../workers/paths.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { PlanTracker } from "../../workers/plan-status.js";
-import { inVisiblePane, runCommandInPane } from "./pane.js";
+import { inVisiblePane } from "../../workers/pane.js";
+import { runCommandInPane } from "./pane.js";
 import { dirtyPaths, pai, realRunnerDeps } from "../../workers/plan-deps.js";
 import { PlanReporter } from "../../workers/run-events.js";
 import { finishDetached, reportOriginWithHost, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
@@ -96,7 +97,7 @@ const runCmd: CommandDef = {
     const reporter = origin ? new PlanReporter(plan.job, plan.units.flatMap((u) => u.parts).length, runMessenger(logDir), origin) : null;
     const total = plan.units.flatMap((u) => u.parts).length;
     const tracker = new PlanTracker(logDir, plan.job, total, merged.size);
-    tracker.hasPane = Boolean(process.env.PAI_PANE_EXEC) && inVisiblePane();
+    tracker.hasPane = inVisiblePane();
     const real = realRunnerDeps(plan, logDir, log, tracker);
     const deps = reporter ? { ...real, log: (e: RunLogEntry) => { real.log(e); reporter.onLog(e); } } : real;
     let s: Awaited<ReturnType<typeof runPlan>>;

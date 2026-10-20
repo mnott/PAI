@@ -104,7 +104,6 @@ Starts a new worker on the same provider and model that picks up the conversatio
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--print-id` | flag | — | Print the new worker id on its own line |
-| `--no-pane` | flag | — | Start without a pane |
 | `--output-format FORMAT` | string | — | text (default), json or stream-json, as for `run` |
 | `--label TEXT` | string | — | Short task label (default: the old label with a return arrow) |
 

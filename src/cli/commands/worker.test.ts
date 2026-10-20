@@ -19,6 +19,11 @@ const PORTED = [
 ];
 
 describe("worker: declared surface", () => {
+  it("resume has no no-pane option: every start gets a pane", () => {
+    expect(sub("resume").options!.map((o) => o.name)).not.toContain("no-pane");
+    expect(() => parse("resume", ["w-1", "go", "--no-pane"])).toThrow();
+  });
+
   it("every ported verb exists with a summary, 2+ examples and a run function", () => {
     for (const v of PORTED) {
       const c = sub(v);

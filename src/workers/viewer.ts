@@ -819,10 +819,8 @@ export async function followWorkers(
   const spawnResume =
     io?.spawnResume ??
     ((id: string, text: string): ResumeChild =>
-      spawn("pai", ["worker", "resume", id, text, "--print-id", "--no-pane"], {
+      spawn("pai", ["worker", "resume", id, text, "--print-id"], {
         stdio: ["ignore", "pipe", "inherit"],
-        // this pane already shows the resumed worker: PAI_WORKER=1 lets the child run without a pane of its own
-        env: { ...process.env, PAI_WORKER: "1" },
       } as SpawnOptions) as unknown as ResumeChild);
   const resumeTarget = (text: string, id: string) => {
     noteLine(c("dim", `» resuming ${id} …`));

@@ -5,22 +5,12 @@
 
 import { readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { closePaneForWorker, closeSelfPane, resolveHostSession } from "../../workers/pane.js";
+import { closePaneForWorker, closeSelfPane, inVisiblePane, resolveHostSession } from "../../workers/pane.js";
 import { launchPane } from "../../workers/pane-launch.js";
-import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV, runPaneExec } from "../../workers/pane-exec.js";
+import { runPaneExec } from "../../workers/pane-exec.js";
 import { writePaneTitle } from "../../workers/pane-title.js";
-import { PANE_RUN_ENV, runInPane } from "../../workers/pane-run.js";
+import { runInPane } from "../../workers/pane-run.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
-
-/**
- * Only the launcher's direct child is already in its pane. Under a pane-exec wrapper the wrapper's pid
- * decides (a grandchild inherits the variables but opens its own pane); without one, the worker / pane-run
- * markers stand for "a pane was not needed or not available".
- */
-export function inVisiblePane(env: NodeJS.ProcessEnv = process.env, ppid: number = process.ppid): boolean {
-  if (env[PANE_EXEC_ENV]) return Number(env[PANE_EXEC_PID_ENV]) === ppid;
-  return env.PAI_WORKER === "1" || env[PANE_RUN_ENV] === "1";
-}
 
 /** Run `command` in a pane placed like a worker's (split, else tab, never a window); resolves to its exit code. */
 export function runCommandInPane(command: string[], label?: string, cwd?: string): Promise<number> {
