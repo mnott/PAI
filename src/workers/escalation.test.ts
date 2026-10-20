@@ -16,6 +16,9 @@ import { runEscalation, type EscalateRunDeps } from "./escalate-run.js";
 import { classifyRoute } from "./route-classifier.js";
 import { parseTiersValue } from "./route-lists.js";
 import { effectiveWorkersYamlRaw, shippedWorkersDefaults } from "../config/shipped-defaults.js";
+import { tryEscalate, type ExecuteArgs } from "./run.js";
+import { parseRunnerArgs } from "./args.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
 import { defaultWorkersConfig, parseWorkersConfig } from "./config.js";
 
 const tiers: TierDef[] = [
@@ -37,7 +40,7 @@ describe("tiers from config", () => {
     expect(parseTiersValue((shipped as { tiers?: unknown }).tiers).map((t) => t.id)).toEqual(["t0", "t1", "t2"]);
     expect(parseTiersValue((shipped as { tiers?: unknown }).tiers)[0].session).toBe(true);
     expect(d.escalate).toMatchObject({ enabled: true, contextFraction: 0.7, failures: 2 });
-    expect(d.escalate.triggers).toEqual(["context", "missing-tool", "repeated-failure"]);
+    expect(d.escalate.triggers).toEqual(["context", "missing-tool", "repeated-failure", "loop-stop"]);
   });
   it("parses and rejects bad config", () => {
     expect(parseTiersValue([{ id: "a", models: ["glm"] }])[0].classes).toBeUndefined();
@@ -175,5 +178,59 @@ describe("thresholds come from config", () => {
   it("the override changes the trigger's behaviour", () => {
     expect(detectTrigger({ contextTokens: 74, contextWindow: 100, cfg: parsed.escalate })).toBeNull();
     expect(detectTrigger({ contextTokens: 95, contextWindow: 100, cfg: parsed.escalate })?.reason).toBe("context 95%");
+  });
+});
+
+describe("loop-stop trigger", () => {
+  const stopped = { ...base, loopStopped: true, failures: 1, failureWhy: "loop-guard stop" };
+
+  it("a loop-stopped run with a salvage commit escalates t2 -> t1 at once with the salvage merge instruction", async () => {
+    const plan = planEscalation({ ...stopped, commits: ["abc salvage: uncommitted edits"] })!;
+    expect(plan.trigger.kind).toBe("loop-stop");
+    expect(plan.line).toMatch(/^escalated t2→t1: /);
+    const { d, calls } = deps();
+    expect(await runEscalation(plan, [], d)).toEqual({ kind: "rerun", rc: 0 });
+    expect(calls.reruns[0].prompt).toContain("Continue, do not restart: first git merge worker/w1");
+  });
+
+  it("salvaged edits alone count as saved work", () => {
+    expect(detectTrigger({ loopStopped: true, salvaged: true })?.kind).toBe("loop-stop");
+  });
+
+  it("a loop stop without saved work has no loop-stop trigger and follows the failures rule", () => {
+    expect(detectTrigger({ loopStopped: true, commits: [], failures: 1 })).toBeNull();
+    expect(planEscalation({ ...stopped, commits: [] })).toBeNull();
+    expect(detectTrigger({ loopStopped: true, commits: [], failures: 2 })?.kind).toBe("repeated-failure");
+  });
+
+  it("no loop-stop trigger in config -> no escalation at failures 1", () => {
+    const cfg = { ...DEFAULT_ESCALATE, triggers: DEFAULT_ESCALATE.triggers.filter((t) => t !== "loop-stop") };
+    expect(planEscalation({ ...stopped, cfg, commits: ["abc x"] })).toBeNull();
+  });
+
+  it("the loop-stop exit path calls the escalation: tryEscalate re-runs one tier up through the injected runner", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "esc-run-"));
+    const st = {
+      id: "w1", pid: -1, label: "job", cwd: logDir, term: "", provider: "p", model: "m", state: "failed",
+      started: "2026-10-21 01:00:00", updated: "2026-10-21 01:00:00", turns: 0, tools: 0, last: "", rc: 143, secs: 5,
+      loopStopped: true, branch: "worker/w1",
+    } as WorkerStatus;
+    saveStatus(logDir, st);
+    const seen: Array<{ providerFlag?: string; modelFlag?: string; claudeArgs: string[] }> = [];
+    const a = {
+      logDir,
+      config: { tiers, escalate: DEFAULT_ESCALATE },
+      className: "implement",
+      label: "job",
+      parsed: parseRunnerArgs(["-p", "ORIGINAL TASK"]),
+      opts: { claudeArgs: ["-p", "ORIGINAL TASK"] },
+      runner: async (o: { providerFlag?: string; modelFlag?: string; claudeArgs: string[]; onWorkerStart?: (id: string) => void }) => (seen.push(o), o.onWorkerStart?.("w2"), 0),
+    } as unknown as ExecuteArgs;
+    const rc = await tryEscalate(a, "w1", st, { result: "~" }, undefined, ["abc salvage"], "loop-guard stop");
+    expect(rc).toBe(0);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].providerFlag).toBe("anthropic");
+    expect(seen[0].claudeArgs[1]).toContain("Continue, do not restart: first git merge worker/w1");
+    expect(st.escalatedTo).toBe("w2");
   });
 });
