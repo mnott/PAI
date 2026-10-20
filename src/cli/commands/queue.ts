@@ -47,6 +47,11 @@ async function open(ctx: RunContext): Promise<{ repo: string; store: QueueStore;
  * `local`: the run resolves it to the server that answers (queue run's
  * --local path / the plan runner's resolvePlanProvider), never a guess.
  */
+function namedCap(name: string): number {
+  const p = getProviderOrNative(readWorkersSection().workers, name);
+  return effectiveCap(p?.maxConcurrent, true, p?.conversationSlots);
+}
+
 function providerOf(settings: QueueSettings): { name: string; cap: number } {
   try {
     const w = readWorkersSection().workers;
@@ -57,7 +62,7 @@ function providerOf(settings: QueueSettings): { name: string; cap: number } {
     const found = w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n));
     const name = settings.provider ?? found ?? "local";
     const p = name === "local" ? undefined : getProviderOrNative(w, name);
-    return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) };
+    return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true, p?.conversationSlots) };
   } catch {
     return { name: settings.provider ?? "local", cap: 3 };
   }
@@ -117,7 +122,7 @@ const runCmd: CommandDef = {
       ctx.opts.local === true
         ? await localProviderForDelegation()
         : named
-          ? { name: named, cap: effectiveCap(getProviderOrNative(readWorkersSection().workers, named)?.maxConcurrent, true) }
+          ? { name: named, cap: namedCap(named) }
           : providerOf(settings);
     const parallel = typeof ctx.opts.parallel === "number" ? Math.max(1, Math.floor(ctx.opts.parallel)) : (settings.maxParallel ?? prov.cap);
     const logDir = workersLogDir(readWorkersSection().workers);

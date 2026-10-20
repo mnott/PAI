@@ -465,6 +465,8 @@ export interface WorkersConfig {
   cacheKeepaliveSecs: number;
   /** Default time limit of every run in minutes (workers.defaultMaxMinutes); 0 = none. */
   defaultMaxMinutes: number;
+  /** Minutes a run may queue for a slot before the owner is told (workers.waitAlarmMinutes); default 120. */
+  waitAlarmMinutes: number;
   /** Start gate for same-provider runs (workers.stagger); see stagger.ts. */
   stagger: StaggerConfig;
   /** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
@@ -600,6 +602,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     pool: { ...DEFAULT_POOL },
     cacheKeepaliveSecs: DEFAULT_CACHE_KEEPALIVE_SECS,
     defaultMaxMinutes: DEFAULT_MAX_MINUTES,
+    waitAlarmMinutes: 120,
     stagger: { ...DEFAULT_STAGGER },
     capacity: { ...DEFAULT_CAPACITY },
     localIdle: { ...DEFAULT_LOCAL_IDLE },
@@ -1176,6 +1179,13 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     }
     defaultMaxMinutes = w.defaultMaxMinutes;
   }
+  let waitAlarmMinutes = 120;
+  if (w.waitAlarmMinutes !== undefined) {
+    if (typeof w.waitAlarmMinutes !== "number" || !Number.isInteger(w.waitAlarmMinutes) || w.waitAlarmMinutes < 1) {
+      bad(".waitAlarmMinutes", "must be a positive integer (minutes)");
+    }
+    waitAlarmMinutes = w.waitAlarmMinutes;
+  }
   const stagger = { ...DEFAULT_STAGGER };
   if (w.stagger !== undefined) {
     if (typeof w.stagger !== "object" || w.stagger === null || Array.isArray(w.stagger)) {
@@ -1297,6 +1307,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     pool,
     cacheKeepaliveSecs,
     defaultMaxMinutes,
+    waitAlarmMinutes,
     stagger,
     capacity,
     localIdle,
@@ -1386,6 +1397,7 @@ export function writeWorkersSection(
         pool: workers.pool,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
+        waitAlarmMinutes: workers.waitAlarmMinutes,
         stagger: workers.stagger,
         capacity: workers.capacity,
         localIdle: workers.localIdle,

@@ -47,9 +47,9 @@ export function resolveCap(maxConcurrent: number | undefined, local: boolean): n
   return maxConcurrent ?? (local ? LOCAL_DEFAULT_CAP : undefined);
 }
 
-/** resolveCap with a number always: unlimited becomes UNCAPPED_QUEUE_CAP (queue/plan runners). */
-export function effectiveCap(maxConcurrent: number | undefined, local: boolean): number {
-  return resolveCap(maxConcurrent, local) ?? UNCAPPED_QUEUE_CAP;
+/** admitCap (the one admission rule, conversationSlots included) with a number always: unlimited becomes UNCAPPED_QUEUE_CAP (queue/plan runners). */
+export function effectiveCap(maxConcurrent: number | undefined, local: boolean, conversationSlots?: number): number {
+  return admitCap(maxConcurrent, conversationSlots, local) ?? UNCAPPED_QUEUE_CAP;
 }
 
 /**

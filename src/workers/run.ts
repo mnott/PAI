@@ -168,7 +168,7 @@ import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./prea
 import { killTree } from "./kill-tree.js";
 import { armResultGrace, leftoverNote } from "./result-grace.js";
 import { armDeadline, deadlinePromptLine, extendLimit, resolveLimit, type RunLimit } from "./deadline.js";
-import { buildWaitMs } from "./active-time.js";
+import { blockedMsOf } from "./active-time.js";
 import { aibrokerMessenger } from "./run-events.js";
 import { ownerOf } from "./local-idle.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
@@ -1174,7 +1174,7 @@ const SIGNAL_SALVAGE_MS = 5_000;
 
 /** The deadline fired: record it on the status and in the ledger (the caller then stops the child). */
 export function fireDeadline(logDir: string, status: WorkerStatus, ledger: string, limit: RunLimit): void {
-  const waited = Math.round(((status.queueWaitedMs ?? 0) + buildWaitMs(logDir, status.id)) / 60_000);
+  const waited = Math.round(((status.queueWaitedMs ?? 0) + blockedMsOf(logDir, status.id)) / 60_000);
   const what = limit.absolute ? `deadline reached after ${limit.minutes} min` : `deadline reached after ${limit.minutes} active min${waited ? ` (waited ${waited} min, not counted)` : ""}`;
   status.timedOut = true;
   status.last = what;
@@ -1192,7 +1192,7 @@ function trackBlocked(logDir: string, status: WorkerStatus, limit: RunLimit | nu
   if (!limit) return () => undefined;
   const base = limit.deadlineAt;
   const t = setInterval(() => {
-    const b = buildWaitMs(logDir, status.id);
+    const b = blockedMsOf(logDir, status.id);
     if (b === (status.blockedMs ?? 0)) return;
     status.blockedMs = b;
     if (!limit.absolute) status.deadlineAt = base + b;
@@ -1657,6 +1657,7 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
     log: (line) => {
       process.stderr.write(`${line}\n`);
     },
+    alarmMs: (config.waitAlarmMinutes ?? 120) * 60_000,
     onAlarm: (w) => {
       const text = `[pai worker] ${wid} (${status.label}) has waited ${Math.round(w.elapsedSec / 60)} min for a ${w.provider} slot (position ${w.position} of ${w.queued}). It keeps waiting; kill it or reorder with \`pai worker queue\`.`;
       process.stderr.write(`${text}\n`);
@@ -2145,7 +2146,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   let killed = false;
   const resultGrace = armResultGrace(headless ? proc.pid : undefined);
-  const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => buildWaitMs(logDir, wid)) : null;
+  const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid)) : null;
   const stopTrack = trackBlocked(logDir, status, limit);
   const cleanup = () => {
     stopDeadline?.();
@@ -2725,7 +2726,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   });
 
   let killed = false;
-  const stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => buildWaitMs(logDir, wid)) : null;
+  const stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => blockedMsOf(logDir, wid)) : null;
   const stopTrack = trackBlocked(logDir, status, a.limit);
   process.once("SIGTERM", onCodexSignal("SIGTERM"));
   process.once("SIGINT", onCodexSignal("SIGINT"));

@@ -118,6 +118,11 @@ async function resolveWhere(a: WhereArgs, deps: DelegationDeps, batch = false): 
   return t.provider ? t : undefined;
 }
 
+function namedCap(name: string): number {
+  const p = getProviderOrNative(readWorkersSection().workers, name);
+  return effectiveCap(p?.maxConcurrent, true, p?.conversationSlots);
+}
+
 export function localProvider(settings: QueueSettings): { name: string; cap: number } {
   try {
     const w = readWorkersSection().workers;
@@ -127,7 +132,7 @@ export function localProvider(settings: QueueSettings): { name: string; cap: num
     };
     const name = settings.provider ?? (w.active && w.active !== "auto" && local(w.active) ? w.active : Object.keys(w.providers).find((n) => local(n))) ?? "local";
     const p = getProviderOrNative(w, name);
-    return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true) };
+    return { name, cap: effectiveCap(p?.maxConcurrent, p ? isLocalProvider(p.baseUrl) : true, p?.conversationSlots) };
   } catch {
     return { name: settings.provider ?? "local", cap: 3 };
   }
@@ -144,7 +149,7 @@ export function realDelegationDeps(): DelegationDeps {
     },
     provider: localProvider,
     target: (a) => resolveTarget(a),
-    capOf: (name) => effectiveCap(getProviderOrNative(readWorkersSection().workers, name)?.maxConcurrent, true),
+    capOf: (name) => namedCap(name),
     dirtyPaths,
     logDir: () => workersLogDir(readWorkersSection().workers),
     detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),
