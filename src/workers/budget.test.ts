@@ -135,10 +135,11 @@ describe("BudgetCache", () => {
       polled++;
       return reading(50, null);
     });
-    cache.seed({ glm: reading(96, 123) }, 5_000);
+    const seeded = reading(96, 123, 1_000);
+    cache.seed({ glm: seeded }, 5_000);
     const cfg = oneProviderConfig();
     await cache.warm(cfg, 6_000);
-    expect(cache.get("glm")).toEqual(reading(96, 123));
+    expect(cache.get("glm")).toEqual(seeded);
     expect(polled).toBe(0);
     await cache.warm(cfg, 66_000);
     expect(polled).toBe(2);
