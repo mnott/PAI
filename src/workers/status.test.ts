@@ -127,3 +127,17 @@ describe("ownsPid with queued-then-started workers", () => {
     expect(ownsPid({ id: idFor(1, own), pid: process.pid, started: late })).toBe(false);
   });
 });
+
+describe("ownsPid for pooled statuses", () => {
+  it("is alive while the slot pid is alive and a child of the host", () => {
+    expect(ownsPid({ pid: process.pid, started: "2020-01-01 00:00:00", pool: { hostPid: process.ppid } })).toBe(true);
+  });
+
+  it("is not alive when the slot pid is dead, even with a live host", () => {
+    expect(ownsPid({ pid: 999999, started: nowStamp(), pool: { hostPid: process.pid } })).toBe(false);
+  });
+
+  it("is not alive when the pid is live but not a child of the host", () => {
+    expect(ownsPid({ pid: process.pid, started: nowStamp(), pool: { hostPid: process.pid } })).toBe(false);
+  });
+});
