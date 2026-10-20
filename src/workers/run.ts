@@ -371,7 +371,12 @@ export type StreamEvent = {
   duration_api_ms?: number;
 };
 
-/** Context tokens of an assistant/result usage block (input+cache+output). */
+/**
+ * Context tokens of an assistant usage block (input+cache+output). Only ever
+ * meaningful on a per-turn block: a `result` event's usage is the run's
+ * CUMULATIVE total (summed over all turns), so it must never feed the context
+ * meter — see `bumpContextTokens`.
+ */
 export function usageContextTokens(u: UsageBlock | undefined): number | null {
   if (!u) return null;
   const t =
@@ -391,9 +396,11 @@ export function usageContextUsed(u: UsageBlock | undefined): number | null {
 
 /**
  * Context never shrinks mid-segment, so the status keeps the high-water
- * mark of the usage it has seen: a smaller later reading (short reply,
- * sidechain answer) must not drag the meter down. Compaction is the one
- * legitimate drop — see `resetContextTokensOnCompact`.
+ * mark of the PER-TURN readings it has seen: a smaller later reading (short
+ * reply, sidechain answer) must not drag the meter down. A `result` event's
+ * usage is the run's cumulative total, never a turn fill, and must not be
+ * passed here. Compaction is the one legitimate drop — see
+ * `resetContextTokensOnCompact`.
  */
 export function bumpContextTokens(status: Pick<WorkerStatus, "contextTokens">, tokens: number | null): void {
   if (tokens === null || tokens <= 0) return;
@@ -408,7 +415,7 @@ export function bumpContextTokens(status: Pick<WorkerStatus, "contextTokens">, t
  * reading re-seeds the meter at the fresh, smaller context.
  */
 export function resetContextTokensOnCompact(status: Pick<WorkerStatus, "contextTokens">, e: StreamEvent): void {
-  status.contextTokens = usageContextTokens(e.usage) ?? null;
+  status.contextTokens = usageContextUsed(e.usage) ?? null;
 }
 
 /** A compact boundary in a worker's stream, in either event spelling. */
@@ -2472,6 +2479,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     resultEvent: null,
     resultReport: null,
   };
+  // The latest per-turn fill (input side of the newest assistant usage, reset
+  // at a compact boundary): the context meter's high-water mark is kept on the
+  // status, but a compact result must drop it to THIS value — a result event's
+  // usage is the run's cumulative total, never the post-compact context.
+  // Holder object: a plain `let` would be flow-narrowed to null at the use
+  // site below, since only the readline callback ever assigns it.
+  const turnFill: { last: number | null } = { last: null };
   // every Bash call + outcome, and the untracked files present at spawn: the
   // end-of-run proof check (checkProof) and stray-file listing read these
   const bashRuns: BashRun[] = [];
@@ -2524,12 +2538,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         saveStatus(logDir, status);
       } else if (isCompactBoundary(e)) {
         resetContextTokensOnCompact(status, e);
+        turnFill.last = usageContextUsed(e.usage) ?? null;
         saveStatus(logDir, status);
       } else if (e.type === "assistant") {
         status.turns += 1;
         timing.firstAt ??= Date.now();
         if (status.turns === 1) recordWarmup(logDir, status.provider, (Date.now() - t0) / 1000);
-        bumpContextTokens(status, usageContextTokens(e.message?.usage));
+        bumpContextTokens(status, usageContextUsed(e.message?.usage));
+        turnFill.last = usageContextUsed(e.message?.usage) ?? turnFill.last;
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         for (const block of e.message?.content ?? []) {
           if (block.type === "tool_use") {
@@ -2582,10 +2598,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
           if (sawResult) saveStatus(logDir, status);
         }
       } else if (e.type === "result") {
-        const tokens = usageContextTokens(e.usage);
-        // a compact result legitimately restarts the context lower
-        if (e.is_compact) status.contextTokens = tokens ?? status.contextTokens;
-        else bumpContextTokens(status, tokens);
+        // a result event's usage is the run's CUMULATIVE total (summed over
+        // all turns), never a turn fill: it must not raise the context meter
+        // (a 200k-window run once read "context 690%" from its 1.38M total).
+        // A compact result legitimately restarts the context lower: the meter
+        // drops to the last per-turn fill the assistant events recorded (the
+        // post-compact context), never to the result's cumulative usage.
+        if (e.is_compact) status.contextTokens = turnFill.last ?? status.contextTokens;
         const report = parseWorkerReport(e.result ?? "");
         if (report?.notes) status.last = shortText(report.notes, 90);
         else if (e.result) status.last = shortText(e.result, 90);

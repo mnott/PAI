@@ -1015,7 +1015,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       } else if (e.type === "assistant") {
         status.turns += 1;
         timing.firstAt ??= Date.now();
-        bumpContextTokens(status, usageContextTokens(e.message?.usage));
+        bumpContextTokens(status, usageContextUsed(e.message?.usage));
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         if (!scratch.firstUsage && usageContextTokens(e.message?.usage)) scratch.firstUsage = e.message?.usage ?? null;
         for (const block of e.message?.content ?? []) {
@@ -1046,7 +1046,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       } else if (e.type === "result") {
         // glm-family endpoints report zeros on every assistant message and
         // the real totals on the result event — use it for the carry metric
-        // when no assistant usage carried numbers
+        // when no assistant usage carried numbers. The meter is untouched:
+        // a result event's usage is the run's cumulative total, never a turn
+        // fill (a pooled slot spans tasks, so it would poison every later one).
         const ru = (e as { usage?: UsageBlock }).usage;
         const ruTokens = usageContextTokens(ru);
         if (!scratch.firstUsage && ru && ruTokens !== null && ruTokens > 0) scratch.firstUsage = ru;

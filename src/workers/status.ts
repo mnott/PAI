@@ -71,7 +71,7 @@ export interface WorkerStatus {
   spawnerSession?: string | null;
   /** Follow-pane outcome of the run start: opened, or why not. */
   pane?: { opened: boolean; reason?: string; failed?: boolean; session?: string; placement?: "split"; exec?: boolean } | null;
-  /** Context meter: tokens of the last assistant turn (input+cache+output). */
+  /** Context meter: peak fill of one assistant turn (input+cache, no output); never the run's token total. */
   contextTokens?: number | null;
   /** Current context fill: input+cache_read+cache_creation of the latest assistant turn. */
   contextUsed?: number | null;
