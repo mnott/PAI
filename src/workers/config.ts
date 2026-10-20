@@ -1394,7 +1394,13 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     active,
     providers,
     classes,
-    tiers: parseTiersValue(w.tiers, "workers.tiers"),
+    // a `local` placeholder entry resolves to the first enabled local provider
+    // of this section (the JSON path has no `local:` key)
+    tiers: parseTiersValue(
+      w.tiers,
+      "workers.tiers",
+      Object.entries(providers).find(([, p]) => p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl))?.[0] ?? null
+    ),
     mcpSets,
     capabilities,
     pane,
@@ -1491,6 +1497,11 @@ export function readWorkersSection(
   migrateClassRoutes(workers.classes);
   migrateLegacyChains((raw.workers as { chains?: unknown } | undefined)?.chains, workers.classes);
   migrateToTiers(workers);
+  // no user workers.yaml and no legacy roles to fold: the shipped delegation table
+  if (!workers.tiers.length) {
+    const local = Object.entries(workers.providers).find(([, p]) => p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl))?.[0] ?? null;
+    workers.tiers = parseTiersValue(shippedWorkersDefaults().tiers, "defaults tiers", local);
+  }
   // role keys left over a config that already has tiers fold into the class ->
   // tier mapping (their list into the served tier) and drop — they must not
   // reach the pin migration as a "pin"
