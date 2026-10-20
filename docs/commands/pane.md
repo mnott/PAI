@@ -25,7 +25,7 @@ Run a command in a visible pane and wait for it
 pai pane run [options]
 ```
 
-Opens one pane (split of this window, else a tab, never a new window) that shows the command's live output and its exit code, tees the output to <PAI home>/logs/panes/<id>.log, and blocks until the command ends. The pane closes itself five seconds after the command ends, whatever the exit code; the full output stays in the log. Then it prints the last 40 lines and exits with the command's exit code, so a backgrounded call still reports back to the session. SIGTERM/SIGINT/SIGHUP to this command kill the command's whole process group. Every background shell command of a session goes through here: the Bash guard denies a bare run_in_background command. Several words are exec'd as given; a single word is run by sh -c.
+Opens one pane (split of this window, never a new window) FIRST and runs the command in it as the child of `pai pane exec`, which shows the live output and its exit code, writes <PAI home>/state/pane-exec/<id>.exit and closes the pane when the command ends, whatever the exit code. The caller tees the output to <PAI home>/logs/panes/<id>.log and blocks until the command ends. With no terminal at all the command runs directly. Then it prints the last 40 lines and exits with the command's exit code, so a backgrounded call still reports back to the session. SIGTERM/SIGINT/SIGHUP to this command kill the command's whole process group. Every background shell command of a session goes through here: the Bash guard denies a bare run_in_background command. Several words are exec'd as given; a single word is run by sh -c.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -40,11 +40,32 @@ pai pane run -- sleep 30
 
 See also: `pai worker ps`, `pai worker follow`, `pai build run`
 
+### pai pane exec
+
+Internal: the wrapper a pane runs; owns the process started in it
+
+```
+pai pane exec ID
+```
+
+The command of every pane PAI opens for a process it starts (a worker, a plan runner, `pai pane run`). It connects to the starting `pai` process, which sends the real command; the wrapper runs it as its child, shows its output in the pane, writes <PAI home>/state/pane-exec/<id>.exit (exit code + end time) and exits when the child exits, so the pane closes with the process. If the starting process goes away, the child is killed. Not for direct use.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Run id the starting process listens for |
+
+```sh
+pai pane exec pane-20260101-0000-ab12
+```
+
+See also: `pai pane run`
+
 ## Subcommands
 
 | Command | Description |
 |---|---|
 | `pai pane run` | Run a command in a visible pane and wait for it |
+| `pai pane exec` | Internal: the wrapper a pane runs; owns the process started in it |
 
 ## See also
 

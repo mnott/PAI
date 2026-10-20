@@ -13,7 +13,6 @@ import { eventsPath } from "./paths.js";
 import { loadStatuses } from "./status.js";
 import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
-import { headlessAllowed, openVerifiedPane, realPaneOps, resolveHostSession } from "./pane.js";
 import { getProviderOrNative, readWorkersSection } from "./config.js";
 import { GATE_MARK } from "./worktree.js";
 import { PlanTracker, gatePhaseName } from "./plan-status.js";
@@ -231,24 +230,6 @@ export async function mergeBranch(repo: string, id: string, gate: string, onGate
   const head = await rev("rev-parse", "HEAD");
   if (head) mergedHeads.set(repo, (mergedHeads.get(repo) ?? new Set()).add(head));
   return { ok: true, commit: head || undefined, before, output };
-}
-
-/**
- * The runner's own pane for its whole life (a split of the host tab, never a window): `pai worker follow plan-<job>`
- * streams the runner's live log and exits when the run ends. Each worker opens its own pane. A pane that cannot open is
- * logged and the run goes on; its workers' own fail-closed gate still applies.
- */
-export async function openPlanPane(logDir: string, tracker: PlanTracker, open: typeof openVerifiedPane = openVerifiedPane, host: () => Promise<{ term: string }> = resolveHostSession): Promise<boolean> {
-  if (headlessAllowed()) return false;
-  try {
-    const term = (await host()).term;
-    tracker.log(`plan pane: ${await open(logDir, readWorkersSection().workers, tracker.id, term, process.env, realPaneOps)}`);
-    tracker.hasPane = true;
-    return true;
-  } catch (e) {
-    tracker.log(`plan pane not opened: ${e instanceof Error ? e.message : String(e)}`);
-    return false;
-  }
 }
 
 export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, tracker?: PlanTracker): RunnerDeps {

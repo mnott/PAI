@@ -312,7 +312,7 @@ function followTtys(): Set<string> {
   for (const line of psOutput("tty=,command=").split("\n")) {
     const parts = line.trim().split(/\s+/, 2);
     if (parts.length < 2 || parts[0] === "ps") continue;
-    if (!/(^|\/)(worker-follow|pai worker follow|glm-ps follow)\b/.test(parts[1])) continue;
+    if (!/(^|\/)(worker-follow|pai worker follow|pane exec|glm-ps follow)\b/.test(parts[1])) continue;
     if (parts[0].startsWith("ttys")) ttys.add(`/dev/${parts[0]}`);
   }
   return ttys;
@@ -320,7 +320,7 @@ function followTtys(): Set<string> {
 
 /** True while a `follow <wid>` process runs (its pane shows that worker). */
 export function workerPaneOpen(wid: string): boolean {
-  const pat = new RegExp(`(?:worker follow|worker-follow|glm-ps follow) ${wid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const pat = new RegExp(`(?:worker follow|worker-follow|pane exec|glm-ps follow) ${wid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
   return psOutput("command=").split("\n").some((ln) => pat.test(ln));
 }
 
@@ -331,7 +331,7 @@ function followRunsHere(uid: string): boolean {
   if (!tty) return false;
   return psOutput("tty=,command=")
     .split("\n")
-    .some((ln) => ln.trim().startsWith(`${tty.replace(/^\/dev\//, "")} `) && /(^|\/)(worker[- ]follow|glm-ps follow)\b/.test(ln));
+    .some((ln) => ln.trim().startsWith(`${tty.replace(/^\/dev\//, "")} `) && /(^|\/)(worker[- ]follow|pane exec|glm-ps follow)\b/.test(ln));
 }
 
 // The tty of the iTerm session with a given unique id (argv[0]), "" when not live.
@@ -752,7 +752,7 @@ export const realPaneOps: PaneOps = {
 };
 
 // A follow command of any PAI id: a worker, a plan run or a `pai pane run` pane.
-const FOLLOW_ID = /worker[- ]follow ([A-Za-z0-9._-]+)/;
+const FOLLOW_ID = /(?:worker[- ]follow|pane exec) ([A-Za-z0-9._-]+)/;
 
 /** End one worker's registered iTerm pane, found by worker id. True if a pane was closed. */
 export async function closePaneForWorker(logDir: string, wid: string, ops: PaneOps = realPaneOps): Promise<boolean> {
@@ -1312,14 +1312,15 @@ export async function openPaneForWorker(
   logDir: string,
   config: WorkersConfig,
   wid: string,
-  term: string
+  term: string,
+  command?: string
 ): Promise<PaneOpenResult> {
   if (workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
   const backend = paneBackend(process.env, process.platform, term);
   if (backend === "none") return { message: noPaneMessage(wid), session: null };
   if (backend === "tmux") {
     tmuxPaneTitle = workerPaneTitle(logDir, wid);
-    tmuxSplit(followCommand(wid));
+    tmuxSplit(command ?? followCommand(wid));
     return { message: `pane opened for ${wid}`, session: null };
   }
   const uid = itermUuid(term);
@@ -1328,7 +1329,7 @@ export async function openPaneForWorker(
   await closeEndedInScope(logDir, scope);
   const reg = loadRegistry(logDir, scope);
   const profile = await followProfile(config.pane.fontSize);
-  const cmd = followCommand(wid);
+  const cmd = command ?? followCommand(wid);
   // registry newest first: the split lands below the lowest live worker pane
   const cands = [...reg].reverse().map((e) => e.session).join(",");
   const sizes = (await osascript(TAB_SIZES_SCRIPT, [uid])).stdout.trim();
@@ -1578,7 +1579,7 @@ function followRunsOn(tty: string, wid: string): boolean {
   }
   return table
     .split("\n")
-    .some((ln) => ln.trim().startsWith(`${short} `) && new RegExp(`worker follow ${wid}\\b`).test(ln));
+    .some((ln) => ln.trim().startsWith(`${short} `) && new RegExp(`(?:worker follow|pane exec) ${wid}\\b`).test(ln));
 }
 
 /**
@@ -1625,8 +1626,13 @@ export async function verifyPane(
   throw new Error(`pane verification failed: \`worker follow ${wid}\` is not running in the pane (${last})`);
 }
 
+/** No iTerm2 or tmux reachable: the caller runs its command directly ("no terminal", not a violation). */
+export class NoTerminalError extends Error {}
+
 /** Test seams of openVerifiedPane: the real iTerm-touching steps. */
 export interface PaneSeam {
+  /** The pane's command (default: `worker follow <wid>`); the launcher passes `pane exec <wid>`. */
+  command?: string;
   split?: typeof openPaneForWorker;
   verify?: typeof verifyPane;
   hostSelected?: (hostUid: string) => Promise<boolean>;
@@ -1651,7 +1657,7 @@ export async function openVerifiedPane(
   const split = seam.split ?? openPaneForWorker;
   const verify = seam.verify ?? verifyPane;
   if (env.TMUX) {
-    const r = await openPaneForWorker(logDir, config, wid, term);
+    const r = await openPaneForWorker(logDir, config, wid, term, seam.command);
     if (!r.message.startsWith("pane opened")) throw new Error(`pane verification failed: ${r.message}`);
     return "tmux pane";
   }
@@ -1660,7 +1666,7 @@ export async function openVerifiedPane(
   if (!envUid && !hostUid) {
     const daemon = (seam.daemon ?? (() => underBackgroundDaemon()))();
     const refusal = `neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees${daemon ? " (runs under the Claude background daemon; no attached terminal found)" : ""}`;
-    throw new Error(refusal);
+    throw new NoTerminalError(refusal);
   }
   if (envUid && envUid !== hostUid) {
     throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
@@ -1668,7 +1674,7 @@ export async function openVerifiedPane(
   // Every pane is a split of the host's own tab: never a window, never another tab. A host tab that is not
   // the selected one still gets its split (the operator finds it there); only the visibility proof is skipped.
   const hostShown = await (seam.hostSelected ?? hostTabSelected)(hostUid);
-  let r = await split(logDir, config, wid, term);
+  let r = await split(logDir, config, wid, term, seam.command);
   if (!r.session) throw new Error(`pane verification failed: ${r.message}`);
   if (!hostShown) {
     placements.set(wid, "split");
@@ -1692,4 +1698,13 @@ export async function openVerifiedPane(
     await closePaneForWorker(logDir, wid, ops).catch(() => false);
     throw e;
   }
+}
+
+/**
+ * The `pane exec` wrapper closing its own iTerm session after it wrote its exit file, so the pane goes
+ * with the process even under a profile without Close Sessions On End. tmux panes end with their command.
+ */
+export async function closeSelfPane(env: NodeJS.ProcessEnv = process.env, ops: PaneOps = realPaneOps): Promise<boolean> {
+  const uid = itermUuid(env.ITERM_SESSION_ID ?? "");
+  return uid ? ops.closeIterm(uid).catch(() => false) : false;
 }

@@ -377,6 +377,7 @@ describe("spare helpers and the client", () => {
       logDir: d,
       quiet: true,
       id: "w-cl",
+      noPane: true,
       label: "x",
       model: "m",
       cwd: tmpdir(),

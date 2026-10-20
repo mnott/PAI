@@ -868,7 +868,7 @@ describe("worktree result: recordWorktree's return, not the stale local, must be
   });
 });
 
-describe("announcePane", () => {
+describe("announcePane (records, never opens)", () => {
   const cfg = parseWorkersConfig({});
   let dir: string;
   let ledger: string;
@@ -879,7 +879,9 @@ describe("announcePane", () => {
     ledger = join(dir, "ledger.jsonl");
     stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     vi.mocked(pane.openPaneForWorker).mockReset();
-    vi.stubEnv("TMUX", "/tmp/tmux-1/default,1,0");
+    vi.stubEnv("PAI_WORKER", "");
+    vi.stubEnv("PAI_WORKER_ALLOW_HIDDEN", "");
+    vi.stubEnv("PAI_HEADLESS_OK_FILE", join(dir, "no-such-override"));
   });
 
   afterEach(() => {
@@ -888,47 +890,16 @@ describe("announcePane", () => {
     vi.unstubAllEnvs();
   });
 
-  it("reports the new pane's iTerm session on success", async () => {
-    vi.mocked(pane.openPaneForWorker).mockResolvedValue({ message: "pane opened for w1", session: "SESS-1" });
-    await announcePane(dir, cfg, "w1", "term-1", false, ledger);
-    expect(stderr).toHaveBeenCalledWith("[pai worker] pane opened for w1 (iTerm session SESS-1)\n");
-  });
-
-  it("reports failure on stderr and keeps the PANE-FAIL ledger line", async () => {
-    vi.mocked(pane.openPaneForWorker).mockRejectedValue(new Error("boom"));
-    await announcePane(dir, cfg, "w1", "term-1", false, ledger);
-    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: boom\n");
-    const lines = parseLedger(readFileSync(ledger, "utf8"));
-    expect(lines.some((l) => l.event === "PANE-FAIL" && l.fields.id === "w1")).toBe(true);
-  });
-
-  it.each([
-    ["--no-pane flag", { noPane: true, config: cfg, term: "term-1" }, "--no-pane"],
-    [
-      "workers.pane.enabled false",
-      { noPane: false, config: { ...cfg, pane: { ...cfg.pane, enabled: false } }, term: "term-1" },
-      "workers.pane.enabled is false",
-    ],
-    ["no tmux, no iTerm2", { noPane: false, config: cfg, term: "" }, "no tmux ($TMUX) or iTerm2 (ITERM_SESSION_ID) here"],
-  ] as const)("skips and names why: %s", async (label, o, reason) => {
-    if (label === "no tmux, no iTerm2") {
-      vi.stubEnv("TMUX", "");
-      vi.stubEnv("ITERM_SESSION_ID", "");
-    }
-    await announcePane(dir, o.config, "w1", o.term, o.noPane, ledger);
-    expect(stderr).toHaveBeenCalledWith(`[pai worker] no pane for w1: ${reason}\n`);
-    expect(pane.openPaneForWorker).not.toHaveBeenCalled();
-  });
-
-  it("skips with PAI_WORKER_AUTOPANE=0", async () => {
-    vi.stubEnv("PAI_WORKER_AUTOPANE", "0");
-    await announcePane(dir, cfg, "w1", "term-1", false, ledger);
-    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: PAI_WORKER_AUTOPANE=0\n");
+  it("names the reason in the status and on stderr; never opens a pane", async () => {
+    const status = { pane: undefined } as { pane?: unknown };
+    await announcePane(dir, cfg, "w1", "term-1", true, ledger, status as never);
+    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: --no-pane\n");
+    expect(status.pane).toMatchObject({ opened: false, reason: "--no-pane" });
     expect(pane.openPaneForWorker).not.toHaveBeenCalled();
   });
 });
 
-describe("requireVisiblePane (never refuses)", () => {
+describe("requireVisiblePane", () => {
   const cfg = parseWorkersConfig({});
   let dir: string;
   let ledger: string;
@@ -950,28 +921,19 @@ describe("requireVisiblePane (never refuses)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("opens and verifies the pane before the worker starts", async () => {
-    vi.mocked(pane.openVerifiedPane).mockResolvedValue("window 7 tab 1/1");
-    expect(await requireVisiblePane(dir, cfg, "w1", "term-1", false, false, ledger)).toBe(true);
-    expect(stderr).toHaveBeenCalledWith("[pai worker] pane verified for w1: window 7 tab 1/1\n");
-  });
-
-  it("a failed pane never refuses: false, a WORKER-NO-PANE ledger line with the reason, status shows it", async () => {
-    vi.mocked(pane.openVerifiedPane).mockRejectedValue(
-      new Error("neither TMUX nor ITERM_SESSION_ID is set: this process does not run in a terminal pane the operator sees (runs under the Claude background daemon; no attached terminal found)")
-    );
+  it("no terminal at all: false (the command runs directly), a PANE-NOTERMINAL ledger line, status shows the reason", async () => {
+    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new pane.NoTerminalError("neither TMUX nor ITERM_SESSION_ID is set"));
     await expect(requireVisiblePane(dir, cfg, "w1", "", false, false, ledger)).resolves.toBe(false);
-    const lines = parseLedger(readFileSync(ledger, "utf8"));
-    expect(lines.some((l) => l.event === "WORKER-NO-PANE" && l.fields.id === "w1")).toBe(true);
-    expect(readFileSync(ledger, "utf8")).toMatch(/WORKER-NO-PANE.*background daemon/);
     const status = { pane: undefined } as { pane?: unknown };
     await announcePane(dir, cfg, "w1", "", false, ledger, status as never);
-    expect(status.pane).toMatchObject({ opened: false, failed: true, reason: expect.stringContaining("background daemon") });
+    expect(status.pane).toMatchObject({ opened: false, reason: "no terminal" });
   });
 
-  it("verification that never confirms starts the worker without a pane too", async () => {
-    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("pane verification failed: `worker follow w2` is not running in the pane"));
-    await expect(requireVisiblePane(dir, cfg, "w2", "term-1", false, false, ledger)).resolves.toBe(false);
+  it("a pane that cannot open refuses the start: the command does not run unseen", async () => {
+    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("pane verification failed: split failed"));
+    await expect(requireVisiblePane(dir, cfg, "w2", "term-1", false, false, ledger)).rejects.toThrow(/pane could not be opened: pane verification failed/);
+    const lines = parseLedger(readFileSync(ledger, "utf8"));
+    expect(lines.some((l) => l.event === "WORKER-NO-PANE" && l.fields.id === "w2")).toBe(true);
   });
 
   it("an explicit hidden request is honoured without a consent file", async () => {
@@ -986,9 +948,9 @@ describe("requireVisiblePane (never refuses)", () => {
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
   });
 
-  it("config pane.enabled=false and PAI_WORKER_AUTOPANE=0 do not skip the attempt", async () => {
+  it("config pane.enabled=false and PAI_WORKER_AUTOPANE=0 do not skip the pane", async () => {
     vi.stubEnv("PAI_WORKER_AUTOPANE", "0");
-    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("no pane"));
+    vi.mocked(pane.openVerifiedPane).mockRejectedValue(new pane.NoTerminalError("no terminal"));
     const off = { ...cfg, pane: { ...cfg.pane, enabled: false } };
     await expect(requireVisiblePane(dir, off, "w1", "term-1", false, false, ledger)).resolves.toBe(false);
     expect(pane.openVerifiedPane).toHaveBeenCalledTimes(1);

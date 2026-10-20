@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openVerifiedPane, type PaneOps, type PaneSeam } from "./pane.js";
-import { openPlanPane, workerArgs } from "./plan-deps.js";
+import { workerArgs } from "./plan-deps.js";
 import { PlanTracker, followPlanLog, planRunEnded, planStatusFile } from "./plan-status.js";
 import { requireVisiblePane, buildRunEnv } from "./run.js";
 import type { WorkersConfig } from "./config.js";
@@ -44,17 +44,13 @@ function seam(small = false): PaneSeam & { splits: string[] } {
 }
 
 describe("panes in the host tab", () => {
-  it("two plan runs with one worker each: 4 panes, all splits of the host tab", async () => {
+  it("two plan runs (each a pane run) with one worker each: 4 panes, all splits of the host tab", async () => {
     const s = seam();
-    const open: typeof openVerifiedPane = (l, c, w, t, _e, o) => openVerifiedPane(l, c, w, t, env, o, s);
-    const host = async () => ({ term: TERM });
-    const a = new PlanTracker(dir, "job-a", 1, 0);
-    const b = new PlanTracker(dir, "job-b", 1, 0);
-    expect(await openPlanPane(dir, a, open, host)).toBe(true);
-    expect(await openPlanPane(dir, b, open, host)).toBe(true);
+    await openVerifiedPane(dir, config, "pane-a", TERM, env, ops, s);
+    await openVerifiedPane(dir, config, "pane-b", TERM, env, ops, s);
     await openVerifiedPane(dir, config, "w-a1", TERM, env, ops, s);
     await openVerifiedPane(dir, config, "w-b1", TERM, env, ops, s);
-    expect(s.splits).toEqual(["plan-job-a", "plan-job-b", "w-a1", "w-b1"]);
+    expect(s.splits).toEqual(["pane-a", "pane-b", "w-a1", "w-b1"]);
   });
 
   it("crowded tab: the worker starts in a small pane, never a tab or window", async () => {

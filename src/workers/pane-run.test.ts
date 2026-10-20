@@ -22,7 +22,7 @@ afterEach(() => {
 function opts(command: string[], extra: Partial<PaneRunOptions> = {}): PaneRunOptions & { got: string[]; opened: string[] } {
   const got: string[] = [];
   const opened: string[] = [];
-  return { command, logDir: dir, out: (s) => got.push(s), err: () => undefined, openPane: async (id) => (opened.push(id), "pane"), got, opened, ...extra };
+  return { command, logDir: dir, out: (s) => got.push(s), err: () => undefined, launch: async (id) => (opened.push(id), null), got, opened, ...extra };
 }
 
 describe("runInPane", () => {
@@ -47,10 +47,16 @@ describe("runInPane", () => {
     expect(await runInPane(o)).toBe(0);
     expect(o.got.join("")).toContain("there");
   });
-  it("runs where asked and without a pane when none opens", async () => {
-    const o = opts(["pwd"], { cwd: dir, openPane: async () => { throw new Error("no host"); } });
+  it("runs where asked, directly when there is no pane to own it", async () => {
+    const o = opts(["pwd"], { cwd: dir });
     expect(await runInPane(o)).toBe(0);
     expect(o.got.join("")).toContain(dir.replace(/^\/private/, ""));
+  });
+  it("a pane that cannot open fails the run: the command does not run unseen", async () => {
+    const marker = join(dir, "ran");
+    const o = opts([`touch ${marker}`], { launch: async () => { throw new Error("split failed"); } });
+    expect(await runInPane(o)).toBe(1);
+    expect(existsSync(marker)).toBe(false);
   });
   it("lists the running command in ps until it ends", async () => {
     const o = opts(["sleep", "2"], { label: "nap" });

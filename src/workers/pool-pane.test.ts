@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -69,27 +69,18 @@ const args = (logDir: string, port: number, noPane: boolean) =>
 
 const panes = () => vi.mocked(pane.openVerifiedPane).mock.calls.length + vi.mocked(pane.openPaneForWorker).mock.calls.length;
 
-describe("pooled runs get a follow pane", () => {
-  it("an accepted pooled run opens exactly one pane and records it", async () => {
+describe("pooled runs and the pane rule (the pane owns every process)", () => {
+  it("with a terminal the pool is declined: the run spawns fresh through its pane, no task is posted", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    const a = args(d, await listen({ pooled: true, rc: 0 }), false);
-    await gateStart(a);
-    expect(await tryPoolRun(a)).toBe(0);
-    expect(panes()).toBe(1);
-    expect(loadStatus(d, "w-pane")?.pane?.opened).toBe(true);
-  });
-
-  it("a declined pooled run opens one pane, and the fallback does not open another", async () => {
-    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    const a = args(d, await listen({ pooled: false, reason: "busy" }), false) as { panePrepared?: unknown };
+    let posted = false;
+    const a = args(d, await listen({ pooled: true, rc: 0 }, () => (posted = true)), false) as { spareMiss?: string };
     await gateStart(a as never);
     expect(await tryPoolRun(a as never)).toBeNull();
-    expect(panes()).toBe(1);
-    expect(a.panePrepared).toEqual({ verified: true });
-    expect(panes()).toBe(1);
+    expect(posted).toBe(false);
+    expect(readFileSync(join(d, "ledger.log"), "utf8")).toMatch(/WORKER-POOL-SKIP.*pane rule/);
   });
 
-  it("--no-pane (with the hidden-run override) announces none", async () => {
+  it("--no-pane (with the hidden-run override) still pools and opens none", async () => {
     vi.mocked(pane.headlessAllowed).mockReturnValue("test override");
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
     const a = args(d, await listen({ pooled: true, rc: 0 }), true);
@@ -98,34 +89,19 @@ describe("pooled runs get a follow pane", () => {
     expect(panes()).toBe(0);
   });
 
-  it("the pane opens beside the pool request: a slow pane does not delay the task", async () => {
+  it("no terminal at all: the pooled run goes ahead without a pane (recorded, not a violation)", async () => {
+    vi.mocked(pane.resolveHostSession).mockReset().mockResolvedValue({ term: "" } as never);
+    vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new pane.NoTerminalError("neither TMUX nor ITERM_SESSION_ID"));
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    let releasePane: () => void = () => undefined;
-    vi.mocked(pane.openVerifiedPane).mockReset().mockImplementation(() => new Promise((r) => (releasePane = () => r("here"))));
-    let requestSeen = false;
-    const a = args(d, await listen({ pooled: true, rc: 0 }, () => (requestSeen = true)), false) as { panePrepared?: unknown };
-    await gateStart(a as never); // returns with the pane still opening
-    expect(a.panePrepared).toBeUndefined();
-    const run = tryPoolRun(a as never);
-    await vi.waitFor(() => expect(requestSeen).toBe(true)); // the task was shipped while the pane is unopened
-    expect(a.panePrepared).toBeUndefined();
-    releasePane();
-    expect(await run).toBe(0);
-    expect(a.panePrepared).toEqual({ verified: true });
-    expect(loadStatus(d, "w-pane")?.pane?.opened).toBe(true);
-  });
-
-  it("a pane failure is logged and never blocks the run", async () => {
-    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new Error("iterm gone"));
     const a = args(d, await listen({ pooled: true, rc: 0 }), false);
     await gateStart(a);
     expect(await tryPoolRun(a)).toBe(0);
+    expect(loadStatus(d, "w-pane")?.pane?.opened).toBe(false);
   });
 
   it("records where the setup time went on the run's args", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    const a = args(d, await listen({ pooled: true, rc: 0 }), false) as { setupPaneMs?: number; admissionMs?: number };
+    const a = args(d, await listen({ pooled: true, rc: 0 }), true) as { setupPaneMs?: number; admissionMs?: number };
     await gateStart(a as never);
     await tryPoolRun(a as never);
     expect(a.admissionMs).toBeGreaterThanOrEqual(0);
