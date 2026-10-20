@@ -879,6 +879,24 @@ export function daemonPeerPids(daemonLsof: string, allLsof: string): number[] {
   return [...pids];
 }
 
+/**
+ * The Claude daemon behind a background session: the process listening on `<dir>/control.sock`, where the
+ * session's pty host runs as `--bg-pty-host <dir>/pty/<short>.sock`. The host's parent is the fast path when
+ * it is that listener; an orphaned host (ppid 1) still finds the daemon through the socket. 0 when unknown.
+ * `listeners(sock)` returns the pids lsof reports for the socket path.
+ */
+export function findDaemonPid(short: string, table: { pid: number; ppid: number; cmd: string }[], listeners: (sock: string) => number[]): number {
+  const hostRe = new RegExp(`--bg-pty-host\\s+(\\S*)/pty/${short}\\.sock`, "i");
+  for (const r of table) {
+    const dir = hostRe.exec(r.cmd)?.[1];
+    if (dir === undefined) continue;
+    const found = listeners(`${dir}/control.sock`);
+    if (r.ppid > 1 && found.includes(r.ppid)) return r.ppid;
+    if (found.length) return found[0];
+  }
+  return 0;
+}
+
 export const realHostDeps: HostDeps = {
   psOf(pid) {
     try {
@@ -938,13 +956,12 @@ export const realHostDeps: HostDeps = {
         }
       };
       const short = cid.slice(0, 8);
-      const hostRe = new RegExp(`--bg-pty-host\\s+\\S*/pty/${short}\\.sock`, "i");
       const table = psTable("pid=,ppid=,command=").split("\n").flatMap((l) => {
         const r = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l);
         return r ? [{ pid: Number(r[1]), ppid: Number(r[2]), cmd: r[3] }] : [];
       });
-      const daemon = table.find((r) => hostRe.test(r.cmd))?.ppid;
-      if (!daemon || daemon <= 1) return [];
+      const daemon = findDaemonPid(short, table, (sock) => [...lsof(["-nP", "-Fp", "--", sock]).matchAll(/^p(\d+)$/gm)].map((m) => Number(m[1])));
+      if (!daemon) return [];
       const peers = daemonPeerPids(lsof(["-a", "-nP", "-p", String(daemon), "-U", "-Fpfdn"]), lsof(["-nP", "-U", "-Fpfdn"]));
       const cmds = new Map(table.map((r) => [r.pid, r.cmd]));
       const rows: { pid: number; tty: string; started: number }[] = [];
