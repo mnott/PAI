@@ -108,7 +108,7 @@ describe("foldCodexLine", () => {
     ]);
   });
 
-  it("turn.completed records the context tokens (input+cached+output)", () => {
+  it("turn.completed records the context fill (input+cached, no output)", () => {
     const r = emptyCodexResult();
     foldCodexLine(
       parseCodexLine(
@@ -116,7 +116,7 @@ describe("foldCodexLine", () => {
       ),
       r
     );
-    expect(r.contextTokens).toBe(8165);
+    expect(r.contextTokens).toBe(8120);
   });
 
   it("turn.failed flags the run as error with the message", () => {

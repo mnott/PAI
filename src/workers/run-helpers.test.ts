@@ -41,6 +41,7 @@ import {
   shouldRetryReport,
   stdinUserMessage,
   usageContextTokens,
+  usageContextUsed,
   printResult,
   worktreeExtras,
   type StreamEvent,
@@ -54,6 +55,7 @@ import { describeProviders } from "./providers.js";
 import * as childProcess from "node:child_process";
 import { addWorktree, git, commitsSince, recordWorktree } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
+import { DEFAULT_ESCALATE, detectTrigger } from "./escalation.js";
 import { parseLedger } from "./ledger.js";
 import * as pane from "./pane.js";
 
@@ -620,6 +622,96 @@ describe("compact boundary resets the floor", () => {
     bumpContextTokens(s, 150_000);
     resetContextTokensOnCompact(s, { type: "system", subtype: "compact", usage: { input_tokens: 5_000 } });
     expect(s.contextTokens).toBe(5_000);
+  });
+
+  it("the compact event's own usage counts its input side only, never output", () => {
+    const s = statusOf();
+    bumpContextTokens(s, 150_000);
+    resetContextTokensOnCompact(s, {
+      type: "system",
+      subtype: "compact_boundary",
+      usage: { input_tokens: 5_000, cache_read_input_tokens: 20_000, output_tokens: 900 },
+    });
+    expect(s.contextTokens).toBe(25_000);
+  });
+});
+
+// The stream-event -> meter fold of run.ts's readline callback, extracted so
+// tests drive the same branch logic the runner uses (assistant / compact
+// boundary / result). The result event's usage is the run's CUMULATIVE total
+// and must never raise the meter (live bug 2026-10-21: a 200k-window run
+// read "context 690%" from its 1.38M total and escalated t1→t0).
+function foldStreamEvents(
+  s: Pick<WorkerStatus, "contextTokens">,
+  events: StreamEvent[]
+): void {
+  let lastTurnFill: number | null = null;
+  for (const e of events) {
+    if (isCompactBoundary(e)) {
+      resetContextTokensOnCompact(s, e);
+      lastTurnFill = usageContextUsed(e.usage) ?? null;
+    } else if (e.type === "assistant") {
+      bumpContextTokens(s, usageContextUsed(e.message?.usage));
+      lastTurnFill = usageContextUsed(e.message?.usage) ?? lastTurnFill;
+    } else if (e.type === "result") {
+      // a result event's usage is the run's cumulative total: it never feeds
+      // the meter; a compact result drops it to the last per-turn fill
+      if (e.is_compact) s.contextTokens = lastTurnFill ?? s.contextTokens;
+    }
+  }
+}
+
+describe("the context meter is the largest turn, not the run's token total", () => {
+  const turn = (fill: number): StreamEvent => ({
+    type: "assistant",
+    message: { usage: { input_tokens: 1_000, cache_read_input_tokens: fill - 1_000, output_tokens: 500 } },
+  });
+  const resultEvt = (total: number): StreamEvent => ({
+    type: "result",
+    usage: { input_tokens: total, cache_read_input_tokens: 0, output_tokens: 40_000 },
+    result: "done",
+  });
+
+  it("three turns (50k, 80k, 60k) + a 1.4M cumulative result keep the peak turn", () => {
+    const s: Pick<WorkerStatus, "contextTokens"> = {};
+    foldStreamEvents(s, [turn(50_000), turn(80_000), turn(60_000), resultEvt(1_400_000)]);
+    expect(s.contextTokens).toBe(80_000);
+  });
+
+  it("escalation context trigger: the 80k peak does not fire at 0.7 of 200k; a single 150k turn does", () => {
+    const cfg = { ...DEFAULT_ESCALATE, contextFraction: 0.7 };
+    const s: Pick<WorkerStatus, "contextTokens"> = {};
+    foldStreamEvents(s, [turn(50_000), turn(80_000), turn(60_000), resultEvt(1_400_000)]);
+    expect(detectTrigger({ contextTokens: s.contextTokens, contextWindow: 200_000, cfg })).toBeNull();
+    const one: Pick<WorkerStatus, "contextTokens"> = {};
+    foldStreamEvents(one, [turn(150_000), resultEvt(150_500)]);
+    expect(detectTrigger({ contextTokens: one.contextTokens, contextWindow: 200_000, cfg })?.kind).toBe("context");
+  });
+
+  it("a compact result resets to the post-compact per-turn fill, not the cumulative usage", () => {
+    const s: Pick<WorkerStatus, "contextTokens"> = {};
+    foldStreamEvents(s, [turn(150_000)]);
+    expect(s.contextTokens).toBe(150_000);
+    // compact boundary: the meter drops, the next per-turn reading re-seeds it
+    foldStreamEvents(s, [{ type: "system", subtype: "compact_boundary" }]);
+    expect(s.contextTokens).toBeNull();
+    foldStreamEvents(s, [turn(40_000), turn(30_000)]);
+    expect(s.contextTokens).toBe(40_000);
+    // a compact result with no usage of its own keeps the last per-turn fill
+    foldStreamEvents(s, [{ type: "result", is_compact: true }]);
+    expect(s.contextTokens).toBe(40_000);
+    // a compact result carrying the run's CUMULATIVE total must not raise the
+    // meter: the compact boundary resets the floor first, and the next
+    // per-turn reading re-seeds it at the real post-compact fill
+    foldStreamEvents(s, [
+      { type: "system", subtype: "compact_boundary" },
+      { type: "result", is_compact: true, usage: { input_tokens: 1_400_000 } },
+    ]);
+    expect(s.contextTokens).toBeNull(); // the boundary reset stands; the total never feeds the meter
+    foldStreamEvents(s, [turn(25_000)]);
+    expect(s.contextTokens).toBe(25_000);
+    // the escalation trigger stays silent on the post-compact fill
+    expect(detectTrigger({ contextTokens: s.contextTokens, contextWindow: 200_000, cfg: DEFAULT_ESCALATE })).toBeNull();
   });
 });
 

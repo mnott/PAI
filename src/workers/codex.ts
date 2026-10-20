@@ -164,8 +164,9 @@ export function foldCodexLine(line: unknown, r: CodexEventResult): void {
       output_tokens?: number;
       cached_input_tokens?: number;
     };
-    const tokens =
-      (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0) + (usage.output_tokens ?? 0);
+    // the context meter is the turn's FILL: the input side only (no output).
+    // Codex reports per-turn usage here, so it is a legitimate reading.
+    const tokens = (usage.input_tokens ?? 0) + (usage.cached_input_tokens ?? 0);
     if (tokens > 0) r.contextTokens = tokens;
     return;
   }
