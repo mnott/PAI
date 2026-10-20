@@ -9,8 +9,9 @@
  * `pai build doctor` flags doors that do not.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 
 export interface BuildsConfig {
   /** Directory holding `.pai/builds.yaml`. */
@@ -149,14 +150,67 @@ function heavy(ws: string[]): string | null {
   return null;
 }
 
+/** Git worktree root containing `dir` (a worktree of the same repo has its own root), or null. */
+function gitTop(dir: string): string | null {
+  try {
+    let d = resolve(dir);
+    while (!existsSync(d)) {
+      const up = dirname(d);
+      if (up === d) return null;
+      d = up;
+    }
+    const out = execFileSync("git", ["-C", d, "rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }).trim();
+    return out ? realpathSync(out) : null;
+  } catch {
+    return null;
+  }
+}
+
+const normDoor = (d: string): string => normalize(d).replace(/^(\.\/)+/, "");
+
+/**
+ * Is `script` (as written in a command run from `cwd`) a door registered in `.pai/builds.yaml`? The script path is
+ * resolved to a path relative to the git worktree root that holds it and compared with the repo-relative door list, so
+ * `tools/build.sh`, `./tools/build.sh` and an absolute path into any worktree of the repo all match alike.
+ */
+export function isDoorScript(script: string, cwd: string, cfg: BuildsConfig | null = loadBuildsConfig(cwd)): boolean {
+  const abs = isAbsolute(script) ? resolve(script) : resolve(cwd, script);
+  if (cfg?.doors.some((d) => resolve(cfg.root, d) === abs)) return true;
+  const top = gitTop(dirname(abs));
+  if (!top) return false;
+  let real = abs;
+  try {
+    real = join(realpathSync(dirname(abs)), base(abs));
+  } catch {
+    /* script not on disk: compare the lexical path */
+  }
+  const rel = relative(top, real);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return false;
+  const doors = new Set<string>();
+  for (const c of [loadBuildsConfig(top), cfg]) for (const d of c?.doors ?? []) doors.add(normDoor(d));
+  return doors.has(rel);
+}
+
+/** The script a command segment runs: after env/wrapper prefixes and an optional `sh|bash|zsh` (not `-c`). */
+function scriptOf(ws: string[]): string | null {
+  let w = stripPrefix(ws);
+  if (SHELLS.has(base(w[0] ?? ""))) {
+    w = w.slice(1);
+    while (w[0]?.startsWith("-") && w[0] !== "-c") w = w.slice(1);
+    if (w[0] === "-c") return null;
+  }
+  return w[0] ?? null;
+}
+
+/** Does this segment (words) run a registered door? Not `cd`: callers track the directory themselves. */
+export function runsDoor(ws: string[], cwd: string, cfg: BuildsConfig | null = loadBuildsConfig(cwd)): boolean {
+  const s = scriptOf(ws);
+  return !!s && isDoorScript(s, cwd, cfg);
+}
+
 function isDoor(ws: string[], cfg: BuildsConfig, cwd: string): boolean {
   if (!cfg.doors.length) return false;
-  let w = ws;
-  if (SHELLS.has(base(w[0] ?? "")) && w[1] && !w[1].startsWith("-")) w = w.slice(1);
-  const first = w[0];
-  if (!first) return false;
-  const abs = isAbsolute(first) ? resolve(first) : resolve(cwd, first);
-  return cfg.doors.some((d) => resolve(cfg.root, d) === abs);
+  return runsDoor(ws, cwd, cfg);
 }
 
 interface Reason {
@@ -189,8 +243,14 @@ function reasonFor(segment: string, cfg: BuildsConfig | null, cwd: string, depth
 
 /** Deny message when `command` runs a raw heavy builder outside the queue, else null. */
 export function buildGateReason(command: string, cwd: string, cfg: BuildsConfig | null = loadBuildsConfig(cwd)): string | null {
+  let dir = cwd;
   for (const seg of splitSegments(command)) {
-    const r = reasonFor(seg, cfg, cwd, 0);
+    const cd = /^cd\s+(\S+)$/.exec(seg);
+    if (cd) {
+      dir = isAbsolute(cd[1]) ? cd[1] : resolve(dir, cd[1]);
+      continue;
+    }
+    const r = reasonFor(seg, cfg, dir, 0);
     if (r) return `${BUILD_DENY_MESSAGE(cfg?.doors[0])} (blocked: ${r.why}; kind ${r.kind}${r.kind === "test" ? ": use \`pai build run --kind test -- <cmd>\`" : ""})`;
   }
   return null;

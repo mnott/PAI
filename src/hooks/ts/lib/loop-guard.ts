@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
-import { loadBuildsConfig, splitSegments, type BuildsConfig } from "./build-gate.js";
+import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 export const LOOP_MAX_REPEATS = 4;
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
@@ -110,12 +110,7 @@ export function isPollCommand(command: string, cwd: string = process.cwd()): boo
     }
     if (POLL_VERB.test(ws.join(" ").replace(/^(?:[A-Za-z_]\w*=\S*\s+|nohup\s+)+/, ""))) return true;
     if (!ws.includes("--wait")) continue;
-    const cfg = doorsAt(dir);
-    if (!cfg) continue;
-    for (const door of cfg.doors) {
-      const d = door.replace(/^\.\//, "");
-      if (ws.some((w) => w.replace(/^\.\//, "") === d || w.endsWith(`/${d}`) || resolve(dir, w) === resolve(cfg.root, d))) return true;
-    }
+    if (runsDoor(ws, dir, doorsAt(dir))) return true;
   }
   return false;
 }

@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { actionKey, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
+import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
+import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -425,4 +426,37 @@ describe("build-door polls are waits", () => {
   it("without --wait it is an ordinary repeat", () => expect(run("sh tools/build.sh mac", 9)).toEqual([4, 5, 6, 7, 8]));
   it("--wait on a non-door is an ordinary repeat", () => expect(run("sh tools/other.sh mac --wait", 9)).toEqual([4, 5, 6, 7, 8]));
   it("the cap still applies after 45 minutes", () => expect(run("sh tools/build.sh mac --wait", 4, 0, WAIT_CAP_MS / 2)).toEqual([2, 3]));
+});
+
+describe("build doors match by repo-relative path", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lg-door-git-")));
+  const repo = join(root, "repo");
+  const wt = join(root, "wt", "w1");
+  const git = (...a: string[]) => spawnSync("git", ["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", ...a], { encoding: "utf8" });
+  mkdirSync(join(repo, "tools"), { recursive: true });
+  mkdirSync(join(repo, ".pai"), { recursive: true });
+  writeFileSync(join(repo, "tools", "build.sh"), "#!/bin/sh\n");
+  writeFileSync(join(repo, ".pai", "builds.yaml"), "doors: [tools/build.sh]\n");
+  spawnSync("git", ["init", "-q", repo]);
+  git("add", "-A");
+  git("commit", "-q", "-m", "x");
+  git("worktree", "add", "-q", "-b", "w1", wt);
+  const forms = (base: string, other: string) => [
+    "tools/build.sh mac --wait",
+    "./tools/build.sh mac --wait",
+    `${base}/tools/build.sh mac --wait`,
+    `sh ${base}/tools/build.sh mac --wait`,
+    `bash ${other}/tools/build.sh mac --wait`,
+    `cd ${base} && ./tools/build.sh mac --wait`,
+    `cd ${base} && tools/build.sh mac --wait 2>&1 | tail -5`,
+    `FOO=1 zsh ${base}/tools/build.sh mac --wait`,
+  ];
+  for (const [cwd, other] of [[repo, wt], [wt, repo]] as const)
+    for (const c of forms(cwd, other)) it(`poll from ${cwd === repo ? "main" : "worktree"}: ${c.replaceAll(root, "")}`, () => expect(isPollCommand(c, cwd)).toBe(true));
+  it("a non-door script in the worktree is no poll", () => expect(isPollCommand(`${wt}/tools/other.sh --wait`, wt)).toBe(false));
+  it("the build gate allows the door by absolute path in a worktree", () => {
+    expect(buildGateReason(`${wt}/tools/build.sh mac`, repo, loadBuildsConfig(repo))).toBeNull();
+    expect(buildGateReason(`cd ${wt} && sh ./tools/build.sh mac`, repo, loadBuildsConfig(repo))).toBeNull();
+    expect(buildGateReason(`${wt}/tools/other.sh && swift build`, repo, loadBuildsConfig(repo))).not.toBeNull();
+  });
 });
