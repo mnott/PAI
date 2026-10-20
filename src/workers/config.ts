@@ -17,6 +17,7 @@
  * Code.
  */
 
+import { DEFAULT_ESCALATE, parseEscalate, type EscalateConfig } from "./escalation.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -538,6 +539,8 @@ export interface WorkersConfig {
   capacity: CapacityConfig;
   /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
   localIdle: LocalIdleConfig;
+  /** Escalation one tier up (workers.escalate); see escalation.ts. */
+  escalate: EscalateConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
   /** Hourly gc archives finished workers' worktrees older than this many hours (workers.gcOlderThanHours). */
@@ -593,6 +596,9 @@ export function defaultWorkersConfig(): WorkersConfig {
   const stagger = obj(w.stagger);
   const capacity = obj(w.capacity);
   const localIdle = obj(w.localIdle);
+  const escalate = parseEscalate(w.escalate, (path, msg) => {
+    throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`);
+  });
   return {
     enabled: bool(w.enabled, false),
     active: null,
@@ -658,6 +664,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       minutes: num(localIdle.minutes, 2),
       backoffMinutes: num(localIdle.backoffMinutes, 10),
     },
+    escalate,
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
     worktreesMaxGb: num(w.worktreesMaxGb, 20),
@@ -1415,6 +1422,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     stagger,
     capacity,
     localIdle,
+    escalate: parseEscalate(w.escalate, bad),
     noBrowserByDefault,
     gcOlderThanHours,
     worktreesMaxGb,
@@ -1546,6 +1554,8 @@ export function writeWorkersSection(
         stagger: workers.stagger,
         capacity: workers.capacity,
         localIdle: workers.localIdle,
+        escalate: workers.escalate,
+        tiers: workers.tiers,
         noBrowserByDefault: workers.noBrowserByDefault,
         gcOlderThanHours: workers.gcOlderThanHours,
         worktreesMaxGb: workers.worktreesMaxGb,

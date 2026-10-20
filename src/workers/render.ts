@@ -545,6 +545,8 @@ export function renderTable(
       ...(s.switchReason ? [s.switchReason] : []),
       ...(s.fallThroughOf ? [`fall-through of ${s.fallThroughOf}`] : []),
       ...(s.fallThroughTo ? [`fell through to ${s.fallThroughTo}`] : []),
+      ...(s.escalated ? [s.escalated] : []),
+      ...(s.escalatedTo ? [`escalated -> ${s.escalatedTo}`] : []),
     ];
     return parts.length ? "  " + c("dim", parts.join("  ")) : "";
   };

@@ -122,6 +122,20 @@ workers:
     minutes: 2
     # Minutes between repeat notices.
     backoffMinutes: 10
+  # Escalation one tier up (escalation.ts): a run whose context passes
+  # contextFraction of the model's window, that is missing a tool it needs, or
+  # that failed `failures` times on the same task goes one tier up — t2 -> t1
+  # re-runs on the tier above starting from the salvaged branch, t1 -> t0
+  # messages the owning session (never silently). Off when `enabled: false`;
+  # `triggers` picks which of the three rules are on.
+  escalate:
+    enabled: true
+    # Fraction (0..1] of the model's context window that triggers escalation.
+    contextFraction: 0.7
+    # Failed attempts of one task that escalate it.
+    failures: 2
+    # Which triggers are on: context, missing-tool, repeated-failure.
+    triggers: [context, missing-tool, repeated-failure]
   # Runs strip browser tools unless --browser is passed.
   noBrowserByDefault: false
   # Hourly gc archives finished workers' worktrees older than this many hours.
