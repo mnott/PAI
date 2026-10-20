@@ -127,7 +127,8 @@ describe("strataEngineMetrics", () => {
   });
   it("a failed probe or a payload without fields is null / nulls, never a crash", () => {
     expect(strataEngineMetrics(null)).toBeNull();
-    expect(strataEngineMetrics({})).toEqual({ decode: null, prefill: null, phase: null, parked: null, slots: null, reusedPct: null });
+    expect(strataEngineMetrics({})).toBeNull(); // not Strata's dialect
+    expect(strataEngineMetrics({ live: {} })).toEqual({ decode: null, prefill: null, phase: null, parked: null, slots: null, reusedPct: null });
   });
 });
 
@@ -191,6 +192,59 @@ describe("probeEngines", () => {
     expect(urls).toEqual(["http://127.0.0.1:8035/metrics"]);
     expect(out["gyro-m"]?.phase).toBe("idle");
     expect(out["coder"]).toBeUndefined();
+  });
+});
+
+describe("Strata behind an openai-server runtime", () => {
+  const openai: ModelInventory = {
+    ...inventory,
+    runtimes: [{ name: "gyro-m", kind: "openai-server", status: "running", port: 8035, models: [{ model: "m", kind: "coding", loaded: true, memoryMb: 100, usedBy: [] }], users: [] }],
+  };
+  const cfg = () => workersConfig({ "gyro-m": provider({ baseUrl: "http://127.0.0.1:8035", maxConcurrent: 4, conversationSlots: 4 }) });
+
+  it("is probed by its dialect; a non-Strata port is asked once and remembered", async () => {
+    const urls: string[] = [];
+    const dialects = new Map<number, boolean>();
+    const strata = async (u: string) => (urls.push(u), { live: { state: "idle", tok_s: 5 } });
+    expect((await probeEngines({ inventory: openai, workers: cfg() }, strata, dialects))["gyro-m"]?.decode).toBe(5);
+    expect(dialects.get(8035)).toBe(true);
+    const plain = new Map<number, boolean>();
+    const other = async (u: string) => (urls.push(u), { object: "list" });
+    expect(await probeEngines({ inventory: openai, workers: cfg() }, other, plain)).toEqual({});
+    await probeEngines({ inventory: openai, workers: cfg() }, other, plain);
+    expect(urls.length).toBe(2); // 1 strata + 1 plain; the second plain tick skipped
+  });
+
+  it("a failed probe still yields live with scheduler, worker, pool and cap fields; history grows per tick", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-runtime-samples-"));
+    dirs.push(dir);
+    let t = 0;
+    const sampler = createRuntimeSampler(
+      {
+        inventory: async () => openai,
+        sched: () => sched,
+        statuses: () => [status({}), status({ state: "queued", label: "w2" })],
+        poolState: () => input().poolState,
+        getJson: async () => null,
+        now: () => (t += 5000),
+      },
+      cfg,
+      () => dir
+    );
+    await sampler.tick();
+    await sampler.tick();
+    const p = (await sampler.payload()) as { runtimes: Array<{ live: { workers: Array<{ state: string }>; queued: number; cap: number | null; sparesReady: number; engine: unknown }; history: { queued: unknown[] } }> };
+    const g = p.runtimes[0]!;
+    expect(g.live.engine).toBeNull();
+    expect(g.live.workers.map((w) => w.state)).toEqual(["running", "queued"]);
+    expect(g.live.cap).toBe(3); // conversationSlots-1
+    expect(g.live.queued).toBe(3); // 2 in the router scheduler + 1 waiting on the admission gate
+    expect(g.live.sparesReady).toBe(1);
+    expect(g.history.queued.length).toBe(2);
+  });
+
+  it("the page flattens each runtime's live object and history (workers, cap, engine)", () => {
+    expect(COCKPIT_HTML).toContain("Object.assign({},l.live,{history:l.history})");
   });
 });
 
@@ -272,7 +326,7 @@ describe("/cockpit/models with the sampler", () => {
   it("the page renders a card per running runtime and chips for stopped ones", () => {
     expect(COCKPIT_HTML).toContain('class="rt-grid"');
     expect(COCKPIT_HTML).toContain('<div class="rt-card">');
-    expect(COCKPIT_HTML).toContain("stopped: ");
-    expect(COCKPIT_HTML).toContain("not loaded: ");
+    expect(COCKPIT_HTML).toContain("rt-chips dim");
+    expect(COCKPIT_HTML).toContain("not loaded");
   });
 });

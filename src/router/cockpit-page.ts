@@ -197,7 +197,7 @@ function modelsHtml(inv){
  function n1(v){return v==null?"–":Math.round(v*10)/10}
  function n0(v){return v==null?"–":Math.round(v)}
  function gb(v){return v==null?"–":(v/1024).toFixed(1)}
- function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l||null}
+ function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l?Object.assign({},l.live,{history:l.history}):null}
  var cards="",stopped=[];
  inv.runtimes.forEach(function(r){
   if(r.status==="stopped"){stopped.push(r);return}
@@ -224,7 +224,7 @@ function modelsHtml(inv){
     series:[{data:h.memoryMb||[]}]})+
    metricTile({title:"Workers",value:w.length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
     series:[{data:h.queued||[]}]})+
-   metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",sub:eng&&eng.reused!=null&&eng.prompt?"reused "+pct(eng.reused/eng.prompt)+" of prompt tokens":"prompt reuse not reported",
+   metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
     series:[{data:h.reusedPct||[]}]})+'</div>';
   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
   cards+='<div class="rt-card">'+head+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+'</div>';

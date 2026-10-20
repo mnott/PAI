@@ -127,8 +127,15 @@ function runtimeKeyOf(s: WorkerStatus, workers: WorkersConfig): string {
 
 const keyOf = (rt: { name: string; port?: number }): string => (rt.port != null ? `port:${rt.port}` : `name:${rt.name}`);
 
+/** Does a `/metrics` body speak Strata's dialect (a `live` or `conversation_cache` section)? */
+export function isStrataMetrics(body: unknown): boolean {
+  const m = body as { live?: unknown; conversation_cache?: unknown } | null;
+  return !!m && typeof m === "object" && (typeof m.live === "object" || typeof m.conversation_cache === "object");
+}
+
 /** Strata's `metrics` payload → the engine's live reading; null for anything else or a failed probe. */
 export function strataEngineMetrics(body: unknown): RuntimeLive["engine"] {
+  if (!isStrataMetrics(body)) return null;
   const m = body as {
     live?: { state?: string; phase?: string; tok_s?: number; prefill_tok_s_mean?: number; queued?: number };
     conversation_cache?: { parked?: number; slots?: number; prompt_tokens?: number; reused_tokens?: number };
@@ -168,7 +175,8 @@ export function runtimeLive(rt: RuntimeSamplerInput["inventory"]["runtimes"][num
     live.workers.push({ id: s.id, label: s.label, session: ownerSessionName(s), state: s.state === "queued" ? "queued" : "running" });
   }
   const e = sched?.engines[engine];
-  if (e) live.queued = Object.values(e.queued).reduce((a, n) => a + n, 0);
+  // router scheduler's waiting requests + workers waiting on the admission gate
+  live.queued = (e ? Object.values(e.queued).reduce((a, n) => a + n, 0) : 0) + live.workers.filter((w) => w.state === "queued").length;
   if (poolState?.spares) live.sparesReady = poolState.spares.filter((sp) => sp.provider === engine && sp.state === "ready").length;
   return live;
 }
@@ -214,20 +222,32 @@ export function sampleRuntimes(input: RuntimeSamplerInput, history: Record<strin
   }
 }
 
-/** The engine status probes the tick needs: one per running engine that speaks a dialect, 1 s timeout. */
+/** Per-port result of the dialect detection: true = answers Strata's metrics, false = answers something else. A failed probe is never cached. */
+export type EngineDialects = Map<number, boolean>;
+
+/**
+ * The engine status probes the tick needs, 1 s timeout each. An engine is
+ * identified by what it answers, not by the inventory kind (Strata sits behind
+ * "openai-server" providers): every running port is asked for `/metrics` once;
+ * a Strata answer is probed on every tick from then on, any other answer is
+ * remembered per port and not asked again.
+ */
 export async function probeEngines(
   input: { inventory: ModelInventory; workers: WorkersConfig },
-  getJson: (url: string) => Promise<unknown | null>
+  getJson: (url: string) => Promise<unknown | null>,
+  dialects: EngineDialects = new Map()
 ): Promise<Record<string, RuntimeLive["engine"]>> {
   const out: Record<string, RuntimeLive["engine"]> = {};
   await Promise.all(
     input.inventory.runtimes
-      .filter((rt) => rt.status === "running" && rt.kind === "strata" && rt.port != null)
+      .filter((rt) => rt.status === "running" && rt.port != null && rt.kind !== "ollama" && rt.kind !== "docker-model-runner" && dialects.get(rt.port) !== false)
       .map(async (rt) => {
         const engine = engineNameOf(rt, input.workers.providers);
         const p = input.workers.providers[engine];
         const host = p && isLoopbackProvider(p) ? providerHostPort(p)?.host : undefined;
         const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || "127.0.0.1"}:${rt.port}/metrics`);
+        if (body != null && rt.kind !== "strata") dialects.set(rt.port!, isStrataMetrics(body));
+        if (body != null && !isStrataMetrics(body)) return;
         out[engine] = strataEngineMetrics(body);
       })
   );
@@ -293,6 +313,7 @@ export function createRuntimeSampler(
 ): RuntimeSampler {
   const history: Record<string, RuntimeSample[]> = {};
   let last: { inventory: ModelInventory; engine: Record<string, RuntimeLive["engine"]>; at: number } | null = null;
+  const dialects: EngineDialects = new Map();
   let ticking: Promise<void> | null = null;
 
   const tick = async (): Promise<void> => {
@@ -302,7 +323,7 @@ export function createRuntimeSampler(
         const inventory = await deps.inventory();
         if (!inventory) return;
         const workers = readConfig();
-        const engine = await probeEngines({ inventory, workers }, deps.getJson);
+        const engine = await probeEngines({ inventory, workers }, deps.getJson, dialects);
         last = { inventory, engine, at: deps.now() };
         sampleRuntimes(
           { inventory, sched: deps.sched(), statuses: deps.statuses(logDir()), poolState: deps.poolState(logDir()), pool: poolSettings(workers), workers, engine, pressurePct: pressure(), now: last.at },
