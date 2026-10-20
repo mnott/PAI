@@ -237,7 +237,7 @@ export async function routeRun(
   flags: RouteFlags,
   deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
-  const list = classRoute(config.classes ?? {}, flags.className ?? "implement");
+  const list = classRoute(config.tiers ?? [], flags.className ?? "implement");
   if (list.length) return listRoute(config, logDir, list, flags, deps);
   const policy = readPolicy(logDir);
   if (!policy) return null;

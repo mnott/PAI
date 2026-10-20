@@ -662,6 +662,9 @@ export function initContextWindow(e: StreamEvent): number | null {
   return null;
 }
 
+/** The class a run routes by: its own, else `orchestrate` for --orchestrate (the t1 tier), else none (the default tier). */
+export const routeClassOf = (opts: { className?: string; orchestrate?: boolean }): string | undefined => opts.className ?? (opts.orchestrate ? "orchestrate" : undefined);
+
 /**
  * Run one worker. Returns the process exit code to pass through.
  * Throws WorkersConfigError-shaped Errors for configuration problems.
@@ -672,7 +675,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // the session's own routing rows replace the global ones for this run (routeRun and resolveTarget read config.classes)
   const sessionName = await detectSessionName();
   const sessionRoutes = sessionName ? getProfile(sessionName)?.routes : undefined;
-  if (sessionRoutes) config.classes = applyRouteOverrides(config.classes, sessionRoutes);
+  if (sessionRoutes) config.tiers = applyRouteOverrides(config.tiers, sessionRoutes);
   void _raw;
   if (!config.enabled) {
     throw new Error(
@@ -773,7 +776,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     }
   }
   if (!route && !providerFlag && !capability && opts.className !== "plan" && parseRunnerArgs(opts.claudeArgs).headless) {
-    const routed = await routeRun(config, logDir, opts);
+    const routed = await routeRun(config, logDir, { ...opts, className: routeClassOf(opts) });
     if (routed) {
       route = routed.route;
       providerFlag = routed.providerFlag ?? undefined;
@@ -804,7 +807,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       }
     : resolveTarget(config, logDir, {
         flagProvider: providerFlag,
-        className: opts.className,
+        className: routeClassOf(opts),
         cwd: opts.cwd,
       });
   assertProviderRunnable(target.providerName, target.provider);

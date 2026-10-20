@@ -21,6 +21,7 @@ import { dirname, join, resolve } from "node:path";
 import { Document, Scalar, parseDocument, type Node } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { writeYamlFileAtomic, YamlStoreError } from "../config/yaml-store.js";
+import { parseTiersValue, type TierDef } from "./route-lists.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import {
   ANTHROPIC_NATIVE,
@@ -101,6 +102,7 @@ export interface WorkersYamlData {
   active: string | null;
   providers: Record<string, WorkerProvider>;
   classes: Record<string, ClassTarget>;
+  tiers: TierDef[];
   capabilities: Record<string, string[]>;
   mcpSets: Record<string, string[]>;
   nativeModels: WorkerProvider["models"];
@@ -344,7 +346,14 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     );
   }
 
-  return { active, providers, classes, capabilities, mcpSets, nativeModels };
+  let tiers: TierDef[] = [];
+  try {
+    tiers = parseTiersValue(r.tiers, "tiers");
+  } catch (e) {
+    withLine(doc, ["tiers"], yamlPath, e);
+  }
+
+  return { active, providers, classes, tiers, capabilities, mcpSets, nativeModels };
 }
 
 /** The `merge.verify` command of a parsed workers.yaml root (undefined when unset); `fail` is called with the message when the key is malformed. */
@@ -456,6 +465,12 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
     if (!(cls in after.classes)) doc.deleteIn(["classes", cls]);
   }
 
+  // tiers: one list, replaced when it differs
+  if (JSON.stringify(before.tiers) !== JSON.stringify(after.tiers)) {
+    if (after.tiers.length) doc.setIn(["tiers"], JSON.parse(JSON.stringify(after.tiers)));
+    else doc.deleteIn(["tiers"]);
+  }
+
   // capabilities: same add/update/remove diff
   for (const [cap, prefs] of Object.entries(after.capabilities)) {
     if (!shallowEqual(before.capabilities[cap], prefs)) {
@@ -498,6 +513,7 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
         active: null,
         providers: {},
         classes: {},
+        tiers: [],
         capabilities: {},
         mcpSets: {},
         nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
@@ -680,6 +696,20 @@ export function buildWorkersYamlText(data: WorkersYamlData): string {
     lines.push(`  ${cls}: ${typeof target === "string" ? target : yamlScalar(target)}`);
   }
   lines.push("");
+  if (data.tiers.length) {
+    lines.push("tiers:");
+    for (const t of data.tiers) {
+      lines.push(`  - id: ${t.id}`);
+      lines.push(`    name: ${yamlScalar(t.name)}`);
+      if (t.description) lines.push(`    description: ${yamlScalar(t.description)}`);
+      lines.push(`    models: [${t.models.map((m) => JSON.stringify(m)).join(", ")}]`);
+      if (t.classes?.length) lines.push(`    classes: [${t.classes.join(", ")}]`);
+      if (t.default) lines.push("    default: true");
+      if (t.session) lines.push("    session: true");
+      if (t.note) lines.push(`    note: ${yamlScalar(t.note)}`);
+    }
+    lines.push("");
+  }
   const capEntries = Object.entries(data.capabilities);
   if (capEntries.length) {
     lines.push("capabilities:");
@@ -743,6 +773,7 @@ export function migrateWorkersToYaml(
     active: workers.active,
     providers: workers.providers,
     classes: workers.classes,
+    tiers: workers.tiers,
     capabilities: workers.capabilities,
     mcpSets: workers.mcpSets,
     nativeModels: workers.nativeModels,

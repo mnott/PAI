@@ -13,7 +13,6 @@ import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
 import { applyPolicyToRoutes, clearSessionRoute, resolveSessionArg, routeRows, routeText, setRoute, setSessionRoute } from "../../workers/route-table.js";
-import { CLASSES_OF_ROLE, ROUTE_ROLES } from "../../workers/route-lists.js";
 import { budgetCache } from "../../workers/budget.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
@@ -931,21 +930,21 @@ export const workerPolicyCommand: CommandDef = {
 
 export const workerRouteCommand: CommandDef = {
   name: "route",
-  summary: "Print the routing table: per role the ordered models",
+  summary: "Print the routing table: per delegation tier the ordered models",
   description:
-    "Three rows, one per role (Orchestrator: orchestrate, plan; Worker: implement, research, draft, review, complex; Quick check: simple, spotcheck), each an ordered list of models: the first serves, the rest is the fallback order. Local models (\"local gyro-m\") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.\n" +
-    "`route set <role|class> <provider/model,...>` sets a row (a class sets its role's row; an unknown class is a Worker): a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m). --note adds the reason (tooltip).\n" +
-    "--session <name|self> makes it a per-session override stored in that session's profile (`route set --session s <role|class> <models>`, `route clear --session s [<role|class>]`); runs started from that session use its row, else the global one. `route --session s` prints the effective table for that session.",
+    "One row per delegation tier of workers.yaml `tiers:` (typically t0 Session: the interactive session itself; t1 Orchestrator: splits a job, plans, reviews; t2 Worker: implements the parts and runs quick checks), each an ordered list of models: the first available one serves, the rest is the fallback order (a tier is not a fallback rank). The first line is the flow, what each tier resolves to right now. Local models (\"local gyro-m\") are entries like any other; one whose server is not running is skipped, never started. `pai worker policy` rewrites the default tier's list.\n" +
+    "`route set <tier|class> <provider/model,...>` sets a row (a class sets its tier's row): a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m). --note adds the reason (tooltip). Tiers, their classes and descriptions are edited in workers.yaml.\n" +
+    "--session <name|self> makes it a per-session override stored in that session's profile (`route set --session s <tier|class> <models>`, `route clear --session s [<tier|class>]`); runs started from that session use its row, else the global one. `route --session s` prints the effective table for that session.",
   args: [
     { name: "ACTION", summary: "set or clear (omit to print)" },
-    { name: "CLASS", summary: `${ROUTE_ROLES.join(", ")}, or any class (${Object.values(CLASSES_OF_ROLE).flat().join(", ")})` },
+    { name: "CLASS", summary: "A tier id (t0, t1, t2, ... as configured) or a class (it sets its tier)" },
     { name: "MODELS", summary: "Comma-separated provider/model entries, first serves" },
   ],
   options: [
     { name: "session", type: "string", value: "NAME", summary: "Per-session override: a session name or self" },
     { name: "note", type: "string", value: "TEXT", summary: "Reason for the row (tooltip), e.g. \"context width, reasoning\"" },
   ],
-  examples: ["pai worker route", "pai worker route set worker gyro-m,anthropic/sonnet,glm/glm-5.3-flash --note \"context width, reasoning\"", "pai worker route set --session self worker anthropic/sonnet", "pai worker route clear --session self worker", "pai worker route --session self"],
+  examples: ["pai worker route", "pai worker route set t2 gyro-m,anthropic/sonnet,glm/glm-5.3-flash --note \"context width, reasoning\"", "pai worker route set --session self t2 anthropic/sonnet", "pai worker route clear --session self t2", "pai worker route --session self"],
   seeAlso: ["pai worker policy", "pai worker classes"],
   async run(ctx) {
     try {

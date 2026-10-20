@@ -34,7 +34,7 @@ import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "..
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
 import { readProfiles } from "../workers/session-profile-store.js";
-import { routeChoices, routeRows, type RouteChoice, type RouteRow } from "../workers/route-table.js";
+import { flowText, routeRows, type RouteRow } from "../workers/route-table.js";
 import type { BudgetMap } from "../workers/budget.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
@@ -466,8 +466,8 @@ async function localRunningInfo(): Promise<{ tier: string; label: string; model:
   }
 }
 
-/** The routing table (per class the ordered models with their live state, read from the same limits the gauges show) and the models a row can add. */
-async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; choices: RouteChoice[] }> {
+/** The routing table, read-only (per tier the ordered models with their live state, read from the same limits the gauges show) and the flow line of what each tier resolves to now. */
+async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; flow: string }> {
   try {
     const { workers } = readWorkersSection();
     const budgets: BudgetMap = {};
@@ -477,9 +477,10 @@ async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[];
       budgets[l.provider] = { percent: Math.max(...windows.map((w) => w.percent)), resetAt: null, fetchedAt: l.fetchedAt, windows };
     }
     const running = async (name: string) => ls.some((l) => l.kind === "local" && l.provider === name && l.up === true);
-    return { rows: await routeRows(workers, { logDir: workersLogDir(workers), budgets, running, profiles: readProfiles() }), choices: routeChoices(workers) };
+    const rows = await routeRows(workers, { logDir: workersLogDir(workers), budgets, running, profiles: readProfiles() });
+    return { rows, flow: flowText(rows) };
   } catch {
-    return { rows: [], choices: [] };
+    return { rows: [], flow: "" };
   }
 }
 

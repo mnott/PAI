@@ -554,3 +554,26 @@ Deferred live move, to run once no other `claude` process is active:
 ```
 pai config migrate --history
 ```
+
+## Delegation tiers
+
+`tiers:` is the routing table. A tier is a delegation level, not a fallback rank: each one has an ordered `models` list (the first available entry serves; "Anthropic out", meaning its budget or limit is exhausted, moves on to the next entry). Everything is read from this file: the tier ids, names, descriptions, the `classes` each tier serves, the `default: true` tier that serves every other class, the `session: true` tier PAI starts sessions on (`pai launch` default), notes (tooltips) and an optional `escalation` mapping.
+
+```yaml
+tiers:
+  - id: t0
+    name: Session            # the interactive session itself
+    models: [anthropic/opus, glm/glm-5.3[1m]]
+    session: true
+  - id: t1
+    name: Orchestrator       # splits a job, plans, reviews
+    models: [anthropic/sonnet, glm/glm-5.3-flash]
+    classes: [orchestrate, plan]
+  - id: t2
+    name: Worker             # implements the parts, runs quick checks
+    models: [gyro-m, anthropic/sonnet, glm/glm-5.3-flash, kimi]
+    classes: [implement, research, draft, review, complex, simple, spotcheck]
+    default: true
+```
+
+A config without `tiers:` is migrated on read from the retired `classes` rows `orchestrator` / `worker` / `quick` (Quick check folds into the Worker tier; an order that differed is kept in that tier's description); the next write stores `tiers:`. `pai worker route` prints the flow and the rows, `pai worker route set <tier|class> <models>` edits one; the cockpit routing section is read-only.

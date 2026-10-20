@@ -98,21 +98,23 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).not.toMatch(/alert\(|confirm\(|prompt\(/);
   });
 
-  it("the routing section renders three role rows: ordered chips with arrows, coloured by state, × and +", () => {
+  it("the routing section is read-only: the flow line on top, then three tier rows with ordered chips and arrows coloured by state", () => {
     expect(COCKPIT_HTML).toContain('data-section="routing"');
     expect(COCKPIT_HTML.indexOf('data-section="cloud"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="routing"'));
     expect(COCKPIT_HTML.indexOf('data-section="routing"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="workers"'));
     const body = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string }> = { routing: { innerHTML: "" } };
     const doc = { querySelector: () => ({}), querySelectorAll: () => [] };
-    const run = new Function("lim", "$", "esc", "document", "rtOpen", "rtMsg", "rtFocus", "rtDrag", `${body}\nrenderRouting();`);
+    const run = new Function("lim", "$", "esc", "document", `${body}\nrenderRouting();`);
     const lim = {
       routing: {
+        flow: "t0 Session: opus → t1 Orchestrator: sonnet → t2 Worker: local gyro-m",
         rows: [
-          { cls: "orchestrator", label: "Orchestrator", classes: ["orchestrate", "plan"], chips: [{ entry: "glm", label: "glm/glm-5.3", state: "available", why: "" }] },
+          { id: "t0", label: "t0 Session", description: "the interactive session", classes: [], chips: [{ entry: "anthropic/opus", label: "anthropic/opus", state: "available", why: "" }] },
+          { id: "t1", label: "t1 Orchestrator", note: "planning, reasoning", classes: ["orchestrate", "plan"], chips: [{ entry: "glm", label: "glm/glm-5.3", state: "available", why: "" }] },
           {
-            cls: "worker",
-            label: "Worker",
+            id: "t2",
+            label: "t2 Worker",
             classes: ["implement", "research", "draft", "review", "complex"],
             sessions: [{ session: "job", chips: [{ entry: "glm/fast", label: "glm/glm-5.3-flash", state: "available", why: "" }] }],
             chips: [
@@ -121,39 +123,27 @@ describe("cockpit layout follow-up", () => {
               { entry: "glm/fast", label: "glm/glm-5.3-flash", state: "unavailable", why: "cooldown 5 min" },
             ],
           },
-          { cls: "quick", label: "Quick check", classes: ["simple", "spotcheck"], chips: [{ entry: "gyro-m", label: "local gyro-m", state: "available", why: "" }] },
         ],
-        choices: [{ entry: "kimi/k3[1m]", label: "kimi/k3[1m]", local: false }],
       },
     };
-    const call = (open: string | null) => run(lim, (id: string) => els[id], (s: string) => s, doc, open, {}, null, null);
-    call(null);
+    run(lim, (id: string) => els[id], (x: string) => x, doc);
     const h = els.routing!.innerHTML;
-    expect(h).toContain("Orchestrator");
-    expect(h).toContain("local gyro-m");
+    expect(h.indexOf("t0 Session: opus → t1 Orchestrator: sonnet → t2 Worker: local gyro-m")).toBeGreaterThan(-1);
+    expect(h.indexOf('class="rtflow"')).toBeLessThan(h.indexOf('class="rtrow"'));
+    expect(h.match(/class="rtrow"/g)).toHaveLength(3);
+    for (const l of ["t0 Session", "t1 Orchestrator", "t2 Worker"]) expect(h).toContain(l);
+    expect(h).toContain('title="the interactive session"');
+    expect(h).toContain('title="planning, reasoning"');
     expect(h.match(/rtarrow/g)).toHaveLength(2);
     expect(h).toContain('class="rtchip idle"');
     expect(h).toContain('class="rtchip tight"');
     expect(h).toContain('class="rtchip unavailable"');
     expect(h).toContain('class="rtchip available"');
-    expect(h).toContain('draggable="true"');
-    expect(h).toContain('class="rtx"');
-    expect(h).toContain('class="rtadd"');
-    expect(h).not.toContain("rtlist");
     expect(h).toContain("implement · research · draft · review · complex");
     expect(h).toContain('class="rtsess"');
-    expect(h.match(/class="rtrow"/g)).toHaveLength(3);
-    expect(h).toContain("Quick check");
-    call("worker|");
-    expect(els.routing!.innerHTML).toContain('data-add="kimi/k3[1m]"');
-    call("worker|job");
-    expect(els.routing!.innerHTML).toContain('data-s="job" data-add="kimi/k3[1m]"');
+    for (const editing of ["draggable", "rtx", "rtadd", "rtlist"]) expect(h).not.toContain(editing);
     for (const w of ["--ok", "--warn", "--bad"]) expect(COCKPIT_HTML).toMatch(new RegExp(`\\.rtchip\\.[a-z]+\\{[^}]*${w}`));
-    expect(COCKPIT_HTML).toContain("e.altKey&&(e.key===\"ArrowLeft\"");
-    expect(COCKPIT_HTML).toContain('action:"route"');
-    expect(COCKPIT_HTML).toContain('class="rtsess"');
-    expect(COCKPIT_HTML).toContain("b.clear=true");
-    expect(COCKPIT_HTML).toContain("ondrop");
+    for (const gone of ['action:"route"', "rtDrag", "b.clear=true", "ArrowLeft"]) expect(COCKPIT_HTML).not.toContain(gone);
   });
 
   it("shows a loading state until the first limits poll arrives", () => {

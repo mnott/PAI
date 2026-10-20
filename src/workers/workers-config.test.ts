@@ -62,8 +62,11 @@ describe("starter workers.yaml", () => {
     const { workers } = readWorkersSection(jsonPath);
     expect(workers.active).toBe("anthropic");
     expect(Object.keys(workers.providers).sort()).toEqual(["glm", "kimi"]);
-    expect(workers.classes.worker).toBe("anthropic");
-    expect(workers.classes.quick).toBe("anthropic/fast");
+    // the starter's worker / quick rows migrate into the tiers (Quick check folds into t2, its differing order noted)
+    expect(workers.classes.worker).toBeUndefined();
+    expect(workers.tiers.map((t) => t.id)).toEqual(["t0", "t1", "t2"]);
+    expect(workers.tiers[2]).toMatchObject({ models: ["anthropic"], default: true });
+    expect(workers.tiers[2]!.description).toContain("anthropic/fast");
     expect(workers.mcpSets.desktop).toEqual(["clickr"]);
     expect(workers.nativeModels.default).toBe("sonnet");
     // the starter's example providers carry a placeholder inline key
@@ -196,7 +199,8 @@ describe("provider/role resolution, including fast", () => {
       ].join("\n")
     );
     const { workers } = readWorkersSection(jsonPath);
-    expect(workers.classes.quick).toBe("real/fast");
+    expect(workers.tiers.find((t) => t.id === "t2")!.models).toEqual(["real"]);
+    expect(workers.tiers.find((t) => t.id === "t2")!.description).toContain("real/fast");
     expect(workers.providers.real.models.fast).toBe("real-fast");
     expect(workers.providers.real.models.default).toBe("real-default");
   });
@@ -303,8 +307,8 @@ describe("useProvider re-points classes pinned to a provider", () => {
 
     const { workers } = readWorkersSection(jsonPath);
     expect(workers.active).toBe("newprov");
-    expect(workers.classes.worker).toBe("newprov");
-    expect(workers.classes.quick).toBe("newprov/fast");
+    // the tiers are explicit ordered lists: `use` does not rewrite them
+    expect(workers.tiers.find((t) => t.id === "t2")!.models).toEqual(["anthropic"]);
     // "image: glm/image" keeps its alias, just re-pointed to the new provider
     expect(workers.classes.image).toBe("newprov/image");
     expect(repointed).toBe(Object.keys(workers.classes).length);
@@ -371,11 +375,10 @@ describe("useProvider re-points classes pinned to a provider", () => {
     const { workers } = readWorkersSection(jsonPath);
     expect(workers.active).toBe("barebones");
     // implement had no alias: re-pointed
-    expect(workers.classes.worker).toBe("barebones");
-    // spotcheck/image needed a model "barebones" doesn't have: alias dropped,
+    expect(workers.tiers.find((t) => t.id === "t2")!.models).toEqual(["anthropic"]);
+    // image needed a model "barebones" doesn't have: alias dropped,
     // still moved to barebones (its default model) rather than left on the
     // old provider
-    expect(workers.classes.quick).toBe("barebones");
     expect(workers.classes.image).toBe("barebones");
     expect(repointed).toBe(Object.keys(workers.classes).length);
   });

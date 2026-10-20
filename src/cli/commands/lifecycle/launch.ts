@@ -32,6 +32,8 @@ import {
   type LaunchRow,
 } from "../../../workers/launch.js";
 import { renderTable, err, dim, bold, ok } from "../../lib/utils.js";
+import { sessionStartTarget, type ViewDeps } from "../../../workers/route-table.js";
+import { budgetCache } from "../../../workers/budget.js";
 
 export interface LaunchCliOpts {
   provider?: string;
@@ -76,10 +78,10 @@ function printTable(workers: WorkersConfig, opts: { current?: boolean }): void {
   console.log();
 }
 
-/** Answer text ("3", "glm", "glm/glm-5.3-flash") -> provider + optional model. */
-function parseChoice(answer: string, rows: LaunchRow[]): { provider: string; model?: string } | null {
+/** Answer text ("3", "glm", "glm/glm-5.3-flash") -> provider + optional model; an empty answer takes the default (the session-start tier). */
+export function parseChoice(answer: string, rows: LaunchRow[], dflt?: { provider: string; model?: string } | null): { provider: string; model?: string } | null {
   const trimmed = answer.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return dflt ?? null;
   if (/^\d+$/.test(trimmed)) {
     const row = rows.find((r) => r.index === Number(trimmed));
     return row ? { provider: row.provider, model: row.model } : null;
@@ -87,6 +89,12 @@ function parseChoice(answer: string, rows: LaunchRow[]): { provider: string; mod
   const slash = trimmed.indexOf("/");
   if (slash < 0) return { provider: trimmed };
   return { provider: trimmed.slice(0, slash), model: trimmed.slice(slash + 1) };
+}
+
+/** The default `pai launch` starts on: the first available model of the session-start tier (t0) of the routing table; null when no tier is flagged or none is available. */
+export async function launchDefault(workers: WorkersConfig, deps: ViewDeps): Promise<{ provider: string; model?: string; tier: string } | null> {
+  const t = await sessionStartTarget(workers, deps).catch(() => null);
+  return t ? { provider: t.provider, ...(t.model ? { model: t.model } : {}), tier: t.tier } : null;
 }
 
 function prompt(question: string): Promise<string> {
@@ -135,8 +143,10 @@ export async function runLaunch(args: string[], opts: LaunchCliOpts): Promise<vo
   if (!providerName) {
     printTable(workers, {});
     const rows = buildLaunchRows(workers);
-    const answer = await prompt(dim("  Pick a number or provider/model: "));
-    const picked = parseChoice(answer, rows);
+    const dflt = await launchDefault(workers, { logDir, budgets: budgetCache.snapshot() });
+    const dfltText = dflt ? `${dflt.provider}${dflt.model ? `/${dflt.model}` : ""}` : "";
+    const answer = await prompt(dim(`  Pick a number or provider/model${dflt ? `, Enter = ${dfltText} (${dflt.tier})` : ""}: `));
+    const picked = parseChoice(answer, rows, dflt);
     if (!picked) {
       console.error(
         err(

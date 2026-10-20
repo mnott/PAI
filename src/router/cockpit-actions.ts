@@ -16,7 +16,6 @@ import { randomBytes } from "node:crypto";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 import { readWorkersSection } from "../workers/config.js";
-import { clearSessionRoute, setRoute, setSessionRoute } from "../workers/route-table.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { setClass } from "../workers/providers.js";
 import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.js";
@@ -261,27 +260,6 @@ export async function runCockpitAction(
       deps.setLabel(path, label, { force: true });
       writeLedgerLine(deps, action, path, `set:${label}`);
       return { ok: true, message: `labelled ${runtime}${model ? "/" + model : ""}: ${label}` };
-    } catch (e) {
-      return fail(e instanceof Error ? e.message : String(e));
-    }
-  }
-  if (action === "route") {
-    const cls = typeof body.class === "string" ? body.class : "";
-    const session = typeof body.session === "string" ? body.session.trim() : "";
-    try {
-      if (session && body.clear === true) {
-        const text = clearSessionRoute(session, cls || undefined);
-        appendLedger(deps.ledger, "ROUTE-CLEAR", { who: "cockpit", session, class: cls });
-        return { ok: true, message: text };
-      }
-      if (session) {
-        const r = setSessionRoute(session, cls, body.models, { path: deps.configPath });
-        appendLedger(deps.ledger, "ROUTE-SET", { who: "cockpit", session, class: cls, models: r.entries.join(">") });
-        return { ok: true, message: r.text };
-      }
-      const r = setRoute(cls, body.models, deps.configPath);
-      appendLedger(deps.ledger, "ROUTE-SET", { who: "cockpit", class: cls, models: r.entries.join(">") });
-      return { ok: true, message: r.text };
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e));
     }

@@ -1,61 +1,113 @@
 /**
- * route-lists.ts — the routing table: per class an ordered list of models.
+ * route-lists.ts — the routing table: per delegation tier an ordered list of models.
  *
- * Element 0 is what the class serves on; the rest is that class's fallback
- * order. One entry names a provider and optionally one of its models:
+ * Element 0 is what the tier serves on when available; the rest is its
+ * fallback order. One entry names a provider and optionally one of its models:
  * "gyro-m" (a local model, or a provider's default for the class), "glm/fast"
  * (a model alias), "glm/glm-5.3-flash" or "anthropic/opus" (a model id). The
- * list lives in the class map (`workers.classes`): a plain "<provider>[/alias]"
- * target is a list of one, the object form carries `models: [...]`. Pure
- * functions only; the I/O (validation against the providers, persistence,
- * state) is in route-table.ts.
+ * list lives in the class map (`workers.classes`) under the tier's key: a plain
+ * "<provider>[/alias]" target is a list of one, the object form carries
+ * `models: [...]`. Pure functions only; the I/O (validation against the
+ * providers, persistence, state) is in route-table.ts.
  */
 
 import type { ClassTarget } from "./config.js";
 
 /**
- * The three rows of the routing table: a ROLE owns classes. The role's list is
- * stored in `workers.classes` under the role's own name (ROUTE_ROLES); every
- * class resolves to its role's list through ROLE_OF_CLASS below, the one
- * mapping table. A class this table does not know (a new or custom one) is a
- * Worker. `orchestrate` is the chat side (session profile), the rest are worker classes.
+ * A delegation tier (workers.yaml `tiers:`), not a fallback rank. The tier set,
+ * its names, descriptions, ordered model lists, the class -> tier mapping, the
+ * default tier for unknown classes and the session-start flag are all config;
+ * nothing here names a tier. Typically t0 is the interactive session (PAI
+ * starts a session on its first available model), t1 an orchestrator that
+ * plans and reviews, t2 the workers that implement and run quick checks.
  */
-export const ROUTE_ROLES = ["orchestrator", "worker", "quick"] as const;
-export type RouteRole = (typeof ROUTE_ROLES)[number];
+export interface TierDef {
+  id: string;
+  name: string;
+  description?: string;
+  /** Ordered entries: the first available one serves, the rest is the fallback order. */
+  models: string[];
+  /** The classes this tier serves (the class -> tier mapping). */
+  classes?: string[];
+  /** Serves every class no tier lists. */
+  default?: boolean;
+  /** PAI starts sessions on this tier (`pai launch`, session-start defaults). */
+  session?: boolean;
+  /** Reason note (tooltip). */
+  note?: string;
+  /** Escalation triggers / thresholds: carried through, read by whoever evaluates them. */
+  escalation?: Record<string, unknown>;
+}
 
-export const ROUTE_LABELS: Record<RouteRole, string> = {
-  orchestrator: "Orchestrator",
-  worker: "Worker",
-  quick: "Quick check",
-};
+/** Parse a `tiers` value (JSON or YAML); throws a readable message naming the field. */
+export function parseTiersValue(v: unknown, path = "tiers"): TierDef[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw new Error(`${path}: must be a list of tiers`);
+  const seen = new Set<string>();
+  return v.map((raw, i) => {
+    const at = `${path}[${i}]`;
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error(`${at}: must be a mapping`);
+    const o = raw as Record<string, unknown>;
+    const str = (k: string): string | undefined => {
+      if (o[k] === undefined || o[k] === null) return undefined;
+      if (typeof o[k] !== "string") throw new Error(`${at}.${k}: must be a string`);
+      return (o[k] as string).trim() || undefined;
+    };
+    const list = (k: string): string[] | undefined => {
+      if (o[k] === undefined || o[k] === null) return undefined;
+      if (!Array.isArray(o[k]) || (o[k] as unknown[]).some((x) => typeof x !== "string")) throw new Error(`${at}.${k}: must be a list of strings`);
+      return [...new Set((o[k] as string[]).map((x) => x.trim()).filter(Boolean))];
+    };
+    const id = str("id");
+    if (!id) throw new Error(`${at}.id: is required`);
+    if (seen.has(id)) throw new Error(`${at}.id: duplicate tier "${id}"`);
+    seen.add(id);
+    const models = list("models") ?? [];
+    if (!models.length) throw new Error(`${at}.models: tier "${id}" needs at least one model`);
+    const esc = o.escalation;
+    if (esc !== undefined && (typeof esc !== "object" || esc === null || Array.isArray(esc))) throw new Error(`${at}.escalation: must be a mapping`);
+    const classes = list("classes");
+    return {
+      id,
+      name: str("name") ?? id,
+      ...(str("description") ? { description: str("description") } : {}),
+      models,
+      ...(classes?.length ? { classes } : {}),
+      ...(o.default === true ? { default: true } : {}),
+      ...(o.session === true ? { session: true } : {}),
+      ...(str("note") ? { note: str("note") } : {}),
+      ...(esc ? { escalation: esc as Record<string, unknown> } : {}),
+    };
+  });
+}
 
-/** The one mapping table: class -> role. Unlisted classes are Worker. */
-export const ROLE_OF_CLASS: Record<string, RouteRole> = {
-  orchestrate: "orchestrator",
-  plan: "orchestrator",
-  implement: "worker",
-  research: "worker",
-  draft: "worker",
-  review: "worker",
-  complex: "worker",
-  simple: "quick",
-  spotcheck: "quick",
-};
+/** The tier a tier id or class name resolves to: the id itself, the tier listing the class, else the default tier. */
+export function findTier(tiers: TierDef[], name: string): TierDef | undefined {
+  return tiers.find((t) => t.id === name) ?? tiers.find((t) => t.classes?.includes(name)) ?? tiers.find((t) => t.default);
+}
 
-/** The classes each role covers (display captions), in table order. */
-export const CLASSES_OF_ROLE: Record<RouteRole, string[]> = {
+/** The ordered entries serving a class (its tier's models); [] when no tier covers it. */
+export const classRoute = (tiers: TierDef[], cls: string): string[] => [...(findTier(tiers, cls)?.models ?? [])];
+
+/** The tier PAI starts sessions on. */
+export const sessionTier = (tiers: TierDef[]): TierDef | undefined => tiers.find((t) => t.session);
+
+/** The tiers as one session sees them: its overridden tiers replace the global model lists. */
+export function applyRouteOverrides(tiers: TierDef[], routes: Record<string, string[]> | undefined): TierDef[] {
+  if (!routes) return tiers;
+  return tiers.map((t) => (routes[t.id]?.length ? { ...t, models: [...routes[t.id]] } : t));
+}
+
+/** The retired three-role table's keys, stored in `workers.classes` before tiers: orchestrator -> t1, worker and quick -> t2. */
+const LEGACY_ROLES = ["orchestrator", "worker", "quick"] as const;
+type LegacyRole = (typeof LEGACY_ROLES)[number];
+const LEGACY_ROLE_CLASSES: Record<LegacyRole, string[]> = {
   orchestrator: ["orchestrate", "plan"],
   worker: ["implement", "research", "draft", "review", "complex"],
   quick: ["simple", "spotcheck"],
 };
-
-export const isRouteRole = (r: string): r is RouteRole => (ROUTE_ROLES as readonly string[]).includes(r);
-
-/** The role a role name or class name resolves to (unknown classes: worker). */
-export const roleOf = (cls: string): RouteRole => (isRouteRole(cls) ? cls : (Object.hasOwn(ROLE_OF_CLASS, cls) ? ROLE_OF_CLASS[cls] : "worker"));
-
-/** The class whose list was the role list before the three-role table (one-time migration). */
-const MIGRATION_CLASS: Record<RouteRole, string> = { orchestrator: "orchestrate", worker: "implement", quick: "simple" };
+/** The class whose list was the role list before the three-role table. */
+const MIGRATION_CLASS: Record<LegacyRole, string> = { orchestrator: "orchestrate", worker: "implement", quick: "simple" };
 
 export const MAX_ROUTE_MODELS = 12;
 
@@ -65,9 +117,6 @@ export function parseEntry(entry: string): { provider: string; model: string | n
 }
 
 export const entryProvider = (entry: string): string => parseEntry(entry).provider;
-
-/** The ordered entries of a class: its role's `models`, else its single provider[/alias] target, else []. */
-export const classRoute = (classes: Record<string, ClassTarget>, cls: string): string[] => targetList(classes[roleOf(cls)]);
 
 function targetList(t: ClassTarget | undefined): string[] {
   if (t === undefined) return [];
@@ -94,24 +143,6 @@ export function targetForRoute(existing: ClassTarget | undefined, entries: strin
   return { ...rest, provider: entryProvider(entries[0]), ...(entries.length > 1 || parseEntry(entries[0]).model !== null ? { models: [...entries] } : {}) };
 }
 
-/** The classes as one session sees them: its overridden role rows replace the global ones (other keys of a role target are kept). */
-export function applyRouteOverrides(classes: Record<string, ClassTarget>, routes: Record<string, string[]> | undefined): Record<string, ClassTarget> {
-  if (!routes) return classes;
-  const out = { ...classes };
-  for (const [key, models] of Object.entries(routes)) {
-    const role = roleOf(key);
-    const t = targetForRoute(out[role], models);
-    if (t !== undefined) out[role] = t;
-  }
-  return out;
-}
-
-/** The reason note of a global row, if any. */
-export const classNote = (classes: Record<string, ClassTarget>, cls: string): string | undefined => {
-  const t = classes[roleOf(cls)];
-  return typeof t === "object" && t.note ? t.note : undefined;
-};
-
 /** Flatten a retired rank chain (array, or {local, cloud, localFirst}) into the routing walk it stood for. */
 export function flatLegacyChain(v: unknown): string[] {
   const names = (x: unknown): string[] => (Array.isArray(x) ? x.filter((n): n is string => typeof n === "string" && !!n) : []);
@@ -134,7 +165,7 @@ export function migrateLegacyChains(chains: unknown, classes: Record<string, Cla
   const workers = flatLegacyChain(c.workers);
   if (workers.length) {
     for (const role of ["worker", "quick"] as const) {
-      const current = classRoute(classes, role).map(parseEntry);
+      const current = targetList(classes[role]).map(parseEntry);
       const list = workers.map((p) => {
         const had = current.find((e) => e.provider === p && e.model);
         return had ? `${p}/${had.model}` : p;
@@ -153,22 +184,19 @@ export function migrateLegacyChains(chains: unknown, classes: Record<string, Cla
   return changed;
 }
 
-/** The rows a policy mode rewrites (the orchestrator's stays). */
-export const POLICY_ROLES = ["worker", "quick"] as const;
-
 /**
- * One-time migration of the nine per-class lists into the three role lists:
- * the list of the role's first class (orchestrate, implement, simple) becomes
- * the role list; every per-class list is dropped (other keys of a class target
- * stay). A role that already has a list is left alone. Mutates `classes`;
- * returns whether anything changed.
+ * One-time migration of the nine per-class lists into the retired three role
+ * lists (orchestrator / worker / quick, step one of the migration to tiers):
+ * the list of the role's first class becomes the role list; every per-class
+ * list is dropped (other keys of a class target stay). A role that already has
+ * a list is left alone. Mutates `classes`; returns whether anything changed.
  */
 export function migrateClassRoutes(classes: Record<string, ClassTarget>): boolean {
   let changed = false;
-  for (const role of ROUTE_ROLES) {
+  for (const role of LEGACY_ROLES) {
     if (targetList(classes[role]).length) continue;
     // the role's first class decides; a config without it falls back to the role's next class that has a list
-    const src = [MIGRATION_CLASS[role], ...CLASSES_OF_ROLE[role]].find((c) => targetList(classes[c]).length);
+    const src = [MIGRATION_CLASS[role], ...LEGACY_ROLE_CLASSES[role]].find((c) => targetList(classes[c]).length);
     if (src === undefined) continue;
     const from = classes[src];
     const list = targetList(from);
@@ -176,8 +204,8 @@ export function migrateClassRoutes(classes: Record<string, ClassTarget>): boolea
     if (t !== undefined) classes[role] = typeof from === "object" && from.note ? { ...(typeof t === "object" ? t : { provider: t }), note: from.note } : t;
     changed = true;
   }
-  for (const cls of Object.keys(ROLE_OF_CLASS)) {
-    if (isRouteRole(cls) || !targetList(classes[cls]).length) continue;
+  for (const cls of LEGACY_ROLES.flatMap((r) => LEGACY_ROLE_CLASSES[r])) {
+    if (!targetList(classes[cls]).length) continue;
     const t = targetForRoute(classes[cls], []);
     if (t === undefined || !Object.keys(t).length) delete classes[cls];
     else classes[cls] = t;
@@ -186,16 +214,57 @@ export function migrateClassRoutes(classes: Record<string, ClassTarget>): boolea
   return changed;
 }
 
-/** A session's per-class overrides as per-role ones (the role's first class wins); keys that are roles already stay. */
+/**
+ * One-time migration of the three role lists (`workers.classes` keys
+ * orchestrator / worker / quick) into `tiers`, the config the code reads from
+ * then on. Output, not code constants: t0 Session (anthropic/opus, then
+ * glm/glm-5.3[1m]; PAI starts sessions on it), t1 Orchestrator (anthropic/sonnet,
+ * glm/glm-5.3-flash, then the old orchestrator list), t2 Worker (the old worker
+ * list, the default tier; the Quick check classes fold into it, and a Quick
+ * check order that differed is kept in the tier description). The role keys are
+ * dropped from `classes`. Does nothing when `tiers` exist or no role list does.
+ * Mutates both; returns whether anything changed.
+ */
+export function migrateToTiers(config: { classes: Record<string, ClassTarget>; tiers: TierDef[] }): boolean {
+  const { classes } = config;
+  if (config.tiers.length) return false;
+  const list = (r: LegacyRole) => targetList(classes[r]);
+  const note = (r: LegacyRole) => (typeof classes[r] === "object" ? (classes[r] as Exclude<ClassTarget, string>).note : undefined);
+  const present = LEGACY_ROLES.filter((r) => list(r).length);
+  if (!present.length) return false;
+  const tiers: TierDef[] = [
+    { id: "t0", name: "Session", description: "The interactive session itself; PAI starts sessions on it.", models: ["anthropic/opus", "glm/glm-5.3[1m]"], session: true, note: "context width, reasoning" },
+  ];
+  const orch = [...new Set(["anthropic/sonnet", "glm/glm-5.3-flash", ...list("orchestrator")])];
+  tiers.push({ id: "t1", name: "Orchestrator", description: "Splits a job, plans and reviews; its workers implement the parts.", models: orch, classes: ["orchestrate", "plan"], note: note("orchestrator") ?? "planning, reasoning" });
+  const workers = list("worker").length ? list("worker") : list("quick");
+  const quickDiffers = list("quick").length > 0 && list("quick").join(">") !== workers.join(">");
+  tiers.push({
+    id: "t2",
+    name: "Worker",
+    description: `Implements the parts and runs quick checks.${quickDiffers ? ` Folded from Quick check, whose order was ${list("quick").join(" > ")}.` : ""}`,
+    models: workers,
+    classes: [...LEGACY_ROLE_CLASSES.worker, ...LEGACY_ROLE_CLASSES.quick],
+    default: true,
+    ...(note("worker") ? { note: note("worker") } : {}),
+  });
+  config.tiers = tiers;
+  for (const r of LEGACY_ROLES) delete classes[r];
+  return true;
+}
+
+/** A session's overrides keyed by the retired role or class names as tier-keyed ones (first of a tier's keys wins); keys of no retired name stay. */
 export function migrateSessionRoutes<T>(routes: Record<string, T>): Record<string, T> {
+  const tierOfLegacy = (k: string): string | undefined => {
+    if (k === "orchestrator" || LEGACY_ROLE_CLASSES.orchestrator.includes(k)) return "t1";
+    if (k === "worker" || k === "quick" || [...LEGACY_ROLE_CLASSES.worker, ...LEGACY_ROLE_CLASSES.quick].includes(k)) return "t2";
+    return undefined;
+  };
   const out: Record<string, T> = {};
-  for (const role of ROUTE_ROLES) {
-    const key = [role, MIGRATION_CLASS[role]].find((k) => k in routes);
-    if (key !== undefined) out[role] = routes[key];
-  }
-  for (const [k, v] of Object.entries(routes)) {
-    const role = roleOf(k);
-    if (!(role in out) && !(k in ROLE_OF_CLASS) ) out[role] = v;
+  const rank = (k: string) => (["worker", "orchestrator", "implement", "orchestrate"].includes(k) ? 0 : k === "quick" ? 1 : 2);
+  for (const [k, v] of Object.entries(routes).sort((a, b) => rank(a[0]) - rank(b[0]))) {
+    const id = tierOfLegacy(k) ?? k;
+    if (!(id in out)) out[id] = v;
   }
   return out;
 }
