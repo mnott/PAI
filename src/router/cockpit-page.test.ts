@@ -40,7 +40,7 @@ describe("cockpit page compression", () => {
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
       "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document",
-      `${body}\nrenderLimits();`
+      `function keepDowns(){}\n${body}\nrenderLimits();`
     );
     const lim = {
       activeLocal: "dead17",
@@ -69,7 +69,7 @@ describe("live-shaped payloads", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const run = (activeLocal: string | null) => {
       const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `${body}\nrenderLimits();`);
+      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${body}\nrenderLimits();`);
       const lim = { activeLocal, limits: [{ provider: "gyro-m", kind: "local", up: true, served: ["m"] }, { provider: "flashnext-iq3", kind: "local", up: false }] };
       fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
       return els.local!.innerHTML;
@@ -98,7 +98,7 @@ describe("cockpit layout follow-up", () => {
   it("the cloud section is status only: gauges per provider, local cards, no rank badges or controls", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", `${body}\nrenderLimits();`);
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", `function keepDowns(){}\n${body}\nrenderLimits();`);
     const lim = {
       limits: [
         { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
@@ -1003,5 +1003,73 @@ describe("router.cockpit.sections", () => {
     expect(cockpitHtml()).toBe(COCKPIT_HTML);
     expect(cockpitHtml([])).toBe(COCKPIT_HTML);
     expect(cockpitHtml(["nope"])).toBe(COCKPIT_HTML);
+  });
+});
+
+describe("cockpit folds and open lists survive a redraw", () => {
+  const foldSrc = COCKPIT_HTML.match(/var MCOLLAPSE_KEY[\s\S]*?\n\}\n/)![0];
+  const store: Record<string, string> = {};
+  const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
+  beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
+  const card = (rt: string, def: string) => {
+    const btn: any = { setAttribute() {}, querySelector: () => null };
+    Object.defineProperty(btn, "onclick", { value: null, writable: true, configurable: true, enumerable: true });
+    const c: any = {
+      classes: new Set<string>(),
+      getAttribute: (k: string) => ({ "data-rt": rt, "data-model": "", "data-def": def })[k] ?? null,
+      classList: { toggle(cl: string, on: boolean) { if (on) c.classes.add(cl); else c.classes.delete(cl); }, contains: (cl: string) => c.classes.has(cl) },
+      querySelector: (s: string) => (s === ".mhead" ? btn : null),
+    };
+    return c;
+  };
+  const fold = (get: () => any[]) => {
+    const panel = { querySelectorAll: () => get() };
+    return new Function("localStorage", "$", `${foldSrc}\nreturn applyModelFold;`)(ls, () => panel) as () => void;
+  };
+
+  it("an opened card stays open when the cards are re-rendered with the same data", () => {
+    let cards = [card("a", "coding"), card("b", "other")];
+    const apply = fold(() => cards);
+    apply();
+    expect(cards[1].classes.has("open")).toBe(false);
+    cards[1].classList.toggle("open", true);
+    store["pai.cockpit.models.folded"] = JSON.stringify([]); // what the header click persists
+    cards = [card("a", "coding"), card("b", "other")]; // innerHTML rebuild: no "open" class
+    apply();
+    expect(cards[0].classes.has("open")).toBe(true);
+    expect(cards[1].classes.has("open")).toBe(true);
+  });
+
+  it("a placeholder render (no cards) does not wipe the saved folds", () => {
+    store["pai.cockpit.models.folded"] = JSON.stringify(["b"]);
+    let cards: any[] = [];
+    const apply = fold(() => cards);
+    apply();
+    expect(JSON.parse(store["pai.cockpit.models.folded"])).toEqual(["b"]);
+    cards = [card("a", "coding"), card("b", "other")];
+    apply();
+    expect(cards[1].classes.has("open")).toBe(false);
+    expect(cards[0].classes.has("open")).toBe(true);
+  });
+
+  it("an opened 'not loaded' details stays open across a Local block rebuild", () => {
+    const helper = COCKPIT_HTML.match(/var downsOpen[\s\S]*?\n\}\n/)![0];
+    const mk = () => {
+      const d: any = { open: false, ontoggle: null, getAttribute: () => "nl" };
+      return d;
+    };
+    let current = mk();
+    const el = { querySelectorAll: () => [current] };
+    const keep = new Function(`${helper}\nreturn keepDowns;`)() as (e: unknown) => void;
+    keep(el);
+    current.open = true;
+    current.ontoggle();
+    current = mk(); // innerHTML rebuild
+    keep(el);
+    expect(current.open).toBe(true);
+  });
+
+  it("every section gets a stable id from data-section, not its position", () => {
+    expect(COCKPIT_HTML).toContain('c.id=c.getAttribute("data-section")||"tile-"+i');
   });
 });

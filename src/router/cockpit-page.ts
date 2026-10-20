@@ -205,7 +205,7 @@ function applyCollapse(){
  var cs=collapsedSet(),cards=document.querySelectorAll("main section.card");
  for(var i=0;i<cards.length;i++)(function(c){
   var h=c.querySelector("h2");if(!h)return;
-  if(!c.id)c.id="tile-"+i;
+  if(!c.id)c.id=c.getAttribute("data-section")||"tile-"+i;
   var b=h.querySelector("button.fold");
   if(!b){b=document.createElement("button");b.type="button";b.className="fold";b.setAttribute("aria-expanded","true");h.insertBefore(b,h.firstChild)}
   var col=!!cs[c.id];
@@ -253,6 +253,16 @@ function wireAct(el,onDone){
   };
  })(btns[i]);
 }
+/** The Local block is rebuilt by innerHTML on every poll: remember per details kind whether the user opened it and re-apply after the rebuild. */
+var downsOpen={};
+function keepDowns(el){
+ var ds=el.querySelectorAll("details.downs");
+ for(var i=0;i<ds.length;i++)(function(d){
+  var k=d.getAttribute("data-kind");
+  if(downsOpen[k])d.open=true;
+  d.ontoggle=function(){downsOpen[k]=d.open};
+ })(ds[i]);
+}
 function renderLimits(){
  if(!lim)return;var c="",lo="",dn=[],nl=[];
  lim.limits.forEach(function(l){
@@ -266,10 +276,11 @@ function renderLimits(){
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
   c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
- if(nl.length)lo+='<details class="downs"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
- if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ if(dn.length)lo+='<details class="downs" data-kind="dn"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
+ keepDowns($("local"));
 }
 /** Routing section, read-only: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers) and the sessions overriding it. Edited in workers.yaml or with pai worker route set. */
 function renderRouting(){
@@ -479,8 +490,10 @@ function applyModelFold(){
   var id=rt+(md?" / "+md:"");known[id]=1;
   var open=c.classList.contains("open");
   // the stored array is the folded list: an id in it is folded, an id not in it is open
+  // (a re-rendered card has lost its class, so after init the absence of the id is the only truth)
   if(id in saved)open=!saved[id];
-  else if(init!==1){
+  else if(init===1)open=true;
+  else{
    var d=c.getAttribute("data-def");
    open=d==="coding";
    // only the folded cards are stored; an open card is the absence of its id
@@ -501,7 +514,8 @@ function applyModelFold(){
   };
  })(cards[i]);
  // a card that left the inventory: its saved state goes with it
- for(var k in saved)if(k!=="__init"&&!(k in known))delete saved[k];
+ // (not while no card is rendered: the "…" placeholder is not an empty inventory)
+ if(cards.length)for(var k in saved)if(k!=="__init"&&!(k in known))delete saved[k];
  saved.__init=1;saveMFolded(saved);
 }
 function renderModels(){
