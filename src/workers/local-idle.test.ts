@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_LOCAL_IDLE, evaluate, localIdleLine, parseGpuUtilization, setMuted, readMuted, type LocalIdleState, type LocalProviderSample, type LocalSample } from "./local-idle.js";
+import type { WorkersConfig } from "./config.js";
+import { DEFAULT_LOCAL_IDLE, evaluate, localIdleLine, parseGpuUtilization, takeSample, setMuted, readMuted, type LocalIdleState, type LocalProviderSample, type LocalSample } from "./local-idle.js";
 
 const cfg = DEFAULT_LOCAL_IDLE;
 const MIN = 60_000;
@@ -105,7 +106,36 @@ describe("local idle watcher", () => {
     expect(setMuted(dir, "a", false)).toEqual([]);
     const now = Date.now();
     const line = localIdleLine({ at: new Date(now).toISOString(), gpuPct: 0, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-m", cap: 4, running: 2, free: 2, queued: 0, activity: { build: 2 } }] }, now);
-    expect(line).toBe("local model: idle 0% · gyro-m 2/4 running, 2 free");
+    expect(line).toBe("local model: GPU 0% idle · gyro-m 2/4 running, 2 free");
     expect(readFileSync(join(dir, "local-idle-muted.json"), "utf8")).toBe("[]");
+  });
+
+  it("line names the GPU unambiguously", () => {
+    const now = Date.now();
+    const f = { at: new Date(now).toISOString(), gpuPct: 87, idleSince: null, lastNudge: {}, providers: [{ provider: "gyro-m", cap: 4, running: 4, free: 0, queued: 0, activity: {} }] };
+    expect(localIdleLine(f, now)).toBe("local model: GPU 87% busy · gyro-m 4/4 running, 0 free");
+  });
+
+  describe("takeSample lists only served providers", () => {
+    const local = (enabled: boolean) => ({ enabled, baseUrl: "http://127.0.0.1:8010/v1", maxConcurrent: 2 });
+    const cfg2 = { providers: { gyro: local(true), off: local(false), down: local(true), cloud: { enabled: true, baseUrl: "https://api.example.com" } } } as unknown as WorkersConfig;
+    const status = (provider: string | null) => ({ at: new Date().toISOString(), running: provider ? { provider, model: "m", why: "" } : null, down: [], disabled: [] });
+    const names = async (dir: string, st: ReturnType<typeof status>) => (await takeSample(dir, cfg2, Date.now(), async () => 50, st)).providers.map((p) => p.provider);
+    const tmp = () => mkdtempSync(join(tmpdir(), "pai-li-"));
+
+    it("only the enabled served provider", async () => {
+      expect(await names(tmp(), status("gyro"))).toEqual(["gyro"]);
+    });
+    it("nothing served, no work: nothing listed", async () => {
+      expect(await names(tmp(), status(null))).toEqual([]);
+    });
+    it("a disabled provider is never served", async () => {
+      expect(await names(tmp(), status("off"))).toEqual([]);
+    });
+    it("a provider with a running worker is listed even when unserved", async () => {
+      const dir = tmp();
+      writeFileSync(join(dir, "w1.status"), JSON.stringify({ id: "w1", provider: "down", state: "running", pid: process.pid, started: new Date().toISOString(), last: "" }));
+      expect(await names(dir, status("gyro"))).toEqual(["gyro", "down"]);
+    });
   });
 });
