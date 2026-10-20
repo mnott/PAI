@@ -20,7 +20,9 @@ const KEYWORDS: Array<{ re: RegExp; why: string }> = [
   { re: /\b(install(?:er|ation|ing|s)?|signing|code[- ]?sign\w*|app store|testflight|notariz\w+)\b/i, why: "install/signing task" },
   { re: /\b(devices?|icloud|cloudkit)\b/i, why: "device/iCloud task" },
   { re: /\bbuild[- ]system\b/i, why: "build-system task" },
-  { re: /\b(door|ci|release)\b/i, why: "door/CI/release task" },
+  { re: /\b(?:(?:cut|cutting|publish\w*|tag\w*|ship\w*)\s+(?:\S+\s+){0,2}?releases?|release[- ](?:build|pipeline))\b/i, why: "release task" },
+  { re: /\b(?:build[- ]doors?|door[- ]scripts?)\b/i, why: "build door task" },
+  { re: /\bci(?:\s+(?:pipelines?|config\w*|builds?|jobs?|workflows?)|\s+is\s+(?:red|failing|broken))\b/i, why: "CI task" },
   { re: /\b(migrat\w+|redesign\w*)\b/i, why: "migration/redesign task" },
   { re: /\brefactor\w*\s+across\s+(?:\w+\s+)?modules\b/i, why: "cross-module refactor" },
 ];
