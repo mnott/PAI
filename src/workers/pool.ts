@@ -481,6 +481,8 @@ export interface PoolTaskRequest {
   spare?: boolean;
   /** Epoch ms when the run started: setupMs of a hit counts from here to the task being fed. */
   runStartedAt?: number;
+  /** Ms the client spent in the capacity + stagger gates before shipping the task (ledger split of setupMs). */
+  admissionMs?: number;
 }
 
 /** What the host answers: either the finished task or a refusal to pool it. */

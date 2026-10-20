@@ -825,6 +825,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (inelig) return { pooled: false, reason: inelig };
 
     const wid = task.id;
+    const claimT0 = Date.now();
     // a worktree task runs in the slot's own worktree on a fresh branch; every
     // other task runs in the cwd it came with
     let prep: SlotPrep | null = null;
@@ -915,6 +916,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // setup: run start -> the worker process holds the task as its first turn
     const readyAt = Date.now();
     const setupMs = task.runStartedAt ? Math.max(0, readyAt - task.runStartedAt) : undefined;
+    const claimMs = spareEntry ? readyAt - claimT0 : undefined;
     const timing: { firstAt: number | null } = { firstAt: null };
     appendLedger(ledger, "WORKER-START", {
       id: wid,
@@ -922,6 +924,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       mode: spareEntry ? "headless" : "pooled",
       ...(spareEntry ? { spare: "hit" } : {}),
       ...(setupMs !== undefined ? { setupMs } : {}),
+      ...(task.admissionMs !== undefined ? { admissionMs: task.admissionMs } : {}),
+      ...(claimMs !== undefined ? { claimMs } : {}),
       model: task.model,
       cwd: task.cwd,
       label: task.label,
@@ -1035,7 +1039,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const text = spareEntry
       ? `${pooledUnitPrompt(unitSpec, wtNote)}${task.trailer}`
       : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer);
-    let resultEvent = await session.feed(text, onEvent);
+    const feeding = session.feed(text, onEvent);
+    // the replacement starts once the task is on its way, not when it ends: back-to-back tasks find the next spare ready
+    if (spareEntry) topUp(spareEntry.rec.repo, task.provider, task.model);
+    let resultEvent = await feeding;
     if (deadTimer) clearTimeout(deadTimer);
     clientGone?.removeEventListener("abort", onClientGone);
 
@@ -1147,6 +1154,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       poolTask: taskNo,
       ...(spareEntry ? { spare: "hit" } : {}),
       ...(setupMs !== undefined ? { setupMs } : {}),
+      ...(task.admissionMs !== undefined ? { admissionMs: task.admissionMs } : {}),
+      ...(claimMs !== undefined ? { claimMs } : {}),
       ...(timing.firstAt !== null ? { firstAnswerMs: timing.firstAt - readyAt } : {}),
       ...(status.timedOut ? { timedOut: 1 } : {}),
     });
@@ -1188,10 +1197,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     state.tasksServed += 1;
     release(session);
     if (spareEntry && spareKeyOf) {
-      // one task per spare: the process ends, the worktree stays; a replacement starts for the key
+      // one task per spare: the process ends, the worktree stays (its replacement started at the claim)
       session.kill();
       appendLedger(ledger, "WORKER-POOL-SPARE-END", { spare: spareEntry.rec.id, provider: task.provider, note: `served ${wid}` });
-      topUp(spareEntry.rec.repo, task.provider, task.model);
     } else if (session.dead) dropSlot(slotKey(task.provider, task.model, workDir), "slot exited after task");
     // a worktree task gets a fresh conversation: the process ends, the next task spawns a new one in the same slot dir
     else if (prep) dropSlot(slotKey(task.provider, task.model, workDir), "fresh conversation per worktree task");

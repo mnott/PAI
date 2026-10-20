@@ -1552,6 +1552,12 @@ export interface ExecuteArgs {
   opts: RunOptions;
   /** Set once the follow pane was handled (tryPoolRun); executeRun then neither opens nor verifies a second one. */
   panePrepared?: { verified: boolean };
+  /** The follow pane opening beside admission and the claim (gateStart); settles once panePrepared is set. Never rejects. */
+  paneOpening?: Promise<void>;
+  /** Ms the pane took to open and verify (off the critical path), ms spent in the capacity + stagger gates, epoch ms a fresh spawn began. */
+  setupPaneMs?: number;
+  admissionMs?: number;
+  spawnT0?: number;
   /** Epoch ms the run started: setupMs counts from here to the worker process holding its first turn. */
   runT0?: number;
   /** Why the spare claim missed (the pool was asked, this run spawned fresh); recorded on the WORKER-END line. */
@@ -1605,11 +1611,14 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this.
   // A spare claim starts the task first and opens the pane alongside it: the pane never delays the task.
   const preparePane = async (): Promise<void> => {
+    if (a.paneOpening) return a.paneOpening; // gateStart already started it, beside admission
     if (a.panePrepared) return;
+    const paneT0 = Date.now();
     const term = (await resolveHostSession()).term;
     const ledger = ledgerPath(a.logDir);
     const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
     a.panePrepared = { verified };
+    a.setupPaneMs = Date.now() - paneT0;
     const status = loadStatus(a.logDir, wid);
     if (status) {
       if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
@@ -1619,12 +1628,12 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger);
     }
   };
-  const panePending = claim ? preparePane() : null;
-  if (!claim) await preparePane();
+  const panePending = preparePane(); // beside the claim / first turn: the pane never delays the task
   const limitMinutes = a.limit && a.limit.minutes > 0 ? a.limit.minutes : null;
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
   let resp: PoolTaskResponse | null;
+  const postT0 = Date.now();
   try {
     resp = await postTaskToPool(
       settings.port,
@@ -1647,6 +1656,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
         trailer: promptTrailer(a.reportFormat),
         worktree: a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
         ...(claim ? { runStartedAt: a.runT0 ?? Date.now() } : {}),
+        ...(a.admissionMs !== undefined ? { admissionMs: a.admissionMs } : {}),
       },
       timeoutMs,
       claim ? "/claim" : "/task"
@@ -1654,6 +1664,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   } catch {
     resp = null;
   }
+  const postMs = Date.now() - postT0;
   await panePending; // a miss falls back to executeRun, which reuses the prepared pane
   if (resp === null) {
     a.spareMiss = "host-unreachable";
@@ -1674,6 +1685,10 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     return null;
   }
   a.onWorkerStart?.(wid);
+  if (claim && a.setupPaneMs !== undefined) {
+    // the pane finishes beside the claim, so the host cannot know it: the client adds the pane share of the setup
+    appendLedger(ledgerPath(a.logDir), "WORKER-SETUP", { id: wid, setupPaneMs: a.setupPaneMs, admissionMs: a.admissionMs, claimMs: postMs });
+  }
   const rc = resp.rc ?? 1;
   if (!a.quiet) {
     printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, resp.report);
@@ -1796,22 +1811,28 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     ...(spawner ? { spawnerSession: spawner } : {}),
   };
   saveStatus(a.logDir, status);
-  // the follow pane opens now, not after the queue: a run parked at a cap shows
-  // its place in line there (runGates onWait) and flips to the live view on the grant
-  const term = (await resolveHostSession()).term;
-  const hostSession = resolveSession(term);
-  if (hostSession) {
-    status.session = hostSession;
-    saveStatus(a.logDir, status);
-  }
+  // the follow pane opens now, not after the queue (a run parked at a cap shows
+  // its place in line there, runGates onWait) — and beside admission and the
+  // claim, never in front of them: whoever needs the pane settled awaits paneOpening
   const ledger = ledgerPath(a.logDir);
-  const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
-  a.panePrepared = { verified };
-  if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
-  else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
-  saveStatus(a.logDir, status);
+  const paneT0 = Date.now();
+  a.paneOpening = (async () => {
+    const term = (await resolveHostSession()).term;
+    const hostSession = resolveSession(term);
+    if (hostSession) {
+      status.session = hostSession;
+      saveStatus(a.logDir, status);
+    }
+    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
+    a.panePrepared = { verified };
+    a.setupPaneMs = Date.now() - paneT0;
+    if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
+    else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
+    saveStatus(a.logDir, status);
+  })().catch(() => undefined);
   const gateT0 = Date.now();
   await runGates(a, wid, status);
+  a.admissionMs = Date.now() - gateT0;
   // waiting for a slot is not work: the limit counts from the grant (active time)
   const queued = Date.now() - gateT0;
   if (a.limit && queued >= 1000) {
@@ -1846,9 +1867,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
+  await a.paneOpening;
   const paneVerified = a.panePrepared
     ? a.panePrepared.verified
     : headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
+  a.spawnT0 = Date.now();
   const session = resolveSession(term);
   const sessionKey = await detectSessionName();
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
@@ -2498,6 +2521,9 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       tools: status.tools,
       label,
       ...(a.runT0 ? { setupMs: Math.max(0, timing.readyAt - a.runT0) } : {}),
+      ...(a.setupPaneMs !== undefined ? { setupPaneMs: a.setupPaneMs } : {}),
+      ...(a.admissionMs !== undefined ? { admissionMs: a.admissionMs } : {}),
+      ...(a.spawnT0 ? { spawnMs: Math.max(0, timing.readyAt - a.spawnT0) } : {}),
       ...(timing.firstAt !== null ? { firstAnswerMs: timing.firstAt - timing.readyAt } : {}),
       ...(a.spareMiss ? { spare: "miss", spareMiss: a.spareMiss } : {}),
     },
