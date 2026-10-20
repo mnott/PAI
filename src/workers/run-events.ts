@@ -66,6 +66,21 @@ export function aibrokerMessenger(
   logDir: string,
   warn: (s: string) => void = (s) => process.stderr.write(s + "\n"),
   resolveHost: (claudeSession: string) => Promise<string> = async () => "",
+  send: (target: string, text: string) => Promise<{ ok: boolean; timedOut?: boolean; error?: string }> = async (target, text) => {
+    // lazy import: the live client loads only when a message is actually sent
+    const { sendToSession } = await import("../cli/lib/aibroker-client.js");
+    return sendToSession(target, text);
+  },
+  toPailot: (text: string) => Promise<boolean> = async (text) => {
+    try {
+      const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
+      await callAiBroker("pailot_send", { text }, 8_000);
+      return true;
+    } catch (e) {
+      warn(`run report not delivered to PAILot: ${String(e)}`);
+      return false;
+    }
+  },
 ): Messenger {
   const self: Messenger = {
     async toSession(origin, text) {
@@ -76,34 +91,20 @@ export function aibrokerMessenger(
         return false;
       };
       try {
-        // AIBROKER_CLIENT_STUB redirects the client import (tests use a temp module, never the live socket)
-        const { sendToSession } = await import(process.env.AIBROKER_CLIENT_STUB ?? "../cli/lib/aibroker-client.js");
         let target = originTarget(origin);
         // a background session records no iterm: fall back to the host resolver for its Claude session
         if (!target && origin.claudeSession) target = (await resolveHost(origin.claudeSession)) || undefined;
         if (!target) {
           return fail("the run has no originating session");
         }
-        if (!target) {
-          return fail("the run has no originating session");
-        }
-        const r = await sendToSession(target, text);
+        const r = await send(target, text);
         if (!r.ok && !r.timedOut) return fail(`${target}: ${r.error}`);
         return r.ok || r.timedOut === true;
       } catch (e) {
         return fail(String(e));
       }
     },
-    async toPailot(text) {
-      try {
-        const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
-        await callAiBroker("pailot_send", { text }, 8_000);
-        return true;
-      } catch (e) {
-        warn(`run report not delivered to PAILot: ${String(e)}`);
-        return false;
-      }
-    },
+    toPailot,
   };
   return self;
 }
