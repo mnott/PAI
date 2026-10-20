@@ -76,6 +76,7 @@ import { parseWaitOn, waitingLine } from "./waiting.js";
 import { denialLines } from "./denials.js";
 import { lastCommand } from "./tool-errors.js";
 import { isWaitPollCommand } from "./wait.js";
+import { psTable } from "./ps-table.js";
 
 /** Whether a Bash command ends in a `pai worker wait*` poll. */
 const isWaitPoll = (cmd: string): boolean => {
@@ -99,7 +100,7 @@ export const BACKFILL_EVENTS = 200;
  */
 export function strayWorkerProcesses(
   statuses: Pick<WorkerStatus, "pid" | "started" | "state" | "parentPid">[],
-  psOut: string = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" })
+  psOut: string = psTable("pid=,command=")
 ): Array<{ pid: number; command: string }> {
   const owned = new Set<number>();
   for (const s of statuses) {
