@@ -1,0 +1,17 @@
+{
+  "name": "pai",
+  "owner": {
+    "name": "Matthias Nott"
+  },
+  "metadata": {
+    "description": "PAI Knowledge OS: persistent memory, session continuity and worker orchestration for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "pai",
+      "source": "./",
+      "description": "Personal AI Infrastructure: persistent memory, session continuity, knowledge graph and an install skill",
+      "homepage": "https://github.com/mnott/PAI"
+    }
+  ]
+}

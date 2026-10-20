@@ -10,23 +10,28 @@ PAI is an operating layer for Claude Code. It gives every session a memory: note
 
 Prerequisites: [Claude Code](https://claude.com/claude-code) and Node.js 20 or newer. Docker is only needed if you choose PostgreSQL.
 
-**With the install skill (recommended).** The npm package ships a Claude Code plugin named `pai` (manifest `.claude-plugin/plugin.json`) whose `setup` skill does the install:
+**With the install skill (recommended).** Two commands inside Claude Code add this repository as a plugin marketplace and install the `pai` plugin, whose `setup` skill does the install:
+
+```
+/plugin marketplace add mnott/PAI
+/plugin install pai@pai
+```
+
+Then say **"set up PAI"**. The skill checks each phase first (package, `pai setup`, daemon, first workers) and does only what is missing.
+
+**From a clone or the npm package.** Load the plugin for one session instead of installing it:
 
 ```bash
 npm i -g @tekmidian/pai
 claude --plugin-dir "$(npm root -g)/@tekmidian/pai"
 ```
 
-Then say **"set up PAI"**. The skill checks each phase first (package, `pai setup`, daemon, first workers) and does only what is missing.
-
-**Without the plugin.** Install the package and run the wizard yourself; copy the skill into your skills folder if you want Claude to drive it later:
+**Without the plugin.** Install the package and run the wizard yourself:
 
 ```bash
 npm i -g @tekmidian/pai
 pai setup                     # interactive; or: pai setup --yes --storage sqlite
 pai daemon status             # should show "running"
-mkdir -p ~/.claude/skills
-cp -R "$(npm root -g)/@tekmidian/pai/plugins/core/skills/setup" ~/.claude/skills/pai-setup
 ```
 
 Details, storage choices, the daemon and updates: [docs/install/index.md](docs/install/index.md).
