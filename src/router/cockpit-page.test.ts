@@ -98,7 +98,7 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).not.toMatch(/alert\(|confirm\(|prompt\(/);
   });
 
-  it("the routing section renders one row per class: ordered chips with arrows, coloured by state, × and +", () => {
+  it("the routing section renders three role rows: ordered chips with arrows, coloured by state, × and +", () => {
     expect(COCKPIT_HTML).toContain('data-section="routing"');
     expect(COCKPIT_HTML.indexOf('data-section="cloud"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="routing"'));
     expect(COCKPIT_HTML.indexOf('data-section="routing"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="workers"'));
@@ -109,16 +109,19 @@ describe("cockpit layout follow-up", () => {
     const lim = {
       routing: {
         rows: [
-          { cls: "orchestrate", label: "Orchestrator", chips: [{ entry: "glm", label: "glm/glm-5.3", state: "available", why: "" }] },
+          { cls: "orchestrator", label: "Orchestrator", classes: ["orchestrate", "plan"], chips: [{ entry: "glm", label: "glm/glm-5.3", state: "available", why: "" }] },
           {
-            cls: "implement",
-            label: "Implement",
+            cls: "worker",
+            label: "Worker",
+            classes: ["implement", "research", "draft", "review", "complex"],
+            sessions: [{ session: "job", chips: [{ entry: "glm/fast", label: "glm/glm-5.3-flash", state: "available", why: "" }] }],
             chips: [
               { entry: "gyro-m", label: "local gyro-m", state: "idle", why: "not running" },
               { entry: "anthropic/sonnet", label: "anthropic/sonnet", state: "tight", why: "budget 85%" },
               { entry: "glm/fast", label: "glm/glm-5.3-flash", state: "unavailable", why: "cooldown 5 min" },
             ],
           },
+          { cls: "quick", label: "Quick check", classes: ["simple", "spotcheck"], chips: [{ entry: "gyro-m", label: "local gyro-m", state: "available", why: "" }] },
         ],
         choices: [{ entry: "kimi/k3[1m]", label: "kimi/k3[1m]", local: false }],
       },
@@ -137,8 +140,14 @@ describe("cockpit layout follow-up", () => {
     expect(h).toContain('class="rtx"');
     expect(h).toContain('class="rtadd"');
     expect(h).not.toContain("rtlist");
-    call("implement");
+    expect(h).toContain("implement · research · draft · review · complex");
+    expect(h).toContain('class="rtsess"');
+    expect(h.match(/class="rtrow"/g)).toHaveLength(3);
+    expect(h).toContain("Quick check");
+    call("worker|");
     expect(els.routing!.innerHTML).toContain('data-add="kimi/k3[1m]"');
+    call("worker|job");
+    expect(els.routing!.innerHTML).toContain('data-s="job" data-add="kimi/k3[1m]"');
     for (const w of ["--ok", "--warn", "--bad"]) expect(COCKPIT_HTML).toMatch(new RegExp(`\\.rtchip\\.[a-z]+\\{[^}]*${w}`));
     expect(COCKPIT_HTML).toContain("e.altKey&&(e.key===\"ArrowLeft\"");
     expect(COCKPIT_HTML).toContain('action:"route"');

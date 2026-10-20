@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
-import { migrateLegacyChains } from "./route-lists.js";
+import { migrateClassRoutes, migrateLegacyChains } from "./route-lists.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
 
 // ---------------------------------------------------------------------------
@@ -1407,6 +1407,8 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
     workers.nativeModels = yaml.data.nativeModels;
   }
   // the retired rank chains (workers.chains) become the class lists; the next write drops the key
+  // the nine per-class lists become the three role lists (orchestrator / worker / quick); the next write drops the class lists
+  migrateClassRoutes(workers.classes);
   migrateLegacyChains((raw.workers as { chains?: unknown } | undefined)?.chains, workers.classes);
   return { raw, workers };
 }

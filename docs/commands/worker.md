@@ -1351,20 +1351,20 @@ See also: `pai worker local`, `pai worker providers`
 
 ### pai worker route
 
-Print the routing table: per class the ordered models
+Print the routing table: per role the ordered models
 
 ```
 pai worker route [ACTION] [CLASS] [MODELS] [options]
 ```
 
-One row per class (orchestrate, implement, simple, spotcheck, ...), each an ordered list of models: the first serves, the rest is the fallback order. Local models ("local gyro-m") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.
-`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m). --note adds the reason (tooltip).
---session <name|self> makes it a per-session override stored in that session's profile (`route set --session s <class> <models>`, `route clear --session s [<class>]`); runs started from that session use its row, else the global one. `route --session s` prints the effective table for that session.
+Three rows, one per role (Orchestrator: orchestrate, plan; Worker: implement, research, draft, review, complex; Quick check: simple, spotcheck), each an ordered list of models: the first serves, the rest is the fallback order. Local models ("local gyro-m") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.
+`route set <role|class> <provider/model,...>` sets a row (a class sets its role's row; an unknown class is a Worker): a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m). --note adds the reason (tooltip).
+--session <name|self> makes it a per-session override stored in that session's profile (`route set --session s <role|class> <models>`, `route clear --session s [<role|class>]`); runs started from that session use its row, else the global one. `route --session s` prints the effective table for that session.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ACTION` | no | set or clear (omit to print) |
-| `CLASS` | no | orchestrate, implement, simple, spotcheck, research, draft, review, complex, plan |
+| `CLASS` | no | orchestrator, worker, quick, or any class (orchestrate, plan, implement, research, draft, review, complex, simple, spotcheck) |
 | `MODELS` | no | Comma-separated provider/model entries, first serves |
 
 | Flag | Type | Default | Description |
@@ -1374,9 +1374,9 @@ One row per class (orchestrate, implement, simple, spotcheck, ...), each an orde
 
 ```sh
 pai worker route
-pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash --note "context width, reasoning"
-pai worker route set --session self implement anthropic/sonnet
-pai worker route clear --session self implement
+pai worker route set worker gyro-m,anthropic/sonnet,glm/glm-5.3-flash --note "context width, reasoning"
+pai worker route set --session self worker anthropic/sonnet
+pai worker route clear --session self worker
 pai worker route --session self
 ```
 
@@ -1643,7 +1643,7 @@ See also: `pai worker providers`
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
-| `pai worker route` | Print the routing table: per class the ordered models |
+| `pai worker route` | Print the routing table: per role the ordered models |
 | `pai worker local` | Which local model runs; the operator switches tiers |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |
