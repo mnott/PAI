@@ -37,9 +37,9 @@ describe("cockpit page compression", () => {
 
   it("local providers that are down sit in one closed <details>; up ones stay visible", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
-    const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
+    const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" }, ranksum: { innerHTML: "" } };
     const fn = new Function(
-      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "actRow", "wireAct", "loadLimits", "document",
+      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "badges", "rankPop", "chainText", "wireRanks", "loadLimits", "document",
       `${body}\nrenderLimits();`
     );
     const lim = {
@@ -49,7 +49,7 @@ describe("cockpit page compression", () => {
       ],
     };
     fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "",
-      (_cls: string, _attrs: string, btns: string) => btns, () => {}, () => {}, { querySelectorAll: () => [] });
+      () => "", () => "", () => "", () => {}, () => {}, { querySelectorAll: () => [] });
     const html = els.local!.innerHTML;
     expect(html).toContain("up1");
     expect(html).toContain("<details");
@@ -64,23 +64,49 @@ describe("cockpit page compression", () => {
 });
 
 describe("cockpit layout follow-up", () => {
-  it("top panel: local sizes to content, cloud takes the rest", () => {
-    expect(COCKPIT_HTML).toContain('class="grp grp-cloud"');
-    expect(COCKPIT_HTML).toContain('class="grp grp-local"');
-    expect(COCKPIT_HTML).toMatch(/\.grp-cloud\{flex:1 1 0\}/);
-    expect(COCKPIT_HTML).not.toMatch(/\.grp-cloud\{flex:1 1 560px\}/);
-    // gauges scale via the viewBox instead of a fixed floor: no 110px min-width,
-    // the svg fills the gauge and keeps its aspect ratio
-    // max-width:min(120px,100%): a long unbreakable line (an error text at a
-    // large minimum font size) must not push a gauge past its container
+  it("cloud and local models are cards in one responsive grid across the full width", () => {
+    expect(COCKPIT_HTML).toMatch(/\.rkgrid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(260px,100%\),1fr\)\)/);
+    expect(COCKPIT_HTML).toContain('<div class="rkgrid" id="cloud">');
+    expect(COCKPIT_HTML).toContain('<div class="rkgrid" id="local">');
+    expect(COCKPIT_HTML).not.toContain("grp-cloud");
+    expect(COCKPIT_HTML).not.toContain("grp-local");
+    // gauges scale via the viewBox; a long unbreakable line must not push a gauge past its container
     expect(COCKPIT_HTML).toMatch(/\.gauge\{[^}]*min-width:0[^}]*flex:1 1 110px[^}]*max-width:min\(120px,100%\)/);
     expect(COCKPIT_HTML).toMatch(/\.gauge svg\{display:block;width:100%;height:auto\}/);
-    // no width:min-content: its min-content (a long error line at a large
-    // minimum font size) could push the card past the viewport; the group
-    // follows the gauges instead, capped at 34% of the card
-    expect(COCKPIT_HTML).toMatch(/\.grp-local\{flex:0 1 auto;min-width:min\(200px,100%\);max-width:34%\}/);
-    expect(COCKPIT_HTML).not.toMatch(/\.grp-local\{[^}]*width:min-content/);
-    expect(COCKPIT_HTML).not.toMatch(/\.grp\{flex:1;/);
+  });
+
+  it("rank badges, popover rows and summary line replace the workers/orchestrator buttons", () => {
+    const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
+    const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" }, ranksum: { innerHTML: "" } };
+    const helpers = ["badges", "rankPop", "chainText"].map((n) => COCKPIT_HTML.match(new RegExp(`^function ${n}\\([^\\n]*\\}$|^function ${n}\\([\\s\\S]*?\\n\\}`, "m"))![0]).join("\n");
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "wireRanks", "loadLimits", "ROLES", `${helpers}\n${body}\nrenderLimits();`);
+    const lim = {
+      chains: { workers: ["gyro-m", "anthropic", "glm"], orchestrator: ["anthropic", "glm"] },
+      limits: [
+        { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
+        { provider: "glm", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
+        { provider: "kimi", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
+        { provider: "gyro-m", kind: "local", up: true, rssMb: 5, tokensPerSec: 9 },
+      ],
+    };
+    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", () => {}, () => {}, [["workers", "Workers", "W"], ["orchestrator", "Orchestrator", "O"]]);
+    expect(els.ranksum!.textContent).toBe("Workers: gyro-m → anthropic → glm · Orchestrator: anthropic → glm");
+    const cloud = els.cloud!.innerHTML;
+    expect(cloud).toContain("W t1");
+    expect(cloud).toContain("O t0");
+    expect(cloud).toContain("W —");
+    expect(cloud).toContain("O —");
+    expect(cloud).toContain('class="rkpop"');
+    expect(cloud).toContain('data-role="workers"');
+    expect(cloud).toContain('data-role="orchestrator"');
+    for (const k of ["off", "t0", "t1", "t2", "t3"]) expect(cloud).toContain(`data-rank="${k}"`);
+    expect(els.local!.innerHTML).toContain("W t0");
+    expect(els.local!.innerHTML).toContain("9 tok/s");
+    expect(cloud).not.toContain("cloud.role");
+    expect(COCKPIT_HTML).not.toContain("cloud.role");
+    expect(COCKPIT_HTML).not.toContain(">workers</button>");
+    expect(COCKPIT_HTML).not.toMatch(/alert\(|confirm\(|prompt\(/);
+    expect(COCKPIT_HTML).toContain('"rank"');
   });
 
   it("shows a loading state until the first limits poll arrives", () => {

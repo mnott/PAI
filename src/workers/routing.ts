@@ -121,6 +121,7 @@ export function clearCooldown(logDir: string, provider: string): void {
  */
 export function autoOrder(config: WorkersConfig, cls?: { order?: string[] }): string[] {
   if (cls?.order?.length) return cls.order;
+  if (config.chains?.workers.length) return config.chains.workers;
   if (config.routing.policy === "order") return config.routing.order;
   if (config.routing.priority.length) return config.routing.priority;
   if (config.routing.order.length) return config.routing.order;

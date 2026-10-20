@@ -323,6 +323,11 @@ const MODEL_TIERS: readonly ModelTier[] = ["haiku", "sonnet", "opus"];
 
 export const DEFAULT_COST_TIER = 3;
 
+export interface WorkersChains {
+  workers: string[];
+  orchestrator: string[];
+}
+
 /** Tags a provider may carry; classes filter auto-routing on them. */
 export const PROVIDER_TAGS = [
   "code",
@@ -457,6 +462,12 @@ export interface WorkersConfig {
   pane: WorkersPaneConfig;
   logDir: string;
   routing: WorkersRoutingConfig;
+  /**
+   * Ordered model chains per role (workers.chains): t0 first, then the fall
+   * through. Names are cloud providers or local models. Empty = not set; the
+   * chain is then derived from the legacy keys (see chains.ts).
+   */
+  chains: WorkersChains;
   /** Sub-worker caps (workers.tree). */
   tree: WorkersTreeConfig;
   /** Worker supervision options (workers.supervision). */
@@ -606,6 +617,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     pane: { ...DEFAULT_PANE },
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
+    chains: { workers: [], orchestrator: [] },
     tree: { ...DEFAULT_TREE },
     supervision: { pointer: false, push: "harness", stallMinutes: 10 },
     pool: { ...DEFAULT_POOL },
@@ -1097,6 +1109,18 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
+  const chains: WorkersChains = { workers: [], orchestrator: [] };
+  if (w.chains !== undefined) {
+    if (typeof w.chains !== "object" || w.chains === null || Array.isArray(w.chains)) bad(".chains", "must be an object");
+    const c = w.chains as Record<string, unknown>;
+    for (const role of ["workers", "orchestrator"] as const) {
+      const v = c[role];
+      if (v === undefined) continue;
+      if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !x)) bad(`.chains.${role}`, "must be an array of model names");
+      chains[role] = [...new Set(v as string[])];
+    }
+  }
+
   let supervision: WorkersSupervisionConfig = { pointer: false, push: "harness", stallMinutes: 10 };
   if (w.supervision !== undefined) {
     if (typeof w.supervision !== "object" || w.supervision === null || Array.isArray(w.supervision)) {
@@ -1325,6 +1349,7 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     pane,
     logDir: str(w.logDir) || d.logDir,
     routing,
+    chains,
     tree,
     supervision,
     pool,
@@ -1415,6 +1440,7 @@ export function writeWorkersSection(
         pane: workers.pane,
         logDir: workers.logDir,
         routing: workers.routing,
+        chains: workers.chains,
         tree: workers.tree,
         supervision: workers.supervision,
         pool: workers.pool,

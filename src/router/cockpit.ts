@@ -33,7 +33,8 @@ import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
-import { classesOnProvider, defaultDeps, orchestratorProvider, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
+import { chatProviderOf, deriveChains } from "../workers/chains.js";
+import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -463,17 +464,13 @@ async function localRunningInfo(): Promise<{ tier: string; label: string; model:
   }
 }
 
-/** Each cloud provider's current role mapping, for the gauges' toggles. */
-function cloudRoles(): Record<string, { workers: string[]; orchestrator: boolean }> {
+/** The Workers / Orchestrator chains (rank t0 first) behind the cockpit's rank badges. */
+function modelChains(): { workers: string[]; orchestrator: string[] } {
   try {
-    const { workers } = readWorkersSection();
-    const orch = orchestratorProvider(workers);
-    const out: Record<string, { workers: string[]; orchestrator: boolean }> = {};
-    for (const name of Object.keys(workers.providers)) out[name] = { workers: classesOnProvider(workers, name), orchestrator: name === orch };
-    out.anthropic = { workers: classesOnProvider(workers, "anthropic"), orchestrator: !orch || orch === "anthropic" };
-    return out;
+    const { raw, workers } = readWorkersSection();
+    return deriveChains(workers, chatProviderOf(raw, workers));
   } catch {
-    return {};
+    return { workers: [], orchestrator: [] };
   }
 }
 
@@ -715,7 +712,7 @@ export function handleCockpit(
   if (req.method === "POST" && url.pathname === "/cockpit/action") {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
     readBody(req)
-      .then((raw) => JSON.parse(raw || "{}") as { action?: unknown; target?: unknown; value?: unknown })
+      .then((raw) => JSON.parse(raw || "{}") as { action?: unknown; target?: unknown; value?: unknown; role?: unknown; model?: unknown; rank?: unknown })
       .catch(() => ({}))
       .then(async (body) => {
         try {
@@ -769,7 +766,7 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then(
-      (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, roles: cloudRoles() })),
+      (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, chains: modelChains() })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");
