@@ -1,9 +1,10 @@
 /** The pane auditor: injected iTerm listing, registry and processes; nothing touches iTerm. */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
+import { auditLaunches, auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
+import type { LaunchRecord } from "./pane-exec.js";
 import { loadRegistry, saveEntry, type PaneEntry } from "./pane.js";
 import type { Messenger } from "./run-events.js";
 
@@ -132,133 +133,52 @@ describe("auditTick", () => {
         { id: "plan-x", kind: "plan" },
       ],
       registry: () => [entry("w-bad", P2), entry("plan-x", "CCCCCCCC-0000-4000-8000-000000000003")],
-      reopen: async () => "no pane support here",
+      launches: async () => [],
     });
+  const noLaunches = { launches: async () => [] };
+  const ledger = () => readFileSync(join(dir, "ledger.log"), "utf8");
 
-  it("records, marks and reports each violation once", async () => {
+  it("records, marks and writes each violation once, to the ledger only", async () => {
     expect((await run()).map((x) => x.mark)).toEqual(["ok", "ok"]); // first failed check only confirms
-    expect(sent.length).toBe(0);
     const v = await run();
     expect(v.map((x) => x.mark)).toEqual(["WRONG TAB", "NO PANE"]);
-    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-VIOLATION.*w-bad/);
+    expect(ledger()).toMatch(/PANE-VIOLATION.*w-bad/);
     expect(markOf(readAudit(dir), "w-bad")).toBe("WRONG TAB");
-    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(2);
-    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(0); // pane findings never go to PAILot
     await run();
-    expect(sent.length).toBe(2); // not repeated
-  });
-  it("overlapping ticks (a slow messenger) report each violation once", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const slow: Messenger = { toSession: async (o, t) => (await gate, sent.push(`S:${o.iterm}:${t}`), true), toPailot: async (t) => (await gate, sent.push(`P:${t}`), true) };
-    const tick = () =>
-      auditTick(dir, slow, {
-        tabs: async () => tabs({ [H]: "1:2", [P2]: "9:1" }),
-        procs: () => [{ id: "w-bad", kind: "worker" }],
-        registry: () => [entry("w-bad", P2)],
-      });
-    await tick(); // confirm round
-    const a = tick(); // reports, blocked in the messenger
-    await new Promise((r) => setTimeout(r, 5));
-    const b = tick(); // the next interval fires while the first is still sending
-    const c = tick();
-    release();
-    await Promise.all([a, b, c]);
-    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(0); // pane findings never go to PAILot
-    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
+    expect(ledger().match(/PANE-VIOLATION/g)?.length).toBe(2); // not repeated
+    expect(sent.length).toBe(0); // never a session, never PAILot
   });
   it("a failure that clears after one check is never reported", async () => {
     await run();
-    await auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2", [P2]: "1:2" }), procs: () => [{ id: "w-bad", kind: "worker" }], registry: () => [entry("w-bad", P2)] });
+    await auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2", [P2]: "1:2" }), procs: () => [{ id: "w-bad", kind: "worker" }], registry: () => [entry("w-bad", P2)], ...noLaunches });
     await run();
-    expect(sent.length).toBe(0);
+    expect(existsSync(join(dir, "ledger.log"))).toBe(false);
   });
   it("unreadable iTerm: no verdict", async () => {
-    expect(await auditTick(dir, msg, { tabs: async () => Promise.reject(new Error("x")), procs: () => [] })).toEqual([]);
+    expect(await auditTick(dir, msg, { tabs: async () => Promise.reject(new Error("x")), procs: () => [], ...noLaunches })).toEqual([]);
   });
   it("renders process -> pane -> tab", async () => {
     await run();
     expect(renderPaneAudit(await run())).toMatch(/WRONG TAB\s+worker w-bad\s+pane BBBBBBBB.*tab 9:1.*host tab 1:2/);
   });
-
-  // the reopen path: a running worker whose pane is gone gets its pane reopened through the
-  // `pai worker pane <id>` code path; the session hears only when that fails.
-  const reopen = (ok: boolean) => vi.fn(async (_wid: string) => (ok ? "pane opened for w-1" : "no pane support here"));
-  const lost = (split = reopen(true)) =>
-    auditTick(dir, msg, {
-      tabs: async () => tabs({ [H]: "1:2" }),
-      procs: () => [{ id: "w-1", kind: "worker" }],
-      registry: () => [entry("w-1", P1)],
-      reopen: split,
-    });
-  const ledger = () => readFileSync(join(dir, "ledger.log"), "utf8");
-
-  it("running worker whose pane is gone: reopened once, no notification", async () => {
-    const split = reopen(true);
-    await lost(split); // first failed check only confirms
-    await lost(split); // confirmed: reopen
-    expect(split).toHaveBeenCalledTimes(1);
-    expect(sent.length).toBe(0);
-    await lost(); // the pane is back: nothing further
-    expect(split).toHaveBeenCalledTimes(1);
-    expect(ledger()).toMatch(/PANE-REOPENED.*w-1/);
-  });
-  it("reopen fails: the session is notified", async () => {
-    const split = reopen(false);
-    await lost(split);
-    await lost(split);
-    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
-    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(0); // pane findings never go to PAILot
-    expect(sent[0]).toContain("reopen failed");
-  });
-  it("closed twice within 10 min: stop reopening, notify instead", async () => {
-    let t = 0;
-    const split = reopen(true);
-    const at = () => new Date(1_700_000_000_000 + t);
-    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], now: at, reopen: split });
+  it("there is no reopening: a running worker whose pane is gone is a ledger line, nothing else", async () => {
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], running: () => true, ...noLaunches });
     await tick();
-    t += 30_000;
-    await tick(); // confirmed: reopen 1
-    expect(split).toHaveBeenCalledTimes(1);
-    t += 5 * 60_000; // the operator closed the reopened pane
-    await tick();
-    await tick(); // confirmed: reopen 2, then stop
-    expect(split).toHaveBeenCalledTimes(2);
-    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
-    expect(sent[0]).toContain("stopped reopening");
-    t += 5 * 60_000; // still within the 10-min window
-    await tick();
-    await tick();
-    expect(split).toHaveBeenCalledTimes(2);
-  });
-  it("an ended worker is never reopened", async () => {
-    const split = reopen(true);
-    const ended = () =>
-      auditTick(dir, msg, {
-        tabs: async () => tabs({ [H]: "1:2" }),
-        procs: () => [{ id: "w-1", kind: "worker", live: false }],
-        registry: () => [entry("w-1", P1)],
-        reopen: split,
-      });
-    await ended(); // first failed check only confirms
-    await ended(); // confirmed: an ended worker is not reopened, and not reported either
-    expect(split).not.toHaveBeenCalled();
+    expect((await tick())[0].mark).toBe("NO PANE");
+    expect(ledger()).toMatch(/PANE-VIOLATION.*w-1/);
+    expect(ledger()).not.toMatch(/REOPEN/);
     expect(sent.length).toBe(0);
   });
   it("status turned done between the pane check and the report: no violation", async () => {
-    const split = reopen(true);
     let alive = true;
-    const tick = () =>
-      auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [], running: () => alive, reopen: split });
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [], running: () => alive, ...noLaunches });
     await tick(); // confirms
     alive = false; // the worker ended after the pane vanished
     expect((await tick())[0].mark).toBe("ok");
-    expect(sent.length).toBe(0);
-    expect(split).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, "ledger.log"))).toBe(false);
   });
   it("pane closed 10 s ago, process exiting: no violation", async () => {
     const now = new Date(1_700_000_000_000);
-    const split = reopen(true);
     const tick = () =>
       auditTick(dir, msg, {
         tabs: async () => tabs({ [H]: "1:2" }),
@@ -266,24 +186,75 @@ describe("auditTick", () => {
         registry: () => [],
         now: () => now,
         running: () => true,
-        reopen: split,
+        ...noLaunches,
       });
     await tick();
     expect((await tick())[0].mark).toBe("ok");
-    expect(sent.length).toBe(0);
-    expect(split).not.toHaveBeenCalled();
   });
-  it("a really running worker without a pane is still reported", async () => {
-    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker", host: H }], registry: () => [], running: () => true });
-    await tick();
-    expect((await tick())[0].mark).toBe("NO PANE");
-    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
+});
+
+describe("auditLaunches: the bug detector for the pane-owns-the-process rule", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-auditl-"));
   });
-  it("a really running worker whose pane is gone is still reopened", async () => {
-    const split = reopen(true);
-    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], running: () => true, reopen: split });
-    await tick();
-    await tick();
-    expect(split).toHaveBeenCalledTimes(1);
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const NOW = new Date(1_700_000_000_000);
+  const rec = (o: Partial<LaunchRecord> = {}): LaunchRecord => ({ id: "w-1", kind: "worker", caller: 1, wrapper: 100, child: 200, startedMs: NOW.getTime() - 600_000, ...o });
+  const rig = (alive: number[]) => {
+    const killed: string[] = [];
+    const closed: string[] = [];
+    return { killed, closed, deps: { alive: (p?: number) => p !== undefined && alive.includes(p), kill: (pid: number, sig: string, group: boolean) => void killed.push(`${pid}:${sig}:${group}`), closePane: async (id: string) => void closed.push(id), workers: () => [] } };
+  };
+  const ledger = () => readFileSync(join(dir, "ledger.log"), "utf8");
+
+  it("a launcher-run process in order (wrapper and child alive) is never reported", async () => {
+    const r = rig([100, 200]);
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => null }, NOW)).toEqual([]);
+    expect(r.killed).toEqual([]);
+    expect(existsSync(join(dir, "ledger.log"))).toBe(false);
+  });
+  it("a finished launch (exit file, both gone) is history, not a finding", async () => {
+    const r = rig([]);
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 0, endedMs: NOW.getTime() - 5000 }) }, NOW)).toEqual([]);
+  });
+  it("child gone while the pane lives: the wrapper is killed and the pane closed, ledger only", async () => {
+    const r = rig([100]);
+    const f = await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => null }, NOW);
+    expect(f.map((x) => x.kind)).toEqual(["orphan-wrapper"]);
+    expect(r.killed).toEqual(["100:SIGKILL:false"]);
+    expect(r.closed).toEqual(["w-1"]);
+    expect(ledger()).toMatch(/PANE-ORPHAN.*side=wrapper/);
+  });
+  it("child ended long ago but the wrapper still holds the pane: closed", async () => {
+    const r = rig([100]);
+    const f = await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 0, endedMs: NOW.getTime() - 60_000 }) }, NOW);
+    expect(f.map((x) => x.kind)).toEqual(["orphan-wrapper"]);
+    expect(r.closed).toEqual(["w-1"]);
+  });
+  it("the wrapper is still closing the pane (exit file seconds old): left alone", async () => {
+    const r = rig([100]);
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 0, endedMs: NOW.getTime() - 2000 }) }, NOW)).toEqual([]);
+  });
+  it("wrapper (the pane) gone while the child runs: the child's group is killed", async () => {
+    const r = rig([200]);
+    const f = await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => null }, NOW);
+    expect(f.map((x) => x.kind)).toEqual(["orphan-child"]);
+    expect(r.killed).toEqual(["200:SIGKILL:true"]);
+  });
+  it("a running worker that did not go through the launcher is noted once; one recorded as no-terminal is not", async () => {
+    const r = rig([]);
+    const old = NOW.getTime() - 600_000;
+    const workers = () => [
+      { id: "w-bare", startedMs: old, exec: false, exempt: false },
+      { id: "w-noterm", startedMs: old, exec: false, exempt: true },
+      { id: "w-ok", startedMs: old, exec: true, exempt: false },
+      { id: "w-young", startedMs: NOW.getTime() - 1000, exec: false, exempt: false },
+    ];
+    const f = await auditLaunches(dir, { ...r.deps, records: () => [], workers }, NOW);
+    expect(f.map((x) => x.id)).toEqual(["w-bare"]);
+    expect(ledger()).toMatch(/PANE-UNLAUNCHED.*w-bare/);
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [], workers }, NOW)).toEqual([]); // told once
+    expect(r.killed).toEqual([]);
   });
 });

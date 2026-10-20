@@ -1,23 +1,27 @@
 /**
- * pane-audit.ts — every process PAI starts (worker, plan runner, `pai pane run`) owns a LIVE pane in the
- * tab of the session that started it. The audit reads the pane registry and a listing of iTerm sessions
- * with their tab, and judges each running process: ok, NO PANE (none recorded, or gone while the process
- * runs) WRONG TAB (the pane is not in the starting session's tab) or HOST UNKNOWN (the starting session's tab cannot be
- * determined, so the placement cannot be judged). The daemon runs it every 30 s,
- * writes <logDir>/pane-audit.json for `ps` and the cockpit, and reports each violation once.
+ * pane-audit.ts — the pane auditor, a BUG DETECTOR now that the pane owns the process (pane-exec.ts: every
+ * process PAI starts in a session runs as the child of the wrapper in its pane, so a process without a pane
+ * or a pane without a process cannot arise by construction).
+ *
+ * Two checks, both recorded in the ledger only (never a session notice, never PAILot): the launcher audit
+ * (auditLaunches: a pane-exec whose child is gone while the pane lives, or the reverse, has its orphan side
+ * killed / closed; a running worker that bypassed the launcher is noted) and the pane marks (judged from the
+ * pane registry and the iTerm listing: ok, NO PANE, WRONG TAB, HOST UNKNOWN, STILL OPEN, plus the shown-only
+ * SMALL / NOT SELECTED / MINIMISED). The daemon runs it every 30 s and writes <logDir>/pane-audit.json for
+ * `ps` and the cockpit.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRegistry, openPaneForWorker, osascriptJxa, resolveHostSession, type PaneEntry } from "./pane.js";
-import { readWorkersSection } from "./config.js";
+import { closePaneForWorker, loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
+import { exitFilePath, listRecords, pidAlive, readExit, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
-import { eventLine, type Messenger } from "./run-events.js";
+import type { Messenger } from "./run-events.js";
 
 export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "STILL OPEN" | "SMALL" | "NOT SELECTED" | "MINIMISED";
 /** Marks that are shown, never alarmed: the pane runs, only its visibility falls short. */
@@ -55,8 +59,6 @@ export interface PaneVerdict {
   tab?: string;
   hostTab?: string;
   why?: string;
-  /** The pane existed and is gone while the process runs: the auditor reopens it itself. */
-  reopenable?: boolean;
 }
 
 /** iTerm session id -> "window:tab" key. */
@@ -88,7 +90,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     if (!e) return { ...v, mark: "NO PANE", why: p.noPaneReason ? `started without a pane: ${p.noPaneReason}` : "no pane recorded for a running process" };
     const tab = tabOf(e.session);
     if (!tab && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
-    if (!tab) return { ...v, mark: "NO PANE", ...(p.ended ? {} : { reopenable: true }), why: `pane ${e.session} is gone while the process runs` };
+    if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
     // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
     if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > START_GRACE_MS) {
       return { ...v, mark: "STILL OPEN", tab, why: `pane ${e.session} of the ended run ${p.id} is still open` };
@@ -183,45 +185,29 @@ function readJson(file: string): Record<string, string> {
 }
 
 const readTold = (logDir: string): Record<string, string> => readJson(toldFile(logDir));
-const reopenedFile = (logDir: string): string => join(logDir, "pane-audit-reopened.json");
-
-/** One reopen per worker per this window; a second reopen inside the window stops the reopening. */
-const REOPEN_WINDOW_MS = 5 * 60_000;
-/** Reopens this far apart still count toward the stop: an operator closing repeatedly ends the reopening. */
-const REOPEN_STOP_MS = 10 * 60_000;
-
-interface ReopenStamp {
-  /** When the pane was first seen gone (the first failed check). */
-  seenMs: number;
-  /** When the last reopen happened. */
-  lastMs: number;
-  /** When the first reopen happened: the stop window counts from it. */
-  firstMs: number;
-  count: number;
-}
-
 /**
- * One audit round: judge, persist, and report each new violation once (ledger PANE-VIOLATION, the
- * starting session; never PAILot). A violation that clears may be reported again if it returns. A confirmed
- * NO PANE whose pane is gone while the process runs (worker started in a session with a resolvable
- * host tab) is reopened through the `pai worker pane <id>` code path, at most once per
- * REOPEN_WINDOW_MS; after a second reopen within REOPEN_STOP_MS the reopening stops and the session
- * is notified instead. The session hears about a NO PANE only when the reopen fails or stops.
+ * One audit round: judge, persist, and record each new violation once, in the ledger only (PANE-VIOLATION).
+ * Since the pane owns the process (pane-exec.ts) a missing pane cannot happen by construction; what is left
+ * is a bug detector: the launcher audit (auditLaunches) and the visibility marks. Nothing is sent to a session
+ * or to PAILot, nothing is reopened.
  */
 export async function auditTick(
   logDir: string,
-  msg: Messenger,
+  _msg: Messenger,
   deps: {
     tabs?: (sizes: SizeMap) => Promise<TabMap>;
     procs?: () => AuditProc[];
     registry?: () => PaneEntry[];
     now?: () => Date;
-    /** Reopen seam: opens the worker's follow pane (the `pai worker pane <id>` path); returns its message or throws. */
-    reopen?: (wid: string) => Promise<string>;
     /** Fresh liveness at the moment of the check: false when the worker's status is terminal or its process is gone. */
     running?: (wid: string) => boolean;
+    /** Launcher audit seam (default: the real pane-exec records and processes). */
+    launches?: () => Promise<unknown>;
   } = {}
 ): Promise<PaneVerdict[]> {
+  const now = deps.now?.() ?? new Date();
+  const nowMs = now.getTime();
+  await (deps.launches ?? (() => auditLaunches(logDir, undefined, now)))().catch(() => undefined);
   let tabs: TabMap;
   const sizes: SizeMap = new Map();
   try {
@@ -230,8 +216,6 @@ export async function auditTick(
     return []; // iTerm unreadable: no verdict, no false alarm
   }
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
-  const now = deps.now?.() ?? new Date();
-  const nowMs = now.getTime();
   const procs = (deps.procs ?? (() => runningProcs(logDir)))();
   const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes);
   // re-read the status right before judging: a worker that ended since the listing was taken (its pane closes first) is no violation
@@ -245,7 +229,7 @@ export async function auditTick(
     if (v.kind !== "worker" || v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
     const proc = procs.find((p) => p.id === v.id);
     const recent = proc?.endedMs !== undefined && nowMs - proc.endedMs < END_GRACE_MS;
-    if (recent || !running(v.id)) Object.assign(v, { mark: "ok", reopenable: undefined, tab: undefined, hostTab: undefined, why: "ended, pane closed" });
+    if (recent || !running(v.id)) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "ended, pane closed" });
   }
   // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
   const seen = readJson(pendingFile(logDir));
@@ -259,93 +243,111 @@ export async function auditTick(
   writeFileSync(auditFile(logDir), JSON.stringify({ at: now.toISOString(), verdicts } satisfies AuditFile), "utf8");
   const told = readTold(logDir);
   const next: Record<string, string> = {};
-  const stamps: Record<string, ReopenStamp> = (() => {
-    try {
-      return JSON.parse(readFileSync(reopenedFile(logDir), "utf8")) as Record<string, ReopenStamp>;
-    } catch {
-      return {};
-    }
-  })();
-  const reopen =
-    deps.reopen ??
-    (async (wid) => {
-      // the same code path as `pai worker pane <id>`: resolve the host session, then open the worker's pane
-      const host = await resolveHostSession();
-      if (!host.term) throw new Error(`no host session (${host.reason ?? "none"})`);
-      const { workers } = readWorkersSection();
-      return (await openPaneForWorker(logDir, workers, wid, host.term)).message;
-    });
-  const fresh: PaneVerdict[] = [];
-  /** Notices from the reopen path: sent after the told marker is written, like every violation. */
-  const notices: { v: PaneVerdict; what: string }[] = [];
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
-    // a running worker whose pane is gone gets its pane reopened here, not reported to the session
-    const proc = procs.find((p) => p.id === v.id);
-    if (v.mark === "NO PANE" && v.reopenable && proc?.live !== false) {
-      next[v.id] = v.mark;
-      // a violation counts only when confirmed twice (the pending check above already marked the first)
-      if (seen[v.id] !== v.mark) continue;
-      // the reopen ledger survives a pane that came back: the absence clock restarts when the violation is first seen
-      let s = stamps[v.id] ?? { seenMs: nowMs, lastMs: 0, firstMs: 0, count: 0 };
-      // reopens older than the stop window collapse to one
-      if (s.count > 0 && nowMs - s.lastMs >= REOPEN_STOP_MS) stamps[v.id] = s = { ...s, count: 1, firstMs: s.lastMs };
-      // the stop window counts from the FIRST reopen: two reopens inside it end the reopening
-      if (s.count >= 2 && nowMs - s.firstMs < REOPEN_STOP_MS) {
-        // the stop notice is told once, like any violation
-        if (told[v.id] === "STOPPED") continue;
-        next[v.id] = "STOPPED";
-        appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
-        // already reopened twice inside the stop window: the operator keeps closing it — stop and notify
-        appendLedger(ledgerPath(logDir), "PANE-REOPEN-STOPPED", { id: v.id, kind: v.kind, why: v.why }, now);
-        const stopped = `NO PANE: ${v.kind} ${v.id} runs without its pane (${v.why}); reopened twice within ${REOPEN_STOP_MS / 60_000} min, stopped reopening — open it with: pai worker pane ${v.id}.`;
-        notices.push({ v, what: stopped });
-        continue;
-      }
-      // a reopen is due once the violation is confirmed (the first reopen), and after a reopen once
-      // the pane has been gone a full window again (the absence clock restarts when it comes back)
-      if (s.count === 0 || (s.count === 1 && nowMs - s.seenMs >= REOPEN_WINDOW_MS)) {
-        appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
-        let message = "";
-        try {
-          message = await reopen(v.id);
-        } catch (e) {
-          message = `reopen failed: ${(e as Error).message ?? e}`;
-        }
-        stamps[v.id] = { seenMs: s.seenMs, lastMs: nowMs, firstMs: s.count === 0 ? nowMs : s.firstMs, count: s.count + 1 };
-        if (message.startsWith("pane opened")) {
-          appendLedger(ledgerPath(logDir), "PANE-REOPENED", { id: v.id, kind: v.kind, session: v.session }, now);
-          continue; // the session hears nothing on a successful reopen
-        }
-        const what = `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}); reopen failed: ${message}.`;
-        notices.push({ v, what });
-        continue;
-      }
-      // inside the reopen window: wait for the next round, report nothing yet
-      continue;
-    }
-    // a violation that clears is forgotten: it may be reported again when it returns
-    delete stamps[v.id];
-    // an ended worker whose pane is gone is shown as NO PANE but never alarmed: nothing to reopen
-    if (v.reopenable && proc?.live === false) continue;
     next[v.id] = v.mark;
-    if (told[v.id] !== v.mark) fresh.push(v);
+    if (told[v.id] !== v.mark) appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
   }
-  // marked told BEFORE any send: a slow messenger must not let the next tick report the same violations again
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
-  writeFileSync(reopenedFile(logDir), JSON.stringify(stamps), "utf8");
-  for (const { v, what } of notices) {
-    if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
-  }
-  for (const v of fresh) {
-    appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
-    const what =
-      v.mark === "STILL OPEN"
-        ? `${v.mark}: ${v.kind} ${v.id} ended but its pane is still open (${v.why}).`
-        : `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}).`;
-    if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
-  }
   return verdicts;
+}
+
+export interface LaunchFinding {
+  id: string;
+  /** What is wrong: the side that was left behind. */
+  kind: "orphan-wrapper" | "orphan-child" | "unlaunched";
+  action: string;
+}
+
+export interface LaunchAuditDeps {
+  records?: () => LaunchRecord[];
+  exit?: (id: string) => ExitRecord | null;
+  alive?: (pid: number | undefined) => boolean;
+  kill?: (pid: number, sig: NodeJS.Signals, group: boolean) => void;
+  closePane?: (id: string) => Promise<unknown>;
+  /** Running workers: [id, started ms, pane.exec, pane.opened===false]. */
+  workers?: () => Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }>;
+  /** Files of an ended launch older than this are removed. */
+  keepMs?: number;
+}
+
+const killReal = (pid: number, sig: NodeJS.Signals, group: boolean): void => {
+  try {
+    process.kill(group ? -pid : pid, sig);
+  } catch {
+    /* gone */
+  }
+};
+
+/**
+ * The launcher audit, a bug detector: a pane-exec whose child is gone while its wrapper (the pane) lives, or
+ * whose wrapper is gone while the child lives, has an orphan side, which is killed / closed here; a running
+ * worker that never went through the launcher (and has no "no terminal" record) is only noted. Ledger lines
+ * only: PANE-ORPHAN, PANE-UNLAUNCHED. Never a session notice, never PAILot.
+ */
+export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now: Date = new Date()): Promise<LaunchFinding[]> {
+  const out: LaunchFinding[] = [];
+  const alive = d.alive ?? pidAlive;
+  const kill = d.kill ?? killReal;
+  const ledger = ledgerPath(logDir);
+  const exitOf = d.exit ?? readExit;
+  const nowMs = now.getTime();
+  for (const r of (d.records ?? listRecords)()) {
+    const ex = exitOf(r.id);
+    const wrapperUp = alive(r.wrapper);
+    const childUp = alive(r.child);
+    if (ex && !wrapperUp && !childUp) continue;
+    // the wrapper writes its exit file the moment the child ends; a grace covers the closing itself
+    if (ex && wrapperUp && nowMs - ex.endedMs > LAUNCH_GRACE_MS) {
+      kill(r.wrapper!, "SIGKILL", false);
+      await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
+      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, now);
+      out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
+    } else if (!ex && r.child && !childUp && wrapperUp && nowMs - r.startedMs > LAUNCH_GRACE_MS) {
+      kill(r.wrapper!, "SIGKILL", false);
+      await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
+      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child gone without an exit file" }, now);
+      out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
+    } else if (!ex && r.wrapper && !wrapperUp && childUp) {
+      kill(r.child!, "SIGKILL", true);
+      appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "child", why: "wrapper (the pane) is gone" }, now);
+      out.push({ id: r.id, kind: "orphan-child", action: "child killed" });
+    }
+  }
+  // a running worker nobody launched through a pane, and with no recorded reason to run without one
+  const told = readJson(join(logDir, "pane-audit-unlaunched.json"));
+  const flagged: Record<string, string> = {};
+  for (const w of (d.workers ?? (() => runningWorkers(logDir)))()) {
+    if (w.exec || w.exempt || nowMs - w.startedMs < START_GRACE_MS) continue;
+    flagged[w.id] = "1";
+    if (!told[w.id]) {
+      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why: "running without having been started through the pane launcher" }, now);
+      out.push({ id: w.id, kind: "unlaunched", action: "noted" });
+    }
+  }
+  writeFileSync(join(logDir, "pane-audit-unlaunched.json"), JSON.stringify(flagged), "utf8");
+  // ended launches: their files are history after a day
+  if (!d.records) {
+    for (const r of listRecords()) {
+      const ex = readExit(r.id);
+      if (ex && nowMs - ex.endedMs > (d.keepMs ?? 24 * 3600_000)) for (const f of [recordPath(r.id), exitFilePath(r.id)]) try { unlinkSync(f); } catch { /* gone */ }
+    }
+  }
+  return out;
+}
+
+/** Launches whose wrapper outlives its child by this long are orphans (the wrapper closes the pane within a second). */
+export const LAUNCH_GRACE_MS = 15_000;
+
+const defaultClose = (logDir: string) => (id: string) => closePaneForWorker(logDir, id);
+
+function runningWorkers(logDir: string): Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> {
+  const out: Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> = [];
+  for (const s of loadStatusesCached(logDir)) {
+    if (isChatPane(s) || s.state !== "running" || !isLive(s, ownsPidCached)) continue;
+    out.push({ id: s.id, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), exec: s.pane?.exec === true, exempt: s.pane?.opened === false });
+  }
+  return out;
 }
 
 /** `pai worker ps --panes`: process -> pane -> tab for everything running. */
