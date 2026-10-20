@@ -357,6 +357,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker` | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | `pai worker bench` | Compare providers on a set of real tasks |
 | `pai worker capability` | Choose which provider serves a capability (e.g. image) |
+| `pai worker chains` | Print the Workers and Orchestrator chains routing really uses |
 | `pai worker classes` | Which provider serves draft, implement, review, … |
 | `pai worker classes list` | List classes and where each one runs |
 | `pai worker classes set` | Send a class to a provider, or give it routing limits |

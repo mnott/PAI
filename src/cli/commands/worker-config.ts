@@ -12,6 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
+import { chainSummary, effectiveChains } from "../../workers/chains.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
 import {
@@ -923,6 +924,28 @@ export const workerPolicyCommand: CommandDef = {
 // fallback, pool, proxy, mcp, on, off, install, controls
 // ---------------------------------------------------------------------------
 
+export const workerChainsCommand: CommandDef = {
+  name: "chains",
+  summary: "Print the Workers and Orchestrator chains routing really uses",
+  description:
+    "Same function as the cockpit's rank line: the derived chains with the routing policy applied (`pai worker policy`).\n" +
+    "`active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.",
+  args: [],
+  examples: ["pai worker chains", "pai worker policy prefer-local && pai worker chains"],
+  seeAlso: ["pai worker policy"],
+  async run() {
+    try {
+      const { raw, workers } = readWorkersSection();
+      const dir = workersLogDir(workers);
+      const p = readPolicy(dir);
+      out(`policy: ${p ? p.mode : "none"}  active: ${workers.active ?? "-"}`);
+      out(chainSummary(await effectiveChains(raw, workers)));
+    } catch (e) {
+      fail(e, "pai worker chains");
+    }
+  },
+};
+
 export const workerFallbackCommand: CommandDef = {
   name: "fallback",
   summary: "Run every new Claude Code process on a worker provider",
@@ -1132,6 +1155,7 @@ export const WORKER_CONFIG_COMMANDS: CommandDef[] = [
   workerRolesCommand,
   workerConfigCommand,
   workerPolicyCommand,
+  workerChainsCommand,
   workerLocalCommand,
   workerFallbackCommand,
   workerPoolCommand,

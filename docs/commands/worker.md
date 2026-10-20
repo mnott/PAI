@@ -1349,6 +1349,24 @@ pai worker policy prefer-local --for 2h
 
 See also: `pai worker local`, `pai worker providers`
 
+### pai worker chains
+
+Print the Workers and Orchestrator chains routing really uses
+
+```
+pai worker chains
+```
+
+Same function as the cockpit's rank line: the derived chains with the routing policy applied (`pai worker policy`).
+`active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.
+
+```sh
+pai worker chains
+pai worker policy prefer-local && pai worker chains
+```
+
+See also: `pai worker policy`
+
 ### pai worker local
 
 Which local model runs; the operator switches tiers
@@ -1610,6 +1628,7 @@ See also: `pai worker providers`
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
+| `pai worker chains` | Print the Workers and Orchestrator chains routing really uses |
 | `pai worker local` | Which local model runs; the operator switches tiers |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |

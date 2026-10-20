@@ -9,7 +9,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig, readWorkersSection } from "./config.js";
-import { applyRank, chainSummary, deriveChains, parseRank, setModelRank } from "./chains.js";
+import { applyRank, chainSummary, deriveChains, effectiveChains, parseRank, setModelRank } from "./chains.js";
+import { routeRun, writePolicy, clearPolicy, POLICY_MODES } from "./policy.js";
 import { autoOrder, resolveTarget } from "./routing.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-chains-"));
@@ -123,5 +124,53 @@ describe("routing reads the chain", () => {
   it("resolveTarget walks the chain: glm first although the default priority starts with anthropic", () => {
     const c = cfg({ chains: { workers: ["glm", "anthropic"] } });
     expect(resolveTarget(c, dir, {}).providerName).toBe("glm");
+  });
+});
+
+describe("effective chains follow routing", () => {
+  const up = async () => true;
+  const down = async () => false;
+  const mk = (extra: Record<string, unknown> = {}) => cfg({ logDir: dir, ...extra });
+
+  it("the cockpit workers chain starts where routeRun sends the next run, for every policy mode", async () => {
+    for (const ping of [up, down]) {
+      for (const mode of POLICY_MODES) {
+        writePolicy(dir, mode);
+        const c = mk();
+        const eff = await effectiveChains({}, c, { ping, battery: () => false, logDir: dir });
+        const routed = await routeRun(c, dir, {}, { ping, battery: () => false }).catch(() => null);
+        const t0 = routed?.providerFlag ?? eff.workers[0];
+        expect(eff.workers[0], `${mode} ping=${ping === up}`).toBe(t0);
+        if (routed?.providerFlag) expect(eff.workers[0]).toBe("gyro-m");
+        else if (mode === "local-only") expect(eff.workers).toEqual([]);
+        else expect(eff.workers[0]).toBe("anthropic");
+      }
+    }
+    clearPolicy(dir);
+  });
+
+  it("per mode", async () => {
+    const run = async (mode: string | null, ping = up) => {
+      if (mode) writePolicy(dir, mode as never);
+      else clearPolicy(dir);
+      return (await effectiveChains({}, mk(), { ping, battery: () => false, logDir: dir })).workers;
+    };
+    expect(await run(null)).toEqual(["anthropic", "glm", "kimi"]);
+    expect(await run("cloud-only")).toEqual(["anthropic", "glm", "kimi"]);
+    expect(await run("local-only")).toEqual(["gyro-m"]);
+    expect(await run("prefer-local")).toEqual(["gyro-m", "anthropic", "glm", "kimi"]);
+    expect(await run("prefer-local", down)).toEqual(["anthropic", "glm", "kimi"]);
+    expect(await run("prefer-cloud")).toEqual(["anthropic", "glm", "kimi", "gyro-m"]);
+    clearPolicy(dir);
+  });
+
+  it("an explicit chain is shown as set; active feeds only the orchestrator", async () => {
+    writePolicy(dir, "prefer-local");
+    const c = mk({ chains: { workers: ["glm", "gyro-m"], orchestrator: [] }, active: "glm" });
+    const eff = await effectiveChains({}, c, { ping: up, logDir: dir });
+    expect(eff.workers).toEqual(["glm", "gyro-m"]);
+    clearPolicy(dir);
+    const a = await effectiveChains({}, mk({ active: "glm" }), { ping: up, logDir: dir });
+    expect(a).toEqual({ workers: ["anthropic", "glm", "kimi"], orchestrator: ["glm"] });
   });
 });
