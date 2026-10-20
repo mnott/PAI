@@ -136,9 +136,10 @@ export function tierNames(yamlPath: string): string[] {
   }
 }
 
-/** The config path of a label: models.labels.<runtime> or models.labels.<runtime>.<model>. */
-export function labelPath(runtime: string, model?: string): string {
-  return model ? `models.labels.${runtime}.${model}` : `models.labels.${runtime}`;
+/** The config path a label write goes to: models.labels.<runtime>. A model's label lives in
+ *  that runtime's {model → label} map (written whole, so ids with "." stay one key). */
+export function labelPath(runtime: string, _model?: string): string {
+  return `models.labels.${runtime}`;
 }
 
 /** The labels config block (runtime → {model → label} or a plain runtime label). */
@@ -299,10 +300,26 @@ export async function runCockpitAction(
     // top-level key there, so this label block writes with force (same as
     // `pai config set models.labels.<rt> <label> --force`)
     try {
+      if (model) {
+        // a model id may hold "." (huggingface.co/org/name), which a dotted path would split
+        // into nested keys: the runtime's whole {model → label} map is written as one object
+        const prev = readLabels()[runtime];
+        const map: Record<string, unknown> = prev && typeof prev === "object" && !Array.isArray(prev) ? { ...(prev as Record<string, unknown>) } : {};
+        if (label.trim()) map[model] = label;
+        else delete map[model];
+        if (Object.keys(map).length === 0) {
+          deps.unsetLabel(path);
+          writeLedgerLine(deps, action, path, "removed");
+          return { ok: true, message: `label removed (${runtime}/${model})` };
+        }
+        deps.setLabel(path, JSON.stringify(map), { force: true });
+        writeLedgerLine(deps, action, path, label.trim() ? `set:${label}` : "removed");
+        return { ok: true, message: label.trim() ? `labelled ${runtime}/${model}: ${label}` : `label removed (${runtime}/${model})` };
+      }
       if (!label.trim()) {
         deps.unsetLabel(path);
         writeLedgerLine(deps, action, path, "removed");
-        return { ok: true, message: `label removed (${runtime}${model ? "/" + model : ""})` };
+        return { ok: true, message: `label removed (${runtime})` };
       }
       deps.setLabel(path, label, { force: true });
       writeLedgerLine(deps, action, path, `set:${label}`);

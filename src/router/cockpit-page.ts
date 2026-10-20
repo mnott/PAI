@@ -142,6 +142,8 @@ svg text{fill:var(--dim);font-size:10px}
 .lbl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;color:var(--dim);font-size:11px}
 .lbl input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;max-width:100%}
 .lbl .lblbtn,.mhead .lblbtn{background:none;border:0;padding:0 4px;color:var(--acc);cursor:pointer;font:inherit}
+.mhead .lblact{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;min-width:32px;min-height:28px;padding:0 6px;margin-left:4px;font:inherit;cursor:pointer}
+.mhead .lblmsg{font-size:11px;margin-left:6px}
 .mhead input.lblin{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;width:12em;max-width:100%}
 .lbls{display:flex;flex-direction:column;gap:2px;min-width:0}
 .tog.on{background:var(--acc);border-color:var(--acc);color:#fff}
@@ -333,7 +335,7 @@ function renderRouting(){
   var tip=[row.description,row.note].filter(Boolean).join(" — ");
   return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
 }
-var mdl=null,mEditing=false;
+var mdl=null,mEditing=false,BLUR_CANCEL_MS=400;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
  * the full id rides in the title attribute. */
 function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>=0?s.slice(i+1):s}
@@ -587,19 +589,39 @@ function renderModels(){
   btn.onclick=function(e){
    e.stopPropagation();
    if(head.querySelector("input.lblin"))return;
+   var alias=btn.getAttribute("data-alias")||"";
    var inp=document.createElement("input");inp.type="text";inp.className="lblin";inp.setAttribute("data-lblin",rt+"/"+md);
-   inp.value=btn.getAttribute("data-alias")||"";inp.placeholder="alias";
-   head.replaceChild(inp,t);inp.focus({preventScroll:true});
-   inp.onclick=function(ev){ev.stopPropagation()};
-   inp.onkeydown=function(ev){ev.stopPropagation();if(ev.key==="Enter"){ev.preventDefault();inp.blur()}else if(ev.key==="Escape"){done=true;mEditing=false;if(head.contains(inp))head.replaceChild(t,inp);renderModels()}};
-   var done=false;mEditing=true;
-   inp.onblur=function(){
-    if(done)return;done=true;mEditing=false;
-    var val2=inp.value.trim();
-    postAction("model.label",rt,"model:"+md+"="+val2,function(j2){
-     if(j2&&j2.ok)loadModels();else{if(head.contains(inp))head.replaceChild(t,inp);renderModels()}
+   inp.value=alias;inp.placeholder="alias";
+   var done=false,timer=null,ui=[];
+   function mk(txt,cls,title,fn){
+    var b=document.createElement("button");b.type="button";b.className="lblact "+cls;b.textContent=txt;b.title=title;b.setAttribute("aria-label",title);
+    b.onclick=function(ev){ev.stopPropagation();fn()};b.onkeydown=function(ev){ev.stopPropagation()};
+    head.appendChild(b);ui.push(b);return b;
+   }
+   function close(){
+    done=true;mEditing=false;if(timer){clearTimeout(timer);timer=null}
+    ui.forEach(function(n){if(head.contains(n))head.removeChild(n)});ui=[];
+    if(head.contains(inp))head.replaceChild(t,inp);
+    renderModels();
+   }
+   function save(val){
+    if(done)return;done=true;if(timer){clearTimeout(timer);timer=null}
+    postAction("model.label",rt,"model:"+md+"="+val,function(j2){
+     if(j2&&j2.ok){close();loadModels()}
+     else{done=false;msg.textContent=(j2&&j2.message)||"save failed"}
     });
-   };
+   }
+   inp.onclick=function(ev){ev.stopPropagation()};
+   inp.onfocus=function(){if(timer){clearTimeout(timer);timer=null}};
+   inp.onkeydown=function(ev){ev.stopPropagation();if(ev.key==="Enter"){ev.preventDefault();save(inp.value.trim())}else if(ev.key==="Escape"){close()}};
+   // blur alone never saves: unless a button is tapped (or focus returns) within a moment, cancel
+   inp.onblur=function(){if(done)return;if(timer)clearTimeout(timer);timer=setTimeout(function(){timer=null;if(!done)close()},BLUR_CANCEL_MS)};
+   head.replaceChild(inp,t);
+   mk("✓","lblok","save alias",function(){save(inp.value.trim())});
+   mk("✕","lblno","cancel",close);
+   if(alias)mk("↺","lblrs","reset to the original name",function(){save("")});
+   var msg=document.createElement("span");msg.className="lblmsg dim";head.appendChild(msg);ui.push(msg);
+   mEditing=true;inp.focus({preventScroll:true});
   };
  })(lbls[k]);
 }

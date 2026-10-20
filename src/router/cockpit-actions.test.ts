@@ -147,7 +147,7 @@ describe("cockpit actions", () => {
     const calls = emptyCalls();
     const d = testDeps(tmp, calls);
     expect(labelPath("ollama")).toBe("models.labels.ollama");
-    expect(labelPath("ollama", "qwen3:8b")).toBe("models.labels.ollama.qwen3:8b");
+    expect(labelPath("ollama", "qwen3:8b")).toBe("models.labels.ollama");
     // the real writer, on the temp config
     const base = testDeps(tmp, calls) as Record<string, unknown>;
     const real = { ...base, setLabel: (p: string, v: string, o?: { force?: boolean }) => void setConfigValueOp(p, v, o), unsetLabel: (p: string) => void unsetConfigValueOp(p) } as never;
@@ -164,7 +164,28 @@ describe("cockpit actions", () => {
     expect(r3.ok).toBe(true); // no label text: removes the model label (no-op here)
     // the mocked writer records the path it was given
     await runCockpitAction({ action: "model.label", target: "ollama", value: "model:qwen3:8b=cheap drafts" }, d);
-    expect(calls.setLabel).toEqual(["models.labels.ollama.qwen3:8b=cheap drafts"]);
+    expect(calls.setLabel).toEqual(['models.labels.ollama={"qwen3:8b":"cheap drafts"}']);
+  });
+
+  it("model labels round-trip for ids with : / . (stored as one map, not nested keys); removing the last one drops the block", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const base = testDeps(tmp, calls) as Record<string, unknown>;
+    const real = { ...base, setLabel: (p: string, v: string, o?: { force?: boolean }) => void setConfigValueOp(p, v, o), unsetLabel: (p: string) => void unsetConfigValueOp(p) } as never;
+    const ids = ["qwen3:8b", "huggingface.co/org/name", "llama3.1:70b-q4_K_M"];
+    for (const id of ids) {
+      const r = await runCockpitAction({ action: "model.label", target: "ollama", value: `model:${id}=alias of ${id}` }, real);
+      expect(r.ok).toBe(true);
+    }
+    const labels = readModelLabels();
+    expect(labels).toEqual({ ollama: Object.fromEntries(ids.map((id) => [id, `alias of ${id}`])) });
+    for (const id of ids) expect(modelLabel(labels, "ollama", id)).toBe(`alias of ${id}`);
+    // removing one keeps the others
+    await runCockpitAction({ action: "model.label", target: "ollama", value: "model:qwen3:8b=" }, real);
+    expect(modelLabel(readModelLabels(), "ollama", "qwen3:8b")).toBe("");
+    expect(modelLabel(readModelLabels(), "ollama", "huggingface.co/org/name")).toBe("alias of huggingface.co/org/name");
+    for (const id of ids.slice(1)) await runCockpitAction({ action: "model.label", target: "ollama", value: `model:${id}=` }, real);
+    expect(readModelLabels()).toEqual({});
   });
 
   it("cloud.role worker maps every class through setClass; bad role and unknown provider refuse", async () => {

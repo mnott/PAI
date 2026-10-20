@@ -1437,42 +1437,150 @@ describe("cockpit Models: one local switch, editable aliases", () => {
     expect(h).toContain('class="lblbtn" data-alias="My Flash"');
   });
 
-  it("the pencil swaps the title for an input; blur posts model.label with model:<id>=<alias>; Escape cancels; the fold is not toggled", () => {
+  /** Runs renderModels against a fake DOM; returns the pencil button and the fake state. */
+  function editorHarness(opts: { alias?: string; reply?: (a: unknown[]) => unknown } = {}) {
     const body = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
     const posts: unknown[][] = [];
-    const t: any = { id: "title" };
-    const stop: string[] = [];
+    const t: any = { id: "title", tagName: "B" };
     const inputs: any[] = [];
+    const extras: any[] = [];
+    const loads: number[] = [];
+    const state: { renders: number; get: () => boolean } = { renders: 0, get: () => false };
     const head: any = {
       querySelector: (s: string) => (s === "b" ? t : s === "input.lblin" ? inputs.find((i) => i.in) ?? null : null),
       replaceChild: (n: any, o: any) => { if (n.tagName === "INPUT") n.in = true; if (o.tagName === "INPUT") o.in = false; },
+      appendChild: (n: any) => { n.in = true; extras.push(n); },
+      removeChild: (n: any) => { n.in = false; },
       contains: (n: any) => !!n.in,
     };
-    const card = { getAttribute: (k: string) => ({ "data-rt": "gyro-m", "data-model": "flash-next" } as Record<string, string>)[k] };
+    const card = { getAttribute: (k: string) => ({ "data-rt": "gyro-m", "data-model": "huggingface.co/org/qwen3:8b" } as Record<string, string>)[k] };
     head.parentNode = card;
-    const btn: any = { parentNode: head, getAttribute: () => "Old" };
+    const btn: any = { parentNode: head, getAttribute: () => opts.alias ?? "Old" };
     const el: any = { __html: "x", querySelectorAll: (s: string) => (s === ".lblbtn" ? [btn] : []) };
-    const doc = { createElement: () => { const i: any = { tagName: "INPUT", setAttribute() {}, focus() {}, blur() { i.in = false; i.onblur(); } }; inputs.push(i); return i; } };
-    const fn = new Function("$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", `var mEditing=false;\n${body}\nrenderModels();`);
-    fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc, (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)({ ok: true }); }, () => {}, () => {}, () => {});
-    btn.onclick({ stopPropagation: () => stop.push("click") });
-    expect(stop).toEqual(["click"]);
-    const inp = inputs[0];
-    expect(inp.value).toBe("Old");
-    expect(inp.placeholder).toBe("alias");
-    inp.value = " Fast ";
-    inp.onkeydown({ key: "Enter", stopPropagation() {}, preventDefault() {} });
-    expect(posts.map((p) => p.slice(0, 3))).toEqual([["model.label", "gyro-m", "model:flash-next=Fast"]]);
-    // empty removes
-    btn.onclick({ stopPropagation() {} });
-    const inp2 = inputs[1];
-    inp2.value = "";
-    inp2.blur();
-    expect(posts[1]!.slice(0, 3)).toEqual(["model.label", "gyro-m", "model:flash-next="]);
-    // Escape cancels without posting
-    btn.onclick({ stopPropagation() {} });
-    inputs[2].onkeydown({ key: "Escape", stopPropagation() {} });
-    expect(posts.length).toBe(2);
+    const doc = {
+      createElement: (tag: string) => {
+        const i: any = { tagName: tag.toUpperCase(), setAttribute() {}, focus() {}, blur() { i.in = false; i.onblur?.(); } };
+        if (tag === "input") inputs.push(i);
+        return i;
+      },
+    };
+    const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
+    const st = (fn: () => void, ms: number) => { timers.push({ fn, ms, live: true }); return timers.length - 1; };
+    const ct = (id: number) => { if (timers[id]) timers[id]!.live = false; };
+    const fn = new Function(
+      "$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", "setTimeout", "clearTimeout", "S",
+      `var mEditing=false,BLUR_CANCEL_MS=400;\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
+    );
+    fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc,
+      (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)(opts.reply ? opts.reply(a) : { ok: true }); },
+      () => loads.push(1), () => {}, () => {}, st, ct, state);
+    const click = () => btn.onclick({ stopPropagation() {} });
+    const find = (cls: string) => extras.filter((x) => x.in).find((x) => x.className?.includes(cls));
+    return { btn, t, head, inputs, extras, posts, loads, state, timers, click, find };
+  }
+  const tap = (b: any) => b.onclick({ stopPropagation() {} });
+
+  it("the pencil swaps the title for an input with check and cross; Enter posts model.label with model:<id>=<alias> (ids with : / . intact)", () => {
+    const h = editorHarness();
+    h.click();
+    expect(h.state.get()).toBe(true);
+    expect(h.inputs[0].value).toBe("Old");
+    expect(h.inputs[0].placeholder).toBe("alias");
+    expect(h.find("lblok")).toBeTruthy();
+    expect(h.find("lblno")).toBeTruthy();
+    h.inputs[0].value = " Fast ";
+    h.inputs[0].onkeydown({ key: "Enter", stopPropagation() {}, preventDefault() {} });
+    expect(h.posts.map((p) => p.slice(0, 3))).toEqual([["model.label", "gyro-m", "model:huggingface.co/org/qwen3:8b=Fast"]]);
+    expect(h.state.get()).toBe(false);
+    expect(h.inputs[0].in).toBe(false);
+    expect(h.loads.length).toBe(1);
+  });
+
+  it("the check button posts and closes", () => {
+    const h = editorHarness();
+    h.click();
+    h.inputs[0].value = "Fast";
+    tap(h.find("lblok"));
+    expect(h.posts.map((p) => p.slice(0, 3))).toEqual([["model.label", "gyro-m", "model:huggingface.co/org/qwen3:8b=Fast"]]);
+    expect(h.state.get()).toBe(false);
+    expect(h.inputs[0].in).toBe(false);
+    expect(h.find("lblok")).toBeUndefined();
+  });
+
+  it("the cross button and Escape cancel without posting and restore the title", () => {
+    const h = editorHarness();
+    h.click();
+    h.inputs[0].value = "typed";
+    tap(h.find("lblno"));
+    expect(h.posts.length).toBe(0);
+    expect(h.state.get()).toBe(false);
+    expect(h.inputs[0].in).toBe(false);
+    h.click();
+    h.inputs[1].onkeydown({ key: "Escape", stopPropagation() {} });
+    expect(h.posts.length).toBe(0);
+    expect(h.state.get()).toBe(false);
+    expect(h.inputs[1].in).toBe(false);
+  });
+
+  it("blur without a tap cancels after a moment and clears mEditing; a tap within the moment still saves; refocus keeps it open", () => {
+    const h = editorHarness();
+    h.click();
+    h.inputs[0].onblur();
+    expect(h.state.get()).toBe(true); // blur alone does nothing at once
+    expect(h.posts.length).toBe(0);
+    h.timers.at(-1)!.fn();
+    expect(h.posts.length).toBe(0);
+    expect(h.state.get()).toBe(false);
+    expect(h.inputs[0].in).toBe(false);
+    // blur, then the check is tapped before the timer fires: saves
+    h.click();
+    h.inputs[1].value = "Fast";
+    h.inputs[1].onblur();
+    const pending = h.timers.at(-1)!;
+    tap(h.find("lblok"));
+    expect(h.posts.length).toBe(1);
+    expect(pending.live).toBe(false);
+    // blur then refocus: the cancel timer is dropped
+    h.click();
+    h.inputs[2].onblur();
+    const t2 = h.timers.at(-1)!;
+    h.inputs[2].onfocus();
+    expect(t2.live).toBe(false);
+    expect(h.state.get()).toBe(true);
+  });
+
+  it("reset (only while an alias is set) removes the alias in one tap", () => {
+    const none = editorHarness({ alias: "" });
+    none.click();
+    expect(none.find("lblrs")).toBeUndefined();
+    const h = editorHarness();
+    h.click();
+    h.inputs[0].value = "half typed";
+    tap(h.find("lblrs"));
+    expect(h.posts.map((p) => p.slice(0, 3))).toEqual([["model.label", "gyro-m", "model:huggingface.co/org/qwen3:8b="]]);
+    expect(h.state.get()).toBe(false);
+  });
+
+  it("a failed save keeps the input open with the message beside it; the cross still closes and clears the freeze; blur-cancel works after", () => {
+    const h = editorHarness({ reply: () => ({ ok: false, message: "boom" }) });
+    h.click();
+    h.inputs[0].value = "Fast";
+    tap(h.find("lblok"));
+    expect(h.inputs[0].in).toBe(true);
+    expect(h.state.get()).toBe(true);
+    expect(h.find("lblmsg").textContent).toBe("boom");
+    tap(h.find("lblno"));
+    expect(h.inputs[0].in).toBe(false);
+    expect(h.state.get()).toBe(false);
+    expect(h.posts.length).toBe(1);
+    // blur-cancel after a failure
+    h.click();
+    h.inputs[1].value = "x";
+    tap(h.find("lblok"));
+    h.inputs[1].onblur();
+    h.timers.at(-1)!.fn();
+    expect(h.state.get()).toBe(false);
+    expect(h.inputs[1].in).toBe(false);
   });
 
   it("a rebuild is skipped while an alias input is being edited", () => {
