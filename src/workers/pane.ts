@@ -832,6 +832,8 @@ export interface HostDeps {
   listSessions(): Promise<ItermSession[]>;
   /** Pids of `claude attach <id>` client processes for a Claude session (short or full id). */
   attachClients?(cid: string): number[];
+  /** Processes other than the session's own `--bg-pty-host` holding its daemon socket `pty/<sid8>.sock` open (a plain `claude` showing the session), newest started first; tty as ps prints it. */
+  daemonClients?(cid: string): { pid: number; tty: string }[];
   /** ITERM_SESSION_ID in a process's environment, "" when unreadable or unset. */
   itermIdOf?(pid: number): string;
   /** iTerm session uid the AIBroker registry records for a Claude session id, "" when none. */
@@ -904,6 +906,38 @@ export const realHostDeps: HostDeps = {
       const r = /^\s*(\d+)\s+(.*)$/.exec(l);
       return r && re.test(r[2]) && !/--bg-pty-host/.test(r[2]) ? [Number(r[1])] : [];
     });
+  },
+  daemonClients(cid) {
+    try {
+      const short = cid.slice(0, 8);
+      const sockRe = new RegExp(`--bg-pty-host\\s+(\\S*/pty/${short}\\.sock)`, "i");
+      const sock = psTable("command=").split("\n").map((l) => sockRe.exec(l)?.[1]).find(Boolean);
+      if (!sock) return [];
+      let held = "";
+      try {
+        held = execFileSync("lsof", ["-nP", "-Fp", "--", sock], { encoding: "utf8", timeout: 10_000 });
+      } catch (e) {
+        held = (e as { stdout?: string }).stdout ?? ""; // lsof exits 1 when it lists nothing
+      }
+      const pids = [...held.matchAll(/^p(\d+)$/gm)].map((m) => Number(m[1]));
+      if (!pids.length) return [];
+      const cmds = new Map<number, string>();
+      for (const l of psTable("pid=,command=").split("\n")) {
+        const r = /^\s*(\d+)\s+(.*)$/.exec(l);
+        if (r) cmds.set(Number(r[1]), r[2]);
+      }
+      const rows: { pid: number; tty: string; started: number }[] = [];
+      for (const pid of pids) {
+        const cmd = cmds.get(pid) ?? "";
+        if (pid === process.pid || /--bg-pty-host\b/.test(cmd) || cmd.includes(`--session-id ${cid}`)) continue;
+        const out = execFileSync("ps", ["-o", "tty=,lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).trim();
+        const m = /^(\S+)\s+(.*)$/.exec(out);
+        if (m) rows.push({ pid, tty: m[1], started: Date.parse(m[2]) || 0 });
+      }
+      return rows.sort((a, b) => b.started - a.started).map(({ pid, tty }) => ({ pid, tty }));
+    } catch {
+      return [];
+    }
   },
   itermIdOf(pid) {
     try {
@@ -986,6 +1020,8 @@ function claudeIdOf(cmd: string): string | undefined {
  *  2. background (`claude attach <short>`): the Claude session id from env or an
  *     ancestor's command line, matched against each session's jobPid command;
  *     several matches are ambiguous and fail loudly
+ *  2b. daemon client: a plain `claude` holding the session's pty/<sid8>.sock
+ *     open (switched to the session in its UI); its tty names the iTerm session
  *  3. the tty of the nearest ancestor that has one
  *  4. ITERM_SESSION_ID, only when it names a live session — a reattached session
  *     keeps its old id in the process env for good
@@ -1039,6 +1075,13 @@ export async function resolveHostSession(
       if (live) return found(live, `attach client ${pid}`);
     }
     notes.push("attach client: no attach process with a live ITERM_SESSION_ID");
+    const clients = deps.daemonClients?.(cid) ?? [];
+    for (const c of clients) {
+      const tty = c.tty && c.tty !== "??" && c.tty !== "?" ? (c.tty.startsWith("/dev/") ? c.tty : `/dev/${c.tty}`) : "";
+      const live = tty && sessions.find((s) => s.tty === tty);
+      if (live) return found(live, `daemon client pid ${c.pid} tty ${tty}`);
+    }
+    notes.push(clients.length ? `daemon client: ${clients.map((c) => `pid ${c.pid} tty ${c.tty}`).join(", ")} matched no session` : `daemon client: no process holds pty/${short}.sock`);
     const reg = deps.registryHost?.(cid) ?? "";
     const regLive = reg && sessions.find((s) => s.id === reg);
     if (regLive) return found(regLive, "registry");
