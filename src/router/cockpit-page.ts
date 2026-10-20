@@ -83,9 +83,11 @@ svg text{fill:var(--dim);font-size:10px}
 /* foldable model cards: the header line toggles the body; folded cards show header only */
 .mcard{container-type:inline-size;background:var(--card);border:1px solid var(--line);border-radius:8px;min-width:0;max-width:100%;overflow:hidden}
 .mhead{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap;width:100%;background:none;border:0;border-bottom:1px solid transparent;padding:7px 10px;color:var(--fg);cursor:pointer;font:inherit;text-align:left}
+.mhead:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 .mcard.open .mhead{border-bottom-color:var(--line)}
 .mhead:hover{color:var(--acc)}
 .mhead b{font-size:13px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mhead .mid{flex:0 1 auto;min-width:0;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mhead .chev{flex:0 0 auto;width:12px;color:var(--dim)}
 .mhead .num{margin-left:auto;flex:0 0 auto;color:var(--dim);font-size:12px;white-space:nowrap}
 .mhead .badge{flex:0 0 auto}
@@ -94,7 +96,9 @@ svg text{fill:var(--dim);font-size:10px}
 .mcard.down{border-color:var(--bad)}
 .mdown{color:var(--bad);font-size:12px}
 .mnote{color:var(--dim);font-size:11px}
-.mhead .act{flex:0 0 auto}
+/* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
+.mhead .act{flex:0 0 auto;margin-left:auto}
+.mhead .num{margin-left:8px}
 .mhead .act button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font:inherit;font-size:11px;cursor:pointer}
 .mhead .act button:hover{border-color:var(--acc);color:var(--acc)}
 .mhead .act button[disabled]{opacity:.5;cursor:default}
@@ -230,11 +234,13 @@ function postAction(action,target,value,cb){
  fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
   .then(function(r){return r.json()}).then(function(j){cb(j)}).catch(function(){cb({ok:false,message:"action failed"})});
 }
-/** Buttons in an action row: disabled while the action runs; the result text lands on the card. */
+/** Buttons in an action row: disabled while the action runs; the result text lands on the card.
+ * A button click must not reach the card header's fold toggle (the button is inside the header button). */
 function wireAct(el,onDone){
  var btns=el.querySelectorAll("button");
  for(var i=0;i<btns.length;i++)(function(b){
-  b.onclick=function(){
+  b.onclick=function(e){
+   if(e&&e.stopPropagation)e.stopPropagation();
    var cf=b.getAttribute("data-confirm");
    if(cf&&!b.confirmed){b.confirmed=true;var m0=el.querySelector(".msg");if(m0){m0.textContent=cf;m0.className="msg"}return}
    b.confirmed=false;
@@ -333,47 +339,83 @@ function modelsHtml(inv){
   return {pct:Math.min(100,used/eng.maxContext*100),text:Math.round(used/eng.maxContext*100)+"% · "+kfmt(used)+" / "+ctxfmt(eng.maxContext)}
  }
  function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l?Object.assign({},l.live,{history:l.history}):null}
- /** What uses this runtime: the inventory's users plus PAI's own consumers (the embedding backend). */
- function usersOf(r){
-  var u=(r.users||[]).slice();
-  consumers.forEach(function(c){if(c.runtime===r.name||c.runtime===r.kind)if(u.indexOf(c.name)<0)u.push(c.name)});
+ /** The consumers of one model on one runtime: by the model the consumer names;
+  * a consumer without a model counts only on a runtime with a single model. */
+ function consumersOf(cs2,rt2,m){
+  return cs2.filter(function(c){
+   if(c.runtime!==rt2.name&&c.runtime!==rt2.kind)return false;
+   return c.model?c.model===m.model:rt2.models.length===1;
+  });
+ }
+ /** What uses this runtime/model: the inventory's users plus the consumers (PAI's embedding backend, apps). */
+ function usersOf(cs2,rt2,m){
+  var u=(rt2.users||[]).slice();
+  consumersOf(cs2,rt2,m).forEach(function(c){if(u.indexOf(c.name)<0)u.push(c.name)});
   return u;
  }
  /** The consumer sentence: what each user needs the runtime for. */
  function purposeOf(u){
   return u.map(function(n){
    var c=consumers.filter(function(x){return x.name===n})[0];
-   if(c)return n+" ("+c.purpose+")";
+   if(c)return n+" ("+(c.purpose||c.label)+")";
    if(n==="pai-embedding")return "PAI's embedding (memory search embeds new content)";
    if(n.indexOf("worker:")===0)return n.slice(7)+" (worker provider)";
    return n;
   }).join(", ");
  }
- /** Header buttons: start/stop from the configured commands only — no command, no button. */
+ /** Header buttons: start/stop from the configured commands only — no command, no button.
+  * Only the applicable one shows: running/idle -> stop, stopped -> start; never a disabled twin. */
  function rtBtns(r){
   var c=cmds[r.name]||{};
-  var b="";
-  if(c.start)b+='<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start"'+(r.status!=="stopped"?' disabled':"")+' data-confirm="starts '+esc(r.name)+'">start</button>';
-  if(c.stop)b+='<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop"'+(r.status==="stopped"?' disabled':"")+' data-confirm="stops '+esc(r.name)+'">stop</button>';
-  return b;
+  if(r.status==="stopped")return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start" data-confirm="starts '+esc(r.name)+'">start</button>':"";
+  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop" data-confirm="stops '+esc(r.name)+'">stop</button>':"";
  }
  var cards="";
- inv.runtimes.forEach(function(r){
+ inv.runtimes.forEach(function(rt){
+  // one card per consumer model: a runtime hosting several consumer-labelled models
+  // (ollama: qwen3:8b for chat, arctic-embed for embeddings) splits into one card per
+  // model; a runtime without several labelled models keeps one card for all its models
+  var rts=[];
+  var keyed=rt.models.filter(function(m){return m.label||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&c.model===m.model})});
+  if(keyed.length>1)keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m]}))});
+  // a runtime with no models of its own still shows its declared consumers (a stopped ollama)
+  else if(!rt.models.length&&consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))rts.push(Object.assign({},rt,{models:[{model:"",kind:"chat",loaded:false,usedBy:[]}]}));
+  else rts.push(rt);
+  rts.forEach(function(r){
   var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
   var loaded=r.models.filter(function(m){return m.loaded});
-  var users=usersOf(r);
+  var hasModel=!!(r.models.length&&r.models[0].model);
+  var users=usersOf(consumers,rt,r.models[0]||{model:"",kind:"chat",loaded:false,usedBy:[]});
+  // a runtime with no models of its own: every consumer pointing at it still waits on it
+  if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
   var down=r.status==="stopped";
   var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
   var state=down?"down":r.status==="idle"?"available (loads on first request)":"running";
   var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
-   :r.status==="idle"?(r.models.length+" installed")
+   :r.status==="idle"?(hasModel?r.models.length+" installed":"no model")
    :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
+  /* purpose first: the title is the consumer's label (config only), the model id is grey secondary text;
+   * without a label the consumer name, then the model id */
+  function titleOf(m){
+   // the inventory's per-model label first (models.consumers[].label / models.labels),
+   // then the payload's consumer label, then the runtime label — all from config
+   var lbl=m.label||"";
+   if(!lbl){var cc=consumers.filter(function(x){return x.model===m.model&&(x.runtime===rt.name||x.runtime===rt.kind)})[0];if(cc&&cc.label)lbl=cc.label}
+   if(!lbl)lbl=(r.modelLabels&&r.modelLabels[m.model])||r.label||"";
+   if(lbl)return lbl;
+   var cs=consumersOf(consumers,rt,m);
+   if(cs.length)return cs[0].name;
+   var u=(m.usedBy||[]).length?m.usedBy:(rt.models.length===1?users:[]);
+   var first=u.length?String(u[0]):"";
+   return first?first.replace(/^worker:/,""):shortModel(m.model);
+  }
   var head='<button class="mhead" type="button" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.status==="idle"?" idle":"")+'"></span>'+
-   '<b'+(r.models.length?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(r.models.length?shortModel(r.models[0].model):r.name)+'</b>'+
+   '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
+   (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
    '<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
-   (rtBtns(r)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r)+'<span class="msg"></span></span>':"")+
+   (rtBtns(r)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r)+'</span>':"")+
    '<span class="num">'+esc(key)+'</span></button>';
   var body="";
   if(down){
@@ -382,7 +424,7 @@ function modelsHtml(inv){
   }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
    body+='<div class="rt-tiles two">'+
-    metricTile({title:"Memory / size",value:mem(size),unit:"",sub:r.models.length+" model"+(r.models.length===1?"":"s")+" installed, none loaded",series:[]})+
+    metricTile({title:"Memory / size",value:mem(size),unit:"",sub:hasModel?r.models.length+" model"+(r.models.length===1?"":"s")+" installed, none loaded":"no model installed",series:[]})+
     metricTile({title:"Users",value:users.length,unit:"",sub:users.length?esc(purposeOf(users)):"no declared consumer",series:[]})+
     '</div>';
    if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
@@ -402,41 +444,53 @@ function modelsHtml(inv){
   }
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(r.status!=="stopped"&&tierBtns)body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-def="'+(r.status==="running"&&coding?"coding":"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
+  cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?"coding":"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
+  });
  });
  var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
  if(tierBtns)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
+ // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
 }
-/** Fold state of the model cards: pai.cockpit.models.folded lists the folded runtime names.
- * Default: a runtime running a coding model opens, everything else folds. */
+/** Fold state of the model cards: pai.cockpit.models.folded lists the folded card ids
+ * (runtime + first model id, so two cards on one runtime fold separately).
+ * Default: a runtime running a coding model opens, everything else folds.
+ * The whole header line is the toggle: it is a <button>, so Enter/Space fire a click too. */
 var MCOLLAPSE_KEY="pai.cockpit.models.folded";
-function mFolded(){var s={};try{var r=localStorage.getItem(MCOLLAPSE_KEY);if(r)JSON.parse(r).forEach(function(k){s[k]=1})}catch(e){}return s}
+// the saved array is the folded list; __init marks "the defaults were applied once",
+// so a card absent from the list after that is open, not unknown
+function mFolded(){var s={};try{var r=localStorage.getItem(MCOLLAPSE_KEY);if(r){JSON.parse(r).forEach(function(k){s[k]=1});s.__init=1}}catch(e){}return s}
 function saveMFolded(s){try{var a=[];for(var k in s)if(s[k]&&k!=="__init")a.push(k);localStorage.setItem(MCOLLAPSE_KEY,JSON.stringify(a))}catch(e){}}
 function applyModelFold(){
- var el=$("modelspanel"),saved=mFolded(),known={};
+ var el=$("modelspanel"),saved=mFolded(),init=saved.__init,known={};
  var cards=el.querySelectorAll(".mcard");
  for(var i=0;i<cards.length;i++)(function(c){
-  var rt=c.getAttribute("data-rt")||"";known[rt]=1;
+  var rt=c.getAttribute("data-rt")||"",md=c.getAttribute("data-model")||"";
+  var id=rt+(md?" / "+md:"");known[id]=1;
   var open=c.classList.contains("open");
-  if(rt in saved)open=!saved[rt];
-  else if(saved.__init!==1){
+  // the stored array is the folded list: an id in it is folded, an id not in it is open
+  if(id in saved)open=!saved[id];
+  else if(init!==1){
    var d=c.getAttribute("data-def");
    open=d==="coding";
-   saved[rt]=open?0:1;
+   // only the folded cards are stored; an open card is the absence of its id
+   if(!open)saved[id]=1;
   }
   c.classList.toggle("open",open);
   var b=c.querySelector(".mhead");
   if(b){b.setAttribute("aria-expanded",open?"true":"false");var ch=b.querySelector(".chev");if(ch)ch.textContent=open?"▾":"▸"}
-  if(!b.onclick)b.onclick=function(e){
-   if(e.target&&e.target.tagName==="BUTTON")return;
-   var s2=mFolded();var nowOpen=!c.classList.contains("open");
-   if(nowOpen)delete s2[rt];else s2[rt]=1;
-   saveMFolded(s2);applyModelFold();
+  if(!b.onclick)b.onclick=function(){
+   var nowOpen=!c.classList.contains("open");
+   c.classList.toggle("open",nowOpen);
+   var folded=JSON.parse(localStorage.getItem(MCOLLAPSE_KEY)||"[]");
+   folded=nowOpen?folded.filter(function(k){return k!==id}):folded.concat([id]);
+   try{localStorage.setItem(MCOLLAPSE_KEY,JSON.stringify(folded))}catch(e){}
+   b.setAttribute("aria-expanded",nowOpen?"true":"false");
+   var ch=b.querySelector(".chev");if(ch)ch.textContent=nowOpen?"▾":"▸";
   };
  })(cards[i]);
- // a runtime that left the inventory: its saved state goes with it
+ // a card that left the inventory: its saved state goes with it
  for(var k in saved)if(k!=="__init"&&!(k in known))delete saved[k];
  saved.__init=1;saveMFolded(saved);
 }
