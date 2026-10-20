@@ -162,7 +162,7 @@ import {
   type WorkerReport,
 } from "./report.js";
 import { parseDenialText, recordDenial } from "./denials.js";
-import { validateAg2 } from "./agentish.js";
+import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
 import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
 import { taskForProvider } from "./local-contract.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
@@ -2381,7 +2381,13 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     });
   }
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
-    const v = validateAg2(resultEvent.result);
+    const rep = repairAndValidateAg2(resultEvent.result);
+    const v = rep.validation;
+    if (rep.repairs.length) {
+      resultEvent.result = rep.text;
+      ctx.resultReport = parseWorkerReport(rep.text);
+      if (ctx.resultReport?.notes) status.last = shortText(ctx.resultReport.notes, 90);
+    }
     status.reportValid = v.ok;
     status.reportErrors = v.errors;
     // one bounded re-ask, cap exactly one — see shouldRetryReport

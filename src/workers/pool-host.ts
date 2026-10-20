@@ -27,7 +27,7 @@ import { createInterface } from "node:readline";
 import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
-import { validateAg2 } from "./agentish.js";
+import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
 import { getProviderOrNative, readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { buildRunEnv, claudeCommand, isLoopbackProvider, loopbackRouterChoice } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
@@ -816,8 +816,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         status.last = "harness: empty-response (model returned nothing)";
       }
       // AG2 validity + the one bounded re-ask, fed to the same warm slot
-      if (task.reportFormat === "ag2" && resultEvent.result && !validateAg2(resultEvent.result).ok) {
-        const v = validateAg2(resultEvent.result);
+      const rep = task.reportFormat === "ag2" && resultEvent.result ? repairAndValidateAg2(resultEvent.result) : null;
+      if (rep?.repairs.length) resultEvent = { ...resultEvent, result: rep.text };
+      if (rep && !rep.validation.ok) {
+        const v = rep.validation;
         status.reportValid = v.ok;
         status.reportErrors = v.errors;
         appendLedger(ledger, "WORKER-REPORT-RETRY", {
