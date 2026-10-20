@@ -141,7 +141,8 @@ svg text{fill:var(--dim);font-size:10px}
 .tiercap{color:var(--dim);font-size:11px}
 .lbl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;color:var(--dim);font-size:11px}
 .lbl input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;max-width:100%}
-.lbl .lblbtn{background:none;border:0;padding:0 4px;color:var(--acc);cursor:pointer;font:inherit}
+.lbl .lblbtn,.mhead .lblbtn{background:none;border:0;padding:0 4px;color:var(--acc);cursor:pointer;font:inherit}
+.mhead input.lblin{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;width:12em;max-width:100%}
 .lbls{display:flex;flex-direction:column;gap:2px;min-width:0}
 .tog.on{background:var(--acc);border-color:var(--acc);color:#fff}
 </style></head><body>
@@ -332,7 +333,7 @@ function renderRouting(){
   var tip=[row.description,row.note].filter(Boolean).join(" — ");
   return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
 }
-var mdl=null;
+var mdl=null,mEditing=false;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
  * the full id rides in the title attribute. */
 function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>=0?s.slice(i+1):s}
@@ -359,6 +360,15 @@ function modelsHtml(inv){
  var cmds=inv.runtimeCommands||{};
  var consumers=inv.consumers||[];
  var tierBtns=tiers.length?tierRow(tiers,running):"";
+ /* the local model switch shows once: in the card of the engine runtime the workers use (a running runtime
+  * that is neither ollama nor docker model runner, hosting the running model, else one with a worker user);
+  * with no such card it sits at the section bottom */
+ var localRt="";
+ if(tierBtns){
+  var eng0=inv.runtimes.filter(function(x){return x.status!=="stopped"&&x.kind!=="ollama"&&x.kind!=="docker-model-runner"});
+  var hit=eng0.filter(function(x){return running&&(x.models||[]).some(function(m){return m.model===running.model})})[0]||eng0.filter(function(x){return(x.users||[]).some(function(u){return String(u).indexOf("worker:")===0})})[0];
+  if(hit)localRt=hit.name;
+ }
  function mem(m){return m==null?"–":m>=1024?gbm(m)+" GB":m+" MB"}
  function n0(v){return v==null?"–":Math.round(v)}
  /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer;
@@ -471,6 +481,7 @@ function modelsHtml(inv){
   var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
+   (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
    '<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
@@ -502,12 +513,12 @@ function modelsHtml(inv){
    if(chips)body+='<div class="rt-chips">'+chips+'</div>';
   }
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
-  if(r.status!=="stopped"&&tierBtns)body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
+  if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
   cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
  var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
- if(tierBtns)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
+ if(tierBtns&&!localRt)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
  // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
@@ -561,31 +572,34 @@ function renderModels(){
  var el=$("modelspanel");if(!el)return;
  // a pending poll never replaces a rendering that already shows data
  if(!mdl&&el.__html)return;
+ if(mdl&&mEditing)return;
  var changed=setHtml(el,mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>');
  applyModelFold();
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
  if(!changed)return;
  var acts=el.querySelectorAll(".act");
  for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
- var lbls=el.querySelectorAll(".lbl");
- for(var k=0;k<lbls.length;k++)(function(sp){
-  var btn=sp.querySelector(".lblbtn"),v=sp.querySelector(".lblv");
-  btn.onclick=function(){
-   var inp=document.createElement("input");inp.type="text";inp.value=v.textContent||"";inp.placeholder="what is this for?";
-   sp.replaceChild(inp,v);inp.focus({preventScroll:true});
-   var msg=sp.querySelector(".msg");
-   function save(){
-    var val2=inp.value;var back=document.createElement("b");back.className="lblv";back.textContent=val2;
-    if(sp.parentNode.contains(inp))sp.replaceChild(back,inp);
-    back.onclick=btn.onclick;
-    for(var x=0;x<acts.length;x++){var bb=acts[x].querySelectorAll("button");for(var y=0;y<bb.length;y++)bb[y].disabled=true}
-    postAction("model.label",sp.getAttribute("data-rt"),sp.getAttribute("data-model")?("model:"+sp.getAttribute("data-model")+"="+val2):val2,function(j2){
-     msg.textContent=(j2&&j2.message)||"";msg.className="msg"+(j2&&j2.ok?"":" bad");
-     for(var x=0;x<acts.length;x++){var bb=acts[x].querySelectorAll("button");for(var y=0;y<bb.length;y++)bb[y].disabled=false}
-     if(j2&&j2.ok)loadModels();
+ var lbls=el.querySelectorAll(".lblbtn");
+ for(var k=0;k<lbls.length;k++)(function(btn){
+  var head=btn.parentNode,card=head.parentNode,t=head.querySelector("b");
+  var rt=card.getAttribute("data-rt"),md=card.getAttribute("data-model");
+  btn.onkeydown=function(e){e.stopPropagation()};
+  btn.onclick=function(e){
+   e.stopPropagation();
+   if(head.querySelector("input.lblin"))return;
+   var inp=document.createElement("input");inp.type="text";inp.className="lblin";inp.setAttribute("data-lblin",rt+"/"+md);
+   inp.value=btn.getAttribute("data-alias")||"";inp.placeholder="alias";
+   head.replaceChild(inp,t);inp.focus({preventScroll:true});
+   inp.onclick=function(ev){ev.stopPropagation()};
+   inp.onkeydown=function(ev){ev.stopPropagation();if(ev.key==="Enter"){ev.preventDefault();inp.blur()}else if(ev.key==="Escape"){done=true;mEditing=false;if(head.contains(inp))head.replaceChild(t,inp);renderModels()}};
+   var done=false;mEditing=true;
+   inp.onblur=function(){
+    if(done)return;done=true;mEditing=false;
+    var val2=inp.value.trim();
+    postAction("model.label",rt,"model:"+md+"="+val2,function(j2){
+     if(j2&&j2.ok)loadModels();else{if(head.contains(inp))head.replaceChild(t,inp);renderModels()}
     });
-   }
-   inp.onkeydown=function(e){if(e.key==="Enter")save();else if(e.key==="Escape"){var back2=document.createElement("b");back2.className="lblv";back2.textContent=v.textContent||"";sp.replaceChild(back2,inp);back2.onclick=btn.onclick}};
+   };
   };
  })(lbls[k]);
 }
