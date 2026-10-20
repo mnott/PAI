@@ -85,6 +85,13 @@ The cockpit layout policy values live in `defaults/config.yaml` under `router.co
 | `router.cockpit.layout.jobFirstDelayMs` / `.jobPollMs` / `.jobMaxTries` | job watch `2000`/`5000`/`120` | `2000`/`5000`/`120` |
 | `router.cockpit.layout.serverCounterStaleSecs` | prefix-cache age mark `>60` | `60 s` |
 | `router.cockpit.layout.foldDefaultKind` | model-card fold default `"coding"` | `coding` |
+| `router.cockpit.layout.rows` | drag-and-drop default arrangement; empty = derive from section order + span classes (c8+c4 one row, c6+c6 one row, c12 own row) | `[]` |
+| `router.cockpit.layout.maxPerRow` | sections per row; a 4th drop beside a full row is refused | `3` |
+| `router.cockpit.layout.touchPressMs` | touch drag starts only after this press on the grip | `350 ms` |
+| `router.cockpit.layout.edgeScrollPx` | auto-scroll band at the viewport edge during a drag | `40 px` |
+
+The arrangement a user drags is per browser (localStorage `pai.cockpit.layout.v1` for rows,
+`pai.cockpit.tiles.v1` for tile order inside containers), not config; the header's ⟲ resets it.
 
 ## Backlog: policy constants still in code
 

@@ -51,14 +51,15 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
-@media(max-width:480px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{display:none}#theme{flex:0 0 auto;margin-left:auto}}
+@media(max-width:480px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{display:none}#reset{flex:0 0 auto;margin-left:auto}#theme{flex:0 0 auto}}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
+#reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(${L.gridCols},minmax(0,1fr))}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}.tw{overflow-x:auto}
 .gauge .s{overflow-wrap:anywhere}
 .c12{grid-column:span ${L.gridCols}}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
-@media(max-width:${L.gridBreakpointPx}px){.c8,.c6,.c4{grid-column:span ${L.gridCols}}}
+@media(max-width:${L.gridBreakpointPx}px){.c8,.c6,.c4{grid-column:span ${L.gridCols}}section[data-section]{grid-column:span ${L.gridCols}!important}}
 .gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 ${L.gaugeMinWidthPx}px;max-width:min(${L.gaugeMaxWidthPx}px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
 .pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
@@ -83,6 +84,11 @@ svg text{fill:var(--dim);font-size:10px}
 #sessions td:first-child span[title]{display:inline-block;max-width:${L.sessionTitleMaxWidthPx}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+.tgrip{cursor:grab;color:var(--dim);font-size:12px;user-select:none;-webkit-user-select:none;touch-action:none}
+.sgrip{background:none;border:0;padding:0 4px 0 0;color:var(--dim);cursor:grab;font:inherit;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}.sgrip:hover{color:var(--acc)}.sgrip:focus-visible{outline:2px solid var(--acc);border-radius:4px}
+.dropind{position:fixed;z-index:9;pointer-events:none;border:2px solid var(--acc);border-radius:8px;background:color-mix(in srgb,var(--acc) 12%,transparent)}
+.dropind[data-mode=above]{border-top-width:6px}.dropind[data-mode=below]{border-bottom-width:6px}.dropind[data-mode=left]{border-left-width:6px}.dropind[data-mode=right]{border-right-width:6px}
+.dropind.bad{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
 .mt-values{display:flex;justify-content:space-between;gap:10px}.mt-values>div{display:flex;flex-direction:column;gap:2px;min-width:0}.mt-sec{text-align:right}
 .mt-values{flex-wrap:nowrap}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
@@ -151,7 +157,7 @@ svg text{fill:var(--dim);font-size:10px}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
-<span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
+<span id="stamp">loading...</span><button id="reset" type="button" title="reset layout" aria-label="reset layout">⟲</button><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
 <section data-section="cloud" class="card c12"><h2>Cloud</h2><h2 class="pgsub">Local</h2><div class="pgrid" id="local"></div><h2 class="pgsub">Cloud</h2><div class="pgrid" id="cloud"></div></section>
 <section data-section="routing" class="card c12"><h2>Routing<span class="tip" tabindex="0" aria-label="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. The top line shows what each tier resolves to now. A local model that is not running is skipped, not started. Read-only: edit workers.yaml or run pai worker route set." data-tip="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. The top line shows what each tier resolves to now. A local model that is not running is skipped, not started. Read-only: edit workers.yaml or run pai worker route set.">ⓘ</span></h2><div id="routing"></div></section>
@@ -231,7 +237,7 @@ function metricSpark(series){
 }
 function metricTile(o){
  var sec=o.secondary;
- function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value">'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
+ function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span>'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
  function fill(v,u,sub){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
  return'<div class="mt"><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
@@ -258,7 +264,246 @@ function applyCollapse(){
   if(!b.onclick)b.onclick=function(){var s2=collapsedSet();if(s2[c.id])delete s2[c.id];else s2[c.id]=1;saveCollapsed(s2);applyCollapse()};
  })(cards[i]);
 }
-
+/** The layout model: rows of section names; a row of n gives each 12/n columns.
+ *  The arrangement lives in the browser (localStorage); the default derives from
+ *  the page order and the span classes (c8+c4 consecutive = one row, c6+c6 = one
+ *  row, c12 = its own row), unless the config's router.cockpit.layout.rows names rows. */
+var LKEY="pai.cockpit.layout.v1",TKEY="pai.cockpit.tiles.v1";
+var MAXROW=${n(L.maxPerRow)},PRESS_MS=${n(L.touchPressMs)},EDGE_PX=${n(L.edgeScrollPx)},GRIDCOLS=${n(L.gridCols)};
+var DEFAULT_ROWS=${JSON.stringify(L.rows)};
+function spanOf(c){var m=String(c.className||"").match(/c([0-9]+)/);return m?+m[1]:GRIDCOLS}
+/** Consecutive sections share a row while their spans sum to the grid width
+ *  (c8+c4, c6+c6), up to MAXROW per row; a c12 is always alone. */
+function deriveRows(secs){var rows=[],cur=null;for(var i=0;i<secs.length;i++){var s=spanOf(secs[i]);
+ if(cur&&cur.sum+s<=GRIDCOLS&&cur.names.length<MAXROW){cur.names.push(secs[i].getAttribute("data-section"));cur.sum+=s}
+ else{if(cur)rows.push(cur.names);cur={names:[secs[i].getAttribute("data-section")],sum:s}}
+ if(cur.names.length===MAXROW||cur.sum>=GRIDCOLS){rows.push(cur.names);cur=null}}
+ if(cur)rows.push(cur.names);return rows}
+/** The default rows of the shipped page, derived once from the static markup
+ *  (the section order and the span classes) — no layout literal in code. */
+var PAGE_ROWS=(function(){
+ var m=document.querySelector("main"),secs=m?m.querySelectorAll("section[data-section]"):[];
+ return secs.length?deriveRows(secs):[];
+})();
+function savedRows(){try{var r=localStorage.getItem(LKEY);if(!r)return null;var a=JSON.parse(r);return Array.isArray(a)?a:null}catch(e){return null}}
+function defaultRows(secs){
+ if(DEFAULT_ROWS&&DEFAULT_ROWS.length)return DEFAULT_ROWS.map(function(r){return r.slice()});
+ // the derivation of the shipped page (the markup the page was built from);
+ // a section the page does not carry appends as its own row via cleanRows
+ return PAGE_ROWS.length?PAGE_ROWS.map(function(r){return r.slice()}):deriveRows(secs);
+}
+/** Unknown names dropped, sections missing from the saved layout appended as own rows. */
+function cleanRows(rows,secs){
+ var names={},seen={},out=[];
+ for(var i=0;i<secs.length;i++)names[secs[i].getAttribute("data-section")]=1;
+ for(var k=0;k<rows.length;k++){
+  var r=[];
+  for(var n=0;n<rows[k].length;n++){var name=rows[k][n];if(names[name]&&!seen[name]&&r.length<MAXROW){r.push(name);seen[name]=1}}
+  if(r.length)out.push(r);
+ }
+ for(var j=0;j<secs.length;j++){var s=secs[j].getAttribute("data-section");if(!seen[s])out.push([s])}
+ return out;
+}
+function layoutRows(secs){return cleanRows(savedRows()||defaultRows(secs),secs)}
+function saveRows(rows){try{localStorage.setItem(LKEY,JSON.stringify(rows))}catch(e){}}
+/** Apply the rows: DOM order = row order, each section spans 12/n columns.
+ *  The section elements move, never get rebuilt: folds and listeners survive. */
+function applyLayout(rows){
+ var main=document.querySelector("main");if(!main)return;
+ var byName={},secs=main.querySelectorAll("section[data-section]");
+ for(var i=0;i<secs.length;i++)byName[secs[i].getAttribute("data-section")]=secs[i];
+ var order=[];
+ for(var r=0;r<rows.length;r++){
+  var row=rows[r],span=Math.floor(GRIDCOLS/Math.min(row.length,MAXROW));
+  for(var k=0;k<row.length;k++){var el=byName[row[k]];if(!el)continue;el.style.gridColumn="span "+span;order.push(el)}
+ }
+ for(var j=0;j<order.length;j++)main.appendChild(order[j]);
+}
+function moveSec(name,rows,target,mode){
+ var ri=-1,si=-1,t=-1,kk=-1;
+ for(var r=0;r<rows.length;r++){var k=rows[r].indexOf(name);if(k>=0){ri=r;si=k}var j=rows[r].indexOf(target);if(j>=0){t=r;kk=j}}
+ if(ri<0||t<0)return rows;
+ var out=rows.map(function(x){return x.slice()});
+ // beside: a full row refuses the drop, nothing moves
+ if((mode==="left"||mode==="right")&&out[t].length>=MAXROW)return rows;
+ out[ri].splice(si,1);
+ if(mode==="above")out.splice(t,0,[name]);
+ else if(mode==="below")out.splice(t+1,0,[name]);
+ else out[t].splice(mode==="left"?kk:kk+1,0,name);
+ for(var q=out.length-1;q>=0;q--)if(!out[q].length)out.splice(q,1);
+ return out;
+}
+/** Tile order inside a container (model cards in .rt-grid, metric tiles in .rt-tiles):
+ *  saved per container key (section name + card id); applied after every rebuild. */
+function tileOrder(){try{var r=localStorage.getItem(TKEY);if(!r)return {};var o=JSON.parse(r);return o&&typeof o==="object"?o:{}}catch(e){return{}}}
+function saveTileOrder(o){try{localStorage.setItem(TKEY,JSON.stringify(o))}catch(e){}}
+function applyTileOrder(el){
+ var kids=el.children;var ord=tileOrder()[el.__tkey];if(!ord||kids.length<2)return;
+ var byId={},keep=[];
+ for(var i=0;i<kids.length;i++){var id=kids[i].getAttribute("data-tid");if(!id){keep.push(kids[i]);continue}byId[id]=kids[i]}
+ var moved=0;
+ for(var k=0;k<ord.length;k++){var e=byId[ord[k]];if(e){el.appendChild(e);moved++}}
+ // tiles the saved order does not know (new since the save) go last, in DOM order
+ for(var j=0;j<kids.length;j++)if(ord.indexOf(kids[j].getAttribute("data-tid"))<0&&kids[j].getAttribute("data-tid"))keep.push(kids[j]);
+ for(var m=0;m<keep.length;m++)el.appendChild(keep[m]);
+ if(moved)el.__html=""; // the html no longer matches the source string: a later identical poll must re-apply
+}
+function tileGrips(){
+ var gs=document.querySelectorAll("[data-tgrip]");
+ for(var i=0;i<gs.length;i++)(function(g){
+  if(g.__wired)return;g.__wired=1;
+  g.addEventListener("pointerdown",function(e){sDrag(e,g,"tile")});
+  g.addEventListener("keydown",function(e){
+   if(!e.altKey)return;
+   if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+    e.preventDefault();
+    var cont=g.parentNode,ord=[];
+    for(var k=0;k<cont.children.length;k++)if(cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
+    var id=g.parentNode.getAttribute("data-tid"),p=ord.indexOf(id);
+    var np=e.key==="ArrowLeft"?p-1:p+1;
+    if(np<0||np>=ord.length)return;
+    ord.splice(p,1);ord.splice(np,0,id);
+    var o=tileOrder();o[cont.__tkey]=ord;saveTileOrder(o);applyTileOrder(cont);
+   }
+  });
+ })(gs[i]);
+}
+/** Drag state: a section grip or a tile grip; pointer events for mouse and touch. */
+var drag=null,ind=null;
+function showInd(rect,mode,bad){
+ if(!ind){ind=document.createElement("div");ind.className="dropind";document.body.appendChild(ind)}
+ ind.style.left=rect.left+"px";ind.style.top=rect.top+"px";ind.style.width=rect.width+"px";ind.style.height=rect.height+"px";
+ ind.dataset.mode=mode;ind.classList.toggle("bad",!!bad);
+}
+function hideInd(){if(ind){ind.remove();ind=null}}
+function edgeScroll(y){
+ var d=document.documentElement,vp=d.clientHeight;
+ if(y<EDGE_PX)window.scrollBy(0,-8);else if(y>vp-EDGE_PX)window.scrollBy(0,8);
+}
+function sDrag(e,g,kind){
+ if(e.button||drag)return;
+ drag={g:g,kind:kind,moved:false,timer:null};
+ if(kind==="section"){
+  var sec=g.closest("section");drag.sec=sec;drag.title=(sec.querySelector("h2")||{}).textContent||sec.getAttribute("data-section");
+ }else drag.tile=g.closest("[data-tid]");
+ g.setPointerCapture&&g.setPointerCapture(e.pointerId);
+ g.addEventListener("pointermove",mDrag);
+ g.addEventListener("pointerup",uDrag);
+ g.addEventListener("pointercancel",aDrag);
+ window.addEventListener("keydown",kDrag);
+ if(e.pointerType==="touch")drag.timer=setTimeout(function(){drag.timer=null;drag.armed=true},PRESS_MS);
+ else drag.armed=true;
+ e.preventDefault();
+}
+function zone(rect,x,y){
+ var dx=x-rect.left,dy=y-rect.top;
+ if(dy<rect.height/3)return"above";
+ if(dy>rect.height*2/3)return"below";
+ if(dx<rect.width/3)return"left";
+ if(dx>rect.width*2/3)return"right";
+ return"inside";
+}
+function mDrag(e){
+ if(!drag)return;
+ drag.moved=true;drag.x=e.clientX;drag.y=e.clientY;
+ if(!drag.armed)return;
+ edgeScroll(e.clientY);
+ if(drag.kind==="tile"){
+  var cont=drag.tile.parentNode,t=cont.querySelector("[data-tid]"),r=t.getBoundingClientRect();
+  showInd(r,e.clientX<r.left+r.width/2?"left":"right",false);
+  return;
+ }
+ var el=document.elementFromPoint(e.clientX,e.clientY);
+ var sec=el&&el.closest?el.closest("section.card"):null;
+ if(!sec||sec===drag.sec){hideInd();return}
+ var rect=sec.getBoundingClientRect(),z=zone(rect,e.clientX,e.clientY);
+ var rows=curRows(),ri=-1;
+ for(var r0=0;r0<rows.length;r0++)if(rows[r0].indexOf(sec.getAttribute("data-section"))>=0)ri=r0;
+ var full=ri>=0&&rows[ri].length>=MAXROW;
+ showInd(rect,z,(z==="left"||z==="right")&&full);
+}
+function uDrag(e){
+ if(!drag)return;
+ if(drag.timer){clearTimeout(drag.timer);drag.timer=null}
+ var d=drag;drag=null;
+ cleanup(d);
+ if(!d.armed||!d.moved){hideInd();return}
+ if(d.kind==="tile"){
+  hideInd();
+  var cont=d.tile.parentNode,ord=[];
+  for(var k=0;k<cont.children.length;k++)if(cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
+  var id=d.tile.getAttribute("data-tid"),p=ord.indexOf(id);
+  var r=cont.querySelector("[data-tid]").getBoundingClientRect();
+  var np=e.clientX<r.left+r.width/2?p-1:p+1;
+  if(np>=0&&np<ord.length&&np!==p){
+   ord.splice(p,1);ord.splice(np,0,id);
+   var o=tileOrder();o[cont.__tkey]=ord;saveTileOrder(o);applyTileOrder(cont);
+  }
+  return;
+ }
+ var el=document.elementFromPoint(e.clientX,e.clientY);
+ var sec=el&&el.closest?el.closest("section.card"):null;
+ hideInd();
+ if(!sec||sec===d.sec)return;
+ var rect=sec.getBoundingClientRect(),z=zone(rect,e.clientX,e.clientY);
+ if(z==="inside")return;
+ var rows=curRows();
+ var rows2=moveSec(d.sec.getAttribute("data-section"),rows,sec.getAttribute("data-section"),z);
+ if(rows2===rows)return; // refused (a 4th beside)
+ saveRows(rows2);applyLayout(rows2);
+}
+function aDrag(){if(!drag)return;if(drag.timer){clearTimeout(drag.timer);drag.timer=null}cleanup(drag);drag=null;hideInd()}
+function cleanup(d){
+ d.g.removeEventListener("pointermove",mDrag);
+ d.g.removeEventListener("pointerup",uDrag);
+ d.g.removeEventListener("pointercancel",aDrag);
+ window.removeEventListener("keydown",kDrag);
+}
+function kDrag(e){if(e.key==="Escape")aDrag()}
+function curRows(){
+ var main=document.querySelector("main");
+ return cleanRows(savedRows()||defaultRows(main.querySelectorAll("section[data-section]")),main.querySelectorAll("section[data-section]"));
+}
+/** Grip before the fold chevron in every section h2; keyboard: Alt+Arrow moves. */
+function secGrips(){
+ var secs=document.querySelectorAll("main section.card");
+ for(var i=0;i<secs.length;i++)(function(sec){
+  var h=sec.querySelector("h2");if(!h)return;
+  var g=h.querySelector("button.sgrip");
+  if(!g){
+   g=document.createElement("button");g.type="button";g.className="sgrip";g.textContent="⠿";
+   g.title="move section";g.setAttribute("aria-label","move "+(h.textContent||"").trim());
+   h.insertBefore(g,h.firstChild);
+   g.addEventListener("pointerdown",function(e){sDrag(e,g,"section")});
+   g.addEventListener("keydown",function(e){
+    if(!e.altKey)return;
+    var name=sec.getAttribute("data-section"),rows=curRows(),ri=-1,si=-1;
+    for(var r=0;r<rows.length;r++){var k=rows[r].indexOf(name);if(k>=0){ri=r;si=k;break}}
+    if(ri<0)return;
+    if(e.key==="ArrowUp"||e.key==="ArrowDown"){
+     e.preventDefault();
+     var t=ri+(e.key==="ArrowDown"?1:-1);
+     if(t<0||t>=rows.length)return;
+     rows[ri].splice(si,1);
+     if(rows[ri].length===0)rows.splice(ri,1);
+     rows.splice(t,0,[name]);
+    }else if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+     e.preventDefault();
+     var row=rows[ri];
+     if(e.key==="ArrowRight"){
+      if(row.length>=MAXROW){rows[ri].splice(si,1);if(rows[ri].length===0)rows.splice(ri,1);rows.splice(ri+1,0,[name])}
+      else if(si<row.length-1)row.splice(si,1),row.splice(si+1,0,name);
+     }else if(si>0)row.splice(si,1),row.splice(si-1,0,name);
+     else{rows[ri].splice(si,1);if(rows[ri].length===0)rows.splice(ri,1);rows.splice(ri-1<0?0:ri-1,0,[name])}
+    }else return;
+    saveRows(rows);applyLayout(rows);
+   });
+  }
+  var b=h.querySelector("button.fold");
+  if(b)h.insertBefore(g,b); // the grip sits left of the fold chevron
+ })(secs[i]);
+}
+function resetLayout(){try{localStorage.removeItem(LKEY)}catch(e){}applyLayout(layoutRows(document.querySelectorAll("section[data-section]")))}
 function gauge(l,w,age){
  var p=Math.max(0,Math.min(100,w.percent)),r=44,cx=60,cy=56,a=Math.PI*p/100;
  var x=cx-r*Math.cos(a),y=cy-r*Math.sin(a);
@@ -463,6 +708,9 @@ function modelsHtml(inv){
   // a running on-demand runtime (ollama, docker model runner) whose model is not in memory loads it on the first request
   var idle=!down&&(r.status==="idle"||(hasModel&&!loaded.length&&(r.kind==="ollama"||r.kind==="docker-model-runner")));
   var state=down?"down":idle?"available (loads on first request)":"running";
+  // the tile order is keyed by the card's position in the grid, not its model id:
+  // a renamed alias must not scramble the tiles the user arranged
+  var tkey=r.name+" / "+(hasModel?r.models[0].model:"")+" tiles";
   var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
    :idle?(hasModel?r.models.length+" installed":"no model")
    :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
@@ -496,14 +744,14 @@ function modelsHtml(inv){
    if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
   }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
-   body+='<div class="rt-tiles two">'+
+   body+='<div class="rt-tiles two" data-tkey="'+esc(tkey)+'">'+
     metricTile({title:"Memory / size",value:mem(size),unit:"",sub:hasModel?r.models.length+" model"+(r.models.length===1?"":"s")+" installed, none loaded":"no model installed",series:[]})+
     metricTile({title:"Users",value:users.length,unit:"",sub:users.length?esc(purposeOf(users)):"no declared consumer",series:[]})+
     '</div>';
    if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
   }else{
    var ctx=ctxOf(eng);
-   body+='<div class="rt-tiles">'+
+   body+='<div class="rt-tiles" data-tkey="'+esc(tkey)+'">'+
     speedTile(eng,h)+
     memoryTile(eng,lv,loaded,h)+
     metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · slots "+lv.conversationSlots:"")+" · spares "+(lv&&lv.sparesReady?lv.sparesReady:0),
@@ -517,7 +765,7 @@ function modelsHtml(inv){
   }
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
+  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
  var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
@@ -578,6 +826,10 @@ function renderModels(){
  if(mdl&&mEditing)return;
  var changed=setHtml(el,mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>');
  applyModelFold();
+ // the poll rebuild must not reset the tile order the user arranged
+ var tgs=el.querySelectorAll(".rt-tiles");
+ for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
+ tileGrips();
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
  if(!changed)return;
  var acts=el.querySelectorAll(".act");
@@ -987,7 +1239,9 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e)
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 /* a section that is not on the page fetches nothing */
 var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
-tabs();applyCollapse();if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
+tabs();applyCollapse();applyLayout(layoutRows(document.querySelectorAll("section[data-section]")));secGrips();
+$("reset").onclick=resetLayout;
+if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
 if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});setInterval(tick,${L.clockTickMs});
 })();
 </script></body></html>

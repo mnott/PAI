@@ -43,6 +43,19 @@ function str(section: Record<string, unknown>, key: string, fallback: string): s
   return typeof section[key] === "string" && section[key] ? (section[key] as string) : fallback;
 }
 
+/** A list of non-empty strings (a list of lists for layout.rows), else the fallback. */
+function strLists(section: Record<string, unknown>, key: string, fallback: string[][]): string[][] {
+  const v = section[key];
+  if (!Array.isArray(v)) return fallback;
+  const rows: string[][] = [];
+  for (const r of v) {
+    if (!Array.isArray(r)) continue;
+    const names = r.filter((x): x is string => typeof x === "string" && !!x);
+    if (names.length) rows.push(names);
+  }
+  return rows;
+}
+
 /** The shipped values, kept only as the fallback when the defaults file is
  *  missing a key; the file is the source of truth. */
 const SHIPPED = {
@@ -86,6 +99,12 @@ const SHIPPED = {
   jobMaxTries: 120,
   serverCounterStaleSecs: 60,
   foldDefaultKind: "coding",
+  // drag-and-drop tunables (router.cockpit.layout): the rows override is empty
+  // by default — the layout derives from the section order and the span classes.
+  rows: [] as string[][],
+  maxPerRow: 3,
+  touchPressMs: 350,
+  edgeScrollPx: 40,
 } as const;
 
 /** The layout policy of the cockpit page, read at page-build time. */
@@ -150,6 +169,15 @@ export interface CockpitLayout {
   serverCounterStaleSecs: number;
   /** fold default: a card whose data-def equals this opens, everything else folds. */
   foldDefaultKind: string;
+  /** drag-and-drop layout: configured rows (list of section-name lists);
+   *  empty = derive from the section order and the span classes. */
+  rows: string[][];
+  /** a row holds at most this many sections. */
+  maxPerRow: number;
+  /** on touch, a drag starts after this long press on the grip (ms). */
+  touchPressMs: number;
+  /** during a drag the page auto-scrolls within this of the viewport edge (px). */
+  edgeScrollPx: number;
 }
 
 export function cockpitLayout(): CockpitLayout {
@@ -196,5 +224,9 @@ export function cockpitLayout(): CockpitLayout {
     jobMaxTries: num(s, "jobMaxTries", SHIPPED.jobMaxTries),
     serverCounterStaleSecs: num(s, "serverCounterStaleSecs", SHIPPED.serverCounterStaleSecs),
     foldDefaultKind: str(s, "foldDefaultKind", SHIPPED.foldDefaultKind),
+    rows: strLists(s, "rows", SHIPPED.rows),
+    maxPerRow: num(s, "maxPerRow", SHIPPED.maxPerRow),
+    touchPressMs: num(s, "touchPressMs", SHIPPED.touchPressMs),
+    edgeScrollPx: num(s, "edgeScrollPx", SHIPPED.edgeScrollPx),
   };
 }

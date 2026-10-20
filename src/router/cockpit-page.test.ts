@@ -168,7 +168,9 @@ describe("cockpit layout follow-up", () => {
     expect(h).toContain('class="rtsess"');
     for (const editing of ["draggable", "rtx", "rtadd", "rtlist"]) expect(h).not.toContain(editing);
     for (const w of ["--ok", "--warn", "--bad"]) expect(COCKPIT_HTML).toMatch(new RegExp(`\\.rtchip\\.[a-z]+\\{[^}]*${w}`));
-    for (const gone of ['action:"route"', "rtDrag", "b.clear=true", "ArrowLeft"]) expect(COCKPIT_HTML).not.toContain(gone);
+    // the routing section itself stays read-only: no drag/edit wiring inside it
+    const routingSrc = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
+    for (const gone of ['action:"route"', "rtDrag", "b.clear=true", "ArrowLeft"]) expect(routingSrc).not.toContain(gone);
   });
 
   it("shows a loading state until the first limits poll arrives", () => {
@@ -811,7 +813,7 @@ describe("cockpit collapsible tiles", () => {
   }
   const run = (cards: Array<{ id: string; title: string }>) => {
     const { nodes, document } = makeDom(cards);
-    const fn = new Function("localStorage", "document", `${src}\napplyCollapse();return {collapsedSet:collapsedSet,saveCollapsed:saveCollapsed,applyCollapse:applyCollapse};`);
+    const fn = new Function("localStorage", "document", `${src}\nfunction secGrips(){}\napplyCollapse();return {collapsedSet:collapsedSet,saveCollapsed:saveCollapsed,applyCollapse:applyCollapse};`);
     return { api: fn(localStorageStub, document) as { collapsedSet: () => Record<string, number>; saveCollapsed: (s: Record<string, number>) => void; applyCollapse: () => void }, nodes };
   };
   beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
@@ -1103,7 +1105,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
 
   it("gridBreakpointPx moves the card-collapse media query", () => {
     write({ gridBreakpointPx: 1234 });
-    expect(cockpitHtml()).toContain("@media(max-width:1234px){.c8,.c6,.c4{grid-column:span 12}}");
+    expect(cockpitHtml()).toContain("@media(max-width:1234px){.c8,.c6,.c4{grid-column:span 12}section[data-section]{grid-column:span 12!important}}");
   });
 
   it("gaugeMinWidthPx and gaugeMaxWidthPx move the gauge tile widths", () => {
@@ -1378,7 +1380,7 @@ describe("cockpit section ids", () => {
     };
     const cards = secs.map(mk);
     const doc = { querySelectorAll: () => cards };
-    const fn = new Function("localStorage", "document", `${src}\napplyCollapse();`);
+    const fn = new Function("localStorage", "document", `${src}\nfunction secGrips(){}\napplyCollapse();`);
     fn({ getItem: () => null, setItem() {} }, doc);
     for (const c of cards) { byId[c.id] = c; expect(inner.has(c.id) && !c.id.startsWith("sec-")).toBe(false); }
     expect(new Set(cards.map((c: any) => c.id)).size).toBe(cards.length);
@@ -1475,7 +1477,7 @@ describe("cockpit Models: one local switch, editable aliases", () => {
     const ct = (id: number) => { if (timers[id]) timers[id]!.live = false; };
     const fn = new Function(
       "$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", "setTimeout", "clearTimeout", "S",
-      `var mEditing=false,BLUR_CANCEL_MS=400;\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
+      `var mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
     );
     fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc,
       (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)(opts.reply ? opts.reply(a) : { ok: true }); },
@@ -1591,5 +1593,203 @@ describe("cockpit Models: one local switch, editable aliases", () => {
 
   it("a rebuild is skipped while an alias input is being edited", () => {
     expect(COCKPIT_HTML).toContain("if(mdl&&mEditing)return;");
+  });
+});
+
+describe("cockpit drag-and-drop layout", () => {
+  const src = COCKPIT_HTML.match(/var LKEY[\s\S]*?\nfunction resetLayout[^\n]*\n/)![0];
+  const store: Record<string, string> = {};
+  const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
+  beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
+
+  const sec = (name: string, cls: string) => ({
+    className: cls,
+    style: {} as Record<string, string>,
+    getAttribute: (k: string) => (k === "data-section" ? name : null),
+  });
+  /** The shipped page's sections, in page order with their span classes. */
+  const pageSecs = () => {
+    const html = COCKPIT_HTML.match(/<main[\s\S]*?<\/main>/)![0];
+    return [...html.matchAll(/<section data-section="([a-z]+)" class="card (c\d+)">/g)].map((m) => sec(m[1]!, m[2]!));
+  };
+  const api = (secs: unknown[]) => {
+    const main: any = { children: secs.slice(), appendChild(n: any) { const i = main.children.indexOf(n); if (i >= 0) main.children.splice(i, 1); main.children.push(n); } };
+    main.querySelectorAll = (sel: string) => (sel === "section[data-section]" ? main.children : []);
+    const document = { querySelector: (s: string) => (s === "main" ? main : null), querySelectorAll: (s: string) => main.querySelectorAll(s) };
+    const fn = new Function("localStorage", "document", `${src}\nreturn {spanOf:spanOf,deriveRows:deriveRows,PAGE_ROWS:PAGE_ROWS.slice(),savedRows:savedRows,defaultRows:defaultRows,cleanRows:cleanRows,layoutRows:layoutRows,saveRows:saveRows,applyLayout:applyLayout,moveSec:moveSec,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,resetLayout:resetLayout};`);
+    return { a: fn(ls, document) as Record<string, (...args: unknown[]) => unknown>, main };
+  };
+
+  it("the default rows derive from the section order and the span classes: c8+c4 one row, c6+c6 one row, c12 own rows", () => {
+    const { a } = api(pageSecs());
+    expect(a.PAGE_ROWS).toEqual([
+      ["cloud"], ["routing"], ["workers"], ["pool"], ["models"], ["system"], ["kpis"],
+      ["tokens", "cache"], ["speed"], ["pause"], ["sessions"], ["runs", "daily"],
+    ]);
+  });
+
+  it("a configured router.cockpit.layout.rows wins over the derivation", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-cockpit-rows-"));
+    const prev = process.env.PAI_CONFIG_FILE;
+    try {
+      writeFileSync(join(dir, "config.yaml"), "router:\n  cockpit:\n    layout:\n      rows:\n        - [cloud, tokens]\n        - [models]\n");
+      process.env.PAI_CONFIG_FILE = join(dir, "config.yaml");
+      const html = cockpitHtml();
+      expect(html).toContain('var DEFAULT_ROWS=[["cloud","tokens"],["models"]]');
+      expect(html).not.toBe(COCKPIT_HTML);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.PAI_CONFIG_FILE;
+      else process.env.PAI_CONFIG_FILE = prev;
+    }
+    // the shipped default is empty: the derivation stands
+    expect(COCKPIT_HTML).toContain("var DEFAULT_ROWS=[]");
+  });
+
+  it("applyLayout spans each section 12/n and moves the elements in row order (the element itself survives)", () => {
+    const a = sec("tokens", "c8"), b = sec("cache", "c4"), c = sec("cloud", "c12");
+    const { a: A, main } = api([a, b, c]);
+    A.applyLayout([["cloud"], ["tokens", "cache"]]);
+    expect((a as any).style.gridColumn).toBe("span 6");
+    expect((b as any).style.gridColumn).toBe("span 6");
+    expect((c as any).style.gridColumn).toBe("span 12");
+    expect(main.children).toEqual([c, a, b]);
+  });
+
+  it("moving a section beside another makes both span 6 and persists under pai.cockpit.layout.v1", () => {
+    const secs = pageSecs();
+    const { a: A } = api(secs);
+    const rows = A.layoutRows(secs) as string[][];
+    const moved = A.moveSec("cloud", rows, "tokens", "left") as string[][];
+    expect(moved.some((r) => r.join(",") === "cloud,tokens,cache")).toBe(true);
+    expect(moved.some((r) => r.length === 1 && r[0] === "cloud")).toBe(false);
+    A.saveRows(moved);
+    expect(JSON.parse(store["pai.cockpit.layout.v1"])).toEqual(moved);
+    A.applyLayout(moved);
+    const tokens = secs[7] as any, cache = secs[8] as any, cloud = secs[0] as any;
+    expect(tokens.style.gridColumn).toBe("span 4");
+    expect(cache.style.gridColumn).toBe("span 4");
+    expect(cloud.style.gridColumn).toBe("span 4");
+  });
+
+  it("a 4th beside a full row is refused: moveSec returns the rows untouched", () => {
+    const { a: A } = api([]);
+    const rows = [["tokens", "cache", "speed"]];
+    expect(A.moveSec("cloud", rows, "cache", "left")).toBe(rows);
+    expect(A.moveSec("cloud", rows, "cache", "right")).toBe(rows);
+  });
+
+  it("moving above or below creates a row and the old row closes up", () => {
+    const { a: A } = api([]);
+    const rows = [["a"], ["b", "c"], ["d"]];
+    expect(A.moveSec("d", [["a"], ["b", "c"], ["d"]], "b", "above")).toEqual([["a"], ["d"], ["b", "c"]]);
+    expect(A.moveSec("a", [["a"], ["b", "c"], ["d"]], "c", "below")).toEqual([["b", "c"], ["a"], ["d"]]);
+    // moving the only member of a row out removes the emptied row
+    expect(A.moveSec("a", [["a"], ["b", "c"]], "c", "right")).toEqual([["b", "c", "a"]]);
+  });
+
+  it("reset clears the saved layout and restores the default rows", () => {
+    const secs = pageSecs();
+    const { a: A, main } = api(secs);
+    store["pai.cockpit.layout.v1"] = JSON.stringify([["models"], ["cloud"]]);
+    A.applyLayout(A.layoutRows(secs));
+    // the saved rows first; the sections the save does not know append as own rows
+    expect(main.children.slice(0, 2)).toEqual([secs[4], secs[0]]);
+    expect((secs[4] as any).style.gridColumn).toBe("span 12");
+    expect(main.children.length).toBe(14);
+    A.resetLayout();
+    expect(store["pai.cockpit.layout.v1"]).toBeUndefined();
+    // the default rows are back: page order, tokens+cache share a row
+    expect(main.children[0]).toBe(secs[0]);
+    expect(main.children[12]).toBe(secs[12]);
+    expect(main.children[13]).toBe(secs[13]);
+    expect((secs[7] as any).style.gridColumn).toBe("span 6");
+    expect((secs[8] as any).style.gridColumn).toBe("span 6");
+  });
+
+  it("unknown names in the saved layout are dropped, new sections append as own rows", () => {
+    const secs = [sec("a", "c12"), sec("b", "c12")];
+    const { a: A } = api(secs);
+    store["pai.cockpit.layout.v1"] = JSON.stringify([["gone"], ["b", "ghost"], ["a"]]);
+    expect(A.layoutRows(secs)).toEqual([["b"], ["a"]]);
+  });
+
+  it("tile order persists across a setHtml rebuild: applyTileOrder reorders by data-tid, new tiles go last", () => {
+    const mk = (id: string) => ({ style: {}, getAttribute: (k: string) => (k === "data-tid" ? id : null) });
+    const t1 = mk("Speed"), t2 = mk("Memory"), t3 = mk("Workers");
+    const kids = [t1, t2, t3];
+    const el: any = { __tkey: "rt / m tiles", __html: "src" };
+    Object.defineProperty(el, "children", { get: () => kids });
+    el.appendChild = (n: any) => { const i = kids.indexOf(n); if (i >= 0) kids.splice(i, 1); kids.push(n); };
+    const { a: A } = api([]);
+    A.applyTileOrder(el); // no saved order: untouched
+    expect(el.children).toEqual([t1, t2, t3]);
+    const o = A.tileOrder() as Record<string, string[]>;
+    o[el.__tkey] = ["Workers", "Memory"];
+    A.saveTileOrder(o);
+    // the poll rebuild: fresh elements, source order
+    const r1 = mk("Speed"), r2 = mk("Memory"), r3 = mk("Workers");
+    const kids2 = [r1, r2, r3];
+    const el2: any = { __tkey: el.__tkey, __html: "src" };
+    Object.defineProperty(el2, "children", { get: () => kids2 });
+    el2.appendChild = (n: any) => { const i = kids2.indexOf(n); if (i >= 0) kids2.splice(i, 1); kids2.push(n); };
+    A.applyTileOrder(el2);
+    expect(el2.children).toEqual([r3, r2, r1]);
+    // a tile the order does not know goes last
+    const r4 = mk("Cache");
+    kids2.push(r4);
+    A.applyTileOrder(el2);
+    expect(el2.children).toEqual([r3, r2, r1, r4]);
+  });
+
+  it("a touch press shorter than the delay does not arm the drag; at the delay it arms", () => {
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const setTimeoutStub = (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; };
+    const clearTimeoutStub = () => {};
+    const secEl = { querySelector: () => ({ textContent: "Cloud" }), getAttribute: () => "cloud" };
+    const mkGrip = () => ({ setPointerCapture() {}, addEventListener() {}, removeEventListener() {}, parentNode: null, closest: (sel: string) => (sel === "section" ? secEl : null) });
+    const document = { querySelector: () => null, createElement: () => ({ style: {}, dataset: {}, classList: { toggle() {} }, remove() {} }), body: { appendChild() {} } };
+    const windowStub = { addEventListener() {}, removeEventListener() {}, scrollBy() {} };
+    const fn = new Function("localStorage", "document", "window", "setTimeout", "clearTimeout", `${src}\nreturn {startDrag:sDrag,getDrag:function(){return drag},abortDrag:aDrag};`);
+    const a = fn(ls, document, windowStub, setTimeoutStub, clearTimeoutStub) as { startDrag: (e: unknown, grip: unknown, kind: string) => void; getDrag: () => any; abortDrag: () => void };
+    a.startDrag({ button: 0, pointerType: "touch", pointerId: 1, clientX: 5, clientY: 5, preventDefault() {} }, mkGrip(), "section");
+    expect(timers[0]!.ms).toBe(350);
+    expect(a.getDrag().armed).toBeUndefined();
+    // releasing before the press delay: no drag, nothing armed
+    a.abortDrag();
+    // a mouse arms at once, no timer
+    a.startDrag({ button: 0, pointerType: "mouse", pointerId: 2, clientX: 5, clientY: 5, preventDefault() {} }, mkGrip(), "tile");
+    expect(timers.length).toBe(1);
+    expect(a.getDrag().armed).toBe(true);
+    // the touch timer firing at the delay arms the drag
+    a.abortDrag();
+    a.startDrag({ button: 0, pointerType: "touch", pointerId: 3, clientX: 5, clientY: 5, preventDefault() {} }, mkGrip(), "section");
+    expect(a.getDrag().armed).toBeUndefined();
+    timers[1]!.fn();
+    expect(a.getDrag().armed).toBe(true);
+  });
+
+  it("the keyboard Alt+ArrowUp moves a section one row (the wiring is in the page)", () => {
+    expect(COCKPIT_HTML).toContain('g.addEventListener("keydown",function(e){');
+    expect(COCKPIT_HTML).toContain("if(!e.altKey)return;");
+    expect(COCKPIT_HTML).toContain('if(e.key==="ArrowUp"||e.key==="ArrowDown")');
+    expect(COCKPIT_HTML).toContain('if(e.key==="ArrowLeft"||e.key==="ArrowRight")');
+    // the grip carries the aria-label and sits before the fold chevron
+    expect(COCKPIT_HTML).toContain('g.setAttribute("aria-label","move "+(h.textContent||"").trim())');
+    expect(COCKPIT_HTML).toContain('h.insertBefore(g,b)');
+    // the header reset button
+    expect(COCKPIT_HTML).toContain('<button id="reset" type="button" title="reset layout" aria-label="reset layout">⟲</button>');
+    expect(COCKPIT_HTML).toContain('$("reset").onclick=resetLayout');
+    // pointer events, edge scroll, escape/cancel abort
+    expect(COCKPIT_HTML).toContain('g.addEventListener("pointerdown",function(e){sDrag(e,g,"section")})');
+    expect(COCKPIT_HTML).toContain("if(y<EDGE_PX)window.scrollBy(0,-8)");
+    expect(COCKPIT_HTML).toContain('if(e.key==="Escape")aDrag()');
+    expect(COCKPIT_HTML).toContain('g.addEventListener("pointercancel",aDrag)');
+    // below the phone breakpoint every row stacks to full width, order kept
+    expect(COCKPIT_HTML).toContain("@media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}section[data-section]{grid-column:span 12!important}}");
+    // the tunables are baked from the config
+    expect(COCKPIT_HTML).toContain("MAXROW=3");
+    expect(COCKPIT_HTML).toContain("PRESS_MS=350");
+    expect(COCKPIT_HTML).toContain("EDGE_PX=40");
   });
 });
