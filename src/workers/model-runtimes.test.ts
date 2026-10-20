@@ -136,7 +136,7 @@ describe("models.runtimes shipped defaults (temp dirs only, never a user write)"
       start: "ollama serve",
       stop: "kill $(lsof -nP -iTCP:11434 -sTCP:LISTEN -t)",
       ready: "http://127.0.0.1:11434/api/tags",
-      note: "PAI's embedding backend runs here",
+      note: "local Ollama server; loads a model on the first request",
     });
     expect(block["docker-model-runner"]).toEqual({
       start: "docker model run",
@@ -156,7 +156,7 @@ describe("models.runtimes shipped defaults (temp dirs only, never a user write)"
       const { effectiveMainConfig } = await import("../config/shipped-defaults.js");
       const merged = effectiveMainConfig(cfg) as { models?: { runtimes?: Record<string, RuntimeCommands> } };
       expect(merged.models?.runtimes?.ollama?.start).toBe("ollama serve");
-      expect(merged.models?.runtimes?.ollama?.note).toBe("PAI's embedding backend runs here");
+      expect(merged.models?.runtimes?.ollama?.note).toBe("local Ollama server; loads a model on the first request");
       expect(existsSync(cfg)).toBe(false);
     } finally {
       process.env.PAI_HOME = saved.home;

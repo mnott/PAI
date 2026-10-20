@@ -301,13 +301,13 @@ models:
   embeddingLabel: PAI memory embeddings
   # The start/stop/ready commands `pai models start|stop` and the cockpit's
   # runtime buttons run (src/workers/model-runtimes.ts). A runtime with no
-  # command shows no button. Your entries in ~/.pai/config.yaml win per key.
+  # command shows no button. Your entries in config.yaml in the PAI home win per key.
   runtimes:
     ollama:
       start: ollama serve
       stop: kill $(lsof -nP -iTCP:11434 -sTCP:LISTEN -t)
       ready: http://127.0.0.1:11434/api/tags
-      note: PAI's embedding backend runs here
+      note: local Ollama server; loads a model on the first request
     docker-model-runner:
       start: docker model run
       stop: docker model unload
