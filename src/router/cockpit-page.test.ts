@@ -550,7 +550,7 @@ describe("cockpit Models cards", () => {
       live: { at: 1, runtimes: [] },
     });
     // kind equals the runtime name: no kind chip at all, the name shows once in the header
-    const dupHead = dup.slice(dup.indexOf('<button class="mhead"'), dup.indexOf('<div class="mbody"'));
+    const dupHead = dup.slice(dup.indexOf('<div class="mhead"'), dup.indexOf('<div class="mbody"'));
     expect((dupHead.match(/<span class="badge">[^<]*<\/span>/g) ?? []).length).toBe(2); // runtime chip + status chip, no kind chip
     expect(dupHead).toContain('<span class="badge">docker-model-runner :8090</span>');
     expect(dupHead).not.toContain('<span class="badge">docker-model-runner</span><span class="badge">docker-model-runner');
@@ -622,7 +622,9 @@ describe("cockpit Models cards", () => {
     expect(h).not.toMatch(/data-a="runtime"[^>]*disabled/);
     // right-aligned in the header; the memory/count text is a separate element
     expect(COCKPIT_HTML).toMatch(/\.mhead \.act\{[^}]*margin-left:auto/);
-    const head = h.slice(h.indexOf('<button class="mhead"'), h.indexOf("</button>"));
+    const oc = h.slice(h.indexOf('data-rt="ollama"'));
+    const head = oc.slice(0, oc.indexOf('<div class="mbody"'));
+    expect(head.indexOf('class="act')).toBeGreaterThan(-1);
     expect(head.indexOf('class="act')).toBeLessThan(head.indexOf('<span class="num">'));
   });
   it("an idle runner reads available (loads on first request), never idle or stopped", () => {
@@ -633,7 +635,7 @@ describe("cockpit Models cards", () => {
   });
   it("fold markup: a header button with aria-expanded and a body div; CSS folds the body unless the card is open", () => {
     const h = modelsHtml(inv);
-    expect((h.match(/<button class="mhead" type="button" aria-expanded="false">/g) ?? []).length).toBe(4);
+    expect((h.match(/<div class="mhead" role="button" tabindex="0" aria-expanded="false">/g) ?? []).length).toBe(4);
     expect((h.match(/<div class="mbody">/g) ?? []).length).toBe(4);
     expect(COCKPIT_HTML).toMatch(/\.mbody\{[^}]*display:none/);
     expect(COCKPIT_HTML).toMatch(/\.mcard\.open \.mbody\{display:flex\}/);
@@ -643,8 +645,45 @@ describe("cockpit Models cards", () => {
     expect(h).toContain('data-rt="ollama" data-model="huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16" data-def="other"');
     expect(h).toContain('data-rt="coder" data-model="" data-def="other"');
     // the whole header line is the toggle: a real <button>, so Enter/Space fire a click natively
-    expect(COCKPIT_HTML).toMatch(/<button class="mhead" type="button" aria-expanded="false">/);
+    expect(COCKPIT_HTML).toMatch(/<div class="mhead" role="button" tabindex="0" aria-expanded="false">/);
     expect(COCKPIT_HTML).toMatch(/\.mhead:focus-visible\{outline:2px solid var\(--acc\)/);
+  });
+  it("PAI's embedding is its own card titled from config, even when the runtime lists the model with a :latest tag", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["pai-embedding"], models: [{ model: "arctic-embed-m-v1.5-f16:latest", kind: "embedding", loaded: true, sizeMb: 300, usedBy: ["pai-embedding"] }] }],
+      consumers: [{ name: "pai-embedding", runtime: "ollama", purpose: "memory search", label: "PAI memory embeddings", model: "arctic-embed-m-v1.5-f16" }],
+      live: { at: 1, runtimes: [] },
+    });
+    expect(h).toContain("<b ");
+    expect(h).toContain(">PAI memory embeddings</b>");
+    expect(h).toContain('data-rt="ollama" data-model="arctic-embed-m-v1.5-f16:latest"');
+    // runtime lists nothing: the consumer still gets its card
+    const none = modelsHtml({ at: "x", runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: [], models: [] }], consumers: [{ name: "pai-embedding", runtime: "ollama", purpose: "m", label: "PAI memory embeddings", model: "arctic-embed-m-v1.5-f16" }], live: { at: 1, runtimes: [] } });
+    expect(none).toContain(">PAI memory embeddings</b>");
+  });
+  it("available-idle is neutral (green outline), never the warning colour; the buttons sit inside the header", () => {
+    expect(COCKPIT_HTML).toMatch(/\.rt-dot\.idle\{[^}]*var\(--ok\)/);
+    expect(COCKPIT_HTML).not.toMatch(/\.rt-dot\.idle\{[^}]*var\(--warn\)/);
+    const idle = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "docker-model-runner", kind: "docker-model-runner", status: "idle", users: [], models: [{ model: "ai/x", kind: "chat", loaded: false, sizeMb: 100, usedBy: [] }] }],
+      runtimeCommands: { "docker-model-runner": { start: "docker model run", stop: "docker model unload" } },
+      live: { at: 1, runtimes: [] },
+    });
+    const head = idle.slice(idle.indexOf('<div class="mhead"'), idle.indexOf('<div class="mbody"'));
+    expect(head).toContain('data-v="start" data-confirm="starts docker-model-runner">load</button>');
+    expect(head).not.toContain(">stop<");
+    expect(head.indexOf('class="act')).toBeLessThan(head.indexOf('<span class="num">'));
+    // no <button> nested in another <button>: the header is not itself a button element
+    expect(head).not.toMatch(/<button class="mhead"/);
+    const loaded = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "docker-model-runner", kind: "docker-model-runner", status: "running", users: [], models: [{ model: "ai/x", kind: "chat", loaded: true, memoryMb: 1000, usedBy: [] }] }],
+      runtimeCommands: { "docker-model-runner": { start: "a", stop: "b" } },
+      live: { at: 1, runtimes: [] },
+    });
+    expect(loaded).toContain('data-v="stop" data-confirm="stops docker-model-runner">unload</button>');
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
     expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");

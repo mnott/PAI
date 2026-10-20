@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { TOKEN_WEIGHTS, buildCockpitData, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
+import { TOKEN_WEIGHTS, buildCockpitData, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -487,5 +487,19 @@ describe("cockpitQueue grouping", () => {
     expect(local.cap).toBe(1);
     expect(local.running.map((r) => r.session)).toEqual(["PAI"]);
     expect(local.waiting.map((w) => `${w.position}|${w.session}|${w.model}`)).toEqual(["1|AIBroker|flashnext-iq3"]);
+  });
+});
+
+describe("enabledLocalLimits", () => {
+  it("drops local readings of disabled or unconfigured providers, keeps cloud and enabled ones", () => {
+    const ls = [
+      { provider: "gyro-m", kind: "local", up: true },
+      { provider: "gyro-m-b", kind: "local", up: false },
+      { provider: "gone", kind: "local", up: false },
+      { provider: "glm", kind: "plan" },
+    ] as unknown as Parameters<typeof enabledLocalLimits>[0];
+    const out = enabledLocalLimits(ls, { "gyro-m": { enabled: true }, "gyro-m-b": { enabled: false }, glm: { enabled: true } });
+    expect(out.map((l) => l.provider)).toEqual(["gyro-m", "glm"]);
+    expect(enabledLocalLimits(ls, {})).toHaveLength(4);
   });
 });
