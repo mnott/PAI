@@ -33,4 +33,6 @@ record nothing, for second instances) and `--wait-bind SECONDS` (used by
 spans like `30m`, `1h`, `2d`. A port other than the default never touches the
 pid file.
 
+Concept overview (scheduler, parking, sampler): [concepts/router.md](concepts/router.md).
+
 Full reference: [commands/router.md](commands/router.md).
