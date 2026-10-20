@@ -202,7 +202,7 @@ PAI can run subagents (research, implementation, spotchecks) on an endpoint you
 configure instead of the main session's Anthropic account. Ask Claude to
 delegate through workers, or use the CLI above. `pai worker ps` lists running
 workers, the status line shows their current step, and `pai worker follow`
-tails one live. Full reference: [docs/worker.md](docs/worker.md).
+tails one live. Work is delegated over three tiers (session, orchestrator, workers; local model first): see [delegation tiers](docs/concepts/delegation-tiers.md), [workers](docs/concepts/workers.md) and the [cockpit](docs/cockpit.md). First setup: [docs/install/first-workers.md](docs/install/first-workers.md). Full reference: [docs/worker.md](docs/worker.md).
 
 ---
 
