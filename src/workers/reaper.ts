@@ -20,6 +20,7 @@ import { slotsDir } from "./slots.js";
 import { loadStatus, saveStatus } from "./status.js";
 import { killProcessTree } from "./wait-on.js";
 import { worktreesDir } from "./worktree.js";
+import { truncateLines } from "./ps-table.js";
 
 export const REAP_TICK_MS = 30_000;
 export const REAP_MIN_AGE_SECS = 120;
@@ -84,7 +85,7 @@ const spawnRunner: Runner = (cmd, args) => {
 export function realSnapshot(run: Runner = spawnRunner, uid: number = process.getuid?.() ?? -1): ProcRow[] {
   let out: string;
   try {
-    out = run("ps", ["-axo", "pid=,ppid=,uid=,pcpu=,etime=,command="]);
+    out = truncateLines(run("ps", ["-axo", "pid=,ppid=,uid=,pcpu=,etime=,command="]));
   } catch {
     return [];
   }

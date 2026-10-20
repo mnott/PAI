@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { psTable } from "../workers/ps-table.js";
 
 export type Deferral = "on" | "OFF" | "n/a";
 
@@ -61,9 +62,7 @@ export function isClaudeProcess(line: string): boolean {
 
 export function findClaudePids(): number[] {
   try {
-    const out = execFileSync("ps", ["-axo", "pid=,etime=,comm=,args="], {
-      encoding: "utf8",
-    });
+    const out = psTable("pid=,etime=,comm=,args=");
     const pids: number[] = [];
     for (const line of out.split("\n")) {
       if (!line.trim()) continue;

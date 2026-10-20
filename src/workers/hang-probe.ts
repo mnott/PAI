@@ -16,6 +16,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { psTable } from "./ps-table.js";
 
 /** Marker line every diagnosis carries; the loop guard keys on it. */
 export const HANG_MARKER = "[pai hang probe]";
@@ -141,7 +142,7 @@ interface ProcRow {
 
 function listProcs(): ProcRow[] {
   try {
-    const out = execFileSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8", timeout: 5_000 });
+    const out = psTable("pid=,ppid=,command=");
     return out.split("\n").flatMap((l) => {
       const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l);
       return m ? [{ pid: Number(m[1]), ppid: Number(m[2]), cmd: m[3] }] : [];

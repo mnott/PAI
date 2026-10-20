@@ -49,6 +49,7 @@ import { ledgerPath, panesDir, statusPath } from "./paths.js";
 import { appendLedger } from "./ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { itermUuid, scopeKey } from "./scope.js";
+import { psTable, psTableOrNull } from "./ps-table.js";
 
 export const PROFILE_NAME = "pai-worker";
 
@@ -288,7 +289,7 @@ function osascript(script: string, args: string[]): Promise<{ stdout: string; st
 
 function psOutput(format: string): string {
   try {
-    return execFileSync("ps", ["-axo", format], { encoding: "utf8" });
+    return psTable(format);
   } catch {
     return "";
   }
@@ -895,7 +896,7 @@ export const realHostDeps: HostDeps = {
     const re = new RegExp(`\\battach\\s+(${short}|${cid})\\b`, "i");
     let out = "";
     try {
-      out = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, maxBuffer: 32 << 20 });
+      out = psTable("pid=,command=");
     } catch {
       return [];
     }
@@ -1407,7 +1408,13 @@ const MIN_PANE_COLS = 40;
 /** True while a `worker follow <wid>` process runs on that tty. */
 function followRunsOn(tty: string, wid: string): boolean {
   const short = tty.replace(/^\/dev\//, "");
-  return psOutput("tty=,command=")
+  const table = psTableOrNull("tty=,command=");
+  if (table === null) {
+    // ps failed: the follow command is unknown, never a reason to refuse a start
+    console.error(`PANE-UNVERIFIED: process table unreadable, \`worker follow ${wid}\` not confirmed on ${short}`);
+    return true;
+  }
+  return table
     .split("\n")
     .some((ln) => ln.trim().startsWith(`${short} `) && new RegExp(`worker follow ${wid}\\b`).test(ln));
 }

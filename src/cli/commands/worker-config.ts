@@ -61,6 +61,7 @@ import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../workers
 import { CliError, type CommandDef, type OptDef } from "../define.js";
 import { dim, err, ok, warn } from "../lib/utils.js";
 import { useCommand } from "./providers.js";
+import { psTable } from "../../workers/ps-table.js";
 
 const out = (s = "") => void process.stdout.write(s + "\n");
 
@@ -651,7 +652,7 @@ const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function listServers(cfg: LocalConfig): RunningServer[] {
-  const o = execFileSync("ps", ["-axo", "pid=,rss=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  const o = psTable("pid=,rss=,command=");
   return parseServers(o, cfg);
 }
 
