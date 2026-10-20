@@ -207,3 +207,86 @@ export function validateAg2(text: string): Ag2ValidationResult {
     return { ok: true, errors: [], validator: "none" };
   }
 }
+
+export interface Ag2Repair {
+  text: string;
+  /** Short names of the repairs applied, e.g. "c pairs", "note->z". */
+  repairs: string[];
+}
+
+const looksLikePath = (s: string): boolean => !/\s/.test(s) && (s.includes("/") || /\.\w+$/.test(s));
+
+/**
+ * Deterministic repair of the mechanical AG2 slips local models make, run
+ * before validation. Fixes only: (1) `c=` as alternating path|summary|path|summary,
+ * (2) a long-alias note key (`note`/`notes`) appended to `z` with "; ", (3) test
+ * entries with spaces before the outcome char ("name 33+" -> "name-33+").
+ * Anything else is left for the validator and the re-ask.
+ */
+export function repairAg2(text: string): Ag2Repair {
+  const repairs: string[] = [];
+  const src = unwrapAg2(text);
+  if (!/^R\b/.test(src)) return { text, repairs };
+  const lines = src.split("\n");
+  const keyOf = (l: string): string => {
+    const eq = l.indexOf("=");
+    return eq < 0 ? "" : l.slice(0, eq).trim();
+  };
+  const val = (l: string): string => l.slice(l.indexOf("=") + 1).trim();
+
+  // (2) note -> z
+  const noteIdx = lines.map((l, i) => (i > 0 && (keyOf(l) === "note" || keyOf(l) === "notes") ? i : -1)).filter((i) => i > 0);
+  if (noteIdx.length) {
+    const zIdx = lines.findIndex((l, i) => i > 0 && keyOf(l) === "z");
+    const noteText = noteIdx.map((i) => val(lines[i])).filter(Boolean).join("; ");
+    if (zIdx >= 0) lines[zIdx] = `z=${[val(lines[zIdx]), noteText].filter(Boolean).join("; ")}`;
+    else lines[noteIdx[0]] = `z=${noteText}`;
+    repairs.push("note->z");
+    for (const i of noteIdx.slice(zIdx >= 0 ? 0 : 1).reverse()) lines.splice(i, 1);
+  }
+
+  for (let i = 1; i < lines.length; i++) {
+    const k = keyOf(lines[i]);
+    if (k === "c") {
+      const v = val(lines[i]);
+      const parts = v.split("|").map((s) => s.trim());
+      if (parts.length >= 2 && parts.length % 2 === 0 && parts.every((p, j) => (j % 2 === 0 ? looksLikePath(p) : !looksLikePath(p) && p))) {
+        const pairs: string[] = [];
+        for (let j = 0; j < parts.length; j += 2) pairs.push(`${parts[j]} ${parts[j + 1]}`);
+        lines[i] = `c=${pairs.join("|")}`;
+        repairs.push("c pairs");
+      }
+    } else if (k === "t") {
+      const entries = val(lines[i]).split("|").map((s) => s.trim());
+      const isGrammar = (e: string): boolean => e.split(/\s+/).every((tok) => /^\S+[+\-~?!]$/.test(tok));
+      const fixed = entries.map((e) => (isGrammar(e) ? e : e.replace(/\s+/g, "-")));
+      if (fixed.some((e, j) => e !== entries[j])) {
+        lines[i] = `t=${fixed.join("|")}`;
+        repairs.push("t names");
+      }
+    }
+  }
+  return repairs.length ? { text: lines.join("\n"), repairs } : { text, repairs };
+}
+
+/**
+ * Repair known shape slips, then validate. When the repaired text validates
+ * (and something was repaired) the returned text carries "repaired: ..." in z;
+ * otherwise the original text is returned untouched so the re-ask sees it as written.
+ */
+export function repairAndValidateAg2(text: string): { text: string; validation: Ag2ValidationResult; repairs: string[] } {
+  const original = validateAg2(text);
+  if (original.ok) return { text, validation: original, repairs: [] };
+  const fixed = repairAg2(text);
+  if (!fixed.repairs.length) return { text, validation: original, repairs: [] };
+  const v = validateAg2(fixed.text);
+  if (!v.ok) return { text, validation: original, repairs: [] };
+  const note = `repaired: ${fixed.repairs.join(", ")}`;
+  const lines = fixed.text.split("\n");
+  const zi = lines.findIndex((l, i) => i > 0 && l.startsWith("z="));
+  if (zi >= 0) lines[zi] = `${lines[zi]}; ${note}`;
+  else lines.push(`z=${note}`);
+  const withNote = lines.join("\n");
+  const v2 = validateAg2(withNote);
+  return v2.ok ? { text: withNote, validation: v2, repairs: fixed.repairs } : { text: fixed.text, validation: v, repairs: fixed.repairs };
+}
