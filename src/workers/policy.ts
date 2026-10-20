@@ -228,3 +228,17 @@ export function fallThroughReason(
   if (!report && status.state === "failed") return "no report";
   return null;
 }
+
+/**
+ * A failed local run that already committed is reviewed, not redone: the
+ * cloud re-run would repeat finished work. Returns the report override
+ * (r=~, commits listed) or null when there is nothing to review.
+ */
+export function committedFallThrough(
+  why: string | null,
+  commits: string[]
+): { result: "~"; why: string; notes: string } | null {
+  if (!why || !commits.length) return null;
+  const reason = `local run committed but its report was invalid: ${why}`;
+  return { result: "~", why: reason, notes: `${reason}\ncommits: ${commits.join("; ")}` };
+}

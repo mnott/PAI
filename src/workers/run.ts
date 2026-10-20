@@ -110,7 +110,7 @@ import { certainContextWindow } from "../utils/model-window.js";
 import { itermUuid, resolveSession, resolveSpawnerSession } from "./scope.js";
 import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
-import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
+import { committedFallThrough, fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
 import { admitCap, capacityGate, queuedText, sessionScopeKey, type CapacityOpts } from "./capacity.js";
 import { recordWarmup, staggerGate } from "./stagger.js";
 import {
@@ -1160,6 +1160,10 @@ interface FinaliseArgs {
    * (print the result, quota reroute). A returned number ends the run with
    * it, skipping the handoff — the reroute's own run reports instead.
    */
+  /** why a failed local run would be re-run on the cloud; with commits it is reviewed instead */
+  fallThroughWhy?: (status: WorkerStatus, report: WorkerReport | null) => string | null;
+  /** set when a committed run was kept for review: beforeHandoff must not re-run it */
+  onReviewed?: () => void;
   beforeHandoff?: (status: WorkerStatus, report: WorkerReport | null) => Promise<number | void> | number | void;
 }
 
@@ -1276,6 +1280,15 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
 
   if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
 
+  const reviewed = f.worktree ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
+  if (reviewed) {
+    process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
+    appendLedger(ledger, "WORKER-FALLTHROUGH-REVIEW", { id: wid, reason: reviewed.why });
+    report = { ...(report ?? {}), ...reviewed };
+    status.claimsContinue = true;
+    saveStatus(logDir, status);
+    f.onReviewed?.();
+  }
   const early = await f.beforeHandoff?.(status, report);
   if (typeof early === "number") return early;
 
@@ -2437,6 +2450,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     status.last = leftoverNote(resultGrace.leftover);
     appendLedger(ledger, "WORKER-LEFTOVER-ENDED", { id: wid, processes: resultGrace.leftover });
   }
+  let reviewed = false;
   return finaliseRun({
     logDir,
     ledger,
@@ -2456,9 +2470,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     fallbackText: resultEvent?.result,
     worktree,
     timedOut: status.timedOut ? limit?.minutes : undefined,
+    fallThroughWhy: (st, rep) => (headless ? fallThroughReason(a.route, st, rep) : null),
+    onReviewed: () => {
+      reviewed = true;
+    },
     beforeHandoff: async (st, rep) => {
-      // Fall-through: a local run that failed its own report is repeated once on the cloud.
-      const why = headless ? fallThroughReason(a.route, st, rep) : null;
+      // Fall-through: a local run that failed its own report is repeated once on the cloud
+      // (unless it committed: finaliseRun keeps that one for review).
+      const why = headless && !reviewed ? fallThroughReason(a.route, st, rep) : null;
       if (why && a.route) {
         appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: why });
         process.stderr.write(`pai worker: ${wid} on ${target.providerName} ended badly (${why}) — re-running on the cloud\n`);
