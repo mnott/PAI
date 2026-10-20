@@ -17,6 +17,7 @@ import { isLocalProvider, type WorkersConfig } from "./config.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
+import { readLocalStatus, type LocalStatus } from "./local-status.js";
 import { isChatPane, isLive, loadStatuses, type WorkerStatus } from "./status.js";
 
 export interface LocalIdleConfig {
@@ -96,7 +97,7 @@ export function activityOf(s: Pick<WorkerStatus, "id" | "last">, tickets: BuildT
 }
 
 /** The sample from disk: statuses, build tickets and the provider queue. */
-export async function takeSample(logDir: string, workers: WorkersConfig, now = Date.now(), gpu: () => Promise<number | null> = readGpuUtilization): Promise<LocalSample> {
+export async function takeSample(logDir: string, workers: WorkersConfig, now = Date.now(), gpu: () => Promise<number | null> = readGpuUtilization, status: LocalStatus | null = readLocalStatus(logDir, now)): Promise<LocalSample> {
   let tickets: BuildTicket[] = [];
   try {
     tickets = listBuildsSync(buildsDir());
@@ -110,13 +111,16 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
     if (!isLocalProvider(p.baseUrl)) continue;
     const cap = providerCap(workers, name);
     if (cap === undefined) continue;
+    const mine = statuses.filter((s) => s.provider === name);
+    const queued = queue.filter((q) => q.provider === name).length;
+    // only a provider that is enabled and served (the daemon's local-status names it) or has work is worth a line
+    const served = status?.running?.provider === name;
+    if (!(p.enabled && served) && !mine.length && !queued) continue;
     providers.push({
       provider: name,
       cap,
-      workers: statuses
-        .filter((s) => s.provider === name)
-        .map((s) => ({ id: s.id, activity: activityOf(s, tickets), iterm: s.term || undefined, name: s.session?.name })),
-      queued: queue.filter((q) => q.provider === name).length,
+      workers: mine.map((s) => ({ id: s.id, activity: activityOf(s, tickets), iterm: s.term || undefined, name: s.session?.name })),
+      queued,
     });
   }
   return { at: now, gpuPct: await gpu(), providers };
@@ -152,7 +156,7 @@ export const nudgeText = (n: Nudge, ids: string[], minutes: number): string =>
     ids[0] ?? n.provider,
     "local-idle",
     { provider: n.provider, free: n.free },
-    `GPU idle ${minutes} min: your local workers ${ids.join(", ")} are in builds; ${n.provider} has ${n.free} free slot${n.free === 1 ? "" : "s"}: start more independent local tasks`
+    `GPU idle (under ${DEFAULT_LOCAL_IDLE.gpuBelowPct}% busy) for ${minutes} min: your local workers ${ids.join(", ")} are in builds; ${n.provider} has ${n.free} free slot${n.free === 1 ? "" : "s"}: start more independent local tasks`
   );
 
 export interface LocalIdleFile {
@@ -193,10 +197,10 @@ export function setMuted(logDir: string, session: string, muted: boolean): strin
   return [...set];
 }
 
-/** The `ps` / cockpit line: "local model: busy 63 % · gyro-m 2/4 running, 2 free"; "" with no reading. */
+/** The `ps` / cockpit line: "local model: GPU 63% busy · gyro-m 2/4 running, 2 free"; "" with no reading. */
 export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string {
   if (!f || now - Date.parse(f.at) > 120_000) return "";
-  const gpu = f.gpuPct === null ? "gpu ?" : `${f.gpuPct < DEFAULT_LOCAL_IDLE.gpuBelowPct ? "idle" : "busy"} ${f.gpuPct}%`;
+  const gpu = f.gpuPct === null ? "GPU ?" : `GPU ${f.gpuPct}% ${f.gpuPct < DEFAULT_LOCAL_IDLE.gpuBelowPct ? "idle" : "busy"}`;
   const provs = f.providers.map((p) => `${p.provider} ${p.running}/${p.cap} running, ${p.free} free${p.queued ? `, ${p.queued} queued` : ""}`);
   return `local model: ${[gpu, ...provs].join(" · ")}`;
 }
