@@ -17,7 +17,7 @@ import { nowStamp, ownsPidCached } from "./status.js";
 import { fmtElapsed } from "./plan-status.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
 import { closeOwnPane, realPaneOps, type PaneOps } from "./pane.js";
-import type { OwnedPane } from "./pane-exec.js";
+import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV, type OwnedPane } from "./pane-exec.js";
 
 export interface PaneRunStatus {
   kind: "pane";
@@ -200,7 +200,10 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
   err(`[pai pane] ${id}: ${pane ? pane.where : "no pane (no terminal or already in one); running directly"}`);
 
   const argv = o.command.length === 1 ? ["/bin/sh", "-c", o.command[0]] : o.command;
-  const childEnv = { ...env, [PANE_RUN_ENV]: "1" };
+  // a stale pane marker from the caller's own pane must not reach the child: the launcher sets its own
+  const childEnv: NodeJS.ProcessEnv = { ...env, [PANE_RUN_ENV]: "1" };
+  delete childEnv[PANE_EXEC_ENV];
+  delete childEnv[PANE_EXEC_PID_ENV];
   let child: ChildProcess;
   try {
     child = pane

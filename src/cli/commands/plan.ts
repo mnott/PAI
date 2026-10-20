@@ -96,7 +96,7 @@ const runCmd: CommandDef = {
     const reporter = origin ? new PlanReporter(plan.job, plan.units.flatMap((u) => u.parts).length, runMessenger(logDir), origin) : null;
     const total = plan.units.flatMap((u) => u.parts).length;
     const tracker = new PlanTracker(logDir, plan.job, total, merged.size);
-    tracker.hasPane = Boolean(process.env.PAI_PANE_EXEC);
+    tracker.hasPane = Boolean(process.env.PAI_PANE_EXEC) && inVisiblePane();
     const real = realRunnerDeps(plan, logDir, log, tracker);
     const deps = reporter ? { ...real, log: (e: RunLogEntry) => { real.log(e); reporter.onLog(e); } } : real;
     let s: Awaited<ReturnType<typeof runPlan>>;

@@ -28,6 +28,8 @@ import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
 
 export const PANE_EXEC_ENV = "PAI_PANE_EXEC";
+/** Pid of the wrapper that spawned the process; only that wrapper's direct child is "already in its pane". */
+export const PANE_EXEC_PID_ENV = "PAI_PANE_EXEC_PID";
 /** Seconds the caller waits for the wrapper to come up in the pane it opened. */
 export const HELLO_WAIT_MS = 20_000;
 const KILL_GRACE_MS = 3000;
@@ -264,7 +266,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   try {
     child = spawn(argv[0], argv.slice(1), {
       cwd: sp.cwd,
-      env: { ...(sp.env ?? process.env), ...(d.env ?? {}), [PANE_EXEC_ENV]: id } as NodeJS.ProcessEnv,
+      env: { ...(sp.env ?? process.env), ...(d.env ?? {}), [PANE_EXEC_ENV]: id, [PANE_EXEC_PID_ENV]: String(process.pid) } as NodeJS.ProcessEnv,
       detached: true,
       stdio: [sp.stdin === "pipe" ? "pipe" : "ignore", "pipe", "pipe"],
     });
