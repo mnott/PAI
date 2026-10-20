@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { followPaneRun, loadPaneRunStatus, loadPaneRunStatuses, PANE_LINGER_SECS, renderPaneRunLines, runInPane, type PaneRunOptions } from "./pane-run.js";
+import { nowStamp } from "./status.js";
+import { followPaneRun, writePaneRunStatus, paneRunStatusFile, loadPaneRunStatus, loadPaneRunStatuses, PANE_LINGER_SECS, renderPaneRunLines, runInPane, type PaneRunOptions } from "./pane-run.js";
 import type { PaneOps } from "./pane.js";
 
 let dir: string;
@@ -140,5 +141,28 @@ describe("followPaneRun", () => {
     const ops = closeOps();
     await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, {}, ops);
     expect(ops.closed).toEqual([]);
+  });
+});
+
+describe("pane-run registry entries", () => {
+  const entry = (id: string, pid: number, startedMs: number) => ({
+    kind: "pane" as const, id, label: "x", cwd: "/", pid, started: nowStamp(new Date(startedMs)), startedMs, state: "running" as const, log: "/dev/null",
+  });
+  it("a pid reused by another process is not running; the entry is marked lost on disk", () => {
+    // this test process is alive, but did not start the run recorded two days ago
+    writePaneRunStatus(dir, entry("pane-reused", process.pid, Date.now() - 2 * 86400_000));
+    expect(loadPaneRunStatus(dir, "pane-reused")!.state).toBe("lost");
+    expect(loadPaneRunStatuses(dir, Date.now() - 2 * 86400_000 + 1000)[0]!.state).toBe("lost");
+    expect(JSON.parse(readFileSync(paneRunStatusFile(dir, "pane-reused"), "utf8")).state).toBe("lost");
+  });
+  it("a live pid with a matching start time is running", () => {
+    writePaneRunStatus(dir, entry("pane-live", process.pid, Date.now() - 5000));
+    expect(loadPaneRunStatus(dir, "pane-live")!.state).toBe("running");
+  });
+  it("ended entries are pruned after a day", () => {
+    writePaneRunStatus(dir, { ...entry("pane-old", 999999, Date.now() - 3 * 86400_000), state: "done" });
+    writePaneRunStatus(dir, { ...entry("pane-new", 999999, Date.now() - 3600_000), state: "done" });
+    expect(loadPaneRunStatuses(dir).map((s) => s.id)).toEqual(["pane-new"]);
+    expect(existsSync(paneRunStatusFile(dir, "pane-old"))).toBe(false);
   });
 });

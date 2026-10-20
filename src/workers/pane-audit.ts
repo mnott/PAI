@@ -76,8 +76,11 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
       const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < START_GRACE_MS);
       if (young) return { ...v, why: "within the start grace" };
     }
+    // an ended pane-run closed its pane itself: no registry entry is the expected end state, never NO PANE
+    if (!e && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
     if (!e) return { ...v, mark: "NO PANE", why: p.noPaneReason ? `started without a pane: ${p.noPaneReason}` : "no pane recorded for a running process" };
     const tab = tabOf(e.session);
+    if (!tab && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
     if (!tab) return { ...v, mark: "NO PANE", ...(p.ended ? {} : { reopenable: true }), why: `pane ${e.session} is gone while the process runs` };
     // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
     if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > START_GRACE_MS) {

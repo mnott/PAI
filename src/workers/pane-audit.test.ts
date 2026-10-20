@@ -46,9 +46,11 @@ describe("auditPanes", () => {
     expect(v.mark).toBe("STILL OPEN");
     expect(v.why).toContain("still open");
   });
-  it("ended pane run past the grace but pane gone: NO PANE (the pane closed)", () => {
+  it("ended pane run whose pane closed (or was never recorded) is ok, never NO PANE", () => {
     const now = Date.parse("2026-10-20T02:10:00Z");
-    expect(auditPanes([{ id: "pane-1", kind: "pane", startedMs: now - 60000, ended: true }], [entry("pane-1", P1)], tabs({ [H]: "1:2" }), now)[0].mark).toBe("NO PANE");
+    const ended = [{ id: "pane-1", kind: "pane" as const, startedMs: now - 60000, ended: true }];
+    expect(auditPanes(ended, [entry("pane-1", P1)], tabs({ [H]: "1:2" }), now)[0].mark).toBe("ok");
+    expect(auditPanes(ended, [], tabs({ [H]: "1:2" }), now)[0].mark).toBe("ok");
   });
   it("ended pane run within the grace (closing takes a few seconds): ok", () => {
     const now = Date.parse("2026-10-20T02:00:40Z");
