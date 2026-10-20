@@ -1228,6 +1228,59 @@ export function recordSignalEnd(logDir: string, status: WorkerStatus, signal: st
   return end;
 }
 
+/**
+ * A run the loop guard stopped: the status note and the report that ends it.
+ * Commits on the branch make it finished work to review (r=~), none a failure
+ * (r=-). Shared by the fresh finalise and the pool host's per-task ending.
+ */
+export function applyLoopStop(
+  status: WorkerStatus,
+  loopStop: { reason: string },
+  report: WorkerReport | null,
+  fallbackText: string | undefined,
+  worktree: { dir: string; base: string } | null | undefined
+): WorkerReport {
+  const reason = `loop-stopped: ${loopStop.reason}`;
+  status.loopStopped = true;
+  status.last = shortText(reason, 90);
+  // a loop after committing is finished work to review, not a failure
+  const commits = worktree ? commitLines(worktree.dir, worktree.base) : [];
+  if (commits.length) {
+    const why = `loop-stopped after committing: ${loopStop.reason}`;
+    const list = `commits: ${commits.join("; ")}`;
+    return { ...(report ?? {}), result: "~", why, notes: [why, list, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
+  }
+  return { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
+}
+
+/** Re-run a failed local run once on the cloud, as a fresh run (never another pool spare of the local key). */
+function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: WorkerStatus): Promise<number> {
+  const { logDir } = a;
+  appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH", { id: wid, reason: why });
+  process.stderr.write(`pai worker: ${wid} on ${a.target.providerName} ended badly (${why}) — re-running on the cloud\n`);
+  return (a.runner ?? runWorker)({
+    providerFlag: ANTHROPIC_NATIVE,
+    label: `${a.label} (fall-through)`,
+    noPane: a.noPane,
+    mcpFlag: a.mcpFlag,
+    cwd: a.cwd,
+    specPath: a.specPath,
+    parent: a.parent,
+    stage: a.stage,
+    claudeArgs: a.claudeArgs,
+    quiet: a.quiet,
+    worktreeFlag: a.worktreeFlag,
+    className: a.className,
+    _route: { policy: a.route!.policy, reason: `fall-through (${why})`, local: false },
+    _fallThroughOf: wid,
+    onWorkerStart: (id2) => {
+      st.fallThroughTo = id2;
+      saveStatus(logDir, st);
+      a.onWorkerStart?.(id2);
+    },
+  });
+}
+
 export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
@@ -1249,20 +1302,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), result: "~", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
   }
   const loopStop = takeLoopStop(logDir, wid);
-  if (loopStop) {
-    const reason = `loop-stopped: ${loopStop.reason}`;
-    status.loopStopped = true;
-    status.last = shortText(reason, 90);
-    // a loop after committing is finished work to review, not a failure
-    const commits = f.worktree ? commitLines(f.worktree.dir, f.worktree.base) : [];
-    if (commits.length) {
-      const why = `loop-stopped after committing: ${loopStop.reason}`;
-      const list = `commits: ${commits.join("; ")}`;
-      report = { ...(report ?? {}), result: "~", why, notes: [why, list, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
-    } else {
-      report = { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
-    }
-  }
+  if (loopStop) report = applyLoopStop(status, loopStop, report, f.fallbackText, f.worktree);
   const orphanReason = checkOrphanedChildren(logDir, wid);
   const succeeded = ok && !orphanReason && !f.timedOut && !loopStop;
   status.state = succeeded ? "done" : "failed";
@@ -1560,6 +1600,8 @@ export interface ExecuteArgs {
   spawnT0?: number;
   /** Epoch ms the run started: setupMs counts from here to the worker process holding its first turn. */
   runT0?: number;
+  /** Starts the fall-through run; tests swap it, runs use runWorker. */
+  runner?: (opts: RunOptions) => Promise<number>;
   /** Why the spare claim missed (the pool was asked, this run spawned fresh); recorded on the WORKER-END line. */
   spareMiss?: string;
 }
@@ -1690,8 +1732,28 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     appendLedger(ledgerPath(a.logDir), "WORKER-SETUP", { id: wid, setupPaneMs: a.setupPaneMs, admissionMs: a.admissionMs, claimMs: postMs });
   }
   const rc = resp.rc ?? 1;
+  let report = resp.report ?? null;
+  // the ending a fresh run has: a failed local run is kept for review when it committed, else re-run once on the cloud
+  const st = resp.status ?? loadStatus(a.logDir, wid);
+  if (st && a.parsed.headless) {
+    const why = fallThroughReason(a.route, st, report);
+    const commits =
+      st.worktreeDir && st.worktreeBase
+        ? commitLines(st.worktreeDir, st.worktreeBase)
+        : st.branch && st.commits ? [`${st.commits} commit(s) on ${st.branch}`] : [];
+    const reviewed = committedFallThrough(why, commits);
+    if (reviewed) {
+      process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
+      appendLedger(ledgerPath(a.logDir), "WORKER-FALLTHROUGH-REVIEW", { id: wid, reason: reviewed.why });
+      report = { ...(report ?? {}), ...reviewed };
+      st.claimsContinue = true;
+      saveStatus(a.logDir, st);
+    } else if (why && a.route) {
+      return rerunOnCloud(a, wid, why, st);
+    }
+  }
   if (!a.quiet) {
-    printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, resp.report);
+    printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, report);
   }
   return rc;
 }
@@ -2540,29 +2602,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
       // (unless it committed: finaliseRun keeps that one for review).
       const why = headless && !reviewed ? fallThroughReason(a.route, st, rep) : null;
       if (why && a.route) {
-        appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: why });
-        process.stderr.write(`pai worker: ${wid} on ${target.providerName} ended badly (${why}) — re-running on the cloud\n`);
-        return runWorker({
-          providerFlag: ANTHROPIC_NATIVE,
-          label: `${label} (fall-through)`,
-          noPane: a.noPane,
-          mcpFlag: a.mcpFlag,
-          cwd: a.cwd,
-          specPath: a.specPath,
-          parent: a.parent,
-          stage: a.stage,
-          claudeArgs: a.claudeArgs,
-          quiet: a.quiet,
-          worktreeFlag: a.worktreeFlag,
-          className: a.className,
-          _route: { policy: a.route.policy, reason: `fall-through (${why})`, local: false },
-          _fallThroughOf: wid,
-          onWorkerStart: (id2) => {
-            st.fallThroughTo = id2;
-            saveStatus(logDir, st);
-            a.onWorkerStart?.(id2);
-          },
-        });
+        return rerunOnCloud(a, wid, why, st);
       }
       if (headless && !a.quiet) {
         printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));

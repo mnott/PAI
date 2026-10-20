@@ -34,6 +34,7 @@ import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
 import { resolveLocalProvider } from "./local-provider.js";
 import { routeRun } from "./policy.js";
+import { takeLoopStop } from "./loop-stop.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
 import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
 import { loadContractAddendum } from "./contract-addendum.js";
@@ -53,6 +54,7 @@ import {
   usageContextTokens,
   usageContextUsed,
   DEFAULT_WORKER_TOOLS,
+  applyLoopStop,
   type StreamEvent,
 } from "./run.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
@@ -1104,6 +1106,13 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       }
     }
 
+    // the loop guard killed the slot: end with the loop-stop report, as a fresh run does
+    const loopStop = takeLoopStop(logDir, wid);
+    if (loopStop) {
+      report = applyLoopStop(status, loopStop, report, resultEvent?.result, prep ? { dir: prep.dir, base: prep.base } : null);
+      status.endReason = "loop-stopped";
+      rc = rc || 1;
+    }
     // the slot moves on to its next task: commit what this one left, carry its
     // Notes/ into the repo, and put the slot on a detached HEAD so the branch
     // is free for `pai worker merge`
@@ -1135,7 +1144,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
     const secs = Math.floor((now().getTime() - t0) / 1000);
     const empty = resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
-    const ok = !status.timedOut && !clientGoneFired && rc === 0 && !empty;
+    const ok = !status.timedOut && !clientGoneFired && !loopStop && rc === 0 && !empty;
     status.state = ok ? "done" : "failed";
     status.rc = rc;
     status.secs = secs;
