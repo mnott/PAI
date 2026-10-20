@@ -19,36 +19,35 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
-import { isLocalProvider } from "./config.js";
+import { isLocalProvider, type CapacityConfig } from "./config.js";
 import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 
-export interface CapacityConfig {
-  enabled: boolean;
-}
-
+export type { CapacityConfig };
 
 /**
- * Loopback default. The server exposes no capacity: GET /v1/models, /health
- * and /v1/cache/stats on a vllm-mlx server report model names and cache
- * counters only, not max-num-seqs.
+ * The fallback used when the config cannot be read; the policy values live in
+ * the shipped defaults file (defaults/workers.yaml, `workers.capacity`).
  */
-export const LOCAL_DEFAULT_CAP = 1;
+export const DEFAULT_CAPACITY: CapacityConfig = { enabled: true, localDefaultCap: 1, uncappedQueueCap: 3, maxTotalWaitMs: 2 * 3_600_000, heartbeatMs: 60_000, agingMs: 15 * 60_000 };
 
-/** Cap shown/used by queue and plan runners for a provider with no cap at all (cloud, unset). */
-export const UNCAPPED_QUEUE_CAP = 3;
+/** A config object written before these keys existed (tests, old files): the
+ *  shipped defaults fill each missing one. */
+export function capacityOf(c: Partial<CapacityConfig> | undefined): CapacityConfig {
+  return { ...DEFAULT_CAPACITY, ...(c ?? {}) };
+}
 
 /**
  * Provider cap, the model's default concurrency: explicit `maxConcurrent`
- * (N for a parallel-capable server), else LOCAL_DEFAULT_CAP for loopback (one
- * local engine serves one request at a time), else unlimited (undefined).
+ * (N for a parallel-capable server), else the loopback default cap for loopback
+ * (one local engine serves one request at a time), else unlimited (undefined).
  */
-export function resolveCap(maxConcurrent: number | undefined, local: boolean): number | undefined {
-  return maxConcurrent ?? (local ? LOCAL_DEFAULT_CAP : undefined);
+export function resolveCap(maxConcurrent: number | undefined, local: boolean, localDefaultCap: number = DEFAULT_CAPACITY.localDefaultCap): number | undefined {
+  return maxConcurrent ?? (local ? localDefaultCap : undefined);
 }
 
-/** admitCap (the one admission rule, conversationSlots included) with a number always: unlimited becomes UNCAPPED_QUEUE_CAP (queue/plan runners). */
-export function effectiveCap(maxConcurrent: number | undefined, local: boolean, conversationSlots?: number): number {
-  return admitCap(maxConcurrent, conversationSlots, local) ?? UNCAPPED_QUEUE_CAP;
+/** admitCap (the one admission rule, conversationSlots included) with a number always: unlimited becomes the uncapped queue cap (queue/plan runners). */
+export function effectiveCap(maxConcurrent: number | undefined, local: boolean, conversationSlots?: number, capacity: CapacityConfig = DEFAULT_CAPACITY): number {
+  return admitCap(maxConcurrent, conversationSlots, local, capacity) ?? capacity.uncappedQueueCap;
 }
 
 /**
@@ -57,25 +56,19 @@ export function effectiveCap(maxConcurrent: number | undefined, local: boolean, 
  * admitting more makes the cached conversations evict each other every turn.
  * Unset: the provider cap alone (conversationSlots defaults to it).
  */
-export function admitCap(maxConcurrent: number | undefined, conversationSlots: number | undefined, local: boolean): number | undefined {
-  const cap = resolveCap(maxConcurrent, local);
+export function admitCap(maxConcurrent: number | undefined, conversationSlots: number | undefined, local: boolean, capacity: CapacityConfig = DEFAULT_CAPACITY): number | undefined {
+  const cap = resolveCap(maxConcurrent, local, capacity.localDefaultCap);
   if (conversationSlots === undefined) return cap;
   const limit = Math.max(1, conversationSlots - 1);
   return cap === undefined ? limit : Math.min(cap, limit);
 }
 
 /** Cap of a named provider from the config, the same rule the gate applies. */
-export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string }> }, provider: string): number | undefined {
+export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string }>; capacity?: Partial<CapacityConfig> }, provider: string): number | undefined {
   const p = config.providers[provider];
   if (!p) return undefined;
-  return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl));
+  return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
 }
-
-/** A run queued this long raises the max-total-wait alarm (notifies the owner, never kills). */
-export const MAX_TOTAL_WAIT_MS = 2 * 3_600_000;
-
-/** Longest silence of the log while queued. */
-export const HEARTBEAT_MS = 60_000;
 
 /** Queue key of a session's `max_parallel` gate (a provider name never contains "~"). */
 export const sessionScopeKey = (name: string): string => `session~${name}`;
@@ -109,9 +102,6 @@ function readEntry(dir: string, id: string): QueueEntry {
   };
 }
 
-/** A ticket waiting longer than this jumps ahead of newer tickets of any session. */
-export const AGING_MS = 15 * 60_000;
-
 /** The owning session of a worker (ownership checks: spawner, then host session), else its session-profile name, else one shared anonymous bucket. */
 export function sessionOf(s: Pick<WorkerStatus, "spawnerSession" | "session" | "sessionKey"> | undefined | null): string {
   return s?.spawnerSession || s?.session?.id || s?.sessionKey || "~anonymous";
@@ -126,6 +116,7 @@ export interface FairInput {
   /** Epoch ms of each session's most recent slot grant on this provider (finished runs included): the tie-break that keeps turns going round. */
   lastServed?: ReadonlyMap<string, number>;
   now: number;
+  /** Aging bound; default `workers.capacity.agingMs`. */
   agingMs?: number;
 }
 
@@ -139,7 +130,7 @@ export interface FairInput {
  * own tickets keep their order (pull-forward via front/up/next).
  */
 export function fairOrder(i: FairInput): QueueEntry[] {
-  const aging = i.agingMs ?? AGING_MS;
+  const aging = i.agingMs ?? DEFAULT_CAPACITY.agingMs;
   const since = (e: QueueEntry): number => e.since ?? i.now;
   const front = i.entries.filter((e) => e.front);
   const rest = i.entries.filter((e) => !e.front);
@@ -184,7 +175,7 @@ function lastServed(all: WorkerStatus[], provider: string): Map<string, number> 
 }
 
 /** liveEntries, then fair share across sessions (provider queues only; a session's own max_parallel queue stays as is). */
-function fairEntries(logDir: string, key: string, isAlive: (pid: number) => boolean, statuses?: WorkerStatus[], now: number = Date.now()): QueueEntry[] {
+function fairEntries(logDir: string, key: string, isAlive: (pid: number) => boolean, statuses?: WorkerStatus[], now: number = Date.now(), agingMs?: number): QueueEntry[] {
   const entries = liveEntries(logDir, key, isAlive);
   if (key.startsWith("session~")) return entries;
   const all = statuses ?? loadStatuses(logDir);
@@ -195,6 +186,7 @@ function fairEntries(logDir: string, key: string, isAlive: (pid: number) => bool
     running: all.filter((s) => s.provider === key && s.state === "running").map(sessionOf),
     lastServed: lastServed(all, key),
     now,
+    ...(agingMs === undefined ? {} : { agingMs }),
   });
 }
 
@@ -225,8 +217,8 @@ function liveEntries(logDir: string, provider: string, isAlive: (pid: number) =>
  * and the cockpit queue panel all go through capacityGate's priority, setFront
  * and moveUp.
  */
-export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive, statuses?: WorkerStatus[], now?: number): string[] {
-  return fairEntries(logDir, provider, isAlive, statuses, now).map((e) => e.id);
+export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive, statuses?: WorkerStatus[], now?: number, agingMs?: number): string[] {
+  return fairEntries(logDir, provider, isAlive, statuses, now, agingMs).map((e) => e.id);
 }
 
 /** Put a waiting run ahead of the provider's non-front runs ("front"). False when it is not waiting. */
@@ -364,12 +356,12 @@ export interface CapacityOpts {
   scope?: { key: string; label: string; holds: (s: WorkerStatus) => boolean };
   /** Resolved cap; undefined = unlimited. */
   cap: number | undefined;
-  config: CapacityConfig;
+  config: Partial<CapacityConfig>;
   disabled?: boolean;
   /** "front": wait ahead of the provider's other queued runs (--now). */
   priority?: "front";
   log?: (line: string) => void;
-  /** Waited this long (default 2 h): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
+  /** Waited this long (default `config.maxTotalWaitMs`): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
   alarmMs?: number;
   onAlarm?: (info: CapacityInfo) => void;
   /** Called at the start and after every poll while queued; null once the slot is granted (the caller flips queued -> running then). */
@@ -387,7 +379,8 @@ export interface CapacityResult {
 
 /** Resolves once fewer than `cap` other runs hold a slot on the provider and this run heads the queue; null when it never had to wait. */
 export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | null> {
-  if (o.disabled || !o.config.enabled || o.cap === undefined || o.cap <= 0) return null;
+  const cfg = capacityOf(o.config);
+  if (o.disabled || !cfg.enabled || o.cap === undefined || o.cap <= 0) return null;
   const { logDir, self, cap } = o;
   const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0), loadStatuses(dir)));
   const now = o.now ?? Date.now;
@@ -406,7 +399,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // is a waiter, never a holder, whatever its queue entry says.
   const check = () => {
     const loaded = load(logDir);
-    const queue = liveQueue(logDir, queueKey, isAlive, loaded, now());
+    const queue = liveQueue(logDir, queueKey, isAlive, loaded, now(), cfg.agingMs);
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
     const holders = loaded.filter(
       (s) => s.id !== self.id && holds(s) && s.state === "running" && isLive(s, owns),
@@ -444,12 +437,12 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       c = check();
       if (c.position === 1 && c.holding < cap) break;
       o.onWait?.(info());
-      if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? MAX_TOTAL_WAIT_MS)) {
+      if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? cfg.maxTotalWaitMs)) {
         alarmed = true;
         o.onAlarm(info());
       }
       // a quiet log looks hung to wait-on's stall rule
-      if (now() - lastBeat >= HEARTBEAT_MS) {
+      if (now() - lastBeat >= cfg.heartbeatMs) {
         lastBeat = now();
         o.log?.(`queued: still waiting, position ${c.position}, ${info().elapsedSec}s`);
       }

@@ -210,6 +210,43 @@ router:
       serverCounterStaleSecs: 60
       # fold default: a model card whose kind equals this opens, the rest fold.
       foldDefaultKind: coding
+  # Request scheduling for local engines (src/router/scheduler.ts): one request
+  # in flight per engine, fair across the workers' owning sessions.
+  scheduling:
+    enabled: true
+    # Virtual-token weight of a fresh prefill token.
+    wTokIn: 1
+    # Virtual-token weight of a decode token.
+    wTokOut: 2
+    # Seconds a request may wait before it goes next regardless.
+    agingSec: 120
+    # Per-session weight overrides; a session not named here weighs 1.
+    sessionWeights: {}
+    # A worker whose last turn ended under this long ago still has its prefix
+    # cached (milliseconds).
+    warmMs: 300000
+    # Queued-stream ping interval of the router (milliseconds).
+    pingMs: 15000
+  # Park an idle local conversation to disk while its worker waits on a long
+  # build gate (src/router/parking.ts). Needs the engine started with
+  # `--slot-save-path <PAI home>/state/strata-slots`.
+  parking:
+    enabled: false
+    # Park only when the expected build wait exceeds this many seconds.
+    parkAfterSec: 120
+  # Cockpit Models cards: the live sampler of running runtimes
+  # (src/router/runtime-samples.ts).
+  samples:
+    # Sampling cadence of the ring, in milliseconds.
+    sampleMs: 5000
+    # Samples kept per runtime: 60 × 5 s = the last 5 minutes.
+    historyLen: 60
+    # An engine's own status endpoint must answer within this, in milliseconds;
+    # a slow engine is simply not reported.
+    engineStatusTimeoutMs: 1000
+    # How old the card reading served from /cockpit/models may be before a new
+    # one is taken, in milliseconds.
+    cardReadingMaxAgeMs: 2000
 
 # Cockpit Models cards: the title of PAI's own embedding consumer (the purpose
 # of the model). Override in ~/.pai/config.yaml under models.embeddingLabel.

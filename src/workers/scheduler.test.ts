@@ -2,8 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AGING_MS, admitCap, capacityGate, liveQueue, providerCap } from "./capacity.js";
-import { defaultWorkersConfig } from "./config.js";
+import { DEFAULT_CAPACITY, admitCap, capacityGate, liveQueue, providerCap } from "./capacity.js";
 import { activeText, beginBuildWait, buildWaitMs, endBuildWait } from "./active-time.js";
 import { armDeadline, extendLimit, resolveLimit } from "./deadline.js";
 import { buildRunEnv } from "./run-env.js";
@@ -71,11 +70,62 @@ describe("fair share across sessions", () => {
     const now = 10_000_000;
     // A's old ticket would be third by share (B and C are fresh and fewer), but it aged
     const all = [st("a1", "A", "running"), st("a2", "A"), st("b1", "B"), st("c1", "C")];
-    enqueue(logDir, "a2", now - AGING_MS - 1);
+    enqueue(logDir, "a2", now - DEFAULT_CAPACITY.agingMs - 1);
     enqueue(logDir, "b1", now - 1000);
     enqueue(logDir, "c1", now - 500);
     expect(liveQueue(logDir, "loc", alive, all, now)).toEqual(["a2", "b1", "c1"]);
-    expect(liveQueue(logDir, "loc", alive, all, now - AGING_MS)).toEqual(["b1", "c1", "a2"]);
+    expect(liveQueue(logDir, "loc", alive, all, now - DEFAULT_CAPACITY.agingMs)).toEqual(["b1", "c1", "a2"]);
+  });
+
+  it("agingMs from a user config changes when a ticket jumps the queue", async () => {
+    // CONFIG_FILE and workersYamlPath() resolve once at module load, so the temp
+    // PAI_HOME must exist BEFORE config.js is first imported (the trick of
+    // shipped-defaults.test.ts): the user workers.yaml lives there, never in the
+    // live files.
+    const savedHome = process.env.HOME;
+    const savedPaiHome = process.env.PAI_HOME;
+    const savedConfigFile = process.env.PAI_CONFIG_FILE;
+    const savedWorkersYaml = process.env.PAI_WORKERS_YAML;
+    const homeDir = mkdtempSync(join(tmpdir(), "sched-cfg-home-"));
+    const paiHome = mkdtempSync(join(tmpdir(), "sched-cfg-paihome-"));
+    process.env.HOME = homeDir;
+    process.env.PAI_HOME = paiHome;
+    process.env.PAI_CONFIG_FILE = join(paiHome, "config.json");
+    // no user workers.yaml: the temp PAI_HOME isolates the live one
+    process.env.PAI_WORKERS_YAML = join(paiHome, "workers.yaml");
+    // the capacity keys are main-config settings: the user's config.yaml (the
+    // shipped defaults merge under it), never the live files
+    const yamlPath = join(paiHome, "config.yaml");
+    writeFileSync(yamlPath, "workers:\n  capacity:\n    agingMs: 300000\n");
+    try {
+      // config.js is imported only here: its module-level CONFIG_FILE resolves
+      // with the temp PAI_HOME env already set
+      const { defaultWorkersConfig, readWorkersSection } = await import("./config.js");
+      expect(defaultWorkersConfig().capacity.agingMs).toBe(900_000); // the shipped default
+      const capacity = readWorkersSection(undefined, () => undefined).workers.capacity;
+      expect(capacity.agingMs).toBe(300_000);
+      const logDir = tmp();
+      const now = 10_000_000;
+      const all = [st("a1", "A", "running"), st("a2", "A"), st("b1", "B"), st("c1", "C")];
+      enqueue(logDir, "a2", now - capacity.agingMs - 1);
+      enqueue(logDir, "b1", now - 1000);
+      enqueue(logDir, "c1", now - 500);
+      // aged at the configured 5 min, not at the default 15 min
+      expect(liveQueue(logDir, "loc", alive, all, now, capacity.agingMs)).toEqual(["a2", "b1", "c1"]);
+      expect(liveQueue(logDir, "loc", alive, all, now - capacity.agingMs, capacity.agingMs)).toEqual(["b1", "c1", "a2"]);
+    } finally {
+      rmSync(yamlPath, { force: true });
+      rmSync(homeDir, { recursive: true, force: true });
+      rmSync(paiHome, { recursive: true, force: true });
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+      if (savedPaiHome === undefined) delete process.env.PAI_HOME;
+      else process.env.PAI_HOME = savedPaiHome;
+      if (savedConfigFile === undefined) delete process.env.PAI_CONFIG_FILE;
+      else process.env.PAI_CONFIG_FILE = savedConfigFile;
+      if (savedWorkersYaml === undefined) delete process.env.PAI_WORKERS_YAML;
+      else process.env.PAI_WORKERS_YAML = savedWorkersYaml;
+    }
   });
 
   it("the gate grants B the second slot (dry run, two sessions)", async () => {
@@ -93,7 +143,7 @@ describe("fair share across sessions", () => {
         logDir,
         self: { id, provider: "loc", pid: 100 },
         cap: 1,
-        config: defaultWorkersConfig().capacity,
+        config: DEFAULT_CAPACITY,
         now: () => t,
         sleep: async () => {
           t += 1000;
@@ -140,7 +190,7 @@ describe("conversationSlots cap", () => {
         logDir,
         self: { id: "w", provider: "loc", pid: 100 },
         cap: admitCap(4, 3, true),
-        config: defaultWorkersConfig().capacity,
+        config: DEFAULT_CAPACITY,
         now: () => t,
         sleep: async () => {
           t += 1000;

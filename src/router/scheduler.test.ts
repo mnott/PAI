@@ -1,6 +1,10 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadConfig } from "../daemon/config.js";
 import { createRouter } from "./router.js";
 import {
   DEFAULT_SCHED,
@@ -184,21 +188,125 @@ describe("RequestScheduler", () => {
 
   it("parses config over the defaults", () => {
     expect(schedConfigFrom({ wTokOut: 3, enabled: false, sessionWeights: { a: 2, b: -1 }, agingSec: "x" })).toEqual({
-      enabled: false, wTokIn: 1, wTokOut: 3, agingSec: 120, sessionWeights: { a: 2 },
+      enabled: false, wTokIn: 1, wTokOut: 3, agingSec: 120, sessionWeights: { a: 2 }, warmMs: 300_000, pingMs: 15_000,
     });
   });
 });
 
-describe("router scheduling", () => {
-  const closers: Array<() => void> = [];
-  afterEach(() => {
-    closers.splice(0).forEach((c) => c());
-    setSchedConfigSource(() => DEFAULT_SCHED);
-    delete process.env.PAI_ROUTER_PING_MS;
+/** A temp PAI_HOME/config.yaml (PAI_CONFIG_FILE, never the live files): the shipped
+ *  defaults merged under it, read through loadConfig → schedConfigFrom. */
+function tempConfig(yaml: string): () => void {
+  const savedHome = process.env.PAI_HOME;
+  const savedFile = process.env.PAI_CONFIG_FILE;
+  const dir = mkdtempSync(join(tmpdir(), "sched-cfg-"));
+  process.env.PAI_HOME = dir;
+  process.env.PAI_CONFIG_FILE = join(dir, "config.yaml");
+  writeFileSync(process.env.PAI_CONFIG_FILE, yaml);
+  return () => {
+    if (savedHome === undefined) delete process.env.PAI_HOME;
+    else process.env.PAI_HOME = savedHome;
+    if (savedFile === undefined) delete process.env.PAI_CONFIG_FILE;
+    else process.env.PAI_CONFIG_FILE = savedFile;
+    rmSync(dir, { recursive: true, force: true });
+  };
+}
+
+describe("router.scheduling values from config", () => {
+  afterEach(() => setSchedConfigSource(() => DEFAULT_SCHED));
+
+  it("wTokOut from a user config changes the token weighting", async () => {
+    const cleanup = tempConfig("router:\n  scheduling:\n    wTokOut: 5\n");
+    try {
+      const r = rig(schedConfigFrom(loadConfig().router.scheduling));
+      r.ask("a1", "A");
+      await flush();
+      await r.done("a1", { prefill: 100, decode: 50 });
+      expect(r.s.snapshot().engines.eng!.counters.A).toBe(350); // 100 + 5 × 50, not the default 200
+    } finally {
+      cleanup();
+    }
   });
 
-  async function setup(holdMs: (n: number) => number, stream = false) {
-    let active = 0;
+  it("wTokIn from a user config changes the prefill weighting", async () => {
+    const cleanup = tempConfig("router:\n  scheduling:\n    wTokIn: 3\n");
+    try {
+      const r = rig(schedConfigFrom(loadConfig().router.scheduling));
+      r.ask("a1", "A");
+      await flush();
+      await r.done("a1", { prefill: 100, decode: 50 });
+      expect(r.s.snapshot().engines.eng!.counters.A).toBe(400); // 3 × 100 + 2 × 50, not the default 200
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("agingSec from a user config changes when a waiting request ages ahead", async () => {
+    const cleanup = tempConfig("router:\n  scheduling:\n    agingSec: 30\n");
+    try {
+      const r = rig(schedConfigFrom(loadConfig().router.scheduling));
+      r.ask("a1", "A");
+      await flush();
+      r.ask("a2", "A"); // waits
+      await r.done("a1", { prefill: 100_000, decode: 0 }); // A is expensive
+      await flush();
+      r.ask("a3", "A");
+      r.advance(40_000); // past the configured 30 s, under the default 120 s
+      r.ask("b1", "B");
+      await r.done("a2");
+      await flush();
+      expect(r.order[2]).toBe("a3"); // aged at 30 s beats B's lower counter
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("warmMs from a user config changes when a conversation stops being warm", async () => {
+    const cleanup = tempConfig("router:\n  scheduling:\n    warmMs: 60000\n");
+    try {
+      const r = rig(schedConfigFrom(loadConfig().router.scheduling));
+      r.ask("w2", "A", "w2");
+      await flush();
+      await r.done("w2");
+      r.ask("hold", "A", "hold");
+      await flush();
+      r.ask("w1", "A", "w1");
+      r.advance(90_000); // past the configured 60 s, under the default 5 min
+      r.ask("w2b", "A", "w2");
+      await r.done("hold");
+      await flush();
+      expect(r.order.slice(-1)).toEqual(["w1"]); // w2's conversation is cold at 60 s
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("pingMs from a user config pings a queued stream at the configured interval", async () => {
+    const cleanup = tempConfig("router:\n  scheduling:\n    pingMs: 25\n");
+    try {
+      setSchedConfigSource(() => schedConfigFrom(loadConfig().router.scheduling));
+      const t = await setup(() => 150, true);
+      const first = t.call("one", "A", "w1");
+      await new Promise((r) => setTimeout(r, 10));
+      const second = await t.call("two", "B", "w2");
+      await first;
+      expect(second.status).toBe(200);
+      expect(second.text.match(/event: ping/g)!.length).toBeGreaterThanOrEqual(2);
+      expect(second.text).toContain("message_delta");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+const closers: Array<() => void> = [];
+afterEach(() => {
+  closers.splice(0).forEach((c) => c());
+  setSchedConfigSource(() => DEFAULT_SCHED);
+  delete process.env.PAI_ROUTER_PING_MS;
+});
+
+async function setup(holdMs: (n: number) => number, stream = false) {
+  let active = 0;
     let maxActive = 0;
     const served: string[] = [];
     const up = http.createServer((req, res) => {
@@ -243,9 +351,10 @@ describe("router scheduling", () => {
         rq.on("error", reject);
         rq.end(JSON.stringify({ model: "qwen-test", stream: bodyStream, messages: [{ role: "user", content: tag }] }));
       });
-    return { call, served, maxActive: () => maxActive, port };
-  }
+  return { call, served, maxActive: () => maxActive, port };
+}
 
+describe("router scheduling", () => {
   it("demo: two sessions, one engine slot, service order", async () => {
     const t = await setup(() => 30);
     const reqs = [
