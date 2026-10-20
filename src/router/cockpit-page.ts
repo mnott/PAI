@@ -170,6 +170,24 @@ ${POOL_PANEL_HTML}
 var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",DAILY_DAYS=${n(L.dailyDays)},SESSION_ROWS=${n(L.sessionsRows)},WORKER_ROWS=${n(L.workerRows)},LOW_REQ=${n(L.lowRequestMin)},STALE_SEC=${n(L.stampStaleSecs)},data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
 var colors={};function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[Object.keys(colors).length%PAL.length];return colors[k]}
 function $(id){return document.getElementById(id)||document.createElement("div")}
+/** Every panel rebuild goes through here. Identical html: no DOM write. Otherwise the viewport stays put (Safari has no scroll anchoring):
+ *  the first main child below the viewport top is the anchor, scrollBy corrects its drift; the old height is held until the next frame so
+ *  a shorter intermediate rendering cannot collapse the page; focus inside the panel moves to the equivalent element (same data-*). */
+function dataKey(e){var k=e.tagName.toLowerCase(),a=e.attributes||[];for(var i=0;i<a.length;i++)if(a[i].name.indexOf("data-")===0)k+="|"+a[i].name+"="+a[i].value;return k}
+function setHtml(el,html){
+ if(el.__html===html)return false;
+ var main=document.querySelector("main"),anchor=null,top=0,i,r,kids;
+ if(main){kids=main.children;for(i=0;i<kids.length;i++){r=kids[i].getBoundingClientRect();if(r.bottom>0){anchor=kids[i];top=r.top;break}}}
+ var ae=document.activeElement,fk=null,prev="";
+ if(ae&&ae!==el&&el.contains&&el.contains(ae)&&ae.tagName)fk=dataKey(ae);
+ var hold=el.style&&typeof el.offsetHeight==="number"&&el.offsetHeight>0;
+ if(hold){prev=el.style.minHeight;el.style.minHeight=el.offsetHeight+"px"}
+ el.innerHTML=html;el.__html=html;
+ if(fk){var c=el.querySelectorAll(fk.split("|")[0]);for(i=0;i<c.length;i++)if(dataKey(c[i])===fk){c[i].focus({preventScroll:true});break}}
+ if(anchor){var d=anchor.getBoundingClientRect().top-top;if(d)window.scrollBy(0,d)}
+ if(hold)requestAnimationFrame(function(){el.style.minHeight=prev});
+ return true;
+}
 function has(){for(var i=0;i<arguments.length;i++)if(document.querySelector('[data-section="'+arguments[i]+'"]'))return true;return false}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function fmt(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(2)+"G";if(n>=1e6)return(n/1e6).toFixed(2)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(Math.round(n))}
@@ -296,9 +314,9 @@ function renderLimits(){
   c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
  if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
- $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
+ setHtml($("cloud"),c||'<span class="dim">no cloud limit sources</span>');
  if(dn.length)lo+='<details class="downs" data-kind="dn"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
- $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
+ setHtml($("local"),lo||'<span class="dim">no local providers</span>');
  keepDowns($("local"));
 }
 /** Routing section, read-only: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers) and the sessions overriding it. Edited in workers.yaml or with pai worker route set. */
@@ -307,10 +325,10 @@ function renderRouting(){
  var rows=r.rows||[];
  var chipsOf=function(cs){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+'</span>'}).join("")};
  var flow=rows.length?'<div class="rtflow" id="rtflow">'+esc(r.flow||"")+'</div>':"";
- $("routing").innerHTML=rows.length?flow+rows.map(function(row){
+ setHtml($("routing"),rows.length?flow+rows.map(function(row){
   var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips)+'</span></div>'}).join("");
   var tip=[row.description,row.note].filter(Boolean).join(" — ");
-  return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>';
+  return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
 }
 var mdl=null;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
@@ -539,9 +557,12 @@ function applyModelFold(){
 }
 function renderModels(){
  var el=$("modelspanel");if(!el)return;
- el.innerHTML=mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>';
+ // a pending poll never replaces a rendering that already shows data
+ if(!mdl&&el.__html)return;
+ var changed=setHtml(el,mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>');
  applyModelFold();
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
+ if(!changed)return;
  var acts=el.querySelectorAll(".act");
  for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
  var lbls=el.querySelectorAll(".lbl");
@@ -549,7 +570,7 @@ function renderModels(){
   var btn=sp.querySelector(".lblbtn"),v=sp.querySelector(".lblv");
   btn.onclick=function(){
    var inp=document.createElement("input");inp.type="text";inp.value=v.textContent||"";inp.placeholder="what is this for?";
-   sp.replaceChild(inp,v);inp.focus();
+   sp.replaceChild(inp,v);inp.focus({preventScroll:true});
    var msg=sp.querySelector(".msg");
    function save(){
     var val2=inp.value;var back=document.createElement("b");back.className="lblv";back.textContent=val2;
@@ -631,11 +652,11 @@ function renderSystem(){
  /** Unused metric: the window has samples for it and every one is 0 (no samples = unknown, stays visible). */
  function unused(key){var n=0;for(var i=0;i<ss.length;i++){var v=ss[i][key];if(v==null)continue;if(v!==0)return false;n++}return n>0&&!(c[key]>0)}
  kpis=kpis.filter(function(k){if(k[3]&&unused(k[3])){hid.push(k[0]);return false}return true});
- $("sys").innerHTML=kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("")+(hid.length?'<div class="dim" style="flex-basis:100%;font-size:11px" title="Every sample in the selected window reads 0 for these; they reappear as soon as a non-zero reading arrives.">hidden: '+esc(hid.join(", "))+' (0 in this window)</div>':"");
+ setHtml($("sys"),kpis.map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+esc(k[0])+'</span><span style="display:block;color:var(--dim)">'+k[2]+'</span></div>'}).join("")+(hid.length?'<div class="dim" style="flex-basis:100%;font-size:11px" title="Every sample in the selected window reads 0 for these; they reappear as soon as a non-zero reading arrives.">hidden: '+esc(hid.join(", "))+' (0 in this window)</div>':""));
  var allSrv=sys.servers||[];
  var srv=allSrv.filter(function(s){return s.up!==false});
  function dec(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];if(!r)return'<span class="dim">-</span>';return fmt(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps)}
-$("sysservers").innerHTML=srv.length?table(["local server","status","RSS","end-to-end tok/s","decode tok/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',dec(s.provider),s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":lim?'<span class="dim">not reported</span>':'<span class="dim" title="loading: first limits poll pending">…</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>';
+setHtml($("sysservers"),srv.length?table(["local server","status","RSS","end-to-end tok/s","decode tok/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',dec(s.provider),s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":lim?'<span class="dim">not reported</span>':'<span class="dim" title="loading: first limits poll pending">…</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>');
  renderDonuts();
 }
 function trimEmpty(labels,rows,totalOf){
@@ -652,7 +673,7 @@ function emptyChart(w,h){
 }
 function lineChart(el,labels,series,keys,w,h){
  var tr=trimEmpty(labels,series,function(s){var t=0;keys.forEach(function(k){t+=s[k[0]]||0});return t});
- if(!tr){el.innerHTML=emptyChart(w,h);return}
+ if(!tr){setHtml(el,emptyChart(w,h));return}
  labels=tr.labels;series=tr.rows;
  var padL=44,padR=34,padB=18,padT=6,W=w-padL-padR,H=h-padB-padT,n=labels.length,bw=W/n;
  var leftMax=1,hasR=false; // key[3]: 1 = percent, fixed 0-100 right axis; others share the auto left axis
@@ -667,13 +688,13 @@ function lineChart(el,labels,series,keys,w,h){
   if(d)svg+='<path d="'+d+'" fill="none" stroke="'+k[2]+'" stroke-width="1.5"/>';
  });
  series.forEach(function(s,i){if(n<=30||i%Math.ceil(n/12)===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>'});
- el.innerHTML=svg+'</svg>';
+ setHtml(el,svg+'</svg>');
 }
 function renderPower(){
  if(!sys||!sys.series)return;
  var ss=sys.series.series;
  lineChart($("power"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,${L.powerChartWidthPx},${L.powerChartHeightPx});
- $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("");
+ setHtml($("plegend"),PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join(""));
 }
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
@@ -705,7 +726,7 @@ function stackedBars(el,labels,series,keys,w,h,tickFmt){
    ri++}
   x+=cw;
  });
- el.innerHTML=svg+'</svg>';
+ setHtml(el,svg+'</svg>');
  return L.compressed;
 }
 function twoToneModelBars(el,labels,buckets,models,w,h){
@@ -729,10 +750,10 @@ function twoToneModelBars(el,labels,buckets,models,w,h){
    ri++}
   x+=cw;
  });
- el.innerHTML=svg+'</svg>';
+ setHtml(el,svg+'</svg>');
  return L.compressed;
 }
-function legend(el,keys){el.innerHTML=keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")}
+function legend(el,keys,extra){setHtml(el,keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")+(extra||""))}
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
 function donut(ratio,sz){
  var r=${n(L.donutRadiusPx)},c=2*Math.PI*r,d=c*ratio;sz=sz||${n(L.donutSizePx)};
@@ -792,7 +813,7 @@ function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(d
 function renderSpeed(){
  var sp=(data&&data.speed)||[];
  function c(st,k,u){return st[k]==null?'<span class="dim">-</span>':fmt(st[k])+u}
- $("speed").innerHTML=sp.length?table(["provider","model","req 1h / 24h","TTFT p50 1h","p90 1h","TTFT p50 24h","p90 24h","read tok/s 1h","24h","write tok/s 1h","24h"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+" / "+r.h24.requests,c(r.h1,"ttftP50"," ms"),c(r.h1,"ttftP90"," ms"),c(r.h24,"ttftP50"," ms"),c(r.h24,"ttftP90"," ms"),c(r.h1,"readTps",""),c(r.h24,"readTps",""),c(r.h1,"writeTps",""),c(r.h24,"writeTps","")]}),{"TTFT p50 1h":"Median time from request sent to first content token, last hour.","TTFT p50 24h":"Median time from request sent to first content token, last 24 hours.","p90 1h":"90th percentile TTFT, last hour.","p90 24h":"90th percentile TTFT, last 24 hours.","read tok/s 1h":"Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads).","write tok/s 1h":"Output tokens / decode time, replies of 16+ tokens only."}):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>';
+ setHtml($("speed"),sp.length?table(["provider","model","req 1h / 24h","TTFT p50 1h","p90 1h","TTFT p50 24h","p90 24h","read tok/s 1h","24h","write tok/s 1h","24h"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+" / "+r.h24.requests,c(r.h1,"ttftP50"," ms"),c(r.h1,"ttftP90"," ms"),c(r.h24,"ttftP50"," ms"),c(r.h24,"ttftP90"," ms"),c(r.h1,"readTps",""),c(r.h24,"readTps",""),c(r.h1,"writeTps",""),c(r.h24,"writeTps","")]}),{"TTFT p50 1h":"Median time from request sent to first content token, last hour.","TTFT p50 24h":"Median time from request sent to first content token, last 24 hours.","p90 1h":"90th percentile TTFT, last hour.","p90 24h":"90th percentile TTFT, last 24 hours.","read tok/s 1h":"Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads).","write tok/s 1h":"Output tokens / decode time, replies of 16+ tokens only."}):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>');
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};
@@ -802,34 +823,34 @@ function renderDonuts(){ renderSpeed();
   dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,${L.bigDonutSizePx})+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
  }else dh=ringTiles(ms,allSrv2);
  var lowc=dh.indexOf('class="solo"')>=0?"":lowChips(ms);
- $("donut").innerHTML=dh||(lowc?"":'<span class="dim">no data</span>');
- $("donutlow").innerHTML=lowc;
+ setHtml($("donut"),dh||(lowc?"":'<span class="dim">no data</span>'));
+ setHtml($("donutlow"),lowc);
  function chip(l,v,tt){return'<span class="chip"'+(tt?' title="'+esc(tt)+'"':'')+'>'+l+' <b>'+v+'</b></span>'}
  var note=chip("overall",pct(t.hitRatio),"cache_read / (read + write + fresh input), all providers and models");
  var sk=d.sessionSplit;
  if(sk)note+=chip("continuous",pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess)","continuous sessions: "+sk.continuous.sessions+" sessions, "+sk.continuous.requests+" requests")+chip("one-shot",pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess)","one-shot sessions: "+sk.oneShot.sessions+" sessions, "+sk.oneShot.requests+" requests");
  if(d.pool&&d.pool.tasks)note+=chip("pool",d.pool.tasks+" task(s) · "+fmt(d.pool.tokensCarried),d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried");
- $("donutnote").innerHTML=note;
+ setHtml($("donutnote"),note);
  var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
  var lh="";
  loc.forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(data.promptByProvider||{})[s.provider],ageMark(s))});
  $("donutlocaltitle").style.display=lh?"":"none";
- $("donutlocal").innerHTML=lh;
+ setHtml($("donutlocal"),lh);
 }
 function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
 function render(){
  if(!data)return;var d=data,t=d.totals;
- $("kpis").innerHTML=[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),.02,.1)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join("");
+ setHtml($("kpis"),[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),.02,.1)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join(""));
  var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});
  var sel=$("msel");if(msel&&models.indexOf(msel)<0)msel="";
- sel.innerHTML='<option value="">all models</option>'+models.map(function(m){return'<option'+(m===msel?' selected':'')+'>'+esc(m)+'</option>'}).join("");
+ setHtml(sel,'<option value="">all models</option>'+models.map(function(m){return'<option'+(m===msel?' selected':'')+'>'+esc(m)+'</option>'}).join(""));
  sel.onchange=function(){msel=this.value;render()};
  var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},wt=mode==="weighted";
  var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(msel&&m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
  var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
  var labs=d.series.map(function(b){return label(b.t,d.window)});
  var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),${L.tokensChartWidthPx},${L.tokensChartHeightPx}):twoToneModelBars($("series"),labs,buckets,models,${L.tokensChartWidthPx},${L.tokensChartHeightPx});
- $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':"");
+ setHtml($("legend"),KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':""));
  setTip($("wnote"),wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.");
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  renderDonuts();
@@ -837,14 +858,14 @@ function render(){
   var cells=cm.buckets.map(function(b){if(!b.n)return'<td class="dim">-</td>';var hr=b.hit/b.n;return'<td><span class="'+(hr<.5?"bad":hr<.8?"warn":"ok")+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span></td>'}).join("");
   return'<tr><td>'+esc(cm.model)+'</td>'+cells+'</tr>'}).join("");
  var labs=d.cachePause.length?d.cachePause[0].buckets.map(function(b){return b.label}):[];
- $("pause").innerHTML=ph?'<table><tr><th>model (hit% n)</th>'+labs.map(function(l){return'<th>'+esc(l)+'</th>'}).join("")+'</tr>'+ph+'</table>':'<span class="dim">no data</span>';
- $("providers").innerHTML=table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
-  '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>';
- $("sessions").innerHTML=table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}));
- $("workers").innerHTML=d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>';
+ setHtml($("pause"),ph?'<table><tr><th>model (hit% n)</th>'+labs.map(function(l){return'<th>'+esc(l)+'</th>'}).join("")+'</tr>'+ph+'</table>':'<span class="dim">no data</span>');
+ setHtml($("providers"),table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
+  '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>');
+ setHtml($("sessions"),table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]})));
+ setHtml($("workers"),d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>');
  var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
  var dgap=stackedBars($("daily"),dd.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,${L.dailyChartWidthPx},${L.dailyChartHeightPx});
- legend($("dlegend"),dm);if(dgap)$("dlegend").innerHTML+='<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>';
+ legend($("dlegend"),dm,dgap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':"");
 }
 function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
@@ -854,14 +875,14 @@ ${POOL_PANEL_JS}
 var qdrag=false;
 function renderQueue(q){
  if(qdrag)return;
- var el=$("queuepanel");if(!q){el.innerHTML='<span class="dim">queue status unavailable</span>';return}
+ var el=$("queuepanel");if(!q){if(!el.__html)setHtml(el,'<span class="dim">queue status unavailable</span>');return}
  function qdur(s){return s<90?s+"s":s<5400?Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s":Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m"}
  setTip($("queuetip"),"Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use next / up) to reorder it; running workers are never interrupted.");
  var ps=(q.providers||[]).filter(function(p){return p.running.length||p.waiting.length});
  var pl=q.plans||[];
  var bq=q.builds,bhas=bq&&(bq.running.length||bq.waiting.length);
  var wt=q.worktrees?'<div class="dim">'+esc(q.worktrees)+'</div>':'';
- if(!ps.length&&!bhas&&!pl.length){el.innerHTML='<span class="dim">nothing running or waiting</span>'+wt;return}
+ if(!ps.length&&!bhas&&!pl.length){setHtml(el,'<span class="dim">nothing running or waiting</span>'+wt);return}
  var BTN='<button data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
  function mk(it,p,waiting,serial){
   var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
@@ -900,7 +921,7 @@ function renderQueue(q){
  var pn=q.panes||[];
  if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return'<tr><td style="text-align:left">'+esc(p.label)+'</td><td style="text-align:left">'+esc(p.cwd)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc(p.log)+'</td></tr>'})));
  if(q.localModel)out.unshift('<div style="margin:4px 0;color:#888">'+esc(q.localModel)+"</div>");
- el.innerHTML=out.join("")+wt;
+ setHtml(el,out.join("")+wt);
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
    .then(function(r){return r.json()}).then(function(j){if(j.error)setTip($("queuetip"),j.error);loadQueue()}).catch(function(){loadQueue()});

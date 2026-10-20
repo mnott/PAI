@@ -212,7 +212,7 @@ export const POOL_PANEL_HTML = `<section data-section="pool" class="card c12"><h
 /** Page script (no template literals, ES5): defines loadPool(); uses the page's esc, fmt, pct, table helpers. */
 export const POOL_PANEL_JS = String.raw`
 function renderPool(p){
- var el=$("poolpanel");if(!p){el.innerHTML='<span class="dim">pool status unavailable</span>';return}
+ var el=$("poolpanel");if(!p){if(!el.__html)setHtml(el,'<span class="dim">pool status unavailable</span>');return}
  function dur(s){return s<90?s+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h"}
  var head='<div class="kpis">'+
   [["pool",p.enabled?'<span class="ok">enabled</span>':'<span class="bad">disabled</span>',"max "+p.maxSlots+" slots · idle kill "+(p.idleKillSecs?dur(p.idleKillSecs):"never")],
@@ -224,7 +224,7 @@ function renderPool(p){
  var rows=p.slots.length?table(["provider","model","cwd","state","task","branch","first req","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',s.task?esc(s.task):"-",s.branch?esc(s.branch):"-",s.firstRequest?'<span class="'+(s.firstRequest==="warm"?"ok":"warn")+'">'+s.firstRequest+'</span>':"-",dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<span class="dim" title="A slot spawns with the first pooled task.">no slots</span>';
  var rs=p.last24h.reasons.length?"\nRejections (24 h): "+p.last24h.reasons.map(function(r){return r.reason+" x"+r.runs}).join(", ")+(p.last24h.unattributed?" · "+p.last24h.unattributed+" without a logged reason":""):"";
  setTip($("pooltip"),p.message+rs);
- el.innerHTML=head+rows;
+ setHtml(el,head+rows);
 }
 function loadPool(){fetch("/cockpit/pool",{cache:"no-store"}).then(function(r){return r.json()}).then(renderPool).catch(function(){})}
 `;

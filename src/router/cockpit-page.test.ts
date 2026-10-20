@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COCKPIT_FAVICON_SVG, COCKPIT_HTML, cockpitHtml } from "./cockpit-page.js";
 
+/** Stand-in for the page's setHtml in tests that run a render function against plain fake elements. */
+const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
+
 const COLLAPSE_KEY_TEST = "pai.cockpit.collapsed";
 
 const stripTags = (html: string) => html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<style[\s\S]*?<\/style>/g, "");
@@ -43,7 +46,7 @@ describe("cockpit page compression", () => {
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
       "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document",
-      `function keepDowns(){}\n${body}\nrenderLimits();`
+      `function keepDowns(){}\n${SH}\n${body}\nrenderLimits();`
     );
     const lim = {
       activeLocal: "dead17",
@@ -72,7 +75,7 @@ describe("live-shaped payloads", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const run = (activeLocal: string | null) => {
       const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${body}\nrenderLimits();`);
+      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${SH}\n${body}\nrenderLimits();`);
       const lim = { activeLocal, limits: [{ provider: "gyro-m", kind: "local", up: true, served: ["m"] }, { provider: "flashnext-iq3", kind: "local", up: false }] };
       fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
       return els.local!.innerHTML;
@@ -101,7 +104,7 @@ describe("cockpit layout follow-up", () => {
   it("the cloud section is status only: gauges per provider, local cards, no rank badges or controls", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", `function keepDowns(){}\n${body}\nrenderLimits();`);
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", `function keepDowns(){}\n${SH}\n${body}\nrenderLimits();`);
     const lim = {
       limits: [
         { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
@@ -127,7 +130,7 @@ describe("cockpit layout follow-up", () => {
     const body = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string }> = { routing: { innerHTML: "" } };
     const doc = { querySelector: () => ({}), querySelectorAll: () => [] };
-    const run = new Function("lim", "$", "esc", "document", `${body}\nrenderRouting();`);
+    const run = new Function("lim", "$", "esc", "document", `${SH}\n${body}\nrenderRouting();`);
     const lim = {
       routing: {
         flow: "t0 Session: opus → t1 Orchestrator: sonnet → t2 Worker: local gyro-m",
@@ -190,7 +193,7 @@ describe("cockpit system tiles: unused metrics", () => {
     const sys = { current, series: { series, wh: { "1h": 0 }, coveredMin: { "1h": 0 } }, servers: [] };
     const fn = new Function(
       "sys", "$", "esc", "gb", "LAST", "win", "data", "lim", "table", "renderDonuts",
-      `${body}\nrenderSystem();`
+      `${SH}\n${body}\nrenderSystem();`
     );
     fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b), {}, "1h", {}, null, () => "", () => {});
     return els.sys!.innerHTML;
@@ -310,7 +313,7 @@ describe("cockpit workers panel", () => {
       queuepanel: { innerHTML: "", querySelectorAll: () => [] },
       queuetip: { innerHTML: "", querySelectorAll: () => [] },
     };
-    const fn = new Function("q", "$", "esc", "setTip", "loadQueue", `${table}\n${body}\nrenderQueue(q);`);
+    const fn = new Function("q", "$", "esc", "setTip", "loadQueue", `${SH}\n${table}\n${body}\nrenderQueue(q);`);
     fn(q, (id: string) => els[id], (s: string) => s, () => {}, () => {});
     return els.queuepanel!.innerHTML;
   };
@@ -755,7 +758,7 @@ describe("cockpit Models cards", () => {
     expect(i("Models — runtimes")).toBeGreaterThan(i("Workers — running and waiting"));
     expect(i("Models — runtimes")).toBeLessThan(i("<h2>System"));
     const rl = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}\n/)![0];
-    expect(rl).toContain('$("local").innerHTML=lo');
+    expect(rl).toContain('setHtml($("local"),lo');
     expect(rl).not.toContain("modelsHtml");
   });
 });
@@ -1277,5 +1280,84 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
     // the shipped default still opens a running coding card and folds the rest
     expect(COCKPIT_HTML).toContain('coding?"coding":"other"');
     expect(COCKPIT_HTML).toContain('open=d==="coding"');
+  });
+});
+
+describe("cockpit refresh keeps the page still", () => {
+  const helper = COCKPIT_HTML.match(/function dataKey[\s\S]*?\nfunction setHtml[\s\S]*?\n\}\n/)![0];
+  function env(opts: { anchorTops?: number[]; onWrite?: () => void } = {}) {
+    const calls = { scrollBy: [] as Array<[number, number]>, writes: 0, focused: [] as unknown[] };
+    const tops = opts.anchorTops ?? [-50, 100];
+    let step = 0;
+    const kid = (i: number) => ({ getBoundingClientRect: () => ({ top: tops[Math.min(step, tops.length - 1)]! + i * 0, bottom: tops[Math.min(step, tops.length - 1)]! + 200 }) });
+    const doc: any = { activeElement: null, querySelector: () => ({ children: [kid(0)] }) };
+    const win = { scrollBy: (x: number, y: number) => calls.scrollBy.push([x, y]) };
+    const raf: Array<() => void> = [];
+    const make = new Function("document", "window", "requestAnimationFrame", `${helper}\nreturn setHtml;`);
+    const setHtml = make(doc, win, (f: () => void) => raf.push(f)) as (el: unknown, h: string) => boolean;
+    const el: any = {
+      style: { minHeight: "" }, offsetHeight: 300, __h: "",
+      get innerHTML() { return this.__h; },
+      set innerHTML(v: string) { calls.writes++; this.__h = v; step++; opts.onWrite?.(); },
+    };
+    return { calls, doc, setHtml, el, raf };
+  }
+
+  it("identical html is not written again", () => {
+    const { calls, setHtml, el } = env();
+    expect(setHtml(el, "<b>a</b>")).toBe(true);
+    expect(setHtml(el, "<b>a</b>")).toBe(false);
+    expect(calls.writes).toBe(1);
+    expect(setHtml(el, "<b>b</b>")).toBe(true);
+    expect(calls.writes).toBe(2);
+  });
+
+  it("a rebuild above the viewport that changes height scrolls back by the anchor drift and holds the old height for one frame", () => {
+    const { calls, setHtml, el, raf } = env({ anchorTops: [-50, -20] });
+    let held = "";
+    const e2 = Object.assign(el, {});
+    setHtml(e2, "<i>x</i>");
+    expect(calls.scrollBy).toEqual([[0, 30]]);
+    expect(e2.style.minHeight).toBe("300px");
+    held = e2.style.minHeight;
+    raf.forEach((f) => f());
+    expect(held).toBe("300px");
+    expect(e2.style.minHeight).toBe("");
+  });
+
+  it("no scroll correction when the anchor did not move", () => {
+    const { calls, setHtml, el } = env({ anchorTops: [-50, -50] });
+    setHtml(el, "<i>x</i>");
+    expect(calls.scrollBy).toEqual([]);
+  });
+
+  it("focus inside the panel returns to the element with the same data-* id, without scrolling", () => {
+    const { doc, setHtml, el } = env();
+    const focused: unknown[] = [];
+    const attrs = [{ name: "data-id", value: "w1" }];
+    doc.activeElement = { tagName: "BUTTON", attributes: attrs };
+    el.contains = (n: unknown) => n === doc.activeElement;
+    const fresh = { tagName: "BUTTON", attributes: attrs, focus: (o: unknown) => focused.push(o) };
+    el.querySelectorAll = (sel: string) => (sel === "button" ? [{ tagName: "BUTTON", attributes: [{ name: "data-id", value: "other" }], focus: () => focused.push("wrong") }, fresh] : []);
+    setHtml(el, "<button data-id=w1>");
+    expect(focused).toEqual([{ preventScroll: true }]);
+  });
+
+  it("a pending poll after data keeps the old rendering; every .focus() is preventScroll", () => {
+    const body = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
+    expect(body).toContain("if(!mdl&&el.__html)return;");
+    const el: any = { __html: "<div class=mcard>data</div>", innerHTML: "<div class=mcard>data</div>" };
+    const writes: string[] = [];
+    const fn = new Function("$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", `${body}\nrenderModels();`);
+    fn(() => el, null, (_e: unknown, h: string) => { writes.push(h); return true; }, () => {}, () => {}, () => "");
+    expect(writes).toEqual([]);
+    expect(el.innerHTML).toContain("data");
+    for (const m of COCKPIT_HTML.matchAll(/\.focus\(([^)]*)\)/g)) expect(m[1]).toContain("preventScroll:true");
+  });
+
+  it("no panel is rebuilt with a raw innerHTML write except the fold chevron", () => {
+    const raw = COCKPIT_HTML.match(/\w+\.innerHTML=/g) ?? [];
+    expect(raw.filter((r) => r !== "b.innerHTML=" && r !== "el.innerHTML=")).toEqual([]);
+    expect(COCKPIT_HTML.match(/el\.innerHTML=/g)?.length).toBe(1); // inside setHtml
   });
 });
