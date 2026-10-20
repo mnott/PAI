@@ -52,7 +52,7 @@ const MINFONT = process.env.MINFONT ? Number(process.env.MINFONT) : 0;
 if (MINFONT) {
   html = html.replace(
     "</style>",
-    `*{font-size:max(${MINFONT}px,1em)!important}\nsvg text{font-size:${MINFONT}px!important}\n.s{white-space:nowrap}\n</style>`,
+    `*{font-size:max(${MINFONT}px,1em)!important}\nsvg text{font-size:${MINFONT}px!important}\n.s{white-space:nowrap}\n.gauge .n,.gauge .s,.card,.groups,.grp,.gauges{overflow-wrap:normal!important}\n</style>`,
   );
 }
 writeFileSync(new URL("./cockpit-cloud.html", import.meta.url), html);

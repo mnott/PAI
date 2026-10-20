@@ -37,10 +37,11 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,minmax(0,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}.tw{overflow-x:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}.tw{overflow-x:auto}
+.gauge .s{overflow-wrap:anywhere}
 .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
 @media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}
-.gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 110px;max-width:120px}.gauge .n,.gauge .s{overflow-wrap:anywhere}
+.gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 110px;max-width:min(120px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line);white-space:nowrap}

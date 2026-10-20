@@ -70,7 +70,9 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).not.toMatch(/\.grp-cloud\{flex:1 1 560px\}/);
     // gauges scale via the viewBox instead of a fixed floor: no 110px min-width,
     // the svg fills the gauge and keeps its aspect ratio
-    expect(COCKPIT_HTML).toMatch(/\.gauge\{[^}]*min-width:0[^}]*flex:1 1 110px[^}]*max-width:120px\}/);
+    // max-width:min(120px,100%): a long unbreakable line (an error text at a
+    // large minimum font size) must not push a gauge past its container
+    expect(COCKPIT_HTML).toMatch(/\.gauge\{[^}]*min-width:0[^}]*flex:1 1 110px[^}]*max-width:min\(120px,100%\)/);
     expect(COCKPIT_HTML).toMatch(/\.gauge svg\{display:block;width:100%;height:auto\}/);
     // no width:min-content: its min-content (a long error line at a large
     // minimum font size) could push the card past the viewport; the group
