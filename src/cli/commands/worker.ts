@@ -838,8 +838,9 @@ const killCommand: CommandDef = {
   options: [
     { name: "only", type: "boolean", summary: "Kill only this worker, leave its children running" },
     { name: "force", type: "boolean", summary: "Kill another session's worker (operator's terminal only, not from a worker); logged as forced" },
+    { name: "reason", type: "string", value: "TEXT", summary: "Why it is stopped; recorded in the worker's event log and end status, required with --force on another session's worker" },
   ],
-  examples: ["pai worker kill w-20260101-abc", "pai worker ps   (find the id first)"],
+  examples: ["pai worker kill w-20260101-abc", 'pai worker kill w-20260101-abc --force --reason "stuck loop"', "pai worker ps   (find the id first)"],
   seeAlso: ["pai worker ps"],
   run: (ctx) =>
     guard("pai worker ps", async () => {
@@ -850,7 +851,7 @@ const killCommand: CommandDef = {
       if (status.state !== "running" && status.state !== "queued")
         throw new Error(`worker ${id} is not running (state: ${status.state})`);
       if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
-      for (const line of await killTree(dir, id, { only: ctx.opts.only === true, caller: { env: process.env, force: ctx.opts.force === true } })) out(line);
+      for (const line of await killTree(dir, id, { only: ctx.opts.only === true, caller: { env: process.env, force: ctx.opts.force === true }, reason: typeof ctx.opts.reason === "string" ? ctx.opts.reason : undefined })) out(line);
     }),
 };
 

@@ -82,7 +82,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
     },
     killChildren = async (logDir, id) => {
       const { killTree } = await import("./kill-tree.js");
-      return killTree(logDir, id, { skipRoot: true });
+      return killTree(logDir, id, { skipRoot: true, by: "loop-guard", reason: "parent worker stopped by the loop guard" });
     },
   } = deps;
 

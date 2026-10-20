@@ -5,10 +5,13 @@ import { execFileSync } from "node:child_process";
  */
 
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { killTree, type KillTreeDeps } from "./kill-tree.js";
+import { endLabel, decideEndReason, requestKill, appendStopEvent } from "./endreason.js";
+import { eventsPath } from "./paths.js";
+import { requestLoopStop } from "./loop-stop.js";
 import { loadStatus, nowStamp, ownsPid, saveStatus, type WorkerStatus } from "./status.js";
 
 function mk(dir: string, id: string, pid: number, over: Partial<WorkerStatus> = {}): void {
@@ -191,7 +194,7 @@ describe("killTree session ownership", () => {
     const f = fakes(dir);
     const forced: (boolean | undefined)[] = [];
     f.deps.request = (_d, _l, _i, fo) => void forced.push(fo);
-    await killTree(dir, "w1", { deps: f.deps, caller: { env: env("CaseLeaf"), force: true } });
+    await killTree(dir, "w1", { deps: { ...f.deps, notifyOwner: async () => undefined }, reason: "test", caller: { env: env("CaseLeaf"), force: true } });
     expect(f.signalled).toEqual(["w1"]);
     expect(forced).toEqual([true]);
     const dir2 = owned();
@@ -209,5 +212,86 @@ describe("killTree session ownership", () => {
     const f2 = fakes(dir2);
     await killTree(dir2, "w1", { deps: f2.deps });
     expect(f2.signalled).toEqual(["w1"]);
+  });
+});
+
+describe("killTree records who stopped a worker and why", () => {
+  const readEvents = (dir: string, id: string) =>
+    readFileSync(eventsPath(dir, id), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+
+  function owned(): string {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-why-"));
+    mk(dir, "w1", 1, { label: "CaseLeaf", session: { id: "SESS-OWNER", name: "owner" } });
+    return dir;
+  }
+  const other = { CLAUDE_CODE_SESSION_ID: "224db3e0" } as NodeJS.ProcessEnv;
+
+  it("forced kill by another session: final event, status and owner message carry killer and reason", async () => {
+    const dir = owned();
+    const f = fakes(dir);
+    const sent: string[][] = [];
+    const reqs: unknown[][] = [];
+    await killTree(dir, "w1", {
+      caller: { env: other, force: true },
+      reason: "stuck in a loop",
+      deps: { ...f.deps, request: (...a) => void reqs.push(a), notifyOwner: async (o, t) => void sent.push([o, t]) },
+    });
+    const last = readEvents(dir, "w1").at(-1);
+    expect(last).toMatchObject({ type: "worker-stopped", killed_by: "claude-session:224db3e0", forced: true, reason: "stuck in a loop" });
+    expect(reqs[0]).toEqual([expect.anything(), expect.anything(), "w1", true, "claude-session:224db3e0", "stuck in a loop"]);
+    expect(sent).toEqual([["SESS-OWNER", "worker w1 (CaseLeaf) stopped by claude-session:224db3e0: stuck in a loop"]]);
+  });
+
+  it("--force on another session's worker without a reason is refused; the owner needs none", async () => {
+    const dir = owned();
+    const f = fakes(dir);
+    await expect(killTree(dir, "w1", { caller: { env: other, force: true }, deps: f.deps })).rejects.toThrow(/--reason/);
+    expect(f.signalled).toEqual([]);
+    const sent: string[] = [];
+    await killTree(dir, "w1", {
+      caller: { env: { PAI_SESSION_NAME: "owner" } as NodeJS.ProcessEnv, force: true },
+      deps: { ...f.deps, notifyOwner: async (_o, t) => void sent.push(t) },
+    });
+    expect(sent).toEqual([]); // owner killing its own worker: no message
+    expect(readEvents(dir, "w1").at(-1)).toMatchObject({ killed_by: "owner", forced: true });
+  });
+
+  it("guard and deadline kills record their name, reason and tell the owner", async () => {
+    for (const by of ["loop-guard", "deadline"]) {
+      const dir = owned();
+      const f = fakes(dir);
+      const sent: string[] = [];
+      await killTree(dir, "w1", { by, reason: `${by} fired`, deps: { ...f.deps, notifyOwner: async (_o, t) => void sent.push(t) } });
+      expect(readEvents(dir, "w1").at(-1)).toMatchObject({ killed_by: by, forced: false, reason: `${by} fired` });
+      expect(sent).toEqual([`worker w1 (CaseLeaf) stopped by ${by}: ${by} fired`]);
+    }
+  });
+
+  it("status of a worker that never self-reports shows killer, force and reason", async () => {
+    const dir = owned();
+    const f = fakes(dir);
+    const deps = { ...f.deps, signal: () => undefined, notifyOwner: async () => undefined };
+    await killTree(dir, "w1", { caller: { env: other, force: true }, reason: "why", deps });
+    const st = loadStatus(dir, "w1")!;
+    expect(st).toMatchObject({ endBy: "claude-session:224db3e0", endKillReason: "why", endForced: true });
+    expect(endLabel(st)).toBe("pai-worker-kill by claude-session:224db3e0 (forced): why");
+  });
+});
+
+describe("stop reason through the kill marker and the loop guard", () => {
+  it("marker carries forced and reason into the end decision", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-marker-"));
+    requestKill(dir, join(dir, "ledger"), "w9", "someone", true, "because");
+    const end = decideEndReason({ logDir: dir, id: "w9", signal: "SIGTERM" });
+    expect(end).toMatchObject({ reason: "pai-worker-kill", by: "someone", killReason: "because", forced: true });
+    expect(end.note).toContain("because");
+  });
+
+  it("loop-stop writes the final event", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-loop-"));
+    requestLoopStop(dir, "w8", "same call 20x", { kill: () => undefined, claudePid: () => undefined });
+    const last = JSON.parse(readFileSync(eventsPath(dir, "w8"), "utf8").trim().split("\n").at(-1)!);
+    expect(last).toMatchObject({ type: "worker-stopped", killed_by: "loop-guard", reason: "same call 20x" });
+    appendStopEvent(dir, "w8", { killed_by: "gc", forced: false, reason: "r" });
   });
 });

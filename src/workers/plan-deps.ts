@@ -117,7 +117,7 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
     for (const s of loadStatuses(logDir)) {
       if (s.label !== l.label || (s.state !== "running" && s.state !== "queued") || Date.parse(s.started) < l.t0) continue;
       try {
-        await kill(logDir, s.id);
+        await kill(logDir, s.id, { by: "plan", reason: "plan run stopped" });
         stopped.push(s.id);
       } catch {
         /* already gone */

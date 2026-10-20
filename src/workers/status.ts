@@ -181,6 +181,9 @@ export interface WorkerStatus {
   endBy?: string;
   /** Detail for the reason (signal, sender note). */
   endNote?: string;
+  /** Stated reason and force flag of a `pai worker kill` (endReason pai-worker-kill). */
+  endKillReason?: string;
+  endForced?: boolean;
   /**
    * What the worker is blocked on right now: written by `pai worker wait-on`
    * while it waits (null once it returns), rendered by waiting.ts.
