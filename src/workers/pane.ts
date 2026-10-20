@@ -45,7 +45,8 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { WorkersConfig } from "./config.js";
-import { panesDir, statusPath } from "./paths.js";
+import { ledgerPath, panesDir, statusPath } from "./paths.js";
+import { appendLedger } from "./ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { itermUuid, scopeKey } from "./scope.js";
 
@@ -116,11 +117,70 @@ const REBALANCE = `var groups = {};
         g.forEach(function (e) { try { e[0].rows = want; } catch (x) {} });
     });`;
 
-// One pane per worker: split the launching session vertically, or the lowest
-// live candidate horizontally. Returns "<live ids>,|<new session id>".
+// "id<TAB>columns<TAB>rows" of every session in the launching session's tab.
+export const TAB_SIZES_SCRIPT = `${FIND_SESSION}
+function run(argv) {
+    var app = Application("iTerm2");
+    if (!app.running()) return "notrunning";
+    var f = findSession(app, argv[0]);
+    if (!f) return "notfound";
+    return f.all.map(function (o) { return o.id() + "\\t" + o.columns() + "\\t" + o.rows(); }).join("\\n");
+}`;
+
+export interface TabPane {
+  id: string;
+  cols: number;
+  rows: number;
+}
+export interface SplitChoice {
+  id: string;
+  dir: "h" | "v";
+  cols: number;
+  rows: number;
+}
+
+const MIN_COLS = 40;
+
+/** Smaller half of a split: "h" stacks top/bottom, "v" puts the halves side by side (one cell for the divider). */
+function halves(p: TabPane, dir: "h" | "v"): { cols: number; rows: number } {
+  return dir === "h" ? { cols: p.cols, rows: Math.floor((p.rows - 1) / 2) } : { cols: Math.floor((p.cols - 1) / 2), rows: p.rows };
+}
+const fits = (h: { cols: number; rows: number }) => h.cols >= MIN_COLS && h.rows >= MIN_ROWS;
+
+/**
+ * Pick the pane to split and the direction from the tab's real sizes: the pane
+ * with the most cells whose result keeps >= 40x6, never the host's own pane
+ * while another fits. Side by side only if both halves keep >= 80 columns or
+ * the pane is wider than 3.5x its height in cells (a cell is ~2x taller than wide), else stacked; the other direction is
+ * the fallback when the preferred one leaves too small a pane. null = nothing fits.
+ */
+export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { small: boolean }) | null {
+  const options: Array<SplitChoice & { host: boolean; cells: number; small: boolean }> = [];
+  for (const p of panes) {
+    const wide = Math.floor((p.cols - 1) / 2) >= 80 || p.cols > 3.5 * p.rows;
+    const order: Array<"h" | "v"> = wide ? ["v", "h"] : ["h", "v"];
+    const dir = order.find((d) => fits(halves(p, d)));
+    if (dir) options.push({ id: p.id, dir, ...halves(p, dir), host: p.id === hostId, cells: p.cols * p.rows, small: false });
+  }
+  const pool = options.some((o) => !o.host) ? options.filter((o) => !o.host) : options;
+  pool.sort((a, b) => b.cells - a.cells);
+  if (pool[0]) return pool[0];
+  // nothing reaches the minimum: a small pane never stops a start, so take the split whose smaller half is largest
+  let best: (SplitChoice & { small: boolean; score: number }) | null = null;
+  for (const p of panes) {
+    for (const d of ["h", "v"] as const) {
+      const h = halves(p, d);
+      const score = Math.min(h.cols / MIN_COLS, h.rows / MIN_ROWS) - (p.id === hostId ? 0.001 : 0);
+      if (h.cols > 0 && h.rows > 0 && (!best || score > best.score)) best = { id: p.id, dir: d, ...h, small: true, score };
+    }
+  }
+  return best ? { id: best.id, dir: best.dir, cols: best.cols, rows: best.rows, small: true } : null;
+}
+
+// One pane per worker: split the pane pickSplit chose (argv[4]) side by side
+// ("v") or stacked ("h", argv[5]). Returns "<live ids>,|<new session id>".
 // Exported for the script-content tests (window size, argv-only arguments).
 export const WORKER_SPLIT_SCRIPT = `${FIND_SESSION}
-var MIN_ROWS = ${MIN_ROWS};
 function run(argv) {
     var targetID = argv[0], candList = argv[1], followCmd = argv[2], profileName = argv[3];
     var app = Application("iTerm2");
@@ -141,22 +201,18 @@ function run(argv) {
         lived.push(cid);
         live.push(f.all[at]);
     });
-    // split the LARGEST worker pane (by area), never the newest: halving the
-    // newest pane caps a tab at ~4 workers. Stack (horizontal split) while
-    // both halves keep >= MIN_ROWS rows, else add a column (vertical split).
-    var splitS = null;
-    live.forEach(function (o) { if (!splitS || o.columns() * o.rows() > splitS.columns() * splitS.rows()) splitS = o; });
-    var stack = splitS && Math.floor(splitS.rows() / 2) >= MIN_ROWS + 1;
+    // the pane and direction were chosen in TypeScript from the tab's real sizes (pickSplit)
+    var splitS = f.all[sessIDs.indexOf(argv[4])] || f.s;
+    var stack = argv[5] === "h";
     // the follow command is part of the split itself: the pane is born already
     // running it, so no text is ever typed into any session — a typing step
     // raced the operator's keystrokes and could even land in the operator's
     // own session
     var newS;
-    if (!splitS || !stack) {
-        var base = splitS || f.s;
+    if (!stack) {
         newS = profileName === ""
-            ? base.splitVerticallyWithDefaultProfile({ command: followCmd })
-            : base.splitVertically({ withProfile: profileName, command: followCmd });
+            ? splitS.splitVerticallyWithDefaultProfile({ command: followCmd })
+            : splitS.splitVertically({ withProfile: profileName, command: followCmd });
     } else {
         newS = profileName === ""
             ? splitS.splitHorizontallyWithDefaultProfile({ command: followCmd })
@@ -1112,7 +1168,18 @@ export async function openPaneForWorker(
   const cmd = followCommand(wid);
   // registry newest first: the split lands below the lowest live worker pane
   const cands = [...reg].reverse().map((e) => e.session).join(",");
-  const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile]);
+  const sizes = (await osascript(TAB_SIZES_SCRIPT, [uid])).stdout.trim();
+  const panes: TabPane[] = sizes.includes("\t")
+    ? sizes.split("\n").map((l) => {
+        const [id, c, r] = l.split("\t");
+        return { id, cols: Number(c), rows: Number(r) };
+      })
+    : [];
+  const choice = panes.length ? pickSplit(panes, uid) : null;
+  if (choice?.small) {
+    process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${MIN_COLS}x${MIN_ROWS}; opening a small ${choice.cols}x${choice.rows} pane\n`);
+  }
+  const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile, choice?.id ?? "", choice?.dir ?? "v"]);
   const out = p.stdout.trim();
   if (out === "notfound" || out === "notrunning") {
     throw new Error(
@@ -1379,10 +1446,9 @@ export async function verifyPane(
     if (r.selectedTab !== true) throw new Error(`pane verification failed: its tab is not the selected one (${where})`);
     if (r.hidden === true) throw new Error(`pane verification failed: iTerm2 is hidden (${where})`);
     if (r.onScreen !== true) throw new Error(`pane verification failed: its window is off screen (${where})`);
-    if (rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS) {
-      throw new Error(`pane verification failed: pane too small, ${cols}x${rows} < ${MIN_PANE_COLS}x${MIN_PANE_ROWS} (${where})`);
-    }
-    if (running(String(r.tty), wid)) return where;
+    // a small pane never stops a start: it is marked SMALL, logged, and audited as SMALL
+    const small = rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS;
+    if (running(String(r.tty), wid)) return small ? `${where} SMALL (< ${MIN_PANE_COLS}x${MIN_PANE_ROWS})` : where;
     last = where;
     await new Promise((res) => setTimeout(res, pollMs));
   }
@@ -1443,23 +1509,14 @@ export async function openVerifiedPane(
   try {
     const where = await verify(hostUid, r.session, wid);
     placements.set(wid, "split");
+    if (/ SMALL /.test(where)) {
+      appendLedger(ledgerPath(logDir), "PANE-SMALL", { id: wid, session: r.session, where });
+      process.stderr.write(`[pai worker] pane: small pane for ${wid}: ${where}\n`);
+    }
     return `${where} (iTerm session ${r.session})`;
   } catch (e) {
     await closePaneForWorker(logDir, wid, ops).catch(() => false);
-    if (!/pane too small/.test((e as Error).message)) throw e;
-    // crowded tab: ended panes of the scope were closed before the split, so their room is free again;
-    // rebalance the live panes and split once more. Never a window, never a tab.
-    await ops.rebalanceIterm?.(loadRegistry(logDir).map((x) => x.session)).catch(() => undefined);
-    r = await split(logDir, config, wid, term);
-    if (!r.session) throw e;
-    try {
-      const where = await verify(hostUid, r.session, wid);
-      placements.set(wid, "split");
-      return `${where} (iTerm session ${r.session})`;
-    } catch (e2) {
-      await closePaneForWorker(logDir, wid, ops).catch(() => false);
-      throw e2;
-    }
+    throw e;
   }
 }
 

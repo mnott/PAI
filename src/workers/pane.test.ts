@@ -21,6 +21,7 @@ import {
   REBALANCE_SCRIPT,
   VERIFY_PANE_SCRIPT,
   WORKER_SPLIT_SCRIPT,
+  pickSplit,
   checkPaneForWorker,
   dynamicProfilePath,
   followCommand,
@@ -301,22 +302,23 @@ function runSplit(host: [number, number], workers: Array<[number, number]>) {
   const win = { bounds: () => ({}), tabs: () => [{ sessions: () => all }] } as unknown as Record<string, unknown>;
   const app = { running: () => true, windows: () => [win] };
   const run = new Function("Application", `${WORKER_SPLIT_SCRIPT}; return run;`)(() => app) as (a: string[]) => string;
-  run(["host", ws.map((w) => w.id()).join(","), "cmd", "prof"]);
+  const pick = pickSplit(all.map((o) => ({ id: o.id(), cols: o.columns(), rows: (o.rows as unknown as () => number)() })), "host");
+  run(["host", ws.map((w) => w.id()).join(","), "cmd", "prof", pick?.id ?? "", pick?.dir ?? "v"]);
   return { log, rows: [...ws, ...created].map((o) => (o.rows as unknown as () => number)()) };
 }
 
 describe("WORKER_SPLIT_SCRIPT split choice and re-balance", () => {
-  it("first worker splits the host vertically", () => {
+  it("first worker splits the host side by side", () => {
     expect(runSplit([166, 47], []).log).toEqual(["V host"]);
   });
 
-  it("splits the LARGEST worker pane, not the newest", () => {
-    // newest-first order would pick w2 (6 rows); the largest is w0
-    expect(runSplit([166, 47], [[228, 30], [228, 12], [228, 6]]).log).toEqual(["H w0"]);
+  it("splits the largest pane that fits, not the newest", () => {
+    // 228x30 stacks to 228x14; the host is spared while another pane fits
+    expect(runSplit([166, 47], [[228, 30], [228, 12], [228, 6]]).log).toEqual(["V w0"]);
   });
 
-  it("adds a column once stacking would drop a pane under the minimum height", () => {
-    expect(runSplit([166, 47], [[228, 12], [228, 12], [228, 12], [228, 12]]).log).toEqual(["V w0"]);
+  it("stacks a pane that is not wide enough for two 80-column halves", () => {
+    expect(runSplit([166, 47], [[94, 30], [94, 12]]).log).toEqual(["H w0"]);
   });
 
   it("re-balances stacked panes of one width to equal rows", () => {
@@ -405,10 +407,15 @@ describe("fail-closed visibility", () => {
     ["window off screen", { onScreen: false }, "off screen"],
     ["iTerm2 hidden", { hidden: true }, "hidden"],
     ["window minimised", { miniaturized: true }, "minimised"],
-    ["collapsed pane", { rows: 2 }, "too small"],
-    ["narrow pane", { cols: 10 }, "too small"],
   ])("refuses: %s", async (_n, over, why) => {
     await expect(verify(over)).rejects.toThrow(why);
+  });
+
+  it.each([
+    ["collapsed pane", { rows: 2 }],
+    ["narrow pane", { cols: 10 }],
+  ])("a %s is accepted and marked SMALL, never refused", async (_n, over) => {
+    await expect(verify(over)).resolves.toMatch(/ SMALL \(< 40x6\)/);
   });
 
   it("refuses when the follow command is not running in the pane", async () => {
@@ -446,5 +453,36 @@ describe("fail-closed visibility", () => {
     expect(() => assertPaneNotDisabled(false, {})).not.toThrow();
     expect(() => assertPaneNotDisabled(true, { PAI_WORKER: "1" })).not.toThrow();
     vi.unstubAllEnvs();
+  });
+});
+
+describe("pickSplit", () => {
+  const P = (id: string, cols: number, rows: number) => ({ id, cols, rows });
+
+  it("the live 5-pane layout splits a 94x30 pane top/bottom, not the host side by side", () => {
+    const c = pickSplit([P("host", 77, 30), P("m1", 96, 12), P("m2", 96, 12), P("a", 94, 30), P("b", 94, 30)], "host");
+    expect(c).toMatchObject({ id: "a", dir: "h", cols: 94, rows: 14, small: false });
+  });
+
+  it("a single host pane 270x60 splits side by side", () => {
+    expect(pickSplit([P("host", 270, 60)], "host")).toMatchObject({ id: "host", dir: "v", cols: 134, rows: 60, small: false });
+  });
+
+  it("never picks the host while another pane fits", () => {
+    expect(pickSplit([P("host", 300, 80), P("w", 90, 30)], "host")).toMatchObject({ id: "w", dir: "h" });
+  });
+
+  it("uses the host when it is the only pane that fits", () => {
+    expect(pickSplit([P("host", 200, 50), P("w", 30, 8)], "host")?.id).toBe("host");
+  });
+
+  it("all panes small: best available, marked small, never null", () => {
+    const c = pickSplit([P("host", 50, 10), P("w", 44, 9)], "host");
+    expect(c).toMatchObject({ small: true });
+    expect(c!.cols).toBeGreaterThan(0);
+  });
+
+  it("no panes: null", () => {
+    expect(pickSplit([], "host")).toBeNull();
   });
 });
