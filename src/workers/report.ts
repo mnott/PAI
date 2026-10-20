@@ -36,27 +36,35 @@ function ag2ReportBlock(): string[] {
     spec.spec,
     spec.extensions,
     "Final message: one AG2 `R` message only — no prose, no code fence, no markdown.",
-    "R requires i (id), r (+ - ~ ? !), t (tests, Name+ Name-), c (path summary|path summary).",
-    "r=+ requires G=+ (gate) and p non-empty (proof command), and every t entry +. z= the answer/note,",
-    "one line, always present. x= what is left (omit if nothing). y= one line why when r is not +.",
+    "R requires i (id), r (+ - ~ ? !), t (tests, Name+ Name-), c (files you modified or created, never files you",
+    "only read; `path summary`; c=none when none). r=+ needs G=+ and p, every t entry +.",
+    "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
+    "y= one line why when r is not +.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
     "Example:",
     "R",
     "i=count-audit-ts",
     "r=+",
     "G=+",
-    "c=src/audit summary of files counted",
+    "c=none",
     "t=Count+",
     "p=wc -l src/audit/*.ts",
     "z=19 files, 2523 lines",
   ];
 }
 
-/** The JSON report block appended to a contract when format is "json" (pre-AG2 fallback). */
+/**
+ * The JSON report block appended to a contract when format is "json" (pre-AG2
+ * fallback). The field-meaning lines ride along here so the short contract
+ * carries them too — the full contract appends its own copy after the block.
+ */
 function jsonReportBlock(lead: string): string[] {
   return [
     lead,
     '{"changed":[{"path":"…","summary":"…"}],"commands":["…"],"checks":[{"name":"…","ok":true,"detail":"…"}],"open":["…"],"notes":"one line"}',
+    "changed: files you modified or created (path + one-line summary), never files you only read; [] when nothing changed.",
+    "commands: the commands that verify the work. checks: each with ok true/false and the evidence in detail.",
+    "open: what you could not finish, if anything. notes: one line, the headline a reviewer reads first.",
   ];
 }
 
@@ -152,13 +160,6 @@ function fullContractPrompt(format: "ag2" | "json"): string {
           "Your ONE final message is a JSON object and nothing else — no prose before or after, no code fence:"
         ))
   );
-  if (format === "json") {
-    lines.push(
-      "changed: files you touched (path + one-line summary). commands: the commands that verify the work.",
-      "checks: each with ok true/false and the evidence in detail. open: what you could not finish, if anything.",
-      "notes: one line, the headline a reviewer reads first."
-    );
-  }
   return lines.join("\n");
 }
 
