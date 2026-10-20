@@ -46,6 +46,9 @@ class FakeSpare implements SlotProcess {
   readonly pid = process.pid;
   readonly fed: string[] = [];
   killed = false;
+  /** Hold the answer back until release() — a task still running. */
+  hold = false;
+  private held: (() => void) | null = null;
   private lineCb: ((l: string) => void) | null = null;
   constructor() {
     queueMicrotask(() => this.emit({ type: "system", subtype: "init", session_id: "sess-spare", model: "m1" }));
@@ -55,9 +58,16 @@ class FakeSpare implements SlotProcess {
   }
   write(text: string): boolean {
     this.fed.push(String(JSON.parse(text).message?.content ?? ""));
-    this.emit({ type: "assistant", message: { usage, content: [{ type: "text", text: "on it" }] } });
-    this.emit({ type: "result", is_error: false, result: R_OK });
+    const answer = (): void => {
+      this.emit({ type: "assistant", message: { usage, content: [{ type: "text", text: "on it" }] } });
+      this.emit({ type: "result", is_error: false, result: R_OK });
+    };
+    if (this.hold) this.held = answer;
+    else answer();
     return true;
+  }
+  release(): void {
+    this.held?.();
   }
   kill(): boolean {
     this.killed = true;
@@ -186,6 +196,36 @@ describe("spares", () => {
     expect(Number(end.fields.setupMs)).toBeGreaterThanOrEqual(1500);
     expect(Number.isFinite(Number(end.fields.firstAnswerMs))).toBe(true);
     expect(spareStats(readFileSync(ledgerPath(h.logDir), "utf8")).hits).toBe(1);
+  });
+
+  it("splits the setup on the ledger: admissionMs from the client, claimMs measured by the host", async () => {
+    const repo = makeRepo();
+    const h = makeHost(repo);
+    await h.host.settle();
+    await h.host.runTask(task(repo, { runStartedAt: Date.now() - 1500, admissionMs: 321 }));
+    const lines = ledgerLines(h.logDir);
+    for (const ev of ["WORKER-START", "WORKER-END"]) {
+      const l = lines.find((x) => x.event === ev && x.fields.id === "w1")!;
+      expect(l.fields.admissionMs).toBe("321");
+      expect(Number.isFinite(Number(l.fields.claimMs))).toBe(true);
+    }
+  });
+
+  it("the replacement spare starts at the claim, while the task is still running", async () => {
+    const repo = makeRepo();
+    const h = makeHost(repo);
+    await h.host.settle();
+    h.procs[0]!.hold = true;
+    const running = h.host.runTask(task(repo));
+    await vi.waitFor(() => expect(h.procs[0]!.fed).toHaveLength(1));
+    await h.host.settle();
+    expect(h.procs).toHaveLength(2); // the replacement exists before the first task answered
+    expect(h.host.state().spares).toHaveLength(1);
+    expect(h.host.state().spares![0]!.state).toBe("ready");
+    h.procs[0]!.release();
+    expect((await running).pooled).toBe(true);
+    // back to back: the next task finds a spare
+    expect((await h.host.runTask(task(repo, { id: "w2" }))).pooled).toBe(true);
   });
 
   it("a miss answers with its reason and starts a spare so the next claim hits", async () => {

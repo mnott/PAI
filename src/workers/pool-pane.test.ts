@@ -35,10 +35,11 @@ afterEach(async () => {
   }
 });
 
-const listen = async (reply: object): Promise<number> => {
+const listen = async (reply: object, onRequest?: () => void): Promise<number> => {
   const server = createServer((req, res) => {
     req.resume();
     req.on("end", () => {
+      onRequest?.();
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(reply));
     });
@@ -95,5 +96,39 @@ describe("pooled runs get a follow pane", () => {
     await gateStart(a);
     expect(await tryPoolRun(a)).toBe(0);
     expect(panes()).toBe(0);
+  });
+
+  it("the pane opens beside the pool request: a slow pane does not delay the task", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
+    let releasePane: () => void = () => undefined;
+    vi.mocked(pane.openVerifiedPane).mockReset().mockImplementation(() => new Promise((r) => (releasePane = () => r("here"))));
+    let requestSeen = false;
+    const a = args(d, await listen({ pooled: true, rc: 0 }, () => (requestSeen = true)), false) as { panePrepared?: unknown };
+    await gateStart(a as never); // returns with the pane still opening
+    expect(a.panePrepared).toBeUndefined();
+    const run = tryPoolRun(a as never);
+    await vi.waitFor(() => expect(requestSeen).toBe(true)); // the task was shipped while the pane is unopened
+    expect(a.panePrepared).toBeUndefined();
+    releasePane();
+    expect(await run).toBe(0);
+    expect(a.panePrepared).toEqual({ verified: true });
+    expect(loadStatus(d, "w-pane")?.pane?.opened).toBe(true);
+  });
+
+  it("a pane failure is logged and never blocks the run", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
+    vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new Error("iterm gone"));
+    const a = args(d, await listen({ pooled: true, rc: 0 }), false);
+    await gateStart(a);
+    expect(await tryPoolRun(a)).toBe(0);
+  });
+
+  it("records where the setup time went on the run's args", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
+    const a = args(d, await listen({ pooled: true, rc: 0 }), false) as { setupPaneMs?: number; admissionMs?: number };
+    await gateStart(a as never);
+    await tryPoolRun(a as never);
+    expect(a.admissionMs).toBeGreaterThanOrEqual(0);
+    expect(a.setupPaneMs).toBeGreaterThanOrEqual(0);
   });
 });
