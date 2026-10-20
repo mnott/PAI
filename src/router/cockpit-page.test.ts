@@ -1392,3 +1392,90 @@ describe("cockpit section ids", () => {
     expect(cards.find((c: any) => c.id === "sec-cloud").h2.innerHTML).toContain("fold");
   });
 });
+
+describe("cockpit Models: one local switch, editable aliases", () => {
+  const src = [
+    COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function actRow[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function tierRow[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function gb\(b,d\)\{[^\n]*\}/)![0],
+    COCKPIT_HTML.match(/function gbm\(m\)\{[^\n]*\}/)![0],
+    COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
+  ].join("\n");
+  const modelsHtml = new Function("esc", "pct", `${src}; return modelsHtml;`)(
+    (s: unknown) => String(s ?? ""),
+    (x: number) => (x * 100).toFixed(1) + "%"
+  ) as (inv: unknown) => string;
+  const tiers = [{ tier: "gyro-m", label: "Gyro-M", memoryGb: 60 }];
+  const strata = { name: "gyro-m", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, usedBy: ["worker:flashnext-iq3"] }] };
+  const ollama = { name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["paperfull-llm"], models: [{ model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["paperfull-llm"] }] };
+  const base = { at: "x", duplicates: [], consumers: [], live: { at: 1, runtimes: [] }, tiers };
+  const count = (h: string) => (h.match(/Local model:/g) ?? []).length;
+
+  it("tierRow renders once, inside the strata card, with two running runtimes", () => {
+    const h = modelsHtml({ ...base, running: { model: "flash-next", tier: "gyro-m" }, runtimes: [strata, ollama] });
+    expect(count(h)).toBe(1);
+    const cards = h.split('<div class="mcard').slice(1);
+    expect(cards.filter((c) => c.includes("Local model:")).length).toBe(1);
+    expect(cards.find((c) => c.includes('data-rt="gyro-m"'))).toContain("Local model:");
+    expect(cards.find((c) => c.includes('data-rt="ollama"'))).not.toContain("Local model:");
+  });
+
+  it("tierRow sits once at the section bottom when no local engine card is rendered", () => {
+    const h = modelsHtml({ ...base, running: null, runtimes: [{ ...strata, status: "stopped", models: [] }, ollama] });
+    expect(count(h)).toBe(1);
+    expect(h.lastIndexOf("Local model:")).toBeGreaterThan(h.lastIndexOf('<div class="mcard'));
+    expect(h.slice(h.indexOf("rt-grid"))).toMatch(/rt-chips[^>]*>.*Local model:/);
+  });
+
+  it("an alias in the payload is the card title; the model id stays secondary; the pencil is outside the fold toggle target", () => {
+    const h = modelsHtml({ ...base, running: null, runtimes: [{ ...strata, models: [{ ...strata.models[0], label: "My Flash" }] }] });
+    expect(h).toContain('<b title="flash-next">My Flash</b>');
+    expect(h).toContain('<span class="mid" title="flash-next">flash-next</span>');
+    expect(h).toContain('class="lblbtn" data-alias="My Flash"');
+  });
+
+  it("the pencil swaps the title for an input; blur posts model.label with model:<id>=<alias>; Escape cancels; the fold is not toggled", () => {
+    const body = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
+    const posts: unknown[][] = [];
+    const t: any = { id: "title" };
+    const stop: string[] = [];
+    const inputs: any[] = [];
+    const head: any = {
+      querySelector: (s: string) => (s === "b" ? t : s === "input.lblin" ? inputs.find((i) => i.in) ?? null : null),
+      replaceChild: (n: any, o: any) => { if (n.tagName === "INPUT") n.in = true; if (o.tagName === "INPUT") o.in = false; },
+      contains: (n: any) => !!n.in,
+    };
+    const card = { getAttribute: (k: string) => ({ "data-rt": "gyro-m", "data-model": "flash-next" } as Record<string, string>)[k] };
+    head.parentNode = card;
+    const btn: any = { parentNode: head, getAttribute: () => "Old" };
+    const el: any = { __html: "x", querySelectorAll: (s: string) => (s === ".lblbtn" ? [btn] : []) };
+    const doc = { createElement: () => { const i: any = { tagName: "INPUT", setAttribute() {}, focus() {}, blur() { i.in = false; i.onblur(); } }; inputs.push(i); return i; } };
+    const fn = new Function("$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", `var mEditing=false;\n${body}\nrenderModels();`);
+    fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc, (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)({ ok: true }); }, () => {}, () => {}, () => {});
+    btn.onclick({ stopPropagation: () => stop.push("click") });
+    expect(stop).toEqual(["click"]);
+    const inp = inputs[0];
+    expect(inp.value).toBe("Old");
+    expect(inp.placeholder).toBe("alias");
+    inp.value = " Fast ";
+    inp.onkeydown({ key: "Enter", stopPropagation() {}, preventDefault() {} });
+    expect(posts.map((p) => p.slice(0, 3))).toEqual([["model.label", "gyro-m", "model:flash-next=Fast"]]);
+    // empty removes
+    btn.onclick({ stopPropagation() {} });
+    const inp2 = inputs[1];
+    inp2.value = "";
+    inp2.blur();
+    expect(posts[1]!.slice(0, 3)).toEqual(["model.label", "gyro-m", "model:flash-next="]);
+    // Escape cancels without posting
+    btn.onclick({ stopPropagation() {} });
+    inputs[2].onkeydown({ key: "Escape", stopPropagation() {} });
+    expect(posts.length).toBe(2);
+  });
+
+  it("a rebuild is skipped while an alias input is being edited", () => {
+    expect(COCKPIT_HTML).toContain("if(mdl&&mEditing)return;");
+  });
+});
