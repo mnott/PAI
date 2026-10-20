@@ -29,11 +29,39 @@ is `needs-decision`. `pai queue run` makes two local attempts per item and then
 stops at `needs-decision`; the cloud step is manual: two `again` rounds mark the
 item `cloud`, and `pai queue run --escalate sonnet` runs one Sonnet worker on it.
 
-## Tier to tier: manual today
+## Tier to tier
 
-The tiers table has no `escalation` key in code today, and nothing moves a t2 job
-to t1 on its own for large context, a missing tool or repeated failure beyond the
-rules above. The manual path:
+A run that ends in trouble goes one tier up on its own when one of three
+triggers fires:
+
+- **context**: the run used more than `contextFraction` of its model's window;
+- **missing tool**: it needed a tool it does not have;
+- **repeated failure**: the same task failed `failures` times.
+
+What happens then depends on the tier the run was on:
+
+- **t2 to t1**: the task is re-run on the t1 model list. The new run's spec starts
+  with an instruction to merge the stopped run's branch, including the salvaged
+  edits, so it continues instead of starting over. The stopped run's status shows
+  `escalated -> <id>` and the ledger records `WORKER-ESCALATE`.
+- **t1 to t0**: nothing is re-run. The owning session gets one message saying what
+  was tried and why it stopped, and decides. It never goes to PAILot.
+
+A task escalates out of a tier once. A local run that committed and is kept for
+review is not escalated: its commits are the result to review.
+
+The keys sit under `workers.escalate` in workers.yaml (shipped defaults shown):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `workers.escalate.enabled` | `true` | Escalation on or off. |
+| `workers.escalate.contextFraction` | `0.7` | Share of the context window that triggers it. |
+| `workers.escalate.failures` | `2` | Failed attempts of one task that trigger it. |
+| `workers.escalate.triggers` | `[context, missing-tool, repeated-failure]` | Which triggers are on. |
+
+## Doing it by hand
+
+To move a job up yourself, or when escalation is off:
 
 1. `pai worker pending` lists finished workers whose branch holds unmerged work,
    including salvaged branches.
