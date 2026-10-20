@@ -279,6 +279,15 @@ export function commitsSince(dir: string, base: string): number {
   }
 }
 
+/** "<hash> <subject>" of each commit the branch collected on top of its base; empty when none or unreadable. */
+export function commitLines(dir: string, base: string): string[] {
+  try {
+    return git(dir, ["log", "--format=%h %s", `${base}..HEAD`]).split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Record the worktree result in the status file: branch and commit count on
  * success, the worktree cleaned up on failure. Returns the updated status.

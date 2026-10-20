@@ -138,6 +138,7 @@ import {
   markResumed,
   salvageOnExit,
   archiveEmptyResult,
+  commitLines,
   gcWorktreesThrottled,
   inPlaceSystemPrompt,
   recordWorktree,
@@ -1246,7 +1247,15 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     const reason = `loop-stopped: ${loopStop.reason}`;
     status.loopStopped = true;
     status.last = shortText(reason, 90);
-    report = { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+    // a loop after committing is finished work to review, not a failure
+    const commits = f.worktree ? commitLines(f.worktree.dir, f.worktree.base) : [];
+    if (commits.length) {
+      const why = `loop-stopped after committing: ${loopStop.reason}`;
+      const list = `commits: ${commits.join("; ")}`;
+      report = { ...(report ?? {}), result: "~", why, notes: [why, list, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+    } else {
+      report = { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+    }
   }
   const orphanReason = checkOrphanedChildren(logDir, wid);
   const succeeded = ok && !orphanReason && !f.timedOut && !loopStop;

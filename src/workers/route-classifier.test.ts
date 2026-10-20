@@ -124,6 +124,7 @@ describe("local worker contract", () => {
     const c = localContract(loadChecks(dir));
     expect(c).toContain("npx tsc --noEmit");
     expect(c).toContain("npx vitest run {class}");
+    expect(c).toContain("A command that succeeded is done: never run it again unchanged. After the commit, write the report.");
     expect(c.split(/\s+/).length).toBeLessThan(120);
     expect(withLocalContract("TASK", dir).endsWith("\n\nTASK")).toBe(true);
   });

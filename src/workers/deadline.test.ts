@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { stripBrowserArgs, stripBrowserNames, isBrowserTool } from "./browser-to
 import { parseWorkersConfig } from "./config.js";
 import { armDeadline, deadlineLabel, deadlinePromptLine, parseDeadline, resolveLimit } from "./deadline.js";
 import { makeColor, renderTable } from "./render.js";
+import { requestLoopStop } from "./loop-stop.js";
 import { finaliseRun, fireDeadline } from "./run.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 import { decideWorkerGuard } from "../hooks/ts/lib/worker-guard.js";
@@ -117,6 +118,44 @@ describe("timed-out status and ps", () => {
     expect(saved.state).toBe("failed");
     expect(saved.last).toBe("deadline reached after 2 active min");
     expect(readFileSync(ledger, "utf8")).toContain("WORKER-DEADLINE");
+  });
+
+  describe("loop-stop outcome", () => {
+    const loopStopped = async (commit: boolean) => {
+      const dir = join(logDir, "wt");
+      const g = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+      mkdirSync(dir);
+      g("init", "-q");
+      g("commit", "-q", "--allow-empty", "-m", "base");
+      const base = g("rev-parse", "HEAD");
+      if (commit) g("commit", "-q", "--allow-empty", "-m", "feat: finished work");
+      const s = status();
+      saveStatus(logDir, s);
+      requestLoopStop(logDir, "w-1", "Bash vitest repeated 5 times", { kill: () => {}, claudePid: () => 1 });
+      let report: { result?: string; why?: string; notes?: string } | undefined;
+      await finaliseRun({
+        logDir, ledger: join(logDir, "ledger.log"), status: s, ok: false, rc: 143, secs: 5, end: {}, report: null,
+        worktree: { dir, branch: "b", base, snapshot: false },
+        beforeHandoff: async (_s, r) => { report = r ?? undefined; },
+      });
+      return { s, report: report! };
+    };
+
+    it("with commits the report is ~ with the commits listed", async () => {
+      const { s, report } = await loopStopped(true);
+      expect(s.loopStopped).toBe(true);
+      expect(s.claimsContinue).toBe(true);
+      expect(report.result).toBe("~");
+      expect(report.why).toBe("loop-stopped after committing: Bash vitest repeated 5 times");
+      expect(report.notes).toMatch(/commits: [0-9a-f]+ feat: finished work/);
+    });
+
+    it("without commits the report stays -", async () => {
+      const { s, report } = await loopStopped(false);
+      expect(s.claimsContinue).toBe(false);
+      expect(report.result).toBe("-");
+      expect(report.why).toBe("loop-stopped: Bash vitest repeated 5 times");
+    });
   });
 
   it("labels remaining, overdue and timed out", () => {
