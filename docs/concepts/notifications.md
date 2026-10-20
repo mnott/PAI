@@ -50,3 +50,5 @@ a separate subsystem and is not covered here.
 
 Related: [loop guard and limits](loop-guard-and-limits.md) for what counts as a
 denial, [panes](panes.md) for the auditor, which writes to the ledger only.
+
+Setting this up for the first time: [first workers](../install/first-workers.md).

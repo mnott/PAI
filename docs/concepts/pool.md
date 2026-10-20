@@ -63,3 +63,5 @@ They are independent. The pool pre-starts processes. The keepalive
 (`workers.cacheKeepaliveSecs`, default 0 = off) has the daemon run a trivial
 heartbeat worker so the provider's prompt cache stays warm. See
 [cache-keepalive.md](../cache-keepalive.md).
+
+Setting this up for the first time: [first workers](../install/first-workers.md).

@@ -76,3 +76,5 @@ pai worker replay <id>
 heredoc, a long foreground wait): rewrite the spec. The session that started a
 worker is told when denials pile up, see [notifications](notifications.md).
 Details: [../worker-denials.md](../worker-denials.md).
+
+Setting this up for the first time: [first workers](../install/first-workers.md).

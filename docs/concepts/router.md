@@ -96,3 +96,5 @@ restarted when they run.
 ```
 pai reload
 ```
+
+Setting this up for the first time: [first workers](../install/first-workers.md).

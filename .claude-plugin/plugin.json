@@ -20,6 +20,7 @@
     "zettelkasten"
   ],
   "skills": [
-    "./plugins/productivity/skills/"
+    "./plugins/productivity/skills/",
+    "./plugins/core/skills/"
   ]
 }
