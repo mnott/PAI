@@ -9,7 +9,8 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
+import { loadRegistry, openPaneForWorker, osascriptJxa, resolveHostSession, type PaneEntry } from "./pane.js";
+import { readWorkersSection } from "./config.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
@@ -33,6 +34,8 @@ export interface AuditProc {
   noPaneReason?: string;
   /** The run already ended (a pane-run run): its pane must have closed itself. */
   ended?: boolean;
+  /** False when the process has ended: an ended worker is never reopened. */
+  live?: boolean;
 }
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
@@ -47,6 +50,8 @@ export interface PaneVerdict {
   tab?: string;
   hostTab?: string;
   why?: string;
+  /** The pane existed and is gone while the process runs: the auditor reopens it itself. */
+  reopenable?: boolean;
 }
 
 /** iTerm session id -> "window:tab" key. */
@@ -73,7 +78,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     }
     if (!e) return { ...v, mark: "NO PANE", why: p.noPaneReason ? `started without a pane: ${p.noPaneReason}` : "no pane recorded for a running process" };
     const tab = tabOf(e.session);
-    if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
+    if (!tab) return { ...v, mark: "NO PANE", ...(p.ended ? {} : { reopenable: true }), why: `pane ${e.session} is gone while the process runs` };
     // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
     if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > START_GRACE_MS) {
       return { ...v, mark: "STILL OPEN", tab, why: `pane ${e.session} of the ended run ${p.id} is still open` };
@@ -94,8 +99,8 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
 export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
   for (const s of loadStatusesCached(logDir)) {
-    if (isChatPane(s) || !isLive(s, ownsPidCached) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
-    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
+    if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
+    procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });
   // ended pane runs too: their pane must have closed itself, and one still open is a fault
@@ -168,15 +173,42 @@ function readJson(file: string): Record<string, string> {
 }
 
 const readTold = (logDir: string): Record<string, string> => readJson(toldFile(logDir));
+const reopenedFile = (logDir: string): string => join(logDir, "pane-audit-reopened.json");
+
+/** One reopen per worker per this window; a second reopen inside the window stops the reopening. */
+const REOPEN_WINDOW_MS = 5 * 60_000;
+/** Reopens this far apart still count toward the stop: an operator closing repeatedly ends the reopening. */
+const REOPEN_STOP_MS = 10 * 60_000;
+
+interface ReopenStamp {
+  /** When the pane was first seen gone (the first failed check). */
+  seenMs: number;
+  /** When the last reopen happened. */
+  lastMs: number;
+  /** When the first reopen happened: the stop window counts from it. */
+  firstMs: number;
+  count: number;
+}
 
 /**
  * One audit round: judge, persist, and report each new violation once (ledger PANE-VIOLATION, the
- * starting session, PAILot). A violation that clears may be reported again if it returns.
+ * starting session, PAILot). A violation that clears may be reported again if it returns. A confirmed
+ * NO PANE whose pane is gone while the process runs (worker started in a session with a resolvable
+ * host tab) is reopened through the `pai worker pane <id>` code path, at most once per
+ * REOPEN_WINDOW_MS; after a second reopen within REOPEN_STOP_MS the reopening stops and the session
+ * is notified instead. The session hears about a NO PANE only when the reopen fails or stops.
  */
 export async function auditTick(
   logDir: string,
   msg: Messenger,
-  deps: { tabs?: (sizes: SizeMap) => Promise<TabMap>; procs?: () => AuditProc[]; registry?: () => PaneEntry[]; now?: () => Date } = {}
+  deps: {
+    tabs?: (sizes: SizeMap) => Promise<TabMap>;
+    procs?: () => AuditProc[];
+    registry?: () => PaneEntry[];
+    now?: () => Date;
+    /** Reopen seam: opens the worker's follow pane (the `pai worker pane <id>` path); returns its message or throws. */
+    reopen?: (wid: string) => Promise<string>;
+  } = {}
 ): Promise<PaneVerdict[]> {
   let tabs: TabMap;
   const sizes: SizeMap = new Map();
@@ -187,7 +219,9 @@ export async function auditTick(
   }
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
   const now = deps.now?.() ?? new Date();
-  const verdicts = auditPanes((deps.procs ?? (() => runningProcs(logDir)))(), (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, now.getTime(), sizes);
+  const nowMs = now.getTime();
+  const procs = (deps.procs ?? (() => runningProcs(logDir)))();
+  const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes);
   // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
   const seen = readJson(pendingFile(logDir));
   const failing: Record<string, string> = {};
@@ -200,8 +234,74 @@ export async function auditTick(
   writeFileSync(auditFile(logDir), JSON.stringify({ at: now.toISOString(), verdicts } satisfies AuditFile), "utf8");
   const told = readTold(logDir);
   const next: Record<string, string> = {};
+  const stamps: Record<string, ReopenStamp> = (() => {
+    try {
+      return JSON.parse(readFileSync(reopenedFile(logDir), "utf8")) as Record<string, ReopenStamp>;
+    } catch {
+      return {};
+    }
+  })();
+  const reopen =
+    deps.reopen ??
+    (async (wid) => {
+      // the same code path as `pai worker pane <id>`: resolve the host session, then open the worker's pane
+      const host = await resolveHostSession();
+      if (!host.term) throw new Error(`no host session (${host.reason ?? "none"})`);
+      const { workers } = readWorkersSection();
+      return (await openPaneForWorker(logDir, workers, wid, host.term)).message;
+    });
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
+    // a running worker whose pane is gone gets its pane reopened here, not reported to the session
+    const proc = procs.find((p) => p.id === v.id);
+    if (v.mark === "NO PANE" && v.reopenable && proc?.live !== false) {
+      next[v.id] = v.mark;
+      // a violation counts only when confirmed twice (the pending check above already marked the first)
+      if (seen[v.id] !== v.mark) continue;
+      // the reopen ledger survives a pane that came back: the absence clock restarts when the violation is first seen
+      let s = stamps[v.id] ?? { seenMs: nowMs, lastMs: 0, firstMs: 0, count: 0 };
+      // reopens older than the stop window collapse to one
+      if (s.count > 0 && nowMs - s.lastMs >= REOPEN_STOP_MS) stamps[v.id] = s = { ...s, count: 1, firstMs: s.lastMs };
+      // the stop window counts from the FIRST reopen: two reopens inside it end the reopening
+      if (s.count >= 2 && nowMs - s.firstMs < REOPEN_STOP_MS) {
+        // the stop notice is told once, like any violation
+        if (told[v.id] === "STOPPED") continue;
+        next[v.id] = "STOPPED";
+        appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
+        // already reopened twice inside the stop window: the operator keeps closing it — stop and notify
+        appendLedger(ledgerPath(logDir), "PANE-REOPEN-STOPPED", { id: v.id, kind: v.kind, why: v.why }, now);
+        const stopped = `NO PANE: ${v.kind} ${v.id} runs without its pane (${v.why}); reopened twice within ${REOPEN_STOP_MS / 60_000} min, stopped reopening — open it with: pai worker pane ${v.id}.`;
+        await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, stopped)).catch(() => false);
+        await msg.toPailot(stopped).catch(() => false);
+        continue;
+      }
+      // a reopen is due once the violation is confirmed (the first reopen), and after a reopen once
+      // the pane has been gone a full window again (the absence clock restarts when it comes back)
+      if (s.count === 0 || (s.count === 1 && nowMs - s.seenMs >= REOPEN_WINDOW_MS)) {
+        appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
+        let message = "";
+        try {
+          message = await reopen(v.id);
+        } catch (e) {
+          message = `reopen failed: ${(e as Error).message ?? e}`;
+        }
+        stamps[v.id] = { seenMs: s.seenMs, lastMs: nowMs, firstMs: s.count === 0 ? nowMs : s.firstMs, count: s.count + 1 };
+        if (message.startsWith("pane opened")) {
+          appendLedger(ledgerPath(logDir), "PANE-REOPENED", { id: v.id, kind: v.kind, session: v.session }, now);
+          continue; // the session hears nothing on a successful reopen
+        }
+        const what = `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}); reopen failed: ${message}.`;
+        if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
+        await msg.toPailot(what).catch(() => false);
+        continue;
+      }
+      // inside the reopen window: wait for the next round, report nothing yet
+      continue;
+    }
+    // a violation that clears is forgotten: it may be reported again when it returns
+    delete stamps[v.id];
+    // an ended worker whose pane is gone is shown as NO PANE but never alarmed: nothing to reopen
+    if (v.reopenable && proc?.live === false) continue;
     next[v.id] = v.mark;
     if (told[v.id] === v.mark) continue;
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
@@ -212,6 +312,7 @@ export async function auditTick(
     if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
     await msg.toPailot(what).catch(() => false);
   }
+  writeFileSync(reopenedFile(logDir), JSON.stringify(stamps), "utf8");
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
   return verdicts;
 }
