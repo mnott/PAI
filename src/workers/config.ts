@@ -146,6 +146,12 @@ export interface WorkerProvider {
   thinking?: boolean;
   /** Most runs this provider serves at once; more queue (capacity.ts). Default 3 on loopback, unlimited otherwise. */
   maxConcurrent?: number;
+  /**
+   * Conversation-cache slots of the engine behind this provider (Strata
+   * --conversation-cache-slots). Admitted workers stay below it (one slot spare):
+   * more makes conversations evict each other every turn. Default: maxConcurrent.
+   */
+  conversationSlots?: number;
   /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier. */
   costTier?: number;
   /** Capability tags; classes filter auto-routing via requireTags. */
@@ -756,6 +762,12 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     }
   }
 
+  if (p.conversationSlots !== undefined) {
+    if (typeof p.conversationSlots !== "number" || !Number.isInteger(p.conversationSlots) || p.conversationSlots < 1) {
+      bad(`.providers.${name}.conversationSlots`, "must be a positive integer");
+    }
+  }
+
   const upstreamUrl = str(p.upstreamUrl);
   if (protocol === "openai" && !upstreamUrl) {
     bad(`.providers.${name}.upstreamUrl`, `is required for protocol "openai" (the Chat Completions base, e.g. "https://api.openai.com/v1")`);
@@ -847,6 +859,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(p.maxConcurrent !== undefined ? { maxConcurrent: p.maxConcurrent as number } : {}),
+    ...(p.conversationSlots !== undefined ? { conversationSlots: p.conversationSlots as number } : {}),
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
     ...(usage ? { usage } : {}),

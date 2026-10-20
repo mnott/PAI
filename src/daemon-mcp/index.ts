@@ -101,6 +101,7 @@ import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
+import { schedulerLines, schedulerView } from "../workers/scheduler.js";
 import { providerCaps } from "../cli/commands/worker.js";
 import { deadlineLabel } from "../workers/deadline.js";
 import { endLabel } from "../workers/endreason.js";
@@ -1027,6 +1028,7 @@ async function startShim(): Promise<void> {
       cost_tier: z.number().int().min(1).max(5).optional().describe("Cost tier 1 (cheapest) … 5 (most expensive). Default 3. (add, update)"),
       tags: z.array(z.enum(["code", "vision", "image-gen", "long-context", "fast", "reasoning"])).optional().describe("Capability tags (add, update)."),
       cap: z.union([z.number().int().min(1), z.literal("default")]).optional().describe("Parallel cap (cap): integer >= 1, or \"default\" to unset. Omit to show."),
+      slots: z.union([z.number().int().min(1), z.literal("default")]).optional().describe("Conversation-cache slots of the engine (cap): admitted workers stay one below it; \"default\" unsets."),
     },
     async (args) => {
       try {
@@ -1037,7 +1039,7 @@ async function startShim(): Promise<void> {
         }
         if (!args.name) return workerError(new Error("name is required for this action"));
         if (action === "cap") {
-          const { effective } = setProviderCap(args.name, args.cap);
+          const { effective } = setProviderCap(args.name, args.cap, undefined, args.slots);
           return workerText(`provider ${args.name}: ${effective}`);
         }
         if (action === "update") {
@@ -1599,7 +1601,7 @@ async function startShim(): Promise<void> {
         const action = args.action ?? "list";
         if (action === "list") {
           const rows = queueRows(logDir, providerCaps(workers));
-          if (!rows.length) return workerText("nothing waiting");
+          if (!rows.length) return workerText(["nothing waiting", ...schedulerLines(schedulerView(logDir, workers))].join("\n"));
           let prov = "";
           const lines: string[] = [];
           for (const r of rows) {
@@ -1614,6 +1616,7 @@ async function startShim(): Promise<void> {
                 `  position ${r.position} of ${r.queued}`
             );
           }
+          lines.push(...schedulerLines(schedulerView(logDir, workers)));
           return workerText(lines.join("\n"));
         }
         if (!args.id) return workerError(new Error("id is required for next/up"));

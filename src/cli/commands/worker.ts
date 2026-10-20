@@ -23,6 +23,7 @@ import { assertPaneNotDisabled, checkPaneForWorker, closeEndedPanes, openFollowP
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
+import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killTree } from "../../workers/kill-tree.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
@@ -1142,6 +1143,7 @@ const queueCommand: CommandDef = {
               `  position ${r.position} of ${r.queued}`
           );
         }
+        for (const l of schedulerLines(schedulerView(dir, workers))) out(l);
         return;
       }
       if (!id) throw new Error(`usage: pai worker queue ${verb} <id>`);

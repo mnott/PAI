@@ -12,6 +12,13 @@ export interface RunLimit {
   deadlineAt: number;
   /** Minutes from launch to the deadline. */
   minutes: number;
+  /** Set for --deadline HH:MM: a wall-clock time, so waits do not move it. */
+  absolute?: true;
+}
+
+/** Slide a minutes-based limit by time spent waiting (queue); an absolute one stays. */
+export function extendLimit(limit: RunLimit, waitedMs: number): RunLimit {
+  return limit.absolute || waitedMs <= 0 ? limit : { ...limit, deadlineAt: limit.deadlineAt + waitedMs };
 }
 
 /** Local HH:MM → epoch ms: today, or tomorrow when already past. */
@@ -37,7 +44,7 @@ export function resolveLimit(
   }
   if (flags.deadline !== undefined) {
     const deadlineAt = parseDeadline(flags.deadline, now);
-    return { deadlineAt, minutes: Math.max(1, Math.round((deadlineAt - now.getTime()) / 60_000)) };
+    return { deadlineAt, minutes: Math.max(1, Math.round((deadlineAt - now.getTime()) / 60_000)), absolute: true };
   }
   const minutes = flags.maxMinutes ?? defaultMinutes;
   if (!Number.isFinite(minutes) || minutes < 0) throw new Error(`--max-minutes: expected a non-negative number, got ${minutes}`);
@@ -87,10 +94,20 @@ export function armDeadline(
   proc: { kill(sig?: NodeJS.Signals): boolean; exitCode: number | null; signalCode: NodeJS.Signals | null },
   limit: RunLimit,
   onFire: () => void,
-  graceMs: number = DEADLINE_GRACE_MS
+  graceMs: number = DEADLINE_GRACE_MS,
+  /** ms the run spent blocked (build-gate waits) so far; they push the deadline out. Absolute limits ignore it. */
+  blocked: () => number = () => 0,
+  now: () => number = Date.now
 ): () => void {
   let kill: NodeJS.Timeout | null = null;
-  const t = setTimeout(() => {
+  let t: NodeJS.Timeout;
+  const left = (): number => limit.deadlineAt + (limit.absolute ? 0 : blocked()) - now();
+  const arm = (): void => {
+    t = setTimeout(fire, Math.max(0, left()));
+  };
+  const fire = (): void => {
+    // a wait in progress moved the deadline since the timer was set
+    if (left() > 0) return arm();
     onFire();
     try {
       proc.kill("SIGTERM");
@@ -107,7 +124,8 @@ export function armDeadline(
       }
     }, graceMs);
     kill.unref();
-  }, Math.max(0, limit.deadlineAt - Date.now()));
+  };
+  arm();
   return () => {
     clearTimeout(t);
     if (kill) clearTimeout(kill);

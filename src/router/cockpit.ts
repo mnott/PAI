@@ -440,6 +440,8 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 export interface QueueProvider {
   provider: string;
   cap?: number;
+  /** Engine conversation-cache slots, when configured (slots used = running.length). */
+  conversationSlots?: number;
   running: Array<{ id: string; label: string; ageSec: number; now?: string; session: string; model: string }>;
   waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string }>;
 }
@@ -495,7 +497,7 @@ export function cockpitQueue(
   const row = (provider: string): QueueProvider => {
     let p = byProvider.get(provider);
     if (!p) {
-      p = { provider, cap: caps[provider], running: [], waiting: [] };
+      p = { provider, cap: caps[provider], ...(workers.providers[provider]?.conversationSlots !== undefined ? { conversationSlots: workers.providers[provider].conversationSlots } : {}), running: [], waiting: [] };
       byProvider.set(provider, p);
     }
     return p;

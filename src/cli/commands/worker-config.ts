@@ -369,7 +369,10 @@ const providersCapCommand: CommandDef = {
     { name: "PROVIDER", required: true, summary: "Provider name" },
     { name: "N", summary: "Parallel runs (>= 1), or `default` to unset" },
   ],
-  examples: ["pai worker providers cap local", "pai worker providers cap local 2", "pai worker providers cap local default"],
+  options: [
+    { name: "slots", type: "string", value: "N", summary: "Conversation-cache slots of the engine (writes conversationSlots; `default` removes it). Admitted workers stay one below it." },
+  ],
+  examples: ["pai worker providers cap local", "pai worker providers cap local 2", "pai worker providers cap local default", "pai worker providers cap local --slots 4"],
   seeAlso: ["pai worker providers", "pai worker queue"],
   run(ctx) {
     try {
@@ -380,7 +383,13 @@ const providersCapCommand: CommandDef = {
         cap = raw === "default" ? "default" : Number(raw);
         if (cap !== "default" && (!Number.isInteger(cap) || cap < 1)) throw new WorkersConfigError(`cap must be an integer >= 1 or "default", got "${raw}"`);
       }
-      const { effective } = setProviderCap(name, cap);
+      const slotsRaw = ctx.opts.slots as string | undefined;
+      let slots: number | "default" | undefined;
+      if (slotsRaw !== undefined) {
+        slots = slotsRaw === "default" ? "default" : Number(slotsRaw);
+        if (slots !== "default" && (!Number.isInteger(slots) || slots < 1)) throw new WorkersConfigError(`--slots must be an integer >= 1 or "default", got "${slotsRaw}"`);
+      }
+      const { effective } = setProviderCap(name, cap, undefined, slots);
       out(ok(`${name}: ${effective}`));
     } catch (e) {
       fail(e, "pai worker providers");

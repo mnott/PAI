@@ -463,7 +463,7 @@ function renderQueue(q){
   if(p.cap===1){
    var rows=p.running.map(function(r){return mk(r,p,false,true)}).concat(p.waiting.map(function(w){return mk(w,p,true,true)}));
    var mods={};p.running.concat(p.waiting).forEach(function(x){if(x.model)mods[x.model]=1});
-   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (cap 1)',["pos","worker","session","state","age / waited","now","move"],rows.concat(p.waiting.length?[]:['<tr><td colspan="7" class="dim" style="text-align:left">nothing waiting</td></tr>'])));
+   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (slots '+p.running.length+'/1'+(p.conversationSlots?', conversation slots '+p.conversationSlots:'')+')',["pos","worker","session","state","age / waited","now","move"],rows.concat(p.waiting.length?[]:['<tr><td colspan="7" class="dim" style="text-align:left">nothing waiting</td></tr>'])));
    return}
   p.running.forEach(function(r){(sess[r.session||"other"]=sess[r.session||"other"]||[]).push({k:p.provider+"/"+(r.model||"?"),h:mk(r,p,false,false)})});
   p.waiting.forEach(function(w){(sess[w.session||"other"]=sess[w.session||"other"]||[]).push({k:p.provider+"/"+(w.model||"?"),h:mk(w,p,true,false)})});

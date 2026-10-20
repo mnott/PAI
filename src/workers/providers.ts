@@ -40,7 +40,7 @@ import { clearCooldown, probeQuota, quotaSkipThreshold } from "./routing.js";
 import { workersLogDir } from "./paths.js";
 import { workersYamlLegacyNotice, workersYamlPath } from "./workers-config.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { LOCAL_DEFAULT_CAP, resolveCap } from "./capacity.js";
+import { admitCap, LOCAL_DEFAULT_CAP, resolveCap } from "./capacity.js";
 import { LOCAL_MECHANISM_LINE, probeLoopback, type PortCheck } from "./local-provider.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 
@@ -181,7 +181,12 @@ export function describeCap(p: WorkerProvider): { cap: number | undefined; sourc
 
 export function capText(p: WorkerProvider): string {
   const { cap, source } = describeCap(p);
-  return `cap ${cap ?? "unlimited"} (${source})`;
+  const slots = p.conversationSlots;
+  const admit = admitCap(p.maxConcurrent, slots, isLoopbackProvider(p));
+  return (
+    `cap ${cap ?? "unlimited"} (${source}), conversation slots ${slots ?? `${cap ?? "unlimited"} (default)`}` +
+    (slots !== undefined ? ` — admits ${admit ?? "unlimited"}` : "")
+  );
 }
 
 /**
@@ -191,7 +196,8 @@ export function capText(p: WorkerProvider): string {
 export function setProviderCap(
   name: string,
   cap: number | "default" | undefined,
-  configPath?: string
+  configPath?: string,
+  conversationSlots?: number | "default"
 ): { workers: WorkersConfig; effective: string } {
   const { raw, workers } = readWorkersSection(configPath);
   const p = workers.providers[name];
@@ -204,8 +210,13 @@ export function setProviderCap(
     if (cap === "default") delete p.maxConcurrent;
     else if (!Number.isInteger(cap) || cap < 1) throw new WorkersConfigError("cap must be an integer >= 1 (or \"default\")");
     else p.maxConcurrent = cap;
-    writeWorkersSection(raw, workers, configPath);
   }
+  if (conversationSlots !== undefined) {
+    if (conversationSlots === "default") delete p.conversationSlots;
+    else if (!Number.isInteger(conversationSlots) || conversationSlots < 1) throw new WorkersConfigError("slots must be an integer >= 1 (or \"default\")");
+    else p.conversationSlots = conversationSlots;
+  }
+  if (cap !== undefined || conversationSlots !== undefined) writeWorkersSection(raw, workers, configPath);
   return { workers, effective: capText(p) };
 }
 
