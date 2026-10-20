@@ -219,11 +219,11 @@ describe("resolveModelCapability", () => {
 });
 
 describe("classModelCapability", () => {
-  it("maps image to image, the cheap classes to fast, everything else to default", () => {
+  it("image only: no class implies a fast model — a cheap model is a tier entry, not a class rule", () => {
     expect(classModelCapability("image")).toBe("image");
     expect(classModelCapability("implement")).toBe("default");
-    expect(classModelCapability("spotcheck")).toBe("fast");
-    expect(classModelCapability("simple")).toBe("fast");
+    expect(classModelCapability("spotcheck")).toBe("default");
+    expect(classModelCapability("simple")).toBe("default");
     expect(classModelCapability(undefined)).toBe("default");
     expect(classModelCapability("made-up-class")).toBe("default");
   });

@@ -118,7 +118,8 @@ export function parseEntry(entry: string): { provider: string; model: string | n
 
 export const entryProvider = (entry: string): string => parseEntry(entry).provider;
 
-function targetList(t: ClassTarget | undefined): string[] {
+/** The routing list a class target stores (a plain target is a list of one). */
+export function targetList(t: ClassTarget | undefined): string[] {
   if (t === undefined) return [];
   if (typeof t === "string") return [t];
   if (t.models?.length) return [...t.models];
@@ -251,6 +252,62 @@ export function migrateToTiers(config: { classes: Record<string, ClassTarget>; t
   config.tiers = tiers;
   for (const r of LEGACY_ROLES) delete classes[r];
   return true;
+}
+
+/**
+ * One-time migration of legacy per-class pins (`workers.classes` entries that
+ * name a route — a plain target, or an object with `provider`/`models`) into
+ * the tier lists, so the tier list is the only routing source for every class:
+ * the pin becomes its tier's first entry (an entry the tier already lists is
+ * left in place, not duplicated), the class key is dropped from `classes`; a
+ * class target carrying only constraints (mcp, cost tier, tags, order) stays.
+ * A class no tier lists keeps its pin — it is that class's own routing list,
+ * not a legacy leak. Mutates both; returns the migrated `class=target`
+ * descriptions (empty when nothing moved). No-op when no tier covers the pin.
+ */
+export function migrateClassPins(classes: Record<string, ClassTarget>, tiers: TierDef[]): string[] {
+  if (!tiers.length) return [];
+  const moved: string[] = [];
+  for (const cls of Object.keys(classes)) {
+    // only a class a tier explicitly serves leaks: the default tier standing in
+    // for an unlisted class must not swallow a custom class's own list
+    const tier = tiers.find((t) => t.id === cls || t.classes?.includes(cls));
+    if (!tier) continue;
+    const t = classes[cls];
+    const list = targetList(t);
+    if (!list.length) continue;
+    if (!list.every((e) => tier.models.includes(e))) tier.models = [...list, ...tier.models.filter((e) => !list.includes(e))];
+    const rest = targetForRoute(t, []);
+    if (rest === undefined || !Object.keys(rest).length) delete classes[cls];
+    else classes[cls] = rest;
+    moved.push(`${cls}=${list.join(">")}`);
+  }
+  return moved;
+}
+
+/**
+ * The retired three-role table's keys (workers.classes keys orchestrator /
+ * worker / quick) folded into the class -> tier mapping: a tier's `classes`
+ * gain the role's classes when the tier serves any of them. The role keys
+ * themselves are dropped by migrateToTiers when it builds the tiers; a config
+ * that already has tiers (so migrateToTiers no-ops) is covered here. Mutates
+ * `classes` and the tiers; returns whether anything changed.
+ */
+export function foldLegacyRoles(classes: Record<string, ClassTarget>, tiers: TierDef[]): string[] {
+  const folded: string[] = [];
+  for (const role of LEGACY_ROLES) {
+    if (!(role in classes)) continue;
+    const list = targetList(classes[role]);
+    delete classes[role];
+    for (const tier of tiers) {
+      if (!tier.classes?.some((c) => LEGACY_ROLE_CLASSES[role].includes(c))) continue;
+      if (list.length && !list.every((e) => tier.models.includes(e))) tier.models = [...list, ...tier.models.filter((e) => !list.includes(e))];
+      const added = LEGACY_ROLE_CLASSES[role].filter((c) => !tier.classes!.includes(c));
+      if (added.length) tier.classes = [...tier.classes, ...added];
+    }
+    folded.push(`${role}=${list.join(">") || "(no list)"}`);
+  }
+  return folded;
 }
 
 /** A session's overrides keyed by the retired role or class names as tier-keyed ones (first of a tier's keys wins); keys of no retired name stay. */

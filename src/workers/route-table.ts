@@ -13,7 +13,6 @@
 
 import {
   ANTHROPIC_NATIVE,
-  classModelCapability,
   getProviderOrNative,
   isLocalProvider,
   nativeAnthropicProvider,
@@ -235,7 +234,9 @@ export function entryLabel(workers: WorkersConfig, tier: TierDef, entry: string)
   const p = providerOf(workers, provider);
   if (p && isLocalProvider(p.baseUrl)) return `local ${provider}`;
   if (!p) return entry;
-  const shown = model ? (p.models[model] ?? model) : resolveModelCapability(p, classModelCapability(tier.classes?.[0]));
+  // an unnamed entry serves the provider's default model; a cheap model for a
+  // class is a tier entry (`glm/fast`), never a class rule
+  const shown = model ? (p.models[model] ?? model) : resolveModelCapability(p, "default");
   return `${provider}/${shown}`;
 }
 

@@ -466,10 +466,10 @@ export function adoptInitModel(status: Pick<WorkerStatus, "model">, e: StreamEve
 }
 
 /**
- * The model a run goes out on: an explicit `--model` wins; else the class
- * target's alias ("glm/fast") names the capability; else the capability the
- * class implies (image → image model, spotcheck/simple → fast, everything
- * else → default), resolved against the provider's model table. The built-in
+ * The model a run goes out on: an explicit `--model` wins; else the routing
+ * list entry's alias ("glm/fast") names the capability; else the capability
+ * the class implies (image → image model, every other class → default),
+ * resolved against the provider's model table. The built-in
  * anthropic provider resolves through the same table as any other, so a
  * worker never inherits the orchestrator session's model.
  */

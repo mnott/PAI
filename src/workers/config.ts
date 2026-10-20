@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
-import { migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
+import { foldLegacyRoles, migrateClassPins, migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
 
 // ---------------------------------------------------------------------------
@@ -375,26 +375,16 @@ export function isModelCapability(v: string): v is ModelCapability {
 }
 
 /**
- * Which model capability a class runs on when its target names no alias: the
- * image class uses the image model, the cheap classes (spotcheck, simple) the
- * fast model, every other class the provider default. A provider without a
- * fast model falls back to its default (resolveModelCapability).
+ * The image class runs on a provider's image model; every other class runs on
+ * the model its routing list's entry names (route-lists.ts), else the
+ * provider's worker_model. There is no per-class fast-model rule: the cheap
+ * classes (spotcheck, simple) get a cheap model only when their tier's list
+ * says so (a `glm/fast` entry, or a tier `fast` class option naming the tier
+ * entry's fast alias). A provider without a fast model falls back to its
+ * default (resolveModelCapability).
  */
-const CLASS_MODEL_CAPABILITY: Record<WorkerClassName, ModelCapability> = {
-  draft: "default",
-  plan: "default",
-  implement: "default",
-  review: "default",
-  research: "default",
-  spotcheck: "fast",
-  simple: "fast",
-  complex: "default",
-  image: "image",
-};
-
-/** Capability for a run's class (default when unset or not a standard class). */
 export function classModelCapability(className?: string): ModelCapability {
-  return (className && CLASS_MODEL_CAPABILITY[className as WorkerClassName]) || "default";
+  return className === "image" ? "image" : "default";
 }
 
 /**
@@ -1395,7 +1385,10 @@ function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
  * cacheKeepaliveSecs, fallback, enabled, logDir) always comes from the main
  * config (JSON or YAML).
  */
-export function readWorkersSection(path: string = CONFIG_FILE): {
+export function readWorkersSection(
+  path: string = CONFIG_FILE,
+  onWarn: (msg: string) => void = (msg) => process.stderr.write(`pai worker: ${msg}\n`)
+): {
   raw: Record<string, unknown>;
   workers: WorkersConfig;
 } {
@@ -1417,6 +1410,16 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
   migrateClassRoutes(workers.classes);
   migrateLegacyChains((raw.workers as { chains?: unknown } | undefined)?.chains, workers.classes);
   migrateToTiers(workers);
+  // role keys left over a config that already has tiers fold into the class ->
+  // tier mapping (their list into the served tier) and drop — they must not
+  // reach the pin migration as a "pin"
+  const folded = foldLegacyRoles(workers.classes, workers.tiers);
+  // a legacy per-class pin (workers.classes entry naming a route) moves into its
+  // tier's list — the tier list is the only routing source for every class; the
+  // next write stores only `tiers`
+  const moved = migrateClassPins(workers.classes, workers.tiers);
+  if (folded.length || moved.length)
+    onWarn(`legacy routing migrated into the tier lists: ${[...folded, ...moved].join(", ")} (pai worker route)`);
   return { raw, workers };
 }
 

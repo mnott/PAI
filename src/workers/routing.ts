@@ -43,7 +43,7 @@ import {
   resolveCapability,
   isLocalProvider,
 } from "./config.js";
-import { classRoute, entryProvider, parseEntry } from "./route-lists.js";
+import { classRoute, entryProvider, parseEntry, targetList } from "./route-lists.js";
 import {
   type BudgetMap,
   type BudgetReading,
@@ -319,10 +319,9 @@ export function resolveTarget(
     }
   }
 
-  // the session the run was spawned from: its provider, the model tier from
-  // the class (spotcheck/simple fast, the rest default) — the class map's
-  // provider is ignored. A walled (cooldown) session provider falls through
-  // to the configured routing below.
+  // the session the run was spawned from: its provider, the model its worker_model
+  // names — no class rule picks a tier here. A walled (cooldown) session
+  // provider falls through to the configured routing below.
   const session = detectSessionProvider(config, {
     env: opts.sessionEnv,
     home: opts.home,
@@ -333,12 +332,11 @@ export function resolveTarget(
   if (session) {
     const p = getProviderOrNative(config, session.name);
     const state = readRoutingState(logDir);
-    const capability = classModelCapability(opts.className);
     const sessionTarget = (name: string, provider: WorkerProvider, routeWhy: string, switchReason?: string): ResolvedTarget => ({
       providerName: name,
       provider,
       // an unnamed tier lets the provider's worker_model decide (resolveRunModel)
-      modelAlias: capability === "fast" ? "fast" : provider.workerModel === "fast" ? null : "default",
+      modelAlias: provider.workerModel === "fast" ? null : "default",
       classMcp: cls?.mcp ?? null,
       via: "session",
       routeWhy,
@@ -371,10 +369,22 @@ export function resolveTarget(
     // everything full: fall through to the configured routing as before
   }
 
-  // the class's routing list (route-lists.ts): the first entry that qualifies serves; a local entry is
-  // only ever pinned by routeRun (policy.ts), which knows whether its server runs
-  const list = opts.className ? classRoute(config.tiers ?? [], opts.className) : [];
-  const listed = list.length > 0;
+  // the class's routing list (route-lists.ts): its tier's list, or a legacy
+  // per-class pin when no tier covers the class (a custom class's own list).
+  // The first entry that qualifies serves; a local entry is only ever pinned
+  // by routeRun (policy.ts), which knows whether its server runs.
+  const tiers = config.tiers ?? [];
+  const cn = opts.className;
+  const tierCovers = cn !== undefined && tiers.some((t) => t.id === cn || t.classes?.includes(cn));
+  const legacyPin = cn !== undefined && !tierCovers ? config.classes[cn] : undefined;
+  const legacyList = legacyPin !== undefined && legacyPin !== null ? targetList(legacyPin) : [];
+  // a legacy pin of one provider is a plain class target, walked with the
+  // class's own constraints (cooldown, budget, cost tier) like before; a real
+  // routing list is walked entry by entry
+  const legacyPlain = typeof legacyPin === "string" ? legacyPin : legacyPin?.provider;
+  const legacyModels = legacyPin !== undefined && legacyPin !== null && typeof legacyPin !== "string" ? legacyPin.models : undefined;
+  const list = cn !== undefined ? (tierCovers ? classRoute(tiers, cn) : legacyList) : [];
+  const listed = list.length > 0 && legacyPlain === undefined && legacyModels === undefined;
   if (opts.className && listed) {
     const state = readRoutingState(logDir);
     const budgets: BudgetMap | undefined = config.routing.policy !== "order" ? budgetCache.snapshot() : undefined;
@@ -535,10 +545,11 @@ export interface CapabilityRunResolution {
 
 /**
  * Whether a run should resolve through `resolveCapability` instead of
- * `resolveTarget`: an explicit `--capability` always does. A `--class`
- * whose implied capability is not "default" (e.g. `image`) does too, but
- * only when the class itself names no provider — a class already pinned to
- * one (`image: glm/image`) always wins unchanged, same as any other class.
+ * `resolveTarget`: an explicit `--capability` always does. The `image` class
+ * does too, but only when the class itself names no provider — a class
+ * already pinned to one (`image: glm/image`) always wins unchanged, same as
+ * any other class. No other class implies a capability: the tier list names
+ * the model, cheap classes included.
  */
 export function capabilityForRun(
   config: WorkersConfig,
