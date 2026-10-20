@@ -129,7 +129,10 @@ import { detectSessionName } from "./session-name.js";
 import { getProfile, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
 import { runImageCapability } from "./engines/image.js";
-import { headlessAllowed, openPaneForWorker, openVerifiedPane, paneBackend, panePlacement, resolveHostSession } from "./pane.js";
+import { headlessAllowed, paneBackend, resolveHostSession } from "./pane.js";
+import { launchPane, noTerminalReasons } from "./pane-launch.js";
+import type { OwnedPane } from "./pane-exec.js";
+import { paneTitle } from "./pane-title.js";
 import { assertChildAllowed, checkOrphanedChildren, isWorkerId, launchParent } from "./tree.js";
 import { deliverHandoff, isHandoffMessage } from "./handoff.js";
 import {
@@ -946,7 +949,11 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         await returnControlsIfHeld(logDir, workerId);
         return pooledRc;
       }
-      rc = await executeRun(execArgs);
+      try {
+        rc = await executeRun(execArgs);
+      } finally {
+        releasePane(execArgs.id); // a run that never reached its command leaves no pane waiting
+      }
     }
     await returnControlsIfHeld(logDir, workerId);
     return rc;
@@ -1452,16 +1459,22 @@ async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof
   }
 }
 
-/** Why a worker's pane could not be opened this process, per worker id: announcePane records it in status.pane. */
-const noPaneReasons = new Map<string, string>();
+/** The panes opened FIRST for the runs of this process, per worker id, until the run's command starts in them. */
+const paneHandles = new Map<string, OwnedPane>();
+
+/** The run will not start its command (it ended or fell through first): its pane closes. */
+export function releasePane(wid: string | undefined): void {
+  if (!wid) return;
+  paneHandles.get(wid)?.cancel();
+  paneHandles.delete(wid);
+}
 
 /**
- * Open and verify the worker's pane before it starts. Never refuses: a pane that cannot be opened (no tmux or
- * iTerm2, a background session with no terminal, a failed split, verification that never confirms) is logged
- * (WORKER-NO-PANE ledger line, stderr) and the worker starts without one; its status carries the reason, the
- * pane auditor shows NO PANE, and `pai worker pane <id>` opens one later. Skipped (false, no failure) for
- * headlessAllowed() (a worker's own child, the operator's override), `dryRun` (--print-cmd) and an explicit
- * noPane. Resolves true when the pane exists and runs the worker.
+ * Open the worker's pane FIRST: the pane's command is `pai pane exec <id>`, which will own the claude process
+ * (see pane-exec.ts). Resolves true when the pane exists and waits for the command (spawnOwned starts it in
+ * there). false, with no failure: no terminal at all (recorded "no terminal"), `dryRun` (--print-cmd), an
+ * explicit noPane, the operator's override, or workers.pane.enabled false; the command then runs directly.
+ * A pane that cannot be opened for any other reason rejects: the command does not run unseen.
  */
 export async function requireVisiblePane(
   logDir: string,
@@ -1472,24 +1485,42 @@ export async function requireVisiblePane(
   dryRun: boolean,
   ledger: string
 ): Promise<boolean> {
-  if (dryRun) return false;
+  if (dryRun || noPane || !config.pane.enabled || process.env.PAI_WORKER_AUTOPANE === "0") return false;
   const allow = headlessAllowed();
   if (allow) {
     process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
     return false;
   }
-  if (noPane) return false;
+  if (paneHandles.has(wid)) return true;
   try {
-    const where = await openVerifiedPane(logDir, config, wid, term);
-    process.stderr.write(`[pai worker] pane verified for ${wid}: ${where}\n`);
+    const pane = await launchPane({ logDir, config, id: wid, kind: "worker", term });
+    if (!pane) return false;
+    paneHandles.set(wid, pane);
+    process.stderr.write(`[pai worker] pane opened for ${wid}: ${pane.where}\n`);
     return true;
   } catch (e) {
     const reason = (e instanceof Error ? e.message : String(e)).slice(0, 300);
-    noPaneReasons.set(wid, reason);
     appendLedger(ledger, "WORKER-NO-PANE", { id: wid, reason });
-    process.stderr.write(`[pai worker] ${wid} starts without a pane: ${reason}\n`);
-    return false;
+    process.stderr.write(`[pai worker] ${wid} not started: its pane could not be opened: ${reason}\n`);
+    throw new Error(`pane could not be opened: ${reason}`);
   }
+}
+
+/**
+ * Start a run's command: inside the pane opened for it (the wrapper's child, output rendered there), or
+ * directly when no pane owns this run (no terminal, interactive, override).
+ */
+async function spawnOwned(
+  wid: string,
+  cmd: string[],
+  o: { env: NodeJS.ProcessEnv; cwd: string; stdio: ["pipe" | "ignore", "pipe", "pipe" | "inherit"] | "inherit"; render?: "plain" | "stream"; title: string }
+): Promise<ReturnType<typeof spawn>> {
+  const pane = paneHandles.get(wid);
+  if (!pane || o.stdio === "inherit") return spawn(cmd[0], cmd.slice(1), { env: o.env, cwd: o.cwd, stdio: o.stdio });
+  paneHandles.delete(wid);
+  const proc = (await pane.start({ argv: cmd, cwd: o.cwd, env: o.env as Record<string, string | undefined>, stdin: o.stdio[0] === "pipe" ? "pipe" : "ignore", render: o.render ?? "plain", title: o.title })).asChild();
+  if (o.stdio[2] === "inherit") proc.stderr?.pipe(process.stderr);
+  return proc;
 }
 
 /** status.last for a claude start that died before any model event: its stderr, not a bare "starting". */
@@ -1499,10 +1530,9 @@ export function preEventFailure(rc: number, turns: number, stderrTail: string): 
 }
 
 /**
- * Follow pane, made observable on stderr (stdout stays pure JSON for
- * `--output-format json`): one line naming the outcome — opened, skipped
- * (with reason), or failed (with reason, alongside the existing PANE-FAIL
- * ledger line). Fire-and-forget, never blocks the worker.
+ * Records, in the status, why a run has no pane of its own (stdout stays pure JSON for `--output-format
+ * json`): no terminal, --no-pane, config, the operator's override. A run with a pane is marked exec. Never
+ * opens a pane: panes are opened by requireVisiblePane, before the command starts.
  */
 export async function announcePane(
   logDir: string,
@@ -1516,33 +1546,16 @@ export async function announcePane(
   const setPane = (p: NonNullable<WorkerStatus["pane"]>): void => {
     if (status) status.pane = p;
   };
-  const skip = !noPane
-    ? !config.pane.enabled
-      ? "workers.pane.enabled is false"
-      : process.env.PAI_WORKER_AUTOPANE === "0"
-        ? "PAI_WORKER_AUTOPANE=0"
-        : paneBackend(process.env, process.platform, term) === "none"
-          ? "no tmux ($TMUX) or iTerm2 (ITERM_SESSION_ID) here"
-          : null
-    : "--no-pane";
-  const failed = noPaneReasons.get(wid);
-  if (skip || failed) {
-    const why = failed ?? skip ?? "";
-    process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
-    setPane({ opened: false, reason: why, ...(failed ? { failed: true } : {}) });
+  void logDir;
+  void term;
+  if (paneHandles.has(wid)) {
+    setPane({ opened: true, exec: true });
     return;
   }
-  try {
-    const r = await openPaneForWorker(logDir, config, wid, term);
-    const suffix = r.session ? ` (iTerm session ${r.session})` : "";
-    process.stderr.write(`[pai worker] pane opened for ${wid}${suffix}\n`);
-    setPane({ opened: true, ...(r.session ? { session: r.session } : {}) });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[pai worker] no pane for ${wid}: ${message.slice(0, 200)}\n`);
-    appendLedger(ledger, "PANE-FAIL", { id: wid, error: message.slice(0, 200) });
-    setPane({ opened: false, reason: message.slice(0, 200) });
-  }
+  const why = noTerminalReasons.get(wid) ?? (noPane ? "--no-pane" : !config.pane.enabled ? "workers.pane.enabled is false" : process.env.PAI_WORKER_AUTOPANE === "0" ? "PAI_WORKER_AUTOPANE=0" : headlessAllowed() ?? "no pane owns this run");
+  process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
+  setPane({ opened: false, reason: why });
+  void ledger;
 }
 
 export interface ExecuteArgs {
@@ -1595,6 +1608,8 @@ export interface ExecuteArgs {
   panePrepared?: { verified: boolean };
   /** The follow pane opening beside admission and the claim (gateStart); settles once panePrepared is set. Never rejects. */
   paneOpening?: Promise<void>;
+  /** The pane could not be opened (not a missing terminal): executeRun throws it, the run does not start unseen. */
+  paneError?: Error;
   /** Ms the pane took to open and verify (off the critical path), ms spent in the capacity + stagger gates, epoch ms a fresh spawn began. */
   setupPaneMs?: number;
   admissionMs?: number;
@@ -1650,6 +1665,13 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
     return null;
   }
+  // the pane rule wins over the pool: a claimed spare would run outside a pane that owns it, so with a terminal
+  // the run spawns fresh through its pane
+  if (!a.noPane && !headlessAllowed() && paneBackend(process.env, process.platform, (await resolveHostSession()).term) !== "none") {
+    if (claim) a.spareMiss = "pane rule: a pane owns every run";
+    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", { id: a.id ?? "-", provider: a.target.providerName, reason: "pane rule: a pane owns every run" });
+    return null;
+  }
   const wid = a.id ?? newWorkerId();
   // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this.
   // A spare claim starts the task first and opens the pane alongside it: the pane never delays the task.
@@ -1664,7 +1686,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     a.setupPaneMs = Date.now() - paneT0;
     const status = loadStatus(a.logDir, wid);
     if (status) {
-      if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
+      if (verified) status.pane = { opened: true, exec: true };
       else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
       saveStatus(a.logDir, status);
     } else if (!verified) {
@@ -1889,10 +1911,13 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
     a.panePrepared = { verified };
     a.setupPaneMs = Date.now() - paneT0;
-    if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
+    if (verified) status.pane = { opened: true, exec: true };
     else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
     saveStatus(a.logDir, status);
-  })().catch(() => undefined);
+  })().catch((e) => {
+    a.paneError = e instanceof Error ? e : new Error(String(e));
+    markStartFailed(a.logDir, status, a.paneError);
+  });
   const gateT0 = Date.now();
   await runGates(a, wid, status);
   a.admissionMs = Date.now() - gateT0;
@@ -1931,6 +1956,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
   await a.paneOpening;
+  if (a.paneError) throw a.paneError;
   const paneVerified = a.panePrepared
     ? a.panePrepared.verified
     : headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
@@ -2183,16 +2209,18 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // Follow pane: headless only (interactive runs ARE the chat pane). Verified
   // above when the gate applies; best effort otherwise.
-  if (paneVerified) status.pane = { opened: true, placement: panePlacement(wid) };
+  if (paneVerified) status.pane = { opened: true, exec: true };
   else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   let proc: ReturnType<typeof spawn>;
   try {
     if (headless && !a.gated) await runGates(a, wid, status);
-    proc = spawn(cmd[0], cmd.slice(1), {
+    proc = await spawnOwned(wid, cmd, {
       env,
       cwd: worktree?.dir ?? cwd,
       stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
+      render: "stream",
+      title: paneTitle(label, target.providerName),
     });
   } catch (e) {
     markStartFailed(logDir, status, e);
@@ -2829,14 +2857,15 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     });
   }
 
-  if (paneVerified) status.pane = { opened: true, placement: panePlacement(wid) };
+  if (paneVerified) status.pane = { opened: true, exec: true };
   else void announcePane(logDir, config, wid, term, noPane, ledger, status);
 
   const t0 = Date.now();
-  const proc = spawn("codex", buildCodexArgs(prompt, parsed.callerModel ? undefined : model), {
+  const proc = await spawnOwned(wid, ["codex", ...buildCodexArgs(prompt, parsed.callerModel ? undefined : model)], {
     env,
     cwd: worktree?.dir ?? cwd,
     stdio: ["ignore", "pipe", "inherit"],
+    title: paneTitle(label, target.providerName),
   });
 
   const fold = emptyCodexResult();
