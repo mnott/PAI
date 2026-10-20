@@ -158,7 +158,51 @@ providers:
 mcp_sets:
   desktop: [clickr]
 
-# The standard task classes live in the main config's shipped defaults
-# (defaults/config.yaml's workers.classes); a user's workers.yaml classes
-# replaces that map wholesale when it names any class.
+# The default delegation table: one row per tier, each an ordered model list
+# (the first available entry serves, the rest is the fallback order), plus the
+# class -> tier mapping in each tier's `classes` key. A user's workers.yaml
+# `tiers:` replaces this list wholesale (arrays replace — no concatenation);
+# edit a row with `pai worker route set <tier|class> <provider/model,...>`
+# (it writes the user file) or write your own `tiers:` block.
+tiers:
+  - id: t0
+    name: Session
+    description: The interactive session itself; PAI starts sessions on it.
+    models:
+      - anthropic/opus
+      - glm/glm-5.3
+    session: true
+    note: you; cloud before local only for context width or reasoning
+  - id: t1
+    name: Orchestrator
+    description: Splits a job, plans and reviews; its workers implement the parts.
+    models:
+      - anthropic/sonnet
+      - glm/glm-5.3-flash
+    classes:
+      - orchestrate
+      - plan
+    note: splits and plans; cloud before local only for reasoning
+  - id: t2
+    name: Worker
+    description: Implements the parts and runs quick checks.
+    models:
+      - local
+      - anthropic/sonnet
+      - glm/glm-5.3-flash
+    classes:
+      - implement
+      - research
+      - draft
+      - review
+      - complex
+      - simple
+      - spotcheck
+    default: true
+    note: implements; local first, cloud before local only for context width
+
+# The class -> tier mapping lives in the tiers' `classes` keys above (the
+# standard classes: draft, plan, implement, review, research, spotcheck,
+# simple, complex, image). A user's `classes:` map replaces the shipped map
+# wholesale when it names any class; routing itself reads the tier lists.
 classes: {}

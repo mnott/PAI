@@ -430,8 +430,11 @@ export const workerProvidersCommand: CommandDef = {
 function printClasses(): void {
   const { workers } = readWorkersSection();
   const entries = Object.entries(workers.classes);
-  if (!entries.length) return void out(dim("  no classes set — runs use the active provider (or auto routing)"));
+  // the delegation table (tiers) carries the class -> tier mapping
+  const mapped = workers.tiers.flatMap((t) => (t.classes ?? []).map((cls) => [cls, t] as const));
+  if (!entries.length && !mapped.length) return void out(dim("  no classes set — runs use the active provider (or auto routing)"));
   for (const [cls, target] of entries) out(`  ${cls.padEnd(12)} ${classTargetText(target)}`);
+  for (const [cls, t] of mapped) if (!(cls in workers.classes)) out(`  ${cls.padEnd(12)} ${t.id} (${t.name}): ${t.models.join(" > ")}`);
 }
 
 const classListCommand: CommandDef = {

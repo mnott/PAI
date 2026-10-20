@@ -34,6 +34,7 @@ import {
   nativeAnthropicModels,
   WorkersConfigError,
   expandHome,
+  isLocalProvider,
   isModelCapability,
   parseCapabilitiesValue,
   parseClassesValue,
@@ -366,9 +367,17 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     );
   }
 
+  // a `local` placeholder entry in a tier's models resolves to the configured
+  // local provider: the `local:` key of the merged root (the user's file or the
+  // shipped defaults), else the first enabled local provider; none configured
+  // drops the entry
+  const localPref = r.local === undefined || r.local === null ? null : String(r.local);
+  const localProvider =
+    localPref ??
+    (Object.entries(providers).find(([, p]) => p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl))?.[0] ?? null);
   let tiers: TierDef[] = [];
   try {
-    tiers = parseTiersValue(r.tiers, "tiers");
+    tiers = parseTiersValue(r.tiers, "tiers", localProvider);
   } catch (e) {
     withLine(doc, ["tiers"], yamlPath, e);
   }

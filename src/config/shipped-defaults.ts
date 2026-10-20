@@ -63,7 +63,15 @@ export function mergeYamlUnderDefaults(defaultsText: string, userText: string): 
  *  alone. */
 export function effectiveWorkersYamlDoc(userPath: string): Document {
   if (!existsSync(userPath)) return parseDocument(readFileSync(shippedWorkersDefaultsPath(), "utf8"));
-  return mergeYamlUnderDefaults(readFileSync(shippedWorkersDefaultsPath(), "utf8"), readFileSync(userPath, "utf8"));
+  const userText = readFileSync(userPath, "utf8");
+  const doc = mergeYamlUnderDefaults(readFileSync(shippedWorkersDefaultsPath(), "utf8"), userText);
+  // a file that still routes through the retired `classes` map and names no
+  // tiers of its own keeps its routing: the shipped table must not shadow the
+  // tiers that map migrates into
+  const user = parseDocument(userText);
+  const classes = user.get("classes");
+  if (!user.has("tiers") && isMap(classes) && classes.items.length) doc.delete("tiers");
+  return doc;
 }
 
 /** The directory the shipped defaults files live in: src/config/defaults/

@@ -39,8 +39,27 @@ export interface TierDef {
   escalation?: Record<string, unknown>;
 }
 
+/**
+ * Resolve the `local` placeholder entry — the shipped defaults' way of naming
+ * "the running local tier, whatever it is called" without hard-coding a model
+ * name: the `local:` preference (workers.yaml's `local:` key) when set, else
+ * the first enabled local provider. Returns null when no local provider is
+ * configured, so the entry drops out of the list.
+ */
+export function resolveLocalEntry(
+  entry: string,
+  local: string | null
+): string | null {
+  if (entry !== "local") return entry;
+  return local;
+}
+
 /** Parse a `tiers` value (JSON or YAML); throws a readable message naming the field. */
-export function parseTiersValue(v: unknown, path = "tiers"): TierDef[] {
+export function parseTiersValue(
+  v: unknown,
+  path = "tiers",
+  local: string | null = null
+): TierDef[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) throw new Error(`${path}: must be a list of tiers`);
   const seen = new Set<string>();
@@ -62,7 +81,11 @@ export function parseTiersValue(v: unknown, path = "tiers"): TierDef[] {
     if (!id) throw new Error(`${at}.id: is required`);
     if (seen.has(id)) throw new Error(`${at}.id: duplicate tier "${id}"`);
     seen.add(id);
-    const models = list("models") ?? [];
+    // a `local` placeholder entry resolves to the configured local provider
+    // (null: none configured — the entry drops out of the list)
+    const models = (list("models") ?? [])
+      .map((e) => resolveLocalEntry(e, local))
+      .filter((e): e is string => e !== null);
     if (!models.length) throw new Error(`${at}.models: tier "${id}" needs at least one model`);
     const esc = o.escalation;
     if (esc !== undefined && (typeof esc !== "object" || esc === null || Array.isArray(esc))) throw new Error(`${at}.escalation: must be a mapping`);
