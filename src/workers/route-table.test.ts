@@ -1,5 +1,5 @@
 /**
- * route-table.test.ts — the per-class routing table: migration of the retired
+ * route-table.test.ts — the three-role routing table (Orchestrator / Worker / Quick check): migration of the retired
  * rank chains, routing that reads element 0 and falls through in order (a
  * local entry that is not running is skipped), the policy modes rewriting the
  * lists, validation and the round trip on a temp config copy (never the live
@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readWorkersSection } from "./config.js";
-import { applyRouteOverrides, classRoute, listForPolicy, migrateLegacyChains } from "./route-lists.js";
+import { CLASSES_OF_ROLE, ROLE_OF_CLASS, applyRouteOverrides, classRoute, listForPolicy, migrateClassRoutes, migrateLegacyChains, roleOf } from "./route-lists.js";
 import { readProfiles, type SessionProfile } from "./session-profile-store.js";
 import type { WorkersConfig } from "./config.js";
 import { applyPolicyToRoutes, clearSessionRoute, setSessionRoute, routeChoices, routeRows, routeText, setRoute, validateRoute } from "./route-table.js";
@@ -67,10 +67,10 @@ function liveShaped(): string {
 describe("migration from the rank chains", () => {
   it("the workers chain becomes every worker class's list, the orchestrator chain the orchestrate row", () => {
     const { workers } = readWorkersSection(liveShaped());
-    // a provider the class already served keeps its alias; plan keeps its own target
+    // a provider the class already served keeps its alias; the role takes its first class's list
     expect(classRoute(workers.classes, "implement")).toEqual(["gyro-m", "anthropic", "glm/fast", "kimi"]);
     expect(classRoute(workers.classes, "spotcheck")).toEqual(["gyro-m", "anthropic", "glm/fast", "kimi"]);
-    expect(classRoute(workers.classes, "research")).toEqual(["gyro-m", "anthropic", "glm", "kimi"]);
+    expect(classRoute(workers.classes, "research")).toEqual(["gyro-m", "anthropic", "glm/fast", "kimi"]);
     expect(classRoute(workers.classes, "plan")).toEqual(["glm"]);
     expect(classRoute(workers.classes, "orchestrate")).toEqual(["glm"]);
   });
@@ -97,19 +97,85 @@ describe("migration from the rank chains", () => {
   });
 });
 
+describe("roles", () => {
+  it("every class maps to its role; unknown classes are Worker", () => {
+    expect(Object.fromEntries(Object.keys(ROLE_OF_CLASS).map((c) => [c, roleOf(c)]))).toEqual({
+      orchestrate: "orchestrator", plan: "orchestrator",
+      implement: "worker", research: "worker", draft: "worker", review: "worker", complex: "worker",
+      simple: "quick", spotcheck: "quick",
+    });
+    expect(CLASSES_OF_ROLE).toEqual({ orchestrator: ["orchestrate", "plan"], worker: ["implement", "research", "draft", "review", "complex"], quick: ["simple", "spotcheck"] });
+    expect(roleOf("brand-new")).toBe("worker");
+    expect(roleOf("quick")).toBe("quick");
+    expect(roleOf("toString")).toBe("worker");
+  });
+
+  it("migrates the live-shaped per-class lists: the role's first class is the role list, the class lists are dropped", () => {
+    const classes: Record<string, any> = {
+      orchestrate: { provider: "anthropic", models: ["anthropic/opus", "anthropic/sonnet", "glm/glm-5.3", "glm/glm-5.3-flash", "gyro-m"] },
+      plan: "glm",
+      implement: { provider: "gyro-m", models: ["gyro-m", "anthropic/sonnet", "glm/glm-5.3-flash", "kimi"] },
+      research: { provider: "glm", models: ["glm/glm-5.3", "kimi"] },
+      review: "anthropic",
+      simple: { provider: "gyro-m", models: ["gyro-m", "anthropic/haiku", "glm/glm-5.3-flash", "kimi"] },
+      spotcheck: "glm/fast",
+      mine: { maxCostTier: 2 },
+    };
+    expect(migrateClassRoutes(classes)).toBe(true);
+    expect(classRoute(classes, "orchestrate")).toEqual(["anthropic/opus", "anthropic/sonnet", "glm/glm-5.3", "glm/glm-5.3-flash", "gyro-m"]);
+    expect(classRoute(classes, "worker")).toEqual(["gyro-m", "anthropic/sonnet", "glm/glm-5.3-flash", "kimi"]);
+    expect(classRoute(classes, "spotcheck")).toEqual(["gyro-m", "anthropic/haiku", "glm/glm-5.3-flash", "kimi"]);
+    for (const c of ["orchestrate", "plan", "implement", "research", "review", "simple", "spotcheck"]) expect(classes[c]).toBeUndefined();
+    expect(classes.mine).toEqual({ maxCostTier: 2 });
+    expect(migrateClassRoutes(classes)).toBe(false);
+  });
+
+  it("migrates through the config read and persists the three lists on the next write", () => {
+    const path = join(dir, `config-${Math.random().toString(36).slice(2)}.yaml`);
+    writeFileSync(path, JSON.stringify({ workers: { enabled: true, providers: PROVIDERS, logDir: join(dir, "logs"), classes: {
+      orchestrate: { provider: "anthropic", models: ["anthropic/opus", "anthropic/sonnet", "glm/glm-5.3", "glm/glm-5.3-flash", "gyro-m"] },
+      implement: { provider: "gyro-m", models: ["gyro-m", "anthropic/sonnet", "glm/glm-5.3-flash", "kimi"] },
+      simple: { provider: "gyro-m", models: ["gyro-m", "anthropic/haiku", "glm/glm-5.3-flash", "kimi"] },
+    } } }));
+    const rows = readWorkersSection(path).workers.classes;
+    expect(Object.keys(rows).sort()).toEqual(["orchestrator", "quick", "worker"]);
+    setRoute("review", ["kimi"], path);
+    const w = readWorkersSection(path).workers.classes;
+    expect(Object.keys(JSON.parse(readFileSync(path, "utf8")).workers.classes ?? {}).sort()).toEqual(["orchestrator", "quick", "worker"]);
+    expect(classRoute(w, "implement")).toEqual(["kimi"]);
+    expect(classRoute(w, "simple")).toEqual(["gyro-m", "anthropic/haiku", "glm/glm-5.3-flash", "kimi"]);
+  });
+
+  it("routing for --class review uses the Worker row", async () => {
+    const path = liveShaped();
+    setRoute("worker", ["anthropic/opus", "glm/fast"], path);
+    const { workers } = readWorkersSection(path);
+    expect(classRoute(workers.classes, "review")).toEqual(["anthropic/opus", "glm/fast"]);
+    expect(resolveTarget(workers, join(dir, "logs-r"), { className: "review", sessionEnv: {} })).toMatchObject({ providerName: "anthropic", modelId: "opus" });
+  });
+
+  it("route set with a class sets its role's row", () => {
+    const path = liveShaped();
+    expect(setRoute("spotcheck", ["kimi", "glm/fast"], path).text).toBe("quick=kimi>glm/fast");
+    const { workers } = readWorkersSection(path);
+    expect(classRoute(workers.classes, "simple")).toEqual(["kimi", "glm/fast"]);
+    expect(classRoute(workers.classes, "implement")).toEqual(["gyro-m", "anthropic", "glm/fast", "kimi"]);
+    expect(setRoute("unheard-of", ["kimi"], path).cls).toBe("worker");
+  });
+});
+
 describe("set / validate", () => {
-  it("round trips on a temp copy; the orchestrate row moves the session chat provider", () => {
+  it("round trips on a temp copy; the orchestrator row moves the session chat provider", () => {
     const path = liveShaped();
     const r = setRoute("orchestrate", ["anthropic/opus", "glm"], path);
-    expect(r.text).toBe("orchestrate=anthropic/opus>glm");
+    expect(r.text).toBe("orchestrator=anthropic/opus>glm");
     const raw = JSON.parse(readFileSync(path, "utf8"));
     expect(raw.session.profile.chat.provider).toBe("anthropic");
     expect(classRoute(readWorkersSection(path).workers.classes, "orchestrate")).toEqual(["anthropic/opus", "glm"]);
   });
 
-  it("refuses an unknown class, empty or malformed models, unknown providers and models, a model on a local entry", () => {
+  it("refuses empty or malformed models, unknown providers and models, a model on a local entry", () => {
     const { workers } = readWorkersSection(liveShaped());
-    expect(() => validateRoute(workers, "boss", ["glm"])).toThrow(/no class/);
     expect(() => validateRoute(workers, "implement", [])).toThrow(/at least one/);
     expect(() => validateRoute(workers, "implement", "glm")).toThrow(/list/);
     expect(() => validateRoute(workers, "implement", ["nobody"])).toThrow(/no provider/);
@@ -195,19 +261,19 @@ describe("policy modes rewrite the lists", () => {
     expect(listForPolicy("local-only", ["anthropic", "gyro-m"], isLocal, "gyro-m")).toEqual(["gyro-m"]);
   });
 
-  it("`pai worker policy <mode>` rewrites implement / simple / spotcheck and leaves the other rows", () => {
+  it("`pai worker policy <mode>` rewrites the Worker and Quick check rows and leaves the Orchestrator", () => {
     expect(POLICY_MODES).toContain("prefer-local");
     const path = liveShaped();
     setRoute("implement", ["anthropic", "glm/fast"], path);
     applyPolicyToRoutes("prefer-local", path);
     let c = readWorkersSection(path).workers.classes;
     expect(classRoute(c, "implement")).toEqual(["gyro-m", "anthropic", "glm/fast"]);
-    expect(classRoute(c, "research")).toEqual(["gyro-m", "anthropic", "glm", "kimi"]);
+    expect(classRoute(c, "orchestrate")).toEqual(["glm"]);
     applyPolicyToRoutes("cloud-only", path);
     c = readWorkersSection(path).workers.classes;
     expect(classRoute(c, "implement")).toEqual(["anthropic", "glm/fast"]);
     expect(classRoute(c, "spotcheck")).toEqual(["anthropic", "glm/fast", "kimi"]);
-    expect(classRoute(c, "research")).toEqual(["gyro-m", "anthropic", "glm", "kimi"]);
+    expect(classRoute(c, "orchestrate")).toEqual(["glm"]);
     applyPolicyToRoutes("prefer-cloud", path);
     expect(classRoute(readWorkersSection(path).workers.classes, "simple")).toEqual(["anthropic", "glm/fast", "kimi", "gyro-m"]);
     applyPolicyToRoutes("local-only", path);
@@ -243,8 +309,9 @@ describe("rows and text", () => {
         glm: { percent: 85, resetAt: null, fetchedAt: now, windows: [{ name: "5h", percent: 85 }] },
       },
     });
-    const impl = rows.find((r) => r.cls === "implement")!;
-    expect(impl.label).toBe("Implement");
+    expect(rows.map((r) => r.label)).toEqual(["Orchestrator", "Worker", "Quick check"]);
+    expect(rows[1]!.classes).toEqual(["implement", "research", "draft", "review", "complex"]);
+    const impl = rows.find((r) => r.cls === "worker")!;
     expect(impl.chips.map((c) => [c.label, c.state])).toEqual([
       ["local gyro-m", "available"],
       ["local iq3s", "idle"],
@@ -252,7 +319,7 @@ describe("rows and text", () => {
       ["glm/glm-5.3-flash", "tight"],
       ["kimi/k3", "unavailable"],
     ]);
-    expect(rows[0]!.cls).toBe("orchestrate");
+    expect(rows[0]!.cls).toBe("orchestrator");
     expect(routeText(rows)).toContain("local gyro-m → local iq3s (not running) → anthropic/sonnet → glm/glm-5.3-flash (budget 85%)");
   });
 
@@ -297,19 +364,19 @@ describe("per-session overrides", () => {
     const { workers } = readWorkersSection(path);
     const deps = { logDir: join(dir, "logs-t"), running: async () => true };
     const eff = routeText(await routeRows(workers, { ...deps, session: readProfiles(pp)["job-search"] }));
-    expect(eff).toMatch(/implement\s+anthropic\/sonnet  \[session override\]  # wide/);
-    expect(eff).toMatch(/simple\s+local gyro-m/);
+    expect(eff).toMatch(/Worker\s+anthropic\/sonnet  \[implement, research, draft, review, complex\]  \[session override\]  # wide/);
+    expect(eff).toMatch(/Quick check\s+local gyro-m/);
     const rows = await routeRows(workers, { ...deps, profiles: readProfiles(pp) });
-    const impl = rows.find((r) => r.cls === "implement")!;
+    const impl = rows.find((r) => r.cls === "worker")!;
     expect(impl.note).toBe("context width, reasoning");
     expect(impl.sessions).toMatchObject([{ session: "job-search", note: "wide", chips: [{ entry: "anthropic/sonnet" }] }]);
     expect(routeText(rows)).toContain("    job-search: anthropic/sonnet  # wide");
-    expect(readWorkersSection(path).workers.classes.implement).toMatchObject({ models: ["glm/fast"], note: "context width, reasoning" });
+    expect(readWorkersSection(path).workers.classes.worker).toMatchObject({ models: ["glm/fast"], note: "context width, reasoning" });
   });
 
-  it("refuses an unknown class or model for a session override", () => {
+  it("refuses an unknown model for a session override; a class sets its role's override", () => {
     const path = liveShaped();
-    expect(() => setSessionRoute("s", "boss", ["glm"], { path, profilesPath: profiles() })).toThrow(/no class/);
+    expect(setSessionRoute("s", "review", ["glm"], { path, profilesPath: profiles() }).cls).toBe("worker");
     expect(() => setSessionRoute("s", "implement", ["nobody/x"], { path, profilesPath: profiles() })).toThrow(/no provider/);
   });
 });

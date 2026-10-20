@@ -62,8 +62,8 @@ describe("starter workers.yaml", () => {
     const { workers } = readWorkersSection(jsonPath);
     expect(workers.active).toBe("anthropic");
     expect(Object.keys(workers.providers).sort()).toEqual(["glm", "kimi"]);
-    expect(workers.classes.implement).toBe("anthropic");
-    expect(workers.classes.spotcheck).toBe("anthropic/fast");
+    expect(workers.classes.worker).toBe("anthropic");
+    expect(workers.classes.quick).toBe("anthropic/fast");
     expect(workers.mcpSets.desktop).toEqual(["clickr"]);
     expect(workers.nativeModels.default).toBe("sonnet");
     // the starter's example providers carry a placeholder inline key
@@ -196,7 +196,7 @@ describe("provider/role resolution, including fast", () => {
       ].join("\n")
     );
     const { workers } = readWorkersSection(jsonPath);
-    expect(workers.classes.spotcheck).toBe("real/fast");
+    expect(workers.classes.quick).toBe("real/fast");
     expect(workers.providers.real.models.fast).toBe("real-fast");
     expect(workers.providers.real.models.default).toBe("real-default");
   });
@@ -303,8 +303,8 @@ describe("useProvider re-points classes pinned to a provider", () => {
 
     const { workers } = readWorkersSection(jsonPath);
     expect(workers.active).toBe("newprov");
-    expect(workers.classes.implement).toBe("newprov");
-    expect(workers.classes.spotcheck).toBe("newprov/fast");
+    expect(workers.classes.worker).toBe("newprov");
+    expect(workers.classes.quick).toBe("newprov/fast");
     // "image: glm/image" keeps its alias, just re-pointed to the new provider
     expect(workers.classes.image).toBe("newprov/image");
     expect(repointed).toBe(Object.keys(workers.classes).length);
@@ -371,11 +371,11 @@ describe("useProvider re-points classes pinned to a provider", () => {
     const { workers } = readWorkersSection(jsonPath);
     expect(workers.active).toBe("barebones");
     // implement had no alias: re-pointed
-    expect(workers.classes.implement).toBe("barebones");
+    expect(workers.classes.worker).toBe("barebones");
     // spotcheck/image needed a model "barebones" doesn't have: alias dropped,
     // still moved to barebones (its default model) rather than left on the
     // old provider
-    expect(workers.classes.spotcheck).toBe("barebones");
+    expect(workers.classes.quick).toBe("barebones");
     expect(workers.classes.image).toBe("barebones");
     expect(repointed).toBe(Object.keys(workers.classes).length);
   });

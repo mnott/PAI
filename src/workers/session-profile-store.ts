@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { dirname } from "node:path";
 import { parse, stringify } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
+import { migrateSessionRoutes } from "./route-lists.js";
 
 export const SESSION_NAME_ENV = "PAI_SESSION_NAME";
 /** Set by queue/plan runners (and --batch) on spawns that are part of a fan-out. */
@@ -59,14 +60,15 @@ function cleanProfile(v: unknown): SessionProfile {
   if (typeof r.max_parallel === "number" && Number.isInteger(r.max_parallel) && r.max_parallel > 0) out.max_parallel = r.max_parallel;
   if (r.routes && typeof r.routes === "object") {
     const routes: Record<string, string[]> = {};
-    for (const [cls, v] of Object.entries(r.routes as Record<string, unknown>)) {
+    // overrides stored per class (the nine-row table) become per-role ones
+    for (const [cls, v] of Object.entries(migrateSessionRoutes(r.routes as Record<string, unknown>))) {
       const list = Array.isArray(v) ? [...new Set(v.filter((m): m is string => typeof m === "string" && !!m.trim()).map((m) => m.trim()))] : [];
       if (list.length) routes[cls] = list;
     }
     if (Object.keys(routes).length) out.routes = routes;
     if (out.routes && r.route_notes && typeof r.route_notes === "object") {
       const notes: Record<string, string> = {};
-      for (const [cls, n] of Object.entries(r.route_notes as Record<string, unknown>)) if (out.routes[cls] && typeof n === "string" && n.trim()) notes[cls] = n.trim();
+      for (const [cls, n] of Object.entries(migrateSessionRoutes(r.route_notes as Record<string, unknown>))) if (out.routes[cls] && typeof n === "string" && n.trim()) notes[cls] = n.trim();
       if (Object.keys(notes).length) out.route_notes = notes;
     }
   }

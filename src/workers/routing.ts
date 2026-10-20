@@ -373,7 +373,7 @@ export function resolveTarget(
   // the class's routing list (route-lists.ts): the first entry that qualifies serves; a local entry is
   // only ever pinned by routeRun (policy.ts), which knows whether its server runs
   const list = opts.className ? classRoute(config.classes ?? {}, opts.className) : [];
-  const listed = typeof clsTarget === "object" && clsTarget.models?.length ? true : list.length > 1;
+  const listed = list.length > 0;
   if (opts.className && listed) {
     const state = readRoutingState(logDir);
     const budgets: BudgetMap | undefined = config.routing.policy !== "order" ? budgetCache.snapshot() : undefined;

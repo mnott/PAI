@@ -243,7 +243,7 @@ function renderLimits(){
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
-/** Routing section: one row per class, the ordered model chips with arrows, coloured by state; drag / Alt+arrows reorder, × removes, + adds. Every change posts the whole row and the row re-renders from the saved state. */
+/** Routing section: one row per role (Orchestrator / Worker / Quick check; a grey caption lists the classes it covers), the ordered model chips with arrows, coloured by state; drag / Alt+arrows reorder, × removes, + adds. Every change posts the whole row and the row re-renders from the saved state. */
 var rtOpen=null,rtMsg={},rtFocus=null,rtDrag=null;
 function rtEntries(cls,sess){var rows=(lim&&lim.routing&&lim.routing.rows)||[];for(var i=0;i<rows.length;i++)if(rows[i].cls===cls){if(!sess)return rows[i].chips.map(function(c){return c.entry});var ss=rows[i].sessions||[];for(var j=0;j<ss.length;j++)if(ss[j].session===sess)return ss[j].chips.map(function(c){return c.entry})}return[]}
 function postRoute(cls,models,cb,sess,clear){
@@ -261,24 +261,30 @@ function moveEntry(cls,from,to,sess){
 function renderRouting(){
  var r=lim&&lim.routing;if(!r||rtDrag||!document.querySelector('[data-section="routing"]'))return;
  var rows=r.rows||[],choices=r.choices||[];
+ /* the model picker of a row or of a session override line (key = class + session); the + button and the list are shared */
+ var rtKey=function(cls,sess){return cls+"|"+(sess||"")};
+ var rtAddBtn=function(cls,sess,label){return'<button class="rtadd" data-cls="'+esc(cls)+'"'+(sess?' data-s="'+esc(sess)+'"':"")+' aria-label="add a model to '+esc(label)+'">+</button>'};
+ var rtPicker=function(cls,sess,chips,choices){
+  if(rtOpen!==rtKey(cls,sess))return"";
+  var have=chips.map(function(c){return c.entry});
+  return'<div class="rtlist">'+choices.filter(function(c){return have.indexOf(c.entry)<0}).map(function(c){return'<button data-cls="'+esc(cls)+'"'+(sess?' data-s="'+esc(sess)+'"':"")+' data-add="'+esc(c.entry)+'">'+esc(c.label)+'</button>'}).join("")+'</div>'};
  $("routing").innerHTML=rows.length?rows.map(function(row){
   var chipsOf=function(cs,sess){return cs.map(function(c,i){
    var at=' data-cls="'+esc(row.cls)+'" data-i="'+i+'"'+(sess?' data-s="'+esc(sess)+'"':"");
    return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" draggable="true" tabindex="0"'+at+' title="'+esc(c.why||c.state)+'">'+esc(c.label)+'<button class="rtx"'+at+' aria-label="remove '+esc(c.label)+'">×</button></span>'}).join("")};
   var chips=chipsOf(row.chips);
-  var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" data-cls="'+esc(row.cls)+'" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips,s.session)+'<button class="rtclear" data-cls="'+esc(row.cls)+'" data-s="'+esc(s.session)+'" aria-label="clear the override of '+esc(s.session)+'" title="clear this session override">×</button></span></div>'}).join("");
-  var have=row.chips.map(function(c){return c.entry});
-  var list=rtOpen===row.cls?'<div class="rtlist">'+choices.filter(function(c){return have.indexOf(c.entry)<0}).map(function(c){return'<button data-cls="'+esc(row.cls)+'" data-add="'+esc(c.entry)+'">'+esc(c.label)+'</button>'}).join("")+'</div>':"";
+  var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" data-cls="'+esc(row.cls)+'" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips,s.session)+'<button class="rtclear" data-cls="'+esc(row.cls)+'" data-s="'+esc(s.session)+'" aria-label="clear the override of '+esc(s.session)+'" title="clear this session override">×</button>'+rtAddBtn(row.cls,s.session,s.session+" override")+'</span>'+rtPicker(row.cls,s.session,s.chips,choices)+'</div>'}).join("");
+  var list=rtPicker(row.cls,"",row.chips,choices);
   var m=rtMsg[row.cls];
-  return'<div class="rtrow" data-cls="'+esc(row.cls)+'"><span class="rtlabel"'+(row.note?' title="'+esc(row.note)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chips+'<button class="rtadd" data-cls="'+esc(row.cls)+'" aria-label="add a model to '+esc(row.label)+'">+</button></span>'+list+'<span class="rtmsg'+(m&&!m.ok?" bad":"")+'">'+esc(m?m.t:"")+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>';
+  return'<div class="rtrow" data-cls="'+esc(row.cls)+'"><span class="rtlabel"'+(row.note?' title="'+esc(row.note)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chips+rtAddBtn(row.cls,"",row.label)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+list+'<span class="rtmsg'+(m&&!m.ok?" bad":"")+'">'+esc(m?m.t:"")+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>';
  var xs=document.querySelectorAll("#routing .rtx"),i;
  for(i=0;i<xs.length;i++)xs[i].onclick=function(e){e.stopPropagation();var cls=this.getAttribute("data-cls"),n=Number(this.getAttribute("data-i")),sess=this.getAttribute("data-s")||"",en=rtEntries(cls,sess);en.splice(n,1);if(sess&&!en.length)saveRoute(cls,[],null,sess,true);else saveRoute(cls,en,null,sess)};
  var cl=document.querySelectorAll("#routing .rtclear");
  for(i=0;i<cl.length;i++)cl[i].onclick=function(e){e.stopPropagation();saveRoute(this.getAttribute("data-cls"),[],null,this.getAttribute("data-s"),true)};
  var ad=document.querySelectorAll("#routing .rtadd");
- for(i=0;i<ad.length;i++)ad[i].onclick=function(){var cls=this.getAttribute("data-cls");rtOpen=rtOpen===cls?null:cls;renderRouting()};
+ for(i=0;i<ad.length;i++)ad[i].onclick=function(){var k=rtKey(this.getAttribute("data-cls"),this.getAttribute("data-s"));rtOpen=rtOpen===k?null:k;renderRouting()};
  var ls=document.querySelectorAll("#routing .rtlist button");
- for(i=0;i<ls.length;i++)ls[i].onclick=function(){var cls=this.getAttribute("data-cls"),en=rtEntries(cls);en.push(this.getAttribute("data-add"));saveRoute(cls,en,en.length-1)};
+ for(i=0;i<ls.length;i++)ls[i].onclick=function(){var cls=this.getAttribute("data-cls"),sess=this.getAttribute("data-s")||"",en=rtEntries(cls,sess);en.push(this.getAttribute("data-add"));saveRoute(cls,en,en.length-1,sess)};
  var cs=document.querySelectorAll("#routing .rtchip");
  for(i=0;i<cs.length;i++)(function(ch){
   var cls=ch.getAttribute("data-cls"),n=Number(ch.getAttribute("data-i")),sess=ch.getAttribute("data-s")||"";

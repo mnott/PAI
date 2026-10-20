@@ -162,13 +162,13 @@ describe("session_profile_get / set", () => {
     expect(now.content[0].text).toContain("sent /model opus");
     expect(sent).toEqual(["job-search:/model opus"]);
   });
-  it("route overrides round trip: set, shown in get, one class cleared, all cleared", async () => {
+  it("route overrides round trip: set (a class sets its role), shown in get, one row cleared, all cleared", async () => {
     const set = await sessionProfileSet({ routes: { implement: ["anthropic/sonnet"], spotcheck: ["anthropic/haiku"] } }, d);
     expect(set.isError).toBeUndefined();
-    expect(getProfile("job-search", d.path)?.routes).toEqual({ implement: ["anthropic/sonnet"], spotcheck: ["anthropic/haiku"] });
-    expect((await sessionProfileGet({}, d)).content[0].text).toContain("route overrides: implement=anthropic/sonnet, spotcheck=anthropic/haiku");
+    expect(getProfile("job-search", d.path)?.routes).toEqual({ worker: ["anthropic/sonnet"], quick: ["anthropic/haiku"] });
+    expect((await sessionProfileGet({}, d)).content[0].text).toContain("route overrides: worker=anthropic/sonnet, quick=anthropic/haiku");
     await sessionProfileSet({ routes: { spotcheck: null } }, d);
-    expect(getProfile("job-search", d.path)?.routes).toEqual({ implement: ["anthropic/sonnet"] });
+    expect(getProfile("job-search", d.path)?.routes).toEqual({ worker: ["anthropic/sonnet"] });
     await sessionProfileSet({ routes: null }, d);
     expect(getProfile("job-search", d.path)?.routes).toBeUndefined();
   });
