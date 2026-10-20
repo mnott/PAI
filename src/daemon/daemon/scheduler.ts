@@ -13,6 +13,7 @@ import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
 import { auditTick } from "../../workers/pane-audit.js";
+import { localIdleTick } from "../../workers/local-idle.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
 import { cliEntry } from "../pass-priority.js";
@@ -564,6 +565,13 @@ export function startWorkerSupervisor(): void {
     void auditTick(dir, runMessenger(dir)).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
+
+  // the local model must not idle while its workers build: sampled every 30 s, one nudge per backoff
+  const localIdle = setInterval(() => {
+    const w = readWorkersSection().workers;
+    void localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w))).catch(() => undefined);
+  }, 30_000);
+  localIdle.unref();
 
   let ticking = false; // a slow tick must not overlap the next one
   const tick = () => {

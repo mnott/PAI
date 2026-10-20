@@ -128,11 +128,14 @@ Shows the workers started from this terminal. When other sessions have live work
 |---|---|---|---|
 | `--all` | flag | — | Workers of all sessions, not just this terminal's |
 | `--panes` | flag | — | List process -> pane -> tab for everything running, checked live |
+| `--mute-local-idle SESSION` | string | — | Stop the idle-local-model nudge to this session name (or iTerm id) |
+| `--unmute-local-idle SESSION` | string | — | Resume the idle-local-model nudge to this session |
 
 ```sh
 pai worker ps
 pai worker ps --all
 pai worker ps --panes
+pai worker ps --mute-local-idle my-session
 ```
 
 See also: `pai worker follow`, `pai worker pending`, `pai worker kill`

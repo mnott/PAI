@@ -29,6 +29,7 @@ import { handoffFromInside } from "../../workers/handoff.js";
 import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
 import { readMergeVerify } from "../../workers/workers-config.js";
 import { followPaneRun, isPaneRunId, loadPaneRunStatus } from "../../workers/pane-run.js";
+import { setMuted } from "../../workers/local-idle.js";
 import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
@@ -335,12 +336,20 @@ const psCommand: CommandDef = {
   options: [
     { name: "all", type: "boolean", summary: "Workers of all sessions, not just this terminal's" },
     { name: "panes", type: "boolean", summary: "List process -> pane -> tab for everything running, checked live" },
+    { name: "mute-local-idle", type: "string", value: "SESSION", summary: "Stop the idle-local-model nudge to this session name (or iTerm id)" },
+    { name: "unmute-local-idle", type: "string", value: "SESSION", summary: "Resume the idle-local-model nudge to this session" },
   ],
-  examples: ["pai worker ps", "pai worker ps --all", "pai worker ps --panes"],
+  examples: ["pai worker ps", "pai worker ps --all", "pai worker ps --panes", "pai worker ps --mute-local-idle my-session"],
   seeAlso: ["pai worker follow", "pai worker pending", "pai worker kill"],
   run: (ctx) =>
     guard("pai worker ps --all", async () => {
       const dir = logDir();
+      const mute = str(ctx.opts["mute-local-idle"]);
+      const unmute = str(ctx.opts["unmute-local-idle"]);
+      if (mute || unmute) {
+        out(`local-idle nudge muted for: ${setMuted(dir, (mute || unmute)!, !!mute).join(", ") || "(nobody)"}`);
+        return;
+      }
       if (flag(ctx, "panes")) {
         out(renderPaneAudit(auditPanes(runningProcs(dir), loadRegistry(dir), await listItermTabs())));
         return;
