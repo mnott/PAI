@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig, readWorkersSection } from "./config.js";
-import { applyRank, chainSummary, deriveChains, effectiveChains, parseRank, setModelRank } from "./chains.js";
+import { applyRank, chainForPolicy, chatProviderOf, setChain, chainSummary, deriveChains, effectiveChains, parseRank, setModelRank } from "./chains.js";
 import { routeRun, writePolicy, clearPolicy, POLICY_MODES } from "./policy.js";
 import { autoOrder, resolveTarget } from "./routing.js";
 
@@ -172,5 +172,58 @@ describe("effective chains follow routing", () => {
     clearPolicy(dir);
     const a = await effectiveChains({}, mk({ active: "glm" }), { ping: up, logDir: dir });
     expect(a).toEqual({ workers: ["anthropic", "glm", "kimi"], orchestrator: ["glm"] });
+  });
+});
+
+describe("an explicit Workers chain is the routing order", () => {
+  const up = async () => true;
+  const mk = (workers: string[]) => cfg({ logDir: dir, chains: { workers, orchestrator: [] } });
+  const route = (c: ReturnType<typeof mk>) => routeRun(c, dir, {}, { ping: up, battery: () => false });
+
+  it("local below the cloud entries: cloud first, local only last, despite prefer-local", async () => {
+    writePolicy(dir, "prefer-local");
+    const c = mk(["anthropic", "glm", "kimi", "gyro-m"]);
+    const r = await route(c);
+    expect(r?.providerFlag).toBeNull();
+    expect(resolveTarget(c, dir, { className: "implement" }).providerName).toBe("anthropic");
+    expect(autoOrder(c)).toEqual(["anthropic", "glm", "kimi", "gyro-m"]);
+    expect((await effectiveChains({}, c, { ping: up, logDir: dir })).workers).toEqual(["anthropic", "glm", "kimi", "gyro-m"]);
+    clearPolicy(dir);
+  });
+
+  it("local first routes local; display equals routing", async () => {
+    const c = mk(["gyro-m", "anthropic", "glm"]);
+    const r = await route(c);
+    expect(r?.providerFlag).toBe("gyro-m");
+    expect((await effectiveChains({}, c, { ping: up, logDir: dir })).workers[0]).toBe("gyro-m");
+    expect((await routeRun(c, dir, {}, { ping: async () => false }))?.providerFlag).toBeNull();
+  });
+
+  it("no local in the chain is cloud only; no cloud is local only", async () => {
+    expect((await route(mk(["glm", "anthropic"])))?.providerFlag).toBeNull();
+    expect((await route(mk(["gyro-m"])))?.providerFlag).toBe("gyro-m");
+  });
+
+  it("active does not pin a run once a chain is set", () => {
+    const c = cfg({ logDir: dir, active: "kimi", chains: { workers: ["glm", "anthropic"], orchestrator: [] } });
+    expect(resolveTarget(c, dir, {}).providerName).toBe("glm");
+  });
+
+  it("policy modes rewrite the chain; orchestrator chain beats active", () => {
+    const cur = ["anthropic", "glm", "kimi"];
+    expect(chainForPolicy("prefer-local", cur, "gyro-m")).toEqual(["gyro-m", "anthropic", "glm", "kimi"].slice(0, 4));
+    expect(chainForPolicy("auto", cur, "gyro-m")[0]).toBe("gyro-m");
+    expect(chainForPolicy("prefer-cloud", cur, "gyro-m")).toEqual([...cur, "gyro-m"]);
+    expect(chainForPolicy("cloud-only", [...cur, "gyro-m"], "gyro-m")).toEqual(cur);
+    expect(chainForPolicy("local-only", cur, "gyro-m")).toEqual(["gyro-m"]);
+    expect(chatProviderOf({}, cfg({ active: "glm", chains: { workers: [], orchestrator: ["kimi"] } }))).toBe("kimi");
+  });
+
+  it("setChain persists to a temp config", () => {
+    const path = tempConfig();
+    setChain("workers", ["anthropic", "glm", "gyro-m"], path);
+    expect(readWorkersSection(path).workers.chains.workers).toEqual(["anthropic", "glm", "gyro-m"]);
+    setChain("workers", chainForPolicy("prefer-local", ["anthropic", "glm", "gyro-m"], "gyro-m"), path);
+    expect(readWorkersSection(path).workers.chains.workers[0]).toBe("gyro-m");
   });
 });
