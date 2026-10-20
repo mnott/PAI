@@ -13,16 +13,16 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { panePolicy } from "./pane-policy.js";
 
 /** Titles cap at this many characters (the title bar cannot show more). */
-export const PANE_TITLE_MAX = 40;
 
 /**
  * Title text safe for the terminal: control characters (including ESC and BEL,
  * which would break out of an OSC sequence) and the double quote are removed,
  * whitespace collapsed, and the result capped at `max` characters.
  */
-export function escapePaneTitle(s: string, max = PANE_TITLE_MAX): string {
+export function escapePaneTitle(s: string, max = panePolicy().titleMax): string {
   const clean = s.replace(/[\x00-\x1f\x7f"]/g, " ").replace(/\s+/g, " ").trim();
   return clean.length > max ? clean.slice(0, max).trimEnd() : clean;
 }

@@ -149,3 +149,34 @@ router:
 # of the model). Override in ~/.pai/config.yaml under models.embeddingLabel.
 models:
   embeddingLabel: PAI memory embeddings
+# Worker panes (src/workers/pane*.ts; read through src/workers/pane-policy.ts).
+panes:
+  # Smallest pane a worker may be placed in; smaller is flagged SMALL.
+  minCols: 40
+  minRows: 6
+  # Verify a new pane: attempts and the poll interval between them.
+  verifyTries: 25
+  verifyPollMs: 300
+  # Session-map entries older than this are ignored.
+  sessionMapMaxAgeDays: 7
+  # Longest pane title, in characters.
+  titleMax: 40
+  # Chat status-line refresh interval.
+  statusTickMs: 1000
+  # Pane exec wrapper: wait for its hello, grace before SIGKILL, socket connect.
+  helloWaitSecs: 20
+  killGraceSecs: 3
+  connectSecs: 10
+  # Pane run: seconds the last line stays visible before the pane closes,
+  # poll interval, how long ended entries are kept, tail lines in the footer.
+  lingerSecs: 5
+  runPollMs: 250
+  runKeepHours: 24
+  tailLines: 40
+  # Pane audit: processes younger than startGraceSecs, or ended within
+  # endGraceSecs, are not judged; a wrapper outliving its child by
+  # launchGraceSecs is an orphan.
+  audit:
+    startGraceSecs: 30
+    endGraceSecs: 60
+    launchGraceSecs: 15

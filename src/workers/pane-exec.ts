@@ -27,13 +27,11 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
 import { startPaneBar, type PaneBar, type PaneBarDeps, type StatusLineSpec } from "./pane-bar.js";
+import { panePolicy } from "./pane-policy.js";
 
 export const PANE_EXEC_ENV = "PAI_PANE_EXEC";
 /** Pid of the wrapper that spawned the process; only that wrapper's direct child is "already in its pane". */
 export const PANE_EXEC_PID_ENV = "PAI_PANE_EXEC_PID";
-/** Seconds the caller waits for the wrapper to come up in the pane it opened. */
-export const HELLO_WAIT_MS = 20_000;
-const KILL_GRACE_MS = 3000;
 
 export const paneExecDir = (): string => paiHomePath("state", "pane-exec");
 export const exitFilePath = (id: string): string => join(paneExecDir(), `${id}.exit`);
@@ -183,7 +181,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   const err = d.err ?? ((s) => process.stderr.write(s));
   const now = d.now ?? Date.now;
   const proc = d.proc ?? process;
-  const grace = d.killGraceMs ?? KILL_GRACE_MS;
+  const grace = d.killGraceMs ?? panePolicy().killGraceMs;
   const finish = async (rec: Omit<ExitRecord, "id" | "endedMs">, linger = 0): Promise<number> => {
     writeJson(exitFilePath(id), { id, endedMs: now(), ...rec } satisfies ExitRecord);
     if (linger > 0) await new Promise((r) => setTimeout(r, linger * 1000));
@@ -191,7 +189,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
     return rec.code;
   };
 
-  const sock = await connect(sockPath(id), d.connectMs ?? 10_000);
+  const sock = await connect(sockPath(id), d.connectMs ?? panePolicy().connectMs);
   if (!sock) {
     err(`pai pane exec: no caller listens for ${id}; nothing to run\n`);
     return finish({ code: 1, reason: "no caller" });
@@ -509,7 +507,7 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   }
   const s = await Promise.race([
     connected,
-    new Promise<null>((r) => setTimeout(() => r(null), o.helloMs ?? HELLO_WAIT_MS).unref()),
+    new Promise<null>((r) => setTimeout(() => r(null), o.helloMs ?? panePolicy().helloWaitMs).unref()),
   ]);
   if (!s) return fail(new Error(`pane opened (${where}) but its wrapper did not connect`));
   rmQuiet(sockPath(o.id));

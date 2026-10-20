@@ -18,6 +18,7 @@ import { fmtElapsed } from "./plan-status.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
 import { closeOwnPane, realPaneOps, type PaneOps } from "./pane.js";
 import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV, type OwnedPane } from "./pane-exec.js";
+import { panePolicy } from "./pane-policy.js";
 
 export interface PaneRunStatus {
   kind: "pane";
@@ -35,8 +36,6 @@ export interface PaneRunStatus {
 /** The env marker of a command running under `pai pane run`: nested pane/build runs then stay in it. */
 export const PANE_RUN_ENV = "PAI_PANE_RUN";
 /** Seconds the pane stays on screen after the command ended, then closes itself. */
-export const PANE_LINGER_SECS = 5;
-const TAIL_LINES = 40;
 
 export const paneRunStatusFile = (logDir: string, id: string): string => join(logDir, `${id}.panestatus`);
 export const paneRunLogDir = (): string => paiHomePath("logs", "panes");
@@ -60,8 +59,6 @@ export function loadPaneRunStatus(logDir: string, id: string): PaneRunStatus | n
   }
 }
 
-/** Ended entries are kept this long (for ps and the audit), then removed. */
-export const PANE_RUN_KEEP_MS = 24 * 3600_000;
 
 /**
  * Every pane-run entry. A run whose runner died without writing its end is recorded as lost on disk
@@ -75,7 +72,7 @@ export function loadPaneRunStatuses(logDir: string, now = Date.now()): PaneRunSt
     const s = loadPaneRunStatus(logDir, id);
     if (!s) continue;
     try {
-      if (s.state !== "running" && now - s.startedMs > PANE_RUN_KEEP_MS) {
+      if (s.state !== "running" && now - s.startedMs > panePolicy().runKeepMs) {
         unlinkSync(paneRunStatusFile(logDir, id));
         continue;
       }
@@ -110,8 +107,8 @@ export async function followPaneRun(
   logDir: string,
   id: string,
   write: (s: string) => void,
-  lingerSecs = PANE_LINGER_SECS,
-  pollMs = 250,
+  lingerSecs = panePolicy().lingerSecs,
+  pollMs = panePolicy().runPollMs,
   env: NodeJS.ProcessEnv = process.env,
   ops: PaneOps = realPaneOps
 ): Promise<void> {
@@ -222,7 +219,7 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     } catch {
       /* the log is a view */
     }
-    tail = (tail + s).split("\n").slice(-(TAIL_LINES + 1)).join("\n");
+    tail = (tail + s).split("\n").slice(-(panePolicy().tailLines + 1)).join("\n");
   };
   child.stdout?.on("data", feed);
   child.stderr?.on("data", feed);
@@ -244,7 +241,7 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     if (signalled) return;
     signalled = sig;
     killGroup("SIGTERM");
-    setTimeout(() => killGroup("SIGKILL"), o.killGraceMs ?? 3000).unref();
+    setTimeout(() => killGroup("SIGKILL"), o.killGraceMs ?? panePolicy().killGraceMs).unref();
   };
   const sigs: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
   const handlers = sigs.map((s) => {
@@ -271,6 +268,6 @@ export async function runInPane(o: PaneRunOptions): Promise<number> {
     /* as above */
   }
   writePaneRunStatus(o.logDir, { ...status, state: code === 0 ? "done" : "failed", exit: code });
-  out(tail.replace(/\n+$/, "").split("\n").slice(-TAIL_LINES).join("\n") + `\n${footer}\n`);
+  out(tail.replace(/\n+$/, "").split("\n").slice(-panePolicy().tailLines).join("\n") + `\n${footer}\n`);
   return signalled ? 128 + ({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as Record<string, number>)[signalled] : code;
 }

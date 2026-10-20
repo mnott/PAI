@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { nowStamp } from "./status.js";
-import { followPaneRun, writePaneRunStatus, paneRunStatusFile, loadPaneRunStatus, loadPaneRunStatuses, PANE_LINGER_SECS, renderPaneRunLines, runInPane, type PaneRunOptions } from "./pane-run.js";
+import { followPaneRun, writePaneRunStatus, paneRunStatusFile, loadPaneRunStatus, loadPaneRunStatuses, renderPaneRunLines, runInPane, type PaneRunOptions } from "./pane-run.js";
 import type { PaneOps } from "./pane.js";
+import { panePolicy } from "./pane-policy.js";
 
 let dir: string;
 beforeEach(() => {
@@ -131,7 +132,7 @@ describe("followPaneRun", () => {
   });
 
   it("lingers a few seconds before closing, so the last line stays visible", async () => {
-    expect(PANE_LINGER_SECS).toBeLessThanOrEqual(5);
+    expect(panePolicy().lingerSecs).toBeLessThanOrEqual(5);
     const o = opts(["echo hi"]);
     await runInPane(o);
     const ops = closeOps();

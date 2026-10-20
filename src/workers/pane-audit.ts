@@ -22,6 +22,7 @@ import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCac
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import type { Messenger } from "./run-events.js";
+import { panePolicy } from "./pane-policy.js";
 
 export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "STILL OPEN" | "SMALL" | "NOT SELECTED" | "MINIMISED";
 /** Marks that are shown, never alarmed: the pane runs, only its visibility falls short. */
@@ -45,10 +46,8 @@ export interface AuditProc {
 }
 
 /** A worker that ended, or whose pane closed, within this window is not judged: the pane closes itself before the final status lands. */
-export const END_GRACE_MS = 60_000;
 
 /** A process younger than this (since start or pane registration) is not judged: its pane is still being opened. */
-export const START_GRACE_MS = 30_000;
 
 export interface PaneVerdict {
   id: string;
@@ -65,8 +64,6 @@ export interface PaneVerdict {
 export type TabMap = Map<string, string>;
 /** iTerm session id -> its size in cells. */
 export type SizeMap = Map<string, { cols: number; rows: number; mark?: "NOT SELECTED" | "MINIMISED" }>;
-const SMALL_COLS = 40;
-const SMALL_ROWS = 6;
 
 const norm = (id: string): string => itermUuid(id) || id;
 
@@ -82,7 +79,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     if (p.kind === "worker" && p.live === false) return { ...v, why: "ended" };
     if (nowMs !== undefined) {
       // registry stamps are UTC (toISOString); a recent start or a recent registration opens the grace
-      const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < START_GRACE_MS);
+      const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < panePolicy().startGraceMs);
       if (young) return { ...v, why: "within the start grace" };
     }
     // an ended pane-run closed its pane itself: no registry entry is the expected end state, never NO PANE
@@ -92,15 +89,15 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     if (!tab && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
     if (!tab) return { ...v, mark: "NO PANE", why: `pane ${e.session} is gone while the process runs` };
     // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
-    if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > START_GRACE_MS) {
+    if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > panePolicy().startGraceMs) {
       return { ...v, mark: "STILL OPEN", tab, why: `pane ${e.session} of the ended run ${p.id} is still open` };
     }
     const hostTab = tabOf(host);
     if (!hostTab) return { ...v, mark: "HOST UNKNOWN", tab, why: host ? `starting session ${host} is not in the iTerm listing` : `pane ${e.session} has no recorded starting session` };
     if (hostTab !== tab) return { ...v, mark: "WRONG TAB", tab, hostTab, why: `pane ${e.session} sits in ${tab}, the starting session in ${hostTab}` };
     const size = sizes?.get(norm(e.session));
-    if (size && (size.cols < SMALL_COLS || size.rows < SMALL_ROWS)) {
-      return { ...v, mark: "SMALL", tab, hostTab, why: `pane ${e.session} is ${size.cols}x${size.rows}, under ${SMALL_COLS}x${SMALL_ROWS}` };
+    if (size && (size.cols < panePolicy().minCols || size.rows < panePolicy().minRows)) {
+      return { ...v, mark: "SMALL", tab, hostTab, why: `pane ${e.session} is ${size.cols}x${size.rows}, under ${panePolicy().minCols}x${panePolicy().minRows}` };
     }
     if (size?.mark) return { ...v, mark: size.mark, tab, hostTab, why: `pane ${e.session} runs, but ${size.mark === "MINIMISED" ? "its window is minimised" : "its tab is not the selected one"}` };
     return { ...v, tab, hostTab };
@@ -228,7 +225,7 @@ export async function auditTick(
   for (const v of verdicts) {
     if (v.kind !== "worker" || v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
     const proc = procs.find((p) => p.id === v.id);
-    const recent = proc?.endedMs !== undefined && nowMs - proc.endedMs < END_GRACE_MS;
+    const recent = proc?.endedMs !== undefined && nowMs - proc.endedMs < panePolicy().endGraceMs;
     if (recent || !running(v.id)) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "ended, pane closed" });
   }
   // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
@@ -298,12 +295,12 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
     const childUp = alive(r.child);
     if (ex && !wrapperUp && !childUp) continue;
     // the wrapper writes its exit file the moment the child ends; a grace covers the closing itself
-    if (ex && wrapperUp && nowMs - ex.endedMs > LAUNCH_GRACE_MS) {
+    if (ex && wrapperUp && nowMs - ex.endedMs > panePolicy().launchGraceMs) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, now);
       out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
-    } else if (!ex && r.child && !childUp && wrapperUp && nowMs - r.startedMs > LAUNCH_GRACE_MS) {
+    } else if (!ex && r.child && !childUp && wrapperUp && nowMs - r.startedMs > panePolicy().launchGraceMs) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child gone without an exit file" }, now);
@@ -318,7 +315,7 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
   const told = readJson(join(logDir, "pane-audit-unlaunched.json"));
   const flagged: Record<string, string> = {};
   for (const w of (d.workers ?? (() => runningWorkers(logDir)))()) {
-    if (w.exec || w.exempt || nowMs - w.startedMs < START_GRACE_MS) continue;
+    if (w.exec || w.exempt || nowMs - w.startedMs < panePolicy().startGraceMs) continue;
     flagged[w.id] = "1";
     if (!told[w.id]) {
       appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why: "running without having been started through the pane launcher" }, now);
@@ -330,14 +327,13 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
   if (!d.records) {
     for (const r of listRecords()) {
       const ex = readExit(r.id);
-      if (ex && nowMs - ex.endedMs > (d.keepMs ?? 24 * 3600_000)) for (const f of [recordPath(r.id), exitFilePath(r.id)]) try { unlinkSync(f); } catch { /* gone */ }
+      if (ex && nowMs - ex.endedMs > (d.keepMs ?? panePolicy().runKeepMs)) for (const f of [recordPath(r.id), exitFilePath(r.id)]) try { unlinkSync(f); } catch { /* gone */ }
     }
   }
   return out;
 }
 
 /** Launches whose wrapper outlives its child by this long are orphans (the wrapper closes the pane within a second). */
-export const LAUNCH_GRACE_MS = 15_000;
 
 const defaultClose = (logDir: string) => (id: string) => closePaneForWorker(logDir, id);
 
