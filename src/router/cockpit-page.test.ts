@@ -66,7 +66,12 @@ describe("cockpit layout follow-up", () => {
   it("top panel: local sizes to content, cloud takes the rest", () => {
     expect(COCKPIT_HTML).toContain('class="grp grp-cloud"');
     expect(COCKPIT_HTML).toContain('class="grp grp-local"');
-    expect(COCKPIT_HTML).toMatch(/\.grp-cloud\{flex:1 1 560px\}/);
+    expect(COCKPIT_HTML).toMatch(/\.grp-cloud\{flex:1 1 0\}/);
+    expect(COCKPIT_HTML).not.toMatch(/\.grp-cloud\{flex:1 1 560px\}/);
+    // gauges scale via the viewBox instead of a fixed floor: no 110px min-width,
+    // the svg fills the gauge and keeps its aspect ratio
+    expect(COCKPIT_HTML).toMatch(/\.gauge\{[^}]*min-width:0[^}]*flex:1 1 110px[^}]*max-width:120px\}/);
+    expect(COCKPIT_HTML).toMatch(/\.gauge svg\{display:block;width:100%;height:auto\}/);
     expect(COCKPIT_HTML).toMatch(/\.grp-local\{flex:0 1 auto;width:min-content;min-width:200px;max-width:34%\}/);
     expect(COCKPIT_HTML).not.toMatch(/\.grp\{flex:1;/);
   });
