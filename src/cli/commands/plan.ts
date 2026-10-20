@@ -12,7 +12,7 @@ import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../.
 import { PlanTracker } from "../../workers/plan-status.js";
 import { dirtyPaths, openPlanPane, pai, realRunnerDeps } from "../../workers/plan-deps.js";
 import { PlanReporter } from "../../workers/run-events.js";
-import { finishDetached, reportOrigin, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
+import { finishDetached, reportOriginWithHost, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
 import { resolve } from "node:path";
 import type { RunLogEntry } from "../../workers/plan-runner.js";
 import { blockedMessage, planStatus, planStopPath, requestPlanStop, runExitCode, readRunLog, renderSchedule, renderStatus, resumeState, runPlan } from "../../workers/plan-runner.js";
@@ -83,7 +83,7 @@ const runCmd: CommandDef = {
       if (clash.length) throw new CliError(`${plan.repo} has uncommitted changes to files the plan touches: ${clash.join(", ")}. A run would clobber or mix them in.`, "commit or stash them, or pass --allow-dirty");
     }
     const logDir = workersLogDir(readWorkersSection().workers);
-    const origin = reportOrigin();
+    const origin = await reportOriginWithHost();
     if (ctx.opts.detach === true) {
       const rec = startDetached(logDir, { kind: "plan", label: plan.job, positional: [resolve(path)], opts: ctx.opts, cwd: process.cwd(), origin });
       out(`detached: ${rec.id} (pid ${rec.pid}); progress in ${log}, output in ${rec.output}; ${origin ? "events go to the starting session" : "no originating session found, events are not delivered"}`);

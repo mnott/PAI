@@ -22,6 +22,8 @@ export interface RunOrigin {
   iterm?: string;
   /** PAI / AIBroker session name. */
   name?: string;
+  /** Host iTerm uuid resolveHostSession found for the originating session at run start — the target when `iterm` is empty (a background session has no ITERM_SESSION_ID). */
+  host?: string;
 }
 
 export interface Messenger {
@@ -54,8 +56,17 @@ export function originFromEnv(env: NodeJS.ProcessEnv = process.env): RunOrigin {
   return o;
 }
 
+/** The origin's AIBroker target: its own uuid, else the host resolveHostSession recorded, else its name. */
+export function originTarget(origin: RunOrigin): string | undefined {
+  return origin.iterm?.split(":").pop() || origin.host || origin.name || undefined; // ITERM_SESSION_ID form "w8t0p0:<uuid>" -> the uuid
+}
+
 /** Real messenger over AIBroker's socket; unreachable AIBroker is logged and ignored. */
-export function aibrokerMessenger(logDir: string, warn: (s: string) => void = (s) => process.stderr.write(s + "\n")): Messenger {
+export function aibrokerMessenger(
+  logDir: string,
+  warn: (s: string) => void = (s) => process.stderr.write(s + "\n"),
+  resolveHost: (claudeSession: string) => Promise<string> = async () => "",
+): Messenger {
   const self: Messenger = {
     async toSession(origin, text) {
       self.lastError = undefined;
@@ -65,13 +76,14 @@ export function aibrokerMessenger(logDir: string, warn: (s: string) => void = (s
         return false;
       };
       try {
-        const { sendToSession } = await import("../cli/lib/aibroker-client.js");
-        let target = origin.iterm?.split(":").pop() || undefined; // ITERM_SESSION_ID form "w8t0p0:<uuid>" -> the uuid
-        if (!target && origin.claudeSession) {
-          const { itermForClaudeSession } = await import("./scope.js");
-          target = itermForClaudeSession(logDir, origin.claudeSession) ?? undefined;
+        // AIBROKER_CLIENT_STUB redirects the client import (tests use a temp module, never the live socket)
+        const { sendToSession } = await import(process.env.AIBROKER_CLIENT_STUB ?? "../cli/lib/aibroker-client.js");
+        let target = originTarget(origin);
+        // a background session records no iterm: fall back to the host resolver for its Claude session
+        if (!target && origin.claudeSession) target = (await resolveHost(origin.claudeSession)) || undefined;
+        if (!target) {
+          return fail("the run has no originating session");
         }
-        target = target ?? origin.name;
         if (!target) {
           return fail("the run has no originating session");
         }

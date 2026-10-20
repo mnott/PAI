@@ -1,9 +1,23 @@
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { detachRun, listRuns, markRunDone, originFromEnv, PlanReporter, QueueReporter, sweepRuns, type Messenger, type RunOrigin } from "./run-events.js";
-import { detachedArgv, reportOrigin } from "./run-report-wiring.js";
+import { vi } from "vitest";
+import { aibrokerMessenger, detachRun, listRuns, markRunDone, originFromEnv, originTarget, PlanReporter, QueueReporter, sweepRuns, type Messenger, type RunOrigin } from "./run-events.js";
+import { detachedArgv, reportOrigin, reportOriginWithHost } from "./run-report-wiring.js";
+import * as pane from "./pane.js";
+
+// The messenger's dynamic import of the AIBroker client is redirected to a
+// temp module: tests never touch the live socket.
+const stubClient = (): Array<[string, string]> => {
+  const sent: Array<[string, string]> = [];
+  const dir = mkdtempSync(join(tmpdir(), "aibroker-stub-"));
+  const file = join(dir, "aibroker-client.js");
+  writeFileSync(file, `export async function sendToSession(target, text) { return globalThis.__paiSend(target, text); }\nexport async function callAiBroker() { return {}; }\n`, "utf8");
+  vi.stubEnv("AIBROKER_CLIENT_STUB", file);
+  (globalThis as Record<string, unknown>).__paiSend = async (target: string, text: string) => (sent.push([target, text]), { ok: true });
+  return sent;
+};
 import { parsePlan } from "./plan.js";
 import { runPlan, type RunnerDeps } from "./plan-runner.js";
 import type { QueueItem } from "./queue.js";
@@ -160,6 +174,47 @@ describe("origin and detach", () => {
     expect(calls[0].env.PAI_RUN_ID).toBe(rec.id);
     expect(listRuns(dir).map((r) => r.id)).toEqual([rec.id]);
     expect(detachedArgv("plan", ["/p.yaml"], { detach: true, parallel: 2, "allow-dirty": true, "dry-run": false, escalate: "sonnet" })).toEqual(["plan", "run", "/p.yaml", "--parallel", "2", "--allow-dirty", "--escalate", "sonnet"]);
+  });
+
+  it("a background origin with a recorded host delivers to that uuid; nothing resolvable fails the same way", async () => {
+    const sent = stubClient();
+    const m = aibrokerMessenger("/tmp", () => undefined);
+    // origin.iterm empty, host recorded at run start -> the host uuid is the target
+    expect(await m.toSession({ claudeSession: "cc1", host: "HOST-7" }, "hi")).toBe(true);
+    expect(sent[0]?.[0]).toBe("HOST-7");
+    // nothing resolvable -> the same "no originating session" failure
+    expect(await m.toSession({ name: "" }, "hi")).toBe(false);
+    expect(m.lastError).toBe("the run has no originating session");
+    vi.unstubAllEnvs();
+  });
+
+  it("the delivery-time resolver is the fallback when no host was recorded", async () => {
+    const sent = stubClient();
+    const m = aibrokerMessenger("/tmp", () => undefined, async (cid) => (cid === "cc1" ? "HOST-9" : ""));
+    expect(await m.toSession({ claudeSession: "cc1" }, "hi")).toBe(true);
+    expect(sent[0]?.[0]).toBe("HOST-9");
+    expect(await m.toSession({ claudeSession: "other" }, "hi")).toBe(false);
+    expect(m.lastError).toBe("the run has no originating session");
+    vi.unstubAllEnvs();
+  });
+
+  it("originTarget prefers iterm, then the recorded host, then the name", () => {
+    expect(originTarget({ iterm: "w8t0p0:UUID-1", host: "HOST-7", name: "n" })).toBe("UUID-1");
+    expect(originTarget({ claudeSession: "cc1", host: "HOST-7", name: "n" })).toBe("HOST-7");
+    expect(originTarget({ name: "n" })).toBe("n");
+    expect(originTarget({})).toBeUndefined();
+  });
+
+  it("reportOriginWithHost records the resolved host when the origin has no iterm", async () => {
+    const spy = vi.spyOn(pane, "resolveHostSession").mockResolvedValue({ uid: "HOST-3", term: "HOST-3", via: "daemon client" });
+    try {
+      expect(await reportOriginWithHost({ CLAUDE_CODE_SESSION_ID: "cc1" })).toEqual({ claudeSession: "cc1", host: "HOST-3" });
+      // an origin that already names its terminal gets no lookup
+      expect(await reportOriginWithHost({ ITERM_SESSION_ID: "w0t0p0:UUID-9" })).toEqual({ iterm: "UUID-9" });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("the sweep reports a dead run once and ignores finished and live ones", async () => {

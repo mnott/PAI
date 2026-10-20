@@ -23,7 +23,7 @@ import { idleText, planStatus, planStopPath, requestPlanStop, readRunLog, render
 import { again, loadSettings, move, queueStatePath, QueueStore, type QueueItem, type QueueSettings } from "../../workers/queue.js";
 import { acceptItems } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
-import { reportOrigin, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
+import { reportOriginWithHost, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
 import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
 import type { WorkerToolResult } from "./worker-model.js";
 
@@ -76,7 +76,7 @@ export interface DelegationDeps {
   accept(store: QueueStore, settings: QueueSettings, ids: string[], repo: string): ReturnType<typeof acceptItems>;
   branchDiff(repo: string, workerId: string): Promise<string>;
   /** Calling session: where the run's events are delivered. */
-  origin(): RunOrigin | null;
+  origin(): RunOrigin | null | Promise<RunOrigin | null>;
   now(): number;
   /** Worker log dir: where the plan runner's live phase entry is read from. */
   logDir?(): string;
@@ -155,7 +155,7 @@ export function realDelegationDeps(): DelegationDeps {
     detach: (req) => startDetached(workersLogDir(readWorkersSection().workers), req),
     accept: (store, settings, ids, repo) => acceptItems(store, settings, ids, realQueueDeps(workersLogDir(readWorkersSection().workers), repo)),
     branchDiff,
-    origin: () => reportOrigin(),
+    origin: () => reportOriginWithHost(),
     now: Date.now,
   };
 }
@@ -267,7 +267,7 @@ export async function planRun(args: { project: string; name: string; escalate?: 
     const total = plan.units.flatMap((u) => u.parts).length;
     const target = await resolveWhere(args, deps, (plan.maxParallel ?? 2) > 1);
     const par = parallelOf(plan, target?.provider ? deps.capOf(target.provider) : deps.provider(loadSettings(repo)).cap);
-    const origin = deps.origin();
+    const origin = await deps.origin();
     deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin });
     return text(withTarget(target, `Plan "${args.name}" started in the background${origin ? "" : " (no calling session found, events are not delivered)"}: ${total - merged.size} of ${total} parts to run, ${par} at a time${merged.size ? ` (${merged.size} already merged are skipped)` : ""}. Check progress with plan_status.`));
   } catch (e) {
@@ -393,7 +393,7 @@ export async function queueRun(args: { project: string; escalate?: boolean } & W
     if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
     const target = await resolveWhere(args, deps, true);
     const prov =target?.provider ? { name: target.provider, cap: deps.capOf(target.provider) } : deps.provider(settings);
-    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: deps.origin() });
+    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: await deps.origin() });
     return text(withTarget(target, `Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`));
   } catch (e) {
     return error(e);
