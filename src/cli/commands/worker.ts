@@ -306,7 +306,6 @@ const resumeCommand: CommandDef = {
   ],
   options: [
     { name: "print-id", type: "boolean", summary: "Print the new worker id on its own line" },
-    { name: "no-pane", type: "boolean", summary: "Start without a pane" },
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
   ],
@@ -316,8 +315,7 @@ const resumeCommand: CommandDef = {
     guard("pai worker ps   (lists worker ids)", async () => {
       const id = ctx.args.ID as string;
       const text = ctx.args.TEXT as string;
-      const noPane = flag(ctx, "no-pane");
-          const dir = logDir();
+      const dir = logDir();
       const old = loadStatus(dir, id);
       if (!old) throw new Error(`no worker named "${id}"`);
       if (!old.claudeSession) {
@@ -333,7 +331,6 @@ const resumeCommand: CommandDef = {
         providerFlag: old.provider,
         modelFlag: old.model,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
-        noPane,
         claudeArgs,
         resumeOf: id,
         onWorkerStart: (wid) => {

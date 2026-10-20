@@ -892,3 +892,11 @@ describe("ps machine scope (no hidden workers)", () => {
     expect(stray.map((s) => s.pid)).toEqual([102]);
   });
 });
+
+describe("viewer resume spawn", () => {
+  it("resumes through the launcher: no --no-pane, no PAI_WORKER override", () => {
+    const src = readFileSync(new URL("./viewer.ts", import.meta.url), "utf8");
+    expect(src).not.toContain("--no-pane");
+    expect(src).not.toMatch(/PAI_WORKER:\s*"1"/);
+  });
+});

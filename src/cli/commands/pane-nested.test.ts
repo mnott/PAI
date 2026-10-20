@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { inVisiblePane } from "./pane.js";
+import { inVisiblePane } from "../../workers/pane.js";
 import { openOwnedPane, runPaneExec } from "../../workers/pane-exec.js";
 import { runInPane } from "../../workers/pane-run.js";
 
@@ -29,11 +29,19 @@ describe("a process started inside a pane gets its own pane", () => {
     expect(inVisiblePane({ PAI_PANE_EXEC: "r1" }, 9999)).toBe(false);
   });
 
-  it("without a launcher the worker / pane-run markers still count", () => {
-    expect(inVisiblePane({ PAI_WORKER: "1" }, 1)).toBe(true);
-    expect(inVisiblePane({ PAI_PANE_RUN: "1" }, 1)).toBe(true);
+  it("without a wrapper the worker / pane-run markers decide nothing: a pane opens", () => {
+    expect(inVisiblePane({ PAI_WORKER: "1" }, 1)).toBe(false);
+    expect(inVisiblePane({ PAI_PANE_RUN: "1" }, 1)).toBe(false);
     expect(inVisiblePane({}, 1)).toBe(false);
   });
+
+  it("pai pane run from a PAI_WORKER=1 process that is not the wrapper's child opens a pane", async () => {
+    vi.stubEnv("PAI_WORKER", "1");
+    vi.stubEnv("PAI_PANE_EXEC", "");
+    const launch = vi.fn(async () => null);
+    await runInPane({ command: ["true"], logDir: join(dir, "logs"), out: () => undefined, err: () => undefined, launch, env: { PATH: process.env.PATH, PAI_WORKER: "1" } });
+    expect(launch).toHaveBeenCalledTimes(1);
+  }, 15_000);
 
   it("the wrapper gives its child the new run-id and the wrapper's pid, replacing inherited values", async () => {
     const id = "t-nested-env";

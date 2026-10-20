@@ -11,7 +11,8 @@ import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor } from "../../builds/doctor.js";
-import { inVisiblePane, runCommandInPane } from "./pane.js";
+import { inVisiblePane } from "../../workers/pane.js";
+import { runCommandInPane } from "./pane.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 
 const out = (s: string) => process.stdout.write(s + "\n");
