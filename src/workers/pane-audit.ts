@@ -13,7 +13,7 @@ import { loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-import { loadStatuses, isLive, isChatPane, spawnTimeOf } from "./status.js";
+import { loadStatusesCached, isLive, isChatPane, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
@@ -82,8 +82,8 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
 /** Everything running now that must own a pane. A run that was refused/allowed hidden (pane.opened false) is exempt. */
 export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
-  for (const s of loadStatuses(logDir)) {
-    if (isChatPane(s) || !isLive(s) || s.state === "queued" || s.pane?.opened === false) continue;
+  for (const s of loadStatusesCached(logDir)) {
+    if (isChatPane(s) || !isLive(s, ownsPidCached) || s.state === "queued" || s.pane?.opened === false) continue;
     procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false) });
   }
   for (const p of loadPlanStatuses(logDir)) if (p.state === "running" && p.hasPane) procs.push({ id: p.id, kind: "plan", startedMs: stampMs(p.started, false) });

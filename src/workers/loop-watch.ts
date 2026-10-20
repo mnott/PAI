@@ -30,13 +30,30 @@ export interface LoopDeps {
   killChildren?: (logDir: string, id: string) => Promise<unknown>;
 }
 
+/** Loop detection looks at the last turns only: the transcript's tail (MBs for a long run) is all that is parsed per tick. */
+export const LOOP_TAIL_BYTES = 256 * 1024;
+
+/** The last `max` bytes of a file as text, starting at a line boundary. */
+export function readTail(fs: typeof import("node:fs"), path: string, max: number): string {
+  const size = fs.statSync(path).size;
+  if (size <= max) return fs.readFileSync(path, "utf8");
+  const fd = fs.openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(max);
+    fs.readSync(fd, buf, 0, max, size - max);
+    return buf.toString("utf8").split("\n").slice(1).join("\n");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent: Record<string, string>, deps: LoopDeps = {}): Promise<LoopFinding[]> {
   const {
     readEvents = async (logDir, id) => {
       const path = eventsPath(logDir, id);
       const fs = await import("node:fs");
       try {
-        const data = fs.readFileSync(path, "utf8");
+        const data = readTail(fs, path, LOOP_TAIL_BYTES);
         const lines = data.split("\n");
         const events: unknown[] = [];
         for (const line of lines) {
