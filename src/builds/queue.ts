@@ -41,6 +41,8 @@ export interface BuildTicket {
   state: "waiting" | "running";
   enqueuedAt: number;
   startedAt?: number;
+  /** Paths (cwd, derived data, ...) that name this job's compilers in `ps`. */
+  paths?: string[];
   /** Process group of the running build. */
   pgid?: number;
   log?: string;

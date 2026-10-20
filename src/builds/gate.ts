@@ -27,6 +27,7 @@ import {
   type BuildTicket,
   type QueueDeps,
 } from "./queue.js";
+import { jobPaths, reapJob, type ReapOptions } from "./reap.js";
 import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
 
 export interface RunBuildOptions {
@@ -60,6 +61,8 @@ export interface RunBuildOptions {
   cores?: number;
   /** The caller is gone when this returns true (default: reparented away from the original parent). */
   callerGone?: () => boolean;
+  /** Compiler reaping hooks (tests inject a process table and kill). */
+  reap?: ReapOptions;
 }
 
 export function sessionName(env: NodeJS.ProcessEnv, cwd: string): string {
@@ -143,6 +146,8 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
   );
   o.spawnWatcher?.(o.dir, ticket.id);
 
+  const paths = jobPaths(o.command, cwd, env);
+  let startedAt = 0;
   let aborted: NodeJS.Signals | null = null;
   let child: ChildProcess | null = null;
   const killChild = (): void => {
@@ -188,7 +193,8 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
       }
       await new Promise((r) => setTimeout(r, poll));
     }
-    if (kind === "test") await patchTicket(o.dir, ticket.id, { bootedBefore: bootedSimulators(o.simctl) });
+    startedAt = Date.now();
+    await patchTicket(o.dir, ticket.id, { paths, ...(kind === "test" ? { bootedBefore: bootedSimulators(o.simctl) } : {}) });
     out(`build started: ${label} (${mode}) — log ${buildLogPath(o.dir, ticket.id)}`);
     const code = await exec(wrap(o.command), { ...childEnv, PAI_BUILD_TICKET: ticket.id }, cwd, ticket, o, (c) => {
       child = c;
@@ -202,6 +208,10 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
       if (t?.bootedBefore) shutdownAdded(t.bootedBefore, o.simctl);
     }
     if (o.handleSignals) for (const s of sigs) process.off(s, onSig);
+    if (startedAt) {
+      const others = (await listBuilds(o.dir, o.deps)).filter((t) => t.id !== ticket.id).flatMap((t) => t.paths ?? []);
+      await reapJob(paths, others, (Date.now() - startedAt) / 1000, o.reap);
+    }
     await removeTicket(o.dir, ticket.id);
   }
 }
@@ -249,7 +259,7 @@ function exec(
 }
 
 /** Detached-watcher body: kill the build tree, drop the ticket and shut down the simulators a test job booted once the gate process is gone. */
-export async function watchTicket(dir: string, id: string, deps: Partial<QueueDeps> = {}, intervalMs = 1000, simctl?: Simctl): Promise<void> {
+export async function watchTicket(dir: string, id: string, deps: Partial<QueueDeps> = {}, intervalMs = 1000, simctl?: Simctl, reap?: ReapOptions): Promise<void> {
   const isAlive = deps.isAlive ?? ((pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } });
   for (;;) {
     const t = await getTicket(dir, id);
@@ -257,6 +267,10 @@ export async function watchTicket(dir: string, id: string, deps: Partial<QueueDe
     if (!isAlive(t.pid)) {
       await listBuilds(dir, deps); // prune kills the group and removes the ticket
       if (t.kind === "test" && t.bootedBefore) shutdownAdded(t.bootedBefore, simctl);
+      if (t.startedAt && t.paths?.length) {
+        const others = (await listBuilds(dir, deps)).filter((x) => x.id !== t.id).flatMap((x) => x.paths ?? []);
+        await reapJob(t.paths, others, (Date.now() - t.startedAt) / 1000, reap);
+      }
       return;
     }
     await new Promise((r) => setTimeout(r, intervalMs));

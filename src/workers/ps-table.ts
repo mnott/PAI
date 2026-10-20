@@ -29,10 +29,10 @@ export function psTable(format: string, run: PsRunner = realRunner, maxLine = PS
 }
 
 /** psTable that retries, then returns null ("unknown") instead of throwing. */
-export function psTableOrNull(format: string, run: PsRunner = realRunner, tries = 3): string | null {
+export function psTableOrNull(format: string, run: PsRunner = realRunner, tries = 3, maxLine = PS_MAX_LINE): string | null {
   for (let i = 0; i < tries; i++) {
     try {
-      return psTable(format, run);
+      return psTable(format, run, maxLine);
     } catch {
       /* retry */
     }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runBuild } from "./gate.js";
+import { jobPaths, parseEtime, parseTable, reapJob, sweepOrphans, type ProcRow } from "./reap.js";
 import { buildNext, enqueue, listBuilds, patchTicket, releaseBuildsOf, renderBuildQueue } from "./queue.js";
 import { poolSlots, slotsFor } from "./config.js";
 import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
@@ -192,5 +193,63 @@ describe("simulator cleanup", () => {
     gone = true;
     expect(await r).toBe(129);
     expect(log).toEqual(["ORPHAN"]);
+  });
+});
+
+describe("compiler reaping", () => {
+  const row = (pid: number, ppid: number, age: number, command: string): ProcRow => ({ pid, ppid, age, command });
+  const rec = () => {
+    const sent: Array<[number, string]> = [];
+    return { sent, kill: (p: number, s: NodeJS.Signals) => void sent.push([p, s]), isAlive: (p: number) => p === 3, wait: async () => {}, log: () => {} };
+  };
+
+  it("parses ps rows and etime", () => {
+    expect(parseEtime("01:02")).toBe(62);
+    expect(parseEtime("1-00:00:01")).toBe(86401);
+    expect(parseTable("  10     1  12:00 /x/swift-frontend -c a\n").at(0)).toMatchObject({ pid: 10, ppid: 1, age: 720 });
+    expect(jobPaths(["xcodebuild", "-derivedDataPath", "/tmp/dd/app-1"], "/w/trees/job1", {})).toEqual(["/w/trees/job1", "/tmp/dd/app-1"]);
+  });
+
+  it("reaps this job's compilers only, TERM then KILL for survivors", async () => {
+    const r = rec();
+    const table = [
+      row(1, 1, 30, "/Xcode/swift-frontend -c /w/a/File.swift -o /tmp/dd/A/x.o"),
+      row(2, 500, 30, "clang -c /w/a/y.c"),
+      row(3, 1, 30, "/Xcode/ld -o /tmp/dd/A/out"),
+      row(4, 1, 30, "/Xcode/swift-frontend -c /w/b/File.swift"), // other job
+      row(5, 1, 30, "/Xcode/swift-frontend -c /elsewhere/z.swift"), // unrelated
+      row(6, 1, 9000, "/Xcode/swift-frontend -c /w/a/old.swift"), // orphan from before the window
+      row(7, 1, 30, "vim /w/a/notes"),
+    ];
+    const pids = await reapJob(["/w/a", "/tmp/dd/A"], ["/w/b"], 60, { ...r, table });
+    expect(pids).toEqual([1, 2, 3]);
+    expect(r.sent.filter(([, s]) => s === "SIGTERM").map(([p]) => p)).toEqual([1, 2, 3]);
+    expect(r.sent.filter(([, s]) => s === "SIGKILL").map(([p]) => p)).toEqual([3]);
+  });
+
+  it("does not touch a compiler that names another running job's path too", async () => {
+    const r = rec();
+    const table = [row(1, 1, 5, "swift-frontend /w/a/x.swift -I /w/b/mod")];
+    expect(await reapJob(["/w/a"], ["/w/b"], 60, { ...r, table })).toEqual([]);
+    expect(r.sent).toEqual([]);
+  });
+
+  it("sweeps old ppid-1 compilers that match no running job", async () => {
+    const r = rec();
+    const table = [
+      row(1, 1, 600, "swift-frontend -c /w/dead/x.swift"),
+      row(2, 1, 600, "swift-frontend -c /w/live/x.swift"),
+      row(3, 1, 60, "swift-frontend -c /w/dead/young.swift"),
+      row(4, 77, 600, "swift-frontend -c /w/dead/child.swift"),
+      row(5, 1, 600, "/Xcode/SWBBuildService"),
+    ];
+    expect(await sweepOrphans(["/w/live"], { ...r, table })).toEqual([1]);
+  });
+
+  it("the gate reaps compilers left by a finished job", async () => {
+    const r = rec();
+    const table = [row(41, 1, 1, `swift-frontend -c ${process.cwd()}/x.swift`)];
+    await runBuild({ ...base, dir, slots: 1, command: ["true"], reap: { ...r, table } });
+    expect(r.sent[0]).toEqual([41, "SIGTERM"]);
   });
 });
