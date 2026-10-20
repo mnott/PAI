@@ -1,0 +1,200 @@
+/**
+ * cockpit-layout.ts — the policy values of the cockpit layout: grid
+ * breakpoints and column counts, tile min/max widths, chart heights,
+ * sample/history window lengths, refresh intervals, row limits and fold
+ * defaults. They live in the shipped defaults file
+ * (src/config/defaults/config.yaml, `router.cockpit.layout` section) and are
+ * read through the main-config loader (effectiveMainConfig over
+ * paiConfigFilePath(), so PAI_CONFIG_FILE and a user config.yaml/json win),
+ * resolved at page-build time — never as constants in code. Pure styling
+ * (fonts, colours from the theme mapping) stays in the page's CSS.
+ */
+
+import { paiConfigFilePath } from "../daemon/config.js";
+import { effectiveMainConfig } from "../config/shipped-defaults.js";
+
+/** The `router.cockpit.layout` subtree of the effective main config; {} when unreadable. */
+function layoutSection(): Record<string, unknown> {
+  try {
+    const r = effectiveMainConfig(paiConfigFilePath()).router;
+    const c =
+      typeof r === "object" && r !== null && !Array.isArray(r)
+        ? (r as Record<string, unknown>).cockpit
+        : undefined;
+    const l =
+      typeof c === "object" && c !== null && !Array.isArray(c)
+        ? (c as Record<string, unknown>).layout
+        : undefined;
+    return typeof l === "object" && l !== null && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
+  } catch {
+    // a damaged user config must not blank the page: the shipped defaults stand alone
+    return {};
+  }
+}
+
+/** A positive number from the config subtree, else the shipped fallback. */
+function num(section: Record<string, unknown>, key: string, fallback: number): number {
+  const v = section[key];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+/** A non-empty string from the config subtree, else the shipped fallback. */
+function str(section: Record<string, unknown>, key: string, fallback: string): string {
+  return typeof section[key] === "string" && section[key] ? (section[key] as string) : fallback;
+}
+
+/** The shipped values, kept only as the fallback when the defaults file is
+ *  missing a key; the file is the source of truth. */
+const SHIPPED = {
+  gridBreakpointPx: 1000,
+  gaugeMinWidthPx: 110,
+  gaugeMaxWidthPx: 120,
+  providerTileMinPx: 260,
+  runtimeCardMinPx: 420,
+  tilesWideBreakpointPx: 720,
+  tilesWideCols: 4,
+  tilesNarrowCols: 2,
+  tilesOneColBreakpointPx: 339,
+  ringMinWidthPx: 92,
+  sessionTitleMaxWidthPx: 480,
+  sparkHeightPx: 32,
+  sparkViewMaxPx: 100,
+  sparkPlotHeightPx: 30,
+  sparkPlotTopPx: 28,
+  bigDonutSizePx: 170,
+  donutSizePx: 84,
+  donutRadiusPx: 48,
+  donutStrokePx: 16,
+  donutViewBoxPx: 140,
+  tokensChartWidthPx: 760,
+  tokensChartHeightPx: 220,
+  powerChartWidthPx: 760,
+  powerChartHeightPx: 150,
+  dailyChartWidthPx: 520,
+  dailyChartHeightPx: 200,
+  dailyDays: 14,
+  sessionsRows: 20,
+  workerRows: 15,
+  lowRequestMin: 5,
+  pollMs: 5000,
+  limitsPollMs: 30000,
+  poolPollMs: 15000,
+  clockTickMs: 1000,
+  stampStaleSecs: 15,
+  jobPollMs: 5000,
+  jobFirstDelayMs: 2000,
+  jobMaxTries: 120,
+  serverCounterStaleSecs: 60,
+  foldDefaultKind: "coding",
+} as const;
+
+/** The layout policy of the cockpit page, read at page-build time. */
+export interface CockpitLayout {
+  /** main grid: 12 columns; cards wider than c8 collapse to full width below this width. */
+  gridCols: number;
+  gridBreakpointPx: number;
+  /** gauge tiles in the cloud/local flex rows. */
+  gaugeMinWidthPx: number;
+  gaugeMaxWidthPx: number;
+  /** provider group cards in the responsive pgrid. */
+  providerTileMinPx: number;
+  /** runtime cards in the models rt-grid. */
+  runtimeCardMinPx: number;
+  /** metric tiles inside a runtime card: wide cols at/above the container breakpoint,
+   *  narrow cols below it, one column at/below the one-col breakpoint. */
+  tilesWideBreakpointPx: number;
+  tilesWideCols: number;
+  tilesNarrowCols: number;
+  tilesOneColBreakpointPx: number;
+  /** cache rings grid. */
+  ringMinWidthPx: number;
+  /** the sessions table's title column. */
+  sessionTitleMaxWidthPx: number;
+  /** metric-tile sparkline: height, viewBox width, plot top/height. */
+  sparkHeightPx: number;
+  sparkViewMaxPx: number;
+  sparkPlotHeightPx: number;
+  sparkPlotTopPx: number;
+  /** cache donut: solo size, ring size, radius, stroke, viewBox. */
+  bigDonutSizePx: number;
+  donutSizePx: number;
+  donutRadiusPx: number;
+  donutStrokePx: number;
+  donutViewBoxPx: number;
+  /** chart canvases (SVG viewBox sizes). */
+  tokensChartWidthPx: number;
+  tokensChartHeightPx: number;
+  powerChartWidthPx: number;
+  powerChartHeightPx: number;
+  dailyChartWidthPx: number;
+  dailyChartHeightPx: number;
+  /** sample/history windows. */
+  dailyDays: number;
+  /** table row limits. */
+  sessionsRows: number;
+  workerRows: number;
+  /** models under this many requests are chips, not rings. */
+  lowRequestMin: number;
+  /** refresh intervals. */
+  pollMs: number;
+  limitsPollMs: number;
+  poolPollMs: number;
+  clockTickMs: number;
+  /** the stamp reads stale past this age. */
+  stampStaleSecs: number;
+  /** a local switch/off job: first delay, poll interval, max tries. */
+  jobPollMs: number;
+  jobFirstDelayMs: number;
+  jobMaxTries: number;
+  /** a server prefix-cache counter older than this is marked. */
+  serverCounterStaleSecs: number;
+  /** fold default: a card whose data-def equals this opens, everything else folds. */
+  foldDefaultKind: string;
+}
+
+export function cockpitLayout(): CockpitLayout {
+  const s = layoutSection();
+  return {
+    gridCols: 12,
+    gridBreakpointPx: num(s, "gridBreakpointPx", SHIPPED.gridBreakpointPx),
+    gaugeMinWidthPx: num(s, "gaugeMinWidthPx", SHIPPED.gaugeMinWidthPx),
+    gaugeMaxWidthPx: num(s, "gaugeMaxWidthPx", SHIPPED.gaugeMaxWidthPx),
+    providerTileMinPx: num(s, "providerTileMinPx", SHIPPED.providerTileMinPx),
+    runtimeCardMinPx: num(s, "runtimeCardMinPx", SHIPPED.runtimeCardMinPx),
+    tilesWideBreakpointPx: num(s, "tilesWideBreakpointPx", SHIPPED.tilesWideBreakpointPx),
+    tilesWideCols: num(s, "tilesWideCols", SHIPPED.tilesWideCols),
+    tilesNarrowCols: num(s, "tilesNarrowCols", SHIPPED.tilesNarrowCols),
+    tilesOneColBreakpointPx: num(s, "tilesOneColBreakpointPx", SHIPPED.tilesOneColBreakpointPx),
+    ringMinWidthPx: num(s, "ringMinWidthPx", SHIPPED.ringMinWidthPx),
+    sessionTitleMaxWidthPx: num(s, "sessionTitleMaxWidthPx", SHIPPED.sessionTitleMaxWidthPx),
+    sparkHeightPx: num(s, "sparkHeightPx", SHIPPED.sparkHeightPx),
+    sparkViewMaxPx: num(s, "sparkViewMaxPx", SHIPPED.sparkViewMaxPx),
+    sparkPlotHeightPx: num(s, "sparkPlotHeightPx", SHIPPED.sparkPlotHeightPx),
+    sparkPlotTopPx: num(s, "sparkPlotTopPx", SHIPPED.sparkPlotTopPx),
+    bigDonutSizePx: num(s, "bigDonutSizePx", SHIPPED.bigDonutSizePx),
+    donutSizePx: num(s, "donutSizePx", SHIPPED.donutSizePx),
+    donutRadiusPx: num(s, "donutRadiusPx", SHIPPED.donutRadiusPx),
+    donutStrokePx: num(s, "donutStrokePx", SHIPPED.donutStrokePx),
+    donutViewBoxPx: num(s, "donutViewBoxPx", SHIPPED.donutViewBoxPx),
+    tokensChartWidthPx: num(s, "tokensChartWidthPx", SHIPPED.tokensChartWidthPx),
+    tokensChartHeightPx: num(s, "tokensChartHeightPx", SHIPPED.tokensChartHeightPx),
+    powerChartWidthPx: num(s, "powerChartWidthPx", SHIPPED.powerChartWidthPx),
+    powerChartHeightPx: num(s, "powerChartHeightPx", SHIPPED.powerChartHeightPx),
+    dailyChartWidthPx: num(s, "dailyChartWidthPx", SHIPPED.dailyChartWidthPx),
+    dailyChartHeightPx: num(s, "dailyChartHeightPx", SHIPPED.dailyChartHeightPx),
+    dailyDays: num(s, "dailyDays", SHIPPED.dailyDays),
+    sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
+    workerRows: num(s, "workerRows", SHIPPED.workerRows),
+    lowRequestMin: num(s, "lowRequestMin", SHIPPED.lowRequestMin),
+    pollMs: num(s, "pollMs", SHIPPED.pollMs),
+    limitsPollMs: num(s, "limitsPollMs", SHIPPED.limitsPollMs),
+    poolPollMs: num(s, "poolPollMs", SHIPPED.poolPollMs),
+    clockTickMs: num(s, "clockTickMs", SHIPPED.clockTickMs),
+    stampStaleSecs: num(s, "stampStaleSecs", SHIPPED.stampStaleSecs),
+    jobPollMs: num(s, "jobPollMs", SHIPPED.jobPollMs),
+    jobFirstDelayMs: num(s, "jobFirstDelayMs", SHIPPED.jobFirstDelayMs),
+    jobMaxTries: num(s, "jobMaxTries", SHIPPED.jobMaxTries),
+    serverCounterStaleSecs: num(s, "serverCounterStaleSecs", SHIPPED.serverCounterStaleSecs),
+    foldDefaultKind: str(s, "foldDefaultKind", SHIPPED.foldDefaultKind),
+  };
+}

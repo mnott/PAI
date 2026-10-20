@@ -144,6 +144,72 @@ vaultIndex:
 router:
   enabled: false
   bind: loopback
+  # Cockpit page layout policy (src/router/cockpit-layout.ts): grid breakpoints,
+  # column counts, tile min/max widths, chart heights, sample/history window
+  # lengths, refresh intervals, row limits, fold defaults. Read at page build
+  # time; a user config.yaml/json override changes the served page. Pure
+  # styling (fonts, colours from the theme mapping) stays in the page's CSS.
+  cockpit:
+    layout:
+      # main grid: 12 columns; c8/c6/c4 cards go full width below this width.
+      gridBreakpointPx: 1000
+      # cloud/local gauge tiles (flex row): base width, cap.
+      gaugeMinWidthPx: 110
+      gaugeMaxWidthPx: 120
+      # provider group cards in the responsive grid: min column width.
+      providerTileMinPx: 260
+      # models runtime cards: min column width of the rt-grid.
+      runtimeCardMinPx: 420
+      # metric tiles inside a runtime card: 4 columns at/above the container
+      # breakpoint, 2 below it, 1 at/below the one-column breakpoint.
+      tilesWideBreakpointPx: 720
+      tilesWideCols: 4
+      tilesNarrowCols: 2
+      tilesOneColBreakpointPx: 339
+      # cache rings grid: min column width.
+      ringMinWidthPx: 92
+      # sessions table: max width of the title column.
+      sessionTitleMaxWidthPx: 480
+      # metric-tile sparkline: height, viewBox width, plot top, plot height.
+      sparkHeightPx: 32
+      sparkViewMaxPx: 100
+      sparkPlotHeightPx: 28
+      sparkPlotTopPx: 30
+      # cache donut: solo size, ring size, radius, stroke width, viewBox size.
+      bigDonutSizePx: 170
+      donutSizePx: 84
+      donutRadiusPx: 48
+      donutStrokePx: 16
+      donutViewBoxPx: 140
+      # chart canvases (SVG viewBox sizes).
+      tokensChartWidthPx: 760
+      tokensChartHeightPx: 220
+      powerChartWidthPx: 760
+      powerChartHeightPx: 150
+      dailyChartWidthPx: 520
+      dailyChartHeightPx: 200
+      # history window of the "Tokens per day per model" chart, in days.
+      dailyDays: 14
+      # table row limits: sessions by tokens, worker runs.
+      sessionsRows: 20
+      workerRows: 15
+      # models under this many requests render as chips, not rings.
+      lowRequestMin: 5
+      # refresh intervals of the page's polls.
+      pollMs: 5000
+      limitsPollMs: 30000
+      poolPollMs: 15000
+      clockTickMs: 1000
+      # the stamp reads "stale" past this age, in seconds.
+      stampStaleSecs: 15
+      # a local switch/off job: first delay, poll interval, max tries.
+      jobFirstDelayMs: 2000
+      jobPollMs: 5000
+      jobMaxTries: 120
+      # a server prefix-cache counter older than this (seconds) is marked.
+      serverCounterStaleSecs: 60
+      # fold default: a model card whose kind equals this opens, the rest fold.
+      foldDefaultKind: coding
 
 # Cockpit Models cards: the title of PAI's own embedding consumer (the purpose
 # of the model). Override in ~/.pai/config.yaml under models.embeddingLabel.

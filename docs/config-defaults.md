@@ -46,6 +46,37 @@ The pane values live in `defaults/config.yaml` under `panes`, read at call time 
 | `panes.tailLines` | `TAIL_LINES` (pane-run.ts) | `40` |
 | `panes.audit.startGraceSecs` / `endGraceSecs` / `launchGraceSecs` | `START_GRACE_MS` / `END_GRACE_MS` / `LAUNCH_GRACE_MS` (pane-audit.ts) | `30 s` / `60 s` / `15 s` |
 
+## Moved: cockpit layout (2026-10-20)
+
+The cockpit layout policy values live in `defaults/config.yaml` under `router.cockpit.layout`, read at page-build time through the main-config loader (`src/router/cockpit-layout.ts` → `effectiveMainConfig(paiConfigFilePath())`, so a user `config.yaml`/`config.json` wins; `cockpitHtml()` re-reads per page load). The page bakes the values into its static HTML/CSS/JS; the mechanism (`var NAME=<value>` declarations in the page script, `${L.x}` interpolations in the CSS):
+
+| key | was | value |
+|---|---|---|
+| `router.cockpit.layout.gridBreakpointPx` | the `@media(max-width:1000px)` card collapse (src/router/cockpit-page.ts) | `1000 px` |
+| `router.cockpit.layout.gaugeMinWidthPx` / `.gaugeMaxWidthPx` | gauge tile `flex:1 1 110px` / `max-width:min(120px,100%)` | `110` / `120 px` |
+| `router.cockpit.layout.providerTileMinPx` | pgrid `minmax(min(260px,100%),1fr)` | `260 px` |
+| `router.cockpit.layout.runtimeCardMinPx` | rt-grid `minmax(min(420px,100%),1fr)` | `420 px` |
+| `router.cockpit.layout.tilesWideBreakpointPx` / `.tilesWideCols` / `.tilesNarrowCols` / `.tilesOneColBreakpointPx` | rt-tiles container queries `720px`/4, base 2, `339px`/1 | `720`/`4`/`2`/`339` |
+| `router.cockpit.layout.ringMinWidthPx` | rings `minmax(92px,1fr)` | `92 px` |
+| `router.cockpit.layout.sessionTitleMaxWidthPx` | sessions title column `max-width:480px` | `480 px` |
+| `router.cockpit.layout.sparkHeightPx` / `.sparkViewMaxPx` / `.sparkPlotHeightPx` / `.sparkPlotTopPx` | sparkline `height:32`, viewBox `0 0 100 32`, plot `30 - v*28` | `32`/`100`/`28`/`30` |
+| `router.cockpit.layout.bigDonutSizePx` | solo donut `donut(ratio,170)` | `170 px` |
+| `router.cockpit.layout.donutSizePx` / `.donutRadiusPx` / `.donutStrokePx` / `.donutViewBoxPx` | donut default `84`, `r=48`, `stroke-width=16`, viewBox `140` | `84`/`48`/`16`/`140` |
+| `router.cockpit.layout.tokensChartWidthPx` / `.tokensChartHeightPx` | tokens chart `760,220` | `760`/`220` |
+| `router.cockpit.layout.powerChartWidthPx` / `.powerChartHeightPx` | power chart `760,150` | `760`/`150` |
+| `router.cockpit.layout.dailyChartWidthPx` / `.dailyChartHeightPx` | daily chart `520,200` | `520`/`200` |
+| `router.cockpit.layout.dailyDays` | daily history window (header "(14 d)", chart rows) | `14 d` |
+| `router.cockpit.layout.sessionsRows` / `.workerRows` | `slice(0,20)` / `slice(0,15)` table limits | `20` / `15` |
+| `router.cockpit.layout.lowRequestMin` | `LOW_REQ=5` (chip line vs rings) | `5` |
+| `router.cockpit.layout.pollMs` | data/system/models/queue `setInterval(…,5000)` | `5000 ms` |
+| `router.cockpit.layout.limitsPollMs` | limits `setInterval(…,30000)` | `30000 ms` |
+| `router.cockpit.layout.poolPollMs` | pool `setInterval(…,15000)` | `15000 ms` |
+| `router.cockpit.layout.clockTickMs` | stamp tick `setInterval(…,1000)` | `1000 ms` |
+| `router.cockpit.layout.stampStaleSecs` | stamp stale threshold `age>=15` | `15 s` |
+| `router.cockpit.layout.jobFirstDelayMs` / `.jobPollMs` / `.jobMaxTries` | job watch `2000`/`5000`/`120` | `2000`/`5000`/`120` |
+| `router.cockpit.layout.serverCounterStaleSecs` | prefix-cache age mark `>60` | `60 s` |
+| `router.cockpit.layout.foldDefaultKind` | model-card fold default `"coding"` | `coding` |
+
 ## Backlog: policy constants still in code
 
 Each later topic commit moves one area into the defaults files. Generated from `NAME = number/list` constants in non-test sources.

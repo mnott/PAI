@@ -5,6 +5,7 @@
  */
 
 import { POOL_PANEL_HTML, POOL_PANEL_JS } from "./pool-panel.js";
+import { cockpitLayout, type CockpitLayout } from "./cockpit-layout.js";
 
 /** Favicon: a router fanning one request out to three tiers. Inline data URI —
  *  no extra file, no extra route; encodeURIComponent keeps it safe in Safari,
@@ -13,7 +14,23 @@ const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"
 export const COCKPIT_FAVICON_SVG = FAVICON_SVG;
 export const COCKPIT_FAVICON_DATA_URI = "data:image/svg+xml," + encodeURIComponent(FAVICON_SVG);
 
-const FULL_HTML = String.raw`<!doctype html>
+/** The page, built with one layout policy object (router.cockpit.layout in the
+ *  config defaults, user config wins). `${L.x}` interpolations bake the values
+ *  into the static HTML/JS at module load; cockpitHtml() rebuilds the page from
+ *  a layout read at call time, so a user override changes the served page. */
+function buildHtml(L: CockpitLayout): string {
+  // the page's inline JS interpolates only numbers and quoted strings, so no
+  // interpolation can break out of the script; String.raw keeps the page's own
+  // backslash sequences verbatim
+  const n = (v: number): string => {
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) throw new Error(`cockpit layout: ${v} is not a positive number`);
+    return String(v);
+  };
+  const q = (v: string): string => {
+    if (typeof v !== "string" || !v || !/^[\w -]+$/.test(v)) throw new Error(`cockpit layout: ${JSON.stringify(v)} is not a safe label`);
+    return JSON.stringify(v);
+  };
+  return String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PAI router cockpit</title>
@@ -36,12 +53,12 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
-main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,minmax(0,1fr))}
+main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(${L.gridCols},minmax(0,1fr))}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}.tw{overflow-x:auto}
 .gauge .s{overflow-wrap:anywhere}
-.c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
-@media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}
-.gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 110px;max-width:min(120px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
+.c12{grid-column:span ${L.gridCols}}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
+@media(max-width:${L.gridBreakpointPx}px){.c8,.c6,.c4{grid-column:span ${L.gridCols}}}
+.gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 ${L.gaugeMinWidthPx}px;max-width:min(${L.gaugeMaxWidthPx}px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
 .pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
@@ -50,11 +67,11 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
-.chips.lowmodels{margin-top:6px}.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:8px;min-width:0;align-items:start}.pgrid .downs{grid-column:1/-1}.pgrid .pgroup{margin:0}.pgsub{margin-top:10px}.rtrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:4px 0;border-top:1px solid var(--line)}.rtrow:first-child{border-top:0}.rtlabel{min-width:96px;font-weight:600}.rtchips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;min-width:0}.rtarrow{color:var(--dim)}.rtchip{display:inline-flex;gap:6px;align-items:center;padding:1px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;white-space:nowrap}.rtflow{font-weight:600;padding:2px 0 6px}.rtchip.available{background:color-mix(in srgb,var(--ok) 22%,var(--card));border-color:var(--ok)}.rtchip.tight{background:color-mix(in srgb,var(--warn) 25%,var(--card));border-color:var(--warn)}.rtchip.idle{background:var(--bg);color:var(--dim)}.rtchip.unavailable{background:color-mix(in srgb,var(--bad) 22%,var(--card));border-color:var(--bad)}
+.chips.lowmodels{margin-top:6px}.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(${L.providerTileMinPx}px,100%),1fr));gap:8px;min-width:0;align-items:start}.pgrid .downs{grid-column:1/-1}.pgrid .pgroup{margin:0}.pgsub{margin-top:10px}.rtrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:4px 0;border-top:1px solid var(--line)}.rtrow:first-child{border-top:0}.rtlabel{min-width:96px;font-weight:600}.rtchips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;min-width:0}.rtarrow{color:var(--dim)}.rtchip{display:inline-flex;gap:6px;align-items:center;padding:1px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;white-space:nowrap}.rtflow{font-weight:600;padding:2px 0 6px}.rtchip.available{background:color-mix(in srgb,var(--ok) 22%,var(--card));border-color:var(--ok)}.rtchip.tight{background:color-mix(in srgb,var(--warn) 25%,var(--card));border-color:var(--warn)}.rtchip.idle{background:var(--bg);color:var(--dim)}.rtchip.unavailable{background:color-mix(in srgb,var(--bad) 22%,var(--card));border-color:var(--bad)}
 .ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
+.rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(${L.ringMinWidthPx}px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
 .rings .solo{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:16px;width:100%;flex-wrap:wrap}.bignum{font-size:26px;font-weight:600;text-align:center}.bignum span{display:block;font-size:11px;color:var(--dim);font-weight:400}
 svg text{fill:var(--dim);font-size:10px}
 .tip{position:relative;display:inline-block;margin-left:5px;width:14px;height:14px;line-height:14px;text-align:center;font:11px/14px inherit;font-style:normal;text-transform:none;letter-spacing:0;color:var(--dim);cursor:help;border-radius:50%;vertical-align:middle}
@@ -62,7 +79,7 @@ svg text{fill:var(--dim);font-size:10px}
 .tip::after{content:attr(data-tip);display:none;position:absolute;z-index:5;top:18px;left:-6px;width:max-content;max-width:min(340px,72vw);padding:6px 9px;background:var(--fg);color:var(--bg);border-radius:6px;font-size:12px;font-weight:400;line-height:1.4;white-space:pre-line;text-align:left;text-transform:none;letter-spacing:0;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .tip:hover::after,.tip:focus::after{display:block}
 .downs{width:100%;color:var(--dim)}.downs summary{cursor:pointer}.downs .chip{margin:2px 2px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;white-space:nowrap}.chip b{font-weight:600}.grip{cursor:grab;color:var(--dim)}tr.qrow{cursor:grab}
-#sessions td:first-child span[title]{display:inline-block;max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+#sessions td:first-child span[title]{display:inline-block;max-width:${L.sessionTitleMaxWidthPx}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
 .mt-values{display:flex;justify-content:space-between;gap:10px}.mt-values>div{display:flex;flex-direction:column;gap:2px;min-width:0}.mt-sec{text-align:right}
@@ -70,8 +87,8 @@ svg text{fill:var(--dim);font-size:10px}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
 .mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mt-fill{display:flex;align-items:center;gap:6px;min-width:0}.mt-bar{flex:0 0 40%;height:4px;border-radius:2px;background:var(--line);overflow:hidden}.mt-bar i{display:block;height:100%;background:var(--acc)}.mt-fill .mt-sub{flex:1 1 auto;min-width:0}
-.mt-spark{display:block;width:100%;max-width:100%;height:32px;margin-top:auto;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
-.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}
+.mt-spark{display:block;width:100%;max-width:100%;height:${L.sparkHeightPx}px;margin-top:auto;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
+.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(${L.runtimeCardMinPx}px,100%),1fr));gap:8px;min-width:0;align-items:stretch}
 .rt-card{container-type:inline-size;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .rt-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap}
 .rt-head b{font-size:14px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -105,9 +122,9 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead .msg{color:var(--dim);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mhead .msg.bad{color:var(--bad)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
-.rt-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
-@container (min-width:720px){.rt-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}.rt-tiles.two{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container (max-width:339px){.rt-tiles,.rt-tiles.two{grid-template-columns:minmax(0,1fr)}}
+.rt-tiles{display:grid;grid-template-columns:repeat(${L.tilesNarrowCols},minmax(0,1fr));gap:8px;min-width:0}
+@container (min-width:${L.tilesWideBreakpointPx}px){.rt-tiles{grid-template-columns:repeat(${L.tilesWideCols},minmax(0,1fr))}.rt-tiles.two{grid-template-columns:repeat(${L.tilesNarrowCols},minmax(0,1fr))}}
+@container (max-width:${L.tilesOneColBreakpointPx}px){.rt-tiles,.rt-tiles.two{grid-template-columns:minmax(0,1fr)}}
 .rt-tiles .mt{padding:8px 9px}
 .rt-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
 .rt-chips .chip{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -146,11 +163,11 @@ ${POOL_PANEL_HTML}
 <section data-section="pause" class="card c12"><h2>Cache verdict by pause<span class="tip" tabindex="0" aria-label="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it." data-tip="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.">ⓘ</span></h2><div id="pause"></div></section>
 <section data-section="sessions" class="card c12"><h2>Sessions by tokens</h2><div id="sessions"></div></section>
 <section data-section="runs" class="card c6"><h2>Worker runs</h2><div id="workers"></div></section>
-<section data-section="daily" class="card c6"><h2>Tokens per day per model (14 d)</h2><div id="daily"></div><div class="legend" id="dlegend"></div></section>
+<section data-section="daily" class="card c6"><h2>Tokens per day per model (${L.dailyDays} d)</h2><div id="daily"></div><div class="legend" id="dlegend"></div></section>
 </main>
 <script>
 (function(){
-var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
+var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",DAILY_DAYS=${n(L.dailyDays)},SESSION_ROWS=${n(L.sessionsRows)},WORKER_ROWS=${n(L.workerRows)},LOW_REQ=${n(L.lowRequestMin)},STALE_SEC=${n(L.stampStaleSecs)},data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
 var colors={};function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[Object.keys(colors).length%PAL.length];return colors[k]}
 function $(id){return document.getElementById(id)||document.createElement("div")}
 function has(){for(var i=0;i<arguments.length;i++)if(document.querySelector('[data-section="'+arguments[i]+'"]'))return true;return false}
@@ -182,9 +199,9 @@ function metricSpark(series){
    return d[p]+(d[q]-d[p])*(j-p)/(q-p);
   }
   for(i=a;i<=b;i++){
-   seg.push((n>1?i/(n-1)*100:50).toFixed(1)+","+(30-valAt(i)/max*28).toFixed(1));
+   seg.push((n>1?i/(n-1)*${L.sparkViewMaxPx}:50).toFixed(1)+","+(${L.sparkPlotTopPx}-valAt(i)/max*${L.sparkPlotHeightPx}).toFixed(1));
   }
-  if(seg.length){line+="M"+seg.join("L");if(seg.length>1&&k===0)area+="M"+seg[0].split(",")[0]+",32L"+seg.join("L")+"L"+seg[seg.length-1].split(",")[0]+",32Z"}
+  if(seg.length){line+="M"+seg.join("L");if(seg.length>1&&k===0)area+="M"+seg[0].split(",")[0]+",${L.sparkHeightPx}L"+seg.join("L")+"L"+seg[seg.length-1].split(",")[0]+",${L.sparkHeightPx}Z"}
   return(area?'<path class="area" fill="currentColor" opacity=".12" d="'+area+'"/>':"")+(line?'<path class="line mt-'+esc(x.tone||(k?"alt":"acc"))+'" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" d="'+line+'"/>':"")
  }).join("");
 }
@@ -195,8 +212,10 @@ function metricTile(o){
  return'<div class="mt"><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
   (o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub):"")+
-  '<svg class="mt-spark" viewBox="0 0 100 32" preserveAspectRatio="none" width="100%" height="32">'+metricSpark(o.series||[])+'</svg></div>'
+  '<svg class="mt-spark" viewBox="0 0 ${L.sparkViewMaxPx} ${L.sparkHeightPx}" preserveAspectRatio="none" width="100%" height="${L.sparkHeightPx}">'+metricSpark(o.series||[])+'</svg></div>'
 }
+/** Baked policy values, declared before the helpers that use them so each extracted function stays self-contained. */
+var JOB_TRIES=${n(L.jobMaxTries)},JOB_POLL=${n(L.jobPollMs)},JOB_FIRST=${n(L.jobFirstDelayMs)},SRV_STALE_SEC=${n(L.serverCounterStaleSecs)};
 /** Collapsible tiles: every card/panel can fold; the state is saved per tile id and restored on load. */
 var COLLAPSE_KEY="pai.cockpit.collapsed";
 function collapsedSet(){var s={};try{var r=localStorage.getItem(COLLAPSE_KEY);if(r)JSON.parse(r).forEach(function(k){s[k]=1})}catch(e){}return s}
@@ -464,7 +483,7 @@ function modelsHtml(inv){
   }
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(r.status!=="stopped"&&tierBtns)body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?"coding":"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
+  cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
  var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
@@ -495,7 +514,7 @@ function applyModelFold(){
   else if(init===1)open=true;
   else{
    var d=c.getAttribute("data-def");
-   open=d==="coding";
+   open=d===${q(L.foldDefaultKind)};
    // only the folded cards are stored; an open card is the absence of its id
    if(!open)saved[id]=1;
   }
@@ -555,10 +574,10 @@ function watchJob(id){
    var el=$("modelspanel");var msgs=el.querySelectorAll(".act .msg");
    for(var i=0;i<msgs.length;i++)msgs[i].textContent=(j&&j.message)||"";
    if(j&&(j.state==="done"||j.state==="failed")){loadModels();return}
-   if(++tries<120)setTimeout(step,5000);
-  }).catch(function(){if(++tries<120)setTimeout(step,5000)});
+   if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL);
+  }).catch(function(){if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL)});
  }
- setTimeout(step,2000);
+ setTimeout(step,JOB_FIRST);
 }
 var sys=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
@@ -653,15 +672,15 @@ function lineChart(el,labels,series,keys,w,h){
 function renderPower(){
  if(!sys||!sys.series)return;
  var ss=sys.series.series;
- lineChart($("power"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,760,150);
+ lineChart($("power"),ss.map(function(b){return label(b.t,sys.window)}),ss,PKEYS,${L.powerChartWidthPx},${L.powerChartHeightPx});
  $("plegend").innerHTML=PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join("");
 }
 function tick(){
  var els=document.querySelectorAll("[data-reset]");
  for(var i=0;i<els.length;i++){var r=+els[i].getAttribute("data-reset");if(r)els[i].textContent="resets in "+dur(r-Date.now())}
  var st=$("stamp"),age=(Date.now()-lastOk)/1000;
- st.textContent=lastOk?(age<15?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"loading...";
- st.className=lastOk&&age>=15?"stale":"";
+ st.textContent=lastOk?(age<STALE_SEC?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"loading...";
+ st.className=lastOk&&age>=STALE_SEC?"stale":"";
 }
 /** Columns for the bar charts: runs of zero-total buckets collapse into one 0.4-width spacer. */
 function gapCols(totals){var cols=[],i=0;while(i<totals.length){if(totals[i]>0){cols.push({b:i,g:0});i++}else{var j=i;while(j<totals.length&&!totals[j])j++;cols.push({b:i,g:j-i});i=j}}return cols}
@@ -716,14 +735,15 @@ function twoToneModelBars(el,labels,buckets,models,w,h){
 function legend(el,keys){el.innerHTML=keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")}
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
 function donut(ratio,sz){
- var r=48,c=2*Math.PI*r,d=c*ratio;sz=sz||84;
- return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 140 140"><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="16"/><circle cx="70" cy="70" r="'+r+'" fill="none" stroke="'+(ratio>.8?"var(--ok)":ratio>.5?"var(--warn)":"var(--bad)")+'" stroke-width="16" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 70 70)"/><text x="70" y="'+(sz>120?79:76)+'" text-anchor="middle" style="font-size:'+(sz>120?28:22)+'px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
+ var r=${n(L.donutRadiusPx)},c=2*Math.PI*r,d=c*ratio;sz=sz||${n(L.donutSizePx)};
+ var cx=${n(L.donutViewBoxPx)}/2;
+ return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+${n(L.donutViewBoxPx)}+' '+${n(L.donutViewBoxPx)}+'"><circle cx="'+cx+'" cy="'+cx+'" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="${n(L.donutStrokePx)}"/><circle cx="'+cx+'" cy="'+cx+'" r="'+r+'" fill="none" stroke="'+(ratio>.8?"var(--ok)":ratio>.5?"var(--warn)":"var(--bad)")+'" stroke-width="${n(L.donutStrokePx)}" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 '+cx+' '+cx+')"/><text x="'+cx+'" y="'+(sz>120?79:76)+'" text-anchor="middle" style="font-size:'+(sz>120?28:22)+'px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
 }
 function emptyRing(sz){
- sz=sz||84;
- return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 140 140"><circle cx="70" cy="70" r="48" fill="none" stroke="var(--line)" stroke-width="16"/></svg>';
+ sz=sz||${n(L.donutSizePx)};
+ var cx=${n(L.donutViewBoxPx)}/2;
+ return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+${n(L.donutViewBoxPx)}+' '+${n(L.donutViewBoxPx)}+'"><circle cx="'+cx+'" cy="'+cx+'" r="${n(L.donutRadiusPx)}" fill="none" stroke="var(--line)" stroke-width="${n(L.donutStrokePx)}"/></svg>';
 }
-var LOW_REQ=5;
 /** Models under LOW_REQ requests: one chip line under the grid, details on hover. */
 function lowChips(ms){
  var low=Object.keys(ms).map(function(k){return ms[k]}).filter(function(m){return m.requests<LOW_REQ});
@@ -747,7 +767,7 @@ function ringTiles(ms,servers){
 /** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
 /** " (Ns old)" when the server counter is a kept reading older than one poll interval (60 s). */
 function ageMark(s){
- return s&&s.prefixCacheAgeSec>60?' <span class="dim">('+(s.prefixCacheAgeSec>=120?Math.round(s.prefixCacheAgeSec/60)+' min':s.prefixCacheAgeSec+'s')+' old)</span>':''
+ return s&&s.prefixCacheAgeSec>SRV_STALE_SEC?' <span class="dim">('+(s.prefixCacheAgeSec>=2*SRV_STALE_SEC?Math.round(s.prefixCacheAgeSec/60)+' min':s.prefixCacheAgeSec+'s')+' old)</span>':''
 }
 function provHit(p,servers){
  var srv=(servers||[]).filter(function(s){return s.provider===p.provider})[0];
@@ -779,7 +799,7 @@ function renderDonuts(){ renderSpeed();
  d.byModel.forEach(function(m){var k=m.provider+"\u0000"+m.model,o=ms[k]||(ms[k]={provider:m.provider,model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
  var mk=Object.keys(ms),dh="",allSrv2=(sys&&sys.servers)||[];
  if(mk.length===1&&ms[mk[0]].cacheRead+ms[mk[0]].cacheWrite>0){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
-  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,170)+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
+  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,${L.bigDonutSizePx})+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
  }else dh=ringTiles(ms,allSrv2);
  var lowc=dh.indexOf('class="solo"')>=0?"":lowChips(ms);
  $("donut").innerHTML=dh||(lowc?"":'<span class="dim">no data</span>');
@@ -808,7 +828,7 @@ function render(){
  var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(msel&&m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
  var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
  var labs=d.series.map(function(b){return label(b.t,d.window)});
- var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),760,220):twoToneModelBars($("series"),labs,buckets,models,760,220);
+ var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),${L.tokensChartWidthPx},${L.tokensChartHeightPx}):twoToneModelBars($("series"),labs,buckets,models,${L.tokensChartWidthPx},${L.tokensChartHeightPx});
  $("legend").innerHTML=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':"");
  setTip($("wnote"),wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.");
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
@@ -820,10 +840,10 @@ function render(){
  $("pause").innerHTML=ph?'<table><tr><th>model (hit% n)</th>'+labs.map(function(l){return'<th>'+esc(l)+'</th>'}).join("")+'</tr>'+ph+'</table>':'<span class="dim">no data</span>';
  $("providers").innerHTML=table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
   '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>';
- $("sessions").innerHTML=table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,20).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}));
- $("workers").innerHTML=d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,15).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>';
- var dm=Object.keys(d.daily.models),ds=d.daily.days.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][i]});return o});
- var dgap=stackedBars($("daily"),d.daily.days.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,520,200);
+ $("sessions").innerHTML=table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}));
+ $("workers").innerHTML=d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+(s.verdict==="ok"?"ok":s.verdict==="failed"?"bad":"dim")+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>';
+ var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
+ var dgap=stackedBars($("daily"),dd.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,${L.dailyChartWidthPx},${L.dailyChartHeightPx});
  legend($("dlegend"),dm);if(dgap)$("dlegend").innerHTML+='<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>';
 }
 function load(){
@@ -908,28 +928,31 @@ setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 /* a section that is not on the page fetches nothing */
 var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
 tabs();applyCollapse();if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
-if(needData&&needSys)setInterval(function(){load();loadSystem()},5000);else if(needData)setInterval(load,5000);else if(needSys)setInterval(loadSystem,5000);if(needLim)setInterval(loadLimits,30000);if(needModels)setInterval(loadModels,5000);if(needPool)setInterval(loadPool,15000);if(needQueue)setInterval(loadQueue,5000);setInterval(tick,1000);
+if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});setInterval(tick,${L.clockTickMs});
 })();
 </script></body></html>
 `;
+}
 
 /** Stable ids of the page's top-level sections, in page order (config key router.cockpit.sections). */
 export const COCKPIT_SECTION_IDS = ["cloud", "routing", "workers", "pool", "models", "system", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
 
-/** The full page: every section. */
-export const COCKPIT_HTML = FULL_HTML;
+/** The full page: every section, built once at module load from the config defaults. */
+export const COCKPIT_HTML = buildHtml(cockpitLayout());
 
 /**
  * The page with only the listed sections, in the listed order. Unlisted sections are cut out of the
  * HTML (no DOM) and the script skips their fetches. Undefined or empty list = the full page; unknown ids are ignored
- * (all unknown = full page, so a typo never yields a blank cockpit).
+ * (all unknown = full page, so a typo never yields a blank cockpit). The layout policy is re-read
+ * on every call, so a user config override changes the served page.
  */
 export function cockpitHtml(sections?: readonly string[]): string {
+  const full = buildHtml(cockpitLayout());
   const want = (sections ?? []).filter((id) => (COCKPIT_SECTION_IDS as readonly string[]).includes(id));
-  if (!want.length) return FULL_HTML;
+  if (!want.length) return full;
   const re = /<section data-section="([a-z]+)"[\s\S]*?<\/section>\n?/g;
   const found = new Map<string, string>();
-  const [head, rest] = [FULL_HTML.slice(0, FULL_HTML.indexOf("<main>") + 7), FULL_HTML.slice(FULL_HTML.indexOf("<main>") + 7)];
+  const [head, rest] = [full.slice(0, full.indexOf("<main>") + 7), full.slice(full.indexOf("<main>") + 7)];
   const tail = rest.slice(rest.indexOf("</main>"));
   for (const m of rest.slice(0, rest.indexOf("</main>")).matchAll(re)) found.set(m[1]!, m[0].endsWith("\n") ? m[0] : m[0] + "\n");
   return head + [...new Set(want)].map((id) => found.get(id) ?? "").join("") + tail;

@@ -369,10 +369,10 @@ describe("one key per model", () => {
 
 describe("cockpit cache rings and providers table", () => {
   const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
-  const lowReq = COCKPIT_HTML.match(/var LOW_REQ=\d+;/)![0];
+  const baked = COCKPIT_HTML.match(/var JOB_TRIES=\d+,[\s\S]*?SRV_STALE_SEC=\d+;/)![0] + COCKPIT_HTML.match(/LOW_REQ=\d+/)![0];
   const fns = new Function(
     "donut", "pct", "esc", "fmt", "lim",
-    `${lowReq}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
+    `${baked}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
   )(
     (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
     (r: number) => `${(r * 100).toFixed(1)}%`,
