@@ -40,7 +40,7 @@ pai build run|lock --key <name> -- <cmd...>      # or env PAI_BUILD_KEY (for doo
 
 Jobs with the same key run one at a time, FIFO within the key, still inside the machine-wide slot limit; different keys overlap up to `builds.slots`. A key-blocked job does not hold a free slot from a later job with another key. A door builds one target per key (`caseleaf-mac`, `caseleaf-ios`), so same-target jobs queue onto one warm build tree and stay deltas instead of each cold-building its own. `pai build queue`, `pai worker ps` and the cockpit show `[key]` next to each job and, for a waiting one, `same key as <job>`.
 
-Without a key the gate derives one: for a script (`tools/build.sh test mac`) `<project dir>:<script>:<last non-flag argument>`, so `tools/build.sh test mac` and `tools/build.sh install mac` share `CaseLeaf:tools/build.sh:mac`; for an Xcode build with `-scheme X`, `<project dir>:xcodebuild:X`; any other command has no key. `--key` wins over `PAI_BUILD_KEY`, which wins over the derived key.
+Without a key the gate derives one: for a script (`tools/build.sh test mac`) `<repository>:<script>:<last non-flag argument>`, so `tools/build.sh test mac` and `tools/build.sh install mac` share `<repository>:tools/build.sh:mac`; for an Xcode build with `-scheme X`, `<repository>:xcodebuild:X`. `<repository>` is the main worktree root shared by all git worktrees of the repo (the cwd outside git), so a worker's worktree and the main checkout serialise; any other command has no key. `--key` wins over `PAI_BUILD_KEY`, which wins over the derived key.
 
 ## Compiler parallelism: PAI_BUILD_JOBS
 

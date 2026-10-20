@@ -12,9 +12,9 @@
  */
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, realpathSync } from "node:fs";
 import { cpus } from "node:os";
-import { basename } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import {
   buildLogPath,
   enqueue,
@@ -88,15 +88,26 @@ export function coreCount(platform = process.platform): number {
 /** Compiler parallelism one job may use: its share of the cores across all slots, at least 2. */
 export const buildJobs = (cores: number, slots: number): number => Math.max(2, Math.floor(cores / Math.max(1, slots)));
 
+/** Identity shared by every worktree of a repository: the main worktree root (git common dir's parent); cwd outside git. */
+export function repoIdentity(cwd: string): string {
+  try {
+    const common = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const abs = realpathSync(resolve(cwd, common));
+    return basename(abs) === ".git" ? dirname(abs) : abs;
+  } catch {
+    return cwd;
+  }
+}
+
 /**
- * Key for a raw command when none is given: "<cwd name>:<door>:<last argument>" for a script
- * (so `tools/build.sh test mac` and `tools/build.sh install mac` share one), "<cwd name>:xcodebuild:<scheme>"
- * for xcodebuild -scheme; anything else has no key.
+ * Key for a raw command when none is given: "<repository>:<door>:<last argument>" for a script
+ * (so `tools/build.sh test mac` and `tools/build.sh install mac` share one), "<repository>:xcodebuild:<scheme>"
+ * for xcodebuild -scheme; anything else has no key. The repository is shared by all its worktrees.
  */
 export function deriveKey(command: string[], cwd: string): string | undefined {
   const [c0, ...args] = command;
   if (!c0) return undefined;
-  const proj = basename(cwd);
+  const proj = repoIdentity(cwd);
   if (basename(c0) === "xcodebuild") {
     const i = args.indexOf("-scheme");
     return i >= 0 && args[i + 1] ? `${proj}:xcodebuild:${args[i + 1]}` : undefined;
