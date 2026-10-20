@@ -36,11 +36,12 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 #stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
-main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,1fr)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}.tw{overflow-x:auto}
+main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,minmax(0,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}.tw{overflow-x:auto}
+.gauge .s{overflow-wrap:anywhere}
 .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
 @media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}
-.gauges{display:flex;flex-wrap:wrap;gap:10px 14px}.gauge{text-align:center;min-width:0;flex:1 1 110px;max-width:120px}
+.gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 110px;max-width:min(120px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -48,7 +49,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
-.groups{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}.grp{min-width:0}.grp-cloud{flex:1 1 0}.grp-local{flex:0 1 auto;width:min-content;min-width:200px;max-width:34%}.grp-local .gauges{flex-wrap:nowrap;flex-direction:column;align-items:flex-start}.grp+.grp{border-left:1px solid var(--line);padding-left:24px}@media(max-width:1000px){.grp-local{max-width:none;width:auto;flex:1 1 100%}.grp-local .gauges{flex-direction:row;flex-wrap:wrap}.grp+.grp{border-left:0;padding-left:0}}.chips.lowmodels{margin-top:6px}.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.groups{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;min-width:0}.grp{min-width:0}.grp-cloud{flex:1 1 0}.grp-local{flex:0 1 auto;min-width:min(200px,100%);max-width:34%}.grp-local .gauges{flex-wrap:nowrap;flex-direction:column;align-items:flex-start}.grp+.grp{border-left:1px solid var(--line);padding-left:24px}@media(max-width:1000px){.grp-local{max-width:none;width:auto;flex:1 1 100%}.grp-local .gauges{flex-direction:row;flex-wrap:wrap}.grp+.grp{border-left:0;padding-left:0}}.chips.lowmodels{margin-top:6px}.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
