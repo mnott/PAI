@@ -38,8 +38,7 @@ function seam(small = false): PaneSeam & { splits: string[] } {
       return { message: "pane opened", session: `S${splits.length}` };
     },
     verify: async () => {
-      if (small) throw new Error("pane verification failed: pane too small, 26x14 < 40x6 (window 1)");
-      return "window 7 tab 1/1, pane 80x20";
+      return small ? "window 7 tab 1/1, pane 26x14 SMALL (< 40x6)" : "window 7 tab 1/1, pane 80x20";
     },
   };
 }
@@ -58,10 +57,10 @@ describe("panes in the host tab", () => {
     expect(s.splits).toEqual(["plan-job-a", "plan-job-b", "w-a1", "w-b1"]);
   });
 
-  it("crowded tab: split again smaller, never a tab or window", async () => {
+  it("crowded tab: the worker starts in a small pane, never a tab or window", async () => {
     const s = seam(true);
-    await expect(openVerifiedPane(dir, config, "w-1", TERM, env, ops, s)).rejects.toThrow(/too small/);
-    expect(s.splits).toHaveLength(2);
+    await expect(openVerifiedPane(dir, config, "w-1", TERM, env, ops, s)).resolves.toContain("SMALL");
+    expect(s.splits).toHaveLength(1);
   });
 
   it("a plan worker requests its own pane: no plan exemption", async () => {

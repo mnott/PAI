@@ -18,7 +18,7 @@ import { loadPlanStatuses } from "./plan-status.js";
 import { loadPaneRunStatuses } from "./pane-run.js";
 import { eventLine, type Messenger } from "./run-events.js";
 
-export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN";
+export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "SMALL";
 
 export interface AuditProc {
   id: string;
@@ -45,12 +45,16 @@ export interface PaneVerdict {
 
 /** iTerm session id -> "window:tab" key. */
 export type TabMap = Map<string, string>;
+/** iTerm session id -> its size in cells. */
+export type SizeMap = Map<string, { cols: number; rows: number }>;
+const SMALL_COLS = 40;
+const SMALL_ROWS = 6;
 
 const norm = (id: string): string => itermUuid(id) || id;
 
 const stampMs = (t: string | undefined, utc: boolean): number => (t ? Date.parse(t.replace(" ", "T") + (utc ? "Z" : "")) : NaN);
 
-export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number): PaneVerdict[] {
+export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number, sizes?: SizeMap): PaneVerdict[] {
   const tabOf = (id: string | undefined): string | undefined => (id ? tabs.get(norm(id)) : undefined);
   return procs.map((p) => {
     const e = registry.find((x) => x.worker === p.id);
@@ -67,6 +71,10 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     const hostTab = tabOf(host);
     if (!hostTab) return { ...v, mark: "HOST UNKNOWN", tab, why: host ? `starting session ${host} is not in the iTerm listing` : `pane ${e.session} has no recorded starting session` };
     if (hostTab !== tab) return { ...v, mark: "WRONG TAB", tab, hostTab, why: `pane ${e.session} sits in ${tab}, the starting session in ${hostTab}` };
+    const size = sizes?.get(norm(e.session));
+    if (size && (size.cols < SMALL_COLS || size.rows < SMALL_ROWS)) {
+      return { ...v, mark: "SMALL", tab, hostTab, why: `pane ${e.session} is ${size.cols}x${size.rows}, under ${SMALL_COLS}x${SMALL_ROWS}` };
+    }
     return { ...v, tab, hostTab };
   });
 }
@@ -95,7 +103,7 @@ const TABS_SCRIPT = `function run(argv) {
             if (!t) return;
             var tid = ""; try { tid = String(t.id()); } catch (e) { tid = "i" + ti; }
             arr(function () { return t.sessions(); }).forEach(function (s) {
-                try { out += s.id() + "\\t" + wid + ":" + tid + "\\n"; } catch (e) {}
+                try { out += s.id() + "\\t" + wid + ":" + tid + "\\t" + s.columns() + "\\t" + s.rows() + "\\n"; } catch (e) {}
             });
         });
     });
@@ -103,12 +111,13 @@ const TABS_SCRIPT = `function run(argv) {
 }`;
 
 /** Every iTerm session with its window:tab. Rejects when iTerm cannot be listed (no verdict is then given). */
-export async function listItermTabs(run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascriptJxa): Promise<TabMap> {
+export async function listItermTabs(run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascriptJxa, sizes?: SizeMap): Promise<TabMap> {
   const p = await run(TABS_SCRIPT, []);
   const m: TabMap = new Map();
   for (const l of p.stdout.split("\n")) {
-    const [id, tab] = l.split("\t");
+    const [id, tab, cols, rows] = l.split("\t");
     if (id && tab) m.set(norm(id), tab);
+    if (id && cols && rows) sizes?.set(norm(id), { cols: Number(cols), rows: Number(rows) });
   }
   return m;
 }
@@ -153,22 +162,23 @@ const readTold = (logDir: string): Record<string, string> => readJson(toldFile(l
 export async function auditTick(
   logDir: string,
   msg: Messenger,
-  deps: { tabs?: () => Promise<TabMap>; procs?: () => AuditProc[]; registry?: () => PaneEntry[]; now?: () => Date } = {}
+  deps: { tabs?: (sizes: SizeMap) => Promise<TabMap>; procs?: () => AuditProc[]; registry?: () => PaneEntry[]; now?: () => Date } = {}
 ): Promise<PaneVerdict[]> {
   let tabs: TabMap;
+  const sizes: SizeMap = new Map();
   try {
-    tabs = await (deps.tabs ?? listItermTabs)();
+    tabs = await (deps.tabs ?? ((z) => listItermTabs(undefined, z)))(sizes);
   } catch {
     return []; // iTerm unreadable: no verdict, no false alarm
   }
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
   const now = deps.now?.() ?? new Date();
-  const verdicts = auditPanes((deps.procs ?? (() => runningProcs(logDir)))(), (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, now.getTime());
+  const verdicts = auditPanes((deps.procs ?? (() => runningProcs(logDir)))(), (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, now.getTime(), sizes);
   // a violation counts only when the previous check failed the same way: one bad listing is not a verdict
   const seen = readJson(pendingFile(logDir));
   const failing: Record<string, string> = {};
   for (const v of verdicts) {
-    if (v.mark === "ok") continue;
+    if (v.mark === "ok" || v.mark === "SMALL") continue;
     failing[v.id] = v.mark;
     if (seen[v.id] !== v.mark) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "first failed check, confirming" });
   }
@@ -177,7 +187,7 @@ export async function auditTick(
   const told = readTold(logDir);
   const next: Record<string, string> = {};
   for (const v of verdicts) {
-    if (v.mark === "ok") continue;
+    if (v.mark === "ok" || v.mark === "SMALL") continue; // SMALL is shown, never alarmed
     next[v.id] = v.mark;
     if (told[v.id] === v.mark) continue;
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);

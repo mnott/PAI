@@ -18,6 +18,10 @@ describe("auditPanes", () => {
   it("pane in the starting tab: ok", () => {
     expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }))[0].mark).toBe("ok");
   });
+  it("pane under 40x6: SMALL, not NO PANE", () => {
+    const sizes = new Map([[P1, { cols: 26, rows: 5 }]]);
+    expect(auditPanes(procs, [entry("w-1", P1)], tabs({ [H]: "1:2", [P1]: "1:2" }), undefined, sizes)[0].mark).toBe("SMALL");
+  });
   it("no registry entry: NO PANE", () => {
     expect(auditPanes(procs, [], tabs({ [H]: "1:2" }))[0].mark).toBe("NO PANE");
   });

@@ -2,7 +2,8 @@
  * openVerifiedPane placement fallback: split in the host tab only: a crowded tab is
  * re-split once, never a tab or a window. Every iTerm step is a fake seam; nothing is opened.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { ledgerPath } from "./paths.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,7 @@ const config = { pane: { fontSize: 13, autoExitSecs: 10 } } as unknown as Worker
 const UID = "D38D3E5D-19E8-4FE5-A78A-26E8E571FE27";
 const TERM = `w5t0p0:${UID}`;
 const env = { ITERM_SESSION_ID: TERM } as NodeJS.ProcessEnv;
-const TOO_SMALL = "pane verification failed: pane too small, 26x14 < 40x6 (window 5322)";
+const SMALL = "window 5322 tab 1/1, pane 26x14 SMALL (< 40x6)";
 
 let dir: string;
 let rebalanced: number;
@@ -27,7 +28,7 @@ const ops: PaneOps = {
   },
 };
 
-function seam(opts: { split?: "ok" | "small" | "small-once"; hostSelected?: boolean }): PaneSeam & { splits: number } {
+function seam(opts: { split?: "ok" | "small"; hostSelected?: boolean }): PaneSeam & { splits: number } {
   const o = { splits: 0 };
   return Object.assign(o, {
     hostSelected: async () => opts.hostSelected !== false,
@@ -36,7 +37,7 @@ function seam(opts: { split?: "ok" | "small" | "small-once"; hostSelected?: bool
       return { message: "pane opened", session: `S${o.splits}` };
     },
     verify: async () => {
-      if (opts.split === "small" || (opts.split === "small-once" && o.splits === 1)) throw new Error(TOO_SMALL);
+      if (opts.split === "small") return SMALL;
       return "window 7 tab 1/1, pane 80x20";
     },
   });
@@ -62,18 +63,12 @@ describe("openVerifiedPane placement", () => {
     expect(panePlacement("w-split")).toBe("split");
   });
 
-  it("crowded tab: rebalance and split again, still a split", async () => {
-    const s = seam({ split: "small-once" });
-    await expect(open("w-crowd", s)).resolves.toContain("S2");
-    expect(s.splits).toBe(2);
-    expect(rebalanced).toBe(1);
-    expect(panePlacement("w-crowd")).toBe("split");
-  });
-
-  it("truly no room: rejected with the size error, never a tab or window", async () => {
+  it("crowded tab: the worker starts in a small pane and the ledger notes it", async () => {
     const s = seam({ split: "small" });
-    await expect(open("w-none", s)).rejects.toThrow("pane too small, 26x14 < 40x6");
-    expect(panePlacement("w-none")).toBeUndefined();
+    await expect(open("w-crowd", s)).resolves.toContain("SMALL");
+    expect(s.splits).toBe(1);
+    expect(panePlacement("w-crowd")).toBe("split");
+    expect(readFileSync(ledgerPath(dir), "utf8")).toMatch(/PANE-SMALL.*w-crowd/);
   });
 
   it("host tab not selected: still a split of the host tab", async () => {
