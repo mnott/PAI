@@ -167,6 +167,10 @@ export interface WorkerStatus {
   deadlineAt?: number | null;
   /** Limit in minutes the deadline was derived from. */
   maxMinutes?: number | null;
+  /** ms spent queued for a slot before the run started (active-time.ts); not counted against the limit. */
+  queueWaitedMs?: number | null;
+  /** ms blocked in build-gate waits so far; not counted against the limit. */
+  blockedMs?: number | null;
   /** The loop guard stopped this run (state failed, `last` says why). */
   loopStopped?: boolean;
   /** The deadline stopped this run (state failed, `last` says why). */

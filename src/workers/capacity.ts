@@ -52,12 +52,28 @@ export function effectiveCap(maxConcurrent: number | undefined, local: boolean):
   return resolveCap(maxConcurrent, local) ?? UNCAPPED_QUEUE_CAP;
 }
 
+/**
+ * Admission cap: the provider cap, held below the engine's conversation-cache
+ * slots (one spare, never under 1) when `conversationSlots` is configured —
+ * admitting more makes the cached conversations evict each other every turn.
+ * Unset: the provider cap alone (conversationSlots defaults to it).
+ */
+export function admitCap(maxConcurrent: number | undefined, conversationSlots: number | undefined, local: boolean): number | undefined {
+  const cap = resolveCap(maxConcurrent, local);
+  if (conversationSlots === undefined) return cap;
+  const limit = Math.max(1, conversationSlots - 1);
+  return cap === undefined ? limit : Math.min(cap, limit);
+}
+
 /** Cap of a named provider from the config, the same rule the gate applies. */
-export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; baseUrl: string }> }, provider: string): number | undefined {
+export function providerCap(config: { providers: Record<string, { maxConcurrent?: number; conversationSlots?: number; baseUrl: string }> }, provider: string): number | undefined {
   const p = config.providers[provider];
   if (!p) return undefined;
-  return resolveCap(p.maxConcurrent, isLocalProvider(p.baseUrl));
+  return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl));
 }
+
+/** A run queued this long raises the max-total-wait alarm (notifies the owner, never kills). */
+export const MAX_TOTAL_WAIT_MS = 2 * 3_600_000;
 
 /** Longest silence of the log while queued. */
 export const HEARTBEAT_MS = 60_000;
@@ -94,6 +110,95 @@ function readEntry(dir: string, id: string): QueueEntry {
   };
 }
 
+/** A ticket waiting longer than this jumps ahead of newer tickets of any session. */
+export const AGING_MS = 15 * 60_000;
+
+/** The owning session of a worker (ownership checks: spawner, then host session), else its session-profile name, else one shared anonymous bucket. */
+export function sessionOf(s: Pick<WorkerStatus, "spawnerSession" | "session" | "sessionKey"> | undefined | null): string {
+  return s?.spawnerSession || s?.session?.id || s?.sessionKey || "~anonymous";
+}
+
+export interface FairInput {
+  /** Waiting tickets in their own order (front, rank, id): the order a session keeps for itself. */
+  entries: QueueEntry[];
+  sessionOf: (id: string) => string;
+  /** Sessions of the workers currently holding a slot (one item per worker). */
+  running: string[];
+  /** Epoch ms of each session's most recent slot grant on this provider (finished runs included): the tie-break that keeps turns going round. */
+  lastServed?: ReadonlyMap<string, number>;
+  now: number;
+  agingMs?: number;
+}
+
+/**
+ * Grant order of a provider's waiting tickets: `--now` (front) tickets first,
+ * then tickets waiting longer than the aging bound (oldest first), then fair
+ * share — the next slot goes to the session with the fewest slots (running +
+ * already ordered ahead), ties to the session served least recently, then to
+ * the one whose head waited longest, so
+ * sessions take turns regardless of how many tickets each queued. A session's
+ * own tickets keep their order (pull-forward via front/up/next).
+ */
+export function fairOrder(i: FairInput): QueueEntry[] {
+  const aging = i.agingMs ?? AGING_MS;
+  const since = (e: QueueEntry): number => e.since ?? i.now;
+  const front = i.entries.filter((e) => e.front);
+  const rest = i.entries.filter((e) => !e.front);
+  const aged = rest.filter((e) => i.now - since(e) > aging).sort((a, b) => since(a) - since(b));
+  const agedIds = new Set(aged.map((e) => e.id));
+  const per = new Map<string, QueueEntry[]>();
+  for (const e of rest) {
+    if (agedIds.has(e.id)) continue;
+    const k = i.sessionOf(e.id);
+    per.set(k, [...(per.get(k) ?? []), e]);
+  }
+  const load = new Map<string, number>();
+  for (const k of i.running) load.set(k, (load.get(k) ?? 0) + 1);
+  for (const e of [...front, ...aged]) load.set(i.sessionOf(e.id), (load.get(i.sessionOf(e.id)) ?? 0) + 1);
+  const out: QueueEntry[] = [...front, ...aged];
+  while (per.size) {
+    let best = "";
+    for (const [k, q] of per) {
+      if (!best) best = k;
+      else {
+        const [lb, lk] = [load.get(best) ?? 0, load.get(k) ?? 0];
+        const [sb, sk] = [i.lastServed?.get(best) ?? 0, i.lastServed?.get(k) ?? 0];
+        if (lk < lb || (lk === lb && (sk < sb || (sk === sb && since(q[0]) < since(per.get(best)![0]))))) best = k;
+      }
+    }
+    const q = per.get(best)!;
+    out.push(q.shift()!);
+    load.set(best, (load.get(best) ?? 0) + 1);
+    if (!q.length) per.delete(best);
+  }
+  return out;
+}
+
+function lastServed(all: WorkerStatus[], provider: string): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const s of all) {
+    if (s.provider !== provider || s.state === "queued") continue;
+    const t = Date.parse((s.started ?? "").replace(" ", "T"));
+    if (Number.isFinite(t)) out.set(sessionOf(s), Math.max(out.get(sessionOf(s)) ?? 0, t));
+  }
+  return out;
+}
+
+/** liveEntries, then fair share across sessions (provider queues only; a session's own max_parallel queue stays as is). */
+function fairEntries(logDir: string, key: string, isAlive: (pid: number) => boolean, statuses?: WorkerStatus[], now: number = Date.now()): QueueEntry[] {
+  const entries = liveEntries(logDir, key, isAlive);
+  if (key.startsWith("session~")) return entries;
+  const all = statuses ?? loadStatuses(logDir);
+  const byId = new Map(all.map((s) => [s.id, s]));
+  return fairOrder({
+    entries,
+    sessionOf: (id) => sessionOf(byId.get(id)),
+    running: all.filter((s) => s.provider === key && s.state === "running").map(sessionOf),
+    lastServed: lastServed(all, key),
+    now,
+  });
+}
+
 /** Live entries in waiting order: "front" runs first, then by rank, then oldest (by name); dead entries are removed. */
 function liveEntries(logDir: string, provider: string, isAlive: (pid: number) => boolean): QueueEntry[] {
   const dir = queueDir(logDir, provider);
@@ -121,8 +226,8 @@ function liveEntries(logDir: string, provider: string, isAlive: (pid: number) =>
  * and the cockpit queue panel all go through capacityGate's priority, setFront
  * and moveUp.
  */
-export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive): string[] {
-  return liveEntries(logDir, provider, isAlive).map((e) => e.id);
+export function liveQueue(logDir: string, provider: string, isAlive: (pid: number) => boolean = alive, statuses?: WorkerStatus[], now?: number): string[] {
+  return fairEntries(logDir, provider, isAlive, statuses, now).map((e) => e.id);
 }
 
 /** Put a waiting run ahead of the provider's non-front runs ("front"). False when it is not waiting. */
@@ -200,7 +305,7 @@ export interface QueueRow {
  * worker_queue list. Dead entries are dropped; a provider with no cap (or a
  * cap the config no longer names) still lists its waiters, cap undefined.
  */
-export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}): QueueRow[] {
+export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}, isAlive: (pid: number) => boolean = alive): QueueRow[] {
   let providers: string[];
   try {
     providers = readdirSync(join(logDir, "queue")).sort();
@@ -209,7 +314,7 @@ export function queueRows(logDir: string, caps: Record<string, number | undefine
   }
   const rows: QueueRow[] = [];
   for (const prov of providers) {
-    const queue = liveEntries(logDir, prov, alive);
+    const queue = fairEntries(logDir, prov, isAlive);
     queue.forEach((e, i) => {
       rows.push({
         id: e.id,
@@ -265,6 +370,9 @@ export interface CapacityOpts {
   /** "front": wait ahead of the provider's other queued runs (--now). */
   priority?: "front";
   log?: (line: string) => void;
+  /** Waited this long (default 2 h): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
+  alarmMs?: number;
+  onAlarm?: (info: CapacityInfo) => void;
   /** Called at the start and after every poll while queued; null once the slot is granted (the caller flips queued -> running then). */
   onWait?: (info: CapacityInfo | null) => void;
   now?: () => number;
@@ -298,9 +406,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
   const check = () => {
-    const queue = liveQueue(logDir, queueKey, isAlive);
+    const loaded = load(logDir);
+    const queue = liveQueue(logDir, queueKey, isAlive, loaded, now());
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
-    const holders = load(logDir).filter(
+    const holders = loaded.filter(
       (s) => s.id !== self.id && holds(s) && s.state === "running" && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
@@ -328,6 +437,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   };
   o.log?.(info().line);
   let lastBeat = t0;
+  let alarmed = false;
   try {
     o.onWait?.(info());
     for (let n = 0; ; n++) {
@@ -335,6 +445,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       c = check();
       if (c.position === 1 && c.holding < cap) break;
       o.onWait?.(info());
+      if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? MAX_TOTAL_WAIT_MS)) {
+        alarmed = true;
+        o.onAlarm(info());
+      }
       // a quiet log looks hung to wait-on's stall rule
       if (now() - lastBeat >= HEARTBEAT_MS) {
         lastBeat = now();

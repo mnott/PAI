@@ -111,7 +111,7 @@ import { resolveSession, resolveSpawnerSession } from "./scope.js";
 import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
-import { capacityGate, queuedText, resolveCap, sessionScopeKey, type CapacityOpts } from "./capacity.js";
+import { admitCap, capacityGate, queuedText, sessionScopeKey, type CapacityOpts } from "./capacity.js";
 import { recordWarmup, staggerGate } from "./stagger.js";
 import {
   autoOrder,
@@ -166,7 +166,10 @@ import { loadContractAddendum, type ContractAddendum } from "./contract-addendum
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { killTree } from "./kill-tree.js";
 import { armResultGrace, leftoverNote } from "./result-grace.js";
-import { armDeadline, deadlinePromptLine, resolveLimit, type RunLimit } from "./deadline.js";
+import { armDeadline, deadlinePromptLine, extendLimit, resolveLimit, type RunLimit } from "./deadline.js";
+import { buildWaitMs } from "./active-time.js";
+import { aibrokerMessenger } from "./run-events.js";
+import { ownerOf } from "./local-idle.js";
 import { stripBrowserArgs, stripBrowserNames } from "./browser-tools.js";
 import { expandMcpNames, grantsChrome, mcpServersFromToolGrants, writeMcpConfig } from "./mcp.js";
 import { pinNotices, projectLaunchConfig, type ProjectLaunchConfig } from "./project-config.js";
@@ -1168,12 +1171,32 @@ const SIGNAL_SALVAGE_MS = 5_000;
 
 /** The deadline fired: record it on the status and in the ledger (the caller then stops the child). */
 export function fireDeadline(logDir: string, status: WorkerStatus, ledger: string, limit: RunLimit): void {
+  const waited = Math.round(((status.queueWaitedMs ?? 0) + buildWaitMs(logDir, status.id)) / 60_000);
+  const what = limit.absolute ? `deadline reached after ${limit.minutes} min` : `deadline reached after ${limit.minutes} active min${waited ? ` (waited ${waited} min, not counted)` : ""}`;
   status.timedOut = true;
-  status.last = `deadline reached after ${limit.minutes} min`;
+  status.last = what;
   saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes });
+  appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes, waitedMin: waited });
   // the deadline stops the run's own process; its sub-workers go with it
-  void killTree(logDir, status.id, { skipRoot: true, by: "deadline", reason: `parent worker deadline reached after ${limit.minutes} min` }).catch(() => undefined);
+  void killTree(logDir, status.id, { skipRoot: true, by: "deadline", reason: `parent worker ${what}` }).catch(() => undefined);
+}
+
+/**
+ * Keep the status' deadline and blockedMs in step with build-gate waits (the
+ * run's deadline counts active time), so ps shows the real time left. Returns the stop function.
+ */
+function trackBlocked(logDir: string, status: WorkerStatus, limit: RunLimit | null): () => void {
+  if (!limit) return () => undefined;
+  const base = limit.deadlineAt;
+  const t = setInterval(() => {
+    const b = buildWaitMs(logDir, status.id);
+    if (b === (status.blockedMs ?? 0)) return;
+    status.blockedMs = b;
+    if (!limit.absolute) status.deadlineAt = base + b;
+    saveStatus(logDir, status);
+  }, 15_000);
+  t.unref();
+  return () => clearInterval(t);
 }
 
 /** Decide why a signal ended the run and put it on the status; the caller writes WORKER-END. */
@@ -1209,7 +1232,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), notes: [report?.notes ?? f.fallbackText, msg].filter(Boolean).join("\n"), result: report?.result ?? "-" };
   }
   if (f.timedOut) {
-    const reason = `deadline reached after ${f.timedOut} min`;
+    const reason = status.last.startsWith("deadline reached") ? status.last : `deadline reached after ${f.timedOut} min`;
     status.timedOut = true;
     status.last = reason;
     // partial state = the salvage summary (r=~: stopped, not failed outright)
@@ -1459,6 +1482,8 @@ export async function announcePane(
 export interface ExecuteArgs {
   /** capacity + stagger gates already passed (set by gateStart) */
   gated?: boolean;
+  /** ms spent queued for a slot (set by gateStart); the deadline already moved by it. */
+  queueWaitedMs?: number;
   config: ReturnType<typeof readWorkersSection>["workers"];
   logDir: string;
   target: ReturnType<typeof resolveTarget>;
@@ -1622,12 +1647,17 @@ async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Prom
   const gate: CapacityOpts = {
     logDir,
     self: { id: wid, provider: target.providerName },
-    cap: resolveCap(target.provider.maxConcurrent, isLocalProvider(target.provider.baseUrl)),
+    cap: admitCap(target.provider.maxConcurrent, target.provider.conversationSlots, isLocalProvider(target.provider.baseUrl)),
     config: config.capacity,
     disabled: a.noQueue,
     priority: a.priority,
     log: (line) => {
       process.stderr.write(`${line}\n`);
+    },
+    onAlarm: (w) => {
+      const text = `[pai worker] ${wid} (${status.label}) has waited ${Math.round(w.elapsedSec / 60)} min for a ${w.provider} slot (position ${w.position} of ${w.queued}). It keeps waiting; kill it or reorder with \`pai worker queue\`.`;
+      process.stderr.write(`${text}\n`);
+      void aibrokerMessenger(logDir).toSession(ownerOf(status), text).catch(() => false);
     },
     onWait: (w) => {
       if (w) {
@@ -1695,6 +1725,8 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   const wid = a.id ?? newWorkerId();
   a.id = wid;
   const sessionKey = await detectSessionName();
+  // the owning session: what the local scheduler shares slots by
+  const spawner = resolveSpawnerSession(a.logDir, a.cwd ?? process.cwd());
   const status: WorkerStatus = {
     id: wid,
     pid: process.pid,
@@ -1715,11 +1747,17 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     origin: "spawn",
     outputFormat: a.parsed.outputFormat,
     ...(sessionKey ? { sessionKey } : {}),
+    ...(spawner ? { spawnerSession: spawner } : {}),
   };
   saveStatus(a.logDir, status);
   // the follow pane opens now, not after the queue: a run parked at a cap shows
   // its place in line there (runGates onWait) and flips to the live view on the grant
   const term = (await resolveHostSession()).term;
+  const hostSession = resolveSession(term);
+  if (hostSession) {
+    status.session = hostSession;
+    saveStatus(a.logDir, status);
+  }
   const ledger = ledgerPath(a.logDir);
   let verified: boolean;
   try {
@@ -1733,7 +1771,14 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   if (verified) status.pane = { opened: true, placement: panePlacement(wid) };
   else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
   saveStatus(a.logDir, status);
+  const gateT0 = Date.now();
   await runGates(a, wid, status);
+  // waiting for a slot is not work: the limit counts from the grant (active time)
+  const queued = Date.now() - gateT0;
+  if (a.limit && queued >= 1000) {
+    a.limit = extendLimit(a.limit, queued);
+    a.queueWaitedMs = queued;
+  }
   // a gate that never had to wait leaves the placeholder "running" with the
   // spawn stamp; one that queued already flipped back to "running" with the
   // grant stamp (runGates onWait)
@@ -1986,6 +2031,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ...(adopted ? { resumedFrom: a.resumeOf } : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
     ...(limit ? { deadlineAt: limit.deadlineAt, maxMinutes: limit.minutes } : {}),
+    ...(a.queueWaitedMs ? { queueWaitedMs: a.queueWaitedMs } : {}),
   };
   saveStatus(logDir, status);
   if (adopted && a.resumeOf) markResumed(logDir, a.resumeOf, wid);
@@ -2094,9 +2140,11 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   let killed = false;
   const resultGrace = armResultGrace(headless ? proc.pid : undefined);
-  const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit)) : null;
+  const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => buildWaitMs(logDir, wid)) : null;
+  const stopTrack = trackBlocked(logDir, status, limit);
   const cleanup = () => {
     stopDeadline?.();
+    stopTrack();
     if (closeTimer) clearTimeout(closeTimer);
     operatorServer?.close();
   };
@@ -2621,6 +2669,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
       : {}),
     ...(a.specPath ? { spec: a.specPath } : {}),
     ...(a.limit ? { deadlineAt: a.limit.deadlineAt, maxMinutes: a.limit.minutes } : {}),
+    ...(a.queueWaitedMs ? { queueWaitedMs: a.queueWaitedMs } : {}),
   };
   saveStatus(logDir, status);
   a.onWorkerStart?.(wid);
@@ -2671,7 +2720,8 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   });
 
   let killed = false;
-  const stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!)) : null;
+  const stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => buildWaitMs(logDir, wid)) : null;
+  const stopTrack = trackBlocked(logDir, status, a.limit);
   process.once("SIGTERM", onCodexSignal("SIGTERM"));
   process.once("SIGINT", onCodexSignal("SIGINT"));
   process.once("SIGHUP", onCodexSignal("SIGHUP"));
@@ -2734,6 +2784,7 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
   stopDeadline?.();
+  stopTrack();
   closeSync(eventsFd);
 
   const secs = Math.floor((Date.now() - t0) / 1000);

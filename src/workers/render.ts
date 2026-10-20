@@ -9,6 +9,8 @@
  */
 
 import { deadlineLabel } from "./deadline.js";
+import { activeText } from "./active-time.js";
+import { sessionOf } from "./capacity.js";
 import { queuedText } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, NATIVE_ANTHROPIC_MODELS, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
@@ -563,7 +565,8 @@ export function renderTable(
   };
   const timeMark = (s: WorkerStatus): string => {
     const l = deadlineLabel(s, now.getTime());
-    return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l) : "";
+    const a = s.state === "running" ? activeText(s, now.getTime()) : null;
+    return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l + (a ? ` (${a})` : "")) : "";
   };
 
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
@@ -582,6 +585,18 @@ export function renderTable(
       );
       lines.push(`      task: ${s.label}  ${basename(s.cwd)}`);
     }
+    // per session on the queued providers: who runs, who waits (the fair share the scheduler works from)
+    const provs = new Set(queued.map((s) => s.provider));
+    const per = new Map<string, { name: string; run: number; wait: number }>();
+    for (const s of statuses) {
+      if (!provs.has(s.provider) || (s.state !== "running" && s.state !== "queued")) continue;
+      const k = sessionOf(s);
+      const e = per.get(k) ?? { name: s.sessionKey || s.session?.name || k.slice(0, 8), run: 0, wait: 0 };
+      if (s.state === "queued") e.wait++;
+      else e.run++;
+      per.set(k, e);
+    }
+    for (const e of per.values()) lines.push(c("dim", `  session ${e.name}: ${e.run} running, ${e.wait} waiting`));
     lines.push("");
   }
   lines.push(c("bold", `RUNNING (${running.length})`));

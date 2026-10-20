@@ -251,8 +251,8 @@ describe("cockpit workers panel", () => {
       ],
     });
     const at = (x: string) => html.indexOf(x);
-    expect(at("local: flashnext-iq3 (cap 1)")).toBeGreaterThanOrEqual(0);
-    expect(at("local: flashnext-iq3 (cap 1)")).toBeLessThan(at("AIBroker <span"));
+    expect(at("local: flashnext-iq3 (slots 1/1)")).toBeGreaterThanOrEqual(0);
+    expect(at("local: flashnext-iq3 (slots 1/1)")).toBeLessThan(at("AIBroker <span"));
     expect(at("AIBroker <span")).toBeLessThan(at("PAI <span"));
     expect(at("PAI <span")).toBeLessThan(at(">other <span"));
     expect(html).toContain("anthropic/sonnet ×2");

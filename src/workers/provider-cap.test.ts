@@ -34,17 +34,25 @@ describe("provider cap", () => {
     const { workers } = readWorkersSection(jsonPath);
     expect(describeCap(workers.providers.locp)).toEqual({ cap: 1, source: "default" });
     expect(describeCap(workers.providers.cloudp)).toEqual({ cap: undefined, source: "default" });
-    expect(setProviderCap("locp", undefined, jsonPath).effective).toBe("cap 1 (default)");
-    expect(setProviderCap("cloudp", undefined, jsonPath).effective).toBe("cap unlimited (default)");
+    expect(setProviderCap("locp", undefined, jsonPath).effective).toBe("cap 1 (default), conversation slots 1 (default)");
+    expect(setProviderCap("cloudp", undefined, jsonPath).effective).toBe("cap unlimited (default), conversation slots unlimited (default)");
+  });
+
+  it("conversation slots are written, shown with the admitted count, and removed again", () => {
+    const { yamlPath, jsonPath } = setup();
+    expect(setProviderCap("locp", 4, jsonPath, 4).effective).toBe("cap 4 (config), conversation slots 4 — admits 3");
+    expect(readFileSync(yamlPath, "utf8")).toMatch(/conversationSlots: 4/);
+    expect(setProviderCap("locp", undefined, jsonPath, "default").effective).toBe("cap 4 (config), conversation slots 4 (default)");
+    expect(readFileSync(yamlPath, "utf8")).not.toMatch(/conversationSlots/);
   });
 
   it("sets, shows and unsets through workers.yaml", () => {
     const { yamlPath, jsonPath } = setup();
-    expect(setProviderCap("locp", 2, jsonPath).effective).toBe("cap 2 (config)");
+    expect(setProviderCap("locp", 2, jsonPath).effective).toBe("cap 2 (config), conversation slots 2 (default)");
     expect(readFileSync(yamlPath, "utf8")).toMatch(/maxConcurrent: 2/);
-    expect(setProviderCap("locp", undefined, jsonPath).effective).toBe("cap 2 (config)");
-    expect(setProviderCap("cloudp", 4, jsonPath).effective).toBe("cap 4 (config)");
-    expect(setProviderCap("locp", "default", jsonPath).effective).toBe("cap 1 (default)");
+    expect(setProviderCap("locp", undefined, jsonPath).effective).toBe("cap 2 (config), conversation slots 2 (default)");
+    expect(setProviderCap("cloudp", 4, jsonPath).effective).toBe("cap 4 (config), conversation slots 4 (default)");
+    expect(setProviderCap("locp", "default", jsonPath).effective).toBe("cap 1 (default), conversation slots 1 (default)");
     expect(readFileSync(yamlPath, "utf8")).not.toMatch(/maxConcurrent: 2/);
     expect(readFileSync(yamlPath, "utf8")).toMatch(/maxConcurrent: 4/);
   });

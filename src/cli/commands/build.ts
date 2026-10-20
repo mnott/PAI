@@ -6,6 +6,9 @@
 import { spawn } from "node:child_process";
 import { renderBuildQueue, buildNext, buildsDir, listBuilds } from "../../builds/queue.js";
 import { slotsFor, poolSlots } from "../../builds/config.js";
+import { beginBuildWait, endBuildWait } from "../../workers/active-time.js";
+import { workersLogDir } from "../../workers/paths.js";
+import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor } from "../../builds/doctor.js";
 import { inVisiblePane, runCommandInPane } from "./pane.js";
@@ -18,6 +21,19 @@ function spawnWatcher(dir: string, id: string): void {
   if (!entry) return;
   const c = spawn(process.execPath, [...process.execArgv, entry, "build", "watch", dir, id], { detached: true, stdio: "ignore" });
   c.unref();
+}
+
+/** Inside a worker, record build-gate waits so its deadline counts active time only (active-time.ts). */
+function workerWaitSink(): ((waiting: boolean) => void) | undefined {
+  const id = process.env.PAI_WORKER_ID;
+  if (!id) return undefined;
+  let logDir: string;
+  try {
+    logDir = workersLogDir(readWorkersSection().workers);
+  } catch {
+    return undefined;
+  }
+  return (waiting) => (waiting ? beginBuildWait(logDir, id) : endBuildWait(logDir, id));
 }
 
 async function gate(ctx: RunContext): Promise<number> {
@@ -39,6 +55,7 @@ async function gate(ctx: RunContext): Promise<number> {
     slots: slotsFor(kind),
     spawnWatcher,
     handleSignals: true,
+    onWait: workerWaitSink(),
   });
 }
 

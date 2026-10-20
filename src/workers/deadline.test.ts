@@ -115,7 +115,7 @@ describe("timed-out status and ps", () => {
     const saved = loadStatus(logDir, "w-1")!;
     expect(saved.timedOut).toBe(true);
     expect(saved.state).toBe("failed");
-    expect(saved.last).toBe("deadline reached after 2 min");
+    expect(saved.last).toBe("deadline reached after 2 active min");
     expect(readFileSync(ledger, "utf8")).toContain("WORKER-DEADLINE");
   });
 

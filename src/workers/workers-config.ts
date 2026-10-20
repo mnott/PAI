@@ -133,6 +133,8 @@ function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> 
   if (y.thinking !== undefined) raw.thinking = y.thinking;
   if (y.maxConcurrent !== undefined) raw.maxConcurrent = y.maxConcurrent;
   else if (y.max_concurrent !== undefined) raw.maxConcurrent = y.max_concurrent;
+  if (y.conversationSlots !== undefined) raw.conversationSlots = y.conversationSlots;
+  else if (y.conversation_slots !== undefined) raw.conversationSlots = y.conversation_slots;
   if (y.tags !== undefined) raw.tags = y.tags;
   if (y.usage !== undefined) raw.usage = y.usage;
   if (y.model_tiers !== undefined) raw.modelTiers = y.model_tiers;
@@ -161,6 +163,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (p.contextWindow !== undefined) y.context_window = p.contextWindow;
   if (p.thinking !== undefined) y.thinking = p.thinking ? "on" : "off";
   if (p.maxConcurrent !== undefined) y.maxConcurrent = p.maxConcurrent;
+  if (p.conversationSlots !== undefined) y.conversationSlots = p.conversationSlots;
   if (p.tags?.length) y.tags = [...p.tags];
   if (p.usage) y.usage = p.usage;
   if (p.modelTiers) y.model_tiers = { ...p.modelTiers };

@@ -205,7 +205,7 @@ See also: `pai worker providers list`
 Show or set how many workers run in parallel on a provider
 
 ```
-pai providers cap PROVIDER [N]
+pai providers cap PROVIDER [N] [options]
 ```
 
 Without N, shows the provider's effective cap and where it comes from (config or default). N (>= 1) writes maxConcurrent to workers.yaml; `default` removes it again. Unset, a local provider runs one worker at a time and a cloud provider is uncapped.
@@ -215,10 +215,15 @@ Without N, shows the provider's effective cap and where it comes from (config or
 | `PROVIDER` | yes | Provider name |
 | `N` | no | Parallel runs (>= 1), or `default` to unset |
 
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--slots N` | string | — | Conversation-cache slots of the engine (writes conversationSlots; `default` removes it). Admitted workers stay one below it. |
+
 ```sh
 pai worker providers cap local
 pai worker providers cap local 2
 pai worker providers cap local default
+pai worker providers cap local --slots 4
 ```
 
 See also: `pai worker providers`, `pai worker queue`

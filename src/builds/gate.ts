@@ -45,6 +45,8 @@ export interface RunBuildOptions {
   simctl?: Simctl;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+  /** Called when the wait for a slot starts / ends (a worker's active-time accounting). */
+  onWait?: (waiting: boolean) => void;
   /** Poll interval while waiting for a slot. */
   pollMs?: number;
   /** Heartbeat line interval while waiting. */
@@ -189,6 +191,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
     let lastBeat = 0;
     const poll = o.pollMs ?? 500;
     const beat = o.heartbeatMs ?? 30_000;
+    o.onWait?.(true);
     for (;;) {
       if (aborted) return 128 + (aborted === "SIGINT" ? 2 : aborted === "SIGHUP" ? 1 : 15);
       if (await tryStart(o.dir, ticket.id, o.slots, o.deps)) break;
@@ -198,6 +201,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
       }
       await new Promise((r) => setTimeout(r, poll));
     }
+    o.onWait?.(false);
     startedAt = Date.now();
     await patchTicket(o.dir, ticket.id, { paths, ...(kind === "test" ? { bootedBefore: bootedSimulators(o.simctl) } : {}) });
     out(`build started: ${label} (${mode}) — log ${buildLogPath(o.dir, ticket.id)}`);
@@ -207,6 +211,7 @@ export async function runBuild(o: RunBuildOptions): Promise<number> {
     });
     return aborted ? 128 + (aborted === "SIGINT" ? 2 : aborted === "SIGHUP" ? 1 : 15) : code;
   } finally {
+    o.onWait?.(false);
     clearInterval(watch);
     if (kind === "test") {
       const t = await getTicket(o.dir, ticket.id);
