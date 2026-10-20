@@ -11,10 +11,10 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
-import { nowStamp, pidAlive } from "./status.js";
+import { nowStamp, ownsPidCached } from "./status.js";
 import { fmtElapsed } from "./plan-status.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
 import { closeOwnPane, realPaneOps, type PaneOps } from "./pane.js";
@@ -53,19 +53,39 @@ export function writePaneRunStatus(logDir: string, s: PaneRunStatus): void {
 export function loadPaneRunStatus(logDir: string, id: string): PaneRunStatus | null {
   try {
     const s = JSON.parse(readFileSync(paneRunStatusFile(logDir, id), "utf8")) as PaneRunStatus;
-    return s.state === "running" && !pidAlive(s.pid) ? { ...s, state: "lost" } : s;
+    // running only while the recorded pid is alive AND is the process that started the run (a reused pid is not)
+    return s.state === "running" && !ownsPidCached({ pid: s.pid, started: s.started }) ? { ...s, state: "lost" } : s;
   } catch {
     return null;
   }
 }
 
-export function loadPaneRunStatuses(logDir: string): PaneRunStatus[] {
+/** Ended entries are kept this long (for ps and the audit), then removed. */
+export const PANE_RUN_KEEP_MS = 24 * 3600_000;
+
+/**
+ * Every pane-run entry. A run whose runner died without writing its end is recorded as lost on disk
+ * (so the pane reaper sees it ended and closes its pane); entries ended for over a day are removed.
+ */
+export function loadPaneRunStatuses(logDir: string, now = Date.now()): PaneRunStatus[] {
   if (!existsSync(logDir)) return [];
-  return readdirSync(logDir)
-    .filter((n) => n.endsWith(".panestatus"))
-    .sort()
-    .map((n) => loadPaneRunStatus(logDir, n.slice(0, -".panestatus".length)))
-    .filter((s): s is PaneRunStatus => !!s);
+  const out: PaneRunStatus[] = [];
+  for (const n of readdirSync(logDir).filter((x) => x.endsWith(".panestatus")).sort()) {
+    const id = n.slice(0, -".panestatus".length);
+    const s = loadPaneRunStatus(logDir, id);
+    if (!s) continue;
+    try {
+      if (s.state !== "running" && now - s.startedMs > PANE_RUN_KEEP_MS) {
+        unlinkSync(paneRunStatusFile(logDir, id));
+        continue;
+      }
+      if (s.state === "lost" && (JSON.parse(readFileSync(paneRunStatusFile(logDir, id), "utf8")) as PaneRunStatus).state === "running") writePaneRunStatus(logDir, s);
+    } catch {
+      /* the entry is a view; a failed rewrite is retried next tick */
+    }
+    out.push(s);
+  }
+  return out;
 }
 
 /** ps lines of the running pane commands: label, cwd, running time, log path. */

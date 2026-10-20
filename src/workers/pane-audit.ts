@@ -76,8 +76,11 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
       const young = [p.startedMs, stampMs(e?.opened, true)].some((t) => t !== undefined && Math.abs(nowMs - t) < START_GRACE_MS);
       if (young) return { ...v, why: "within the start grace" };
     }
+    // an ended pane-run closed its pane itself: no registry entry is the expected end state, never NO PANE
+    if (!e && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
     if (!e) return { ...v, mark: "NO PANE", why: p.noPaneReason ? `started without a pane: ${p.noPaneReason}` : "no pane recorded for a running process" };
     const tab = tabOf(e.session);
+    if (!tab && p.ended && isPaneRunId(p.id)) return { ...v, why: "ended, pane closed" };
     if (!tab) return { ...v, mark: "NO PANE", ...(p.ended ? {} : { reopenable: true }), why: `pane ${e.session} is gone while the process runs` };
     // a pane-run pane closes itself when its command ends: one still open past the linger is a fault
     if (p.ended && isPaneRunId(p.id) && nowMs !== undefined && nowMs - (p.startedMs ?? 0) > START_GRACE_MS) {
@@ -250,6 +253,9 @@ export async function auditTick(
       const { workers } = readWorkersSection();
       return (await openPaneForWorker(logDir, workers, wid, host.term)).message;
     });
+  const fresh: PaneVerdict[] = [];
+  /** Notices from the reopen path: sent after the told marker is written, like every violation. */
+  const notices: { v: PaneVerdict; what: string }[] = [];
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
     // a running worker whose pane is gone gets its pane reopened here, not reported to the session
@@ -271,8 +277,7 @@ export async function auditTick(
         // already reopened twice inside the stop window: the operator keeps closing it — stop and notify
         appendLedger(ledgerPath(logDir), "PANE-REOPEN-STOPPED", { id: v.id, kind: v.kind, why: v.why }, now);
         const stopped = `NO PANE: ${v.kind} ${v.id} runs without its pane (${v.why}); reopened twice within ${REOPEN_STOP_MS / 60_000} min, stopped reopening — open it with: pai worker pane ${v.id}.`;
-        await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, stopped)).catch(() => false);
-        await msg.toPailot(stopped).catch(() => false);
+        notices.push({ v, what: stopped });
         continue;
       }
       // a reopen is due once the violation is confirmed (the first reopen), and after a reopen once
@@ -291,8 +296,7 @@ export async function auditTick(
           continue; // the session hears nothing on a successful reopen
         }
         const what = `${v.mark}: ${v.kind} ${v.id} runs without its pane in this session's tab (${v.why}); reopen failed: ${message}.`;
-        if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
-        await msg.toPailot(what).catch(() => false);
+        notices.push({ v, what });
         continue;
       }
       // inside the reopen window: wait for the next round, report nothing yet
@@ -303,7 +307,16 @@ export async function auditTick(
     // an ended worker whose pane is gone is shown as NO PANE but never alarmed: nothing to reopen
     if (v.reopenable && proc?.live === false) continue;
     next[v.id] = v.mark;
-    if (told[v.id] === v.mark) continue;
+    if (told[v.id] !== v.mark) fresh.push(v);
+  }
+  // marked told BEFORE any send: a slow messenger must not let the next tick report the same violations again
+  writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
+  writeFileSync(reopenedFile(logDir), JSON.stringify(stamps), "utf8");
+  for (const { v, what } of notices) {
+    if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
+    await msg.toPailot(what).catch(() => false);
+  }
+  for (const v of fresh) {
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
     const what =
       v.mark === "STILL OPEN"
@@ -312,8 +325,6 @@ export async function auditTick(
     if (v.host) await msg.toSession({ iterm: v.host }, eventLine(v.id, "pane-violation", { mark: v.mark }, what)).catch(() => false);
     await msg.toPailot(what).catch(() => false);
   }
-  writeFileSync(reopenedFile(logDir), JSON.stringify(stamps), "utf8");
-  writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
   return verdicts;
 }
 

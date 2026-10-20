@@ -46,9 +46,11 @@ describe("auditPanes", () => {
     expect(v.mark).toBe("STILL OPEN");
     expect(v.why).toContain("still open");
   });
-  it("ended pane run past the grace but pane gone: NO PANE (the pane closed)", () => {
+  it("ended pane run whose pane closed (or was never recorded) is ok, never NO PANE", () => {
     const now = Date.parse("2026-10-20T02:10:00Z");
-    expect(auditPanes([{ id: "pane-1", kind: "pane", startedMs: now - 60000, ended: true }], [entry("pane-1", P1)], tabs({ [H]: "1:2" }), now)[0].mark).toBe("NO PANE");
+    const ended = [{ id: "pane-1", kind: "pane" as const, startedMs: now - 60000, ended: true }];
+    expect(auditPanes(ended, [entry("pane-1", P1)], tabs({ [H]: "1:2" }), now)[0].mark).toBe("ok");
+    expect(auditPanes(ended, [], tabs({ [H]: "1:2" }), now)[0].mark).toBe("ok");
   });
   it("ended pane run within the grace (closing takes a few seconds): ok", () => {
     const now = Date.parse("2026-10-20T02:00:40Z");
@@ -144,6 +146,26 @@ describe("auditTick", () => {
     expect(sent.filter((s) => s.startsWith("P:")).length).toBe(2);
     await run();
     expect(sent.length).toBe(4); // not repeated
+  });
+  it("overlapping ticks (a slow messenger) report each violation once", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow: Messenger = { toSession: async (o, t) => (await gate, sent.push(`S:${o.iterm}:${t}`), true), toPailot: async (t) => (await gate, sent.push(`P:${t}`), true) };
+    const tick = () =>
+      auditTick(dir, slow, {
+        tabs: async () => tabs({ [H]: "1:2", [P2]: "9:1" }),
+        procs: () => [{ id: "w-bad", kind: "worker" }],
+        registry: () => [entry("w-bad", P2)],
+      });
+    await tick(); // confirm round
+    const a = tick(); // reports, blocked in the messenger
+    await new Promise((r) => setTimeout(r, 5));
+    const b = tick(); // the next interval fires while the first is still sending
+    const c = tick();
+    release();
+    await Promise.all([a, b, c]);
+    expect(sent.filter((s) => s.startsWith("P:")).length).toBe(1);
+    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
   });
   it("a failure that clears after one check is never reported", async () => {
     await run();

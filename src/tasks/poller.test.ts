@@ -729,6 +729,7 @@ describe("parking a task that cannot be dispatched", () => {
     pailot.mockClear();
     vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
     vi.doMock("../cli/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
+    vi.doMock("../workers/pailot-guard.js", () => ({ guardedPailot: (_d: string, t: string, send: (t: string) => Promise<boolean>) => send(t) })); // no state file in the real log dir
   });
 
   function failingTransport(outcome: TransportResult["outcome"], reason?: string): Transport {
@@ -900,6 +901,7 @@ describe("a parked task alerts PAILot on the transition", () => {
     pailot.mockClear();
     vi.doMock("../notifications/router.js", () => ({ routeNotification: notify }));
     vi.doMock("../cli/lib/aibroker-client.js", () => ({ callAiBroker: pailot }));
+    vi.doMock("../workers/pailot-guard.js", () => ({ guardedPailot: (_d: string, t: string, send: (t: string) => Promise<boolean>) => send(t) })); // no state file in the real log dir
   });
 
   const MISSING_ROOT = "project_root_missing: /Users/x/old-name which does not exist";

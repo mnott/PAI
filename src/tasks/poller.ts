@@ -290,7 +290,10 @@ async function alertParked(task: Task, reason: string): Promise<void> {
     `language only (e.g. "tomorrow 9am").`;
   try {
     const { callAiBroker } = await import("../cli/lib/aibroker-client.js");
-    await callAiBroker("pailot_send", { text }, 8_000);
+    const { readWorkersSection } = await import("../workers/config.js");
+    const { workersLogDir } = await import("../workers/paths.js");
+    const { guardedPailot } = await import("../workers/pailot-guard.js");
+    await guardedPailot(workersLogDir(readWorkersSection().workers), text, async (t) => (await callAiBroker("pailot_send", { text: t }, 8_000), true), Date.now, false); // a re-park is a new event: rate cap only
   } catch (e) {
     console.error(
       `[pai-poller] parked-task alert not delivered to PAILot ` +
