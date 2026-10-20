@@ -134,6 +134,10 @@ export interface WorkerStatus {
   /** Fall-through link: the local run this cloud run repeats, and (on the local run) its repeat. */
   fallThroughOf?: string;
   fallThroughTo?: string;
+  /** Escalated one tier up: "escalated t2→t1: context 74%" (escalation.ts). */
+  escalated?: string;
+  /** Escalation link: the run this one was escalated to (set on the ended run). */
+  escalatedTo?: string;
   /** Which contract/parser this run used for its final report (see report.ts). */
   reportFormat?: "json" | "ag2";
   /** Whether the final AG2 report passed `aibroker agentish check`; unset for json reports or when no validator ran. */

@@ -126,6 +126,10 @@ import {
   type CapabilityRunResolution,
 } from "./routing.js";
 import { applyRouteOverrides } from "./route-lists.js";
+import { planEscalation } from "./escalation.js";
+import { runEscalation } from "./escalate-run.js";
+import { localFailures } from "./route-classifier.js";
+import { readToolErrors } from "./tool-errors.js";
 import { detectSessionName } from "./session-name.js";
 import { getProfile, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
@@ -263,6 +267,8 @@ export interface RunOptions {
   /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
   _route?: RouteInfo;
   _fallThroughOf?: string;
+  /** Internal: tiers this task already escalated out of (escalation.ts); an escalated re-run is not escalated again from them. */
+  _escalatedFrom?: string[];
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
   /** Internal: this run is the one automatic re-launch after an empty model response. */
@@ -942,6 +948,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         route,
         routeWhy,
         fallThroughOf: opts._fallThroughOf,
+        escalatedFrom: opts._escalatedFrom,
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
@@ -1182,7 +1189,7 @@ interface FinaliseArgs {
    */
   /** why a failed local run would be re-run on the cloud; with commits it is reviewed instead */
   fallThroughWhy?: (status: WorkerStatus, report: WorkerReport | null) => string | null;
-  /** set when a committed run was kept for review: beforeHandoff must not re-run it */
+  /** set when a committed run was kept for review: beforeHandoff must not re-run or escalate it */
   onReviewed?: () => void;
   beforeHandoff?: (status: WorkerStatus, report: WorkerReport | null) => Promise<number | void> | number | void;
 }
@@ -1269,6 +1276,95 @@ export function applyLoopStop(
     return { ...(report ?? {}), result: "~", why, notes: [why, list, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
   }
   return { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
+}
+
+/**
+ * Escalation one tier up (escalation.ts) for a run that just ended: context over the
+ * configured fraction, a missing tool, or repeated failure. Resolves to the exit code
+ * of the re-run (t2 -> t1, whose spec starts with the salvage merge of the ended
+ * run's branch), or null when the run stays (no tiers configured, no trigger, kept
+ * for review, already escalated out of this tier); a t1 -> t0 escalation messages the
+ * owning session (never PAILot) and turns the report into r=~ "escalated to session"
+ * in place.
+ */
+export async function tryEscalate(
+  a: ExecuteArgs,
+  wid: string,
+  st: WorkerStatus,
+  report: WorkerReport | null,
+  resultText: string | undefined,
+  commits: string[],
+  failureWhy: string | null,
+  keptForReview = false
+): Promise<number | null> {
+  const { logDir, config } = a;
+  if (!a.parsed.headless || !config.tiers?.length) return null;
+  const label = a.label ?? st.label ?? UNLABELED;
+  const failed = st.state === "failed" || !!failureWhy;
+  const plan = planEscalation({
+    tiers: config.tiers,
+    cfg: config.escalate,
+    className: a.className,
+    state: { from: a.escalatedFrom ?? [] },
+    id: wid,
+    label,
+    done: report?.notes ?? resultText,
+    commits,
+    branch: st.branch ?? undefined,
+    contextTokens: st.contextTokens,
+    contextWindow: st.contextWindow,
+    resultText,
+    reportText: [report?.notes, report?.why].filter(Boolean).join("\n"),
+    toolErrors: readToolErrors(logDir).filter((r) => r.worker === wid).map((r) => r.raw),
+    failures: failed ? localFailures(ledgerPath(logDir), label, (p) => { const c = getProviderOrNative(config, p); return !!c && isLoopbackProvider(c); }) + (st.rc === 0 ? 1 : 0) : 0,
+    loopStopped: st.loopStopped,
+    reportValid: st.reportValid,
+    failureWhy: failureWhy ?? undefined,
+    keptForReview,
+  });
+  if (!plan) return null;
+  const out = await runEscalation(plan, a.escalatedFrom ?? [], {
+    ledger: ledgerPath(logDir),
+    id: wid,
+    label,
+    spec: a.parsed.prompt ?? "",
+    fromModel: st.model,
+    markEscalated: (line) => {
+      st.escalated = line;
+      st.last = line;
+      saveStatus(logDir, st);
+    },
+    rerun: (o) => {
+      const p0 = parseRunnerArgs(a.opts.claudeArgs).prompt;
+      let swapped = false;
+      return (a.runner ?? runWorker)({
+        ...relaunchOptions(a.opts, {}),
+        providerFlag: o.providerFlag,
+        modelFlag: o.modelFlag,
+        label: o.label,
+        claudeArgs: a.opts.claudeArgs.map((x) => (!swapped && x === p0 ? ((swapped = true), o.prompt) : x)),
+        _escalatedFrom: o.escalatedFrom,
+        _route: undefined,
+        onWorkerStart: (id2) => {
+          st.escalatedTo = id2;
+          saveStatus(logDir, st);
+          o.onStarted(id2);
+          a.onWorkerStart?.(id2);
+        },
+      });
+    },
+    notifySession: async (text) => {
+      const target = st.session?.id || st.session?.name || st.sessionKey;
+      if (!target) return;
+      const { sendToSession } = await import("../cli/lib/aibroker-client.js");
+      await sendToSession(target, text, undefined, { noReply: true });
+    },
+  });
+  if (out.kind === "rerun") return out.rc;
+  if (report) Object.assign(report, out.report);
+  st.claimsContinue = true;
+  saveStatus(logDir, st);
+  return null;
 }
 
 /** Re-run a failed local run once on the cloud, as a fresh run (never another pool spare of the local key). */
@@ -1599,6 +1695,7 @@ export interface ExecuteArgs {
   emptyRetried?: boolean;
   route?: RouteInfo;
   fallThroughOf?: string;
+  escalatedFrom?: string[];
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
   routeWhy?: string;
@@ -1774,14 +1871,17 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       st.worktreeDir && st.worktreeBase
         ? commitLines(st.worktreeDir, st.worktreeBase)
         : st.branch && st.commits ? [`${st.commits} commit(s) on ${st.branch}`] : [];
+    // kept for review (it committed) stays: no cloud re-run, no escalation
     const reviewed = committedFallThrough(why, commits);
+    const escalated = await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why ?? (st.loopStopped ? "loop-guard stop" : null), !!reviewed);
+    if (escalated !== null) return escalated;
     if (reviewed) {
       process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
       appendLedger(ledgerPath(a.logDir), "WORKER-FALLTHROUGH-REVIEW", { id: wid, reason: reviewed.why });
       report = { ...(report ?? {}), ...reviewed };
       st.claimsContinue = true;
       saveStatus(a.logDir, st);
-    } else if (why && a.route) {
+    } else if (why && a.route && !st.escalated) {
       return rerunOnCloud(a, wid, why, st);
     }
   }
@@ -2644,9 +2744,16 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     },
     beforeHandoff: async (st, rep) => {
       // Fall-through: a local run that failed its own report is repeated once on the cloud
-      // (unless it committed: finaliseRun keeps that one for review).
+      // (unless it committed: finaliseRun keeps that one for review — and a run
+      // kept for review is not escalated either; escalation starts from the
+      // salvaged branch instead).
+      const failWhy = headless ? fallThroughReason(a.route, st, rep) ?? (st.loopStopped ? "loop-guard stop" : null) : null;
+      const escalated = headless
+        ? await tryEscalate(a, wid, st, rep, resultEvent?.result, worktree ? commitLines(worktree.dir, worktree.base) : [], failWhy, reviewed)
+        : null;
+      if (escalated !== null) return escalated;
       const why = headless && !reviewed ? fallThroughReason(a.route, st, rep) : null;
-      if (why && a.route) {
+      if (why && a.route && !st.escalated) {
         return rerunOnCloud(a, wid, why, st);
       }
       if (headless && !a.quiet) {

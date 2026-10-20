@@ -6,15 +6,16 @@
  * the plan part `kind:`, the worker label / tags and keywords in the task
  * text; infrastructure, install, device and external-service work goes to the
  * cloud, bounded code/test slices stay local. Always overridable (forceLocal).
- * After LOCAL_FAILURE_LIMIT failed local attempts on the same label the next
- * start goes to the cloud whatever the rules say.
+ * After the escalation rule's failure count (escalation.ts) of failed local
+ * attempts on the same label the next start goes to the cloud whatever the rules say.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { parseLedger } from "./ledger.js";
+import { ESCALATE_FAILURES } from "./escalation.js";
 
 export const CLOUD_KINDS = ["infra", "install", "device", "external", "redesign"] as const;
 export const LOCAL_KINDS = ["code", "test"] as const;
-export const LOCAL_FAILURE_LIMIT = 2;
+export const LOCAL_FAILURE_LIMIT = ESCALATE_FAILURES;
 
 const KEYWORDS: Array<{ re: RegExp; why: string }> = [
   { re: /\b(install(?:er|ation|ing|s)?|signing|code[- ]?sign\w*|app store|testflight|notariz\w+)\b/i, why: "install/signing task" },
