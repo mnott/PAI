@@ -7,6 +7,7 @@ import {
   POLICY_MODES,
   chooseRoute,
   clearPolicy,
+  committedFallThrough,
   fallThroughReason,
   findLocal,
   parseDuration,
@@ -151,5 +152,20 @@ describe("fallThroughReason", () => {
     expect(fallThroughReason({ ...local, policy: "local-only" }, bad, { result: "-" })).toBeNull();
     expect(fallThroughReason({ ...local, local: false }, bad, { result: "-" })).toBeNull();
     expect(fallThroughReason(undefined, bad, { result: "-" })).toBeNull();
+  });
+});
+
+describe("committedFallThrough", () => {
+  it("bad report + commits -> r=~ with the commits, no cloud re-run", () => {
+    const r = committedFallThrough("invalid report", ["abc1234 fix(x): y"]);
+    expect(r?.result).toBe("~");
+    expect(r?.why).toBe("local run committed but its report was invalid: invalid report");
+    expect(r?.notes).toContain("commits: abc1234 fix(x): y");
+  });
+  it("bad report, no commits -> null, the cloud re-run goes ahead", () => {
+    expect(committedFallThrough("invalid report", [])).toBeNull();
+  });
+  it("no fall-through reason -> null", () => {
+    expect(committedFallThrough(null, ["abc1234 x"])).toBeNull();
   });
 });
