@@ -7,6 +7,8 @@ import { POOL_PANEL_JS } from "./pool-panel.js";
 
 /** Stand-in for the page's setHtml in tests that run a render function against plain fake elements. */
 const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
+// renderLimits builds the local tile with localTile, which reads the model names through ringName/shortModel and gbm
+const LT = ["gbm", "shortModel", "ringName", "localTile"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
 
 const COLLAPSE_KEY_TEST = "pai.cockpit.collapsed";
 
@@ -47,7 +49,7 @@ describe("cockpit page compression", () => {
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
       "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document",
-      `function keepDowns(){}\n${SH}\n${body}\nrenderLimits();`
+      `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`
     );
     const lim = {
       activeLocal: "dead17",
@@ -76,7 +78,7 @@ describe("live-shaped payloads", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const run = (activeLocal: string | null) => {
       const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${SH}\n${body}\nrenderLimits();`);
+      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`);
       const lim = { activeLocal, limits: [{ provider: "gyro-m", kind: "local", up: true, served: ["m"] }, { provider: "flashnext-iq3", kind: "local", up: false }] };
       fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
       return els.local!.innerHTML;
@@ -105,7 +107,7 @@ describe("cockpit layout follow-up", () => {
   it("the cloud section is status only: gauges per provider, local cards, no rank badges or controls", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", `function keepDowns(){}\n${SH}\n${body}\nrenderLimits();`);
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`);
     const lim = {
       limits: [
         { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
@@ -113,7 +115,7 @@ describe("cockpit layout follow-up", () => {
         { provider: "gyro-m", kind: "local", up: true, rssMb: 5, tokensPerSec: 9 },
       ],
     };
-    fn(lim, (id: string) => els[id], (s: string) => s, (l: { provider: string }) => `<gauge ${l.provider}>`, () => "", () => "");
+    fn(lim, (id: string) => els[id], (s: string) => s, (l: { provider: string }) => `<gauge ${l.provider}>`, () => "", () => "", null);
     expect(els.cloud!.innerHTML).toContain('data-prov="anthropic"');
     expect(els.cloud!.innerHTML).toContain("<gauge glm>");
     expect(els.local!.innerHTML).toContain("9 tok/s");
@@ -414,6 +416,49 @@ describe("cockpit Models cards", () => {
     expect(card).toContain("pai-embedding");
     expect(card).not.toContain("badge bad");
     expect(h).toContain('data-rt="docker-model-runner"');
+  });
+  it("a card is per consumer: a shared runtime's purpose line, used-by and USERS tile describe that consumer only", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", label: "PAI's embedding backend runs here", status: "running", port: 11434, users: ["paperfull-chat", "pai-embedding"], models: [
+        { model: "qwen3:8b", kind: "chat", loaded: false, label: "Paperfull chat model", usedBy: ["paperfull-chat"] },
+        { model: "arctic-embed", kind: "embedding", loaded: false, usedBy: ["pai-embedding"] },
+      ] }],
+      consumers: [
+        { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat model", purpose: "Paperfull chat model" },
+        { name: "pai-embedding", runtime: "ollama", model: "arctic-embed", label: "PAI embedding", purpose: "memory search embeds new content" },
+      ],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    const chat = h.split('<div class="mcard').find((c) => c.includes('data-model="qwen3:8b"'))!;
+    expect(chat).toContain("Paperfull chat model · used by paperfull-chat (Paperfull chat model)");
+    expect(chat).not.toContain("embedding backend");
+    expect(chat).not.toContain("pai-embedding");
+    expect(chat).toContain('<span class="mt-value">1</span>');
+  });
+  it("a worker chip shows the job label with its state word, never a raw unknown field", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "gyro-m", kind: "mlx", status: "running", port: 1, users: [], models: [{ model: "m", kind: "coding", loaded: true, memoryMb: 5000, usedBy: [] }] }],
+      duplicates: [],
+      live: { at: 1, runtimes: [{ name: "gyro-m", live: { engine: {}, cap: 2, queued: 0, workers: [
+        { id: "j1", label: "C2d #8 one colour per model", state: "running" },
+        { id: "j2", label: "other job", state: "queued" },
+      ] }, history: {} }] },
+    });
+    expect(h).not.toContain("?</b>");
+    expect(h).not.toMatch(/<b>\?<\/b>/);
+    expect(h).toContain("C2d #8 one colour per model <span class=\"dim\">running</span>");
+    expect(h).toContain("other job <span class=\"warn\">queued</span>");
+  });
+  it("the tile grip sits in the tile's top-right corner, never inline with the value", () => {
+    const tile = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}\n${COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]}; return metricTile;`)((s: unknown) => String(s ?? ""))({ title: "Speed", value: "58.5", unit: "t/s", sub: "", series: [] }) as string;
+    expect(tile).not.toMatch(/<span class="mt-value"><span class="tgrip"/);
+    expect(tile).toMatch(/^<div class="mt"><span class="tgrip" data-tgrip/);
+    expect(COCKPIT_HTML).toMatch(/\.tgrip\{position:absolute;top:\d+px;right:\d+px;opacity:0/);
+    expect(COCKPIT_HTML).toMatch(/@media\(hover:none\)\{\.tgrip\{opacity:\.5\}\}/);
+    expect(COCKPIT_HTML).toMatch(/\.mt:hover \.tgrip/);
   });
   const inv = {
     at: "2026-10-19T18:00:00.000Z",
@@ -1299,13 +1344,16 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
   const colorSrc = [
     COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
     COCKPIT_HTML.match(/function assignColors\([\s\S]*?\n\}\n/)![0],
-    COCKPIT_HTML.match(/function colorOf\([^\n]*\n/)![0],
+    COCKPIT_HTML.match(/function hslHex\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function genColor\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function hueOf\([\s\S]*?\n\}\n/)![0],
+    COCKPIT_HTML.match(/function colorOf\([\s\S]*?\n\}\n/)![0],
   ].join("\n");
   const store: Record<string, string> = {};
   const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
-  const colorApi = () => {
-    const fn = new Function("localStorage", "PAL", `var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]];\n${colorSrc}\nreturn {assign:function(ms){return assignColors(ms)},colorOf:colorOf,colors:colors};`);
-    return fn(ls, PAL) as { assign: (ms: string[]) => void; colorOf: (k: string) => string; colors: Record<string, string> };
+  const colorApi = (pruneDays = 90) => {
+    const fn = new Function("localStorage", "PAL", "COLOR_PRUNE_DAYS", `var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]];\n${colorSrc}\nreturn {assign:function(ms){return assignColors(ms)},colorOf:colorOf,colors:colors};`);
+    return fn(ls, PAL, pruneDays) as { assign: (ms: string[]) => void; colorOf: (k: string) => string; colors: Record<string, string> };
   };
   beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
 
@@ -1334,7 +1382,7 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
     expect(models.map((m) => c.colorOf(m))).toEqual(first);
   });
 
-  it("colours persist per model name in localStorage and a model leaving the view loses its entry", () => {
+  it("colours persist per model name; a model not visible right now keeps its saved colour", () => {
     const a = colorApi();
     a.assign(["x", "y"]);
     const saved = JSON.parse(store["pai.cockpit.modelColors.v1"]);
@@ -1342,7 +1390,81 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
     expect(saved.y).toMatch(/^#[0-9a-f]{6}$/);
     const b = colorApi();
     b.assign(["x"]);
-    expect(Object.keys(b.colors).filter((k) => k.indexOf("@ts") < 0)).toEqual(["x"]);
+    expect(b.colors.y).toBe(saved.y); // not deleted: merely not visible right now
+    // it reappears with the same colour
+    b.assign(["x", "y"]);
+    expect(b.colorOf("y")).toBe(saved.y);
+  });
+
+  it("two charts with different model sets keep all colours distinct and stable across re-renders in either order", () => {
+    const winModels = ["claude-haiku-4-5", "claude-sonnet-5-5", "k3"];
+    const dailyModels = ["claude-haiku-4-5", "glm-5.3", "qwen3-coder-30b-8bit", "k3"];
+    const union = Array.from(new Set(winModels.concat(dailyModels))).sort();
+    // daily first, then the window chart (the live order that wiped the daily colours)
+    const a = colorApi();
+    a.assign(dailyModels);
+    a.assign(winModels);
+    const first = union.map((m) => a.colorOf(m));
+    expect(new Set(first).size).toBe(union.length);
+    // window first, then daily, in a fresh session over the same storage
+    const b = colorApi();
+    b.assign(winModels);
+    b.assign(dailyModels);
+    expect(union.map((m) => b.colorOf(m))).toEqual(first);
+    // re-render either chart again: nothing changes
+    b.assign(dailyModels);
+    b.assign(winModels);
+    expect(union.map((m) => b.colorOf(m))).toEqual(first);
+  });
+
+  it("20 models get 20 distinct colours, past the palette by generated hues", () => {
+    const a = colorApi();
+    const models = Array.from({ length: 20 }, (_, i) => `mm${i}`);
+    a.assign(models);
+    const cs = models.map((m) => a.colorOf(m));
+    expect(new Set(cs).size).toBe(20);
+    for (const c of cs) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    // a re-render keeps them
+    const b = colorApi();
+    b.assign(models);
+    expect(models.map((m) => b.colorOf(m))).toEqual(cs);
+  });
+
+  it("colorOf assigns an unassigned model on the spot and never returns PAL[0] silently", () => {
+    const a = colorApi();
+    a.assign(["p"]); // p takes PAL[0]
+    expect(a.colorOf("p")).toBe(PAL[0]);
+    const c = a.colorOf("late-model");
+    expect(c).not.toBe(PAL[0]);
+    expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    expect(a.colors["late-model"]).toBe(c);
+    expect(JSON.parse(store["pai.cockpit.modelColors.v1"])["late-model"]).toBe(c);
+    // the kind colours still resolve by kind name
+    expect(a.colorOf("input")).toBe("#3b6fe0");
+  });
+
+  it("saved colours older than colorPruneDays are pruned by their @ts stamp", () => {
+    const DAY = 864e5;
+    const old = JSON.stringify({ gone: "#2bb3c0", "gone@ts": Date.now() - 100 * DAY, keep: "#d64570", "keep@ts": Date.now() - 10 * DAY });
+    store["pai.cockpit.modelColors.v1"] = old;
+    const a = colorApi(90);
+    a.assign(["fresh"]);
+    expect(a.colors.gone).toBeUndefined();
+    expect(a.colors.keep).toBe("#d64570");
+    // the prune window is config-driven
+    store["pai.cockpit.modelColors.v1"] = old;
+    const b = colorApi(200);
+    b.assign(["fresh"]);
+    expect(b.colors.gone).toBe("#2bb3c0");
+  });
+
+  it("the page assigns colours once over the union of every model shown", () => {
+    const render = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
+    expect(render).toContain("d.byModel.forEach(function(m){um[m.model]=1})");
+    expect(render).toContain("(d.speed||[]).forEach(function(r){um[r.model]=1})");
+    expect(render).toContain("dm.forEach(function(m){um[m]=1})");
+    expect(render).toContain("assignColors(Object.keys(um))");
+    expect(COCKPIT_HTML).toContain("COLOR_PRUNE_DAYS=90");
   });
 
   it("axis labels are compact (784M, 1.57G, not 783.98M) and the left padding grows with the widest label", () => {
@@ -2087,5 +2209,51 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     });
     expect(els.poolpanel.innerHTML).toContain("<div class=\"kpis\">");
     expect(els.poolpanel.innerHTML).toContain("tasks served");
+  });
+});
+
+describe("local server tile and section title", () => {
+  const render = (l: Record<string, unknown>, mdl: unknown = null) => {
+    const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
+    const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
+    new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`)(
+      { limits: [l] }, (id: string) => els[id], (s: unknown) => String(s ?? ""), () => "", () => "", () => "", mdl);
+    return els.local!.innerHTML;
+  };
+  const live = { provider: "gyro-m", kind: "local", up: true, rssMb: 51601, tokensPerSec: 58.2, served: ["mlx-community/qwen3.8-flash-next-gyro-m"] };
+  it("reads like a provider tile: header with name and status, memory in GB, tok/s in one nowrap span, model short name with the id in the title", () => {
+    const h = render(live);
+    expect(h).toContain('<div class="phead"><span class="lname" title="gyro-m">gyro-m</span><span class="ok nw">● up</span></div>');
+    expect(h).toContain('<span class="nw">50.4 GB</span>');
+    expect(h).not.toContain(" MB");
+    expect(h).toContain('<span class="nw">58 tok/s</span>');
+    expect(h).toContain('<span class="nw" title="mlx-community/qwen3.8-flash-next-gyro-m">qwen3.8-flash-next-gyro-m</span>');
+    expect(COCKPIT_HTML).toMatch(/\.nw\{white-space:nowrap\}/);
+    expect(COCKPIT_HTML).toMatch(/\.ltab\{[^}]*text-align:left/);
+  });
+  it("the header shows the alias set via models.labels", () => {
+    const h = render(live, { runtimes: [{ modelLabels: { "mlx-community/qwen3.8-flash-next-gyro-m": "Gyro" } }], consumers: [] });
+    expect(h).toContain('<span class="lname" title="gyro-m">Gyro</span>');
+  });
+  it("the section is titled 'Limits and local servers' with an explaining tooltip; data-section key unchanged", () => {
+    expect(COCKPIT_HTML).toMatch(/<section data-section="cloud" class="card c12"><h2>Limits and local servers<span class="tip"[^>]*data-tip="Cloud usage windows per provider; local model servers"/);
+    expect(COCKPIT_HTML).toContain('<section data-section="cloud"');
+  });
+});
+
+describe("generated model colours", () => {
+  it("25 models all get distinct colours; generated hues stay 12 degrees from every palette hue", () => {
+    const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
+    const store: Record<string, string> = {};
+    const fn = new Function("localStorage", `${COCKPIT_HTML.match(/var KINDS=[\s\S]*?PAL=\[[^\]]+\]/)![0]};\n${COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0]}\n${["hslHex", "hueOf", "genColor", "colorOf"].map(get).join("\n")}\nreturn {colorOf, hueOf, PAL};`)(
+      { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } }) as { colorOf: (k: string) => string; hueOf: (h: string) => number; PAL: string[] };
+    const cs = Array.from({ length: 25 }, (_, i) => fn.colorOf(`model-${i}`));
+    expect(new Set(cs).size).toBe(25);
+    const gen = cs.filter((c) => !fn.PAL.includes(c));
+    expect(gen.length).toBeGreaterThan(0);
+    for (const g of gen) for (const p of fn.PAL) {
+      const d = Math.abs(fn.hueOf(g) - fn.hueOf(p));
+      expect(Math.min(d, 360 - d)).toBeGreaterThanOrEqual(12);
+    }
   });
 });
