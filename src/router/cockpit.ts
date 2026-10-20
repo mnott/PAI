@@ -8,7 +8,8 @@ import { statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
-import { COCKPIT_HTML } from "./cockpit-page.js";
+import { cockpitHtml } from "./cockpit-page.js";
+import { loadConfig } from "../daemon/config.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
@@ -538,6 +539,18 @@ export function cockpitQueue(
  * unless router.bind opens a second listener (then every cockpit route,
  * writes included, is token-gated — see src/router/cockpit-auth.ts).
  */
+/** Sections to show: ?sections=a,b overrides router.cockpit.sections, which is re-read on every page load. Empty = all. */
+function cockpitSections(url: URL): string[] {
+  const q = url.searchParams.get("sections");
+  if (q !== null) return q.split(",").map((x) => x.trim()).filter(Boolean);
+  try {
+    const l = loadConfig().router.cockpit?.sections;
+    return Array.isArray(l) ? l.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function handleCockpit(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -579,7 +592,7 @@ export function handleCockpit(
     return true;
   }
   if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
-  if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", COCKPIT_HTML);
+  if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", cockpitHtml(cockpitSections(url)));
   else if (url.pathname === "/cockpit/data") {
     try {
       const rows = readRows();

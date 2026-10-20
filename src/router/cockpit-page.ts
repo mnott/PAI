@@ -13,7 +13,7 @@ const FAVICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"
 export const COCKPIT_FAVICON_SVG = FAVICON_SVG;
 export const COCKPIT_FAVICON_DATA_URI = "data:image/svg+xml," + encodeURIComponent(FAVICON_SVG);
 
-export const COCKPIT_HTML = String.raw`<!doctype html>
+const FULL_HTML = String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PAI router cockpit</title>
@@ -71,28 +71,29 @@ svg text{fill:var(--dim);font-size:10px}
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
 <span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
-<section class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
-<section class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
+<section data-section="cloud" class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
+<section data-section="workers" class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
-<section class="card c12"><h2>Models — loaded<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
-<section class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
-<section class="card c12"><div class="kpis" id="kpis"></div></section>
-<section class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
+<section data-section="models" class="card c12"><h2>Models — loaded<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
+<section data-section="system" class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
+<section data-section="kpis" class="card c12"><div class="kpis" id="kpis"></div></section>
+<section data-section="tokens" class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:8px">Power and GPU/CPU load<span class="tip" tabindex="0" aria-label="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis." data-tip="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis.">ⓘ</span></h2><div id="power"></div><div class="legend" id="plegend"></div></section>
-<section class="card c4"><h2>Cache hit ratio<span class="tip" tabindex="0" aria-label="cache_read / (read + write + fresh input), per provider / model." data-tip="cache_read / (read + write + fresh input), per provider / model.">ⓘ</span></h2><div id="donut" class="rings"></div><div id="donutlow" class="chips lowmodels"></div><div id="donutnote" class="chips"></div>
+<section data-section="cache" class="card c4"><h2>Cache hit ratio<span class="tip" tabindex="0" aria-label="cache_read / (read + write + fresh input), per provider / model." data-tip="cache_read / (read + write + fresh input), per provider / model.">ⓘ</span></h2><div id="donut" class="rings"></div><div id="donutlow" class="chips lowmodels"></div><div id="donutnote" class="chips"></div>
 <h2 id="donutlocaltitle" style="margin-top:8px;display:none">Local prefix cache<span class="tip" tabindex="0" aria-label="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money." data-tip="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money.">ⓘ</span></h2><div id="donutlocal"></div>
 <h2 style="margin-top:8px">Providers<span class="tip" tabindex="0" aria-label="* server counter (prefix cache since server start; this provider reports no cache fields per request). avg ms is end-to-end incl. queueing and prefill, ttft p50 is time to first token." data-tip="* server counter (prefix cache since server start; this provider reports no cache fields per request). avg ms is end-to-end incl. queueing and prefill, ttft p50 is time to first token.">ⓘ</span></h2><div id="providers"></div></section>
-<section class="card c12"><h2>Speed per model<span class="tip" tabindex="0" aria-label="TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked." data-tip="TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked.">ⓘ</span></h2><div id="speed"></div></section>
-<section class="card c12"><h2>Cache verdict by pause<span class="tip" tabindex="0" aria-label="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it." data-tip="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.">ⓘ</span></h2><div id="pause"></div></section>
-<section class="card c12"><h2>Sessions by tokens</h2><div id="sessions"></div></section>
-<section class="card c6"><h2>Worker runs</h2><div id="workers"></div></section>
-<section class="card c6"><h2>Tokens per day per model (14 d)</h2><div id="daily"></div><div class="legend" id="dlegend"></div></section>
+<section data-section="speed" class="card c12"><h2>Speed per model<span class="tip" tabindex="0" aria-label="TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked." data-tip="TTFT = request sent to first content token. Read = input tokens / TTFT (prefill incl. cached for local models; for Anthropic input excludes cache reads). Write = output tokens / decode time, replies of 16+ tokens only. Medians (p50) unless marked.">ⓘ</span></h2><div id="speed"></div></section>
+<section data-section="pause" class="card c12"><h2>Cache verdict by pause<span class="tip" tabindex="0" aria-label="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it." data-tip="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.">ⓘ</span></h2><div id="pause"></div></section>
+<section data-section="sessions" class="card c12"><h2>Sessions by tokens</h2><div id="sessions"></div></section>
+<section data-section="runs" class="card c6"><h2>Worker runs</h2><div id="workers"></div></section>
+<section data-section="daily" class="card c6"><h2>Tokens per day per model (14 d)</h2><div id="daily"></div><div class="legend" id="dlegend"></div></section>
 </main>
 <script>
 (function(){
 var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
 var colors={};function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[Object.keys(colors).length%PAL.length];return colors[k]}
-function $(id){return document.getElementById(id)}
+function $(id){return document.getElementById(id)||document.createElement("div")}
+function has(){for(var i=0;i<arguments.length;i++)if(document.querySelector('[data-section="'+arguments[i]+'"]'))return true;return false}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function fmt(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(2)+"G";if(n>=1e6)return(n/1e6).toFixed(2)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(Math.round(n))}
 /** Tooltip icon: the long text lives in data-tip (CSS hover/focus) and aria-label (screen readers). */
@@ -541,7 +542,32 @@ function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l
 $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="dark"?"light":"dark";setTheme(t);try{localStorage.setItem("pai.cockpit.theme",t)}catch(e){}};
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
-tabs();applyCollapse();load();loadSystem();loadLimits();loadPool();loadQueue();setInterval(function(){load();loadSystem()},5000);setInterval(loadLimits,30000);setInterval(loadPool,15000);setInterval(loadQueue,5000);setInterval(tick,1000);
+/* a section that is not on the page fetches nothing */
+var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","models","system","cache"),needPool=has("pool"),needQueue=has("workers");
+tabs();applyCollapse();if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needPool)loadPool();if(needQueue)loadQueue();
+if(needData&&needSys)setInterval(function(){load();loadSystem()},5000);else if(needData)setInterval(load,5000);else if(needSys)setInterval(loadSystem,5000);if(needLim)setInterval(loadLimits,30000);if(needPool)setInterval(loadPool,15000);if(needQueue)setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
 </script></body></html>
 `;
+
+/** Stable ids of the page's top-level sections, in page order (config key router.cockpit.sections). */
+export const COCKPIT_SECTION_IDS = ["cloud", "workers", "pool", "models", "system", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
+
+/** The full page: every section. */
+export const COCKPIT_HTML = FULL_HTML;
+
+/**
+ * The page with only the listed sections, in the listed order. Unlisted sections are cut out of the
+ * HTML (no DOM) and the script skips their fetches. Undefined or empty list = the full page; unknown ids are ignored
+ * (all unknown = full page, so a typo never yields a blank cockpit).
+ */
+export function cockpitHtml(sections?: readonly string[]): string {
+  const want = (sections ?? []).filter((id) => (COCKPIT_SECTION_IDS as readonly string[]).includes(id));
+  if (!want.length) return FULL_HTML;
+  const re = /<section data-section="([a-z]+)"[\s\S]*?<\/section>\n?/g;
+  const found = new Map<string, string>();
+  const [head, rest] = [FULL_HTML.slice(0, FULL_HTML.indexOf("<main>") + 7), FULL_HTML.slice(FULL_HTML.indexOf("<main>") + 7)];
+  const tail = rest.slice(rest.indexOf("</main>"));
+  for (const m of rest.slice(0, rest.indexOf("</main>")).matchAll(re)) found.set(m[1]!, m[0].endsWith("\n") ? m[0] : m[0] + "\n");
+  return head + [...new Set(want)].map((id) => found.get(id) ?? "").join("") + tail;
+}

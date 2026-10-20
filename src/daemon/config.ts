@@ -152,6 +152,11 @@ export interface RouterConfig {
    * Defaults: enabled false, parkAfterSec 120.
    */
   parking?: { enabled?: boolean; parkAfterSec?: number };
+  /**
+   * Cockpit page: `sections` lists the section ids to render, in page order (cloud, workers, pool, models,
+   * system, kpis, tokens, cache, speed, pause, sessions, runs, daily). Missing or empty = all. Re-read per page load.
+   */
+  cockpit?: { sections?: string[] };
 }
 
 export interface PaiDaemonConfig {
