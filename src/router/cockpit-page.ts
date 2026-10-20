@@ -67,6 +67,18 @@ svg text{fill:var(--dim);font-size:10px}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
 .mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums}
 .mt-spark{display:block;width:100%;max-width:100%;height:32px;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
+.rt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}
+.rt-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
+.rt-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.rt-head b{font-size:14px;font-weight:600;min-width:0;overflow-wrap:anywhere}
+.rt-sub{color:var(--dim);font-size:11px;min-width:0;overflow-wrap:anywhere}
+.rt-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+.rt-dot.idle{background:var(--warn)}
+.badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
+.rt-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(180px,100%),1fr));gap:8px;min-width:0}
+.rt-tiles .mt{padding:8px 9px}
+.rt-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
+.rt-chips .chip{max-width:100%;overflow-wrap:anywhere}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
@@ -75,7 +87,7 @@ svg text{fill:var(--dim);font-size:10px}
 <section data-section="cloud" class="card c12"><div class="groups"><div class="grp grp-cloud"><h2>Cloud</h2><div class="gauges" id="cloud"></div></div><div class="grp grp-local"><h2>Local</h2><div class="gauges" id="local"></div></div></div></section>
 <section data-section="workers" class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
-<section data-section="models" class="card c12"><h2>Models — loaded<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
+<section data-section="models" class="card c12"><h2>Models — runtimes<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
 <section data-section="system" class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
 <section data-section="kpis" class="card c12"><div class="kpis" id="kpis"></div></section>
 <section data-section="tokens" class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
@@ -171,36 +183,48 @@ function renderLimits(){
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
 }
 var mdl=null;
-/** Models tile: only loaded models (they hold memory) as rows; not-loaded models and stopped runtimes fold into one dim line, expandable to the full rows. */
+/** Models section: one card per running runtime with live tiles (Speed, Memory, Workers, Conversation cache);
+ * stopped runtimes and not-loaded models collapse to one chip row. A value the runtime does not report shows "–". */
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
- function mem(m){return m==null?"-":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
- var live=[],idle=[],stopped=[];
+ function mem(m){return m==null?"–":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
+ function n1(v){return v==null?"–":Math.round(v*10)/10}
+ function n0(v){return v==null?"–":Math.round(v)}
+ function gb(v){return v==null?"–":(v/1024).toFixed(1)}
+ function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l||null}
+ var cards="",idle=[],stopped=[];
  inv.runtimes.forEach(function(r){
   if(r.status==="stopped"){stopped.push(r);return}
-  r.models.forEach(function(m){
-   var users=esc((m.usedBy.length?m.usedBy:r.models.length===1?r.users:[]).concat(m===r.models[0]?(r.notServed||[]).map(function(n){return n+" (not served)"}):[]).join(", ")||"-");
-   if(m.loaded)live.push([esc(m.model),esc(r.name),esc(m.kind),users,mem(m.memoryMb)+(m.mappedMb?" (+"+mem(m.mappedMb).replace(".0 "," ")+" file mapped)":"")]);
-   else idle.push([esc(r.name),esc(m.model),esc(m.kind),users,mem(m.sizeMb)]);
-  });
+  r.models.forEach(function(m){if(!m.loaded)idle.push([esc(r.name),esc(m.model),esc(m.kind),mem(m.sizeMb)])});
+  var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
+  var head='<div class="rt-head"><span class="rt-dot'+(r.status==="idle"?" idle":"")+'"></span><b>'+esc(r.models.length?r.models[0].model:r.name)+'</b>'+
+   '<span class="badge">'+esc(r.kind)+'</span>'+(r.status==="idle"?'<span class="badge">idle</span>':"")+'</div>'+
+   '<div class="rt-sub">'+esc(r.name)+(r.port==null?"":" :"+r.port)+(r.users&&r.users.length?" · used by "+esc(r.users.join(", ")):"")+'</div>';
+  var tiles='<div class="rt-tiles">'+
+   metricTile({title:"Speed",value:n1(eng&&eng.decode),unit:eng&&eng.decode!=null?"t/s":"",sub:(eng&&eng.phase?esc(eng.phase)+" · ":"")+"Decode",
+    secondary:{value:n1(eng&&eng.prefill),unit:eng&&eng.prefill!=null?"t/s":"",sub:"Prefill"},
+    series:[{data:h.decode||[]},{data:h.prefill||[]}]})+
+   metricTile({title:"Memory",value:gb(r.models.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null),unit:"GB",sub:"Resident"+(r.models[0]&&r.models[0].mappedMb?" · "+gb(r.models[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
+    series:[{data:h.memoryMb||[]}]})+
+   metricTile({title:"Workers",value:w.length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
+    series:[{data:h.queued||[]}]})+
+   metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",sub:eng&&eng.reused!=null&&eng.prompt?"reused "+pct(eng.reused/eng.prompt)+" of prompt tokens":"prompt reuse not reported",
+    series:[{data:h.reusedPct||[]}]})+'</div>';
+  var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
+  cards+='<div class="rt-card">'+head+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+'</div>';
  });
- var h=live.length?table(["model","runtime","kind","used by","memory"],live):'<span class="dim">no model loaded</span>';
+ var h='<div class="rt-grid">'+(cards||'<span class="dim">no runtime running</span>')+'</div>';
  var parts=[];
+ if(stopped.length)parts.push("stopped: "+stopped.map(function(r){return esc(r.name)+(r.port==null?"":" :"+r.port)}).join(", "));
  if(idle.length)parts.push("not loaded: "+idle.map(function(o){return o[1]+" "+o[2]+" ("+o[0]+")"}).join(", "));
- if(stopped.length)parts.push("stopped: "+stopped.map(function(r){return r.name}).join(", "));
- if(parts.length){
-  h+='<details class="downs dim"><summary>'+parts.join(" · ")+'</summary>';
-  if(idle.length)h+=table(["runtime","model","kind","used by","size on disk"],idle);
-  if(stopped.length)h+=stopped.map(function(r){return'<span class="chip bad" title="'+esc(r.users.join(", "))+'">'+esc(r.name)+(r.port==null?"":":"+r.port)+'</span>'}).join(" ");
-  h+='</details>';
- }
+ if(parts.length)h+='<div class="rt-chips dim" style="margin-top:6px">'+parts.map(function(p){return'<span class="chip">'+p+'</span>'}).join("")+'</div>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
 }
 function renderModels(){
  var el=$("modelspanel");if(!el)return;
  el.innerHTML=mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>';
- setTip($("modelstip"),mdl&&mdl.at?"Local model runtimes. In use = a worker provider, the PAI embedding backend or a declared consumer (config models.consumers). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
+ setTip($("modelstip"),mdl&&mdl.at?"Local model runtimes with live tiles (the router samples each running runtime every 5 s; a value the runtime does not report shows –). In use = a worker provider, the PAI embedding backend or a declared consumer (config models.consumers). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
 }
 var sys=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
@@ -536,7 +560,7 @@ function renderQueue(q){
 }
 function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
 function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;renderLimits();renderModels()}).catch(function(){})}
-function loadLimits(){loadModels();fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
+function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}
@@ -544,9 +568,9 @@ $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="da
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 /* a section that is not on the page fetches nothing */
-var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","models","system","cache"),needPool=has("pool"),needQueue=has("workers");
-tabs();applyCollapse();if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needPool)loadPool();if(needQueue)loadQueue();
-if(needData&&needSys)setInterval(function(){load();loadSystem()},5000);else if(needData)setInterval(load,5000);else if(needSys)setInterval(loadSystem,5000);if(needLim)setInterval(loadLimits,30000);if(needPool)setInterval(loadPool,15000);if(needQueue)setInterval(loadQueue,5000);setInterval(tick,1000);
+var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
+tabs();applyCollapse();if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
+if(needData&&needSys)setInterval(function(){load();loadSystem()},5000);else if(needData)setInterval(load,5000);else if(needSys)setInterval(loadSystem,5000);if(needLim)setInterval(loadLimits,30000);if(needModels)setInterval(loadModels,5000);if(needPool)setInterval(loadPool,15000);if(needQueue)setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
 </script></body></html>
 `;

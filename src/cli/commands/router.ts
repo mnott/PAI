@@ -9,7 +9,8 @@ import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
-import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit } from "../../router/cockpit.js";
+import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setRuntimeSampler } from "../../router/cockpit.js";
+import { createRuntimeSampler, routerSamplerDeps } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
 import { listenRetry } from "../../router/listen.js";
 import { drainServers } from "../../router/drain.js";
@@ -124,6 +125,18 @@ const runCommand: CommandDef = {
     if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
     const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
     const system = new SystemMonitor();
+    // cockpit Models cards: the 5 s ring of live readings per running runtime (runtime-samples.ts)
+    const sampler = createRuntimeSampler(
+      routerSamplerDeps(() => sharedScheduler().snapshot()),
+      () => readWorkersSection().workers,
+      () => workersLogDir(readWorkersSection().workers),
+      () => {
+        const c = system.cachedSample();
+        return c && c.memUsed != null && c.memTotal ? (c.memUsed / c.memTotal) * 100 : null;
+      }
+    );
+    sampler.start();
+    setRuntimeSampler(sampler);
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);

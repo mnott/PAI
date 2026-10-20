@@ -318,6 +318,11 @@ export class SystemMonitor {
     void this.probe(); // warm power/temp/gpu so the first page does not wait ~10 s
   }
 
+  /** The last served reading without polling (null before the first `current()`); for cheap periodic readers. */
+  cachedSample(): SystemSample | null {
+    return this.cached;
+  }
+
   /**
    * Latest reading, direct sources first; sample is null only when every
    * source failed (reason in the sample notes).
