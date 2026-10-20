@@ -7,6 +7,10 @@
  * `pai worker kill`, the deadline and the loop watch all go through here.
  */
 
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
 import { appendStopEvent, callerDescription, requestKill } from "./endreason.js";
 import {
@@ -52,26 +56,135 @@ function ownerIdentities(s: WorkerStatus): string[] {
   return ids.filter((x): x is string => !!x);
 }
 
+/**
+ * Caller process facts for the chain check: `processTree` maps a pid to its
+ * [ppid, tty], `commands` its command line. Injected by tests; the real one
+ * reads `ps`. Only consulted when env-based identity does not match.
+ */
+export interface CallerProcessInfo {
+  processTree?: (start: number) => Map<number, [number, string]>;
+  commands?: (pids: number[]) => Map<number, string>;
+  pid?: number;
+  home?: string;
+}
+
+/** pid -> [ppid, tty] for the ancestor chain of `start`, via one `ps` call. */
+function realProcessTree(start: number): Map<number, [number, string]> {
+  const out = new Map<number, [number, string]>();
+  let pid = start;
+  for (let hops = 0; hops < 40 && pid > 0; hops++) {
+    try {
+      const row = execFileSync("ps", ["-o", "ppid=,tty=", "-p", String(pid)], { encoding: "utf8" }).trim().split(/\s+/);
+      if (row.length < 2) break; // pid gone
+      const ppid = Number(row[0]);
+      out.set(pid, [ppid, row[1] ?? ""]);
+      pid = ppid;
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
+function realCommands(pids: number[]): Map<number, string> {
+  const out = new Map<number, string>();
+  if (!pids.length) return out;
+  try {
+    const outStr = execFileSync("ps", ["-o", "pid=,command=", "-p", pids.join(",")], { encoding: "utf8" });
+    for (const line of outStr.split("\n")) {
+      const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+      if (m) out.set(Number(m[1]), m[2]);
+    }
+  } catch {
+    /* ps failed: no command lines */
+  }
+  return out;
+}
+
+/**
+ * Claude session ids the calling process chain carries: CLAUDE_PID's session
+ * file, plus every ancestor command line's `--session-id <uuid>` or
+ * `--bg-pty-host …/pty/<short>.sock` (the short id matches a recorded id that
+ * starts with it). A background-job session has no TTY, no ITERM_SESSION_ID
+ * and no session id in its Bash env — the chain is the only identity left.
+ */
+function callerChainSessionIds(
+  info: CallerProcessInfo,
+  env: NodeJS.ProcessEnv,
+  owners: string[],
+  start: number = info.pid ?? process.pid
+): { full: Set<string>; short: Set<string> } {
+  const full = new Set<string>();
+  const short = new Set<string>();
+  if (env.CLAUDE_CODE_SESSION_ID) full.add(env.CLAUDE_CODE_SESSION_ID);
+  // an explicit tree skips the real ps walk; commands still default to the real ps
+  const tree = info.processTree?.(start) ?? realProcessTree(start);
+  const pids = [...tree.keys()];
+  // command lines cost a ps: fetch them only when a recorded spawner identity could match
+  const needCmds = owners.some((o) => /^[0-9a-f]{8}-/i.test(o)) || info.commands !== undefined;
+  const cmds = needCmds ? (info.commands?.(pids) ?? realCommands(pids)) : new Map<number, string>();
+  const claudePid = Number(env.CLAUDE_PID);
+  if (claudePid > 0) {
+    try {
+      const rec = JSON.parse(readFileSync(join(info.home ?? homedir(), ".claude", "sessions", `${claudePid}.json`), "utf8")) as {
+        sessionId?: string;
+      };
+      if (rec.sessionId) full.add(rec.sessionId);
+    } catch {
+      /* no session file for that pid */
+    }
+  }
+  for (const pid of pids) {
+    // tolerate a map keyed by pid strings (injected test data)
+    const cmd = cmds.get(pid) ?? (cmds as Map<unknown, string>).get(String(pid)) ?? "";
+    const m = /--session-id\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(cmd);
+    if (m) full.add(m[1]);
+    const s = /--bg-pty-host\s+\S*\/pty\/([0-9a-f]{8})\.sock/i.exec(cmd);
+    if (s) short.add(s[1]);
+  }
+  return { full, short };
+}
+
 /** True when the calling session is one of the worker's owner identities. */
-export function isOwner(s: WorkerStatus, env: NodeJS.ProcessEnv): boolean {
+export function isOwner(
+  s: WorkerStatus,
+  env: NodeJS.ProcessEnv,
+  proc: CallerProcessInfo = {}
+): boolean {
   const owners = ownerIdentities(s);
-  return owners.includes(callerDescription(env)) || (!!env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID));
+  if (owners.includes(callerDescription(env))) return true;
+  if (env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID)) return true;
+  // background-job sessions carry no env identity: match the spawning process
+  // chain against what the status recorded at spawn (parentPid, spawnerSession).
+  if (s.parentPid && Number(env.CLAUDE_PID) === s.parentPid) return true;
+  const ids = callerChainSessionIds(proc, env, owners);
+  for (const o of owners) {
+    if (ids.full.has(o)) return true;
+    for (const sh of ids.short) if (o.startsWith(`${sh}-`)) return true;
+  }
+  return false;
 }
 
 /**
  * Refusal text when a session-originated kill targets another session's worker, else null.
  * No recorded owner keeps the old behaviour; the owner session always passes.
  */
-export function killRefusal(s: WorkerStatus, env: NodeJS.ProcessEnv, force: boolean, reason?: string): string | null {
+export function killRefusal(
+  s: WorkerStatus,
+  env: NodeJS.ProcessEnv,
+  force: boolean,
+  reason?: string,
+  proc: CallerProcessInfo = {}
+): string | null {
   const owners = ownerIdentities(s);
   if (force) {
     if (env.PAI_WORKER) return `worker ${s.id}: --force is only for the operator's terminal, not from a worker process`;
-    if (owners.length && !isOwner(s, env) && !reason?.trim())
+    if (owners.length && !isOwner(s, env, proc) && !reason?.trim())
       return `worker ${s.id}: --force on another session's worker needs --reason "<text>"`;
     return null;
   }
   if (!owners.length) return null;
-  if (isOwner(s, env)) return null;
+  if (isOwner(s, env, proc)) return null;
   const owner = s.session?.name || s.sessionKey || owners[0];
   return `worker ${s.id} belongs to session ${owner}; refused (use --force from the operator's terminal or that session)`;
 }
@@ -184,13 +297,16 @@ export async function killTree(
     by?: string;
     /** Why; required of a forced kill on another session's worker. */
     reason?: string;
+    /** Caller process facts for the ownership chain check (tests inject these). */
+    proc?: CallerProcessInfo;
   } = {}
 ): Promise<string[]> {
   const d = { ...defaultDeps(), ...opts.deps };
   const root = loadStatus(logDir, id);
   if (!root) throw new Error(`no worker named "${id}"`);
+  const proc = opts.proc ?? {};
   if (opts.caller) {
-    const refusal = killRefusal(root, opts.caller.env, opts.caller.force, opts.reason);
+    const refusal = killRefusal(root, opts.caller.env, opts.caller.force, opts.reason, proc);
     if (refusal) throw new Error(refusal);
   }
   const by = opts.by ?? callerDescription(opts.caller?.env);
@@ -199,7 +315,7 @@ export async function killTree(
     forced: opts.caller?.force === true,
     reason: opts.reason?.trim() || (opts.by ? `stopped by ${opts.by}` : "no reason given"),
     // a session killing someone else's worker, or an internal killer (guard, deadline) stopping a worker its owner did not ask to stop
-    foreign: opts.caller ? !isOwner(s, opts.caller.env) : opts.by !== "plan",
+    foreign: opts.caller ? !isOwner(s, opts.caller.env, proc) : opts.by !== "plan",
   });
   const order = opts.only ? [] : descendantsLeavesFirst(loadStatuses(logDir), id);
   if (!opts.skipRoot) order.push(root);
