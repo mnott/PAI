@@ -254,11 +254,11 @@ function wireAct(el,onDone){
  })(btns[i]);
 }
 function renderLimits(){
- if(!lim)return;var c="",lo="",dn=[];
+ if(!lim)return;var c="",lo="",dn=[],nl=[];
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
-   if(!l.up){dn.push(l.provider);return}
+   if(!l.up){(l.provider===lim.activeLocal?dn:nl).push(l.provider);return}
    lo+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges"><div class="gauge"><div class="ok">up</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div></div></div>';
    return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
@@ -266,6 +266,7 @@ function renderLimits(){
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
   c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
+ if(nl.length)lo+='<details class="downs"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
@@ -380,7 +381,7 @@ function modelsHtml(inv){
   // (ollama: qwen3:8b for chat, arctic-embed for embeddings) splits into one card per
   // model; a runtime without several labelled models keeps one card for all its models
   var rts=[];
-  var keyed=rt.models.filter(function(m){return m.label||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&sameModel(c.model,m.model)})});
+  var keyed=rt.models.filter(function(m){return m.label||(m.usedBy||[]).length||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&sameModel(c.model,m.model)})});
   // a consumer's model the runtime does not list (yet) still gets its card
   consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&c.model&&!rt.models.some(function(m){return sameModel(c.model,m.model)}))keyed.push({model:c.model,kind:"embedding",loaded:false,usedBy:[c.name]})});
   if(keyed.length>1||(keyed.length&&consumers.some(function(c){return c.name==="pai-embedding"&&(c.runtime===rt.name||c.runtime===rt.kind)})))keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m]}))});
@@ -396,9 +397,11 @@ function modelsHtml(inv){
   if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
   var down=r.status==="stopped";
   var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
-  var state=down?"down":r.status==="idle"?"available (loads on first request)":"running";
+  // a running on-demand runtime (ollama, docker model runner) whose model is not in memory loads it on the first request
+  var idle=!down&&(r.status==="idle"||(hasModel&&!loaded.length&&(r.kind==="ollama"||r.kind==="docker-model-runner")));
+  var state=down?"down":idle?"available (loads on first request)":"running";
   var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
-   :r.status==="idle"?(hasModel?r.models.length+" installed":"no model")
+   :idle?(hasModel?r.models.length+" installed":"no model")
    :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
   /* purpose first: the title is the consumer's label (config only), the model id is grey secondary text;
    * without a label the consumer name, then the model id */
@@ -415,7 +418,7 @@ function modelsHtml(inv){
    var first=u.length?String(u[0]):"";
    return first?first.replace(/^worker:/,""):shortModel(m.model);
   }
-  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.status==="idle"?" idle":"")+'"></span>'+
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+

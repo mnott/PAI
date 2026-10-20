@@ -4,7 +4,7 @@
  * gets numbers and display names, never keys, bodies or prompt content.
  */
 
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
@@ -22,6 +22,7 @@ import { currentInventory, readInventory, readInventoryInput } from "../workers/
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { activeTier, fetchServedModels, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
+import { parse as parseYaml } from "yaml";
 import { readLocalStatus } from "../workers/local-status.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
@@ -171,6 +172,16 @@ function configuredProviders(): Record<string, { enabled?: boolean; models?: Rec
     return readWorkersSection().workers.providers;
   } catch {
     return {};
+  }
+}
+
+/** workers.yaml `local:` — the preferred (active) local provider; only that one is "down" when its port is silent. */
+function configuredLocal(): string | null {
+  try {
+    const doc = parseYaml(readFileSync(workersYamlPath(), "utf8")) as { local?: unknown } | null;
+    return typeof doc?.local === "string" && doc.local ? doc.local : null;
+  } catch {
+    return null;
   }
 }
 
@@ -830,7 +841,7 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders())).then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
-      ([l, routing]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing })),
+      ([l, routing]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing, activeLocal: configuredLocal() })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");
