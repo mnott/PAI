@@ -589,7 +589,7 @@ export async function followWorkers(
   // the pane's purpose in the title bar (worker panes show "node" otherwise):
   // the target's label plus the provider or model it runs on
   const targetStatus = target ? loadStatus(logDir, target) : null;
-  writePaneTitle(paneTitle(targetStatus?.label ?? target ?? "workers", targetStatus?.provider || targetStatus?.model || ""), env);
+  writePaneTitle(paneTitle(targetStatus?.label ?? target ?? "workers", targetStatus?.provider || targetStatus?.model || ""), env, undefined, out_.isTTY === true);
   // iTerm user variable: lets AIBroker leave worker panes out of its Claude
   // session list. Real TTY only (not FORCE_TTY); no tmux passthrough helper exists.
   if (out_.isTTY === true && target) {
