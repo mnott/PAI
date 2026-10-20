@@ -17,7 +17,10 @@ import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
-import { currentInventory } from "../workers/model-inventory.js";
+import { currentInventory, readInventory } from "../workers/model-inventory.js";
+import { readLocalConfig } from "../workers/local-tiers.js";
+import { workersYamlPath } from "../workers/workers-config.js";
+import { readLocalStatus } from "../workers/local-status.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
@@ -30,6 +33,7 @@ import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
+import { classesOnProvider, defaultDeps, orchestratorProvider, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -379,6 +383,33 @@ export function parseWindow(q: string | null): CockpitWindow {
 /** Anything with a cached provider poll; LimitsCache in production, stubs in tests. */
 export type LimitsSource = Pick<LimitsCache, "get">;
 
+/** The action deps + local-job runner the router command installs; tests install their own. */
+let actionHooks: ActionHooks = {};
+let actionDepsOverride: Partial<ActionDeps> | null = null;
+
+export function setActionHooks(hooks: ActionHooks, deps?: Partial<ActionDeps>): void {
+  actionHooks = hooks;
+  actionDepsOverride = deps ?? null;
+}
+
+/**
+ * Same-origin check for the write actions: a browser sends `Origin` on every
+ * cross-origin POST and `Sec-Fetch-Site: cross-site` in modern browsers; a
+ * same-origin POST carries Origin equal to the Host (or none, e.g. curl).
+ * A mismatch is refused — the cockpit is reachable over Tailscale.
+ */
+export function sameOriginAction(req: http.IncomingMessage): boolean {
+  const sfs = req.headers["sec-fetch-site"];
+  if (typeof sfs === "string" && sfs !== "same-origin" && sfs !== "none") return false;
+  const origin = req.headers.origin;
+  if (typeof origin !== "string" || !origin) return true;
+  try {
+    return new URL(origin).host === (req.headers.host ?? "");
+  } catch {
+    return false;
+  }
+}
+
 /** The process-wide runtime sampler the router command installs; tests install their own. */
 let runtimeSampler: RuntimeSampler | null = null;
 
@@ -393,10 +424,77 @@ export function setRuntimeSampler(s: RuntimeSampler | null): void {
  */
 export async function cockpitModelsPayload(): Promise<unknown> {
   const inv = await currentInventory();
-  if (!runtimeSampler) return inv;
+  const labels = actionLabels();
+  const withLabels = {
+    ...inv,
+    runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
+    tiers: localTierNames(),
+    running: localRunningInfo(),
+  };
+  if (!runtimeSampler) return withLabels;
   const live = await runtimeSampler.payload();
-  if (!live) return inv;
-  return { ...inv, live };
+  if (!live) return withLabels;
+  return { ...withLabels, live };
+}
+
+/** Tier names + the running local model, for the cards' Start/Stop row. */
+function localTierNames(): string[] {
+  try {
+    return Object.keys(readLocalConfig(workersYamlPath()).tiers);
+  } catch {
+    return [];
+  }
+}
+
+function localRunningInfo(): { tier: string; model: string; memGb: string } | null {
+  try {
+    const st = readLocalStatus(workersLogDir(readWorkersSection().workers));
+    if (!st?.running) return null;
+    const tiers = readLocalConfig(workersYamlPath()).tiers;
+    const tier = Object.values(tiers).find((t) => t.provider === st.running!.provider)?.tier ?? "";
+    const inv = readInventory(workersLogDir(readWorkersSection().workers));
+    const rt = inv?.runtimes.find((r) => r.status === "running" && r.users.some((u) => u.startsWith(`worker:${st.running!.provider}`)));
+    const mb = rt?.models.reduce((a, m) => a + (m.memoryMb ?? 0), 0) ?? 0;
+    return { tier, model: st.running.model, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
+  } catch {
+    return null;
+  }
+}
+
+/** Each cloud provider's current role mapping, for the gauges' toggles. */
+function cloudRoles(): Record<string, { workers: string[]; orchestrator: boolean }> {
+  try {
+    const { workers } = readWorkersSection();
+    const orch = orchestratorProvider(workers);
+    const out: Record<string, { workers: string[]; orchestrator: boolean }> = {};
+    for (const name of Object.keys(workers.providers)) out[name] = { workers: classesOnProvider(workers, name), orchestrator: name === orch };
+    out.anthropic = { workers: classesOnProvider(workers, "anthropic"), orchestrator: !orch || orch === "anthropic" };
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** The models.labels config block flattened for the payload: runtime → label
+ *  and "<runtime>." → {model → label}. null when nothing is set. */
+function actionLabels(): Record<string, unknown> | null {
+  try {
+    const block = readLabels();
+    const out: Record<string, unknown> = {};
+    let any = false;
+    for (const [rt, v] of Object.entries(block)) {
+      if (typeof v === "string") {
+        out[rt] = v;
+        any = true;
+      } else if (v && typeof v === "object" && !Array.isArray(v)) {
+        out[`${rt}.`] = v;
+        any = true;
+      }
+    }
+    return any ? out : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Local model servers as the SYSTEM panel shows them (from the limits poll). */
@@ -612,6 +710,27 @@ export function handleCockpit(
     });
     return true;
   }
+  if (req.method === "POST" && url.pathname === "/cockpit/action") {
+    if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
+    readBody(req)
+      .then((raw) => JSON.parse(raw || "{}") as { action?: unknown; target?: unknown; value?: unknown })
+      .catch(() => ({}))
+      .then(async (body) => {
+        try {
+          const r = await runCockpitAction(body, { ...defaultDeps(), ...(actionDepsOverride ?? {}) }, actionHooks);
+          send(200, "application/json", JSON.stringify(r));
+        } catch (e) {
+          send(500, "application/json", JSON.stringify({ ok: false, message: (e as Error).message }));
+        }
+      });
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/cockpit/job") {
+    const home = (actionDepsOverride?.home ?? process.env.PAI_HOME) || "";
+    const j = home ? readCockpitJob(home, url.searchParams.get("id") ?? "") : null;
+    send(j ? 200 : 404, "application/json", j ? JSON.stringify(j) : JSON.stringify({ error: "no such job" }));
+    return true;
+  }
   if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
   if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", cockpitHtml(cockpitSections(url)));
   else if (url.pathname === "/cockpit/data") {
@@ -648,7 +767,7 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then(
-      (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l })),
+      (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, roles: cloudRoles() })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");

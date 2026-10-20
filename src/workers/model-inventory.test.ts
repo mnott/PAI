@@ -156,11 +156,26 @@ describe("render and cache", () => {
     // the disabled provider left the table entirely: no stopped row for it
     expect(rows.some((r) => r[1] === "stopped")).toBe(false);
     const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
-    expect(text).toContain("runtime | status | model | kind | memory / on disk | used by | port");
-    expect(text).toContain("strata | running | flash-next | coding | 20.5 GB (+87.9 GB file mapped) | worker:flashnext-iq3 | 8035");
+    expect(text).toContain("runtime | status | model | label | kind | memory / on disk | used by | port");
+    expect(text).toContain("strata | running | flash-next | - | coding | 20.5 GB (+87.9 GB file mapped) | worker:flashnext-iq3 | 8035");
     // an installed-only model shows its size on disk, not "-"
-    expect(text).toContain("qwen3:8b (installed) | chat | 4.7 GB | paperfull-llm | 11434");
+    expect(text).toContain("qwen3:8b (installed) | - | chat | 4.7 GB | paperfull-llm | 11434");
     expect(text).toContain("duplicates: embedding runs on 2 runtimes");
+  });
+
+  it("the label column shows models.labels (runtime label, model label wins)", () => {
+    const mk = (model: string, loaded: boolean) => ({ model, kind: "chat" as const, loaded, usedBy: [] });
+    const inv = {
+      at: "x",
+      duplicates: [],
+      runtimes: [
+        { name: "ollama", kind: "ollama", status: "running", models: [mk("qwen3:8b", true)], users: [] },
+        { name: "strata", kind: "strata", status: "running", models: [mk("flash-next", true)], users: [] },
+      ],
+    } as never;
+    const rows = inventoryRows(inv as never, { ollama: { "qwen3:8b": "cheap drafts" }, strata: "coding engine" });
+    expect(rows.map((r) => r[3])).toEqual(["cheap drafts", "coding engine"]);
+    expect(inventoryRows(inv as never).map((r) => r[3])).toEqual(["-", "-"]);
   });
 
   it("loaded models sort first, installed-only after, stopped runtimes last", () => {

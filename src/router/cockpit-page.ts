@@ -64,11 +64,12 @@ svg text{fill:var(--dim);font-size:10px}
 .mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
 .mt-values{display:flex;justify-content:space-between;gap:10px}.mt-values>div{display:flex;flex-direction:column;gap:2px;min-width:0}.mt-sec{text-align:right}
-.mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
-.mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums}
-.mt-spark{display:block;width:100%;max-width:100%;height:32px;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
+.mt{flex:1 1 auto;display:flex;flex-direction:column}.mt-values{flex-wrap:nowrap;white-space:nowrap}
+.mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
+.mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mt-spark{display:block;width:100%;max-width:100%;height:32px;margin-top:auto;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
 .rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}
-.rt-card{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
+.rt-card{container-type:inline-size;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .rt-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap}
 .rt-head b{font-size:14px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-head .badge{flex:0 0 auto}
@@ -77,9 +78,23 @@ svg text{fill:var(--dim);font-size:10px}
 .rt-dot.idle{background:var(--warn)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
 .rt-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;min-width:0}
+@container (max-width:719px){.rt-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:339px){.rt-tiles{grid-template-columns:minmax(0,1fr)}}
+@container (min-width:720px){.rt-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .rt-tiles .mt{padding:8px 9px}
 .rt-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
 .rt-chips .chip{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.act{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
+.act button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}
+.act button:hover{border-color:var(--acc);color:var(--acc)}
+.act button[disabled]{opacity:.5;cursor:default}
+.act .msg{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.act .msg.bad{color:var(--bad)}
+.lbl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;color:var(--dim);font-size:11px}
+.lbl input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;max-width:100%}
+.lbl .lblbtn{background:none;border:0;padding:0 4px;color:var(--acc);cursor:pointer;font:inherit}
+.lbls{display:flex;flex-direction:column;gap:2px;min-width:0}
+.tog.on{background:var(--acc);border-color:var(--acc);color:#fff}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
@@ -169,19 +184,49 @@ function gauge(l,w,age){
   '<div class="n">'+esc(l.provider)+' '+esc(w.name)+(age?' <span class="warn" title="'+esc(l.error||"")+'">· '+esc(age)+' old</span>':'')+(w.estimated?' <span class="warn">estimated</span>':'')+'</div>'+
   '<div class="s" data-reset="'+(w.resetAt||0)+'">'+(w.resetAt?'resets in '+dur(w.resetAt-Date.now()):'reset unknown')+'</div></div>';
 }
+/** The action row shared by the model cards and the cloud gauges. */
+function actRow(cls,attrs,btns,msg){
+ return'<div class="act '+cls+'"'+attrs+'>'+btns+'<span class="msg">'+esc(msg||"")+'</span></div>';
+}
+function postAction(action,target,value,cb){
+ var body={action:action};if(target!=null)body.target=target;if(value!=null)body.value=value;
+ fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
+  .then(function(r){return r.json()}).then(function(j){cb(j)}).catch(function(){cb({ok:false,message:"action failed"})});
+}
+/** Buttons in an action row: disabled while the action runs; the result text lands on the card. */
+function wireAct(el,onDone){
+ var btns=el.querySelectorAll("button");
+ for(var i=0;i<btns.length;i++)(function(b){
+  b.onclick=function(){
+   for(var k=0;k<btns.length;k++)btns[k].disabled=true;
+   postAction(b.getAttribute("data-a"),b.getAttribute("data-t")||null,b.getAttribute("data-v")||null,function(j){
+    var m=el.querySelector(".msg");if(m){m.textContent=(j&&j.message)||"";m.className="msg"+(j&&j.ok?"":" bad")}
+    for(var k=0;k<btns.length;k++)btns[k].disabled=false;
+    if(onDone)onDone(j);
+   });
+  };
+ })(btns[i]);
+}
 function renderLimits(){
  if(!lim)return;var c="",lo="",dn=[];
+ var roles=lim.roles||{};
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="'+(l.up?"ok":"bad")+'">'+(l.up?"up":"down")+'</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div>';if(l.up)lo+=h;else dn.push(l.provider);return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
+  var r=roles[l.provider]||{workers:[],orchestrator:false};
+  h+=actRow("roles",' data-prov="'+esc(l.provider)+'"',
+   '<button data-a="cloud.role" data-t="'+esc(l.provider)+'" data-v="worker" class="tog'+(r.workers.length?" on":"")+'" title="worker classes → '+esc(l.provider)+'">workers</button>'+
+   '<button data-a="cloud.role" data-t="'+esc(l.provider)+'" data-v="orchestrator" class="tog'+(r.orchestrator?" on":"")+'" title="orchestrator → '+esc(l.provider)+'">orchestrator</button>');
   c+=h;
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
+ var els=document.querySelectorAll("#cloud .act");
+ for(var i=0;i<els.length;i++)wireAct(els[i],loadLimits);
 }
 var mdl=null;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
@@ -193,6 +238,16 @@ function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>
  * stopped runtimes collapse to one chip row that never repeats a card. A value the runtime does not report shows "–". */
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
+ var tiers=inv.tiers||[];
+ var running=(inv.running&&inv.running.model)?inv.running:null;
+ var tierBtns=tiers.map(function(t){return'<button data-a="local.switch" data-t="'+esc(t)+'"'+(running&&running.tier===t?' disabled':"")+' title="stops '+(running?esc(running.model)+" first, needs ~"+(running.memGb||"?")+" GB":"nothing")+'">'+esc(t)+'</button>'}).join("")+(tiers.length?'<button data-a="local.off">off</button>':"");
+ /** Label row: the label as subtitle, click → text field, Enter saves, Esc cancels. */
+ function lblRow(r){
+  var ml=r.modelLabels||{};
+  var parts='<span class="lbl" data-rt="'+esc(r.name)+'">label: <b class="lblv">'+esc(r.label||"")+'</b><button class="lblbtn" title="edit label">edit</button><span class="msg"></span></span>';
+  var mrows=r.models.map(function(m){return'<span class="lbl" data-rt="'+esc(r.name)+'" data-model="'+esc(m.model)+'">· '+esc(shortModel(m.model))+': <b class="lblv">'+esc(ml[m.model]||"")+'</b><button class="lblbtn" title="edit model label">edit</button><span class="msg"></span></span>'}).join("");
+  return'<div class="lbls">'+parts+mrows+'</div>';
+ }
  function mem(m){return m==null?"–":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
  function n1(v){return v==null?"–":Math.round(v*10)/10}
  function n0(v){return v==null?"–":Math.round(v)}
@@ -204,16 +259,17 @@ function modelsHtml(inv){
   var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
   var loaded=r.models.filter(function(m){return m.loaded});
   var head='<div class="rt-head"><span class="rt-dot'+(r.status==="idle"?" idle":"")+'"></span><b'+(r.models.length?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(r.models.length?shortModel(r.models[0].model):r.name)+'</b>'+
-   '<span class="badge">'+esc(r.kind)+'</span><span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
+   (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+'<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+(r.kind!==r.name&&r.kind.indexOf(r.name)===0?" · "+esc(r.kind.slice(r.name.length).replace(/^ :?\d+/,"")):"")+'</span>'+
    '<span class="badge">'+(r.status==="idle"?"idle":"running")+'</span></div>'+
-   '<div class="rt-sub"'+(r.users&&r.users.length?' title="'+esc(r.users.join(", "))+'"':"")+'>'+(r.users&&r.users.length?"used by "+esc(r.users.join(", ")):"")+'</div>';
+   '<div class="rt-sub"'+(r.users&&r.users.length?' title="'+esc(r.users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label&&r.users&&r.users.length?" · ":"")+(r.users&&r.users.length?"used by "+esc(r.users.join(", ")):"")+'</div>';
+  var act=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
   // compact card: nothing loaded (idle runtime) — no Speed / Conversation cache tiles that would show only "–"
   if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
-   cards+='<div class="rt-card">'+head+'<div class="rt-tiles">'+
+   cards+='<div class="rt-card">'+head+lblRow(r)+'<div class="rt-tiles">'+
     metricTile({title:"Memory / size",value:mem(size),unit:"",sub:r.models.length+" model"+(r.models.length===1?"":"s")+" not loaded",series:[]})+
     metricTile({title:"Users",value:(r.users||[]).length,unit:"",sub:(r.users||[]).length?esc(r.users.join(", ")):"no declared consumer",series:[]})+
-    '</div></div>';
+    '</div>'+act+'</div>';
    return;
   }
   var tiles='<div class="rt-tiles">'+
@@ -227,13 +283,15 @@ function modelsHtml(inv){
    metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
     series:[{data:h.reusedPct||[]}]})+'</div>';
   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
-  cards+='<div class="rt-card">'+head+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+'</div>';
+  cards+='<div class="rt-card">'+head+lblRow(r)+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+act+'</div>';
  });
  var h='<div class="rt-grid">'+(cards||'<span class="dim">no runtime running</span>')+'</div>';
  // one chip per stopped runtime (no card): never repeats a card, each chip ellipsised inside the card width
  if(stopped.length)h+='<div class="rt-chips dim" style="margin-top:6px">'+stopped.map(function(r){
   var t=esc(r.name)+(r.port==null?"":" :"+r.port)+(r.users&&r.users.length?" · used by "+esc(r.users.join(", ")):"");
   return'<span class="chip" title="'+t+'">'+t+'</span>'}).join("")+'</div>';
+ if(stopped.length)h+='<div class="rt-chips" style="margin-top:6px">'+stopped.map(function(r){
+  return actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns+'<button data-a="local.off">off</button>')}).join("")+'</div>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
 }
@@ -241,6 +299,42 @@ function renderModels(){
  var el=$("modelspanel");if(!el)return;
  el.innerHTML=mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>';
  setTip($("modelstip"),mdl&&mdl.at?"Local model runtimes with live tiles (the router samples each running runtime every 5 s; a value the runtime does not report shows –). In use = a worker provider, the PAI embedding backend or a declared consumer (config models.consumers). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
+ var acts=el.querySelectorAll(".act");
+ for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
+ var lbls=el.querySelectorAll(".lbl");
+ for(var k=0;k<lbls.length;k++)(function(sp){
+  var btn=sp.querySelector(".lblbtn"),v=sp.querySelector(".lblv");
+  btn.onclick=function(){
+   var inp=document.createElement("input");inp.type="text";inp.value=v.textContent||"";inp.placeholder="what is this for?";
+   sp.replaceChild(inp,v);inp.focus();
+   var msg=sp.querySelector(".msg");
+   function save(){
+    var val2=inp.value;var back=document.createElement("b");back.className="lblv";back.textContent=val2;
+    if(sp.parentNode.contains(inp))sp.replaceChild(back,inp);
+    back.onclick=btn.onclick;
+    for(var x=0;x<acts.length;x++){var bb=acts[x].querySelectorAll("button");for(var y=0;y<bb.length;y++)bb[y].disabled=true}
+    postAction("model.label",sp.getAttribute("data-rt"),sp.getAttribute("data-model")?("model:"+sp.getAttribute("data-model")+"="+val2):val2,function(j2){
+     msg.textContent=(j2&&j2.message)||"";msg.className="msg"+(j2&&j2.ok?"":" bad");
+     for(var x=0;x<acts.length;x++){var bb=acts[x].querySelectorAll("button");for(var y=0;y<bb.length;y++)bb[y].disabled=false}
+     if(j2&&j2.ok)loadModels();
+    });
+   }
+   inp.onkeydown=function(e){if(e.key==="Enter")save();else if(e.key==="Escape"){var back2=document.createElement("b");back2.className="lblv";back2.textContent=v.textContent||"";sp.replaceChild(back2,inp);back2.onclick=btn.onclick}};
+  };
+ })(lbls[k]);
+}
+/** A local switch/off job: poll its state; the card refreshes from the inventory. */
+function watchJob(id){
+ var tries=0;
+ function step(){
+  fetch("/cockpit/job?id="+encodeURIComponent(id),{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
+   var el=$("modelspanel");var msgs=el.querySelectorAll(".act .msg");
+   for(var i=0;i<msgs.length;i++)msgs[i].textContent=(j&&j.message)||"";
+   if(j&&(j.state==="done"||j.state==="failed")){loadModels();return}
+   if(++tries<120)setTimeout(step,5000);
+  }).catch(function(){if(++tries<120)setTimeout(step,5000)});
+ }
+ setTimeout(step,2000);
 }
 var sys=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
