@@ -304,18 +304,18 @@ describe("cockpit Models cards", () => {
   const inv = {
     at: "2026-10-19T18:00:00.000Z",
     runtimes: [
-      { name: "strata", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, mappedMb: 40000, usedBy: ["worker:flashnext-iq3"] }] },
+      { name: "gyro-m", kind: "strata", status: "running", port: 8035, users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, mappedMb: 40000, usedBy: ["worker:flashnext-iq3"] }] },
       { name: "ollama", kind: "ollama", status: "idle", port: 11434, users: ["pai-embedding", "paperfull-llm"], models: [
         { model: "huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16", kind: "embedding", loaded: true, memoryMb: 600, sizeMb: 600, usedBy: ["pai-embedding"] },
         { model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792, usedBy: ["paperfull-llm"] },
       ] },
-      { name: "gyro-m", kind: "strata", status: "stopped", port: 8036, users: ["worker:gyro"], models: [] },
+      { name: "coder", kind: "strata", status: "stopped", port: 8036, users: ["worker:gyro"], models: [] },
     ],
     duplicates: ["embedding runs on 2 runtimes: a + b"],
     live: {
       at: 1,
       runtimes: [
-        { name: "strata", status: "running", live: { engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90 }, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1 }, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
+        { name: "gyro-m", status: "running", live: { engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90, lastDecode: 73.4, lastPrompt: 155000, lastReused: 150000, lastPromptMs: 5000, lastUsed: 155500, gpuMemUsed: 45576978432, gpuMemTotal: 115448725504, maxContext: 262144, liveUsed: null }, rssMb: 36148, workers: [{ id: "w-1", label: "fix-x", session: "PAI", state: "running" }], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1 }, history: { decode: [70, null, 73.4], prefill: [700, null, 715], memoryMb: [49000, 50000, 50000], queued: [0, 1, 2], pressurePct: [60, 61, 62] } },
         { name: "ollama", status: "idle", live: { engine: null, workers: [], queued: 0, cap: 1, conversationSlots: null, sparesReady: 0, sparesConfig: 1 }, history: { decode: [], prefill: [], memoryMb: [], queued: [], pressurePct: [] } },
       ],
     },
@@ -327,22 +327,47 @@ describe("cockpit Models cards", () => {
     expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(2);
     expect(h).toContain('<b title="flash-next">flash-next</b>');
     // kind differs from the name: one separate kind chip, the name shows once
-    expect(h).toContain('<span class="badge">strata :8035</span>');
-    expect(h).toContain("strata :8035");
+    expect(h).toContain('<span class="badge">strata</span><span class="badge">gyro-m :8035</span>');
+    expect(h).toContain("gyro-m :8035");
     expect(h).toContain("used by worker:flashnext-iq3");
     expect(h).toContain('<span class="rt-dot"></span>');
     expect(h).toContain('<span class="rt-dot idle"></span>');
     for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(h).toContain(t);
     expect(h).toContain("73.4");
     expect(h).toContain("715");
-    expect(h).toContain("48.8<small>GB</small>");
+    expect(h).toContain("Decode last request");
+    expect(h).toContain("Prefill last request");
+    expect(h).toContain("35.3<small>GB</small>");
+    expect(h).toContain("RAM 35.3 GB · GPU 42.4 / 108 GB");
     expect(h).toContain("39.1 GB file mapped");
     expect(h).toContain("reused 90.0% of prompt tokens");
     expect(h).toContain("2<small>/ 4</small>");
+    expect(h).toContain("59% · 156k / 256K");
     expect(h).toContain("queued 2");
     expect(h).toContain("cap 1");
     expect(h).toContain("1 spare(s) ready");
     expect(h).toContain("machine pressure 62%");
+  });
+  it("a generating engine reads like Strata's monitor: Decode now / Prefill this request, context from the running request", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "strata", kind: "strata", status: "running", port: 8035, users: [], models: [{ model: "m", kind: "coding", loaded: true, memoryMb: 50000, usedBy: [] }] }],
+      live: { at: 1, runtimes: [{ name: "strata", status: "running", live: { engine: { decode: 78.04, prefill: 101.8, phase: "generating", parked: 4, slots: 4, reusedPct: 98.8, lastDecode: 50.9, lastPrompt: null, lastReused: null, lastPromptMs: null, lastUsed: null, gpuMemUsed: 45576978432, gpuMemTotal: 115448725504, maxContext: 262144, liveUsed: 155000 }, rssMb: 36148, workers: [], queued: 0, cap: 1, conversationSlots: 4, sparesReady: 0, sparesConfig: 1 }, history: {} }] },
+    });
+    expect(h).toContain("78.0"); // decode: 1 decimal, as Strata
+    expect(h).toContain("102"); // prefill: integer, as Strata
+    expect(h).toContain("Decode now");
+    expect(h).toContain("Prefill this request");
+    expect(h).toContain("59% · 155k / 256K");
+    expect(h).toContain('class="mt-bar"');
+    expect(h).toMatch(/mt-bar[^>]*><i style="width:59\.1%"/);
+  });
+  it("the context fill is the secondary value with a small bar on the Conversation cache tile", () => {
+    const h = modelsHtml(inv);
+    const cache = h.slice(h.indexOf("Conversation cache"));
+    expect(cache).toContain('class="mt-fill"');
+    expect(cache).toContain("59% · 156k / 256K");
+    expect(cache).toContain('style="width:59.3%"');
   });
   it("sparklines carry the history; a runtime with a loaded model keeps all four tiles and – only where the engine does not report", () => {
     const h = modelsHtml(inv);
@@ -376,10 +401,10 @@ describe("cockpit Models cards", () => {
   });
   it("the runtime name never repeats: a kind equal to the name (or name:port) shows no kind chip", () => {
     const h = modelsHtml(inv);
-    // strata: the kind equals the name, so the name appears once in the header
+    // strata kind on a runtime named gyro-m: one kind chip; the name appears once in the header
     const strataHead = h.slice(h.indexOf('<b title="flash-next">flash-next</b>'), h.indexOf('<div class="rt-sub'));
-    expect(strataHead).toContain('<span class="badge">strata :8035</span>');
-    expect(strataHead).not.toContain('<span class="badge">strata</span>');
+    expect(strataHead).toContain('<span class="badge">strata</span><span class="badge">gyro-m :8035</span>');
+    expect(strataHead).not.toContain('<span class="badge">gyro-m :8035</span><span class="badge">gyro-m<');
     const dup = modelsHtml({
       at: "x",
       runtimes: [{ name: "docker-model-runner", kind: "docker-model-runner", status: "idle", port: 8090, users: [], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
@@ -408,14 +433,14 @@ describe("cockpit Models cards", () => {
     expect(h).not.toContain("<table");
     expect(h).not.toContain('class="tw"');
     expect(h).not.toContain("<details");
-    expect(h).toContain('<span class="chip" title="gyro-m :8036 · used by worker:gyro">gyro-m :8036 · used by worker:gyro</span>');
+    expect(h).toContain('<span class="chip" title="coder :8036 · used by worker:gyro">coder :8036 · used by worker:gyro</span>');
     expect(h).not.toContain("not loaded:");
     expect(h).toContain("duplicates: embedding runs on 2 runtimes");
     // the chips live after the grid closes: they name only runtimes without a card
     const chips = h.slice(h.indexOf('class="rt-chips dim"'));
-    expect(chips).not.toContain("strata");
+    expect(chips).not.toContain("gyro-m");
     expect(chips).not.toContain("ollama");
-    expect(chips).toContain("gyro-m");
+    expect(chips).toContain("coder");
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
     expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
@@ -551,6 +576,16 @@ describe("cockpit metric tile", () => {
     for (const w of ["Speed", "73.4", "Decode now", "715", "Prefill this request", "viewBox=\"0 0 100 32\""]) expect(html).toContain(w);
     expect(html.match(/<path class="line[^>]* d="M/g)!.length).toBe(2);
     expect(html).toMatch(/d="M[^"]*M/);
+  });
+  it("a fill renders a small bar and its text line between the values and the sparkline", () => {
+    const src = [COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0], COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]].join("\n");
+    const tile = new Function("esc", `${src}\nreturn metricTile;`)((s: unknown) => String(s ?? "")) as (o: unknown) => string;
+    const html = tile({ title: "Conversation cache", value: 4, unit: "/ 4", sub: "reused 98.8% of prompt tokens", fill: { pct: 59.1, text: "59% · 155k / 256K" }, series: [] });
+    expect(html).toContain('class="mt-fill"');
+    expect(html).toContain('style="width:59.1%"');
+    expect(html).toContain("59% · 155k / 256K");
+    expect(html.indexOf("mt-fill")).toBeLessThan(html.indexOf("mt-spark"));
+    expect(COCKPIT_HTML).toMatch(/\.mt-spark\{[^}]*margin-top:auto[^}]*\}/);
   });
 });
 

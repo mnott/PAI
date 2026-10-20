@@ -19,6 +19,7 @@
  * `sampleRuntimes()` directly.
  */
 
+import { execFile } from "node:child_process";
 import { providerCap, LOCAL_DEFAULT_CAP } from "../workers/capacity.js";
 import { providerHostPort } from "../workers/local-provider.js";
 import { isLoopbackProvider } from "../workers/run-env.js";
@@ -49,6 +50,8 @@ export interface RuntimeSample {
   queued: number | null;
   /** workers holding a slot on this engine right now */
   running: number | null;
+  /** the process tree's RSS MB on the engine's port (the Memory tile's RAM number) */
+  rssMb: number | null;
   /** conversation-cache slots the engine holds (parked conversations) */
   parked: number | null;
   /** conversation-cache slots the engine has */
@@ -59,10 +62,17 @@ export interface RuntimeSample {
   phase: string | null;
   /** machine memory pressure % used (system monitor) */
   pressurePct: number | null;
+  /** GPU memory in use / total bytes (the engine's hardware reading, as Strata's monitor shows) */
+  gpuMemUsed: number | null;
+  gpuMemTotal: number | null;
+  /** max context tokens (engine-reported) */
+  maxContext: number | null;
+  /** conversation tokens in use now: the running request, else the last one (Strata's context fill) */
+  contextUsed: number | null;
 }
 
 /** The ring's last N samples, oldest first; nulls are gaps (failed probes). */
-export type RuntimeHistory = Record<"decode" | "prefill" | "memoryMb" | "queued" | "pressurePct" | "reusedPct", Array<number | null>>;
+export type RuntimeHistory = Record<"decode" | "prefill" | "memoryMb" | "queued" | "pressurePct" | "reusedPct" | "gpuMemUsed" | "contextUsed", Array<number | null>>;
 
 export interface RuntimeLive {
   /** workers with a live slot on this engine, by the session that started them */
@@ -77,6 +87,8 @@ export interface RuntimeLive {
   sparesReady: number;
   /** spares configured per (repo, provider) key */
   sparesConfig: number;
+  /** the process tree's RSS MB on the engine's port (the Memory tile's RAM number) */
+  rssMb: number | null;
   /** the engine's own live reading, when it reports one */
   engine: {
     decode: number | null;
@@ -85,6 +97,21 @@ export interface RuntimeLive {
     parked: number | null;
     slots: number | null;
     reusedPct: number | null;
+    /** decode of the last finished request (Strata's "Decode last request") */
+    lastDecode: number | null;
+    /** fresh prompt tokens / prompt ms of the last request (its prefill rate) */
+    lastPrompt: number | null;
+    lastReused: number | null;
+    lastPromptMs: number | null;
+    /** conversation tokens of the last request (context fill when idle) */
+    lastUsed: number | null;
+    /** GPU memory in use / total bytes (the engine's hardware reading) */
+    gpuMemUsed: number | null;
+    gpuMemTotal: number | null;
+    /** max context tokens */
+    maxContext: number | null;
+    /** conversation tokens of the request running right now */
+    liveUsed: number | null;
   } | null;
 }
 
@@ -98,6 +125,10 @@ export interface RuntimeSamplerInput {
   workers: WorkersConfig;
   /** engine name → live reading from the engine's own status endpoint (null = failed probe) */
   engine: Record<string, RuntimeLive["engine"]>;
+  /** the process tree's RSS MB on each engine's port (the Memory tile's RAM number) */
+  rss?: Record<string, number | null>;
+  /** the machine's total GPU memory bytes, when the engine's reading carries none (Metal recommended working set) */
+  gpuMemTotalFallback?: number | null;
   /** the machine's memory pressure % (0-100) from the system monitor, for the Memory tile */
   pressurePct?: number | null;
   now: number;
@@ -133,25 +164,48 @@ export function isStrataMetrics(body: unknown): boolean {
   return !!m && typeof m === "object" && (typeof m.live === "object" || typeof m.conversation_cache === "object");
 }
 
-/** Strata's `metrics` payload → the engine's live reading; null for anything else or a failed probe. */
+/** Strata's `metrics` payload → the engine's live reading; null for anything else or a failed probe.
+ *  The fields mirror serve/web/app.js's Monitor: decode = the running request's `tok_s`, else the
+ *  last request's `decode_tok_s`; prefill = `prefill_tok_s_mean` while busy, else the last request's
+ *  fresh tokens / prompt_ms; the hardware section carries the GPU's in-use / total bytes; the context
+ *  fill counts the running request's prompt + generated tokens, else the last request's. */
 export function strataEngineMetrics(body: unknown): RuntimeLive["engine"] {
   if (!isStrataMetrics(body)) return null;
   const m = body as {
-    live?: { state?: string; phase?: string; tok_s?: number; prefill_tok_s_mean?: number; queued?: number };
+    engine?: { max_context?: number };
+    live?: { state?: string; phase?: string; tok_s?: number; prefill_tok_s_mean?: number; queued?: number; prompt_tokens?: number; generated?: number };
     conversation_cache?: { parked?: number; slots?: number; prompt_tokens?: number; reused_tokens?: number };
+    hardware?: { gpu_mem_used?: number; gpu_mem_total?: number };
+    requests?: Array<{ decode_tok_s?: number; prompt_tokens?: number; reused?: number; prompt_ms?: number; output_tokens?: number }>;
   } | null;
   if (!m || typeof m !== "object") return null;
   const live = m.live ?? {};
   const cc = m.conversation_cache ?? {};
+  const hw = m.hardware ?? {};
+  const last = (m.requests ?? [])[0] ?? null;
   const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
   const prompt = num(cc.prompt_tokens), reused = num(cc.reused_tokens);
+  const state = typeof live.state === "string" ? live.state : null;
+  // the same choices as serve/web/app.js's renderMonitor: the running request's tok_s while
+  // generating, else the last request's decode_tok_s (0 is a reading, not a gap)
+  const decode = state === "generating" ? num(live.tok_s) : last && last.decode_tok_s != null ? last.decode_tok_s : num(live.tok_s);
+  const prefill = state && state !== "idle" ? num(live.prefill_tok_s_mean) : last && (last.prompt_ms ?? 0) > 0 ? Math.max(0, (last.prompt_tokens ?? 0) - (last.reused ?? 0)) / (last.prompt_ms! / 1000) : num(live.prefill_tok_s_mean);
   return {
-    decode: num(live.tok_s),
-    prefill: num(live.prefill_tok_s_mean),
-    phase: typeof live.state === "string" ? live.state : null,
+    decode,
+    prefill,
+    phase: state,
     parked: num(cc.parked),
     slots: num(cc.slots),
     reusedPct: prompt && prompt > 0 && reused != null ? (reused / prompt) * 100 : null,
+    lastDecode: num(last?.decode_tok_s),
+    lastPrompt: num(last?.prompt_tokens),
+    lastReused: num(last?.reused),
+    lastPromptMs: num(last?.prompt_ms),
+    lastUsed: last != null ? (last.prompt_tokens ?? 0) + (last.output_tokens ?? 0) : null,
+    gpuMemUsed: num(hw.gpu_mem_used),
+    gpuMemTotal: num(hw.gpu_mem_total),
+    maxContext: num(m.engine?.max_context),
+    liveUsed: state && state !== "idle" ? (live.prompt_tokens ?? 0) + (live.generated ?? 0) : null,
   };
 }
 
@@ -166,6 +220,7 @@ export function runtimeLive(rt: RuntimeSamplerInput["inventory"]["runtimes"][num
     conversationSlots: workers.providers[engine]?.conversationSlots ?? null,
     sparesReady: 0,
     sparesConfig: pool.spares,
+    rssMb: input.rss?.[engine] ?? null,
     engine: input.engine[engine] ?? null,
   };
   const key = keyOf(rt);
@@ -191,7 +246,7 @@ export function buildRuntimePayload(input: RuntimeSamplerInput, history: Record<
       name: rt.name,
       status: rt.status,
       live,
-      history: { decode: col("decode"), prefill: col("prefill"), memoryMb: col("memoryMb"), queued: col("queued"), pressurePct: col("pressurePct"), reusedPct: col("reusedPct") },
+      history: { decode: col("decode"), prefill: col("prefill"), memoryMb: col("memoryMb"), queued: col("queued"), pressurePct: col("pressurePct"), reusedPct: col("reusedPct"), gpuMemUsed: col("gpuMemUsed"), contextUsed: col("contextUsed") },
     };
   });
   return { at: input.now, runtimes };
@@ -215,6 +270,11 @@ export function sampleRuntimes(input: RuntimeSamplerInput, history: Record<strin
       reusedPct: live.engine?.reusedPct ?? null,
       phase: live.engine?.phase ?? null,
       pressurePct: input.pressurePct ?? null,
+      rssMb: live.rssMb,
+      gpuMemUsed: live.engine?.gpuMemUsed ?? null,
+      gpuMemTotal: live.engine?.gpuMemTotal ?? input.gpuMemTotalFallback ?? null,
+      maxContext: live.engine?.maxContext ?? null,
+      contextUsed: live.engine?.liveUsed ?? live.engine?.lastUsed ?? null,
     };
     const ring = (history[keyOf(rt)] ??= []);
     ring.push(s);
@@ -263,6 +323,10 @@ export interface SamplerDeps {
   statuses: (logDir: string) => WorkerStatus[];
   poolState: (logDir: string) => PoolState | null;
   getJson: (url: string) => Promise<unknown | null>;
+  /** the process tree's RSS MB on a port (0 = not found) */
+  rssMb: (port: number) => Promise<number>;
+  /** the machine's total GPU memory bytes (Metal recommended working set), null when unknown */
+  gpuTotalBytes: () => Promise<number | null>;
   now: () => number;
 }
 
@@ -272,7 +336,53 @@ export interface SamplerDeps {
  * module-level singleton — a test importing this module must not touch the
  * router's scheduler.
  */
+/**
+ * The machine's total GPU memory bytes — the Metal recommended working set, the
+ * same figure Strata's monitor shows as the VRAM total. One `sysctl` read; null
+ * when it cannot be answered.
+ */
+export async function metalRecommendedWorkingSet(exec: (cmd: string, args: string[]) => Promise<string | null>): Promise<number | null> {
+  const out = await exec("sysctl", ["-n", "hw.memsize"]);
+  const n = out ? Number(out.trim()) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * The engine status probes a fresh card reading needs: every running port is
+ * asked for `/metrics` with a 1 s timeout, in parallel. A port remembered as
+ * non-Strata is skipped; a failed probe is a null entry (never cached).
+ */
+export async function freshEngineReadings(
+  input: { inventory: ModelInventory; workers: WorkersConfig },
+  getJson: (url: string) => Promise<unknown | null>,
+  dialects: EngineDialects = new Map()
+): Promise<Record<string, RuntimeLive["engine"]>> {
+  const out: Record<string, RuntimeLive["engine"]> = {};
+  await Promise.all(
+    input.inventory.runtimes
+      .filter((rt) => rt.status === "running" && rt.port != null && rt.kind !== "ollama" && rt.kind !== "docker-model-runner" && dialects.get(rt.port) !== false)
+      .map(async (rt) => {
+        const engine = engineNameOf(rt, input.workers.providers);
+        const p = input.workers.providers[engine];
+        const host = p && isLoopbackProvider(p) ? providerHostPort(p)?.host : undefined;
+        const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || "127.0.0.1"}:${rt.port}/metrics`);
+        if (body != null && rt.kind !== "strata") dialects.set(rt.port!, isStrataMetrics(body));
+        if (body != null && !isStrataMetrics(body)) return;
+        out[engine] = strataEngineMetrics(body);
+      })
+  );
+  return out;
+}
+
 export function routerSamplerDeps(sched: () => SchedSnapshot | null): SamplerDeps {
+  const exec = (cmd: string, args: string[]): Promise<string | null> =>
+    new Promise((resolve) => {
+      try {
+        execFile(cmd, args, { timeout: 2_000, maxBuffer: 1 << 20 }, (e, stdout) => resolve(e ? null : String(stdout)));
+      } catch {
+        resolve(null);
+      }
+    });
   return {
     inventory: async () => {
       const { currentInventory } = await import("../workers/model-inventory.js");
@@ -289,8 +399,26 @@ export function routerSamplerDeps(sched: () => SchedSnapshot | null): SamplerDep
         return null;
       }
     },
+    async rssMb(port) {
+      const { processTreeRssMb } = await import("../workers/model-inventory.js");
+      const pid = ((await exec("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])) ?? "").split("\n")[0];
+      if (!pid) return 0;
+      return processTreeRssMb(pid, exec);
+    },
+    gpuTotalBytes: () => metalRecommendedWorkingSet(exec),
     now: () => Date.now(),
   };
+}
+
+/** How old the card reading served from /cockpit/models may be before a new one is taken. */
+export const CARD_READING_MAX_AGE_MS = 2_000;
+
+/** The fresh engine reading behind the card's current values (probes + RSS + the GPU total). */
+export interface CardReading {
+  engine: Record<string, RuntimeLive["engine"]>;
+  rss: Record<string, number | null>;
+  gpuTotalBytes: number | null;
+  at: number;
 }
 
 /**
@@ -298,9 +426,12 @@ export function routerSamplerDeps(sched: () => SchedSnapshot | null): SamplerDep
  * are cached, engine probes are 1 s and fire-and-forget). Returns the stop
  * function; the payload builder reads the ring it fills.
  */
+
 export interface RuntimeSampler {
   tick: () => Promise<void>;
   payload: () => Promise<{ at: number; runtimes: unknown[] } | null>;
+  /** the fresh engine reading behind the card's current values (cached at most 2 s) */
+  cardReading: () => Promise<CardReading | null>;
   start: (ms?: number) => () => void;
 }
 
@@ -315,6 +446,54 @@ export function createRuntimeSampler(
   let last: { inventory: ModelInventory; engine: Record<string, RuntimeLive["engine"]>; at: number } | null = null;
   const dialects: EngineDialects = new Map();
   let ticking: Promise<void> | null = null;
+  /** the card reading served from /cockpit/models: fresh engine probes, cached at most CARD_READING_MAX_AGE_MS */
+  let card: CardReading | null = null;
+  let cardPending: Promise<CardReading | null> | null = null;
+  /** the last reading in which an engine spoke; a failed probe is a gap, never a blank card */
+  let lastEngine: Record<string, RuntimeLive["engine"]> = {};
+
+  /** A fresh reading of the engines (1 s probes in parallel + the RSS tree of each port);
+   *  served from cache while it is younger than CARD_READING_MAX_AGE_MS. */
+  const cardReading = async (): Promise<CardReading | null> => {
+    if (card && deps.now() - card.at < CARD_READING_MAX_AGE_MS) return card;
+    if (cardPending) return cardPending;
+    const startedAt = deps.now();
+    const run = async (): Promise<CardReading | null> => {
+      try {
+        const inventory = await deps.inventory();
+        if (!inventory) return card;
+        const workers = readConfig();
+        const engine = await freshEngineReadings({ inventory, workers }, deps.getJson, dialects);
+        const rss: Record<string, number | null> = {};
+        await Promise.all(
+          inventory.runtimes
+            .filter((rt) => rt.status !== "stopped" && rt.port != null)
+            .map(async (rt) => {
+              const mb = await deps.rssMb(rt.port!);
+              rss[engineNameOf(rt, workers.providers)] = mb > 0 ? mb : null;
+            })
+        );
+        const gpuTotalBytes = await deps.gpuTotalBytes();
+        // stamp the cache with the time the reading started: a slow probe must not
+        // make the next payload take another one
+        card = { engine, rss, gpuTotalBytes, at: startedAt };
+        if (Object.values(engine).some((e) => e != null)) lastEngine = engine;
+      } catch {
+        /* a failed reading keeps the previous one */
+      }
+      // every probe failed: keep the last reading that spoke (a failed probe is a
+      // gap, never a blank card)
+      if (!Object.values(card?.engine ?? {}).some((e) => e != null)) card = { engine: lastEngine, rss: card?.rss ?? {}, gpuTotalBytes: card?.gpuTotalBytes ?? null, at: startedAt };
+      return card;
+    };
+    // the caller waits on the run itself; the cache is stamped with the time the
+    // reading started, so a slow probe never makes the next payload take another
+    cardPending = run();
+    void cardPending.finally(() => {
+      cardPending = null;
+    });
+    return cardPending;
+  };
 
   const tick = async (): Promise<void> => {
     if (ticking) return ticking;
@@ -343,9 +522,13 @@ export function createRuntimeSampler(
 
   return {
     tick,
+    cardReading,
     payload: async () => {
       if (!last) await tick();
       if (!last) return null;
+      // the card's current values come from a fresh engine reading (cached ≤ 2 s);
+      // the ring stays for the sparklines only
+      const reading = await cardReading();
       return buildRuntimePayload(
         {
           inventory: last.inventory,
@@ -354,7 +537,9 @@ export function createRuntimeSampler(
           poolState: deps.poolState(logDir()),
           pool: poolSettings(readConfig()),
           workers: readConfig(),
-          engine: last.engine,
+          engine: reading?.engine ?? last.engine,
+          rss: reading?.rss,
+          gpuMemTotalFallback: reading?.gpuTotalBytes ?? null,
           pressurePct: pressure(),
           now: deps.now(),
         },

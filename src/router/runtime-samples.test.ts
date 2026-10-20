@@ -102,7 +102,7 @@ function input(over: Partial<RuntimeSamplerInput> = {}): RuntimeSamplerInput {
     poolState: { hostPid: 1, port: 8798, startedAt: "", updatedAt: "", slots: [], tasksServed: 0, tokensCarried: 0, spares: [{ id: "s1", repo: "/r", provider: "gyro-m", model: "flash-next", dir: "/r/wt", branch: "b", base: "h", pid: 9, createdAt: "", state: "ready" }] },
     pool: { enabled: true, maxSlots: 3, idleSecs: 900, port: 8798, native: true, spares: 1, idleKillSec: 1800, continuation: false },
     workers: workersConfig({ "gyro-m": provider({ baseUrl: "http://127.0.0.1:8035", conversationSlots: 4 }), ollama: provider({ baseUrl: "http://127.0.0.1:11434" }) }),
-    engine: { "gyro-m": { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90 } },
+    engine: { "gyro-m": { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90, lastDecode: 73.4, lastPrompt: null, lastReused: null, lastPromptMs: null, lastUsed: null, gpuMemUsed: null, gpuMemTotal: null, maxContext: null, liveUsed: null } },
     now: 1000,
     ...over,
   };
@@ -120,15 +120,39 @@ describe("engineNameOf", () => {
 describe("strataEngineMetrics", () => {
   it("reads decode, prefill, phase and the conversation cache from Strata's metrics payload", () => {
     const e = strataEngineMetrics({
-      live: { state: "generating", phase: "draft", tok_s: 71.2, prefill_tok_s_mean: 800 },
+      engine: { max_context: 262144 },
+      live: { state: "generating", phase: "draft", tok_s: 71.2, prefill_tok_s_mean: 800, prompt_tokens: 150000, generated: 5000 },
       conversation_cache: { parked: 3, slots: 8, prompt_tokens: 1000, reused_tokens: 250 },
+      hardware: { gpu_mem_used: 45576978432, gpu_mem_total: 115448725504 },
+      requests: [{ decode_tok_s: 50.9, prompt_tokens: 43884, reused: 42819, prompt_ms: 1828.5, output_tokens: 120 }],
     });
-    expect(e).toEqual({ decode: 71.2, prefill: 800, phase: "generating", parked: 3, slots: 8, reusedPct: 25 });
+    expect(e).toEqual({
+      decode: 71.2, prefill: 800, phase: "generating", parked: 3, slots: 8, reusedPct: 25,
+      lastDecode: 50.9, lastPrompt: 43884, lastReused: 42819, lastPromptMs: 1828.5, lastUsed: 44004,
+      gpuMemUsed: 45576978432, gpuMemTotal: 115448725504, maxContext: 262144, liveUsed: 155000,
+    });
+  });
+  it("idle falls back to the last request, as Strata's monitor does: Decode last request, prefill from fresh tokens / prompt_ms, context from the last request", () => {
+    const e = strataEngineMetrics({
+      engine: { max_context: 262144 },
+      live: { state: "idle", tok_s: null, prefill_tok_s_mean: null },
+      conversation_cache: {},
+      hardware: { gpu_mem_used: 45576978432, gpu_mem_total: 115448725504 },
+      requests: [{ decode_tok_s: 78.0, prompt_tokens: 155000, reused: 150000, prompt_ms: 5000, output_tokens: 500 }],
+    });
+    expect(e?.decode).toBe(78.0);
+    expect(e?.prefill).toBe(1000); // (155000 - 150000) / 5 s
+    expect(e?.lastUsed).toBe(155500);
+    expect(e?.liveUsed).toBeNull();
   });
   it("a failed probe or a payload without fields is null / nulls, never a crash", () => {
     expect(strataEngineMetrics(null)).toBeNull();
     expect(strataEngineMetrics({})).toBeNull(); // not Strata's dialect
-    expect(strataEngineMetrics({ live: {} })).toEqual({ decode: null, prefill: null, phase: null, parked: null, slots: null, reusedPct: null });
+    expect(strataEngineMetrics({ live: {} })).toEqual({
+      decode: null, prefill: null, phase: null, parked: null, slots: null, reusedPct: null,
+      lastDecode: null, lastPrompt: null, lastReused: null, lastPromptMs: null, lastUsed: null,
+      gpuMemUsed: null, gpuMemTotal: null, maxContext: null, liveUsed: null,
+    });
   });
 });
 
@@ -145,6 +169,11 @@ describe("runtimeLive", () => {
     expect(live.conversationSlots).toBe(4);
     expect(live.sparesReady).toBe(1);
     expect(live.engine?.decode).toBe(73.4);
+    expect(live.rssMb).toBeNull();
+  });
+  it("the RSS reading lands on the runtime's live object", () => {
+    const live = runtimeLive(inventory.runtimes[0]!, input({ rss: { "gyro-m": 36148 } }));
+    expect(live.rssMb).toBe(36148);
   });
   it("a runtime with no provider behind it keeps its own name and no workers", () => {
     const live = runtimeLive(inventory.runtimes[1]!, input({ statuses: [] }));
@@ -226,6 +255,8 @@ describe("Strata behind an openai-server runtime", () => {
         statuses: () => [status({}), status({ state: "queued", label: "w2" })],
         poolState: () => input().poolState,
         getJson: async () => null,
+        rssMb: async () => 0,
+        gpuTotalBytes: async () => null,
         now: () => (t += 5000),
       },
       cfg,
@@ -246,6 +277,77 @@ describe("Strata behind an openai-server runtime", () => {
   it("the page flattens each runtime's live object and history (workers, cap, engine)", () => {
     expect(COCKPIT_HTML).toContain("Object.assign({},l.live,{history:l.history})");
   });
+
+  it("the payload's current values come from a fresh reading, not the ring's last sample; the reading is cached ≤ 2 s", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-runtime-samples-"));
+    dirs.push(dir);
+    let t = 0;
+    let probes = 0;
+    let speed = 78.0;
+    const sampler = createRuntimeSampler(
+      {
+        inventory: async () => openai,
+        sched: () => sched,
+        statuses: () => [],
+        poolState: () => null,
+        getJson: async () => {
+          probes++;
+          return { live: { state: "generating", tok_s: speed, prefill_tok_s_mean: 900, prompt_tokens: 155000, generated: 5000 }, conversation_cache: { parked: 1, slots: 4 }, engine: { max_context: 262144 }, hardware: { gpu_mem_used: 45576978432, gpu_mem_total: 115448725504 }, requests: [{ decode_tok_s: 71.1, prompt_tokens: 1000, output_tokens: 10 }] };
+        },
+        rssMb: async () => 36148,
+        gpuTotalBytes: async () => 137438953472,
+        now: () => t,
+      },
+      cfg,
+      () => dir
+    );
+    await sampler.tick(); // the ring's sample carries the tick's probe (78.0)
+    const p1 = (await sampler.payload()) as { runtimes: Array<{ name: string; live: { engine: { decode: number | null }, rssMb?: number | null }; history: { decode: Array<number | null> } }> };
+    const g = p1.runtimes.find((r) => r.name === "gyro-m")!;
+    expect(g.live.engine?.decode).toBe(78.0);
+    expect(g.live.rssMb).toBe(36148);
+    expect(g.history.decode.length).toBe(1); // the ring stays for the sparklines only
+    expect(probes).toBe(2); // the tick's probe + the payload's fresh reading
+    const probesAfterFresh = probes;
+    await sampler.payload(); // within the 2 s cache: no new probe
+    expect(probes).toBe(probesAfterFresh);
+    // the engine changes; the card must show the new value, not the ring's last sample
+    speed = 91.5;
+    t += 2000; // past the reading cache: a fresh probe
+    const p2 = (await sampler.payload()) as { runtimes: Array<{ name: string; live: { engine: { decode: number | null } } }> };
+    expect(p2.runtimes.find((r) => r.name === "gyro-m")!.live.engine.decode).toBe(91.5);
+    expect(probes).toBe(3);
+  });
+
+  it("a failed fresh reading falls back to the tick's last reading, never a blank card", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-runtime-samples-"));
+    dirs.push(dir);
+    let ok = true;
+    let t = 0;
+    const sampler = createRuntimeSampler(
+      {
+        inventory: async () => openai,
+        sched: () => sched,
+        statuses: () => [],
+        poolState: () => null,
+        getJson: async () => (ok ? { live: { state: "idle", tok_s: 0 }, conversation_cache: {} } : null),
+        rssMb: async () => 0,
+        gpuTotalBytes: async () => null,
+        now: () => t,
+      },
+      cfg,
+      () => dir
+    );
+    t = 1000;
+    await sampler.tick();
+    t = 1000;
+    const p0 = (await sampler.payload()) as { runtimes: Array<{ live: { engine: unknown } }> };
+    expect(p0.runtimes[0]!.live.engine).not.toBeNull(); // the first reading succeeded
+    ok = false;
+    t = 3001; // past the reading cache: the fresh probe now fails
+    const p = (await sampler.payload()) as { runtimes: Array<{ live: { engine: unknown } }> };
+    expect(p.runtimes[0]!.live.engine).not.toBeNull(); // the last good reading, not null
+  });
 });
 
 describe("createRuntimeSampler", () => {
@@ -264,6 +366,8 @@ describe("createRuntimeSampler", () => {
         statuses: () => [status({})],
         poolState: () => null,
         getJson: async () => null,
+        rssMb: async () => 0,
+        gpuTotalBytes: async () => null,
         now: () => 2000,
       },
       () => workersConfig({ "gyro-m": provider({ baseUrl: "http://127.0.0.1:8035" }) }),
@@ -314,6 +418,7 @@ describe("/cockpit/models with the sampler", () => {
     setRuntimeSampler({
       tick: async () => {},
       payload: async () => buildRuntimePayload(input(), history),
+      cardReading: async () => null,
       start: () => () => {},
     });
     const j = await get("/cockpit/models") as { runtimes: unknown[]; live: { runtimes: Array<{ name: string; live: { workers: unknown[] }; history: { decode: Array<number | null> } }> } };

@@ -67,6 +67,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mt-values{flex-wrap:nowrap}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
 .mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mt-fill{display:flex;align-items:center;gap:6px;min-width:0}.mt-bar{flex:0 0 40%;height:4px;border-radius:2px;background:var(--line);overflow:hidden}.mt-bar i{display:block;height:100%;background:var(--acc)}.mt-fill .mt-sub{flex:1 1 auto;min-width:0}
 .mt-spark{display:block;width:100%;max-width:100%;height:32px;margin-top:auto;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
 .rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}
 .rt-card{container-type:inline-size;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
@@ -151,8 +152,10 @@ function metricSpark(series){
 function metricTile(o){
  var sec=o.secondary;
  function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value">'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
+ function fill(v,u,sub){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
  return'<div class="mt"><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
+  (o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub):"")+
   '<svg class="mt-spark" viewBox="0 0 100 32" preserveAspectRatio="none" width="100%" height="32">'+metricSpark(o.series||[])+'</svg></div>'
 }
 /** Collapsible tiles: every card/panel can fold; the state is saved per tile id and restored on load. */
@@ -254,6 +257,35 @@ function modelsHtml(inv){
  function n1(v){return v==null?"–":Math.round(v*10)/10}
  function n0(v){return v==null?"–":Math.round(v)}
  function gb(v){return v==null?"–":(v/1024).toFixed(1)}
+ /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer, GB binary */
+ function f1(v){return v==null?"–":Number(v).toFixed(1)}
+ function g1(v){return v==null?"–":(v/1073741824).toFixed(1)}
+ function g0(v){return v==null?"–":Math.round(v/1073741824)}
+ function kfmt(n){return n==null?"–":n>=1000?(n>=10000?Math.round(n/1000)+"k":(n/1000).toFixed(1)+"k"):String(n)}
+ function ctxfmt(n){return n&&n%1024===0?Math.round(n/1024)+"K":kfmt(n)}
+ /** Strata's Speed tile: decode = the running request, else the last one; prefill = this request, else the last. */
+ function speedTile(eng,h){
+  var st=eng&&eng.phase;
+  var sub=st==="generating"?"Decode now":st==="reading"?"Decode":eng&&eng.lastDecode!=null?"Decode last request":"Decode";
+  var psub=st==="reading"?"Prefill now":st==="generating"?"Prefill this request":eng&&eng.lastPromptMs?"Prefill last request":"Prefill";
+  return metricTile({title:"Speed",value:f1(eng&&eng.decode),unit:eng&&eng.decode!=null?"t/s":"",sub:(eng&&eng.phase?esc(eng.phase)+" · ":"")+sub,
+   secondary:{value:n0(eng&&eng.prefill),unit:eng&&eng.prefill!=null?"t/s":"",sub:psub},
+   series:[{data:h.decode||[]},{data:h.prefill||[]}]})
+ }
+ /** Strata's VRAM measure (the engine's hardware reading) beside the process RSS. */
+ function memoryTile(eng,lv,loaded,h){
+  var ram=lv&&lv.rssMb!=null?lv.rssMb:(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null);
+  var gpu=eng&&eng.gpuMemUsed!=null,sub="RAM"+(ram!=null?" "+gb(ram)+" GB":" · not reported")+(gpu?" · GPU "+g1(eng.gpuMemUsed)+(eng.gpuMemTotal!=null?" / "+g0(eng.gpuMemTotal)+" GB":""):" · GPU not reported");
+  return metricTile({title:"Memory",value:ram!=null?gb(ram):"–",unit:ram!=null?"GB":"",sub:sub+(loaded[0]&&loaded[0].mappedMb?" · "+gb(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
+   series:[{data:h.memoryMb||[]}]})
+ }
+ /** Strata's context fill: the running request's tokens, else the last one's, over the engine's max context. */
+ function ctxOf(eng){
+  if(!eng||eng.maxContext==null)return null;
+  var used=eng.liveUsed!=null?eng.liveUsed:eng.lastUsed;
+  if(used==null)return null;
+  return {pct:Math.min(100,used/eng.maxContext*100),text:Math.round(used/eng.maxContext*100)+"% · "+kfmt(used)+" / "+ctxfmt(eng.maxContext)}
+ }
  function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l?Object.assign({},l.live,{history:l.history}):null}
  var cards="",stopped=[];
  inv.runtimes.forEach(function(r){
@@ -274,15 +306,15 @@ function modelsHtml(inv){
     '</div>'+act+'</div>';
    return;
   }
+  var ctx=ctxOf(eng);
   var tiles='<div class="rt-tiles">'+
-   metricTile({title:"Speed",value:n1(eng&&eng.decode),unit:eng&&eng.decode!=null?"t/s":"",sub:(eng&&eng.phase?esc(eng.phase)+" · ":"")+"Decode",
-    secondary:{value:n1(eng&&eng.prefill),unit:eng&&eng.prefill!=null?"t/s":"",sub:"Prefill"},
-    series:[{data:h.decode||[]},{data:h.prefill||[]}]})+
-   metricTile({title:"Memory",value:gb(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null),unit:"GB",sub:"Resident"+(loaded[0]&&loaded[0].mappedMb?" · "+gb(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
-    series:[{data:h.memoryMb||[]}]})+
+   speedTile(eng,h)+
+   memoryTile(eng,lv,loaded,h)+
    metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
     series:[{data:h.queued||[]}]})+
-   metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
+   metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",
+    sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
+    fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
     series:[{data:h.reusedPct||[]}]})+'</div>';
   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
   cards+='<div class="rt-card">'+head+lblRow(r)+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+act+'</div>';
