@@ -8,8 +8,9 @@
  */
 
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
-import { warmOrCold, poolCarry, poolHostAlive, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
+import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostAlive, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
 import type { PoolMetricRow, PoolSlotRecord, PoolState } from "../workers/pool.js";
+import { diskBundleMtime } from "../workers/pool-cli.js";
 import { readWorkersSection } from "../workers/config.js";
 import { parseLedger, type LedgerLine } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
@@ -39,6 +40,10 @@ export interface PoolPanelData {
   maxSlots: number;
   idleKillSecs: number;
   hostSince: string | null;
+  /** When the host's code was built (its bundle mtime), null when unknown. */
+  hostBuiltAt: string | null;
+  /** A newer build is on disk than the one the host runs. */
+  hostStale: boolean;
   slots: PoolPanelSlot[];
   totals: { tasksServed: number; tokensCarried: number; hitRatio: number | null; carriedTasks: number };
   last24h: {
@@ -65,6 +70,8 @@ export interface PoolPanelInput {
   metrics: PoolMetricRow[];
   ledger: LedgerLine[];
   nowMs: number;
+  /** mtime of the host bundle on disk (null/absent = unknown). */
+  diskBundleMtimeMs?: number | null;
 }
 
 /** Ledger stamps are local wall time. */
@@ -135,6 +142,8 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
     maxSlots: i.maxSlots,
     idleKillSecs: i.idleSecs,
     hostSince: i.state?.startedAt ?? null,
+    hostBuiltAt: i.state?.bundleMtimeMs !== undefined ? bundleBuildStamp(i.state.bundleMtimeMs) : null,
+    hostStale: poolHostStale(i.state?.bundleMtimeMs, i.diskBundleMtimeMs ?? null),
     slots,
     totals: {
       tasksServed: i.state?.tasksServed ?? 0,
@@ -185,6 +194,7 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
         metrics: readPoolMetrics(poolMetricsPath(logDir)),
         ledger: readLedgerTail(ledgerPath(logDir)),
         nowMs: Date.now(),
+        diskBundleMtimeMs: diskBundleMtime(),
       });
     } catch {
       cached = null;
@@ -206,7 +216,7 @@ function renderPool(p){
  function dur(s){return s<90?s+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h"}
  var head='<div class="kpis">'+
   [["pool",p.enabled?'<span class="ok">enabled</span>':'<span class="bad">disabled</span>',"max "+p.maxSlots+" slots · idle kill "+(p.idleKillSecs?dur(p.idleKillSecs):"never")],
-   ["host",p.hostUp?'<span class="ok">up</span>':'<span class="bad">down</span>',"port "+p.port+(p.hostSince?" · since "+esc(p.hostSince):"")],
+   ["host",p.hostUp?'<span class="ok">up</span>':'<span class="bad">down</span>',"port "+p.port+(p.hostSince?" · since "+esc(p.hostSince):"")+(p.hostBuiltAt?" · built "+esc(p.hostBuiltAt):"")+(p.hostStale?' · <span class="warn">stale (newer build on disk)</span>':"")],
    ["tasks served",p.totals.tasksServed,fmt(p.totals.tokensCarried)+" cache-read tokens carried"],
    ["first-request hit",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s)"],
    ["not pooled (24 h)",p.last24h.notPooled+" of "+p.last24h.runs,p.last24h.topReason?"top reason: "+esc(p.last24h.topReason):(p.last24h.notPooled?"reasons not logged yet":"")]

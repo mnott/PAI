@@ -8,6 +8,7 @@
  * a loopback port; see src/workers/pool-host.ts and pool.ts.
  */
 
+import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { readWorkersSection } from "../config.js";
 import { workersLogDir } from "../paths.js";
@@ -31,6 +32,13 @@ try {
 
 const host = createPoolHost({
   port,
+  // a build replaces this file: once no slot is busy the host starts its successor on the same argv and exits
+  bundlePath: process.argv[1],
+  reexec: () => {
+    const child = spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: "ignore", cwd: process.cwd() });
+    child.unref();
+    process.exit(0);
+  },
   ...(logDir ? { logDir } : {}),
   // the reaper inside createPoolHost is armed from the config; idleSecs here
   // only guards the case where config reading failed (0 would disable it)
