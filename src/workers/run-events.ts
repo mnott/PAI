@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSy
 import { join } from "node:path";
 import { idleText, type RunLogEntry } from "./plan-runner.js";
 import { guardedPailot } from "./pailot-guard.js";
+import { runReportPolicy } from "./notice-policy.js";
 import type { QueueItem } from "./queue.js";
 
 /** The session that started a run: where its events go. */
@@ -37,9 +38,6 @@ export interface Messenger {
   /** Explicit, operator-requested sends only. No automatic notice may call this (operator rule 2026-10-20). */
   toPailot(text: string): Promise<boolean>;
 }
-
-export const PLAN_GROUP_THROTTLE_MS = 15 * 60_000;
-export const QUEUE_READY_BATCH_MS = 10 * 60_000;
 
 /** The origin of the calling session, from its environment. */
 export function originFromEnv(env: NodeJS.ProcessEnv = process.env): RunOrigin {
@@ -187,7 +185,7 @@ export class PlanReporter extends Reporter {
   private unitDone(unit: string): void {
     this.pendingGroups.push(unit);
     const t = this.now();
-    if (t - this.lastGroup < PLAN_GROUP_THROTTLE_MS) return;
+    if (t - this.lastGroup < runReportPolicy().planGroupThrottleMs) return;
     this.lastGroup = t;
     const units = this.pendingGroups.splice(0);
     this.send(eventLine(this.id, "unit-done", { units: units.join(",") }, `${this.job}: ${units.length === 1 ? "unit" : "units"} ${units.join(", ")} finished; ${this.merged} of ${this.totalParts} parts merged so far.`));
@@ -225,7 +223,7 @@ export class QueueReporter extends Reporter {
 
   onReady(item: QueueItem): void {
     this.readyBatch.push(item);
-    if (this.now() - this.lastReady >= QUEUE_READY_BATCH_MS) this.sendReady();
+    if (this.now() - this.lastReady >= runReportPolicy().queueReadyBatchMs) this.sendReady();
   }
 
   onNeedsDecision(item: QueueItem): void {

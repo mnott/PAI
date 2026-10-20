@@ -43,6 +43,34 @@ embedding:
     baseUrl: http://127.0.0.1:11434
 # Daemon log level: debug, info, warn, or error.
 logLevel: info
+# Notices to the session and to PAILot: the throttles and windows of the
+# notice path (the PAILot gate, the run/queue reporters, worker trouble).
+notices:
+  # The PAILot gate (src/workers/pailot-guard.ts).
+  pailot:
+    # Messages that may leave per window, from all PAI processes; the excess
+    # is dropped with one summary line per window.
+    maxPerMinute: 5
+    # How long a sent text counts as a duplicate (persisted marker lifetime).
+    dedupHours: 24
+    # The rate window.
+    windowSecs: 60
+  # Run/queue reports into the originating session (src/workers/run-events.ts).
+  runReports:
+    # At most one grouped unit-done message per this span.
+    planGroupThrottleMinutes: 15
+    # Ready queue items batch into one message per this span.
+    queueReadyBatchMinutes: 10
+  # Worker trouble notices to the starting session (src/workers/worker-trouble.ts).
+  trouble:
+    # At most one trouble message per worker per this span; hard stops bypass.
+    throttleMinutes: 5
+    # Guard denials count towards the threshold within this span.
+    denialWindowMinutes: 10
+    # Denials in the window before the session is told.
+    denialThreshold: 3
+    # No output for this long while running tells once per quiet spell.
+    stallMinutes: 10
 # Notification subsystem configuration.
 notifications:
   mode: auto

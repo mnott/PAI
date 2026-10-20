@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { guardedPailot, PAILOT_MAX_PER_MIN } from "./pailot-guard.js";
+import { guardedPailot } from "./pailot-guard.js";
+import { pailotPolicy } from "./notice-policy.js";
 
 describe("guardedPailot", () => {
   let dir: string;
@@ -21,10 +22,11 @@ describe("guardedPailot", () => {
     expect(sent).toEqual(["run X ended"]);
   });
   it("a flood of distinct texts: 5 per minute, one summary, ledger entry; next minute flows again", async () => {
+    const cap = pailotPolicy().maxPerMinute;
     let t = 1_000_000;
     for (let i = 0; i < 200; i++) await guardedPailot(dir, `msg ${i}`, send, () => t);
-    expect(sent.length).toBe(PAILOT_MAX_PER_MIN + 1);
-    expect(sent[PAILOT_MAX_PER_MIN]).toMatch(/held back/);
+    expect(sent.length).toBe(cap + 1);
+    expect(sent[cap]).toMatch(/held back/);
     expect(readFileSync(join(dir, "ledger.log"), "utf8").match(/PAILOT-RATE-LIMIT/g)?.length).toBe(195);
     t += 61_000;
     expect(await guardedPailot(dir, "later", send, () => t)).toBe(true);

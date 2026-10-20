@@ -4,7 +4,7 @@
  * 2026-10-20: a pane-audit tick re-reported the same violations on every overlapping tick and about 760
  * messages reached the operator's phone in four minutes. Whatever the next bug is, it must not do that:
  * the same text goes to PAILot at most once (persisted marker, so a restart does not repeat it), and no
- * more than PAILOT_MAX_PER_MIN messages leave per minute from all PAI processes; the excess is dropped,
+ * more than notices.pailot.maxPerMinute messages leave per minute from all PAI processes; the excess is dropped,
  * one summary line is sent per window and the ledger records PAILOT-RATE-LIMIT.
  *
  * The decision is made synchronously on a small state file before the send, so overlapping callers in one
@@ -16,9 +16,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
-
-export const PAILOT_MAX_PER_MIN = 5;
-export const PAILOT_DEDUP_MS = 24 * 3600_000;
+import { pailotPolicy } from "./notice-policy.js";
 
 interface GuardState {
   /** text hash -> ms it was sent */
@@ -59,18 +57,19 @@ export type PailotVerdict = "send" | "duplicate" | "limited";
  * `summary` is set on the first drop of a window (send it, it is allowed through once).
  */
 export function pailotGate(logDir: string, text: string, now: number = Date.now(), dedup = true): { verdict: PailotVerdict; summary?: string } {
+  const policy = pailotPolicy();
   const s = load(logDir);
-  for (const [h, t] of Object.entries(s.sent)) if (now - t > PAILOT_DEDUP_MS) delete s.sent[h];
-  s.recent = s.recent.filter((t) => now - t < 60_000);
+  for (const [h, t] of Object.entries(s.sent)) if (now - t > policy.dedupMs) delete s.sent[h];
+  s.recent = s.recent.filter((t) => now - t < policy.windowMs);
   const key = createHash("sha1").update(text).digest("hex");
   if (dedup && s.sent[key] !== undefined) return { verdict: "duplicate" };
-  if (s.recent.length >= PAILOT_MAX_PER_MIN) {
+  if (s.recent.length >= policy.maxPerMinute) {
     s.sent[key] = now; // dropped text is not retried later either
     s.dropped++;
     let summary: string | undefined;
-    if (now - s.summarised >= 60_000) {
+    if (now - s.summarised >= policy.windowMs) {
       s.summarised = now;
-      summary = `PAI held back PAILot messages: more than ${PAILOT_MAX_PER_MIN} in a minute. The rest are dropped; see PAILOT-RATE-LIMIT in the worker ledger.`;
+      summary = `PAI held back PAILot messages: more than ${policy.maxPerMinute} in a minute. The rest are dropped; see PAILOT-RATE-LIMIT in the worker ledger.`;
     }
     appendLedger(ledgerPath(logDir), "PAILOT-RATE-LIMIT", { dropped: s.dropped, text: text.slice(0, 120) }, new Date(now));
     save(logDir, s);
