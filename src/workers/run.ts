@@ -1173,7 +1173,7 @@ export function fireDeadline(logDir: string, status: WorkerStatus, ledger: strin
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes });
   // the deadline stops the run's own process; its sub-workers go with it
-  void killTree(logDir, status.id, { skipRoot: true }).catch(() => undefined);
+  void killTree(logDir, status.id, { skipRoot: true, by: "deadline", reason: `parent worker deadline reached after ${limit.minutes} min` }).catch(() => undefined);
 }
 
 /** Decide why a signal ended the run and put it on the status; the caller writes WORKER-END. */
@@ -1190,6 +1190,8 @@ export function recordSignalEnd(logDir: string, status: WorkerStatus, signal: st
   status.endReason = end.reason;
   status.endBy = end.by;
   status.endNote = end.note;
+  if (end.killReason) status.endKillReason = end.killReason;
+  if (end.forced) status.endForced = true;
   return end;
 }
 

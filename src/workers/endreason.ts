@@ -6,7 +6,9 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { eventsPath } from "./paths.js";
 import { appendLedger } from "./ledger.js";
 import { pidAlive } from "./status.js";
 
@@ -16,6 +18,9 @@ export interface EndInfo {
   reason: EndReason;
   by?: string;
   note?: string;
+  /** The stated reason of a `pai worker kill`. */
+  killReason?: string;
+  forced?: boolean;
 }
 
 export interface KillRequest {
@@ -24,6 +29,8 @@ export interface KillRequest {
   pid: number;
   ppid: number;
   cwd: string;
+  forced?: boolean;
+  reason?: string;
 }
 
 export const killMarkerPath = (logDir: string, id: string): string => join(logDir, `${id}.kill`);
@@ -40,7 +47,8 @@ export function callerDescription(env: NodeJS.ProcessEnv = process.env): string 
 /** Write the kill-request marker and the WORKER-KILL ledger line; call right before signalling. */
 export function requestKill(logDir: string, ledger: string, id: string,
   by: string = callerDescription(),
-  forced = false
+  forced = false,
+  reason?: string
 ): void {
   const req: KillRequest = {
     ts: new Date().toISOString(),
@@ -48,9 +56,11 @@ export function requestKill(logDir: string, ledger: string, id: string,
     pid: process.pid,
     ppid: process.ppid,
     cwd: process.cwd(),
+    ...(forced ? { forced } : {}),
+    ...(reason ? { reason } : {}),
   };
   writeFileSync(killMarkerPath(logDir, id), JSON.stringify(req));
-  appendLedger(ledger, "WORKER-KILL", { id, by, pid: req.pid, ppid: req.ppid, cwd: req.cwd, ...(forced ? { forced: 1 } : {}) });
+  appendLedger(ledger, "WORKER-KILL", { id, by, pid: req.pid, ppid: req.ppid, cwd: req.cwd, ...(forced ? { forced: 1 } : {}), ...(reason ? { reason } : {}) });
 }
 
 function readMarker(logDir: string, id: string): KillRequest | null {
@@ -109,7 +119,15 @@ export function decideEndReason(a: {
   if (a.loopStopped) return { reason: "loop-stopped" };
   if (!a.signal) return { reason: "exit" };
   const marker = readMarker(a.logDir, a.id);
-  if (marker) return { reason: "pai-worker-kill", by: marker.by, note: `${a.signal} requested by pid ${marker.pid}` };
+  if (marker) {
+    return {
+      reason: "pai-worker-kill",
+      by: marker.by,
+      note: `${a.signal} requested by pid ${marker.pid}${marker.forced ? " (forced)" : ""}${marker.reason ? `: ${marker.reason}` : ""}`,
+      ...(marker.reason ? { killReason: marker.reason } : {}),
+      ...(marker.forced ? { forced: true } : {}),
+    };
+  }
   const alive = (a.isAlive ?? ((p: number) => pidAlive(p, { epermAlive: true })))(a.parentPid ?? process.ppid);
   const parent = `parent ${a.parentPid ?? "?"}${a.parentComm ? ` (${a.parentComm})` : ""}`;
   if (!alive) return { reason: "parent-gone", note: `${a.signal}; ${parent} not alive` };
@@ -128,6 +146,22 @@ export function endFields(e: EndInfo): { reason: EndReason; by?: string } {
 }
 
 /** "external-signal", "pai-worker-kill by <caller>" for a finished worker; null when nothing was recorded. */
-export function endLabel(s: { endReason?: string; endBy?: string }): string | null {
-  return s.endReason ? `${s.endReason}${s.endBy ? ` by ${s.endBy}` : ""}` : null;
+export function endLabel(s: { endReason?: string; endBy?: string; endKillReason?: string; endForced?: boolean }): string | null {
+  if (!s.endReason) return null;
+  return `${s.endReason}${s.endBy ? ` by ${s.endBy}` : ""}${s.endForced ? " (forced)" : ""}${s.endKillReason ? `: ${s.endKillReason}` : ""}`;
+}
+
+export interface StopRecord {
+  killed_by: string;
+  forced: boolean;
+  reason: string;
+}
+
+/** Final event in the worker's own event log (what `pai worker replay` and the owner read). Never throws. */
+export function appendStopEvent(logDir: string, id: string, stop: StopRecord): void {
+  try {
+    appendFileSync(eventsPath(logDir, id), JSON.stringify({ type: "worker-stopped", ...stop, _ts: new Date().toISOString() }) + "\n");
+  } catch {
+    /* the log is gone; the ledger line stays */
+  }
 }

@@ -97,6 +97,10 @@ export interface StreamEventLike {
   is_error?: boolean;
   num_turns?: number;
   duration_ms?: number;
+  /** worker-stopped event: who stopped the worker, whether forced, why. */
+  killed_by?: string;
+  forced?: boolean;
+  reason?: string;
   /** ISO stamp the runner attaches to every mirrored event (2g). */
   _ts?: string;
   /** Operator text (type: "operator"). */
@@ -356,6 +360,10 @@ export function renderEvent(
     for (const ln of String(e.text ?? "").split("\n")) {
       out.push(`${prefix}${c("cyan", "» " + ln)}`);
     }
+  } else if (e.type === "worker-stopped") {
+    out.push(
+      `${prefix}${c("red", `■ stopped by ${e.killed_by ?? "?"}${e.forced ? " (forced)" : ""}: ${e.reason ?? "no reason given"}`)}`
+    );
   } else if (e.type === "handoff") {
     // a child's message from the inbox: ◆ from <id> · <kind>: <text>
     for (const ln of String(e.text ?? "").split("\n")) {

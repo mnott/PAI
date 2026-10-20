@@ -77,6 +77,7 @@ import { denialLines } from "./denials.js";
 import { lastCommand } from "./tool-errors.js";
 import { isWaitPollCommand } from "./wait.js";
 import { psTable } from "./ps-table.js";
+import { endLabel } from "./endreason.js";
 
 /** Whether a Bash command ends in a `pai worker wait*` poll. */
 const isWaitPoll = (cmd: string): boolean => {
@@ -1108,7 +1109,7 @@ export async function followWorkers(
     eraseLiveness();
     const pre = multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  ";
     out(`${pre}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`);
-    const why = [st.endReason, st.endBy].filter(Boolean).join(" ");
+    const why = endLabel(st) ?? "";
     const secs = st.secs ?? Math.max(0, Math.floor((Date.now() - Date.parse((st.started ?? "").replace(" ", "T"))) / 1000));
     out(
       c(

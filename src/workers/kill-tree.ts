@@ -8,7 +8,7 @@
  */
 
 import { appendLedger } from "./ledger.js";
-import { callerDescription, requestKill } from "./endreason.js";
+import { appendStopEvent, callerDescription, requestKill } from "./endreason.js";
 import {
   loadStatus,
   loadStatuses,
@@ -26,7 +26,9 @@ export interface KillTreeDeps {
   owns: (s: WorkerStatus) => boolean;
   isAlive: (pid: number) => boolean;
   waitTerminal: (logDir: string, id: string) => Promise<WorkerStatus | null>;
-  request: (logDir: string, ledger: string, id: string, forced?: boolean) => void;
+  request: (logDir: string, ledger: string, id: string, forced?: boolean, by?: string, reason?: string) => void;
+  /** Tell the owning session one of its workers was stopped by someone else. */
+  notifyOwner: (ownerSession: string, text: string) => Promise<void>;
   /** Wait after SIGKILL is not needed; this is the grace between SIGTERM and SIGKILL. */
   graceMs: number;
 }
@@ -36,7 +38,11 @@ const defaultDeps = (): KillTreeDeps => ({
   owns: ownsPid,
   isAlive: (pid) => pidAlive(pid),
   waitTerminal: (dir, id) => waitForTerminalStatus(dir, id),
-  request: (dir, ledger, id, forced) => requestKill(dir, ledger, id, callerDescription(), forced === true),
+  request: (dir, ledger, id, forced, by, reason) => requestKill(dir, ledger, id, by ?? callerDescription(), forced === true, reason),
+  notifyOwner: async (session, text) => {
+    const { sendToSession } = await import("../cli/lib/aibroker-client.js");
+    await sendToSession(session, text, undefined, { noReply: true });
+  },
   graceMs: 1000,
 });
 
@@ -46,16 +52,26 @@ function ownerIdentities(s: WorkerStatus): string[] {
   return ids.filter((x): x is string => !!x);
 }
 
+/** True when the calling session is one of the worker's owner identities. */
+export function isOwner(s: WorkerStatus, env: NodeJS.ProcessEnv): boolean {
+  const owners = ownerIdentities(s);
+  return owners.includes(callerDescription(env)) || (!!env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID));
+}
+
 /**
  * Refusal text when a session-originated kill targets another session's worker, else null.
  * No recorded owner keeps the old behaviour; the owner session always passes.
  */
-export function killRefusal(s: WorkerStatus, env: NodeJS.ProcessEnv, force: boolean): string | null {
-  if (force) return env.PAI_WORKER ? `worker ${s.id}: --force is only for the operator's terminal, not from a worker process` : null;
+export function killRefusal(s: WorkerStatus, env: NodeJS.ProcessEnv, force: boolean, reason?: string): string | null {
   const owners = ownerIdentities(s);
+  if (force) {
+    if (env.PAI_WORKER) return `worker ${s.id}: --force is only for the operator's terminal, not from a worker process`;
+    if (owners.length && !isOwner(s, env) && !reason?.trim())
+      return `worker ${s.id}: --force on another session's worker needs --reason "<text>"`;
+    return null;
+  }
   if (!owners.length) return null;
-  const me = callerDescription(env);
-  if (owners.includes(me) || (env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID))) return null;
+  if (isOwner(s, env)) return null;
   const owner = s.session?.name || s.sessionKey || owners[0];
   return `worker ${s.id} belongs to session ${owner}; refused (use --force from the operator's terminal or that session)`;
 }
@@ -78,7 +94,15 @@ export function descendantsLeavesFirst(statuses: WorkerStatus[], id: string): Wo
   return out.sort((a, b) => b.depth - a.depth).map((x) => x.s);
 }
 
-async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, forced = false): Promise<string> {
+interface Stop {
+  by: string;
+  forced: boolean;
+  reason: string;
+  /** The killer is not the worker's owner: the owner session is told. */
+  foreign: boolean;
+}
+
+async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, stop: Stop): Promise<string> {
   const id = recorded.id;
   // A pooled task's `pid` is the shared slot process; the process to end is its `pai worker run` client,
   // whose disconnect makes the pool host cancel the task and write the terminal status.
@@ -92,7 +116,16 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
     saveStatus(logDir, recorded);
     return `worker ${id}: pid ${status.pid} is not this worker any more (started ${status.started}); marked lost, nothing signalled`;
   }
-  d.request(logDir, ledgerPath(logDir), id, forced);
+  d.request(logDir, ledgerPath(logDir), id, stop.forced, stop.by, stop.reason);
+  appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
+  if (stop.foreign) {
+    const owner = recorded.session?.id || recorded.session?.name || recorded.sessionKey;
+    if (owner) {
+      await d
+        .notifyOwner(owner, `worker ${id} (${recorded.label}) stopped by ${stop.by}: ${stop.reason}`)
+        .catch(() => undefined);
+    }
+  }
   // a worker holding the machine-wide build lock frees it and its build tree dies with it
   await releaseBuildsOf(buildsDir(), id).catch(() => []);
   try {
@@ -124,7 +157,9 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
       latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
       latest.last = latest.last || `killed by signal ${how}`;
       latest.endReason = "pai-worker-kill";
-      latest.endBy = callerDescription();
+      latest.endBy = stop.by;
+      latest.endKillReason = stop.reason;
+      if (stop.forced) latest.endForced = true;
       saveStatus(logDir, latest);
     }
   }
@@ -145,22 +180,33 @@ export async function killTree(
     deps?: Partial<KillTreeDeps>;
     /** Set by session-originated kills (the CLI): checks ownership. Internal callers (plans, loop guard, gc, daemon) omit it. */
     caller?: { env: NodeJS.ProcessEnv; force: boolean };
+    /** Who is stopping it when not a session (guard, deadline, plan, gc); default: the calling session. */
+    by?: string;
+    /** Why; required of a forced kill on another session's worker. */
+    reason?: string;
   } = {}
 ): Promise<string[]> {
   const d = { ...defaultDeps(), ...opts.deps };
   const root = loadStatus(logDir, id);
   if (!root) throw new Error(`no worker named "${id}"`);
   if (opts.caller) {
-    const refusal = killRefusal(root, opts.caller.env, opts.caller.force);
+    const refusal = killRefusal(root, opts.caller.env, opts.caller.force, opts.reason);
     if (refusal) throw new Error(refusal);
   }
-  const forced = opts.caller?.force === true;
+  const by = opts.by ?? callerDescription(opts.caller?.env);
+  const stop = (s: WorkerStatus): Stop => ({
+    by,
+    forced: opts.caller?.force === true,
+    reason: opts.reason?.trim() || (opts.by ? `stopped by ${opts.by}` : "no reason given"),
+    // a session killing someone else's worker, or an internal killer (guard, deadline) stopping a worker its owner did not ask to stop
+    foreign: opts.caller ? !isOwner(s, opts.caller.env) : opts.by !== "plan",
+  });
   const order = opts.only ? [] : descendantsLeavesFirst(loadStatuses(logDir), id);
   if (!opts.skipRoot) order.push(root);
   const lines: string[] = [];
   for (const s of order) {
     try {
-      lines.push(await killOne(logDir, s, d, forced));
+      lines.push(await killOne(logDir, s, d, stop(s)));
     } catch (e) {
       if (s.id === id) throw e;
       lines.push(`worker ${s.id}: kill failed: ${e instanceof Error ? e.message : String(e)}`);

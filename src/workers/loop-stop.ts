@@ -9,6 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { appendStopEvent } from "./endreason.js";
 import { loadStatus, saveStatus } from "./status.js";
 import { buildsDir, releaseBuildsOf } from "../builds/queue.js";
 
@@ -55,6 +56,7 @@ export function requestLoopStop(logDir: string, id: string, reason: string, deps
   } catch {
     // the signal below still ends the run
   }
+  appendStopEvent(logDir, id, { killed_by: "loop-guard", forced: false, reason });
   try {
     const st = loadStatus(logDir, id);
     if (st && st.state === "running") saveStatus(logDir, { ...st, last: `loop-stopped: ${reason}` });
