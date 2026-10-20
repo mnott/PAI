@@ -42,3 +42,17 @@ export function slotsFor(kind: "build" | "test", env: NodeJS.ProcessEnv = proces
 export function poolSlots(env: NodeJS.ProcessEnv = process.env, read: () => Record<string, unknown> = readMainConfigRaw): { build: number; test: number } {
   return { build: buildSlots(env, read), test: testSlots(env, read) };
 }
+
+export const DEFAULT_STALL_MINUTES = 5;
+
+/** Minutes a running job's output may stand still before it is flagged STALLED (`builds.stallMinutes`, default 5). */
+export function stallMinutes(env: NodeJS.ProcessEnv = process.env, read: () => Record<string, unknown> = readMainConfigRaw): number {
+  const n = Number(env.PAI_BUILD_STALL_MINUTES);
+  if (n > 0) return n;
+  try {
+    const v = Number((read().builds as Record<string, unknown> | undefined)?.stallMinutes);
+    return v > 0 ? v : DEFAULT_STALL_MINUTES;
+  } catch {
+    return DEFAULT_STALL_MINUTES;
+  }
+}

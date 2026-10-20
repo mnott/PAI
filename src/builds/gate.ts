@@ -122,6 +122,11 @@ export function deriveKey(command: string[], cwd: string): string | undefined {
   return undefined;
 }
 
+/** Log files a door names in its output: "log: <path>" / "see <path>". */
+export function declaredLogs(text: string): string[] {
+  return [...text.matchAll(/(?:\blog:|\bsee)\s+(\/[^\s'")]+)/gi)].map((m) => m[1].replace(/[.,;:]+$/, ""));
+}
+
 const fmtWait = (ms: number): string => (ms < 90_000 ? `${Math.floor(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m`);
 
 /** Run `command` through the queue; resolves to the exit code. */
@@ -238,13 +243,24 @@ function exec(
     const child = spawn(argv[0], argv.slice(1), { cwd, env, detached: true, stdio: ["inherit", "pipe", "pipe"] });
     onChild?.(child);
     if (ticket && child.pid) void patchTicket(o.dir, ticket.id, { pgid: child.pid });
+    const declared = new Set<string>();
+    const declare = (p: string): void => {
+      if (!ticket || declared.has(p)) return;
+      declared.add(p);
+      void patchTicket(o.dir, ticket.id, { logs: [...declared] });
+    };
+    if (env.PAI_BUILD_LOG) declare(env.PAI_BUILD_LOG);
+    const onData = (b: Buffer): void => {
+      log?.write(b);
+      for (const p of declaredLogs(b.toString("utf8"))) declare(p);
+    };
     child.stdout?.on("data", (b: Buffer) => {
       process.stdout.write(b);
-      log?.write(b);
+      onData(b);
     });
     child.stderr?.on("data", (b: Buffer) => {
       process.stderr.write(b);
-      log?.write(b);
+      onData(b);
     });
     child.on("error", (e) => {
       process.stderr.write(`pai build: cannot run ${argv[0]}: ${e.message}\n`);
