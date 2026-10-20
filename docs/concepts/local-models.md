@@ -104,3 +104,5 @@ Local runs are scheduled by the router, one request per engine at a time (see
 Whether a task belongs on a local model is decided by deterministic rules; after
 two failed local attempts the next start goes to the cloud. See
 [../local-routing.md](../local-routing.md).
+
+Setting this up for the first time: [first workers](../install/first-workers.md).

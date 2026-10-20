@@ -126,3 +126,5 @@ process, pane and tab live.
 
 Font size comes from `workers.pane.fontSize` (default 13); `workers.pane.enabled`
 defaults to true.
+
+Setting this up for the first time: [first workers](../install/first-workers.md).

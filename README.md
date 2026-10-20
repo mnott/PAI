@@ -34,7 +34,7 @@ pai daemon status                    # should show "running"
 
 `pai setup` without `--yes` asks every question interactively. It installs the daemon as a LaunchAgent on macOS and a systemd user service on Linux. From a source checkout: `git clone https://github.com/mnott/PAI && cd PAI && bun install && bun run build`.
 
-→ [docs/install.md](docs/install.md) · [docs/install-linux.md](docs/install-linux.md) (both storage paths, Docker, systemd)
+→ [docs/install/index.md](docs/install/index.md) (install skill, both storage paths, Docker, systemd) · [docs/install/first-workers.md](docs/install/first-workers.md)
 
 ## Daily Use: the `pai` command
 
