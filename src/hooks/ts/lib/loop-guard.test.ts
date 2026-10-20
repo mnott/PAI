@@ -47,7 +47,7 @@ describe("loop guard", () => {
     expect(feed(calls)).toEqual([]);
   });
   it("never denies different sed ranges", () => {
-    const calls = Array.from({ length: 30 }, (_, i) => bash(`sed -n ${i * 40 + 1},${i * 40 + 40}p f.ts`));
+    const calls = Array.from({ length: 14 }, (_, i) => bash(`sed -n ${i * 40 + 1},${i * 40 + 40}p f.ts`));
     expect(feed(calls, (i) => `block ${i} text`)).toEqual([]);
   });
   it("does not collapse digits outside /tmp paths", () => {
@@ -458,5 +458,49 @@ describe("build doors match by repo-relative path", () => {
     expect(buildGateReason(`${wt}/tools/build.sh mac`, repo, loadBuildsConfig(repo))).toBeNull();
     expect(buildGateReason(`cd ${wt} && sh ./tools/build.sh mac`, repo, loadBuildsConfig(repo))).toBeNull();
     expect(buildGateReason(`${wt}/tools/other.sh && swift build`, repo, loadBuildsConfig(repo))).not.toBeNull();
+  });
+});
+
+describe("piecewise read loop", () => {
+  const run = (cmds: string[], fp: (i: number) => string = () => "fp") => {
+    let s: LoopState = emptyLoopState();
+    const out: Array<{ deny: boolean; stop?: boolean; reason?: string }> = [];
+    cmds.forEach((c, i) => {
+      const r = stepLoopGuard(s, "Bash", c, fp(i));
+      s = r.state;
+      out.push({ deny: r.deny, stop: r.stop, reason: r.reason });
+      if (!r.deny) s = recordLoopResult(s, "Bash", c, `line ${i} text ${i * 7}`);
+    });
+    return out;
+  };
+  const piece = (i: number, f = "Notes/a.md") => `head -40 ${f} | sed -n '${i},${i}p'; echo ===; sed -n '${i - 1},${i - 1}p' ${f}`;
+  it("denies the 16th line-by-line read, then stops after 2 more denials", () => {
+    const r = run(Array.from({ length: 19 }, (_, i) => piece(i + 2)));
+    expect(r.slice(0, 15).some((x) => x.deny)).toBe(false);
+    expect(r[15].deny).toBe(true);
+    expect(r[15].reason).toContain("Notes/a.md piece by piece (15 calls, no edits)");
+    expect(r[15].stop).toBe(false);
+    expect(r[16].stop).toBe(false);
+    expect(r[17].stop).toBe(true);
+  });
+  it("does not trigger when the worktree changes in between", () => {
+    const r = run(Array.from({ length: 40 }, (_, i) => piece(i + 2)), (i) => `fp${Math.floor(i / 10)}`);
+    expect(r.some((x) => x.deny)).toBe(false);
+  });
+  it("does not trigger when edits alternate", () => {
+    let s: LoopState = emptyLoopState();
+    for (let i = 0; i < 40; i++) {
+      const r = stepLoopGuard(s, "Bash", piece(i + 2), "fp");
+      expect(r.deny).toBe(false);
+      s = stepLoopGuard(r.state, "Edit").state;
+    }
+  });
+  it("does not trigger for different files", () => {
+    const r = run(Array.from({ length: 40 }, (_, i) => piece(i + 2, `Notes/f${i}.md`)));
+    expect(r.some((x) => x.deny)).toBe(false);
+  });
+  it("does not trigger for non-read commands", () => {
+    const r = run(Array.from({ length: 30 }, (_, i) => `sed -i '${i}d' Notes/a.md`));
+    expect(r.some((x) => x.deny)).toBe(false);
   });
 });
