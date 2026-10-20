@@ -35,7 +35,7 @@ Answers: how much of each provider's allowance is used, and which local servers 
 
 ### Routing (`routing`)
 
-Answers: where does a delegated worker go now. One line per delegation tier from `workers.yaml`, listing the models in the order they serve, each as a chip: the first available one wins, the rest are the fallback order. A local model that is not running is skipped, not started. Session-specific routes appear indented under their tier. The section is read-only. To change a route, run `pai worker route set` or edit `workers.yaml`; see [three-tier coding](three-tier-coding.md).
+Answers: where does a delegated worker go now. One line per delegation tier from `workers.yaml`, listing the models in the order they serve, each as a chip: the first available one wins, the rest are the fallback order. A local model that is not running is skipped, not started. Session-specific routes appear indented under their tier. The section is read-only. To change a route, run `pai worker route set` or edit `workers.yaml`; see [delegation tiers](concepts/delegation-tiers.md).
 
 ### Workers — running and waiting (`workers`)
 
