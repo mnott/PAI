@@ -15,6 +15,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -394,6 +395,50 @@ export function loadStatuses(logDir: string): WorkerStatus[] {
   return out;
 }
 
+const statusCache = new Map<string, { mtimeMs: number; size: number; status: WorkerStatus | null; checked: number }>();
+/** A cached terminal status is trusted this long without a stat: a finished worker's file no longer changes. */
+export const TERMINAL_RECHECK_MS = 5 * 60_000;
+
+/**
+ * loadStatuses for the daemon's periodic tasks: a status file is parsed again only when its mtime or size
+ * changed, so a tick over thousands of historical workers costs one readdir and one stat each, not a parse.
+ * The returned objects are shared with the cache: read-only.
+ */
+export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStatus[] {
+  if (!existsSync(logDir)) return [];
+  const out: WorkerStatus[] = [];
+  const seen = new Set<string>();
+  for (const name of readdirSync(logDir).sort()) {
+    if (!name.endsWith(".status")) continue;
+    const path = join(logDir, name);
+    seen.add(path);
+    try {
+      let hit = statusCache.get(path);
+      if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) {
+        out.push(hit.status);
+        continue;
+      }
+      const st = statSync(path);
+      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+        let status: WorkerStatus | null = null;
+        try {
+          status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
+        } catch {
+          // a half-written or damaged status file is not worth a crash
+        }
+        hit = { mtimeMs: st.mtimeMs, size: st.size, status, checked: now };
+        statusCache.set(path, hit);
+      }
+      hit.checked = now;
+      if (hit.status) out.push(hit.status);
+    } catch {
+      statusCache.delete(path);
+    }
+  }
+  for (const k of statusCache.keys()) if (k.startsWith(logDir) && !seen.has(k)) statusCache.delete(k);
+  return out;
+}
+
 export function loadStatus(logDir: string, id: string): WorkerStatus | null {
   const path = statusPath(logDir, id);
   if (!existsSync(path)) return null;
@@ -483,6 +528,26 @@ export function ownsPid(status: OwnerFields): boolean {
     // another reason — the pid-existence check is still better than nothing.
     return alive(status.pid);
   }
+}
+
+const ownsCache = new Map<string, number>();
+/** How long a verified pid ownership is trusted by the daemon's periodic tasks. */
+export const OWNS_TTL_MS = 60_000;
+
+/**
+ * ownsPid for periodic daemon tasks: a pid that was verified (one blocking `ps`) is trusted for a minute while
+ * it still exists, so a tick does not spawn a `ps` per running worker. Kill paths keep using ownsPid.
+ */
+export function ownsPidCached(status: OwnerFields, now = Date.now()): boolean {
+  if (status.pid <= 0 || !alive(status.pid)) return false;
+  const key = `${status.pid}:${status.started}`;
+  const at = ownsCache.get(key);
+  if (at !== undefined && now - at < OWNS_TTL_MS) return true;
+  const ok = ownsPid(status);
+  if (ok) ownsCache.set(key, now);
+  else ownsCache.delete(key);
+  if (ownsCache.size > 512) for (const [k, t] of ownsCache) if (now - t >= OWNS_TTL_MS) ownsCache.delete(k);
+  return ok;
 }
 
 /** Any state a worker never leaves on its own: everything but "running" and "queued". */

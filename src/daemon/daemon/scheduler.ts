@@ -13,6 +13,7 @@ import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
 import { auditTick } from "../../workers/pane-audit.js";
+import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
 import { probeRouter, runRouterTick, spawnRouter } from "../../router/supervisor.js";
@@ -562,14 +563,14 @@ export function startWorkerSupervisor(): void {
   // every running process owns a live pane in its starting session's tab: judged every 30 s
   const paneAudit = setInterval(() => {
     const dir = workersLogDir(readWorkersSection().workers);
-    void auditTick(dir, runMessenger(dir)).catch(() => undefined);
+    void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
 
   // the local model must not idle while its workers build: sampled every 30 s, one nudge per backoff
   const localIdle = setInterval(() => {
     const w = readWorkersSection().workers;
-    void localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w))).catch(() => undefined);
+    void timedTask("local-idle", () => localIdleTick(workersLogDir(w), w, runMessenger(workersLogDir(w)))).catch(() => undefined);
   }, 30_000);
   localIdle.unref();
 
@@ -578,11 +579,11 @@ export function startWorkerSupervisor(): void {
     if (!ticking) {
       ticking = true;
       // detached plan/queue runs that died without a done marker: tell their session once
-      void sweepRuns(workersLogDir(readWorkersSection().workers), runMessenger(workersLogDir(readWorkersSection().workers)), alive).catch(() => undefined);
-    runSupervisionTick(workersLogDir(readWorkersSection().workers), {
+      void timedTask("sweep-runs", () => sweepRuns(workersLogDir(readWorkersSection().workers), runMessenger(workersLogDir(readWorkersSection().workers)), alive)).catch(() => undefined);
+    timedTask("supervision", () => runSupervisionTick(workersLogDir(readWorkersSection().workers), {
       ...(process.env.PAI_WORKER_STALL_MINUTES ? { stallMs: stallMinutesFromEnv() * 60_000 } : {}),
       thrashFails: thrashFailsFromEnv(),
-    })
+    }), 200)
       .then((r) => {
         for (const ev of r.events) {
           process.stderr.write(`[pai-daemon] Supervision: ${ev.text}\n`);
@@ -609,7 +610,7 @@ export function startWorkerSupervisor(): void {
   const reapTimer = setInterval(() => {
     if (reaping) return;
     reaping = true;
-    reapEndedPanesOnce(workersLogDir(readWorkersSection().workers))
+    timedTask("pane-reaper", () => reapEndedPanesOnce(workersLogDir(readWorkersSection().workers)))
       .then((closed) => {
         for (const l of closed) process.stderr.write(`[pai-daemon] Pane reaper: closed ${l}\n`);
       })

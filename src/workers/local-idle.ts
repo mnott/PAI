@@ -18,7 +18,7 @@ import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
-import { isChatPane, isLive, loadStatuses, type WorkerStatus } from "./status.js";
+import { isChatPane, isLive, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
 
 export interface LocalIdleConfig {
   enabled: boolean;
@@ -104,7 +104,7 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
   } catch {
     /* no build dir yet */
   }
-  const statuses = loadStatuses(logDir).filter((s) => !isChatPane(s) && isLive(s) && s.state === "running");
+  const statuses = loadStatusesCached(logDir).filter((s) => !isChatPane(s) && isLive(s, ownsPidCached) && s.state === "running");
   const queue = queueRows(logDir);
   const providers: LocalProviderSample[] = [];
   for (const [name, p] of Object.entries(workers.providers)) {
