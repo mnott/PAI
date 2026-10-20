@@ -92,3 +92,12 @@ Only "the pane exists and runs the worker" matters, and a missing terminal never
 - **Visibility is a mark.** A pane that runs the worker but is not seen right now is accepted and marked on the returned description (`NOT SELECTED` tab, `MINIMISED` window, `HIDDEN` iTerm2, `OFF SCREEN` window, `SMALL` pane). Each mark is logged (`PANE-MARK`, `PANE-SMALL`) and the pane auditor shows `NOT SELECTED`, `MINIMISED` and `SMALL` without alarming.
 - **No terminal at all** (no tmux or `ITERM_SESSION_ID`, a Claude background session with no attached terminal) runs the command directly: the ledger gets `PANE-NOTERMINAL` and `status.pane` records it (not a violation). A failed split or a wrapper that never connects fails the start (`WORKER-NO-PANE`). PAI never opens a `claude attach` tab or any new tab or window to make a pane possible.
 - `--no-pane`, `PAI_WORKER_AUTOPANE=0` and the keepalive beat need no override any more.
+
+## Every start has its own pane
+
+A worker's own child worker (`pai worker run` inside a worker, `PAI_WORKER=1`) opens its own pane through the launcher like any other start: a split of the host tab, resolved through the session the parent worker belongs to. `PAI_WORKER=1` is no reason to run hidden. `--print-cmd` still opens nothing. The only hidden-run switches left are the operator's: `PAI_WORKER_ALLOW_HIDDEN=1` in their own shell and the `headless-ok` file (both still used by daemons, tests and the keepalive check).
+
+The only processes PAI starts without a pane of their own:
+
+- **The report re-ask** and **the provider-ping helper**: short internal helper calls inside an already-paned run; the run's pane shows them.
+- **The follow viewer's resume** (`worker resume ... --no-pane`): the follow pane already shows the resumed worker.

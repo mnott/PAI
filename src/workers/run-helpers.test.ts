@@ -941,11 +941,18 @@ describe("requireVisiblePane", () => {
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
   });
 
-  it("skips (false) for --print-cmd dry runs and for a worker's children", async () => {
+  it("skips (false) for --print-cmd dry runs, even inside a worker", async () => {
     expect(await requireVisiblePane(dir, cfg, "w1", "", true, true, ledger)).toBe(false);
     vi.stubEnv("PAI_WORKER", "1");
-    expect(await requireVisiblePane(dir, cfg, "w1", "", false, false, ledger)).toBe(false);
+    expect(await requireVisiblePane(dir, cfg, "w1", "term-1", false, true, ledger)).toBe(false);
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
+  });
+
+  it("a worker's child (PAI_WORKER=1) opens its own pane through the launcher", async () => {
+    vi.stubEnv("PAI_WORKER", "1");
+    vi.mocked(pane.openVerifiedPane).mockResolvedValue({ where: "split of host", paneUid: "P1" } as never);
+    await requireVisiblePane(dir, cfg, "w-child", "term-1", false, false, ledger).catch(() => undefined);
+    expect(pane.openVerifiedPane).toHaveBeenCalled();
   });
 
   it("config pane.enabled=false and PAI_WORKER_AUTOPANE=0 do not skip the pane", async () => {
