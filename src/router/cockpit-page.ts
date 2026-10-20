@@ -787,7 +787,7 @@ function modelsHtml(inv){
  function purposeOf(u){
   return u.map(function(n){
    var c=consumers.filter(function(x){return x.name===n})[0];
-   if(c)return n+" ("+(c.purpose||c.label)+")";
+   if(c){var d=c.purpose||c.label;return d&&d!==n?n+" ("+d+")":n}
    if(n==="pai-embedding")return "PAI's embedding (memory search embeds new content)";
    if(n.indexOf("worker:")===0)return n.slice(7)+" (worker provider)";
    return n;
@@ -881,11 +881,16 @@ function modelsHtml(inv){
      sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
      fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
      series:[{data:h.reusedPct||[]}]})+'</div>';
-   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+(x.session?' <b>'+esc(x.session)+'</b>':"")+(x.state==="queued"?' <span class="warn">queued</span>':x.state==="running"?' <span class="dim">running</span>':"")+'</span>'}).join("");
+   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+(x.session&&x.session!=="?"?' <b>'+esc(x.session)+'</b>':"")+(x.state==="queued"?' <span class="warn">queued</span>':x.state==="running"?' <span class="dim">running</span>':"")+'</span>'}).join("");
    if(chips)body+='<div class="rt-chips">'+chips+'</div>';
   }
-  var sub=r.label||"";
-  if(r.split&&hasModel){var c0=consumersOf(consumers,rt,r.models[0])[0];sub=c0?(c0.purpose||c0.label||""):(r.models[0].label||"")}
+  // the purpose line is the card's own consumer's description (config), never the runtime's or another consumer's
+  var own=consumers.filter(function(c){return users.indexOf(c.name)>=0&&(c.runtime===rt.name||c.runtime===rt.kind)});
+  var sub="";
+  if(own.length)sub=(own.filter(function(c){return c.purpose||c.label})[0]||{}).purpose||(own.filter(function(c){return c.label})[0]||{}).label||"";
+  else if(r.split&&hasModel)sub=r.models[0].label||"";
+  else if(!consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))sub=r.label||"";
+  if(users.indexOf(sub)>=0)sub="";
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
   cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
@@ -1071,7 +1076,7 @@ function renderSystem(){
  var allSrv=sys.servers||[];
  var srv=allSrv.filter(function(s){return s.up!==false});
  function dec(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];if(!r)return'<span class="dim">-</span>';return fmt(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps)}
-setHtml($("sysservers"),srv.length?table(["local server","status","RSS","end-to-end tok/s","decode tok/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?s.rssMb+" MB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',dec(s.provider),s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":lim?'<span class="dim">not reported</span>':'<span class="dim" title="loading: first limits poll pending">…</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>');
+setHtml($("sysservers"),srv.length?table(["local server","status","RSS","end-to-end tok/s","decode tok/s","prefix cache"],srv.map(function(s){return[esc(s.provider),'<span class="'+(s.up?"ok":"bad")+'">'+(s.up?"up":"down")+'</span>',s.rssMb!=null?gbm(s.rssMb)+" GB":'<span class="dim">n/a</span>',s.tokensPerSec!=null?s.tokensPerSec:'<span class="dim">-</span>',dec(s.provider),s.prefixCache?pct(s.prefixCache.hitRate)+" ("+s.prefixCache.hits+"/"+(s.prefixCache.hits+s.prefixCache.misses)+")":lim?'<span class="dim">not reported</span>':'<span class="dim" title="loading: first limits poll pending">…</span>']})):'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>');
  renderDonuts();
 }
 function trimEmpty(labels,rows,totalOf){
@@ -1359,7 +1364,7 @@ function renderQueue(q){
  if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return'<tr style="color:#d33"><td style="text-align:left">'+esc(p.id)+'</td><td style="text-align:left">'+esc(p.mark)+'</td><td style="text-align:left">'+esc(p.why||"")+'</td></tr>'})));
  var pn=q.panes||[];
  if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return'<tr><td style="text-align:left">'+esc(p.label)+'</td><td style="text-align:left">'+esc(p.cwd)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc(p.log)+'</td></tr>'})));
- if(q.localModel)out.unshift('<div class="dim" style="margin:4px 0">'+esc(q.localModel)+"</div>");
+ if(q.localModel)out.unshift('<div class="dim" style="margin:4px 0"'+(q.localModelTitle?' title="'+esc(q.localModelTitle)+'"':"")+'>'+esc(q.localModel)+"</div>");
  setHtml(el,out.join("")+wt);
  function post(verb,body){
   fetch("/cockpit/queue/"+verb,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})

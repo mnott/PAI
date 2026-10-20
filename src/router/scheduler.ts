@@ -405,3 +405,32 @@ export function schedLine(s: SchedSnapshot | null, names?: Record<string, string
   }
   return parts.length ? `local scheduler: ${parts.join(" · ")}` : "";
 }
+
+/** compact count: 10838 -> "10.8k", 950 -> "950" */
+function compactCount(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n);
+}
+
+/** Cockpit line in plain words: "local engine gyro-m: 1 request in flight, 1 queued; served 10.8k tokens this window".
+ *  No session ids in the line; the per-session detail (name if known, else "session <8 chars>") is the title. */
+export function schedPlain(s: SchedSnapshot | null, names?: Record<string, string>): { text: string; title: string } {
+  if (!s) return { text: "", title: "" };
+  const label = (sid: string): string => names?.[sid] ?? `session ${sid.slice(0, 8)}`;
+  const lines: string[] = [];
+  const titles: string[] = [];
+  for (const [name, e] of Object.entries(s.engines)) {
+    const q = Object.entries(e.queued);
+    if (!e.inflight && !q.length) continue;
+    const queued = q.reduce((a, [, n]) => a + n, 0);
+    const served = Object.values(e.counters).reduce((a, v) => a + v, 0);
+    lines.push(
+      `local engine ${name}: ${e.inflight ? "1 request in flight" : "idle"}, ${queued} queued` +
+        (served ? `; served ${compactCount(served)} tokens this window` : "")
+    );
+    if (e.inflight) titles.push(`${name} in flight: ${label(e.inflight.session)}`);
+    if (q.length) titles.push(`${name} queued: ${q.map(([k, n]) => `${label(k)} ${n}`).join(", ")}`);
+    const c = Object.entries(e.counters);
+    if (c.length) titles.push(`${name} served: ${c.map(([k, v]) => `${label(k)} ${v} tokens`).join(", ")}`);
+  }
+  return { text: lines.join(" · "), title: titles.join("\n") };
+}

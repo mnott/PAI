@@ -284,17 +284,21 @@ describe("cockpit http", () => {
         session: { id: uuid, name: "PAI" },
       }));
       const named = JSON.parse((await ask("/cockpit/queue")).body).localModel as string;
-      expect(named).toContain("in flight (PAI)");
-      expect(named).toContain("PAI 18120 tokens served");
+      expect(named).toContain("local engine gyro: 1 request in flight, 0 queued; served 18.1k tokens this window");
       expect(named).not.toContain(uuid);
+      expect(named).not.toMatch(/[0-9a-f]{8}/);
+      expect(JSON.parse((await ask("/cockpit/queue")).body).localModelTitle).toContain("gyro in flight: PAI");
       // no session name anywhere: the first 8 chars, never the full uuid
       writeFileSync(join(logDir, "w1.status"), JSON.stringify({
         id: "w1", pid: process.pid, label: "l", cwd: "/p", term: "", provider: "p1", model: "m1",
         state: "running", started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null,
       }));
       const bare = JSON.parse((await ask("/cockpit/queue")).body).localModel as string;
-      expect(bare).toContain("in flight (d875bcac)");
-      expect(bare).not.toContain(uuid);
+      expect(bare).toContain("in flight");
+      expect(bare).toContain("queued");
+      expect(bare).toContain("served");
+      expect(bare).not.toMatch(/[0-9a-f]{8}/);
+      expect(JSON.parse((await ask("/cockpit/queue")).body).localModelTitle).toContain("session d875bcac");
 
       // the page carries the panel and its buttons
       const page = await ask("/cockpit");

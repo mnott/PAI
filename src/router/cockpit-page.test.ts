@@ -219,6 +219,18 @@ describe("cockpit system tiles: unused metrics", () => {
     expect(html).not.toContain("hidden:");
   });
 
+  it("the local server table shows RSS in GB with one decimal, never MB", () => {
+    const rows: unknown[][] = [];
+    const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, sysservers: { innerHTML: "" } };
+    const sys = { current: {}, series: { series: [], wh: { "1h": 0 }, coveredMin: { "1h": 0 } }, servers: [{ provider: "gyro-m", up: true, rssMb: 47723 }] };
+    const fn = new Function(
+      "sys", "$", "esc", "gb", "gbm", "LAST", "win", "data", "lim", "table", "renderDonuts",
+      `${SH}\n${body}\nrenderSystem();`
+    );
+    fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b), (m: number) => (m / 1024).toFixed(1), {}, "1h", {}, null, (_h: unknown, r: unknown[][]) => { rows.push(...r); return ""; }, () => {});
+    expect(rows[0]![2]).toBe("46.6 GB");
+  });
+
   it("keeps tiles when the window has no samples for them", () => {
     const html = render([{ t: 1, n: 1 }], {});
     expect(html).toContain("<span>ANE load</span>");
@@ -451,6 +463,40 @@ describe("cockpit Models cards", () => {
     expect(h).not.toMatch(/<b>\?<\/b>/);
     expect(h).toContain("C2d #8 one colour per model <span class=\"dim\">running</span>");
     expect(h).toContain("other job <span class=\"warn\">queued</span>");
+  });
+  it("a running worker chip without class or session shows '<label> · running' style, no '?'", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "gyro-m", kind: "mlx", status: "running", port: 1, users: [], models: [{ model: "m", kind: "coding", loaded: true, memoryMb: 5000, usedBy: [] }] }],
+      duplicates: [],
+      live: { at: 1, runtimes: [{ name: "gyro-m", live: { engine: {}, cap: 2, queued: 0, workers: [
+        { id: "j1", label: "kill: background owner recognised", session: "?", state: "running" },
+      ] }, history: {} }] },
+    });
+    expect(h).toContain('kill: background owner recognised <span class="dim">running</span>');
+    expect(h).not.toContain("?");
+  });
+  it("two consumers on one runtime without descriptions: no borrowed runtime label, one used-by with the own name", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", label: "PAI's embedding backend runs here", status: "running", port: 11434, users: ["paperfull-chat", "pai-embedding"], models: [
+        { model: "qwen3:8b", kind: "chat", loaded: false, usedBy: ["paperfull-chat"] },
+        { model: "arctic-embed", kind: "embedding", loaded: false, usedBy: ["pai-embedding"] },
+      ] }],
+      consumers: [
+        { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "paperfull-chat" },
+        { name: "pai-embedding", runtime: "ollama", model: "arctic-embed", label: "PAI embedding", purpose: "memory search embeds new content" },
+      ],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    const chat = h.split('<div class="mcard').find((c) => c.includes('data-model="qwen3:8b"'))!;
+    const emb = h.split('<div class="mcard').find((c) => c.includes('data-model="arctic-embed"'))!;
+    expect(chat).not.toContain("embedding backend");
+    expect(chat).toContain(">used by paperfull-chat</div>");
+    expect(chat).not.toContain("paperfull-chat (paperfull-chat)");
+    expect(emb).toContain("memory search embeds new content · used by pai-embedding (memory search embeds new content)");
+    expect(emb).not.toContain("paperfull-chat");
   });
   it("the tile grip sits in the tile's top-right corner, never inline with the value", () => {
     const tile = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}\n${COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]}; return metricTile;`)((s: unknown) => String(s ?? ""))({ title: "Speed", value: "58.5", unit: "t/s", sub: "", series: [] }) as string;
