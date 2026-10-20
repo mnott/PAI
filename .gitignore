@@ -56,3 +56,7 @@ user-extensions/hooks/*
 user-extensions/skills/*
 !user-extensions/skills/.gitkeep
 audits/
+
+# worker scratch space, never committed
+tmp/
+.tmp-*/
