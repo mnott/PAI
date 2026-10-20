@@ -78,7 +78,7 @@ describe.skipIf(!HAS_BUN)("process-wide storage accessors: child process exit", 
     return { scratchUrl: scratch.toString(), adminUrl: admin.toString(), dbName };
   }
 
-  it("a child that only calls getStorageBackend() exits by itself within 5s", async () => {
+  it("a child that only calls getStorageBackend() exits by itself (no hang)", async () => {
     const { scratchUrl, adminUrl, dbName } = scratchTargets();
     const admin = new Pool({ connectionString: adminUrl, max: 1 });
     try {
@@ -115,10 +115,12 @@ describe.skipIf(!HAS_BUN)("process-wide storage accessors: child process exit", 
       );
 
       // If getStorageBackend() left the pg pool open with no beforeExit
-      // cleanup, this would hang and execFileSync would throw on timeout.
+      // cleanup, this would hang and execFileSync would throw on timeout. A hang
+      // is unbounded, so the bound only has to clear bun startup plus the pg
+      // handshake on a loaded machine (the full suite runs many workers at once).
       execFileSync("bun", [scriptFile], {
         encoding: "utf8",
-        timeout: 5_000,
+        timeout: 20_000,
         env: { ...process.env, PAI_CONFIG_FILE: configFile },
       });
     } finally {
@@ -130,7 +132,7 @@ describe.skipIf(!HAS_BUN)("process-wide storage accessors: child process exit", 
         await admin2.end();
       }
     }
-  }, 15_000);
+  }, 40_000);
 
   it("a child holding a setInterval plus the pool does not exit on its own", async () => {
     const { scratchUrl, adminUrl, dbName } = scratchTargets();

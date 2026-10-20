@@ -188,7 +188,8 @@ describe("say reports ok only on real delivery", () => {
       last: "",
       rc: null,
       secs: null,
-      pool: { task: 1, slotSession: null, hostPid: 123, slot: "s1" }
+      // alive only as a child of the pool host: the test process is the slot, its parent the host
+      pool: { task: 1, slotSession: null, hostPid: process.ppid, slot: "s1" }
     };
     saveStatus(dir, status);
     await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/pooled task/);

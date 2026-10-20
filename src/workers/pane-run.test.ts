@@ -81,18 +81,26 @@ describe("followPaneRun", () => {
     expect(shown).toContain("[exit 2");
   });
 
-  it("writes the pane's purpose as the terminal title (OSC 1/2) at its start", async () => {
+  it.each([[true], [false]])("writes the pane's purpose as the terminal title (OSC 1/2) at its start only to a TTY (tty=%s)", async (tty) => {
     const o = opts(["sleep", "1"], { label: "tests" });
     const p = runInPane(o);
     await new Promise((r) => setTimeout(r, 200));
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const was = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", { value: tty, configurable: true });
     try {
       await followPaneRun(dir, o.opened[0], () => undefined, 0, 10);
       const written = err.mock.calls.map((c) => String(c[0])).join("");
+      if (!tty) {
+        expect(written).toBe("");
+        return;
+      }
       // a pane-run pane shows its label alone, no provider
       expect(written).toContain("\x1b]1;tests\x07");
       expect(written).toContain("\x1b]2;tests\x07");
     } finally {
+      if (was) Object.defineProperty(process.stdout, "isTTY", was);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
       err.mockRestore();
       await p;
     }
