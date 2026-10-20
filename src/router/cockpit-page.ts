@@ -90,6 +90,7 @@ svg text{fill:var(--dim);font-size:10px}
 .act button[disabled]{opacity:.5;cursor:default}
 .act .msg{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .act .msg.bad{color:var(--bad)}
+.tiercap{color:var(--dim);font-size:11px}
 .lbl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;color:var(--dim);font-size:11px}
 .lbl input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;max-width:100%}
 .lbl .lblbtn{background:none;border:0;padding:0 4px;color:var(--acc);cursor:pointer;font:inherit}
@@ -135,17 +136,25 @@ function ago(iso){var s=(Date.now()-Date.parse(iso))/1000;return s<90?Math.round
 function sev(p){return p>=90?"var(--bad)":p>=70?"var(--warn)":"var(--ok)"}
 /* metricTile: ported from Strata's "Speed" metric tile (MIT, Copyright (c) 2026 Niko1221 and the Strata contributors) */
 function metricSpark(series){
- var max=0,n=0,i,s,d;
+ var max=0,n=0,i,d;
  series.forEach(function(x){(x.data||[]).forEach(function(v){if(v!=null&&isFinite(v)&&v>max)max=v});n=Math.max(n,(x.data||[]).length)});
  if(!max)max=1;
  return series.map(function(x,k){
   d=x.data||[];var line="",area="",seg=[];
-  function flush(){if(seg.length){line+="M"+seg.join("L");if(seg.length>1&&k===0)area+="M"+seg[0].split(",")[0]+",32L"+seg.join("L")+"L"+seg[seg.length-1].split(",")[0]+",32Z"}seg=[]}
-  for(i=0;i<d.length;i++){
-   if(d[i]==null||!isFinite(d[i])){flush();continue}
-   seg.push((n>1?i/(n-1)*100:50).toFixed(1)+","+(30-d[i]/max*28).toFixed(1));
+  // a missing (null) point is interpolated linearly between its neighbours, so a
+  // series with data draws one continuous line; leading/trailing nulls are dropped
+  var a=0,b=d.length-1;while(a<=b&&!(d[a]!=null&&isFinite(d[a])))a++;while(b>=a&&!(d[b]!=null&&isFinite(d[b])))b--;
+  function valAt(j){
+   if(d[j]!=null&&isFinite(d[j]))return d[j];
+   var p=j,q=j;
+   while(p>a&&!(d[p]!=null&&isFinite(d[p])))p--;
+   while(q<b&&!(d[q]!=null&&isFinite(d[q])))q++;
+   return d[p]+(d[q]-d[p])*(j-p)/(q-p);
   }
-  flush();
+  for(i=a;i<=b;i++){
+   seg.push((n>1?i/(n-1)*100:50).toFixed(1)+","+(30-valAt(i)/max*28).toFixed(1));
+  }
+  if(seg.length){line+="M"+seg.join("L");if(seg.length>1&&k===0)area+="M"+seg[0].split(",")[0]+",32L"+seg.join("L")+"L"+seg[seg.length-1].split(",")[0]+",32Z"}
   return(area?'<path class="area" fill="currentColor" opacity=".12" d="'+area+'"/>':"")+(line?'<path class="line mt-'+esc(x.tone||(k?"alt":"acc"))+'" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" d="'+line+'"/>':"")
  }).join("");
 }
@@ -245,22 +254,21 @@ function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  var tiers=inv.tiers||[];
  var running=(inv.running&&inv.running.model)?inv.running:null;
- var tierBtns=tiers.map(function(t){return'<button data-a="local.switch" data-t="'+esc(t)+'"'+(running&&running.tier===t?' disabled':"")+(running?' data-confirm="stops '+esc(running.model)+' first, needs ~'+esc(running.memGb||"?")+' GB. Click again to confirm."':"")+'>'+esc(t)+'</button>'}).join("")+(tiers.length?'<button data-a="local.off">off</button>':"");
- /** Label row: the label as subtitle, click → text field, Enter saves, Esc cancels. */
+ var tierBtns=tiers.length?'<span class="tiercap">Local model:</span>'+tiers.map(function(t){return'<button data-a="local.switch" data-t="'+esc(t)+'"'+(running&&running.tier===t?' class="on" disabled':"")+(running&&running.tier!==t?' data-confirm="stops '+esc(running.model)+' first, needs ~'+esc(running.memGb||"?")+' GB. Click again to confirm."':"")+'>'+esc(t)+'</button>'}).join("")+'<button data-a="local.off">off</button>':"";
+ /** Label row: one line "Label: <text or none> · edit", click → text field, Enter saves, Esc cancels.
+  * A model label line only when the runtime holds more than one model. */
  function lblRow(r){
   var ml=r.modelLabels||{};
-  var parts='<span class="lbl" data-rt="'+esc(r.name)+'">label: <b class="lblv">'+esc(r.label||"")+'</b><button class="lblbtn" title="edit label">edit</button><span class="msg"></span></span>';
-  var mrows=r.models.map(function(m){return'<span class="lbl" data-rt="'+esc(r.name)+'" data-model="'+esc(m.model)+'">· '+esc(shortModel(m.model))+': <b class="lblv">'+esc(ml[m.model]||"")+'</b><button class="lblbtn" title="edit model label">edit</button><span class="msg"></span></span>'}).join("");
+  var parts='<span class="lbl" data-rt="'+esc(r.name)+'">Label: <b class="lblv">'+esc(r.label||"none")+'</b><button class="lblbtn" title="edit label">edit</button><span class="msg"></span></span>';
+  var mrows=r.models.length>1?r.models.map(function(m){return'<span class="lbl" data-rt="'+esc(r.name)+'" data-model="'+esc(m.model)+'">Label: '+esc(shortModel(m.model))+' <b class="lblv">'+esc(ml[m.model]||"none")+'</b><button class="lblbtn" title="edit model label">edit</button><span class="msg"></span></span>'}).join(""):"";
   return'<div class="lbls">'+parts+mrows+'</div>';
  }
- function mem(m){return m==null?"–":m>=1024?(m/1024).toFixed(1)+" GB":m+" MB"}
+ function mem(m){return m==null?"–":m>=1024?gbm(m)+" GB":m+" MB"}
  function n1(v){return v==null?"–":Math.round(v*10)/10}
  function n0(v){return v==null?"–":Math.round(v)}
- function gb(v){return v==null?"–":(v/1024).toFixed(1)}
- /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer, GB binary */
+ /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer;
+ * every GB on the card goes through gb() — binary GB (1024^3), 1 decimal used / 0 total */
  function f1(v){return v==null?"–":Number(v).toFixed(1)}
- function g1(v){return v==null?"–":(v/1073741824).toFixed(1)}
- function g0(v){return v==null?"–":Math.round(v/1073741824)}
  function kfmt(n){return n==null?"–":n>=1000?(n>=10000?Math.round(n/1000)+"k":(n/1000).toFixed(1)+"k"):String(n)}
  function ctxfmt(n){return n&&n%1024===0?Math.round(n/1024)+"K":kfmt(n)}
  /** Strata's Speed tile: decode = the running request, else the last one; prefill = this request, else the last. */
@@ -275,8 +283,8 @@ function modelsHtml(inv){
  /** Strata's VRAM measure (the engine's hardware reading) beside the process RSS. */
  function memoryTile(eng,lv,loaded,h){
   var ram=lv&&lv.rssMb!=null?lv.rssMb:(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null);
-  var gpu=eng&&eng.gpuMemUsed!=null,sub="RAM"+(ram!=null?" "+gb(ram)+" GB":" · not reported")+(gpu?" · GPU "+g1(eng.gpuMemUsed)+(eng.gpuMemTotal!=null?" / "+g0(eng.gpuMemTotal)+" GB":""):" · GPU not reported");
-  return metricTile({title:"Memory",value:ram!=null?gb(ram):"–",unit:ram!=null?"GB":"",sub:sub+(loaded[0]&&loaded[0].mappedMb?" · "+gb(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
+  var gpu=eng&&eng.gpuMemUsed!=null,sub="RAM"+(ram!=null?" "+gbm(ram)+" GB":" · not reported")+(gpu?" · GPU "+gb(eng.gpuMemUsed)+(eng.gpuMemTotal!=null?" / "+gb(eng.gpuMemTotal,0)+" GB":""):" · GPU not reported");
+  return metricTile({title:"Memory",value:ram!=null?gbm(ram):"–",unit:ram!=null?"GB":"",sub:sub+(loaded[0]&&loaded[0].mappedMb?" · "+gbm(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
    series:[{data:h.memoryMb||[]}]})
  }
  /** Strata's context fill: the running request's tokens, else the last one's, over the engine's max context. */
@@ -310,7 +318,7 @@ function modelsHtml(inv){
   var tiles='<div class="rt-tiles">'+
    speedTile(eng,h)+
    memoryTile(eng,lv,loaded,h)+
-   metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
+   metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · slots "+lv.conversationSlots:"")+" · spares "+(lv&&lv.sparesReady?lv.sparesReady:0),
     series:[{data:h.queued||[]}]})+
    metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",
     sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
@@ -372,7 +380,11 @@ function watchJob(id){
 var sys=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
 var PKEYS=[["totalW","power W","#d98a1c",0],["gpu","GPU load","#3b6fe0",1],["cpu","CPU load","#2e9e5b",1]];
+/* one helper for every GB on the page: binary GB (1024^3), the same rounding as
+ * Strata's monitor (serve/web/app.js line 13): 1 decimal for a used value, 0 for a total */
 function gb(b,d){return b==null?"n/a":(b/1073741824).toFixed(d==null?1:d)}
+/** GB from MB values (the inventory's memoryMb / mappedMb / rssMb): the same binary GB, 1 decimal. */
+function gbm(m){return m==null?"–":(m/1024).toFixed(1)}
 /** Last good readings per metric: a stale source keeps its number on the card instead of n/a. */
 var LAST={};
 /** A reading the payload no longer carries: the last value stays, dimmed, with a ~age suffix. tip is pre-escaped. */
