@@ -424,3 +424,20 @@ describe("cockpit collapsible tiles", () => {
     expect(COCKPIT_HTML).not.toMatch(/setInterval\([^)]*applyCollapse/);
   });
 });
+
+describe("cockpit metric tile", () => {
+  it("page carries metricTile and its CSS; it renders title, value, sub, secondary and svg paths", () => {
+    expect(COCKPIT_HTML).toContain("function metricTile(");
+    expect(COCKPIT_HTML).toMatch(/\.mt-spark\{[^}]*width:100%/);
+    const src = [COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0], COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]].join("\n");
+    const tile = new Function("esc", `${src}\nreturn metricTile;`)((s: unknown) => String(s ?? "")) as (o: unknown) => string;
+    const html = tile({
+      title: "Speed", icon: "S", value: "73.4", unit: "t/s", sub: "Decode now",
+      secondary: { value: "715", unit: "t/s", sub: "Prefill this request" },
+      series: [{ data: [1, 5, null, 3, 8] }, { data: [2, 2, 4, null, 6], tone: "warn" }],
+    });
+    for (const w of ["Speed", "73.4", "Decode now", "715", "Prefill this request", "viewBox=\"0 0 100 32\""]) expect(html).toContain(w);
+    expect(html.match(/<path class="line[^>]* d="M/g)!.length).toBe(2);
+    expect(html).toMatch(/d="M[^"]*M/);
+  });
+});

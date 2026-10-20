@@ -60,6 +60,12 @@ svg text{fill:var(--dim);font-size:10px}
 .tip:hover::after,.tip:focus::after{display:block}
 .downs{width:100%;color:var(--dim)}.downs summary{cursor:pointer}.downs .chip{margin:2px 2px 0 0}.chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.chip{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:12px;white-space:nowrap}.chip b{font-weight:600}.grip{cursor:grab;color:var(--dim)}tr.qrow{cursor:grab}
 #sessions td:first-child span[title]{display:inline-block;max-width:480px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+.mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
+.mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
+.mt-values{display:flex;justify-content:space-between;gap:10px}.mt-values>div{display:flex;flex-direction:column;gap:2px;min-width:0}.mt-sec{text-align:right}
+.mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
+.mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums}
+.mt-spark{display:block;width:100%;max-width:100%;height:32px;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
@@ -97,6 +103,29 @@ function tot(t){return t.input+t.output+t.cacheWrite+t.cacheRead}
 function dur(ms){if(ms<=0)return"now";var s=Math.floor(ms/1000),d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+"d "+h+"h":h?h+"h "+String(m).padStart(2,"0")+"m":m+"m "+String(s%60).padStart(2,"0")+"s"}
 function ago(iso){var s=(Date.now()-Date.parse(iso))/1000;return s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":s<172800?Math.round(s/3600)+"h":Math.round(s/86400)+"d"}
 function sev(p){return p>=90?"var(--bad)":p>=70?"var(--warn)":"var(--ok)"}
+/* metricTile: ported from Strata's "Speed" metric tile (MIT, Copyright (c) 2026 Niko1221 and the Strata contributors) */
+function metricSpark(series){
+ var max=0,n=0,i,s,d;
+ series.forEach(function(x){(x.data||[]).forEach(function(v){if(v!=null&&isFinite(v)&&v>max)max=v});n=Math.max(n,(x.data||[]).length)});
+ if(!max)max=1;
+ return series.map(function(x,k){
+  d=x.data||[];var line="",area="",seg=[];
+  function flush(){if(seg.length){line+="M"+seg.join("L");if(seg.length>1&&k===0)area+="M"+seg[0].split(",")[0]+",32L"+seg.join("L")+"L"+seg[seg.length-1].split(",")[0]+",32Z"}seg=[]}
+  for(i=0;i<d.length;i++){
+   if(d[i]==null||!isFinite(d[i])){flush();continue}
+   seg.push((n>1?i/(n-1)*100:50).toFixed(1)+","+(30-d[i]/max*28).toFixed(1));
+  }
+  flush();
+  return(area?'<path class="area" fill="currentColor" opacity=".12" d="'+area+'"/>':"")+(line?'<path class="line mt-'+esc(x.tone||(k?"alt":"acc"))+'" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" d="'+line+'"/>':"")
+ }).join("");
+}
+function metricTile(o){
+ var sec=o.secondary;
+ function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value">'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
+ return'<div class="mt"><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
+  '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
+  '<svg class="mt-spark" viewBox="0 0 100 32" preserveAspectRatio="none" width="100%" height="32">'+metricSpark(o.series||[])+'</svg></div>'
+}
 /** Collapsible tiles: every card/panel can fold; the state is saved per tile id and restored on load. */
 var COLLAPSE_KEY="pai.cockpit.collapsed";
 function collapsedSet(){var s={};try{var r=localStorage.getItem(COLLAPSE_KEY);if(r)JSON.parse(r).forEach(function(k){s[k]=1})}catch(e){}return s}
