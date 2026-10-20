@@ -245,4 +245,45 @@ describe("auditTick", () => {
     expect(split).not.toHaveBeenCalled();
     expect(sent.length).toBe(0);
   });
+  it("status turned done between the pane check and the report: no violation", async () => {
+    const split = reopen(true);
+    let alive = true;
+    const tick = () =>
+      auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [], running: () => alive, reopen: split });
+    await tick(); // confirms
+    alive = false; // the worker ended after the pane vanished
+    expect((await tick())[0].mark).toBe("ok");
+    expect(sent.length).toBe(0);
+    expect(split).not.toHaveBeenCalled();
+  });
+  it("pane closed 10 s ago, process exiting: no violation", async () => {
+    const now = new Date(1_700_000_000_000);
+    const split = reopen(true);
+    const tick = () =>
+      auditTick(dir, msg, {
+        tabs: async () => tabs({ [H]: "1:2" }),
+        procs: () => [{ id: "w-1", kind: "worker", startedMs: now.getTime() - 600_000, endedMs: now.getTime() - 10_000 }],
+        registry: () => [],
+        now: () => now,
+        running: () => true,
+        reopen: split,
+      });
+    await tick();
+    expect((await tick())[0].mark).toBe("ok");
+    expect(sent.length).toBe(0);
+    expect(split).not.toHaveBeenCalled();
+  });
+  it("a really running worker without a pane is still reported", async () => {
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker", host: H }], registry: () => [], running: () => true });
+    await tick();
+    expect((await tick())[0].mark).toBe("NO PANE");
+    expect(sent.filter((s) => s.startsWith("S:")).length).toBe(1);
+  });
+  it("a really running worker whose pane is gone is still reopened", async () => {
+    const split = reopen(true);
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], running: () => true, reopen: split });
+    await tick();
+    await tick();
+    expect(split).toHaveBeenCalledTimes(1);
+  });
 });
