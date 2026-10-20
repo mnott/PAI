@@ -145,6 +145,69 @@ export interface WorktreeInfo {
   base: string;
   /** `base` is a snapshot commit of uncommitted checkout state, not HEAD itself. */
   snapshot: boolean;
+  /** Set when a dirty checkout was NOT snapshotted, and why (a running in-place worker is editing it). */
+  snapshotSkipped?: string;
+}
+
+/** Live workers running in place (no worktree of their own) in the same checkout as `cwd`. */
+function runningInPlaceWorkers(logDir: string, id: string, cwd: string): string[] {
+  let root: string;
+  try {
+    root = realpathSync(git(cwd, ["rev-parse", "--show-toplevel"]));
+  } catch {
+    return [];
+  }
+  const same = (c: string): boolean => {
+    try {
+      return realpathSync(git(c, ["rev-parse", "--show-toplevel"])) === root;
+    } catch {
+      return false;
+    }
+  };
+  return loadStatuses(logDir)
+    .filter((s) => s.id !== id && isLive(s) && !s.worktreeDir && !s.resumedBy && existsSync(s.cwd) && same(s.cwd))
+    .map((s) => s.id);
+}
+
+/** Does branch `name` exist in `cwd`'s repository? */
+function branchExists(cwd: string, name: string): boolean {
+  try {
+    git(cwd, ["rev-parse", "--verify", "-q", `refs/heads/${name}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Is branch `name` checked out in any worktree of the repository? */
+function branchCheckedOut(cwd: string, name: string): boolean {
+  return git(cwd, ["worktree", "list", "--porcelain"]).split("\n").includes(`branch refs/heads/${name}`);
+}
+
+/**
+ * The branch to create the worktree on. A leftover branch of the same worker id
+ * is reused (reset to `base` by `worktree add -B`) when it holds no commit
+ * beyond HEAD and is checked out nowhere; otherwise the first free `<name>-N`.
+ */
+function pickBranch(cwd: string, id: string, head: string): string {
+  const first = worktreeBranch(id);
+  if (!branchExists(cwd, first)) return first;
+  if (!branchCheckedOut(cwd, first) && commitsSince(cwd, head, first) === 0) return first;
+  for (let n = 2; ; n++) {
+    const name = `${first}-${n}`;
+    if (!branchExists(cwd, name)) return name;
+  }
+}
+
+/**
+ * Worker safety is a hard gate: when no worktree could be made, a run whose
+ * tools can write must not start in place. Logs WORKER-NO-WORKTREE and returns
+ * true (start must fail); read-only runs may go on in place (false).
+ */
+export function worktreeRefusesStart(logDir: string, id: string, why: string, allowedTools: string[]): boolean {
+  if (!toolsCanWrite(allowedTools)) return false;
+  appendLedger(ledgerPath(logDir), "WORKER-NO-WORKTREE", { id, reason: why });
+  return true;
 }
 
 /** Paths PAI itself rewrites (Notes/, TODO*.md at the root or in Notes/): never part of a snapshot. */
@@ -206,21 +269,27 @@ function snapshotUncommitted(cwd: string, id: string, head: string, bookkeeping:
  * checkout has uncommitted changes, from a snapshot commit of that dirty
  * state (see `snapshotUncommitted`), so a worktree worker sees the same
  * files the operator sees, not just what was last committed. Throws when git
- * refuses (no commits yet, branch exists, …) — the caller decides whether to
- * degrade to an in-place run.
+ * refuses (no commits yet, …) — see `worktreeRefusesStart`.
  */
 export function addWorktree(logDir: string, id: string, cwd: string): WorktreeInfo {
   const dir = worktreePath(logDir, id);
-  const branch = worktreeBranch(id);
   const head = git(cwd, ["rev-parse", "HEAD"]);
+  const branch = pickBranch(cwd, id, head);
   ensureScratchExcluded(cwd);
   const all = dirtyPaths(cwd);
   const bookkeeping = all.filter(isPaiBookkeepingPath);
-  const dirty = all.length > bookkeeping.length;
+  let dirty = all.length > bookkeeping.length;
+  // a running in-place worker owns those edits: snapshotting would carry its half-done files elsewhere
+  const editing = dirty ? runningInPlaceWorkers(logDir, id, cwd) : [];
+  const snapshotSkipped = editing.length
+    ? `checkout is dirty because in-place worker(s) ${editing.join(", ")} are running in it; no snapshot, branching from HEAD`
+    : undefined;
+  if (snapshotSkipped) dirty = false;
   const base = dirty ? snapshotUncommitted(cwd, id, head, bookkeeping) : head;
-  git(cwd, ["worktree", "add", dir, "-b", branch, base]);
+  // -B: a reusable leftover branch is reset to base; a fresh name is simply created
+  git(cwd, ["worktree", "add", "-B", branch, dir, base]);
   provisionDeps(logDir, id, cwd, dir);
-  return { dir, branch, base, snapshot: dirty };
+  return { dir, branch, base, snapshot: dirty, ...(snapshotSkipped ? { snapshotSkipped } : {}) };
 }
 
 /**
@@ -271,9 +340,9 @@ export function provisionDeps(logDir: string, id: string, cwd: string, wtDir: st
 }
 
 /** Commits the branch collected on top of its base. */
-export function commitsSince(dir: string, base: string): number {
+export function commitsSince(dir: string, base: string, tip = "HEAD"): number {
   try {
-    return parseInt(git(dir, ["rev-list", "--count", `${base}..HEAD`]), 10) || 0;
+    return parseInt(git(dir, ["rev-list", "--count", `${base}..${tip}`]), 10) || 0;
   } catch {
     return 0;
   }

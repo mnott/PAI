@@ -143,6 +143,7 @@ import {
   inPlaceSystemPrompt,
   recordWorktree,
   worktreeSystemPrompt,
+  worktreeRefusesStart,
   worktreeWanted,
   type WorktreeInfo,
 } from "./worktree.js";
@@ -1942,7 +1943,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
 
   // One worktree per run whose tools can write (Edit/Write/Bash or no
   // restriction), in a git cwd; --worktree/--no-worktree override. A git refusal
-  // degrades to an in-place run — the worker itself must still run.
+  // fails the start for a writing run (hard gate); read-only runs go in place.
   // Skipped for --print-cmd: it is a dry-run and must not touch git.
   let worktree: WorktreeInfo | null = adopted;
   if (
@@ -1953,9 +1954,14 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   ) {
     try {
       worktree = addWorktree(logDir, wid, cwd);
+      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
     } catch (e) {
       const why = (e as Error).message;
-      process.stderr.write(`pai worker: no worktree (${why}) — running in place\n`);
+      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
+        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
+        return 1;
+      }
+      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
       appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
     }
   }
@@ -2744,9 +2750,14 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
   if (worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })) {
     try {
       worktree = addWorktree(logDir, wid, cwd);
+      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
     } catch (e) {
       const why = (e as Error).message;
-      process.stderr.write(`pai worker: no worktree (${why}) — running in place\n`);
+      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
+        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
+        return 1;
+      }
+      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
       appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
     }
   }
