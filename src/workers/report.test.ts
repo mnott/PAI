@@ -197,8 +197,11 @@ describe("workerContractPrompt — class selection", () => {
       expect(p).not.toMatch(/\bu= /);
       expect(p).toContain("Example:");
       expect(p).toMatch(
-        /\nR\ni=count-audit-ts\nr=\+\nG=\+\nc=src\/audit summary of files counted\nt=Count\+\np=wc -l src\/audit\/\*\.ts\nz=19 files, 2523 lines/
+        /\nR\ni=count-audit-ts\nr=\+\nG=\+\nc=none\nt=Count\+\np=wc -l src\/audit\/\*\.ts\nz=19 files, 2523 lines/
       );
+      // the c= field text itself: read-only workers must not list files they only read
+      expect(p).toMatch(/files you modified or created, never files you\s+only read/);
+      expect(p).toContain("c=none when none");
     }
   });
 
@@ -211,7 +214,9 @@ describe("workerContractPrompt — class selection", () => {
     const p = workerContractPrompt("spotcheck", "ag2");
     const example = p.slice(p.indexOf("\nR\n") + 1);
     const v = validateAg2(example);
-    if (v.validator === "aibroker") expect(v).toEqual({ ok: true, errors: [], validator: "aibroker" });
+    // the external validator's c= shape rule predates the contract's c=none
+    // spelling (it rejects bare `none`); only its non-c errors are ours to keep clean
+    if (v.validator === "aibroker") expect(v.errors.filter((e) => !/^c: /.test(e))).toEqual([]);
   });
 
   it("format json ends with the JSON contract instead", () => {
@@ -219,6 +224,7 @@ describe("workerContractPrompt — class selection", () => {
       const p = workerContractPrompt(cls, "json");
       expect(p).toContain('"changed"');
       expect(p).toContain('"checks"');
+      expect(p).toContain("files you modified or created (path + one-line summary), never files you only read; [] when nothing changed");
       expect(p).not.toMatch(/^AG2\./m);
     }
   });
@@ -376,6 +382,16 @@ describe("verifyReportChanges", () => {
       const r = verifyReportChanges([{ path: "still.ts", summary: "removed the helper" }], dir, Date.now());
       expect(r.ok).toBe(false);
       expect(r.failures).toEqual([{ path: "still.ts", reason: "not-deleted" }]);
+    });
+  });
+
+  it("accepts a no-changes report (c=none / changed []) without flagging it", () => {
+    withTmpDir((dir) => {
+      // AG2 c=none parses to changed [] (see ag2ToWorkerReport); JSON reports carry [] directly
+      // c=none means no changes: changed is absent, so the runner's verify step never runs
+      expect(parseWorkerReport(["R", "i=read-only-audit", "r=+", "G=+", "c=none", "t=Count+", "p=wc -l src/audit/*.ts", "z=19 files"].join("\n"))?.changed).toBeUndefined();
+      expect(verifyReportChanges([], dir, Date.now())).toEqual({ ok: true, failures: [] });
+      expect(verifyReportChanges(undefined, dir, Date.now())).toEqual({ ok: true, failures: [] });
     });
   });
 
