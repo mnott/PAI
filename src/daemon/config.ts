@@ -140,6 +140,12 @@ export interface RouterConfig {
    * startup); /v1 keeps answering only loopback and tailnet remotes.
    */
   bind: string;
+  /**
+   * Request scheduling for local engines (src/router/scheduler.ts): one request in
+   * flight per engine, fair across the workers' owning sessions. Defaults:
+   * enabled true, wTokIn 1, wTokOut 2, agingSec 120, sessionWeights {}.
+   */
+  scheduling?: { enabled?: boolean; wTokIn?: number; wTokOut?: number; agingSec?: number; sessionWeights?: Record<string, number> };
 }
 
 export interface PaiDaemonConfig {

@@ -25,6 +25,7 @@ import { loadPaneRunStatuses, paneRunRows } from "../workers/pane-run.js";
 import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
+import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import type { SystemMonitor } from "./system.js";
@@ -524,7 +525,7 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: localIdleLine(readLocalIdle(logDir), now) };
+  return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), schedLine(readSchedFile(logDir, now))].filter(Boolean).join(" · ") };
 }
 
 /**
@@ -598,6 +599,8 @@ export function handleCockpit(
       (inv) => send(200, "application/json", JSON.stringify(inv)),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
+  } else if (url.pathname === "/cockpit/scheduler") {
+    send(200, "application/json", JSON.stringify(sharedScheduler().snapshot()));
   } else if (url.pathname === "/cockpit/pool") {
     readPoolPanel().then((p) => send(200, "application/json", JSON.stringify(p)));
   } else if (url.pathname === "/cockpit/queue") {

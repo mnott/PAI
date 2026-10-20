@@ -30,9 +30,13 @@ import { workersLogDir } from "../workers/paths.js";
 import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
+import { newPrefill, schedEnabled, sharedScheduler, PING_MS } from "./scheduler.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
 export const ROUTER_PORT = 8790;
+
+/** Queued-stream ping interval; PAI_ROUTER_PING_MS shortens it for tests. */
+const pingMs = (): number => Number(process.env.PAI_ROUTER_PING_MS) || PING_MS;
 export const CLAUDE_UPSTREAM = "http://127.0.0.1:8787/w/claude";
 
 export type Target =
@@ -547,6 +551,7 @@ export function routerHandler(
       const mayCount = target.kind === "provider" && !isCount && isLocal(up.url);
       const counted: Promise<number | null> = mayCount ? promptTokenCount(safeBody(up.body) ?? {}, target.model) : Promise.resolve(null);
       const mod = up.url.protocol === "https:" ? https : http;
+      const forward = (release: (u?: Usage) => void): void => {
       const ureq = mod.request(
         up.url,
         { method: "POST", headers: up.headers },
@@ -564,9 +569,21 @@ export function routerHandler(
           delete rh["transfer-encoding"];
           delete rh.connection;
           delete rh["keep-alive"];
-          res.writeHead(ures.statusCode ?? 502, rh);
-          const sniff = onUsage && !isCount ? new UsageSniffer(ures.headers["content-type"]) : undefined;
+          const sniff = (onUsage || scheduled) && !isCount ? new UsageSniffer(ures.headers["content-type"]) : undefined;
           if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
+          if (res.headersSent && (ures.statusCode ?? 502) !== 200) {
+            // queued stream: 200 + pings already went out, so an upstream failure travels as an SSE error event
+            const bits: Buffer[] = [];
+            ures.on("data", (c: Buffer) => bits.push(c));
+            ures.on("end", () => {
+              const text = Buffer.concat(bits).toString("utf8").trim();
+              res.end(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: text.slice(0, 500) || `upstream ${ures.statusCode}` } })}\n\n`);
+              log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
+              release(sniff ? sniff.finish() : undefined);
+            });
+            return;
+          }
+          if (!res.headersSent) res.writeHead(ures.statusCode ?? 502, rh);
           const declared = isCount || ures.statusCode !== 200 ? [] : declaredToolNames(up.body);
           const plainSse = /text\/event-stream/i.test(String(ures.headers["content-type"] ?? "")) && !ures.headers["content-encoding"];
           const fixer =
@@ -592,15 +609,18 @@ export function routerHandler(
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
             const ended = Date.now();
             const first = sniff?.firstContentAt;
+            const usage = sniff ? sniff.finish() : emptyUsage();
+            release(sniff ? usage : undefined);
             record(
               ures.statusCode ?? 502,
-              sniff ? sniff.finish() : emptyUsage(),
+              usage,
               first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}
             );
           });
         }
       );
       ureq.on("error", (e: NodeJS.ErrnoException) => {
+        release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
         if (target.kind === "provider" && isLocal(up.url) && e.code === "ECONNREFUSED") {
           return fail(
@@ -612,8 +632,61 @@ export function routerHandler(
         }
         fail(502, `upstream error: ${e.code ?? e.message}`, target.model, prov);
       });
-      res.on("close", () => ureq.destroy());
+      res.on("close", () => {
+        release();
+        ureq.destroy();
+      });
       ureq.end(up.body);
+      };
+      // Local engine: one request in flight, the rest wait here (scheduler.ts). Any scheduler fault forwards directly.
+      let scheduled = false;
+      if (target.kind === "provider" && !isCount && isLocal(up.url) && schedEnabled()) {
+        try {
+          const sched = sharedScheduler();
+          const sess = headerValue(req.headers["x-pai-session"], 80) || "anon";
+          const worker = headerValue(req.headers["x-pai-worker"], 80) || `conn:${sessionId?.slice(0, 8) ?? req.socket.remotePort ?? "?"}`;
+          const streaming = safeBody(up.body)?.stream === true;
+          let gone = false;
+          let pings: NodeJS.Timeout | undefined;
+          const stopPings = () => {
+            if (pings) clearInterval(pings);
+            pings = undefined;
+          };
+          if (streaming) {
+            // keep Claude Code's stream-idle timers quiet while queued: 200 + SSE ping events
+            pings = setInterval(() => {
+              if (res.writableEnded || gone) return stopPings();
+              if (!res.headersSent) res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+              res.write(`event: ping\ndata: {"type":"ping"}\n\n`);
+            }, pingMs());
+            pings.unref();
+          }
+          scheduled = true;
+          sched
+            .acquire(prov, sess, worker, {
+              onAbort: (cb) =>
+                res.on("close", () => {
+                  gone = true;
+                  cb();
+                }),
+            })
+            .then(
+              (ticket) => {
+                stopPings();
+                forward((u) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined));
+              },
+              () => {
+                stopPings();
+                if (!gone) forward(() => {});
+              }
+            );
+          return;
+        } catch (e) {
+          log(`${new Date().toISOString()} scheduler error, forwarding directly: ${(e as Error).message}`);
+          scheduled = false;
+        }
+      }
+      forward(() => {});
     });
   };
 }

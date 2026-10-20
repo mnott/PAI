@@ -67,7 +67,7 @@ import {
   type WorkerProvider,
   type WorkersConfig,
 } from "./config.js";
-import { buildRunEnv, claudeCommand, isLoopbackProvider, routeLoopbackViaRouter } from "./run-env.js";
+import { addSchedulingHeaders, buildRunEnv, claudeCommand, isLoopbackProvider, routeLoopbackViaRouter } from "./run-env.js";
 import {
   httpModelsCheck,
   LOCAL_MECHANISM_LINE,
@@ -107,7 +107,7 @@ import {
   UNLABELED,
 } from "./status.js";
 import { certainContextWindow } from "../utils/model-window.js";
-import { resolveSession, resolveSpawnerSession } from "./scope.js";
+import { itermUuid, resolveSession, resolveSpawnerSession } from "./scope.js";
 import { applySessionProviderEnv } from "./session-provider.js";
 import { returnControlsIfHeld } from "./controls.js";
 import { fallThroughReason, routeRun, type RouteInfo } from "./policy.js";
@@ -1811,6 +1811,8 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
+  // the router's fair queue shares a local engine between owning sessions
+  addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid });
   const noteToken = newNoteToken();
   env[NOTE_TOKEN_ENV] = noteToken;
   applySessionProviderEnv(env, target);
