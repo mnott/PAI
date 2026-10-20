@@ -24,6 +24,27 @@ describe("session mapper", () => {
   });
 });
 
+describe("worker verdict: flagged report is not a failed run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sess-verdict-"));
+  const base = { state: "done", rc: 0, started: "2026-10-20 10:00:00" };
+  writeFileSync(join(dir, "flagged.status"), JSON.stringify({ ...base, id: "w1", claudeSession: "c-1", reportValid: false, commits: 1 }));
+  writeFileSync(join(dir, "rc1.status"), JSON.stringify({ ...base, id: "w2", rc: 1, claudeSession: "c-2" }));
+  writeFileSync(join(dir, "failed.status"), JSON.stringify({ id: "w3", state: "failed", rc: 0, claudeSession: "c-3" }));
+  writeFileSync(join(dir, "valid.status"), JSON.stringify({ ...base, id: "w4", claudeSession: "c-4", reportValid: true }));
+  const map = loadSessionMap({ workerDirs: [dir], agentSessionsFile: join(dir, "none.json") });
+
+  it("done + rc 0 + reportValid false is a warn verdict, not failed", () => {
+    expect(map.get("c-1")?.verdict).toBe("done · report flagged · 1 commit");
+  });
+  it("rc 1 and state failed stay failed", () => {
+    expect(map.get("c-2")?.verdict).toBe("failed");
+    expect(map.get("c-3")?.verdict).toBe("failed");
+  });
+  it("done + valid report is ok", () => {
+    expect(map.get("c-4")?.verdict).toBe("ok");
+  });
+});
+
 describe("session mapper: stagger warm-up wait", () => {
   it("shows a gated run as waiting (warm-up), a plain running one as running", () => {
     const dir = mkdtempSync(join(tmpdir(), "sess-"));
