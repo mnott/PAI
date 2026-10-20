@@ -214,9 +214,7 @@ describe("workerContractPrompt — class selection", () => {
     const p = workerContractPrompt("spotcheck", "ag2");
     const example = p.slice(p.indexOf("\nR\n") + 1);
     const v = validateAg2(example);
-    // the external validator's c= shape rule predates the contract's c=none
-    // spelling (it rejects bare `none`); only its non-c errors are ours to keep clean
-    if (v.validator === "aibroker") expect(v.errors.filter((e) => !/^c: /.test(e))).toEqual([]);
+    if (v.validator === "aibroker") expect(v.errors).toEqual([]);
   });
 
   it("format json ends with the JSON contract instead", () => {
