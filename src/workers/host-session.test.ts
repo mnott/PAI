@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ancestorTty, lookupSessionMap, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
+import { ancestorTty, daemonPeerPids, isDaemonHelper, lookupSessionMap, resolveHostSession, underBackgroundDaemon, type HostDeps, type ItermSession } from "./pane.js";
 
 const LIVE = "88D76B26-0000-0000-0000-000000000001";
 const DEAD = "78C67D79-0000-0000-0000-000000000002";
@@ -121,21 +121,23 @@ describe("resolveHostSession: bg-pty-host without a jobPid match", () => {
     expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "attach client 4242" });
   });
 
-  it("resolves via a plain claude holding the daemon socket (tty -> iTerm session)", async () => {
+  it("resolves via the one plain claude connected to the daemon (tty -> iTerm session)", async () => {
     const d = base({ daemonClients: () => [{ pid: 85322, tty: "ttys009" }] });
     expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "daemon client pid 85322 tty /dev/ttys009" });
   });
 
-  it("two daemon clients: the first (newest) with a live tty wins", async () => {
-    const d = base({ daemonClients: () => [{ pid: 2, tty: "ttys009" }, { pid: 1, tty: "ttys050" }] });
-    expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "daemon client pid 2 tty /dev/ttys009" });
+  it("two daemon clients: ambiguous, nothing guessed", async () => {
+    const d = base({ daemonClients: () => [{ pid: 2, tty: "ttys009" }, { pid: 1, tty: "ttys050" }], registryHost: () => "" });
+    const h = await resolveHostSession({}, d, 75840);
+    expect(h.via).toBe("none");
+    expect(h.reason).toContain("daemon client: 2 clients, ambiguous");
   });
 
   it("no daemon client -> falls through with a reason", async () => {
     const d = base({ daemonClients: () => [], registryHost: () => "" });
     const h = await resolveHostSession({}, d, 75840);
     expect(h.via).toBe("none");
-    expect(h.reason).toContain(`daemon client: no process holds pty/${SHORT}.sock`);
+    expect(h.reason).toContain("daemon client: none connected to the daemon");
   });
 
   it("resolves via the AIBroker registry", async () => {
@@ -196,5 +198,20 @@ describe("lookupSessionMap", () => {
     expect(lookupSessionMap(p, SHORT, now)).toBe(LIVE);
     expect(lookupSessionMap(p, "ffffffff-0000", now)).toBe("");
     expect(lookupSessionMap(join(dir, "none.json"), FULL, now)).toBe("");
+  });
+});
+
+describe("daemon control.sock peers", () => {
+  const daemon = "p10\nf17\nd0xaaa1\nn->0xbbb1\nf18\nd0xaaa2\nn->0xbbb2\nf19\nd0xaaa3\nn->0xbbb3\nf20\nd0xaaa4\nn/x/control.sock\n";
+  const all = "p10\nf17\nd0xaaa1\nn->0xbbb1\np85322\nf9\nd0xbbb1\nn->0xaaa1\np777\nf3\nd0xbbb2\nn->0xaaa2\np500\nf3\nd0xccc\nn->0xddd\n";
+
+  it("maps daemon device addresses to the processes naming them as peers", () => {
+    expect(daemonPeerPids(daemon, all).sort()).toEqual([777, 85322]);
+  });
+
+  it("helpers are excluded", () => {
+    expect(isDaemonHelper("claude.exe --bg-pty-host /d/pty/224db3e0.sock")).toBe(true);
+    expect(isDaemonHelper("claude.exe --bg-spare")).toBe(true);
+    expect(isDaemonHelper("claude")).toBe(false);
   });
 });

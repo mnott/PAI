@@ -832,7 +832,7 @@ export interface HostDeps {
   listSessions(): Promise<ItermSession[]>;
   /** Pids of `claude attach <id>` client processes for a Claude session (short or full id). */
   attachClients?(cid: string): number[];
-  /** Processes other than the session's own `--bg-pty-host` holding its daemon socket `pty/<sid8>.sock` open (a plain `claude` showing the session), newest started first; tty as ps prints it. */
+  /** Clients of the Claude daemon that runs this session (processes connected to its control.sock, helpers excluded), newest started first; tty as ps prints it. Several means the daemon cannot say which shows the session. */
   daemonClients?(cid: string): { pid: number; tty: string }[];
   /** ITERM_SESSION_ID in a process's environment, "" when unreadable or unset. */
   itermIdOf?(pid: number): string;
@@ -856,6 +856,27 @@ export function lookupSessionMap(mapPath: string, cid: string, now: number = Dat
   } catch {
     return "";
   }
+}
+
+/** The daemon's own pty hosts and spare workers: connected to it, but not clients showing a session. */
+export function isDaemonHelper(cmd: string): boolean {
+  return /--bg-pty-host\b|--bg-spare\b/.test(cmd);
+}
+
+/**
+ * Pids holding a unix socket connected to the daemon. `daemonLsof` and `allLsof` are `lsof -F pfdn`
+ * outputs for the daemon's sockets and for every unix socket: a daemon socket's DEVICE address A is
+ * the peer a client names as `->A`.
+ */
+export function daemonPeerPids(daemonLsof: string, allLsof: string): number[] {
+  const addrs = new Set([...daemonLsof.matchAll(/^d(0x[0-9a-f]+)$/gim)].map((m) => m[1].toLowerCase()));
+  const pids = new Set<number>();
+  let pid = 0;
+  for (const l of allLsof.split("\n")) {
+    if (l.startsWith("p")) pid = Number(l.slice(1));
+    else if (l.startsWith("n->") && addrs.has(l.slice(3).toLowerCase())) pids.add(pid);
+  }
+  return [...pids];
 }
 
 export const realHostDeps: HostDeps = {
@@ -909,27 +930,26 @@ export const realHostDeps: HostDeps = {
   },
   daemonClients(cid) {
     try {
+      const lsof = (args: string[]): string => {
+        try {
+          return execFileSync("lsof", args, { encoding: "utf8", timeout: 10_000, maxBuffer: 64 << 20 });
+        } catch (e) {
+          return (e as { stdout?: string }).stdout ?? ""; // lsof exits 1 when it lists nothing
+        }
+      };
       const short = cid.slice(0, 8);
-      const sockRe = new RegExp(`--bg-pty-host\\s+(\\S*/pty/${short}\\.sock)`, "i");
-      const sock = psTable("command=").split("\n").map((l) => sockRe.exec(l)?.[1]).find(Boolean);
-      if (!sock) return [];
-      let held = "";
-      try {
-        held = execFileSync("lsof", ["-nP", "-Fp", "--", sock], { encoding: "utf8", timeout: 10_000 });
-      } catch (e) {
-        held = (e as { stdout?: string }).stdout ?? ""; // lsof exits 1 when it lists nothing
-      }
-      const pids = [...held.matchAll(/^p(\d+)$/gm)].map((m) => Number(m[1]));
-      if (!pids.length) return [];
-      const cmds = new Map<number, string>();
-      for (const l of psTable("pid=,command=").split("\n")) {
-        const r = /^\s*(\d+)\s+(.*)$/.exec(l);
-        if (r) cmds.set(Number(r[1]), r[2]);
-      }
+      const hostRe = new RegExp(`--bg-pty-host\\s+\\S*/pty/${short}\\.sock`, "i");
+      const table = psTable("pid=,ppid=,command=").split("\n").flatMap((l) => {
+        const r = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l);
+        return r ? [{ pid: Number(r[1]), ppid: Number(r[2]), cmd: r[3] }] : [];
+      });
+      const daemon = table.find((r) => hostRe.test(r.cmd))?.ppid;
+      if (!daemon || daemon <= 1) return [];
+      const peers = daemonPeerPids(lsof(["-a", "-nP", "-p", String(daemon), "-U", "-Fpfdn"]), lsof(["-nP", "-U", "-Fpfdn"]));
+      const cmds = new Map(table.map((r) => [r.pid, r.cmd]));
       const rows: { pid: number; tty: string; started: number }[] = [];
-      for (const pid of pids) {
-        const cmd = cmds.get(pid) ?? "";
-        if (pid === process.pid || /--bg-pty-host\b/.test(cmd) || cmd.includes(`--session-id ${cid}`)) continue;
+      for (const pid of peers) {
+        if (pid === daemon || pid === process.pid || isDaemonHelper(cmds.get(pid) ?? "")) continue;
         const out = execFileSync("ps", ["-o", "tty=,lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).trim();
         const m = /^(\S+)\s+(.*)$/.exec(out);
         if (m) rows.push({ pid, tty: m[1], started: Date.parse(m[2]) || 0 });
@@ -1020,8 +1040,8 @@ function claudeIdOf(cmd: string): string | undefined {
  *  2. background (`claude attach <short>`): the Claude session id from env or an
  *     ancestor's command line, matched against each session's jobPid command;
  *     several matches are ambiguous and fail loudly
- *  2b. daemon client: a plain `claude` holding the session's pty/<sid8>.sock
- *     open (switched to the session in its UI); its tty names the iTerm session
+ *  2b. daemon client: the one plain `claude` connected to the session's daemon
+ *     (control.sock); its tty names the iTerm session. Several clients are ambiguous
  *  3. the tty of the nearest ancestor that has one
  *  4. ITERM_SESSION_ID, only when it names a live session — a reattached session
  *     keeps its old id in the process env for good
@@ -1076,12 +1096,15 @@ export async function resolveHostSession(
     }
     notes.push("attach client: no attach process with a live ITERM_SESSION_ID");
     const clients = deps.daemonClients?.(cid) ?? [];
-    for (const c of clients) {
+    if (clients.length === 1) {
+      const c = clients[0];
       const tty = c.tty && c.tty !== "??" && c.tty !== "?" ? (c.tty.startsWith("/dev/") ? c.tty : `/dev/${c.tty}`) : "";
       const live = tty && sessions.find((s) => s.tty === tty);
       if (live) return found(live, `daemon client pid ${c.pid} tty ${tty}`);
+      notes.push(`daemon client: pid ${c.pid} tty ${c.tty} matched no session`);
+    } else {
+      notes.push(clients.length ? `daemon client: ${clients.length} clients, ambiguous` : "daemon client: none connected to the daemon");
     }
-    notes.push(clients.length ? `daemon client: ${clients.map((c) => `pid ${c.pid} tty ${c.tty}`).join(", ")} matched no session` : `daemon client: no process holds pty/${short}.sock`);
     const reg = deps.registryHost?.(cid) ?? "";
     const regLive = reg && sessions.find((s) => s.id === reg);
     if (regLive) return found(regLive, "registry");
