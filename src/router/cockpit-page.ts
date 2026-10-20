@@ -117,7 +117,7 @@ svg text{fill:var(--dim);font-size:10px}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
 .mhead .act{flex:0 0 auto;margin-left:auto}
 .mhead .num{margin-left:8px}
-@container (max-width:480px){.mhead{flex-wrap:wrap;row-gap:3px}.mhead b{flex:1 1 calc(100% - 44px)}}
+@container (max-width:480px){.mhead{flex-wrap:wrap;row-gap:3px}.mhead b{flex:0 1 auto;max-width:calc(100% - 76px)}.mhead .lblbtn{margin-right:auto}.mhead .mid{flex-basis:100%;order:1}.mhead .badge,.mhead .act,.mhead .num{order:2}}
 .mhead .act button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font:inherit;font-size:11px;cursor:pointer}
 .mhead .act button:hover{border-color:var(--acc);color:var(--acc)}
 .mhead .act button[disabled]{opacity:.5;cursor:default}
@@ -142,6 +142,7 @@ svg text{fill:var(--dim);font-size:10px}
 .lbl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;color:var(--dim);font-size:11px}
 .lbl input{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;max-width:100%}
 .lbl .lblbtn,.mhead .lblbtn{background:none;border:0;padding:0 4px;color:var(--acc);cursor:pointer;font:inherit}
+.mhead .lblbtn{flex:0 0 auto;font-size:12px;line-height:1;align-self:center}
 .mhead .lblact{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;min-width:32px;min-height:28px;padding:0 6px;margin-left:4px;font:inherit;cursor:pointer}
 .mhead .lblmsg{font-size:11px;margin-left:6px}
 .mhead input.lblin{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;width:12em;max-width:100%}
@@ -482,8 +483,8 @@ function modelsHtml(inv){
   }
   var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
-   (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
+   (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
    '<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+

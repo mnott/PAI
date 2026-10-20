@@ -442,7 +442,7 @@ describe("cockpit Models cards", () => {
     // one card per consumer model: ollama hosts two (embeddings + chat) -> 4 cards
     expect((h.match(/<div class="mcard/g) ?? []).length).toBe(4);
     // purpose first: the title is the consumer's purpose, the model id is grey secondary text
-    expect(h).toContain('<b title="flash-next">Coding workers (gyro-m)</b><span class="mid" title="flash-next">flash-next</span>');
+    expect(h).toContain('<b title="flash-next">Coding workers (gyro-m)</b><button class="lblbtn"');
     // kind differs from the name: one separate kind chip, the name shows once
     expect(h).toContain('<span class="badge">strata</span><span class="badge">gyro-m :8035</span>');
     expect(h).toContain("gyro-m :8035");
@@ -536,21 +536,21 @@ describe("cockpit Models cards", () => {
     // labels from the payload's consumers (config only), one per model: two ollama cards
     expect((h.match(/class="mcard/g) ?? []).length).toBe(4);
     expect(h).toContain('<b title="huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16">PAI memory embeddings</b>');
-    expect(h).toContain('<b title="qwen3:8b">Paperfull chat</b><span class="mid" title="qwen3:8b">qwen3:8b</span>');
+    expect(h).toContain('<b title="qwen3:8b">Paperfull chat</b><button class="lblbtn"');
     // no label anywhere: the consumer name is the title, the model id stays grey secondary text
     const bare = modelsHtml({
       at: "x",
       runtimes: [{ name: "rt", kind: "rt", status: "idle", port: 9, users: [], models: [{ model: "m-1", kind: "chat", loaded: false, usedBy: ["paperfull-chat"] }] }],
       live: { at: 1, runtimes: [] },
     });
-    expect(bare).toContain('<b title="m-1">paperfull-chat</b><span class="mid" title="m-1">m-1</span>');
+    expect(bare).toContain('<b title="m-1">paperfull-chat</b><button class="lblbtn"');
     // no label and no consumer: the short model id is the title
     const solo = modelsHtml({
       at: "x",
       runtimes: [{ name: "rt", kind: "rt", status: "idle", port: 9, users: [], models: [{ model: "sub/m-2", kind: "chat", loaded: false, usedBy: [] }] }],
       live: { at: 1, runtimes: [] },
     });
-    expect(solo).toContain('<b title="sub/m-2">m-2</b><span class="mid" title="sub/m-2">m-2</span>');
+    expect(solo).toContain('<b title="sub/m-2">m-2</b><button class="lblbtn"');
   });
   it("one card per consumer model: two labelled models on one runtime are two cards, each with its own fold id", () => {
     const two = modelsHtml({
@@ -1435,6 +1435,12 @@ describe("cockpit Models: one local switch, editable aliases", () => {
     expect(h).toContain('<b title="flash-next">My Flash</b>');
     expect(h).toContain('<span class="mid" title="flash-next">flash-next</span>');
     expect(h).toContain('class="lblbtn" data-alias="My Flash"');
+  });
+
+  it("the pencil is a header child immediately after the title element", () => {
+    const h = modelsHtml({ ...base, running: null, runtimes: [{ ...strata, models: [{ ...strata.models[0], label: "My Flash" }] }] });
+    expect(h).toMatch(/<b title="flash-next">My Flash<\/b><button class="lblbtn"/);
+    expect(h.indexOf('class="lblbtn"')).toBeLessThan(h.indexOf('class="mid"'));
   });
 
   /** Runs renderModels against a fake DOM; returns the pencil button and the fake state. */
