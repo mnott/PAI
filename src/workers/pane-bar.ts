@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, chatTickerRow, parseChatLine } from "./chatui.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import type { WorkerStatus } from "./status.js";
+import { panePolicy } from "./pane-policy.js";
 
 /** What the wrapper is told to show at the bottom of the pane. */
 export type StatusLineSpec =
@@ -66,7 +67,7 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
   d.write(chatEnter(rows, d.columns() ?? 0, dim));
   prompt();
   tick();
-  const timer = setInterval(tick, d.tickMs ?? 1000);
+  const timer = setInterval(tick, d.tickMs ?? panePolicy().statusTickMs);
   timer.unref();
   if (rl && d.spec.kind === "worker") {
     const { id, logDir } = d.spec;

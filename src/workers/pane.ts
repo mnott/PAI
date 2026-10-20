@@ -52,6 +52,7 @@ import { itermUuid, scopeKey } from "./scope.js";
 import { psTable, psTableOrNull } from "./ps-table.js";
 import { escapePaneTitle, paneTitle } from "./pane-title.js";
 import { PANE_EXEC_ENV, PANE_EXEC_PID_ENV } from "./pane-exec.js";
+import { panePolicy } from "./pane-policy.js";
 
 export const PROFILE_NAME = "pai-worker";
 
@@ -103,9 +104,6 @@ const RESTORE_ACTIVE = `try {
         if (prevSess && prevTab.currentSession().id() !== prevSess.id()) prevSess.select();
     } catch (e) {}`;
 
-// Smallest height a follow pane may be split down to (the visible-pane gate
-// refuses anything under 6 rows).
-const MIN_ROWS = 6;
 
 // Equalise the follow panes' heights. iTerm exposes no pane position, so panes
 // are grouped by column count: panes stacked in one column share it, and a
@@ -142,13 +140,12 @@ export interface SplitChoice {
   rows: number;
 }
 
-const MIN_COLS = 40;
 
 /** Smaller half of a split: "h" stacks top/bottom, "v" puts the halves side by side (one cell for the divider). */
 function halves(p: TabPane, dir: "h" | "v"): { cols: number; rows: number } {
   return dir === "h" ? { cols: p.cols, rows: Math.floor((p.rows - 1) / 2) } : { cols: Math.floor((p.cols - 1) / 2), rows: p.rows };
 }
-const fits = (h: { cols: number; rows: number }) => h.cols >= MIN_COLS && h.rows >= MIN_ROWS;
+const fits = (h: { cols: number; rows: number }) => h.cols >= panePolicy().minCols && h.rows >= panePolicy().minRows;
 
 /**
  * Pick the pane to split and the direction from the tab's real sizes: the pane
@@ -173,7 +170,7 @@ export function pickSplit(panes: TabPane[], hostId: string): (SplitChoice & { sm
   for (const p of panes) {
     for (const d of ["h", "v"] as const) {
       const h = halves(p, d);
-      const score = Math.min(h.cols / MIN_COLS, h.rows / MIN_ROWS) - (p.id === hostId ? 0.001 : 0);
+      const score = Math.min(h.cols / panePolicy().minCols, h.rows / panePolicy().minRows) - (p.id === hostId ? 0.001 : 0);
       if (h.cols > 0 && h.rows > 0 && (!best || score > best.score)) best = { id: p.id, dir: d, ...h, small: true, score };
     }
   }
@@ -908,14 +905,14 @@ export interface HostDeps {
 }
 
 /** Entries older than this are dropped by the statusline writer and ignored here. */
-export const SESSION_MAP_MAX_AGE_MS = 7 * 24 * 3600_000;
+
 
 /** The iTerm uid recorded for a Claude session id (prefix match for short ids), newest entry wins, "" when none or stale. */
 export function lookupSessionMap(mapPath: string, cid: string, now: number = Date.now()): string {
   try {
     const m = JSON.parse(readFileSync(mapPath, "utf8")) as Record<string, { uid?: unknown; ts?: unknown }>;
     const hits = Object.entries(m)
-      .filter(([k, v]) => (k === cid || (cid.length >= 8 && k.startsWith(cid))) && typeof v?.uid === "string" && typeof v.ts === "number" && now - v.ts < SESSION_MAP_MAX_AGE_MS)
+      .filter(([k, v]) => (k === cid || (cid.length >= 8 && k.startsWith(cid))) && typeof v?.uid === "string" && typeof v.ts === "number" && now - v.ts < panePolicy().sessionMapMaxAgeMs)
       .sort((a, b) => (b[1].ts as number) - (a[1].ts as number));
     return (hits[0]?.[1].uid as string | undefined) ?? "";
   } catch {
@@ -1342,7 +1339,7 @@ export async function openPaneForWorker(
     : [];
   const choice = panes.length ? pickSplit(panes, uid) : null;
   if (choice?.small) {
-    process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${MIN_COLS}x${MIN_ROWS}; opening a small ${choice.cols}x${choice.rows} pane\n`);
+    process.stderr.write(`[pai worker] pane: no pane of the tab splits to ${panePolicy().minCols}x${panePolicy().minRows}; opening a small ${choice.cols}x${choice.rows} pane\n`);
   }
   const p = await osascript(WORKER_SPLIT_SCRIPT, [uid, cands, cmd, profile, choice?.id ?? "", choice?.dir ?? "v", workerPaneTitle(logDir, wid)]);
   const out = p.stdout.trim();
@@ -1573,8 +1570,6 @@ export function panePlacement(wid: string): PanePlacement | undefined {
   return placements.get(wid);
 }
 
-const MIN_PANE_ROWS = 6;
-const MIN_PANE_COLS = 40;
 
 /** True while a `worker follow <wid>` process runs on that tty. */
 function followRunsOn(tty: string, wid: string): boolean {
@@ -1603,8 +1598,8 @@ export async function verifyPane(
   wid: string,
   run: (script: string, args: string[]) => Promise<{ stdout: string; stderr: string }> = osascript,
   running: (tty: string, wid: string) => boolean = followRunsOn,
-  tries = 25,
-  pollMs = 300,
+  tries = panePolicy().verifyTries,
+  pollMs = panePolicy().verifyPollMs,
   placement: PanePlacement = "split"
 ): Promise<string> {
   let last = "";
@@ -1626,7 +1621,7 @@ export async function verifyPane(
     if (r.miniaturized === true) marks.push("MINIMISED");
     if (r.hidden === true) marks.push("HIDDEN");
     if (r.onScreen !== true) marks.push("OFF SCREEN");
-    if (rows < MIN_PANE_ROWS || cols < MIN_PANE_COLS) marks.push(`SMALL (< ${MIN_PANE_COLS}x${MIN_PANE_ROWS})`);
+    if (rows < panePolicy().minRows || cols < panePolicy().minCols) marks.push(`SMALL (< ${panePolicy().minCols}x${panePolicy().minRows})`);
     if (running(String(r.tty), wid)) return marks.length ? `${where} ${marks.join(" ")}` : where;
     last = where;
     await new Promise((res) => setTimeout(res, pollMs));

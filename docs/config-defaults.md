@@ -26,6 +26,26 @@ The notice-path policy values live in `defaults/config.yaml` under `notices`, re
 | `notices.trouble.denialThreshold` | `DENIAL_THRESHOLD` (src/workers/worker-trouble.ts) | `3` |
 | `notices.trouble.stallMinutes` | `STALL_MS` (src/workers/worker-trouble.ts) | `10 min` |
 
+## Moved: panes (2026-10-20)
+
+The pane values live in `defaults/config.yaml` under `panes`, read at call time through `src/workers/pane-policy.ts` (`panePolicy()` → `effectiveMainConfig(paiConfigFilePath())`, so a user config wins):
+
+| key | was | value |
+|---|---|---|
+| `panes.minCols` / `panes.minRows` | `MIN_COLS`/`MIN_ROWS`/`MIN_PANE_*` (pane.ts), `SMALL_COLS`/`SMALL_ROWS` (pane-audit.ts) | `40` / `6` |
+| `panes.verifyTries` / `panes.verifyPollMs` | `tries`/`pollMs` defaults of `verifyPane` (pane.ts) | `25` / `300` |
+| `panes.sessionMapMaxAgeDays` | `SESSION_MAP_MAX_AGE_MS` (pane.ts) | `7 d` |
+| `panes.titleMax` | `PANE_TITLE_MAX` (pane-title.ts) | `40` |
+| `panes.statusTickMs` | chat status-line tick (pane-bar.ts) | `1000` |
+| `panes.helloWaitSecs` | `HELLO_WAIT_MS` (pane-exec.ts) | `20 s` |
+| `panes.killGraceSecs` | `KILL_GRACE_MS` (pane-exec.ts), kill grace (pane-run.ts) | `3 s` |
+| `panes.connectSecs` | wrapper socket connect (pane-exec.ts) | `10 s` |
+| `panes.lingerSecs` | `PANE_LINGER_SECS` (pane-run.ts) | `5` |
+| `panes.runPollMs` | follow poll (pane-run.ts) | `250` |
+| `panes.runKeepHours` | `PANE_RUN_KEEP_MS` (pane-run.ts), keep (pane-audit.ts) | `24 h` |
+| `panes.tailLines` | `TAIL_LINES` (pane-run.ts) | `40` |
+| `panes.audit.startGraceSecs` / `endGraceSecs` / `launchGraceSecs` | `START_GRACE_MS` / `END_GRACE_MS` / `LAUNCH_GRACE_MS` (pane-audit.ts) | `30 s` / `60 s` / `15 s` |
+
 ## Backlog: policy constants still in code
 
 Each later topic commit moves one area into the defaults files. Generated from `NAME = number/list` constants in non-test sources.
@@ -112,7 +132,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/hooks/ts/lib/wait-timeout.ts:15 | `SLACK_SECS` | `15` |
 | src/hooks/ts/lib/context-handover-cache.ts:51 | `HANDOVER_MAX_AGE_MS` | `2 * 60 * 60 * 1000` |
 | src/hooks/ts/lib/loop-guard.ts:74 | `WAIT_CAP_MS` | `45 * 60_000` |
-| src/workers/pane-title.ts:18 | `PANE_TITLE_MAX` | `40` |
 | src/workers/status.ts:407 | `TERMINAL_RECHECK_MS` | `5 * 60_000` |
 | src/workers/status.ts:555 | `OWNS_TTL_MS` | `60_000` |
 | src/workers/status.ts:587 | `LOST_GRACE_MS` | `2 * 60_000` |
@@ -131,7 +150,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/reaper.ts:57 | `START_SLACK_MS` | `5000` |
 | src/workers/wait-probes.ts:12 | `PROBE_DEFAULT_SECS` | `100` |
 | src/workers/wait-probes.ts:13 | `PROBE_CAP_SECS` | `590` |
-| src/workers/pane.ts:911 | `SESSION_MAP_MAX_AGE_MS` | `7 * 24 * 3600_000` |
 | src/workers/routing.ts:60 | `PROBE_TIMEOUT_MS` | `10_000` |
 | src/workers/routing.ts:62 | `BUDGET_COOLDOWN_MIN` | `10` |
 | src/workers/model-inventory.ts:25 | `MODEL_INVENTORY_REFRESH_MS` | `30_000` |
@@ -149,8 +167,6 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/wait-on.ts:20 | `HEARTBEAT_MS` | `20_000` |
 | src/workers/wait-on.ts:22 | `REUSE_SLACK_MS` | `2000` |
 | src/workers/wait-on.ts:26 | `KILL_GRACE_MS` | `5000` |
-| src/workers/pane-exec.ts:35 | `HELLO_WAIT_MS` | `20_000` |
-| src/workers/pane-exec.ts:36 | `KILL_GRACE_MS` | `3000` |
 | src/workers/stagger.ts:24 | `POLL_STEPS_MS` | `[250, 500, 1000, 2000]` |
 | src/workers/engines/image.ts:38 | `DEFAULT_IMAGE_TIMEOUT_MS` | `120_000` |
 | src/workers/wait.ts:163 | `WAIT_MAX_DEFAULT_SECS` | `100` |
@@ -163,15 +179,10 @@ Each later topic commit moves one area into the defaults files. Generated from `
 | src/workers/tool-errors.ts:41 | `SIGNATURE_MAX` | `160` |
 | src/workers/tool-errors.ts:42 | `RAW_MAX` | `300` |
 | src/workers/tool-errors.ts:43 | `INPUT_MAX` | `1000` |
-| src/workers/pane-run.ts:38 | `PANE_LINGER_SECS` | `5` |
-| src/workers/pane-run.ts:64 | `PANE_RUN_KEEP_MS` | `24 * 3600_000` |
 | src/workers/budget.ts:45 | `BUDGET_TTL_MS` | `5 * 60_000` |
 | src/workers/local-status.ts:15 | `LOCAL_STATUS_REFRESH_MS` | `30_000` |
 | src/workers/local-status.ts:17 | `LOCAL_STATUS_MAX_AGE_MS` | `90_000` |
 | src/workers/route-classifier.ts:17 | `LOCAL_FAILURE_LIMIT` | `2` |
-| src/workers/pane-audit.ts:48 | `END_GRACE_MS` | `60_000` |
-| src/workers/pane-audit.ts:51 | `START_GRACE_MS` | `30_000` |
-| src/workers/pane-audit.ts:340 | `LAUNCH_GRACE_MS` | `15_000` |
 | src/workers/result-grace.ts:12 | `RESULT_GRACE_MS` | `20_000` |
 | src/workers/run-env.ts:90 | `COPY_MAX_AGE_MS` | `7 * 24 * 3600 * 1000` |
 | src/workers/capacity.ts:75 | `MAX_TOTAL_WAIT_MS` | `2 * 3_600_000` |
