@@ -160,6 +160,12 @@ export function retryRows(rows: UsageRow[]): Set<UsageRow> {
   return out;
 }
 
+/** Local-server readings of a provider that is disabled (or no longer configured) are dropped, like the models inventory does. */
+export function enabledLocalLimits(ls: ProviderLimits[], providers: Record<string, { enabled?: boolean }>): ProviderLimits[] {
+  if (!Object.keys(providers).length) return ls;
+  return ls.filter((l) => l.kind !== "local" || (l.provider in providers && providers[l.provider]!.enabled !== false));
+}
+
 function configuredProviders(): Record<string, { enabled?: boolean; models?: Record<string, unknown> }> {
   try {
     return readWorkersSection().workers.providers;
@@ -823,7 +829,7 @@ export function handleCockpit(
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
   } else if (url.pathname === "/cockpit/limits") {
-    limits.get().then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
+    limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders())).then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
       ([l, routing]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

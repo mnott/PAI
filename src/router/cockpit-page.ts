@@ -78,7 +78,7 @@ svg text{fill:var(--dim);font-size:10px}
 .rt-head .badge{flex:0 0 auto}
 .rt-sub{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
-.rt-dot.idle{background:var(--warn)}
+.rt-dot.idle{background:transparent;box-shadow:inset 0 0 0 2px var(--ok)}
 .rt-dot.down{background:var(--bad)}
 /* foldable model cards: the header line toggles the body; folded cards show header only */
 .mcard{container-type:inline-size;background:var(--card);border:1px solid var(--line);border-radius:8px;min-width:0;max-width:100%;overflow:hidden}
@@ -339,12 +339,14 @@ function modelsHtml(inv){
   return {pct:Math.min(100,used/eng.maxContext*100),text:Math.round(used/eng.maxContext*100)+"% · "+kfmt(used)+" / "+ctxfmt(eng.maxContext)}
  }
  function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l?Object.assign({},l.live,{history:l.history}):null}
+ /** A consumer's model names the runtime's model: equal, or equal up to ollama's ":latest" tag. */
+ function sameModel(a,b){return !!a&&!!b&&(a===b||a.replace(/:latest$/,"")===b.replace(/:latest$/,""))}
  /** The consumers of one model on one runtime: by the model the consumer names;
   * a consumer without a model counts only on a runtime with a single model. */
  function consumersOf(cs2,rt2,m){
   return cs2.filter(function(c){
    if(c.runtime!==rt2.name&&c.runtime!==rt2.kind)return false;
-   return c.model?c.model===m.model:rt2.models.length===1;
+   return c.model?sameModel(c.model,m.model):rt2.models.length===1;
   });
  }
  /** What uses this runtime/model: the inventory's users plus the consumers (PAI's embedding backend, apps). */
@@ -367,8 +369,10 @@ function modelsHtml(inv){
   * Only the applicable one shows: running/idle -> stop, stopped -> start; never a disabled twin. */
  function rtBtns(r){
   var c=cmds[r.name]||{};
-  if(r.status==="stopped")return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start" data-confirm="starts '+esc(r.name)+'">start</button>':"";
-  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop" data-confirm="stops '+esc(r.name)+'">stop</button>':"";
+  var dmr=r.kind==="docker-model-runner";
+  // docker model runner: idle (nothing loaded) -> load, loaded -> unload; others: stopped -> start, else stop
+  if(r.status==="stopped"||(dmr&&r.status==="idle"))return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start" data-confirm="starts '+esc(r.name)+'">'+(dmr&&r.status==="idle"?"load":"start")+'</button>':"";
+  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop" data-confirm="stops '+esc(r.name)+'">'+(dmr?"unload":"stop")+'</button>':"";
  }
  var cards="";
  inv.runtimes.forEach(function(rt){
@@ -376,8 +380,10 @@ function modelsHtml(inv){
   // (ollama: qwen3:8b for chat, arctic-embed for embeddings) splits into one card per
   // model; a runtime without several labelled models keeps one card for all its models
   var rts=[];
-  var keyed=rt.models.filter(function(m){return m.label||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&c.model===m.model})});
-  if(keyed.length>1)keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m]}))});
+  var keyed=rt.models.filter(function(m){return m.label||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&sameModel(c.model,m.model)})});
+  // a consumer's model the runtime does not list (yet) still gets its card
+  consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&c.model&&!rt.models.some(function(m){return sameModel(c.model,m.model)}))keyed.push({model:c.model,kind:"embedding",loaded:false,usedBy:[c.name]})});
+  if(keyed.length>1||(keyed.length&&consumers.some(function(c){return c.name==="pai-embedding"&&(c.runtime===rt.name||c.runtime===rt.kind)})))keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m]}))});
   // a runtime with no models of its own still shows its declared consumers (a stopped ollama)
   else if(!rt.models.length&&consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))rts.push(Object.assign({},rt,{models:[{model:"",kind:"chat",loaded:false,usedBy:[]}]}));
   else rts.push(rt);
@@ -400,7 +406,7 @@ function modelsHtml(inv){
    // the inventory's per-model label first (models.consumers[].label / models.labels),
    // then the payload's consumer label, then the runtime label — all from config
    var lbl=m.label||"";
-   if(!lbl){var cc=consumers.filter(function(x){return x.model===m.model&&(x.runtime===rt.name||x.runtime===rt.kind)})[0];if(cc&&cc.label)lbl=cc.label}
+   if(!lbl){var cc=consumers.filter(function(x){return sameModel(x.model,m.model)&&(x.runtime===rt.name||x.runtime===rt.kind)})[0];if(cc&&cc.label)lbl=cc.label}
    if(!lbl)lbl=(r.modelLabels&&r.modelLabels[m.model])||r.label||"";
    if(lbl)return lbl;
    var cs=consumersOf(consumers,rt,m);
@@ -409,14 +415,14 @@ function modelsHtml(inv){
    var first=u.length?String(u[0]):"";
    return first?first.replace(/^worker:/,""):shortModel(m.model);
   }
-  var head='<button class="mhead" type="button" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.status==="idle"?" idle":"")+'"></span>'+
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.status==="idle"?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
    '<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
    (rtBtns(r)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r)+'</span>':"")+
-   '<span class="num">'+esc(key)+'</span></button>';
+   '<span class="num">'+esc(key)+'</span></div>';
   var body="";
   if(down){
    body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
@@ -480,6 +486,7 @@ function applyModelFold(){
   c.classList.toggle("open",open);
   var b=c.querySelector(".mhead");
   if(b){b.setAttribute("aria-expanded",open?"true":"false");var ch=b.querySelector(".chev");if(ch)ch.textContent=open?"▾":"▸"}
+  if(!b.onclick){b.onkeydown=function(e){if(e.target===b&&(e.key==="Enter"||e.key===" ")){e.preventDefault();b.onclick()}};}
   if(!b.onclick)b.onclick=function(){
    var nowOpen=!c.classList.contains("open");
    c.classList.toggle("open",nowOpen);
