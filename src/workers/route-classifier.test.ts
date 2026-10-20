@@ -16,10 +16,14 @@ describe("classifyRoute", () => {
     for (const kind of ["code", "test"]) expect(classifyRoute({ kind, text: "install the thing" }).where).toBe("local");
   });
   it("matches keywords in the task text", () => {
-    for (const text of ["fix TestFlight upload", "notarize the app", "iCloud sync bug", "CloudKit schema", "the build system", "door run", "cut a release", "migrate the db", "redesign the cache", "App Store signing"]) {
+    for (const text of ["fix TestFlight upload", "notarize the app", "iCloud sync bug", "CloudKit schema", "the build system", "build door run", "cut a release", "migrate the db", "redesign the cache", "App Store signing"]) {
       expect(classifyRoute({ text }).where, text).toBe("cloud");
     }
     expect(classifyRoute({ text: "fix the off-by-one in parseRange" })).toEqual({ where: "local", reason: "bounded code task" });
+  });
+  it("keeps release/door/CI keywords narrow", () => {
+    for (const text of ["release notes typo in README", "explain the CIrcuit breaker"]) expect(classifyRoute({ text }).where, text).toBe("local");
+    for (const text of ["cut the 1.4 release", "fix the build door's lock", "CI is red on main"]) expect(classifyRoute({ text }).where, text).toBe("cloud");
   });
   it("reads labels and tags", () => {
     expect(classifyRoute({ label: "infra: cache layout" }).where).toBe("cloud");

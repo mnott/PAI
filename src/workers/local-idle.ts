@@ -224,7 +224,7 @@ export function setMuted(logDir: string, session: string, muted: boolean): strin
 /** The `ps` / cockpit line: "local model: GPU 63% busy · gyro-m 2/4 running, 2 free"; "" with no reading. */
 export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string {
   if (!f || now - Date.parse(f.at) > 120_000) return "";
-  const gpu = f.gpuPct === null ? "GPU ?" : `GPU ${f.gpuPct}% ${f.gpuPct < DEFAULT_LOCAL_IDLE.gpuBelowPct ? "idle" : "busy"}`;
+  const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}% ${f.gpuPct < DEFAULT_LOCAL_IDLE.gpuBelowPct ? "idle" : "busy"}`;
   const provs = f.providers.map((p) => `${p.provider} ${p.running}/${p.cap} running, ${p.free} free${p.queued ? `, ${p.queued} queued` : ""}`);
   return `local model: ${[gpu, ...provs].join(" · ")}`;
 }
