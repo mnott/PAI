@@ -327,7 +327,7 @@ describe("cockpit Models cards", () => {
     expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(2);
     expect(h).toContain('<b title="flash-next">flash-next</b>');
     // kind differs from the name: one separate kind chip, the name shows once
-    expect(h).toContain('<span class="badge">strata</span><span class="badge">strata :8035</span>');
+    expect(h).toContain('<span class="badge">strata :8035</span>');
     expect(h).toContain("strata :8035");
     expect(h).toContain("used by worker:flashnext-iq3");
     expect(h).toContain('<span class="rt-dot"></span>');
@@ -374,12 +374,12 @@ describe("cockpit Models cards", () => {
     expect(h).not.toContain("Speed");
     expect(h).not.toContain("–");
   });
-  it("the runtime name never repeats: kind==name hides the kind chip, kind==name:port folds into the runtime chip", () => {
+  it("the runtime name never repeats: a kind equal to the name (or name:port) shows no kind chip", () => {
     const h = modelsHtml(inv);
-    // strata: the kind is not the name, so one kind chip; the name appears once in the header
+    // strata: the kind equals the name, so the name appears once in the header
     const strataHead = h.slice(h.indexOf('<b title="flash-next">flash-next</b>'), h.indexOf('<div class="rt-sub'));
-    expect(strataHead).toContain('<span class="badge">strata</span><span class="badge">strata :8035</span>');
-    expect(strataHead).not.toContain('<span class="badge">strata :8035</span><span class="badge">strata<');
+    expect(strataHead).toContain('<span class="badge">strata :8035</span>');
+    expect(strataHead).not.toContain('<span class="badge">strata</span>');
     const dup = modelsHtml({
       at: "x",
       runtimes: [{ name: "docker-model-runner", kind: "docker-model-runner", status: "idle", port: 8090, users: [], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
@@ -395,7 +395,7 @@ describe("cockpit Models cards", () => {
       runtimes: [{ name: "e5", kind: "e5 :8090", status: "idle", port: 8090, users: [], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
       live: { at: 1, runtimes: [] },
     });
-    expect(fold).toContain('<span class="badge">e5 :8090 · e5</span>');
+    expect(fold).toContain('<span class="badge">e5 :8090</span>');
     expect(fold).not.toContain('<span class="badge">e5 :8090</span><span class="badge">e5 :8090');
   });
   it("worker chips name the sessions with workers on the runtime", () => {
@@ -419,13 +419,12 @@ describe("cockpit Models cards", () => {
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
     expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
-    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;min-width:0}");
+    expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}");
     // four tiles in one row only when the card itself is wide; a balanced 2x2 below 720px,
     // one column under ~340px — explicit columns per range via a container query on the card, never 3+1
     expect(COCKPIT_HTML).toMatch(/\.rt-card\{[^}]*container-type:inline-size/);
-    expect(COCKPIT_HTML).toMatch(/@container \(min-width:720px\)\{\.rt-tiles\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}\}/);
-    expect(COCKPIT_HTML).toMatch(/@container \(max-width:719px\)\{\.rt-tiles\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}\}/);
-    expect(COCKPIT_HTML).toMatch(/@container \(max-width:339px\)\{\.rt-tiles\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+    expect(COCKPIT_HTML).toMatch(/@container \(min-width:720px\)\{\.rt-tiles\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}/);
+    expect(COCKPIT_HTML).toMatch(/@container \(max-width:339px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\}/);
     // sparklines align at the bottom of every tile; value + unit never break apart
     expect(COCKPIT_HTML).toMatch(/\.mt-spark\{[^}]*margin-top:auto[^}]*\}/);
     expect(COCKPIT_HTML).toMatch(/\.mt-value\{[^}]*white-space:nowrap/);

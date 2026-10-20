@@ -64,7 +64,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
 .mt-values{display:flex;justify-content:space-between;gap:10px}.mt-values>div{display:flex;flex-direction:column;gap:2px;min-width:0}.mt-sec{text-align:right}
-.mt{flex:1 1 auto;display:flex;flex-direction:column}.mt-values{flex-wrap:nowrap;white-space:nowrap}
+.mt-values{flex-wrap:nowrap}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
 .mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mt-spark{display:block;width:100%;max-width:100%;height:32px;margin-top:auto;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
@@ -77,10 +77,9 @@ svg text{fill:var(--dim);font-size:10px}
 .rt-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
 .rt-dot.idle{background:var(--warn)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
-.rt-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr));gap:8px;min-width:0}
-@container (max-width:719px){.rt-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@container (max-width:339px){.rt-tiles{grid-template-columns:minmax(0,1fr)}}
-@container (min-width:720px){.rt-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.rt-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
+@container (min-width:720px){.rt-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}.rt-tiles.two{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:339px){.rt-tiles,.rt-tiles.two{grid-template-columns:minmax(0,1fr)}}
 .rt-tiles .mt{padding:8px 9px}
 .rt-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
 .rt-chips .chip{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -198,6 +197,9 @@ function wireAct(el,onDone){
  var btns=el.querySelectorAll("button");
  for(var i=0;i<btns.length;i++)(function(b){
   b.onclick=function(){
+   var cf=b.getAttribute("data-confirm");
+   if(cf&&!b.confirmed){b.confirmed=true;var m0=el.querySelector(".msg");if(m0){m0.textContent=cf;m0.className="msg"}return}
+   b.confirmed=false;
    for(var k=0;k<btns.length;k++)btns[k].disabled=true;
    postAction(b.getAttribute("data-a"),b.getAttribute("data-t")||null,b.getAttribute("data-v")||null,function(j){
     var m=el.querySelector(".msg");if(m){m.textContent=(j&&j.message)||"";m.className="msg"+(j&&j.ok?"":" bad")}
@@ -240,7 +242,7 @@ function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  var tiers=inv.tiers||[];
  var running=(inv.running&&inv.running.model)?inv.running:null;
- var tierBtns=tiers.map(function(t){return'<button data-a="local.switch" data-t="'+esc(t)+'"'+(running&&running.tier===t?' disabled':"")+' title="stops '+(running?esc(running.model)+" first, needs ~"+(running.memGb||"?")+" GB":"nothing")+'">'+esc(t)+'</button>'}).join("")+(tiers.length?'<button data-a="local.off">off</button>':"");
+ var tierBtns=tiers.map(function(t){return'<button data-a="local.switch" data-t="'+esc(t)+'"'+(running&&running.tier===t?' disabled':"")+(running?' data-confirm="stops '+esc(running.model)+' first, needs ~'+esc(running.memGb||"?")+' GB. Click again to confirm."':"")+'>'+esc(t)+'</button>'}).join("")+(tiers.length?'<button data-a="local.off">off</button>':"");
  /** Label row: the label as subtitle, click → text field, Enter saves, Esc cancels. */
  function lblRow(r){
   var ml=r.modelLabels||{};
@@ -259,14 +261,14 @@ function modelsHtml(inv){
   var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
   var loaded=r.models.filter(function(m){return m.loaded});
   var head='<div class="rt-head"><span class="rt-dot'+(r.status==="idle"?" idle":"")+'"></span><b'+(r.models.length?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(r.models.length?shortModel(r.models[0].model):r.name)+'</b>'+
-   (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+'<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+(r.kind!==r.name&&r.kind.indexOf(r.name)===0?" · "+esc(r.kind.slice(r.name.length).replace(/^ :?\d+/,"")):"")+'</span>'+
+   (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+'<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge">'+(r.status==="idle"?"idle":"running")+'</span></div>'+
    '<div class="rt-sub"'+(r.users&&r.users.length?' title="'+esc(r.users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label&&r.users&&r.users.length?" · ":"")+(r.users&&r.users.length?"used by "+esc(r.users.join(", ")):"")+'</div>';
   var act=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
   // compact card: nothing loaded (idle runtime) — no Speed / Conversation cache tiles that would show only "–"
   if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
-   cards+='<div class="rt-card">'+head+lblRow(r)+'<div class="rt-tiles">'+
+   cards+='<div class="rt-card">'+head+lblRow(r)+'<div class="rt-tiles two">'+
     metricTile({title:"Memory / size",value:mem(size),unit:"",sub:r.models.length+" model"+(r.models.length===1?"":"s")+" not loaded",series:[]})+
     metricTile({title:"Users",value:(r.users||[]).length,unit:"",sub:(r.users||[]).length?esc(r.users.join(", ")):"no declared consumer",series:[]})+
     '</div>'+act+'</div>';
@@ -278,7 +280,7 @@ function modelsHtml(inv){
     series:[{data:h.decode||[]},{data:h.prefill||[]}]})+
    metricTile({title:"Memory",value:gb(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null),unit:"GB",sub:"Resident"+(loaded[0]&&loaded[0].mappedMb?" · "+gb(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
     series:[{data:h.memoryMb||[]}]})+
-   metricTile({title:"Workers",value:w.length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
+   metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · conv slots "+lv.conversationSlots:"")+(lv&&lv.sparesReady?" · "+lv.sparesReady+" spare(s) ready":lv&&lv.sparesConfig?" · spares: none ready":""),
     series:[{data:h.queued||[]}]})+
    metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
     series:[{data:h.reusedPct||[]}]})+'</div>';
@@ -290,8 +292,7 @@ function modelsHtml(inv){
  if(stopped.length)h+='<div class="rt-chips dim" style="margin-top:6px">'+stopped.map(function(r){
   var t=esc(r.name)+(r.port==null?"":" :"+r.port)+(r.users&&r.users.length?" · used by "+esc(r.users.join(", ")):"");
   return'<span class="chip" title="'+t+'">'+t+'</span>'}).join("")+'</div>';
- if(stopped.length)h+='<div class="rt-chips" style="margin-top:6px">'+stopped.map(function(r){
-  return actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns+'<button data-a="local.off">off</button>')}).join("")+'</div>';
+ if(stopped.length)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
 }
