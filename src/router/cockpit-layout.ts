@@ -43,6 +43,17 @@ function str(section: Record<string, unknown>, key: string, fallback: string): s
   return typeof section[key] === "string" && section[key] ? (section[key] as string) : fallback;
 }
 
+/** A #rrggbb colour string. */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/** A list of #rrggbb colour strings (the model palette), else the fallback. */
+function hexColors(section: Record<string, unknown>, key: string, fallback: string[]): string[] {
+  const v = section[key];
+  if (!Array.isArray(v)) return fallback;
+  const out = v.filter((x): x is string => typeof x === "string" && HEX_COLOR.test(x));
+  return out.length ? out : fallback;
+}
+
 /** A list of non-empty strings (a list of lists for layout.rows), else the fallback. */
 function strLists(section: Record<string, unknown>, key: string, fallback: string[][]): string[][] {
   const v = section[key];
@@ -70,6 +81,15 @@ const SHIPPED = {
   tilesNarrowCols: 2,
   tilesOneColBreakpointPx: 339,
   ringMinWidthPx: 92,
+  // model colours, assignment order; the first four are the token-kind colours.
+  palette: [
+    "#3b6fe0", "#e0703b", "#2e9e5b", "#b04fd0",
+    "#d9b31c", "#2bb3c0", "#d64570", "#7a8a99",
+    "#8fbf3f", "#a0522d", "#6a5acd", "#1f8a70",
+    "#c2c24a", "#4d8bc9", "#c96a9b", "#57a64a",
+    "#b38f2d", "#3aa0d6", "#9b59b6", "#d07a35",
+    "#4a9e8f", "#8a7f5a", "#c05a5a", "#6f9e3c",
+  ],
   sessionTitleMaxWidthPx: 480,
   sparkHeightPx: 32,
   sparkViewMaxPx: 100,
@@ -131,6 +151,8 @@ export interface CockpitLayout {
   tilesOneColBreakpointPx: number;
   /** cache rings grid. */
   ringMinWidthPx: number;
+  /** model colours: palette in assignment order (#rrggbb, readable on both themes). */
+  palette: string[];
   /** the sessions table's title column. */
   sessionTitleMaxWidthPx: number;
   /** metric-tile sparkline: height, viewBox width, plot top/height. */
@@ -199,6 +221,7 @@ export function cockpitLayout(): CockpitLayout {
     tilesNarrowCols: num(s, "tilesNarrowCols", SHIPPED.tilesNarrowCols),
     tilesOneColBreakpointPx: num(s, "tilesOneColBreakpointPx", SHIPPED.tilesOneColBreakpointPx),
     ringMinWidthPx: num(s, "ringMinWidthPx", SHIPPED.ringMinWidthPx),
+    palette: hexColors(s, "palette", [...SHIPPED.palette]),
     sessionTitleMaxWidthPx: num(s, "sessionTitleMaxWidthPx", SHIPPED.sessionTitleMaxWidthPx),
     sparkHeightPx: num(s, "sparkHeightPx", SHIPPED.sparkHeightPx),
     sparkViewMaxPx: num(s, "sparkViewMaxPx", SHIPPED.sparkViewMaxPx),

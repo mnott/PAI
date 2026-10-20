@@ -30,6 +30,11 @@ function buildHtml(L: CockpitLayout): string {
     if (typeof v !== "string" || !v || !/^[\w -]+$/.test(v)) throw new Error(`cockpit layout: ${JSON.stringify(v)} is not a safe label`);
     return JSON.stringify(v);
   };
+  // a #rrggbb colour, JSON-quoted for the page's inline JS
+  const hex = (v: string): string => {
+    if (typeof v !== "string" || !/^#[0-9a-fA-F]{6}$/.test(v)) throw new Error(`cockpit layout: ${JSON.stringify(v)} is not a #rrggbb colour`);
+    return JSON.stringify(v);
+  };
   return String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -81,6 +86,9 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.lgline{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;width:100%}
+.lgcap{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+.cap{margin-top:4px;font-size:11px}
 .rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(${L.ringMinWidthPx}px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
 .rings .solo{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:16px;width:100%;flex-wrap:wrap}.bignum{font-size:26px;font-weight:600;text-align:center}.bignum span{display:block;font-size:11px;color:var(--dim);font-weight:400}
 svg text{fill:var(--dim);font-size:10px}
@@ -174,7 +182,7 @@ ${POOL_PANEL_HTML}
 <section data-section="models" class="card c12"><h2>Models — runtimes<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
 <section data-section="system" class="card c12"><h2>System — memory, load, temperature, power</h2><div class="kpis" id="sys"></div><div id="sysservers" style="margin-top:6px"></div></section>
 <section data-section="kpis" class="card c12"><h2>Totals in this window<span class="tip" tabindex="0" aria-label="Requests, tokens and errors over the selected window (1 hour / Today / Week)." data-tip="Requests, tokens and errors over the selected window (1 hour / Today / Week).">ⓘ</span></h2><div class="kpis" id="kpis"></div></section>
-<section data-section="tokens" class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div class="legend" id="legend"></div>
+<section data-section="tokens" class="card c8"><h2>Tokens per bucket by kind<span class="tip" id="wnote" tabindex="0" aria-label="Token counts" data-tip="Token counts">ⓘ</span></h2><div class="ctl"><span id="mode"><button data-m="weighted">weighted</button><button data-m="raw">raw</button></span><select id="msel"></select></div><div id="series"></div><div id="seriescap"></div><div class="legend" id="legend"></div>
 <h2 style="margin-top:8px">Power and GPU/CPU load<span class="tip" tabindex="0" aria-label="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis." data-tip="Same buckets as above. W on the left axis, load % on the fixed 0-100 right axis.">ⓘ</span></h2><div id="power"></div><div class="legend" id="plegend"></div></section>
 <section data-section="cache" class="card c4"><h2>Cache hit ratio<span class="tip" tabindex="0" aria-label="cache_read / (read + write + fresh input), per provider / model." data-tip="cache_read / (read + write + fresh input), per provider / model.">ⓘ</span></h2><div id="donut" class="rings"></div><div id="donutlow" class="chips lowmodels"></div><div id="donutnote" class="chips"></div>
 <h2 id="donutlocaltitle" style="margin-top:8px;display:none">Local prefix cache<span class="tip" tabindex="0" aria-label="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money." data-tip="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money.">ⓘ</span></h2><div id="donutlocal"></div>
@@ -183,12 +191,30 @@ ${POOL_PANEL_HTML}
 <section data-section="pause" class="card c12"><h2>Cache verdict by pause<span class="tip" tabindex="0" aria-label="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it." data-tip="Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it.">ⓘ</span></h2><div id="pause"></div></section>
 <section data-section="sessions" class="card c12"><h2>Sessions by tokens</h2><div id="sessions"></div></section>
 <section data-section="runs" class="card c6"><h2>Worker runs</h2><div id="workers"></div></section>
-<section data-section="daily" class="card c6"><h2>Tokens per day per model (${L.dailyDays} d)</h2><div id="daily"></div><div class="legend" id="dlegend"></div></section>
+<section data-section="daily" class="card c6"><h2>Tokens per day per model (${L.dailyDays} d)</h2><div id="daily"></div><div id="dailycap"></div><div class="legend" id="dlegend"></div></section>
 </main>
 <script>
 (function(){
-var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",DAILY_DAYS=${n(L.dailyDays)},SESSION_ROWS=${n(L.sessionsRows)},WORKER_ROWS=${n(L.workerRows)},LOW_REQ=${n(L.lowRequestMin)},STALE_SEC=${n(L.stampStaleSecs)},data=null,lim=null,lastOk=0,PAL=["#3b6fe0","#e0703b","#2e9e5b","#b04fd0","#d9b31c","#2bb3c0","#d64570","#7a8a99","#8fbf3f","#a0522d"];
-var colors={};function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[Object.keys(colors).length%PAL.length];return colors[k]}
+var KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]],mode=localStorage.getItem("cockpitMode")||"weighted",msel="";var win=localStorage.getItem("cockpitWin")||"1h",DAILY_DAYS=${n(L.dailyDays)},SESSION_ROWS=${n(L.sessionsRows)},WORKER_ROWS=${n(L.workerRows)},LOW_REQ=${n(L.lowRequestMin)},STALE_SEC=${n(L.stampStaleSecs)},data=null,lim=null,lastOk=0,PAL=[${L.palette.map(hex).join(",")}];
+var colors={},CKEY="pai.cockpit.modelColors.v1";
+try{colors=JSON.parse(localStorage.getItem(CKEY)||"{}")||{}}catch(e){colors={}}
+function saveColors(){try{localStorage.setItem(CKEY,JSON.stringify(colors))}catch(e){}}
+/** Model colours: every visible model gets its own colour. A model keeps the colour saved under its name (localStorage); a new one takes the first palette entry no visible model uses, in sorted-name order — so the assignment does not depend on the data's order. */
+function assignColors(ms){
+ var want={},i,k;for(i=0;i<ms.length;i++)want[ms[i]]=1;
+ var names=Object.keys(want).sort(),taken={},n=new Date().getTime();
+ for(i=0;i<names.length;i++){k=colors[names[i]];if(k&&PAL.indexOf(k)>=0&&!(k in taken))taken[k]=names[i]}
+ var changed=false;
+ for(i=0;i<names.length;i++){
+  var nm=names[i],c=colors[nm],p=0;
+  if(c&&PAL.indexOf(c)>=0&&taken[c]===nm)continue;
+  while(p<PAL.length&&taken[PAL[p]]!==undefined)p++;c=PAL[Math.min(p,PAL.length-1)];
+  taken[c]=nm;colors[nm]=c;colors[nm+"@ts"]=n;changed=true;
+ }
+ for(k in colors)if(!want[k]&&String(k).indexOf("@ts")<0)delete colors[k];
+ if(changed)saveColors();
+}
+function colorOf(k){for(var i=0;i<KINDS.length;i++)if(KINDS[i][0]===k)return KINDS[i][2];if(!colors[k])colors[k]=PAL[0];return colors[k]}
 function $(id){return document.getElementById(id)||document.createElement("div")}
 /** Every panel rebuild goes through here. Identical html: no DOM write. Otherwise the viewport stays put (Safari has no scroll anchoring):
  *  the first main child below the viewport top is the anchor, scrollBy corrects its drift; the old height is held until the next frame so
@@ -211,6 +237,10 @@ function setHtml(el,html){
 function has(){for(var i=0;i<arguments.length;i++)if(document.querySelector('[data-section="'+arguments[i]+'"]'))return true;return false}
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function fmt(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(2)+"G";if(n>=1e6)return(n/1e6).toFixed(2)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(Math.round(n))}
+/** Axis labels: one significant decimal, compact (784M, 1.57G, not 783.98M). */
+function fmtAxis(n){n=n||0;if(n>=1e9)return(n/1e9>=10?(n/1e9).toFixed(0):(n/1e9).toFixed(2))+"G";if(n>=1e6)return(n/1e6>=10?(n/1e6).toFixed(0):(n/1e6).toFixed(2))+"M";if(n>=1e3)return(n/1e3>=10?(n/1e3).toFixed(0):(n/1e3).toFixed(1))+"k";return String(Math.round(n))}
+/** Left padding for axis labels: the widest label at ~8 px per character (svg text is 10 px), plus the 4 px gap. */
+function padFor(labels){var m=0;labels.forEach(function(s){if(String(s).length>m)m=String(s).length});return Math.max(30,m*8+12)}
 /** Tooltip icon: the long text lives in data-tip (CSS hover/focus) and aria-label (screen readers). */
 function tip(t){return'<span class="tip" tabindex="0" aria-label="'+esc(t)+'" data-tip="'+esc(t)+'">ⓘ</span>'}
 function setTip(el,t){el.setAttribute("aria-label",t);el.setAttribute("data-tip",t)}
@@ -607,6 +637,14 @@ var mdl=null,mEditing=false,BLUR_CANCEL_MS=400;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
  * the full id rides in the title attribute. */
 function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>=0?s.slice(i+1):s}
+/** A model's display name: the alias the user set on any runtime or consumer, else the short model name. */
+function ringName(m){
+ var rs=(mdl&&mdl.runtimes)||[];
+ for(var i=0;i<rs.length;i++){var ml=rs[i].modelLabels||{};if(ml[m])return ml[m]}
+ var cs=(mdl&&mdl.consumers)||[];
+ for(i=0;i<cs.length;i++)if(cs[i].model===m&&cs[i].label)return cs[i].label;
+ return shortModel(m);
+}
 /** Local-model buttons: caption, one button per tier (label, memory need), the active one highlighted and
  * disabled, an inline confirm that names what the switch stops, and off. */
 function tierRow(tiers,running){
@@ -980,7 +1018,7 @@ function trimEmpty(labels,rows,totalOf){
  return a>b?null:{labels:labels.slice(a,b+1),rows:rows.slice(a,b+1)}
 }
 function emptyChart(w,h){
- var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
+ var padL=padFor([fmtAxis(1e9)]),padB=18,padT=6,W=w-padL-6,H=h-padB-padT,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
  for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/>'}
  svg+='<text x="'+(padL+W/2)+'" y="'+(padT+H/2+3)+'" text-anchor="middle">no data in this window</text>';
  return svg+'</svg>';
@@ -992,8 +1030,9 @@ function lineChart(el,labels,series,keys,w,h){
  var padL=44,padR=34,padB=18,padT=6,W=w-padL-padR,H=h-padB-padT,n=labels.length,bw=W/n;
  var leftMax=1,hasR=false; // key[3]: 1 = percent, fixed 0-100 right axis; others share the auto left axis
  keys.forEach(function(k){if(k[3])hasR=true;else series.forEach(function(s){if((s[k[0]]||0)>leftMax)leftMax=s[k[0]]})});
+ padL=padFor([fmtAxis(leftMax)+" W"]);
  var PCT=["0","33","66","100"],svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+(leftMax*g/3).toFixed(1)+' W</text>'+
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(leftMax*g/3)+' W</text>'+
   (hasR?'<text x="'+(w-2)+'" y="'+(yy+3)+'" text-anchor="end">'+PCT[g]+'%</text>':'')}
  keys.forEach(function(k){
   var scale=k[3]?100:leftMax,d="",pen=false;
@@ -1028,10 +1067,11 @@ function gapLayout(totals,w,padL){
 }
 function gapMark(x,top,bot){return'<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+top+'" y2="'+bot+'" stroke="var(--line)" stroke-dasharray="2 3"/>'}
 function stackedBars(el,labels,series,keys,w,h,tickFmt){
- var padL=44,padB=18,padT=6,H=h-padB-padT,max=1;
+ var padB=18,padT=6,max=1;
  var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
+ var padL=padFor([fmtAxis(max)]),H=h-padB-padT;
  var L=gapLayout(sums,w,padL),svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(max*g/3)+'</text>'}
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
  var x=padL,ri=0;
  L.cols.forEach(function(c){
   var cw=L.bw*(c.g?0.4:1);
@@ -1046,11 +1086,12 @@ function stackedBars(el,labels,series,keys,w,h,tickFmt){
  return L.compressed;
 }
 function twoToneModelBars(el,labels,buckets,models,w,h){
- var padL=44,padB=18,padT=6,W=w-padL-6,H=h-padB-padT,mc=models.length,max=1;
+ var padB=18,padT=6,mc=models.length,max=1;
  models.forEach(function(m){colorOf(m)});
  var totals=buckets.map(function(arr){var t=0;arr.forEach(function(s){t+=s.total});return t});totals.forEach(function(v){if(v>max)max=v});
+ var padL=padFor([fmtAxis(max)]),W=w-padL-6,H=h-padB-padT;
  var L=gapLayout(totals,w,padL),mwid=mc?Math.max(3,L.bw/mc):L.bw,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmt(max*g/3)+'</text>'}
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
  var x=padL,ri=0;
  L.cols.forEach(function(c){
   var cw=L.bw*(c.g?0.4:1);
@@ -1070,6 +1111,10 @@ function twoToneModelBars(el,labels,buckets,models,w,h){
  return L.compressed;
 }
 function legend(el,keys,extra){setHtml(el,keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")+(extra||""))}
+/** One legend line: a small caption, then the swatch items. */
+function legendLine(cap,items){return'<div class="lgline"><span class="lgcap">'+esc(cap)+'</span>'+items+'</div>'}
+/** The chart caption under the svg: set only when idle buckets were compressed. */
+function chartCap(el,on){setHtml(el,on?'<div class="cap dim">idle hours compressed: the x axis is not time-linear</div>':"")}
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
 function donut(ratio,sz){
  var r=${n(L.donutRadiusPx)},c=2*Math.PI*r,d=c*ratio;sz=sz||${n(L.donutSizePx)};
@@ -1092,13 +1137,14 @@ function lowChips(ms){
 function ringTiles(ms,servers){
  var list=Object.keys(ms).map(function(k){return ms[k]}).filter(function(m){return m.requests>=LOW_REQ});
  list.sort(function(a,b){var la=a.requests<LOW_REQ?1:0,lb=b.requests<LOW_REQ?1:0;return la!==lb?la-lb:b.requests-a.requests});
+ assignColors(list.map(function(m){return m.model}));
  return list.map(function(m){
   var dn=m.cacheRead+m.cacheWrite+m.input,low=m.requests<LOW_REQ,ring,cap="";
   var srv=(servers||[]).filter(function(s){return s.provider===m.provider})[0];
   if(m.cacheRead+m.cacheWrite>0){var r=dn?m.cacheRead/dn:0;ring=low?(r>0?donut(r):emptyRing()):donut(r)}
   else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache'+ageMark(srv)+'</div>'}
   else{ring=emptyRing();cap='<div class="s">'+(lim?"not reported":'<span class="dim" title="loading: first limits poll pending">…</span>')+'</div>'}
-  return'<div class="ring">'+ring+'<div class="n">'+esc(m.provider)+'</div><div class="s">'+esc(m.model)+' · '+m.requests+' req</div>'+cap+'</div>'
+  return'<div class="ring">'+ring+'<div class="n">'+esc(ringName(m.model))+'</div><div class="s">'+esc(m.provider)+' · '+m.requests+' req</div>'+cap+'</div>'
  }).join("");
 }
 /** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
@@ -1163,7 +1209,8 @@ function cls(v,warn,bad){return v>=bad?"bad":v>=warn?"warn":""}
 function render(){
  if(!data)return;var d=data,t=d.totals;
  setHtml($("kpis"),[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),.02,.1)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join(""));
- var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});
+ var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});models.sort();
+ assignColors(models);
  var sel=$("msel");if(msel&&models.indexOf(msel)<0)msel="";
  setHtml(sel,'<option value="">all models</option>'+models.map(function(m){return'<option'+(m===msel?' selected':'')+'>'+esc(m)+'</option>'}).join(""));
  sel.onchange=function(){msel=this.value;render()};
@@ -1172,7 +1219,8 @@ function render(){
  var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
  var labs=d.series.map(function(b){return label(b.t,d.window)});
  var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),${L.tokensChartWidthPx},${L.tokensChartHeightPx}):twoToneModelBars($("series"),labs,buckets,models,${L.tokensChartWidthPx},${L.tokensChartHeightPx});
- setHtml($("legend"),KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>'+models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(m)+'</span>'}).join(""))+(gap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':""));
+ chartCap($("seriescap"),gap);
+ setHtml($("legend"),legendLine("kinds",KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>')+(msel?"":legendLine("models",models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(ringName(m))+'</span>'}).join(""))))+(msel?"":"</div>"));
  setTip($("wnote"),wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.");
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  renderDonuts();
@@ -1187,7 +1235,8 @@ function render(){
  setHtml($("workers"),d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+vcls(s.verdict)+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>');
  var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
  var dgap=stackedBars($("daily"),dd.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,${L.dailyChartWidthPx},${L.dailyChartHeightPx});
- legend($("dlegend"),dm,dgap?'<span class="dim" title="Idle buckets are compressed: the x axis is not time-linear.">idle compressed</span>':"");
+ chartCap($("dailycap"),dgap);
+ legend($("dlegend"),dm);
 }
 function load(){
  fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
