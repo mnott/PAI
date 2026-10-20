@@ -53,9 +53,13 @@ Controls:
 
 - **Start / stop** buttons run the commands configured under `start` and `stop` commands of a runtime under `models.runtimes` (see [local models](concepts/local-models.md)). A runtime without a command has no button. They are the same action as `pai models start|stop`.
 - **Local model:** a button per coding tier switches the local engine to that tier. The active tier is disabled; switching while another model runs asks for a second click and names what it stops. **off** stops every local server. Both run as a job whose progress the card follows.
-- **Alias:** the pencil beside a model title opens an inline field. Enter saves, Escape cancels, and an empty value removes the alias. The alias is written to `models.labels` in your config, and it then names the model in the cards, the rings and the speed table. An embedding consumer is titled by `models.embeddingLabel`.
+- **Alias:** the pencil beside a card's title opens an inline field in place of the title, with ✓ (save), ✕ (cancel) and, when an alias is set, ↺ (back to the original name). Enter saves and Escape cancels too; tapping elsewhere cancels. An empty value removes the alias. The alias is written to `models.labels` in your config, and it then names the model in the cards, the rings and the speed table. An embedding consumer is titled by `models.embeddingLabel`.
+
+A runtime's note (`models.runtimes.<name>.note`) is the tooltip of the runtime chip in the card header, so consumers that share a runtime do not repeat it.
 
 A card folds by clicking its header. By default a running coding runtime is open and the rest are folded.
+
+![Models: the local engine card with speed, memory, workers and conversation cache tiles and the local model switch, then one card per consumer on the shared runtimes](images/cockpit-models.jpg)
 
 ### System — memory, load, temperature, power (`system`)
 
