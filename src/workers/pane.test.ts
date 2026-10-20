@@ -478,3 +478,10 @@ describe("pickSplit", () => {
     expect(pickSplit([], "host")).toBeNull();
   });
 });
+
+describe("paneBackend for a resolved frontmost host", () => {
+  it("no ITERM_SESSION_ID but a resolved host term -> iterm (`pai worker pane` opens the split)", () => {
+    expect(paneBackend({}, "darwin", "AAAAAAAA-0000-0000-0000-00000000000f")).toBe("iterm");
+    expect(paneBackend({}, "darwin", "")).toBe("none");
+  });
+});
