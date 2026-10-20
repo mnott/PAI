@@ -32,6 +32,8 @@ import { getProviderOrNative, readWorkersSection, type WorkerProvider, type Work
 import { buildRunEnv, claudeCommand, isLoopbackProvider, loopbackRouterChoice } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
+import { resolveLocalProvider } from "./local-provider.js";
+import { routeRun } from "./policy.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
 import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
 import { loadContractAddendum } from "./contract-addendum.js";
@@ -312,6 +314,11 @@ export interface PoolHostOptions {
   noReaper?: boolean;
   /** (provider, model, cwd) triples to start spares for at boot; defaults to the workers of the last 60 min in the ledger. */
   warmKeys?: WarmKey[];
+  /**
+   * Provider names whose spares are also seeded for every repo in the warm keys, with no ledger history
+   * needed. Defaults to the active local provider and the policy's default route; tests inject.
+   */
+  seedProviders?: () => Promise<string[]>;
 }
 
 export interface PoolHost {
@@ -326,6 +333,8 @@ export interface PoolHost {
   reapSlots(): number;
   /** Retire spares idle past workers.pool.idleKillSec. */
   reapSpares(): number;
+  /** Move idle spares whose repo HEAD moved onto the new HEAD (git reset in their worktree, no new process). */
+  refreshSpares(): number;
   /** Resolves when every spare start in flight has finished (tests). */
   settle(): Promise<void>;
 }
@@ -706,6 +715,41 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
   };
 
+  /** Move an idle spare's worktree onto the repo's new HEAD; its claude process is waiting for a first turn and does not care. */
+  const refreshSpare = (e: SpareEntry, head: string): boolean => {
+    try {
+      git(e.rec.dir, ["reset", "--hard", "-q", head]);
+    } catch {
+      return false;
+    }
+    e.rec.base = head;
+    persist();
+    appendLedger(ledger, "WORKER-POOL-SPARE-REFRESH", { spare: e.rec.id, provider: e.rec.provider, base: head.slice(0, 8) });
+    return true;
+  };
+
+  const refreshSpares = (): number => {
+    let n = 0;
+    for (const list of [...spares.values()]) {
+      for (const e of [...list]) {
+        if (e.rec.state !== "ready" || !e.session || e.session.dead || e.session.busy) continue;
+        let head = "";
+        try {
+          head = git(e.rec.repo, ["rev-parse", "HEAD"]);
+        } catch {
+          continue;
+        }
+        if (head === e.rec.base) continue;
+        if (refreshSpare(e, head)) n++;
+        else {
+          discardSpare(e, "stale: refresh failed");
+          topUp(e.rec.repo, e.rec.provider, e.rec.model);
+        }
+      }
+    }
+    return n;
+  };
+
   const missSpare = (task: PoolTaskRequest, reason: SpareMissReason): PoolTaskResponse => {
     state.spareMisses![reason] = (state.spareMisses![reason] ?? 0) + 1;
     appendLedger(ledger, "WORKER-POOL-MISS", { id: task.id, provider: task.provider, reason });
@@ -733,13 +777,14 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     } catch {
       return { reason: "not-git" };
     }
-    if (head !== ready.rec.base) {
+    if (head !== ready.rec.base && !refreshSpare(ready, head)) {
       discardSpare(ready, "stale: repo HEAD moved");
       topUp(repo, task.provider, task.model);
       return { reason: "stale" };
     }
     try {
-      if (uncommittedPaths(repo).some((p) => !isPaiBookkeepingPath(p))) return { reason: "dirty" };
+      // the spare stays: a fresh worker for this run, the spare still serves the next clean one
+      if (uncommittedPaths(repo).some((p) => !isPaiBookkeepingPath(p))) return { reason: "dirty-checkout" };
     } catch {
       return { reason: "not-git" };
     }
@@ -1234,9 +1279,29 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     timer.unref?.();
   }
   if (!opts.noReaper && settings.idleKillSec > 0) {
-    const timer = setInterval(reapSpares, 30_000);
+    const timer = setInterval(() => {
+      reapSpares();
+      refreshSpares();
+    }, 30_000);
     timer.unref?.();
   }
+
+  /** The active local provider (resolved like --local) and the policy's route, when each exists. */
+  const defaultSeedProviders = async (): Promise<string[]> => {
+    const names = new Set<string>();
+    try {
+      names.add((await resolveLocalProvider(config, logDir)).name);
+    } catch {
+      // no local server running
+    }
+    try {
+      const route = await routeRun(config, logDir, {});
+      if (route?.providerFlag) names.add(route.providerFlag);
+    } catch {
+      // policy unreadable or local-only without a server
+    }
+    return [...names];
+  };
 
   // boot: spares for every key that ran a worker in the last 60 min
   if (settings.spares > 0) {
@@ -1252,6 +1317,20 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       const repo = repoRootOf(k.cwd);
       if (repo) topUp(repo, k.provider, k.model);
     }
+    // the first local task of the day hits a spare too: seed the local provider and the policy route for each of those repos
+    const repos = [...new Set(keys.map((k) => repoRootOf(k.cwd)).filter((r): r is string => !!r))];
+    if (repos.length) {
+      const seed: Promise<void> = (opts.seedProviders ?? (opts.warmKeys ? async () => [] : defaultSeedProviders))()
+        .then((names) => {
+          for (const name of names) {
+            const model = getProviderOrNative(config, name)?.models.default;
+            if (model) for (const repo of repos) topUp(repo, name, model);
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => pendingStarts.delete(seed));
+      pendingStarts.add(seed);
+    }
   }
 
   return {
@@ -1263,6 +1342,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     shutdown,
     reapSlots,
     reapSpares,
+    refreshSpares,
     settle: async () => {
       while (pendingStarts.size) await Promise.all([...pendingStarts]);
     },

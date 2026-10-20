@@ -347,7 +347,7 @@ export type PoolIneligibleReason =
   | "cwd";
 
 /** Why a claim found no usable spare (the run then spawns fresh). */
-export type SpareMissReason = "spares-off" | "no-worktree" | "not-git" | "no-spare" | "starting" | "stale" | "dirty" | "spare-dead" | "rename-failed";
+export type SpareMissReason = "spares-off" | "no-worktree" | "not-git" | "no-spare" | "starting" | "stale" | "dirty-checkout" | "spare-dead" | "rename-failed";
 
 /** The tool grant every slot is born with (== DEFAULT_WORKER_TOOLS in run.ts). */
 const SLOT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
