@@ -121,6 +121,23 @@ describe("resolveHostSession: bg-pty-host without a jobPid match", () => {
     expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "attach client 4242" });
   });
 
+  it("resolves via a plain claude holding the daemon socket (tty -> iTerm session)", async () => {
+    const d = base({ daemonClients: () => [{ pid: 85322, tty: "ttys009" }] });
+    expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "daemon client pid 85322 tty /dev/ttys009" });
+  });
+
+  it("two daemon clients: the first (newest) with a live tty wins", async () => {
+    const d = base({ daemonClients: () => [{ pid: 2, tty: "ttys009" }, { pid: 1, tty: "ttys050" }] });
+    expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "daemon client pid 2 tty /dev/ttys009" });
+  });
+
+  it("no daemon client -> falls through with a reason", async () => {
+    const d = base({ daemonClients: () => [], registryHost: () => "" });
+    const h = await resolveHostSession({}, d, 75840);
+    expect(h.via).toBe("none");
+    expect(h.reason).toContain(`daemon client: no process holds pty/${SHORT}.sock`);
+  });
+
   it("resolves via the AIBroker registry", async () => {
     const d = base({ attachClients: () => [], registryHost: (cid) => (cid.startsWith(SHORT) ? LIVE : "") });
     expect(await resolveHostSession({}, d, 75840)).toMatchObject({ uid: LIVE, via: "registry" });
