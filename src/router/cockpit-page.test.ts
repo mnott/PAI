@@ -39,7 +39,7 @@ describe("cockpit page compression", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" }, ranksum: { innerHTML: "" } };
     const fn = new Function(
-      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "badges", "rankPop", "chainText", "wireRanks", "loadLimits", "document",
+      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "badges", "rankPop", "wireRanks", "loadLimits", "document",
       `${body}\nrenderLimits();`
     );
     const lim = {
@@ -68,6 +68,8 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).toMatch(/\.rkgrid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(260px,100%\),1fr\)\)/);
     expect(COCKPIT_HTML).toContain('<div class="rkgrid" id="cloud">');
     expect(COCKPIT_HTML).toContain('<div class="rkgrid" id="local">');
+    // two sub-headers, Local cards first, then Cloud cards
+    expect(COCKPIT_HTML).toMatch(/<h2 class="rksub">Local<\/h2><div class="rkgrid" id="local"><\/div><h2 class="rksub">Cloud<\/h2><div class="rkgrid" id="cloud">/);
     expect(COCKPIT_HTML).not.toContain("grp-cloud");
     expect(COCKPIT_HTML).not.toContain("grp-local");
     // gauges scale via the viewBox; a long unbreakable line must not push a gauge past its container
@@ -78,10 +80,14 @@ describe("cockpit layout follow-up", () => {
   it("rank badges, popover rows and summary line replace the workers/orchestrator buttons", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" }, ranksum: { innerHTML: "" } };
-    const helpers = ["badges", "rankPop", "chainText"].map((n) => COCKPIT_HTML.match(new RegExp(`^function ${n}\\([^\\n]*\\}$|^function ${n}\\([\\s\\S]*?\\n\\}`, "m"))![0]).join("\n");
+    const helpers = ["badges", "rankPop"].map((n) => COCKPIT_HTML.match(new RegExp(`^function ${n}\\([^\\n]*\\}$|^function ${n}\\([\\s\\S]*?\\n\\}`, "m"))![0]).join("\n");
     const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "wireRanks", "loadLimits", "ROLES", `${helpers}\n${body}\nrenderLimits();`);
     const lim = {
-      chains: { workers: ["gyro-m", "anthropic", "glm"], orchestrator: ["anthropic", "glm"] },
+      chainSummary: "Workers: local gyro-m (running) · then cloud anthropic → glm · Orchestrator: cloud anthropic → glm",
+      chains: {
+        workers: { local: ["gyro-m"], cloud: ["anthropic", "glm"], localFirst: true, running: "gyro-m" },
+        orchestrator: { local: [], cloud: ["anthropic", "glm"], localFirst: true, running: null },
+      },
       limits: [
         { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
         { provider: "glm", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
@@ -90,10 +96,12 @@ describe("cockpit layout follow-up", () => {
       ],
     };
     fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", () => {}, () => {}, [["workers", "Workers", "W"], ["orchestrator", "Orchestrator", "O"]]);
-    expect(els.ranksum!.textContent).toBe("Workers: gyro-m → anthropic → glm · Orchestrator: anthropic → glm");
+    expect(els.ranksum!.textContent).toBe(lim.chainSummary);
     const cloud = els.cloud!.innerHTML;
-    expect(cloud).toContain("W t1");
+    // ranks count within a group: W t0 on the local gyro-m and W t0 on the cloud anthropic
+    expect(cloud).toContain("W t0");
     expect(cloud).toContain("O t0");
+    expect(cloud).toContain("W t1");
     expect(cloud).toContain("W —");
     expect(cloud).toContain("O —");
     expect(cloud).toContain('class="rkpop"');

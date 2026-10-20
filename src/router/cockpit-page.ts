@@ -104,7 +104,7 @@ svg text{fill:var(--dim);font-size:10px}
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
 <span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
-<section data-section="cloud" class="card c12"><h2>Cloud</h2><div class="rksum" id="ranksum"></div><div class="rkgrid" id="cloud"></div><h2 class="rksub">Local</h2><div class="rkgrid" id="local"></div></section>
+<section data-section="cloud" class="card c12"><h2>Cloud</h2><div class="rksum" id="ranksum"></div><h2 class="rksub">Local</h2><div class="rkgrid" id="local"></div><h2 class="rksub">Cloud</h2><div class="rkgrid" id="cloud"></div></section>
 <section data-section="workers" class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
 <section data-section="models" class="card c12"><h2>Models — runtimes<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
@@ -225,16 +225,16 @@ function wireAct(el,onDone){
  })(btns[i]);
 }
 var ROLES=[["workers","Workers","W"],["orchestrator","Orchestrator","O"]];
-/** Rank badges of a model: W t0 / O t1, a grey "—" for off. */
-function badges(m){
+/** Rank badges of a model: W t0 / O t1, a grey "—" for off. The rank counts within the model's group (grp: local or cloud). */
+function badges(m,grp){
  var ch=(lim&&lim.chains)||{};
- return'<span class="rk">'+ROLES.map(function(r){var i=(ch[r[0]]||[]).indexOf(m);return'<span class="rkb'+(i<0?" off":"")+'" title="'+esc(r[1])+'">'+r[2]+" "+(i<0?"—":"t"+i)+"</span>"}).join("")+"</span>";
+ return'<span class="rk">'+ROLES.map(function(r){var i=((ch[r[0]]||{})[grp]||[]).indexOf(m);return'<span class="rkb'+(i<0?" off":"")+'" title="'+esc(r[1])+'">'+r[2]+" "+(i<0?"—":"t"+i)+"</span>"}).join("")+"</span>";
 }
 /** Inline popover: one segmented row per role. */
-function rankPop(m){
+function rankPop(m,grp){
  var ch=(lim&&lim.chains)||{};
  return'<div class="rkpop">'+ROLES.map(function(r){
-  var cur=(ch[r[0]]||[]).indexOf(m);
+  var cur=((ch[r[0]]||{})[grp]||[]).indexOf(m);
   return'<div class="rkrow"><span>'+r[1]+'</span><span class="seg">'+["off","t0","t1","t2","t3"].map(function(k,j){
    var on=j===0?cur<0:cur===j-1;
    return'<button data-role="'+r[0]+'" data-model="'+esc(m)+'" data-rank="'+k+'" class="'+(on?"on":"")+'">'+k+"</button>"}).join("")+"</span></div>"}).join("")+'<div class="rkmsg"></div></div>';
@@ -243,7 +243,6 @@ function postRank(role,model,rank,cb){
  fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"rank",role:role,model:model,rank:rank}),cache:"no-store"})
   .then(function(r){return r.json()}).then(cb).catch(function(){cb({ok:false,message:"action failed"})});
 }
-function chainText(c){return c&&c.length?c.join(" → "):"—"}
 /** Click opens the popover (hover too, via CSS); the segmented buttons post the rank. */
 function wireRanks(root){
  var cards=root.querySelectorAll(".rkcard");
@@ -265,18 +264,17 @@ function wireRanks(root){
 }
 function renderLimits(){
  if(!lim)return;var c="",lo="",dn=[];
- var ch=lim.chains||{};
- $("ranksum").textContent="Workers: "+chainText(ch.workers)+" · Orchestrator: "+chainText(ch.orchestrator);
+ $("ranksum").textContent=lim.chainSummary||"";
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
    if(!l.up){dn.push(l.provider);return}
-   lo+='<div class="pgroup rkcard" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+badges(l.provider)+'</div><div class="gauges"><div class="gauge"><div class="ok">up</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div></div>'+rankPop(l.provider)+'</div>';
+   lo+='<div class="pgroup rkcard" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+badges(l.provider,'local')+'</div><div class="gauges"><div class="gauge"><div class="ok">up</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div></div>'+rankPop(l.provider,'local')+'</div>';
    return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
-  c+='<div class="pgroup rkcard" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+badges(l.provider)+'</div><div class="gauges">'+h+'</div>'+rankPop(l.provider)+'</div>';
+  c+='<div class="pgroup rkcard" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+badges(l.provider,'cloud')+'</div><div class="gauges">'+h+'</div>'+rankPop(l.provider,'cloud')+'</div>';
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';

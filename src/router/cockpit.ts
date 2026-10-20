@@ -33,7 +33,7 @@ import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
-import { effectiveChains } from "../workers/chains.js";
+import { chainSummary, effectiveChains, type ChainViews } from "../workers/chains.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
@@ -464,13 +464,14 @@ async function localRunningInfo(): Promise<{ tier: string; label: string; model:
   }
 }
 
-/** The Workers / Orchestrator chains (rank t0 first) behind the cockpit's rank badges. */
-async function modelChains(): Promise<{ workers: string[]; orchestrator: string[] }> {
+/** The Workers / Orchestrator chains (local group, cloud group; rank t0 first within a group) behind the cockpit's rank badges. */
+async function modelChains(): Promise<ChainViews> {
   try {
     const { raw, workers } = readWorkersSection();
     return await effectiveChains(raw, workers);
   } catch {
-    return { workers: [], orchestrator: [] };
+    const none = { local: [], cloud: [], localFirst: true, running: null };
+    return { workers: { ...none }, orchestrator: { ...none } };
   }
 }
 
@@ -766,7 +767,7 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/limits") {
     Promise.all([limits.get(), modelChains()]).then(
-      ([l, chains]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, chains })),
+      ([l, chains]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, chains, chainSummary: chainSummary(chains) })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");

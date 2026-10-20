@@ -19,8 +19,11 @@ import { join } from "node:path";
 import {
   ANTHROPIC_NATIVE,
   WorkersConfigError,
+  flatChain,
   getProviderOrNative,
   isLocalProvider,
+  roleChainSet,
+  type RoleChain,
   type WorkersConfig,
 } from "./config.js";
 import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
@@ -144,7 +147,7 @@ export async function pingLocal(baseUrl: string, timeoutMs = 4000): Promise<bool
   }
 }
 
-/** First enabled, loopback, answering provider in config order. */
+/** First enabled, loopback, answering provider: in config order, or in the order of `only` (ranks) when given. */
 export async function findLocal(
   config: WorkersConfig,
   logDir: string,
@@ -152,10 +155,12 @@ export async function findLocal(
   only?: string[]
 ): Promise<{ name: string | null; why: string }> {
   const state = readRoutingState(logDir);
-  const candidates = Object.entries(config.providers).filter(
-    ([name, p]) =>
-      (!only || only.includes(name)) && p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl) && cooldownRemaining(state, name) === 0
-  );
+  const candidates = Object.entries(config.providers)
+    .filter(
+      ([name, p]) =>
+        (!only || only.includes(name)) && p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl) && cooldownRemaining(state, name) === 0
+    )
+    .sort(([a], [b]) => (only ? only.indexOf(a) - only.indexOf(b) : 0));
   if (!candidates.length) return { name: null, why: "no local provider" };
   for (const [name, p] of candidates) if (await ping(p.baseUrl)) return { name, why: "" };
   return { name: null, why: "local down" };
@@ -169,46 +174,59 @@ export interface RouteFlags {
 
 /** The Workers chain set explicitly (cockpit rank, `pai worker chains set`, a policy mode), or []. */
 export function explicitWorkersChain(config: WorkersConfig): string[] {
-  return config.chains?.workers ?? [];
+  return config.chains && roleChainSet(config.chains.workers) ? flatChain(config.chains.workers) : [];
+}
+
+/**
+ * The ranked local model that serves: the highest-ranked one that is running.
+ * A lower-ranked model that is not loaded is skipped, never started. The one
+ * function routing and the displays (`pai worker chains`, cockpit) share.
+ */
+export async function runningRankedLocal(
+  config: WorkersConfig,
+  logDir: string,
+  rc: RoleChain,
+  ping?: (url: string) => Promise<boolean>
+): Promise<{ name: string | null; why: string }> {
+  if (!rc.local.length) return { name: null, why: "no local model" };
+  return findLocal(config, logDir, ping, rc.local);
 }
 
 /**
  * The route of an explicit Workers chain: the single source of truth, the
- * policy modes are views of it. Local at t0 -> local first (prefer-local);
- * local at a lower rank -> the cloud entries above it first, the local one
- * reached by the auto walk at its rank (prefer-cloud); no local -> cloud only;
- * no cloud -> local only. Per-run --urgent/--cloud/--local-ok still apply.
+ * policy modes are views of it. Two groups, local first: the highest-ranked
+ * running local model serves; no local running (or local off, or a fall-through
+ * afterwards) -> the cloud group in its order. Local off + no cloud -> cloud-only
+ * is impossible, so no cloud group is local only. Per-run --urgent/--cloud/--local-ok
+ * still apply.
  */
 async function chainRoute(
   config: WorkersConfig,
   logDir: string,
-  chain: string[],
+  rc: RoleChain,
   flags: RouteFlags,
   deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean }
 ): Promise<{ providerFlag: string | null; route: RouteInfo }> {
-  const isLocal = (m: string) => isLocalProvider(config.providers[m]?.baseUrl ?? "");
-  const locals = chain.filter(isLocal);
   const res = (mode: PolicyMode, reason: string, local: string | null) => ({
     providerFlag: local,
     route: { policy: mode, reason, local: local !== null },
   });
-  if (!locals.length) return res("cloud-only", "chain: no local model", null);
-  const found = await findLocal(config, logDir, deps.ping, locals);
-  const idx = chain.indexOf(locals[0]);
-  if (locals.length === chain.length) {
+  if (!rc.local.length) return res("cloud-only", "chain: no local model", null);
+  const found = await runningRankedLocal(config, logDir, rc, deps.ping);
+  if (!rc.cloud.length) {
     if (!found.name) throw new WorkersConfigError(`chain: ${found.why} — start a local server or change the Workers chain (pai worker chains)`);
     return res("local-only", "chain: local only", found.name);
   }
-  if (idx === 0) {
-    const auto = readPolicy(logDir)?.mode === "auto";
-    if (auto && (deps.battery ?? onBattery)()) return res("auto", "battery", null);
-    if (flags.urgent) return res("prefer-local", "urgent", null);
-    if (flags.cloud) return res("prefer-local", "--cloud", null);
-    if (!found.name) return res("prefer-local", found.why, null);
-    return res("prefer-local", "chain: t0", found.name);
+  if (!rc.localFirst) {
+    if (flags.localOk && !flags.cloud && found.name) return res("prefer-cloud", "--local-ok", found.name);
+    return res("prefer-cloud", "chain: local off", null);
   }
-  if (flags.localOk && !flags.cloud && found.name) return res("prefer-cloud", "--local-ok", found.name);
-  return res("prefer-cloud", `chain: ${locals[0]} at t${idx}`, null);
+  const auto = readPolicy(logDir)?.mode === "auto";
+  if (auto && (deps.battery ?? onBattery)()) return res("auto", "battery", null);
+  if (flags.urgent) return res("prefer-local", "urgent", null);
+  if (flags.cloud) return res("prefer-local", "--cloud", null);
+  if (!found.name) return res("prefer-local", found.why, null);
+  return res("prefer-local", `chain: ${found.name}`, found.name);
 }
 
 /**
@@ -223,8 +241,7 @@ export async function routeRun(
   flags: RouteFlags,
   deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
-  const chain = explicitWorkersChain(config);
-  if (chain.length) return chainRoute(config, logDir, chain, flags, deps);
+  if (config.chains && roleChainSet(config.chains.workers)) return chainRoute(config, logDir, config.chains.workers, flags, deps);
   const policy = readPolicy(logDir);
   if (!policy) return null;
   const mode = policy.mode;

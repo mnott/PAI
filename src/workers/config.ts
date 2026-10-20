@@ -323,9 +323,34 @@ const MODEL_TIERS: readonly ModelTier[] = ["haiku", "sonnet", "opus"];
 
 export const DEFAULT_COST_TIER = 3;
 
+/** One role's ranks: two groups, local always ahead of cloud; ranks t0..tN count within a group. */
+export interface RoleChain {
+  local: string[];
+  cloud: string[];
+  /** false = the local group is off: cloud only. */
+  localFirst: boolean;
+}
+
 export interface WorkersChains {
-  workers: string[];
-  orchestrator: string[];
+  workers: RoleChain;
+  orchestrator: RoleChain;
+}
+
+export const emptyRoleChain = (): RoleChain => ({ local: [], cloud: [], localFirst: true });
+
+/** A role has ranks set (either group non-empty). */
+export const roleChainSet = (rc: RoleChain): boolean => rc.local.length + rc.cloud.length > 0;
+
+/** The routing walk of a role: local group then cloud group, or cloud only while local is off. */
+export function flatChain(rc: RoleChain): string[] {
+  return rc.localFirst ? [...rc.local, ...rc.cloud] : [...rc.cloud];
+}
+
+/** Split a flat model list into the two groups. A local model that is not first (cloud ahead of it) migrates as local off. */
+export function splitFlatChain(models: string[], isLocal: (m: string) => boolean): RoleChain {
+  const uniq = [...new Set(models)];
+  const local = uniq.filter(isLocal);
+  return { local, cloud: uniq.filter((m) => !isLocal(m)), localFirst: !local.length || isLocal(uniq[0]) };
 }
 
 /** Tags a provider may carry; classes filter auto-routing on them. */
@@ -617,7 +642,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     pane: { ...DEFAULT_PANE },
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
-    chains: { workers: [], orchestrator: [] },
+    chains: { workers: emptyRoleChain(), orchestrator: emptyRoleChain() },
     tree: { ...DEFAULT_TREE },
     supervision: { pointer: false, push: "harness", stallMinutes: 10 },
     pool: { ...DEFAULT_POOL },
@@ -1014,7 +1039,7 @@ export function parseCapabilitiesValue(raw: unknown, badPathPrefix: string): Rec
  * Parse and validate a raw `workers` value. Missing section → defaults.
  * Unknown-but-typed garbage → WorkersConfigError naming the offending field.
  */
-export function parseWorkersConfig(raw: unknown): WorkersConfig {
+export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, WorkerProvider> = {}): WorkersConfig {
   const d = defaultWorkersConfig();
   if (raw === undefined || raw === null) return d;
   if (typeof raw !== "object" || Array.isArray(raw)) {
@@ -1109,15 +1134,31 @@ export function parseWorkersConfig(raw: unknown): WorkersConfig {
     };
   }
 
-  const chains: WorkersChains = { workers: [], orchestrator: [] };
+  const chains: WorkersChains = { workers: emptyRoleChain(), orchestrator: emptyRoleChain() };
   if (w.chains !== undefined) {
     if (typeof w.chains !== "object" || w.chains === null || Array.isArray(w.chains)) bad(".chains", "must be an object");
     const c = w.chains as Record<string, unknown>;
+    const names = (v: unknown, where: string): string[] => {
+      if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !x)) bad(where, "must be an array of model names");
+      return [...new Set(v as string[])];
+    };
+    const isLocal = (m: string) => isLocalProvider((providers[m] ?? yamlProviders[m])?.baseUrl ?? "");
     for (const role of ["workers", "orchestrator"] as const) {
       const v = c[role];
       if (v === undefined) continue;
-      if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !x)) bad(`.chains.${role}`, "must be an array of model names");
-      chains[role] = [...new Set(v as string[])];
+      if (Array.isArray(v)) {
+        // the flat chain of the earlier format: split into local and cloud
+        chains[role] = splitFlatChain(names(v, `.chains.${role}`), isLocal);
+        continue;
+      }
+      if (typeof v !== "object" || v === null) bad(`.chains.${role}`, "must be an object with local, cloud and localFirst");
+      const o = v as Record<string, unknown>;
+      if (o.localFirst !== undefined && typeof o.localFirst !== "boolean") bad(`.chains.${role}.localFirst`, "must be true or false");
+      chains[role] = {
+        local: o.local === undefined ? [] : names(o.local, `.chains.${role}.local`),
+        cloud: o.cloud === undefined ? [] : names(o.cloud, `.chains.${role}.cloud`),
+        localFirst: o.localFirst !== false,
+      };
     }
   }
 
@@ -1405,8 +1446,9 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
   workers: WorkersConfig;
 } {
   const raw = readMainConfigRaw(path);
-  const workers = parseWorkersConfig(raw.workers);
   const yaml = readWorkersYaml(workersYamlPath());
+  // the providers live in workers.yaml: a flat chain of the earlier format is split by them
+  const workers = parseWorkersConfig(raw.workers, yaml?.data.providers);
   if (yaml) {
     workers.active = yaml.data.active;
     workers.providers = yaml.data.providers;

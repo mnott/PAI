@@ -1354,21 +1354,24 @@ See also: `pai worker local`, `pai worker providers`
 Print the Workers and Orchestrator chains routing really uses
 
 ```
-pai worker chains [ACTION] [ROLE] [MODELS]
+pai worker chains [ACTION] [ROLE] [GROUP] [MODELS]
 ```
 
-Same function as the cockpit's rank line: the derived chains with the routing policy applied (`pai worker policy`).
+Same function as the cockpit's rank line. Two groups per role, local first then cloud; ranks count within a group. The highest-ranked local model that is running serves, else the cloud group in order (`pai worker policy` maps onto the groups).
 `active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ACTION` | no | set (omit to print) |
 | `ROLE` | no | workers or orchestrator |
-| `MODELS` | no | Comma-separated models, t0 first |
+| `GROUP` | no | local or cloud |
+| `MODELS` | no | Comma-separated models, t0 first; for local also on / off |
 
 ```sh
 pai worker chains
-pai worker chains set workers anthropic,glm,gyro-m
+pai worker chains set workers local gyro-m,flashnext-iq3
+pai worker chains set workers cloud anthropic,glm
+pai worker chains set workers local off
 ```
 
 See also: `pai worker policy`
