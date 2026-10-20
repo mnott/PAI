@@ -19,6 +19,8 @@ export interface PlanPart {
   proof?: string;
   dependsOn: string[];
   risky: boolean;
+  /** Route hint: infra|install|device|external|redesign go to the cloud, code|test stay local (route-classifier.ts). */
+  kind?: string;
   /** Orchestrator-marked: may start its worker while the previous part's worker has ended but its gate/merge still runs. */
   overlap?: boolean;
 }
@@ -72,6 +74,7 @@ export const PLAN_SCHEMA = {
                 files: "string[] — paths the part touches; parts sharing a file never run together",
                 proof: "string — command the worker must run and show passing",
                 depends_on: "string[] — part ids (any unit) that must be merged first",
+                kind: "string — infra|install|device|external|redesign (cloud) or code|test (local); routes the part when the plan runs on a local provider",
                 risky: "boolean — documented intent for review; shown in the schedule",
                 overlap: "boolean — default false; the part is independent of the part before it, so its worker may start as soon as that part's worker has ended, while its gate and merge still run (its merge waits for it). Rejected when it depends on that part",
               },
@@ -185,6 +188,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
           if (p.proof !== undefined && typeof p.proof !== "string") problems.push(`${pw}proof: must be a string`);
           if (p.overlap !== undefined && typeof p.overlap !== "boolean") problems.push(`${pw}overlap: must be a boolean`);
           if (p.risky !== undefined && typeof p.risky !== "boolean") problems.push(`${pw}risky: must be a boolean`);
+          if (p.kind !== undefined && !["infra", "install", "device", "external", "redesign", "code", "test"].includes(String(p.kind))) problems.push(`${pw}kind: must be one of infra, install, device, external, redesign, code, test`);
           const pieces = [planPre, unitPre, spec].filter((x): x is string => !!x).map((x) => textOrFile(x, baseDir));
           parts.push({
             id,
@@ -194,6 +198,7 @@ export function parsePlan(text: string, baseDir: string): Plan {
             ...(typeof p.proof === "string" && p.proof.trim() ? { proof: p.proof.trim() } : {}),
             dependsOn: strList(p.depends_on, `${pw}depends_on`, problems),
             risky: p.risky === true,
+            ...(typeof p.kind === "string" ? { kind: p.kind } : {}),
             ...(p.overlap === true ? { overlap: true } : {}),
           });
         });

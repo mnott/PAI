@@ -55,6 +55,7 @@ const runCmd: CommandDef = {
   options: [
     { name: "parallel", type: "number", value: "N", summary: "Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent)" },
     { name: "escalate", type: "string", value: "TIER", summary: "After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision" },
+    { name: "force-local", type: "boolean", summary: "Keep every part on the local provider: no route classifier, no automatic cloud escalation after 2 failed local attempts" },
     { name: "provider", type: "string", value: "NAME", summary: "Run the parts on this provider instead of the plan's (the value local is resolved at run start)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model the parts' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The parts' workers go ahead of the runs waiting for a slot on the provider" },
@@ -72,7 +73,7 @@ const runCmd: CommandDef = {
     if (esc !== undefined && esc !== "sonnet") throw new CliError(`--escalate takes sonnet, not ${String(esc)}`, "pai plan run PLAN.yaml --escalate sonnet");
     const log = runLogPath(path);
     const { merged, unitsChecked } = resumeState(readRunLog(log));
-    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
+    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", ...(ctx.opts["force-local"] === true ? { forceLocal: true } : {}), ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
     if (ctx.opts["dry-run"] === true || ctx.dryRun) {
       out(renderSchedule(plan, opts));
       return 0;

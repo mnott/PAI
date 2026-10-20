@@ -94,10 +94,12 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** The three optional arguments every delegation tool takes; `local: true` is where "local". */
 export interface WhereArgs extends TargetArgs {
   local?: boolean;
+  /** force_local: keep a local target local whatever the route classifier says. */
+  force_local?: boolean;
 }
 
 const asked = (a: WhereArgs): boolean => a.local === true || !!a.where || !!a.model || a.now === true;
-const targetArgs = (a: WhereArgs): TargetArgs => ({ where: a.where ?? (a.local === true ? "local" : undefined), model: a.model, now: a.now });
+const targetArgs = (a: WhereArgs): TargetArgs => ({ where: a.where ?? (a.local === true ? "local" : undefined), model: a.model, now: a.now, ...(a.force_local === true ? { forceLocal: true } : {}), ...(a.task !== undefined ? { task: a.task } : {}), ...(a.label ? { label: a.label } : {}), ...(a.kind ? { kind: a.kind } : {}) });
 
 /** The `pai plan|queue run` options a resolved target becomes: provider, model, --now (the runners hand them to every worker). */
 function runTarget(t: Target | undefined, withProvider = true): Record<string, unknown> {
@@ -368,7 +370,7 @@ export async function queueAdd(args: { project: string; sentence: string; files?
     if (!args.sentence?.trim()) return fail("sentence is empty; describe the change in one sentence");
     const image = args.image ? resolve(args.image) : undefined;
     if (image && !existsSync(image)) return fail(`No such image: ${image}`);
-    const target = await resolveWhere(args, deps);
+    const target = await resolveWhere({ ...args, task: args.sentence }, deps);
     const { repo, store } = await openQueue(args.project, deps);
     const it = store.add(args.sentence.trim(), repo, { files: (args.files ?? []).map((f) => f.trim()).filter(Boolean), image });
     return text(withTarget(target, `Queued as ${it.id}. Call queue_run to start the pending items${target ? " (pass the same where / model / now)" : ""}.`));

@@ -173,6 +173,7 @@ const whereArgs = {
   where: z.string().optional().describe("Where it runs: \"local\" (PAI picks the running local server), \"cloud\" (the session's cloud provider) or a provider name. Omit for default routing."),
   model: z.string().optional().describe("\"default\", \"fast\" or a model id."),
   now: z.boolean().optional().describe("true: ahead of the runs already waiting."),
+  force_local: z.boolean().optional().describe("true: stay local even when the route classifier says infra/install/device/external work belongs in the cloud."),
 };
 
 

@@ -116,7 +116,7 @@ describe("runPlan", () => {
       specs.push(r.spec);
       return r.part.id !== "a";
     });
-    const s = await runPlan(p, { parallel: 2 }, h.deps);
+    const s = await runPlan(p, { parallel: 2, forceLocal: true }, h.deps);
     expect(h.starts.filter((x) => x.startsWith("a#"))).toEqual(["a#1", "a#2"]);
     expect(specs.some((t) => /previous attempt failed[\s\S]*fail a/.test(t))).toBe(true);
     expect(s.needsDecision).toEqual(["a"]);
@@ -211,7 +211,7 @@ describe("no-commit merges", () => {
       const m = await orig(id, gate);
       return id.startsWith("w-a-") ? { ...m, ok: true, commit: "head0", before: "head0" } : m;
     };
-    const s = await runPlan(p, { parallel: 2 }, h.deps);
+    const s = await runPlan(p, { parallel: 2, forceLocal: true }, h.deps);
     expect(h.starts.filter((x) => x.startsWith("a#"))).toEqual(["a#1", "a#2"]);
     const merges = h.log.filter((e) => e.event === "merge" && e.part === "a");
     expect(merges.map((e) => [e.ok, e.status, e.commit])).toEqual([[false, "no-commit", undefined], [false, "no-commit", undefined]]);
