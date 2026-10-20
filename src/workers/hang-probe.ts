@@ -71,9 +71,15 @@ function rmQuiet(f: string): void {
 
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The command the guard runs instead: the original inside the probe wrapper. */
+/** The command the guard runs instead: the original, base64-encoded so no shell re-parses it, inside the probe wrapper. */
 export function wrapTestCommand(command: string): string {
-  return `${WRAP} -- bash -c ${shq(command)}`;
+  return `${WRAP} --cmd-b64 ${Buffer.from(command, "utf8").toString("base64")}`;
+}
+
+/** The command line test-run executes: the decoded --cmd-b64 payload, else the words after `--`, each shell-quoted. */
+export function commandToRun(cmdB64: string | undefined, words: string[]): string {
+  if (cmdB64) return Buffer.from(cmdB64, "base64").toString("utf8");
+  return words.map(shq).join(" ");
 }
 
 export interface Frame {

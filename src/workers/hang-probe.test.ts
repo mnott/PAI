@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { diagnose, HANG_MARKER, isTestCommand, runProbed, timeoutSecs, userFrames, wrapTestCommand } from "./hang-probe.js";
+import { commandToRun, diagnose, HANG_MARKER, isTestCommand, runProbed, timeoutSecs, userFrames, wrapTestCommand } from "./hang-probe.js";
 import { emptyLoopState, recordLoopResult, stepLoopGuard } from "../hooks/ts/lib/loop-guard.js";
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), "hang-probe-")));
@@ -44,8 +44,11 @@ describe("command recognition", () => {
     expect(timeoutSecs("timeout -k 5 2m npm test")).toBe(120);
     expect(timeoutSecs("npx vitest run")).toBeNull();
   });
-  it("quotes the original command for the wrapper", () => {
-    expect(wrapTestCommand("echo 'a b' && npm test")).toBe(`pai worker test-run -- bash -c 'echo '\\''a b'\\'' && npm test'`);
+  it("hands the original command to the wrapper without shell parsing", () => {
+    const w = wrapTestCommand("echo 'a b' && npm test");
+    expect(w).toMatch(/^pai worker test-run --cmd-b64 [A-Za-z0-9+/=]+$/);
+    expect(commandToRun(w.split(" ")[4], [])).toBe("echo 'a b' && npm test");
+    expect(commandToRun(undefined, ["bash", "-c", "timeout 5 echo hi"])).toBe("'bash' '-c' 'timeout 5 echo hi'");
   });
 });
 
@@ -142,4 +145,43 @@ describe("worker-guard hook", () => {
     expect(call("ls src", { PAI_WORKER: "1" })).toBe("");
     expect(call("npx vitest run a.test.ts", { PAI_WORKER: "" })).toBe("");
   }, 30_000);
+});
+
+describe("wrapped commands survive the shell", () => {
+  // stands in for `pai`: the real test-run command from source
+  const bin = join(tmp, "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "pai"), `#!/bin/sh\nexec npx tsx ${resolve("src/cli/index.ts")} "$@"\n`, { mode: 0o755 });
+  /** Runs the guard's rewritten string through bash -c, as Claude Code does. */
+  const viaGuard = (command: string, cwd = tmp) =>
+    spawnSync("bash", ["-c", wrapTestCommand(command)], { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FOO: "bar" }, encoding: "utf8" });
+
+  it("runs timeout 5 echo hello", () => {
+    const r = viaGuard("timeout 5 echo hello");
+    expect(r.stdout.trim()).toBe("hello");
+    expect(r.status).toBe(0);
+  }, 60_000);
+
+  it("keeps quotes, pipes, && and variables", () => {
+    const r = viaGuard(`echo "a  b" 'c d' && echo $FOO; (echo x; echo y 1>&2) 2>&1 | tail -5; exit 3`);
+    expect(r.stdout).toBe("a  b c d\nbar\nx\ny\n");
+    expect(r.status).toBe(3);
+  }, 60_000);
+
+  it("runs words after -- directly", () => {
+    const r = spawnSync("bash", ["-c", "pai worker test-run -- bash -c 'timeout 5 echo hello'"], { cwd: tmp, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" });
+    expect(r.stdout.trim()).toBe("hello");
+  }, 60_000);
+
+  it("still prints the diagnosis for the infinite-loop fixture", () => {
+    const dir = fixture("loop2", `import { test } from "vitest";
+function spin() {
+  for (;;) {}
+}
+test("loops", () => { spin(); });
+`);
+    const r = viaGuard("timeout 20 npx vitest run case.test.ts", dir);
+    expect(r.stderr + r.stdout).toContain("stuck in case.test.ts:3 spin()");
+    expect(r.status).toBe(124);
+  }, 90_000);
 });
