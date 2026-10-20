@@ -14,7 +14,7 @@ import { enqueueCoalesced, type WorkItem } from "./work-queue.js";
 import { unregistrableReason } from "../registry/registrable.js";
 
 /** Triggers closer together than this share one scan; the 30 min timer is the backstop. */
-export const REGISTRY_SCAN_COALESCE_MS = 5 * 60 * 1000;
+export const REGISTRY_SCAN_COALESCE_MS = 10 * 60 * 1000;
 
 /** Why a trigger from `cwd` cannot change the registry, or undefined if it can. */
 export function registryScanIgnoredReason(cwd: unknown): string | undefined {

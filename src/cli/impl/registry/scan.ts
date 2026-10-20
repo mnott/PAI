@@ -10,8 +10,9 @@ import { encodeDir } from "../../lib/utils.js";
 import { decodeEncodedDir, slugify, parseSessionFilename, buildEncodedDirMap } from "../../../registry/migrate.js";
 import { ensurePaiMarker, discoverPaiMarkers } from "../../../registry/pai-marker.js";
 import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
-import { unregistrableReason, pruneWorktreeProjects } from "../../../registry/registrable.js";
+import { unregistrableReason, pruneWorktreeProjects, workerWorktreesRoot } from "../../../registry/registrable.js";
 import { upsertProject, upsertSession } from "./utils.js";
+import { loadScanIndex, saveScanIndex, mtimeOf, notesSignature, encodedDirRefusedReason, yieldToEventLoop, type ScanIndex } from "./scan-index.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../../config/pai-home.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
@@ -169,8 +170,24 @@ export interface ScanResult {
 // Core scan logic
 // ---------------------------------------------------------------------------
 
-export async function performScan(): Promise<ScanResult> {
+function isDir(p: string): boolean {
+  try { return statSync(p).isDirectory(); } catch { return false; }
+}
+
+/** Entries processed between yields to the event loop. */
+const YIELD_EVERY = 25;
+
+export interface ScanOptions {
+  /** Ignore the mtime index and process every entry. */
+  full?: boolean;
+  /** Index file override (tests). */
+  indexFile?: string;
+}
+
+export async function performScan(opts: ScanOptions = {}): Promise<ScanResult> {
   const backend = await getRegistryBackend();
+  const index: ScanIndex = opts.full ? loadScanIndex("/nonexistent") : loadScanIndex(opts.indexFile);
+  const worktreesRoot = workerWorktreesRoot();
   const result: ScanResult = {
     projectsScanned: 0,
     projectsNew: 0,
@@ -186,17 +203,49 @@ export async function performScan(): Promise<ScanResult> {
   }
 
   // Drop rows registered before worktrees were refused (worker/agent worktrees).
-  await pruneWorktreeProjects(backend);
+  await pruneWorktreeProjects(backend, worktreesRoot);
 
-  const entries = readdirSync(CLAUDE_PROJECTS_DIR()).filter((name) => {
-    const full = join(CLAUDE_PROJECTS_DIR(), name);
-    return statSync(full).isDirectory();
-  });
+  const entries: string[] = [];
+  for (const e of readdirSync(CLAUDE_PROJECTS_DIR(), { withFileTypes: true })) {
+    // Worker/worktree/temp dirs are refused from the name alone: no stat, no decode.
+    const refusedByName = encodedDirRefusedReason(e.name, worktreesRoot);
+    if (refusedByName) {
+      if (e.isDirectory()) {
+        result.filtered.push(`${e.name} (${refusedByName})`);
+        result.projectsScanned++;
+      }
+      continue;
+    }
+    if (e.isDirectory() || (e.isSymbolicLink() && isDir(join(CLAUDE_PROJECTS_DIR(), e.name)))) entries.push(e.name);
+  }
 
   const lookupMap = buildEncodedDirMap();
   const clcMap = buildClcDirMap();
+  const seen = new Set<string>();
+  let processed = 0;
 
   for (const encodedDir of entries) {
+    if (++processed % YIELD_EVERY === 0) await yieldToEventLoop();
+    seen.add(encodedDir);
+
+    // Unchanged since the last full pass (dir mtime and Notes signature) and the
+    // registry row is still there: nothing to read or write.
+    const projDir = join(CLAUDE_PROJECTS_DIR(), encodedDir);
+    const dirMtime = mtimeOf(projDir);
+    const claudeNotesSig = notesSignature(join(projDir, "Notes"));
+    const prev = index.projects[encodedDir];
+    if (prev && prev.m === dirMtime && prev.n === claudeNotesSig) {
+      if (prev.root === "") {
+        result.filtered.push(`${encodedDir} (unchanged)`);
+        result.projectsScanned++;
+        continue;
+      }
+      if (await backend.getProjectByRootPath(prev.root)) {
+        result.projectsScanned++;
+        continue;
+      }
+    }
+
     let rootPath = decodeEncodedDir(encodedDir, lookupMap);
 
     // If the decoded path doesn't exist, try the clc session.json fallback map.
@@ -211,10 +260,11 @@ export async function performScan(): Promise<ScanResult> {
 
     // Paths that can never be projects (worker logs/worktrees, temp dirs) are
     // refused before the disk check, so they are not counted as "not found".
-    const refused = unregistrableReason(rootPath);
+    const refused = unregistrableReason(rootPath, worktreesRoot);
     if (refused) {
       result.filtered.push(`${encodedDir} (${rootPath} — ${refused})`);
       result.projectsScanned++;
+      index.projects[encodedDir] = { m: dirMtime, n: claudeNotesSig, root: "" };
       continue;
     }
 
@@ -257,12 +307,17 @@ export async function performScan(): Promise<ScanResult> {
       // Non-fatal
     }
 
+    index.projects[encodedDir] = { m: dirMtime, n: claudeNotesSig, root: rootPath };
+
     const claudeNotesDir = join(CLAUDE_PROJECTS_DIR(), encodedDir, "Notes");
 
     if (existsSync(claudeNotesDir)) {
       const rootNotesDir = join(rootPath, "Notes");
       if (claudeNotesDir !== rootNotesDir) {
-        await backend.updateProjectClaudeNotesDir(id, claudeNotesDir, Date.now());
+        const row = await backend.getProjectById(id);
+        if (row?.claude_notes_dir !== claudeNotesDir) {
+          await backend.updateProjectClaudeNotesDir(id, claudeNotesDir, Date.now());
+        }
       }
     }
 
@@ -280,13 +335,20 @@ export async function performScan(): Promise<ScanResult> {
     }
   }
 
+  // Entries that vanished from ~/.claude/projects leave the index.
+  for (const k of Object.keys(index.projects)) if (!seen.has(k) && !encodedDirRefusedReason(k, worktreesRoot)) delete index.projects[k];
+
   // Phase 2: Scan project-root Notes/ for all registered active projects
   {
     const activeProjects = await backend.listProjects({ status: "active" });
 
     for (const project of activeProjects) {
+      if (++processed % YIELD_EVERY === 0) await yieldToEventLoop();
       const notesDir = join(project.root_path, "Notes");
       if (!existsSync(notesDir)) continue;
+      const sig = notesSignature(notesDir);
+      if (index.notes[project.root_path] === sig) continue;
+      index.notes[project.root_path] = sig;
 
       let files: string[];
       try {
@@ -334,11 +396,15 @@ export async function performScan(): Promise<ScanResult> {
 
         if (existing) {
           result.projectsScanned++;
+
+          const notesDir = join(childPath, "Notes");
+          const sig = notesSignature(notesDir);
+          if (index.notes[childPath] === sig) continue;
+          index.notes[childPath] = sig;
           result.projectsUpdated++;
 
           try { ensurePaiMarker(childPath, childSlug); } catch { /* non-fatal */ }
 
-          const notesDir = join(childPath, "Notes");
           if (existsSync(notesDir)) {
             const noteFiles = readdirSync(notesDir).filter((f) => f.endsWith(".md"));
             for (const filename of noteFiles) {
@@ -447,6 +513,7 @@ export async function performScan(): Promise<ScanResult> {
     }
   }
 
+  saveScanIndex(index, opts.indexFile);
   return result;
 }
 

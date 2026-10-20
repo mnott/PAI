@@ -60,7 +60,7 @@ export function mainRepoOf(root: string): string | undefined {
 }
 
 /** The worker worktrees root from the workers config; undefined if unreadable. */
-function workerWorktreesRoot(): string | undefined {
+export function workerWorktreesRoot(): string | undefined {
   try {
     return resolve(worktreesDir(workersLogDir(readWorkersSection().workers)));
   } catch {

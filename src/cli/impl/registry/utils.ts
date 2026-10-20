@@ -62,6 +62,7 @@ export async function upsertProject(
     const encodedOwner = await backend.getProjectByEncodedDir(encodedDir);
 
     if (
+      byPath.encoded_dir !== encodedDir &&
       (!encodedOwner || encodedOwner.id === byPath.id) &&
       (await worthWriting(backend, byPath.id, encodedDir))
     ) {
