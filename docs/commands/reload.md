@@ -8,7 +8,7 @@ Restart daemon, router and worker pool host onto the code on disk
 pai reload
 ```
 
-After a build the long-running processes keep the old code until restarted. This restarts the daemon, then the router (no refused connections), then the worker pool host (busy slots finish their task first; idle spares are retired and recreated on the new code). Only processes that run are restarted. Prints one line per process with old and new pid and the code it runs.
+After a build the long-running processes keep the old code until restarted. This restarts the daemon — starting it through its installed service when it does not run — then the router (no refused connections), then the worker pool host (busy slots finish their task first; idle spares are retired and recreated on the new code). The router and pool host are only restarted when they run. Prints one line per process with old and new pid and the code it runs; a daemon that will not start is reported with the last lines of its log and a non-zero exit.
 
 ```sh
 pai reload
