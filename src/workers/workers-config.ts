@@ -267,6 +267,12 @@ export function parseWorkersYamlDocument(doc: Document, yamlPath: string): Worke
     for (const [cls, target] of Object.entries(classes)) {
       const provider = typeof target === "string" ? target.split("/")[0] : target.provider;
       const alias = typeof target === "string" ? target.split("/")[1] : undefined;
+      for (const m of typeof target === "object" ? (target.models ?? []) : []) {
+        const mp = m.split("/")[0];
+        if (mp !== ANTHROPIC_NATIVE && !providers[mp]) {
+          withLine(doc, ["classes", cls], yamlPath, new WorkersConfigError(`classes.${cls}.models: no provider named "${mp}" in "${m}"`));
+        }
+      }
       if (provider !== undefined) {
         const native = provider === ANTHROPIC_NATIVE;
         if (!native && !providers[provider]) {

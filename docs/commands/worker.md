@@ -1349,32 +1349,29 @@ pai worker policy prefer-local --for 2h
 
 See also: `pai worker local`, `pai worker providers`
 
-### pai worker chains
+### pai worker route
 
-Print the Workers and Orchestrator chains routing really uses
+Print the routing table: per class the ordered models
 
 ```
-pai worker chains [ACTION] [ROLE] [GROUP] [MODELS]
+pai worker route [ACTION] [CLASS] [MODELS]
 ```
 
-Same function as the cockpit's rank line. Two groups per role, local first then cloud; ranks count within a group. The highest-ranked local model that is running serves, else the cloud group in order (`pai worker policy` maps onto the groups).
-`active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.
+One row per class (orchestrate, implement, simple, spotcheck, ...), each an ordered list of models: the first serves, the rest is the fallback order. Local models ("local gyro-m") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.
+`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m).
 
 | Argument | Required | Description |
 |---|---|---|
 | `ACTION` | no | set (omit to print) |
-| `ROLE` | no | workers or orchestrator |
-| `GROUP` | no | local or cloud |
-| `MODELS` | no | Comma-separated models, t0 first; for local also on / off |
+| `CLASS` | no | orchestrate, implement, simple, spotcheck, research, draft, review, complex, plan |
+| `MODELS` | no | Comma-separated provider/model entries, first serves |
 
 ```sh
-pai worker chains
-pai worker chains set workers local gyro-m,flashnext-iq3
-pai worker chains set workers cloud anthropic,glm
-pai worker chains set workers local off
+pai worker route
+pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash
 ```
 
-See also: `pai worker policy`
+See also: `pai worker policy`, `pai worker classes`
 
 ### pai worker local
 
@@ -1637,7 +1634,7 @@ See also: `pai worker providers`
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
-| `pai worker chains` | Print the Workers and Orchestrator chains routing really uses |
+| `pai worker route` | Print the routing table: per class the ordered models |
 | `pai worker local` | Which local model runs; the operator switches tiers |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |

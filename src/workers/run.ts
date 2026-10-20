@@ -811,7 +811,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   await assertLocalProviderAlive(config, logDir, target.providerName, target.provider, opts);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
   if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";
-  const modelFlag = opts.modelFlag ?? (profileModel && profileModel !== "fast" && profileModel !== "default" ? profileModel : undefined);
+  const modelFlag = opts.modelFlag ?? target.modelId ?? (profileModel && profileModel !== "fast" && profileModel !== "default" ? profileModel : undefined);
   if (profileModel === "fast" && !opts.modelFlag) target.modelAlias = "fast";
   if (profileModel === "default" && !opts.modelFlag) target.modelAlias = "default";
 

@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { CONFIG_FILE, expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
+import { migrateLegacyChains } from "./route-lists.js";
 import { readWorkersYaml, workersYamlPath, writeWorkersYaml, type WorkersYamlData } from "./workers-config.js";
 
 // ---------------------------------------------------------------------------
@@ -323,36 +324,6 @@ const MODEL_TIERS: readonly ModelTier[] = ["haiku", "sonnet", "opus"];
 
 export const DEFAULT_COST_TIER = 3;
 
-/** One role's ranks: two groups, local always ahead of cloud; ranks t0..tN count within a group. */
-export interface RoleChain {
-  local: string[];
-  cloud: string[];
-  /** false = the local group is off: cloud only. */
-  localFirst: boolean;
-}
-
-export interface WorkersChains {
-  workers: RoleChain;
-  orchestrator: RoleChain;
-}
-
-export const emptyRoleChain = (): RoleChain => ({ local: [], cloud: [], localFirst: true });
-
-/** A role has ranks set (either group non-empty). */
-export const roleChainSet = (rc: RoleChain): boolean => rc.local.length + rc.cloud.length > 0;
-
-/** The routing walk of a role: local group then cloud group, or cloud only while local is off. */
-export function flatChain(rc: RoleChain): string[] {
-  return rc.localFirst ? [...rc.local, ...rc.cloud] : [...rc.cloud];
-}
-
-/** Split a flat model list into the two groups. A local model that is not first (cloud ahead of it) migrates as local off. */
-export function splitFlatChain(models: string[], isLocal: (m: string) => boolean): RoleChain {
-  const uniq = [...new Set(models)];
-  const local = uniq.filter(isLocal);
-  return { local, cloud: uniq.filter((m) => !isLocal(m)), localFirst: !local.length || isLocal(uniq[0]) };
-}
-
 /** Tags a provider may carry; classes filter auto-routing on them. */
 export const PROVIDER_TAGS = [
   "code",
@@ -442,6 +413,8 @@ export type ClassTarget =
       requireTags?: string[];
       /** Provider order for this class; defaults to routing.order. */
       order?: string[];
+      /** The class's routing list (route-lists.ts): element 0 serves, the rest is the fallback order. */
+      models?: string[];
     };
 
 /**
@@ -487,13 +460,7 @@ export interface WorkersConfig {
   pane: WorkersPaneConfig;
   logDir: string;
   routing: WorkersRoutingConfig;
-  /**
-   * Ordered model chains per role (workers.chains): t0 first, then the fall
-   * through. Names are cloud providers or local models. Empty = not set; the
-   * chain is then derived from the legacy keys (see chains.ts).
-   */
-  chains: WorkersChains;
-  /** Sub-worker caps (workers.tree). */
+    /** Sub-worker caps (workers.tree). */
   tree: WorkersTreeConfig;
   /** Worker supervision options (workers.supervision). */
   supervision: WorkersSupervisionConfig;
@@ -642,7 +609,6 @@ export function defaultWorkersConfig(): WorkersConfig {
     pane: { ...DEFAULT_PANE },
     logDir: DEFAULT_LOG_DIR,
     routing: { ...DEFAULT_ROUTING, order: [] },
-    chains: { workers: emptyRoleChain(), orchestrator: emptyRoleChain() },
     tree: { ...DEFAULT_TREE },
     supervision: { pointer: false, push: "harness", stallMinutes: 10 },
     pool: { ...DEFAULT_POOL },
@@ -973,8 +939,16 @@ export function parseClassesValue(
         }
         order = o.order as string[];
       }
+      let models: string[] | undefined;
+      if (o.models !== undefined) {
+        if (!Array.isArray(o.models) || o.models.some((x) => typeof x !== "string" || !x || x.includes(" "))) {
+          bad(`${badPathPrefix}.${cls}.models`, "must be an array of provider[/model] entries");
+        }
+        models = [...new Set(o.models as string[])];
+      }
       const obj: ClassTarget = {
         ...(provider ? { provider } : {}),
+        ...(models?.length ? { models } : {}),
         ...(mcp ? { mcp } : {}),
         ...(maxCostTier !== undefined ? { maxCostTier } : {}),
         ...(requireTags ? { requireTags } : {}),
@@ -1132,34 +1106,6 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       budgetWalls:
         r.budgetWalls === undefined ? {} : ({ ...(r.budgetWalls as WorkersRoutingConfig["budgetWalls"]) }),
     };
-  }
-
-  const chains: WorkersChains = { workers: emptyRoleChain(), orchestrator: emptyRoleChain() };
-  if (w.chains !== undefined) {
-    if (typeof w.chains !== "object" || w.chains === null || Array.isArray(w.chains)) bad(".chains", "must be an object");
-    const c = w.chains as Record<string, unknown>;
-    const names = (v: unknown, where: string): string[] => {
-      if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || !x)) bad(where, "must be an array of model names");
-      return [...new Set(v as string[])];
-    };
-    const isLocal = (m: string) => isLocalProvider((providers[m] ?? yamlProviders[m])?.baseUrl ?? "");
-    for (const role of ["workers", "orchestrator"] as const) {
-      const v = c[role];
-      if (v === undefined) continue;
-      if (Array.isArray(v)) {
-        // the flat chain of the earlier format: split into local and cloud
-        chains[role] = splitFlatChain(names(v, `.chains.${role}`), isLocal);
-        continue;
-      }
-      if (typeof v !== "object" || v === null) bad(`.chains.${role}`, "must be an object with local, cloud and localFirst");
-      const o = v as Record<string, unknown>;
-      if (o.localFirst !== undefined && typeof o.localFirst !== "boolean") bad(`.chains.${role}.localFirst`, "must be true or false");
-      chains[role] = {
-        local: o.local === undefined ? [] : names(o.local, `.chains.${role}.local`),
-        cloud: o.cloud === undefined ? [] : names(o.cloud, `.chains.${role}.cloud`),
-        localFirst: o.localFirst !== false,
-      };
-    }
   }
 
   let supervision: WorkersSupervisionConfig = { pointer: false, push: "harness", stallMinutes: 10 };
@@ -1390,7 +1336,6 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     pane,
     logDir: str(w.logDir) || d.logDir,
     routing,
-    chains,
     tree,
     supervision,
     pool,
@@ -1457,6 +1402,8 @@ export function readWorkersSection(path: string = CONFIG_FILE): {
     workers.capabilities = yaml.data.capabilities;
     workers.nativeModels = yaml.data.nativeModels;
   }
+  // the retired rank chains (workers.chains) become the class lists; the next write drops the key
+  migrateLegacyChains((raw.workers as { chains?: unknown } | undefined)?.chains, workers.classes);
   return { raw, workers };
 }
 
@@ -1482,7 +1429,6 @@ export function writeWorkersSection(
         pane: workers.pane,
         logDir: workers.logDir,
         routing: workers.routing,
-        chains: workers.chains,
         tree: workers.tree,
         supervision: workers.supervision,
         pool: workers.pool,

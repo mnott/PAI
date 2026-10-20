@@ -19,14 +19,13 @@ import { join } from "node:path";
 import {
   ANTHROPIC_NATIVE,
   WorkersConfigError,
-  flatChain,
   getProviderOrNative,
   isLocalProvider,
-  roleChainSet,
-  type RoleChain,
   type WorkersConfig,
 } from "./config.js";
-import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
+import { budgetCache } from "./budget.js";
+import { classRoute, entryProvider } from "./route-lists.js";
+import { cooldownRemaining, exclusionReason, quotaExceeded, readRoutingState } from "./routing.js";
 
 export const POLICY_MODES = ["cloud-only", "local-only", "prefer-local", "prefer-cloud", "auto"] as const;
 export type PolicyMode = (typeof POLICY_MODES)[number];
@@ -147,7 +146,7 @@ export async function pingLocal(baseUrl: string, timeoutMs = 4000): Promise<bool
   }
 }
 
-/** First enabled, loopback, answering provider: in config order, or in the order of `only` (ranks) when given. */
+/** First enabled, loopback, answering provider: in config order, or in the order of `only` (a route list's local entries) when given. */
 export async function findLocal(
   config: WorkersConfig,
   logDir: string,
@@ -167,66 +166,63 @@ export async function findLocal(
 }
 
 export interface RouteFlags {
+  /** The run's class: its routing list decides (a classless run uses implement's). */
+  className?: string;
   urgent?: boolean;
   localOk?: boolean;
   cloud?: boolean;
 }
 
-/** The Workers chain set explicitly (cockpit rank, `pai worker chains set`, a policy mode), or []. */
-export function explicitWorkersChain(config: WorkersConfig): string[] {
-  return config.chains && roleChainSet(config.chains.workers) ? flatChain(config.chains.workers) : [];
-}
-
 /**
- * The ranked local model that serves: the highest-ranked one that is running.
- * A lower-ranked model that is not loaded is skipped, never started. The one
- * function routing and the displays (`pai worker chains`, cockpit) share.
+ * The route of a class list (route-lists.ts): the single source of truth, the
+ * policy modes are views of it. The entries are walked in order: a local entry
+ * serves when its server runs (a model that is not loaded is skipped, never
+ * started), a cloud entry that qualifies serves normally (resolveTarget walks
+ * the same list). Per-run --urgent / --cloud, the auto policy on battery skip
+ * the local entries; --local-ok asks for them before the cloud ones.
  */
-export async function runningRankedLocal(
+async function listRoute(
   config: WorkersConfig,
   logDir: string,
-  rc: RoleChain,
-  ping?: (url: string) => Promise<boolean>
-): Promise<{ name: string | null; why: string }> {
-  if (!rc.local.length) return { name: null, why: "no local model" };
-  return findLocal(config, logDir, ping, rc.local);
-}
-
-/**
- * The route of an explicit Workers chain: the single source of truth, the
- * policy modes are views of it. Two groups, local first: the highest-ranked
- * running local model serves; no local running (or local off, or a fall-through
- * afterwards) -> the cloud group in its order. Local off + no cloud -> cloud-only
- * is impossible, so no cloud group is local only. Per-run --urgent/--cloud/--local-ok
- * still apply.
- */
-async function chainRoute(
-  config: WorkersConfig,
-  logDir: string,
-  rc: RoleChain,
+  list: string[],
   flags: RouteFlags,
   deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean }
-): Promise<{ providerFlag: string | null; route: RouteInfo }> {
-  const res = (mode: PolicyMode, reason: string, local: string | null) => ({
+): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
+  const policyMode = readPolicy(logDir)?.mode;
+  const isLocal = (name: string) => isLocalProvider(config.providers[name]?.baseUrl ?? "");
+  const entries = list.map(entryProvider);
+  const hasCloud = entries.some((n) => !isLocal(n));
+  const mode: PolicyMode = !hasCloud ? "local-only" : (policyMode ?? (isLocal(entries[0]) ? "prefer-local" : "prefer-cloud"));
+  const res = (reason: string, local: string | null) => ({
     providerFlag: local,
     route: { policy: mode, reason, local: local !== null },
   });
-  if (!rc.local.length) return res("cloud-only", "chain: no local model", null);
-  const found = await runningRankedLocal(config, logDir, rc, deps.ping);
-  if (!rc.cloud.length) {
-    if (!found.name) throw new WorkersConfigError(`chain: ${found.why} — start a local server or change the Workers chain (pai worker chains)`);
-    return res("local-only", "chain: local only", found.name);
+  if (!entries.some(isLocal)) return policyMode ? res("route: no local model", null) : null;
+  const skipLocal =
+    (flags.urgent ? "urgent" : "") ||
+    (flags.cloud ? "--cloud" : "") ||
+    (policyMode === "auto" && (deps.battery ?? onBattery)() ? "battery" : "");
+  const localOkFirst = flags.localOk === true && !flags.cloud;
+  const state = readRoutingState(logDir);
+  const budgets = config.routing.policy !== "order" ? budgetCache.snapshot() : undefined;
+  const cloudOk = (name: string) => {
+    const p = getProviderOrNative(config, name);
+    return !!p && exclusionReason(config, state, name, undefined, budgets) === null;
+  };
+  let why = "no local provider";
+  const walk = localOkFirst ? [...entries.filter(isLocal), ...entries.filter((n) => !isLocal(n))] : entries;
+  for (const name of walk) {
+    if (!isLocal(name)) {
+      if (cloudOk(name)) return res(skipLocal || (localOkFirst ? "--local-ok: no local running" : "route: cloud"), null);
+      continue;
+    }
+    if (skipLocal) continue;
+    const found = await findLocal(config, logDir, deps.ping, [name]);
+    if (found.name) return res(localOkFirst ? "--local-ok" : `route: ${found.name}`, found.name);
+    why = found.why;
   }
-  if (!rc.localFirst) {
-    if (flags.localOk && !flags.cloud && found.name) return res("prefer-cloud", "--local-ok", found.name);
-    return res("prefer-cloud", "chain: local off", null);
-  }
-  const auto = readPolicy(logDir)?.mode === "auto";
-  if (auto && (deps.battery ?? onBattery)()) return res("auto", "battery", null);
-  if (flags.urgent) return res("prefer-local", "urgent", null);
-  if (flags.cloud) return res("prefer-local", "--cloud", null);
-  if (!found.name) return res("prefer-local", found.why, null);
-  return res("prefer-local", `chain: ${found.name}`, found.name);
+  if (!hasCloud && !skipLocal) throw new WorkersConfigError(`route: ${why} — start a local server or change the route (pai worker route)`);
+  return res(skipLocal || why, null);
 }
 
 /**
@@ -241,7 +237,8 @@ export async function routeRun(
   flags: RouteFlags,
   deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
-  if (config.chains && roleChainSet(config.chains.workers)) return chainRoute(config, logDir, config.chains.workers, flags, deps);
+  const list = classRoute(config.classes ?? {}, flags.className ?? "implement");
+  if (list.length) return listRoute(config, logDir, list, flags, deps);
   const policy = readPolicy(logDir);
   if (!policy) return null;
   const mode = policy.mode;
