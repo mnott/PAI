@@ -291,7 +291,7 @@ describe("worker run: applyTarget (--where / --model / --now)", () => {
 
   it("--where local --now: provider, model and front priority land on the run", async () => {
     const p = await apply(["--where", "local", "--now"], { provider: "flash", model: "flash-m", priority: "front", description: "local: flash" });
-    expect(seen).toEqual([{ where: "local", model: undefined, now: true }]);
+    expect(seen[0]).toMatchObject({ where: "local", model: undefined, now: true });
     expect(p.kind === "run" && p.run).toMatchObject({ providerFlag: "flash", modelFlag: "flash-m", priority: "front" });
   });
   it("--where cloud --model fast: the resolved concrete model is the flag", async () => {

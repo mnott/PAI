@@ -8,6 +8,7 @@
  * Everything that touches workers, git or the clock goes through RunnerDeps.
  */
 
+import { classifyRoute, routeLine } from "./route-classifier.js";
 import { withRunLock, type LockDeps } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { gatePhaseName } from "./plan-status.js";
@@ -72,6 +73,8 @@ export interface RunnerDeps {
   now(): number;
   /** The provider a plan/queue value names: `local` becomes the running local server, any other name is returned unchanged. */
   resolveLocal(provider: string): Promise<string>;
+  /** True when the (resolved) provider runs on a loopback server; the route classifier applies only then. Unset: only `local` counts. */
+  isLocalProvider?(provider: string): boolean;
   log(entry: RunLogEntry): void;
   /** The runner's current phase ("merging p1", "gate: tsc"), shown by ps, the cockpit and plan_status. */
   phase?(text: string, refine?: boolean): void;
@@ -85,7 +88,7 @@ export interface RunnerDeps {
 
 export interface RunLogEntry {
   ts?: string;
-  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "gate-start" | "gate-end" | "escalate" | "needs-decision" | "unit-check" | "worker-start" | "worker-end" | "model-idle" | "overlap-continue";
+  event: "run-start" | "run-end" | "unit-done" | "part-start" | "part-end" | "merge" | "gate-start" | "gate-end" | "escalate" | "needs-decision" | "unit-check" | "worker-start" | "worker-end" | "model-idle" | "overlap-continue" | "route";
   part?: string;
   unit?: string;
   worker?: string;
@@ -136,6 +139,8 @@ export interface RunSummary {
 export interface RunOptions {
   parallel: number;
   escalate?: boolean;
+  /** Keep every part local whatever the route classifier says. */
+  forceLocal?: boolean;
   /** Model every local-tier worker of the run gets (default: the provider's). */
   model?: string;
   /** "front": every worker of the run goes ahead of the provider's waiting runs. */
@@ -204,7 +209,9 @@ export function runPlan(plan: Plan, opts: RunOptions, deps: RunnerDeps): Promise
 async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, active: Map<string, PlanPart>): Promise<RunSummary> {
   // `provider: local` in a plan means resolveLocalProvider() at run start —
   // the loopback server that answers, never a provider picked by name.
+  const wasLocalName = plan.provider === "local";
   plan = { ...plan, provider: await deps.resolveLocal(plan.provider) };
+  const planWasLocal = wasLocalName || deps.isLocalProvider?.(plan.provider) === true;
   const parts = plan.units.flatMap((u) => u.parts);
   const state = new Map<string, PartState>(parts.map((p) => [p.id, opts.merged?.has(p.id) ? "merged" : "waiting"]));
   const checked = new Set(opts.unitsChecked ?? []);
@@ -307,11 +314,19 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
   };
 
   const attemptPart = async (p: PlanPart): Promise<void> => {
-    const ladder: Array<{ tier: "local" | "sonnet"; provider: string }> = [
-      { tier: "local", provider: plan.provider },
-      { tier: "local", provider: plan.provider },
-      ...(opts.escalate ? [{ tier: "sonnet" as const, provider: "anthropic" }] : []),
-    ];
+    // a local plan: the route classifier may send the part straight to the cloud, and two failed
+    // local attempts always escalate there (route-classifier.ts); --force-local keeps it local
+    const cloud = { tier: "sonnet" as const, provider: "anthropic" };
+    const verdict = planWasLocal && !opts.forceLocal ? classifyRoute({ kind: p.kind, label: label(p), text: p.spec }) : undefined;
+    if (verdict) deps.log({ event: "route", part: p.id, unit: p.unit, note: routeLine(verdict) });
+    const ladder: Array<{ tier: "local" | "sonnet"; provider: string }> =
+      verdict?.where === "cloud"
+        ? [cloud, cloud]
+        : [
+            { tier: "local", provider: plan.provider },
+            { tier: "local", provider: plan.provider },
+            ...(opts.escalate || (planWasLocal && !opts.forceLocal) ? [cloud] : []),
+          ];
     let failure: string | undefined;
     for (let i = 0; i < ladder.length; i++) {
       const { tier, provider } = ladder[i];

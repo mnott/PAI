@@ -14,11 +14,12 @@ import { loadStatuses } from "./status.js";
 import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
 import { headlessAllowed, openVerifiedPane, realPaneOps, resolveHostSession } from "./pane.js";
-import { readWorkersSection } from "./config.js";
+import { getProviderOrNative, readWorkersSection } from "./config.js";
 import { GATE_MARK } from "./worktree.js";
 import { PlanTracker, gatePhaseName } from "./plan-status.js";
 import { appendRunLog, tail, type GateEvent, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import type { Plan } from "./plan.js";
+import { isLoopbackProvider } from "./run-env.js";
 import { resolveRunnerProvider } from "./local-provider.js";
 
 export interface Captured {
@@ -294,6 +295,14 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, trac
       return r;
     },
     resolveLocal: resolveRunnerProvider,
+    isLocalProvider: (name) => {
+      try {
+        const c = getProviderOrNative(readWorkersSection().workers, name);
+        return !!c && isLoopbackProvider(c);
+      } catch {
+        return false;
+      }
+    },
     stopActive: async () => {
       tracker?.end("stopped");
       void (await stopLaunchedWorkers(logDir));

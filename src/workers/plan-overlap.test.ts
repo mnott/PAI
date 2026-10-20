@@ -132,7 +132,7 @@ describe("overlap runs", () => {
 
   it("a gate failure of p2 does not cancel the overlapping p3", async () => {
     const h = manual((p) => p === "p2");
-    const run = runPlan(three(), { parallel: 1 }, h.deps);
+    const run = runPlan(three(), { parallel: 1, forceLocal: true }, h.deps);
     await tick();
     h.workers.get("p1")!();
     await tick();

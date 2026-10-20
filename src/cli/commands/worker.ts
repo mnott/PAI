@@ -40,6 +40,8 @@ import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-p
 import { realProbeDeps, waitFile, waitUrl } from "../../workers/wait-probes.js";
 import { describeModels, describeCapabilities, modelPrefsText, resolveProviderName, setCapabilityPreference, setProviderModel, unsetCapabilityPreference } from "../../workers/providers.js";
 import { BATCH_ENV } from "../../workers/session-profile.js";
+import { LOCAL_FAILURE_LIMIT, localFailures, routeLine } from "../../workers/route-classifier.js";
+import { isLoopbackProvider } from "../../workers/run-env.js";
 import { resolveTarget, type TargetResolver } from "../../workers/target.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { dim, err, ok } from "../lib/utils.js";
@@ -191,14 +193,33 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
 
 /** --where / --model / --now through resolveTarget (target.ts), the one resolver every delegation entry point uses. */
 export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget): Promise<void> {
-  const where = str(ctx.opts.where);
+  let where = str(ctx.opts.where);
   const model = str(ctx.opts.model);
   const now = flag(ctx, "now");
+  const target = plan.kind === "chain" ? plan.chain : plan.run;
+  const forceLocal = flag(ctx, "force-local");
+  const task = plan.kind === "chain" ? plan.chain.brief : parseRunnerArgs(plan.run.claudeArgs).prompt ?? undefined;
+  const label = plan.kind === "run" ? plan.run.label : plan.chain.label;
+  // two failed local attempts on this label: the next start goes to the cloud (route-classifier.ts)
+  if (!where && !forceLocal && label && !target.providerFlag && !flag(ctx, "local") && !flag(ctx, "cloud") && !flag(ctx, "local-ok")) {
+    try {
+      const w = readWorkersSection().workers;
+      const n = localFailures(ledgerPath(workersLogDir(w)), label, (p) => {
+        const c = getProviderOrNative(w, p);
+        return !!c && isLoopbackProvider(c);
+      });
+      if (n >= LOCAL_FAILURE_LIMIT) {
+        process.stderr.write(`pai worker: ${routeLine({ where: "cloud", reason: `escalated: ${n} failed local attempts` })}\n`);
+        where = "cloud";
+      }
+    } catch {
+      // no readable config: no history to escalate from
+    }
+  }
   if (!where && !now && model !== "fast" && model !== "default") return;
   if (where && flag(ctx, "local")) throw new Error("--where and --local both name where to run; use one");
-  const t = await resolveIt({ where, model, now });
+  const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
-  const target = plan.kind === "chain" ? plan.chain : plan.run;
   if (t.provider) target.providerFlag = t.provider;
   // "default" / "fast" are aliases, never a raw model id
   target.modelFlag = model === "default" || model === "fast" ? t.model : (t.model ?? target.modelFlag);
@@ -235,6 +256,7 @@ const runCommand: CommandDef = {
     { name: "where", type: "string", value: "WHERE", summary: "Where to run: local, cloud or a provider name (local and cloud are resolved by PAI; same as the MCP delegation tools' where)" },
     { name: "batch", type: "boolean", summary: "This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min" },
     { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
+    { name: "force-local", type: "boolean", summary: "With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts)" },
     { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
     { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },

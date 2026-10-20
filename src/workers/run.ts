@@ -163,6 +163,7 @@ import {
 import { parseDenialText, recordDenial } from "./denials.js";
 import { validateAg2 } from "./agentish.js";
 import { loadContractAddendum, type ContractAddendum } from "./contract-addendum.js";
+import { taskForProvider } from "./local-contract.js";
 import { loadPreamble, preambleBlock, preambleLine, type Preamble } from "./preamble.js";
 import { killTree } from "./kill-tree.js";
 import { armResultGrace, leftoverNote } from "./result-grace.js";
@@ -812,6 +813,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const label =
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
+  // local contract (local-contract.ts): headless local workers only, never a cloud one
+  if (parsed.headless && parsed.prompt) parsed.prompt = taskForProvider(parsed.prompt, target.provider, opts.cwd ?? process.cwd());
 
   let model = capabilityResolution
     ? capabilityResolution.model
