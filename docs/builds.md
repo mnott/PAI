@@ -14,6 +14,7 @@ pai build run [--full] [--label L] [--kind build|test] -- <command...>
 - The child runs at low CPU priority (`taskpolicy -b` on macOS, `nice -n 10` elsewhere), in its own process group, with the output teed to `<PAI home>/logs/builds/<id>.log`.
 - The whole tree dies with the caller: SIGTERM/SIGINT/SIGHUP kill the group, a reparented caller (shell gone) is detected within a second, and a detached watcher kills the tree if the gate itself is SIGKILLed. Any later queue read also prunes tickets of dead gates and kills their trees.
 - A worker that is killed (`pai worker kill`, SIGTERM of its run) or loop-stopped releases its builds and its build tree is killed.
+- Compilers Xcode's build service started for a job (swift-frontend, clang, ld, ... — not in the gate's process group, reparented to launchd) are reaped when the job ends, normally, killed or caller died: processes whose command line names the job's cwd or derived data path and no other running job's path get SIGTERM, SIGKILL after 5 s (`BUILD-REAP` line). The daemon also sweeps every 60 s for ppid-1 compilers older than 2 min that match no running job.
 
 ## Test jobs and simulators
 

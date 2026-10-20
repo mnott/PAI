@@ -21,6 +21,7 @@ import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
 import { startWorktreeGc } from "../worktree-gc.js";
+import { startBuildReapSweep } from "../build-reap.js";
 // Static on purpose: a running daemon must never need a file from dist/ again.
 // tsdown emits content-hashed chunks and prune-dist.mjs deletes superseded ones,
 // so a lazy import() first hit after a rebuild throws "Cannot find module".
@@ -559,6 +560,7 @@ export function startWorkerSupervisor(): void {
   }
 
   startWorktreeGc();
+  startBuildReapSweep();
 
   // every running process owns a live pane in its starting session's tab: judged every 30 s
   const paneAudit = setInterval(() => {
