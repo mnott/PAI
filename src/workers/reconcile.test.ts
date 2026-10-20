@@ -102,7 +102,7 @@ describe("a worker served by a pool spare", () => {
     ({ ...mk(id, pid), started: "2020-01-01 00:00:00", pool: { spare: true, task: 1, slotSession: null, hostPid } }) as WorkerStatus;
 
   it("is running, not lost, while its pids are alive (reconcile and ps)", async () => {
-    saveStatus(dir, pooled("p1", process.pid, process.pid), T0);
+    saveStatus(dir, pooled("p1", process.pid, process.ppid), T0);
     expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual([]);
     expect(loadStatus(dir, "p1")?.state).toBe("running");
     const { psOutput } = await import("./viewer.js");
@@ -111,9 +111,15 @@ describe("a worker served by a pool spare", () => {
     expect(loadStatus(dir, "p1")?.state).toBe("running");
   });
 
-  it("is alive on the pool host alone", () => {
+  it("is lost when only the pool host is alive (the slot pid is dead)", () => {
     saveStatus(dir, pooled("p2", 999999, process.pid), T0);
-    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual([]);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual(["p2"]);
+    expect(loadStatus(dir, "p2")?.state).toBe("lost");
+  });
+
+  it("is lost when its pid is alive but is not a child of the pool host", () => {
+    saveStatus(dir, pooled("p4", process.pid, 999998), T0);
+    expect(reconcileStatuses(dir, new Date(T0.getTime() + 3_600_000), 0)).toEqual(["p4"]);
   });
 
   it("is lost when every pid is dead", () => {

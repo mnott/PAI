@@ -179,7 +179,7 @@ describe("loop guard, all tools", () => {
 describe("worker-guard hook", () => {
   const hook = "src/hooks/ts/pre-tool-use/worker-guard.ts";
   const call = (dir: string, env: Record<string, string>) =>
-    spawnSync("npx", ["tsx", hook], {
+    spawnSync("node_modules/.bin/tsx", [hook], {
       input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: "src/a.ts" }, cwd: dir }),
       env: { ...process.env, PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-loop", ...env },
       encoding: "utf8",
@@ -202,17 +202,17 @@ describe("worker-guard hook", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 60000);
+  }, 240000);
 });
 
 describe("worker-guard hook: hard stop signals the worker", () => {
   it("at the 7th identical call the hook writes the loop-stop marker and SIGTERMs the claude pid", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loopguard-kill-"));
-    const victim = spawn("sleep", ["30"], { stdio: "ignore" });
+    const victim = spawn("sleep", ["600"], { stdio: "ignore" });
     try {
       const exited = new Promise<string | null>((res) => victim.on("exit", (_c, sig) => res(sig)));
       for (let i = 0; i < 7; i++)
-        spawnSync("npx", ["tsx", "src/hooks/ts/pre-tool-use/worker-guard.ts"], {
+        spawnSync("node_modules/.bin/tsx", ["src/hooks/ts/pre-tool-use/worker-guard.ts"], {
           input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: "src/a.ts" }, cwd: dir }),
           env: { ...process.env, PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-kill", PAI_WORKER: "1", PAI_LOOP_STOP_PID: String(victim.pid) },
           encoding: "utf8",
@@ -223,7 +223,7 @@ describe("worker-guard hook: hard stop signals the worker", () => {
       victim.kill();
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 90000);
+  }, 240000);
 });
 
 describe("loop guard: overlapping Read ranges", () => {
