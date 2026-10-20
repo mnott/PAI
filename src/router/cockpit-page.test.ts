@@ -505,7 +505,7 @@ describe("cockpit Models cards", () => {
         { model: "qwen3:8b", kind: "chat", loaded: false, usedBy: ["paperfull-chat"] },
         { model: "arctic-embed", kind: "embedding", loaded: false, usedBy: ["pai-embedding"] },
       ] }],
-      runtimeCommands: { ollama: { start: "ollama serve", note: "PAI's embedding backend runs here" } },
+      runtimeCommands: { ollama: { start: "ollama serve", note: "local Ollama server; loads a model on the first request" } },
       consumers: [
         { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat", purpose: "Paperfull chat" },
         { name: "pai-embedding", runtime: "ollama", model: "arctic-embed", label: "PAI embedding", purpose: "memory search embeds new content" },
@@ -516,12 +516,12 @@ describe("cockpit Models cards", () => {
     const chat = h.split('<div class="mcard').find((c) => c.includes('data-model="qwen3:8b"'))!;
     const emb = h.split('<div class="mcard').find((c) => c.includes('data-model="arctic-embed"'))!;
     // the note is nowhere in either card's body (the header chip may carry it)
-    expect(chat.slice(chat.indexOf('class="mbody"'))).not.toContain("embedding backend runs here");
-    expect(emb.slice(emb.indexOf('class="mbody"'))).not.toContain("embedding backend runs here");
+    expect(chat.slice(chat.indexOf('class="mbody"'))).not.toContain("local Ollama server; loads a model on the first request");
+    expect(emb.slice(emb.indexOf('class="mbody"'))).not.toContain("local Ollama server; loads a model on the first request");
     expect(h).not.toContain('class="mnote"');
     // the runtime chip in each card header carries it as the title
-    expect(chat).toContain('<span class="badge" title="PAI\'s embedding backend runs here">ollama :11434</span>');
-    expect(emb).toContain('<span class="badge" title="PAI\'s embedding backend runs here">ollama :11434</span>');
+    expect(chat).toContain('<span class="badge" title="local Ollama server; loads a model on the first request">ollama :11434</span>');
+    expect(emb).toContain('<span class="badge" title="local Ollama server; loads a model on the first request">ollama :11434</span>');
   });
   it("the tile grip sits in the tile's top-right corner, never inline with the value", () => {
     const tile = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}\n${COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]}; return metricTile;`)((s: unknown) => String(s ?? ""))({ title: "Speed", value: "58.5", unit: "t/s", sub: "", series: [] }) as string;
@@ -542,7 +542,7 @@ describe("cockpit Models cards", () => {
       { name: "coder", kind: "strata", status: "stopped", port: 8036, users: ["worker:gyro"], models: [] },
     ],
     duplicates: [],
-    runtimeCommands: { ollama: { start: "ollama serve", stop: "kill", note: "PAI's embedding backend runs here" } },
+    runtimeCommands: { ollama: { start: "ollama serve", stop: "kill", note: "local Ollama server; loads a model on the first request" } },
     consumers: [
       { name: "pai-embedding", runtime: "ollama", purpose: "memory search embeds new content here", label: "PAI memory embeddings", model: "huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16" },
       { name: "paperfull-chat", runtime: "ollama", purpose: "Paperfull chat", label: "Paperfull chat", model: "qwen3:8b" },
