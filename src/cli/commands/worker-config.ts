@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
-import { chatProviderOf, deriveChains, CHAIN_ROLES, chainForPolicy, chainSummary, effectiveChains, rankableModels, setChain, type ChainRole } from "../../workers/chains.js";
+import { chatProviderOf, configuredLocal, deriveChains, CHAIN_ROLES, chainForPolicy, chainSummary, effectiveChains, setChain, setLocalFirst, setRoleChain, type ChainGroup, type ChainRole } from "../../workers/chains.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
 import {
@@ -904,11 +904,10 @@ export const workerPolicyCommand: CommandDef = {
           throw new Error(`policy: expected one of ${POLICY_MODES.join(", ")}, clear — got "${mode}"`);
         }
         const p = writePolicy(dir, mode as PolicyMode, ctx.opts.for ? parseDuration(String(ctx.opts.for)) : undefined);
-        // one setting: the policy rewrites the Workers chain (local at t0, last, absent or alone)
+        // one setting: the policy rewrites the Workers chain (local group on, off or alone); an empty local group is seeded with the configured local: provider
         const { raw, workers } = readWorkersSection();
-        const local = rankableModels(workers).find((m) => m.local && workers.providers[m.name]?.enabled)?.name ?? null;
         const current = deriveChains(workers, chatProviderOf(raw, workers)).workers;
-        const rc = setChain("workers", chainForPolicy(p.mode, current, local));
+        const rc = setRoleChain("workers", chainForPolicy(p.mode, current, configuredLocal(workers), workers.routing.priority), `workers ${p.mode}`);
         out(`policy: ${p.mode}${p.until ? ` until ${p.until}` : ""}`);
         return void out(`chain:  ${rc.text}`);
       }
@@ -934,22 +933,27 @@ export const workerChainsCommand: CommandDef = {
   name: "chains",
   summary: "Print the Workers and Orchestrator chains routing really uses",
   description:
-    "Same function as the cockpit's rank line: the derived chains with the routing policy applied (`pai worker policy`).\n" +
+    "Same function as the cockpit's rank line. Two groups per role, local first then cloud; ranks count within a group. The highest-ranked local model that is running serves, else the cloud group in order (`pai worker policy` maps onto the groups).\n" +
     "`active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.",
   args: [
     { name: "ACTION", summary: "set (omit to print)" },
     { name: "ROLE", summary: CHAIN_ROLES.join(" or ") },
-    { name: "MODELS", summary: "Comma-separated models, t0 first" },
+    { name: "GROUP", summary: "local or cloud" },
+    { name: "MODELS", summary: "Comma-separated models, t0 first; for local also on / off" },
   ],
-  examples: ["pai worker chains", "pai worker chains set workers anthropic,glm,gyro-m"],
+  examples: ["pai worker chains", "pai worker chains set workers local gyro-m,flashnext-iq3", "pai worker chains set workers cloud anthropic,glm", "pai worker chains set workers local off"],
   seeAlso: ["pai worker policy"],
   async run(ctx) {
     try {
       if (ctx.args.ACTION === "set") {
         const role = ctx.args.ROLE as string;
         if (!(CHAIN_ROLES as readonly string[]).includes(role)) throw new Error(`chains set: role must be ${CHAIN_ROLES.join(" or ")}`);
-        const models = String(ctx.args.MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
-        return void out(setChain(role as ChainRole, models).text);
+        const group = ctx.args.GROUP as string;
+        if (group !== "local" && group !== "cloud") throw new Error("chains set: group must be local or cloud");
+        const arg = String(ctx.args.MODELS ?? "").trim();
+        if (group === "local" && (arg === "on" || arg === "off")) return void out(setLocalFirst(role as ChainRole, arg === "on").text);
+        const models = arg.split(",").map((m) => m.trim()).filter(Boolean);
+        return void out(setChain(role as ChainRole, group as ChainGroup, models).text);
       }
       const { raw, workers } = readWorkersSection();
       const dir = workersLogDir(workers);
