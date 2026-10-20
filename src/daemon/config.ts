@@ -146,6 +146,12 @@ export interface RouterConfig {
    * enabled true, wTokIn 1, wTokOut 2, agingSec 120, sessionWeights {}.
    */
   scheduling?: { enabled?: boolean; wTokIn?: number; wTokOut?: number; agingSec?: number; sessionWeights?: Record<string, number> };
+  /**
+   * Park an idle local conversation to disk while its worker waits on a long build gate
+   * (src/router/parking.ts). Needs the engine started with `--slot-save-path <PAI home>/state/strata-slots`.
+   * Defaults: enabled false, parkAfterSec 120.
+   */
+  parking?: { enabled?: boolean; parkAfterSec?: number };
 }
 
 export interface PaiDaemonConfig {

@@ -106,6 +106,9 @@ export class UsageSniffer {
   private mode: "sse" | "json" | undefined;
   /** wall-clock ms of the first content_block_delta (text or tool-input), SSE only */
   firstContentAt: number | undefined;
+  /** the response carries a tool call that runs `pai build` (the worker is about to wait on the build gate) */
+  buildCall = false;
+  private toolTail = "";
 
   constructor(contentType: string | undefined) {
     if (contentType) this.mode = /text\/event-stream/i.test(contentType) ? "sse" : "json";
@@ -146,6 +149,13 @@ export class UsageSniffer {
     if (this.firstContentAt === undefined && data.includes('"content_block_delta"') && /"(text|partial_json|thinking)":\s*"[^"]/.test(data)) {
       this.firstContentAt = Date.now();
     }
+    if (!this.buildCall && data.includes('"partial_json"')) {
+      const m = /"partial_json":\s*"((?:[^"\\]|\\.)*)"/.exec(data);
+      if (m) {
+        this.toolTail = (this.toolTail + m[1]).slice(-120);
+        if (/pai build (run|lock)/.test(this.toolTail)) this.buildCall = true;
+      }
+    }
     // cheap prefilter: only usage-bearing events are parsed
     if (!data.includes('"usage"')) return;
     try {
@@ -158,6 +168,7 @@ export class UsageSniffer {
   }
 
   finish(): Usage {
+    if (this.mode === "json" && !this.jsonOverflow && /pai build (run|lock)/.test(this.json)) this.buildCall = true;
     if (this.mode === "sse") {
       if (this.line && !this.skipLine) this.handleLine(this.line);
       this.line = "";
