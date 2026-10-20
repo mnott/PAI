@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 import { readWorkersSection } from "../workers/config.js";
-import { CHAIN_ROLES, parseRank, setModelRank, type ChainRole } from "../workers/chains.js";
+import { setRoute } from "../workers/route-table.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { setClass } from "../workers/providers.js";
 import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.js";
@@ -202,7 +202,7 @@ export function defaultDeps(): ActionDeps {
  * answer at once with a jobId and run through hooks.runLocalJob.
  */
 export async function runCockpitAction(
-  body: { action?: unknown; target?: unknown; value?: unknown; role?: unknown; model?: unknown; rank?: unknown },
+  body: { action?: unknown; target?: unknown; value?: unknown; class?: unknown; models?: unknown },
   deps: ActionDeps,
   hooks: ActionHooks = {}
 ): Promise<ActionResult> {
@@ -265,16 +265,11 @@ export async function runCockpitAction(
       return fail(e instanceof Error ? e.message : String(e));
     }
   }
-  if (action === "rank") {
-    const role = String(body.role ?? "");
-    const model = typeof body.model === "string" ? body.model : "";
-    const rank = parseRank(body.rank);
-    if (!(CHAIN_ROLES as readonly string[]).includes(role)) return fail(`role must be workers or orchestrator, got "${role}"`);
-    if (!model) return fail("model required");
-    if (rank === null) return fail(`rank must be off or t0..t3, got "${String(body.rank ?? "")}"`);
+  if (action === "route") {
+    const cls = typeof body.class === "string" ? body.class : "";
     try {
-      const r = setModelRank(role as ChainRole, model, rank, deps.configPath);
-      writeLedgerLine(deps, action, `${role}/${model}`, r.text);
+      const r = setRoute(cls, body.models, deps.configPath);
+      appendLedger(deps.ledger, "ROUTE-SET", { who: "cockpit", class: cls, models: r.entries.join(">") });
       return { ok: true, message: r.text };
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e));

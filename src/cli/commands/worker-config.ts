@@ -12,7 +12,9 @@ import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
-import { chatProviderOf, configuredLocal, deriveChains, CHAIN_ROLES, chainForPolicy, chainSummary, effectiveChains, setChain, setLocalFirst, setRoleChain, type ChainGroup, type ChainRole } from "../../workers/chains.js";
+import { applyPolicyToRoutes, routeRows, routeText, setRoute } from "../../workers/route-table.js";
+import { ROUTE_CLASSES } from "../../workers/route-lists.js";
+import { budgetCache } from "../../workers/budget.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
 import {
@@ -904,12 +906,10 @@ export const workerPolicyCommand: CommandDef = {
           throw new Error(`policy: expected one of ${POLICY_MODES.join(", ")}, clear — got "${mode}"`);
         }
         const p = writePolicy(dir, mode as PolicyMode, ctx.opts.for ? parseDuration(String(ctx.opts.for)) : undefined);
-        // one setting: the policy rewrites the Workers chain (local group on, off or alone); an empty local group is seeded with the configured local: provider
-        const { raw, workers } = readWorkersSection();
-        const current = deriveChains(workers, chatProviderOf(raw, workers)).workers;
-        const rc = setRoleChain("workers", chainForPolicy(p.mode, current, configuredLocal(workers), workers.routing.priority), `workers ${p.mode}`);
+        // one setting: the policy rewrites the route lists of implement / simple / spotcheck
+        const text = applyPolicyToRoutes(p.mode);
         out(`policy: ${p.mode}${p.until ? ` until ${p.until}` : ""}`);
-        return void out(`chain:  ${rc.text}`);
+        return void out(`routes: ${text || "no class list to rewrite"}`);
       }
       const p = readPolicy(dir);
       out(`policy: ${p ? `${p.mode}${p.until ? ` until ${p.until}` : ""}` : "none (class/active routing)"}`);
@@ -929,39 +929,33 @@ export const workerPolicyCommand: CommandDef = {
 // fallback, pool, proxy, mcp, on, off, install, controls
 // ---------------------------------------------------------------------------
 
-export const workerChainsCommand: CommandDef = {
-  name: "chains",
-  summary: "Print the Workers and Orchestrator chains routing really uses",
+export const workerRouteCommand: CommandDef = {
+  name: "route",
+  summary: "Print the routing table: per class the ordered models",
   description:
-    "Same function as the cockpit's rank line. Two groups per role, local first then cloud; ranks count within a group. The highest-ranked local model that is running serves, else the cloud group in order (`pai worker policy` maps onto the groups).\n" +
-    "`active:` is not a chain member: it pins plain runs (no class, no policy, no session) and names the orchestrator when no session profile does.",
+    "One row per class (orchestrate, implement, simple, spotcheck, ...), each an ordered list of models: the first serves, the rest is the fallback order. Local models (\"local gyro-m\") are entries like any other; one whose server is not running is skipped, never started. Same lists as the cockpit's routing section; `pai worker policy` rewrites them.\n" +
+    "`route set <class> <provider/model,...>` sets a row: a cloud entry is provider/model (glm/glm-5.3-flash, anthropic/opus, glm/fast), a local one the provider name (gyro-m).",
   args: [
     { name: "ACTION", summary: "set (omit to print)" },
-    { name: "ROLE", summary: CHAIN_ROLES.join(" or ") },
-    { name: "GROUP", summary: "local or cloud" },
-    { name: "MODELS", summary: "Comma-separated models, t0 first; for local also on / off" },
+    { name: "CLASS", summary: ROUTE_CLASSES.join(", ") },
+    { name: "MODELS", summary: "Comma-separated provider/model entries, first serves" },
   ],
-  examples: ["pai worker chains", "pai worker chains set workers local gyro-m,flashnext-iq3", "pai worker chains set workers cloud anthropic,glm", "pai worker chains set workers local off"],
-  seeAlso: ["pai worker policy"],
+  examples: ["pai worker route", "pai worker route set implement gyro-m,anthropic/sonnet,glm/glm-5.3-flash"],
+  seeAlso: ["pai worker policy", "pai worker classes"],
   async run(ctx) {
     try {
       if (ctx.args.ACTION === "set") {
-        const role = ctx.args.ROLE as string;
-        if (!(CHAIN_ROLES as readonly string[]).includes(role)) throw new Error(`chains set: role must be ${CHAIN_ROLES.join(" or ")}`);
-        const group = ctx.args.GROUP as string;
-        if (group !== "local" && group !== "cloud") throw new Error("chains set: group must be local or cloud");
-        const arg = String(ctx.args.MODELS ?? "").trim();
-        if (group === "local" && (arg === "on" || arg === "off")) return void out(setLocalFirst(role as ChainRole, arg === "on").text);
-        const models = arg.split(",").map((m) => m.trim()).filter(Boolean);
-        return void out(setChain(role as ChainRole, group as ChainGroup, models).text);
+        const cls = String(ctx.args.CLASS ?? "");
+        const models = String(ctx.args.MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+        return void out(`route: ${setRoute(cls, models).text}`);
       }
-      const { raw, workers } = readWorkersSection();
-      const dir = workersLogDir(workers);
-      const p = readPolicy(dir);
-      out(`policy: ${p ? p.mode : "none"}  active: ${workers.active ?? "-"}`);
-      out(chainSummary(await effectiveChains(raw, workers)));
+      const { workers } = readWorkersSection();
+      const logDir = workersLogDir(workers);
+      const p = readPolicy(logDir);
+      out(`policy: ${p ? p.mode : "none"}`);
+      out(routeText(await routeRows(workers, { logDir, budgets: budgetCache.snapshot() })));
     } catch (e) {
-      fail(e, "pai worker chains");
+      fail(e, "pai worker route");
     }
   },
 };
@@ -1175,7 +1169,7 @@ export const WORKER_CONFIG_COMMANDS: CommandDef[] = [
   workerRolesCommand,
   workerConfigCommand,
   workerPolicyCommand,
-  workerChainsCommand,
+  workerRouteCommand,
   workerLocalCommand,
   workerFallbackCommand,
   workerPoolCommand,

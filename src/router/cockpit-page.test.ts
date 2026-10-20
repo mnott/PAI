@@ -37,9 +37,9 @@ describe("cockpit page compression", () => {
 
   it("local providers that are down sit in one closed <details>; up ones stay visible", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
-    const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" }, ranksum: { innerHTML: "" } };
+    const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
-      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "badges", "rankPop", "wireRanks", "loadLimits", "document",
+      "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document",
       `${body}\nrenderLimits();`
     );
     const lim = {
@@ -48,8 +48,7 @@ describe("cockpit page compression", () => {
         ...Array.from({ length: 18 }, (_, i) => ({ provider: `dead${i}`, kind: "local", up: false })),
       ],
     };
-    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "",
-      () => "", () => "", () => "", () => {}, () => {}, { querySelectorAll: () => [] });
+    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
     const html = els.local!.innerHTML;
     expect(html).toContain("up1");
     expect(html).toContain("<details");
@@ -65,11 +64,11 @@ describe("cockpit page compression", () => {
 
 describe("cockpit layout follow-up", () => {
   it("cloud and local models are cards in one responsive grid across the full width", () => {
-    expect(COCKPIT_HTML).toMatch(/\.rkgrid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(260px,100%\),1fr\)\)/);
-    expect(COCKPIT_HTML).toContain('<div class="rkgrid" id="cloud">');
-    expect(COCKPIT_HTML).toContain('<div class="rkgrid" id="local">');
+    expect(COCKPIT_HTML).toMatch(/\.pgrid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(260px,100%\),1fr\)\)/);
+    expect(COCKPIT_HTML).toContain('<div class="pgrid" id="cloud">');
+    expect(COCKPIT_HTML).toContain('<div class="pgrid" id="local">');
     // two sub-headers, Local cards first, then Cloud cards
-    expect(COCKPIT_HTML).toMatch(/<h2 class="rksub">Local<\/h2><div class="rkgrid" id="local"><\/div><h2 class="rksub">Cloud<\/h2><div class="rkgrid" id="cloud">/);
+    expect(COCKPIT_HTML).toMatch(/<h2 class="pgsub">Local<\/h2><div class="pgrid" id="local"><\/div><h2 class="pgsub">Cloud<\/h2><div class="pgrid" id="cloud">/);
     expect(COCKPIT_HTML).not.toContain("grp-cloud");
     expect(COCKPIT_HTML).not.toContain("grp-local");
     // gauges scale via the viewBox; a long unbreakable line must not push a gauge past its container
@@ -77,50 +76,79 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).toMatch(/\.gauge svg\{display:block;width:100%;height:auto\}/);
   });
 
-  it("rank badges, popover rows and summary line replace the workers/orchestrator buttons", () => {
+  it("the cloud section is status only: gauges per provider, local cards, no rank badges or controls", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
-    const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" }, ranksum: { innerHTML: "" } };
-    const helpers = ["badges", "rankPop"].map((n) => COCKPIT_HTML.match(new RegExp(`^function ${n}\\([^\\n]*\\}$|^function ${n}\\([\\s\\S]*?\\n\\}`, "m"))![0]).join("\n");
-    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "wireRanks", "loadLimits", "ROLES", `${helpers}\n${body}\nrenderLimits();`);
+    const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", `${body}\nrenderLimits();`);
     const lim = {
-      chainSummary: "Workers: local gyro-m (running) · then cloud anthropic → glm · Orchestrator: cloud anthropic → glm",
-      chains: {
-        workers: { local: ["gyro-m"], cloud: ["anthropic", "glm"], localFirst: true, running: "gyro-m" },
-        orchestrator: { local: [], cloud: ["anthropic", "glm"], localFirst: true, running: null },
-      },
       limits: [
         { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
         { provider: "glm", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
-        { provider: "kimi", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
         { provider: "gyro-m", kind: "local", up: true, rssMb: 5, tokensPerSec: 9 },
       ],
     };
-    fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", () => {}, () => {}, [["workers", "Workers", "W"], ["orchestrator", "Orchestrator", "O"]]);
-    expect(els.ranksum!.textContent).toBe(lim.chainSummary);
-    const cloud = els.cloud!.innerHTML;
-    // ranks count within a group: W t0 on the local gyro-m and W t0 on the cloud anthropic
-    expect(cloud).toContain("W t0");
-    expect(cloud).toContain("O t0");
-    expect(cloud).toContain("W t1");
-    expect(cloud).toContain("W —");
-    expect(cloud).toContain("O —");
-    expect(cloud).toContain('class="rkpop"');
-    expect(cloud).toContain('data-role="workers"');
-    expect(cloud).toContain('data-role="orchestrator"');
-    for (const k of ["off", "t0", "t1", "t2", "t3"]) expect(cloud).toContain(`data-rank="${k}"`);
-    expect(els.local!.innerHTML).toContain("W t0");
+    fn(lim, (id: string) => els[id], (s: string) => s, (l: { provider: string }) => `<gauge ${l.provider}>`, () => "", () => "");
+    expect(els.cloud!.innerHTML).toContain('data-prov="anthropic"');
+    expect(els.cloud!.innerHTML).toContain("<gauge glm>");
     expect(els.local!.innerHTML).toContain("9 tok/s");
-    expect(cloud).not.toContain("cloud.role");
-    expect(COCKPIT_HTML).not.toContain("cloud.role");
-    expect(COCKPIT_HTML).not.toContain(">workers</button>");
+    for (const h of [els.cloud!.innerHTML, els.local!.innerHTML, COCKPIT_HTML]) {
+      expect(h).not.toMatch(/rkb|rkpop|rankPop|wireRanks|data-rank|ranksum|chainSummary|lim\.chains/);
+      expect(h).not.toContain("cloud.role");
+    }
     expect(COCKPIT_HTML).not.toMatch(/alert\(|confirm\(|prompt\(/);
-    expect(COCKPIT_HTML).toContain('"rank"');
+  });
+
+  it("the routing section renders one row per class: ordered chips with arrows, coloured by state, × and +", () => {
+    expect(COCKPIT_HTML).toContain('data-section="routing"');
+    expect(COCKPIT_HTML.indexOf('data-section="cloud"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="routing"'));
+    expect(COCKPIT_HTML.indexOf('data-section="routing"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="workers"'));
+    const body = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
+    const els: Record<string, { innerHTML: string }> = { routing: { innerHTML: "" } };
+    const doc = { querySelector: () => ({}), querySelectorAll: () => [] };
+    const run = new Function("lim", "$", "esc", "document", "rtOpen", "rtMsg", "rtFocus", "rtDrag", `${body}\nrenderRouting();`);
+    const lim = {
+      routing: {
+        rows: [
+          { cls: "orchestrate", label: "Orchestrator", chips: [{ entry: "glm", label: "glm/glm-5.3", state: "available", why: "" }] },
+          {
+            cls: "implement",
+            label: "Implement",
+            chips: [
+              { entry: "gyro-m", label: "local gyro-m", state: "idle", why: "not running" },
+              { entry: "anthropic/sonnet", label: "anthropic/sonnet", state: "tight", why: "budget 85%" },
+              { entry: "glm/fast", label: "glm/glm-5.3-flash", state: "unavailable", why: "cooldown 5 min" },
+            ],
+          },
+        ],
+        choices: [{ entry: "kimi/k3[1m]", label: "kimi/k3[1m]", local: false }],
+      },
+    };
+    const call = (open: string | null) => run(lim, (id: string) => els[id], (s: string) => s, doc, open, {}, null, null);
+    call(null);
+    const h = els.routing!.innerHTML;
+    expect(h).toContain("Orchestrator");
+    expect(h).toContain("local gyro-m");
+    expect(h.match(/rtarrow/g)).toHaveLength(2);
+    expect(h).toContain('class="rtchip idle"');
+    expect(h).toContain('class="rtchip tight"');
+    expect(h).toContain('class="rtchip unavailable"');
+    expect(h).toContain('class="rtchip available"');
+    expect(h).toContain('draggable="true"');
+    expect(h).toContain('class="rtx"');
+    expect(h).toContain('class="rtadd"');
+    expect(h).not.toContain("rtlist");
+    call("implement");
+    expect(els.routing!.innerHTML).toContain('data-add="kimi/k3[1m]"');
+    for (const w of ["--ok", "--warn", "--bad"]) expect(COCKPIT_HTML).toMatch(new RegExp(`\\.rtchip\\.[a-z]+\\{[^}]*${w}`));
+    expect(COCKPIT_HTML).toContain("e.altKey&&(e.key===\"ArrowLeft\"");
+    expect(COCKPIT_HTML).toContain('action:"route"');
+    expect(COCKPIT_HTML).toContain("ondrop");
   });
 
   it("shows a loading state until the first limits poll arrives", () => {
     expect(COCKPIT_HTML).toContain("lim?'<span class=\"dim\">not reported</span>':'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
     expect(COCKPIT_HTML).toContain("lim?\"not reported\":'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
-    expect(COCKPIT_HTML).toContain("lim=j;renderLimits();if(sys)renderSystem();renderDonuts()");
+    expect(COCKPIT_HTML).toContain("lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
   });
 
   it("low-request models render as a chip line, not tiles", () => {

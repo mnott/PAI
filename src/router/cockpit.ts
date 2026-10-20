@@ -33,7 +33,8 @@ import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
-import { chainSummary, effectiveChains, type ChainViews } from "../workers/chains.js";
+import { routeChoices, routeRows, type RouteChoice, type RouteRow } from "../workers/route-table.js";
+import type { BudgetMap } from "../workers/budget.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
@@ -464,14 +465,20 @@ async function localRunningInfo(): Promise<{ tier: string; label: string; model:
   }
 }
 
-/** The Workers / Orchestrator chains (local group, cloud group; rank t0 first within a group) behind the cockpit's rank badges. */
-async function modelChains(): Promise<ChainViews> {
+/** The routing table (per class the ordered models with their live state, read from the same limits the gauges show) and the models a row can add. */
+async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; choices: RouteChoice[] }> {
   try {
-    const { raw, workers } = readWorkersSection();
-    return await effectiveChains(raw, workers);
+    const { workers } = readWorkersSection();
+    const budgets: BudgetMap = {};
+    for (const l of ls) {
+      if (l.kind === "local" || !l.windows.length) continue;
+      const windows = l.windows.map((w) => ({ name: w.name, percent: w.percent }));
+      budgets[l.provider] = { percent: Math.max(...windows.map((w) => w.percent)), resetAt: null, fetchedAt: l.fetchedAt, windows };
+    }
+    const running = async (name: string) => ls.some((l) => l.kind === "local" && l.provider === name && l.up === true);
+    return { rows: await routeRows(workers, { logDir: workersLogDir(workers), budgets, running }), choices: routeChoices(workers) };
   } catch {
-    const none = { local: [], cloud: [], localFirst: true, running: null };
-    return { workers: { ...none }, orchestrator: { ...none } };
+    return { rows: [], choices: [] };
   }
 }
 
@@ -713,7 +720,7 @@ export function handleCockpit(
   if (req.method === "POST" && url.pathname === "/cockpit/action") {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
     readBody(req)
-      .then((raw) => JSON.parse(raw || "{}") as { action?: unknown; target?: unknown; value?: unknown; role?: unknown; model?: unknown; rank?: unknown })
+      .then((raw) => JSON.parse(raw || "{}") as { action?: unknown; target?: unknown; value?: unknown; class?: unknown; models?: unknown })
       .catch(() => ({}))
       .then(async (body) => {
         try {
@@ -766,8 +773,8 @@ export function handleCockpit(
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
   } else if (url.pathname === "/cockpit/limits") {
-    Promise.all([limits.get(), modelChains()]).then(
-      ([l, chains]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, chains, chainSummary: chainSummary(chains) })),
+    limits.get().then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
+      ([l, routing]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");

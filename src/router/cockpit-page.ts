@@ -50,7 +50,8 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
-.chips.lowmodels{margin-top:6px}.rksum{margin:0 0 8px;color:var(--dim)}.rksub{margin-top:10px}.rkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:8px;min-width:0;align-items:start}.rkgrid .downs{grid-column:1/-1}.rkcard{position:relative;cursor:pointer;margin:0}.rkcard .phead{display:flex;gap:6px;align-items:center;justify-content:space-between}.rk{display:inline-flex;gap:4px}.rkb{font-size:11px;font-weight:600;padding:0 6px;border-radius:8px;background:var(--acc);color:#fff}.rkb.off{background:var(--bg);color:var(--dim);border:1px solid var(--line);font-weight:400}.rkpop{display:none;position:absolute;z-index:5;left:0;right:0;top:100%;margin-top:2px;padding:8px 10px;background:var(--card);border:1px solid var(--acc);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:default}.rkcard:hover .rkpop,.rkcard:focus-within .rkpop,.rkcard.open .rkpop{display:block}.rkrow{display:flex;gap:6px;align-items:center;margin:2px 0}.rkrow>span{min-width:84px;color:var(--dim);font-size:12px}.seg{display:inline-flex}.seg button{background:var(--card);color:var(--fg);border:1px solid var(--line);padding:2px 8px;font:inherit;cursor:pointer;margin-left:-1px}.seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.seg button:last-child{border-radius:0 6px 6px 0}.seg button.on{background:var(--acc);border-color:var(--acc);color:#fff}.seg button[disabled]{opacity:.5;cursor:default}.rkmsg{color:var(--dim);font-size:11px;min-height:14px}.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.chips.lowmodels{margin-top:6px}.pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(260px,100%),1fr));gap:8px;min-width:0;align-items:start}.pgrid .downs{grid-column:1/-1}.pgrid .pgroup{margin:0}.pgsub{margin-top:10px}.rtrow{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:4px 0;border-top:1px solid var(--line)}.rtrow:first-child{border-top:0}.rtlabel{min-width:96px;font-weight:600}.rtchips{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;min-width:0}.rtarrow{color:var(--dim)}.rtchip{display:inline-flex;gap:6px;align-items:center;padding:1px 4px 1px 10px;border-radius:12px;border:1px solid var(--line);font-size:12px;cursor:grab;white-space:nowrap}.rtchip.available{background:color-mix(in srgb,var(--ok) 22%,var(--card));border-color:var(--ok)}.rtchip.tight{background:color-mix(in srgb,var(--warn) 25%,var(--card));border-color:var(--warn)}.rtchip.idle{background:var(--bg);color:var(--dim)}.rtchip.unavailable{background:color-mix(in srgb,var(--bad) 22%,var(--card));border-color:var(--bad)}.rtchip:focus{outline:2px solid var(--acc)}.rtx,.rtadd{background:none;border:0;color:var(--dim);cursor:pointer;font:inherit;padding:0 4px}.rtx:hover,.rtadd:hover{color:var(--acc)}.rtadd{border:1px dashed var(--line);border-radius:12px;padding:0 9px}.rtlist{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px}.rtlist button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:0 8px;font:inherit;font-size:12px;cursor:pointer}.rtlist button:hover{border-color:var(--acc);color:var(--acc)}.rtmsg{color:var(--dim);font-size:11px}.rtmsg.bad{color:var(--bad)}
+.ctl{display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap}.ctl button,.ctl select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}.ctl button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .legend{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px;color:var(--dim);font-size:12px}
 .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
@@ -104,7 +105,8 @@ svg text{fill:var(--dim);font-size:10px}
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
 <span id="stamp">loading...</span><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
-<section data-section="cloud" class="card c12"><h2>Cloud</h2><div class="rksum" id="ranksum"></div><h2 class="rksub">Local</h2><div class="rkgrid" id="local"></div><h2 class="rksub">Cloud</h2><div class="rkgrid" id="cloud"></div></section>
+<section data-section="cloud" class="card c12"><h2>Cloud</h2><h2 class="pgsub">Local</h2><div class="pgrid" id="local"></div><h2 class="pgsub">Cloud</h2><div class="pgrid" id="cloud"></div></section>
+<section data-section="routing" class="card c12"><h2>Routing<span class="tip" tabindex="0" aria-label="Per class the models in the order they serve: the first one, then the fallback order. A local model that is not running is skipped, not started. Drag a chip, or Alt+Left / Alt+Right on a focused chip, to reorder; × removes; + adds." data-tip="Per class the models in the order they serve: the first one, then the fallback order. A local model that is not running is skipped, not started. Drag a chip, or Alt+Left / Alt+Right on a focused chip, to reorder; × removes; + adds.">ⓘ</span></h2><div id="routing"></div></section>
 <section data-section="workers" class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
 <section data-section="models" class="card c12"><h2>Models — runtimes<span class="tip" id="modelstip" tabindex="0" aria-label="Models" data-tip="Models">ⓘ</span></h2><div id="modelspanel"></div></section>
@@ -224,62 +226,65 @@ function wireAct(el,onDone){
   };
  })(btns[i]);
 }
-var ROLES=[["workers","Workers","W"],["orchestrator","Orchestrator","O"]];
-/** Rank badges of a model: W t0 / O t1, a grey "—" for off. The rank counts within the model's group (grp: local or cloud). */
-function badges(m,grp){
- var ch=(lim&&lim.chains)||{};
- return'<span class="rk">'+ROLES.map(function(r){var i=((ch[r[0]]||{})[grp]||[]).indexOf(m);return'<span class="rkb'+(i<0?" off":"")+'" title="'+esc(r[1])+'">'+r[2]+" "+(i<0?"—":"t"+i)+"</span>"}).join("")+"</span>";
-}
-/** Inline popover: one segmented row per role. */
-function rankPop(m,grp){
- var ch=(lim&&lim.chains)||{};
- return'<div class="rkpop">'+ROLES.map(function(r){
-  var cur=((ch[r[0]]||{})[grp]||[]).indexOf(m);
-  return'<div class="rkrow"><span>'+r[1]+'</span><span class="seg">'+["off","t0","t1","t2","t3"].map(function(k,j){
-   var on=j===0?cur<0:cur===j-1;
-   return'<button data-role="'+r[0]+'" data-model="'+esc(m)+'" data-rank="'+k+'" class="'+(on?"on":"")+'">'+k+"</button>"}).join("")+"</span></div>"}).join("")+'<div class="rkmsg"></div></div>';
-}
-function postRank(role,model,rank,cb){
- fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"rank",role:role,model:model,rank:rank}),cache:"no-store"})
-  .then(function(r){return r.json()}).then(cb).catch(function(){cb({ok:false,message:"action failed"})});
-}
-/** Click opens the popover (hover too, via CSS); the segmented buttons post the rank. */
-function wireRanks(root){
- var cards=root.querySelectorAll(".rkcard");
- for(var i=0;i<cards.length;i++)(function(card){
-  card.onclick=function(e){if(!e.target.closest(".rkpop"))card.classList.toggle("open")};
-  var btns=card.querySelectorAll(".rkpop button");
-  for(var j=0;j<btns.length;j++)(function(b){
-   b.onclick=function(e){
-    e.stopPropagation();
-    for(var k=0;k<btns.length;k++)btns[k].disabled=true;
-    postRank(b.getAttribute("data-role"),b.getAttribute("data-model"),b.getAttribute("data-rank"),function(j2){
-     var m=card.querySelector(".rkmsg");if(m){m.textContent=(j2&&j2.message)||"";m.className="rkmsg"+(j2&&j2.ok?"":" bad")}
-     for(var k=0;k<btns.length;k++)btns[k].disabled=false;
-     loadLimits();
-    });
-   };
-  })(btns[j]);
- })(cards[i]);
-}
 function renderLimits(){
  if(!lim)return;var c="",lo="",dn=[];
- $("ranksum").textContent=lim.chainSummary||"";
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
    if(!l.up){dn.push(l.provider);return}
-   lo+='<div class="pgroup rkcard" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+badges(l.provider,'local')+'</div><div class="gauges"><div class="gauge"><div class="ok">up</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div></div>'+rankPop(l.provider,'local')+'</div>';
+   lo+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges"><div class="gauge"><div class="ok">up</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div></div></div>';
    return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
-  c+='<div class="pgroup rkcard" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+badges(l.provider,'cloud')+'</div><div class="gauges">'+h+'</div>'+rankPop(l.provider,'cloud')+'</div>';
+  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  $("local").innerHTML=lo||'<span class="dim">no local providers</span>';
- wireRanks($("cloud"));wireRanks($("local"));
+}
+/** Routing section: one row per class, the ordered model chips with arrows, coloured by state; drag / Alt+arrows reorder, × removes, + adds. Every change posts the whole row and the row re-renders from the saved state. */
+var rtOpen=null,rtMsg={},rtFocus=null,rtDrag=null;
+function rtEntries(cls){var rows=(lim&&lim.routing&&lim.routing.rows)||[];for(var i=0;i<rows.length;i++)if(rows[i].cls===cls)return rows[i].chips.map(function(c){return c.entry});return[]}
+function postRoute(cls,models,cb){
+ fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"route",class:cls,models:models}),cache:"no-store"})
+  .then(function(r){return r.json()}).then(cb).catch(function(){cb({ok:false,message:"action failed"})});
+}
+function saveRoute(cls,models,focusAt){
+ postRoute(cls,models,function(j){rtMsg[cls]={t:(j&&j.message)||"",ok:!!(j&&j.ok)};if(j&&j.ok)rtOpen=null;rtFocus=j&&j.ok&&focusAt!=null?{cls:cls,i:focusAt}:null;loadLimits()});
+}
+function moveEntry(cls,from,to){
+ var e=rtEntries(cls);if(from===to||to<0||to>=e.length)return;
+ var m=e.splice(from,1)[0];e.splice(to,0,m);saveRoute(cls,e,to);
+}
+function renderRouting(){
+ var r=lim&&lim.routing;if(!r||rtDrag||!document.querySelector('[data-section="routing"]'))return;
+ var rows=r.rows||[],choices=r.choices||[];
+ $("routing").innerHTML=rows.length?rows.map(function(row){
+  var chips=row.chips.map(function(c,i){
+   var at=' data-cls="'+esc(row.cls)+'" data-i="'+i+'"';
+   return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" draggable="true" tabindex="0"'+at+' title="'+esc(c.why||c.state)+'">'+esc(c.label)+'<button class="rtx"'+at+' aria-label="remove '+esc(c.label)+'">×</button></span>'}).join("");
+  var have=row.chips.map(function(c){return c.entry});
+  var list=rtOpen===row.cls?'<div class="rtlist">'+choices.filter(function(c){return have.indexOf(c.entry)<0}).map(function(c){return'<button data-cls="'+esc(row.cls)+'" data-add="'+esc(c.entry)+'">'+esc(c.label)+'</button>'}).join("")+'</div>':"";
+  var m=rtMsg[row.cls];
+  return'<div class="rtrow" data-cls="'+esc(row.cls)+'"><span class="rtlabel">'+esc(row.label)+'</span><span class="rtchips">'+chips+'<button class="rtadd" data-cls="'+esc(row.cls)+'" aria-label="add a model to '+esc(row.label)+'">+</button></span>'+list+'<span class="rtmsg'+(m&&!m.ok?" bad":"")+'">'+esc(m?m.t:"")+'</span></div>'}).join(""):'<span class="dim">no routing table</span>';
+ var xs=document.querySelectorAll("#routing .rtx"),i;
+ for(i=0;i<xs.length;i++)xs[i].onclick=function(e){e.stopPropagation();var cls=this.getAttribute("data-cls"),n=Number(this.getAttribute("data-i")),en=rtEntries(cls);en.splice(n,1);saveRoute(cls,en,null)};
+ var ad=document.querySelectorAll("#routing .rtadd");
+ for(i=0;i<ad.length;i++)ad[i].onclick=function(){var cls=this.getAttribute("data-cls");rtOpen=rtOpen===cls?null:cls;renderRouting()};
+ var ls=document.querySelectorAll("#routing .rtlist button");
+ for(i=0;i<ls.length;i++)ls[i].onclick=function(){var cls=this.getAttribute("data-cls"),en=rtEntries(cls);en.push(this.getAttribute("data-add"));saveRoute(cls,en,en.length-1)};
+ var cs=document.querySelectorAll("#routing .rtchip");
+ for(i=0;i<cs.length;i++)(function(ch){
+  var cls=ch.getAttribute("data-cls"),n=Number(ch.getAttribute("data-i"));
+  ch.ondragstart=function(e){rtDrag={cls:cls,i:n};if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",cls+":"+n)}catch(x){}}};
+  ch.ondragover=function(e){if(rtDrag&&rtDrag.cls===cls){e.preventDefault();ch.style.outline="2px solid var(--acc)"}};
+  ch.ondragleave=function(){ch.style.outline=""};
+  ch.ondrop=function(e){e.preventDefault();ch.style.outline="";if(rtDrag&&rtDrag.cls===cls)moveEntry(cls,rtDrag.i,n);rtDrag=null};
+  ch.ondragend=function(){rtDrag=null};
+  ch.onkeydown=function(e){if(e.altKey&&(e.key==="ArrowLeft"||e.key==="ArrowRight")){e.preventDefault();moveEntry(cls,n,n+(e.key==="ArrowLeft"?-1:1))}};
+  if(rtFocus&&rtFocus.cls===cls&&rtFocus.i===n){rtFocus=null;ch.focus()}
+ })(cs[i]);
 }
 var mdl=null;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
@@ -764,7 +769,7 @@ function renderQueue(q){
 }
 function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(renderQueue).catch(function(){})}
 function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;renderLimits();renderModels()}).catch(function(){})}
-function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
+function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}
@@ -772,7 +777,7 @@ $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="da
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 /* a section that is not on the page fetches nothing */
-var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
+var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
 tabs();applyCollapse();if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
 if(needData&&needSys)setInterval(function(){load();loadSystem()},5000);else if(needData)setInterval(load,5000);else if(needSys)setInterval(loadSystem,5000);if(needLim)setInterval(loadLimits,30000);if(needModels)setInterval(loadModels,5000);if(needPool)setInterval(loadPool,15000);if(needQueue)setInterval(loadQueue,5000);setInterval(tick,1000);
 })();
@@ -780,7 +785,7 @@ if(needData&&needSys)setInterval(function(){load();loadSystem()},5000);else if(n
 `;
 
 /** Stable ids of the page's top-level sections, in page order (config key router.cockpit.sections). */
-export const COCKPIT_SECTION_IDS = ["cloud", "workers", "pool", "models", "system", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
+export const COCKPIT_SECTION_IDS = ["cloud", "routing", "workers", "pool", "models", "system", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
 
 /** The full page: every section. */
 export const COCKPIT_HTML = FULL_HTML;

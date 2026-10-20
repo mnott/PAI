@@ -41,9 +41,9 @@ import {
   providerCostTier,
   getProviderOrNative,
   resolveCapability,
-  flatChain,
-  roleChainSet,
+  isLocalProvider,
 } from "./config.js";
+import { classRoute, entryProvider, parseEntry } from "./route-lists.js";
 import {
   type BudgetMap,
   type BudgetReading,
@@ -123,7 +123,8 @@ export function clearCooldown(logDir: string, provider: string): void {
  */
 export function autoOrder(config: WorkersConfig, cls?: { order?: string[] }): string[] {
   if (cls?.order?.length) return cls.order;
-  if (config.chains && roleChainSet(config.chains.workers)) return flatChain(config.chains.workers);
+  const listed = classRoute(config.classes ?? {}, "implement").map(entryProvider).filter((n) => !isLocalProvider(getProviderOrNative(config, n)?.baseUrl ?? ""));
+  if (listed.length > 1) return [...new Set(listed)];
   if (config.routing.policy === "order") return config.routing.order;
   if (config.routing.priority.length) return config.routing.priority;
   if (config.routing.order.length) return config.routing.order;
@@ -194,6 +195,8 @@ export interface ResolvedTarget {
   classMcp: string[] | null;
   /** How the provider was chosen — names the bypass rule for rerouting. */
   via: "flag" | "class" | "session" | "active" | "auto";
+  /** A concrete model id from the class list ("anthropic/opus"), when it is not one of the provider's aliases. */
+  modelId?: string;
   /** Why this provider, for the run's one route line ("session: launched on glm"). Absent for a flag pin: flagProvider is an internal pin (--local, a policy choice, a profile) as much as a typed --provider, so the caller names that real source (run.ts providerWhy). */
   routeWhy?: string;
   /**
@@ -204,6 +207,14 @@ export interface ResolvedTarget {
 }
 
 export class NoProviderError extends WorkersConfigError {}
+
+/** What a list entry's model part means for a provider: one of its aliases, a model id it declares (→ that alias), else a literal model id. */
+export function entryModel(p: WorkerProvider, model: string | null): { modelAlias: string | null; modelId?: string } {
+  if (!model) return { modelAlias: null };
+  if (p.models[model] !== undefined) return { modelAlias: model };
+  const key = Object.keys(p.models).find((k) => p.models[k] === model);
+  return key ? { modelAlias: key } : { modelAlias: null, modelId: model };
+}
 
 function mustExist(config: WorkersConfig, name: string): WorkerProvider {
   const p = getProviderOrNative(config, name);
@@ -231,7 +242,7 @@ function budgetHitLabel(hit: BudgetHit): string {
 }
 
 /** Why one provider of a routing order did not qualify (message fragment). */
-function exclusionReason(
+export function exclusionReason(
   config: WorkersConfig,
   state: RoutingState,
   name: string,
@@ -359,6 +370,36 @@ export function resolveTarget(
     // everything full: fall through to the configured routing as before
   }
 
+  // the class's routing list (route-lists.ts): the first entry that qualifies serves; a local entry is
+  // only ever pinned by routeRun (policy.ts), which knows whether its server runs
+  const list = opts.className ? classRoute(config.classes ?? {}, opts.className) : [];
+  const listed = typeof clsTarget === "object" && clsTarget.models?.length ? true : list.length > 1;
+  if (opts.className && listed) {
+    const state = readRoutingState(logDir);
+    const budgets: BudgetMap | undefined = config.routing.policy !== "order" ? budgetCache.snapshot() : undefined;
+    const excluded: string[] = [];
+    for (const entry of list) {
+      const { provider: name, model } = parseEntry(entry);
+      const p = getProviderOrNative(config, name);
+      const why = !p ? "not configured" : isLocalProvider(p.baseUrl) ? "local (not running)" : exclusionReason(config, state, name, cls, budgets);
+      if (why || !p) {
+        excluded.push(`${entry}: ${why}`);
+        continue;
+      }
+      return {
+        providerName: name,
+        provider: p,
+        ...entryModel(p, model),
+        classMcp: cls?.mcp ?? null,
+        via: "class",
+        routeWhy: `class: ${opts.className}${excluded.length ? ` (${excluded.join("; ")})` : ""}`,
+      };
+    }
+    throw new NoProviderError(
+      `class "${opts.className}": no model of its routing list is usable (${excluded.join("; ")}).` +
+        `\nChange the list with: pai worker route set ${opts.className} <provider/model,...>`
+    );
+  }
   if (opts.className && clsTarget !== undefined && typeof clsTarget !== "object") {
     const [name, alias] = clsTarget.split("/");
     return {
@@ -381,8 +422,8 @@ export function resolveTarget(
       routeWhy: `class: ${opts.className}`,
     };
   }
-  if (config.active !== "auto" && !(config.chains && roleChainSet(config.chains.workers))) {
-    // `active` only applies when no Workers chain is set. Nothing active and no class entry: the built-in provider, no config written
+  if (config.active !== "auto") {
+    // Nothing active and no class entry: the built-in provider, no config written
     const name = config.active ?? ANTHROPIC_NATIVE;
     return {
       providerName: name,
