@@ -69,6 +69,7 @@ main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(${L.gr
  * (the JS toggles this class per section from the live main width via ResizeObserver, not a media query) */
 section[data-section].stacked{grid-column:span ${L.gridCols}!important}
 .gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 ${L.gaugeMinWidthPx}px;max-width:min(${L.gaugeMaxWidthPx}px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
+.ltile .phead{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.lname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.nw{white-space:nowrap}.ltab{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;font-size:12px;text-align:left}.ltab .nw{overflow:hidden;text-overflow:ellipsis}
 .pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
@@ -100,7 +101,8 @@ svg text{fill:var(--dim);font-size:10px}
 #sessions td:first-child span[title]{display:inline-block;max-width:${L.sessionTitleMaxWidthPx}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
-.tgrip{cursor:grab;color:var(--dim);font-size:12px;user-select:none;-webkit-user-select:none;touch-action:none}
+.mt{position:relative}.tgrip{position:absolute;top:4px;right:6px;opacity:0;transition:opacity .12s;cursor:grab;color:var(--dim);font-size:11px;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}
+.mt:hover .tgrip,.tgrip:focus-visible{opacity:.6}@media(hover:none){.tgrip{opacity:.5}}
 .sgrip{background:none;border:0;padding:0 4px 0 0;color:var(--dim);cursor:grab;font:inherit;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}.sgrip:hover{color:var(--acc)}.sgrip:focus-visible{outline:2px solid var(--acc);border-radius:4px}
 .dropind{position:fixed;z-index:9;pointer-events:none;border:2px solid var(--acc);border-radius:8px;background:color-mix(in srgb,var(--acc) 12%,transparent)}
 .dropind[data-mode=above]{border-top-width:6px}.dropind[data-mode=below]{border-bottom-width:6px}.dropind[data-mode=left]{border-left-width:6px}.dropind[data-mode=right]{border-right-width:6px}
@@ -175,7 +177,7 @@ svg text{fill:var(--dim);font-size:10px}
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
 <span id="stamp">loading...</span><button id="reset" type="button" title="reset layout" aria-label="reset layout">⟲</button><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main>
-<section data-section="cloud" class="card c12"><h2>Cloud</h2><h2 class="pgsub">Local</h2><div class="pgrid" id="local"></div><h2 class="pgsub">Cloud</h2><div class="pgrid" id="cloud"></div></section>
+<section data-section="cloud" class="card c12"><h2>Limits and local servers<span class="tip" tabindex="0" aria-label="Cloud usage windows per provider; local model servers" data-tip="Cloud usage windows per provider; local model servers">ⓘ</span></h2><h2 class="pgsub">Local</h2><div class="pgrid" id="local"></div><h2 class="pgsub">Cloud</h2><div class="pgrid" id="cloud"></div></section>
 <section data-section="routing" class="card c12"><h2>Routing<span class="tip" tabindex="0" aria-label="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. The top line shows what each tier resolves to now. A local model that is not running is skipped, not started. Read-only: edit workers.yaml or run pai worker route set." data-tip="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. The top line shows what each tier resolves to now. A local model that is not running is skipped, not started. Read-only: edit workers.yaml or run pai worker route set.">ⓘ</span></h2><div id="routing"></div></section>
 <section data-section="workers" class="card c12"><h2>Workers — running and waiting<span class="tip" id="queuetip" tabindex="0" aria-label="Provider capacity queue" data-tip="Provider capacity queue">ⓘ</span></h2><div id="queuepanel"></div></section>
 ${POOL_PANEL_HTML}
@@ -237,7 +239,7 @@ function hslHex(h,s,l){
 /** A colour for a model past the palette: rotate the hue from a golden-angle start, skipping hues
  *  within 12° of one already taken; lightness alternates so repeats stay distinguishable. */
 function genColor(taken){
- var used=[],k;for(k in taken)if(/^#[0-9a-f]{6}$/i.test(String(taken[k])))used.push(hueOf(String(taken[k])));
+ var used=[],k;for(k in taken)if(/^#[0-9a-f]{6}$/i.test(k))used.push(hueOf(k)); // taken maps colour -> model name: the keys are the colours
  for(var j=0;j<720;j++){
   var h=(j*137.508+24)%360,l=j%2?0.42:0.62,ok=true;
   for(var i=0;i<used.length;i++){var d=Math.abs(h-used[i]);if(Math.min(d,360-d)<12){ok=false;break}}
@@ -324,9 +326,9 @@ function metricSpark(series){
 }
 function metricTile(o){
  var sec=o.secondary;
- function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span>'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
+ function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value">'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
  function fill(v,u,sub){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
- return'<div class="mt"><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
+ return'<div class="mt"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
   (o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub):"")+
   '<svg class="mt-spark" viewBox="0 0 ${L.sparkViewMaxPx} ${L.sparkHeightPx}" preserveAspectRatio="none" width="100%" height="${L.sparkHeightPx}">'+metricSpark(o.series||[])+'</svg></div>'
@@ -652,13 +654,21 @@ function keepDowns(el){
   d.ontoggle=function(){downsOpen[k]=d.open};
  })(ds[i]);
 }
+/** A running local server as a tile like the provider tiles: name (alias if set) and status in the header,
+ *  then a two-column table — memory in GB, tokens/s with its unit, the model short name (full id in the title). */
+function localTile(l){
+ var m=l.served&&l.served.length?String(l.served[0]):"",al=m&&ringName(m)!==shortModel(m)?ringName(m):"";
+ function r(k,v,t){return'<span class="dim">'+k+'</span><span class="nw"'+(t?' title="'+esc(t)+'"':"")+'>'+v+'</span>'}
+ var rows=(l.rssMb?r("memory",esc(gbm(l.rssMb))+" GB"):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+' tok/s'):"")+(m?r("model",esc(shortModel(m)),m):"");
+ return'<div class="pgroup ltile" data-prov="'+esc(l.provider)+'"><div class="phead"><span class="lname" title="'+esc(l.provider)+'">'+esc(al||l.provider)+'</span><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"")+'</div>';
+}
 function renderLimits(){
  if(!lim)return;var c="",lo="",dn=[],nl=[];
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
    if(!l.up){(l.provider===lim.activeLocal?dn:nl).push(l.provider);return}
-   lo+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges"><div class="gauge"><div class="ok">up</div><div class="s">'+(l.rssMb?l.rssMb+" MB RSS":"")+(l.tokensPerSec?" · "+l.tokensPerSec+" tok/s":"")+'</div>'+(l.served&&l.served.length?'<div class="s">'+esc(l.served[0])+'</div>':'')+'</div></div></div>';
+   lo+=localTile(l);
    return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
@@ -801,7 +811,7 @@ function modelsHtml(inv){
   var keyed=rt.models.filter(function(m){return m.label||(m.usedBy||[]).length||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&sameModel(c.model,m.model)})});
   // a consumer's model the runtime does not list (yet) still gets its card
   consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&c.model&&!rt.models.some(function(m){return sameModel(c.model,m.model)}))keyed.push({model:c.model,kind:"embedding",loaded:false,usedBy:[c.name]})});
-  if(keyed.length>1||(keyed.length&&consumers.some(function(c){return c.name==="pai-embedding"&&(c.runtime===rt.name||c.runtime===rt.kind)})))keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m]}))});
+  if(keyed.length>1||(keyed.length&&consumers.some(function(c){return c.name==="pai-embedding"&&(c.runtime===rt.name||c.runtime===rt.kind)})))keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m],split:true}))});
   // a runtime with no models of its own still shows its declared consumers (a stopped ollama)
   else if(!rt.models.length&&consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))rts.push(Object.assign({},rt,{models:[{model:"",kind:"chat",loaded:false,usedBy:[]}]}));
   else rts.push(rt);
@@ -810,6 +820,8 @@ function modelsHtml(inv){
   var loaded=r.models.filter(function(m){return m.loaded});
   var hasModel=!!(r.models.length&&r.models[0].model);
   var users=usersOf(consumers,rt,r.models[0]||{model:"",kind:"chat",loaded:false,usedBy:[]});
+  // a card is per consumer: on a runtime shared by several, the runtime-wide users stay out of it
+  if(r.split&&hasModel){users=(r.models[0].usedBy||[]).slice();consumersOf(consumers,rt,r.models[0]).forEach(function(c){if(users.indexOf(c.name)<0)users.push(c.name)})}
   // a runtime with no models of its own: every consumer pointing at it still waits on it
   if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
   var down=r.status==="stopped";
@@ -869,10 +881,12 @@ function modelsHtml(inv){
      sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
      fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
      series:[{data:h.reusedPct||[]}]})+'</div>';
-   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
+   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+(x.session?' <b>'+esc(x.session)+'</b>':"")+(x.state==="queued"?' <span class="warn">queued</span>':x.state==="running"?' <span class="dim">running</span>':"")+'</span>'}).join("");
    if(chips)body+='<div class="rt-chips">'+chips+'</div>';
   }
-  if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
+  var sub=r.label||"";
+  if(r.split&&hasModel){var c0=consumersOf(consumers,rt,r.models[0])[0];sub=c0?(c0.purpose||c0.label||""):(r.models[0].label||"")}
+  if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
   cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
   });
