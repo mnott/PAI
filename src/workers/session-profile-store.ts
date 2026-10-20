@@ -26,6 +26,10 @@ export interface SessionProfile {
   parallel_min?: number;
   /** Most workers of this session running at once, on any provider (1 = one after the other). */
   max_parallel?: number;
+  /** Routing rows this session overrides: class -> ordered models (route-lists.ts). */
+  routes?: Record<string, string[]>;
+  /** Optional reason per overridden row. */
+  route_notes?: Record<string, string>;
 }
 
 export type Profiles = Record<string, SessionProfile>;
@@ -53,6 +57,19 @@ function cleanProfile(v: unknown): SessionProfile {
   }
   if (typeof r.parallel_min === "number" && Number.isInteger(r.parallel_min) && r.parallel_min > 0) out.parallel_min = r.parallel_min;
   if (typeof r.max_parallel === "number" && Number.isInteger(r.max_parallel) && r.max_parallel > 0) out.max_parallel = r.max_parallel;
+  if (r.routes && typeof r.routes === "object") {
+    const routes: Record<string, string[]> = {};
+    for (const [cls, v] of Object.entries(r.routes as Record<string, unknown>)) {
+      const list = Array.isArray(v) ? [...new Set(v.filter((m): m is string => typeof m === "string" && !!m.trim()).map((m) => m.trim()))] : [];
+      if (list.length) routes[cls] = list;
+    }
+    if (Object.keys(routes).length) out.routes = routes;
+    if (out.routes && r.route_notes && typeof r.route_notes === "object") {
+      const notes: Record<string, string> = {};
+      for (const [cls, n] of Object.entries(r.route_notes as Record<string, unknown>)) if (out.routes[cls] && typeof n === "string" && n.trim()) notes[cls] = n.trim();
+      if (Object.keys(notes).length) out.route_notes = notes;
+    }
+  }
   return out;
 }
 
@@ -114,12 +131,14 @@ export interface ProfilePatch {
   fallback?: ProfileTarget[] | null;
   parallel_min?: number | null;
   max_parallel?: number | null;
+  routes?: Record<string, string[]> | null;
+  route_notes?: Record<string, string> | null;
 }
 
 export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath()): SessionProfile {
   const profiles = readProfiles(path);
   const next: SessionProfile = { ...(profiles[name] ?? {}) };
-  for (const k of ["chat", "workers", "fallback", "parallel_min", "max_parallel"] as const) {
+  for (const k of ["chat", "workers", "fallback", "parallel_min", "max_parallel", "routes", "route_notes"] as const) {
     if (!(k in patch)) continue;
     const v = patch[k];
     if (v === null || v === undefined) delete next[k];

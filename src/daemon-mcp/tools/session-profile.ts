@@ -20,6 +20,7 @@ import {
   type SessionProfile,
 } from "../../workers/session-profile.js";
 
+import { clearSessionRoute, setSessionRoute } from "../../workers/route-table.js";
 import { detectSessionName } from "../../workers/session-name.js";
 export type { WorkerToolResult } from "./worker-model.js";
 import type { WorkerToolResult } from "./worker-model.js";
@@ -47,6 +48,8 @@ export interface SessionProfileArgs {
   parallel_min?: number | null;
   /** Most of this session's workers running at once, on any provider (1 = one after the other); 0/null clears. */
   max_parallel?: number | null;
+  /** Routing rows this session overrides: class -> ordered models ("gyro-m", "anthropic/sonnet"); a class set to null/[] clears its override, null clears all. */
+  routes?: Record<string, string[] | null> | null;
   /** With a chat change: send `/model <m>` into the running session now. */
   apply_now?: boolean;
 }
@@ -69,6 +72,7 @@ export async function describeProfile(name: string, profile: SessionProfile | nu
     `fallback: ${p.fallback?.length ? p.fallback.map(tgt).join(", ") : "none (global order)"}`,
     `parallel_min: ${p.parallel_min ?? "not set"}`,
     `max_parallel: ${p.max_parallel ?? "not set (parallel)"}`,
+    `route overrides: ${p.routes && Object.keys(p.routes).length ? Object.entries(p.routes).map(([c, m]) => `${c}=${m.join(">")}`).join(", ") : "none (global table)"}`,
     `next worker spawn: ${single.description}`,
   ];
   if (p.parallel_min && batch.description !== single.description) lines.push(`next batch spawn: ${batch.description}`);
@@ -99,8 +103,18 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
     if ("fallback" in args) patch.fallback = args.fallback?.length ? args.fallback : null;
     if ("parallel_min" in args) patch.parallel_min = args.parallel_min ? args.parallel_min : null;
     if ("max_parallel" in args) patch.max_parallel = args.max_parallel ? args.max_parallel : null;
-    if (!Object.keys(patch).length) return fail("nothing to set: pass chat, workers, fallback, parallel_min and/or max_parallel");
-    const profile = updateProfile(name, patch, deps.path);
+    if ("routes" in args) {
+      if (args.routes === null || args.routes === undefined) {
+        clearSessionRoute(name, undefined, deps.path);
+      } else {
+        for (const [cls, models] of Object.entries(args.routes)) {
+          if (models === null || !models.length) clearSessionRoute(name, cls, deps.path);
+          else setSessionRoute(name, cls, models, { profilesPath: deps.path });
+        }
+      }
+    }
+    if (!Object.keys(patch).length && !("routes" in args)) return fail("nothing to set: pass chat, workers, fallback, parallel_min, max_parallel and/or routes");
+    const profile = Object.keys(patch).length ? updateProfile(name, patch, deps.path) : getProfile(name, deps.path);
     const out = [await describeProfile(name, profile, deps)];
     if (args.chat) {
       const running = name === (await detectSessionName(deps.env));
@@ -112,6 +126,7 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
         out.push(`chat model stored: applies when the session next starts${running ? " (this session keeps its model until then; set apply_now to send /model into it)" : ""}`);
       }
     }
+    if (args.routes !== undefined) out.push("route overrides apply to the next worker run of this session");
     if (args.workers || args.fallback !== undefined) out.push("workers change applies to the next spawn");
     return text(out.join("\n"));
   } catch (e) {

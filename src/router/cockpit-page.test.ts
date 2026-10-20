@@ -142,6 +142,8 @@ describe("cockpit layout follow-up", () => {
     for (const w of ["--ok", "--warn", "--bad"]) expect(COCKPIT_HTML).toMatch(new RegExp(`\\.rtchip\\.[a-z]+\\{[^}]*${w}`));
     expect(COCKPIT_HTML).toContain("e.altKey&&(e.key===\"ArrowLeft\"");
     expect(COCKPIT_HTML).toContain('action:"route"');
+    expect(COCKPIT_HTML).toContain('class="rtsess"');
+    expect(COCKPIT_HTML).toContain("b.clear=true");
     expect(COCKPIT_HTML).toContain("ondrop");
   });
 

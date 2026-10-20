@@ -125,6 +125,7 @@ import {
   setCooldown,
   type CapabilityRunResolution,
 } from "./routing.js";
+import { applyRouteOverrides } from "./route-lists.js";
 import { detectSessionName } from "./session-name.js";
 import { getProfile, isBatchEnv, liveResolveCtx, resolveWorkers } from "./session-profile.js";
 import { budgetCache } from "./budget.js";
@@ -668,6 +669,10 @@ export function initContextWindow(e: StreamEvent): number | null {
 export async function runWorker(opts: RunOptions): Promise<number> {
   const runT0 = Date.now();
   const { raw: _raw, workers: config } = readWorkersSection();
+  // the session's own routing rows replace the global ones for this run (routeRun and resolveTarget read config.classes)
+  const sessionName = await detectSessionName();
+  const sessionRoutes = sessionName ? getProfile(sessionName)?.routes : undefined;
+  if (sessionRoutes) config.classes = applyRouteOverrides(config.classes, sessionRoutes);
   void _raw;
   if (!config.enabled) {
     throw new Error(

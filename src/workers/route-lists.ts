@@ -68,6 +68,23 @@ export function targetForRoute(existing: ClassTarget | undefined, entries: strin
   return { ...rest, provider: entryProvider(entries[0]), ...(entries.length > 1 || parseEntry(entries[0]).model !== null ? { models: [...entries] } : {}) };
 }
 
+/** The classes as one session sees them: its overridden rows replace the global ones (other keys of a class target are kept). */
+export function applyRouteOverrides(classes: Record<string, ClassTarget>, routes: Record<string, string[]> | undefined): Record<string, ClassTarget> {
+  if (!routes) return classes;
+  const out = { ...classes };
+  for (const [cls, models] of Object.entries(routes)) {
+    const t = targetForRoute(out[cls], models);
+    if (t !== undefined) out[cls] = t;
+  }
+  return out;
+}
+
+/** The reason note of a global row, if any. */
+export const classNote = (classes: Record<string, ClassTarget>, cls: string): string | undefined => {
+  const t = classes[cls];
+  return typeof t === "object" && t.note ? t.note : undefined;
+};
+
 /** Flatten a retired rank chain (array, or {local, cloud, localFirst}) into the routing walk it stood for. */
 export function flatLegacyChain(v: unknown): string[] {
   const names = (x: unknown): string[] => (Array.isArray(x) ? x.filter((n): n is string => typeof n === "string" && !!n) : []);

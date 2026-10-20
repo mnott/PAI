@@ -415,6 +415,8 @@ export type ClassTarget =
       order?: string[];
       /** The class's routing list (route-lists.ts): element 0 serves, the rest is the fallback order. */
       models?: string[];
+      /** Why the row is ordered this way (shown as a tooltip). */
+      note?: string;
     };
 
 /**
@@ -946,8 +948,10 @@ export function parseClassesValue(
         }
         models = [...new Set(o.models as string[])];
       }
+      const note = str(o.note);
       const obj: ClassTarget = {
         ...(provider ? { provider } : {}),
+        ...(note ? { note } : {}),
         ...(models?.length ? { models } : {}),
         ...(mcp ? { mcp } : {}),
         ...(maxCostTier !== undefined ? { maxCostTier } : {}),
