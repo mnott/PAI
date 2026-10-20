@@ -4,18 +4,18 @@ PAI needs Node 20 or newer and Claude Code. Bun is a development tool only; you 
 
 ## The short way: the install skill
 
-```bash
-npm i -g @tekmidian/pai
+The repository is its own Claude Code plugin marketplace (`.claude-plugin/marketplace.json`). Inside Claude Code:
+
+```
+/plugin marketplace add mnott/PAI
+/plugin install pai@pai
 ```
 
-The package ships an install skill at `plugins/core/skills/setup/SKILL.md`. Make Claude Code see it in one of two ways:
-
-- as a plugin: add the PAI plugin marketplace entry (the repo's `.claude-plugin/plugin.json` lists the skill), or
-- by copying the directory into your skills folder:
+The plugin ships an install skill (`plugins/core/skills/setup/SKILL.md`). From a clone or an npm install, load it for one session instead:
 
 ```bash
-mkdir -p ~/.claude/skills
-cp -R "$(npm root -g)/@tekmidian/pai/plugins/core/skills/setup" ~/.claude/skills/pai-setup
+claude --plugin-dir /path/to/PAI                         # a clone
+claude --plugin-dir "$(npm root -g)/@tekmidian/pai"      # after npm i -g @tekmidian/pai
 ```
 
 Then tell Claude Code: "set up PAI". The skill walks through the phases below, checks each one first and does only what is missing. Everything it does is also a plain command, so you can follow this page by hand.
