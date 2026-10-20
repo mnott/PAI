@@ -2,7 +2,7 @@
 
 PAI is an operating layer for Claude Code. It gives every session a memory: notes written in the background, searchable across sessions, projects and vaults, all stored locally. It also lets one Claude Code session delegate work to workers on any provider, a local model first, over three delegation tiers with routing policy, escalation and limits. A router and a cockpit page show what the models, the worker pool and your token budget are doing.
 
-![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](docs/images/cockpit.png)
+![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](docs/images/cockpit-limits-routing.jpg)
 
 *The router cockpit (`http://127.0.0.1:8790/cockpit`). See [the cockpit page](docs/cockpit.md).*
 
