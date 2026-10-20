@@ -128,6 +128,13 @@ describe("route reason: the real source", () => {
     }
   });
 
+  it("a loopback provider's argv keeps the per-run note token out of the system prompt (shared prefix)", async () => {
+    const s = await capture({ local: true, "print-cmd": true });
+    const [argv, stdin] = s.split('"stdin":');
+    expect(stdin).toContain("PAI note [");
+    expect(argv).not.toContain("PAI note [");
+  });
+
   it("a routing-policy pin says (routing policy: <mode>), not flag: --provider", async () => {
     // the policy pins loc1; the port answers so routeRun's findLocal takes it
     writePolicy(logDir, "prefer-local");

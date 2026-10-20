@@ -33,6 +33,23 @@ describe("auditPanes", () => {
   });
 });
 
+describe("start grace", () => {
+  const T = tabs({ [H]: "1:2" });
+  const now = Date.parse("2026-10-20T02:00:40Z");
+  it("process started 6 s ago, pane not listed: ok", () => {
+    expect(auditPanes([{ id: "w-1", kind: "worker", startedMs: now - 6000 }], [entry("w-1", P1)], T, now)[0].mark).toBe("ok");
+    expect(auditPanes([{ id: "w-1", kind: "worker", startedMs: now - 6000 }], [], T, now)[0].mark).toBe("ok");
+  });
+  it("old process but pane registered 5 s ago: ok", () => {
+    const e = { ...entry("w-1", P1), opened: "2026-10-20 02:00:35" };
+    expect(auditPanes([{ id: "w-1", kind: "worker", startedMs: now - 600000 }], [e], T, now)[0].mark).toBe("ok");
+  });
+  it("past the grace: NO PANE", () => {
+    const e = { ...entry("w-1", P1), opened: "2026-10-20 01:50:00" };
+    expect(auditPanes([{ id: "w-1", kind: "worker", startedMs: now - 60000 }], [e], T, now)[0].mark).toBe("NO PANE");
+  });
+});
+
 describe("host tab of every kind", () => {
   const T = tabs({ [H]: "1:2", [P1]: "1:2", [P2]: "1:2" });
   it("worker, plan run and pane run with a recorded host: host tab filled, ok", () => {
@@ -89,6 +106,8 @@ describe("auditTick", () => {
     });
 
   it("records, marks and reports each violation once", async () => {
+    expect((await run()).map((x) => x.mark)).toEqual(["ok", "ok"]); // first failed check only confirms
+    expect(sent.length).toBe(0);
     const v = await run();
     expect(v.map((x) => x.mark)).toEqual(["WRONG TAB", "NO PANE"]);
     expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-VIOLATION.*w-bad/);
@@ -98,10 +117,17 @@ describe("auditTick", () => {
     await run();
     expect(sent.length).toBe(4); // not repeated
   });
+  it("a failure that clears after one check is never reported", async () => {
+    await run();
+    await auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2", [P2]: "1:2" }), procs: () => [{ id: "w-bad", kind: "worker" }], registry: () => [entry("w-bad", P2)] });
+    await run();
+    expect(sent.length).toBe(0);
+  });
   it("unreadable iTerm: no verdict", async () => {
     expect(await auditTick(dir, msg, { tabs: async () => Promise.reject(new Error("x")), procs: () => [] })).toEqual([]);
   });
   it("renders process -> pane -> tab", async () => {
+    await run();
     expect(renderPaneAudit(await run())).toMatch(/WRONG TAB\s+worker w-bad\s+pane BBBBBBBB.*tab 9:1.*host tab 1:2/);
   });
 });

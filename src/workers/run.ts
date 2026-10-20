@@ -149,6 +149,7 @@ import {
   OPERATOR_MARK,
   AG2_REASK_TEXT,
   promptTrailer,
+  noteTokenSentence,
   workerContractPrompt,
   parseWorkerReport,
   verifyReportChanges,
@@ -1859,6 +1860,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     ? [
         ...(worktree ? [worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)] : []),
         ...(limit ? [deadlinePromptLine(limit)] : []),
+        noteTokenSentence(noteToken), // per-run token: measured 2026-10-20, it cut the shared prefix after 2.3k of 9k tokens
       ]
     : [];
   const { text: taskText, applied: trailerApplied } = headlessPromptText(
@@ -1879,7 +1881,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   // ONE flag: contract (unless the caller brought their own), placement, caller text
   cmd.push(
     ...appendSystemPromptArgs([
-      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, noteToken)] : []),
+      ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, volatileInTask ? undefined : noteToken)] : []),
       ...(addendum ? [addendum.text] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
