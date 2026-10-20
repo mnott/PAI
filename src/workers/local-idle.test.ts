@@ -2,10 +2,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { WorkersConfig } from "./config.js";
-import { DEFAULT_LOCAL_IDLE, evaluate, localIdleTick, ownerOf, localIdleLine, parseGpuUtilization, takeSample, setMuted, readMuted, type LocalIdleState, type LocalProviderSample, type LocalSample } from "./local-idle.js";
+import { defaultWorkersConfig, type WorkersConfig } from "./config.js";
+import { evaluate, localIdleTick, ownerOf, localIdleLine, parseGpuUtilization, takeSample, setMuted, readMuted, type LocalIdleState, type LocalProviderSample, type LocalSample } from "./local-idle.js";
 
-const cfg = DEFAULT_LOCAL_IDLE;
+const cfg = defaultWorkersConfig().localIdle;
 const MIN = 60_000;
 const fresh = (): LocalIdleState => ({ idleSince: null, lastNudge: {} });
 const prov = (over: Partial<LocalProviderSample> = {}): LocalProviderSample => ({
@@ -153,7 +153,7 @@ describe("owner resolution and delivery", () => {
     session: { name: "CaseLeaf" },
     spawnerSession: "c0ffee00-spawner",
   };
-  const workers = { providers: { "gyro-m": { enabled: true, baseUrl: "http://127.0.0.1:8010/v1", maxConcurrent: 4 } }, localIdle: DEFAULT_LOCAL_IDLE } as unknown as WorkersConfig;
+  const workers = { providers: { "gyro-m": { enabled: true, baseUrl: "http://127.0.0.1:8010/v1", maxConcurrent: 4 } }, localIdle: defaultWorkersConfig().localIdle } as unknown as WorkersConfig;
 
   it("ownerOf strips the ITERM_SESSION_ID prefix and keeps name and spawner", () => {
     expect(ownerOf(caseLeaf as never)).toEqual({ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "CaseLeaf", claudeSession: "c0ffee00-spawner" });

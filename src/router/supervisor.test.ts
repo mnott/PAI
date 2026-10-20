@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createServer } from "node:net";
 import { probeRouter, runRouterTick } from "./supervisor.js";
-import { DEFAULTS } from "../daemon/config.js";
+import { defaults } from "../daemon/config.js";
 
 describe("runRouterTick", () => {
   it("starts the router when the probe fails", async () => {
@@ -36,6 +36,6 @@ describe("probeRouter", () => {
 
 describe("router config", () => {
   it("is off by default", () => {
-    expect(DEFAULTS.router.enabled).toBe(false);
+    expect(defaults().router.enabled).toBe(false);
   });
 });

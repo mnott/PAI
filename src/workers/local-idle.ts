@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listBuildsSync, ticketKind, buildsDir, type BuildTicket } from "../builds/queue.js";
 import { providerCap, queueRows } from "./capacity.js";
-import { isLocalProvider, type WorkersConfig } from "./config.js";
+import { defaultWorkersConfig, isLocalProvider, type WorkersConfig } from "./config.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
@@ -30,7 +30,6 @@ export interface LocalIdleConfig {
   backoffMinutes: number;
 }
 
-export const DEFAULT_LOCAL_IDLE: LocalIdleConfig = { enabled: true, gpuBelowPct: 10, minutes: 2, backoffMinutes: 10 };
 
 export type Activity = "build" | "test" | "generating";
 
@@ -180,7 +179,7 @@ export const nudgeText = (n: Nudge, ids: string[], minutes: number): string =>
     ids[0] ?? n.provider,
     "local-idle",
     { provider: n.provider, free: n.free },
-    `GPU idle (under ${DEFAULT_LOCAL_IDLE.gpuBelowPct}% busy) for ${minutes} min: your local workers ${ids.join(", ")} are in builds; ${n.provider} has ${n.free} free slot${n.free === 1 ? "" : "s"}: start more independent local tasks`
+    `GPU idle (under ${defaultWorkersConfig().localIdle.gpuBelowPct}% busy) for ${minutes} min: your local workers ${ids.join(", ")} are in builds; ${n.provider} has ${n.free} free slot${n.free === 1 ? "" : "s"}: start more independent local tasks`
   );
 
 export interface LocalIdleFile {
@@ -224,7 +223,7 @@ export function setMuted(logDir: string, session: string, muted: boolean): strin
 /** The `ps` / cockpit line: "local model: GPU 63% busy · gyro-m 2/4 running, 2 free"; "" with no reading. */
 export function localIdleLine(f: LocalIdleFile | null, now = Date.now()): string {
   if (!f || now - Date.parse(f.at) > 120_000) return "";
-  const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}% ${f.gpuPct < DEFAULT_LOCAL_IDLE.gpuBelowPct ? "idle" : "busy"}`;
+  const gpu = f.gpuPct === null ? "GPU –" : `GPU ${f.gpuPct}% ${f.gpuPct < defaultWorkersConfig().localIdle.gpuBelowPct ? "idle" : "busy"}`;
   const provs = f.providers.map((p) => `${p.provider} ${p.running}/${p.cap} running, ${p.free} free${p.queued ? `, ${p.queued} queued` : ""}`);
   return `local model: ${[gpu, ...provs].join(" · ")}`;
 }

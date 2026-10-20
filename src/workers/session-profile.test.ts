@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { realSessionProfileDeps, sessionProfileGet, sessionProfileSet, type SessionProfileDeps } from "../daemon-mcp/tools/session-profile.js";
 import type { BudgetMap } from "./budget.js";
-import { NATIVE_ANTHROPIC_MODELS, readWorkersSection, writeWorkersSection } from "./config.js";
+import { nativeAnthropicModels, readWorkersSection, writeWorkersSection } from "./config.js";
 import {
   getProfile,
   profilesPath,
@@ -28,8 +28,18 @@ const prov = (baseUrl: string, models: { default: string; fast?: string }, extra
 
 const cfg = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
-  routing: { policy: "budget", order: [], priority: ["glm", "kimi"], budgetWalls: {} },
+  nativeModels: { ...nativeAnthropicModels() },
+  routing: {
+    policy: "budget",
+    order: [],
+    priority: ["glm", "kimi"],
+    budgetWalls: {},
+    budgetPercent: {},
+    budgetWall: 95,
+    cooldownMinutes: 30,
+    retryOnQuota: true,
+    budgetPriority: [],
+  },
   providers: {
     kimi: prov("https://kimi.example.invalid", { default: "k3", fast: "k3-fast" }),
     glm: prov("https://glm.example.invalid", { default: "glm-big", fast: "glm-small" }),

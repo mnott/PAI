@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { defaultWorkersConfig } from "./config.js";
 import {
-  DEFAULT_STAGGER,
   backoffMs,
   loadWarmupHistory,
   recordWarmup,
@@ -11,6 +11,8 @@ import {
   warmupLimitSec,
   type WaitInfo,
 } from "./stagger.js";
+
+const DEFAULT_STAGGER = defaultWorkersConfig().stagger;
 import type { WorkerStatus } from "./status.js";
 
 const T0 = Date.parse("2026-10-17T10:00:02");

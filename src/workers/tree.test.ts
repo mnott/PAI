@@ -19,7 +19,7 @@ import {
   workerDepth,
   WORKER_ID_ENV,
 } from "./tree.js";
-import { DEFAULT_TREE } from "./config.js";
+import { defaultWorkersConfig } from "./config.js";
 import { loadStatuses, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-tree-test-"));
@@ -118,7 +118,7 @@ describe("runningChildren", () => {
 describe("assertChildAllowed", () => {
   it("allows a child of a top-level worker (depth 1 ≤ maxDepth)", () => {
     status("p");
-    assertChildAllowed(dir, "p", DEFAULT_TREE);
+    assertChildAllowed(dir, "p", defaultWorkersConfig().tree);
   });
 
   it("allows a parent without a status file (chain id) uncapped", () => {

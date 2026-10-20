@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AGING_MS, admitCap, capacityGate, DEFAULT_CAPACITY, liveQueue, providerCap } from "./capacity.js";
+import { AGING_MS, admitCap, capacityGate, liveQueue, providerCap } from "./capacity.js";
+import { defaultWorkersConfig } from "./config.js";
 import { activeText, beginBuildWait, buildWaitMs, endBuildWait } from "./active-time.js";
 import { armDeadline, extendLimit, resolveLimit } from "./deadline.js";
 import { buildRunEnv } from "./run-env.js";
@@ -92,7 +93,7 @@ describe("fair share across sessions", () => {
         logDir,
         self: { id, provider: "loc", pid: 100 },
         cap: 1,
-        config: DEFAULT_CAPACITY,
+        config: defaultWorkersConfig().capacity,
         now: () => t,
         sleep: async () => {
           t += 1000;
@@ -139,7 +140,7 @@ describe("conversationSlots cap", () => {
         logDir,
         self: { id: "w", provider: "loc", pid: 100 },
         cap: admitCap(4, 3, true),
-        config: DEFAULT_CAPACITY,
+        config: defaultWorkersConfig().capacity,
         now: () => t,
         sleep: async () => {
           t += 1000;

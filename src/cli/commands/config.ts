@@ -36,12 +36,12 @@ export const configSubcommands: CommandDef[] = [
 {
   name: "get",
   summary: "Print one setting",
-  description: "Print one setting.\n\nPrint one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON.",
+  description: "Print one setting.\n\nPrint one config value (dotted path, e.g. search.recencyBoostDays), masked if it looks like a secret. An object/array subtree prints as YAML; pass --json for JSON. Pass --source to also show whether the value came from the user's config file or the shipped defaults file.",
   args: [{ name: "PATH", summary: "Setting name with dots, e.g. search.recencyBoostDays", required: true }],
-  options: [{ name: "json", type: "boolean", summary: "Print an object/array value as JSON instead of YAML" }],
-  examples: ["pai config get search.recencyBoostDays","pai config get search.recencyBoostDays --json"],
+  options: [{ name: "json", type: "boolean", summary: "Print an object/array value as JSON instead of YAML" }, { name: "source", type: "boolean", summary: "Also print where the value came from (user config / shipped defaults)" }],
+  examples: ["pai config get search.recencyBoostDays","pai config get search.recencyBoostDays --source"],
   seeAlso: ["pai config set","pai config list"],
-  run: (ctx) => configGetCmd(String(ctx.args.PATH), { json: ctx.opts.json === true }),
+  run: (ctx) => configGetCmd(String(ctx.args.PATH), { json: ctx.opts.json === true, source: ctx.opts.source === true }),
 },
 {
   name: "set",

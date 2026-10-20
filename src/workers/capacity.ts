@@ -26,7 +26,6 @@ export interface CapacityConfig {
   enabled: boolean;
 }
 
-export const DEFAULT_CAPACITY: CapacityConfig = { enabled: true };
 
 /**
  * Loopback default. The server exposes no capacity: GET /v1/models, /health

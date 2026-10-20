@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS, type WorkerProvider, type WorkersConfig } from "./config.js";
+import { nativeAnthropicModels, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { buildRunEnv } from "./run-env.js";
 import {
   LaunchError,
@@ -37,7 +37,7 @@ function provider(overrides: Partial<WorkerProvider>): WorkerProvider {
 /** enabled glm (anthropic-protocol), disabled kimi, enabled together (openai-protocol) */
 const fixture: Pick<WorkersConfig, "active" | "providers" | "nativeModels"> = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: {
     glm: provider({
       baseUrl: "https://api.z.ai/api/anthropic",
@@ -60,8 +60,8 @@ describe("buildLaunchRows", () => {
 
     // built-in anthropic (always present) + default/fast of both enabled providers
     expect(pairs).toEqual([
-      `anthropic/${NATIVE_ANTHROPIC_MODELS.default}`,
-      `anthropic/${NATIVE_ANTHROPIC_MODELS.fast}`,
+      `anthropic/${nativeAnthropicModels().default}`,
+      `anthropic/${nativeAnthropicModels().fast}`,
       "glm/glm-5.3[1m]",
       "glm/glm-5.3-flash",
       "together/together-default",
@@ -198,7 +198,7 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
   it("anthropic (built-in): --model only, no base URL/token, no ANTHROPIC_API_KEY leak", async () => {
     const plan = await withLeakedKey(() => buildLaunchPlan(fixture, "anthropic", undefined, [], "/tmp/pai-launch-test"));
     // pinned by pinnedSettingsArgs: router when enabled, else api.anthropic.com
-    expect(plan.argv.slice(2)).toEqual(["--model", NATIVE_ANTHROPIC_MODELS.default]);
+    expect(plan.argv.slice(2)).toEqual(["--model", nativeAnthropicModels().default]);
     expect(plan.argv[0]).toBe("--settings");
     expect(JSON.parse(plan.argv[1]).env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(plan.env.ANTHROPIC_BASE_URL).toBeUndefined();

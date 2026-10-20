@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS, type WorkersConfig } from "../../workers/config.js";
+import { nativeAnthropicModels, type WorkersConfig } from "../../workers/config.js";
 import { getProfile, updateProfile } from "../../workers/session-profile.js";
 import { makeStyle } from "../help.js";
 import type { Setup } from "../lib/setups.js";
@@ -19,7 +19,7 @@ const { lastSetup, startSession } = await import("./root.js");
 const { applyProfileChat } = await import("./session.js");
 
 const mk = { enabled: true, protocol: "anthropic" as const, baseUrl: "https://x.invalid", keyFile: null, env: {}, models: { default: "m", fast: "f" } };
-const workers = { active: "glm", nativeModels: { ...NATIVE_ANTHROPIC_MODELS }, providers: { glm: mk, kimi: mk }, logDir: "/tmp/none", routing: { budgetWalls: {} } } as unknown as WorkersConfig;
+const workers = { active: "glm", nativeModels: { ...nativeAnthropicModels() }, providers: { glm: mk, kimi: mk }, logDir: "/tmp/none", routing: { budgetWalls: {} } } as unknown as WorkersConfig;
 const term = () => ({ input: {} as never, output: { write: () => true } as never, isTTY: false, st: makeStyle(false) });
 
 describe("session profile at launch", () => {

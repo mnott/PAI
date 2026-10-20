@@ -2,7 +2,7 @@
  * main-config.ts — the dual-format (config.yaml / config.json) engine behind
  * the main PAI config file. Deliberately has NO dependency on
  * src/daemon/config.ts (which owns path resolution, PaiDaemonConfig and
- * DEFAULTS) so that module can import this one for loadConfig() without a
+ * defaults) so that module can import this one for loadConfig() without a
  * cycle; every path this module touches is passed in explicitly.
  *
  * Precedence, same shape as workers.yaml/workers/config.ts: config.yaml wins

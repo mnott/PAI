@@ -295,7 +295,7 @@ export async function runCockpitAction(
       }
     }
     const path = labelPath(runtime, model);
-    // the config writer validates against DEFAULTS; models.* is not a known
+    // the config writer validates against the shipped defaults; models.* is not a known
     // top-level key there, so this label block writes with force (same as
     // `pai config set models.labels.<rt> <label> --force`)
     try {

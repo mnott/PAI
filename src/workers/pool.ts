@@ -40,7 +40,7 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { dirname, join } from "node:path";
-import { ANTHROPIC_NATIVE, type WorkersConfig, type WorkerProvider } from "./config.js";
+import { ANTHROPIC_NATIVE, defaultWorkersConfig, type WorkersConfig, type WorkerProvider } from "./config.js";
 import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
 import type { StreamEvent } from "./run.js";
@@ -72,27 +72,19 @@ export interface PoolSettings {
   continuation: boolean;
 }
 
-export const DEFAULT_POOL_SETTINGS: PoolSettings = {
-  enabled: false,
-  maxSlots: 3,
-  idleSecs: 900,
-  port: 8798,
-  native: true,
-  spares: 1,
-  idleKillSec: 1800,
-  continuation: false,
-};
-
+/** Pool fallbacks when a config names none — the shipped defaults file
+ * (defaults/workers.yaml `workers.pool`), read via defaultWorkersConfig(). */
 export function poolSettings(config: WorkersConfig): PoolSettings {
+  const d = defaultWorkersConfig().pool;
   const p = config.pool;
   return {
     enabled: p?.enabled === true,
-    maxSlots: p?.maxSlots ?? DEFAULT_POOL_SETTINGS.maxSlots,
-    idleSecs: p?.idleSecs ?? DEFAULT_POOL_SETTINGS.idleSecs,
-    port: p?.port ?? DEFAULT_POOL_SETTINGS.port,
+    maxSlots: p?.maxSlots ?? d.maxSlots,
+    idleSecs: p?.idleSecs ?? d.idleSecs,
+    port: p?.port ?? d.port,
     native: p?.native !== false,
-    spares: p?.spares ?? DEFAULT_POOL_SETTINGS.spares,
-    idleKillSec: p?.idleKillSec ?? DEFAULT_POOL_SETTINGS.idleKillSec,
+    spares: p?.spares ?? d.spares ?? 1,
+    idleKillSec: p?.idleKillSec ?? d.idleKillSec ?? 1800,
     continuation: p?.continuation === true,
   };
 }

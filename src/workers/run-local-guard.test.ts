@@ -25,7 +25,7 @@ process.env.PAI_WORKERS_YAML = join(home, "workers.yaml");
 const { runWorker, LocalProviderRefusedError, assertLocalProviderAlive } = await import("./run.js");
 const { LOCAL_MECHANISM_LINE } = await import("./local-provider.js");
 const { describeProviders } = await import("./providers.js");
-const { parseWorkersConfig, NATIVE_ANTHROPIC_MODELS } = await import("./config.js");
+const { parseWorkersConfig, nativeAnthropicModels } = await import("./config.js");
 
 const yaml = [
   "providers:",
@@ -226,7 +226,7 @@ describe("runWorker: a named local provider that is down or disabled", () => {
 
 describe("the --local line in the listings", () => {
   it("describeProviders starts with it", () => {
-    const lines = describeProviders({ ...cfg, nativeModels: { ...NATIVE_ANTHROPIC_MODELS } }, join(home, "config.yaml"));
+    const lines = describeProviders({ ...cfg, nativeModels: { ...nativeAnthropicModels() } }, join(home, "config.yaml"));
     expect(lines[0]).toBe(LOCAL_MECHANISM_LINE);
   });
 });

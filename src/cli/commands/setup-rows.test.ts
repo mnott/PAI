@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { getProviderOrNative, NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
+import { getProviderOrNative, nativeAnthropicModels } from "../../workers/config.js";
 import { readProfiles, resolveWorkers, updateProfile } from "../../workers/session-profile.js";
 import { makeStyle } from "../help.js";
 import { allSetups, setupProfile, setupWorkersLabel } from "../lib/setups.js";
@@ -13,7 +13,7 @@ const st = makeStyle(false);
 const mk = (baseUrl: string, fast: string) => ({ enabled: true, protocol: "anthropic" as const, baseUrl, keyFile: null, env: {}, models: { default: "m-default", fast } });
 const cfg = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: {
     glm: mk("https://glm.invalid", "glm-air"),
     kimi: mk("https://kimi.invalid", "m-default"),

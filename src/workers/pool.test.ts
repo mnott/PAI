@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import {
-  DEFAULT_POOL_SETTINGS,
   appendPoolMetric,
   carriedShare,
   firstRequestShare,
@@ -56,7 +55,7 @@ describe("pool settings", () => {
   it("default OFF; poolSettings applies defaults per field", () => {
     const cfg = defaultWorkersConfig();
     expect(cfg.pool.enabled).toBe(false);
-    expect(poolSettings(cfg)).toEqual(DEFAULT_POOL_SETTINGS);
+    expect(poolSettings(cfg)).toEqual(cfg.pool);
     expect(
       poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false } })
     ).toEqual({ enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false, spares: 1, idleKillSec: 1800, continuation: false });

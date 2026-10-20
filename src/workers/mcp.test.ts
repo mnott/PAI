@@ -18,7 +18,7 @@ import {
   mcpServersFromToolGrants,
   runMcpConfigPath,
 } from "./mcp.js";
-import { DEFAULT_MCP_SETS, type WorkersConfig } from "./config.js";
+import { defaultWorkersConfig, type WorkersConfig } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-mcp-test-"));
 const claudeJson = join(dir, "claude.json");
@@ -118,7 +118,7 @@ describe("expandMcpNames — desktop set", () => {
       "utf8"
     );
     // a config without its own mcpSets section still knows the default desktop set
-    const bare = { mcpSets: { ...DEFAULT_MCP_SETS } } as unknown as WorkersConfig;
+    const bare = { mcpSets: { ...defaultWorkersConfig().mcpSets } } as unknown as WorkersConfig;
     expect(expandMcpNames(["desktop"], bare, desktopJson)).toEqual(["clickr"]);
     expect(expandMcpNames(["desktop,memory"], bare, desktopJson)).toEqual(["clickr", "memory"]);
   });

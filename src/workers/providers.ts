@@ -17,7 +17,7 @@
 import { existsSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import {
   ANTHROPIC_NATIVE,
-  DEFAULT_LOG_DIR,
+  defaultWorkersConfig,
   MODEL_CAPABILITIES,
   PROVIDER_TAGS,
   WorkersConfigError,
@@ -123,7 +123,7 @@ export function addProvider(input: AddProviderInput): WorkersConfig {
   if (first) {
     workers.enabled = true;
     workers.active = input.name;
-    workers.logDir = workers.logDir || DEFAULT_LOG_DIR;
+    workers.logDir = workers.logDir || defaultWorkersConfig().logDir;
     const fast = input.fastModel ? `${input.name}/fast` : input.name;
     workers.classes = {
       draft: fast,

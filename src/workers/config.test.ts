@@ -16,7 +16,7 @@ import {
   readWorkersSection,
   writeWorkersSection,
   WorkersConfigError,
-  DEFAULT_CACHE_KEEPALIVE_SECS,
+  defaultWorkersConfig,
 } from "./config.js";
 
 const GLM = {
@@ -384,10 +384,10 @@ describe("writeWorkersSection — round-trip (the 2026-09-18 regression)", () =>
 });
 
 describe("cacheKeepaliveSecs knob", () => {
-  it("defaults to DEFAULT_CACHE_KEEPALIVE_SECS when absent", () => {
+  it("defaults to the shipped defaults file when absent", () => {
     const c = parseWorkersConfig({ providers: { glm: GLM } });
-    expect(c.cacheKeepaliveSecs).toBe(DEFAULT_CACHE_KEEPALIVE_SECS);
-    expect(DEFAULT_CACHE_KEEPALIVE_SECS).toBe(0); // off until the operator arms it
+    expect(c.cacheKeepaliveSecs).toBe(defaultWorkersConfig().cacheKeepaliveSecs);
+    expect(defaultWorkersConfig().cacheKeepaliveSecs).toBe(0); // off until the operator arms it
   });
 
   it("parses 0 as off and a positive cadence verbatim", () => {

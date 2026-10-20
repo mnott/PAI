@@ -51,7 +51,7 @@ describe("runPassChild", () => {
 
 describe("config", () => {
   it("passPriority defaults to background", async () => {
-    const { DEFAULTS } = await import("./config.js");
-    expect(DEFAULTS.passPriority).toBe("background");
+    const { defaults } = await import("./config.js");
+    expect(defaults().passPriority).toBe("background");
   });
 });

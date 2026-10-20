@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { NATIVE_ANTHROPIC_MODELS } from "../../workers/config.js";
+import { nativeAnthropicModels } from "../../workers/config.js";
 import { CliError } from "../define.js";
 import { renameSession } from "../lib/names.js";
 import { planOpen } from "./session.js";
@@ -10,7 +10,7 @@ import { planOpen } from "./session.js";
 const mk = (enabled = true) => ({ enabled, protocol: "anthropic" as const, baseUrl: "https://x.invalid", keyFile: null, env: {}, models: { default: "m" } });
 const workers = {
   active: "glm",
-  nativeModels: { ...NATIVE_ANTHROPIC_MODELS },
+  nativeModels: { ...nativeAnthropicModels() },
   providers: { glm: mk(), kimi: mk(), off: mk(false) },
 };
 

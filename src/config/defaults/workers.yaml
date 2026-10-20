@@ -1,0 +1,150 @@
+# PAI shipped defaults — the workers config.
+#
+# Loaded FIRST and deep-merged UNDER the user's ~/.pai/workers.yaml: user
+# values win, arrays replace, objects merge. Edit the user file, never this
+# one; `pai config get <key> --source` shows which file a value came from.
+# Policy values live here, not in code — the code keeps only the types and the
+# loader (src/config/shipped-defaults.ts).
+#
+# The `workers` section holds the non-provider settings that live in the main
+# config (pane, routing, tree, pool, …); providers/classes/mcp_sets/active
+# live at the top level of workers.yaml.
+
+workers:
+  enabled: false
+  pane:
+    enabled: true
+    fontSize: 13
+    autoExitSecs: 5
+  logDir: ~/.claude/logs/workers
+  routing:
+    # Provider names in preference order; first usable one wins.
+    order: []
+    # Minutes a provider sits in cooldown after a quota/rate failure.
+    cooldownMinutes: 30
+    # Reroute a failed-before-first-tool run to the next provider.
+    retryOnQuota: true
+    # Auto-routing policy: "budget" (skip providers at/above their budget
+    # wall) or "order" (walk routing.order verbatim).
+    policy: budget
+    # Operator preference order for policy "budget"; empty falls back to
+    # routing.order, else routing.budgetPriority.
+    priority: []
+    # Per-provider overrides of routing.budgetPercent; percent used at which
+    # budget routing treats the provider as full.
+    budgetWalls: {}
+    # Provider names budget routing walks when priority and order are both
+    # empty; unconfigured names are skipped.
+    budgetPriority: [anthropic, glm, kimi]
+    # Budget wall for a provider budgetWalls and budgetPercent name none.
+    budgetWall: 95
+    # Budget walls budget routing uses when routing.budgetWalls names none:
+    # percent used at which the provider counts as full.
+    budgetPercent:
+      anthropic: 95
+      glm: 90
+      kimi: 85
+  tree:
+    # Maximum nesting depth of sub-workers (top-level = 0).
+    maxDepth: 2
+    # Maximum concurrently running children per parent.
+    maxChildren: 4
+  supervision:
+    # Type "N worker alerts pending" lines into session panes; default off.
+    pointer: false
+    # Which alerts reach the orchestrating session: "harness" (harness-class
+    # tool errors, loop detections, stalls) or "all".
+    push: harness
+    # Minutes without a tool call before a running unit counts as stalled.
+    stallMinutes: 10
+  # Worker session pool: long-lived headless slots that successive small runs
+  # talk to, so the provider prompt cache carries over. OFF — the operator
+  # turns it on with `pai worker pool on`.
+  pool:
+    enabled: false
+    # Maximum slot processes the host keeps, across all (provider, model) keys.
+    maxSlots: 3
+    # Idle seconds before a slot is killed (0 = never); the cache the pool
+    # exists to carry is gone by then anyway.
+    idleSecs: 900
+    # Loopback port the pool host listens on.
+    port: 8798
+    # Native anthropic (Claude Code's own login) runs may use pooled slots;
+    # worktree runs never do.
+    native: true
+    # Spares per (repo, provider) key: pre-started task-less workers, one
+    # task each (0 = off).
+    spares: 1
+    # Idle seconds before an unclaimed spare is retired (0 = never).
+    idleKillSec: 1800
+    # The old multi-task continuation path; default off.
+    continuation: false
+  # Daemon cache-keepalive cadence in seconds: how often a trivial heartbeat
+  # worker re-arms the provider prompt cache. 0 = off — arming it is the
+  # operator's explicit call.
+  cacheKeepaliveSecs: 0
+  # Default time limit of every run in minutes; 0 = none.
+  defaultMaxMinutes: 60
+  # Minutes a run may queue for a slot before the owner is told.
+  waitAlarmMinutes: 120
+  # Start gate for same-provider runs.
+  stagger:
+    enabled: true
+    # Limit without history, per provider kind (seconds).
+    localDefaultSec: 20
+    remoteDefaultSec: 8
+    # Clamp of the learned limit (seconds).
+    minSec: 3
+    maxSec: 120
+  # Per-provider concurrency cap.
+  capacity:
+    enabled: true
+  # Local-model idle watcher.
+  localIdle:
+    enabled: true
+    # GPU busy percent under which local models count as idle.
+    gpuBelowPct: 10
+    # Minutes idle before the watcher fires.
+    minutes: 2
+    # Minutes between repeat notices.
+    backoffMinutes: 10
+  # Runs strip browser tools unless --browser is passed.
+  noBrowserByDefault: false
+  # Hourly gc archives finished workers' worktrees older than this many hours.
+  gcOlderThanHours: 6
+  # Size cap in GB of the worktrees dir; over it, gc archives the oldest
+  # finished ones.
+  worktreesMaxGb: 20
+  # Daemon reaper for orphaned worker processes.
+  reaper: true
+  # Run native-Anthropic workers through `caveman claude`; off pins them to
+  # api.anthropic.com even when user settings route claude through a proxy.
+  caveman: false
+  # Cost tier used when a provider names none (1 cheapest … 5 most expensive).
+  costTier: 3
+  # Budget-routing skip percentage used when a provider names none.
+  quotaSkipAt: 95
+
+# Providers PAI can run workers on. The built-in `anthropic` provider is
+# Claude Code's own login; its model table is the shipped default below (a
+# user's providers.anthropic.models merges over it).
+providers:
+  anthropic:
+    builtin: true
+    models:
+      # Workers exist to parallelise and to save cost, so they never inherit
+      # the orchestrator's model. These are the Claude Code CLI's own tier
+      # aliases: the CLI resolves each to its newest model on every run.
+      default: sonnet
+      fast: haiku
+
+# The default MCP sets every config starts from; a user's mcp_sets merges
+# over this, so `desktop: []` removes the set deliberately. `desktop` names
+# the clickr server so `--mcp desktop` hands a worker the machine controls.
+mcp_sets:
+  desktop: [clickr]
+
+# The standard task classes live in the main config's shipped defaults
+# (defaults/config.yaml's workers.classes); a user's workers.yaml classes
+# replaces that map wholesale when it names any class.
+classes: {}

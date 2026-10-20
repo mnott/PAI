@@ -23,8 +23,6 @@ import {
   type WorkerProvider,
   type WorkersConfig,
   type WorkersRoutingConfig,
-  DEFAULT_BUDGET_WALL,
-  DEFAULT_BUDGET_WALLS,
   nativeAnthropicProvider,
   resolveProviderKey,
 } from "./config.js";
@@ -163,13 +161,14 @@ export const budgetCache = new BudgetCache();
 
 /**
  * A provider's wall for one window: routing.budgetWalls[name] as a map entry
- * for that window, else its plain number, else the built-in default, else 95.
+ * for that window, else its plain number, else the shipped
+ * routing.budgetPercent, else the shipped routing.budgetWall.
  */
 export function budgetWall(routing: WorkersRoutingConfig, name: string, window?: string): number {
   const w = routing.budgetWalls[name];
   if (typeof w === "number") return w;
   if (w && window !== undefined && w[window] !== undefined) return w[window]!;
-  return DEFAULT_BUDGET_WALLS[name] ?? DEFAULT_BUDGET_WALL;
+  return routing.budgetPercent[name] ?? routing.budgetWall;
 }
 
 /** At or above its wall? Unknown (absent/null percent) is never full. */

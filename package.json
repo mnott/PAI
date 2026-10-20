@@ -24,6 +24,7 @@
     "scripts/build-hooks.mjs",
     "scripts/build-skill-stubs.mjs",
     "scripts/build-docs.mjs",
+    "scripts/copy-defaults.mjs",
     "docker/init.sql",
     "docker/docker-compose.yml",
     "src/hooks",
@@ -59,7 +60,7 @@
     "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },
   "scripts": {
-    "build": "tsdown && node scripts/prune-dist.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
+    "build": "tsdown && node scripts/prune-dist.mjs && node scripts/copy-defaults.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
     "dev": "tsdown --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",

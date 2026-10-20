@@ -16,13 +16,15 @@ import type { RunOptions } from "./run.js";
 describe("roles → classes migration", () => {
   it("parses the legacy roles key into classes", () => {
     const c = parseWorkersConfig({ roles: { implement: "glm", spotcheck: "glm/fast" } });
+    // a user's classes replace the shipped map wholesale (the map is the
+    // routing table, not a patch)
     expect(c.classes).toEqual({ implement: "glm", spotcheck: "glm/fast" });
   });
 
   it("writes classes only: a re-serialized config has no roles key left", () => {
     const c = parseWorkersConfig({ roles: { implement: "glm" } });
     const serialized = JSON.parse(JSON.stringify(c)) as Record<string, unknown>;
-    expect(serialized.classes).toEqual({ implement: "glm" });
+    expect((serialized.classes as Record<string, unknown>).implement).toBe("glm");
     expect("roles" in serialized).toBe(false);
     // and the migrated shape parses back identically
     expect(parseWorkersConfig(serialized).classes.implement).toBe("glm");
