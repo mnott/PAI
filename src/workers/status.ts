@@ -519,11 +519,20 @@ export function spawnTimeOf(status: OwnerFields): number | undefined {
   return new Date(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!).getTime();
 }
 
+function parentPidOf(pid: number): number | undefined {
+  try {
+    const out = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    return out ? Number(out) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function ownsPid(status: OwnerFields): boolean {
   // A worker served by a pool spare: its claude was started before the worker had an id or a
-  // `started` stamp, so the start-time check cannot apply. It lives while the slot's claude or
-  // the pool host serving it does.
-  if (status.pool) return alive(status.pid) || alive(status.pool.hostPid);
+  // `started` stamp, so the start-time check cannot apply. It lives only while the slot's claude
+  // does, verified as a child of the pool host that spawned it; the host alone never keeps it alive.
+  if (status.pool) return status.pid > 0 && alive(status.pid) && parentPidOf(status.pid) === status.pool.hostPid;
   if (status.pid <= 0 || !alive(status.pid)) return false;
   try {
     const out = execFileSync("ps", ["-o", "lstart=", "-p", String(status.pid)], {
