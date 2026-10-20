@@ -210,6 +210,19 @@ router:
       serverCounterStaleSecs: 60
       # fold default: a model card whose kind equals this opens, the rest fold.
       foldDefaultKind: coding
+      # drag-and-drop layout: rows of section names, each row 1..maxPerRow
+      # sections sharing the width (1 full, 2 halves, 3 thirds). Empty =
+      # derive from the section order and the span classes (c8+c4 = one row,
+      # c6+c6 = one row, c12 = its own row). The arrangement a user drags
+      # lives in the browser (localStorage), not here.
+      rows: []
+      # a row holds at most this many sections; a 4th drop beside is refused.
+      maxPerRow: 3
+      # on touch, a drag starts only after this long press on the grip (ms),
+      # so scrolling with a finger never drags.
+      touchPressMs: 350
+      # during a drag the page auto-scrolls within this of the viewport edge (px).
+      edgeScrollPx: 40
   # Request scheduling for local engines (src/router/scheduler.ts): one request
   # in flight per engine, fair across the workers' owning sessions.
   scheduling:
