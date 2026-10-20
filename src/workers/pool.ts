@@ -47,6 +47,7 @@ import type { StreamEvent } from "./run.js";
 import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js";
 import type { WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
+import { parseLedger } from "./ledger.js";
 
 // ---------------------------------------------------------------------------
 // Config-facing helpers
@@ -63,6 +64,12 @@ export interface PoolSettings {
   port: number;
   /** Native anthropic runs may use pooled slots (worktree runs never do). */
   native: boolean;
+  /** Spares per (repo, provider) key; 0 = no spares. */
+  spares: number;
+  /** Idle seconds before an unclaimed spare is retired (0 = never). */
+  idleKillSec: number;
+  /** The old multi-task continuation path; spares are the default use of the pool. */
+  continuation: boolean;
 }
 
 export const DEFAULT_POOL_SETTINGS: PoolSettings = {
@@ -71,6 +78,9 @@ export const DEFAULT_POOL_SETTINGS: PoolSettings = {
   idleSecs: 900,
   port: 8798,
   native: true,
+  spares: 1,
+  idleKillSec: 1800,
+  continuation: false,
 };
 
 export function poolSettings(config: WorkersConfig): PoolSettings {
@@ -81,6 +91,9 @@ export function poolSettings(config: WorkersConfig): PoolSettings {
     idleSecs: p?.idleSecs ?? DEFAULT_POOL_SETTINGS.idleSecs,
     port: p?.port ?? DEFAULT_POOL_SETTINGS.port,
     native: p?.native !== false,
+    spares: p?.spares ?? DEFAULT_POOL_SETTINGS.spares,
+    idleKillSec: p?.idleKillSec ?? DEFAULT_POOL_SETTINGS.idleKillSec,
+    continuation: p?.continuation === true,
   };
 }
 
@@ -111,6 +124,22 @@ export interface PoolSlotRecord {
   firstShare?: number | null;
 }
 
+/** One spare: a pre-started, task-less worker (worktree made, claude waiting for its first user turn). */
+export interface PoolSpareRecord {
+  id: string;
+  /** Repo root, provider and model: the key a claim matches. */
+  repo: string;
+  provider: string;
+  model: string;
+  dir: string;
+  branch: string;
+  /** The repo HEAD the worktree was cut from; a claim after HEAD moved is a stale miss. */
+  base: string;
+  pid: number;
+  createdAt: string;
+  state: "starting" | "ready";
+}
+
 export interface PoolState {
   hostPid: number;
   port: number;
@@ -121,6 +150,12 @@ export interface PoolState {
   tasksServed: number;
   /** cache_read tokens seen on the first request of each pooled task. */
   tokensCarried: number;
+  /** Spares waiting for a claim (absent in state files from before spares). */
+  spares?: PoolSpareRecord[];
+  /** Claims served from a spare since the host started. */
+  spareClaims?: number;
+  /** Claims that found no usable spare, by reason. */
+  spareMisses?: Record<string, number>;
 }
 
 export function poolDir(logDir: string): string {
@@ -311,6 +346,9 @@ export type PoolIneligibleReason =
   | "tools"
   | "cwd";
 
+/** Why a claim found no usable spare (the run then spawns fresh). */
+export type SpareMissReason = "spares-off" | "no-worktree" | "not-git" | "no-spare" | "starting" | "stale" | "dirty" | "spare-dead" | "rename-failed";
+
 /** The tool grant every slot is born with (== DEFAULT_WORKER_TOOLS in run.ts). */
 const SLOT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
 
@@ -439,12 +477,16 @@ export interface PoolTaskRequest {
   /** Task time limit in minutes; null/0 = none. */
   maxMinutes: number | null;
   trailer: string;
+  /** Claim a spare (POST /claim): the host binds this id to a pre-started worker in its own worktree. */
+  spare?: boolean;
+  /** Epoch ms when the run started: setupMs of a hit counts from here to the task being fed. */
+  runStartedAt?: number;
 }
 
 /** What the host answers: either the finished task or a refusal to pool it. */
 export interface PoolTaskResponse {
   pooled: boolean;
-  reason?: PoolIneligibleReason | "busy" | "host-error";
+  reason?: PoolIneligibleReason | SpareMissReason | "busy" | "host-error";
   rc?: number;
   resultEvent?: StreamEvent | null;
   report?: WorkerReport | null;
@@ -465,7 +507,8 @@ export function poolPort(config: WorkersConfig): number {
 export function postTaskToPool(
   port: number,
   task: PoolTaskRequest,
-  timeoutMs: number
+  timeoutMs: number,
+  path: "/task" | "/claim" = "/task"
 ): Promise<PoolTaskResponse | null> {
   return new Promise((resolve) => {
     const body = JSON.stringify(task);
@@ -473,7 +516,7 @@ export function postTaskToPool(
       {
         host: "127.0.0.1",
         port,
-        path: "/task",
+        path,
         method: "POST",
         headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
       },
@@ -637,4 +680,83 @@ export function carriedShare(u: UsageBlock | undefined): number | null {
   const denom = inputSideTokens(u);
   if (!denom) return null;
   return (u.cache_read_input_tokens ?? 0) / denom;
+}
+
+// ---------------------------------------------------------------------------
+// Spares — pre-started task-less workers, one task each
+// ---------------------------------------------------------------------------
+
+/** The identity a claim matches: repo root, provider, model. */
+export function spareKey(repo: string, provider: string, model: string): string {
+  return `${repo}\u0000${provider}\u0000${model}`;
+}
+
+/** A key stays warm for this long after a worker last ran on it. */
+export const SPARE_WARM_WINDOW_MS = 60 * 60_000;
+
+export interface WarmKey {
+  provider: string;
+  model: string;
+  cwd: string;
+}
+
+/** (provider, model, cwd) triples of the workers that started within the warm window, newest first, from ledger text. */
+export function recentWarmKeys(ledgerText: string, nowMs: number): WarmKey[] {
+  const seen = new Map<string, WarmKey>();
+  for (const l of parseLedger(ledgerText).reverse()) {
+    if (l.event !== "WORKER-START" || l.fields.mode !== "headless") continue;
+    const t = Date.parse(l.stamp.replace(" ", "T"));
+    if (!Number.isFinite(t) || nowMs - t > SPARE_WARM_WINDOW_MS) continue;
+    const { provider, model, cwd } = l.fields;
+    if (!provider || !model || !cwd) continue;
+    const k = `${provider}\u0000${model}\u0000${cwd}`;
+    if (!seen.has(k)) seen.set(k, { provider, model, cwd });
+  }
+  return [...seen.values()];
+}
+
+export interface SpareStats {
+  /** WORKER-END lines of workers that ran on a spare (setupMs and firstAnswerMs ride there). */
+  hits: number;
+  /** Starts that asked the pool and got a fresh spawn. */
+  misses: number;
+  missReasons: Record<string, number>;
+  meanHitSetupMs: number | null;
+  meanMissSetupMs: number | null;
+  /** Mean fresh setup minus mean hit setup (null until both sides have data). */
+  meanSavedMs: number | null;
+}
+
+/** Spare claim statistics from ledger text: setupMs of hits against the fresh spawns that asked the pool and missed. */
+export function spareStats(ledgerText: string): SpareStats {
+  const hit: number[] = [];
+  const miss: number[] = [];
+  const reasons: Record<string, number> = {};
+  let hits = 0;
+  let misses = 0;
+  for (const l of parseLedger(ledgerText)) {
+    if (l.event === "WORKER-POOL-MISS") {
+      misses += 1;
+      const r = l.fields.reason ?? "?";
+      reasons[r] = (reasons[r] ?? 0) + 1;
+      continue;
+    }
+    if (l.event !== "WORKER-END") continue;
+    const ms = Number(l.fields.setupMs);
+    if (l.fields.spare === "hit") {
+      hits += 1;
+      if (Number.isFinite(ms)) hit.push(ms);
+    } else if (l.fields.spare === "miss" && Number.isFinite(ms)) {
+      miss.push(ms);
+    }
+  }
+  const mean = (a: number[]): number | null => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
+  const h = mean(hit);
+  const m = mean(miss);
+  return { hits, misses, missReasons: reasons, meanHitSetupMs: h, meanMissSetupMs: m, meanSavedMs: h !== null && m !== null ? m - h : null };
+}
+
+/** Whether a spare idled long enough to be retired (idleKillSec 0 = never). */
+export function spareShouldRetire(createdAtMs: number, nowMs: number, idleKillSec: number): boolean {
+  return idleKillSec > 0 && nowMs - createdAtMs >= idleKillSec * 1000;
 }

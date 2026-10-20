@@ -24,7 +24,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { spawn } from "node:child_process";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
-import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync } from "node:fs";
+import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync, existsSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { validateAg2 } from "./agentish.js";
@@ -55,8 +55,18 @@ import {
 } from "./run.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
 import { POOL_SLOT_ENV, clearSlotCurrent, setSlotCurrent } from "./worker-id.js";
-import { slotsDir, ensureSlotWorktree, prepareSlot, releaseSlot, slotPath, slotServesRepo, type SlotPrep } from "./slots.js";
-import { commitsSince, salvageNotes, salvageOnExit, worktreeSystemPrompt } from "./worktree.js";
+import {
+  slotsDir,
+  ensureSlotWorktree,
+  prepareSlot,
+  releaseSlot,
+  slotPath,
+  slotServesRepo,
+  addSpareWorktree,
+  removeSpareWorktree,
+  type SlotPrep,
+} from "./slots.js";
+import { commitsSince, git, isPaiBookkeepingPath, salvageNotes, salvageOnExit, uncommittedPaths, worktreeBranch, worktreeSystemPrompt } from "./worktree.js";
 import { AG2_REASK_TEXT, checkProof, newUntracked, parseWorkerReport, untrackedPaths, type BashRun } from "./report.js";
 import {
   appendPoolMetric,
@@ -71,6 +81,9 @@ import {
   splitSharedSpec,
   poolIneligibleReason,
   poolPort,
+  recentWarmKeys,
+  spareKey,
+  spareShouldRetire,
   poolSettings,
   readPoolMetrics,
   slotKey,
@@ -78,7 +91,10 @@ import {
   warmOrCold,
   writePoolState,
   type PoolSlotRecord,
+  type PoolSpareRecord,
   type PoolState,
+  type SpareMissReason,
+  type WarmKey,
   type PoolTaskRequest,
   type PoolTaskResponse,
   type SlotProcess,
@@ -294,6 +310,8 @@ export interface PoolHostOptions {
   now?: () => Date;
   /** Disable the idle reaper interval (tests drive reapSlots directly). */
   noReaper?: boolean;
+  /** (provider, model, cwd) triples to start spares for at boot; defaults to the workers of the last 60 min in the ledger. */
+  warmKeys?: WarmKey[];
 }
 
 export interface PoolHost {
@@ -306,6 +324,10 @@ export interface PoolHost {
   /** Kill every slot, write final state, close the server. */
   shutdown(): Promise<void>;
   reapSlots(): number;
+  /** Retire spares idle past workers.pool.idleKillSec. */
+  reapSpares(): number;
+  /** Resolves when every spare start in flight has finished (tests). */
+  settle(): Promise<void>;
 }
 
 /** Last ~400 KB of the router usage log as lines (a task's rows are at the end), empty on any error. */
@@ -371,6 +393,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   mkdirSync(logDir, { recursive: true });
 
   const slots = new Map<string, PoolSlotSession>();
+  /** Spares by spareKey(repo, provider, model): pre-started task-less workers, one task each. */
+  const spares = new Map<string, SpareEntry[]>();
+  const pendingStarts = new Set<Promise<void>>();
+  let spareSeq = 0;
   const state: PoolState = {
     hostPid: process.pid,
     port,
@@ -379,11 +405,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     slots: [],
     tasksServed: 0,
     tokensCarried: 0,
+    spares: [],
+    spareClaims: 0,
+    spareMisses: {},
   };
 
   const persist = (): void => {
     state.updatedAt = nowStamp(now());
     state.slots = [...slots.values()].map((s) => s.record);
+    state.spares = [...spares.values()].flat().map((e) => e.rec);
     writePoolState(state, poolStatePath(logDir));
   };
   persist();
@@ -408,7 +438,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     provider: WorkerProvider,
     model: string,
     cwd: string,
-    shared?: string | null
+    shared?: string | null,
+    mode: "slot" | "spare" = "slot"
   ): Promise<PoolSlotSession | null> => {
     // loopback providers take the router like worker runs do (prefix fixes); down or `router: false` stays direct
     const via = await loopbackRouterChoice(provider, providerName, routerOn, opts.probeRouter ?? probeRouter);
@@ -435,10 +466,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     cmd.push("-p");
     cmd.push(
       ...appendSystemPromptArgs([
-        "You are a pooled worker session: each user turn is a NEW, unrelated task introduced by a " +
-          "system-reminder boundary line. Never carry context between tasks; answer each task only " +
-          "from its own spec.",
-        `Working directory: ${cwd} (fixed for the whole session).`,
+        mode === "spare"
+          ? "You are a worker that was started ahead of time: your first user message is your one task. " +
+            "Answer only from that task's spec."
+          : "You are a pooled worker session: each user turn is a NEW, unrelated task introduced by a " +
+            "system-reminder boundary line. Never carry context between tasks; answer each task only " +
+            "from its own spec.",
+        mode === "spare"
+          ? `Working directory: ${cwd} (a git worktree; the task names your worker id and branch).`
+          : `Working directory: ${cwd} (fixed for the whole session).`,
         // the provider's contract addendum is part of the stable prefix: for local
         // models it is what keeps their output in contract, and as slot system
         // prompt it is cached with the rest of the prefix instead of per task
@@ -500,6 +536,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         }
       });
     }
+    if (mode === "spare") return session;
     slots.set(slotKey(providerName, model, cwd), session);
     appendLedger(ledger, "WORKER-POOL-SLOT", {
       provider: providerName,
@@ -587,6 +624,136 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     persist();
   };
 
+  const repoRootOf = (cwd: string): string | null => {
+    try {
+      return git(cwd, ["rev-parse", "--show-toplevel"]);
+    } catch {
+      return null;
+    }
+  };
+
+  const discardSpare = (e: SpareEntry, why: string): void => {
+    const key = spareKey(e.rec.repo, e.rec.provider, e.rec.model);
+    const list = (spares.get(key) ?? []).filter((x) => x !== e);
+    if (list.length) spares.set(key, list);
+    else spares.delete(key);
+    if (e.session && !e.session.dead) e.session.kill();
+    removeSpareWorktree(e.rec.repo, e.rec.dir, e.rec.branch);
+    persist();
+    appendLedger(ledger, "WORKER-POOL-SPARE-END", { spare: e.rec.id, provider: e.rec.provider, note: why });
+  };
+
+  /** Start one spare: worktree from the repo's HEAD, claude waiting for its first turn. */
+  const startSpare = async (repo: string, providerName: string, model: string): Promise<void> => {
+    const provider = getProviderOrNative(config, providerName);
+    if (!provider) return;
+    const sid = `spare-${process.pid}-${++spareSeq}`;
+    let wt: { dir: string; branch: string; base: string };
+    try {
+      wt = addSpareWorktree(logDir, repo, sid);
+    } catch (err) {
+      appendLedger(ledger, "WORKER-NOTE", { id: sid, note: `spare worktree failed: ${(err as Error).message}` });
+      return;
+    }
+    const rec: PoolSpareRecord = {
+      id: sid,
+      repo,
+      provider: providerName,
+      model,
+      dir: wt.dir,
+      branch: wt.branch,
+      base: wt.base,
+      pid: -1,
+      createdAt: nowStamp(now()),
+      state: "starting",
+    };
+    const entry: SpareEntry = { rec, session: null };
+    const key = spareKey(repo, providerName, model);
+    spares.set(key, [...(spares.get(key) ?? []), entry]);
+    persist();
+    let session: PoolSlotSession | null = null;
+    try {
+      session = await spawnSlot(providerName, provider, model, wt.dir, null, "spare");
+    } catch (err) {
+      appendLedger(ledger, "WORKER-NOTE", { id: sid, note: `spare start failed: ${(err as Error).message}` });
+    }
+    if (!session) return discardSpare(entry, "spare process did not start");
+    entry.session = session;
+    rec.pid = session.pid;
+    rec.state = "ready";
+    persist();
+    appendLedger(ledger, "WORKER-POOL-SPARE", { spare: sid, provider: providerName, model, pid: session.pid, cwd: wt.dir, base: wt.base.slice(0, 8) });
+    void session.waitExit().then(() => {
+      if (rec.state === "ready" && (spares.get(key) ?? []).includes(entry)) discardSpare(entry, "spare process exited");
+    });
+  };
+
+  const spareCapable = (providerName: string): boolean => {
+    const p = getProviderOrNative(config, providerName);
+    if (!p || (p.engine ?? "claude") !== "claude") return false;
+    return !((providerName === "anthropic" || p.native) && !settings.native);
+  };
+
+  /** Bring a key up to workers.pool.spares in the background (nothing stops a key that has none yet). */
+  const topUp = (repo: string, providerName: string, model: string): void => {
+    if (settings.spares <= 0 || !spareCapable(providerName)) return;
+    const have = (spares.get(spareKey(repo, providerName, model)) ?? []).length;
+    for (let i = have; i < settings.spares; i++) {
+      const p: Promise<void> = startSpare(repo, providerName, model)
+        .catch(() => undefined)
+        .finally(() => pendingStarts.delete(p));
+      pendingStarts.add(p);
+    }
+  };
+
+  const missSpare = (task: PoolTaskRequest, reason: SpareMissReason): PoolTaskResponse => {
+    state.spareMisses![reason] = (state.spareMisses![reason] ?? 0) + 1;
+    appendLedger(ledger, "WORKER-POOL-MISS", { id: task.id, provider: task.provider, reason });
+    persist();
+    return { pooled: false, reason };
+  };
+
+  /** Take a ready spare for the task, bound to its branch name, or say why none. */
+  const claimSpare = (task: PoolTaskRequest): { entry: SpareEntry } | { reason: SpareMissReason } => {
+    if (settings.spares <= 0) return { reason: "spares-off" };
+    if (!task.worktree) return { reason: "no-worktree" };
+    const repo = repoRootOf(task.cwd);
+    if (!repo) return { reason: "not-git" };
+    const key = spareKey(repo, task.provider, task.model);
+    const list = spares.get(key) ?? [];
+    const ready = list.find((e) => e.rec.state === "ready" && e.session && !e.session.dead && !e.session.busy);
+    if (!ready) {
+      topUp(repo, task.provider, task.model); // the next run of this key finds one
+      return { reason: list.length ? "starting" : "no-spare" };
+    }
+    // a spare is cut from the HEAD of its day: a moved HEAD or a dirty checkout is not what a fresh worker would see
+    let head = "";
+    try {
+      head = git(repo, ["rev-parse", "HEAD"]);
+    } catch {
+      return { reason: "not-git" };
+    }
+    if (head !== ready.rec.base) {
+      discardSpare(ready, "stale: repo HEAD moved");
+      topUp(repo, task.provider, task.model);
+      return { reason: "stale" };
+    }
+    try {
+      if (uncommittedPaths(repo).some((p) => !isPaiBookkeepingPath(p))) return { reason: "dirty" };
+    } catch {
+      return { reason: "not-git" };
+    }
+    try {
+      git(ready.rec.dir, ["branch", "-m", ready.rec.branch, worktreeBranch(task.id)]);
+    } catch {
+      discardSpare(ready, "branch rename failed");
+      return { reason: "rename-failed" };
+    }
+    ready.rec.branch = worktreeBranch(task.id);
+    spares.set(key, list.filter((e) => e !== ready));
+    return { entry: ready };
+  };
+
   /** One pooled task, end to end. */
   const runTask = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
     const provider = getProviderOrNative(config, task.provider);
@@ -601,7 +768,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       provider,
       nativeAllowed: settings.native,
       worktreeWanted: task.worktree === true,
-      slotWorktree: isLoopbackProvider(provider),
+      slotWorktree: isLoopbackProvider(provider) || task.spare === true,
       resumeOf: undefined,
       printCmd: false,
       parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [] },
@@ -618,7 +785,16 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     let prep: SlotPrep | null = null;
     let session: PoolSlotSession | null;
     const split = splitSharedSpec(task.prompt);
-    if (task.worktree) {
+    let spareEntry: SpareEntry | null = null;
+    if (task.spare) {
+      const got = claimSpare(task);
+      if ("reason" in got) return missSpare(task, got.reason);
+      spareEntry = got.entry;
+      session = got.entry.session!;
+      prep = { dir: got.entry.rec.dir, branch: got.entry.rec.branch, base: got.entry.rec.base, snapshot: false, salvagePatch: null };
+      session.record.branch = prep.branch;
+      state.spareClaims = (state.spareClaims ?? 0) + 1;
+    } else if (task.worktree) {
       // worktree tasks get a fresh process, so the spec's shared block can ride in its system prompt
       const got = await acquireSlotWorktree(task.provider, provider, task.model, task.cwd, wid, split.shared);
       session = got?.session ?? null;
@@ -638,6 +814,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       session = await acquire(task.provider, provider, task.model, task.cwd);
     }
     if (!session) return { pooled: false, reason: "busy" };
+    const spareKeyOf = spareEntry ? spareKey(spareEntry.rec.repo, task.provider, task.model) : null;
     const workDir = prep?.dir ?? task.cwd;
 
     const taskNo = session.record.tasks + 1;
@@ -679,15 +856,27 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         hostPid: process.pid,
         ...(task.clientPid ? { clientPid: task.clientPid } : {}),
         ...(prep ? { slot: prep.dir } : {}),
+        ...(spareEntry ? { spare: true } : {}),
       },
       ...(prep ? { branch: prep.branch, worktreeDir: prep.dir, worktreeBase: prep.base, worktreeSnapshot: false } : {}),
     };
+    // a spare announced its session before it had a task: the init event is already behind us
+    if (spareEntry && session.record.claudeSession) {
+      status.claudeSession = session.record.claudeSession;
+      if (session.record.contextWindow) status.contextWindow = session.record.contextWindow;
+    }
     saveStatus(logDir, status);
     if (session.slotName) setSlotCurrent(logDir, session.slotName, wid);
+    // setup: run start -> the worker process holds the task as its first turn
+    const readyAt = Date.now();
+    const setupMs = task.runStartedAt ? Math.max(0, readyAt - task.runStartedAt) : undefined;
+    const timing: { firstAt: number | null } = { firstAt: null };
     appendLedger(ledger, "WORKER-START", {
       id: wid,
       provider: task.provider,
-      mode: "pooled",
+      mode: spareEntry ? "headless" : "pooled",
+      ...(spareEntry ? { spare: "hit" } : {}),
+      ...(setupMs !== undefined ? { setupMs } : {}),
       model: task.model,
       cwd: task.cwd,
       label: task.label,
@@ -749,6 +938,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         resetContextTokensOnCompact(status, e);
       } else if (e.type === "assistant") {
         status.turns += 1;
+        timing.firstAt ??= Date.now();
         bumpContextTokens(status, usageContextTokens(e.message?.usage));
         status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
         if (!scratch.firstUsage && usageContextTokens(e.message?.usage)) scratch.firstUsage = e.message?.usage ?? null;
@@ -796,7 +986,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const wtNote = prep ? worktreeSystemPrompt(wid, prep.branch, prep.dir) : "";
     // a shared block only left the user turn when this very process carries it in its system prompt
     const unitSpec = session.shared && split.shared === session.shared ? split.unit : task.prompt;
-    const text = pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer);
+    // a spare's task is the whole first turn: no boundary, it has no earlier turns to separate from
+    const text = spareEntry
+      ? `${pooledUnitPrompt(unitSpec, wtNote)}${task.trailer}`
+      : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer);
     let resultEvent = await session.feed(text, onEvent);
     if (deadTimer) clearTimeout(deadTimer);
     clientGone?.removeEventListener("abort", onClientGone);
@@ -865,9 +1058,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         salvageOnExit(ledger, wid, task.label, prep.dir);
         for (const l of salvageNotes(task.cwd, prep.dir, wid)) appendLedger(ledger, "WORKER-NOTE", { id: wid, note: l });
         const had = commitsSince(prep.dir, prep.base);
-        const { commits } = releaseSlot(prep.dir, prep.branch, prep.base);
-        session.record.branch = null;
-        if (commits > 0 || had > 0) status.commits = commits;
+        // a spare's worktree is the worker's own, kept for review and merge like a fresh worker's
+        const { commits } = spareEntry ? { commits: had } : releaseSlot(prep.dir, prep.branch, prep.base);
+        if (!spareEntry) session.record.branch = null;
+        if (spareEntry || commits > 0 || had > 0) status.commits = commits;
         else {
           status.branch = null;
           status.worktreeDir = null;
@@ -904,6 +1098,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       tools: status.tools,
       label: task.label,
       poolTask: taskNo,
+      ...(spareEntry ? { spare: "hit" } : {}),
+      ...(setupMs !== undefined ? { setupMs } : {}),
+      ...(timing.firstAt !== null ? { firstAnswerMs: timing.firstAt - readyAt } : {}),
       ...(status.timedOut ? { timedOut: 1 } : {}),
     });
     closeSync(eventsFd);
@@ -943,7 +1140,12 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
     state.tasksServed += 1;
     release(session);
-    if (session.dead) dropSlot(slotKey(task.provider, task.model, workDir), "slot exited after task");
+    if (spareEntry && spareKeyOf) {
+      // one task per spare: the process ends, the worktree stays; a replacement starts for the key
+      session.kill();
+      appendLedger(ledger, "WORKER-POOL-SPARE-END", { spare: spareEntry.rec.id, provider: task.provider, note: `served ${wid}` });
+      topUp(spareEntry.rec.repo, task.provider, task.model);
+    } else if (session.dead) dropSlot(slotKey(task.provider, task.model, workDir), "slot exited after task");
     // a worktree task gets a fresh conversation: the process ends, the next task spawns a new one in the same slot dir
     else if (prep) dropSlot(slotKey(task.provider, task.model, workDir), "fresh conversation per worktree task");
 
@@ -967,7 +1169,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       void shutdown();
       return;
     }
-    if (req.method === "POST" && url.pathname === "/task") {
+    if (req.method === "POST" && (url.pathname === "/task" || url.pathname === "/claim")) {
+      const claim = url.pathname === "/claim";
       const gone = new AbortController();
       res.on("close", () => {
         if (!res.writableFinished) gone.abort();
@@ -977,6 +1180,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         let task: PoolTaskRequest;
         try {
           task = JSON.parse(body) as PoolTaskRequest;
+          if (claim) task.spare = true;
         } catch {
           return sendJson(res, 400, { pooled: false, reason: "host-error" });
         }
@@ -996,6 +1200,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       s.kill();
       slots.delete(k);
     }
+    for (const list of [...spares.values()]) for (const e of [...list]) discardSpare(e, "host shutdown");
     persist();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
@@ -1011,9 +1216,42 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     return n;
   };
 
+  const reapSpares = (): number => {
+    let n = 0;
+    for (const list of [...spares.values()]) {
+      for (const e of [...list]) {
+        if (e.rec.state === "ready" && spareShouldRetire(Date.parse(e.rec.createdAt), now().getTime(), settings.idleKillSec)) {
+          discardSpare(e, "idle timeout");
+          n++;
+        }
+      }
+    }
+    return n;
+  };
+
   if (!opts.noReaper && settings.idleSecs > 0) {
     const timer = setInterval(reapSlots, 30_000);
     timer.unref?.();
+  }
+  if (!opts.noReaper && settings.idleKillSec > 0) {
+    const timer = setInterval(reapSpares, 30_000);
+    timer.unref?.();
+  }
+
+  // boot: spares for every key that ran a worker in the last 60 min
+  if (settings.spares > 0) {
+    let keys = opts.warmKeys;
+    if (!keys) {
+      try {
+        keys = recentWarmKeys(existsSync(ledger) ? readFileSync(ledger, "utf8") : "", now().getTime());
+      } catch {
+        keys = [];
+      }
+    }
+    for (const k of keys) {
+      const repo = repoRootOf(k.cwd);
+      if (repo) topUp(repo, k.provider, k.model);
+    }
   }
 
   return {
@@ -1024,5 +1262,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     runTask,
     shutdown,
     reapSlots,
+    reapSpares,
+    settle: async () => {
+      while (pendingStarts.size) await Promise.all([...pendingStarts]);
+    },
   };
+}
+
+/** A spare in the host: its record plus the claude process it holds (null while starting). */
+interface SpareEntry {
+  rec: PoolSpareRecord;
+  session: PoolSlotSession | null;
 }

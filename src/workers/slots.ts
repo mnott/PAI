@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { join, resolve, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
-import { git, uncommittedPaths, worktreeBranch, provisionDeps, type WorktreeInfo } from "./worktree.js";
+import { git, uncommittedPaths, worktreeBranch, worktreesDir, ensureScratchExcluded, provisionDeps, type WorktreeInfo } from "./worktree.js";
 
 export function slotsDir(logDir: string): string {
   return join(logDir, "slots");
@@ -98,4 +98,38 @@ export function releaseSlot(dir: string, branch: string, base: string): { commit
   }
 
   return { commits };
+}
+
+/** Branch a spare's worktree starts on; a claim renames it to worker/<id>. */
+export function spareBranch(sid: string): string {
+  return `spare/${sid}`;
+}
+
+/**
+ * A spare's worktree: cut from the repo's current HEAD on its own branch under
+ * <logDir>/worktrees/<sid>, node_modules cloned the way a fresh worker's is.
+ * Throws when git refuses (the caller starts no spare).
+ */
+export function addSpareWorktree(logDir: string, repo: string, sid: string): { dir: string; branch: string; base: string } {
+  const dir = join(worktreesDir(logDir), sid);
+  const branch = spareBranch(sid);
+  const base = git(repo, ["rev-parse", "HEAD"]);
+  ensureScratchExcluded(repo);
+  git(repo, ["worktree", "add", dir, "-b", branch, base]);
+  provisionDeps(logDir, sid, repo, dir);
+  return { dir, branch, base };
+}
+
+/** Drop an unclaimed spare's worktree and branch; best effort. */
+export function removeSpareWorktree(repo: string, dir: string, branch: string): void {
+  try {
+    git(repo, ["worktree", "remove", "--force", dir]);
+  } catch {
+    /* already gone */
+  }
+  try {
+    git(repo, ["branch", "-D", branch]);
+  } catch {
+    /* renamed or gone */
+  }
 }

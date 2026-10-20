@@ -35,7 +35,7 @@ const listen = async (handler: Parameters<typeof createServer>[1]): Promise<numb
 
 const args = (logDir: string, port: number, id: string) =>
   ({
-    config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port }, capacity: { enabled: true } },
+    config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port, continuation: true }, capacity: { enabled: true } },
     logDir,
     quiet: true,
     id,

@@ -207,7 +207,7 @@ export interface WorkerStatus {
    * session id (shared across tasks), and the host pid. `pid` names the slot
    * process — killing it kills the whole slot, not just this task.
    */
-  pool?: { task: number; slotSession: string | null; hostPid: number; clientPid?: number; slot?: string; warm?: "warm" | "cold"; firstShare?: number };
+  pool?: { spare?: boolean; task: number; slotSession: string | null; hostPid: number; clientPid?: number; slot?: string; warm?: "warm" | "cold"; firstShare?: number };
 }
 
 /** Label a worker gets when launched with neither --label nor a prompt. */
