@@ -394,17 +394,30 @@ describe("one key per model", () => {
 });
 
 describe("cockpit cache rings and providers table", () => {
-  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail", "shortModel", "ringName"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
   const baked = COCKPIT_HTML.match(/var JOB_TRIES=\d+,[\s\S]*?SRV_STALE_SEC=\d+;/)![0] + COCKPIT_HTML.match(/LOW_REQ=\d+/)![0];
+  // the colour state the rings need: PAL from the page, the colors/CKEY declarations, saveColors and assignColors
+  const PAL = (COCKPIT_HTML.match(/var KINDS=[\s\S]*?PAL=\[([^\]]+)\]/)![1]).split(",").map((s) => s.replace(/"/g, ""));
+  const colorSrc = [
+    COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
+    COCKPIT_HTML.match(/function assignColors\([\s\S]*?\n\}\n/)![0],
+  ].join("\n");
+  const store: Record<string, string> = {};
+  const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
+  // mdl is the models inventory the page holds; ringName titles a ring by the alias, else the short model name
+  const mdl = { runtimes: [], consumers: [] };
   const fns = new Function(
-    "donut", "pct", "esc", "fmt", "lim",
-    `${baked}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
+    "donut", "pct", "esc", "fmt", "lim", "localStorage", "PAL", "mdl",
+    `${baked}\nvar KINDS=[["input","fresh input","#3b6fe0"],["cacheWrite","cache write","#e0703b"],["cacheRead","cache read","#2e9e5b"],["output","output","#b04fd0"]];\n${colorSrc}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
   )(
     (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
     (r: number) => `${(r * 100).toFixed(1)}%`,
     (s: string) => s,
     (n: number) => String(n),
-    {}
+    {},
+    ls,
+    PAL,
+    mdl
   ) as {
     lowChips: (ms: Record<string, unknown>) => string;
     ringTiles: (ms: Record<string, unknown>, servers: unknown[]) => string;
@@ -420,7 +433,9 @@ describe("cockpit cache rings and providers table", () => {
     expect(html).toContain("99.3");
     expect(html).toContain("server prefix cache");
     expect(html).toContain("local30x8");
-    expect(html).toContain("qwen · 164 req");
+    // rings are titled by model (alias or short name), the provider is the second line
+    expect(html).toContain('<div class="n">qwen</div>');
+    expect(html).toContain('<div class="s">local30x8 · 164 req</div>');
     expect(html).not.toContain("bignum");
   });
   it("the local prefix cache panel is a ring-free detail line; the ring appears once per provider", () => {
@@ -436,7 +451,8 @@ describe("cockpit cache rings and providers table", () => {
     expect(html).toContain("not reported");
     expect(html).toContain('<div class="s">not reported</div>');
     expect(html).not.toContain("donut");
-    expect(html).toContain("qwen · 164 req");
+    expect(html).toContain('<div class="n">qwen</div>');
+    expect(html).toContain('<div class="s">local30x8 · 164 req</div>');
   });
   it("models under 5 requests are not tiles, sorted order unchanged for the rest", () => {
     const html = fns.ringTiles({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) }, []);
