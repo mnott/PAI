@@ -231,7 +231,7 @@ describe("status from what is loaded", () => {
     expect(dmr.status).toBe("idle");
     expect(dmr.models.every((m) => !m.loaded)).toBe(true);
     const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
-    expect(text).toContain("docker-model-runner | idle (not loaded) | huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16 (installed)");
+    expect(text).toContain("docker-model-runner | available (loads on first request) | huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16 (installed)");
   });
   it("one model loaded: running", async () => {
     const inv = await computeInventory(input(), { ...deps(), run: run(DOCKER_PS) });

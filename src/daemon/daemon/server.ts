@@ -34,6 +34,7 @@ import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sy
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
+import { ensureRuntimeCommandsSeeded } from "../../workers/model-runtimes.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
@@ -182,6 +183,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   startLocalStatusRefresh();
   // Every local model runtime, its models and users (`pai models`, cockpit LOCAL).
   startInventoryRefresh();
+  // One-time: seed models.runtimes (start/stop/ready commands) for ollama and
+  // docker-model-runner into the user config when absent; code holds no defaults.
+  ensureRuntimeCommandsSeeded();
 
   // Cache keepalive spawns trivial workers on the workers config — also no
   // backend dependency (observations store opportunistically when Postgres

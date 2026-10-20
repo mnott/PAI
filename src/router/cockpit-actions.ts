@@ -22,8 +22,11 @@ import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.
 import { readLocalConfig } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { readLocalStatus } from "../workers/local-status.js";
+import { readRuntimeCommands, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
+export const RUNTIME_START_EVENT = "RUNTIME-START";
+export const RUNTIME_STOP_EVENT = "RUNTIME-STOP";
 
 export interface ActionDeps {
   /** `pai worker local <tier>`: stop every local server, start this tier. */
@@ -50,6 +53,10 @@ export interface ActionDeps {
   localStatus: ReturnType<typeof readLocalStatus>;
   /** Main config path override (tests); default the live config. */
   configPath?: string;
+  /** The configured runtime commands (models.runtimes); default read from the config. */
+  runtimeCommands?: Record<string, RuntimeCommands>;
+  /** The runtime start/stop runner (dry-run seam for tests); default the live shell run. */
+  runtimeOps?: RuntimeOpDeps;
 }
 
 /** Everything the handler wires in production; tests replace the whole object. */
@@ -57,6 +64,9 @@ export interface ActionHooks {
   /** local.switch / local.off run through this (the router command wires the
    *  real spawn); tests inject a fake. */
   runLocalJob?: (kind: "switch" | "off", tier: string) => Promise<void>;
+  /** runtime start/stop run through this (the CLI `pai models start|stop` and
+   *  the cockpit share it); tests inject a fake. */
+  runRuntimeJob?: (runtime: string, op: "start" | "stop") => Promise<void>;
 }
 
 export interface ActionResult {
@@ -81,8 +91,11 @@ export function cockpitJobFile(home: string, id: string): string {
 
 export interface LocalJobState {
   id: string;
-  kind: "switch" | "off";
+  kind: "switch" | "off" | "runtime";
   tier: string;
+  /** the runtime of a "runtime" job (tier stays "") */
+  runtime?: string;
+  op?: "start" | "stop";
   state: "running" | "done" | "failed";
   message: string;
   at: string;
@@ -193,7 +206,28 @@ export function defaultDeps(): ActionDeps {
     home: process.env.PAI_HOME || "~/.pai",
     workers,
     localStatus: readLocalStatus(logDir),
+    runtimeCommands: readRuntimeCommands(),
   };
+}
+
+/** The runtime start/stop through the configured commands: the shell run, the ledger line, the job file.
+ *  Shared by the cockpit action and `pai models start|stop`. */
+export async function runtimeStartStop(
+  runtime: string,
+  op: "start" | "stop",
+  deps: ActionDeps,
+  opts: { model?: string } = {}
+): Promise<{ ok: boolean; message: string }> {
+  const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
+  const { liveRuntimeOpDeps } = await import("../workers/model-runtimes.js");
+  const r = await runRuntimeOp(runtime, op, commands, deps.runtimeOps ?? liveRuntimeOpDeps, deps.home, opts);
+  appendLedger(deps.ledger, op === "start" ? RUNTIME_START_EVENT : RUNTIME_STOP_EVENT, {
+    who: "cockpit",
+    runtime,
+    result: r.ok ? "ok" : `error: ${r.message}`,
+    log: runtimeLogFile(deps.home, runtime),
+  });
+  return r;
 }
 
 /**
@@ -221,6 +255,19 @@ export async function runCockpitAction(
     writeLedgerLine(deps, action, target, `job ${id}: started`);
     void finishLocalJob(deps, hooks, id, "switch", target);
     return { ok: true, message: `switching to ${target}`, jobId: id };
+  }
+  if (action === "runtime") {
+    const runtime = target;
+    const op = value === "start" || value === "stop" ? value : "";
+    if (!runtime) return fail("target (runtime) required");
+    if (op !== "start" && op !== "stop") return fail(`op must be start or stop, got "${value ?? ""}"`);
+    const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
+    if (!commands[runtime]?.[op]) return fail(`no ${op} command configured for ${runtime} (models.runtimes.${runtime}.${op})`);
+    const id = randomBytes(6).toString("hex");
+    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at: new Date().toISOString() });
+    writeLedgerLine(deps, action, `${runtime}:${op}`, `job ${id}: started`);
+    void finishRuntimeJob(deps, hooks, id, runtime, op);
+    return { ok: true, message: `${op === "start" ? "starting" : "stopping"} ${runtime}`, jobId: id };
   }
   if (action === "local.off") {
     const id = randomBytes(6).toString("hex");
@@ -303,6 +350,19 @@ export async function runCockpitAction(
     }
   }
   return fail(`unknown action "${action}"`);
+}
+
+/** Runs the runtime job (hook or configured commands), records its outcome in the job file;
+ *  runtimeStartStop already wrote the RUNTIME-START/STOP line. */
+async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop"): Promise<void> {
+  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps));
+  try {
+    await run(runtime, op);
+    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "done", message: `${runtime} ${op === "start" ? "up" : "stopped"}`, at: new Date().toISOString() });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "failed", message: msg, at: new Date().toISOString() });
+  }
 }
 
 /** Runs the injected local job, records its outcome in the job file and ledger. */

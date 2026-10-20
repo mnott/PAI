@@ -45,7 +45,7 @@ export interface InventoryModel {
 export interface InventoryRuntime {
   name: string;
   kind: RuntimeKind;
-  /** idle: runner up, models installed, none loaded */
+  /** idle: runner up, models installed, none loaded — it loads on the first request, so it reads "available" */
   status: "running" | "idle" | "stopped";
   port?: number;
   models: InventoryModel[];
@@ -470,7 +470,7 @@ export function inventoryRows(inv: ModelInventory, labels: Record<string, unknow
       rows.push([r.name, r.status, r.models.map((m) => m.model).join(", ") || "-", modelLabel(labels, r.name) || "-", [...new Set(r.models.map((m) => m.kind))].join(", ") || "-", "-", r.users.join(", ") || "-", port]);
       continue;
     }
-    const status = r.status === "idle" ? "idle (not loaded)" : r.status;
+    const status = r.status === "idle" ? "available (loads on first request)" : r.status;
     const notServed = (r.notServed ?? []).map((n) => `${n} (not served)`);
     if (!r.models.length) rows.push([r.name, status, "-", modelLabel(labels, r.name) || "-", "-", "-", [...r.users, ...notServed].join(", ") || "-", port]);
     for (const m of [...r.models].sort((a, b) => Number(b.loaded) - Number(a.loaded))) {

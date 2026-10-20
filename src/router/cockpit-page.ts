@@ -79,6 +79,27 @@ svg text{fill:var(--dim);font-size:10px}
 .rt-sub{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
 .rt-dot.idle{background:var(--warn)}
+.rt-dot.down{background:var(--bad)}
+/* foldable model cards: the header line toggles the body; folded cards show header only */
+.mcard{container-type:inline-size;background:var(--card);border:1px solid var(--line);border-radius:8px;min-width:0;max-width:100%;overflow:hidden}
+.mhead{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap;width:100%;background:none;border:0;border-bottom:1px solid transparent;padding:7px 10px;color:var(--fg);cursor:pointer;font:inherit;text-align:left}
+.mcard.open .mhead{border-bottom-color:var(--line)}
+.mhead:hover{color:var(--acc)}
+.mhead b{font-size:13px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mhead .chev{flex:0 0 auto;width:12px;color:var(--dim)}
+.mhead .num{margin-left:auto;flex:0 0 auto;color:var(--dim);font-size:12px;white-space:nowrap}
+.mhead .badge{flex:0 0 auto}
+.mbody{padding:8px 10px;display:none;flex-direction:column;gap:8px;min-width:0}
+.mcard.open .mbody{display:flex}
+.mcard.down{border-color:var(--bad)}
+.mdown{color:var(--bad);font-size:12px}
+.mnote{color:var(--dim);font-size:11px}
+.mhead .act{flex:0 0 auto}
+.mhead .act button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font:inherit;font-size:11px;cursor:pointer}
+.mhead .act button:hover{border-color:var(--acc);color:var(--acc)}
+.mhead .act button[disabled]{opacity:.5;cursor:default}
+.mhead .msg{color:var(--dim);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mhead .msg.bad{color:var(--bad)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
 .rt-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
 @container (min-width:720px){.rt-tiles{grid-template-columns:repeat(4,minmax(0,1fr))}.rt-tiles.two{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -258,10 +279,6 @@ var mdl=null;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
  * the full id rides in the title attribute. */
 function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>=0?s.slice(i+1):s}
-/** Models section: one card per running runtime with live tiles (Speed, Memory, Workers, Conversation cache);
- * an idle / not-loaded runtime gets a compact card (header + Memory/size + users, no empty tiles); a runtime
- * with a loaded model keeps all four tiles — a "–" there means the engine did not report it, not an idle runtime;
- * stopped runtimes collapse to one chip row that never repeats a card. A value the runtime does not report shows "–". */
 /** Local-model buttons: caption, one button per tier (label, memory need), the active one highlighted and
  * disabled, an inline confirm that names what the switch stops, and off. */
 function tierRow(tiers,running){
@@ -272,21 +289,20 @@ function tierRow(tiers,running){
   return'<button data-a="local.switch" data-t="'+esc(name)+'" class="tier'+(cur?' cur':'')+'"'+(cur?' disabled':'')+cf+'>'+esc(label)+(gb?' · '+esc(gb)+' GB':'')+'</button>'}).join("");
  return'<span class="tiercap">Local model:</span> '+btns+'<button data-a="local.off">off</button>';
 }
+/** Models section: one foldable card per consumer runtime — the runtime PAI's embedding runs on, the worker
+ * providers' local models (tiers) and the declared consumers (models.consumers) — grouped under their runtime.
+ * A runtime whose configured commands can start/stop it carries start/stop buttons on the header (inline
+ * confirm, no dialogs); a runtime without configured commands shows no button. A runtime down with consumers
+ * reads red "down — <consumer> cannot work"; an idle runner reads "available (loads on first request)".
+ * Fold state persists in pai.cockpit.models.folded; default: a running coding runtime open, everything else folded. */
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  var tiers=inv.tiers||[];
  var running=(inv.running&&inv.running.model)?inv.running:null;
- /** Label row: one line "Label: <text or none> · edit", click → text field, Enter saves, Esc cancels.
-  * A model label line only when the runtime holds more than one model. */
+ var cmds=inv.runtimeCommands||{};
+ var consumers=inv.consumers||[];
  var tierBtns=tiers.length?tierRow(tiers,running):"";
- function lblRow(r){
-  var ml=r.modelLabels||{};
-  var parts='<span class="lbl" data-rt="'+esc(r.name)+'">Label: <b class="lblv">'+esc(r.label||"none")+'</b><button class="lblbtn" title="edit label">edit</button><span class="msg"></span></span>';
-  var mrows=r.models.length>1?r.models.map(function(m){return'<span class="lbl" data-rt="'+esc(r.name)+'" data-model="'+esc(m.model)+'">Label: '+esc(shortModel(m.model))+' <b class="lblv">'+esc(ml[m.model]||"none")+'</b><button class="lblbtn" title="edit model label">edit</button><span class="msg"></span></span>'}).join(""):"";
-  return'<div class="lbls">'+parts+mrows+'</div>';
- }
  function mem(m){return m==null?"–":m>=1024?gbm(m)+" GB":m+" MB"}
- function n1(v){return v==null?"–":Math.round(v*10)/10}
  function n0(v){return v==null?"–":Math.round(v)}
  /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer;
  * every GB on the card goes through gb() — binary GB (1024^3), 1 decimal used / 0 total */
@@ -317,51 +333,118 @@ function modelsHtml(inv){
   return {pct:Math.min(100,used/eng.maxContext*100),text:Math.round(used/eng.maxContext*100)+"% · "+kfmt(used)+" / "+ctxfmt(eng.maxContext)}
  }
  function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l?Object.assign({},l.live,{history:l.history}):null}
- var cards="",stopped=[];
+ /** What uses this runtime: the inventory's users plus PAI's own consumers (the embedding backend). */
+ function usersOf(r){
+  var u=(r.users||[]).slice();
+  consumers.forEach(function(c){if(c.runtime===r.name||c.runtime===r.kind)if(u.indexOf(c.name)<0)u.push(c.name)});
+  return u;
+ }
+ /** The consumer sentence: what each user needs the runtime for. */
+ function purposeOf(u){
+  return u.map(function(n){
+   var c=consumers.filter(function(x){return x.name===n})[0];
+   if(c)return n+" ("+c.purpose+")";
+   if(n==="pai-embedding")return "PAI's embedding (memory search embeds new content)";
+   if(n.indexOf("worker:")===0)return n.slice(7)+" (worker provider)";
+   return n;
+  }).join(", ");
+ }
+ /** Header buttons: start/stop from the configured commands only — no command, no button. */
+ function rtBtns(r){
+  var c=cmds[r.name]||{};
+  var b="";
+  if(c.start)b+='<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start"'+(r.status!=="stopped"?' disabled':"")+' data-confirm="starts '+esc(r.name)+'">start</button>';
+  if(c.stop)b+='<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop"'+(r.status==="stopped"?' disabled':"")+' data-confirm="stops '+esc(r.name)+'">stop</button>';
+  return b;
+ }
+ var cards="";
  inv.runtimes.forEach(function(r){
-  if(r.status==="stopped"){stopped.push(r);return}
   var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
   var loaded=r.models.filter(function(m){return m.loaded});
-  var head='<div class="rt-head"><span class="rt-dot'+(r.status==="idle"?" idle":"")+'"></span><b'+(r.models.length?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(r.models.length?shortModel(r.models[0].model):r.name)+'</b>'+
-   (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+'<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
-   '<span class="badge">'+(r.status==="idle"?"idle":"running")+'</span></div>'+
-   '<div class="rt-sub"'+(r.users&&r.users.length?' title="'+esc(r.users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label&&r.users&&r.users.length?" · ":"")+(r.users&&r.users.length?"used by "+esc(r.users.join(", ")):"")+'</div>';
-  var act=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  // compact card: nothing loaded (idle runtime) — no Speed / Conversation cache tiles that would show only "–"
-  if(!loaded.length){
+  var users=usersOf(r);
+  var down=r.status==="stopped";
+  var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
+  var state=down?"down":r.status==="idle"?"available (loads on first request)":"running";
+  var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
+   :r.status==="idle"?(r.models.length+" installed")
+   :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
+  var head='<button class="mhead" type="button" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.status==="idle"?" idle":"")+'"></span>'+
+   '<b'+(r.models.length?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(r.models.length?shortModel(r.models[0].model):r.name)+'</b>'+
+   (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
+   '<span class="badge">'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
+   '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
+   (rtBtns(r)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r)+'<span class="msg"></span></span>':"")+
+   '<span class="num">'+esc(key)+'</span></button>';
+  var body="";
+  if(down){
+   body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
+   if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
+  }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
-   cards+='<div class="rt-card">'+head+lblRow(r)+'<div class="rt-tiles two">'+
-    metricTile({title:"Memory / size",value:mem(size),unit:"",sub:r.models.length+" model"+(r.models.length===1?"":"s")+" not loaded",series:[]})+
-    metricTile({title:"Users",value:(r.users||[]).length,unit:"",sub:(r.users||[]).length?esc(r.users.join(", ")):"no declared consumer",series:[]})+
-    '</div>'+act+'</div>';
-   return;
+   body+='<div class="rt-tiles two">'+
+    metricTile({title:"Memory / size",value:mem(size),unit:"",sub:r.models.length+" model"+(r.models.length===1?"":"s")+" installed, none loaded",series:[]})+
+    metricTile({title:"Users",value:users.length,unit:"",sub:users.length?esc(purposeOf(users)):"no declared consumer",series:[]})+
+    '</div>';
+   if(cmds[r.name]&&cmds[r.name].note)body+='<div class="mnote">'+esc(cmds[r.name].note)+'</div>';
+  }else{
+   var ctx=ctxOf(eng);
+   body+='<div class="rt-tiles">'+
+    speedTile(eng,h)+
+    memoryTile(eng,lv,loaded,h)+
+    metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · slots "+lv.conversationSlots:"")+" · spares "+(lv&&lv.sparesReady?lv.sparesReady:0),
+     series:[{data:h.queued||[]}]})+
+    metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",
+     sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
+     fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
+     series:[{data:h.reusedPct||[]}]})+'</div>';
+   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
+   if(chips)body+='<div class="rt-chips">'+chips+'</div>';
   }
-  var ctx=ctxOf(eng);
-  var tiles='<div class="rt-tiles">'+
-   speedTile(eng,h)+
-   memoryTile(eng,lv,loaded,h)+
-   metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · slots "+lv.conversationSlots:"")+" · spares "+(lv&&lv.sparesReady?lv.sparesReady:0),
-    series:[{data:h.queued||[]}]})+
-   metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",
-    sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
-    fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
-    series:[{data:h.reusedPct||[]}]})+'</div>';
-  var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+' <b>'+esc(x.session||"?")+'</b>'+(x.state==="queued"?' <span class="warn">queued</span>':"")+'</span>'}).join("");
-  cards+='<div class="rt-card">'+head+lblRow(r)+tiles+(chips?'<div class="rt-chips">'+chips+'</div>':"")+act+'</div>';
+  if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(r.label||"")+(r.label?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
+  if(r.status!=="stopped"&&tierBtns)body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
+  cards+='<div class="mcard'+(down?" down":"")+'" data-rt="'+esc(r.name)+'" data-def="'+(r.status==="running"&&coding?"coding":"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
  });
- var h='<div class="rt-grid">'+(cards||'<span class="dim">no runtime running</span>')+'</div>';
- // one chip per stopped runtime (no card): never repeats a card, each chip ellipsised inside the card width
- if(stopped.length)h+='<div class="rt-chips dim" style="margin-top:6px">'+stopped.map(function(r){
-  var t=esc(r.name)+(r.port==null?"":" :"+r.port)+(r.users&&r.users.length?" · used by "+esc(r.users.join(", ")):"");
-  return'<span class="chip" title="'+t+'">'+t+'</span>'}).join("")+'</div>';
- if(stopped.length)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
+ var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
+ if(tierBtns)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
+}
+/** Fold state of the model cards: pai.cockpit.models.folded lists the folded runtime names.
+ * Default: a runtime running a coding model opens, everything else folds. */
+var MCOLLAPSE_KEY="pai.cockpit.models.folded";
+function mFolded(){var s={};try{var r=localStorage.getItem(MCOLLAPSE_KEY);if(r)JSON.parse(r).forEach(function(k){s[k]=1})}catch(e){}return s}
+function saveMFolded(s){try{var a=[];for(var k in s)if(s[k]&&k!=="__init")a.push(k);localStorage.setItem(MCOLLAPSE_KEY,JSON.stringify(a))}catch(e){}}
+function applyModelFold(){
+ var el=$("modelspanel"),saved=mFolded(),known={};
+ var cards=el.querySelectorAll(".mcard");
+ for(var i=0;i<cards.length;i++)(function(c){
+  var rt=c.getAttribute("data-rt")||"";known[rt]=1;
+  var open=c.classList.contains("open");
+  if(rt in saved)open=!saved[rt];
+  else if(saved.__init!==1){
+   var d=c.getAttribute("data-def");
+   open=d==="coding";
+   saved[rt]=open?0:1;
+  }
+  c.classList.toggle("open",open);
+  var b=c.querySelector(".mhead");
+  if(b){b.setAttribute("aria-expanded",open?"true":"false");var ch=b.querySelector(".chev");if(ch)ch.textContent=open?"▾":"▸"}
+  if(!b.onclick)b.onclick=function(e){
+   if(e.target&&e.target.tagName==="BUTTON")return;
+   var s2=mFolded();var nowOpen=!c.classList.contains("open");
+   if(nowOpen)delete s2[rt];else s2[rt]=1;
+   saveMFolded(s2);applyModelFold();
+  };
+ })(cards[i]);
+ // a runtime that left the inventory: its saved state goes with it
+ for(var k in saved)if(k!=="__init"&&!(k in known))delete saved[k];
+ saved.__init=1;saveMFolded(saved);
 }
 function renderModels(){
  var el=$("modelspanel");if(!el)return;
  el.innerHTML=mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>';
- setTip($("modelstip"),mdl&&mdl.at?"Local model runtimes with live tiles (the router samples each running runtime every 5 s; a value the runtime does not report shows –). In use = a worker provider, the PAI embedding backend or a declared consumer (config models.consumers). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
+ applyModelFold();
+ setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
  var acts=el.querySelectorAll(".act");
  for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
  var lbls=el.querySelectorAll(".lbl");

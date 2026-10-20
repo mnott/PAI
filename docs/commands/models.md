@@ -2,22 +2,30 @@
 
 # pai models
 
-Every local model runtime, its models, memory and users
+Every local model runtime, its models, memory and users; start/stop a runtime
 
 ```
-pai models [options]
+pai models [OP] [RUNTIME] [options]
 ```
 
-One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A duplicates hint appears when two runtimes serve the same kind of job. Read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now.
+One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A duplicates hint appears when two runtimes serve the same kind of job. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here.
+
+| Argument | Required | Description |
+|---|---|---|
+| `OP` | no | start | stop (omit for the inventory table) |
+| `RUNTIME` | no | the runtime to start or stop (a name under models.runtimes) |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--fresh` | flag | — | Probe now instead of reading the daemon's cache |
 | `--json` | flag | — | Print the inventory as JSON |
+| `--model STRING` | string | — | start/stop: the model to load or unload (docker model run|unload) |
 
 ```sh
 pai models
 pai models --fresh --json
+pai models start ollama
+pai models stop docker-model-runner --model e5
 ```
 
 See also: `pai worker local`

@@ -17,7 +17,8 @@ import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
-import { currentInventory, readInventory } from "../workers/model-inventory.js";
+import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
+import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { activeTier, fetchServedModels, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { readLocalStatus } from "../workers/local-status.js";
@@ -433,11 +434,39 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
     running: await localRunningInfo(),
+    // the configured start/stop commands per runtime (models.runtimes) and what PAI itself uses
+    runtimeCommands: runtimeCommandsFor(),
+    consumers: consumersFor(),
   };
   if (!runtimeSampler) return withLabels;
   const live = await runtimeSampler.payload();
   if (!live) return withLabels;
   return { ...withLabels, live };
+}
+
+/** The configured runtime commands (models.runtimes); {} when nothing is configured. */
+function runtimeCommandsFor(): Record<string, { start?: string; stop?: string; note?: string }> {
+  try {
+    return readRuntimeCommands();
+  } catch {
+    return {};
+  }
+}
+
+/** What PAI itself uses: the embedding consumer (name, runtime, what it needs it for). */
+function consumersFor(): Array<{ name: string; runtime: string; purpose: string }> {
+  const out: Array<{ name: string; runtime: string; purpose: string }> = [];
+  try {
+    const emb = readInventoryInput().embedding;
+    out.push({
+      name: "pai-embedding",
+      runtime: embeddingRuntimeName(),
+      purpose: emb.backend === "ollama-f16" ? "memory search embeds new content here" : "memory search embeds in-process",
+    });
+  } catch {
+    /* no config: the page shows only the inventory's users */
+  }
+  return out;
 }
 
 /** The tiers (name, label, memory need), for the cards' Start/Stop row. */

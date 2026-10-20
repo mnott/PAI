@@ -87,9 +87,10 @@ function testDeps(tmp: string, calls: Record<string, string[]>, failJob = false)
     workers,
     localStatus: { at: new Date().toISOString(), running: { provider: "local30", model: "qwen3-coder", why: "" }, down: [], disabled: [] },
     tiers: ["small", "big"],
+    runtimeCommands: { ollama: { start: "ollama serve", stop: "kill", ready: "http://127.0.0.1:11434/api/tags" } },
   } as never;
 }
-const emptyCalls = () => ({ startTier: [] as string[], stopAll: [] as string[], setClass: [] as string[], setLabel: [] as string[], unsetLabel: [] as string[] });
+const emptyCalls = () => ({ startTier: [] as string[], stopAll: [] as string[], setClass: [] as string[], setLabel: [] as string[], unsetLabel: [] as string[], runtime: [] as string[] });
 
 describe("cockpit actions", () => {
   it("local.switch answers at once with a job id, runs the code path, writes the ledger", async () => {
@@ -177,6 +178,56 @@ describe("cockpit actions", () => {
     expect(bad.ok).toBe(false);
     const unknown = await runCockpitAction({ action: "cloud.role", target: "nobody", value: "worker" }, testDeps(tmp, calls));
     expect(unknown.ok).toBe(false);
+  });
+
+  it("runtime start runs the configured command through the runner, writes RUNTIME-START and the job file", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const d = testDeps(tmp, calls) as Record<string, unknown>;
+    const real = {
+      ...d,
+      runtimeOps: {
+        runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; },
+        getUrl: async () => true,
+        runCmd: async () => 0,
+        now: () => 0,
+        sleep: async () => undefined,
+      },
+    } as never;
+    const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, real);
+    expect(r.ok).toBe(true);
+    expect(r.jobId).toBeTruthy();
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.runtime).toEqual(["ollama serve"]);
+    expect(readCockpitJob(tmp, r.jobId!)!.state).toBe("done");
+    expect(readCockpitJob(tmp, r.jobId!)!.runtime).toBe("ollama");
+    const lines = parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8"));
+    expect(lines.some((l) => l.event === "RUNTIME-START" && l.fields.runtime === "ollama" && l.fields.result === "ok")).toBe(true);
+    expect(lines.some((l) => l.event === "COCKPIT-ACTION" && l.fields.action === "runtime" && l.fields.target === "ollama:start")).toBe(true);
+  });
+
+  it("runtime stop on a configured runtime runs its stop command; an unconfigured runtime or op refuses", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const real = {
+      ...(testDeps(tmp, calls) as Record<string, unknown>),
+      runtimeOps: { runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; }, getUrl: async () => true, runCmd: async () => 0, now: () => 0, sleep: async () => undefined },
+    } as never;
+    const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, real);
+    expect(r.ok).toBe(true);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.runtime).toEqual(["kill"]);
+    expect(parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8")).some((l) => l.event === "RUNTIME-STOP")).toBe(true);
+    // no commands configured at all: refuse, nothing runs
+    const none = await runCockpitAction({ action: "runtime", target: "strata-box", value: "start" }, { ...(testDeps(tmp, calls) as Record<string, unknown>), runtimeCommands: {} } as never);
+    expect(none.ok).toBe(false);
+    expect(none.message).toContain("no start command configured for strata-box");
+    expect(calls.runtime).toEqual(["kill"]);
+    // a runtime configured for start only: stop refuses
+    const stopOnly = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, { ...(testDeps(tmp, calls) as Record<string, unknown>), runtimeCommands: { ollama: { start: "ollama serve" } } } as never);
+    expect(stopOnly.ok).toBe(false);
+    const badOp = await runCockpitAction({ action: "runtime", target: "ollama", value: "restart" }, real);
+    expect(badOp.ok).toBe(false);
   });
 
   it("unknown actions refuse", async () => {
@@ -295,6 +346,8 @@ describe("cockpit action endpoint", () => {
       expect(page.status).toBe(200);
       expect(page.body).toContain('data-a="local.switch"');
       expect(page.body).toContain('data-a="local.off"');
+      expect(page.body).toContain('data-a="runtime"');
+      expect(page.body).toContain("pai.cockpit.models.folded");
       expect(page.body).toContain('data-section="routing"');
       expect(page.body).toContain("model.label");
       expect(page.body).toContain("first, needs ~");

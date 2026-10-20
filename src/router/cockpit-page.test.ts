@@ -358,6 +358,7 @@ describe("cockpit Models cards", () => {
     COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function actRow[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function tierRow[\s\S]*?\n\}/)![0],
     COCKPIT_HTML.match(/function gb\(b,d\)\{[^\n]*\}/)![0],
     COCKPIT_HTML.match(/function gbm\(m\)\{[^\n]*\}/)![0],
     COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
@@ -377,6 +378,8 @@ describe("cockpit Models cards", () => {
       { name: "coder", kind: "strata", status: "stopped", port: 8036, users: ["worker:gyro"], models: [] },
     ],
     duplicates: ["embedding runs on 2 runtimes: a + b"],
+    runtimeCommands: { ollama: { start: "ollama serve", stop: "kill", note: "PAI's embedding backend runs here" } },
+    consumers: [{ name: "pai-embedding", runtime: "ollama", purpose: "memory search embeds new content here" }],
     live: {
       at: 1,
       runtimes: [
@@ -385,16 +388,15 @@ describe("cockpit Models cards", () => {
       ],
     },
   };
-  const cards = (h: string) => h.match(/<div class="rt-card">[\s\S]*?<\/div>\s*(?=<div class="rt-card">|<\/div>|$)/g) ?? [];
 
-  it("one card per running runtime: header, kind badge, status dot, four metric tiles", () => {
+  it("one foldable card per consumer runtime: header, kind badge, status dot, four metric tiles", () => {
     const h = modelsHtml(inv);
-    expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(2);
+    expect((h.match(/<div class="mcard/g) ?? []).length).toBe(3);
     expect(h).toContain('<b title="flash-next">flash-next</b>');
     // kind differs from the name: one separate kind chip, the name shows once
     expect(h).toContain('<span class="badge">strata</span><span class="badge">gyro-m :8035</span>');
     expect(h).toContain("gyro-m :8035");
-    expect(h).toContain("used by worker:flashnext-iq3");
+    expect(h).toContain("used by flashnext-iq3 (worker provider)");
     expect(h).toContain('<span class="rt-dot"></span>');
     expect(h).toContain('<span class="rt-dot idle"></span>');
     for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(h).toContain(t);
@@ -484,11 +486,11 @@ describe("cockpit Models cards", () => {
       runtimes: [{ name: "docker-model-runner", kind: "docker", status: "idle", port: 8090, users: ["worker:x"], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792 }] }],
       live: { at: 1, runtimes: [] },
     });
-    expect((h.match(/<div class="rt-card">/g) ?? []).length).toBe(1);
+    expect((h.match(/<div class="mcard/g) ?? []).length).toBe(1);
     expect(h).toContain("Memory / size");
     expect(h).toContain("4.7 GB");
     expect(h).toContain("Users");
-    expect(h).toContain("used by worker:x");
+    expect(h).toContain("used by x (worker provider)");
     expect(h).not.toContain("Conversation cache");
     expect(h).not.toContain("Speed");
     expect(h).not.toContain("–");
@@ -505,7 +507,7 @@ describe("cockpit Models cards", () => {
       live: { at: 1, runtimes: [] },
     });
     // kind equals the runtime name: no kind chip at all, the name shows once in the header
-    const dupHead = dup.slice(dup.indexOf('<div class="rt-head">'), dup.indexOf('<div class="rt-sub'));
+    const dupHead = dup.slice(dup.indexOf('<button class="mhead"'), dup.indexOf('<div class="mbody"'));
     expect((dupHead.match(/<span class="badge">[^<]*<\/span>/g) ?? []).length).toBe(2); // runtime chip + status chip, no kind chip
     expect(dupHead).toContain('<span class="badge">docker-model-runner :8090</span>');
     expect(dupHead).not.toContain('<span class="badge">docker-model-runner</span><span class="badge">docker-model-runner');
@@ -522,19 +524,72 @@ describe("cockpit Models cards", () => {
     expect(h).toContain("fix-x");
     expect(h).toContain("<b>PAI</b>");
   });
-  it("stopped runtimes are one chip each, no tables, no horizontal scroll; a runtime with a card is never repeated as a chip", () => {
+  it("every runtime is a card — a stopped one with consumers reads red down — <consumer> cannot work; no tables, no chip rows", () => {
     const h = modelsHtml(inv);
     expect(h).not.toContain("<table");
     expect(h).not.toContain('class="tw"');
     expect(h).not.toContain("<details");
-    expect(h).toContain('<span class="chip" title="coder :8036 · used by worker:gyro">coder :8036 · used by worker:gyro</span>');
+    expect(h).toContain('class="mcard down"');
+    expect(h).toContain("coder :8036 down — gyro (worker provider) cannot work");
+    expect(h).toContain('<span class="rt-dot down"></span>');
+    expect(h).toContain('<span class="badge bad">down</span>');
     expect(h).not.toContain("not loaded:");
     expect(h).toContain("duplicates: embedding runs on 2 runtimes");
-    // the chips live after the grid closes: they name only runtimes without a card
-    const chips = h.slice(h.indexOf('class="rt-chips dim"'));
-    expect(chips).not.toContain("gyro-m");
-    expect(chips).not.toContain("ollama");
-    expect(chips).toContain("coder");
+    // no chip row of stopped runtimes: each one is a card of its own
+    expect(h).not.toContain('class="rt-chips dim"');
+  });
+  it("the PAI embedding consumer shows on its runtime's card and names what it needs the runtime for", () => {
+    const h = modelsHtml(inv);
+    expect(h).toContain("pai-embedding (memory search embeds new content here)");
+    // PAI's embedding runtime down: the card says memory search cannot embed
+    const dead = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "stopped", port: 11434, users: [], models: [] }],
+      consumers: [{ name: "pai-embedding", runtime: "ollama", purpose: "memory search embeds new content here" }],
+      runtimeCommands: { ollama: { start: "ollama serve" } },
+      live: { at: 1, runtimes: [] },
+    });
+    expect(dead).toContain("ollama :11434 down — pai-embedding (memory search embeds new content here) cannot work");
+    expect(dead).toContain('class="mcard down"');
+  });
+  it("start/stop buttons come from the configured commands only: no command, no button; inline confirm, no dialogs", () => {
+    const h = modelsHtml(inv);
+    // ollama has start+stop configured: start enabled while stopped? it is idle here → start disabled, stop enabled
+    expect(h).toContain('data-a="runtime" data-t="ollama" data-v="start" disabled data-confirm="starts ollama"');
+    expect(h).toContain('data-a="runtime" data-t="ollama" data-v="stop" data-confirm="stops ollama"');
+    // gyro-m and coder have no configured commands: no runtime buttons on their cards
+    const gyro = h.slice(h.indexOf('data-rt="gyro-m"'), h.indexOf('data-rt="ollama"'));
+    expect(gyro).not.toContain('data-a="runtime"');
+    const coder = h.slice(h.indexOf('data-rt="coder"'));
+    expect(coder).not.toContain('data-a="runtime"');
+    // a stopped runtime with a start command: the start button is enabled
+    const stopped = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "stopped", port: 11434, users: ["pai-embedding"], models: [] }],
+      runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
+      live: { at: 1, runtimes: [] },
+    });
+    expect(stopped).toContain('data-a="runtime" data-t="ollama" data-v="start" data-confirm="starts ollama"');
+    expect(stopped).toContain('data-a="runtime" data-t="ollama" data-v="stop" disabled');
+    expect(h).not.toMatch(/\balert\(|\bconfirm\(|\bprompt\(/);
+  });
+  it("an idle runner reads available (loads on first request), never idle or stopped", () => {
+    const h = modelsHtml(inv);
+    expect(h).toContain('<span class="badge">available (loads on first request)</span>');
+    expect(h).not.toContain(">idle<");
+    expect(h).not.toContain(">stopped<");
+  });
+  it("fold markup: a header button with aria-expanded and a body div; CSS folds the body unless the card is open", () => {
+    const h = modelsHtml(inv);
+    expect((h.match(/<button class="mhead" type="button" aria-expanded="false">/g) ?? []).length).toBe(3);
+    expect((h.match(/<div class="mbody">/g) ?? []).length).toBe(3);
+    expect(COCKPIT_HTML).toMatch(/\.mbody\{[^}]*display:none/);
+    expect(COCKPIT_HTML).toMatch(/\.mcard\.open \.mbody\{display:flex\}/);
+    expect(COCKPIT_HTML).toContain('MCOLLAPSE_KEY="pai.cockpit.models.folded"');
+    // default: a running coding runtime carries data-def="coding", everything else "other"
+    expect(h).toContain('data-rt="gyro-m" data-def="coding"');
+    expect(h).toContain('data-rt="ollama" data-def="other"');
+    expect(h).toContain('data-rt="coder" data-def="other"');
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
     expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
@@ -592,7 +647,10 @@ describe("cockpit collapsible tiles", () => {
         id: c.id,
         classes: new Set<string>(),
         querySelector: (s: string) => (s === "h2" ? h2 : null),
-        classList: { toggle(cl: string, on: boolean) { if (on) card.classes.add(cl); else card.classes.delete(cl); } },
+        classList: {
+          toggle(cl: string, on: boolean) { if (on) card.classes.add(cl); else card.classes.delete(cl); },
+          contains(cl: string) { return card.classes.has(cl); },
+        },
         h2, btn,
       };
       // the page's guard `if(!b.onclick)` must not skip the stub's handler
@@ -653,6 +711,89 @@ describe("cockpit collapsible tiles", () => {
     for (const r of renders) expect(r).not.toMatch(/classList|folded|applyCollapse/);
     expect(COCKPIT_HTML).toContain("setInterval(function(){load();loadSystem()},5000)");
     expect(COCKPIT_HTML).not.toMatch(/setInterval\([^)]*applyCollapse/);
+  });
+});
+
+describe("cockpit model-card fold state", () => {
+  const src = COCKPIT_HTML.match(/var MCOLLAPSE_KEY[\s\S]*?\n\}\n/)![0];
+  const store: Record<string, string> = {};
+  const localStorageStub = {
+    getItem: (k: string) => store[k] ?? null,
+    setItem: (k: string, v: string) => { store[k] = v; },
+  };
+  function makeDom(cards: Array<{ rt: string; def: string; open: boolean }>) {
+    const nodes = cards.map((c) => {
+      const chev = { textContent: "" };
+      const btn: { attrs: Record<string, string>; innerHTML: string; onclick: null | ((e: unknown) => void); setAttribute: (k: string, v: string) => void; querySelector: (s: string) => unknown } = {
+        attrs: {}, innerHTML: "", onclick: null,
+        setAttribute(k, v) { this.attrs[k] = v; },
+        querySelector: () => chev,
+      };
+      const card = {
+        attrs: { "data-rt": c.rt, "data-def": c.def } as Record<string, string>,
+        classes: new Set<string>(c.open ? ["open"] : []),
+        getAttribute: (k: string) => card.attrs[k] ?? null,
+        classList: {
+          toggle(cl: string, on: boolean) { if (on) card.classes.add(cl); else card.classes.delete(cl); },
+          contains(cl: string) { return card.classes.has(cl); },
+        },
+        querySelector: (s: string) => (s === ".mhead" ? btn : null),
+        btn,
+      };
+      Object.defineProperty(btn, "onclick", { value: null, writable: true, configurable: true, enumerable: true });
+      return card;
+    });
+    const document = { querySelectorAll: (sel: string) => (sel === ".mcard" ? nodes : []) };
+    return { nodes, document };
+  }
+  const exec = (cards: Array<{ rt: string; def: string; open: boolean }>) => {
+    const { nodes, document } = makeDom(cards);
+    const panel = { innerHTML: "", querySelectorAll: (sel: string) => (sel === ".mcard" ? nodes : []) };
+    const fn = new Function("localStorage", "document", "$", `${src}\napplyModelFold();`);
+    fn(localStorageStub, document, (id: string) => panel);
+    return nodes;
+  };
+  beforeEach(() => { for (const k of Object.keys(store)) delete store[k]; });
+
+  it("first render: a running coding runtime opens, everything else folds, and the state is saved", () => {
+    const nodes = exec([{ rt: "gyro-m", def: "coding", open: false }, { rt: "ollama", def: "other", open: false }]);
+    expect(nodes[0].classes.has("open")).toBe(true);
+    expect(nodes[1].classes.has("open")).toBe(false);
+    expect(JSON.parse(store["pai.cockpit.models.folded"])).toEqual(["ollama"]);
+    expect(nodes[0].btn.attrs["aria-expanded"]).toBe("true");
+    expect(nodes[1].btn.attrs["aria-expanded"]).toBe("false");
+  });
+
+  it("the saved state wins over the default on the next render", () => {
+    store["pai.cockpit.models.folded"] = JSON.stringify(["gyro-m", "ollama"]);
+    const nodes = exec([{ rt: "gyro-m", def: "coding", open: true }, { rt: "ollama", def: "other", open: false }]);
+    expect(nodes[0].classes.has("open")).toBe(false);
+    expect(nodes[1].classes.has("open")).toBe(false);
+  });
+
+  it("a header click folds the card and persists it; a click on a start/stop button does not fold", () => {
+    const nodes = exec([{ rt: "ollama", def: "other", open: false }, { rt: "gyro-m", def: "coding", open: true }]);
+    // fold the open coding card by clicking its header
+    nodes[1].btn.onclick!({ target: { tagName: "SPAN" } });
+    expect(nodes[1].classes.has("open")).toBe(false);
+    expect(JSON.parse(store["pai.cockpit.models.folded"])).toEqual(["ollama", "gyro-m"]);
+    // a click that landed on a button (start/stop) is not a fold toggle
+    nodes[1].btn.onclick!({ target: { tagName: "BUTTON" } });
+    expect(nodes[1].classes.has("open")).toBe(false);
+    // re-open persists as absent from the folded list
+    nodes[1].btn.onclick!({ target: { tagName: "SPAN" } });
+    expect(nodes[1].classes.has("open")).toBe(true);
+    expect(JSON.parse(store["pai.cockpit.models.folded"])).toEqual(["ollama"]);
+  });
+
+  it("a runtime that left the inventory loses its saved fold state; a broken saved value survives", () => {
+    store["pai.cockpit.models.folded"] = JSON.stringify(["gone", "ollama"]);
+    const nodes = exec([{ rt: "ollama", def: "other", open: false }]);
+    expect(nodes[0].classes.has("open")).toBe(false);
+    expect(JSON.parse(store["pai.cockpit.models.folded"])).toEqual(["ollama"]);
+    store["pai.cockpit.models.folded"] = "{not json";
+    const n2 = exec([{ rt: "ollama", def: "other", open: false }]);
+    expect(n2[0].classes.has("open")).toBe(false);
   });
 });
 
