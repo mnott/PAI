@@ -292,6 +292,11 @@ describe("cockpit action endpoint", () => {
       expect(page.body).toContain('data-a="cloud.role"');
       expect(page.body).toContain("model.label");
       expect(page.body).toContain("first, needs ~");
+      expect(page.body).toContain("Local model:");
+      expect(page.body).toContain('class="pgroup" data-prov=');
+      expect(page.body).toContain('<div class="phead">');
+      expect(page.body).toContain("tier'+(cur?' cur':'')");
+      expect(page.body).toContain("running.label||running.model");
       expect(page.body).toContain('class="tog');
       expect(page.body).not.toMatch(/\balert\(/);
       expect(page.body).not.toMatch(/\bconfirm\(/);

@@ -500,6 +500,17 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
   writeWorkersYamlText(yamlPath, String(doc));
 }
 
+/**
+ * Set the top-level `local:` key (the provider `--local` routes to), keeping
+ * every comment and other key. Same validated atomic write as writeWorkersYaml.
+ */
+export function setLocalPreference(yamlPath: string, provider: string): void {
+  const existing = readWorkersYaml(yamlPath);
+  const doc = existing ? existing.doc : new Document({});
+  doc.set("local", provider);
+  writeWorkersYamlText(yamlPath, String(doc));
+}
+
 /** Atomic write with a .bak-pai backup and a re-validate-or-restore guard.
  *  The file-I/O tail (backup, temp write at 0600, rename, chmod) is shared
  *  with every other PAI YAML file via writeYamlFileAtomic; only the

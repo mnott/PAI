@@ -42,6 +42,7 @@ main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(12,min
 .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
 @media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}
 .gauges{display:flex;flex-wrap:wrap;gap:10px 14px;min-width:0}.gauge{text-align:center;min-width:0;flex:1 1 110px;max-width:min(120px,100%);overflow:hidden}.gauge .n,.gauge .s{overflow-wrap:anywhere}
+.pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -88,6 +89,8 @@ svg text{fill:var(--dim);font-size:10px}
 .act button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font:inherit;cursor:pointer}
 .act button:hover{border-color:var(--acc);color:var(--acc)}
 .act button[disabled]{opacity:.5;cursor:default}
+.act button.cur{opacity:1;border-color:var(--acc);color:var(--acc);font-weight:600}
+.act .tiercap{color:var(--dim);font-size:11px}
 .act .msg{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .act .msg.bad{color:var(--bad)}
 .tiercap{color:var(--dim);font-size:11px}
@@ -231,10 +234,10 @@ function renderLimits(){
   if(!l.windows.length)h+='<div class="gauge"><div class="n">'+esc(l.provider)+'</div><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
   var r=roles[l.provider]||{workers:[],orchestrator:false};
-  h+=actRow("roles",' data-prov="'+esc(l.provider)+'"',
+  var rr=actRow("roles",' data-prov="'+esc(l.provider)+'"',
    '<button data-a="cloud.role" data-t="'+esc(l.provider)+'" data-v="worker" class="tog'+(r.workers.length?" on":"")+'" title="worker classes → '+esc(l.provider)+'">workers</button>'+
    '<button data-a="cloud.role" data-t="'+esc(l.provider)+'" data-v="orchestrator" class="tog'+(r.orchestrator?" on":"")+'" title="orchestrator → '+esc(l.provider)+'">orchestrator</button>');
-  c+=h;
+  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div>'+rr+'</div>';
  });
  $("cloud").innerHTML=c||'<span class="dim">no cloud limit sources</span>';
  if(dn.length)lo+='<details class="downs"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
@@ -250,13 +253,23 @@ function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>
  * an idle / not-loaded runtime gets a compact card (header + Memory/size + users, no empty tiles); a runtime
  * with a loaded model keeps all four tiles — a "–" there means the engine did not report it, not an idle runtime;
  * stopped runtimes collapse to one chip row that never repeats a card. A value the runtime does not report shows "–". */
+/** Local-model buttons: caption, one button per tier (label, memory need), the active one highlighted and
+ * disabled, an inline confirm that names what the switch stops, and off. */
+function tierRow(tiers,running){
+ var btns=tiers.map(function(t){
+  var name=typeof t==="string"?t:t.tier,label=(typeof t==="string"?"":t.label)||name,gb=typeof t==="string"?null:t.memoryGb;
+  var cur=!!(running&&running.tier===name);
+  var cf=running&&!cur?' data-confirm="stops '+esc(running.label||running.model)+' first, needs ~'+(gb?esc(gb):"?")+' GB. Click again to confirm."':"";
+  return'<button data-a="local.switch" data-t="'+esc(name)+'" class="tier'+(cur?' cur':'')+'"'+(cur?' disabled':'')+cf+'>'+esc(label)+(gb?' · '+esc(gb)+' GB':'')+'</button>'}).join("");
+ return'<span class="tiercap">Local model:</span> '+btns+'<button data-a="local.off">off</button>';
+}
 function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  var tiers=inv.tiers||[];
  var running=(inv.running&&inv.running.model)?inv.running:null;
- var tierBtns=tiers.length?'<span class="tiercap">Local model:</span>'+tiers.map(function(t){return'<button data-a="local.switch" data-t="'+esc(t)+'"'+(running&&running.tier===t?' class="on" disabled':"")+(running&&running.tier!==t?' data-confirm="stops '+esc(running.model)+' first, needs ~'+esc(running.memGb||"?")+' GB. Click again to confirm."':"")+'>'+esc(t)+'</button>'}).join("")+'<button data-a="local.off">off</button>':"";
  /** Label row: one line "Label: <text or none> · edit", click → text field, Enter saves, Esc cancels.
   * A model label line only when the runtime holds more than one model. */
+ var tierBtns=tiers.length?tierRow(tiers,running):"";
  function lblRow(r){
   var ml=r.modelLabels||{};
   var parts='<span class="lbl" data-rt="'+esc(r.name)+'">Label: <b class="lblv">'+esc(r.label||"none")+'</b><button class="lblbtn" title="edit label">edit</button><span class="msg"></span></span>';
