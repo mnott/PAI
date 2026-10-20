@@ -83,9 +83,9 @@ afterAll(async () => {
 
 
 /** The real CLI argv → plan path (buildRunPlan), so the flags tested are the ones typed. */
-const capture = async (argv: Record<string, string | boolean>, env: Record<string, string> = {}): Promise<string> => {
+const capture = async (argv: Record<string, string | boolean>, env: Record<string, string> = {}, prompt = "x"): Promise<string> => {
   const { buildRunPlan } = await import("../cli/commands/worker.js");
-  const plan = buildRunPlan({ args: {}, opts: argv, dryRun: false, rest: ["-p", "x"] });
+  const plan = buildRunPlan({ args: {}, opts: argv, dryRun: false, rest: ["-p", prompt] });
   if (plan.kind !== "run") throw new Error("expected a run plan");
   const prev = { ...process.env };
   Object.assign(process.env, { PAI_HOME: home, ...env });
@@ -133,6 +133,22 @@ describe("route reason: the real source", () => {
     const [argv, stdin] = s.split('"stdin":');
     expect(stdin).toContain("PAI note [");
     expect(argv).not.toContain("PAI note [");
+  });
+
+  it("two loopback workers send the same argv and the same task but for the per-worker block; gitStatus is off", async () => {
+    const task = "--- shared ---\nshared rules\n--- unit ---\nunit text";
+    const run = async () => {
+      const s = await capture({ local: true, "print-cmd": true }, {}, task);
+      const j = JSON.parse(s.slice(s.indexOf('{"cmd"')));
+      const stdin = (j.stdin as string)
+        .replace(/(You are running in your own git worktree:[^\n]*\n[^\n]*\n)?Hard deadline[^\n]*\nNotes from[^\n]*\n/, "<volatile>\n")
+        .replace(/\(worker id [^)]*\)/g, "(worker id W)");
+      return { cmd: JSON.stringify(j.cmd).replace(/PAI note \[[0-9a-f]+\]/g, "PAI note [T]"), stdin, gitStatus: j.gitStatus };
+    };
+    const [a, b] = [await run(), await run()];
+    expect(a.gitStatus).toBe("off");
+    expect(a).toEqual(b);
+    expect(a.stdin.indexOf("shared rules")).toBeLessThan(a.stdin.indexOf("<volatile>"));
   });
 
   it("a routing-policy pin says (routing policy: <mode>), not flag: --provider", async () => {

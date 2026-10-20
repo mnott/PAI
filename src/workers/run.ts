@@ -187,6 +187,8 @@ import {
   poolIneligibleReason,
   poolSettings,
   postTaskToPool,
+  SHARED_MARKER,
+  UNIT_MARKER,
   type PoolTaskResponse,
 } from "./pool.js";
 
@@ -579,6 +581,20 @@ export function headlessPromptText(
 ): { text: string | null; applied: boolean } {
   const applied = headless && prompt !== null && !callerSystemPrompt;
   return { text: applied ? prompt! + promptTrailer(format) : prompt, applied };
+}
+
+/**
+ * Where a loopback run's per-worker lines (worktree path, id, deadline, note
+ * token) go in the task: after a `--- shared ---` section, right before the
+ * `--- unit ---` marker, so the shared section stays inside the cached prefix;
+ * a task without both markers gets them at its head.
+ */
+export function placeVolatile(task: string, volatile: string): string {
+  const lines = task.split("\n");
+  const a = lines.findIndex((l) => l.trim() === SHARED_MARKER);
+  const b = lines.findIndex((l, i) => i > a && l.trim() === UNIT_MARKER);
+  if (a < 0 || b < 0) return volatile + "\n\n" + task;
+  return [...lines.slice(0, b), volatile, "", ...lines.slice(b)].join("\n");
 }
 
 /**
@@ -1869,7 +1885,12 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
     parsed.callerSystemPrompt,
     a.reportFormat
   );
-  const promptText = taskText !== null && volatileParts.length ? volatileParts.join("\n") + "\n\n" + taskText : taskText;
+  const promptText = taskText !== null && volatileParts.length ? placeVolatile(taskText, volatileParts.join("\n")) : taskText;
+  // Claude Code's own gitStatus block (branch = worker branch, recent commits) opens the first user
+  // message and differs per worker; measured 2026-10-20 it was the first differing token after the
+  // shared 5,445 (system+tools). The documented switch (env CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS =
+  // setting includeGitInstructions:false) drops it, and the git section of the system prompt with it.
+  if (volatileInTask) env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = "1";
   const claudeCmd = claudeCommand(env, config.caveman);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
@@ -1904,6 +1925,7 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
         browser: noBrowser ? "off" : "on",
         ...(a.routeWhy ? { route: a.routeWhy } : {}),
         sessionProviderEnv: env.PAI_SESSION_PROVIDER ?? null,
+        ...(env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS ? { gitStatus: "off" } : {}),
         ...(limit ? { deadline: new Date(limit.deadlineAt).toISOString(), maxMinutes: limit.minutes } : { limit: "none" }),
       })
     );
