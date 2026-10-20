@@ -173,13 +173,14 @@ export interface RouteFlags {
 export async function routeRun(
   config: WorkersConfig,
   logDir: string,
-  flags: RouteFlags
+  flags: RouteFlags,
+  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const policy = readPolicy(logDir);
   if (!policy) return null;
   const mode = policy.mode;
   const needLocal = mode !== "cloud-only";
-  const found = needLocal ? await findLocal(config, logDir) : { name: null, why: "" };
+  const found = needLocal ? await findLocal(config, logDir, deps.ping) : { name: null, why: "" };
   const native = getProviderOrNative(config, ANTHROPIC_NATIVE);
   const cloudUnavailable =
     mode === "prefer-cloud" &&
@@ -189,7 +190,7 @@ export async function routeRun(
     urgent: flags.urgent ?? false,
     localOk: flags.localOk ?? false,
     cloud: flags.cloud ?? false,
-    battery: mode === "auto" ? onBattery() : false,
+    battery: mode === "auto" ? (deps.battery ?? onBattery)() : false,
     local: found.name,
     localWhy: found.why,
     cloudUnavailable,

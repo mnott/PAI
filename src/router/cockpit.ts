@@ -33,7 +33,7 @@ import { readSchedFile, schedLine, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
-import { chatProviderOf, deriveChains } from "../workers/chains.js";
+import { effectiveChains } from "../workers/chains.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
@@ -465,10 +465,10 @@ async function localRunningInfo(): Promise<{ tier: string; label: string; model:
 }
 
 /** The Workers / Orchestrator chains (rank t0 first) behind the cockpit's rank badges. */
-function modelChains(): { workers: string[]; orchestrator: string[] } {
+async function modelChains(): Promise<{ workers: string[]; orchestrator: string[] }> {
   try {
     const { raw, workers } = readWorkersSection();
-    return deriveChains(workers, chatProviderOf(raw, workers));
+    return await effectiveChains(raw, workers);
   } catch {
     return { workers: [], orchestrator: [] };
   }
@@ -765,8 +765,8 @@ export function handleCockpit(
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
   } else if (url.pathname === "/cockpit/limits") {
-    limits.get().then(
-      (l) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, chains: modelChains() })),
+    Promise.all([limits.get(), modelChains()]).then(
+      ([l, chains]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, chains })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");

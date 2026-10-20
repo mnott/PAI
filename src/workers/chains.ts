@@ -9,6 +9,8 @@
  * orchestrator); when it is written, the legacy keys are derived from it.
  */
 
+import { findLocal, readPolicy, routeRun } from "./policy.js";
+import { workersLogDir } from "./paths.js";
 import { DEFAULT_BUDGET_PRIORITY, isLocalProvider, readWorkersSection, writeWorkersSection, type WorkersConfig } from "./config.js";
 
 export const CHAIN_ROLES = ["workers", "orchestrator"] as const;
@@ -41,6 +43,37 @@ export function deriveChains(workers: WorkersConfig, chatProvider: string): Chai
     workers: (workers.chains.workers.length ? workers.chains.workers : legacyWorkers).slice(0, MAX_RANKS),
     orchestrator: (workers.chains.orchestrator.length ? workers.chains.orchestrator : [chatProvider || "anthropic"]).slice(0, MAX_RANKS),
   };
+}
+
+/**
+ * The chains routing really follows. The workers chain is the derived one
+ * unless a routing policy is set: then routeRun's decision (the same function
+ * a run uses) decides where the local provider goes — t0 when the run would
+ * go local, last under prefer-cloud / when only the cloud answers, absent
+ * under cloud-only, alone under local-only. An explicit workers.chains.workers
+ * is shown as set. `active` is not a chain member: it only pins plain runs
+ * (no class, no policy, no session) and feeds the orchestrator chain through
+ * chatProviderOf when no session profile names a chat provider.
+ */
+export async function effectiveChains(
+  raw: Record<string, unknown>,
+  workers: WorkersConfig,
+  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean; logDir?: string } = {}
+): Promise<Chains> {
+  const base = deriveChains(workers, chatProviderOf(raw, workers));
+  const logDir = deps.logDir ?? workersLogDir(workers);
+  const policy = readPolicy(logDir);
+  if (!policy || workers.chains.workers.length) return base;
+  const cloud = base.workers.filter((m) => !isLocalProvider(workers.providers[m]?.baseUrl ?? ""));
+  const found = policy.mode === "cloud-only" ? { name: null } : await findLocal(workers, logDir, deps.ping);
+  const routed = await routeRun(workers, logDir, {}, deps).catch(() => null);
+  const local = found.name;
+  let list: string[];
+  if (policy.mode === "cloud-only") list = cloud;
+  else if (policy.mode === "local-only") list = local ? [local] : [];
+  else if (routed?.providerFlag) list = [routed.providerFlag, ...cloud];
+  else list = local && policy.mode === "prefer-cloud" ? [...cloud, local] : cloud;
+  return { workers: list.slice(0, MAX_RANKS), orchestrator: base.orchestrator };
 }
 
 /** Place `model` at `rank` in `chain` (others shift, no duplicates, no gaps); "off" removes it. */
