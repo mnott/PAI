@@ -7,7 +7,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPoolHost, type PoolHost } from "./pool-host.js";
@@ -201,19 +201,81 @@ describe("spares", () => {
     expect(hit.pooled).toBe(true);
   });
 
-  it("misses on a moved HEAD, a dirty checkout, a task without a worktree and spares off", async () => {
+  it("misses on a dirty checkout (spare kept), a task without a worktree and spares off", async () => {
     const repo = makeRepo();
     const h = makeHost(repo);
     await h.host.settle();
+    const spare = h.host.state().spares![0]!;
     writeFileSync(join(repo, "dirty.txt"), "x\n", "utf8");
-    expect(await h.host.runTask(task(repo))).toEqual({ pooled: false, reason: "dirty" });
+    expect(await h.host.runTask(task(repo))).toEqual({ pooled: false, reason: "dirty-checkout" });
+    expect(h.host.state().spares!.map((s) => s.id)).toEqual([spare.id]);
+    expect(h.procs[0]!.killed).toBe(false);
+    expect(existsSync(spare.dir)).toBe(true);
     expect(await h.host.runTask(task(repo, { worktree: false }))).toEqual({ pooled: false, reason: "no-worktree" });
-    git(repo, ["add", "."]);
-    git(repo, ["commit", "-q", "-m", "moved"]);
-    expect(await h.host.runTask(task(repo))).toEqual({ pooled: false, reason: "stale" });
+    // clean again: the same spare serves the next task
+    rmSync(join(repo, "dirty.txt"));
+    expect((await h.host.runTask(task(repo, { id: "w2" }))).pooled).toBe(true);
     const off = makeHost(repo, { spares: 0 });
     expect(await off.host.runTask(task(repo))).toEqual({ pooled: false, reason: "spares-off" });
     expect(off.host.state().spares).toEqual([]);
+  });
+
+  it("a moved HEAD refreshes the idle spare in place: same process, new base, next claim hits", async () => {
+    const repo = makeRepo();
+    const h = makeHost(repo);
+    await h.host.settle();
+    const spare = h.host.state().spares![0]!;
+    writeFileSync(join(repo, "next.txt"), "n\n", "utf8");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-q", "-m", "moved"]);
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    expect(h.host.refreshSpares()).toBe(1);
+    const after = h.host.state().spares!;
+    expect(after.map((s) => s.id)).toEqual([spare.id]);
+    expect(after[0]!.base).toBe(head);
+    expect(existsSync(join(spare.dir, "next.txt"))).toBe(true);
+    expect(h.procs).toHaveLength(1);
+    expect(h.procs[0]!.killed).toBe(false);
+    expect(h.host.refreshSpares()).toBe(0);
+    expect((await h.host.runTask(task(repo))).pooled).toBe(true);
+  });
+
+  it("a claim right after HEAD moved refreshes the spare instead of missing", async () => {
+    const repo = makeRepo();
+    const h = makeHost(repo);
+    await h.host.settle();
+    git(repo, ["commit", "-q", "--allow-empty", "-m", "moved"]);
+    expect((await h.host.runTask(task(repo))).pooled).toBe(true);
+    expect(h.host.state().spareMisses).toEqual({});
+  });
+
+  it("seeds an injected provider (the local one) for the repos of recent runs without ledger history; spares do not take slots", async () => {
+    const repo = makeRepo();
+    const logDir = mkdtempSync(join(tmpdir(), "pai-spare-host-"));
+    const argvs: string[][] = [];
+    const host = createPoolHost({
+      config: { ...config({ maxSlots: 1 }), providers: { fakeprov: provider, localprov: { ...provider, models: { default: "lm" } } } },
+      logDir,
+      usageLogFile: join(logDir, "none.jsonl"),
+      spawner: (argv) => {
+        argvs.push(argv);
+        return new FakeSpare();
+      },
+      envFor: () => ({}),
+      cmdHead: () => ["fake-claude"],
+      warmKeys: [{ provider: "fakeprov", model: "m1", cwd: repo }],
+      seedProviders: async () => ["localprov"],
+      noReaper: true,
+    });
+    live.push(host);
+    await host.settle();
+    const st = host.state();
+    expect(st.spares!.map((s) => `${s.provider}/${s.model}`).sort()).toEqual(["fakeprov/m1", "localprov/lm"]);
+    expect(st.spares!.every((s) => s.state === "ready")).toBe(true);
+    expect(st.slots).toEqual([]);
+    expect(argvs.every((a) => !a.join(" ").includes("NEW TASK"))).toBe(true);
+    const hit = await host.runTask(task(repo, { provider: "localprov", model: "lm" }));
+    expect(hit.pooled).toBe(true);
   });
 
   it("starts a replacement spare when the task ends; the used process is killed", async () => {
