@@ -69,6 +69,11 @@ setTimeout(function(){
  r.stillOpen=!!pop();r.n0=n0;r.n1=optEls().length;
  sel.setValue("y");r.valAfterSet=sel.querySelector(".wv").textContent;
  var s=optEls().find(function(x){return x.classList.contains("wsel")});r.optSel=s?s.getAttribute("data-i"):null;
+ // A5: an update while open keeps the active option (render used to drop it)
+ key(sel,"Home");var a1=act();
+ sel.setOptions([{value:"w",label:"Whiskey"},{value:"x",label:"Xray"},{value:"y",label:"Yankee"}]);
+ r.actHome=a1;r.actAfterOpts=act();
+ key(sel,"ArrowDown");var a2=act();sel.setValue("w");r.actAfterVal=a2+"/"+act();
  mdown(document.body);r.outsideClosed=!pop();
  sel.setDisabled(true,"busy");r.dis=sel.disabled;r.title=sel.getAttribute("title")||"";
  sel.setDisabled(false);
@@ -134,7 +139,7 @@ interface ProbeResult {
     valAfterSet: string; optSel: string | null; outsideClosed: boolean; dis: boolean; title: string;
     menuOpen: string; menuRole: string; menuPicks: string[]; menuClosed: boolean;
     grpOpts: string; grpHeads: string; grpAct: string; twoSelExp: string; twoPops: number; menuAd: string | null; reopenRole: string | null; menuExpAfter: string; isEl: boolean;
-    popBg: string; cardVar: string; selects: number; selRole: string | null; selAria: string | null; ad: string | null; optCount: number;
+    popBg: string; cardVar: string; selects: number; selRole: string | null; selAria: string | null; ad: string | null; optCount: number; actHome: string | null; actAfterOpts: string | null; actAfterVal: string | null;
   };
 }
 
@@ -185,6 +190,9 @@ describe.skipIf(!CHROME)("win Select and Menu (A9, spec 5.1) in Chromium", () =>
     expect(r.n1, "options replaced").toBe(2);
     expect(r.valAfterSet, "setValue repaints the button").toBe("Yankee");
     expect(r.optSel, "the selected option is marked").toBe("1");
+    expect(r.actHome, "Home activates the first option").toBe("0");
+    expect(r.actAfterOpts, "setOptions while open keeps the active option by value").toBe("1");
+    expect(r.actAfterVal, "setValue while open keeps the active option").toBe("2/2");
     expect(r.outsideClosed, "outside mousedown closes").toBe(true);
     expect(r.dis, "setDisabled(true) disables the button").toBe(true);
     expect(r.title, "disabled reason in title").toBe("busy");

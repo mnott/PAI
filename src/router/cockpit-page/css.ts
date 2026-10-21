@@ -179,4 +179,26 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead input.lblin{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font:inherit;min-width:0;width:12em;max-width:100%}
 .lbls{display:flex;flex-direction:column;gap:2px;min-width:0}
 .tog.on{background:var(--acc);border-color:var(--acc);color:#fff}
+/* win cards (A5): scoped under main.win, old rules untouched until W-cut */
+main.win{display:block;position:relative;padding:0;margin:10px 14px}
+main.win .card{position:absolute;padding:0;border:0;outline:1px solid var(--line);outline-offset:-1px;overflow:hidden;min-width:0}
+main.win .chead{position:absolute;left:0;right:0;top:0;height:28px;display:flex;align-items:center;gap:6px;padding:0 6px;border-bottom:1px solid var(--line);min-width:0}
+main.win .card.min .chead{border-bottom:0}
+main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto;contain:strict}
+main.win .cbody.cgroup{overflow:hidden}
+main.win .card.min .cbody{display:none}
+.cgrip{background:none;border:0;padding:0 2px;color:var(--dim);cursor:grab;font:inherit;line-height:1;touch-action:none}
+.cgrip:hover,.cgrip:focus-visible{color:var(--acc);outline:none}
+.ctitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
+.cstatus{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dim)}
+.cstatus:empty{display:none}
+.cstatus[data-kind=ok]{color:var(--ok)}.cstatus[data-kind=err]{color:var(--bad);cursor:pointer}.cstatus[data-kind=stale]{color:var(--warn)}
+.cstatus[data-kind=pending]{animation:cpulse 1.2s ease-in-out infinite}
+@keyframes cpulse{50%{opacity:.4}}
+@media(prefers-reduced-motion:reduce){.cstatus[data-kind=pending]{animation:none}}
+.cbtn{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:0 7px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+.cbtn:hover:not([disabled]){border-color:var(--acc)}.cbtn:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.cbtn[disabled]{opacity:.5;cursor:default}
+.cmin{flex:none;padding:0 6px}
+.cwlive{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 `;

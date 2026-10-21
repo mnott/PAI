@@ -148,8 +148,16 @@ function Select(o){
   if(el&&el!==pop)pick(+el.getAttribute("data-i"));
  });
  var api=btn;
- api.setOptions=function(o2){opts=o2||[];render();if(open)setActive(_wactIndex())};
- api.setValue=function(v){val=v;paintBtn();if(open){render();setActive(_wactIndex())}};
+ function actValue(){var i=_wactIndex();return i>=0&&opts[i]?opts[i].value:null}
+ // render() rebuilds the items and drops the active mark: re-find the active option by value
+ function keepActive(was){
+  var a=-1;
+  for(var i=0;was!==null&&i<opts.length;i++)if(opts[i].value===was&&!opts[i].disabled){a=i;break}
+  if(a<0)a=firstEnabled(0,1);
+  setActive(a);
+ }
+ api.setOptions=function(o2){var was=open?actValue():null;opts=o2||[];render();if(open)keepActive(was)};
+ api.setValue=function(v){var was=open?actValue():null;val=v;paintBtn();if(open){render();keepActive(was)}};
  api.setDisabled=function(on,r){dis=!!on;reason=r||"";btn.disabled=dis;if(reason)btn.title=reason;else btn.removeAttribute("title");if(dis)closeP(false)};
  api.setOptions(o.options||[]);api.setValue(o.value==null?null:o.value);
  return btn;
