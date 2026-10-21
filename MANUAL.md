@@ -35,7 +35,7 @@ PAI supports three search modes. Claude picks the right one automatically, or yo
 | Semantic | Concepts, paraphrases, "find something like..." | Fast |
 | Hybrid | Best overall quality, general-purpose queries | Fast |
 
-Keyword search is available immediately — the daemon indexes every five minutes automatically. Semantic search requires embeddings, which are generated in the background. If semantic search returns nothing, ask Claude to generate embeddings first.
+Keyword is the default (`search.mode`) and is available right after indexing; the daemon indexes about every five minutes. Semantic and hybrid need embeddings (`pai memory embed`, or the daemon's background pass). Details: [Search](docs/search.md), [Memory](docs/memory.md). If semantic search returns nothing, ask Claude to generate embeddings first.
 
 ---
 
@@ -92,6 +92,69 @@ The vault is organized into project folders with an auto-generated index page an
 
 ---
 
+## Reviewing, Sharing and Continuing
+
+| What you want | What to ask Claude |
+|---|---|
+| Review a period | "Review my week" / "What did I do today?" (`/review`) |
+| Plan ahead | "Plan my week" (`/plan`) |
+| Capture a thought | "Journal this thought" (`/journal`) |
+| Draft a post about shipped work | "Share on LinkedIn today", "Tweet about the vault migration", "Share on Bluesky this week" (`/share`) |
+| Pick up where you stopped | "Go": the session reads the `## Continue` block in `TODO.md` |
+| Recall recent activity | "What was I working on?" (recent observations are injected at session start) |
+| Rebuild a missing note | `/reconstruct` creates session notes from transcripts and git history |
+| Check the budget | "How much budget do I have left?", "Go easy on the budget" (`/advisor`) |
+
+See [Skills](docs/skills.md) for every skill and trigger, [Context preservation](docs/context-preservation.md) and [Session management](docs/session-management.md) for how continuity works.
+
+---
+
+## Tracking Your Activity
+
+Every significant tool call is stored as an observation of one of six kinds: decision, bugfix, feature, refactor, discovery, change.
+
+| What you want | What to ask Claude |
+|---|---|
+| Recent changes | "What changes did I make to the daemon today?" |
+| Past decisions | "Show me all decisions from the last session" |
+| Totals | "Show observation stats" |
+
+CLI: `pai observation list [--type KIND] [--project SLUG]`, `pai observation search "text"`, `pai observation stats`. Details: [Observations](docs/observations.md).
+
+---
+
+## Your Notes as a Vault (Zettelkasten)
+
+If you keep an Obsidian vault (`vaultPath` in the config), PAI indexes its links and meaning.
+
+| What you want | What to ask Claude |
+|---|---|
+| Follow a chain of links | "Explore notes linked to PAI" (`pai zettel explore`) |
+| Unexpected connections | "Find surprising connections to this note" (`surprise`) |
+| Emerging clusters | "What themes are emerging in my vault?" (`themes`) |
+| Structural audit | "How healthy is my vault?" (`health`) |
+| Link suggestions | "Suggest connections for this note" (`suggest`) |
+| Ask the vault | "What does my vault say about knowledge management?" (`converse`) |
+
+Details: [Zettelkasten](docs/zettelkasten.md).
+
+---
+
+## Use Cases
+
+Typical ways people use the pieces above. [Use cases](docs/use-cases.md) has the longer list.
+
+| Situation | What helps |
+|---|---|
+| Re-explaining a project every morning, or after context compaction | "Go" reading `## Continue`; [context preservation](docs/context-preservation.md) |
+| "Why did we choose X?" months later | Memory search across sessions; decision observations |
+| Switching between many projects or clients | The project registry; `pai ls`, `pai <name>` |
+| Writing up what you shipped | `/review`, `/share` |
+| Finding links between notes in a large vault | `pai zettel` operations |
+| Keeping institutional knowledge when someone leaves | Each person's session notes and observations stay searchable |
+
+---
+
 ## System Health and Maintenance
 
 PAI is designed to run without intervention. The daemon starts on login and restarts automatically if it exits. But when something seems off, these are the things to ask.
@@ -108,7 +171,7 @@ PAI is designed to run without intervention. The daemon starts on login and rest
 | Restore from a backup | "Restore from the latest backup" |
 | Check daemon socket | "Check the PAI daemon status" |
 
-Backups include the project registry, configuration, and a full PostgreSQL dump. They are stored in `~/.pai/backups/` with timestamps.
+Backups include the project registry, configuration, and a PostgreSQL dump (`pai backup --no-postgres` skips it). They are stored in `~/.pai/backups/` with timestamps.
 
 ---
 
@@ -147,14 +210,14 @@ The commands below all still work; `pai more` lists them by group.
 # Projects
 pai project list                                     # List all projects
 pai project info my-app                              # Project details
-pai project health                                   # Check for broken paths
+pai project health                                   # Check that project folders exist
 pai project tag my-app infrastructure                # Tag a project
 pai project archive old-api                          # Archive a project
 
 # Sessions
 pai session list --project my-app                    # Sessions for a project
-pai session rename my-app 42 "Database Migration"    # Rename a session
-pai session cleanup                                  # Auto-organize session notes
+pai rename ID "Database Migration"                   # Rename a session
+pai session cleanup                                  # Drop empty notes, name, file and renumber
 
 # Memory and search
 pai memory search "rate limiting"                    # Keyword search
@@ -189,10 +252,10 @@ pai setup                                            # Re-run the setup wizard
 pai worker run -p '<task spec>' --output-format json # Run one worker
 pai worker ps                                        # This session's workers
 pai worker providers add <name> --base-url <url> …   # Configure a provider
-pai worker install                                   # Agent hook + glm* shims
+pai worker on                                        # Send Agent-tool subagents to workers
 ```
 
-For the full CLI reference including all subcommands and flags, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the full CLI reference including all subcommands and flags, see [the command pages](docs/commands/README.md) or `pai more`.
 
 ---
 
@@ -212,7 +275,7 @@ tails one live. Work is delegated over three tiers (session, orchestrator, worke
 |---|---|
 | "PAI doesn't know about my recent work" | The daemon indexes every five minutes. Ask Claude to "re-index everything" for immediate results. |
 | "Semantic search returns nothing" | Embeddings may not be generated yet. Ask Claude to "generate embeddings" and try again in a few minutes. |
-| "Claude doesn't have PAI tools available" | Run `pai daemon install` in the terminal to register the MCP server, then restart Claude Code. |
+| "Claude doesn't have PAI tools available" | Run `pai mcp install` to register the MCP server (`pai mcp status` checks it), then restart Claude Code. |
 | "The daemon is not running" | Ask Claude to "restart the PAI daemon" or run `pai daemon install` to re-register it with launchd. |
 | "Search returns irrelevant results" | Try hybrid mode: "Search your memory for X using hybrid search". |
 | "A project is missing from the list" | Ask Claude to "scan for new projects" to pick up any projects PAI hasn't seen yet. |

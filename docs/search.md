@@ -42,15 +42,15 @@ When the chunking logic changes, `CHUNKER_VERSION` in `src/memory/chunker.ts` is
 
 ## Search Intelligence
 
-PAI doesn't just store your notes — it understands them. Three search modes work together, with reranking and recency boost on by default. All search settings are configurable.
+Three search modes, with reranking on by default and recency boost at a 90-day half-life. All search settings are configurable.
 
 ### Search Modes
 
 | Mode | How it works | Best for |
 |------|-------------|----------|
-| **Keyword** | Full-text search (BM25 via SQLite FTS5) | Exact terms, function names, error messages |
-| **Semantic** | Vector similarity (Snowflake Arctic embeddings) | Finding things by meaning, even with different words |
-| **Hybrid** | Keyword + semantic combined, scores normalized and blended | General use — the default |
+| **Keyword** (default, `search.mode`) | Full-text search (BM25 via SQLite FTS5; PostgreSQL full-text on `storageBackend: postgres`) | Exact terms, function names, error messages |
+| **Semantic** | Vector similarity (Snowflake Arctic embeddings, needs `pai memory embed` or the daemon pass; sqlite or pgvector) | Finding things by meaning, even with different words |
+| **Hybrid** | Keyword + semantic combined, scores normalized and blended | Best quality; needs embeddings |
 
 ### Cross-Encoder Reranking
 
@@ -68,7 +68,7 @@ The reranker uses a small local model (~23 MB) that runs entirely on your machin
 
 ### Recency Boost
 
-Recent content scores higher than older content — on by default with a 90-day half-life. A 3-month-old result retains 50% of its score, a 6-month-old retains 25%, and a year-old retains ~6%.
+Recent content scores higher than older content, with a 90-day half-life (`search.recencyBoostDays`). A 3-month-old result retains 50% of its score, a 6-month-old retains 25%, and a year-old retains ~6%.
 
 ```bash
 # Search uses recency boost automatically (90-day half-life from config)
@@ -87,7 +87,7 @@ Recency boost is applied after cross-encoder reranking, so relevance is scored f
 
 ### Search Settings
 
-All search defaults are configurable via `~/.pai/config.json` and can be viewed or changed from the command line.
+All search defaults are configurable via `~/.pai/config.yaml` and can be viewed or changed from the command line.
 
 ```bash
 # View all search settings
@@ -110,7 +110,7 @@ pai memory settings rerank false
 | `defaultLimit` | `10` | Default number of results |
 | `snippetLength` | `200` | Max characters per snippet in MCP results |
 
-Settings live in the `search` section of `~/.pai/config.json`. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
+Settings live in the `search` section of `~/.pai/config.yaml`; `pai memory settings` writes them there. Per-call parameters (CLI flags or MCP tool arguments) always override config defaults.
 
 ### Using Search from Within Claude
 
@@ -124,7 +124,7 @@ When PAI is configured as an MCP server, Claude uses the `memory_search` tool au
 "Find where we discussed the notification system"
 ```
 
-Claude calls `memory_search` with the right parameters based on your config defaults. Reranking and recency boost are both active by default — you don't need to configure anything for good results.
+Claude calls `memory_search` with the right parameters based on your config defaults. Reranking is on by default and recency boost follows `search.recencyBoostDays` — you don't need to configure anything for good results.
 
 **Overriding defaults for a specific search:**
 
@@ -149,12 +149,13 @@ You can ask Claude to adjust search behavior per-query:
 | `project` | string | Scope to one project by slug |
 | `all_projects` | boolean | Explicitly search all projects |
 | `sources` | array | Restrict to `"memory"` or `"notes"` |
+| `format` | string | `"full"` (default) or `"compact"` |
 | `limit` | integer | Max results (1–100, default from config) |
 | `mode` | string | `"keyword"`, `"semantic"`, or `"hybrid"` |
 | `rerank` | boolean | Cross-encoder reranking (default: true from config) |
 | `recency_boost` | integer | Recency half-life in days (0 = off, default from config) |
 
-All parameters except `query` are optional. Omitted values fall back to your `~/.pai/config.json` defaults.
+All parameters except `query` are optional. Omitted values fall back to your `~/.pai/config.yaml` defaults.
 
 **Changing defaults permanently:**
 
@@ -166,4 +167,4 @@ Tell Claude to change your search settings:
 "Change the recency boost to 60 days"
 ```
 
-Claude runs `pai memory settings <key> <value>` to update `~/.pai/config.json`. Changes take effect on the next search — no restart needed.
+Claude runs `pai memory settings <key> <value>` to update `~/.pai/config.yaml`. Changes take effect on the next search — no restart needed.

@@ -1,6 +1,6 @@
 # Skills
 
-PAI ships 22 skills — slash commands that activate specialized workflows. Each responds to natural language triggers as well as the `/command` syntax.
+PAI ships 27 skills, one per prompt file in `src/daemon-mcp/prompts/`. They are generated into `dist/skills/` on every build and symlinked into `~/.claude/skills/` by `pai setup`. Each responds to natural language triggers as well as the `/command` syntax. Your own prompts go in `src/daemon-mcp/prompts/custom/` (gitignored).
 
 ## Productivity
 
@@ -19,6 +19,8 @@ PAI ships 22 skills — slash commands that activate specialized workflows. Each
 | `/sessions` | "list sessions", "where was I working" | Navigate sessions, projects, switch working context |
 | `/route` | "what project is this", "tag this session" | Detect which PAI project the current session belongs to |
 | `/name` | "name this session", "rename session" | Name or rename the current session |
+| `/pause` | "pause", "save my place" | Save a session note before leaving (same as `pai pause`) |
+| `/end` | "end session", "wrap up" | Finish the session: note, TODO, commits (same as `pai end`) |
 | `/search-history` | "search history", "find past", "what did we do" | Search past sessions and previous work by keyword |
 | `/consolidate` | "consolidate notes", "clean up notes", "merge duplicates" | Merge duplicate session notes, fix titles, renumber |
 | `/reconstruct` | "reconstruct sessions", "backfill session notes" | Retroactively create notes from JSONL transcripts and git history |
@@ -42,4 +44,7 @@ PAI ships 22 skills — slash commands that activate specialized workflows. Each
 | `/art` | "create diagram", "flowchart", "visualize" | Create visual content, diagrams, flowcharts, and AI-generated images |
 | `/story` | "explain this as a story", "create story explanation" | Create numbered narrative story explanations of any content |
 | `/observability` | "start observability", "monitor agents" | Start, stop, or check the multi-agent observability dashboard |
+| `/tasks` | "add a task", "what's on the bus" | Cross-session task list (see [task bus](task-bus.md)) |
+| `/worker` | "start a worker", "run this on a worker" | Run, watch and route subagent workers |
+| `/providers` | "which providers", "switch provider" | List providers and models, show how to switch |
 | `/createskill` | "create skill", "validate skill" | Create, validate, update, or canonicalize a PAI skill |

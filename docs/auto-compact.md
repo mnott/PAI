@@ -18,11 +18,11 @@ Set `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` in your `~/.claude/settings.json` under th
 }
 ```
 
-The value is the context percentage at which compaction triggers. `80` means compact when the context window reaches 80% full. Restart Claude Code after saving.
+`pai setup` writes this value (80) into `settings.json` for you. The value is the context percentage at which compaction triggers. `80` means compact when the context window reaches 80% full. Restart Claude Code after saving.
 
 ## Statusline indicator
 
-PAI's statusline shows the remaining context until auto-compact triggers as a percentage on line 3, along with your 5-hour and 7-day usage limits, daily pace indicator, and advisor mode label.
+PAI's statusline shows the remaining context until auto-compact triggers as a percentage, next to your usage limits and the advisor mode label.
 
 ## Set it up with one prompt
 

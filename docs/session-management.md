@@ -1,153 +1,81 @@
 # Session Management
 
-PAI gives you a complete picture of every Claude Code session running on your machine — live tabs in iTerm2, paused snapshots on disk, and everything in between.
+PAI lists every Claude Code session on your machine (running, resumable, or only a transcript) and opens, names and pauses them from one set of commands. `pai help` shows the daily ones, `pai more` the rest.
 
-## The Core Idea: One Entry Point
-
-Two ways in, both forgiving:
-
-- **`pai`** (no args) — opens the **interactive picker**: type to search across projects *and* sessions, then act on the highlighted row with a single key.
-- **`pai <name>`** — the universal session command when you already know the name. It does the right thing based on session state:
-  - **Live session** — switches the iTerm2 tab to front (no new Claude launched)
-  - **Otherwise** — starts a fresh Claude in the project directory, on the configured route. If a resumable transcript exists it asks `Resume it? [y/N]` first (Enter keeps fresh); `--resume` or `pai resume <name>` resume without asking; `-y` skips the question.
-  - **No match** — searches `~/.claude/history.jsonl`, shows a candidate picker
+## Daily commands
 
 ```bash
-pai                 # Interactive picker — search, then go / new / cd / finder / remove
-pai aibroker        # Switch to the live AIBroker tab (iTerm comes to front)
-pai youdrill        # Fresh youdrill session; offers to resume the last transcript
-pai mdf             # Free-text search across your prompt history
-pai 0856d40b        # Resume by UUID prefix
-pai --list          # Static deduped table (the old no-args behaviour)
+pai                   # pick a session: type to filter, Enter opens it
+pai <name>            # open a session by name; shows how it will start
+pai ls                # sessions, newest first
+pai new [DIR]         # start a session in a new or existing folder
+pai pause             # save your place before leaving
+pai end               # finish the current session
 ```
 
-## Daily Commands
+`pai <name>` resolves a session name, a project name or a session id (a prefix is enough). `pai ./dir` or `pai ~/dir` does the same as `pai new`. Without a match, `pai find "words"` searches everything you typed to Claude Code and lists the sessions where the words appeared.
+
+## Listing: `pai ls`
+
+One row per named session, with the provider and model it last ran on, its age, and a status:
+
+| Status | Meaning |
+|--------|---------|
+| `live` | running now |
+| `resumable` | can be reopened with its history |
+| `transcript` / `stub` | partial history |
+| `orphan` | unnamed; shown with `--all` |
+
+Flags: `--project NAME`, `--all` (unnamed sessions, and more than the newest 25), `--workers` (sessions started by background workers, hidden by default), `--json`. `pai ls` is a shortcut for `pai session list`; `pai sessions` is the old plural form of the same namespace.
+
+## Opening: `pai open` / `pai resume`
+
+`pai open [NAME_OR_ID]` (alias `pai resume`) continues a session with its full history. The provider is chosen in this order: `--provider`, the provider the session last ran on, the active provider (`pai providers`). `--model ID` picks a model on that provider; `--dry-run` prints the command instead of running it. Without an argument you pick from a numbered list.
+
+## Starting: `pai new`
+
+`pai new [DIR]` creates DIR when missing (default: the current folder), registers it as a project and starts Claude Code there. Flags: `--with SETUP` (an orchestrator + worker combination from `pai setups`, nothing is asked), `--provider NAME`, `--model ID`, `--name NAME` (default: the folder name), `--dry-run`.
+
+## Changing directory: `pai cd`
+
+`pai cd PROJECT` prints a project's directory; the shell wrapper changes into it. It needs the shell integration: add `eval "$(pai shell-init)"` to your shell profile.
+
+## Names and details
 
 ```bash
-pai                   # Interactive picker (projects + sessions; search then act)
-pai --list            # Static deduped listing (one row per name)
-pai <name>            # Switch / resume / fresh — universal
-pai pause             # Save state checkpoint (write ## Continue to TODO.md)
-pai pause all         # Pause every live Claude session at once
-pai end               # Finalize: save state + mark session note Completed
+pai rename ID NAME            # change the name pai ls shows (history untouched)
+pai session info <note>        # everything known about one session note
+pai session tag <note>         # show or set tags
+pai session route <note>       # link a note to another project
+pai session active             # sessions active in the last hour
+pai clear-names                # wipe stored tab names (recovery)
 ```
 
-And inside Claude Code, the two slash commands that matter:
+`pai session --help` lists all of them.
 
-```
-/pause    →  write checkpoint to TODO.md, print handoff block, then type /exit
-/end      →  same as /pause, plus marks the session note Completed
-```
+## Pausing and ending
 
-## The Interactive Picker
+`pai pause` writes a `## Continue` block to the project's `TODO.md` so the next session knows where you stopped, then tells you to leave with `/exit`. `pai end` does the same and marks the session note Completed. Inside Claude Code the same two actions are the `/pause` and `/end` skills (see [Skills](skills.md)); they write the checkpoint text and call `pai pause --body-file` / `pai end --body-file`.
 
-Run `pai` with no arguments to open a self-contained terminal selector (no `fzf` or other dependency) over a **unified, deduped list of both projects and sessions** — tagged so the two stay distinct. It's the one place to answer "where did I work on X, and take me there."
+| Flag | Meaning |
+|------|---------|
+| `--body-file FILE` | checkpoint text (`-` reads stdin); required unless `--no-body` |
+| `--no-body` | metadata only |
+| `--session-id UUID` | recorded as the handle for `claude --resume` |
+| `--dry-run` | show what would be written |
 
-```
-  pai  —  find a project or session
-  search > samba
-
-  live      Chenarlier   now   …/Raspi/Chenarlier   samba setup monster reverse proxy
-  project   Glidr        2d    …/apps/glidr          claude pai research
-
-  ────────────────────────────────────────
-  Chenarlier   ~/…/Raspi/Chenarlier
-  recent notes:
-    10 - Samba Setup/01 - Samba Server Setup.md   1mo
-    00 - Monster/00 - Monster.md                  3mo
-  ────────────────────────────────────────
-  g go to tab · n new · c cd · f finder · d remove · s search · ↑↓ move · q quit
-```
-
-**Two modes.** You start in *command mode* (single keys are actions). Press `s` (or `/`) to enter *search mode* (type a topic — it filters by name, path, **and folded-in note file/folder names**, so `samba` finds a project literally named "Chenarlier"); `Enter` or `esc` returns to command mode.
-
-**Command keys** act immediately on the highlighted row:
-
-| Key | Action |
-|-----|--------|
-| `g` | **Go to** the running iTerm2 tab (for live rows) |
-| `n` | **New** Claude session in that directory (current terminal) |
-| `c` | **cd** into the folder only — no Claude (your shell stays there) |
-| `f` | Open the folder in **Finder** / Explorer / `xdg-open` (keeps the picker open) |
-| `d` | **Remove** from PAI's list — archives the project (reversible, files untouched); asks `y/N` first |
-| `s` `/` | Enter **search** mode |
-| `↑↓` `j` `k` | Move the highlight |
-| `q` `esc` | Quit |
-
-`Enter` on a row takes the smart default: a live row → go to its tab, otherwise → new session.
-
-The `c` (cd) action needs PAI's shell integration to change your shell's directory — see [Finding the Claude Binary](#finding-the-claude-binary) / `pai shell-init`. On a non-interactive terminal (piped output), `pai` falls back to the static listing automatically.
-
-## Static Listing
-
-`pai --list` shows a single deduped table — one row per session name, regardless of how many snapshots exist on disk:
-
-```
-Sessions:
-
-  #   name        status      age       project                       last prompt
-  --  ----------  ----------  --------  ----------------------------  --------------------------
-  1   AIBroker    live        now       —                             —
-  2   PAI         resumable   2m ago    /…dev/ai/PAI                  "refactor session listing…"
-  3   Client         transcript  3d ago    /…Client/Infrastructure/Webseiten "ok so we recently had…"
-```
-
-Status values: `live` (active iTerm tab), `resumable` (clean snapshot on disk), `transcript` (history available, not resumable), `stub` (empty or minimal).
-
-## Finding Sessions by Topic
-
-`pai <topic>` first checks session names, then falls back to searching your prompt history:
-
-```
-Sessions matching "mdf":
-
-  #  id        when              project                              last matching prompt
-  -  --------  ----------------  -----------------------------------  -------------------------
-  1  6269cf64  2026-05-21 08:20  /…Client/Infrastructure/20 - Webseiten  "ok so we recently had an order…"
-  2  abe2d977  2026-02-23 08:40  /…Client/Infrastructure/20 - Webseiten  "yes the session notes for Whazaa…"
-
-  Enter # to launch (1-2), or press Enter to cancel:
-```
-
-Use `pai <topic> --auto` (or `-y`) to auto-pick #1. Use `pai <topic> 2` to pick directly.
-
-## Power User Access
-
-The full session management namespace is still available:
+### Pausing every live session
 
 ```bash
-pai sessions              # Live + disk listing (with more columns)
-pai sessions --all        # Include unnamed orphan sessions
-pai sessions --all-tabs   # Include shell tabs in the live section
-pai sessions goto <name>  # Named-session resolver (same as pai <name>)
-pai sessions list         # Explicit listing (same as pai sessions)
+pai pause all                  # through AIBroker, every live Claude session
+pai pause all --dry-run        # preview
+pai pause all --only api       # only sessions whose name or id contains "api"
+pai pause all --exit           # also send /exit once each has saved
+pai pause all --wait 180000    # longest wait (ms) for a checkpoint; busy sessions are left open, never killed
 ```
 
-## Pausing All Sessions at Once
+AIBroker must be running. Shell tabs are skipped; only Claude Code panes receive the pause.
 
-When you're done for the day and have multiple Claude windows open:
+## Why /exit and not Ctrl+C
 
-```bash
-pai pause all             # send "pause session" to every live Claude pane
-pai pause all --dry-run   # preview what would be sent
-pai pause all --exit      # also send /exit after each session saves state
-```
-
-AIBroker must be running for this to work. Shell tabs (bare zsh, SSH panes) are automatically skipped — only Claude Code panes receive the pause command. The count of skipped tabs is printed to stderr.
-
-## /pause and /end Inside Claude Code
-
-Type `/pause` or `/end` from inside an active Claude Code session (not from a shell — these are Claude Code slash commands, not CLI commands):
-
-- `/pause` — Claude writes a `## Continue` block to the project's `TODO.md`, prints a handoff summary with the session ID, then tells you to type `/exit`. The next session starts by reading that TODO.md block and picking up exactly where you left off.
-- `/end` — Same as `/pause`, plus Claude marks the session note as Completed and writes a final summary. Use this when you're genuinely done with a topic, not just pausing mid-task.
-
-After either command, type `/exit` to exit Claude Code cleanly.
-
-## Why /exit and Not Ctrl+C
-
-Ctrl+C or closing the terminal kills the Claude Code process abruptly. The session note generation hook never fires, the checkpoint is not written, and the session cannot be resumed with `claude --resume`.
-
-`/exit` sends a clean shutdown signal. Claude Code runs its Stop and Session End hooks, which trigger PAI to write the session note, push the final summary to the daemon, and save a resumable snapshot. The difference in recovery quality between a clean `/exit` and a Ctrl+C is significant for long sessions.
-
-If you do accidentally close a terminal, use `pai sessions --all` to find the orphaned transcript. The `/reconstruct` skill can retroactively generate a session note from it.
+Ctrl+C or closing the terminal kills Claude Code abruptly: the Stop and SessionEnd hooks never fire, so no session note is written and no checkpoint saved. `/exit` runs the hooks, which write the session note and save a resumable snapshot. If a terminal was closed anyway, `pai ls --all` shows the orphaned transcript and the `/reconstruct` skill can build a session note from it.

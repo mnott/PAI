@@ -17,7 +17,7 @@ L0 and L1 fire automatically via the `memory_wakeup` MCP tool, which is called b
 
 ### Configuring Your Identity File
 
-Create `~/.pai/identity.txt` with a short description of yourself and your working style. Claude will see this at every session start. Example:
+Create `~/.pai/identity.txt` (the PAI home; see [PAI home](pai-home.md)) with a short description of yourself and your working style. Claude will see this at every session start. Example:
 
 ```
 Principal engineer. Work across TypeScript, Dart, and shell scripting.
@@ -31,14 +31,15 @@ Prefer concise explanations, hate unnecessary hedging.
 
 Facts change over time. The `kg_triples` table stores knowledge as subject-predicate-object triples with `valid_from` and `valid_to` timestamps, so facts can expire and contradict each other rather than accumulating in an undated blob.
 
-Four MCP tools cover the full lifecycle:
+Read it from the CLI (`pai kg` has no add command; facts are extracted from session notes):
 
-- `kg_add` — Add a fact with a start date (and optional end date)
-- `kg_query` — Query the graph, filtered to facts valid at a given point in time
-- `kg_invalidate` — Mark a fact as no longer true (sets `valid_to`)
-- `kg_contradictions` — Surface facts that directly contradict each other, using predicate inversion rules
+- `pai kg backfill`: extract facts from existing session notes
+- `pai kg query [--subject T] [--predicate T] [--object T] [--as-of DATE] [--project SLUG] [--json]`: look up facts; `--as-of` shows what was true on that date
+- `pai kg list` (facts true now) and `pai kg stats` (fact and contradiction counts)
 
-Example: "the user prefers PostgreSQL" added in March; "the user prefers SQLite" added in April with the March fact invalidated. `kg_query` in April sees only the current fact; `kg_query` for March sees the historical one.
+Claude reads the graph through the `memory_kg_search` MCP tool. Contradictions are detected with predicate inversion rules; a fact that is superseded gets its `valid_to` set instead of being deleted.
+
+Example: "the user prefers PostgreSQL" is recorded in March; "the user prefers SQLite" in April closes the March fact. A query as of April sees only the current fact; a query as of March sees the historical one.
 
 ### Memory Taxonomy
 
@@ -46,7 +47,7 @@ Example: "the user prefers PostgreSQL" added in March; "the user prefers SQLite"
 
 ### Cross-Project Tunnels
 
-`memory_tunnels` detects concepts that appear across multiple projects. It works by comparing FTS vocabulary in SQLite mode or `ts_stat` output in PostgreSQL mode. When a concept — a library name, a design pattern, a person's name — shows up in three separate projects, PAI surfaces that connection as a tunnel.
+`memory_tunnels` (MCP tool) detects concepts that appear across multiple projects. It compares FTS vocabulary on SQLite or `ts_stat` output on PostgreSQL. When a concept — a library name, a design pattern, a person's name — shows up in three separate projects, PAI surfaces that connection as a tunnel.
 
 This reveals unexpected intellectual bridges: the same concurrency pattern used in PAI's daemon showing up in your Flutter app's state management, or a vendor name appearing in both your notes and your job applications.
 
@@ -58,9 +59,9 @@ PAI's memory system uses a three-tier hybrid store inspired by Cognee's approach
 
 | Tier | Backend | What it stores |
 |------|---------|----------------|
-| **Chunks + entities** | SQLite (simple mode) or PostgreSQL (full mode) | Text chunks with embeddings; named entity records with content-address hashes |
-| **Knowledge graph** | PostgreSQL (`kg_triples`) | Subject-predicate-object triples with `valid_from`/`valid_to` timestamps |
-| **Vector embeddings** | pgvector (full mode) | 768-dimensional Snowflake Arctic embeddings on chunks and vault notes |
+| **Chunks + entities** | SQLite (`storageBackend: sqlite`, the default) or PostgreSQL (`storageBackend: postgres`) | Text chunks with embeddings; named entity records with content-address hashes |
+| **Knowledge graph** | `kg_triples` table in the active backend | Subject-predicate-object triples with `valid_from`/`valid_to` timestamps |
+| **Vector embeddings** | pgvector (`storageBackend: postgres` only) | 768-dimensional Snowflake Arctic embeddings on chunks and vault notes |
 
 ### Entity Deduplication via Content-Address Hashing
 
@@ -79,17 +80,18 @@ This means a query about "the PAI daemon" can surface a session note that mentio
 
 ### Feedback Loop with Relevance Scoring
 
-Every search result that is subsequently retrieved via `memory_get` (i.e., actually read by the model) generates a positive feedback signal. These signals are stored and used to adjust future search weights using an exponential moving average (EMA):
+After reading results, the model rates chunks with the `memory_feedback` MCP tool (1 = not relevant, 5 = highly relevant, using the `id=` values from compact `memory_search` results). Ratings update a per-chunk weight with an exponential moving average, and the same signal goes to knowledge-graph entities mentioned in those chunks:
 
 ```
-new_weight = alpha * signal + (1 - alpha) * old_weight
+new = old + alpha * (normalized_rating - old)      # alpha = 0.1
+final_score *= (0.5 + weight)
 ```
 
-The default alpha is 0.1, so recent positive signals gradually raise a chunk's effective score without overriding the semantic baseline. This creates a personalization loop: content you actually use rises in future rankings; content you skip does not.
+So recent ratings gradually move a chunk's effective score without overriding the semantic baseline: content that proved useful rises, content that did not sinks.
 
 ### Access Timestamp Tracking
 
-Every chunk row carries a `last_accessed_at` timestamp updated on each `memory_get` call. This supports recency boost (content accessed recently scores higher) and enables future eviction policies for very large knowledge bases.
+Every chunk row carries a `last_accessed_at` timestamp updated when a chunk is read. This supports recency boost (content accessed recently scores higher) and enables future eviction policies for very large knowledge bases.
 
 ### Multi-Tenant Support
 

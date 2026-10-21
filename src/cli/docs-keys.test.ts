@@ -17,6 +17,8 @@ const FILES = [
   ...mdIn("docs/install"),
   ...mdIn("docs/concepts"),
   "docs/cockpit.md",
+  ...["memory", "search", "observations", "zettelkasten", "session-management", "session-notes", "context-preservation", "auto-compact", "pai-home", "skills", "task-bus", "rules-and-privacy", "what-you-can-ask", "use-cases"].map((n) => `docs/${n}.md`),
+  "MANUAL.md",
   "docs/config.md",
   "docs/config-defaults.md",
   "docs/workers-config.md",
