@@ -12,7 +12,7 @@ import { cockpitHtml } from "./cockpit-page.js";
 import { expandHome, loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
-import { defaultSources, jobSessionName, loadSessionMap, loadWorkerWindows, withJobNames, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
+import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindows, loadWorkerWindowsSteps, runSliced, withJobNames, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
@@ -34,7 +34,7 @@ import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
 import { readSchedFile, schedPlain, sharedScheduler } from "./scheduler.js";
-import { isLive, loadStatus, loadStatusesCached, ownsPid, type WorkerStatus } from "../workers/status.js";
+import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
 import { readProfiles } from "../workers/session-profile-store.js";
@@ -390,30 +390,45 @@ export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
   };
 }
 
+/**
+ * A value rebuilt at most every `ttlMs`. The first call builds it in place; after that an expired
+ * value is returned as it is while the rebuild runs in slices between other requests, so a refresh
+ * that walks thousands of status files never holds the event loop (the router proxies model traffic).
+ */
+function refreshedInSlices<T>(ttlMs: number, steps: () => Generator<void, T>): () => T {
+  let at = 0;
+  let value: { v: T } | undefined;
+  let building = false;
+  return () => {
+    if (!value) {
+      value = { v: drain(steps()) };
+      at = Date.now();
+    } else if (Date.now() - at > ttlMs && !building) {
+      building = true;
+      runSliced(steps())
+        .then((v) => {
+          value = { v };
+          at = Date.now();
+        })
+        .catch(() => {
+          /* the old value stands until the next try */
+        })
+        .finally(() => {
+          building = false;
+        });
+    }
+    return value.v;
+  };
+}
+
 /** Session map reloaded at most every 30 s (status files are many). */
 export function cachedSessionMap(ttlMs = 30_000): () => Map<string, SessionInfo> {
-  let at = 0;
-  let map = new Map<string, SessionInfo>();
-  return () => {
-    if (Date.now() - at > ttlMs) {
-      map = loadSessionMap();
-      at = Date.now();
-    }
-    return map;
-  };
+  return refreshedInSlices(ttlMs, () => loadSessionMapSteps());
 }
 
 /** Worker run windows reloaded at most every 60 s (same status files, one pass). */
 export function cachedWorkerWindows(ttlMs = 60_000): () => WorkerWindow[] {
-  let at = 0;
-  let windows: WorkerWindow[] = [];
-  return () => {
-    if (Date.now() - at > ttlMs) {
-      windows = loadWorkerWindows();
-      at = Date.now();
-    }
-    return windows;
-  };
+  return refreshedInSlices(ttlMs, () => loadWorkerWindowsSteps());
 }
 
 /**
@@ -423,18 +438,48 @@ export function cachedWorkerWindows(ttlMs = 60_000): () => WorkerWindow[] {
  * rows being rendered.
  */
 const NAMED_TTL_MS = 30_000;
-const namedMemo = new WeakMap<object, { at: number; map: Map<string, SessionInfo> }>();
+const namedMemo = new WeakMap<object, { at: number; map: Map<string, SessionInfo>; building: boolean }>();
 
 /**
  * Attributing every usage row to a worker window walks all rows against all windows (hundreds
- * of ms on a big log), so the result is reused for as long as the session map it builds on lives.
+ * of ms on a big log), so the result is reused for as long as the session map it builds on lives;
+ * once it is old, the previous result is served while the next one is built in slices.
  */
 function namedSessionMap(rows: UsageRow[], sessionMap: () => Map<string, SessionInfo>, workerWindows: () => WorkerWindow[]): Map<string, SessionInfo> {
   const hit = namedMemo.get(sessionMap);
-  if (hit && Date.now() - hit.at < NAMED_TTL_MS) return hit.map;
-  const map = withJobNames(withWorkerAttribution(sessionMap(), rows, workerWindows()), rows.map((r) => r.session_id));
-  namedMemo.set(sessionMap, { at: Date.now(), map });
-  return map;
+  const steps = function* (): Generator<void, Map<string, SessionInfo>> {
+    const attributed = yield* withWorkerAttributionSteps(sessionMap(), rows, workerWindows());
+    return withJobNames(attributed, rows.map((r) => r.session_id));
+  };
+  if (!hit) {
+    const map = drain(steps());
+    namedMemo.set(sessionMap, { at: Date.now(), map, building: false });
+    return map;
+  }
+  if (Date.now() - hit.at >= NAMED_TTL_MS && !hit.building) {
+    hit.building = true;
+    runSliced(steps())
+      .then((map) => {
+        hit.map = map;
+        hit.at = Date.now();
+      })
+      .catch(() => {
+        /* the old names stand until the next try */
+      })
+      .finally(() => {
+        hit.building = false;
+      });
+  }
+  return hit.map;
+}
+
+/** Builds the caches the first /cockpit/data would build, so a router warms them before it takes traffic. */
+export function warmCockpit(readRows: () => UsageRow[], sessionMap: () => Map<string, SessionInfo>, workerWindows: () => WorkerWindow[]): void {
+  try {
+    namedSessionMap(readRows(), sessionMap, workerWindows);
+  } catch {
+    /* a failed warm-up: the first request builds them */
+  }
 }
 
 export function parseWindow(q: string | null): CockpitWindow {
@@ -745,7 +790,7 @@ export function cockpitQueue(
   logDir: string,
   workers: WorkersConfig,
   now = Date.now(),
-  owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPid
+  owns: (s: { pid: number; started: string; id?: string }) => boolean = ownsPidCached
 ): { now: number; plans: ReturnType<typeof planRows>; panes: ReturnType<typeof paneRunRows>; paneViolations: Array<{ id: string; mark: string; why?: string }>; providers: QueueProvider[]; sessionMax: SessionLimits; builds: CockpitBuilds; worktrees: string; localModel: string; localModelTitle: string } {
   const caps: Record<string, number | undefined> = {};
   for (const name of Object.keys(workers.providers)) caps[name] = providerCap(workers, name);
@@ -765,8 +810,10 @@ export function cockpitQueue(
   const sessionMax: SessionLimits = {};
   const statuses = loadStatusesCached(logDir);
   for (const s of statuses) {
-    const max = s.sessionKey ? getProfile(s.sessionKey)?.max_parallel : undefined;
-    if (max && (s.state === "queued" || (s.state === "running" && isLive(s, owns)))) sessionMax[sessionGroup(s)] = max;
+    // only a queued or live run needs its profile read: thousands of finished statuses would each reread the file
+    if (!s.sessionKey || !(s.state === "queued" || (s.state === "running" && isLive(s, owns)))) continue;
+    const max = getProfile(s.sessionKey)?.max_parallel;
+    if (max) sessionMax[sessionGroup(s)] = max;
   }
   for (const s of statuses) {
     if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model });
