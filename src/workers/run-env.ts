@@ -343,20 +343,28 @@ export async function loopbackRouterChoice(
 
 /** The probe body, run in a child node so the sync launch path can wait on it. */
 const PROBE_SCRIPT = `
-const c = (e) => { const k = e && e.cause; return (k && (k.code || (k.errors && k.errors[0] && k.errors[0].code))) || (e && e.code) || (e && e.name) || "error"; };
+const c = (e) => (e && (e.code || (e.errors && e.errors[0] && e.errors[0].code) || (e.cause && e.cause.code))) || (e && e.name) || "error";
 const [url, model, ms] = process.argv.slice(1);
-fetch(url + "/v1/messages", {
+const u = new URL(url + "/v1/messages");
+const body = JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "." }] });
+const req = require(u.protocol === "https:" ? "node:https" : "node:http").request(u, {
   method: "POST",
-  headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
-  body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "." }] }),
-  signal: AbortSignal.timeout(Number(ms)),
-}).then(async (r) => {
-  const t = await r.text();
-  let m = t.slice(0, 200);
-  try { m = JSON.parse(t).error.message ?? m; } catch {}
-  console.log(JSON.stringify({ status: r.status, message: m }));
-}, (e) => console.log(JSON.stringify({ code: c(e) })));
+  headers: { "content-type": "application/json", "anthropic-version": "2023-06-01", "content-length": Buffer.byteLength(body) },
+  timeout: Number(ms),
+}, (r) => {
+  let t = "";
+  r.on("data", (d) => { t += d; });
+  r.on("end", () => {
+    let m = t.slice(0, 200);
+    try { m = JSON.parse(t).error.message ?? m; } catch {}
+    console.log(JSON.stringify({ status: r.statusCode, message: m }));
+  });
+});
+req.on("timeout", () => req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
+req.on("error", (e) => console.log(JSON.stringify({ code: c(e) })));
+req.end(body);
 `;
+
 
 const PROBE_TIMEOUT_MS = 3000;
 const PROBE_MODEL = "claude-haiku-4-5";
