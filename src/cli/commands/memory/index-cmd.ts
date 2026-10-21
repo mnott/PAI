@@ -8,6 +8,7 @@ import { dim, bold, ok, err } from "../../lib/utils.js";
 import { PaiClient } from "../../../daemon/ipc-client.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { runEmbed } from "./embed.js";
+import { acquireRun, readRun } from "../../../memory/run-state.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
 
 /**
@@ -62,46 +63,63 @@ export async function memoryIndexCmd(
     return 1;
   }
 
-  if (projectSlug) {
-    const registry = await getRegistryBackend();
-    const project = await registry.getProjectBySlug(projectSlug);
+  const held = readRun();
+  if (held) {
+    console.error(err(`${held.kind} already running (started by ${held.by}, pid ${held.pid})`));
+    process.exitCode = 1;
+    return 1;
+  }
+  const run = acquireRun("index");
+  if (!run) {
+    console.error(err("another memory run just started"));
+    process.exitCode = 1;
+    return 1;
+  }
+  try {
+    if (projectSlug) {
+      const registry = await getRegistryBackend();
+      const project = await registry.getProjectBySlug(projectSlug);
 
-    if (!project || project.status !== "active") {
-      console.error(err(`Project not found or not active: ${projectSlug}`));
-      process.exitCode = 1;
-      return 1;
+      if (!project || project.status !== "active") {
+        console.error(err(`Project not found or not active: ${projectSlug}`));
+        process.exitCode = 1;
+        return 1;
+      }
+
+      console.log(dim(`Indexing ${project.display_name} (${project.slug})...`));
+      const result = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
+
+      console.log(
+        ok(`Done.`) +
+        `  ${bold(String(result.filesProcessed))} files indexed` +
+        `, ${bold(String(result.chunksCreated))} chunks created` +
+        `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
+      );
+
+      if (opts.embed) {
+        await runEmbed(backend, project.id, project.slug);
+      }
+
+    } else if (opts.all || !projectSlug) {
+      console.log(dim("Indexing all active projects..."));
+
+      const { projects, result } = await indexAllProjects(backend);
+
+      console.log(
+        ok(`Done.`) +
+        `  ${bold(String(projects))} projects` +
+        `, ${bold(String(result.filesProcessed))} files indexed` +
+        `, ${bold(String(result.chunksCreated))} chunks created` +
+        `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
+      );
+
+      if (opts.embed) {
+        await runEmbed(backend);
+      }
     }
 
-    console.log(dim(`Indexing ${project.display_name} (${project.slug})...`));
-    const result = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
-
-    console.log(
-      ok(`Done.`) +
-      `  ${bold(String(result.filesProcessed))} files indexed` +
-      `, ${bold(String(result.chunksCreated))} chunks created` +
-      `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
-    );
-
-    if (opts.embed) {
-      await runEmbed(backend, project.id, project.slug);
-    }
-
-  } else if (opts.all || !projectSlug) {
-    console.log(dim("Indexing all active projects..."));
-
-    const { projects, result } = await indexAllProjects(backend);
-
-    console.log(
-      ok(`Done.`) +
-      `  ${bold(String(projects))} projects` +
-      `, ${bold(String(result.filesProcessed))} files indexed` +
-      `, ${bold(String(result.chunksCreated))} chunks created` +
-      `, ${dim(String(result.filesSkipped) + " skipped (unchanged)")}`,
-    );
-
-    if (opts.embed) {
-      await runEmbed(backend);
-    }
+  } finally {
+    run.release();
   }
 
   return 0;

@@ -11,6 +11,7 @@
  * with a job id; the card shows progress from the inventory refresh.
  */
 
+import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
@@ -24,6 +25,9 @@ import { readLocalConfig } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { readLocalStatus } from "../workers/local-status.js";
 import { paiHomeDir } from "../config/pai-home.js";
+import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
+import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
+import { cockpitLayout } from "./cockpit-layout.js";
 import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
@@ -63,6 +67,12 @@ export interface ActionDeps {
   runtimeKinds?: Record<string, string>;
   /** Fresh model-inventory probe written over the 30 s cache; called when a runtime job ends. Default: compute + write. */
   refreshInventory?: (runtime: string) => Promise<void>;
+  /** The running index/embed run (memory-run.json); default read from PAI home. */
+  readRun?: () => RunState | null;
+  /** Why the daemon's own index/embed pass blocks a start, else null; default asks the daemon over IPC. */
+  daemonMemoryBusy?: () => Promise<string | null>;
+  /** Signal a run's process (stop); default process.kill. */
+  killRun?: (pid: number) => void;
 }
 
 /** Everything the handler wires in production; tests replace the whole object. */
@@ -73,6 +83,8 @@ export interface ActionHooks {
   /** runtime start/stop run through this (the CLI `pai models start|stop` and
    *  the cockpit share it); tests inject a fake. */
   runRuntimeJob?: (runtime: string, op: "start" | "stop") => Promise<void | { ok: boolean; message: string }>;
+  /** memory.embed / memory.index run through this (default: the detached CLI, see spawnMemoryRun); tests inject a fake. */
+  runMemoryJob?: (kind: RunKind, jobId: string) => Promise<{ ok: boolean; message: string }>;
 }
 
 export interface ActionResult {
@@ -97,11 +109,13 @@ export function cockpitJobFile(home: string, id: string): string {
 
 export interface LocalJobState {
   id: string;
-  kind: "switch" | "off" | "runtime";
+  kind: "switch" | "off" | "runtime" | "memory";
   tier: string;
   /** the runtime of a "runtime" job (tier stays "") */
   runtime?: string;
   op?: "start" | "stop";
+  /** a "memory" job: which run it started */
+  what?: RunKind;
   state: "running" | "done" | "failed";
   message: string;
   at: string;
@@ -394,6 +408,29 @@ export async function runCockpitAction(
     void finishRuntimeJob(deps, hooks, id, runtime, op);
     return { ok: true, message: `${op === "start" ? "starting" : "stopping"} ${runtime}`, jobId: id };
   }
+  if (action === "memory.embed" || action === "memory.index") {
+    const kind: RunKind = action === "memory.embed" ? "embed" : "index";
+    const refused = await memoryRunRefusal(deps);
+    if (refused) return fail(refused);
+    const id = randomBytes(6).toString("hex");
+    const at = new Date().toISOString();
+    writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: "running", message: kind === "embed" ? "embed backlog" : "index now", at, startedAt: at });
+    writeLedgerLine(deps, action, kind, `job ${id}: started`);
+    void finishMemoryJob(deps, hooks, id, kind);
+    return { ok: true, message: kind === "embed" ? "embedding the backlog" : "indexing", jobId: id };
+  }
+  if (action === "memory.stop") {
+    const run = (deps.readRun ?? (() => readRun(deps.home)))();
+    if (!run) return fail("nothing running");
+    if (run.by === "daemon") return fail(`the ${run.kind} run belongs to the daemon's pass (pid ${run.pid}); it ends at its own budget`);
+    try {
+      (deps.killRun ?? ((pid) => process.kill(pid, "SIGTERM")))(run.pid);
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+    writeLedgerLine(deps, action, run.kind, `pid ${run.pid}: stopping`);
+    return { ok: true, message: `stopping ${run.kind} (re-run to continue)` };
+  }
   if (action === "local.off") {
     const id = randomBytes(6).toString("hex");
     writeJob(deps.home, { id, kind: "off", tier: "", state: "running", message: "stopping local servers", at: new Date().toISOString() });
@@ -491,6 +528,67 @@ export async function runCockpitAction(
     }
   }
   return fail(`unknown action "${action}"`);
+}
+
+/** Why an index/embed run must not start now (the duplicate guard), else null: a run's marker (any starter),
+ *  a cockpit job still starting, or the daemon's own pass. */
+export async function memoryRunRefusal(deps: ActionDeps, nowMs = Date.now()): Promise<string | null> {
+  const run = (deps.readRun ?? (() => readRun(deps.home)))();
+  if (run) return `${run.kind} already running (started by ${run.by}, pid ${run.pid})`;
+  const starting = runningMemoryJob(deps.home, nowMs, cockpitLayout().memoryStartGraceSecs * 1000);
+  if (starting) return `${starting.what ?? "run"} is already starting (job ${starting.id})`;
+  const busy = await (deps.daemonMemoryBusy ?? daemonMemoryBusy)();
+  return busy;
+}
+
+/** The daemon's in-process passes (no child, so no marker): its status says whether one runs. */
+async function daemonMemoryBusy(): Promise<string | null> {
+  try {
+    const { PaiClient } = await import("../daemon/ipc-client.js");
+    const { loadConfig } = await import("../daemon/config.js");
+    const s = await new PaiClient(loadConfig().socketPath).call("status", {}, 5000) as { indexInProgress?: boolean; embedInProgress?: boolean };
+    if (s.embedInProgress) return "embed already running (started by daemon)";
+    if (s.indexInProgress) return "index already running (started by daemon)";
+  } catch {
+    /* daemon down: nothing of its own can be running */
+  }
+  return null;
+}
+
+/** `pai memory embed --all --background` / `pai memory index --direct --background`, detached, output to the run log;
+ *  resolves when it exits. The run marks itself in memory-run.json (by=cockpit through PAI_RUN_BY). */
+export function spawnMemoryRun(kind: RunKind, jobId: string, home: string): Promise<{ ok: boolean; message: string }> {
+  const args = kind === "embed" ? ["memory", "embed", "--all", "--background"] : ["memory", "index", "--direct", "--background"];
+  const log = memoryRunLog(home);
+  mkdirSync(`${home}/state`, { recursive: true });
+  const fd = openSync(log, "w");
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [process.argv[1] ?? "", ...args], {
+      detached: true,
+      stdio: ["ignore", fd, fd],
+      env: { ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId },
+    });
+    closeSync(fd);
+    child.on("error", (e) => resolve({ ok: false, message: `cannot start: ${e.message}` }));
+    child.on("close", (code, signal) => {
+      const tail = logTailSince(log, 0);
+      resolve({ ok: code === 0, message: code === 0 ? tail || `${kind} finished` : `${kind} ended (${code ?? signal})${tail ? ": " + tail : ""}` });
+    });
+    child.unref();
+  });
+}
+
+/** Runs the memory job (hook or the detached CLI), records its outcome in the job file. */
+async function finishMemoryJob(deps: ActionDeps, hooks: ActionHooks, id: string, kind: RunKind): Promise<void> {
+  const run = hooks.runMemoryJob ?? ((k, j) => spawnMemoryRun(k, j, deps.home));
+  let r: { ok: boolean; message: string };
+  try {
+    r = await run(kind, id);
+  } catch (e) {
+    r = { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+  writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: r.ok ? "done" : "failed", message: r.message, at: new Date().toISOString() });
+  writeLedgerLine(deps, kind === "embed" ? "memory.embed" : "memory.index", kind, `job ${id}: ${r.ok ? "done" : "failed: " + r.message}`);
 }
 
 /** Runs the runtime job (hook or configured commands), records its outcome in the job file;

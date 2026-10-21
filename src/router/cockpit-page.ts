@@ -11,6 +11,7 @@ import { shellHead, shellBody } from "./cockpit-page/shell.js";
 import { css } from "./cockpit-page/css.js";
 import { scriptCore } from "./cockpit-page/script-core.js";
 import { scriptModels } from "./cockpit-page/script-models.js";
+import { scriptMemory } from "./cockpit-page/script-memory.js";
 import { scriptCharts } from "./cockpit-page/script-charts.js";
 import { scriptTables } from "./cockpit-page/script-tables.js";
 import { scriptBoot } from "./cockpit-page/script-boot.js";
@@ -39,12 +40,12 @@ function buildHtml(L: CockpitLayout): string {
     if (typeof v !== "string" || !/^#[0-9a-fA-F]{6}$/.test(v)) throw new Error(`cockpit layout: ${JSON.stringify(v)} is not a #rrggbb colour`);
     return JSON.stringify(v);
   };
-  const parts = [shellHead, css, shellBody, scriptCore, scriptModels, scriptCharts, scriptTables, scriptBoot];
+  const parts = [shellHead, css, shellBody, scriptCore, scriptModels, scriptMemory, scriptCharts, scriptTables, scriptBoot];
   return parts.map((p) => p(L, n, q, hex)).join("");
 }
 
 /** Stable ids of the page's top-level sections, in page order (config key router.cockpit.sections). */
-export const COCKPIT_SECTION_IDS = ["cloud", "routing", "workers", "pool", "models", "system", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
+export const COCKPIT_SECTION_IDS = ["cloud", "routing", "workers", "pool", "models", "system", "memory", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
 
 /** The full page: every section, built once at module load from the config defaults. */
 export const COCKPIT_HTML = buildHtml(cockpitLayout());

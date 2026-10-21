@@ -281,6 +281,8 @@ export interface EmbedPassOptions {
   batchSize?: number;
   /** Checked between batches; a string stops the pass (yield) with that reason. */
   shouldYield?: () => string | null;
+  /** Called after every stored batch with the chunks embedded so far. */
+  onProgress?: (embedded: number) => void;
   /** Called once when the loop ends: "done" (backlog slice finished), "budget" or "yielded". */
   onEnd?: (r: { outcome: "done" | "budget" | "yielded"; embedded: number; reason?: string }) => void;
 }
@@ -430,6 +432,7 @@ export async function embedChunksWithBackend(
     }
 
     embedded += batch.length;
+    options?.onProgress?.(embedded);
 
     // Log progress with current file path for context
     const lastChunk = batch[batch.length - 1];

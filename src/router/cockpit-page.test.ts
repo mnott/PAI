@@ -2259,7 +2259,7 @@ describe("cockpit drag-and-drop layout", () => {
   it("the default rows derive from the section order and the span classes: c8+c4 one row, c6+c6 one row, c12 own rows", () => {
     const { a } = api(pageSecs());
     expect(a.PAGE_ROWS).toEqual([
-      ["cloud"], ["routing"], ["workers"], ["pool"], ["models"], ["system"], ["kpis"],
+      ["cloud"], ["routing"], ["workers"], ["pool"], ["models"], ["system"], ["memory"], ["kpis"],
       ["tokens", "cache"], ["speed"], ["pause"], ["sessions"], ["runs", "daily"],
     ]);
   });
@@ -2302,7 +2302,7 @@ describe("cockpit drag-and-drop layout", () => {
     A.saveRows(moved);
     expect(JSON.parse(store["pai.cockpit.layout.v1"])).toEqual(moved);
     A.applyLayout(moved);
-    const tokens = secs[7] as any, cache = secs[8] as any, cloud = secs[0] as any;
+    const tokens = secs[8] as any, cache = secs[9] as any, cloud = secs[0] as any;
     expect(tokens.style.gridColumn).toBe("span 4");
     expect(cache.style.gridColumn).toBe("span 4");
     expect(cloud.style.gridColumn).toBe("span 4");
@@ -2332,15 +2332,15 @@ describe("cockpit drag-and-drop layout", () => {
     // the saved rows first; the sections the save does not know append as own rows
     expect(main.children.slice(0, 2)).toEqual([secs[4], secs[0]]);
     expect((secs[4] as any).style.gridColumn).toBe("span 12");
-    expect(main.children.length).toBe(14);
+    expect(main.children.length).toBe(15);
     A.resetLayout();
     expect(store["pai.cockpit.layout.v1"]).toBeUndefined();
     // the default rows are back: page order, tokens+cache share a row
     expect(main.children[0]).toBe(secs[0]);
-    expect(main.children[12]).toBe(secs[12]);
     expect(main.children[13]).toBe(secs[13]);
-    expect((secs[7] as any).style.gridColumn).toBe("span 6");
+    expect(main.children[14]).toBe(secs[14]);
     expect((secs[8] as any).style.gridColumn).toBe("span 6");
+    expect((secs[9] as any).style.gridColumn).toBe("span 6");
   });
 
   it("a row of 2 at an 822 px main width stays side by side; a row of 3 stacks (minSectionPx 380)", () => {

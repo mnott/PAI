@@ -37,8 +37,7 @@ import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
-import { startLiveDashboard } from "./dashboard-live.js";
-import type { DashboardHandle } from "../dashboard.js";
+import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
 import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
 // ---------------------------------------------------------------------------
@@ -210,7 +209,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
       startIndexScheduler();
 
-      void startLiveDashboard(config).then((h) => { dashboard = h; });
+      void startMemoryStatus(config);
 
       if (backend.supportsPostgresFeatures) {
         startEmbedScheduler();
@@ -241,8 +240,6 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
       process.exit(1);
     });
 
-  let dashboard: DashboardHandle | null = null;
-
   const shutdown = async (signal: string): Promise<void> => {
     process.stderr.write(`\n[pai-daemon] ${signal} received. Stopping.\n`);
 
@@ -254,7 +251,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
     stopWorker();
 
-    dashboard?.stop();
+    stopMemoryStatus();
     server.close();
 
     const SHUTDOWN_TIMEOUT_MS = 10_000;

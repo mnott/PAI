@@ -23,7 +23,7 @@ function makeFakeBackend(rowCount: number) {
 
   let maxRowsInFlight = 0;
 
-  const backend: Pick<StorageBackend, "getUnembeddedChunkIds" | "updateEmbedding" | "getStats" | "getProjectStats"> = {
+  const backend: Pick<StorageBackend, "getUnembeddedChunkIds" | "updateEmbedding" | "getStats" | "getProjectStats" | "countUnembeddedChunks"> = {
     async getUnembeddedChunkIds(_projectId, limit, after) {
       const pending = rows.filter((r) => !r.embedded);
       const start = after ? pending.findIndex((r) => r.id > after.id) : 0;
@@ -35,8 +35,12 @@ function makeFakeBackend(rowCount: number) {
       const row = rows.find((r) => r.id === chunkId);
       if (row) row.embedded = true;
     },
+    async countUnembeddedChunks() {
+      return rows.filter((r) => !r.embedded).length;
+    },
     async getStats() {
-      return { files: 1, chunks: rowCount };
+      // the index holds far more chunks than the backlog: progress must not use this number
+      return { files: 1, chunks: rowCount * 20 };
     },
     async getProjectStats() {
       return { files: 1, chunks: rowCount };
@@ -60,5 +64,42 @@ describe("runEmbed pagination", () => {
 
     expect(rows.every((r) => r.embedded)).toBe(true);
     expect(getMaxRowsInFlight()).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("runEmbed progress and stop", () => {
+  beforeEach(() => {
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  it("counts progress against the backlog at start, not the index's total chunks", async () => {
+    const { backend } = makeFakeBackend(300);
+    const { runEmbed, embedProgressLine } = await import("./embed.js");
+    const lines: string[] = [];
+    (process.stdout.write as unknown as ReturnType<typeof vi.fn>).mockImplementation((s: string) => { lines.push(String(s)); return true; });
+    const seen: Array<{ backlog?: number; done: number[] }> = [{ done: [] }];
+    await runEmbed(backend, undefined, undefined, 50, 100, undefined, {
+      setBacklog: (n) => { seen[0].backlog = n; },
+      progress: (d) => seen[0].done.push(d),
+      release: () => {},
+    });
+    expect(seen[0].backlog).toBe(300);
+    expect(seen[0].done.at(-1)).toBe(300);
+    expect(lines.join("")).toContain("300 / 300 chunks embedded...");
+    expect(lines.join("")).not.toContain("6000");
+    expect(embedProgressLine(14900, 122303)).toBe("14900 / 122303 chunks embedded...");
+  });
+
+  it("stops cleanly between batches when asked, leaving the rest for a re-run", async () => {
+    const { backend, rows } = makeFakeBackend(300);
+    const { runEmbed } = await import("./embed.js");
+    let batches = 0;
+    const r = await runEmbed(backend, undefined, undefined, 50, 100, undefined, undefined, () => ++batches > 2);
+    expect(r.done).toBe(100);
+    expect(rows.filter((x) => !x.embedded)).toHaveLength(200);
+    // a re-run continues where it stopped
+    const again = await runEmbed(backend, undefined, undefined, 50, 100);
+    expect(again.done).toBe(200);
   });
 });

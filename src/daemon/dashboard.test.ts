@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
-import { DashboardState, hostAllowed, indexSegments, startDashboard, type DashboardSource, type PassSnapshot } from "./dashboard.js";
+import { DashboardState, indexSegments, startDashboardState, type DashboardSource, type PassSnapshot } from "./dashboard.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -198,44 +198,13 @@ describe("count cache", () => {
   });
 });
 
-describe("host check", () => {
-  const allowed = ["127.0.0.1", "localhost", "box.tail1234.ts.net", "100.64.0.7"];
-  it.each(["127.0.0.1:8770", "localhost", "LOCALHOST:8770", "box.tail1234.ts.net:8770", "100.64.0.7", "[::1]:8770"])(
-    "allows %s",
-    (h) => expect(hostAllowed(h, [...allowed, "::1"])).toBe(true),
-  );
-  it.each([undefined, "", "evil.example", "evil.example:8770", "127.0.0.1.evil.example", "box.tail1234.ts.net.evil.example", "100.64.0.8"])(
-    "denies %s",
-    (h) => expect(hostAllowed(h, allowed)).toBe(false),
-  );
-});
-
-describe("server", () => {
-  let stop: (() => void) | undefined;
-  afterEach(() => stop?.());
-
-  it("serves status and page, 403 on a foreign Host, 405 on POST", async () => {
-    const h = await startDashboard({ enabled: true, port: 0, bind: "127.0.0.1" }, source(), { extraHosts: [] });
-    stop = h.stop;
-    const addr = h.server.address() as { port: number };
-    const base = `http://127.0.0.1:${addr.port}`;
-
-    const api = await fetch(`${base}/api/status`);
-    expect(api.status).toBe(200);
-    expect((await api.json()).daemon.pid).toBe(42);
-
-    const page = await fetch(`${base}/`);
-    expect(page.headers.get("content-type")).toContain("text/html");
-    expect(await page.text()).toContain("/api/status");
-
-    // fetch forbids overriding Host, so use a raw request.
-    const { request } = await import("node:http");
-    const code = await new Promise<number>((resolve) => {
-      request({ port: addr.port, host: "127.0.0.1", path: "/api/status", headers: { host: "evil.example" } }, (r) => { r.resume(); resolve(r.statusCode ?? 0); }).end();
-    });
-    expect(code).toBe(403);
-
-    expect((await fetch(`${base}/api/status`, { method: "POST" })).status).toBe(405);
+describe("sampling", () => {
+  it("takes the first sample before startDashboardState resolves, and stops its timer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dash-"));
+    const h = await startDashboardState(source(), { historyPath: join(dir, "h.json") });
+    expect(h.state.status().index).toMatchObject({ files: 10, chunks: 100 });
+    h.stop();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

@@ -132,11 +132,6 @@ sessions:
     minContextTokens: 20000
     # The exact word typed into the session.
     prompt: keepalive
-# Read-only status dashboard.
-dashboard:
-  enabled: true
-  port: 8770
-  bind: 127.0.0.1
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:
@@ -298,6 +293,14 @@ router:
       hitBad: 0.5
       errorWarn: 0.02
       errorBad: 0.1
+      # Memory section: title, refresh interval (ms), embedding coverage ratios
+      # (below Warn amber, below Bad red), seconds a started run may take to
+      # show its progress before the card stops reading "starting".
+      memoryTitle: Memory
+      memoryPollMs: 5000
+      memoryCoverageWarn: 0.99
+      memoryCoverageBad: 0.5
+      memoryStartGraceSecs: 120
     probe:
       # a local server whose TCP connect or /v1/models answer times out is busy, not down;
       # it turns down after this many consecutive timeouts (refused / not serving = down at once)
