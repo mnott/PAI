@@ -397,7 +397,7 @@ function modelsHtml(inv){
     metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · slots "+lv.conversationSlots:"")+" · spares "+(lv&&lv.sparesReady?lv.sparesReady:0),
      series:[{data:h.queued||[]}]})+
     metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",
-     sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
+     sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"this engine does not report prompt reuse",
      fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
      series:[{data:h.reusedPct||[]}]})+'</div>';
    var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+(x.session&&x.session!=="?"?' <b>'+esc(x.session)+'</b>':"")+(x.state==="queued"?' <span class="warn">queued</span>':x.state==="running"?' <span class="dim">running</span>':"")+'</span>'}).join("");

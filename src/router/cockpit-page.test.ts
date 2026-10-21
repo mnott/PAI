@@ -920,7 +920,7 @@ describe("cockpit Models cards", () => {
     const ollama = h.slice(h.indexOf('<b title="huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16">PAI memory embeddings</b>'), h.indexOf('<b title="qwen3:8b">'));
     for (const t of ["Speed", "Memory", "Workers", "Conversation cache"]) expect(ollama).toContain(t);
     expect(ollama).toContain("–");
-    expect(ollama).toContain("prompt reuse not reported");
+    expect(ollama).toContain("this engine does not report prompt reuse");
     expect(ollama).toContain("spares 0");
   });
   it("sparklines never break: a null point is interpolated between neighbours into one continuous line; leading/trailing nulls drop", () => {
