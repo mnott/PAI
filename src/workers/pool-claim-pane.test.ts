@@ -86,6 +86,47 @@ describe("a claimed spare under the pane rule", () => {
     void loadStatus;
   });
 
+  it("a pane failure posts no task: skipped with reason 'pane failed'", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
+    let posted = 0;
+    const port = await new Promise<number>((resolve) => {
+      const server = createServer((req, res) => {
+        posted++;
+        req.on("data", () => undefined);
+        req.on("end", () => res.end(JSON.stringify({ pooled: true, rc: 0 })));
+      });
+      servers.push(server);
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    const a = args(d, port, "w-pf") as { paneOpening?: Promise<void>; spareMiss?: string };
+    a.paneOpening = Promise.reject(new Error("pane could not be opened: boom"));
+    expect(await tryPoolRun(a as never)).toBeNull();
+    expect(posted).toBe(0);
+    expect(a.spareMiss).toBe("pane failed");
+    const ledger = readFileSync(join(d, "ledger.log"), "utf8");
+    expect(ledger).toContain("WORKER-POOL-SKIP");
+    expect(ledger).toContain("pane failed");
+  });
+
+  it("the claim is posted only after the pane exists", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
+    const order: string[] = [];
+    const a = args(d, 0, "w-po") as { paneOpening?: Promise<void> };
+    a.paneOpening = new Promise<void>((r) => setTimeout(() => { order.push("pane"); r(); }, 300));
+    const port = await new Promise<number>((resolve) => {
+      const server = createServer((req, res) => {
+        order.push("claim");
+        req.on("data", () => undefined);
+        req.on("end", () => res.end(JSON.stringify({ pooled: false, reason: "no-spare" })));
+      });
+      servers.push(server);
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port));
+    });
+    (a as never as { config: { pool: { port: number } } }).config.pool.port = port;
+    await tryPoolRun(a as never);
+    expect(order).toEqual(["pane", "claim"]);
+  });
+
   it("a miss leaves the pane for the fresh spawn", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
     const started: StartSpec[] = [];
