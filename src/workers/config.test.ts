@@ -423,3 +423,14 @@ describe("workers.supervision.push", () => {
     expect(() => parseWorkersConfig({ supervision: { stallMinutes: 0 } })).toThrow(/stallMinutes/);
   });
 });
+
+describe("workers.proxy.port", () => {
+  it("defaults to 8797 from the shipped defaults", () => {
+    expect(defaultWorkersConfig().proxy.port).toBe(8797);
+  });
+  it("accepts a configured port and rejects a bad one", () => {
+    const base = { providers: { example: GLM } } as Record<string, unknown>;
+    expect(parseWorkersConfig({ ...base, proxy: { port: 9100 } }).proxy.port).toBe(9100);
+    expect(() => parseWorkersConfig({ ...base, proxy: { port: 70000 } })).toThrow(/proxy\.port/);
+  });
+});
