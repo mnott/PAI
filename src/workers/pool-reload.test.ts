@@ -15,7 +15,6 @@ import { buildPoolPanel } from "../router/pool-panel.js";
 
 const config = (): WorkersConfig => ({
   ...defaultWorkersConfig(),
-  caveman: false,
   pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 0, native: true, spares: 0, idleKillSec: 0, continuation: true },
   providers: { fakeprov: { enabled: true, protocol: "anthropic", baseUrl: "https://example.invalid", keyFile: null, models: { default: "m1" }, env: {} } },
 });

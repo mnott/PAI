@@ -25,7 +25,6 @@ vi.mock("./pane.js", async (importOriginal) => {
 const provider: WorkerProvider = { enabled: true, protocol: "anthropic", baseUrl: "https://example.invalid", keyFile: null, models: { default: "m1" }, env: {} };
 const config = (): WorkersConfig => ({
   ...defaultWorkersConfig(),
-  caveman: false,
   pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 0, native: true, spares: 1, idleKillSec: 1800, continuation: false },
   providers: { fakeprov: provider },
 });

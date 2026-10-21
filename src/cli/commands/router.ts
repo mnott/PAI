@@ -1,5 +1,5 @@
 /**
- * `pai router start|stop|status|run|stats` — local model router on port 8790.
+ * `pai router start|stop|status|run|stats` — local model router on router.port.
  * See src/router/router.ts. Names, flags and stdout match the old CLI.
  */
 
@@ -8,7 +8,7 @@ import http from "node:http";
 import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
-import { routerHandler, ROUTER_PORT } from "../../router/router.js";
+import { routerHandler, routerPort } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
 import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler } from "../../router/cockpit.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
@@ -33,14 +33,14 @@ const out = (s: string) => void process.stdout.write(s + "\n");
 const startCommand: CommandDef = {
   name: "start",
   summary: "Start the router in the background",
-  description: "Starts the local model router (127.0.0.1:8790). If it is already running, says so and does nothing.",
+  description: "Starts the local model router (127.0.0.1:<router.port>). If it is already running, says so and does nothing.",
   examples: ["pai router start", "pai router status"],
   seeAlso: ["pai router stop", "pai router status"],
   run() {
     const pid = routerRunningPid();
     if (pid) return void out(ok(`router already running (pid ${pid})`));
     const started = spawnRouter(process.argv[1]!);
-    out(ok(`router starting on 127.0.0.1:${ROUTER_PORT} (pid ${started}), log ${routerLogFile()}`));
+    out(ok(`router starting on 127.0.0.1:${routerPort()} (pid ${started}), log ${routerLogFile()}`));
   },
 };
 
@@ -73,7 +73,7 @@ const statusCommand: CommandDef = {
     const pid = routerRunningPid();
     const managed = loadConfig().router.enabled;
     const note = managed ? "daemon-managed: restarted if down" : "not daemon-managed (router.enabled is false)";
-    out(pid ? ok(`router running (pid ${pid}, port ${ROUTER_PORT}); ${note}`) : dim(`router not running; ${note}`));
+    out(pid ? ok(`router running (pid ${pid}, port ${routerPort()}); ${note}`) : dim(`router not running; ${note}`));
   },
 };
 
@@ -84,7 +84,7 @@ const runCommand: CommandDef = {
     "Runs the router in this terminal until you press Ctrl-C. `pai router start` uses this to run it in the background.\n" +
     "A port other than the default never touches the pid file.",
   options: [
-    { name: "port", type: "string", value: "PORT", default: String(ROUTER_PORT), summary: "Port to listen on" },
+    { name: "port", type: "string", value: "PORT", default: String(routerPort()), summary: "Port to listen on" },
     { name: "usage-file", type: "string", value: "PATH", summary: "Read the cockpit's accounting from this file and record nothing (second instances)" },
     { name: "wait-bind", type: "string", value: "SECONDS", summary: "Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`)" },
   ],
@@ -93,7 +93,7 @@ const runCommand: CommandDef = {
   run(ctx) {
     const port = Number(ctx.opts.port);
     const usageFile = ctx.opts["usage-file"] as string | undefined;
-    const managed = port === ROUTER_PORT;
+    const managed = port === routerPort();
     // router.bind: "loopback" (default) | "tailscale" | an explicit IPv4; 0.0.0.0 is never accepted.
     const bindName = loadConfig().router.bind ?? "loopback";
     const addr = resolveBindAddress(bindName);
@@ -228,7 +228,7 @@ const restartCommand: CommandDef = {
       oldPid: routerRunningPid() ?? undefined,
       spawnNew: () => spawnRouter(process.argv[1]!, ["--wait-bind", "10"]),
       signalOld: (pid) => process.kill(pid, "SIGTERM"),
-      isUp: () => probeRouter(ROUTER_PORT, 500)
+      isUp: () => probeRouter(routerPort(), 500)
     });
     out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms)`));
   },
@@ -262,7 +262,7 @@ const statsCommand: CommandDef = {
 export const routerCommand: CommandDef = {
   name: "router",
   summary: "Local model router: start, stop, restart, status, run, stats",
-  description: `A local router on 127.0.0.1:${ROUTER_PORT}: set ANTHROPIC_BASE_URL to it and /model picks the provider.`,
+  description: `A local router on 127.0.0.1:${routerPort()}: set ANTHROPIC_BASE_URL to it and /model picks the provider.`,
   examples: ["pai router status", "pai router stats --since 1d"],
   seeAlso: ["pai worker policy", "pai providers"],
   subcommands: [startCommand, stopCommand, restartCommand, statusCommand, runCommand, statsCommand],

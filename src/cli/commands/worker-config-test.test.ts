@@ -148,7 +148,7 @@ describe("providers test anthropic probes the local claude CLI", () => {
         ? { rc: 0, stdout: "claude 9.9.9", stderr: "" }
         : { rc: 0, stdout: '{"type":"result","result":"pong"}', stderr: "" }
     );
-    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, { run });
     expect(r.ok).toBe(true);
     expect(r.skipped).toBeUndefined();
     expect(r.result).toBe("pong");
@@ -161,7 +161,7 @@ describe("providers test anthropic probes the local claude CLI", () => {
 
   it("not installed: claude --version fails, nothing else is probed", async () => {
     const run = vi.fn(async (_argv: string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) => ({ rc: 127, stdout: "", stderr: "" }));
-    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, { run });
     expect(r.ok).toBe(false);
     expect(r.skipped).toBe("claude CLI not installed");
     expect(r.result).toContain("install Claude Code");
@@ -172,7 +172,7 @@ describe("providers test anthropic probes the local claude CLI", () => {
     const run = vi.fn(async (argv: string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) =>
       argv[1] === "--version" ? { rc: 0, stdout: "claude 9.9.9", stderr: "" } : { rc: 1, stdout: "", stderr: "Not logged in" }
     );
-    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, { run });
     expect(r.ok).toBe(false);
     expect(r.skipped).toBe("claude not logged in");
     expect(r.result).toContain("claude");
@@ -185,7 +185,7 @@ describe("providers test anthropic probes the local claude CLI", () => {
         ? { rc: 0, stdout: "claude 9.9.9", stderr: "" }
         : { rc: 0, stdout: '{"type":"result","result":"[2026-10-21 03:26] pong"}', stderr: "" }
     );
-    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, { run });
     expect(r.ok).toBe(true);
     expect(r.result).toBe("[2026-10-21 03:26] pong");
   });
@@ -194,7 +194,7 @@ describe("providers test anthropic probes the local claude CLI", () => {
     const run = vi.fn(async (argv: string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) =>
       argv[1] === "--version" ? { rc: 0, stdout: "claude 9.9.9", stderr: "" } : { rc: 1, stdout: "", stderr: "network unreachable" }
     );
-    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, { run });
     expect(r.ok).toBe(false);
     expect(r.skipped).toBe("probe failed: network unreachable");
   });
