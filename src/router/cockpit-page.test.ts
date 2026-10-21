@@ -143,9 +143,11 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     expect(html).toContain('<td data-l="last">1m</td>');
   });
 
-  it("the stacked-card CSS lets a cell shrink: min-width:0 on cells, an inner span ellipsises below the phone breakpoint", () => {
-    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{[^]*\.tw th,\.tw td\{[^}]*min-width:0[^}]*\}/);
-    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{[^]*\.tw td>span\{min-width:0;overflow:hidden;text-overflow:ellipsis\}/);
+  it("the stacked-card CSS lets a cell shrink: min-width:0 on cells, an inner span ellipsises in a .stacked table; the label never wraps", () => {
+    expect(COCKPIT_HTML).toMatch(/\.tw\.stacked th,\.tw\.stacked td\{[^}]*min-width:0[^}]*\}/);
+    expect(COCKPIT_HTML).toMatch(/\.tw\.stacked td>span\{min-width:0;overflow:hidden;text-overflow:ellipsis\}/);
+    expect(COCKPIT_HTML).toMatch(/\.tw\.stacked td::before\{[^}]*white-space:nowrap;flex:none;align-self:flex-start\}/);
+    expect(COCKPIT_HTML).not.toMatch(/@container\s*\(max-width:400px\)\{\.tw/);
   });
 
   /** The page's CSS rules with their enclosing media range: {sel, decls, maxW}. */
@@ -175,20 +177,8 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
       .filter((r) => (r.maxW === Infinity ? true : r.maxW >= width) && r.sel.split(",").map((s) => s.trim()).includes(sel))
       .map((r) => r.decls)
       .join(";");
-  /** The declarations a selector gets from the phone (max-width) rules only.
-   *  The media query is one brace block, so cssRules cannot see inside it: match
-   *  the rule blocks directly against the media body. */
-  const phoneDecls = (sel: string): string => {
-    const css = COCKPIT_HTML.match(/<style>([\s\S]*?)<\/style>/)![1];
-    const marker = "@media(max-width:480px){.tw{";
-    const at = css.indexOf(marker);
-    const body = at < 0 ? "" : css.slice(at + marker.length, css.indexOf("\n", at));
-    const out: string[] = [];
-    for (const m of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      if (m[1].split(",").map((s) => s.trim()).includes(sel)) out.push(m[2]);
-    }
-    return out.join(";");
-  };
+  /** The declarations a selector gets in a stacked table (the rules keyed on .tw.stacked). */
+  const phoneDecls = (sel: string): string => appliedDecls(sel.replace(".tw ", ".tw.stacked "), 375);
   /** The used width of an inline-block span: min(max-width, containing-block width),
    *  the shrink-to-fit rule a browser applies at this width. */
   const usedSpanWidth = (sel: string, width: number, containerWidth: number): number => {
@@ -215,7 +205,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     expect(usedSpanWidth("#sessions td:first-child span[title]", 375, cardW)).toBeLessThanOrEqual(cardW);
     // the cell can shrink in the stacked phone layout (min-width:0)
     expect(appliedDecls("#sessions td:first-child", 375)).toContain("min-width:0");
-    expect(appliedDecls(".tw td", 375)).toContain("min-width:0");
+    expect(appliedDecls(".tw.stacked td", 375)).toContain("min-width:0");
   });
 
   /** The used width of a block row inside the stacked table at a viewport width:
@@ -242,14 +232,14 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     // the harness: viewport 375 px, card inside main (card padding 10 px each side)
     const cardW = 375 - 20;
     // tbody must not stay a table-row-group: that wraps in an anonymous table box sized to the widest content
-    expect(appliedDecls(".tw tbody", 375)).toContain("display:block");
-    expect(appliedDecls(".tw tbody", 375)).toContain("max-width:100%");
-    expect(appliedDecls(".tw tr", 375)).toContain("display:block");
-    expect(appliedDecls(".tw tr", 375)).toContain("max-width:100%");
-    expect(appliedDecls(".tw td", 375)).toContain("max-width:100%");
+    expect(appliedDecls(".tw.stacked tbody", 375)).toContain("display:block");
+    expect(appliedDecls(".tw.stacked tbody", 375)).toContain("max-width:100%");
+    expect(appliedDecls(".tw.stacked tr", 375)).toContain("display:block");
+    expect(appliedDecls(".tw.stacked tr", 375)).toContain("max-width:100%");
+    expect(appliedDecls(".tw.stacked td", 375)).toContain("max-width:100%");
     // a row with the 90-char name sizes to the card, not to its content
-    expect(usedRowWidth(".tw tbody", 375, cardW)).toBeLessThanOrEqual(cardW);
-    expect(usedRowWidth(".tw tr", 375, cardW)).toBeLessThanOrEqual(cardW);
+    expect(usedRowWidth(".tw.stacked tbody", 375, cardW)).toBeLessThanOrEqual(cardW);
+    expect(usedRowWidth(".tw.stacked tr", 375, cardW)).toBeLessThanOrEqual(cardW);
     // desktop (non-stacked) layout untouched: the phone rules don't apply at 900 px,
     // and the base rules carry no display override (tbody stays table-row-group there)
     expect(phoneDecls(".tw tbody")).toContain("display:block");
@@ -267,7 +257,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
       return i < 0 ? "" : COCKPIT_HTML.slice(i, COCKPIT_HTML.indexOf("\n", i));
     };
     const pauseLine = lineOf('setHtml($("pause")');
-    const sessLine = lineOf(" setHtml(el,'<style>");
+    const sessLine = lineOf(" setHtml(el,table([\"session .txt\"");
     expect(pauseLine).not.toBe("");
     expect(sessLine).not.toBe("");
     expect(pauseLine).toContain("table(");
@@ -2364,8 +2354,8 @@ describe("cockpit drag-and-drop layout", () => {
     expect(COCKPIT_HTML).toContain("section[data-section].stacked{grid-column:span 12!important}");
     expect(COCKPIT_HTML).toContain("MINSEC=380");
     // the live main width drives it: ResizeObserver on main, else a resize listener
-    expect(COCKPIT_HTML).toContain('new ResizeObserver(function(){stackRows()}).observe(document.querySelector("main"))');
-    expect(COCKPIT_HTML).toContain('window.addEventListener("resize",stackRows)');
+    expect(COCKPIT_HTML).toContain('new ResizeObserver(function(){stackRows();fitTables()}).observe(document.querySelector("main"))');
+    expect(COCKPIT_HTML).toContain('window.addEventListener("resize",function(){stackRows();fitTables()})');
   });
 
   it("unknown names in the saved layout are dropped, new sections append as own rows", () => {
@@ -2932,7 +2922,7 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(html).toContain('<td data-l="session">alpha</td>');
     expect(html).toContain('<td data-l="req">3</td>');
     // the box never scrolls sideways: no overflow-x rule, no sticky column, cells wrap
-    expect(COCKPIT_HTML).toMatch(/\.tw\{max-width:100%;container-type:inline-size\}/); // the box is a size container: a half-width card stacks its rows via @container
+    expect(COCKPIT_HTML).toMatch(/\.tw\{max-width:100%\}/); // the box stacks via .stacked, set by fitTables from a measurement
     expect(COCKPIT_HTML).not.toMatch(/\.tw\{overflow-x:auto\}/);
     expect(COCKPIT_HTML).not.toContain("scrollbar-color:var(--dim) var(--card)");
     expect(COCKPIT_HTML).not.toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky/);
@@ -2948,14 +2938,10 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     // order don't matter — the behaviour is what counts, not the spelling.
     // the header block and the table block share this breakpoint in separate media rules;
     // take the one containing the .tw rules
-    const phone = [...COCKPIT_HTML.matchAll(/@media\(max-width:480px\)\{([\s\S]*?)\}(?=\n|$)/g)].map((m) => m[1]).find((b) => b.includes(".tw"));
-    expect(phone).toBeDefined();
-    const decl = (sel: string) =>
-      [...phone!.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => m[1].split(",").some((s) => s.trim() === sel));
-    expect(decl(".tw tbody").some((m) => /display:\s*block/.test(m[2]))).toBe(true);
-    expect(decl(".tw thead").some((m) => /display:\s*none/.test(m[2]))).toBe(true);
-    expect(decl(".tw tr:first-child").some((m) => /display:\s*none/.test(m[2]))).toBe(true);
-    expect(COCKPIT_HTML).toMatch(/\.tw td::before\{content:attr\(data-l\)/);
+    const decl = (sel: string) => [...COCKPIT_HTML.matchAll(/(?:^|\n|\})([^{}\n]+)\{([^}]*)\}/g)].filter((m) => m[1].split(",").some((x) => x.trim() === `.tw.stacked ${sel}`)).map((m) => m[2]);
+    expect(decl("tbody").some((m) => /display:\s*block/.test(m))).toBe(true);
+    expect(decl("thead").some((m) => /display:\s*none/.test(m))).toBe(true);
+    expect(COCKPIT_HTML).toMatch(/\.tw\.stacked td::before\{content:attr\(data-l\)/);
   });
 
   /** table() with the page's esc: the helper (one line per statement) cut from the page source. */
