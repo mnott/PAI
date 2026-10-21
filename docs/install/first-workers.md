@@ -16,9 +16,11 @@ pai worker providers test NAME  # sends one word, prints the reply and the time
 pai worker config check         # validates workers.yaml, names file and line on error
 ```
 
+`pai worker providers test` without a NAME tests what routing would use for a worker now (the t2 row's first available entry, else the active provider). `pai worker providers test anthropic` checks the built-in provider: the local `claude` CLI is installed and logged in — no API key is sent or needed.
+
 OpenAI-style APIs use `--protocol openai --upstream-url URL`. `pai worker providers use NAME` makes it the active provider (where `pai new` starts and where new workers go by default); `disable NAME` takes it out of automatic routing. The file is `pai worker config path`.
 
-If the test fails: check the key file and URL, then `pai worker providers disable NAME` until fixed.
+If the test fails: check the key file and URL, then `pai worker providers disable NAME` until fixed; for `anthropic`, run `claude` once and log in.
 
 ## 2. Check the delegation table
 

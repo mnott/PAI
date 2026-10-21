@@ -77,7 +77,7 @@ pai worker config check
 
 `pai worker providers use NAME` makes it the active one. A provider with an OpenAI-style API takes `--protocol openai --upstream-url URL` instead of `--url`.
 
-Verify: `pai worker providers test NAME` prints a reply, and `pai worker config check` exits 0. If the test fails, check the key file and URL with the user; `pai worker providers disable NAME` takes a broken provider out of routing.
+Verify: `pai worker providers test` (no name: it tests what routing would use for a worker now) prints a reply, and `pai worker config check` exits 0. If the test fails, check the key file and URL with the user; `pai worker providers disable NAME` takes a broken provider out of routing.
 
 ## 6. Delegation table
 
@@ -137,7 +137,7 @@ Report each line as pass or fail with the command output:
 2. `pai --version` works
 3. `pai daemon status` says running
 4. `pai memory search "test"` runs without error
-5. `pai worker providers` lists a provider; if you added one in phase 5, `pai worker providers test NAME` answers (the built-in `anthropic` provider has nothing to test: `claude --version` and a logged-in `claude` cover it)
+5. `pai worker providers test` answers: without a name it tests the provider routing would use now, and `pai worker providers test anthropic` probes the local `claude` CLI (installed, logged in — no API key involved)
 6. `pai worker config check` exits 0
 7. `pai worker route` shows a model on every tier
 8. `pai router status` running and the cockpit page loads (if phase 7 was done)
