@@ -198,6 +198,11 @@ export function classifyToolError(r: ToolErrorRecord): Classification {
   return RULES.find((x) => x.test(r))?.c ?? { cls: "unknown", hint: "unclassified" };
 }
 
+/** Raw texts of the records that may count as a harness fault: what the model asked for outside its grant (cls model) never does. */
+export function harnessToolErrorTexts(records: ToolErrorRecord[]): string[] {
+  return records.filter((r) => classifyToolError(r).cls !== "model").map((r) => r.raw);
+}
+
 export function toolErrorsPath(logDir: string): string {
   return join(logDir, TOOL_ERRORS_FILE);
 }
