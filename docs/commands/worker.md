@@ -982,24 +982,24 @@ See also: `pai worker providers enable`
 
 #### pai worker providers test
 
-Send one word through a provider to check it answers
+Check a provider answers — without a name, what workers would use now
 
 ```
 pai worker providers test [NAME]
 ```
 
-Sends a tiny prompt and prints the reply and the time it took. Exits 1 if the provider does not answer. Without a name it tests the active provider.
+With a NAME, sends a tiny prompt through that provider and prints the reply and the time it took; exits 1 if it does not answer. Without a NAME it tests the provider routing would use for a worker now: the t2 tier's first available entry, else the active provider. The built-in `anthropic` provider is Claude Code's own login: it probes the local `claude` CLI (installed and logged in) and never needs an API key.
 
 | Argument | Required | Description |
 |---|---|---|
-| `NAME` | no | Provider to test (default: the active one) |
+| `NAME` | no | Provider to test (default: what routing would use now) |
 
 ```sh
 pai worker providers test
 pai worker providers test glm
 ```
 
-See also: `pai worker providers list`
+See also: `pai worker providers list`, `pai worker route`
 
 #### pai worker providers cap
 

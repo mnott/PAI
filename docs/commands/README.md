@@ -254,7 +254,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai providers enable` | Turn a provider on (also clears its cooldown) |
 | `pai providers remove` | Remove a provider and the classes pointing at it |
-| `pai providers test` | Send one word through a provider to check it answers |
+| `pai providers test` | Check a provider answers — without a name, what workers would use now |
 | `pai providers update` | Change a provider's cost tier and tags |
 | `pai providers use` | Make a provider the active one |
 | `pai queue` | Queue small changes, run them on a local worker, review in a batch |
@@ -396,7 +396,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker providers enable` | Turn a provider on (also clears its cooldown) |
 | `pai worker providers list` | List providers, their models and whether workers are on |
 | `pai worker providers remove` | Remove a provider and the classes pointing at it |
-| `pai worker providers test` | Send one word through a provider to check it answers |
+| `pai worker providers test` | Check a provider answers — without a name, what workers would use now |
 | `pai worker providers update` | Change a provider's cost tier and tags |
 | `pai worker providers use` | Make a provider the active one |
 | `pai worker proxy` | The local proxy for OpenAI-style providers |
