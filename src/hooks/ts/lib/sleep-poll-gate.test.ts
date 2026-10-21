@@ -53,7 +53,7 @@ describe("sleep-poll gate", () => {
 
   it("worker session (PAI_WORKER=1): deny reason points at a foreground timeout and a kill -0 loop instead", () => {
     const out = decisionOf(bash("sleep 590"), { PAI_WORKER: "1" });
-    expect(out.permissionDecisionReason).toContain("pai worker wait-on $(cat /tmp/job.pid)");
+    expect(out.permissionDecisionReason).toContain("pai worker wait-on $(cat $TMPDIR/job.pid)");
     expect(out.permissionDecisionReason).not.toContain("run_in_background: true");
   });
 

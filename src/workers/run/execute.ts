@@ -4,6 +4,7 @@
  * existing import path keeps working.
  */
 
+import { applyScratchEnv } from "../scratch.js";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { openSync, closeSync, writeSync } from "node:fs";
@@ -183,6 +184,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     }
   }
   env.PAI_WORKER_ID = wid;
+  applyScratchEnv(env, logDir, wid);
   // codex takes instructions through the prompt, not a system prompt flag
   const prompt =
     (a.limit ? deadlinePromptLine(a.limit) + "\n\n" : "") +

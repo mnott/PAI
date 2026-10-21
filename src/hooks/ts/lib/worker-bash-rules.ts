@@ -242,3 +242,24 @@ export function maskedProofReason(command: string): string | null {
   }
   return null;
 }
+
+const SHARED_TMP = /^(?:\/private)?\/tmp\/(?!claude-)[^/\s]/;
+const INTERPRETERS = new Set(["python", "python3", "node", "tsx", "sh", "bash", "zsh", "ruby", "perl"]);
+export const TMP_SCRATCH_REASON = 'literal /tmp/<name> is shared by every concurrent worker (another worker\'s file of that name runs in your tree): use "$TMPDIR/<name>", which is private to this worker';
+
+/** Reason when a command writes (`>`, `>>`, tee, cp/mv target) or runs (python3/node/sh/bash <file>) a literal fixed /tmp path. Reading, /tmp/claude-*, and $TMPDIR paths pass. */
+export function tmpScratchReason(command: string): string | null {
+  for (const { words, redirects } of parseCommand(command)) {
+    if (redirects.some((r) => SHARED_TMP.test(r))) return TMP_SCRATCH_REASON;
+    const args = words.slice(1).filter((w) => !w.startsWith("-"));
+    const cmd = words[0];
+    if ((cmd === "bash" || cmd === "sh" || cmd === "zsh") && words[1] === "-c" && words[2]) {
+      const inner = tmpScratchReason(words[2]);
+      if (inner) return inner;
+    }
+    if (cmd === "tee" && args.some((w) => SHARED_TMP.test(w))) return TMP_SCRATCH_REASON;
+    if ((cmd === "cp" || cmd === "mv") && args.length > 0 && SHARED_TMP.test(args[args.length - 1])) return TMP_SCRATCH_REASON;
+    if (INTERPRETERS.has(cmd) && args.length > 0 && SHARED_TMP.test(args[0])) return TMP_SCRATCH_REASON;
+  }
+  return null;
+}

@@ -96,7 +96,7 @@ const ALLOW: [string, ReturnType<typeof bash>, WorkerGuardContext][] = [
   ["ln -s inside worktree", bash("ln -s ../node_modules/x lib/x"), wtCtx()],
   ["ln -s absolute inside worktree", bash(`ln -s ${WT}/a b`), wtCtx()],
   ["cp -R within worktree", bash("cp -R src /work/wt/abc/tmp/src2"), wtCtx()],
-  ["cp -r subdir to /tmp", bash("cp -r src /tmp/src"), wtCtx()],
+  ["cp -r subdir to /tmp", bash("cp -r src /tmp/claude-1/src"), wtCtx()],
   ["git status/diff/log", bash("git status && git diff --stat | head && git log -3"), wtCtx()],
   ["git add + commit", bash(`git add -A && git commit -m "fix: mention git push and git stash"`), wtCtx()],
   ["git reset in worktree", bash("git reset --hard HEAD~1"), wtCtx()],

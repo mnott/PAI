@@ -1,8 +1,8 @@
 /**
  * wait-on.ts — bounded wait for a detached job, the worker alternative to a
  * long blocking foreground call (which starves operator messages and
- * supervision). Recipe: `nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid`,
- * then `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until exit 0.
+ * supervision). Recipe: `nohup sh -c 'CMD; echo $? > $TMPDIR/job.rc' > $TMPDIR/job.log 2>&1 & echo $! > $TMPDIR/job.pid`,
+ * then `pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log` until exit 0.
  *
  * Exit codes: 0 pid gone, 3 still running at --max, 2 pid never existed or not ours,
  * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes); a silent tree that is busy
@@ -316,8 +316,8 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
 
 /** The documented long-job recipe, quoted by the worker contract and every deny message. */
 export const WAIT_RECIPE =
-  "`nohup sh -c 'CMD; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid`, then repeat " +
-  "`pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` (each call returns within 2 min; do other work between calls) until it exits 0";
+  "`nohup sh -c 'CMD; echo $? > $TMPDIR/job.rc' > $TMPDIR/job.log 2>&1 & echo $! > $TMPDIR/job.pid`, then repeat " +
+  "`pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log` (each call returns within 2 min; do other work between calls) until it exits 0";
 
 /** One line naming the bounded wait for each thing a worker can wait on; quoted by the contract and the tier-2 advice. */
 export const WAIT_VERBS =

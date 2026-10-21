@@ -31,7 +31,7 @@ describe("block-sleep-poll", () => {
     const out = runHook("sleep 590", {}, { PAI_WORKER: "1" });
     const parsed = JSON.parse(out).hookSpecificOutput;
     expect(parsed.permissionDecision).toBe("deny");
-    expect(parsed.permissionDecisionReason).toContain("pai worker wait-on $(cat /tmp/job.pid)");
+    expect(parsed.permissionDecisionReason).toContain("pai worker wait-on $(cat $TMPDIR/job.pid)");
   });
 
   it("allows a short sleep (prints nothing)", () => {

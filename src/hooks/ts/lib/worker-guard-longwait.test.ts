@@ -14,7 +14,7 @@ const WORKER = { PAI_WORKER: "1" };
 const run = (command: string, timeout?: number, env: Record<string, string> = WORKER) =>
   decideWorkerGuard({ tool_name: "Bash", tool_input: { command, timeout } }, env, () => ctx);
 
-const RECIPE = "nohup sh -c 'timeout 590 make; sleep 300; echo $? > /tmp/job.rc' > /tmp/job.log 2>&1 & echo $! > /tmp/job.pid";
+const RECIPE = "nohup sh -c 'timeout 590 make; sleep 300; echo $? > $TMPDIR/job.rc' > $TMPDIR/job.log 2>&1 & echo $! > $TMPDIR/job.pid";
 
 describe("long foreground waits", () => {
   it.each([
@@ -28,7 +28,7 @@ describe("long foreground waits", () => {
     const d = run(cmd, to);
     expect(d.decision).toBe("deny");
     const reason = (d as { reason: string }).reason;
-    expect(reason).toContain("pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log");
+    expect(reason).toContain("pai worker wait-on $(cat $TMPDIR/job.pid) --log $TMPDIR/job.log");
     expect(reason).toContain("block operator messages and supervision");
   });
 
