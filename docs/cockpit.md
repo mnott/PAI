@@ -118,7 +118,7 @@ What is stored where:
 | Where | What |
 |---|---|
 | Browser (local storage) | Section arrangement, tile order, folded sections and cards, model colours, the weighted/raw choice, the window, the theme |
-| Config | `router.cockpit.sections`, `router.cockpit.layout.*`, `models.labels`, `models.runtimes` |
+| Config | `router.cockpit.sections`, `router.cockpit.layout.*`, `router.cockpit.probe.*`, `models.labels`, `models.runtimes` |
 
 Nothing about your arrangement is sent to the server, so a different browser starts from the default. The default derives from the section order and each section's width, unless `router.cockpit.layout.rows` names an arrangement.
 
@@ -184,3 +184,12 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `errorWarn`, `errorBad` | 0.02, 0.1 | An error rate at/above the bad ratio colours red, at/above the warn ratio amber (totals strip, provider err%) |
 
 The sampler behind the Models tiles is `router.samples` (`sampleMs`, `historyLen`, `engineStatusTimeoutMs`, `cardReadingMaxAgeMs`), also in the shipped defaults.
+
+### Probe keys
+
+`router.cockpit.probe` holds the local-server probe policy, read when the router polls its limits.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `timeoutStrikes` | 3 | A local server whose TCP connect or `/v1/models` answer times out is busy, not down; it turns down after this many consecutive timeouts (refused / not serving = down at once) |
+| `tcpTimeoutMs` | 3000 | TCP connect timeout of the local-server probe |

@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import net from "node:net";
 import { vi } from "vitest";
 import {
@@ -26,6 +26,7 @@ import {
 } from "./limits.js";
 import type { WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
+import { parse } from "yaml";
 
 describe("modelServed", () => {
   it("decides by served model id, not by the shared port", () => {
@@ -310,7 +311,7 @@ describe("local server up/down and prefix cache", () => {
   });
 
   describe("busy is not down; down says why", () => {
-    const stub = (tcp: "open" | "refused" | "timeout", served: { alive: boolean; timeout?: boolean; ids?: string[] }) => ({ probes: { tcp: async () => tcp, served: async () => served } });
+    const stub = (tcp: "open" | "refused" | "timeout", served: { alive: boolean; timeout?: boolean; ids?: string[] }) => ({ probes: { tcp: async () => tcp, served: async () => served }, timeoutStrikes: undefined as number | undefined });
     const run = (n: string, o: ReturnType<typeof stub>) => localLimits(n, local(9), [], Date.now(), undefined, o);
 
     it("a slow answer after a known-up state stays up, no downReason", async () => {
@@ -347,6 +348,19 @@ describe("local server up/down and prefix cache", () => {
       expect(g.map((x) => x.up)).toEqual([true, true, false]);
       expect(g[2]!.downReason).toBe("probe timeout");
     });
+    it("timeoutStrikes 1 via opts turns a known-up server down after one timeout", async () => {
+      const t = stub("open", { alive: false, timeout: true });
+      await run("busy-h", stub("open", { alive: true, ids: ["m-served"] }));
+      const r = await run("busy-h", { ...t, timeoutStrikes: 1 });
+      expect([r.up, r.downReason]).toEqual([false, "probe timeout"]);
+    });
+  });
+
+  it("defaults config carries router.cockpit.probe.timeoutStrikes = 3", () => {
+    const cfg = parse(readFileSync(resolve(__dirname, "..", "config", "defaults", "config.yaml"), "utf8")) as {
+      router: { cockpit: { probe: { timeoutStrikes: number } } };
+    };
+    expect(cfg.router.cockpit.probe.timeoutStrikes).toBe(3);
   });
 
   it("AcceptingButNotServingIsDown: a socket holder (launchd-style) that accepts and drops the connection is not a running server", async () => {

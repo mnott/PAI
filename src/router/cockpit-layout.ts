@@ -13,23 +13,25 @@
 import { paiConfigFilePath } from "../daemon/config.js";
 import { effectiveMainConfig } from "../config/shipped-defaults.js";
 
-/** The `router.cockpit.layout` subtree of the effective main config; {} when unreadable. */
-function layoutSection(): Record<string, unknown> {
+/** The `router.cockpit` subtree of the effective main config; {} when unreadable. */
+function cockpitSection(): Record<string, unknown> {
   try {
     const r = effectiveMainConfig(paiConfigFilePath()).router;
     const c =
       typeof r === "object" && r !== null && !Array.isArray(r)
         ? (r as Record<string, unknown>).cockpit
         : undefined;
-    const l =
-      typeof c === "object" && c !== null && !Array.isArray(c)
-        ? (c as Record<string, unknown>).layout
-        : undefined;
-    return typeof l === "object" && l !== null && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
+    return typeof c === "object" && c !== null && !Array.isArray(c) ? (c as Record<string, unknown>) : {};
   } catch {
     // a damaged user config must not blank the page: the shipped defaults stand alone
     return {};
   }
+}
+
+/** The `router.cockpit.layout` subtree; {} when absent. */
+function layoutSection(): Record<string, unknown> {
+  const l = cockpitSection().layout;
+  return typeof l === "object" && l !== null && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
 }
 
 /** A positive number from the config subtree, else the shipped fallback. */
@@ -251,6 +253,31 @@ export interface CockpitLayout {
   /** an error rate at/above errorBad reads red, at/above errorWarn amber (ratios 0..1). */
   errorWarn: number;
   errorBad: number;
+}
+
+/** The shipped probe fallbacks, kept only for when the defaults file is missing a key. */
+const SHIPPED_PROBE = {
+  timeoutStrikes: 3,
+  tcpTimeoutMs: 3000,
+} as const;
+
+/** The local-server probe policy (`router.cockpit.probe`), read where the router builds its limits. */
+export interface CockpitProbe {
+  /** consecutive probe timeouts after which a local server is shown down. */
+  timeoutStrikes: number;
+  /** TCP connect timeout of the local-server probe (ms). */
+  tcpTimeoutMs: number;
+}
+
+export function cockpitProbeSettings(): CockpitProbe {
+  const s = (() => {
+    const p = cockpitSection().probe;
+    return typeof p === "object" && p !== null && !Array.isArray(p) ? (p as Record<string, unknown>) : {};
+  })();
+  return {
+    timeoutStrikes: num(s, "timeoutStrikes", SHIPPED_PROBE.timeoutStrikes),
+    tcpTimeoutMs: num(s, "tcpTimeoutMs", SHIPPED_PROBE.tcpTimeoutMs),
+  };
 }
 
 export function cockpitLayout(): CockpitLayout {

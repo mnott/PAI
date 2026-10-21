@@ -19,6 +19,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
+import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
@@ -455,19 +456,21 @@ async function providerPlanLimits(name: string, p: WorkerProvider, now: number, 
 /** TCP connect: accepted, refused/reset, or no answer within the timeout (a server too busy to accept is slow, not gone). */
 export type TcpProbe = "open" | "refused" | "timeout";
 
-function probeTcp(port: number, host: string): Promise<TcpProbe> {
+/** TCP connect timeout of the cockpit's local probe; the accept queue of a server at full load is slow.
+ *  Shipped fallback only — the live value is `router.cockpit.probe.tcpTimeoutMs`. */
+export const TCP_TIMEOUT_MS = 3000;
+/** Consecutive probe timeouts after which a local server is shown down; fewer keep the last known state.
+ *  Shipped fallback only — the live value is `router.cockpit.probe.timeoutStrikes`. */
+export const PROBE_TIMEOUT_STRIKES = 3;
+
+function probeTcp(port: number, host: string, timeoutMs: number = TCP_TIMEOUT_MS): Promise<TcpProbe> {
   return new Promise((resolve) => {
-    const s = net.connect({ port, host, timeout: TCP_TIMEOUT_MS });
+    const s = net.connect({ port, host, timeout: timeoutMs });
     s.on("connect", () => (s.destroy(), resolve("open")));
     s.on("timeout", () => (s.destroy(), resolve("timeout")));
     s.on("error", () => resolve("refused"));
   });
 }
-
-/** TCP connect timeout of the cockpit's local probe; the accept queue of a server at full load is slow. */
-export const TCP_TIMEOUT_MS = 3000;
-/** Consecutive probe timeouts after which a local server is shown down; fewer keep the last known state. */
-export const PROBE_TIMEOUT_STRIKES = 3;
 
 /** Why a local server is shown down. */
 export type DownReason = "not listening" | "no HTTP answer" | "model not served" | "probe timeout";
@@ -501,11 +504,11 @@ export async function localLimits(
   rows: UsageRow[],
   now: number,
   background?: (stats: Promise<PrefixCacheStats | undefined>) => void,
-  opts: { probes?: LocalProbes; timeoutStrikes?: number } = {}
+  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number } = {}
 ): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
-  const probes = opts.probes ?? { tcp: probeTcp, served: servedModels };
+  const probes = opts.probes ?? { tcp: (port, host) => probeTcp(port, host, opts.tcpTimeoutMs ?? TCP_TIMEOUT_MS), served: servedModels };
   const strikesToDown = opts.timeoutStrikes ?? PROBE_TIMEOUT_STRIKES;
   const endpoint = `${u.hostname}:${port}`;
   const stateKey = `${name}@${endpoint}`;
@@ -664,6 +667,8 @@ export interface LimitsDeps {
   gate?: Backoff;
   /** Replaces the anthropic keychain + https fetch (tests). */
   fetchAnthropic?: () => Promise<string>;
+  /** Local probe policy (router.cockpit.probe); defaults to the shipped values. */
+  probe?: { timeoutStrikes?: number; tcpTimeoutMs?: number };
 }
 
 /**
@@ -780,7 +785,7 @@ export class LimitsCache {
             const done = pending.then((stats) => this.prefixArrived(name, stats, now));
             this.pendingPrefix.add(done);
             void done.finally(() => this.pendingPrefix.delete(done));
-          })
+          }, this.deps.probe ?? {})
         );
       }
       else if (p.usage) plan(name, (lg) => providerPlanLimits(name, p, now, lg));
