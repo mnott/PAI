@@ -47,9 +47,9 @@ export type WinTypeDef = {
  *  - minimize: Win.toggleMin(id) / the – + button; the card shows only its header (HEAD_H), the body
  *    is display:none but its state is kept; saved (debounced 150 ms, one write) with the layout. */
 const WIN_CARD_BODY_JS = String.raw`var Win=(function(){
-var HEAD_H=28,SAVE_MS=150;
+var HEAD_H=28,SAVE_MS=150,FIT_MAX=360;
 var TYPES={group:{accepts:["*"],minW:220,minH:HEAD_H+40,defaultH:300}};
-var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null};
+var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null,auto:false,fit:{},fitT:0};
 function registerType(name,def){TYPES[name]=def||{}}
 function el(tag,cls){var e=document.createElement(tag);if(cls)e.className=cls;return e}
 function mkCtx(c){
@@ -158,7 +158,55 @@ function paintMin(c){
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
-function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;return W.cfg}
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.fit=W.auto?W.fit:undefined;return W.cfg}
+/** Auto layout (no saved layout, no user move yet): a default card is as tall as its content. The content height of a card is
+ *  its lowest leaf element, measured here; layout() (cfg.fit) turns the readings into band and card heights. A type that
+ *  draws at the body size (it has resize) or a group has no reading and keeps its default height. */
+function fitEligible(c){
+ return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&!(TYPES[c.type]||{}).resize&&c.el.style.display!=="none"&&c.body.clientWidth>0;
+}
+/** Content height of every eligible card at once: each card is squeezed to its header (the body box is 0 high), where the
+ *  body's scrollHeight is its content; heights and scroll offsets are put back before anything paints. */
+function fitReadAll(){
+ var out={},list=[],i,c;
+ for(i=0;i<W.order.length;i++){c=W.cards[W.order[i]];if(c&&fitEligible(c))list.push(c)}
+ var h=[],t=[];
+ for(i=0;i<list.length;i++){h.push(list[i].el.style.height);t.push(list[i].body.scrollTop);list[i].el.style.height=HEAD_H+"px"}
+ for(i=0;i<list.length;i++)out[list[i].id]=list[i].body.scrollHeight>0?Math.min(FIT_MAX,Math.ceil(list[i].body.scrollHeight)+8+HEAD_H):null;
+ for(i=0;i<list.length;i++){list[i].el.style.height=h[i];list[i].body.scrollTop=t[i]}
+ return out;
+}
+function refit(){
+ W.fitT=0;
+ if(!W.auto||!W.main)return;
+ var changed=false,id,all=fitReadAll();
+ for(id in W.cards){
+  var v=all[id];
+  if(v===undefined||v===null){if(W.fit[id]!==undefined){delete W.fit[id];changed=true}continue}
+  if(W.fit[id]===undefined||Math.abs(W.fit[id]-v)>=2){W.fit[id]=v;changed=true}
+ }
+ if(changed)relayout();
+}
+function scheduleFit(){
+ if(!W.auto||W.fitT)return;
+ W.fitT=1;if(typeof Promise!=="undefined")Promise.resolve().then(refit);else setTimeout(refit,0);
+}
+/** The first user move leaves auto layout: the heights on screen become the saved band px and group weights. */
+function freeze(){
+ if(!W.auto)return;
+ W.auto=false;
+ function bake(n,root){
+  if(n.k!=="s")return;
+  var i;
+  if(n.d==="c")for(i=0;i<n.ch.length;i++){
+   var e=winGExt(n.ch[i],W.rects);
+   if(e&&e.y1>e.y0)n.sz[i]=e.y1-e.y0;
+  }
+  for(i=0;i<n.ch.length;i++)bake(n.ch[i],false);
+ }
+ bake(W.tree,true);
+ for(var g in W.kids)if(W.kids[g]&&W.kids[g].k)bake(W.kids[g],false);
+}
 /** One feed payload into one card: a spec's view(payload, ctx) turns it into the data its (generic) type draws
  *  (null = nothing to draw); a type marked viewed draws nothing for a spec without a view. */
 function feedCard(c,payload){
@@ -192,6 +240,7 @@ function relayout(){
  var r=layout(W.tree,W.kids,{w:w},layState(),cfgOf());
  W.main.style.height=r.height+"px";
  W.rects=r.rects;
+ scheduleFit();
  for(var i=0;i<W.order.length;i++){
   var c=W.cards[W.order[i]],rect=r.rects[c.id];
   if(!rect){c.el.style.display="none";continue}
@@ -284,7 +333,7 @@ function save(){
   var now=W.opts.now||Date.now(),st={},id;
   for(id in W.st)st[id]=W.st[id];
   for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}
-  saveWin(W.opts.storage,W.tree,W.kids,st);
+  saveWin(W.opts.storage,W.tree,W.kids,st,W.auto);
  },SAVE_MS);
 }
 function toggleMin(id){
@@ -304,6 +353,7 @@ function update(feed,payload){
   feedCard(c,payload);
   paintActions(c);n++;
  }
+ if(n)scheduleFit();
  return n;
 }
 /** Tree reading order, so Tab order = DOM order; a group's kids live inside its body. */
@@ -324,10 +374,17 @@ function init(main,defaults,opts){
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];
  var specs=defaults.cards||[],known=[],i;
  for(i=0;i<specs.length;i++){W.cards[specs[i].id]=buildCard(specs[i]);known.push(specs[i].id)}
+ var hadSaved=false;
+ try{var sv=parseWin(W.opts.storage.getItem(WIN_KEY));hadSaved=!!sv&&sv.auto!==1}catch(e){}
  var l=loadWin(W.opts.storage,defaults,known,W.opts.now);
+ W.auto=!hadSaved&&!opts.noFit;
  W.tree=l.tree;W.kids=l.kids;W.st=l.st;
  main.classList.add("win");
  if(!main.__winGut){main.__winGut=1;gutterWire()}
+ if(!main.__winFreeze){main.__winFreeze=1;
+  var fz=function(e){var t=e.target&&e.target.closest?e.target.closest(".cgrip,.wgutter"):null;if(t)freeze()};
+  document.addEventListener("pointerdown",fz,true);document.addEventListener("keydown",fz,true);
+ }
  if(typeof winInfoWire==="function"&&!main.__winInfo){main.__winInfo=1;winInfoWire(document,window)}
  // the cards present in the loaded tree, in reading order; the rest are not drawn
  var drawn={},ord=[];
@@ -336,6 +393,8 @@ function init(main,defaults,opts){
  for(var id in W.cards)if(!all[id]){var inKids=false;for(var g in W.kids)if(ids(W.kids[g]).indexOf(id)>=0)inKids=true;if(!inKids){delete W.cards[id]}}
  attach(main,W.tree);
  relayout();
+ // any content write (feed, action status, a section's own paint) re-reads the content heights; style writes are not observed
+ if(typeof MutationObserver!=="undefined"&&!main.__winMo){main.__winMo=1;new MutationObserver(scheduleFit).observe(main,{childList:true,subtree:true,characterData:true})}
  if(typeof ResizeObserver!=="undefined"){
   var ro=new ResizeObserver(sync);
   ro.observe(main);W.ro=ro;
@@ -371,11 +430,11 @@ function hide(id,on){W.hide=W.hide||{};if(!!W.hide[id]===!!on)return;W.hide[id]=
 var api={init:init,addCards:addCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
- state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},
+ state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},fit:function(){return W.fit},auto:function(){return W.auto},
  cfg:cfgOf,announce:announce,layState:layState,
  /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
  apply:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
- flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}saveWin(W.opts.storage,W.tree,W.kids,st)}}};
+ flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
 return api;
 })();
 `;

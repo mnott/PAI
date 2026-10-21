@@ -79,6 +79,32 @@ function winNeed(node,w,st,cfg,kids){
  }
  return Math.max(sum,need)+(vis.length-1)*gap;
 }
+/** Content-driven height (auto layout only: cfg.fit = {id: card px} measured by the runtime): a card its measured height, a
+ *  group HEAD_H plus its kids, a row the tallest child, a column the sum. null when any card in it has no reading (keep the default). */
+function winFit(node,w,st,cfg,kids){
+ var i,vis=[],k;
+ for(i=0;i<(node.ch||[]).length;i++)if(!winGhost(st,node.ch[i].id))vis.push(i);
+ if(node.k==="c"){
+  if(winGhost(st,node.id))return 0;
+  if(winMin(st,node.id))return cfg.HEAD_H;
+  var kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
+  if(kt){k=winFit(kt,w,st,cfg,kids);return k===null?null:cfg.HEAD_H+k}
+  if(winPx(st,node.id)!==null)return null;
+  var v=cfg.fit[node.id];
+  return v===undefined?null:Math.max(v,winNeed(node,w,st,cfg,kids));
+ }
+ var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,r=0,sum=0;
+ for(i=0;i<vis.length;i++)t+=node.sz[vis[i]]||0;
+ if(t<=0)t=1;
+ var wide=node.d==="r";
+ if(wide)for(i=0;i<vis.length;i++)if((node.sz[vis[i]]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
+ for(i=0;i<vis.length;i++){
+  k=winFit(node.ch[vis[i]],node.d==="r"&&wide?(node.sz[vis[i]]||0)/t*total:w,st,cfg,kids);
+  if(k===null)return null;
+  r=Math.max(r,k);sum+=k;
+ }
+ return node.d==="r"&&wide?r:sum+(vis.length-1)*gap;
+}
 /** Lay out one split into pieces {n,x,y,w,h}. bounded: the container has a fixed h. */
 function winSplit(node,box,bounded,st,cfg,kids){
  var n=node.ch.length,i,out=[];
@@ -123,10 +149,21 @@ function winSplit(node,box,bounded,st,cfg,kids){
    if(winMin(st,node.ch[vis[i]].id))m+=cfg.HEAD_H;else t2+=node.sz[vis[i]]||0;
   }
   var avail=rest-m;if(avail<0)avail=0;
+  // auto layout: every card takes its content height when they all fit the box; else the weights
+  var fh=null;
+  if(cfg.fit){
+   var fs=[],fsum=0;
+   for(i=0;i<vis.length&&fs;i++){
+    var fv=winMin(st,node.ch[vis[i]].id)?0:winFit(node.ch[vis[i]],box.w,st,cfg,kids);
+    if(fv===null)fs=null;else{fs.push(fv);fsum+=fv}
+   }
+   if(fs&&fsum<=avail+0.5)fh=fs;
+  }
   var y2=0;
   for(i=0;i<vis.length;i++){
    var c2=node.ch[vis[i]],h2;
    if(winMin(st,c2.id))h2=cfg.HEAD_H;
+   else if(fh)h2=fh[i];
    else h2=t2>0?(node.sz[vis[i]]||0)/t2*avail:avail/Math.max(1,vis.length);
    out.push({n:c2,x:0,y:y2,w:box.w,h:h2});
    y2+=h2+gap;
@@ -140,6 +177,8 @@ function winSplit(node,box,bounded,st,cfg,kids){
   var sz=node.sz[si]||0;si++;
   if(winGhost(st,node.ch[i].id))continue;
   var c3=node.ch[i];
+  // auto layout: a default band shrinks to its content (never above its default px, never below its types' minH)
+  if(cfg.fit){var fb=winFit(c3,box.w,st,cfg,kids);if(fb!==null)sz=Math.max(fb,winNeed(c3,box.w,st,cfg,kids))}
   var h3;
   if(c3.k==="s"){
    var allMin=true,any=false;

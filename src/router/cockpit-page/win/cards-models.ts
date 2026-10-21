@@ -212,7 +212,7 @@ Win.registerType("model",{minW:300,minH:90,defaultH:120,
    if(d.__h!==h){d.innerHTML=h;d.__h=h}
   });
  }});
-Win.registerType("eplist",{minW:260,minH:60,defaultH:90,
+Win.registerType("eplist",{minW:260,minH:44,defaultH:90,
  mount:function(ctx){
   ctx.body.innerHTML='<div class="wmd-e" style="padding:6px 10px"><div data-k="rows"></div><div class="dim" data-k="none"></div></div>';
   ctx.body.addEventListener("click",function(ev){

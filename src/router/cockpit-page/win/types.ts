@@ -15,14 +15,14 @@ export const WIN_TYPES_JS = String.raw`function winDrawCommon(ctx,d){
  if(d.after)d.after(ctx);
 }
 function winSpecMount(ctx){if(ctx.spec&&ctx.spec.mount)ctx.spec.mount(ctx)}
-Win.registerType("kv",{minW:150,minH:96,defaultH:96,viewed:true,
+Win.registerType("kv",{minW:150,minH:80,defaultH:96,viewed:true,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><b class="wm-v" data-k="v"></b><span class="wm-s" data-k="s"></span></div>';winSpecMount(ctx)},
  update:function(ctx,d){
   ctx.html("v",d.v);ctx.html("s",d.s);
   if("t" in d)ctx.attr("s","title",d.t);
   winDrawCommon(ctx,d);
  }});
-Win.registerType("table",{minW:300,minH:80,defaultH:160,viewed:true,
+Win.registerType("table",{minW:300,minH:56,defaultH:160,viewed:true,
  resize:function(ctx,w,h){if(ctx.spec&&ctx.spec.resize)ctx.spec.resize(ctx,w,h)},
  mount:function(ctx){ctx.body.innerHTML='<div class="tw" data-k="t"></div>';winSpecMount(ctx)},
  update:function(ctx,d){
@@ -46,7 +46,7 @@ Win.registerType("list",{minW:200,minH:60,defaultH:90,viewed:true,
   else ctx.html("l",d.html);
   winDrawCommon(ctx,{status:d.status,after:d.after});
  }});
-var WIN_METRIC={minW:110,minH:96,defaultH:96,viewed:true,
+var WIN_METRIC={minW:110,minH:76,defaultH:96,viewed:true,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><div class="wm-sp" data-k="spark"></div><b class="wm-v" data-k="v"></b><small class="wm-u" data-k="u"></small><span class="wm-s" data-k="s"></span><div class="wm-x" data-k="x" style="font-size:11px;overflow:auto"></div></div>';winSpecMount(ctx)},
  update:function(ctx,d){
   if("v" in d)ctx.text("v",d.v);
@@ -59,5 +59,5 @@ var WIN_METRIC={minW:110,minH:96,defaultH:96,viewed:true,
  }};
 Win.registerType("metric",WIN_METRIC);
 /** metricm: the same card for the memory group, whose sub lines wrap to three rows. */
-Win.registerType("metricm",Object.assign({},WIN_METRIC,{minH:140,defaultH:140}));
+Win.registerType("metricm",Object.assign({},WIN_METRIC,{minH:90,defaultH:140}));
 `;

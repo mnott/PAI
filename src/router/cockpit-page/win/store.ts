@@ -224,8 +224,11 @@ function reconcileSaved(saved,defaults,knownIds,now){
  return{tree:tree,kids:kids,st:st};
 }
 /** One write, whole object, debounced by the caller (spec 6). */
-function saveWin(storage,tree,kids,st){
- try{storage.setItem(WIN_KEY,JSON.stringify({v:LAYOUT_V,tree:tree,kids:kids||{},st:st||{}}))}catch(e){}
+function saveWin(storage,tree,kids,st,auto){
+ var o={v:LAYOUT_V,tree:tree,kids:kids||{},st:st||{}};
+ // auto: the sizes are still the defaults (heights follow the content); a layout saved without it holds the user's sizes
+ if(auto)o.auto=1;
+ try{storage.setItem(WIN_KEY,JSON.stringify(o))}catch(e){}
 }
 /** Reset: the defaults, fresh state (minimized state resets too, spec 6). */
 function resetWin(defaults){return defaultsOf(defaults)}

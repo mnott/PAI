@@ -28,7 +28,7 @@ function limServerHtml(l){
  var s=l.starting,failed=s.state==="failed";
  return'<div class="phead"><span class="'+(failed?"bad":"warn")+'" title="'+esc(s.log)+'">'+(failed?esc(s.message):"starting · loading "+s.sinceSec+" s")+'</span></div>';
 }
-Win.registerType("server",{minW:180,minH:130,defaultH:130,
+Win.registerType("server",{minW:180,minH:96,defaultH:130,
  mount:function(ctx){ctx.body.innerHTML='<div class="wr" data-k="b"></div>'},
  update:function(ctx,d){
   if(!d||!d.limits)return;
@@ -39,7 +39,7 @@ Win.registerType("server",{minW:180,minH:130,defaultH:130,
   var al=l.served&&l.served.length&&ringName(String(l.served[0]))!==shortModel(String(l.served[0]))?ringName(String(l.served[0])):"";
   ctx.title(al||l.provider);
  }});
-Win.registerType("provider",{minW:200,minH:160,defaultH:160,
+Win.registerType("provider",{minW:200,minH:140,defaultH:160,
  mount:function(ctx){ctx.body.innerHTML='<div class="gauges" data-k="g"></div>'},
  update:function(ctx,d){
   if(!d||!d.limits)return;
