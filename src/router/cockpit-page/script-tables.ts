@@ -59,8 +59,18 @@ function localDetail(prov,pc,tot,age){
 }
 /** One box for every table: a wide table scrolls inside .tw (theme-coloured thin
  *  scrollbar, sticky first column); below the phone breakpoint CSS turns each row
- *  into a stacked card — the column label rides on each cell as data-l. */
-function table(head,rows,tips){return'<div class="tw"><table><thead><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+rows.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'}
+ *  into a stacked card — the column label rides on each cell as data-l.
+ *  A column empty in every row is not rendered at all (header, cells, stacked label):
+ *  it only wastes width, and only when rows exist to judge by. EMPTY_CELL is the
+ *  technical set of placeholders the renderers emit for "no value" — "" and whitespace,
+ *  "-", the dim "-" placeholder, the dim ellipsis placeholder, the dim n/a. */
+function table(head,rows,tips){
+ var EMPTY_CELL=["","-",'<span class="dim">-</span>','<span class="dim">…</span>','<span class="dim">n/a</span>'];
+ var keep=rows.length?head.map(function(h,i){return !rows.every(function(r){return EMPTY_CELL.indexOf(String(r[i]==null?"":r[i]).trim())>=0})}):head.map(function(){return true});
+ var head2=head.filter(function(h,i){return keep[i]});
+ var row2=rows.map(function(r){var out=[];head.forEach(function(h,i){if(keep[i])out.push(r[i])});return out});
+ return'<div class="tw"><table><thead><tr>'+head2.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+row2.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head2[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'
+}
 /** Verdict colour by prefix: ok* green, failed red, "report flagged" and an escalated hand-off amber, the rest dim.
  *  A missing verdict is dim, never a crash. One helper for both verdict tables. */
 function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v).indexOf("failed")===0?"bad":String(v).indexOf("report flagged")>=0||String(v).indexOf("escalated")===0||String(v).indexOf("handed to session")===0?"warn":"dim"}
