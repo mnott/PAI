@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
  * environment-dependent too).
  */
 
-vi.mock("../../../workers/config.js", () => ({
+vi.mock("../../../workers/config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../workers/config.js")>()),
   readWorkersSection: () => ({ workers: { mcpSets: {} } }),
 }));
 vi.mock("../../../workers/mcp.js", () => ({
