@@ -8,9 +8,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 const savedHome = process.env.HOME;
 const savedPaiHome = process.env.PAI_HOME;
@@ -88,9 +88,10 @@ function testDeps(tmp: string, calls: Record<string, string[]>, failJob = false)
     localStatus: { at: new Date().toISOString(), running: { provider: "local30", model: "qwen3-coder", why: "" }, down: [], disabled: [] },
     tiers: ["small", "big"],
     runtimeCommands: { ollama: { start: "ollama serve", stop: "kill", ready: "http://127.0.0.1:11434/api/tags" } },
+    refreshInventory: async (rt: string) => void calls.refresh?.push(rt),
   } as never;
 }
-const emptyCalls = () => ({ startTier: [] as string[], stopAll: [] as string[], setClass: [] as string[], setLabel: [] as string[], unsetLabel: [] as string[], runtime: [] as string[] });
+const emptyCalls = () => ({ startTier: [] as string[], stopAll: [] as string[], setClass: [] as string[], setLabel: [] as string[], unsetLabel: [] as string[], runtime: [] as string[], refresh: [] as string[] });
 
 describe("cockpit actions", () => {
   it("local.switch answers at once with a job id, runs the code path, writes the ledger", async () => {
@@ -209,7 +210,9 @@ describe("cockpit actions", () => {
       ...d,
       runtimeOps: {
         runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; },
-        getUrl: async () => true,
+        spawnDetached: (cmd: string) => { calls.runtime!.push(cmd); return { exit: new Promise<{ code: number | null }>(() => {}) }; },
+        // down at the duplicate guard, up once the command ran
+        getUrl: async () => calls.runtime!.length > 0,
         runCmd: async () => 0,
         now: () => 0,
         sleep: async () => undefined,
@@ -227,12 +230,36 @@ describe("cockpit actions", () => {
     expect(lines.some((l) => l.event === "COCKPIT-ACTION" && l.fields.action === "runtime" && l.fields.target === "ollama:start")).toBe(true);
   });
 
+  it("the default action deps' home is the PAI home resolver's absolute path, never a literal ~", async () => {
+    const { defaultDeps } = await import("./cockpit-actions.js");
+    const { paiHomeDir } = await import("../config/pai-home.js");
+    const home = defaultDeps().home;
+    expect(home).toBe(paiHomeDir());
+    expect(isAbsolute(home)).toBe(true);
+    expect(home).not.toContain("~");
+  });
+
+  it("a failed runtime start ends its job failed with the runner's message", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const real = {
+      ...(testDeps(tmp, calls) as Record<string, unknown>),
+      runtimeOps: { runShell: async () => ({ code: 0 }), spawnDetached: () => ({ exit: Promise.resolve({ code: 7 }) }), getUrl: async () => false, runCmd: async () => 1, now: () => 0, sleep: async () => undefined },
+      runtimeCommands: { srv: { start: "serve", ready: "http://127.0.0.1:1/h" } },
+    } as never;
+    const r = await runCockpitAction({ action: "runtime", target: "srv", value: "start" }, real);
+    await new Promise((res) => setTimeout(res, 50));
+    const job = readCockpitJob(tmp, r.jobId!)!;
+    expect(job.state).toBe("failed");
+    expect(job.message).toContain("exited (7)");
+  });
+
   it("runtime stop on a configured runtime runs its stop command; an unconfigured runtime or op refuses", async () => {
     const tmp = newDir();
     const calls = emptyCalls();
     const real = {
       ...(testDeps(tmp, calls) as Record<string, unknown>),
-      runtimeOps: { runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; }, getUrl: async () => true, runCmd: async () => 0, now: () => 0, sleep: async () => undefined },
+      runtimeOps: { runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; }, spawnDetached: () => ({ exit: new Promise<{ code: number | null }>(() => {}) }), getUrl: async () => true, runCmd: async () => 0, now: () => 0, sleep: async () => undefined },
     } as never;
     const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, real);
     expect(r.ok).toBe(true);
@@ -383,6 +410,146 @@ describe("cockpit action endpoint", () => {
     } finally {
       srv.close();
       setActionHooks({});
+    }
+  });
+});
+
+describe("runtime duplicate guard, progress and fresh inventory", () => {
+  const sleep50 = () => new Promise((res) => setTimeout(res, 50));
+  const ops = (over: Record<string, unknown> = {}) => ({
+    runShell: async () => ({ code: 0 }),
+    spawnDetached: () => ({ exit: new Promise<{ code: number | null }>(() => {}) }),
+    getUrl: async () => false,
+    runCmd: async () => 1,
+    now: () => 0,
+    sleep: async () => undefined,
+    ...over,
+  });
+  const withOps = (tmp: string, calls: ReturnType<typeof emptyCalls>, o: Record<string, unknown>, hooks?: Record<string, unknown>) =>
+    ({ ...(testDeps(tmp, calls) as Record<string, unknown>), runtimeOps: ops(o) }) as never;
+
+  it("a start is refused with 'already running' while the runtime's ready answers, and spawns nothing", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const spawned: string[] = [];
+    const deps = withOps(tmp, calls, { getUrl: async () => true, spawnDetached: (c: string) => (spawned.push(c), { exit: new Promise(() => {}) }) });
+    const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("already running");
+    expect(r.jobId).toBeUndefined();
+    expect(spawned).toEqual([]);
+  });
+
+  it("the CLI path (runtimeStartStop) shares the same guard", async () => {
+    const { runtimeStartStop } = await import("./cockpit-actions.js");
+    const tmp = newDir();
+    const r = await runtimeStartStop("ollama", "start", withOps(tmp, emptyCalls(), { getUrl: async () => true }));
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("already running");
+  });
+
+  it("a second start while a start job runs is refused with the job id; a second stop with 'already stopping'", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const deps = withOps(tmp, calls, {});
+    const hang = { runRuntimeJob: () => new Promise<never>(() => {}) };
+    const first = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps, hang);
+    expect(first.ok).toBe(true);
+    const second = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps, hang);
+    expect(second.ok).toBe(false);
+    expect(second.message).toContain(`already starting (job ${first.jobId})`);
+    const stop1 = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, deps, hang);
+    expect(stop1.ok).toBe(true);
+    const stop2 = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, deps, hang);
+    expect(stop2.ok).toBe(false);
+    expect(stop2.message).toContain("already stopping");
+  });
+
+  it("a finished start job no longer blocks a start", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const deps = withOps(tmp, calls, {});
+    const first = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps, { runRuntimeJob: async () => ({ ok: true, message: "up" }) });
+    await sleep50();
+    expect(readCockpitJob(tmp, first.jobId!)!.state).toBe("done");
+    const again = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps, { runRuntimeJob: async () => ({ ok: true, message: "up" }) });
+    expect(again.ok).toBe(true);
+  });
+
+  it("a fresh inventory probe of the runtime is requested when the job ends, before the job reads done", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    let stateAtRefresh = "";
+    let jobId = "";
+    const deps = { ...(withOps(tmp, calls, {}) as Record<string, unknown>), refreshInventory: async (rt: string) => { calls.refresh!.push(rt); const f = readdirSync(join(tmp, "cockpit-jobs"))[0]!; stateAtRefresh = readCockpitJob(tmp, f.slice(0, -5))!.state; } } as never;
+    const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, deps, { runRuntimeJob: async () => ({ ok: true, message: "ollama stopped" }) });
+    jobId = r.jobId!;
+    await sleep50();
+    expect(calls.refresh).toEqual(["ollama"]);
+    expect(stateAtRefresh).toBe("running");
+    expect(readCockpitJob(tmp, jobId)!.state).toBe("done");
+  });
+
+  it("logTailSince returns the last non-empty line written after the offset, one trimmed line", async () => {
+    const { logTailSince } = await import("./cockpit-actions.js");
+    const tmp = newDir();
+    const log = join(tmp, "rt.log");
+    writeFileSync(log, "old line from an earlier run\n");
+    const offset = readFileSync(log).length;
+    expect(logTailSince(log, offset)).toBe("");
+    writeFileSync(log, "old line from an earlier run\n$ serve --port 1\n  loading   model \x1b[32mshard 2/4\x1b[0m  \n\n\n");
+    expect(logTailSince(log, offset)).toBe("loading model shard 2/4");
+    expect(logTailSince(join(tmp, "none.log"), 0)).toBe("");
+    writeFileSync(log, "x".repeat(500) + "\n");
+    expect(logTailSince(log, 0, 20).length).toBe(20);
+  });
+
+  it("a running runtime job's status carries elapsed seconds and the log tail; the job records the log offset", async () => {
+    const { runtimeJobProgress } = await import("./cockpit-actions.js");
+    const { runtimeLogFile } = await import("../workers/model-runtimes.js");
+    const tmp = newDir();
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(tmp, "logs", "local"), { recursive: true });
+    writeFileSync(runtimeLogFile(tmp, "ollama"), "previous run\n");
+    const deps = withOps(tmp, emptyCalls(), {});
+    const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps, { runRuntimeJob: () => new Promise<never>(() => {}) });
+    const job = readCockpitJob(tmp, r.jobId!)!;
+    expect(job.logOffset).toBe("previous run\n".length);
+    writeFileSync(runtimeLogFile(tmp, "ollama"), "previous run\nloading the model\n");
+    const p = runtimeJobProgress(tmp, job, Date.parse(job.at) + 23_000)!;
+    expect(p).toEqual({ elapsedSec: 23, tail: "loading the model" });
+    expect(runtimeJobProgress(tmp, { ...job, state: "done" })).toBeNull();
+  });
+
+  it("GET /cockpit/job reads the job an action wrote even with PAI_HOME unset (same resolver as the actions)", async () => {
+    const { paiHomeDir } = await import("../config/pai-home.js");
+    const { mkdirSync } = await import("node:fs");
+    const saved = process.env.PAI_HOME;
+    delete process.env.PAI_HOME;
+    setActionHooks({}, {});
+    const home = paiHomeDir();
+    expect(home.startsWith(process.env.HOME!)).toBe(true);
+    mkdirSync(join(home, "cockpit-jobs"), { recursive: true });
+    writeFileSync(join(home, "cockpit-jobs", "abc123.json"), JSON.stringify({ id: "abc123", kind: "runtime", tier: "", runtime: "ollama", op: "start", state: "done", message: "ollama up", at: new Date().toISOString() }));
+    const srv = http.createServer((req, res) => {
+      if (!handleCockpit(req, res, { get: async () => [] } as never, () => [], () => new Map())) res.end("other");
+    });
+    try {
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      const port = (srv.address() as AddressInfo).port;
+      const body = await new Promise<{ status: number; body: string }>((resolve) =>
+        http.get({ host: "127.0.0.1", port, path: "/cockpit/job?id=abc123" }, (res) => {
+          let b = "";
+          res.on("data", (c) => (b += c));
+          res.on("end", () => resolve({ status: res.statusCode!, body: b }));
+        })
+      );
+      expect(body.status).toBe(200);
+      expect(JSON.parse(body.body).message).toBe("ollama up");
+    } finally {
+      srv.close();
+      setActionHooks({});
+      if (saved !== undefined) process.env.PAI_HOME = saved;
     }
   });
 });

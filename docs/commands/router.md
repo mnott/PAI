@@ -25,7 +25,7 @@ Start the router in the background
 pai router start
 ```
 
-Starts the local model router (127.0.0.1:8790). If it is already running, says so and does nothing.
+Starts the local model router (127.0.0.1:<router.port>). If it is already running, says so and does nothing.
 
 ```sh
 pai router start

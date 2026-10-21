@@ -40,7 +40,8 @@ import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./
 import { readProfiles } from "../workers/session-profile-store.js";
 import { flowText, routeRows, type RouteRow } from "../workers/route-table.js";
 import type { BudgetMap } from "../workers/budget.js";
-import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
+import { paiHomeDir } from "../config/pai-home.js";
+import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -923,9 +924,9 @@ export function handleCockpit(
     return true;
   }
   if (req.method === "GET" && url.pathname === "/cockpit/job") {
-    const home = (actionDepsOverride?.home ?? process.env.PAI_HOME) || "";
+    const home = actionDepsOverride?.home ?? paiHomeDir();
     const j = home ? readCockpitJob(home, url.searchParams.get("id") ?? "") : null;
-    send(j ? 200 : 404, "application/json", j ? JSON.stringify(j) : JSON.stringify({ error: "no such job" }));
+    send(j ? 200 : 404, "application/json", j ? JSON.stringify({ ...j, ...(runtimeJobProgress(home, j) ?? {}) }) : JSON.stringify({ error: "no such job" }));
     return true;
   }
   if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;

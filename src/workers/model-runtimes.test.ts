@@ -41,10 +41,15 @@ afterAll(() => {
   else process.env.PAI_CONFIG_FILE = savedConfigFile;
 });
 
-const fakeDeps = (runs: string[], opts: { code?: number; readyOk?: boolean } = {}) => ({
+/** A start command that never exits (a server) unless opts.startExit is set: then it exits with that code. */
+const fakeDeps = (runs: string[], opts: { code?: number; readyOk?: boolean; startExit?: number } = {}) => ({
   runShell: async (cmd: string) => {
     runs.push(cmd);
     return { code: opts.code ?? 0 };
+  },
+  spawnDetached: (cmd: string) => {
+    runs.push(cmd);
+    return { exit: opts.startExit === undefined ? new Promise<{ code: number | null }>(() => {}) : Promise.resolve({ code: opts.startExit }) };
   },
   getUrl: async () => opts.readyOk ?? true,
   runCmd: async () => (opts.readyOk ?? true ? 0 : 1),
@@ -79,7 +84,7 @@ describe("models.runtimes config", () => {
   it("ready: a URL is polled as a URL, a command as a command", async () => {
     const urls: string[] = [];
     const cmds: string[] = [];
-    const deps = { runShell: async () => ({ code: 0 }), getUrl: async (u: string) => { urls.push(u); return true; }, runCmd: async (c: string) => { cmds.push(c); return 0; }, now: () => 0, sleep: async () => undefined };
+    const deps = { runShell: async () => ({ code: 0 }), spawnDetached: () => ({ exit: new Promise<{ code: number | null }>(() => {}) }), getUrl: async (u: string) => { urls.push(u); return true; }, runCmd: async (c: string) => { cmds.push(c); return 0; }, now: () => 0, sleep: async () => undefined };
     expect(readyIsUrl("http://x")).toBe(true);
     expect(readyIsUrl("docker model status")).toBe(false);
     const { waitReady } = await import("./model-runtimes.js");
@@ -110,10 +115,43 @@ describe("runRuntimeOp", () => {
     const r = await runRuntimeOp("docker-model-runner", "stop", { "docker-model-runner": { stop: "docker model unload" } }, fakeDeps(runs), home);
     expect(r.ok).toBe(true);
     expect(runs).toEqual(["docker model unload"]);
-    const bad = await runRuntimeOp("ollama", "start", { ollama: { start: "ollama serve" } }, fakeDeps(runs, { code: 3 }), home);
+    const bad = await runRuntimeOp("ollama", "start", { ollama: { start: "ollama serve", ready: "http://127.0.0.1:1/x" } }, { ...fakeDeps(runs, { startExit: 3 }), getUrl: async () => false }, home);
     expect(bad.ok).toBe(false);
     expect(bad.message).toContain("exited (3)");
     expect(bad.message).toContain(join(home, "logs", "local", "ollama.log"));
+  });
+
+  it("start of a never-exiting command resolves ok once ready answers", async () => {
+    const runs: string[] = [];
+    let polls = 0;
+    const deps = { ...fakeDeps(runs), getUrl: async () => ++polls >= 3 };
+    const r = await runRuntimeOp("srv", "start", { srv: { start: "python serve/server.py", ready: "http://127.0.0.1:1/health" } }, deps, newDir());
+    expect(r.ok).toBe(true);
+    expect(polls).toBe(3);
+    expect(runs).toEqual(["python serve/server.py"]);
+  });
+
+  it("start without ready is ok right after the spawn", async () => {
+    const r = await runRuntimeOp("srv", "start", { srv: { start: "serve" } }, fakeDeps([]), newDir());
+    expect(r.ok).toBe(true);
+    expect(r.message).toContain("srv started");
+  });
+
+  it("start whose command exits 1 before ready fails with the code and the log path", async () => {
+    const home = newDir();
+    const deps = { ...fakeDeps([], { startExit: 1 }), getUrl: async () => false };
+    const r = await runRuntimeOp("srv", "start", { srv: { start: "serve", ready: "http://127.0.0.1:1/health" } }, deps, home);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("exited (1)");
+    expect(r.message).toContain(join(home, "logs", "local", "srv.log"));
+  });
+
+  it("stop still waits for the command to exit", async () => {
+    let exited = false;
+    const deps = { ...fakeDeps([]), runShell: async () => { await new Promise((res) => setTimeout(res, 30)); exited = true; return { code: 0 }; } };
+    const r = await runRuntimeOp("srv", "stop", { srv: { stop: "kill-it" } }, deps, newDir());
+    expect(exited).toBe(true);
+    expect(r.ok).toBe(true);
   });
 
   it("an unconfigured runtime or op refuses without running anything", async () => {

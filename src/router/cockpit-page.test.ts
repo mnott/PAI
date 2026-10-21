@@ -991,7 +991,8 @@ describe("cockpit Models cards", () => {
       runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
       live: { at: 1, runtimes: [] },
     });
-    expect(stopped).toContain('data-a="runtime" data-t="ollama" data-v="start" data-confirm="starts ollama"');
+    expect(stopped).toContain('data-a="runtime" data-t="ollama" data-v="start">start</button>');
+    expect(stopped).not.toContain("starts ollama");
     expect(stopped).not.toContain('data-v="stop"');
     // no disabled runtime buttons anywhere on the cards
     expect(h).not.toMatch(/data-a="runtime"[^>]*disabled/);
@@ -1047,7 +1048,7 @@ describe("cockpit Models cards", () => {
       live: { at: 1, runtimes: [] },
     });
     const head = idle.slice(idle.indexOf('<div class="mhead"'), idle.indexOf('<div class="mbody"'));
-    expect(head).toContain('data-v="start" data-confirm="starts docker-model-runner">load</button>');
+    expect(head).toContain('data-v="start">load</button>');
     expect(head).not.toContain(">stop<");
     expect(head.indexOf('class="act')).toBeLessThan(head.indexOf('<span class="num">'));
     // no <button> nested in another <button>: the header is not itself a button element
@@ -1251,10 +1252,10 @@ describe("cockpit model-card fold state", () => {
     // the handler is bound to the header button itself (button semantics: Enter/Space fire a click)
     expect(typeof nodes[1].btn.onclick).toBe("function");
     // the click event of a start/stop button inside the header stops before the header
-    const stop = new Function("wireAct", "postAction", `${COCKPIT_HTML.match(/function wireAct[\s\S]*?\n\}\n/)![0]}; return wireAct;`)(() => {}, () => {}) as (el: unknown, cb?: unknown) => void;
+    const stop = new Function("wireAct", "postAction", `${ACT_STATE_SRC}\n${COCKPIT_HTML.match(/function wireAct[\s\S]*?\n\}\n/)![0]}; return wireAct;`)(() => {}, () => {}) as (el: unknown, cb?: unknown) => void;
     let stopped = false;
     const inner: Record<string, unknown> = { getAttribute: () => null, disabled: false, confirmed: false };
-    const act = { querySelectorAll: () => [inner], querySelector: () => null };
+    const act = { querySelectorAll: () => [inner], querySelector: () => null, getAttribute: () => null };
     stop(act);
     (inner.onclick as (e: unknown) => void)({ stopPropagation: () => { stopped = true; } });
     expect(stopped).toBe(true);
@@ -2103,7 +2104,7 @@ describe("cockpit Models: one local switch, editable aliases", () => {
     const ct = (id: number) => { if (timers[id]) timers[id]!.live = false; };
     const fn = new Function(
       "$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", "setTimeout", "clearTimeout", "S",
-      `var mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
+      `${ACT_STATE_SRC}\nvar mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
     );
     fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc,
       (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)(opts.reply ? opts.reply(a) : { ok: true }); },
@@ -2455,13 +2456,13 @@ describe("cockpit drag-and-drop layout", () => {
 /** The page's stop-confirm code (wireAct + the baked CONFIRM_MS), run against a fake
  *  action row whose buttons carry the rendered data-* attributes. */
 function confirmHarness(cfText: string | null, confirmMs = 4000) {
-  const src = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\nfunction wireAct[\s\S]*?\n\}\n/)![0];
+  const src = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\n[\s\S]*?function wireAct[\s\S]*?\n\}\n/)![0];
   const msg: any = { textContent: "", className: "msg" };
   const btn: any = {
     confirmed: false, disabled: false, textContent: "stop",
     getAttribute: (k: string) => ({ "data-confirm": cfText, "data-a": "runtime", "data-t": "ollama", "data-v": "stop" } as Record<string, string | null>)[k] ?? null,
   };
-  const el = { querySelectorAll: () => [btn], querySelector: () => msg };
+  const el = { querySelectorAll: () => [btn], querySelector: () => msg, getAttribute: () => null };
   const posts: unknown[][] = [];
   const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
   const fn = new Function("postAction", "setTimeout", "clearTimeout", "CONFIRM_MS", `${src}\nreturn wireAct;`)(
@@ -2479,7 +2480,7 @@ function confirmHarness(cfText: string | null, confirmMs = 4000) {
  *  the real stop button, the real wireAct, a fake postAction that records posts. */
 function stopHarness(inv: unknown, confirmMs = 4000) {
   const renderBody = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
-  const confirmSrc = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\nfunction wireAct[\s\S]*?\n\}\n/)![0];
+  const confirmSrc = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\n[\s\S]*?function wireAct[\s\S]*?\n\}\n/)![0];
   // the miniDom nodes are plain objects: an onclick assignment sticks
   const dom = miniDom(realModelsHtml(inv), (n: any) => Object.defineProperty(n, "onclick", { value: undefined, writable: true, configurable: true, enumerable: true }));
   const posts: unknown[][] = [];
@@ -2528,6 +2529,9 @@ function stopHarness(inv: unknown, confirmMs = 4000) {
   const fire = (i: number) => { if (timers[i]?.live) { timers[i]!.live = false; timers[i]!.fn(); } };
   return { posts, timers, click, fire, advance, stopBtn, textOf };
 }
+
+/** The page-level armed-confirm / action-message state and its re-apply helpers (wireAct and renderModels use them). */
+const ACT_STATE_SRC = COCKPIT_HTML.match(/var armedKey=[\s\S]*?function noteMsg[^\n]*\n/)![0];
 
 /** The page's render helpers, extracted verbatim from the shipped page. */
 const TILE_RENDER_SRC = [
@@ -2653,7 +2657,7 @@ function tileDragHarness(inv: unknown) {
   dom.document.documentElement = { clientHeight: 800 };
   const fn = new Function(
     "localStorage", "document", "window", "setTimeout", "clearTimeout", "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct",
-    `${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
+    `${ACT_STATE_SRC}\n${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
   );
   const api = fn(ls, dom.document, windowStub, () => 0, () => {}, () => dom.panel, inv, () => true, () => {}, () => {},
     (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%") as Record<string, (...args: unknown[]) => unknown>;
@@ -2835,7 +2839,7 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
       ],
       live: { at: 1, runtimes: [] },
     });
-    expect(stopped).toContain('data-v="start" data-confirm="starts ollama"');
+    expect(stopped).toContain('data-v="start">start</button>');
     expect(stopped).not.toContain("click again");
   });
 
@@ -2897,6 +2901,23 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
     expect(armed.posts.map((p) => p.slice(0, 3))).toEqual([["runtime", "ollama", "stop"]]);
     expect(armed.timers[0]!.live).toBe(false);
     expect(armed.btn.textContent).toBe("stop");
+  });
+
+  it("an armed confirm and the action message survive the poll re-render (page-level state re-applied)", () => {
+    const api = new Function(`${ACT_STATE_SRC}\nreturn {arm:function(k){armedKey=k},reapplyActs:reapplyActs,noteMsg:noteMsg};`)() as {
+      arm: (k: string) => void; reapplyActs: (r: unknown) => void; noteMsg: (rt: string, t: string, ok: boolean) => void;
+    };
+    const attrs = { "data-a": "runtime", "data-t": "ollama", "data-v": "stop", "data-confirm": "stop ollama - click again" } as Record<string, string>;
+    const fresh: any = { textContent: "stop", getAttribute: (k: string) => attrs[k] ?? null };
+    const msg: any = { textContent: "", className: "msg" };
+    const row: any = { getAttribute: () => "ollama", querySelector: () => msg };
+    const root = { querySelectorAll: (q: string) => (q.startsWith("button") ? [fresh] : [row]) };
+    api.arm("runtime|ollama|stop");
+    api.noteMsg("ollama", "starting ollama", true);
+    api.reapplyActs(root);
+    expect(fresh.confirmed).toBe(true);
+    expect(fresh.textContent).toBe("stop ollama - click again");
+    expect(msg.textContent).toBe("starting ollama");
   });
 
   it("the second click clears the revert timer: past CONFIRM_MS the label stays reverted and confirmed stays false", () => {
@@ -3466,5 +3487,97 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     expect(html).toContain('title="retries 2 · avg 1200 ms · ttft p50 300 ms · tokens 10"');
     expect(html).toContain('<span class="warn">↻2</span>');
     expect(html).not.toContain("<th>avg ms</th>");
+  });
+});
+
+describe("runtime start/stop progress on the card", () => {
+  const WATCH_SRC = COCKPIT_HTML.match(/function watchJob\(id\)\{[\s\S]*?\n\}\n/)![0];
+  type Fake = { textContent: string; title: string; className: string };
+  // one card's action span: a .msg and two buttons, found by the selectors the page uses
+  const makeAct = (rt: string) => {
+    const msg: Fake = { textContent: "", title: "", className: "msg" };
+    const btns = [{ disabled: false }, { disabled: false }];
+    const act = { getAttribute: (k: string) => (k === "data-rt" ? rt : null), querySelector: (s: string) => (s === ".msg" ? msg : null), querySelectorAll: (s: string) => (s === "button" ? btns : []) };
+    return { act, msg, btns };
+  };
+  function harness(jobs: unknown[]) {
+    const state = { card: makeAct("ollama"), loads: 0, fetched: [] as string[] };
+    const root = {
+      querySelectorAll: (s: string) => (s === ".act[data-rt]" ? [state.card.act] : []),
+    };
+    const queue = [...jobs];
+    const timers: Array<() => void> = [];
+    const fn = new Function(
+      "$", "fetch", "loadModels", "setTimeout", "JOB_TRIES", "JOB_POLL", "JOB_FIRST", "CONFIRM_MS",
+      `${ACT_STATE_SRC}\n${WATCH_SRC}\nreturn { watchJob: watchJob, reapplyActs: reapplyActs };`
+    );
+    const api = fn(
+      () => root,
+      (url: string) => { state.fetched.push(url); const j = queue.length > 1 ? queue.shift() : queue[0]; return Promise.resolve({ json: () => Promise.resolve(j) }); },
+      () => { state.loads++; },
+      (f: () => void) => { timers.push(f); return 0; },
+      120, 5000, 2000, 4000
+    ) as { watchJob: (id: string) => void; reapplyActs: (r: unknown) => void };
+    // run the pending poll and let its promise chain settle
+    const poll = async () => { timers.shift()!(); await new Promise((r) => setTimeout(r, 0)); };
+    const rerender = () => { state.card = makeAct("ollama"); api.reapplyActs(root); };
+    return { state, api, poll, rerender, timers };
+  }
+  const running = { id: "j1", kind: "runtime", runtime: "ollama", op: "start", state: "running", message: "start ollama", elapsedSec: 23, tail: "loading shard 2/4" };
+
+  it("a running start job shows 'starting… N s · last log line' and disables the buttons, also after the 5 s poll re-render", async () => {
+    const h = harness([running]);
+    h.api.watchJob("j1");
+    await h.poll();
+    expect(h.state.card.msg.textContent).toBe("starting… 23 s · loading shard 2/4");
+    expect(h.state.card.btns.every((b) => b.disabled)).toBe(true);
+    h.rerender();
+    expect(h.state.card.msg.textContent).toBe("starting… 23 s · loading shard 2/4");
+    expect(h.state.card.btns.every((b) => b.disabled)).toBe(true);
+    expect(h.state.loads).toBe(0);
+  });
+
+  it("a stop job reads 'stopping…'", async () => {
+    const h = harness([{ ...running, op: "stop", elapsedSec: 1, tail: "" }]);
+    h.api.watchJob("j1");
+    await h.poll();
+    expect(h.state.card.msg.textContent).toBe("stopping… 1 s");
+  });
+
+  it("when the job ends the result message stays through re-renders, the buttons are free again and the inventory is reloaded", async () => {
+    const h = harness([running, { ...running, state: "done", message: "ollama up (http://127.0.0.1:11434/api/tags)" }]);
+    h.api.watchJob("j1");
+    await h.poll();
+    await h.poll();
+    expect(h.state.loads).toBe(1);
+    expect(h.state.card.msg.textContent).toBe("ollama up (http://127.0.0.1:11434/api/tags)");
+    h.rerender();
+    expect(h.state.card.msg.textContent).toBe("ollama up (http://127.0.0.1:11434/api/tags)");
+    expect(h.state.card.msg.className).toBe("msg");
+    expect(h.state.card.btns.some((b) => b.disabled)).toBe(false);
+  });
+
+  it("a failed job shows the error text styled bad", async () => {
+    const h = harness([{ ...running, state: "failed", message: "ollama start exited (7); see /logs/local/ollama.log" }]);
+    h.api.watchJob("j1");
+    await h.poll();
+    h.rerender();
+    expect(h.state.card.msg.textContent).toContain("see /logs/local/ollama.log");
+    expect(h.state.card.msg.className).toBe("msg bad");
+  });
+
+  it("the runtime buttons sit in a header span that has its own .msg element (the action text has somewhere to land)", () => {
+    const h = stopHarness({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["c"], models: [{ model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["c"] }] }],
+      runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
+      consumers: [{ name: "c", runtime: "ollama", model: "qwen3:8b", label: "C" }],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    const btn = h.stopBtn("ollama");
+    const act = btn.parentNode;
+    expect(act.classes.has("rt-act")).toBe(true);
+    expect(act.children.some((c: any) => c.classes.has("msg"))).toBe(true);
   });
 });

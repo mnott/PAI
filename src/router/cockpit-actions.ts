@@ -11,7 +11,7 @@
  * with a job id; the card shows progress from the inventory refresh.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
@@ -22,7 +22,8 @@ import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.
 import { readLocalConfig } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { readLocalStatus } from "../workers/local-status.js";
-import { readRuntimeCommands, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
+import { paiHomeDir } from "../config/pai-home.js";
+import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
 export const RUNTIME_START_EVENT = "RUNTIME-START";
@@ -57,6 +58,8 @@ export interface ActionDeps {
   runtimeCommands?: Record<string, RuntimeCommands>;
   /** The runtime start/stop runner (dry-run seam for tests); default the live shell run. */
   runtimeOps?: RuntimeOpDeps;
+  /** Fresh model-inventory probe written over the 30 s cache; called when a runtime job ends. Default: compute + write. */
+  refreshInventory?: (runtime: string) => Promise<void>;
 }
 
 /** Everything the handler wires in production; tests replace the whole object. */
@@ -66,7 +69,7 @@ export interface ActionHooks {
   runLocalJob?: (kind: "switch" | "off", tier: string) => Promise<void>;
   /** runtime start/stop run through this (the CLI `pai models start|stop` and
    *  the cockpit share it); tests inject a fake. */
-  runRuntimeJob?: (runtime: string, op: "start" | "stop") => Promise<void>;
+  runRuntimeJob?: (runtime: string, op: "start" | "stop") => Promise<void | { ok: boolean; message: string }>;
 }
 
 export interface ActionResult {
@@ -99,6 +102,85 @@ export interface LocalJobState {
   state: "running" | "done" | "failed";
   message: string;
   at: string;
+  /** a runtime job: when it began (ISO) and the size of the runtime log then, so progress shows only its own lines */
+  startedAt?: string;
+  logOffset?: number;
+}
+
+/** What /cockpit/job adds for a running runtime job: seconds since it began and the last log line it wrote. */
+export interface JobProgress {
+  elapsedSec: number;
+  tail: string;
+}
+
+/** The last non-empty line the log gained after `offset`, ANSI-stripped and trimmed to one line; "" when none. */
+export function logTailSince(logPath: string, offset: number, max = 160): string {
+  try {
+    const size = statSync(logPath).size;
+    const from = offset > size ? 0 : Math.max(offset, size - 8192);
+    const buf = Buffer.alloc(size - from);
+    const fd = openSync(logPath, "r");
+    try {
+      readSync(fd, buf, 0, buf.length, from);
+    } finally {
+      closeSync(fd);
+    }
+    const lines = buf.toString("utf8").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split(/[\r\n]+/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i]!.trim().replace(/\s+/g, " ");
+      // the "$ cmd" echo is the runner's own header, not progress
+      if (l && !l.startsWith("$ ")) return l.length > max ? l.slice(0, max - 1) + "…" : l;
+    }
+  } catch {
+    /* no log yet */
+  }
+  return "";
+}
+
+/** Progress of a running runtime job for the card; null for any other job. */
+export function runtimeJobProgress(home: string, j: LocalJobState, nowMs = Date.now()): JobProgress | null {
+  if (j.kind !== "runtime" || j.state !== "running" || !j.runtime) return null;
+  const started = Date.parse(j.startedAt ?? j.at);
+  return { elapsedSec: Math.max(0, Math.round((nowMs - (Number.isNaN(started) ? nowMs : started)) / 1000)), tail: logTailSince(runtimeLogFile(home, j.runtime), j.logOffset ?? 0) };
+}
+
+/** A running runtime job of this runtime and op (stale ones, older than a start's ready deadline, are ignored). */
+export function runningRuntimeJob(home: string, runtime: string, op: "start" | "stop", exceptId = "", nowMs = Date.now()): LocalJobState | null {
+  let files: string[] = [];
+  try {
+    files = readdirSync(`${home}/cockpit-jobs`);
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    const j = readCockpitJob(home, f.slice(0, -5));
+    if (!j || j.id === exceptId || j.kind !== "runtime" || j.state !== "running" || j.runtime !== runtime || j.op !== op) continue;
+    if (nowMs - Date.parse(j.at) > RUNTIME_READY_TIMEOUT_MS + 60_000) continue;
+    return j;
+  }
+  return null;
+}
+
+/** The one duplicate guard, used by the cockpit action and `pai models start|stop`: why this op must not run now, else null.
+ *  start: refused when the runtime's `ready` answers (not for a loader such as `docker model run`, whose ready only
+ *  says the runner is up) or a start job runs; stop: refused while a stop job runs. */
+export async function runtimeOpRefusal(
+  runtime: string,
+  op: "start" | "stop",
+  commands: Record<string, RuntimeCommands>,
+  home: string,
+  ops: RuntimeOpDeps = liveRuntimeOpDeps,
+  exceptJobId = ""
+): Promise<string | null> {
+  const running = runningRuntimeJob(home, runtime, op, exceptJobId);
+  if (running) return op === "start" ? `${runtime} is already starting (job ${running.id})` : `${runtime} is already stopping (job ${running.id})`;
+  const c = commands[runtime];
+  if (op === "start" && c?.ready && !/(^|\s)model(\s|$)/.test(c.start ?? "")) {
+    const up = readyIsUrl(c.ready) ? await ops.getUrl(c.ready) : (await ops.runCmd(c.ready)) === 0;
+    if (up) return `${runtime} is already running (${c.ready})`;
+  }
+  return null;
 }
 
 /** The job's current state; null when the file is absent or unreadable. */
@@ -204,7 +286,7 @@ export function defaultDeps(): ActionDeps {
     unsetLabel: (path) => void unsetConfigValueOp(path),
     ledger: ledgerPath(logDir),
     workersYaml: workersYamlPath(),
-    home: process.env.PAI_HOME || "~/.pai",
+    home: paiHomeDir(),
     workers,
     localStatus: readLocalStatus(logDir),
     runtimeCommands: readRuntimeCommands(),
@@ -217,10 +299,11 @@ export async function runtimeStartStop(
   runtime: string,
   op: "start" | "stop",
   deps: ActionDeps,
-  opts: { model?: string } = {}
+  opts: { model?: string; jobId?: string } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
-  const { liveRuntimeOpDeps } = await import("../workers/model-runtimes.js");
+  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId);
+  if (refused) return { ok: false, message: refused };
   const r = await runRuntimeOp(runtime, op, commands, deps.runtimeOps ?? liveRuntimeOpDeps, deps.home, opts);
   appendLedger(deps.ledger, op === "start" ? RUNTIME_START_EVENT : RUNTIME_STOP_EVENT, {
     who: "cockpit",
@@ -264,8 +347,17 @@ export async function runCockpitAction(
     if (op !== "start" && op !== "stop") return fail(`op must be start or stop, got "${value ?? ""}"`);
     const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
     if (!commands[runtime]?.[op]) return fail(`no ${op} command configured for ${runtime} (models.runtimes.${runtime}.${op})`);
+    const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps);
+    if (refused) return fail(refused);
     const id = randomBytes(6).toString("hex");
-    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at: new Date().toISOString() });
+    let logOffset = 0;
+    try {
+      logOffset = statSync(runtimeLogFile(deps.home, runtime)).size;
+    } catch {
+      /* no log yet */
+    }
+    const at = new Date().toISOString();
+    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at, startedAt: at, logOffset });
     writeLedgerLine(deps, action, `${runtime}:${op}`, `job ${id}: started`);
     void finishRuntimeJob(deps, hooks, id, runtime, op);
     return { ok: true, message: `${op === "start" ? "starting" : "stopping"} ${runtime}`, jobId: id };
@@ -372,14 +464,31 @@ export async function runCockpitAction(
 /** Runs the runtime job (hook or configured commands), records its outcome in the job file;
  *  runtimeStartStop already wrote the RUNTIME-START/STOP line. */
 async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop"): Promise<void> {
-  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps));
+  const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id }));
+  const end = (state: "done" | "failed", message: string): void =>
+    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state, message, at: new Date().toISOString() });
+  let state: "done" | "failed" = "done";
+  let message = `${runtime} ${op === "start" ? "up" : "stopped"}`;
   try {
-    await run(runtime, op);
-    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "done", message: `${runtime} ${op === "start" ? "up" : "stopped"}`, at: new Date().toISOString() });
+    const r = await run(runtime, op);
+    if (r && !r.ok) state = "failed";
+    if (r) message = r.message;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "failed", message: msg, at: new Date().toISOString() });
+    state = "failed";
+    message = e instanceof Error ? e.message : String(e);
   }
+  // the card flips right after the job ends: a fresh probe over the 30 s cached inventory, before the job reads done
+  try {
+    await (deps.refreshInventory ?? defaultRefreshInventory)(runtime);
+  } catch {
+    /* the daemon's next 30 s refresh still corrects the card */
+  }
+  end(state, message);
+}
+
+async function defaultRefreshInventory(): Promise<void> {
+  const { computeInventory, readInventoryInput, writeInventory } = await import("../workers/model-inventory.js");
+  writeInventory(workersLogDir(readWorkersSection().workers), await computeInventory(readInventoryInput()));
 }
 
 /** Runs the injected local job, records its outcome in the job file and ledger. */

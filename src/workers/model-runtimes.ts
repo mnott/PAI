@@ -71,8 +71,10 @@ export function runtimeOpArgv(cmd: string, model?: string): string[] {
 }
 
 export interface RuntimeOpDeps {
-  /** detached shell run; resolves when the process exits */
+  /** shell run (stop commands); resolves when the process exits */
   runShell: (cmd: string, logPath: string) => Promise<{ code: number | null }>;
+  /** detached long-running shell run (start commands): returns at once; `exit` settles only if the child ends */
+  spawnDetached: (cmd: string, logPath: string) => { exit: Promise<{ code: number | null }> };
   /** a ready URL answered 2xx */
   getUrl: (url: string) => Promise<boolean>;
   /** a ready command: resolves its exit code */
@@ -102,6 +104,20 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
         resolve({ code: null });
       });
     });
+  },
+  spawnDetached(cmd, logPath) {
+    mkdirSync(dirname(logPath), { recursive: true });
+    const fd = openSync(logPath, "a");
+    appendFileSync(fd, `\n$ ${cmd}\n`, "utf8");
+    const child = spawn(cmd, { shell: true, detached: true, stdio: ["ignore", fd, fd] });
+    child.unref();
+    // the child holds its own copy of the log fd; the parent's is closed at once
+    closeFd(fd);
+    const exit = new Promise<{ code: number | null }>((resolve) => {
+      child.on("exit", (code) => resolve({ code }));
+      child.on("error", () => resolve({ code: null }));
+    });
+    return { exit };
   },
   async getUrl(url) {
     try {
@@ -134,9 +150,17 @@ const closeFd = (fd: number): void => {
 export const readyIsUrl = (ready: string): boolean => /^https?:\/\//i.test(ready.trim());
 
 /** Poll the runtime's readiness until it answers or the deadline passes. */
-export async function waitReady(ready: string, deps: RuntimeOpDeps, timeoutMs = RUNTIME_READY_TIMEOUT_MS, pollMs = RUNTIME_READY_POLL_MS): Promise<boolean> {
+export async function waitReady(
+  ready: string,
+  deps: RuntimeOpDeps,
+  timeoutMs = RUNTIME_READY_TIMEOUT_MS,
+  pollMs = RUNTIME_READY_POLL_MS,
+  /** true = give up now (the start command died) */
+  abort: () => boolean = () => false
+): Promise<boolean> {
   const deadline = deps.now() + timeoutMs;
   for (;;) {
+    if (abort()) return false;
     const ok = readyIsUrl(ready) ? await deps.getUrl(ready) : (await deps.runCmd(ready)) === 0;
     if (ok) return true;
     if (deps.now() >= deadline) return false;
@@ -158,11 +182,23 @@ export async function runRuntimeOp(
   if (!cmd || !cmd[op]) return { ok: false, message: `no ${op} command configured for ${runtime} (models.runtimes.${runtime}.${op})` };
   const argv = runtimeOpArgv(cmd[op]!, opts.model);
   const logPath = runtimeLogFile(home, runtime);
-  const { code } = await deps.runShell(argv.join(" "), logPath);
-  if (op === "stop") return { ok: code === 0 || code === null, message: `${runtime} stopped${code ? ` (exit ${code})` : ""} — ${logPath}` };
-  if (code !== null && code !== 0) return { ok: false, message: `${runtime} start exited (${code}); see ${logPath}` };
+  if (op === "stop") {
+    const { code } = await deps.runShell(argv.join(" "), logPath);
+    return { ok: code === 0 || code === null, message: `${runtime} stopped${code ? ` (exit ${code})` : ""} — ${logPath}` };
+  }
+  // start: the command is usually a server that never exits, so it is spawned, not awaited;
+  // an exit before ready is a failure (exit 0 only when ready then still answers, as a launcher that daemonizes)
+  let exitCode: number | null | undefined;
+  try {
+    deps.spawnDetached(argv.join(" "), logPath).exit.then(({ code }) => void (exitCode = code));
+  } catch (e) {
+    return { ok: false, message: `${runtime} start failed: ${e instanceof Error ? e.message : String(e)}; see ${logPath}` };
+  }
+  const died = (): boolean => exitCode !== undefined && exitCode !== 0;
+  const diedMsg = (): string => `${runtime} start exited (${exitCode ?? "signal"}); see ${logPath}`;
   if (cmd.ready) {
-    const up = await waitReady(cmd.ready, deps, opts.readyTimeoutMs);
+    const up = await waitReady(cmd.ready, deps, opts.readyTimeoutMs, undefined, died);
+    if (died()) return { ok: false, message: diedMsg() };
     return up ? { ok: true, message: `${runtime} up (${cmd.ready})` } : { ok: false, message: `${runtime} not ready after ${Math.round((opts.readyTimeoutMs ?? RUNTIME_READY_TIMEOUT_MS) / 1000)} s; see ${logPath}` };
   }
   return { ok: true, message: `${runtime} started — ${logPath}` };

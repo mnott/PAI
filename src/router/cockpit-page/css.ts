@@ -121,7 +121,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead .act button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font:inherit;font-size:11px;cursor:pointer}
 .mhead .act button:hover{border-color:var(--acc);color:var(--acc)}
 .mhead .act button[disabled]{opacity:.5;cursor:default}
-.mhead .msg{color:var(--dim);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mhead .msg{color:var(--dim);font-size:11px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mhead .msg.bad{color:var(--bad)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
 /* never a partial last row: wide mode is a ${L.tilesWideCols * 3}-track grid, every tile spans

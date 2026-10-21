@@ -28,6 +28,22 @@ function postAction(action,target,value,cb){
  * second click within CONFIRM_MS; the revert timer restores the label. The row's .msg stays for the
  * action's result. */
 var CONFIRM_MS=${n(L.confirmMs)};
+var armedKey=null,armedBtn=null,armedTimer=null,actMsg={};
+function btnKey(b){return(b.getAttribute("data-a")||"")+"|"+(b.getAttribute("data-t")||"")+"|"+(b.getAttribute("data-v")||"")}
+function armBtn(b,cf){armedBtn=b;b.confirmed=true;if(b.__label===undefined)b.__label=b.textContent;b.textContent=cf}
+/** The Models section is rebuilt on every changed poll: put the armed confirm and the running/last action message back. */
+function reapplyActs(root){
+ var bs=root.querySelectorAll("button[data-confirm]");
+ for(var i=0;i<bs.length;i++)if(armedKey&&btnKey(bs[i])===armedKey)armBtn(bs[i],bs[i].getAttribute("data-confirm"));
+ var as=root.querySelectorAll(".act[data-rt]");
+ for(var k=0;k<as.length;k++){
+  var am=actMsg[as[k].getAttribute("data-rt")],m=as[k].querySelector(".msg");
+  if(m&&am){m.textContent=am.text;m.title=am.text;m.className="msg"+(am.ok?"":" bad")}
+  // a running start/stop job keeps its buttons disabled across the poll re-render
+  if(am&&am.busy){var bb=as[k].querySelectorAll("button");for(var q=0;q<bb.length;q++)bb[q].disabled=true}
+ }
+}
+function noteMsg(rt,text,ok,busy){if(rt)actMsg[rt]={text:text,ok:ok,busy:!!busy}}
 function wireAct(el,onDone){
  var btns=el.querySelectorAll("button");
  for(var i=0;i<btns.length;i++)(function(b){
@@ -35,18 +51,22 @@ function wireAct(el,onDone){
    if(e&&e.stopPropagation)e.stopPropagation();
    var cf=b.getAttribute("data-confirm");
    if(cf&&!b.confirmed){
-    b.confirmed=true;
-    if(b.__label===undefined)b.__label=b.textContent;
-    b.textContent=cf;
-    // the real timer id, stored as-is: the second click must clear it (armed is b.confirmed)
-    b.__cfTimer=setTimeout(function(){b.confirmed=false;b.textContent=b.__label},CONFIRM_MS);
+    armedKey=btnKey(b);armBtn(b,cf);
+    if(armedTimer!=null)clearTimeout(armedTimer);
+    // the armed state lives at page level: the poll re-render replaces the element, reapplyActs re-arms the new one
+    armedTimer=setTimeout(function(){armedKey=null;armedTimer=null;if(armedBtn){armedBtn.confirmed=false;armedBtn.textContent=armedBtn.__label;armedBtn=null}},CONFIRM_MS);
     return}
+   armedKey=null;if(armedTimer!=null){clearTimeout(armedTimer);armedTimer=null}
    b.confirmed=false;
    if(b.__label!==undefined)b.textContent=b.__label;
+   var rtName=el.getAttribute("data-rt");
    for(var k=0;k<btns.length;k++){btns[k].disabled=true;if(btns[k].__cfTimer!=null){clearTimeout(btns[k].__cfTimer);btns[k].__cfTimer=null}}
    postAction(b.getAttribute("data-a"),b.getAttribute("data-t")||null,b.getAttribute("data-v")||null,function(j){
     var m=el.querySelector(".msg");if(m){m.textContent=(j&&j.message)||"";m.className="msg"+(j&&j.ok?"":" bad")}
-    for(var k=0;k<btns.length;k++)btns[k].disabled=false;
+    // an accepted runtime job stays busy (buttons disabled) until the job watcher sees it end
+    var busy=!!(rtName&&j&&j.ok&&j.jobId);
+    noteMsg(rtName,(j&&j.message)||"",!!(j&&j.ok),busy);
+    if(!busy)for(var k=0;k<btns.length;k++)btns[k].disabled=false;
     if(onDone)onDone(j);
    });
   };
@@ -215,7 +235,7 @@ function modelsHtml(inv){
   var c=cmds[r.name]||{};
   var dmr=r.kind==="docker-model-runner";
   // docker model runner: idle (nothing loaded) -> load, loaded -> unload; others: stopped -> start, else stop
-  if(r.status==="stopped"||(dmr&&r.status==="idle"))return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start" data-confirm="starts '+esc(r.name)+'">'+(dmr&&r.status==="idle"?"load":"start")+'</button>':"";
+  if(r.status==="stopped"||(dmr&&r.status==="idle"))return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start">'+(dmr&&r.status==="idle"?"load":"start")+'</button>':"";
   // the other consumers of this runtime: the card's own consumers (its model's users and
   // the consumers pointing at its model) are not "other"; a runtime-wide user that
   // points at no model (or at a model the runtime does not list) is not a card's own either
@@ -286,7 +306,7 @@ function modelsHtml(inv){
    // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
    '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
-   (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'</span>':"")+
+   (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
    '<span class="num">'+esc(key)+'</span></div>';
   var body="";
   if(down){
@@ -389,6 +409,7 @@ function renderModels(){
  if(!changed)return;
  var acts=el.querySelectorAll(".act");
  for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
+ reapplyActs(el);
  var lbls=el.querySelectorAll(".lblbtn");
  for(var k=0;k<lbls.length;k++)(function(btn){
   var head=btn.parentNode,card=head.parentNode,t=head.querySelector("b");
@@ -438,9 +459,18 @@ function watchJob(id){
  var tries=0;
  function step(){
   fetch("/cockpit/job?id="+encodeURIComponent(id),{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
-   var el=$("modelspanel");var msgs=el.querySelectorAll(".act .msg");
-   for(var i=0;i<msgs.length;i++)msgs[i].textContent=(j&&j.message)||"";
-   if(j&&(j.state==="done"||j.state==="failed")){loadModels();return}
+   var el=$("modelspanel");
+   var ended=j&&(j.state==="done"||j.state==="failed");
+   if(j&&j.kind==="runtime"&&j.runtime){
+    // the card header shows starting…/stopping… with the elapsed seconds and the log's last line, then the job's result
+    var txt=ended?(j.message||""):(j.op==="stop"?"stopping…":"starting…")+(j.elapsedSec!=null?" "+j.elapsedSec+" s":"")+(j.tail?" · "+j.tail:"");
+    noteMsg(j.runtime,txt,j.state!=="failed",!ended);
+    reapplyActs(el);
+   }else{
+    var msgs=el.querySelectorAll(".act .msg");
+    for(var i=0;i<msgs.length;i++)msgs[i].textContent=(j&&j.message)||"";
+   }
+   if(ended){loadModels();return}
    if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL);
   }).catch(function(){if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL)});
  }
