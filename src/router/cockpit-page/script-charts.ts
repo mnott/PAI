@@ -83,7 +83,7 @@ function renderSystem(){
  function S(s,what,v,txt,unit,sub){return metricTile({title:s.provider+" "+what,value:v==null?null:txt(v),unit:unit,sub:sub,series:[{data:hist("srv:"+s.provider+":"+what,null,v)}]})}
  setHtml($("sysservers"),srv.length?'<div class="rt-tiles" data-tkey="syssrv">'+srv.map(function(s){
   var pc=s.prefixCache,tot=pc?pc.hits+pc.misses:0;
-  return S(s,"RSS",s.rssMb,gbm,"GB","resident memory")+S(s,"end-to-end",s.tokensPerSec,String,"tok/s",s.tokensPerSec!=null?"end to end":data?e2eSub(s.provider):"loading")+S(s,"decode",dec(s.provider),fmt,"tok/s","decode")+S(s,"prefix cache",pc?pc.hitRate:null,function(v){return(v*100).toFixed(1)},"%",pc?pc.hits+"/"+tot:lim?"server reports no prefix-cache counter":"loading: first limits poll pending")
+  return S(s,"RSS",s.rssMb,gbm,"GB","resident memory")+S(s,"end-to-end",s.tokensPerSec,String,"tok/s",s.tokensPerSec!=null?(s.tokensPerSecWindow==="24h"?"router, 24 h":s.tokensPerSecWindow==="1h"?"router, last hour":"end to end"):data?e2eSub(s.provider):"loading")+S(s,"decode",dec(s.provider),fmt,"tok/s","decode")+S(s,"prefix cache",pc?pc.hitRate:null,function(v){return(v*100).toFixed(1)},"%",pc?pc.hits+"/"+tot:lim?"server reports no prefix-cache counter":"loading: first limits poll pending")
  }).join("")+'</div>':'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>');
  // the poll rebuild must not reset the tile order the user arranged
  orderTiles($("sys"));orderTiles($("sysservers"));

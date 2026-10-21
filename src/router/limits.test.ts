@@ -503,7 +503,13 @@ describe("decodeTokPerSec", () => {
     ];
     // p50 of [25, 50, 100]
     expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({ decodeTokPerSec: 50 });
-    expect(tokensPerSec(rows, "local30x8", NOW)).toEqual({ tokensPerSec: 2 });
+    expect(tokensPerSec(rows, "local30x8", NOW)).toEqual({ tokensPerSec: 2, tokensPerSecWindow: "1h" });
+  });
+
+  it("falls back to the 24 h window when the last hour has no request, and to nothing without any", () => {
+    const old = row({ ts: new Date(NOW - 5 * 3_600_000).toISOString(), ms: 10000, output_tokens: 100 });
+    expect(tokensPerSec([old], "local30x8", NOW)).toEqual({ tokensPerSec: 10, tokensPerSecWindow: "24h" });
+    expect(tokensPerSec([row({ ts: new Date(NOW - 30 * 3_600_000).toISOString() })], "local30x8", NOW)).toEqual({});
   });
 
   it("ignores rows without decodeMs", () => {

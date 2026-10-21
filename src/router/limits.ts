@@ -48,8 +48,10 @@ export interface ProviderLimits {
   rssMb?: number;
   /** model ids the local server lists */
   served?: string[];
-  /** average output tokens per second over the last hour */
+  /** average output tokens per second of request wall time (the router's own accounting), over `tokensPerSecWindow` */
   tokensPerSec?: number;
+  /** the window `tokensPerSec` covers: the last hour, else the last 24 h */
+  tokensPerSecWindow?: "1h" | "24h";
   /** p50 decode tokens/s over the last hour, from the per-row decodeMs (the Speed table write rate) */
   decodeTokPerSec?: number;
   /** prefix-cache counters the local server reports itself (undefined = server does not report them) */
@@ -654,16 +656,19 @@ async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCac
 /** Several providers share one port: up only when its model is served. Re-exported from the shared probe (workers/served-models.ts). */
 export { serves as modelServed } from "../workers/served-models.js";
 
-/** output tokens / generation seconds over the last hour (slow-path requests only). */
-export function tokensPerSec(rows: UsageRow[], provider: string, now: number): { tokensPerSec?: number } {
-  let out = 0;
-  let ms = 0;
-  for (const r of rows) {
-    if (r.provider !== provider || Date.parse(r.ts) < now - 3_600_000 || r.status !== 200 || !r.output_tokens) continue;
-    out += r.output_tokens;
-    ms += r.ms;
+/** output tokens / request wall seconds over the last hour, else the last 24 h (successful requests). */
+export function tokensPerSec(rows: UsageRow[], provider: string, now: number): { tokensPerSec?: number; tokensPerSecWindow?: "1h" | "24h" } {
+  for (const [span, tokensPerSecWindow] of [[3_600_000, "1h"], [86_400_000, "24h"]] as const) {
+    let out = 0;
+    let ms = 0;
+    for (const r of rows) {
+      if (r.provider !== provider || Date.parse(r.ts) < now - span || r.status !== 200 || !r.output_tokens) continue;
+      out += r.output_tokens;
+      ms += r.ms;
+    }
+    if (ms) return { tokensPerSec: Math.round((out / (ms / 1000)) * 10) / 10, tokensPerSecWindow };
   }
-  return ms ? { tokensPerSec: Math.round((out / (ms / 1000)) * 10) / 10 } : {};
+  return {};
 }
 
 /** p50 decode tokens/s over the last hour (slow-path requests only). */

@@ -147,7 +147,7 @@ describe("limits parsing", () => {
     expect(estimateWindows(rows, "glm", { "5h": 10 }, NOW)).toEqual([
       { name: "5h", percent: 20, resetAt: NOW - 20 * 60_000 + 5 * 3_600_000, estimated: true },
     ]);
-    expect(tokensPerSec(rows, "glm", NOW)).toEqual({ tokensPerSec: 20 });
+    expect(tokensPerSec(rows, "glm", NOW)).toEqual({ tokensPerSec: 20, tokensPerSecWindow: "1h" });
   });
 });
 
