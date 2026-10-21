@@ -208,5 +208,6 @@ body.winon{display:flex;flex-direction:column}body.winon>main#win-root{order:1}b
 .wm{position:relative;height:100%}.wm-s{margin-top:2px}.wm-u{color:var(--dim);margin-left:3px;font-size:12px}.wm-sp{position:absolute;right:8px;top:6px;width:40%;height:32px}
 .wc-svg{height:calc(100% - 22px);overflow:hidden}.wc-leg{height:22px;overflow:hidden;padding:0 10px}
 .wr{padding:6px 10px;min-width:0}.wr-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}.wr-sel{flex:none}.wr .rtcls{font-size:11px}.wr-sess{margin-top:4px}.wr-sess .rtsess{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;margin-left:12px}
+.wmd{padding:6px 10px;min-width:0}.wmd-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.wmd-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 10px;margin-top:6px}.wmdt{font-size:11px;color:var(--dim)}.wmdv{font-size:18px}.wmds{font-size:11px}.wmd-n{margin-top:4px}.wmd-i .linst{margin-top:3px}.wmd-in{font:inherit;min-width:120px}.wmd-e .eprow{padding:2px 0}
 ${winSelectCss()}
 `;
