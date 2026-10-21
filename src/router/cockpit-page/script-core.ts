@@ -236,6 +236,14 @@ function layoutRows(secs){
  return rows;
 }
 function saveRows(rows){try{localStorage.setItem(LKEY,JSON.stringify(rows))}catch(e){}}
+/** Run a layout change (a drop, a keyboard move) and leave the page where it was scrolled: moved nodes
+ *  must not drag the viewport along, whatever the browser's anchoring does with a detached anchor. */
+function keepScroll(fn){
+ var x=window.scrollX,y=window.scrollY,r=fn();
+ var fix=function(){if(window.scrollY!==y||window.scrollX!==x)window.scrollTo(x,y)};
+ fix();window.requestAnimationFrame(fix);
+ return r;
+}
 /** Apply the rows: DOM order = row order, each section spans 12/n columns.
  *  The section elements move, never get rebuilt: folds and listeners survive. */
 function applyLayout(rows){
@@ -405,7 +413,7 @@ function moveTileBy(tile,delta){
  if(p<0||np<0||np>=ord.length)return false;
  ord.splice(p,1);ord.splice(np,0,id);
  // __tkey is set by orderTiles; fall back to the container's own data-tkey
- var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);applyTileOrder(cont);
+ var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);keepScroll(function(){applyTileOrder(cont)});
  return true;
 }
 function tileGrips(){
@@ -544,12 +552,12 @@ function uDrag(e){
   if(ti<0)return;
   ord.splice(drop.before?ti:ti+1,0,d.tid);
   if(ord.join("\n")===was)return; // dropped where it already was: nothing to save
-  var o=tileOrder();o[tkeyOf(lt.cont)]=ord;saveTileOrder(o);applyTileOrder(lt.cont);
+  var o=tileOrder();o[tkeyOf(lt.cont)]=ord;saveTileOrder(o);keepScroll(function(){applyTileOrder(lt.cont)});
   return;
  }
  var rows=curRows(),rows2=moveSec(d.name,rows,drop.ref,drop.mode);
  if(rows2===rows)return; // refused (a 4th beside)
- saveRows(rows2);applyLayout(rows2);
+ saveRows(rows2);keepScroll(function(){applyLayout(rows2)});
 }
 /** Every drag trace gone: listeners, press timer, dimmed item, indicator. */
 function endDrag(){

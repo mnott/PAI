@@ -187,6 +187,41 @@ describe.skipIf(!CHROME)("cockpit drag and drop in a real browser", () => {
     } finally { page.close(); }
   }, 120_000);
 
+  it("scroll: moving a panel and the refresh after it keep the page where it was scrolled", async () => {
+    const page = await Page.open();
+    try {
+      await load(page);
+      // a page taller than the window, scrolled well down
+      const secs: string[] = await page.ev(secNames);
+      const y = await page.ev<number>(`(function(){var e=document.querySelector('main section[data-section="${secs[secs.length - 3]}"]');window.scrollTo(0,e.getBoundingClientRect().top+window.scrollY-300);return Math.round(window.scrollY)})()`);
+      const s0 = secs[secs.length - 3]!, s1 = secs[secs.length - 2]!;
+      expect(y, "the page is scrolled").toBeGreaterThan(100);
+      // drag the second panel above the first (a real mouse drop; the grip is already on screen)
+      const g = await page.ev<{ l: number; t: number; w: number; h: number }>(`(function(){var r=document.querySelector('main section[data-section="${s1}"] .sgrip').getBoundingClientRect();return{l:r.left,t:r.top,w:r.width,h:r.height}})()`);
+      const gx = g.l + g.w / 2, gy = g.t + g.h / 2;
+      await page.mouse("mouseMoved", gx, gy);
+      await page.mouse("mousePressed", gx, gy);
+      for (let i = 1; i <= 6; i++) { await page.mouse("mouseMoved", gx + 5 * i, gy - 8 * i); await wait(20) }
+      // aim at the top edge of the first panel when it is on screen, else just above the grip
+      const tp = await page.ev<{ x: number; y: number }>(`(function(){var r=document.querySelector('main section[data-section="${s0}"]').getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+4}})()`);
+      const sy = await page.ev<number>(`Math.round(window.scrollY)`);
+      expect(sy, "no scroll during the drag").toBe(y);
+      await page.mouse("mouseMoved", tp.x, tp.y);
+      await page.mouse("mouseReleased", tp.x, tp.y);
+      await wait(150);
+      const secs2: string[] = await page.ev(secNames);
+      expect(secs2.indexOf(s1), "the panel moved").toBeLessThan(secs2.indexOf(s0));
+      const afterDrop = await page.ev<number>(`Math.round(window.scrollY)`);
+      // the next refresh
+      const seen = hits;
+      for (let i = 0; i < 40 && hits === seen; i++) await wait(250);
+      await wait(600);
+      const afterRefresh = await page.ev<number>(`Math.round(window.scrollY)`);
+      expect(afterDrop, "scroll kept after the drop").toBe(y);
+      expect(afterRefresh, "scroll kept after the refresh").toBe(y);
+    } finally { page.close(); }
+  }, 120_000);
+
   it("keyboard: the grip is focusable, Enter grabs, arrows move one place, Enter drops", async () => {
     const page = await Page.open();
     try {

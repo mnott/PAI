@@ -2715,7 +2715,7 @@ function tileDragHarness(inv: unknown) {
   // the drag listens on the window: record them so the test fires the real handlers
   const winHandlers: Array<{ type: string; fn: (e: unknown) => void }> = [];
   const windowStub = {
-    innerWidth: 1200, scrollBy() {},
+    innerWidth: 1200, scrollBy() {}, scrollX: 0, scrollY: 0, scrollTo() {}, requestAnimationFrame() {},
     addEventListener: (type: string, fn: (e: unknown) => void) => { winHandlers.push({ type, fn }); },
     removeEventListener: (type: string, fn: unknown) => { const i = winHandlers.findIndex((w) => w.type === type && w.fn === fn); if (i >= 0) winHandlers.splice(i, 1); },
   };
