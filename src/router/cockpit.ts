@@ -18,7 +18,8 @@ import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
-import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
+import { ledgerPath, workersLogDir } from "../workers/paths.js";
+import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
@@ -48,6 +49,7 @@ import type { BudgetMap } from "../workers/budget.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
+import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -531,6 +533,16 @@ export type LimitsSource = Pick<LimitsCache, "get">;
 /** The action deps + local-job runner the router command installs; tests install their own. */
 let actionHooks: ActionHooks = {};
 let actionDepsOverride: Partial<ActionDeps> | null = null;
+/** Registry editor paths (tests install a temp-dir ctx); default the live workers.yaml. */
+let registryCtxOverride: RegistryCtx | null = null;
+export function setRegistryCtxForTest(ctx: RegistryCtx | null): void {
+  registryCtxOverride = ctx;
+}
+function registryCtx(): RegistryCtx {
+  if (registryCtxOverride) return registryCtxOverride;
+  const logDir = workersLogDir(readWorkersSection().workers);
+  return defaultRegistryCtx(workersYamlPath(), ledgerPath(logDir), logDir);
+}
 
 export function setActionHooks(hooks: ActionHooks, deps?: Partial<ActionDeps>): void {
   actionHooks = hooks;
@@ -1049,6 +1061,7 @@ export function handleCockpit(
       });
     return true;
   }
+  if (handleRegistryRoute(req, res, url.pathname, registryCtx, { sameOrigin: sameOriginAction, readBody })) return true;
   if (req.method === "GET" && url.pathname === "/cockpit/job") {
     const home = actionDepsOverride?.home ?? paiHomeDir();
     const j = home ? readCockpitJob(home, url.searchParams.get("id") ?? "") : null;

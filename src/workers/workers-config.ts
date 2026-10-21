@@ -121,7 +121,7 @@ export interface WorkersYamlData {
 // ---------------------------------------------------------------------------
 
 /** snake_case on-disk keys → the camelCase raw shape parseProvider expects. */
-function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> {
+export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> {
   const raw: Record<string, unknown> = {};
   if (y.enabled !== undefined) raw.enabled = y.enabled;
   if (y.url !== undefined) raw.baseUrl = y.url;
