@@ -302,3 +302,29 @@ describe("pane identity is explicit", () => {
     }
   });
 });
+
+describe("closeEndedPanes: pane opened during the iTerm listing", () => {
+  const seed = (worker: string, session: string, opened: string) => {
+    mkdirSync(join(dir, "panes", "SCOPE"), { recursive: true });
+    writeFileSync(join(dir, "panes", "SCOPE", `${worker}.json`), JSON.stringify({ session, worker, opened }));
+  };
+  it("logs caller, run, session and reason for a stale drop", async () => {
+    seed("20260929-100001-1", "GONE", "2026-09-29 10:00:01");
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await closeEndedPanes(dir, () => true, false, fakeOps({ listIterm: async () => [{ id: "OTHER", name: "zsh" }] }));
+    const log = err.mock.calls.map((c) => String(c[0])).join("");
+    err.mockRestore();
+    expect(log).toContain("[pane-registry] drop caller=closeEndedPanes run=20260929-100001-1 session=GONE reason=stale");
+  });
+  it("keeps an entry registered after the listing started (pooled run race)", async () => {
+    const ops = fakeOps({
+      listIterm: async () => {
+        // the slow osascript listing runs; meanwhile another process opens and registers a pane
+        seed("20260929-100077-7", "NEW", "2026-09-29 10:00:77");
+        return [{ id: "OTHER", name: "zsh" }]; // listing taken before NEW existed
+      },
+    });
+    await closeEndedPanes(dir, () => true, false, ops);
+    expect(existsSync(join(dir, "panes", "SCOPE", "20260929-100077-7.json"))).toBe(true);
+  });
+});

@@ -606,7 +606,8 @@ export function saveEntry(logDir: string, e: PaneEntry): void {
 }
 
 /** Forget an entry (its per-worker file; a legacy list is rewritten without it). */
-function dropEntry(logDir: string, e: PaneEntry): void {
+function dropEntry(logDir: string, e: PaneEntry, caller: string, reason: string): void {
+  process.stderr.write(`[pane-registry] drop caller=${caller} run=${e.worker} session=${e.session} reason=${reason}\n`);
   const legacy = join(panesDir(logDir), `${e.scope}.json`);
   rmSync(entryPath(logDir, e), { force: true });
   if (existsSync(legacy)) {
@@ -791,7 +792,7 @@ export async function closePaneForWorker(logDir: string, wid: string, ops: PaneO
     } catch {
       /* iTerm gone: the entry is stale either way */
     }
-    dropEntry(logDir, e);
+    dropEntry(logDir, e, "closePaneForWorker", "worker pane closed");
   }
   return closed;
 }
@@ -839,18 +840,21 @@ export async function closeEndedPanes(
     }
     if (!dryRun) {
       const ok = backend === "tmux" ? ops.closeTmux(id) : await ops.closeIterm(id).catch(() => false);
-      if (entry) dropEntry(logDir, entry); // stale whether or not the pane still existed
+      if (entry) dropEntry(logDir, entry, "closeEndedPanes", ok ? "ended, pane closed" : "ended, close failed"); // stale whether or not the pane still existed
       if (!ok && !entry) return;
     }
     res.closed.push(`${worker} ${key}${dryRun ? " (dry run)" : ""}`);
   };
+  // Registry first, listing second: the listing then covers every entry read. The other way round, a pane
+  // opened (and registered) while the slow listing ran is in the registry but not the listing, and is dropped as stale.
+  const registry = loadRegistry(logDir);
   // iTerm unreachable: no live-session view, registry entries are still handled
   const sessions = await ops.listIterm().catch(() => []);
   const open = new Set(sessions.map((s) => s.id));
-  for (const e of loadRegistry(logDir)) {
+  for (const e of registry) {
     // iTerm answered and the session is gone: a stale entry, forgotten without a close
     if (sessions.length && !open.has(e.session)) {
-      if (!dryRun) dropEntry(logDir, e);
+      if (!dryRun) dropEntry(logDir, e, "closeEndedPanes", "stale: session not in iTerm listing");
       continue;
     }
     await handle("iterm", e.session, e.worker, e);
@@ -1351,7 +1355,7 @@ export async function closeEndedInScope(logDir: string, scope: string, ops: Pane
   for (const e of loadRegistry(logDir, scope)) {
     if (!paneMayClose(logDir, e.worker)) continue;
     await ops.closeIterm(e.session).catch(() => false);
-    dropEntry(logDir, e);
+    dropEntry(logDir, e, "closeEndedInScope", "ended worker replaced in scope");
   }
 }
 
@@ -1414,7 +1418,7 @@ export async function openPaneForWorker(
     );
   }
   const live = new Set(out.slice(0, bar).split(",").filter(Boolean));
-  for (const e of reg) if (!live.has(e.session)) dropEntry(logDir, e);
+  for (const e of reg) if (!live.has(e.session)) dropEntry(logDir, e, "openPaneForWorker", "stale: session not in split listing");
   saveEntry(logDir, {
     session: out.slice(bar + 1),
     worker: wid,
