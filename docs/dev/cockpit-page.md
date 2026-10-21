@@ -18,6 +18,7 @@ Rules that keep it working:
 
 - Every tunable number, palette or threshold comes from `L` (baked into the page with the `n()`/`q()`/`hex()` helpers that validate it); none is written as a literal in the page parts. Add a new value to `cockpit-layout.ts`, the shipped defaults (`router.cockpit.layout`) and `docs/config-defaults.md` together.
 - Panels are redrawn only through `setHtml(el, html)`; a section's own id is `sec-<name>`, its inner panel keeps the plain id.
+- SVG charts draw at the container's real pixel width: `chartW(el, fallback)` measures `clientWidth` and the viewBox uses it directly (height fixed), so chart text renders at its CSS font-size whatever the chart width; `*ChartWidthPx` is only the fallback when the container cannot be measured. A ResizeObserver on `main` (debounced, `chartResizeSlackPx`/`chartResizeDebounceMs`) redraws a chart when its container's pixel width changed.
 - Draggable tiles carry `data-tid`, rendered by the real renderer (tests must use the real render functions, not hand-made fixtures).
 - A refactor of these files must leave `cockpitHtml()` byte-identical unless the change is meant to alter the page: compare the sha256 before and after.
 - Tests: `src/router/cockpit-page.test.ts` and `src/router/cockpit.test.ts`.

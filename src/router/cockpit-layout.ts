@@ -100,12 +100,17 @@ const SHIPPED = {
   donutRadiusPx: 48,
   donutStrokePx: 16,
   donutViewBoxPx: 140,
+  // width: the fallback when the container cannot be measured (the chart draws at its
+  // real pixel width, so text keeps its size at any width); height: the fixed pixel height.
   tokensChartWidthPx: 760,
   tokensChartHeightPx: 220,
   powerChartWidthPx: 760,
   powerChartHeightPx: 150,
   dailyChartWidthPx: 520,
   dailyChartHeightPx: 200,
+  // chart redraw on resize: a width change at or below the slack is ignored; the redraw is debounced
+  chartResizeSlackPx: 8,
+  chartResizeDebounceMs: 150,
   dailyDays: 14,
   sessionsRows: 20,
   workerRows: 15,
@@ -179,13 +184,18 @@ export interface CockpitLayout {
   donutRadiusPx: number;
   donutStrokePx: number;
   donutViewBoxPx: number;
-  /** chart canvases (SVG viewBox sizes). */
+  /** chart canvases: width is the fallback when the container cannot be measured (the
+   *  svg draws at the container's real pixel width), height is the fixed pixel height. */
   tokensChartWidthPx: number;
   tokensChartHeightPx: number;
   powerChartWidthPx: number;
   powerChartHeightPx: number;
   dailyChartWidthPx: number;
   dailyChartHeightPx: number;
+  /** chart redraw on resize: a width change at or below the slack is ignored (px); the
+   *  redraw is debounced by this many ms. */
+  chartResizeSlackPx: number;
+  chartResizeDebounceMs: number;
   /** sample/history windows. */
   dailyDays: number;
   /** table row limits. */
@@ -265,6 +275,8 @@ export function cockpitLayout(): CockpitLayout {
     powerChartHeightPx: num(s, "powerChartHeightPx", SHIPPED.powerChartHeightPx),
     dailyChartWidthPx: num(s, "dailyChartWidthPx", SHIPPED.dailyChartWidthPx),
     dailyChartHeightPx: num(s, "dailyChartHeightPx", SHIPPED.dailyChartHeightPx),
+    chartResizeSlackPx: num(s, "chartResizeSlackPx", SHIPPED.chartResizeSlackPx),
+    chartResizeDebounceMs: num(s, "chartResizeDebounceMs", SHIPPED.chartResizeDebounceMs),
     dailyDays: num(s, "dailyDays", SHIPPED.dailyDays),
     sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),

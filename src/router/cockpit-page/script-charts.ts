@@ -5,6 +5,8 @@ import type { Num, Str } from "./types.js";
 
 /** sys state through the axis label helper. */
 export const scriptCharts = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`var sys=null;
+/** Chart redraw on resize: a change smaller than the slack is ignored; the redraw is debounced. */
+var CHART_RESIZE_SLACK_PX=${n(L.chartResizeSlackPx)},CHART_RESIZE_DEBOUNCE_MS=${n(L.chartResizeDebounceMs)},chartTimer=null;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
 var PKEYS=[["totalW","power W","#d98a1c",0],["gpu","GPU load","#3b6fe0",1],["cpu","CPU load","#2e9e5b",1]];
 /* one helper for every GB on the page: binary GB (1024^3), the same rounding as
@@ -70,23 +72,30 @@ function trimEmpty(labels,rows,totalOf){
  while(b>=a&&!totalOf(rows[b]))b--;
  return a>b?null:{labels:labels.slice(a,b+1),rows:rows.slice(a,b+1)}
 }
-function emptyChart(w,h){
- var padL=padFor([fmtAxis(1e9)]),padB=18,padT=6,W=w-padL-6,H=h-padB-padT,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/>'}
+/** The svg wrapper: the viewBox is the container's real pixel box (chartW), so every
+ *  user unit is one CSS px and svg text renders at its CSS font-size whatever the chart width. */
+function chartSvg(el,w,h){return'<svg width="100%" viewBox="0 0 '+chartW(el,w)+' '+h+'" preserveAspectRatio="xMidYMid meet">'}
+/** The width a chart draws at: the container's real pixel width (clientWidth), else the
+ *  configured fallback. The viewBox uses it directly — no scaling of text with chart width.
+ *  Also stamps el.__cw: the width the current svg was drawn at (the resize check). */
+function chartW(el,fallback){var w=el&&el.clientWidth;var cw=w>0?Math.round(w):fallback;if(el)el.__cw=cw;return cw}
+function emptyChart(el,w,h){
+ var padL=padFor([fmtAxis(1e9)]),padB=18,padT=6,cw=chartW(el,w),W=cw-padL-6,H=h-padB-padT,svg=chartSvg(el,w,h);
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(cw-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/>'}
  svg+='<text x="'+(padL+W/2)+'" y="'+(padT+H/2+3)+'" text-anchor="middle">no data in this window</text>';
  return svg+'</svg>';
 }
 function lineChart(el,labels,series,keys,w,h){
  var tr=trimEmpty(labels,series,function(s){var t=0;keys.forEach(function(k){t+=s[k[0]]||0});return t});
- if(!tr){setHtml(el,emptyChart(w,h));return}
+ if(!tr){setHtml(el,emptyChart(el,w,h));return}
  labels=tr.labels;series=tr.rows;
- var padL=44,padR=34,padB=18,padT=6,W=w-padL-padR,H=h-padB-padT,n=labels.length,bw=W/n;
+ var cw=chartW(el,w),padL=44,padR=34,padB=18,padT=6,W=cw-padL-padR,H=h-padB-padT,n=labels.length,bw=W/n;
  var leftMax=1,hasR=false; // key[3]: 1 = percent, fixed 0-100 right axis; others share the auto left axis
  keys.forEach(function(k){if(k[3])hasR=true;else series.forEach(function(s){if((s[k[0]]||0)>leftMax)leftMax=s[k[0]]})});
  padL=padFor([fmtAxis(leftMax)+" W"]);
- var PCT=["0","33","66","100"],svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(leftMax*g/3)+' W</text>'+
-  (hasR?'<text x="'+(w-2)+'" y="'+(yy+3)+'" text-anchor="end">'+PCT[g]+'%</text>':'')}
+ var PCT=["0","33","66","100"],svg=chartSvg(el,w,h);
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(cw-padR)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(leftMax*g/3)+' W</text>'+
+  (hasR?'<text x="'+(cw-2)+'" y="'+(yy+3)+'" text-anchor="end">'+PCT[g]+'%</text>':'')}
  keys.forEach(function(k){
   var scale=k[3]?100:leftMax,d="",pen=false;
   series.forEach(function(s,i){var v=s[k[0]];if(v==null){pen=false;return}
@@ -120,11 +129,11 @@ function gapLayout(totals,w,padL){
 }
 function gapMark(x,top,bot){return'<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+top+'" y2="'+bot+'" stroke="var(--line)" stroke-dasharray="2 3"/>'}
 function stackedBars(el,labels,series,keys,w,h,tickFmt){
- var padB=18,padT=6,max=1;
+ var cw=chartW(el,w),padB=18,padT=6,max=1;
  var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
  var padL=padFor([fmtAxis(max)]),H=h-padB-padT;
- var L=gapLayout(sums,w,padL),svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
+ var L=gapLayout(sums,cw,padL),svg=chartSvg(el,w,h);
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(cw-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
  var x=padL,ri=0;
  L.cols.forEach(function(c){
   var cw=L.bw*(c.g?0.4:1);
@@ -139,12 +148,12 @@ function stackedBars(el,labels,series,keys,w,h,tickFmt){
  return L.compressed;
 }
 function twoToneModelBars(el,labels,buckets,models,w,h){
- var padB=18,padT=6,mc=models.length,max=1;
+ var cw=chartW(el,w),padB=18,padT=6,mc=models.length,max=1;
  models.forEach(function(m){colorOf(m)});
  var totals=buckets.map(function(arr){var t=0;arr.forEach(function(s){t+=s.total});return t});totals.forEach(function(v){if(v>max)max=v});
- var padL=padFor([fmtAxis(max)]),W=w-padL-6,H=h-padB-padT;
- var L=gapLayout(totals,w,padL),mwid=mc?Math.max(3,L.bw/mc):L.bw,svg='<svg width="100%" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="xMidYMid meet">';
- for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
+ var padL=padFor([fmtAxis(max)]),W=cw-padL-6,H=h-padB-padT;
+ var L=gapLayout(totals,cw,padL),mwid=mc?Math.max(3,L.bw/mc):L.bw,svg=chartSvg(el,w,h);
+ for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(cw-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
  var x=padL,ri=0;
  L.cols.forEach(function(c){
   var cw=L.bw*(c.g?0.4:1);
@@ -168,5 +177,20 @@ function legend(el,keys,extra){setHtml(el,keys.map(function(k){return'<span><i s
 function legendLine(cap,items){return'<div class="lgline"><span class="lgcap">'+esc(cap)+'</span>'+items+'</div>'}
 /** The chart caption under the svg: set only when idle buckets were compressed. */
 function chartCap(el,on){setHtml(el,on?'<div class="cap dim">idle hours compressed: the x axis is not time-linear</div>':"")}
+/** The chart containers and their redraw entry points (set by render/renderPower). */
+var CHARTS=[["series","render"],["daily","render"],["power","renderPower"]];
+/** Resize: a chart redraws only when its container's pixel width changed by more than
+ *  CHART_RESIZE_SLACK_PX — the viewBox equals the container width, so text stays 10 px at
+ *  any width; a redraw re-measures it. Debounced; falls back to the resize event. */
+function chartResize(){
+ if(chartTimer)clearTimeout(chartTimer);
+ chartTimer=setTimeout(function(){
+  chartTimer=null;
+  CHARTS.forEach(function(c){
+   var el=$(c[0]),w=el.clientWidth||0;
+   if(w>0&&Math.abs(w-(el.__cw||0))>CHART_RESIZE_SLACK_PX&&typeof window!=="undefined"&&window[c[1]])window[c[1]]();
+  });
+ },CHART_RESIZE_DEBOUNCE_MS);
+}
 function label(t,win){var d=new Date(t);return win==="7d"?d.toLocaleDateString([],{weekday:"short"}):win==="24h"?String(d.getHours()).padStart(2,"0")+"h":d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
 `;
