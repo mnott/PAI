@@ -121,7 +121,7 @@ Tables never scroll sideways and never break a header or a number mid-word. The 
 The page is yours to arrange, and the arrangement survives a refresh.
 
 - **Fold.** Every section has a chevron in its header; click it to fold the section down to its title. Cards in the Models section fold on their own. Folded state is remembered.
-- **Move sections.** Drag a section by the grip at the left of its title. Drop it beside another section to share a row, or above or below to put it on its own row. A row holds up to `maxPerRow` sections (3): one fills the width, two take halves, three take thirds. A row stacks, one section per line, when the sections would each be narrower than `minSectionPx` (380); at 822 px wide a row of two stays side by side and a row of three stacks. On touch screens the drag starts only after a press of `touchPressMs` on the grip, so scrolling never drags. Near the viewport edge the page auto-scrolls (`edgeScrollPx`).
+- **Move sections.** Drag a section by the grip at the left of its title. Drop it beside another section to share a row, or above or below to put it on its own row. See [Cockpit windowing](#cockpit-windowing) for how cards, groups, drops and sizes work.
 - **Move tiles.** Metric tiles inside a section have their own grip at the top right (visible on hover); drag a tile to reorder it within its section.
 - **Keyboard.** Focus a grip and press Alt+Up or Alt+Down to move a section to the row above or below as its own row, Alt+Left or Alt+Right to move it within its row or out to a neighbouring row. On a tile grip, Alt+Left and Alt+Right reorder the tile. Escape cancels a drag in progress.
 - **Reset.** The ⟲ button in the header discards the saved section arrangement and returns to the default.
@@ -131,9 +131,9 @@ What is stored where:
 | Where | What |
 |---|---|
 | Browser (local storage) | Section arrangement, tile order, folded sections and cards, model colours, the weighted/raw choice, the window, the theme |
-| Config | `router.cockpit.sections`, `router.cockpit.layout.*`, `router.cockpit.probe.*`, `models.labels`, `models.runtimes` |
+| Config | `router.cockpit.sections`, `router.cockpit.layout.*` (polling, geometry and colour thresholds), `router.cockpit.probe.*`, `models.labels`, `models.runtimes` |
 
-Nothing about your arrangement is sent to the server, so a different browser starts from the default. The default derives from the section order and each section's width, unless `router.cockpit.layout.rows` names an arrangement.
+Nothing about your arrangement is sent to the server, so a different browser starts from the default. The default arrangement comes from the card registry in the page source.
 
 ## Configuration
 
@@ -153,27 +153,13 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 
 | Key | Default | Meaning |
 |---|---|---|
-| `gridBreakpointPx` | 1000 | Below this width the 12-column grid's c8/c6/c4 cards go full width |
-| `minSectionPx` | 380 | A row of n sections stacks when main width / n is below this |
-| `maxPerRow` | 3 | Most sections in one row; a further drop beside is refused |
-| `rows` | `[]` | Default arrangement as rows of section ids; empty derives it from the page order |
-| `touchPressMs` | 350 | Long-press on a grip before a touch drag starts |
-| `edgeScrollPx` | 40 | Distance from the viewport edge where a drag auto-scrolls |
 | `gaugeMinWidthPx`, `gaugeMaxWidthPx` | 110, 120 | Width of a limits gauge tile |
-| `providerTileMinPx` | 260 | Minimum column width of a provider card |
-| `runtimeCardMinPx` | 420 | Minimum column width of a Models runtime card |
-| `tilesWideBreakpointPx` | 720 | Card width at and above which metric tiles use `tilesWideCols` |
-| `tilesWideCols`, `tilesNarrowCols` | 4, 2 | Tile columns above and below that breakpoint |
-| `tilesOneColBreakpointPx` | 339 | At or below this width tiles use one column |
 | `ringMinWidthPx` | 92 | Minimum column width of a cache ring |
 | `palette` | 24 colours | Model colours in assignment order (`#rrggbb`); the first four are the token-kind colours |
 | `colorPruneDays` | 90 | Saved model colours not used for this long are forgotten |
 | `sessionTitleMaxWidthPx` | 480 | Widest title in Sessions by tokens |
 | `sparkHeightPx`, `sparkViewMaxPx`, `sparkPlotHeightPx`, `sparkPlotTopPx` | 32, 100, 28, 30 | Sparkline geometry in metric tiles |
-| `bigDonutSizePx`, `donutSizePx`, `donutRadiusPx`, `donutStrokePx`, `donutViewBoxPx` | 170, 84, 48, 16, 140 | Cache ring geometry |
-| `tokensChartWidthPx`, `tokensChartHeightPx` | 760, 220 | Tokens per bucket chart size |
-| `powerChartWidthPx`, `powerChartHeightPx` | 760, 150 | Power chart size |
-| `dailyChartWidthPx`, `dailyChartHeightPx` | 520, 200 | Tokens per day chart size |
+| `donutSizePx`, `donutRadiusPx`, `donutStrokePx`, `donutViewBoxPx` | 84, 48, 16, 140 | Cache ring geometry |
 | `dailyDays` | 14 | Days in Tokens per day per model |
 | `sessionsRows` | 20 | Rows in Sessions by tokens |
 | `sessionsTopRows` | 10 | Sessions shown before the rest collapse into one "+N more sessions" row |
@@ -187,14 +173,13 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `stampStaleSecs` | 15 | Age after which the stamp reads "stale" |
 | `jobFirstDelayMs`, `jobPollMs`, `jobMaxTries` | 2000, 5000, 120 | Following a local switch, off or runtime job: first delay, poll interval, tries |
 | `serverCounterStaleSecs` | 60 | A server prefix-cache counter older than this is marked |
-| `confirmMs` | 4000 | An inline confirm (a stop that also takes other consumers down) stays armed this long |
-| `chartResizeSlackPx`, `chartResizeDebounceMs` | 8, 150 | Charts draw at their real pixel width, so text keeps its size; a width change above the slack redraws them, debounced |
 | `minLabelGapPx`, `minBarPx` | 48, 3 | Time-axis labels are thinned to a label every k buckets so neighbours keep this many px; bar charts merge buckets (caption names the bucket size) so a bar stays at least this wide |
 | `sysHistoryLen` | 60 | System tiles are metric tiles with a sparkline; a metric without a server series keeps this many recent polls in the page |
-| `foldDefaultKind` | `coding` | A Models card of this kind starts open, the rest folded |
 | `gaugeWarnPct`, `gaugeBadPct` | 70, 90 | A limits gauge at/above the bad percent colours red, at/above the warn percent amber |
 | `hitWarn`, `hitBad` | 0.8, 0.5 | A cache hit ratio below the warn ratio colours amber, below the bad ratio red (cache rings, pause verdicts, sessions and provider hit columns) |
 | `errorWarn`, `errorBad` | 0.02, 0.1 | An error rate at/above the bad ratio colours red, at/above the warn ratio amber (totals strip, provider err%) |
+
+Keys removed with the windowing cut-over (`gridCols`, `gridBreakpointPx`, `minSectionPx`, `providerTileMinPx`, `runtimeCardMinPx`, `tilesWideBreakpointPx`, `tilesWideCols`, `tilesNarrowCols`, `tilesOneColBreakpointPx`, `bigDonutSizePx`, the six `*ChartWidthPx`/`*ChartHeightPx`, `chartResizeSlackPx`, `chartResizeDebounceMs`, `confirmMs`, `foldDefaultKind`, `rows`, `maxPerRow`, `touchPressMs`, `edgeScrollPx`) have no effect. A config that still sets one is not an error: the router ignores it and writes one line to its log naming the keys. Card arrangement and sizes are not configuration; see [Cockpit windowing](#cockpit-windowing).
 
 The sampler behind the Models tiles is `router.samples` (`sampleMs`, `historyLen`, `engineStatusTimeoutMs`, `cardReadingMaxAgeMs`), also in the shipped defaults.
 
@@ -207,3 +192,41 @@ The sampler behind the Models tiles is `router.samples` (`sampleMs`, `historyLen
 | `timeoutStrikes` | 3 | A local server whose TCP connect or `/v1/models` answer times out is busy, not down; it turns down after this many consecutive timeouts (refused / not serving = down at once) |
 | `tcpTimeoutMs` | 3000 | TCP connect timeout of the local-server probe |
 | `stallLogMs` | 1000 | The router logs one line when its event loop is blocked longer than this, with the requests in flight and the slow synchronous handlers |
+
+## Cockpit windowing
+
+The page is a tree of windows, not a fixed grid. Everything on it is a card; cards sit in containers; you rearrange and resize them directly. The arrangement is the browser's, not the config's.
+
+**Cards and groups.** A card has a header (grip, title, status, minimize button) and a body drawn by its type. A group is a card whose body holds other cards, laid out by the same rules inside the group's box. The page root is a column of bands; a band is a single card or a row of cards side by side.
+
+**Types.** A card's type decides what it draws and its minimum and default size (`src/router/cockpit-page/win/types.ts` and the `cards-*.ts` files next to it). The general types draw whatever data a card's spec returns:
+
+| Type | Draws |
+|---|---|
+| `kv` | a big value with a sub line and an optional header status |
+| `table` | a table (stacks into cards when it does not fit, as in [Tables](#tables)) |
+| `note` | one text line |
+| `list` | a keyed row list, or plain markup |
+| `metric` | a value with unit, sub line, extra markup and a sparkline |
+| `metricm` | the same, taller, for a metric with a larger sparkline |
+
+Section types draw the page's own parts: `group`, `chart`, `ring`, `chips`, `server`, `provider`, `runtime`, `model`, `eplist`, `rtflow`, `routing-row`, and the registry editor's `editor` and `backups`.
+
+**Drag.** Drag a card by its grip and drop it on the left, right, top or bottom edge of another card, within that card's container. The outer quarter of each side is a drop zone; the middle is not. Left or right makes the two cards a row; top or bottom stacks them in a column. A drop that would leave any card below its type's minimum size is refused and the indicator turns red. Escape cancels. By keyboard: focus the grip, press Enter or Space to pick the card up, the arrow keys to move it to the other side of the nearest neighbour in that direction, Enter or Space to drop, Escape to restore it; each step is announced to screen readers.
+
+**Minimize and restore.** The button in a card's header folds the card down to its header; press it again to restore it. In a root band or a row only that card shrinks and the space below it stays empty; in a group the siblings share the freed height.
+
+**Gutters.** The gap between two siblings is a handle. Drag it (or focus it and use the arrow keys) to trade size between the two neighbours; other siblings keep theirs. A resize that would push a neighbour under its minimum is refused, and minimized neighbours have no handle.
+
+**Heights: fit once, grow only.** Until you move or resize something, a card's height is the height of its content, measured once. After that a height only grows: content that shrinks later does not make the card or its neighbours jump. A size you have set yourself is saved as it is. A row narrower than its cards' minimum widths is laid out as a column for display only; the stored arrangement is unchanged.
+
+**Persistence.** The arrangement, sizes, minimized cards and group contents are saved in the browser's local storage under `pai.cockpit.win.v2`. The saved state wins over the defaults; a card that is new in a later version is added to the default place, and a saved card that no longer exists is dropped. The older `pai.cockpit.layout.v1`, `pai.cockpit.tiles.v1` and `pai.cockpit.collapsed` entries are removed on first load. The ⟲ button clears the saved state. Nothing is sent to the server.
+
+**Registry editor.** The Registry card edits the model registry (`workers.yaml`) in the page:
+
+- *Validate* checks the text with the config loader's own parsers plus uniqueness, port, model file and running-instance checks, shows errors with line numbers, and shows a line diff against the file on disk.
+- *Save* re-validates, refuses if the file changed on disk since you loaded it, copies the current file to a timestamped backup, writes the new text to a temporary file, re-reads and re-validates it, and renames it over the registry. A failure at any step leaves the registry byte-identical.
+- *Backups* lists the timestamped backups, newest first, with a diff summary against the current file; *restore* (a second click confirms) runs the same validate and atomic save, and backs up the file it replaces.
+- *Duplicate* copies a `local_tiers` entry under a new name on the next free port, other fields identical.
+
+Mutations are POST-only, same-origin and written to the cockpit action ledger.

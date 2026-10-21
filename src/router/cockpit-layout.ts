@@ -1,8 +1,8 @@
 /**
- * cockpit-layout.ts — the policy values of the cockpit layout: grid
- * breakpoints and column counts, tile min/max widths, chart heights,
- * sample/history window lengths, refresh intervals, row limits and fold
- * defaults. They live in the shipped defaults file
+ * cockpit-layout.ts — the policy values of the cockpit layout: tile min/max
+ * widths, chart heights, sample/history window lengths, refresh intervals and
+ * row limits. The arrangement of cards (rows, spans, drag) is not here: it
+ * lives in the windowing registry and the browser's saved state. They live in the shipped defaults file
  * (src/config/defaults/config.yaml, `router.cockpit.layout` section) and are
  * read through the main-config loader (effectiveMainConfig over
  * paiConfigFilePath(), so PAI_CONFIG_FILE and a user config.yaml/json win),
@@ -28,10 +28,30 @@ function cockpitSection(): Record<string, unknown> {
   }
 }
 
+/** Keys removed with the windowing cut-over; a user config that still sets one is
+ *  ignored, with one log line per process. */
+const REMOVED_KEYS = [
+  "gridCols", "gridBreakpointPx", "minSectionPx", "providerTileMinPx", "runtimeCardMinPx",
+  "tilesWideBreakpointPx", "tilesWideCols", "tilesNarrowCols", "tilesOneColBreakpointPx",
+  "bigDonutSizePx", "tokensChartWidthPx", "tokensChartHeightPx", "powerChartWidthPx",
+  "powerChartHeightPx", "dailyChartWidthPx", "dailyChartHeightPx", "chartResizeSlackPx",
+  "chartResizeDebounceMs", "confirmMs", "foldDefaultKind", "rows", "maxPerRow", "touchPressMs",
+  "edgeScrollPx",
+];
+let removedLogged = false;
+
 /** The `router.cockpit.layout` subtree; {} when absent. */
 function layoutSection(): Record<string, unknown> {
   const l = cockpitSection().layout;
-  return typeof l === "object" && l !== null && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
+  const section = typeof l === "object" && l !== null && !Array.isArray(l) ? (l as Record<string, unknown>) : {};
+  if (!removedLogged) {
+    const stale = REMOVED_KEYS.filter((k) => k in section);
+    if (stale.length) {
+      removedLogged = true;
+      console.error(`router.cockpit.layout: ignoring removed keys (no effect since the windowing cut-over): ${stale.join(", ")}`);
+    }
+  }
+  return section;
 }
 
 /** A positive number from the config subtree, else the shipped fallback. */
@@ -56,32 +76,11 @@ function hexColors(section: Record<string, unknown>, key: string, fallback: stri
   return out.length ? out : fallback;
 }
 
-/** A list of non-empty strings (a list of lists for layout.rows), else the fallback. */
-function strLists(section: Record<string, unknown>, key: string, fallback: string[][]): string[][] {
-  const v = section[key];
-  if (!Array.isArray(v)) return fallback;
-  const rows: string[][] = [];
-  for (const r of v) {
-    if (!Array.isArray(r)) continue;
-    const names = r.filter((x): x is string => typeof x === "string" && !!x);
-    if (names.length) rows.push(names);
-  }
-  return rows;
-}
-
 /** The shipped values, kept only as the fallback when the defaults file is
  *  missing a key; the file is the source of truth. */
 const SHIPPED = {
-  gridBreakpointPx: 1000,
-  minSectionPx: 380,
   gaugeMinWidthPx: 110,
   gaugeMaxWidthPx: 120,
-  providerTileMinPx: 260,
-  runtimeCardMinPx: 420,
-  tilesWideBreakpointPx: 720,
-  tilesWideCols: 4,
-  tilesNarrowCols: 2,
-  tilesOneColBreakpointPx: 339,
   ringMinWidthPx: 92,
   // model colours, assignment order; the first four are the token-kind colours.
   palette: [
@@ -97,22 +96,10 @@ const SHIPPED = {
   sparkViewMaxPx: 100,
   sparkPlotHeightPx: 30,
   sparkPlotTopPx: 28,
-  bigDonutSizePx: 170,
   donutSizePx: 84,
   donutRadiusPx: 48,
   donutStrokePx: 16,
   donutViewBoxPx: 140,
-  // width: the fallback when the container cannot be measured (the chart draws at its
-  // real pixel width, so text keeps its size at any width); height: the fixed pixel height.
-  tokensChartWidthPx: 760,
-  tokensChartHeightPx: 220,
-  powerChartWidthPx: 760,
-  powerChartHeightPx: 150,
-  dailyChartWidthPx: 520,
-  dailyChartHeightPx: 200,
-  // chart redraw on resize: a width change at or below the slack is ignored; the redraw is debounced
-  chartResizeSlackPx: 8,
-  chartResizeDebounceMs: 150,
   minLabelGapPx: 48,
   minBarPx: 3,
   sysHistoryLen: 60,
@@ -134,15 +121,6 @@ const SHIPPED = {
   jobFirstDelayMs: 2000,
   jobMaxTries: 120,
   serverCounterStaleSecs: 60,
-  // an inline confirm (a shared runtime's stop) stays armed this long (ms) before it reverts
-  confirmMs: 4000,
-  foldDefaultKind: "coding",
-  // drag-and-drop tunables (router.cockpit.layout): the rows override is empty
-  // by default — the layout derives from the section order and the span classes.
-  rows: [] as string[][],
-  maxPerRow: 3,
-  touchPressMs: 350,
-  edgeScrollPx: 40,
   // colour thresholds: at/above Bad colours red, at/above Warn amber, below Warn
   // green. gaugeWarnPct/gaugeBadPct are percentages of a limits gauge; hitWarn/
   // hitBad and errorWarn/errorBad are ratios (0..1) of a hit ratio / error rate.
@@ -166,25 +144,9 @@ const SHIPPED = {
 
 /** The layout policy of the cockpit page, read at page-build time. */
 export interface CockpitLayout {
-  /** main grid: 12 columns; cards wider than c8 collapse to full width below this width. */
-  gridCols: number;
-  gridBreakpointPx: number;
-  /** a row of n sections stacks (one per line) only when the main width / n falls
-   *  below this; a row of 2 at 822 px stays side by side, a row of 3 stacks. */
-  minSectionPx: number;
   /** gauge tiles in the cloud/local flex rows. */
   gaugeMinWidthPx: number;
   gaugeMaxWidthPx: number;
-  /** provider group cards in the responsive pgrid. */
-  providerTileMinPx: number;
-  /** runtime cards in the models rt-grid. */
-  runtimeCardMinPx: number;
-  /** metric tiles inside a runtime card: wide cols at/above the container breakpoint,
-   *  narrow cols below it, one column at/below the one-col breakpoint. */
-  tilesWideBreakpointPx: number;
-  tilesWideCols: number;
-  tilesNarrowCols: number;
-  tilesOneColBreakpointPx: number;
   /** cache rings grid. */
   ringMinWidthPx: number;
   /** model colours: palette in assignment order (#rrggbb, readable on both themes). */
@@ -196,24 +158,11 @@ export interface CockpitLayout {
   sparkViewMaxPx: number;
   sparkPlotHeightPx: number;
   sparkPlotTopPx: number;
-  /** cache donut: solo size, ring size, radius, stroke, viewBox. */
-  bigDonutSizePx: number;
+  /** cache donut: ring size, radius, stroke, viewBox. */
   donutSizePx: number;
   donutRadiusPx: number;
   donutStrokePx: number;
   donutViewBoxPx: number;
-  /** chart canvases: width is the fallback when the container cannot be measured (the
-   *  svg draws at the container's real pixel width), height is the fixed pixel height. */
-  tokensChartWidthPx: number;
-  tokensChartHeightPx: number;
-  powerChartWidthPx: number;
-  powerChartHeightPx: number;
-  dailyChartWidthPx: number;
-  dailyChartHeightPx: number;
-  /** chart redraw on resize: a width change at or below the slack is ignored (px); the
-   *  redraw is debounced by this many ms. */
-  chartResizeSlackPx: number;
-  chartResizeDebounceMs: number;
   minLabelGapPx: number;
   minBarPx: number;
   sysHistoryLen: number;
@@ -243,19 +192,6 @@ export interface CockpitLayout {
   jobMaxTries: number;
   /** a server prefix-cache counter older than this is marked. */
   serverCounterStaleSecs: number;
-  /** an inline confirm (a shared runtime's stop) stays armed this long (ms) before it reverts. */
-  confirmMs: number;
-  /** fold default: a card whose data-def equals this opens, everything else folds. */
-  foldDefaultKind: string;
-  /** drag-and-drop layout: configured rows (list of section-name lists);
-   *  empty = derive from the section order and the span classes. */
-  rows: string[][];
-  /** a row holds at most this many sections. */
-  maxPerRow: number;
-  /** on touch, a drag starts after this long press on the grip (ms). */
-  touchPressMs: number;
-  /** during a drag the page auto-scrolls within this of the viewport edge (px). */
-  edgeScrollPx: number;
   /** colour thresholds: a limits gauge at/above gaugeBadPct reads red, at/above
    *  gaugeWarnPct amber (percentages). */
   gaugeWarnPct: number;
@@ -312,17 +248,8 @@ export function cockpitProbeSettings(): CockpitProbe {
 export function cockpitLayout(): CockpitLayout {
   const s = layoutSection();
   return {
-    gridCols: 12,
-    gridBreakpointPx: num(s, "gridBreakpointPx", SHIPPED.gridBreakpointPx),
-    minSectionPx: num(s, "minSectionPx", SHIPPED.minSectionPx),
     gaugeMinWidthPx: num(s, "gaugeMinWidthPx", SHIPPED.gaugeMinWidthPx),
     gaugeMaxWidthPx: num(s, "gaugeMaxWidthPx", SHIPPED.gaugeMaxWidthPx),
-    providerTileMinPx: num(s, "providerTileMinPx", SHIPPED.providerTileMinPx),
-    runtimeCardMinPx: num(s, "runtimeCardMinPx", SHIPPED.runtimeCardMinPx),
-    tilesWideBreakpointPx: num(s, "tilesWideBreakpointPx", SHIPPED.tilesWideBreakpointPx),
-    tilesWideCols: num(s, "tilesWideCols", SHIPPED.tilesWideCols),
-    tilesNarrowCols: num(s, "tilesNarrowCols", SHIPPED.tilesNarrowCols),
-    tilesOneColBreakpointPx: num(s, "tilesOneColBreakpointPx", SHIPPED.tilesOneColBreakpointPx),
     ringMinWidthPx: num(s, "ringMinWidthPx", SHIPPED.ringMinWidthPx),
     palette: hexColors(s, "palette", [...SHIPPED.palette]),
     sessionTitleMaxWidthPx: num(s, "sessionTitleMaxWidthPx", SHIPPED.sessionTitleMaxWidthPx),
@@ -330,19 +257,10 @@ export function cockpitLayout(): CockpitLayout {
     sparkViewMaxPx: num(s, "sparkViewMaxPx", SHIPPED.sparkViewMaxPx),
     sparkPlotHeightPx: num(s, "sparkPlotHeightPx", SHIPPED.sparkPlotHeightPx),
     sparkPlotTopPx: num(s, "sparkPlotTopPx", SHIPPED.sparkPlotTopPx),
-    bigDonutSizePx: num(s, "bigDonutSizePx", SHIPPED.bigDonutSizePx),
     donutSizePx: num(s, "donutSizePx", SHIPPED.donutSizePx),
     donutRadiusPx: num(s, "donutRadiusPx", SHIPPED.donutRadiusPx),
     donutStrokePx: num(s, "donutStrokePx", SHIPPED.donutStrokePx),
     donutViewBoxPx: num(s, "donutViewBoxPx", SHIPPED.donutViewBoxPx),
-    tokensChartWidthPx: num(s, "tokensChartWidthPx", SHIPPED.tokensChartWidthPx),
-    tokensChartHeightPx: num(s, "tokensChartHeightPx", SHIPPED.tokensChartHeightPx),
-    powerChartWidthPx: num(s, "powerChartWidthPx", SHIPPED.powerChartWidthPx),
-    powerChartHeightPx: num(s, "powerChartHeightPx", SHIPPED.powerChartHeightPx),
-    dailyChartWidthPx: num(s, "dailyChartWidthPx", SHIPPED.dailyChartWidthPx),
-    dailyChartHeightPx: num(s, "dailyChartHeightPx", SHIPPED.dailyChartHeightPx),
-    chartResizeSlackPx: num(s, "chartResizeSlackPx", SHIPPED.chartResizeSlackPx),
-    chartResizeDebounceMs: num(s, "chartResizeDebounceMs", SHIPPED.chartResizeDebounceMs),
     minLabelGapPx: num(s, "minLabelGapPx", SHIPPED.minLabelGapPx),
     minBarPx: num(s, "minBarPx", SHIPPED.minBarPx),
     sysHistoryLen: num(s, "sysHistoryLen", SHIPPED.sysHistoryLen),
@@ -363,12 +281,6 @@ export function cockpitLayout(): CockpitLayout {
     jobFirstDelayMs: num(s, "jobFirstDelayMs", SHIPPED.jobFirstDelayMs),
     jobMaxTries: num(s, "jobMaxTries", SHIPPED.jobMaxTries),
     serverCounterStaleSecs: num(s, "serverCounterStaleSecs", SHIPPED.serverCounterStaleSecs),
-    confirmMs: num(s, "confirmMs", SHIPPED.confirmMs),
-    foldDefaultKind: str(s, "foldDefaultKind", SHIPPED.foldDefaultKind),
-    rows: strLists(s, "rows", SHIPPED.rows),
-    maxPerRow: num(s, "maxPerRow", SHIPPED.maxPerRow),
-    touchPressMs: num(s, "touchPressMs", SHIPPED.touchPressMs),
-    edgeScrollPx: num(s, "edgeScrollPx", SHIPPED.edgeScrollPx),
     gaugeWarnPct: num(s, "gaugeWarnPct", SHIPPED.gaugeWarnPct),
     gaugeBadPct: num(s, "gaugeBadPct", SHIPPED.gaugeBadPct),
     hitWarn: num(s, "hitWarn", SHIPPED.hitWarn),

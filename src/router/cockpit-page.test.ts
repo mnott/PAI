@@ -225,7 +225,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
   const thresholdHtml = (layout: Record<string, unknown>) => {
     // always write: an empty yaml file parses to null and blanks the whole layout,
     // so the shipped check writes a key that cannot change the thresholds
-    write(Object.keys(layout).length ? layout : { gridBreakpointPx: 1000 });
+    write(Object.keys(layout).length ? layout : { pollMs: 5000 });
     const html = cockpitHtml();
     // the cls/hitCls sources come from COCKPIT_HTML (the shipped page): the
     // threshold NUMBERS are the ones baked into THIS html, injected below.
@@ -243,7 +243,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
   };
   // the same harness for the gauge thresholds, which the page bakes into sev() itself
   const gaugeHtml = (layout: Record<string, unknown>) => {
-    write(Object.keys(layout).length ? layout : { gridBreakpointPx: 1000 });
+    write(Object.keys(layout).length ? layout : { pollMs: 5000 });
     const html = cockpitHtml();
     const sevSrc = html.match(/function sev\([\s\S]*?\n\}\n/)![0];
     return new Function(`${sevSrc}\nreturn sev;`)() as (p: number) => string;

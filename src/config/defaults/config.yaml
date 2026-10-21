@@ -152,31 +152,16 @@ router:
   bind: loopback
   # Milliseconds a stopping router waits for in-flight requests before force-closing.
   drainMs: 120000
-  # Cockpit page layout policy (src/router/cockpit-layout.ts): grid breakpoints,
-  # column counts, tile min/max widths, chart heights, sample/history window
-  # lengths, refresh intervals, row limits, fold defaults. Read at page build
-  # time; a user config.yaml/json override changes the served page. Pure
+  # Cockpit page layout policy (src/router/cockpit-layout.ts): tile min/max
+  # widths, chart heights, sample/history window lengths, refresh intervals,
+  # row limits. Card arrangement is the windowing registry's, not config's.
+  # Read at page build time; a user config.yaml/json override changes the served page. Pure
   # styling (fonts, colours from the theme mapping) stays in the page's CSS.
   cockpit:
     layout:
-      # main grid: 12 columns; c8/c6/c4 cards go full width below this width.
-      gridBreakpointPx: 1000
-      # a row of n sections stacks (one per line) only when the main width / n
-      # falls below this: a row of 2 at 822 px stays side by side, a row of 3 stacks.
-      minSectionPx: 380
       # cloud/local gauge tiles (flex row): base width, cap.
       gaugeMinWidthPx: 110
       gaugeMaxWidthPx: 120
-      # provider group cards in the responsive grid: min column width.
-      providerTileMinPx: 260
-      # models runtime cards: min column width of the rt-grid.
-      runtimeCardMinPx: 420
-      # metric tiles inside a runtime card: 4 columns at/above the container
-      # breakpoint, 2 below it, 1 at/below the one-column breakpoint.
-      tilesWideBreakpointPx: 720
-      tilesWideCols: 4
-      tilesNarrowCols: 2
-      tilesOneColBreakpointPx: 339
       # cache rings grid: min column width.
       ringMinWidthPx: 92
       # model colours: palette in assignment order (sorted model names, kept
@@ -214,25 +199,11 @@ router:
       sparkViewMaxPx: 100
       sparkPlotHeightPx: 28
       sparkPlotTopPx: 30
-      # cache donut: solo size, ring size, radius, stroke width, viewBox size.
-      bigDonutSizePx: 170
+      # cache donut: ring size, radius, stroke width, viewBox size.
       donutSizePx: 84
       donutRadiusPx: 48
       donutStrokePx: 16
       donutViewBoxPx: 140
-      # chart canvases: width is the fallback when the container cannot be measured
-      # (the svg draws at the container's real pixel width, so text keeps its size at
-      # any width); height is the fixed pixel height.
-      tokensChartWidthPx: 760
-      tokensChartHeightPx: 220
-      powerChartWidthPx: 760
-      powerChartHeightPx: 150
-      dailyChartWidthPx: 520
-      dailyChartHeightPx: 200
-      # chart redraw on resize: a width change at or below the slack is ignored (px);
-      # the redraw is debounced by this many ms.
-      chartResizeSlackPx: 8
-      chartResizeDebounceMs: 150
       # time-axis labels keep at least this many px between neighbours (every k-th bucket
       # is labelled); bar charts keep bars at least minBarPx wide by merging buckets.
       minLabelGapPx: 48
@@ -268,24 +239,6 @@ router:
       jobMaxTries: 120
       # a server prefix-cache counter older than this (seconds) is marked.
       serverCounterStaleSecs: 60
-      # an inline confirm on the cockpit (a stop that also takes other consumers down)
-      # stays armed this long (ms) before it reverts; a second click within it runs the action.
-      confirmMs: 4000
-      # fold default: a model card whose kind equals this opens, the rest fold.
-      foldDefaultKind: coding
-      # drag-and-drop layout: rows of section names, each row 1..maxPerRow
-      # sections sharing the width (1 full, 2 halves, 3 thirds). Empty =
-      # derive from the section order and the span classes (c8+c4 = one row,
-      # c6+c6 = one row, c12 = its own row). The arrangement a user drags
-      # lives in the browser (localStorage), not here.
-      rows: []
-      # a row holds at most this many sections; a 4th drop beside is refused.
-      maxPerRow: 3
-      # on touch, a drag starts only after this long press on the grip (ms),
-      # so scrolling with a finger never drags.
-      touchPressMs: 350
-      # during a drag the page auto-scrolls within this of the viewport edge (px).
-      edgeScrollPx: 40
       # colour thresholds, stated per pair: for a limits gauge and an error
       # rate higher is worse — a value at/above the Bad threshold colours red,
       # at/above the Warn threshold amber, below the Warn threshold green. For
