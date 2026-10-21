@@ -6,11 +6,12 @@
  * tool-registry search callable (2026-09-18).
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import http from "node:http";
 import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { buildRunEnv, claudeCommand, routeLoopbackViaRouter } from "./run-env.js";
+import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs, probeRoute, routeLoopbackViaRouter } from "./run-env.js";
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-runenv-test-"));
@@ -356,5 +357,68 @@ describe("addSchedulingHeaders", () => {
     const env: NodeJS.ProcessEnv = {};
     addSchedulingHeaders(env, { session: "s", worker: "w" });
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
+  });
+});
+
+describe("route preflight", () => {
+  const stub = async (status: number, message: string) => {
+    const seen: { auth: unknown; key: unknown; body: string }[] = [];
+    const s = http.createServer((req, res) => {
+      let b = "";
+      req.on("data", (c) => (b += c));
+      req.on("end", () => {
+        seen.push({ auth: req.headers.authorization, key: req.headers["x-api-key"], body: b });
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify({ type: "error", error: { message } }));
+      });
+    });
+    await new Promise<void>((ok) => s.listen(0, "127.0.0.1", ok));
+    return { s, seen, url: `http://127.0.0.1:${(s.address() as { port: number }).port}` };
+  };
+
+  it("401 = live, and no credential is sent", async () => {
+    const { s, seen, url } = await stub(401, "invalid x-api-key");
+    try {
+      expect((await probeRoute(url)).live).toBe(true);
+      expect(seen[0].auth).toBeUndefined();
+      expect(seen[0].key).toBeUndefined();
+      expect(JSON.parse(seen[0].body).max_tokens).toBe(1);
+    } finally {
+      s.close();
+    }
+  });
+
+  it("502 from the router = broken, names router.claudeUpstream", async () => {
+    const { s, url } = await stub(502, "upstream error: ECONNREFUSED");
+    try {
+      const p = await probeRoute(url);
+      expect(p.live).toBe(false);
+      expect(p.reason).toContain("502");
+      expect(p.reason).toContain("ECONNREFUSED");
+      expect(p.fix).toContain("router.claudeUpstream");
+    } finally {
+      s.close();
+    }
+  });
+
+  it("refused port = broken, names the router and the start command", async () => {
+    const p = await probeRoute("http://127.0.0.1:1");
+    expect(p.live).toBe(false);
+    expect(p.reason).toContain("http://127.0.0.1:1");
+    expect(p.reason).toContain("ECONNREFUSED");
+    expect(p.fix).toContain("pai router start");
+  });
+
+  it("launch pins the first-party URL when the route is broken, nothing when live", () => {
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const broken = nativeLaunchSettingsArgs({}, undefined, () => ({ live: false, reason: "router at X not reachable (ECONNREFUSED)", fix: "start it with: pai router start" }), true);
+      expect(JSON.parse(broken[1]).env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+      expect(String(err.mock.calls[0][0])).toContain("launching direct to https://api.anthropic.com");
+      expect(nativeLaunchSettingsArgs({}, undefined, () => ({ live: true }), true)).toEqual([]);
+      expect(nativeLaunchSettingsArgs({}, undefined, () => ({ live: false }), false)).toEqual([]);
+    } finally {
+      err.mockRestore();
+    }
   });
 });

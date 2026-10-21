@@ -487,7 +487,7 @@ export function routerHandler(
           ures.pipe(res);
           ures.on("end", () => log(`${new Date().toISOString()} GET ${path.split("?")[0]} anthropic ${ures.statusCode} ${Date.now() - started}ms`));
         });
-        ureq.on("error", (e: NodeJS.ErrnoException) => fail(502, `upstream error: ${e.code ?? e.message}`, "GET models", "anthropic"));
+        ureq.on("error", (e: NodeJS.ErrnoException) => fail(502, `upstream error: ${e.code ?? e.message} reaching ${claudeBase} (router.claudeUpstream in config.yaml)`, "GET models", "anthropic"));
         res.on("close", () => ureq.destroy());
         ureq.end();
         return;
@@ -629,12 +629,17 @@ export function routerHandler(
         if (target.kind === "provider" && isLocal(up.url) && e.code === "ECONNREFUSED") {
           return fail(
             503,
-            `local model down — start it with pai worker local <tier>`,
+            `local model down — ECONNREFUSED reaching ${up.url.origin} (provider ${target.name} in workers.yaml); start it with pai worker local <tier>`,
             target.model,
             prov
           );
         }
-        fail(502, `upstream error: ${e.code ?? e.message}`, target.model, prov);
+        fail(
+          502,
+          `upstream error: ${e.code ?? e.message} reaching ${up.url.origin} (${target.kind === "claude" ? "router.claudeUpstream in config.yaml" : `provider ${target.name} in workers.yaml`})`,
+          target.model,
+          prov
+        );
       });
       res.on("close", () => {
         release();

@@ -44,7 +44,7 @@ import {
   type WorkersConfig,
   type WorkerProvider,
 } from "../../workers/config.js";
-import { buildRunEnv, claudeCommand } from "../../workers/run-env.js";
+import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs } from "../../workers/run-env.js";
 import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
@@ -837,7 +837,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   }
 
   const fresh = () => {
-    const result = spawnSync("claude", ["--name", name, ...freshPromptArgs], {
+    const result = spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--name", name, ...freshPromptArgs], {
       cwd,
       stdio: "inherit",
       env: process.env,
@@ -866,7 +866,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
             [...plan.cmd.slice(1), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs],
             { cwd, stdio: "inherit", env: plan.env }
           )
-        : spawnSync("claude", ["--resume", opts.resumableUuid!, "--name", name, ...promptArgs], {
+        : spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs], {
             cwd,
             stdio: "inherit",
             env: process.env,

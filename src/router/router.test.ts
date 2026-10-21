@@ -297,3 +297,45 @@ describe("router tool-name case correction", () => {
     }
   });
 });
+
+describe("router 502 names the dead hop", () => {
+  const post = (port: number, payload: object) =>
+    new Promise<{ status: number; body: string }>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "content-type": "application/json" } }, (r) => {
+        let b = "";
+        r.on("data", (c) => (b += c));
+        r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
+      });
+      q.end(JSON.stringify(payload));
+    });
+
+  it("claude upstream refused -> 502 body names the URL and router.claudeUpstream", async () => {
+    const r = createRouter(() => ({}), "http://127.0.0.1:1", () => {});
+    await new Promise<void>((ok) => r.listen(0, "127.0.0.1", ok));
+    try {
+      const res = await post((r.address() as { port: number }).port, { model: "claude-haiku-4-5", max_tokens: 1, messages: [] });
+      expect(res.status).toBe(502);
+      const msg = JSON.parse(res.body).error.message as string;
+      expect(msg).toContain("ECONNREFUSED");
+      expect(msg).toContain("http://127.0.0.1:1");
+      expect(msg).toContain("router.claudeUpstream");
+    } finally {
+      r.close();
+    }
+  });
+
+  it("local provider upstream refused -> 503 (model down) body names the URL and the provider", async () => {
+    const prov = parseWorkersConfig({ providers: { dead: { baseUrl: "http://127.0.0.1:1/x", models: { default: "dead-model-1" } } } }).providers;
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {});
+    await new Promise<void>((ok) => r.listen(0, "127.0.0.1", ok));
+    try {
+      const res = await post((r.address() as { port: number }).port, { model: "dead-model-1", max_tokens: 1, messages: [] });
+      const msg = JSON.parse(res.body).error.message as string;
+      expect(res.status).toBe(503);
+      expect(msg).toContain("http://127.0.0.1:1");
+      expect(msg).toContain("provider dead in workers.yaml");
+    } finally {
+      r.close();
+    }
+  });
+});
