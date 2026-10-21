@@ -310,7 +310,14 @@ describe("local server up/down and prefix cache", () => {
     await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
     return (srv.address() as AddressInfo).port;
   };
-  const close = (srv: http.Server | net.Server) => new Promise<void>((r) => srv.close(() => r()));
+  // no lsof/ps subprocesses: they cost seconds under full-suite load
+  const noRss = async () => undefined;
+  const close = (srv: http.Server | net.Server) =>
+    new Promise<void>((r) => {
+      srv.close(() => r());
+      // a background stats request or idle keep-alive socket would hold close() for seconds
+      if (srv instanceof http.Server) srv.closeAllConnections();
+    });
 
   it("ClosedPortIsDown: nothing listening", async () => {
     const s = net.createServer();
@@ -321,7 +328,7 @@ describe("local server up/down and prefix cache", () => {
 
   describe("busy is not down; down says why", () => {
     const stub = (tcp: "open" | "refused" | "timeout", served: { alive: boolean; timeout?: boolean; ids?: string[] }) => ({ probes: { tcp: async () => tcp, served: async () => served }, timeoutStrikes: undefined as number | undefined });
-    const run = (n: string, o: ReturnType<typeof stub>) => localLimits(n, local(9), [], Date.now(), undefined, o);
+    const run = (n: string, o: ReturnType<typeof stub>) => localLimits(n, local(9), [], Date.now(), undefined, { ...o, listenerRssMb: noRss });
 
     it("a slow answer after a known-up state stays up, no downReason", async () => {
       expect((await run("busy-a", stub("open", { alive: true, ids: ["m-served"] }))).up).toBe(true);
@@ -376,7 +383,7 @@ describe("local server up/down and prefix cache", () => {
   it("AcceptingButNotServingIsDown: a socket holder (launchd-style) that accepts and drops the connection is not a running server", async () => {
     const holder = net.createServer((sock) => sock.destroy());
     const port = await listen(holder);
-    const r = await localLimits("gpt20b", local(port), [], Date.now());
+    const r = await localLimits("gpt20b", local(port), [], Date.now(), undefined, { listenerRssMb: noRss });
     await close(holder);
     expect(r.up).toBe(false);
     expect(r.prefixCache).toBeUndefined();
@@ -389,7 +396,7 @@ describe("local server up/down and prefix cache", () => {
       res.end(JSON.stringify(q.url === "/v1/models" ? { data: [{ id: "m-served" }] } : stats));
     });
     const port = await listen(srv);
-    const r = await localLimits("l", local(port), [], Date.now());
+    const r = await localLimits("l", local(port), [], Date.now(), undefined, { listenerRssMb: noRss });
     await close(srv);
     expect(r.up).toBe(true);
     expect(r.prefixCache).toEqual({ hits: 66, misses: 2, hitRate: 66 / 68, tokensSaved: 259867, entries: 2, memoryMb: 5273.06 });
@@ -401,7 +408,7 @@ describe("local server up/down and prefix cache", () => {
       res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
     });
     const port = await listen(srv);
-    const r = await localLimits("l", local(port), [], Date.now());
+    const r = await localLimits("l", local(port), [], Date.now(), undefined, { listenerRssMb: noRss });
     await close(srv);
     expect(r.up).toBe(true);
     expect(r.prefixCache).toBeUndefined();
@@ -417,7 +424,7 @@ describe("local server up/down and prefix cache", () => {
     });
     const port = await listen(srv);
     const dir = mkdtempSync(join(tmpdir(), "pc-"));
-    const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
+    const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}", probe: { listenerRssMb: noRss } }, 1);
     const t0 = Date.now();
     const first = await cache.get(t0);
     await cache.prefixSettled();
@@ -442,7 +449,7 @@ describe("local server up/down and prefix cache", () => {
     const port = await listen(srv);
     const dir = mkdtempSync(join(tmpdir(), "pc-"));
     const off = { ...local(port), enabled: false };
-    const mk = (tiers: string[]) => new LimitsCache({ providers: () => ({ tiered: off, stray: off }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}", tierProviders: () => tiers }, 1);
+    const mk = (tiers: string[]) => new LimitsCache({ providers: () => ({ tiered: off, stray: off }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}", tierProviders: () => tiers, probe: { listenerRssMb: noRss } }, 1);
     const got = await mk(["tiered"]).get(Date.now());
     await close(srv);
     expect(got.filter((x) => x.kind === "local").map((x) => [x.provider, x.up])).toEqual([["tiered", true]]);
@@ -459,7 +466,7 @@ describe("local server up/down and prefix cache", () => {
     const pc = { hits: 7, misses: 1, hitRate: 7 / 8, tokensSaved: 9 };
     const t0 = Date.now() - 120_000;
     writeFileSync(file, JSON.stringify({ l: { windows: [], fetchedAt: t0, prefixCache: pc } }));
-    const mk = () => new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: file, gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
+    const mk = () => new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: file, gate: new Backoff(60_000), fetchAnthropic: async () => "{}", probe: { listenerRssMb: noRss } }, 1);
     const c1 = mk();
     const r = (await c1.get(t0 + 120_000)).find((x) => x.provider === "l")!;
     await c1.prefixSettled();
@@ -470,24 +477,27 @@ describe("local server up/down and prefix cache", () => {
     expect(old.prefixCache).toBeUndefined();
   });
 
-  it("slow stats (8 s) does not delay up/down, still lands within the 15 s timeout, and is persisted", async () => {
+  it("slow stats (held open until released) do not delay up/down, still land within the 15 s timeout, and are persisted", async () => {
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
     const srv = http.createServer((q, res) => {
       res.writeHead(200, { "content-type": "application/json" });
-      if (q.url === "/v1/cache/stats") return void setTimeout(() => res.end(JSON.stringify({ engine_cache: { hits: 3, misses: 1, tokens_saved: 5 } })), 8000);
+      if (q.url === "/v1/cache/stats") return void released.then(() => res.end(JSON.stringify({ engine_cache: { hits: 3, misses: 1, tokens_saved: 5 } })));
       res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
     });
     const port = await listen(srv);
     const file = join(mkdtempSync(join(tmpdir(), "pc-")), "lg.json");
-    const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: file, gate: new Backoff(60_000), fetchAnthropic: async () => "{}" }, 1);
+    const cache = new LimitsCache({ providers: () => ({ l: local(port) }), rows: () => [], lastGoodFile: file, gate: new Backoff(60_000), fetchAnthropic: async () => "{}", probe: { listenerRssMb: noRss } }, 1);
     const t0 = Date.now();
     const got = (await cache.get(t0)).find((x) => x.provider === "l")!;
     expect(got.up).toBe(true);
     expect(got.prefixCache).toBeUndefined();
+    release();
     await cache.prefixSettled();
     await close(srv);
     expect(got.prefixCache?.hits).toBe(3);
     expect(readLastGood(file).l?.prefixCache?.hits).toBe(3);
-  }, 20_000);
+  });
 
   it("parseStrataCacheStats: conversation_cache request counters become hits/misses; none = undefined", () => {
     const body = '{"conversation_cache":{"parked":1,"bytes":478390820,"requests":4,"requests_reused":3,"reused_tokens":381,"prompt_tokens":750}}';

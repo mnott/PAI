@@ -513,7 +513,7 @@ export async function localLimits(
   rows: UsageRow[],
   now: number,
   background?: (stats: Promise<PrefixCacheStats | undefined>) => void,
-  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number } = {}
+  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined> } = {}
 ): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
@@ -546,13 +546,7 @@ export async function localLimits(
   let rssMb: number | undefined;
   let prefixCache: PrefixCacheStats | undefined;
   if (up) {
-    const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
-    // the listener's own RSS is a thin front (Strata's python server ~30 MB);
-    // the engine child holds the model (~50 GB) — sum the whole tree
-    if (pid) {
-      const tree = await processTreeRssMb(pid, (c, a) => sh(c, a).then((s) => s || null));
-      if (tree > 0) rssMb = tree;
-    }
+    rssMb = await (opts.listenerRssMb ?? listenerRssMb)(port);
     if (background) background(prefixCacheStats(u, p, name));
     else prefixCache = await prefixCacheStats(u, p, name);
   }
@@ -569,6 +563,16 @@ export async function localLimits(
     ...decodeTokPerSec(rows, name, now),
     fetchedAt: now,
   };
+}
+
+/** RSS of the process tree behind the listener on `port`, in MB; undefined when it cannot be read. */
+async function listenerRssMb(port: number): Promise<number | undefined> {
+  const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
+  // the listener's own RSS is a thin front (Strata's python server ~30 MB);
+  // the engine child holds the model (~50 GB) — sum the whole tree
+  if (!pid) return undefined;
+  const tree = await processTreeRssMb(pid, (c, a) => sh(c, a).then((s) => s || null));
+  return tree > 0 ? tree : undefined;
 }
 
 /** The last model list each endpoint (host:port) gave, for polls where it answers without one. */
@@ -713,7 +717,7 @@ export interface LimitsDeps {
   /** Replaces the anthropic keychain + https fetch (tests). */
   fetchAnthropic?: () => Promise<string>;
   /** Local probe policy (router.cockpit.probe); defaults to the shipped values. */
-  probe?: { timeoutStrikes?: number; tcpTimeoutMs?: number };
+  probe?: { timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined> };
 }
 
 /**
