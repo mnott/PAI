@@ -11,6 +11,8 @@ var poolFull=null,poolIsOff=null;
 function poolDur(s){return s<90?s+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h"}
 /** The pool is off and its host is not running: one note, not a dashboard of zeros. */
 function poolOff(p){return!!p&&!p.enabled&&!p.hostUp}
+/** A real PoolPanelData: a transient/degraded payload (or a partial one) carries none of these and must not paint or flip the group. */
+function poolOk(p){return!!p&&typeof p.enabled==="boolean"&&!!p.totals&&!!p.last24h&&!!p.slots}
 /** One kv card of the pool header: {v: html, s: html, t: plain title}. */
 function poolKv(key,p){
  var sp=p.spares||[],sm=p.spareMisses||[],l=p.last24h,r;
@@ -33,16 +35,16 @@ Win.registerType("kv",{minW:150,minH:68,defaultH:90,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><b class="wm-v" data-k="v"></b><span class="wm-s" data-k="s"></span></div>'},
  update:function(ctx,p){
   if(ctx.id.indexOf("memory.")===0){memKvUpdate(ctx,p);return}
-  if(!p||poolOff(p))return;
+  if(!poolOk(p)||poolOff(p))return;
   var m=poolKv(ctx.id.slice(5),p);
   ctx.html("v",m.v);ctx.html("s",m.s);ctx.attr("s","title",m.t);
  }});
 Win.registerType("table",{minW:300,minH:80,defaultH:160,
  mount:function(ctx){ctx.body.innerHTML='<div class="tw" data-k="t"></div>'},
- update:function(ctx,p){if(p&&!poolOff(p))ctx.html("t",poolSlotsHtml(p))}});
+ update:function(ctx,p){if(poolOk(p)&&!poolOff(p))ctx.html("t",poolSlotsHtml(p))}});
 Win.registerType("note",{minW:150,minH:48,defaultH:60,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><span class="wm-s" data-k="n"></span></div>'},
- update:function(ctx,p){if(p&&poolOff(p))ctx.text("n",poolOffText(p))}});
+ update:function(ctx,p){if(poolOk(p)&&poolOff(p))ctx.text("n",poolOffText(p))}});
 /** A copy of a kids tree without the leaf id; weights renormalize, a one-child split collapses. */
 function poolWithout(n,id){
  if(n.k==="c")return n.id===id?null:n;
@@ -54,7 +56,7 @@ function poolWithout(n,id){
 }
 /** Swap the group's kids between the full set and the single note when the off state flips. */
 function poolSwap(p){
- if(!p)return;
+ if(!poolOk(p))return;
  var off=poolOff(p),kids=Win.state().kids.pool;
  if(off===poolIsOff)return;
  if(off){poolFull=poolWithout(kids,"pool.off");poolIsOff=true;Win.apply("pool",WinT.leaf("pool.off"))}

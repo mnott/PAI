@@ -20,7 +20,15 @@ const data = () => ({
   bustParts: {}, bySession: [], workers: [], daily: { models: {}, days: [] }, sessionSplit: null, speed: [], promptByProvider: {}, promptSince: {},
 });
 let poolOn = true;
-const pool = () => ({
+/** "live": the shape captured from a running router (pool on, no slots, no spares, reasons only in last24h); "partial": last24h without `reasons`, which the old panel render cannot take. */
+let shape: "fixture" | "live" | "partial" = "fixture";
+const livePool = () => ({
+  enabled: true, hostUp: true, port: 4711, maxSlots: 3, idleKillSecs: 1800, hostSince: "2026-10-21 23:47:16", hostLastSeen: "2026-10-21 23:47:16", hostBuiltAt: "2026-10-21 23:46:20", hostStale: false,
+  slots: [], spares: [], spareClaims: 0, spareMisses: [], totals: { tasksServed: 0, tokensCarried: 394467, hitRatio: 0.36, carriedTasks: 182 },
+  last24h: { runs: 367, pooled: 59, notPooled: 308, reasons: [{ reason: "opted-out", runs: 214 }, { reason: "spares-off", runs: 98 }], topReason: "opted-out", unattributed: 0, poolOff: 92 }, offReason: null, message: "m",
+});
+const pool = () => shape === "fixture" ? fixturePool() : shape === "live" ? livePool() : (() => { const p = livePool(); delete (p.last24h as { reasons?: unknown }).reasons; return p; })();
+const fixturePool = () => ({
   enabled: poolOn, hostUp: poolOn, port: 4711, maxSlots: 3, idleKillSecs: 600, hostSince: "2026-10-21 08:00", hostBuiltAt: null, hostStale: false,
   hostLastSeen: "2026-10-20 12:00", slots: poolOn ? [{ provider: "claude", model: "opus", cwd: "/a/b/c", state: "busy", ageSecs: 100, idleSecs: 5, tasks: 2, tokensCarried: 5000, hitRatio: 0.8, task: "t1", branch: null, firstRequest: "warm" }] : [],
   spares: [{ provider: "claude", ready: 1, starting: 0 }], spareClaims: 2, spareMisses: [], totals: { tasksServed: 7, tokensCarried: 12000, hitRatio: 0.5, carriedTasks: 3 },
@@ -100,6 +108,18 @@ describe.skipIf(!CHROME)("B4 pool on the win runtime (?win=1)", () => {
     expect(r.vis).not.toContain("pool.slots");
     expect(r.off).toContain("Pool off");
     expect(r.off).toContain("config disabled");
+  }, 120_000);
+
+  it.each(["live", "partial"] as const)("%s payload: kv values and the slots card are filled, no note", async (sh) => {
+    poolOn = true;
+    shape = sh;
+    const r = await open("?win=1", 1400);
+    shape = "fixture";
+    expect(r.vis).toEqual(expect.arrayContaining(["pool.host", "pool.tasks", "pool.slots"]));
+    expect(r.vis).not.toContain("pool.off");
+    expect(r.host).toContain("up");
+    expect(r.tasks).toContain("0");
+    expect(r.slots).toContain("no slots");
   }, 120_000);
 
   it("without the flag the old pool section is unchanged", async () => {

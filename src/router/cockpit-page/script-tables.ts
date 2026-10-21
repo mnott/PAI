@@ -228,7 +228,7 @@ function render(){
  legend($("dlegend"),dm);
 }
 function load(){
- feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;render();if(Win)Win.update("data",j)});
+ feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;if(Win){try{Win.update("data",j)}catch(e){}}render()});
 }
-function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;renderSystem();renderPower();renderDonuts();if(Win)winFeedSystem(j)})}
+function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;if(Win){try{winFeedSystem(j)}catch(e){}}renderSystem();renderPower();renderDonuts()})}
 `;
