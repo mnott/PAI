@@ -67,12 +67,13 @@ export function loadPaneRunStatus(logDir: string, id: string): PaneRunStatus | n
 export function loadPaneRunStatuses(logDir: string, now = Date.now()): PaneRunStatus[] {
   if (!existsSync(logDir)) return [];
   const out: PaneRunStatus[] = [];
+  let keepMs: number | undefined; // the policy reads the config: once per call, and only when an entry has ended
   for (const n of readdirSync(logDir).filter((x) => x.endsWith(".panestatus")).sort()) {
     const id = n.slice(0, -".panestatus".length);
     const s = loadPaneRunStatus(logDir, id);
     if (!s) continue;
     try {
-      if (s.state !== "running" && now - s.startedMs > panePolicy().runKeepMs) {
+      if (s.state !== "running" && now - s.startedMs > (keepMs ??= panePolicy().runKeepMs)) {
         unlinkSync(paneRunStatusFile(logDir, id));
         continue;
       }

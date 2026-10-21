@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { jobSessionName, loadSessionMap, resolveSessionName, withJobNames, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
+import { jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindowsSteps, resolveSessionName, runSliced, withJobNames, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 
 const execGit = (cwd: string, args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 
@@ -347,5 +347,29 @@ describe("display-name precedence: a session's own name beats its project slug",
     const rows = [{ ts: "2026-10-16T18:47:40Z", session_id: "3333aaaa-1", model: "glm-5.3-flash", provider: "glm" }];
     const map = loadSessionMap(src);
     expect(withWorkerAttribution(map, rows, windows).get("3333aaaa-1")).toMatchObject({ name: "AIBroker Name" });
+  });
+});
+
+describe("sliced loaders give the same result as the one-shot ones and hand the loop back", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sess-sliced-"));
+  const started = "2026-10-20 10:00:00";
+  for (let i = 0; i < 60; i++) writeFileSync(join(dir, `w${i}.status`), JSON.stringify({ id: `w${i}`, label: `task ${i}`, state: "done", rc: 0, started, updated: "2026-10-20 10:30:00", claudeSession: `c-${i}`, model: "m", provider: "p" }));
+  const src = { workerDirs: [dir], agentSessionsFile: join(dir, "none.json") };
+  const rows = Array.from({ length: 5000 }, (_, i) => ({ ts: "2026-10-20T08:15:00.000Z", session_id: `one-shot-${i % 40}`, model: "m", provider: "p" }));
+
+  it("session map, worker windows and attribution match", async () => {
+    expect(await runSliced(loadSessionMapSteps(src), 0)).toEqual(loadSessionMap(src));
+    const windows = loadWorkerWindows(src, 1);
+    expect(await runSliced(loadWorkerWindowsSteps(src, 1), 0)).toEqual(windows);
+    const map = loadSessionMap(src);
+    expect(await runSliced(withWorkerAttributionSteps(map, rows, windows), 0)).toEqual(withWorkerAttribution(map, rows, windows));
+  });
+
+  it("a sliced run lets timers fire in between", async () => {
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 1);
+    await runSliced(withWorkerAttributionSteps(new Map(), rows.concat(rows, rows, rows), loadWorkerWindows(src, 1)), 0);
+    clearInterval(timer);
+    expect(ticks).toBeGreaterThan(0);
   });
 });

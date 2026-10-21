@@ -196,6 +196,11 @@ function aibrokerNames(dir: string): Map<string, string> {
 
 /** Full map session id → info. Reads every status file once; callers cache it. */
 export function loadSessionMap(src: SessionSources = defaultSources()): Map<string, SessionInfo> {
+  return drain(loadSessionMapSteps(src));
+}
+
+/** The loader below as steps: a `yield` after each directory or file, so a driver can hand the event loop back between them. */
+export function* loadSessionMapSteps(src: SessionSources = defaultSources()): Generator<void, Map<string, SessionInfo>> {
   // lowest first, each source overwrites only what is below it: transcript
   // fallback < agent-sessions entry < job name < AIBroker name < worker label
   const map = new Map<string, SessionInfo>();
@@ -214,6 +219,7 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
         const id = f.endsWith(".jsonl") ? f.slice(0, -6) : "";
         if (id) map.set(id, { name });
       }
+      yield;
     }
   }
   // The agent-session registry: a project slug every session gets — a name, never a display override.
@@ -230,6 +236,7 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
       if (info.worker || info.aibroker) continue;
       const name = jobSessionName(id, src.jobsDir);
       if (name) map.set(id, { ...info, name });
+      yield;
     }
   // AIBroker's names for interactive sessions: Claude id -> iTerm uuid (statusline map) -> name.
   if (src.aibrokerDir && src.claudeMapFile) {
@@ -248,6 +255,7 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".status")) continue;
+      yield;
       const s = readJson(join(dir, f));
       if (!s || typeof s.claudeSession !== "string") continue;
       map.set(s.claudeSession, {
@@ -296,6 +304,10 @@ function parseLocalTs(v: unknown): number | undefined {
 
 /** Every status file as a run window; running runs end at `now`. */
 export function loadWorkerWindows(src: SessionSources = defaultSources(), now: number = Date.now()): WorkerWindow[] {
+  return drain(loadWorkerWindowsSteps(src, now));
+}
+
+export function* loadWorkerWindowsSteps(src: SessionSources = defaultSources(), now: number = Date.now()): Generator<void, WorkerWindow[]> {
   const out: WorkerWindow[] = [];
   for (const dir of src.workerDirs) {
     if (!existsSync(dir)) continue;
@@ -307,6 +319,7 @@ export function loadWorkerWindows(src: SessionSources = defaultSources(), now: n
     }
     for (const f of files) {
       if (!f.endsWith(".status")) continue;
+      yield;
       const s = readJson(join(dir, f));
       if (!s) continue;
       const startMs = parseLocalTs(s.started);
@@ -353,8 +366,19 @@ export function withWorkerAttribution(
   windows: WorkerWindow[],
   now: number = Date.now()
 ): Map<string, SessionInfo> {
+  return drain(withWorkerAttributionSteps(map, rows, windows, now));
+}
+
+export function* withWorkerAttributionSteps(
+  map: Map<string, SessionInfo>,
+  rows: Array<{ ts: string; session_id?: string; model?: string; provider?: string }>,
+  windows: WorkerWindow[],
+  now: number = Date.now()
+): Generator<void, Map<string, SessionInfo>> {
+  let n = 0;
   const unknown = new Map<string, Array<{ t: number; model?: string; provider?: string }>>();
   for (const r of rows) {
+    if (++n % 2000 === 0) yield;
     // a worker run keeps its label
     if (!r.session_id || map.get(r.session_id)?.worker) continue;
     const t = Date.parse(r.ts);
@@ -366,6 +390,7 @@ export function withWorkerAttribution(
   if (!unknown.size) return map;
   const out = new Map(map);
   for (const [id, reqs] of unknown) {
+    if (++n % 50 === 0) yield;
     // a session already named by a source above the worker label (AIBroker) is not relabelled
     if (map.get(id)?.aibroker) continue;
     const hits = new Map<string, WorkerWindow>();
@@ -383,4 +408,25 @@ export function withWorkerAttribution(
     out.set(id, { name: best.label, worker: best.worker, state: best.state, verdict: best.verdict, provider: best.provider });
   }
   return out;
+}
+
+/** Runs a stepped computation to its end in one go. */
+export function drain<T>(steps: Generator<void, T>): T {
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
+}
+
+/** Runs a stepped computation in slices of about `sliceMs`, handing the event loop back between them. */
+export async function runSliced<T>(steps: Generator<void, T>, sliceMs = 5): Promise<T> {
+  let t = performance.now();
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+    if (performance.now() - t >= sliceMs) {
+      await new Promise<void>((res) => setImmediate(res));
+      t = performance.now();
+    }
+  }
 }

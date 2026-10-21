@@ -10,7 +10,7 @@ import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
-import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, setRuntimeSampler } from "../../router/cockpit.js";
+import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler } from "../../router/cockpit.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
 import { cockpitProbeSettings } from "../../router/cockpit-layout.js";
@@ -172,6 +172,7 @@ const runCommand: CommandDef = {
     // built once: each holds its own TTL cache, so a new one per request would reread every status file on every poll
     const sessionMap = cachedSessionMap();
     const workerWindows = cachedWorkerWindows();
+    warmCockpit(rows, sessionMap, workerWindows); // the first build walks every status file: before the port opens, not in a request
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
