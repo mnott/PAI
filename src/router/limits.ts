@@ -126,9 +126,10 @@ export function humanMinutes(ms: number): string {
 /** The plain-words error for a reading that is not fresh. */
 export function staleText(ageMs: number, cause: string, retryInMs?: number): string {
   const retry = retryInMs && retryInMs > 0 ? `, next try in ${humanMinutes(retryInMs)}` : "";
+  const why = cause.trim();
   return cause === "http 429"
     ? `usage reading ${humanMinutes(ageMs)} old, provider asked us to slow down${retry}`
-    : `usage reading ${humanMinutes(ageMs)} old (${cause})${retry}`;
+    : `usage reading ${humanMinutes(ageMs)} old${why ? ` (${why})` : ""}${retry}`;
 }
 
 /**
@@ -573,7 +574,8 @@ async function servedModels(base: URL): Promise<ServedAnswer> {
     return ids.length ? { alive: true, ids } : { alive: true };
   } catch (e) {
     // a busy server may be slow to answer (timeout); one that resets or closes the connection is not serving
-    if ((e as Error).message === "timeout") return { alive: false, timeout: true };
+    // getJson's timeout rejects with an empty message: treat a message-less error as a timeout too
+    if ((e as Error).message === "timeout" || !(e as Error).message) return { alive: false, timeout: true };
     return { alive: e instanceof HttpError };
   }
 }
