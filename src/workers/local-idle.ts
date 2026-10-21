@@ -17,6 +17,7 @@ import { defaultWorkersConfig, isLocalProvider, type WorkersConfig } from "./con
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
+import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
 import { isChatPane, isLive, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
 
@@ -120,15 +121,16 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
   const statuses = loadStatusesCached(logDir).filter((s) => !isChatPane(s) && isLive(s, ownsPidCached) && s.state === "running");
   const queue = queueRows(logDir);
   const providers: LocalProviderSample[] = [];
+  const tiers = tierProviderNames();
   for (const [name, p] of Object.entries(workers.providers)) {
     if (!isLocalProvider(p.baseUrl)) continue;
     const cap = providerCap(workers, name);
     if (cap === undefined) continue;
     const mine = statuses.filter((s) => s.provider === name);
     const queued = queue.filter((q) => q.provider === name).length;
-    // only a provider that is enabled and served (the daemon's local-status names it) or has work is worth a line
+    // only a provider that is a local candidate (enabled or tier-launched) and served (the daemon's local-status names it) or has work is worth a line
     const served = (status?.running ?? []).some((r) => r.provider === name);
-    if (!(p.enabled && served) && !mine.length && !queued) continue;
+    if (!(isLocalCandidate(p, name, tiers) && served) && !mine.length && !queued) continue;
     providers.push({
       provider: name,
       cap,

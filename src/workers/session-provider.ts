@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "./config.js";
 import { loadStatus } from "./status.js";
+import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
 
 export const SESSION_PROVIDER_ENV = "PAI_SESSION_PROVIDER";
 /** The worker side of a setup launch ("anthropic + kimi workers"): class and unflagged runs follow it; "cloud" never reads it. */
@@ -45,8 +46,9 @@ export function providerForModel(config: ProviderTable, model: string): string |
   const m = canonical(model);
   if (!m || m.startsWith("<")) return null;
   if (m.startsWith("claude-")) return ANTHROPIC_NATIVE;
+  const tiers = tierProviderNames();
   for (const [name, p] of Object.entries(config.providers)) {
-    if (!p.enabled) continue;
+    if (!p.enabled && !isLocalCandidate(p, name, tiers)) continue;
     if (Object.values(p.models).some((id) => typeof id === "string" && canonical(id) === m)) return name;
   }
   return null;

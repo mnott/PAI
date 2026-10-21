@@ -347,6 +347,9 @@ describe("set / validate", () => {
     const entries = routeChoices(workers).map((c) => c.entry);
     expect(entries).toEqual(expect.arrayContaining(["anthropic/opus", "anthropic/sonnet", "glm/glm-5.3", "glm/glm-5.3-flash", "kimi/k3", "gyro-m", "iq3s"]));
     expect(routeChoices(workers).find((c) => c.entry === "gyro-m")).toMatchObject({ label: "local gyro-m", local: true });
+    const off = { ...workers, providers: { ...workers.providers, "gyro-m": { ...workers.providers["gyro-m"], enabled: false } } };
+    expect(routeChoices(off, []).some((c) => c.entry === "gyro-m")).toBe(false);
+    expect(routeChoices(off, ["gyro-m"]).some((c) => c.entry === "gyro-m")).toBe(true);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   nativeOrchestratorModel,
 } from "../../workers/config.js";
 import { isLoopbackProvider } from "../../workers/run-env.js";
+import { isLocalCandidate, tierProviderNames } from "../../workers/local-provider.js";
 import { probeServedModels, serves } from "../../workers/served-models.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 
@@ -111,9 +112,9 @@ export const httpModelsCheck: PortCheck = async (host, port, timeoutMs, models) 
 
 export const PORT_TIMEOUT_MS = 500;
 
-/** Enabled loopback providers whose server does not answer now; all checked in parallel. */
-export async function downLocalProviders(cfg: Cfg, check: PortCheck = httpModelsCheck): Promise<Set<string>> {
-  const local = Object.entries(cfg.providers).filter(([, p]) => p.enabled && isLoopbackProvider(p));
+/** Local-candidate (enabled or tier-launched) loopback providers whose server does not answer now; all checked in parallel. */
+export async function downLocalProviders(cfg: Cfg, check: PortCheck = httpModelsCheck, tiers: string[] = tierProviderNames()): Promise<Set<string>> {
+  const local = Object.entries(cfg.providers).filter(([n, p]) => isLocalCandidate(p, n, tiers));
   const down = new Set<string>();
   await Promise.all(
     local.map(async ([n, p]) => {
@@ -139,7 +140,7 @@ const PRIORITY = ["glm", "kimi"];
  * `resolved` (resolveLocalProvider's pick; the first running one when absent),
  * plus one row per further running provider on a different server URL.
  */
-export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), resolved?: string): Setup[] {
+export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), resolved?: string, tiers: string[] = tierProviderNames()): Setup[] {
   const enabled = (n: string) => n === ANTHROPIC_NATIVE || !!cfg.providers[n]?.enabled;
   const out: Setup[] = [
     // anthropic workers run the anthropic default (sonnet); the haiku row is the explicit cheap choice
@@ -152,7 +153,7 @@ export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), r
     out.push({ name: `anthropic + ${n} workers`, orchestrator: nativeOrchestrator(), workers: n, kind: "builtin" });
   }
   // Running local (loopback) providers: workers only. A local orchestrator is not a default.
-  const up = Object.entries(cfg.providers).filter(([n, p]) => p.enabled && isLoopbackProvider(p) && !down.has(n));
+  const up = Object.entries(cfg.providers).filter(([n, p]) => isLocalCandidate(p, n, tiers) && !down.has(n));
   if (up.length) {
     const pick = up.find(([n]) => n === resolved) ?? up[0];
     out.push({ name: "anthropic + local workers", orchestrator: nativeOrchestrator(), workers: pick[0], kind: "builtin", local: true });

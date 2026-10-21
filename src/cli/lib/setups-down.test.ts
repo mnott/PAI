@@ -28,6 +28,11 @@ describe("local setups need a running server", () => {
     expect(calls.every(([, , t]) => t === PORT_TIMEOUT_MS)).toBe(true);
   });
 
+  it("also checks a disabled provider a local tier launches", async () => {
+    const down = await downLocalProviders(cfg, async () => false, ["off"]);
+    expect([...down].sort()).toEqual(["dead", "off", "up"]);
+  });
+
   it("lists only up local providers", async () => {
     const down = await downLocalProviders(cfg, check);
     const names = allSetups(cfg, null, [], down).map((s) => s.name);

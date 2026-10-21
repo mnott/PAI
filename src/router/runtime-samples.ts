@@ -21,7 +21,7 @@
 
 import { execFile } from "node:child_process";
 import { capacityOf, providerCap } from "../workers/capacity.js";
-import { providerHostPort } from "../workers/local-provider.js";
+import { isLocalCandidate, providerHostPort, tierProviderNames } from "../workers/local-provider.js";
 import { isLoopbackProvider } from "../workers/run-env.js";
 import { loadStatusesCached, isLive, type WorkerStatus } from "../workers/status.js";
 import { ownerSessionName } from "../workers/scope.js";
@@ -160,11 +160,11 @@ export interface RuntimeSamplerInput {
   now: number;
 }
 
-/** The scheduler engine name of a runtime: the enabled loopback provider on its port, else the runtime name. */
-export function engineNameOf(rt: { name: string; port?: number; kind: string }, providers: WorkersConfig["providers"]): string {
+/** The scheduler engine name of a runtime: the local-candidate (enabled or tier-launched) provider on its port, else the runtime name. */
+export function engineNameOf(rt: { name: string; port?: number; kind: string }, providers: WorkersConfig["providers"], tiers: string[] = tierProviderNames()): string {
   if (rt.port != null && rt.kind !== "ollama" && rt.kind !== "docker-model-runner") {
     for (const [name, p] of Object.entries(providers)) {
-      if (!p.enabled || !isLoopbackProvider(p)) continue;
+      if (!isLocalCandidate(p, name, tiers)) continue;
       const hp = providerHostPort(p);
       if (hp && hp.port === rt.port) return name;
     }

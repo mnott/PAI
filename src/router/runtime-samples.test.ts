@@ -111,6 +111,8 @@ describe("engineNameOf", () => {
   it("maps a runtime to the enabled loopback provider on its port, else keeps the runtime name", () => {
     const providers = { "gyro-m": provider({ baseUrl: "http://127.0.0.1:8035" }), off: { ...provider({ baseUrl: "http://127.0.0.1:8035" }), enabled: false } };
     expect(engineNameOf({ name: "gyro-m", port: 8035, kind: "strata" }, providers)).toBe("gyro-m");
+    expect(engineNameOf({ name: "x", port: 8035, kind: "strata" }, { off: providers.off }, [])).toBe("x");
+    expect(engineNameOf({ name: "x", port: 8035, kind: "strata" }, { off: providers.off }, ["off"])).toBe("off");
     expect(engineNameOf({ name: "ollama", port: 11434, kind: "ollama" }, providers)).toBe("ollama");
     expect(engineNameOf({ name: "other", port: 9999, kind: "strata" }, providers)).toBe("other");
   });

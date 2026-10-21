@@ -147,12 +147,12 @@ function cloudModels(name: string, p: WorkerProvider): string[] {
 }
 
 /** Every model a row can take: each enabled cloud provider's models, each enabled local model. */
-export function routeChoices(workers: WorkersConfig): RouteChoice[] {
+export function routeChoices(workers: WorkersConfig, tiers: string[] = tierProviderNames()): RouteChoice[] {
   const out: RouteChoice[] = [];
   const names = [ANTHROPIC_NATIVE, ...Object.keys(workers.providers).filter((n) => n !== ANTHROPIC_NATIVE)];
   for (const name of names) {
     const p = providerOf(workers, name);
-    if (!p || !p.enabled || p.engine === "image") continue;
+    if (!p || p.engine === "image" || !(p.enabled || (isLocalProvider(p.baseUrl) && isLocalCandidate(p, name, tiers)))) continue;
     if (isLocalProvider(p.baseUrl)) out.push({ entry: name, label: `local ${name}`, local: true });
     else for (const m of cloudModels(name, p)) out.push({ entry: `${name}/${m}`, label: `${name}/${m}`, local: false });
   }
@@ -299,6 +299,8 @@ export interface ViewDeps {
   session?: SessionProfile | null;
   /** All profiles: the global view lists under each row the sessions overriding it. */
   profiles?: Profiles;
+  /** Providers a local tier launches (default: read from workers.yaml). */
+  tiers?: string[];
 }
 
 async function chipOf(workers: WorkersConfig, tier: TierDef, entry: string, deps: ViewDeps, state: ReturnType<typeof readRoutingState>): Promise<RouteChip> {
@@ -311,7 +313,7 @@ async function chipOf(workers: WorkersConfig, tier: TierDef, entry: string, deps
   const base = { entry, label: entryLabel(workers, tier, entry), provider };
   if (!p) return { ...base, local: false, state: "unavailable", why: "not configured" };
   if (isLocalProvider(p.baseUrl)) {
-    if (!p.enabled) return { ...base, local: true, state: "idle", why: "disabled" };
+    if (!p.enabled && !isLocalCandidate(p, provider, deps.tiers ?? tierProviderNames())) return { ...base, local: true, state: "idle", why: "disabled" };
     const up = await (deps.running ?? ((_n, q) => pingLocal(q.baseUrl, 1500)))(provider, p).catch(() => false);
     return { ...base, local: true, state: up ? "available" : "idle", why: up ? "" : "not running" };
   }

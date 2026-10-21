@@ -16,7 +16,7 @@
 
 import { CliError } from "../cli/define.js";
 import { ANTHROPIC_NATIVE, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
-import { probeLoopback, resolveLocalProvider, type ResolveLocalOpts } from "./local-provider.js";
+import { isLocalCandidate, probeLoopback, resolveLocalProvider, tierProviderNames, type ResolveLocalOpts } from "./local-provider.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { detectSessionProvider } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";
@@ -96,7 +96,8 @@ function cloudProvider(cfg: ProviderTable, env: NodeJS.ProcessEnv, logDir: strin
 
 async function unknownProvider(cfg: ProviderTable, name: string, why: string, opts: ResolveLocalOpts): Promise<CliError> {
   const running = await probeLoopback(cfg, opts.check);
-  const names = [ANTHROPIC_NATIVE, ...Object.entries(cfg.providers).filter(([, p]) => p.enabled).map(([n]) => n)];
+  const tiers = tierProviderNames();
+  const names = [ANTHROPIC_NATIVE, ...Object.entries(cfg.providers).filter(([n, p]) => p.enabled || isLocalCandidate(p, n, tiers)).map(([n]) => n)];
   const list = names.map((n) => (n in running ? `${n} (${running[n] ? "running" : "not running"})` : n)).join(", ");
   return new CliError(`no usable provider "${name}": ${why}`, `valid: ${list}; or where local / cloud`);
 }
@@ -159,7 +160,7 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
   } else {
     const p = getProviderOrNative(cfg, where);
     if (!p) throw await unknownProvider(cfg, where, "not configured", deps);
-    if (!p.enabled) throw await unknownProvider(cfg, where, "disabled", deps);
+    if (!p.enabled && !isLocalCandidate(p, where, tierProviderNames())) throw await unknownProvider(cfg, where, "disabled", deps);
     provider = where;
     label = "";
   }

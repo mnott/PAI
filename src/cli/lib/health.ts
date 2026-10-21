@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { paiHomePath } from "../../config/pai-home.js";
 import { ANTHROPIC_NATIVE, type WorkersConfig } from "../../workers/config.js";
+import { isLocalCandidate, tierProviderNames } from "../../workers/local-provider.js";
 import { budgetExceeded, budgetSkipReason, budgetWall, type BudgetReading } from "../../workers/budget.js";
 
 export interface Health {
@@ -14,12 +15,13 @@ export function providerHealth(
   name: string,
   cfg: Pick<WorkersConfig, "providers" | "routing">,
   budget: Record<string, BudgetReading | undefined>,
-  now = new Date()
+  now = new Date(),
+  tiers: string[] = tierProviderNames()
 ): Health {
   if (name !== ANTHROPIC_NATIVE) {
     const p = cfg.providers[name];
     if (!p) return { state: "off", reason: `${name}: not configured` };
-    if (!p.enabled) return { state: "off", reason: `${name}: disabled` };
+    if (!p.enabled && !isLocalCandidate(p, name, tiers)) return { state: "off", reason: `${name}: disabled` };
   }
   const r = budget[name];
   if (r && budgetExceeded(r, budgetWall(cfg.routing, name))) {
