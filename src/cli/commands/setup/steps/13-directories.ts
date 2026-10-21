@@ -1,4 +1,4 @@
-/** Step 11: Directory scanning configuration and registry scan prompt. */
+/** Step 14: Directory scanning configuration and registry scan prompt. */
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -7,7 +7,7 @@ import chalk from "chalk";
 import { line, section, type Rl, promptYesNo } from "../utils.js";
 
 export async function stepDirectories(rl: Rl): Promise<void> {
-  section("Step 11: Directories to Index");
+  section("Step 14: Directories to Index");
   line();
   line("  PAI indexes files in your registered projects. You can register projects");
   line("  individually with `pai project add <path>`, or let the registry scanner");

@@ -11,7 +11,7 @@ import { c, line, section, type Rl, promptYesNo, getHooksDir, getStatuslineScrip
 const useSymlinks = platform() !== "win32";
 
 export async function stepHooks(rl: Rl): Promise<boolean> {
-  section("Step 7: Lifecycle Hooks");
+  section("Step 8: Lifecycle Hooks");
   line();
   line("  PAI hooks fire on session stop and context compaction to save state,");
   line("  update notes, and display live statusline information.");

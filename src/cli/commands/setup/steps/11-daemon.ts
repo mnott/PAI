@@ -1,4 +1,4 @@
-/** Step 9: PAI daemon installation (launchd plist on macOS, systemd user unit on Linux). */
+/** Step 12: PAI daemon installation (launchd plist on macOS, systemd user unit on Linux). */
 
 import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
@@ -8,7 +8,7 @@ import { daemonServiceName } from "../../../impl/daemon.js";
 import { c, line, section, type Rl, promptYesNo } from "../utils.js";
 
 export async function stepDaemon(rl: Rl): Promise<boolean> {
-  section("Step 9: Daemon Install");
+  section("Step 12: Daemon Install");
   line();
   line("  The PAI daemon indexes your projects every 5 minutes in the background.");
   line();
