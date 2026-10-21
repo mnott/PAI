@@ -23,7 +23,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 import { isWorkerSession } from "../lib/worker-session.js";
 
 /** Stay silent below this many tool calls — a short turn has not drifted yet. */
@@ -34,7 +34,7 @@ const EVERY = 8;
 
 function counterFile(sessionId: string): string {
   const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "") || "nosession";
-  return join(tmpdir(), "pai-whisper-reinject", `${safe}.count`);
+  return paiHomePath("state", "whisper-reinject", `${safe}.count`);
 }
 
 function bump(path: string): number {

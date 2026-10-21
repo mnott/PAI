@@ -31,7 +31,8 @@
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { readTailLines, scanIncremental } from "./transcript-scan.js";
-import { homedir, tmpdir } from "node:os";
+import { paiCacheDir } from "../../../runtime-paths.js";
+import { claudeProjectsDir } from "../../../config/pai-home.js";
 import { join } from "node:path";
 import {
   DEFAULT_CONTEXT_WINDOW,
@@ -77,7 +78,7 @@ function unknownReading(windowSize: number): ContextFillReading {
 // ---------------------------------------------------------------------------
 
 export function statuslineStateFilePath(sessionId: string): string {
-  return join(tmpdir(), `pai-context-${sessionId}.json`);
+  return join(paiCacheDir(), `pai-context-${sessionId}.json`);
 }
 
 interface StatuslineState {
@@ -343,7 +344,7 @@ export const THRESHOLD_MARGIN_TOKENS = {
 
 /** Real default — overridable per-call so tests never touch the user's
  *  actual ~/.claude/projects/ (a live directory this very session writes to). */
-export const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
+export const CLAUDE_PROJECTS_DIR = claudeProjectsDir();
 
 function encodeProjectPath(cwd: string): string {
   return cwd.replace(/[/\s.-]/g, "-");

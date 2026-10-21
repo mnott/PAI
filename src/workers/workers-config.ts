@@ -23,6 +23,7 @@ import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
 import { writeYamlFileAtomic, YamlStoreError } from "../config/yaml-store.js";
 import { parseTiersValue, type TierDef } from "./route-lists.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
+import { claudeHomeDir, legacyConfigDir } from "../config/pai-home.js";
 import {
   effectiveWorkersYamlDoc,
   effectiveWorkersYamlRaw,
@@ -60,13 +61,13 @@ export function defaultWorkersYamlPath(): string {
 /** Briefly the canonical location between 2026-09-19's two migrations —
  *  read during the transition, never written to again. */
 function oldWorkersYamlPath(): string {
-  return join(homedir(), ".claude", WORKERS_YAML_FILENAME);
+  return join(claudeHomeDir(), WORKERS_YAML_FILENAME);
 }
 
 /** Where workers.yaml lived before 2026-09-19 — read during the transition,
  *  never written to (see `pai worker config migrate`). */
 function legacyWorkersYamlPath(): string {
-  return join(homedir(), ".config", "pai", WORKERS_YAML_FILENAME);
+  return join(legacyConfigDir(), WORKERS_YAML_FILENAME);
 }
 
 /**

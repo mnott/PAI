@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkerProvider } from "./config.js";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
 const GUARD_HOOKS = [
@@ -57,12 +58,12 @@ export const WORKER_BRIEF = [
  * this CLI's own dist/hooks (so a build under test delivers with its own
  * hook), else the installed one. null when neither exists.
  */
-export function noteHookPath(from: string = fileURLToPath(import.meta.url), home: string = homedir()): string | null {
+export function noteHookPath(from: string = fileURLToPath(import.meta.url), claudeDir: string = claudeHomeDir()): string | null {
   for (let dir = dirname(from), i = 0; i < 6; i++, dir = dirname(dir)) {
     const p = join(dir, "hooks", "worker-note.mjs");
     if (existsSync(p)) return p;
   }
-  const installed = join(home, ".claude", "Hooks", "worker-note.mjs");
+  const installed = join(claudeDir, "Hooks", "worker-note.mjs");
   return existsSync(installed) ? installed : null;
 }
 
@@ -135,7 +136,7 @@ export function slimProfileArgs(
   wid: string,
   rest: string[],
   env: NodeJS.ProcessEnv = process.env,
-  userSettingsPath = join(homedir(), ".claude", "settings.json"),
+  userSettingsPath = join(claudeHomeDir(), "settings.json"),
   provider?: WorkerProvider,
 ): string[] {
   if (env.PAI_WORKER_FULL_PROFILE === "1") return [];

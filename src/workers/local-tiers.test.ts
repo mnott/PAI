@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { homedir } from "node:os";
 import { parse } from "yaml";
+import { paiHomePath } from "../config/pai-home.js";
 import { findModelPath, parseLocalConfig, parseServers, planStart, stopLine, LocalTierError } from "./local-tiers.js";
 
 const YAML = `
@@ -48,7 +49,7 @@ describe("local tiers", () => {
       `PF_FORCE_TEXT=1 nohup ${h}/.local/share/uv/tools/vllm-mlx/bin/python ` +
       `${h}/.local/share/vllm-mlx-serve/serve_patched_fold_text.py serve /models/ornith-4bit ` +
       `--served-model-name ornith-1.5-35b --port 8013 ${C} ` +
-      `--default-chat-template-kwargs '{"enable_thinking": false}' > ${h}/.cache/pai/local-server/ornith.log 2>&1 < /dev/null &`;
+      `--default-chat-template-kwargs '{"enable_thinking": false}' > ${paiHomePath("logs", "local", "ornith.log")} 2>&1 < /dev/null &`;
     expect(planStart(cfg, cfg.tiers.small).line).toBe(expected);
     expect(stopLine(cfg)).toBe("for p in $(pgrep -f serve_patched); do kill $p; done");
   });

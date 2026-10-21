@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
-import { tmpdir } from "node:os";
+import { dirname, join, resolve, isAbsolute } from "node:path";
+import { paiHomePath } from "../config/pai-home.js";
 import { git, uncommittedPaths, worktreeBranch, worktreesDir, ensureScratchExcluded, provisionDeps, type WorktreeInfo } from "./worktree.js";
 
 export function slotsDir(logDir: string): string {
@@ -56,10 +56,11 @@ export function prepareSlot(logDir: string, provider: string, n: number, repo: s
   let salvagePatch: string | null = null;
 
   if (uncommittedPaths(dir).length > 0) {
-    const patchPath = join(tmpdir(), `pai-slot-salvage-${taskId}.patch`);
+    const patchPath = paiHomePath("state", "salvage", `${taskId}.patch`);
     const diff = git(dir, ["diff", "HEAD"]);
     const uncommitted = uncommittedPaths(dir);
     const untracked = uncommitted.filter(p => !p.startsWith(".git/"));
+    mkdirSync(dirname(patchPath), { recursive: true });
     writeFileSync(patchPath, `${diff}\nuntracked/other: ${untracked.join(" ")}\n`);
     salvagePatch = patchPath;
     git(dir, ["reset", "--hard", "-q"]);

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { deriveSessionTrigger } from "./context-trigger.js";
@@ -11,17 +11,17 @@ let realTmpdir: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "pai-context-trigger-test-"));
-  // statuslineStateFilePath always resolves against the REAL os.tmpdir(), not
+  // statuslineStateFilePath resolves against the shared cache dir, not
   // the transcript's own temp root — point it at a session-scoped file inside
-  // `root` too by overriding TMPDIR for the duration of each test, so a
+  // `root` too by overriding PAI_CACHE_DIR for the duration of each test, so a
   // statusline-state test never touches this machine's real tmp files.
-  realTmpdir = process.env.TMPDIR ?? "";
-  process.env.TMPDIR = root;
+  realTmpdir = process.env.PAI_CACHE_DIR ?? "";
+  process.env.PAI_CACHE_DIR = root;
 });
 
 afterEach(() => {
-  if (realTmpdir) process.env.TMPDIR = realTmpdir;
-  else delete process.env.TMPDIR;
+  if (realTmpdir) process.env.PAI_CACHE_DIR = realTmpdir;
+  else delete process.env.PAI_CACHE_DIR;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -35,6 +35,7 @@ const usageEntry = (model: string, usage: Record<string, number>) => ({
 });
 
 function writeStatuslineState(sessionId: string, windowSize: number, timestamp: number): void {
+  mkdirSync(dirname(statuslineStateFilePath(sessionId)), { recursive: true });
   writeFileSync(
     statuslineStateFilePath(sessionId),
     JSON.stringify({ used_percentage: 10, context_window_size: windowSize, session_id: sessionId, timestamp }),

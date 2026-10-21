@@ -23,9 +23,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { WorkersConfigError, type WorkersConfig } from "./config.js";
+import { claudeJsonPath } from "../config/claude-json.js";
 
 /** ~/.claude.json — the user's MCP server definitions (top-level mcpServers). */
-export const CLAUDE_JSON = join(homedir(), ".claude.json");
 
 /**
  * The browser bridge is not an MCP server. It rides the Chrome native-host
@@ -58,7 +58,7 @@ function isServerDefinition(name: string, value: unknown): boolean {
   );
 }
 
-export function readMcpServers(claudeJson = CLAUDE_JSON): Record<string, unknown> {
+export function readMcpServers(claudeJson = claudeJsonPath()): Record<string, unknown> {
   try {
     if (!existsSync(claudeJson)) return {};
     const parsed = JSON.parse(readFileSync(claudeJson, "utf8")) as Record<string, unknown>;
@@ -99,7 +99,7 @@ export function grantsChrome(entries: string[]): boolean {
 export function expandMcpNames(
   names: string[],
   config: Pick<WorkersConfig, "mcpSets">,
-  claudeJson = CLAUDE_JSON
+  claudeJson = claudeJsonPath()
 ): string[] {
   const available = readMcpServers(claudeJson);
   const out: string[] = [];
@@ -159,7 +159,7 @@ export function writeMcpConfig(
   logDir: string,
   id: string,
   names: string[],
-  claudeJson = CLAUDE_JSON
+  claudeJson = claudeJsonPath()
 ): string {
   const available = readMcpServers(claudeJson);
   const unknown = names.filter((n) => !(n in available));
@@ -178,7 +178,7 @@ export function writeMcpConfig(
 }
 
 /** `pai worker mcp list`: the servers and sets a run could name. */
-export function describeMcp(config: Pick<WorkersConfig, "mcpSets">, claudeJson = CLAUDE_JSON): string[] {
+export function describeMcp(config: Pick<WorkersConfig, "mcpSets">, claudeJson = claudeJsonPath()): string[] {
   const servers = Object.keys(readMcpServers(claudeJson));
   const lines: string[] = [];
   if (servers.length) {

@@ -12,6 +12,8 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
+import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
+import { aibrokerHomeDir } from "../runtime-paths.js";
 
 export interface SessionInfo {
   /** display name */
@@ -44,13 +46,13 @@ export interface SessionSources {
 export function defaultSources(): SessionSources {
   const home = homedir();
   return {
-    workerDirs: [paiHomePath("logs", "workers"), join(home, ".claude", "logs", "workers")],
+    workerDirs: [paiHomePath("logs", "workers"), join(claudeHomeDir(), "logs", "workers")],
     agentSessionsFile: paiHomePath("agent-sessions.json"),
-    projectsDir: join(home, ".claude", "projects"),
-    aibrokerDir: process.env.AIBROKER_HOME || join(home, ".aibroker"),
+    projectsDir: claudeProjectsDir(),
+    aibrokerDir: aibrokerHomeDir(),
     claudeMapFile: paiHomePath("session-claude-map.json"),
     // CLAUDE_CONFIG_DIR is the .claude dir itself (the jobs dir is <it>/jobs)
-    jobsDir: process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, "jobs") : join(home, ".claude", "jobs"),
+    jobsDir: join(claudeHomeDir(), "jobs"),
   };
 }
 

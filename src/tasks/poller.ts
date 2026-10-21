@@ -74,7 +74,7 @@ export interface PersistedState extends RunState {
    * Task id → epoch ms of the last time an alarm about it reached the user.
    *
    * Every tick that raised an alarm before this existed raised it into
-   * /tmp/pai-scheduler.log and nowhere else. Measured 2026-08-03: the daily
+   * <PAI_HOME>/logs/scheduler.log and nowhere else. Measured 2026-08-03: the daily
    * check had logged "unrouted — cannot dispatch" 151 times across two days,
    * on a task whose whole purpose was to notice things failing silently.
    *
@@ -242,7 +242,7 @@ async function escalate(
   // that away. On 2026-08-04 the WhatsApp provider was dialling a socket that
   // had stopped existing when Whazaa became a thin adapter, so `error` events
   // silently failed — four escalations about a job that had not run in nine
-  // hours reached /tmp/pai-scheduler.log and nowhere else, and the user found
+  // hours reached <PAI_HOME>/logs/scheduler.log and nowhere else, and the user found
   // out by looking.
   //
   // The tracker is the one channel that cannot be misconfigured out of
@@ -264,7 +264,7 @@ async function escalate(
 
 /**
  * The poller-log line written once when a task transitions into parked (launchd sends it to
- * /tmp/pai-scheduler.log). Never sent to PAILot: an automatic system notice does not go to the
+ * <PAI_HOME>/logs/scheduler.log). Never sent to PAILot: an automatic system notice does not go to the
  * phone (operator rule 2026-10-20). A re-park after a release is a new event and logs again.
  */
 async function alertParked(task: Task, reason: string): Promise<void> {
@@ -728,7 +728,7 @@ async function handleDispatch(
   // become ready within 90s`. That sentence names the path and says nothing
   // about it missing, so matching failure text for "does not exist" — the first
   // shape of this guard — would have parked nothing at all while reading, in
-  // the diff, exactly like a fix. `/tmp/pai-scheduler.log` has the wording.
+  // the diff, exactly like a fix. `<PAI_HOME>/logs/scheduler.log` has the wording.
   //
   // Asked locally it is not a guess: the registry says where the project is,
   // and either the directory is there or it is not. Nine hours of fifteen-minute

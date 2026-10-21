@@ -509,7 +509,7 @@ pai daemon logs -f
 pai daemon restart
 ```
 
-Socket: `/tmp/pai.sock` · Log: `/tmp/pai-daemon.log`
+Socket: `/tmp/pai.sock` · Log: `<PAI_HOME>/logs/daemon.log`
 
 ### Registry Maintenance
 

@@ -1,3 +1,5 @@
+import { paiHomePath } from "../../config/pai-home.js";
+
 export const end = {
   description:
     "Finalize a session: checkpoint, mark note completed, commit pending work if asked, then exit safely",
@@ -21,7 +23,7 @@ never varies.
 1b. **Write it to a file** with the Write tool:
 
    \`\`\`
-   /tmp/pai-checkpoint-<session-id>.md
+   ${paiHomePath("state", "checkpoints")}/<session-id>.md
    \`\`\`
 
    Use the \`sessionId\` from the startup system reminders. Body markdown only — no
@@ -30,7 +32,7 @@ never varies.
 2. **Run \`pai end\`** via Bash:
 
    \`\`\`bash
-   pai end --body-file /tmp/pai-checkpoint-<session-id>.md --session-id <session-id>
+   pai end --body-file ${paiHomePath("state", "checkpoints")}/<session-id>.md --session-id <session-id>
    \`\`\`
 
    This does everything \`pai pause\` does (writes the checkpoint into \`## Continue\` in

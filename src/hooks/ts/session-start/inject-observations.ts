@@ -17,11 +17,11 @@
  * Silent on any failure — never blocks session start.
  */
 
+import { paiSocketPath } from "../../../runtime-paths.js";
 import { connect } from 'net';
 import { randomUUID } from 'crypto';
 import { isProbeSession } from '../lib/project-utils.js';
 import { isWorkerSession } from '../lib/worker-session.js';
-import { paiSocketPath } from "../../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Tuning

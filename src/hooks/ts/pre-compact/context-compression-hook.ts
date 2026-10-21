@@ -14,9 +14,10 @@
  */
 
 import { isWorkerSession } from "../lib/worker-session.js";
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
-import { tmpdir } from 'os';
+import { paiHomePath } from '../../../config/pai-home.js';
+import { paiSocketPath } from '../../../runtime-paths.js';
 import { connect } from 'net';
 import { randomUUID } from 'crypto';
 import {
@@ -36,7 +37,6 @@ import { getContextFill, formatContextFill } from '../lib/context-fill.js';
 import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
 import { readContextHandoverCache, judgeHandover } from '../lib/context-handover-cache.js';
 import { bindHandoverEvidence } from '../lib/handover-evidence.js';
-import { paiSocketPath } from "../../../runtime-paths.js";
 
 interface HookInput {
   session_id: string;
@@ -837,7 +837,8 @@ async function main() {
       ].join('\n');
 
       try {
-        const stateFile = join(tmpdir(), `pai-compact-state-${hookInput.session_id}.txt`);
+        const stateFile = paiHomePath('state', `compact-state-${hookInput.session_id}.txt`);
+        mkdirSync(dirname(stateFile), { recursive: true });
         writeFileSync(stateFile, injection, 'utf-8');
         console.error(`Session state saved to ${stateFile} (${injection.length} chars)`);
       } catch (err) {

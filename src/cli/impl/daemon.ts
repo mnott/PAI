@@ -20,7 +20,7 @@ import {
   unlinkSync,
   mkdirSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir, userInfo } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
@@ -56,6 +56,11 @@ const SYSTEMD_UNIT_PATH = join(SYSTEMD_USER_DIR, SYSTEMD_UNIT_NAME);
 /** Service name `daemon install` registers on this platform: systemd unit on Linux, launchd label elsewhere. */
 export function daemonServiceName(plat: NodeJS.Platform = process.platform): string {
   return plat === "linux" ? SYSTEMD_UNIT_NAME : PLIST_LABEL;
+}
+
+/** Where `daemon install` writes its service file: the launchd plist (macOS) or the systemd user unit (Linux). */
+export function daemonServiceFilePath(plat: NodeJS.Platform = process.platform): string {
+  return plat === "linux" ? SYSTEMD_UNIT_PATH : PLIST_PATH;
 }
 
 /**
@@ -195,6 +200,7 @@ async function cmdStatus(): Promise<number> {
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
     if (s["dashboard"]) console.log(dim(`    Dashboard:   ${s["dashboard"]}`));
+    console.log(dim(`    Log:         ${DAEMON_LOG}`));
     const quiet = readQuiet();
     if (quiet.on) console.log(warn(`    Quiet:       ${describeQuiet(quiet)}`));
 
@@ -239,6 +245,7 @@ async function cmdStatus(): Promise<number> {
     console.log(warn(`  Daemon not running: ${msg}`));
     console.log(dim("    Start with: pai daemon serve"));
     console.log(dim("    Or install as service: pai daemon install"));
+    console.log(dim(`    Log:         ${DAEMON_LOG}`));
     console.log();
     return 1;
   }
@@ -295,6 +302,8 @@ function installServiceDarwin(daemonBin: string): boolean {
     mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
   }
 
+  // launchd does not create the log's parent directory; without it the job fails to start.
+  mkdirSync(dirname(DAEMON_LOG), { recursive: true });
   const plistContent = generatePlist(daemonBin);
   try {
     writeFileSync(PLIST_PATH, plistContent, "utf8");

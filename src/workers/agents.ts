@@ -24,6 +24,7 @@ import type { ModelTier, WorkerProvider } from "./config.js";
 export type { ModelTier } from "./config.js";
 
 import { UNLABELED } from "./status.js";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 export interface AgentDef {
   name: string;
@@ -41,7 +42,7 @@ export interface AgentDef {
 
 /** Directory the agent library lives in. */
 export function agentsDir(): string {
-  return join(homedir(), ".claude", "agents");
+  return join(claudeHomeDir(), "agents");
 }
 
 export function agentPath(name: string): string {

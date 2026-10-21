@@ -29,7 +29,7 @@ describe("post-tool-use/whisper-reinject entrypoint", () => {
       // This test suite itself may run inside a worker (PAI_WORKER=1 in
       // process.env) — explicitly clear it so "without the guard" cases are
       // not silently exercising the guarded path instead.
-      env: { ...process.env, PAI_WORKER: "", TMPDIR: isolatedTmp, ...env },
+      env: { ...process.env, PAI_WORKER: "", PAI_HOME: isolatedTmp, ...env },
     });
   }
 
@@ -37,7 +37,7 @@ describe("post-tool-use/whisper-reinject entrypoint", () => {
     const stdout = runHook("t", { PAI_WORKER: "1" });
     expect(stdout).toBe("");
 
-    const counterDir = join(isolatedTmp, "pai-whisper-reinject");
+    const counterDir = join(isolatedTmp, "state", "whisper-reinject");
     expect(existsSync(counterDir)).toBe(false);
   });
 
@@ -49,7 +49,7 @@ describe("post-tool-use/whisper-reinject entrypoint", () => {
     expect(stdout).toContain("<system-reminder>");
     expect(stdout).toContain("tool calls into this turn");
 
-    const counterDir = join(isolatedTmp, "pai-whisper-reinject");
+    const counterDir = join(isolatedTmp, "state", "whisper-reinject");
     expect(readdirSync(counterDir).length).toBe(1);
   });
 });

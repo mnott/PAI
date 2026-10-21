@@ -13,6 +13,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 import { buildTripleExtractionPrompt } from "../daemon/templates/triple-extraction-prompt.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
@@ -27,9 +28,11 @@ import type { StorageBackend } from "../storage/interface.js";
  * (launchd PATH is minimal so bare "claude" often won't resolve).
  */
 export function findClaudeBinary(): string | null {
+  const override = process.env.PAI_CLAUDE_BINARY;
+  if (override && existsSync(override)) return override;
   const candidates = [
     join(homedir(), ".local", "bin", "claude"),
-    join(homedir(), ".claude", "local", "claude"),
+    join(claudeHomeDir(), "local", "claude"),
     "/usr/local/bin/claude",
     "/opt/homebrew/bin/claude",
   ];

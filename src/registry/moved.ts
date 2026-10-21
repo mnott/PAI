@@ -23,11 +23,11 @@
 
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { claudeProjectsDir as paiClaudeProjectsDir } from "../config/pai-home.js";
 
 /** Where Claude Code keeps per-project transcript folders. */
 export function claudeProjectsDir(): string {
-  return join(homedir(), ".claude", "projects");
+  return paiClaudeProjectsDir();
 }
 
 /**

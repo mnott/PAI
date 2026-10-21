@@ -10,8 +10,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir } from "node:os";
-import { paiHomePath, defaultPaiHomeDir, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
+import { claudeProjectsDir, paiHomePath, defaultPaiHomeDir, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -98,13 +97,7 @@ function findNotesDirForProject(rootPath: string): string | null {
     .replace(/\//g, "-")
     .replace(/\./g, "-")
     .replace(/ /g, "-");
-  const centralNotes = join(
-    homedir(),
-    ".claude",
-    "projects",
-    encoded,
-    "Notes"
-  );
+  const centralNotes = join(claudeProjectsDir(), encoded, "Notes");
   if (existsSync(centralNotes)) return centralNotes;
 
   return null;

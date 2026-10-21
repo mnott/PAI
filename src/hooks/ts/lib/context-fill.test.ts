@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
@@ -120,6 +120,7 @@ describe("readStatuslineFill", () => {
     // Point tmpdir-based lookup at a real file by writing exactly where the
     // helper will look.
     const path = statuslineStateFilePath(sessionId);
+    mkdirSync(dirname(path), { recursive: true });
     const now = Date.now();
     writeFileSync(
       path,
@@ -140,6 +141,7 @@ describe("readStatuslineFill", () => {
   it("treats a state file older than the staleness window as absent", () => {
     const sessionId = randomUUID();
     const path = statuslineStateFilePath(sessionId);
+    mkdirSync(dirname(path), { recursive: true });
     const staleTimestamp = Date.now() - 10 * 60 * 1000; // 10 minutes old
     writeFileSync(
       path,
@@ -167,6 +169,7 @@ describe("getContextFill precedence", () => {
   it("prefers a fresh statusline reading over the transcript", () => {
     const sessionId = randomUUID();
     const path = statuslineStateFilePath(sessionId);
+    mkdirSync(dirname(path), { recursive: true });
     const now = Date.now();
     writeFileSync(
       path,
@@ -190,6 +193,7 @@ describe("getContextFill precedence", () => {
   it("falls back to the transcript when the statusline state is stale", () => {
     const sessionId = randomUUID();
     const path = statuslineStateFilePath(sessionId);
+    mkdirSync(dirname(path), { recursive: true });
     const staleTimestamp = Date.now() - 10 * 60 * 1000;
     writeFileSync(
       path,

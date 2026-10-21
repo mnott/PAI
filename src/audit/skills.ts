@@ -13,9 +13,9 @@
  */
 
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { countTokens, TOKEN_ENCODING } from "./tokens.js";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 export type CatalogueSource = "skills" | "commands" | "plugins";
 
@@ -252,7 +252,7 @@ export function findDuplicates(entries: CatalogueEntry[]): DuplicateGroup[] {
 }
 
 export function auditSkills(
-  claudeDir: string = join(homedir(), ".claude"),
+  claudeDir: string = claudeHomeDir(),
   settingsPath: string = join(claudeDir, "settings.json")
 ): SkillsReport {
   const rawFiles = findCatalogueFiles(claudeDir);

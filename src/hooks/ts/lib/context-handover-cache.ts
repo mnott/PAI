@@ -12,9 +12,9 @@
  * this file is the shared seam so neither side has to.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { paiCacheDir } from "../../../runtime-paths.js";
 
 export type HandoverThreshold = "warmup" | "refresh";
 
@@ -28,7 +28,7 @@ export interface ContextHandoverCache {
 }
 
 export function contextHandoverCachePath(sessionId: string): string {
-  return join(tmpdir(), `pai-context-handover-${sessionId}.json`);
+  return join(paiCacheDir(), `pai-context-handover-${sessionId}.json`);
 }
 
 export function readContextHandoverCache(sessionId: string): ContextHandoverCache | null {
@@ -42,7 +42,9 @@ export function readContextHandoverCache(sessionId: string): ContextHandoverCach
 }
 
 export function writeContextHandoverCache(cache: ContextHandoverCache): void {
-  writeFileSync(contextHandoverCachePath(cache.sessionId), JSON.stringify(cache, null, 2), "utf-8");
+  const file = contextHandoverCachePath(cache.sessionId);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(cache, null, 2), "utf-8");
 }
 
 /** A handover older than this is not "current" even when generated after the

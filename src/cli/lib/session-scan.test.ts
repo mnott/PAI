@@ -45,13 +45,19 @@ const SYSTEM_LINE = JSON.stringify({ type: "system", subtype: "init" }) + "\n";
 const USER_LINE =
   JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }) + "\n";
 
+const REAL_HOME = process.env.HOME;
+
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pai-scan-"));
+  // pai-home.ts may already be loaded outside the node:os stub; HOME keeps its homedir() in step.
+  process.env.HOME = home;
   const dir = join(home, ".claude", "projects", ENCODED);
   mkdirSync(join(dir, "sessions"), { recursive: true });
 });
 
 afterEach(() => {
+  if (REAL_HOME === undefined) delete process.env.HOME;
+  else process.env.HOME = REAL_HOME;
   rmSync(home, { recursive: true, force: true });
   vi.resetModules();
 });

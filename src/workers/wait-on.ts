@@ -159,7 +159,7 @@ const readLines = (file: string | undefined): string[] => {
 };
 
 function rcOf(pid: number, log?: string): string | null {
-  for (const f of [log && `${log}.rc`, log && log.replace(/\.[^./]+$/, ".rc"), `/tmp/${pid}.rc`]) {
+  for (const f of [log && `${log}.rc`, log && log.replace(/\.[^./]+$/, ".rc")]) {
     if (f && existsSync(f)) return readFileSync(f, "utf8").trim();
   }
   return null;

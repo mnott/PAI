@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { psTable } from "../workers/ps-table.js";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 export type Deferral = "on" | "OFF" | "n/a";
 
@@ -182,7 +183,7 @@ export function auditEnv(): EnvReport {
 
   let settingsModel: string | null = null;
   let settingsEffortLevel: string | null = null;
-  const settingsPath = join(homedir(), ".claude", "settings.json");
+  const settingsPath = join(claudeHomeDir(), "settings.json");
   if (existsSync(settingsPath)) {
     try {
       const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as { model?: string; effortLevel?: string };

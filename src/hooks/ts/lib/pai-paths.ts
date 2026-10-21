@@ -43,7 +43,8 @@ function loadEnvFile(): void {
   // Check common locations for .env
   const possiblePaths = [
     resolve(process.env.ADAPTER_DIR || process.env.PAI_DIR || '', '.env'),
-    resolve(homedir(), '.claude', '.env'),
+    paiHomePath('.env'),
+    resolve(process.env.CLAUDE_CONFIG_DIR || resolve(homedir(), '.claude'), '.env'),
   ];
 
   for (const envPath of possiblePaths) {
@@ -89,7 +90,7 @@ function loadEnvFile(): void {
 loadEnvFile();
 
 function defaultAdapterDir(): string {
-  return resolve(homedir(), '.claude');
+  return resolve(process.env.CLAUDE_CONFIG_DIR || resolve(homedir(), '.claude'));
 }
 
 /**

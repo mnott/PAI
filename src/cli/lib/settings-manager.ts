@@ -8,16 +8,16 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { readJsonStrict, writeJsonAtomic } from "../../config/json-store.js";
+import { claudeHomeDir } from "../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
-const CLAUDE_DIR = join(homedir(), ".claude");
+const CLAUDE_DIR = claudeHomeDir();
 const SETTINGS_FILE = join(CLAUDE_DIR, "settings.json");
 
 // ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, extname, resolve } from "node:path";
+import { livePaiHomeDirs } from "../../../config/pai-home.js";
 import { type GateDecision } from "./render-decision.js";
 import { decideWorkerGitGuard, isPrivateClone } from "./worker-git-guard.js";
 import { isBrowserTool } from "../../../workers/browser-tools.js";
@@ -187,7 +188,7 @@ function abs(p: string, cwd: string, home: string): string | null {
 }
 
 /** The live PAI home dirs: the default ~/.pai and the pre-migration ~/.claude/pai (see config/pai-home.ts). */
-const LIVE_PAI_DIRS = (home: string): string[] => [`${home}/.pai`, `${home}/.claude/pai`];
+const LIVE_PAI_DIRS = livePaiHomeDirs;
 
 /** Live PAI/Claude config that tests and workers must not write. */
 export function isLiveConfig(p: string, home: string): boolean {

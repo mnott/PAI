@@ -16,7 +16,7 @@
 
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { paiCacheDir } from "../../../runtime-paths.js";
 import { join } from "node:path";
 
 /** Bytes read per syscall while scanning forward. Bounds peak memory. */
@@ -96,7 +96,7 @@ export function scanIncremental<S>(
     const headLen = Math.min(FINGERPRINT_BYTES, size);
     const head = readBytes(fd, 0, headLen).toString("latin1");
 
-    const dir = opts.cacheDir ?? tmpdir();
+    const dir = opts.cacheDir ?? paiCacheDir();
     const cfile = cachePath(path, kind, dir);
 
     let state: S | null = null;

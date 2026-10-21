@@ -51,7 +51,6 @@ DA_COLOR="${DA_COLOR:-purple}"  # Color for the assistant name
 # snapshots per provider and the Claude Code version. One knob rather than a
 # path repeated six times, so a test (or a second user on the same machine)
 # can point the whole lot somewhere private.
-pai_cache_dir="${PAI_CACHE_DIR:-/tmp/claude}"
 
 # PAI's per-user namespace dir — see src/config/pai-home.ts (paiHomeDir) for
 # the canonical (TypeScript) version of this same resolver; this script
@@ -60,6 +59,8 @@ pai_home_dir="${PAI_HOME:-}"
 if [ -z "$pai_home_dir" ]; then
     if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then pai_home_dir="$HOME/.claude/pai"; else pai_home_dir="$HOME/.pai"; fi
 fi
+
+pai_cache_dir="${PAI_CACHE_DIR:-$pai_home_dir/cache}"
 
 # Resolve a PAI per-user file: the new PAI_HOME path if it exists, else the
 # first existing old candidate (args 2+), else the new path. Mirrors
@@ -345,7 +346,8 @@ context_max_k=$((context_size / 1000))
 # affect the status line itself.
 statusline_session_id=$(echo "$input" | jq -r '.session_id // empty' 2>/dev/null)
 if [ -n "$statusline_session_id" ]; then
-    context_state_file="${TMPDIR:-/tmp}/pai-context-${statusline_session_id}.json"
+    mkdir -p "$pai_cache_dir" 2>/dev/null
+    context_state_file="${pai_cache_dir}/pai-context-${statusline_session_id}.json"
     jq -n \
         --argjson used_percentage "${context_pct:-0}" \
         --argjson context_window_size "${context_size:-$default_context_size}" \

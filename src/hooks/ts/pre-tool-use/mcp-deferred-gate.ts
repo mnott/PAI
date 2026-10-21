@@ -20,11 +20,11 @@
  * Never blocks Claude Code: always exits 0, tolerant of missing transcript.
  */
 
+import { paiSocketPath } from "../../../runtime-paths.js";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { connect } from "node:net";
 import { decideMcpGate, PASS_OUTPUT, type GateHookInput } from "../lib/mcp-deferred-gate.js";
 import { isProbeSession } from "../lib/project-utils.js";
-import { paiSocketPath } from "../../../runtime-paths.js";
 
 /** Enough transcript to see the whole recent tool history; transcripts can be huge. */
 const TRANSCRIPT_TAIL_BYTES = 512 * 1024;

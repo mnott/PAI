@@ -7,11 +7,11 @@
  * Claude Code (always exits 0).
  */
 
+import { paiSocketPath } from "../../../runtime-paths.js";
 import { connect } from 'net';
 import { sha256 } from '../../../utils/hash.js';
 import { basename } from 'path';
 import { isProbeSession } from '../lib/project-utils.js';
-import { paiSocketPath } from "../../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Types

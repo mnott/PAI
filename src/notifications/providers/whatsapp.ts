@@ -13,7 +13,7 @@
  * So every WhatsApp notification failed. Silently, because a failed channel
  * writes one line to stderr and the router has no fallback: on 2026-08-04 four
  * task-bus escalations about a job that had not run for nine hours reached
- * /tmp/pai-scheduler.log and nowhere else, while the user had no idea.
+ * <PAI_HOME>/logs/scheduler.log and nowhere else, while the user had no idea.
  *
  * Routing through the hub rather than at the adapter directly is deliberate:
  * the hub knows where its adapters are, and that is exactly the knowledge whose

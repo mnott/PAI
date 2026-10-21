@@ -10,9 +10,8 @@
  */
 
 import { existsSync, lstatSync, symlinkSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { paiHomePath, migratePaiDir, type MigrateDirResult } from "./pai-home.js";
+import { claudeHomeDir, paiHomePath, migratePaiDir, type MigrateDirResult } from "./pai-home.js";
 
 export interface MigrateContentDirResult extends MigrateDirResult {
   symlinked: boolean;
@@ -20,11 +19,11 @@ export interface MigrateContentDirResult extends MigrateDirResult {
 }
 
 function oldAgentsDir(): string {
-  return join(homedir(), ".claude", "agents");
+  return join(claudeHomeDir(), "agents");
 }
 
 function oldCommandsDir(): string {
-  return join(homedir(), ".claude", "commands");
+  return join(claudeHomeDir(), "commands");
 }
 
 function migrateContentDirWithSymlink(

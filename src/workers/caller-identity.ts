@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { itermUuid } from "./scope.js";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 export interface CallerIdentity {
   /** iTerm session uuid (no "w0t0p0:" prefix), "" when none. */
@@ -43,6 +44,6 @@ function jobNameOf(env: NodeJS.ProcessEnv, claudeDir: string): string | undefine
 
 export function callerIdentity(env: NodeJS.ProcessEnv = process.env, deps: CallerIdentityDeps = {}): CallerIdentity {
   const term = itermUuid(env.ITERM_SESSION_ID || env.TERM_SESSION_ID || "");
-  const jobName = jobNameOf(env, deps.claudeDir ?? join(homedir(), ".claude"));
+  const jobName = jobNameOf(env, deps.claudeDir ?? claudeHomeDir());
   return { term, ...(jobName ? { jobName } : {}) };
 }

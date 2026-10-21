@@ -9,7 +9,6 @@
  */
 
 import { existsSync, statSync, renameSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   paiHomePath,
@@ -18,20 +17,22 @@ import {
   migratePaiDir,
   type MigrateFileResult,
   type MigrateDirResult,
+  claudeHomeDir,
+  legacyConfigDir,
 } from "./pai-home.js";
 
 export { paiHomePath };
 
 function oldWhisperRulesPath(): string {
-  return join(homedir(), ".claude", "whisper-rules.md");
+  return join(claudeHomeDir(), "whisper-rules.md");
 }
 
 function oldAdvisorModePath(): string {
-  return join(homedir(), ".claude", "advisor-mode.json");
+  return join(claudeHomeDir(), "advisor-mode.json");
 }
 
 function oldSessionStateDir(): string {
-  return join(homedir(), ".config", "pai", "session-state");
+  return join(legacyConfigDir(), "session-state");
 }
 
 export function whisperRulesPath(): string {
@@ -70,7 +71,7 @@ export function migrateSessionStateDir(opts: { dryRun?: boolean } = {}): Migrate
 // ---------------------------------------------------------------------------
 
 function oldLastHousekeepingPath(): string {
-  return join(homedir(), ".config", "pai", ".last-housekeeping");
+  return join(legacyConfigDir(), ".last-housekeeping");
 }
 
 /** session-stop.sh resolves this itself at runtime (it can't import TS) —
@@ -80,7 +81,7 @@ export function migrateLastHousekeeping(opts: { dryRun?: boolean } = {}): Migrat
 }
 
 function oldVoicesJsonPath(): string {
-  return join(homedir(), ".config", "pai", "voices.json");
+  return join(legacyConfigDir(), "voices.json");
 }
 
 export function migrateVoicesJson(opts: { dryRun?: boolean } = {}): MigrateFileResult {
@@ -107,7 +108,7 @@ export function migrateVoicesJson(opts: { dryRun?: boolean } = {}): MigrateFileR
 // ---------------------------------------------------------------------------
 
 function oldHistoryDir(): string {
-  return join(homedir(), ".claude", "History");
+  return join(claudeHomeDir(), "History");
 }
 
 export function migrateHistoryDir(opts: { dryRun?: boolean } = {}): MigrateDirResult {
@@ -115,7 +116,7 @@ export function migrateHistoryDir(opts: { dryRun?: boolean } = {}): MigrateDirRe
 }
 
 function oldAgentSessionsPath(): string {
-  return join(homedir(), ".claude", "agent-sessions.json");
+  return join(claudeHomeDir(), "agent-sessions.json");
 }
 
 export function migrateAgentSessions(opts: { dryRun?: boolean } = {}): MigrateFileResult {
@@ -123,7 +124,7 @@ export function migrateAgentSessions(opts: { dryRun?: boolean } = {}): MigrateFi
 }
 
 function oldSessionRoutingPath(): string {
-  return join(homedir(), ".claude", "session-routing.json");
+  return join(claudeHomeDir(), "session-routing.json");
 }
 
 export function migrateSessionRouting(opts: { dryRun?: boolean } = {}): MigrateFileResult {
@@ -131,7 +132,7 @@ export function migrateSessionRouting(opts: { dryRun?: boolean } = {}): MigrateF
 }
 
 function oldSecurityEventsPath(): string {
-  return join(homedir(), ".claude", "history", "security", "security-events.jsonl");
+  return join(claudeHomeDir(), "history", "security", "security-events.jsonl");
 }
 
 export function migrateSecurityEvents(opts: { dryRun?: boolean } = {}): MigrateFileResult {
@@ -150,7 +151,7 @@ export interface MigrateLockResult {
 const SESSION_STOP_LOCK_ABANDONED_AFTER_MS = 60 * 60 * 1000;
 
 export function migrateSessionStopLock(opts: { dryRun?: boolean } = {}): MigrateLockResult {
-  const oldPath = join(homedir(), ".config", "pai", ".session-stop.lock");
+  const oldPath = join(legacyConfigDir(), ".session-stop.lock");
   const newPath = paiHomePath(".session-stop.lock");
   if (!existsSync(oldPath)) {
     return { status: "nothing-to-migrate", note: `nothing to migrate (${newPath})` };

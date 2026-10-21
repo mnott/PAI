@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { countTokens, TOKEN_ENCODING } from "./tokens.js";
 import { whisperRulesPath } from "../config/pai-files.js";
 import { encodeDir } from "../cli/lib/utils.js";
+import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
 
 export interface FileTokenReading {
   path: string;
@@ -69,13 +70,13 @@ function parentClaudeMdFiles(startDir: string): string[] {
 /** The default memory set the task describes, plus any @-imports they pull in. */
 export function defaultFileSet(cwd: string): string[] {
   const seeds = [
-    join(homedir(), ".claude", "CLAUDE.md"),
+    join(claudeHomeDir(), "CLAUDE.md"),
     join(cwd, "CLAUDE.md"),
     join(cwd, ".claude", "CLAUDE.md"),
     ...parentClaudeMdFiles(dirname(cwd)),
-    join(homedir(), ".claude", "skills", "CORE", "SKILL.md"),
+    join(claudeHomeDir(), "skills", "CORE", "SKILL.md"),
     whisperRulesPath(),
-    join(homedir(), ".claude", "projects", encodeDir(cwd), "memory", "MEMORY.md"),
+    join(claudeProjectsDir(), encodeDir(cwd), "memory", "MEMORY.md"),
   ];
 
   const visited = new Set<string>();

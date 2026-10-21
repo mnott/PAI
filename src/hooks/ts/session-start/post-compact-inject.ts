@@ -19,7 +19,7 @@
 import { isWorkerSession } from "../lib/worker-session.js";
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { paiHomePath } from '../../../config/pai-home.js';
 import { resetHandoverTriggerState } from '../../../session/context-handover-trigger.js';
 import { clearWhisperConfirmMarker } from '../lib/whisper-confirm.js';
 
@@ -75,7 +75,7 @@ async function main() {
   clearWhisperConfirmMarker(hookInput.session_id);
 
   // Look for the state file saved by context-compression-hook during PreCompact
-  const stateFile = join(tmpdir(), `pai-compact-state-${hookInput.session_id}.txt`);
+  const stateFile = paiHomePath('state', `compact-state-${hookInput.session_id}.txt`);
 
   if (!existsSync(stateFile)) {
     console.error(`post-compact-inject: no state file found at ${stateFile}`);

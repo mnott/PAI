@@ -24,9 +24,10 @@
  * again next time, not a reason to interrupt the hook that called this.
  */
 
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { paiHomePath } from "../config/pai-home.js";
+import { paiCacheDir } from "../runtime-paths.js";
+import { dirname } from "node:path";
 
 import {
   getContextFill,
@@ -93,7 +94,7 @@ export interface HandoverTriggerState {
 }
 
 export function triggerStatePath(sessionId: string): string {
-  return join(tmpdir(), `pai-context-handover-fired-${sessionId}.json`);
+  return paiHomePath("state", `context-handover-fired-${sessionId}.json`);
 }
 
 export function loadTriggerState(sessionId: string): HandoverTriggerState {
@@ -115,6 +116,7 @@ export function loadTriggerState(sessionId: string): HandoverTriggerState {
 
 function saveTriggerState(sessionId: string, state: HandoverTriggerState): void {
   try {
+    mkdirSync(dirname(triggerStatePath(sessionId)), { recursive: true });
     writeFileSync(triggerStatePath(sessionId), JSON.stringify(state), "utf-8");
   } catch {
     // Best-effort — a missing write only costs a possible re-attempt later.
@@ -296,7 +298,7 @@ export async function checkAndEnqueueContextHandover(
       state.confirmedTokens !== undefined &&
       reading.usedTokens - state.confirmedTokens > REARM_GROWTH_FRACTION * reading.windowSize;
     if (fresh && !grown) return NOTHING;
-    const t = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: tmpdir() });
+    const t = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: paiCacheDir() });
     if (reading.usedTokens < t.refreshTokens) return NOTHING;
     state = { confirmed: [], pending: null };
     deps.saveState(input.sessionId, state);
@@ -356,7 +358,7 @@ export async function checkAndEnqueueContextHandover(
     return { attempted: [], confirmed: confirmedThisCheck };
   }
 
-  const thresholds = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: tmpdir() });
+  const thresholds = contextFillThresholds(reading, process.env, { cwd: input.cwd, sampleCacheDir: paiCacheDir() });
   if (!thresholds.windowConfirmed) {
     console.error(
       `[context-handover-trigger] session ${input.sessionId}: window size not confirmed — ` +

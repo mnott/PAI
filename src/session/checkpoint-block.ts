@@ -42,7 +42,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { claudeHomeDir } from "../config/pai-home.js";
 import { loadStatusConfig, writeContinueToForge } from "./forge-sink.js";
 
 // ---------------------------------------------------------------------------
@@ -905,7 +905,7 @@ function getPaiDir(): string {
       return envDir;
     }
   }
-  return join(homedir(), ".claude");
+  return claudeHomeDir();
 }
 
 /**

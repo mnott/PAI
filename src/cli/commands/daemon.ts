@@ -42,7 +42,7 @@ export const daemonSubcommands: CommandDef[] = [
 {
   name: "logs",
   summary: "Show the end of the daemon log",
-  description: "Show the end of the daemon log.\n\nTail the daemon log (/tmp/pai-daemon.log)",
+  description: "Show the end of the daemon log.\n\nTail the daemon log (<PAI_HOME>/logs/daemon.log)",
   options: [{ name: "lines", short: "n", type: "string", value: "N", summary: "Number of lines to show" }, { name: "follow", short: "f", type: "boolean", summary: "Follow log output (like tail -f)" }],
   examples: ["pai daemon logs","pai daemon logs --lines 200 --follow"],
   seeAlso: ["pai daemon keepalive"],
