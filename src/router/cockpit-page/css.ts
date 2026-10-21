@@ -88,9 +88,9 @@ svg text{fill:var(--dim);font-size:10px}
 .tmin>*:not(.tctl):not(.tgrip){display:none}.tmin .tgrip{right:6px;opacity:.6}
 .mt:hover .tgrip,.tgrip:focus-visible{opacity:.6}@media(hover:none){.tgrip{opacity:.5}}
 .sgrip{background:none;border:0;padding:0 4px 0 0;color:var(--dim);cursor:grab;font:inherit;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}.sgrip:hover{color:var(--acc)}.sgrip:focus-visible{outline:2px solid var(--acc);border-radius:4px}
-.dropind{position:fixed;z-index:9;pointer-events:none;border:2px solid var(--acc);border-radius:8px;background:color-mix(in srgb,var(--acc) 12%,transparent)}
-.dropind[data-mode=above]{border-top-width:6px}.dropind[data-mode=below]{border-bottom-width:6px}.dropind[data-mode=left]{border-left-width:6px}.dropind[data-mode=right]{border-right-width:6px}
-.dropind.bad{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.dropind{position:fixed;z-index:9;pointer-events:none;border-radius:2px;background:var(--acc);box-shadow:0 0 0 1px color-mix(in srgb,var(--acc) 40%,transparent)}
+.dropind.bad{background:var(--bad)}
+.dragging{opacity:.4}.tgrip.grab,.sgrip.grab{color:var(--acc);opacity:1}
 .mt-values{display:flex;justify-content:space-between;gap:10px}.mt-values>div{display:flex;flex-direction:column;gap:2px;min-width:0}.mt-sec{text-align:right}
 .mt-values{flex-wrap:nowrap}
 .mt-value{font-size:clamp(18px,2.2vw,26px);font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;white-space:nowrap}.mt-value small{font-size:12px;font-weight:500;color:var(--dim);margin-left:4px}
