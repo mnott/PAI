@@ -37,7 +37,7 @@ import {
 import { staggerGate } from "../stagger.js";
 import { detectSessionName } from "../session-name.js";
 import { getProfile } from "../session-profile.js";
-import { headlessAllowed, paneBackend, resolveHostSession } from "../pane.js";
+import { followCommand, resolveHostSession } from "../pane.js";
 import { commitLines, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
@@ -50,7 +50,7 @@ import {
   type PoolTaskResponse,
 } from "../pool.js";
 import { type ExecuteArgs } from "./types.js";
-import { requireVisiblePane, announcePane } from "./pane-handles.js";
+import { requireVisiblePane, announcePane, paneHandles, spawnOwned } from "./pane-handles.js";
 import { printResult } from "./finalise.js";
 import { tryEscalate, rerunOnCloud } from "./escalate.js";
 
@@ -143,13 +143,6 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
     return null;
   }
-  // the pane rule wins over the pool: a claimed spare would run outside a pane that owns it, so with a terminal
-  // the run spawns fresh through its pane
-  if (!a.noPane && !headlessAllowed() && paneBackend(process.env, process.platform, (await resolveHostSession()).term) !== "none") {
-    if (claim) a.spareMiss = "pane rule: a pane owns every run";
-    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", { id: a.id ?? "-", provider: a.target.providerName, reason: "pane rule: a pane owns every run" });
-    return null;
-  }
   const wid = a.id ?? newWorkerId();
   // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this.
   // A spare claim starts the task first and opens the pane alongside it: the pane never delays the task.
@@ -172,6 +165,21 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     }
   };
   const panePending = preparePane(); // beside the claim / first turn: the pane never delays the task
+  // the process lives in the pool host, so the pane that owns this run follows its transcript instead of
+  // wrapping it. Started as soon as the host has bound the run (a miss keeps the pane for the fresh spawn).
+  let following: Promise<void> | null = null;
+  const followInPane = (): Promise<void> => {
+    following ??= panePending.then(async () => {
+      if (!paneHandles.has(wid)) return; // no pane owns this run (no terminal, hidden run allowed)
+      const argv = [...followCommand(wid).split(" "), "--auto-exit"];
+      const proc = await spawnOwned(wid, argv, { env: process.env, cwd, stdio: ["ignore", "pipe", "pipe"], title: `${a.label ?? wid} (pooled)` });
+      proc.on("error", () => undefined);
+    });
+    return following;
+  };
+  const poll = setInterval(() => {
+    if (loadStatus(a.logDir, wid)?.pool) void followInPane().catch(() => undefined);
+  }, 150);
   const limitMinutes = a.limit && a.limit.minutes > 0 ? a.limit.minutes : null;
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
@@ -207,6 +215,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   } catch {
     resp = null;
   }
+  clearInterval(poll);
   const postMs = Date.now() - postT0;
   await panePending; // a miss falls back to executeRun, which reuses the prepared pane
   if (resp === null) {
@@ -227,6 +236,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${resp.reason ?? "refused"}) — spawning fresh\n`);
     return null;
   }
+  await followInPane().catch(() => undefined); // a task that ended before the poll saw it still leaves its transcript in the pane
   a.onWorkerStart?.(wid);
   if (claim && a.setupPaneMs !== undefined) {
     // the pane finishes beside the claim, so the host cannot know it: the client adds the pane share of the setup

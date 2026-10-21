@@ -25,13 +25,16 @@ status` counts hits and misses by reason.
 An unclaimed spare is retired after `workers.pool.idleKillSec` seconds
 (default 1800; 0 = never).
 
-## Why claims are off while a terminal exists
+## Claimed spares and the pane rule
 
-Every worker gets a visible pane that owns its process (see
-[panes](panes.md)). A spare was started without one, so with a terminal the pane
-rule wins: the run spawns fresh through its pane instead of claiming a spare.
-Claims therefore apply to runs with no terminal at all (daemon-started runs,
-background sessions). Idle spares themselves get no pane.
+Every worker gets a visible pane (see [panes](panes.md)); a claimed spare keeps
+that: the run opens its pane as usual, and once the host binds the run to the
+spare the pane runs `pai worker follow <id>`, so the process lives in the pool
+host while the pane shows its live transcript. We chose this over pre-starting
+spares inside panes because it needs no idle panes and no change to the host,
+and it keeps the rule's intent that the operator sees every running worker live.
+A claim miss leaves the pane untouched for the fresh spawn; with no terminal
+there is no pane and the run is recorded as such, as before.
 
 ## Turning it on and off
 
