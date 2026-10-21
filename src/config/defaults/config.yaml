@@ -289,6 +289,12 @@ router:
       hitBad: 0.5
       errorWarn: 0.02
       errorBad: 0.1
+    probe:
+      # a local server whose TCP connect or /v1/models answer times out is busy, not down;
+      # it turns down after this many consecutive timeouts (refused / not serving = down at once)
+      timeoutStrikes: 3
+      # TCP connect timeout of the local-server probe
+      tcpTimeoutMs: 3000
   # Request scheduling for local engines (src/router/scheduler.ts): one request
   # in flight per engine, fair across the workers' owning sessions.
   scheduling:

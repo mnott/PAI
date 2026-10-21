@@ -12,6 +12,7 @@ import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitT
 import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, setRuntimeSampler } from "../../router/cockpit.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
+import { cockpitProbeSettings } from "../../router/cockpit-layout.js";
 import { listenRetry } from "../../router/listen.js";
 import { drainServers } from "../../router/drain.js";
 import { SystemMonitor } from "../../router/system.js";
@@ -131,7 +132,14 @@ const runCommand: CommandDef = {
     };
     sharedParker().sweep();
     if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
-    const limits = new LimitsCache({ providers: () => readWorkersSection().workers.providers, rows });
+    // local-server probe policy (router.cockpit.probe), re-read per poll like the other config sources
+    const limits = new LimitsCache({
+      providers: () => readWorkersSection().workers.providers,
+      rows,
+      get probe() {
+        return cockpitProbeSettings();
+      },
+    });
     const system = new SystemMonitor();
     // cockpit Models cards: the 5 s ring of live readings per running runtime (runtime-samples.ts)
     const sampler = createRuntimeSampler(
