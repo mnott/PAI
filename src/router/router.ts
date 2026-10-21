@@ -36,6 +36,7 @@ import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { tierProviderNames, withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
+import type { EndpointHealth } from "../workers/endpoint-health.js";
 import { endpointRegistry, instanceEngineKey, instanceNumber, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
 import type { LocalConfig } from "../workers/local-tiers.js";
 import { resolveSelector } from "../workers/route-table.js";
@@ -229,6 +230,8 @@ export interface RouterOptions {
   instances?: () => LocalInstance[];
   /** health of an endpoint (the probe cache); default: every endpoint is up. An unhealthy one is skipped like a dead pid. */
   healthy?: (i: LocalInstance) => boolean;
+  /** the process-wide endpoint probe cache: the router refreshes it (fire and forget) and reads it, the cockpit reads the same instance. Takes precedence over `healthy`. */
+  health?: EndpointHealth;
 }
 
 /** Catalogue shape endpointRegistry needs: which providers a managed model launches (cached 2 s). */
@@ -462,7 +465,8 @@ export function routerHandler(
   const warned = new Set<string>();
   const instancesOf = options?.instances ?? stateFileInstances();
   const launched = launchedConfig();
-  const healthy = options?.healthy ?? (() => true);
+  const health = options?.health;
+  const healthy = health ? (i: LocalInstance) => health.isHealthy(i) : options?.healthy ?? (() => true);
   /** requests routed to an instance and not yet released, by engine key */
   const held = new Map<string, number>();
   let warnedCompressed = false;
@@ -555,6 +559,7 @@ export function routerHandler(
       if (target.kind === "provider") {
         // every row resolves against the registry (managed + registered), then the least busy endpoint serves
         const registry = endpointRegistry(instancesOf(), providers, launched());
+        if (health) void health.refresh(registry);
         const picked = pickInstance(prov, resolveSelector(target.name, registry).filter(healthy), (k) => held.get(k) ?? 0);
         if (picked) {
           const u = new URL(picked.url);

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { parseWorkersConfig } from "../workers/config.js";
 import http from "node:http";
 import { claudeUpstream, routerPort } from "./router.js";
-import type { LocalInstance } from "../workers/local-instances.js";
+import { endpointRegistry, type LocalInstance } from "../workers/local-instances.js";
 import { createRouter, duplicateModelIds, estimateTokens, modelsReply, prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
 
 const dir = mkdtempSync(join(tmpdir(), "router-"));
@@ -479,6 +479,34 @@ describe("router: managed and registered endpoints", () => {
       r.close();
       a.close();
       b.close();
+    }
+  });
+
+  it("a registered endpoint is probed once per interval with the router and a second reader on the same instance", async () => {
+    const { createEndpointHealth } = await import("../workers/endpoint-health.js");
+    const a = serve();
+    const pa = await listen(a);
+    const prov = parseWorkersConfig({
+      providers: { box: { baseUrl: `http://127.0.0.1:${pa}`, models: { default: "box-m" }, characteristics: { tags: ["big"] } } },
+    }).providers;
+    const probes: string[] = [];
+    let t = 1000;
+    const health = createEndpointHealth({ probe: async (u) => { probes.push(u); return true; }, intervalMs: 15_000, now: () => t });
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, () => {}, undefined, { instances: () => [], health });
+    const port = await listen(r);
+    try {
+      expect(await post(port, "box", "box-m")).toBe(200);
+      expect(await post(port, "box", "box-m")).toBe(200);
+      // the cockpit reads the same instance: its refresh inside the interval probes nothing
+      const reg = endpointRegistry([], prov, { tiers: {} } as never);
+      await health.refresh(reg);
+      expect(probes).toHaveLength(1);
+      t += 20_000;
+      await health.refresh(reg);
+      expect(probes).toHaveLength(2);
+    } finally {
+      r.close();
+      a.close();
     }
   });
 });

@@ -24,7 +24,7 @@ import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runt
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { instanceEngineKey, readInstances } from "../workers/local-instances.js";
-import { createEndpointHealth } from "../workers/endpoint-health.js";
+import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-health.js";
 import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpoints.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
@@ -721,8 +721,11 @@ async function localRunningInfo(): Promise<Array<{ tier: string; label: string; 
   }
 }
 
-/** Probe cache for the registered endpoints the cockpit lists (one probe per endpoint per interval). */
-const cockpitEndpointHealth = createEndpointHealth();
+/** Probe cache for registered endpoints: one per router process, shared with the router (setEndpointHealth) so an endpoint is probed once per interval. */
+let cockpitEndpointHealth = createEndpointHealth();
+export function setEndpointHealth(h: EndpointHealth): void {
+  cockpitEndpointHealth = h;
+}
 
 /** The routing table with the selectors a row can take and the endpoint registry (per tier the ordered models with their live state, read from the same limits the gauges show) and the flow line of what each tier resolves to now. */
 async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; flow: string; choices: { entry: string; label: string }[]; endpoints: EndpointRow[] }> {

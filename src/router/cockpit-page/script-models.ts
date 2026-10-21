@@ -124,7 +124,7 @@ function renderLimits(){
 function renderRouting(){
  var r=lim&&lim.routing;if(!r||!document.querySelector('[data-section="routing"]'))return;
  var rows=r.rows||[];
- var chipsOf=function(cs){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+'</span>'}).join("")};
+ var chipsOf=function(cs,rm){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+(rm?'<button type="button" class="rtrm" data-entry="'+esc(c.entry)+'" title="Remove this entry from the tier" aria-label="remove '+esc(c.label)+'">×</button>':"")+'</span>'}).join("")};
  var flow=rows.length?'<div class="rtflow" id="rtflow">'+esc(r.flow||"")+'</div>':"";
  var menu=function(row){
   var opts=(r.choices||[]).map(function(c){return'<option value="'+esc(c.entry)+'">'+esc(c.label)+'</option>'}).join("");
@@ -133,13 +133,28 @@ function renderRouting(){
  setHtml($("routing"),rows.length?flow+rows.map(function(row){
   var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips)+'</span></div>'}).join("");
   var tip=[row.description,row.note].filter(Boolean).join(" — ");
-  return'<div class="rtrow" data-tier="'+esc(row.id)+'" data-entries="'+esc((row.chips||[]).map(function(c){return c.entry}).join(","))+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span>'+menu(row)+'<span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span><span class="rtmsg dim"></span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
+  return'<div class="rtrow" data-tier="'+esc(row.id)+'" data-entries="'+esc((row.chips||[]).map(function(c){return c.entry}).join(","))+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips,true)+'</span>'+menu(row)+'<span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span><span class="rtmsg dim"></span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
  wireRouting($("routing"));
  renderEndpoints(r.endpoints||[]);
 }
-/** A selector pick posts route.set for its tier; the limits poll then redraws the row. */
+/** A selector pick posts route.set for its tier; a × removes one entry (route.set with the list minus it; the last entry stays); the limits poll then redraws the row. */
 function wireRouting(el){
  if(!el||!el.querySelectorAll)return;
+ var rms=el.querySelectorAll("button.rtrm");
+ for(var j=0;j<rms.length;j++)(function(btn){
+  btn.onclick=function(){
+   var row=btn.parentNode.parentNode.parentNode,msg=row.querySelector(".rtmsg");
+   var all=(row.getAttribute("data-entries")||"").split(",").filter(Boolean);
+   var left=all.filter(function(x){return x!==btn.getAttribute("data-entry")});
+   if(!left.length){if(msg){msg.textContent="a tier needs at least one entry";msg.className="rtmsg bad"}return}
+   btn.disabled=true;
+   postAction("route.set",row.getAttribute("data-tier"),left.join(","),function(j2){
+    btn.disabled=false;
+    if(msg){msg.textContent=(j2&&j2.message)||"";msg.className="rtmsg"+(j2&&j2.ok?" dim":" bad")}
+    if(j2&&j2.ok)loadLimits();
+   });
+  };
+ })(rms[j]);
  var sels=el.querySelectorAll("select.rtsel");
  for(var i=0;i<sels.length;i++)(function(sel){
   sel.onchange=function(){

@@ -10,7 +10,8 @@ import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, routerPort } from "../../router/router.js";
 import { defaultV1Guard, displayHost, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
-import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler } from "../../router/cockpit.js";
+import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler, setEndpointHealth } from "../../router/cockpit.js";
+import { createEndpointHealth } from "../../workers/endpoint-health.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
 import { cockpitProbeSettings } from "../../router/cockpit-layout.js";
@@ -175,10 +176,12 @@ const runCommand: CommandDef = {
     const sessionMap = cachedSessionMap();
     const workerWindows = cachedWorkerWindows();
     warmCockpit(rows, sessionMap, workerWindows); // the first build walks every status file: before the port opens, not in a request
+    const endpointHealth = createEndpointHealth(); // one probe cache for the router and the cockpit
+    setEndpointHealth(endpointHealth);
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
-    const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp });
+    const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp, health: endpointHealth });
     const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
     const handler = stalls.wrap(inner);
     return new Promise<number>(() => {

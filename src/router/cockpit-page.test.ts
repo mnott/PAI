@@ -423,6 +423,22 @@ describe("cockpit layout follow-up", () => {
     wireRouting({ querySelectorAll: () => [sel] });
     sel.onchange!();
     expect(posts[0]!.slice(0, 3)).toEqual(["route.set", "t2", "model:qwen,gyro-m,anthropic/sonnet"]);
+    // per-entry remove: route.set with the list minus that entry; the last entry is refused with a message
+    expect(h).toContain('class="rtrm" data-entry="gyro-m"');
+    const mkRm = (entry: string, entries: string) => {
+      const msg = { textContent: "", className: "" };
+      const row = { querySelector: () => msg, getAttribute: (a: string) => (a === "data-tier" ? "t2" : entries) };
+      return { msg, btn: { disabled: false, onclick: null as null | (() => void), getAttribute: () => entry, parentNode: { parentNode: { parentNode: row } } } };
+    };
+    const rm = mkRm("gyro-m", "gyro-m,anthropic/sonnet");
+    wireRouting({ querySelectorAll: (q: string) => (q === "button.rtrm" ? [rm.btn] : []) });
+    rm.btn.onclick!();
+    expect(posts[1]!.slice(0, 3)).toEqual(["route.set", "t2", "anthropic/sonnet"]);
+    const last = mkRm("gyro-m", "gyro-m");
+    wireRouting({ querySelectorAll: (q: string) => (q === "button.rtrm" ? [last.btn] : []) });
+    last.btn.onclick!();
+    expect(posts).toHaveLength(2);
+    expect(last.msg.textContent).toContain("at least one");
   });
 
   it("shows a loading state until the first limits poll arrives", () => {
