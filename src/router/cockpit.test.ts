@@ -610,6 +610,22 @@ describe("withStarting", () => {
     expect(out.find((l) => l.provider === "other")?.starting).toBeUndefined();
   });
   it("leaves the limits alone when nothing is starting", () => expect(withStarting(ls, null)).toBe(ls));
+  it("matches per instance: a further instance loading tags the running provider, #1 does not", () => {
+    const up = [{ provider: "gyro-m", kind: "local" as const, windows: [], up: true, fetchedAt: 0 }];
+    const two = { ...view, id: "gyro-m#2", provider: "gyro-m" };
+    const one = { ...view, id: "gyro-m#1", provider: "gyro-m" };
+    expect((withStarting(up, [two]) as Array<{ starting?: unknown }>)[0].starting).toEqual(two);
+    expect((withStarting(up, [one]) as Array<{ starting?: unknown }>)[0].starting).toBeUndefined();
+  });
+});
+
+describe("runningLocalProviders", () => {
+  const lim = (up: Record<string, boolean>) => Object.entries(up).map(([provider, u]) => ({ provider, kind: "local", up: u, windows: [] }) as never);
+  it("lists every tier provider that answers, in limits order", async () => {
+    const { runningLocalProviders } = await import("./cockpit.js");
+    expect(runningLocalProviders(lim({ codernext4: true, "gyro-m": true, other: true, down: false }), ["codernext4", "gyro-m", "down"])).toEqual(["codernext4", "gyro-m"]);
+    expect(runningLocalProviders(lim({ codernext4: false }), ["codernext4"])).toEqual([]);
+  });
 });
 
 describe("activeLocalProvider", () => {

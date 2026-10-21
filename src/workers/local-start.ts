@@ -27,6 +27,8 @@ export interface LocalStart {
 }
 
 export interface LocalStartView {
+  /** instance id `<model>#<n>` */
+  id?: string;
   tier: string;
   provider: string;
   port: number;
@@ -98,6 +100,7 @@ export function localStartView(s: LocalStart | null, now = Date.now()): LocalSta
   const sinceSec = Math.max(0, Math.round((now - s.startedAt) / 1000));
   const failed = s.failed !== undefined || now - s.startedAt > s.readyMs;
   return {
+    id: keyOf(s),
     tier: s.tier,
     provider: s.provider,
     port: s.port,

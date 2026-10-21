@@ -21,11 +21,11 @@ import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
-import { localStartView, readLocalStart, type LocalStartView } from "../workers/local-start.js";
-import { activeTier, fetchServedModels, firstRunningTier, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
+import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
+import { readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
-import { primaryLocal, readLocalStatus } from "../workers/local-status.js";
+import { readLocalStatus } from "../workers/local-status.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
@@ -190,10 +190,14 @@ function configuredLocal(): string | null {
   }
 }
 
-/** The running tier's provider (the inventory's definition of active); when no tier answers, the configured `local:` one, which is then the one that is down. */
+/** Every local tier provider whose server answers: the set of running models, in limits order. */
+export function runningLocalProviders(l: ProviderLimits[], tierProviders: string[] = tierProviderList()): string[] {
+  return l.filter((x) => x.kind === "local" && x.up === true && tierProviders.includes(x.provider)).map((x) => x.provider);
+}
+
+/** The first running local provider (what the page's single "active" reads); when none answers, the configured `local:` one, which is then the one that is down. */
 export function activeLocalProvider(l: ProviderLimits[], tierProviders: string[] = tierProviderList()): string | null {
-  const running = firstRunningTier(l, (x) => x.kind === "local" && tierProviders.includes(x.provider), (x) => x.up === true);
-  return running?.provider ?? configuredLocal();
+  return runningLocalProviders(l, tierProviders)[0] ?? configuredLocal();
 }
 
 function tierProviderList(): string[] {
@@ -574,7 +578,8 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     ...inv,
     runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
-    running: await localRunningInfo(),
+    running: (await localRunningInfo())[0] ?? null,
+    runningModels: await localRunningInfo(),
     starting: currentStart(),
     // the configured start/stop commands per runtime (models.runtimes) and what PAI itself uses
     runtimeCommands: runtimeCommandsFor(),
@@ -637,19 +642,36 @@ function consumersFor(): Array<{ name: string; runtime: string; purpose: string;
   return out;
 }
 
-/** The local start in flight (loading) or failed, from the record startTier keeps; null when none. */
-function currentStart(): LocalStartView | null {
+/** The local starts in flight (loading) or failed, one view per instance, from the records startInstance keeps; empty when none. */
+function currentStarts(): LocalStartView[] {
   try {
-    return localStartView(readLocalStart(workersLogDir(readWorkersSection().workers)));
+    return Object.values(readLocalStarts(workersLogDir(readWorkersSection().workers)))
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .map((s) => localStartView(s)!);
   } catch {
-    return null;
+    return [];
   }
 }
 
-/** A local limit whose server is not up yet but whose tier is starting carries the start (loading / failed). */
-export function withStarting(ls: ProviderLimits[], view: LocalStartView | null = currentStart()): Array<ProviderLimits & { starting?: LocalStartView }> {
-  if (!view) return ls;
-  return ls.map((l) => (l.kind === "local" && l.up === false && l.provider === view.provider ? { ...l, starting: view } : l));
+/** The single-slot view of the starts (the most recent), for payload fields the page reads as one. */
+function currentStart(): LocalStartView | null {
+  const all = currentStarts();
+  return all[all.length - 1] ?? null;
+}
+
+/**
+ * A local limit carries the start of its own provider: a down one the first start (loading / failed),
+ * an up one only a further instance (#2..) still loading, so scaling up shows on a running model.
+ */
+export function withStarting(ls: ProviderLimits[], views: LocalStartView | LocalStartView[] | null = currentStarts()): Array<ProviderLimits & { starting?: LocalStartView }> {
+  const list = views === null ? [] : Array.isArray(views) ? views : [views];
+  if (!list.length) return ls;
+  return ls.map((l) => {
+    if (l.kind !== "local") return l;
+    const own = list.filter((v) => v.provider === l.provider);
+    const v = l.up === false ? own[0] : own.find((x) => x.id && !x.id.endsWith("#1"));
+    return v ? { ...l, starting: v } : l;
+  });
 }
 
 /** The tiers (name, label, memory need), for the cards' Start/Stop row. */
@@ -661,21 +683,22 @@ function localTierNames(): { tier: string; label: string; memoryGb?: number }[] 
   }
 }
 
-/** The running local model; `tier` is the active tier (its port answers with its model name). */
-async function localRunningInfo(): Promise<{ tier: string; label: string; model: string; memGb: string } | null> {
+/** The running local models, one per tier provider that answers; `tier` is the tier of that provider. */
+async function localRunningInfo(): Promise<Array<{ tier: string; label: string; model: string; memGb: string; provider: string }>> {
   try {
-    const st = readLocalStatus(workersLogDir(readWorkersSection().workers));
-    const run = primaryLocal(st);
-    if (!run) return null;
-    const cfg = readLocalConfig(workersYamlPath());
-    const tiers = cfg.tiers;
-    const active = (await activeTier(cfg, fetchServedModels)) ?? Object.values(tiers).find((t) => t.provider === run.provider);
-    const inv = readInventory(workersLogDir(readWorkersSection().workers));
-    const rt = inv?.runtimes.find((r) => r.status === "running" && r.users.some((u) => u.startsWith(`worker:${run.provider}`)));
-    const mb = rt?.models.reduce((a, m) => a + (m.memoryMb ?? 0), 0) ?? 0;
-    return { tier: active?.tier ?? "", label: active?.label ?? "", model: run.model, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
+    const logDir = workersLogDir(readWorkersSection().workers);
+    const st = readLocalStatus(logDir);
+    if (!st?.running.length) return [];
+    const tiers = Object.values(readLocalConfig(workersYamlPath()).tiers);
+    const inv = readInventory(logDir);
+    return st.running.map((run) => {
+      const tier = tiers.find((t) => t.provider === run.provider);
+      const rts = inv?.runtimes.filter((r) => r.status === "running" && r.users.some((u) => u.startsWith(`worker:${run.provider}`))) ?? [];
+      const mb = rts.reduce((a, r) => a + r.models.reduce((x, m) => x + (m.memoryMb ?? 0), 0), 0);
+      return { tier: tier?.tier ?? "", label: tier?.label ?? "", model: run.model, provider: run.provider, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
+    });
   } catch {
-    return null;
+    return [];
   }
 }
 
@@ -1038,7 +1061,7 @@ export function handleCockpit(
       ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withStarting(l), routing, activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withStarting(l), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

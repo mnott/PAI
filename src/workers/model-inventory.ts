@@ -21,7 +21,7 @@ import { readWorkersSection, type WorkersConfig } from "./config.js";
 import { workersLogDir } from "./paths.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { isLocalCandidate, providerHostPort } from "./local-provider.js";
-import { firstRunningTier, readLocalConfig } from "./local-tiers.js";
+import { readLocalConfig } from "./local-tiers.js";
 import { workersYamlPath } from "./workers-config.js";
 
 export const MODEL_INVENTORY_REFRESH_MS = 30_000;
@@ -56,8 +56,6 @@ export interface InventoryRuntime {
   /** the last probe failed or was slow: status and models are the last good reading, held until DOWN_AFTER_MISSES misses */
   slow?: boolean;
   port?: number;
-  /** a `local_tiers` tier that is not the running one: not a failure, the operator switched away from it */
-  inactive?: { tier: string; active: string };
   /** false when a worker provider on this endpoint is disabled in workers.yaml: not listed anywhere */
   enabled?: boolean;
   models: InventoryModel[];
@@ -338,7 +336,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
           kind: decl?.kind ?? "openai-server",
           status: running ? "running" : "stopped",
           port: e.port,
-          // a tier-only provider (enabled:false) is listed while its server answers, or grey once another tier runs; otherwise unlisted like any disabled one
+          // a tier-only provider (enabled:false) is listed while its server answers, or listed while another catalogue model runs; otherwise unlisted like any disabled one
           enabled: e.enabled.length > 0 && (e.configured > 0 || running),
           models: (running && ids.length ? ids : e.defaults).map((m) => ({ model: m, kind: "coding" as const, loaded: running, usedBy: [] })),
           users: [],
@@ -357,15 +355,9 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         out.push(rt);
       })
   );
-  // the running tier is the active one; every other tier's server being down is the operator's switch, not a failure
-  const active = firstRunningTier(out, (r) => tierOf.has(r), (r) => r.status !== "stopped");
-  if (active) {
-    for (const r of out) {
-      if (r !== active && r.status === "stopped" && tierOf.has(r)) {
-        r.inactive = { tier: tierOf.get(r)!, active: tierOf.get(active)! };
-        r.enabled = true; // a tier-only provider whose server is down is shown grey once another tier runs
-      }
-    }
+  // a stopped catalogue model is simply not running; it stays listed (startable) while any catalogue model runs
+  if (out.some((r) => tierOf.has(r) && r.status !== "stopped")) {
+    for (const r of out) if (r.status === "stopped" && tierOf.has(r)) r.enabled = true;
   }
   return out;
 }

@@ -508,12 +508,3 @@ export function findModelPath(served: string, dirs: { name: string; path: string
   if (!want) return null;
   return dirs.find((d) => norm(d.name).includes(want))?.path ?? null;
 }
-
-/**
- * The active tier among candidates: the first one that is a tier and whose server
- * answers. The one definition behind both the runtimes inventory and the cockpit
- * LIMITS panel, so a tier switch shows the same active model in both.
- */
-export function firstRunningTier<T>(items: T[], isTier: (t: T) => boolean, running: (t: T) => boolean): T | undefined {
-  return items.find((t) => isTier(t) && running(t));
-}
