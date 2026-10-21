@@ -9,6 +9,7 @@
  * logs       — Tail the daemon log file
  */
 
+import { LAUNCHD_LABEL } from "../../daemon/daemon-pid.js";
 import { formatEmbedStatus } from "../../memory/embed-pass.js";
 import {
   existsSync,
@@ -41,7 +42,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const PLIST_LABEL = "com.pai.pai-daemon";
+const PLIST_LABEL = LAUNCHD_LABEL;
 const LAUNCH_AGENTS_DIR = join(HOME, "Library", "LaunchAgents");
 const PLIST_PATH = join(LAUNCH_AGENTS_DIR, `${PLIST_LABEL}.plist`);
 const DAEMON_LOG = daemonLogPath();

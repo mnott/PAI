@@ -21,6 +21,7 @@ import { connect } from 'net';
 import { randomUUID } from 'crypto';
 import { isProbeSession } from '../lib/project-utils.js';
 import { isWorkerSession } from '../lib/worker-session.js';
+import { paiSocketPath } from "../../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -68,7 +69,7 @@ async function callDaemon(method: string, params: Record<string, unknown>): Prom
     let buffer = '';
 
     try {
-      const socket = connect('/tmp/pai.sock', () => {
+      const socket = connect(paiSocketPath(), () => {
         socket.write(JSON.stringify({ id: randomUUID(), method, params }) + '\n');
       });
 

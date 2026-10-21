@@ -40,7 +40,7 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { dirname, join } from "node:path";
-import { ANTHROPIC_NATIVE, defaultWorkersConfig, type WorkersConfig, type WorkerProvider } from "./config.js";
+import { ANTHROPIC_NATIVE, DEFAULT_POOL_PORT, defaultWorkersConfig, type WorkersConfig, type WorkerProvider } from "./config.js";
 import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
 import type { StreamEvent } from "./run.js";
@@ -503,7 +503,7 @@ export interface PoolTaskResponse {
 
 /** The pool host's HTTP health shape. */
 export function poolPort(config: WorkersConfig): number {
-  return config.pool?.port ?? 8798;
+  return config.pool?.port ?? DEFAULT_POOL_PORT;
 }
 
 /**

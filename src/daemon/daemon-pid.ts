@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { userInfo } from "node:os";
 import { daemonPidPath } from "../runtime-paths.js";
 
-const LAUNCHD_LABEL = "com.pai.pai-daemon";
+export const LAUNCHD_LABEL = "com.pai.pai-daemon";
 const SYSTEMD_UNIT = "pai-daemon.service";
 
 /** `pid = N` from `launchctl print gui/<uid>/<label>`; undefined when not running. */

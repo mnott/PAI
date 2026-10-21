@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolveFromModule } from "../../module-paths.js";
 import { getConfiguredBackend } from "../../memory/backends/index.js";
 import { liveSource, startDashboard, type DashboardHandle, type PassSnapshot } from "../dashboard.js";
-import type { PaiDaemonConfig } from "../config.js";
+import { defaults, type PaiDaemonConfig } from "../config.js";
 import {
   daemonConfig,
   embedInProgress,
@@ -65,7 +65,7 @@ export async function startLiveDashboard(config: PaiDaemonConfig): Promise<Dashb
       liveSource({
         storage: storageBackend,
         backend: () => getConfiguredBackend(config),
-        ollamaBaseUrl: config.embedding?.ollama?.baseUrl ?? "http://127.0.0.1:11434",
+        ollamaBaseUrl: config.embedding?.ollama?.baseUrl ?? defaults().embedding.ollama.baseUrl,
         daemon: () => ({ pid: process.pid, startTime, version: packageVersion() }),
         passes: livePasses,
       }),

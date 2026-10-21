@@ -12,7 +12,7 @@ import {
 import { buildRunEnv, claudeCommand } from "../run-env.js";
 import { codexInstalled } from "../codex.js";
 import { ensureNoMcpConfig } from "../paths.js";
-import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "../proxy/server.js";
+import { proxyPort, ensureProxyRunning } from "../proxy/server.js";
 import { type StreamEvent } from "./types.js";
 
 export interface ProviderTestResult {
@@ -152,7 +152,7 @@ export async function testProvider(
 
   let proxyUrl: string | undefined;
   if (provider.protocol === "openai") {
-    const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
+    const base = await ensureProxyRunning(proxyPort(), logDir);
     proxyUrl = `${base}/${providerName}`;
   }
   const env = buildRunEnv(provider, true, proxyUrl, providerName);

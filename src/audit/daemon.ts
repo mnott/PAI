@@ -4,12 +4,13 @@
  * KG-extraction parse failures, and work-queue job throughput.
  */
 
+import { LAUNCHD_LABEL } from "../daemon/daemon-pid.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { daemonLogPath } from "../runtime-paths.js";
 
-const PLIST_PATH = () => join(homedir(), "Library", "LaunchAgents", "com.pai.pai-daemon.plist");
+const PLIST_PATH = () => join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
 
 /** StandardErrorPath from the launchd plist, falling back to the runtime default. */
 export function resolveDaemonLogPath(): string {

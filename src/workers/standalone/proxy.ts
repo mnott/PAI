@@ -12,14 +12,14 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { readWorkersSection } from "../config.js";
 import { workersLogDir } from "../paths.js";
 import {
-  DEFAULT_PROXY_PORT,
+  proxyPort,
   createProxyServer,
   listenProxy,
   proxyPidPath,
 } from "../proxy/server.js";
 
 const portFlag = process.argv.indexOf("--port");
-const port = portFlag > 0 ? parseInt(process.argv[portFlag + 1], 10) || DEFAULT_PROXY_PORT : DEFAULT_PROXY_PORT;
+const port = portFlag > 0 ? parseInt(process.argv[portFlag + 1], 10) || proxyPort() : proxyPort();
 
 // config problems must not crash a detached process into silence
 let logDir = "";

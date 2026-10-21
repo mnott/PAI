@@ -233,10 +233,16 @@ function attach(rt: InventoryRuntime, users: Array<{ name: string; model?: strin
   }
 }
 
+/** Port of a URL, the scheme default when none is written (no hardcoded ollama port). */
+function urlPort(url: string): number {
+  const u = new URL(url);
+  return Number(u.port) || (u.protocol === "https:" ? 443 : 80);
+}
+
 async function detectOllama(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime> {
   const decl = input.runtimes.find((r) => r.kind === "ollama");
   const base = (decl?.url ?? input.embedding.ollamaUrl).replace(/\/+$/, "");
-  const port = Number(new URL(base).port) || 11434;
+  const port = urlPort(base);
   const [ps, tags] = await Promise.all([deps.getJson(`${base}/api/ps`), deps.getJson(`${base}/api/tags`)]);
   const rt: InventoryRuntime = { name: decl?.name ?? "ollama", kind: "ollama", status: ps || tags ? "running" : "stopped", port, models: [], users: [] };
   type OM = { name?: string; size?: number; size_vram?: number };
@@ -284,7 +290,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
     e.wanted.push({ name: `worker:${name}`, model: p.models.default });
     if (p.models.default && !e.defaults.includes(p.models.default)) e.defaults.push(p.models.default);
   }
-  const ollamaPort = Number(new URL(input.embedding.ollamaUrl).port) || 11434;
+  const ollamaPort = urlPort(input.embedding.ollamaUrl);
   const out: InventoryRuntime[] = [];
   await Promise.all(
     [...byPort.values()]

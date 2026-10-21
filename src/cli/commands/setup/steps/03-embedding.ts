@@ -2,7 +2,7 @@
 
 import { c, line, section, type Rl, promptMenu, promptYesNo, readConfigRaw } from "../utils.js";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
-import { detectBackends, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL } from "../../../../memory/backends/index.js";
+import { detectBackends, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, ollamaDefaultUrl } from "../../../../memory/backends/index.js";
 
 /**
  * Probe the embedding backends (also under --yes). A fresh install adopts the
@@ -19,7 +19,7 @@ async function stepBackend(rl: Rl, fresh: boolean): Promise<Record<string, unkno
     return {};
   }
   if (recommended === OLLAMA_ID && (await promptYesNo(rl, "Use Ollama (GPU, several times faster)?", true))) {
-    return { embedding: { backend: OLLAMA_ID, model: OLLAMA_DEFAULT_MODEL, ollama: { baseUrl: OLLAMA_DEFAULT_URL } } };
+    return { embedding: { backend: OLLAMA_ID, model: OLLAMA_DEFAULT_MODEL, ollama: { baseUrl: ollamaDefaultUrl() } } };
   }
   return {};
 }

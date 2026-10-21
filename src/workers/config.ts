@@ -363,6 +363,9 @@ export interface WorkersTreeConfig {
   maxChildren: number;
 }
 
+/** Fallback pool port when a parsed config omits it; the shipped default is in defaults/workers.yaml. */
+export const DEFAULT_POOL_PORT = 8798;
+
 /**
  * The worker session pool (workers.pool): long-lived headless claude slots
  * that successive small runs talk to instead of each spawning a fresh
@@ -533,6 +536,8 @@ export interface WorkersConfig {
   supervision: WorkersSupervisionConfig;
   /** Worker session pool (workers.pool); default off. */
   pool: WorkersPoolConfig;
+  /** PAI openai-protocol proxy (workers.proxy). */
+  proxy: { port: number };
   /**
    * Daemon cache-keepalive cadence in seconds: how often a trivial
    * single-turn heartbeat worker re-arms the provider prompt cache
@@ -637,11 +642,12 @@ export function defaultWorkersConfig(): WorkersConfig {
       push: supervision.push === "all" ? "all" : "harness",
       stallMinutes: num(supervision.stallMinutes, 10),
     },
+    proxy: { port: num(obj(w.proxy).port, 8797) },
     pool: {
       enabled: bool(pool.enabled, false),
       maxSlots: num(pool.maxSlots, 3),
       idleSecs: num(pool.idleSecs, 900),
-      port: num(pool.port, 8798),
+      port: num(pool.port, DEFAULT_POOL_PORT),
       native: bool(pool.native, true),
       spares: num(pool.spares, 1),
       idleKillSec: num(pool.idleKillSec, 1800),
@@ -1266,6 +1272,22 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     };
   }
 
+  let proxy = { ...d.proxy };
+  if (w.proxy !== undefined) {
+    if (typeof w.proxy !== "object" || w.proxy === null || Array.isArray(w.proxy)) {
+      bad(".proxy", "must be an object");
+    } else {
+      const port = (w.proxy as Record<string, unknown>).port;
+      if (port !== undefined) {
+        if (typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65535) {
+          bad(".proxy.port", "must be a TCP port (1 … 65535)");
+        } else {
+          proxy = { port };
+        }
+      }
+    }
+  }
+
   let cacheKeepaliveSecs = d.cacheKeepaliveSecs;
   if (w.cacheKeepaliveSecs !== undefined) {
     if (
@@ -1428,6 +1450,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     tree,
     supervision,
     pool,
+    proxy,
     cacheKeepaliveSecs,
     defaultMaxMinutes,
     waitAlarmMinutes,
@@ -1560,6 +1583,7 @@ export function writeWorkersSection(
         tree: workers.tree,
         supervision: workers.supervision,
         pool: workers.pool,
+        proxy: workers.proxy,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
         waitAlarmMinutes: workers.waitAlarmMinutes,

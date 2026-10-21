@@ -4,7 +4,7 @@ import { getStorageBackend } from "../../../storage/factory.js";
 import { dim, bold, ok, err } from "../../lib/utils.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { setConfigValueOp } from "../../../config/main-config-ops.js";
-import { BACKEND_IDS, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL, createBackend, detectBackends } from "../../../memory/backends/index.js";
+import { BACKEND_IDS, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, ollamaDefaultUrl, createBackend, detectBackends } from "../../../memory/backends/index.js";
 import { provisionOllama } from "../../../memory/backends/ollama-provision.js";
 import { measureThroughput } from "../../../memory/embedding-gate.js";
 import { reembedIndex } from "../../../memory/reembed.js";
@@ -54,7 +54,7 @@ export async function memoryBackendProvisionCmd(backend: string): Promise<number
     if (backend !== "ollama") throw new Error(`Cannot provision "${backend}"; only "ollama" needs provisioning`);
     const cfg = loadConfig();
     await provisionOllama({
-      baseUrl: cfg.embedding?.ollama?.baseUrl ?? OLLAMA_DEFAULT_URL,
+      baseUrl: cfg.embedding?.ollama?.baseUrl ?? ollamaDefaultUrl(),
       model: cfg.embedding?.model ?? OLLAMA_DEFAULT_MODEL,
     });
     console.log(ok("Done.") + dim(`  Use it with \`pai memory backend use ${OLLAMA_ID}\`.`));

@@ -10,11 +10,11 @@
 import { loadConfig, type PaiDaemonConfig } from "../../daemon/config.js";
 import type { EmbeddingBackend } from "./types.js";
 import { TRANSFORMERS_ID, createTransformersBackend } from "./transformers-cpu.js";
-import { OLLAMA_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL, createOllamaBackend, probeOllama } from "./ollama.js";
+import { OLLAMA_ID, OLLAMA_DEFAULT_MODEL, ollamaDefaultUrl, createOllamaBackend, probeOllama } from "./ollama.js";
 import { ollamaBinaryPath } from "./ollama-provision.js";
 
 export const BACKEND_IDS = [OLLAMA_ID, TRANSFORMERS_ID] as const;
-export { OLLAMA_ID, TRANSFORMERS_ID, OLLAMA_DEFAULT_MODEL, OLLAMA_DEFAULT_URL };
+export { OLLAMA_ID, TRANSFORMERS_ID, OLLAMA_DEFAULT_MODEL, ollamaDefaultUrl };
 
 export function createBackend(
   id: string,
@@ -51,7 +51,7 @@ export async function detectBackends(
   deps: { fetch?: typeof fetch; ollamaBinary?: () => string | null } = {},
 ): Promise<{ results: Detection[]; recommended: string | null }> {
   const ollama = createBackend(OLLAMA_ID, cfg) as ReturnType<typeof createOllamaBackend>;
-  const baseUrl = cfg.embedding?.ollama?.baseUrl ?? OLLAMA_DEFAULT_URL;
+  const baseUrl = cfg.embedding?.ollama?.baseUrl ?? ollamaDefaultUrl();
   const p = await probeOllama(baseUrl, ollama.model, deps.fetch);
   const results: Detection[] = [];
   if (p.state === "ready") results.push({ id: OLLAMA_ID, ok: true, reason: p.detail });

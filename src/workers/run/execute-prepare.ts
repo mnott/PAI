@@ -40,7 +40,7 @@ import { deadlinePromptLine } from "../deadline.js";
 import { stripBrowserNames } from "../browser-tools.js";
 import { expandMcpNames, mcpServersFromToolGrants, writeMcpConfig } from "../mcp.js";
 import { pinNotices, projectLaunchConfig } from "../project-config.js";
-import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "../proxy/server.js";
+import { proxyPort, ensureProxyRunning } from "../proxy/server.js";
 import type { ExecuteArgs, StreamEvent } from "./types.js";
 import { modelFlagArgs } from "./model.js";
 import {
@@ -130,7 +130,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // openai-protocol providers run through the local proxy (started on demand)
   let proxyUrl: string | undefined;
   if (target.provider.protocol === "openai") {
-    const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
+    const base = await ensureProxyRunning(proxyPort(), logDir);
     proxyUrl = `${base}/${target.providerName}`;
   }
   let viaRouter: boolean | undefined;

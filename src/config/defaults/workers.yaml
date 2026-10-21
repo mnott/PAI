@@ -57,6 +57,9 @@ workers:
     push: harness
     # Minutes without a tool call before a running unit counts as stalled.
     stallMinutes: 10
+  # Loopback port of the PAI openai-protocol proxy (workers/proxy).
+  proxy:
+    port: 8797
   # Worker session pool: long-lived headless slots that successive small runs
   # talk to, so the provider prompt cache carries over. OFF — the operator
   # turns it on with `pai worker pool on`.

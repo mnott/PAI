@@ -36,6 +36,7 @@ import { getContextFill, formatContextFill } from '../lib/context-fill.js';
 import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
 import { readContextHandoverCache, judgeHandover } from '../lib/context-handover-cache.js';
 import { bindHandoverEvidence } from '../lib/handover-evidence.js';
+import { paiSocketPath } from "../../../runtime-paths.js";
 
 interface HookInput {
   session_id: string;
@@ -50,7 +51,7 @@ interface HookInput {
   scratchpad_dir?: string;
 }
 
-const DAEMON_SOCKET = process.env.PAI_SOCKET ?? '/tmp/pai.sock';
+const DAEMON_SOCKET = paiSocketPath();
 const DAEMON_TIMEOUT_MS = 3_000;
 
 /** Structured data extracted from a transcript in a single pass. */

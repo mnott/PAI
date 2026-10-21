@@ -19,6 +19,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
+import { loadConfig } from "../daemon/config.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
@@ -320,8 +321,10 @@ export function readEstimateCaps(file: string = estimateFile()): Record<string, 
   }
 }
 
-/** The OAuth usage endpoint the anthropic plan readings come from. */
-export const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+/** The OAuth usage endpoint the anthropic plan readings come from (on router.claudeUpstream). */
+export function anthropicUsageUrl(): URL {
+  return new URL("/api/oauth/usage", loadConfig().router.claudeUpstream);
+}
 
 export function getJson(url: URL, headers: Record<string, string>, timeoutMs = 5000): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -375,7 +378,7 @@ export function sharedGate(): Backoff {
 async function fetchAnthropicUsage(): Promise<string> {
   const token = await anthropicToken();
   if (!token) throw new Error("no OAuth token in keychain");
-  return getJson(new URL(ANTHROPIC_USAGE_URL), { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" });
+  return getJson(anthropicUsageUrl(), { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" });
 }
 
 /**
