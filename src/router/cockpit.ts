@@ -986,7 +986,7 @@ export function handleCockpit(
   const url = new URL(req.url ?? "/", "http://localhost");
   if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
-    res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
+    res.writeHead(status, { "content-type": type, "cache-control": "no-store", "content-length": Buffer.byteLength(body) });
     res.end(body);
   };
   if (req.method === "POST" && (url.pathname === "/cockpit/queue/next" || url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
@@ -1034,7 +1034,20 @@ export function handleCockpit(
     return true;
   }
   if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
-  if (url.pathname === "/cockpit") send(200, "text/html; charset=utf-8", cockpitHtml(cockpitSections(url)));
+  if (url.pathname === "/cockpit") {
+    // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
+    let html = "";
+    try {
+      html = cockpitHtml(cockpitSections(url));
+    } catch {
+      /* falls through to the 503 */
+    }
+    if (html) send(200, "text/html; charset=utf-8", html);
+    else {
+      res.setHeader("retry-after", "1");
+      send(503, "text/plain", "cockpit page not ready");
+    }
+  }
   else if (url.pathname === "/cockpit/data") {
     try {
       const rows = readRows();
