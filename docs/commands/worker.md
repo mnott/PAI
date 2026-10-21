@@ -61,7 +61,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--spec FILE` | string | — | Read the task from this file (or - for stdin) instead of -p |
 | `--cwd DIR` | string | — | Directory the worker runs in (default: here) |
 | `--mcp NAMES` | string | — | MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`) |
-| `--no-pane` | flag | — | Start without a pane |
+| `--no-pane` | flag | — | Ignored: every start needs a visible pane |
 | `--no-queue` | flag | — | Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent) |
 | `--no-stagger` | flag | — | Do not wait for an earlier run on the same provider to warm its prompt cache |
 | `--worktree` | flag | — | Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo) |
