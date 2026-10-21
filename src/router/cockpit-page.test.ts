@@ -410,7 +410,7 @@ function renderSys(sys: any, o: { win?: string; data?: any; fresh?: boolean } = 
   const src = [one("esc"), one("gb"), one("gbm"), many("metricSpark"), many("metricTile"), one("staleAge"), one("ringPush"), many("renderSystem")].join("\n");
   const fn = new Function(
     "sys", "$", "win", "data", "lim", "fmt",
-    `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=60;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}function orderTiles(){}var document={querySelectorAll:function(){return[]}};\n${src}\nrenderSystem();return SYSH;`
+    `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=60;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}function orderTiles(){}function wireMinAll(){}var document={querySelectorAll:function(){return[]}};\n${src}\nrenderSystem();return SYSH;`
   );
   fn(sys, (id: string) => els[id], o.win ?? "1h", o.data ?? {}, null, (n: number) => String(n));
   return { sys: els.sys!.innerHTML, hid: els.syshid!.innerHTML, srv: els.sysservers!.innerHTML };
@@ -647,7 +647,8 @@ describe("cockpit Models cards", () => {
       duplicates: [],
       live: { at: 1, runtimes: [] },
     });
-    expect(h).toContain('<div class="rt-grid" data-tkey="models cards" data-tnomin="1">');
+    expect(h).toContain('<div class="rt-grid" data-tkey="models cards">');
+    expect(h).toContain('data-tval="running"');
     const card = h.split('<div class="mcard')[1]!;
     expect(card).toContain('data-tid="ollama / qwen3:8b"');
     expect(card).toContain("data-tgrip");
@@ -2141,7 +2142,7 @@ describe("cockpit Models: one local switch, editable aliases", () => {
     const ct = (id: number) => { if (timers[id]) timers[id]!.live = false; };
     const fn = new Function(
       "$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", "setTimeout", "clearTimeout", "S",
-      `${ACT_STATE_SRC}\nvar mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}function orderTiles(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
+      `${ACT_STATE_SRC}\nvar mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}function orderTiles(){}function wireMinAll(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
     );
     fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc,
       (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)(opts.reply ? opts.reply(a) : { ok: true }); },
@@ -2528,7 +2529,7 @@ function stopHarness(inv: unknown, confirmMs = 4000, watched: string[] = []) {
   const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
   const fn = new Function(
     "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct", "document", "postAction", "loadModels", "watchJob", "setTimeout", "clearTimeout", "CONFIRM_MS",
-    `var mEditing=false;\nfunction tileGrips(){}function orderTiles(){}\nfunction applyTileOrder(){}\nfunction setTip(){}\n${confirmSrc}\n${TILE_RENDER_SRC}\n${renderBody}\nreturn renderModels;`
+    `var mEditing=false;\nfunction tileGrips(){}function orderTiles(){}function wireMinAll(){}\nfunction applyTileOrder(){}\nfunction setTip(){}\n${confirmSrc}\n${TILE_RENDER_SRC}\n${renderBody}\nreturn renderModels;`
   );
   const renderModels = fn(
     () => dom.panel, inv, () => true, () => {}, () => {},
@@ -2724,7 +2725,7 @@ function tileDragHarness(inv: unknown) {
   dom.document.documentElement = { clientHeight: 800 };
   const fn = new Function(
     "localStorage", "document", "window", "setTimeout", "clearTimeout", "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct",
-    `${ACT_STATE_SRC}\n${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
+    `${ACT_STATE_SRC}\n${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}function wireMinAll(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
   );
   const api = fn(ls, dom.document, windowStub, () => 0, () => {}, () => dom.panel, inv, () => true, () => {}, () => {},
     (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%") as Record<string, (...args: unknown[]) => unknown>;

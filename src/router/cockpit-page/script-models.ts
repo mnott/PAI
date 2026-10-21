@@ -359,10 +359,10 @@ function modelsHtml(inv){
   if(users.indexOf(sub)>=0)sub="";
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'" data-tname="'+esc(hasModel?titleOf(r.models[0]):r.name)+'"><span class="tgrip" data-tgrip tabindex="0" title="move card" aria-label="move card" aria-pressed="false" role="button">⠿</span>'+head+'<div class="mbody">'+body+'</div></div>';
+  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'" data-tname="'+esc(hasModel?titleOf(r.models[0]):r.name)+'" data-tval="'+esc(r.status)+'"><span class="tgrip" data-tgrip tabindex="0" title="move card" aria-label="move card" aria-pressed="false" role="button">⠿</span>'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
- var h='<div class="rt-grid" data-tkey="models cards" data-tnomin="1">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
+ var h='<div class="rt-grid" data-tkey="models cards">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
  if(tierBtns&&!localRt)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
  // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
@@ -413,6 +413,19 @@ function applyModelFold(){
  if(cards.length)for(var k in saved)if(k!=="__init"&&!(k in known))delete saved[k];
  saved.__init=1;saveMFolded(saved);
 }
+/** The panel header control: minimizes every model card through the tile minimize state (tkey+"#min"), or restores them all when all are minimized. */
+function wireMinAll(el){
+ var b=$("minall"),g=el.querySelector('[data-tkey="models cards"]');if(!b)return;
+ var ids=g?tids(g):[],mins=g?(tileOrder()[tkeyOf(g)+"#min"]||[]):[],all=ids.length>0&&ids.every(function(x){return mins.indexOf(x)>=0});
+ b.hidden=!ids.length;b.textContent=all?"+":"–";b.title=all?"restore all model cards":"minimize all model cards";
+ b.setAttribute("aria-label",b.title);b.setAttribute("aria-pressed",all?"true":"false");
+ b.onclick=function(){
+  var g2=el.querySelector('[data-tkey="models cards"]');if(!g2)return;
+  var s2=tileOrder(),k2=tkeyOf(g2)+"#min",i2=tids(g2);
+  if(i2.every(function(x){return(s2[k2]||[]).indexOf(x)>=0}))delete s2[k2];else s2[k2]=i2;
+  saveTileOrder(s2);applyTileOrder(g2);wireMinAll(el);
+ };
+}
 function renderModels(){
  var el=$("modelspanel");if(!el)return;
  // a pending poll never replaces a rendering that already shows data
@@ -422,6 +435,7 @@ function renderModels(){
  applyModelFold();
  // the poll rebuild must not reset the tile order the user arranged
  orderTiles(el);
+ wireMinAll(el);
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
  // a runtime job the server reports as running (started before a page reload): busy card, watched unless already
  var rj=(mdl&&mdl.runtimeJobs)||{};
