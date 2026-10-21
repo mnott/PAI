@@ -49,6 +49,7 @@ import { readWorkersSection, type WorkersConfig } from "./config.js";
 import { ledgerPath, panesDir, statusPath, workersLogDir } from "./paths.js";
 import { appendLedger } from "./ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
+import { listRecords } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
 import { psTable, psTableOrNull } from "./ps-table.js";
 import { escapePaneTitle, paneTitle } from "./pane-title.js";
@@ -731,7 +732,10 @@ export async function closeRegisteredIterm(
 function isRegisteredSession(id: string): boolean {
   try {
     const uid = itermUuid(id) || id;
-    return loadRegistry(workersLogDir(readWorkersSection().workers)).some((e) => (itermUuid(e.session) || e.session) === uid);
+    const same = (session: string | undefined): boolean => !!session && (itermUuid(session) || session) === uid;
+    if (loadRegistry(workersLogDir(readWorkersSection().workers)).some((e) => same(e.session))) return true;
+    // a `pane exec` wrapper vouches for its own session: PAI started that pane even if its registry entry is gone
+    return listRecords().some((r) => same(r.session));
   } catch {
     return false;
   }

@@ -81,6 +81,33 @@ describe("closeRegisteredIterm", () => {
   });
 });
 
+describe("a pane's own launch record vouches for it", () => {
+  it("closes an unregistered session its pane-exec wrapper recorded; a foreign one is still refused", async () => {
+    const calls: string[][] = [];
+    const run = (async (_script: string, args: string[]) => (calls.push(args), { stdout: "closed\n", stderr: "" })) as never;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const home = join(dir, "home");
+    process.env.PAI_HOME = home;
+    mkdirSync(join(home, "state", "pane-exec"), { recursive: true });
+    const mine = "A1B2C3D4-0000-4000-8000-000000000001";
+    writeFileSync(join(home, "state", "pane-exec", "w-pooled.json"), JSON.stringify({ id: "w-pooled", kind: "worker", caller: 1, wrapper: 2, session: `w0t0p1:${mine}`, startedMs: 1 }));
+    // the real registry check (no override): no registry entry, only the record
+    expect(await closeRegisteredIterm(mine, run)).toBe(true);
+    expect(await closeRegisteredIterm("D38D3E5D-19E8-4FE5-A78A-26E8E571FE27", run)).toBe(false);
+    expect(calls).toEqual([[mine]]);
+  });
+
+  it("a record without a session vouches for nothing", async () => {
+    const run = (async () => ({ stdout: "closed\n", stderr: "" })) as never;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const home = join(dir, "home2");
+    process.env.PAI_HOME = home;
+    mkdirSync(join(home, "state", "pane-exec"), { recursive: true });
+    writeFileSync(join(home, "state", "pane-exec", "w-tmux.json"), JSON.stringify({ id: "w-tmux", kind: "worker", caller: 1, wrapper: 2, startedMs: 1 }));
+    expect(await closeRegisteredIterm("A1B2C3D4-0000-4000-8000-000000000002", run)).toBe(false);
+  });
+});
+
 describe("pane registry", () => {
   it("keeps all three entries when three workers open panes at once", async () => {
     const ids = ["20260929-203824-58109", "20260929-203825-59308", "20260929-203826-59992"];

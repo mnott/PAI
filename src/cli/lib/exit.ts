@@ -33,6 +33,8 @@ function streamDrained(stream: NodeJS.WriteStream): Promise<void> {
     stream.once("error", () => resolve());
     stream.once("close", () => resolve());
     stream.write("", () => resolve());
+    // a terminal that stops reading must not keep the process from ending
+    setTimeout(resolve, 3000).unref();
   });
 }
 

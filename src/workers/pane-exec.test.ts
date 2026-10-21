@@ -152,6 +152,41 @@ describe("the pane owns the process", () => {
     expect(JSON.parse(readFileSync(exitFilePath("t-cancel"), "utf8")).cancelled).toBe(true);
   }, 15_000);
 
+  it("a pane close that never answers does not keep the wrapper alive", async () => {
+    const id = "t-hang";
+    mkdirSync(paneExecDir(), { recursive: true });
+    const server = createServer();
+    const sockets = new Promise<import("node:net").Socket>((res) => server.once("connection", res));
+    await new Promise<void>((res) => server.listen(sockPath(id), res));
+    const wrapper = runPaneExec(id, { out: () => undefined, err: () => undefined, closePane: () => new Promise<void>(() => undefined), proc: new EventEmitter() as NodeJS.Process, killGraceMs: 300, linger: 0 });
+    const s = await sockets;
+    s.write(frame("S", JSON.stringify({ argv: ["true"] })));
+    const t0 = Date.now();
+    expect(await wrapper).toBe(0);
+    server.close();
+    expect(Date.now() - t0).toBeLessThan(9000);
+  }, 15_000);
+
+  it("the hello carries the iTerm session only outside tmux", async () => {
+    const hello = async (id: string, env: NodeJS.ProcessEnv): Promise<{ session?: string }> => {
+      mkdirSync(paneExecDir(), { recursive: true });
+      const server = createServer();
+      const got = new Promise<{ session?: string }>((res) => server.once("connection", (s) => {
+        const rd = new FrameReader();
+        s.on("data", (c: Buffer) => { for (const f of rd.push(c)) if (f.t === "H") { res(JSON.parse(f.p.toString())); s.write(frame("S", JSON.stringify({ argv: ["true"] }))); } });
+      }));
+      await new Promise<void>((res) => server.listen(sockPath(id), res));
+      const w = runPaneExec(id, { out: () => undefined, err: () => undefined, closePane: async () => undefined, proc: new EventEmitter() as NodeJS.Process, env, linger: 0 });
+      const h = await got;
+      await w;
+      server.close();
+      return h;
+    };
+    expect((await hello("t-h1", { ITERM_SESSION_ID: "w0t0p0:ABC" })).session).toBe("w0t0p0:ABC");
+    expect((await hello("t-h2", { ITERM_SESSION_ID: "w0t0p0:ABC", TMUX: "/tmp/tmux-1/default,1,0" })).session).toBeUndefined();
+    expect((await hello("t-h3", { ITERM_SESSION_ID: "" })).session).toBeUndefined();
+  }, 15_000);
+
   it("the caller going away kills the child and closes the pane", async () => {
     const id = "t-gone";
     const closes: string[] = [];

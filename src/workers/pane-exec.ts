@@ -63,6 +63,8 @@ export interface LaunchRecord {
   caller: number;
   wrapper?: number;
   child?: number;
+  /** The iTerm session the wrapper runs in (its ITERM_SESSION_ID): vouches that PAI opened this pane. */
+  session?: string;
   startedMs: number;
 }
 
@@ -175,6 +177,9 @@ export interface ExecDeps {
   bar?: Partial<PaneBarDeps>;
 }
 
+/** Longest the wrapper waits for its pane to be closed before it ends anyway. */
+const CLOSE_WAIT_MS = 5000;
+
 const SIG_NUM: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGKILL: 9, SIGTERM: 15 };
 
 /** Runs in the pane: resolves to the exit code the wrapper process exits with. */
@@ -190,7 +195,8 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
     const linger = clean ?? d.linger ?? panePolicy().exitLingerSecs;
     if (failed && linger > 0) err(`\n[failed (exit ${rec.code}) — this pane closes in ${linger}s; \`pai worker replay ${id}\` shows it again]\n`);
     if (linger > 0) await new Promise((r) => setTimeout(r, linger * 1000));
-    await d.closePane?.().catch(() => undefined);
+    // a close that hangs must not keep the wrapper (and with it the pane) alive
+    await Promise.race([d.closePane?.().catch(() => undefined), new Promise((r) => setTimeout(r, CLOSE_WAIT_MS).unref())]);
     return rec.code;
   };
 
@@ -202,7 +208,10 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   const send = (t: string, p?: Buffer | string): void => {
     if (!sock.destroyed && sock.writable) sock.write(frame(t, p));
   };
-  send("H", JSON.stringify({ pid: process.pid }));
+  // Under tmux the ITERM_SESSION_ID is the operator's tab, inherited by the tmux server: not this pane's.
+  const wenv = d.env ?? process.env;
+  const session = wenv.TMUX ? undefined : wenv.ITERM_SESSION_ID || undefined;
+  send("H", JSON.stringify({ pid: process.pid, session }));
 
   let child: ChildProcess | null = null;
   let spec: StartSpec | null = null;
@@ -484,6 +493,7 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   mkdirSync(paneExecDir(), { recursive: true });
   for (const f of [exitFilePath(o.id), sockPath(o.id)]) rmQuiet(f);
   let wrapper = 0;
+  let session: string | undefined;
   let sock: Socket | null = null;
   let server!: Server;
   const connected = new Promise<Socket>((resolve) => {
@@ -521,7 +531,7 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   let pidWaiter: { ok: (p: OwnedProc) => void; bad: (e: Error) => void } | null = null;
   let ended = false;
   let startedAt = 0;
-  const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, startedMs: startedAt || Date.now(), ...extra } satisfies LaunchRecord);
+  const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, session, startedMs: startedAt || Date.now(), ...extra } satisfies LaunchRecord);
   const settle = (code: number, signal?: string): void => {
     if (ended) return;
     ended = true;
@@ -552,7 +562,9 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   s.on("data", (chunk: Buffer) => {
     for (const f of rd.push(chunk)) {
       if (f.t === "H") {
-        wrapper = (JSON.parse(f.p.toString("utf8")) as { pid: number }).pid;
+        const hello = JSON.parse(f.p.toString("utf8")) as { pid: number; session?: string };
+        wrapper = hello.pid;
+        session = hello.session || undefined;
         record();
       } else if (f.t === "P" && proc) {
         proc.pid = (JSON.parse(f.p.toString("utf8")) as { pid: number }).pid;
