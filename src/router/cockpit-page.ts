@@ -79,7 +79,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 /* a wide table scrolls inside its own box, never past the page; the first column stays put */
 .tw table th:first-child,.tw table td:first-child{position:sticky;left:0;background:var(--card)}
 /* below the phone breakpoint a table row is a stacked card: label: value pairs, no columns */
-@media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw tr{display:block;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}}
+@media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw tr{display:block;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;min-width:0}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}.tw td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
@@ -1292,10 +1292,9 @@ function render(){
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  renderDonuts();
  var ph=d.cachePause.map(function(cm){
-  var cells=cm.buckets.map(function(b){if(!b.n)return'<td class="dim">-</td>';var hr=b.hit/b.n;return'<td><span class="'+(hr<.5?"bad":hr<.8?"warn":"ok")+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span></td>'}).join("");
-  return'<tr><td>'+esc(cm.model)+'</td>'+cells+'</tr>'}).join("");
- var labs=d.cachePause.length?d.cachePause[0].buckets.map(function(b){return b.label}):[];
- setHtml($("pause"),ph?'<table><tr><th>model (hit% n)</th>'+labs.map(function(l){return'<th>'+esc(l)+'</th>'}).join("")+'</tr>'+ph+'</table>':'<span class="dim">no data</span>');
+  return[esc(cm.model)].concat(cm.buckets.map(function(b){if(!b.n)return'<span class="dim">-</span>';var hr=b.hit/b.n;return'<span class="'+(hr<.5?"bad":hr<.8?"warn":"ok")+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span>'}));
+ });
+ setHtml($("pause"),ph.length?table(["model (hit% n)"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>');
  setHtml($("providers"),table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,.02,.1)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
   '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>');
  setHtml($("sessions"),table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+(s.hitRatio<.5?"bad":s.hitRatio<.8?"warn":"ok")+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]})));
@@ -1329,19 +1328,22 @@ function renderQueue(q){
  var BTN='<button data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button data-q="up" data-id="@" title="move one place up">up</button>';
  function mk(it,p,waiting,serial){
   var idle=!waiting&&it.ageSec>86400,mdl=esc(p.provider+"/"+(it.model||"?"));
-  var cells=[waiting?String(it.position):"",(waiting&&serial?'<span class="grip" title="drag to reorder">&#8942;&#8942;</span> ':'')+'<span title="'+esc(it.id+" · "+it.label)+'">'+esc(it.label||it.id)+'</span>'];
-  if(serial)cells.push(esc(it.session||"other"));else cells.push(mdl);
+  var cells=[waiting?String(it.position):"",(waiting&&serial?'<span class="grip" title="drag to reorder">&#8942;&#8942;</span>':'')+'<span title="'+esc(it.id+" · "+it.label)+'">'+esc(it.label||it.id)+'</span>'];
+  if(serial)cells.push(' <span title="'+esc(it.session||"other")+'">'+esc(it.session||"other")+'</span>');else cells.push(' <span title="'+mdl+'">'+mdl+'</span>');
   cells.push(waiting?'waiting':idle?'idle session':'running',qdur(waiting?it.waitedSec:it.ageSec),waiting?'':esc(idle?"":it.now||""),waiting?BTN.split("@").join(esc(it.id)):"");
   var drag=waiting&&serial;
-  return'<tr class="'+(idle?'dim':'')+(drag?' qrow':'')+'"'+(drag?' draggable="true" data-id="'+esc(it.id)+'" data-prov="'+esc(p.provider)+'" data-pos="'+it.position+'"':'')+'>'+cells.map(function(c,i){return'<td style="text-align:'+(i===1||i===2||i===5?'left':'right')+'">'+c+'</td>'}).join("")+'</tr>'
+  // the row attrs ride on the first cell: table() builds the <tr>, the drag wiring finds the row via closest("tr")
+  cells[0]='<span class="'+(idle?'dim':'')+'"'+(drag?' data-qrow="1" draggable="true" data-id="'+esc(it.id)+'" data-prov="'+esc(p.provider)+'" data-pos="'+it.position+'"':"")+'>'+cells[0]+'</span>';
+  return cells;
  }
- function block(title,head,rows){return'<div style="margin-bottom:10px"><div style="margin-bottom:2px"><b>'+title+'</b></div><div class="tw"><table><tr>'+head.map(function(h){return'<th>'+h+'</th>'}).join("")+'</tr>'+rows.join("")+'</table></div></div>'}
+ function block(title,head,rows){return'<div style="margin-bottom:10px"><div style="margin-bottom:2px"><b>'+title+'</b></div>'+table(head,rows)+'</div>'}
  var out=[],sess={};
  ps.forEach(function(p){
   if(p.cap===1){
    var rows=p.running.map(function(r){return mk(r,p,false,true)}).concat(p.waiting.map(function(w){return mk(w,p,true,true)}));
    var mods={};p.running.concat(p.waiting).forEach(function(x){if(x.model)mods[x.model]=1});
-   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (slots '+p.running.length+'/1'+(p.conversationSlots?', conversation slots '+p.conversationSlots:'')+')',["pos","worker","session","state","age / waited","now","move"],rows.concat(p.waiting.length?[]:['<tr><td colspan="7" class="dim" style="text-align:left">nothing waiting</td></tr>'])));
+   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (slots '+p.running.length+'/1'+(p.conversationSlots?', conversation slots '+p.conversationSlots:'')+')',["pos","worker","session","state","age / waited","now","move"],rows));
+   if(!p.waiting.length)out.push('<div class="dim" style="text-align:left">nothing waiting</div>');
    return}
   p.running.forEach(function(r){(sess[r.session||"other"]=sess[r.session||"other"]||[]).push({k:p.provider+"/"+(r.model||"?"),h:mk(r,p,false,false)})});
   p.waiting.forEach(function(w){(sess[w.session||"other"]=sess[w.session||"other"]||[]).push({k:p.provider+"/"+(w.model||"?"),h:mk(w,p,true,false)})});
@@ -1354,15 +1356,15 @@ function renderQueue(q){
   [["test","tests",bq.testSlots],["build","builds",bq.slots]].forEach(function(P){
    var run=bq.running.filter(function(b){return b.kind===P[0]}),wt=bq.waiting.filter(function(b){return b.kind===P[0]});
    if(!run.length&&!wt.length)return;
-   var brow=run.map(function(b){return'<tr><td style="text-align:right"></td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+(b.key?' ['+esc(b.key)+']':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">running</td><td style="text-align:right">'+qdur(b.ageSec)+'</td></tr>'}).concat(wt.map(function(b,i){return'<tr><td style="text-align:right">'+(i+1)+'</td><td style="text-align:left">'+esc(b.label)+(b.mode==="full"?' [full]':'')+(b.key?' ['+esc(b.key)+']':'')+'</td><td style="text-align:left">'+esc(b.session)+'</td><td style="text-align:right">waiting'+(b.why?' ('+esc(b.why)+')':'')+'</td><td style="text-align:right">'+qdur(b.waitedSec)+'</td></tr>'}));
+   var brow=run.map(function(b){return["",' <span title="'+esc(b.session)+'">'+esc(b.label)+(b.mode==="full"?' [full]':'')+(b.key?' ['+esc(b.key)+']':'')+'</span>',' <span title="'+esc(b.session)+'">'+esc(b.session)+'</span>','running',qdur(b.ageSec)]}).concat(wt.map(function(b,i){return[String(i+1),' <span title="'+esc(b.session)+'">'+esc(b.label)+(b.mode==="full"?' [full]':'')+(b.key?' ['+esc(b.key)+']':'')+'</span>',' <span title="'+esc(b.session)+'">'+esc(b.session)+'</span>','waiting'+(b.why?' ('+esc(b.why)+')':''),qdur(b.waitedSec)]}));
    out.unshift(block(P[1]+' ('+P[2]+' slot'+(P[2]===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
   });
  }
- if(pl.length)out.unshift(block("plans",["plan","parts","phase","in phase","running","workers"],pl.map(function(p){return'<tr><td style="text-align:left">'+esc(p.job)+'</td><td style="text-align:right">'+p.merged+'/'+p.total+'</td><td style="text-align:left">'+esc(p.phase)+'</td><td style="text-align:right">'+qdur(p.phaseSec)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc((p.running||[]).join(", "))+'</td></tr>'})));
+ if(pl.length)out.unshift(block("plans",["plan","parts","phase","in phase","running","workers"],pl.map(function(p){return[' <span title="'+esc(p.job)+'">'+esc(p.job)+'</span>',p.merged+'/'+p.total,' <span title="'+esc(p.phase)+'">'+esc(p.phase)+'</span>',qdur(p.phaseSec),qdur(p.ageSec),' <span title="'+esc((p.running||[]).join(", "))+'">'+esc((p.running||[]).join(", "))+'</span>']})));
  var pv=q.paneViolations||[];
- if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return'<tr style="color:#d33"><td style="text-align:left">'+esc(p.id)+'</td><td style="text-align:left">'+esc(p.mark)+'</td><td style="text-align:left">'+esc(p.why||"")+'</td></tr>'})));
+ if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return[' <span title="'+esc(p.id)+'">'+esc(p.id)+'</span>',' <span title="'+esc(p.mark)+'">'+esc(p.mark)+'</span>',' <span title="'+esc(p.why||"")+'">'+esc(p.why||"")+'</span>']})));
  var pn=q.panes||[];
- if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return'<tr><td style="text-align:left">'+esc(p.label)+'</td><td style="text-align:left">'+esc(p.cwd)+'</td><td style="text-align:right">'+qdur(p.ageSec)+'</td><td style="text-align:left">'+esc(p.log)+'</td></tr>'})));
+ if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return[' <span title="'+esc(p.label)+'">'+esc(p.label)+'</span>',' <span title="'+esc(p.cwd)+'">'+esc(p.cwd)+'</span>',qdur(p.ageSec),' <span title="'+esc(p.log)+'">'+esc(p.log)+'</span>']})));
  if(q.localModel)out.unshift('<div class="dim" style="margin:4px 0"'+(q.localModelTitle?' title="'+esc(q.localModelTitle)+'"':"")+'>'+esc(q.localModel)+"</div>");
  setHtml(el,out.join("")+wt);
  function post(verb,body){
@@ -1371,12 +1373,16 @@ function renderQueue(q){
  }
  var bs=el.querySelectorAll("button[data-q]");
  for(var i=0;i<bs.length;i++)bs[i].onclick=function(){this.disabled=true;post(this.getAttribute("data-q"),{id:this.getAttribute("data-id")})};
- var rs=el.querySelectorAll("tr.qrow"),from=null;
- for(var k=0;k<rs.length;k++){(function(tr){
-  tr.ondragstart=function(e){qdrag=true;from=tr;tr.style.opacity=".4";if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",tr.getAttribute("data-id"))}catch(x){}}};
-  tr.ondragover=function(e){if(from&&from.getAttribute("data-prov")===tr.getAttribute("data-prov")){e.preventDefault();tr.style.outline="1px solid var(--acc)"}};
+ var rs=el.querySelectorAll("[data-qrow]"),from=null;
+ for(var k=0;k<rs.length;k++){(function(sp){
+  var tr=sp.closest?sp.closest("tr"):null;if(!tr)return;
+  tr.ondragstart=function(e){qdrag=true;from=tr;from.__prov=prov;tr.style.opacity=".4";if(e.dataTransfer){e.dataTransfer.effectAllowed="move";try{e.dataTransfer.setData("text/plain",id)}catch(x){}}};
+  var prov=sp.getAttribute("data-prov"),id=sp.getAttribute("data-id"),pos=Number(sp.getAttribute("data-pos"));
+  tr.__prov=prov;
+  if(sp.getAttribute("draggable"))tr.setAttribute("draggable","true");
+  tr.ondragover=function(e){if(from&&from.__prov===prov){e.preventDefault();tr.style.outline="1px solid var(--acc)"}};
   tr.ondragleave=function(){tr.style.outline=""};
-  tr.ondrop=function(e){e.preventDefault();tr.style.outline="";if(!from||from===tr||from.getAttribute("data-prov")!==tr.getAttribute("data-prov"))return;post("move",{id:from.getAttribute("data-id"),position:Number(tr.getAttribute("data-pos"))})};
+  tr.ondrop=function(e){e.preventDefault();tr.style.outline="";if(!from||from===tr||from.__prov!==prov)return;post("move",{id:id,position:pos})};
   tr.ondragend=function(){from=null;qdrag=false;tr.style.opacity="";loadQueue()};
  })(rs[k])}
 }

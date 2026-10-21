@@ -73,6 +73,107 @@ describe("cockpit page compression", () => {
   });
 });
 
+describe("phone width: every table stacks inside its card (issue: pause and sessions overflowed at 375 px)", () => {
+  const tableSrc = COCKPIT_HTML.match(/function table\([\s\S]*?\n\}\n/)![0];
+  const renderPause = (cachePause: unknown) => {
+    const body = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
+    const els: Record<string, { innerHTML: string }> = { pause: { innerHTML: "" } };
+    new Function(
+      "data", "$", "esc", "fmt", "pct", "tot", "cls", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
+      `${SH}\n${tableSrc}\n${body}\nrender();`
+    )(
+      { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause, byProvider: [], bustParts: {}, bySession: [], workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
+      (id: string) => els[id] ?? { innerHTML: "" },
+      (s: unknown) => String(s ?? ""), (n: number) => String(n), (x: number) => (x * 100).toFixed(1) + "%",
+      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "1m",
+      () => "", () => "", () => "", () => false, () => false, () => "", () => "", () => {}, () => {}, () => "", () => "#3b6fe0",
+      [["input", "fresh input", "#3b6fe0"], ["cacheWrite", "cache write", "#e0703b"], ["cacheRead", "cache read", "#2e9e5b"], ["output", "output", "#b04fd0"]],
+      { getItem: () => null, setItem: () => {} }, "", "weighted",
+      { querySelectorAll: () => [], getElementById: () => ({ onchange: null, value: "" }) }, { onchange: null, value: "" }, 20, 15, 14
+    );
+    return els.pause!.innerHTML;
+  };
+  const renderSessions = (bySession: unknown) => {
+    const body = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
+    const els: Record<string, { innerHTML: string }> = { sessions: { innerHTML: "" } };
+    new Function(
+      "data", "$", "esc", "fmt", "pct", "tot", "cls", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
+      `${SH}\n${tableSrc}\n${body}\nrender();`
+    )(
+      { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause: [], byProvider: [], bustParts: {}, bySession, workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
+      (id: string) => els[id] ?? { innerHTML: "" },
+      (s: unknown) => String(s ?? ""), (n: number) => String(n), (x: number) => (x * 100).toFixed(1) + "%",
+      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "1m",
+      () => "", () => "", () => "", () => false, () => false, () => "", () => "", () => {}, () => {}, () => "", () => "#3b6fe0",
+      [["input", "fresh input", "#3b6fe0"], ["cacheWrite", "cache write", "#e0703b"], ["cacheRead", "cache read", "#2e9e5b"], ["output", "output", "#b04fd0"]],
+      { getItem: () => null, setItem: () => {} }, "", "weighted",
+      { querySelectorAll: () => [], getElementById: () => ({ onchange: null, value: "" }) }, { onchange: null, value: "" }, 20, 15, 14
+    );
+    return els.sessions!.innerHTML;
+  };
+  const MODEL50 = "gyro-m/qwen3.8-flash-next-gyro-m-256k-instruct-v2-mlx-4bit"; // 50 chars
+  const NAME60 = "worktree-20261021-015130-55831-phone-fit-check-for-the-cockpit"; // 60 chars
+
+  it("the pause table goes through table(): thead, tbody, a .tw box, every cell carries its column label", () => {
+    const html = renderPause([{ model: MODEL50, buckets: [{ label: "<5m", n: 4, hit: 3 }, { label: "5-30m", n: 2, hit: 0 }] }]);
+    expect(html).toContain('<div class="tw">');
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain('<td data-l="model (hit% n)">' + MODEL50 + "</td>");
+    expect(html).toContain('<td data-l="<5m">');
+    expect(html).toContain('<td data-l="5-30m">');
+    expect(html).toContain("75%");
+    expect(html).toContain("0%");
+  });
+
+  it("the sessions table stacks a 60-char name and a 50-char model id inside table(): data-l on every cell, the name ellipsises in its cell", () => {
+    const html = renderSessions([{
+      name: NAME60, session: "20261021-015130-55831", models: [MODEL50], requests: 3,
+      input: 1000, cacheWrite: 100, cacheRead: 500, output: 200, hitRatio: 0.5, busts: 0, errors: 0,
+      lastTs: new Date().toISOString(), worker: "w1", verdict: "ok",
+    }]);
+    expect(html).toContain('<div class="tw">');
+    expect(html).toContain("<thead>");
+    expect(html).toContain("<tbody>");
+    expect(html).toContain('<td data-l="session">');
+    expect(html).toContain(NAME60);
+    expect(html).toContain('<td data-l="models">' + MODEL50 + "</td>");
+    expect(html).toContain('<td data-l="req">3</td>');
+    expect(html).toContain('<td data-l="last">1m</td>');
+  });
+
+  it("the stacked-card CSS lets a cell shrink: min-width:0 on cells, an inner span ellipsises below the phone breakpoint", () => {
+    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{[^]*\.tw th,\.tw td\{[^}]*min-width:0[^}]*\}/);
+    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{[^]*\.tw td>span\{min-width:0;overflow:hidden;text-overflow:ellipsis\}/);
+  });
+
+  it("the pause and sessions panels render through table(), not a hand-rolled table", () => {
+    // indexOf, not a regex: a `$` in a pattern misbehaves in this engine
+    const lineOf = (needle: string) => {
+      const i = COCKPIT_HTML.indexOf(needle);
+      return i < 0 ? "" : COCKPIT_HTML.slice(i, COCKPIT_HTML.indexOf("\n", i));
+    };
+    const pauseLine = lineOf('setHtml($("pause")');
+    const sessLine = lineOf('setHtml($("sessions")');
+    expect(pauseLine).not.toBe("");
+    expect(sessLine).not.toBe("");
+    expect(pauseLine).toContain("table(");
+    expect(pauseLine).not.toContain("<table>");
+    expect(sessLine).toContain("table(");
+  });
+
+  it("no section renders a bare table outside a .tw box: the queue blocks go through table() too", () => {
+    const script = COCKPIT_HTML.match(/<script>[\s\S]*<\/script>/)![0];
+    // the only markup that builds rows is table() itself; everything else passes cells to table()
+    expect(script.match(/<tr/g) ?? []).toEqual(["<tr", "<tr", "<tr"]); // table()'s thead row, body row, closing tags
+    expect(script.match(/<td/g) ?? []).toEqual(["<td"]); // table()'s cell template (the closing tag is '</td>')
+    expect(script.match(/<th/g) ?? []).toEqual(["<th", "<th"]); // table()'s head template and its closing tag
+    // the queue section's blocks are table() boxes, not hand-rolled tables
+    expect(COCKPIT_HTML).toContain("function block(title,head,rows){return'<div style=\"margin-bottom:10px\"><div style=\"margin-bottom:2px\"><b>'+title+'</b></div>'+table(head,rows)+'</div>'}");
+    expect(COCKPIT_HTML).not.toContain('<div class="tw"><table><tr>');
+  });
+});
+
 describe("live-shaped payloads", () => {
   it("Local block: an unloaded tier is not loaded, never down; only the configured local model can be down", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
@@ -323,14 +424,15 @@ describe("cockpit page scripts", () => {
 });
 
 describe("cockpit workers panel", () => {
-  const table = (COCKPIT_HTML.match(/function table\([\s\S]*?\n/) ?? [""])[0];
+  const table = COCKPIT_HTML.match(/function table\([\s\S]*?\n/)![0]; // the one-line helper, cut at its newline
+  const vcls = COCKPIT_HTML.match(/function vcls\([\s\S]*?\n/)![0];
   const body = COCKPIT_HTML.match(/var qdrag[\s\S]*?\n\}/)![0];
   const render = (q: unknown) => {
     const els: Record<string, { innerHTML: string; querySelectorAll: () => unknown[] }> = {
       queuepanel: { innerHTML: "", querySelectorAll: () => [] },
       queuetip: { innerHTML: "", querySelectorAll: () => [] },
     };
-    const fn = new Function("q", "$", "esc", "setTip", "loadQueue", `${SH}\n${table}\n${body}\nrenderQueue(q);`);
+    const fn = new Function("q", "$", "esc", "setTip", "loadQueue", `${SH}\n${table}\n${vcls}\n${body}\nrenderQueue(q);`);
     fn(q, (id: string) => els[id], (s: string) => s, () => {}, () => {});
     return els.queuepanel!.innerHTML;
   };
@@ -377,7 +479,7 @@ describe("cockpit workers panel", () => {
     // waiting order, session label and drag handle in the local block
     expect(at("first-wait")).toBeLessThan(at("second-wait"));
     expect(at("running-local")).toBeLessThan(at("first-wait"));
-    expect(html).toContain('draggable="true" data-id="l2"');
+    expect(html).toContain('data-qrow="1" draggable="true" data-id="l2"');
     expect(html).not.toContain('data-id="w1" data-prov'); // running rows are not draggable
   });
 
