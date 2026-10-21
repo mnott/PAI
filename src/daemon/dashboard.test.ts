@@ -301,3 +301,21 @@ describe("history persistence", () => {
     expect(status.jobs).toHaveLength(1);
   });
 });
+
+describe("binding check", () => {
+  it("is cached for minutes, keeps the last good binding on failure and reports the streak, not a red level", async () => {
+    let t = 10_000, calls = 0, fail = false;
+    const st = new DashboardState(source({ binding: async () => { calls++; if (fail) throw new Error("connection timeout"); return { backend: "ollama-f16", model: "m1", dims: 768 }; } }), () => t);
+    await st.tick();
+    t += 30_000; await st.tick();
+    expect(calls).toBe(1);
+    fail = true; t += 5 * MIN; await st.tick();
+    t += 30_000; await st.tick();
+    const s = st.status();
+    expect(s.index.binding).toMatchObject({ backend: "ollama-f16" });
+    expect(s.index.bindingFailure).toMatchObject({ failures: 2, reason: "connection timeout" });
+    expect(s.level).toBe("green");
+    fail = false; t += 30_000; await st.tick();
+    expect(st.status().index.bindingFailure).toBeNull();
+  });
+});

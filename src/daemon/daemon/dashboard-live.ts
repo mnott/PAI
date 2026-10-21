@@ -22,6 +22,8 @@ import {
   vaultIndexInProgress,
   storageBackend,
 } from "./state.js";
+import { Snapshot } from "../memory-snapshot.js";
+import type { StorageBackend } from "../../storage/interface.js";
 import { PASS_RETRY_DELAYS_MS, msUntilNextAnchor } from "./scheduler.js";
 
 export function packageVersion(): string {
@@ -80,6 +82,22 @@ export async function startMemoryStatus(config: PaiDaemonConfig): Promise<void> 
 export function stopMemoryStatus(): void {
   live?.stop();
   live = null;
+}
+
+const BACKLOG_TTL_MS = 60_000;
+let backlogSnap: { storage: StorageBackend; snap: Snapshot<number> } | null = null;
+
+/**
+ * The unembedded-chunk backlog for the cockpit: one COUNT(*) per TTL shared by every request
+ * (single-flight), the last good value when it fails. Per-request counts over pai_chunks
+ * held the whole Postgres pool under several polling tabs.
+ */
+export async function memoryBacklog(storage: StorageBackend | null | undefined): Promise<number | null> {
+  if (!storage) return null;
+  if (!backlogSnap || backlogSnap.storage !== storage) {
+    backlogSnap = { storage, snap: new Snapshot(() => storage.countUnembeddedChunks(), BACKLOG_TTL_MS) };
+  }
+  return backlogSnap.snap.get();
 }
 
 /** The IPC `memory_dashboard` answer: the sampled status plus the pass records the cockpit's Memory section shows. */

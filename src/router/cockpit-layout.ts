@@ -161,6 +161,8 @@ const SHIPPED = {
   memoryStallSecs: 300,
   memoryHistoryLen: 120,
   memoryRingPx: 76,
+  memoryFailRedCount: 3,
+  memoryFailRedSecs: 120,
 } as const;
 
 /** The layout policy of the cockpit page, read at page-build time. */
@@ -273,6 +275,10 @@ export interface CockpitLayout {
   /** A job with no progress for this long (s) is STALLED; the rate sparkline keeps at most memoryHistoryLen samples. */
   memoryStallSecs: number;
   memoryHistoryLen: number;
+  /** A failing source (daemon unreachable, binding check) keeps the last good data marked stale; it reads red
+   *  only after this many consecutive failures or this many seconds of failing, whichever comes first. */
+  memoryFailRedCount: number;
+  memoryFailRedSecs: number;
   /** Size (px) of the progress ring on a job tile. */
   memoryRingPx: number;
 }
@@ -379,5 +385,7 @@ export function cockpitLayout(): CockpitLayout {
     memoryStallSecs: num(s, "memoryStallSecs", SHIPPED.memoryStallSecs),
     memoryHistoryLen: num(s, "memoryHistoryLen", SHIPPED.memoryHistoryLen),
     memoryRingPx: num(s, "memoryRingPx", SHIPPED.memoryRingPx),
+    memoryFailRedCount: num(s, "memoryFailRedCount", SHIPPED.memoryFailRedCount),
+    memoryFailRedSecs: num(s, "memoryFailRedSecs", SHIPPED.memoryFailRedSecs),
   };
 }
