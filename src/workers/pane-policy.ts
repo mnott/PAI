@@ -41,6 +41,8 @@ export interface PanePolicy {
   killGraceMs: number;
   connectMs: number;
   lingerSecs: number;
+  /** Seconds a pane stays after its process ended, clean or failed (`pai worker replay` shows a failure again). */
+  exitLingerSecs: number;
   runPollMs: number;
   runKeepMs: number;
   tailLines: number;
@@ -65,6 +67,7 @@ export function panePolicy(): PanePolicy {
     killGraceMs: num(s, "killGraceSecs", 3) * 1000,
     connectMs: num(s, "connectSecs", 10) * 1000,
     lingerSecs: num(s, "lingerSecs", 5),
+    exitLingerSecs: num(s, "exitLingerSecs", 8),
     runPollMs: num(s, "runPollMs", 250),
     runKeepMs: num(s, "runKeepHours", 24) * 3_600_000,
     tailLines: num(s, "tailLines", 40),

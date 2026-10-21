@@ -56,7 +56,7 @@ describe("paneMayClose: process exited AND clean end", () => {
     expect(paneMayClose(dir, id)).toBe(false);
     // host reload: the slot dies, the run is lost; the pane's own process (the follow) lives on
     saveStatus(dir, { ...loadStatus(dir, id)!, state: "lost", rc: null, last: "pool host reloaded" });
-    expect(paneMayClose(dir, id)).toBe(false); // failure stays on screen
+    expect(paneMayClose(dir, id)).toBe(false); // the pane's own process (the follow) lives on
     // fresh restart under the same id reuses the pane
     saveStatus(dir, { ...loadStatus(dir, id)!, state: "running", last: "restarted" });
     expect(paneMayClose(dir, id)).toBe(false);
@@ -68,23 +68,27 @@ describe("paneMayClose: process exited AND clean end", () => {
     expect(paneMayClose(dir, id)).toBe(true);
   });
 
-  it("a failed worker's pane stays even after its process exited", () => {
+  it("a failed worker's pane may close once its process exited", () => {
     paneOf("w-f", true);
     for (const state of ["failed", "killed", "lost"] as const) {
       saveStatus(dir, { ...base, id: "w-f", state, rc: 1 });
-      expect(paneMayClose(dir, "w-f")).toBe(false);
+      expect(paneMayClose(dir, "w-f")).toBe(true);
     }
   });
 
-  it("the daemon reaper never reaps a failed pane", () => {
-    expect(paneReapable({ ...base, id: "w", state: "failed", updated: "2020-01-01 00:00:00" } as WorkerStatus)).toBe(false);
-    expect(paneReapable({ ...base, id: "w", state: "done", updated: "2020-01-01 00:00:00" } as WorkerStatus)).toBe(true);
+  it("a failed pane is reaped after the same grace as a clean one; a running one never", () => {
+    const t = Date.parse("2020-01-01T00:10:00");
+    const at = (state: string, updated: string) => ({ ...base, id: "w", state, updated }) as WorkerStatus;
+    expect(paneReapable(at("done", "2020-01-01 00:09:30"), t)).toBe(true);
+    expect(paneReapable(at("failed", "2020-01-01 00:09:30"), t)).toBe(true);
+    expect(paneReapable(at("failed", "2020-01-01 00:09:59"), t)).toBe(false);
+    expect(paneReapable(at("running", "2020-01-01 00:00:00"), t)).toBe(false);
   });
 });
 
-describe("the pane wrapper holds a failed process's pane", () => {
-  const run = async (code: number, hold: () => Promise<void>): Promise<{ closed: boolean; out: string }> => {
-    const id = `w-hold-${code}`;
+describe("the pane wrapper lingers the same, then closes the pane of a clean and of a failed process", () => {
+  const run = async (code: number, linger: number): Promise<{ closedAfter: () => boolean; out: string; waitClosed: () => Promise<void> }> => {
+    const id = `w-linger-${code}-${linger}`;
     let closed = false;
     let out = "";
     const pane = await openOwnedPane({
@@ -95,7 +99,7 @@ describe("the pane wrapper holds a failed process's pane", () => {
           out: (s) => void (out += String(s)),
           err: (s) => void (out += String(s)),
           closePane: async () => void (closed = true),
-          hold,
+          linger,
           proc: new EventEmitter() as NodeJS.Process,
           killGraceMs: 300,
         });
@@ -105,21 +109,26 @@ describe("the pane wrapper holds a failed process's pane", () => {
     });
     const proc = await pane.start({ argv: ["sh", "-c", `exit ${code}`], render: "plain", stdin: "ignore" });
     await new Promise((r) => proc.on("close", r));
-    await new Promise((r) => setTimeout(r, 200));
-    return { closed, out };
+    return { closedAfter: () => closed, out, waitClosed: () => new Promise((r) => { const t = setInterval(() => closed && (clearInterval(t), r()), 20); }) };
   };
 
-  it("exit 0 closes the pane", async () => {
-    const r = await run(0, async () => new Promise<void>(() => undefined));
-    expect(r.closed).toBe(true);
+  it("exit 0 closes the pane after the clean linger", async () => {
+    const r = await run(0, 0.3);
+    await new Promise((x) => setTimeout(x, 100));
+    expect(r.closedAfter()).toBe(false);
+    await r.waitClosed();
+    expect(r.closedAfter()).toBe(true);
   });
 
-  it("a non-zero exit leaves the pane open with the failure on screen", async () => {
-    const r = await run(3, async () => new Promise<void>(() => undefined));
-    expect(r.closed).toBe(false);
+  it("a non-zero exit closes the pane too, after the same linger, with the error on screen", async () => {
+    const r = await run(3, 0.4);
+    await new Promise((x) => setTimeout(x, 150));
+    expect(r.closedAfter()).toBe(false); // still lingering
     expect(r.out).toContain("[exit 3");
-    expect(r.out).toContain("pane stays open");
-    expect(existsSync(exitFilePath("w-hold-3"))).toBe(true);
+    expect(r.out).toContain("closes in");
+    await r.waitClosed();
+    expect(r.closedAfter()).toBe(true);
+    expect(existsSync(exitFilePath("w-linger-3-0.4"))).toBe(true);
   });
 });
 

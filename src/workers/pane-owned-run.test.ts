@@ -30,7 +30,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (_l, _c, wid, _t, _e, _o, seam) => {
       events.push(`pane-open ${seam?.command}`);
-      wrappers.push(runPaneExec(wid, { out: () => undefined, err: () => undefined, closePane: async () => void events.push("pane-close"), proc: new EventEmitter() as NodeJS.Process }));
+      wrappers.push(runPaneExec(wid, { out: () => undefined, err: () => undefined, closePane: async () => void events.push("pane-close"), proc: new EventEmitter() as NodeJS.Process, linger: 0 }));
       return "fake pane";
     });
 });

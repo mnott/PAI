@@ -13,7 +13,8 @@ import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from 
 import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
-import { auditTick } from "../../workers/pane-audit.js";
+import { panePolicy } from "../../workers/pane-policy.js";
+import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
@@ -573,8 +574,8 @@ const PANE_REAP_TICK_MS = 2_000;
 
 /** True once a worker is terminal and has been for longer than the reap grace. */
 export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean {
-  // only a clean end: a failed, killed or lost worker's pane stays showing the failure until the operator closes it
-  if (!st || st.state !== "done") return false;
+  // every end closes its pane alike (replay shows a failure's error)
+  if (!st || st.state === "running" || st.state === "queued") return false;
   const at = Date.parse(st.updated.replace(" ", "T"));
   return Number.isNaN(at) || now - at > PANE_REAP_GRACE_MS;
 }
@@ -630,6 +631,7 @@ export function startWorkerSupervisor(): void {
   const paneAudit = setInterval(() => {
     const dir = workersLogDir(readWorkersSection().workers);
     void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
+    void timedTask("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
 

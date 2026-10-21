@@ -392,6 +392,9 @@ panes:
   # Pane run: seconds the last line stays visible before the pane closes,
   # poll interval, how long ended entries are kept, tail lines in the footer.
   lingerSecs: 5
+  # Pane exec wrapper: seconds the pane stays after its process ended, then
+  # closes, whatever the end (a failure stays readable with `pai worker replay <id>`).
+  exitLingerSecs: 8
   runPollMs: 250
   runKeepHours: 24
   tailLines: 40

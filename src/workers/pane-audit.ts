@@ -14,7 +14,7 @@
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { closePaneForWorker, loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
-import { exitFilePath, listRecords, pidAlive, readExit, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
+import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
@@ -311,9 +311,8 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
     const childUp = alive(r.child);
     if (ex && !wrapperUp && !childUp) continue;
     // the wrapper writes its exit file the moment the child ends; a grace covers the closing itself
-    // a failed run's wrapper holds its pane open on purpose (pane-exec hold), until the operator closes it
-    const held = ex !== null && ex.code !== 0 && ex.reason !== "pane closed" && !ex.cancelled;
-    if (ex && wrapperUp && !held && nowMs - ex.endedMs > panePolicy().launchGraceMs) {
+    // the wrapper lingers on its own before it closes the pane: only one past that is an orphan
+    if (ex && wrapperUp && nowMs - ex.endedMs > panePolicy().launchGraceMs + panePolicy().exitLingerSecs * 1000) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, now);
@@ -355,6 +354,79 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
 }
 
 /** Launches whose wrapper outlives its child by this long are orphans (the wrapper closes the pane within a second). */
+
+export interface CloseFinishedDeps {
+  registry?: () => PaneEntry[];
+  record?: (id: string) => LaunchRecord | null;
+  exit?: (id: string) => ExitRecord | null;
+  alive?: (pid: number | undefined) => boolean;
+  /** A worker's status when no launch record exists: [ended, endedMs, process still owned]. */
+  worker?: (id: string) => { ended: boolean; endedMs: number; owned: boolean } | null;
+  kill?: (pid: number, sig: NodeJS.Signals, group: boolean) => void;
+  closePane?: (id: string) => Promise<unknown>;
+}
+
+export interface CloseFinishedResult {
+  closed: string[];
+  kept: string[];
+}
+
+/**
+ * Close every registered pane whose owned process is gone and whose linger (clean / failed) has run out:
+ * the leftovers of older builds, a wrapper that died, a follow pane of an ended worker. A pane whose process
+ * is alive (the exec child, or a worker's own pid) is never closed. Idempotent; nothing is closed in `dryRun`.
+ */
+export async function closeFinishedPanes(logDir: string, d: CloseFinishedDeps = {}, now: Date = new Date(), dryRun = false): Promise<CloseFinishedResult> {
+  const res: CloseFinishedResult = { closed: [], kept: [] };
+  const alive = d.alive ?? pidAlive;
+  const kill = d.kill ?? killReal;
+  const nowMs = now.getTime();
+  const seen = new Set<string>();
+  for (const e of (d.registry ?? (() => loadRegistry(logDir)))()) {
+    if (seen.has(e.worker)) continue;
+    seen.add(e.worker);
+    const rec = (d.record ?? readRecord)(e.worker);
+    let endedMs: number | null = null;
+    let linger = panePolicy().exitLingerSecs;
+    if (rec) {
+      if (alive(rec.child)) {
+        res.kept.push(e.worker);
+        continue;
+      }
+      const ex = (d.exit ?? readExit)(e.worker);
+      if (!ex) {
+        res.kept.push(e.worker); // child gone without an exit record: the launcher audit judges it
+        continue;
+      }
+      endedMs = ex.endedMs;
+      linger = panePolicy().exitLingerSecs;
+    } else {
+      const w = (d.worker ?? ((id: string) => workerEnd(logDir, id)))(e.worker);
+      if (!w || !w.ended || w.owned) {
+        res.kept.push(e.worker);
+        continue;
+      }
+      endedMs = w.endedMs;
+      linger = panePolicy().exitLingerSecs;
+    }
+    if (!Number.isFinite(endedMs) || nowMs - (endedMs as number) < linger * 1000) {
+      res.kept.push(e.worker);
+      continue;
+    }
+    if (!dryRun) {
+      if (rec?.wrapper && alive(rec.wrapper)) kill(rec.wrapper, "SIGKILL", false);
+      await (d.closePane ?? defaultClose(logDir))(e.worker).catch(() => undefined);
+    }
+    res.closed.push(e.worker);
+  }
+  return res;
+}
+
+function workerEnd(logDir: string, id: string): { ended: boolean; endedMs: number; owned: boolean } | null {
+  const s = loadStatus(logDir, id);
+  if (!s) return null;
+  return { ended: s.state !== "running" && s.state !== "queued", endedMs: stampMs(s.updated, false), owned: ownsPid(s) };
+}
 
 const defaultClose = (logDir: string) => (id: string) => closePaneForWorker(logDir, id);
 

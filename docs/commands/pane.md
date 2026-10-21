@@ -60,12 +60,34 @@ pai pane exec pane-20260101-0000-ab12
 
 See also: `pai pane run`
 
+### pai pane close-finished
+
+Close every pane whose process has ended
+
+```
+pai pane close-finished [options]
+```
+
+Closes each registered pane whose owned process is gone and whose linger has run out (8 s, clean or failed; panes.exitLingerSecs). A pane with a live process is never closed. The daemon does the same every 30 s; a failure stays readable with `pai worker replay <id>`.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dry-run` | flag | — | Only list what would be closed |
+
+```sh
+pai pane close-finished
+pai pane close-finished --dry-run
+```
+
+See also: `pai worker replay`, `pai worker ps --panes`
+
 ## Subcommands
 
 | Command | Description |
 |---|---|
 | `pai pane run` | Run a command in a visible pane and wait for it |
 | `pai pane exec` | Internal: the wrapper a pane runs; owns the process started in it |
+| `pai pane close-finished` | Close every pane whose process has ended |
 
 ## See also
 

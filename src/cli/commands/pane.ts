@@ -11,6 +11,7 @@ import { closePaneForWorker, closeSelfPane, inVisiblePane, resolveHostSession } 
 import { launchPane, noTerminalReasons } from "../../workers/pane-launch.js";
 import { runPaneExec } from "../../workers/pane-exec.js";
 import { writePaneTitle } from "../../workers/pane-title.js";
+import { closeFinishedPanes } from "../../workers/pane-audit.js";
 import { runInPane } from "../../workers/pane-run.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
 
@@ -76,8 +77,6 @@ const execCmd: CommandDef = {
   run: async (ctx: RunContext) =>
     runPaneExec(String(ctx.args.ID), {
       setTitle: (t) => writePaneTitle(t, process.env),
-      // a failed process keeps its pane: the wrapper stays up until the operator closes the pane
-      hold: () => new Promise<void>(() => setInterval(() => undefined, 1 << 30)),
       closePane: async () => {
         // registry entry and iTerm session by run id; the session by its own id when the registry has none
         const { workers } = readWorkersSection();
@@ -86,11 +85,27 @@ const execCmd: CommandDef = {
     }),
 };
 
+const closeFinishedCmd: CommandDef = {
+  name: "close-finished",
+  summary: "Close every pane whose process has ended",
+  description:
+    "Closes each registered pane whose owned process is gone and whose linger has run out (8 s, clean or failed; panes.exitLingerSecs). A pane with a live process is never closed. The daemon does the same every 30 s; a failure stays readable with `pai worker replay <id>`.",
+  options: [{ name: "dry-run", type: "boolean", summary: "Only list what would be closed" }],
+  examples: ["pai pane close-finished", "pai pane close-finished --dry-run"],
+  seeAlso: ["pai worker replay", "pai worker ps --panes"],
+  run: async (ctx: RunContext) => {
+    const { workers } = readWorkersSection();
+    const r = await closeFinishedPanes(workersLogDir(workers), {}, new Date(), ctx.opts["dry-run"] === true);
+    console.log(`${ctx.opts["dry-run"] === true ? "would close" : "closed"} ${r.closed.length}, kept ${r.kept.length}${r.closed.length ? `: ${r.closed.join(" ")}` : ""}`);
+    return 0;
+  },
+};
+
 export const paneCommand: CommandDef = {
   name: "pane",
   summary: "Run a command in a visible pane: run",
   description: "Everything a session starts that does not run in its own pane runs in one: `pai pane run` is the way for background commands. See docs/worker-panes.md.",
   examples: ["pai pane run --label tests -- npx vitest run", "pai pane run -- sleep 30"],
   seeAlso: ["pai worker run", "pai build run"],
-  subcommands: [runCmd, execCmd],
+  subcommands: [runCmd, execCmd, closeFinishedCmd],
 };

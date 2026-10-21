@@ -658,17 +658,17 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     expect(f.isFinished()).toBe(true);
   }, 15000);
 
-  it("a failed status keeps the pane open showing the failure", async () => {
+  it("a failed status closes the pane like a done one; a same-id restart keeps it", async () => {
     const f = flipFixture();
     await sleep(1200);
-    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: 99999999, started: nowStamp(), state: "failed", rc: 1 }));
-    await sleep(3500);
-    expect(f.isFinished()).toBe(false);
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: process.pid, started: nowStamp(), state: "failed", rc: 1 }));
+    await sleep(1500);
+    expect(f.isFinished()).toBe(false); // failed, but the process (this one) is still alive
     // a same-id restart (state running again) keeps following in the same pane
     writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: process.pid, started: nowStamp(), state: "running" }));
     await sleep(1200);
     expect(f.isFinished()).toBe(false);
-    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: 99999999, started: nowStamp(), state: "done" }));
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: 99999999, started: nowStamp(), state: "failed", rc: 1 }));
     await Promise.race([f.done, sleep(4000)]);
     expect(f.isFinished()).toBe(true);
   }, 20000);

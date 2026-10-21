@@ -162,8 +162,8 @@ export interface ExecDeps {
   setTitle?: (t: string) => void;
   /** Close the pane that runs this wrapper; called after the exit file is written. */
   closePane?: () => Promise<void>;
-  /** A failed child's pane stays open showing the failure: awaited instead of closing (the CLI passes one that never resolves; the operator closes the pane). */
-  hold?: (rec: { code: number; reason?: string }) => Promise<void>;
+  /** Seconds the pane stays after the child ended (default: the pane policy). */
+  linger?: number;
   env?: NodeJS.ProcessEnv;
   /** Process the signal handlers attach to (tests pass their own emitter). */
   proc?: NodeJS.Process;
@@ -184,13 +184,11 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   const now = d.now ?? Date.now;
   const proc = d.proc ?? process;
   const grace = d.killGraceMs ?? panePolicy().killGraceMs;
-  const finish = async (rec: Omit<ExitRecord, "id" | "endedMs">, linger = 0): Promise<number> => {
+  const finish = async (rec: Omit<ExitRecord, "id" | "endedMs">, clean?: number): Promise<number> => {
     writeJson(exitFilePath(id), { id, endedMs: now(), ...rec } satisfies ExitRecord);
-    if (rec.code !== 0 && rec.reason !== "pane closed" && !rec.cancelled && d.hold) {
-      err(`\n[failed (exit ${rec.code}) — this pane stays open; close it when you have read it]\n`);
-      await d.hold(rec);
-      return rec.code;
-    }
+    const failed = rec.code !== 0 && rec.reason !== "pane closed" && !rec.cancelled;
+    const linger = clean ?? d.linger ?? panePolicy().exitLingerSecs;
+    if (failed && linger > 0) err(`\n[failed (exit ${rec.code}) — this pane closes in ${linger}s; \`pai worker replay ${id}\` shows it again]\n`);
     if (linger > 0) await new Promise((r) => setTimeout(r, linger * 1000));
     await d.closePane?.().catch(() => undefined);
     return rec.code;
@@ -357,7 +355,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   writeJson(exitFilePath(id), { id, endedMs: now(), ...rec } satisfies ExitRecord);
   send("X", JSON.stringify({ code }));
   await new Promise<void>((r) => (sock.destroyed ? r() : sock.end(() => r())));
-  return finish(rec, sp.linger ?? 0);
+  return finish(rec, sp.linger);
 }
 
 async function renderer(sp: StartSpec, id: string, out: (s: string | Buffer) => void, err: (s: string | Buffer) => void): Promise<{ out: (c: Buffer) => void; err: (c: Buffer) => void; end: () => void }> {

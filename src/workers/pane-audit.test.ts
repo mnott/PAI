@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { auditLaunches, auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
+import { closeFinishedPanes, auditLaunches, auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
 import type { LaunchRecord } from "./pane-exec.js";
 import { loadRegistry, saveEntry, type PaneEntry } from "./pane.js";
 import type { Messenger } from "./run-events.js";
@@ -243,10 +243,12 @@ describe("auditLaunches: the bug detector for the pane-owns-the-process rule", (
     expect(f.map((x) => x.kind)).toEqual(["orphan-wrapper"]);
     expect(r.closed).toEqual(["w-1"]);
   });
-  it("a failed run's wrapper holds its pane on purpose: not an orphan, however old the exit file", async () => {
+  it("a failed run's wrapper lingers like a clean one: an orphan past the same linger", async () => {
     const r = rig([100]);
-    expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 1, endedMs: NOW.getTime() - 60_000 }) }, NOW)).toEqual([]);
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 1, endedMs: NOW.getTime() - 2000 }) }, NOW)).toEqual([]);
     expect(r.killed).toEqual([]);
+    const f = await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 1, endedMs: NOW.getTime() - 60_000 }) }, NOW);
+    expect(f.map((x) => x.kind)).toEqual(["orphan-wrapper"]);
   });
   it("the wrapper is still closing the pane (exit file seconds old): left alone", async () => {
     const r = rig([100]);
@@ -284,5 +286,59 @@ describe("auditLaunches: the bug detector for the pane-owns-the-process rule", (
     const workers = () => [{ id: "w-pooled", startedMs: NOW.getTime() - 600_000, exec: false, exempt: false }];
     expect(await auditLaunches(dir, { ...r.deps, records: () => [], workers, registered: () => true, stop: async (id) => void stopped.push(id) }, NOW)).toEqual([]);
     expect(stopped).toEqual([]);
+  });
+});
+
+describe("closeFinishedPanes", () => {
+  const NOW = new Date(1_700_000_000_000);
+  const dir = "/nonexistent-pane-logs"; // every dependency is injected
+  const entry = (w: string) => ({ session: `s-${w}`, worker: w, opened: "2026-01-01T00:00:00Z" });
+  const exitOf = (code: number, agoMs: number) => () => ({ id: "x", code, endedMs: NOW.getTime() - agoMs });
+  const rig = (alive: number[], ids: string[]) => {
+    const closed: string[] = [];
+    const killed: number[] = [];
+    return {
+      closed,
+      killed,
+      deps: (exit: ReturnType<typeof exitOf> | (() => null)) => ({
+        registry: () => ids.map(entry),
+        record: (id: string) => ({ id, kind: "worker", caller: 1, wrapper: 100, child: 200, startedMs: 1 }),
+        exit,
+        alive: (p?: number) => p !== undefined && alive.includes(p),
+        kill: (p: number) => void killed.push(p),
+        closePane: async (id: string) => void closed.push(id),
+      }),
+    };
+  };
+
+  it("a failed pane closes after the same linger as a clean one", async () => {
+    const r = rig([100], ["w-f"]);
+    expect((await closeFinishedPanes(dir, r.deps(exitOf(1, 3_000)), NOW)).closed).toEqual([]);
+    const res = await closeFinishedPanes(dir, r.deps(exitOf(1, 9_000)), NOW);
+    expect(res.closed).toEqual(["w-f"]);
+    expect(r.closed).toEqual(["w-f"]);
+    expect(r.killed).toEqual([100]); // the held wrapper of an older build
+  });
+  it("a clean pane closes after the short linger", async () => {
+    const r = rig([], ["w-c"]);
+    expect((await closeFinishedPanes(dir, r.deps(exitOf(0, 3_000)), NOW)).closed).toEqual([]);
+    expect((await closeFinishedPanes(dir, r.deps(exitOf(0, 9_000)), NOW)).closed).toEqual(["w-c"]);
+  });
+  it("a pane whose process is alive is never closed, whatever the exit file says", async () => {
+    const r = rig([200], ["w-live"]);
+    const res = await closeFinishedPanes(dir, r.deps(exitOf(1, 999_000)), NOW);
+    expect(res.closed).toEqual([]);
+    expect(res.kept).toEqual(["w-live"]);
+    expect(r.closed).toEqual([]);
+    expect(r.killed).toEqual([]);
+  });
+  it("a child gone without an exit record is left to the launcher audit", async () => {
+    const r = rig([], ["w-x"]);
+    expect((await closeFinishedPanes(dir, r.deps(() => null), NOW)).closed).toEqual([]);
+  });
+  it("dry run closes nothing", async () => {
+    const r = rig([], ["w-c"]);
+    expect((await closeFinishedPanes(dir, r.deps(exitOf(0, 99_000)), NOW, true)).closed).toEqual(["w-c"]);
+    expect(r.closed).toEqual([]);
   });
 });

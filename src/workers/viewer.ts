@@ -1237,14 +1237,14 @@ export async function followWorkers(
     if (lingerOn !== null && finished.has(lingerOn)) {
       if (autoExit) {
         // the pane belongs to the worker's process: a same-id restart (slot died, fresh run) revives the
-        // run in this pane; a failed, killed or lost run keeps its failure on screen until the operator
-        // closes the pane; only a clean end whose process is gone may close it
+        // run in this pane; any end whose process is gone closes it, a failed one like a clean one
+        // (the error stays readable through `pai worker replay`)
         const now = loadStatus(logDir, lingerOn);
         if (now && !isTerminal(now.state)) {
           finished.delete(lingerOn);
           return { done: false };
         }
-        if (!now || now.state !== "done" || (typeof now.pid === "number" && now.pid > 0 && ownsPid(now))) {
+        if (!now || (typeof now.pid === "number" && now.pid > 0 && ownsPid(now))) {
           writeLiveness();
           await sleep(500);
           return { done: false };

@@ -43,6 +43,7 @@ function rig(id: string, deps: Partial<ExecDeps> = {}): Rig {
         closePane: async () => void r.events.push("pane-close"),
         proc: new EventEmitter() as NodeJS.Process,
         killGraceMs: 300,
+        linger: 0,
         ...deps,
       });
       return "fake pane";
@@ -158,7 +159,7 @@ describe("the pane owns the process", () => {
     const server = createServer();
     const sockets = new Promise<import("node:net").Socket>((res) => server.once("connection", res));
     await new Promise<void>((res) => server.listen(sockPath(id), res));
-    const wrapper = runPaneExec(id, { out: () => undefined, err: () => undefined, closePane: async () => void closes.push("closed"), proc: new EventEmitter() as NodeJS.Process, killGraceMs: 300 });
+    const wrapper = runPaneExec(id, { out: () => undefined, err: () => undefined, closePane: async () => void closes.push("closed"), proc: new EventEmitter() as NodeJS.Process, killGraceMs: 300, linger: 0 });
     const s = await sockets;
     const rd = new FrameReader();
     const pid = await new Promise<number>((res) => {
