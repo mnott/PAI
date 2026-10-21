@@ -70,16 +70,6 @@ const args = (logDir: string, port: number, noPane: boolean) =>
 const panes = () => vi.mocked(pane.openVerifiedPane).mock.calls.length + vi.mocked(pane.openPaneForWorker).mock.calls.length;
 
 describe("pooled runs and the pane rule (the pane owns every process)", () => {
-  it("with a terminal the pool is declined: the run spawns fresh through its pane, no task is posted", async () => {
-    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    let posted = false;
-    const a = args(d, await listen({ pooled: true, rc: 0 }, () => (posted = true)), false) as { spareMiss?: string };
-    await gateStart(a as never);
-    expect(await tryPoolRun(a as never)).toBeNull();
-    expect(posted).toBe(false);
-    expect(readFileSync(join(d, "ledger.log"), "utf8")).toMatch(/WORKER-POOL-SKIP.*pane rule/);
-  });
-
   it("--no-pane (with the hidden-run override) still pools and opens none", async () => {
     vi.mocked(pane.headlessAllowed).mockReturnValue("test override");
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));

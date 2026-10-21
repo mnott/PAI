@@ -103,8 +103,8 @@ the tab), `MINIMISED` (restore the window), `HIDDEN` (show iTerm2),
 `STILL OPEN`: `pai worker pane --close-ended` closes it.
 
 A worker's own child worker opens its own pane like any other start. Pool spares
-get no pane while idle, and with a terminal a run spawns fresh through its pane
-rather than claiming a spare (see [pool](pool.md)).
+get no pane while idle; a claimed spare's run opens its pane as usual and the
+pane follows the run's transcript (see [pool](pool.md)).
 
 ## The pane auditor
 

@@ -49,6 +49,6 @@ describe("pool fallback to a fresh spawn", () => {
 
   it("eligible run but host unreachable: null (fresh spawn)", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-fb-"));
-    expect(await tryPoolRun(args(d, true))).toBeNull();
+    expect(await tryPoolRun(args(d, true, { noPane: true }))).toBeNull();
   });
 });
