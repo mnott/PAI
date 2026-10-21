@@ -2012,7 +2012,7 @@ export function gcWorktrees(
     for (const ent of readdirSync(root, { withFileTypes: true })) {
       const dir = join(root, ent.name);
       // owned by a status (the last id of a resume chain) is that status's business
-      if (!ent.isDirectory() || owned.has(resolve(dir)) || isSlotWorktree(dir)) continue;
+      if (!ent.isDirectory() || owned.has(resolve(dir)) || isSlotWorktree(dir) || ent.name.startsWith("spare-")) continue;
       try {
         if (Math.floor(statSync(dir).mtimeMs) > cutoff) continue;
       } catch {
@@ -2035,6 +2035,53 @@ export function gcWorktrees(
         // repo gone
       }
       invalidatePendingCache(logDir, repo);
+    }
+  }
+  return out;
+}
+
+/**
+ * gc --pool: the pool keeps no reserve worktrees, so every spare-* tree under
+ * worktrees/ and every slots/* tree that no worker status owns and no process
+ * sits in is a leftover. Same removal path as discard: commits archived under
+ * refs/pai-archive/<id>, gitignored notes salvaged, then tree and branch go.
+ */
+export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
+  const out: GcEntry[] = [];
+  const owned = new Set(loadStatuses(logDir).map((s) => ownedTree(s)?.dir).filter((d): d is string => !!d).map((d) => resolve(d)));
+  const cands: { id: string; dir: string }[] = [];
+  const list = (root: string, keep: (n: string) => boolean, idOf: (n: string) => string): void => {
+    if (!existsSync(root)) return;
+    for (const ent of readdirSync(root, { withFileTypes: true })) {
+      if (ent.isDirectory() && keep(ent.name)) cands.push({ id: idOf(ent.name), dir: join(root, ent.name) });
+    }
+  };
+  list(worktreesDir(logDir), (n) => n.startsWith("spare-"), (n) => n);
+  list(join(logDir, "slots"), () => true, (n) => `slot-${n}`);
+  for (const { id, dir } of cands) {
+    if (owned.has(resolve(dir))) continue;
+    const pid = busyPid(dir);
+    if (pid) {
+      out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
+      continue;
+    }
+    let branch = "";
+    try {
+      branch = git(dir, ["symbolic-ref", "--short", "-q", "HEAD"]);
+    } catch {
+      // detached HEAD
+    }
+    const target = `refs/pai-archive/${id}`;
+    if (dryRun) {
+      out.push({ id, archive: target, knowledge: worktreeKnowledge(logDir, id, dir) });
+      continue;
+    }
+    try {
+      const res = archiveWorktree(logDir, id, dir, branch);
+      appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: target });
+      out.push({ id, archive: target, ...(res.salvaged.length ? { salvaged: res.salvaged } : {}) });
+    } catch (e) {
+      out.push({ id, skipped: (e as Error).message.split("\n")[0] });
     }
   }
   return out;

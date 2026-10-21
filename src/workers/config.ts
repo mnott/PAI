@@ -659,7 +659,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       idleSecs: num(pool.idleSecs, 900),
       port: num(pool.port, DEFAULT_POOL_PORT),
       native: bool(pool.native, true),
-      spares: num(pool.spares, 1),
+      spares: num(pool.spares, 0),
       idleKillSec: num(pool.idleKillSec, 1800),
       continuation: bool(pool.continuation, false),
     },

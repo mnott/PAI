@@ -34,7 +34,7 @@ import { setMuted } from "../../workers/local-idle.js";
 import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
-import { discardWorker, formatKnowledge, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
+import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -823,10 +823,11 @@ const gcCommand: CommandDef = {
   options: [
     { name: "older-than", type: "string", value: "HOURS", default: "24", summary: "Minimum age of a finished worker, in hours" },
     { name: "all-finished", type: "boolean", summary: "Any finished worker, regardless of age" },
+    { name: "pool", type: "boolean", summary: "Also remove leftover pool reserve worktrees (spare-*, slots/*) no worker owns and no process sits in (implied by --all-finished)" },
     { name: "foreign", type: "boolean", summary: "Also archive merged, clean worktrees of this repo that PAI did not create (refs/pai-archive/BRANCH); unmerged ones are kept" },
     { ...OPT.dryRun, summary: "Print what would be archived and what each worktree carries, change nothing" },
   ],
-  examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72", "pai worker gc --all-finished"],
+  examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72", "pai worker gc --all-finished", "pai worker gc --pool --dry-run"],
   seeAlso: ["pai worker discard", "pai worker pending"],
   run: (ctx) =>
     guard("pai worker gc --dry-run", () => {
@@ -834,6 +835,7 @@ const gcCommand: CommandDef = {
       const hours = Number(raw);
       if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
       const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true, undefined, flag(ctx, "foreign") ? process.cwd() : undefined);
+      if (flag(ctx, "pool") || flag(ctx, "all-finished")) res.push(...gcPoolWorktrees(logDir(), ctx.dryRun));
       const verb = ctx.dryRun ? "would archive" : "archived";
       for (const r of res) {
         out(

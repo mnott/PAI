@@ -75,9 +75,9 @@ workers:
     # Native anthropic (Claude Code's own login) runs may use pooled slots;
     # worktree runs never do.
     native: true
-    # Spares per (repo, provider) key: pre-started task-less workers, one
-    # task each (0 = off).
-    spares: 1
+    # Reserve spares (pre-made worktree + waiting claude per repo): off. A
+    # worker's worktree is made when it starts and removed when it ends.
+    spares: 0
     # Idle seconds before an unclaimed spare is retired (0 = never).
     idleKillSec: 1800
     # The old multi-task continuation path; default off.

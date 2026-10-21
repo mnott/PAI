@@ -84,7 +84,8 @@ export function poolSettings(config: WorkersConfig): PoolSettings {
     idleSecs: p?.idleSecs ?? d.idleSecs,
     port: p?.port ?? d.port,
     native: p?.native !== false,
-    spares: p?.spares ?? d.spares ?? 1,
+    // default 0: no reserve worktrees; only an explicit config value brings spares back
+    spares: p?.spares ?? d.spares ?? 0,
     idleKillSec: p?.idleKillSec ?? d.idleKillSec ?? 1800,
     continuation: p?.continuation === true,
   };
