@@ -512,7 +512,7 @@ export async function localLimits(
   const strikesToDown = opts.timeoutStrikes ?? PROBE_TIMEOUT_STRIKES;
   const endpoint = `${u.hostname}:${port}`;
   const stateKey = `${name}@${endpoint}`;
-  const prev = probeState.get(stateKey) ?? { up: false, strikes: 0 };
+  const prev = probeState.get(stateKey) ?? { up: true, strikes: 0 };
   const tcp = await probes.tcp(port, u.hostname);
   // An accepted TCP connection proves nothing: launchd (or any socket holder) accepts for a server
   // that is not running. Up means the server answers HTTP, and serves this provider's model.
@@ -524,7 +524,7 @@ export async function localLimits(
   let up: boolean;
   let downReason: DownReason | undefined;
   if (probe.timeout) {
-    // connected (or slow to accept) but no answer: busy, not down, until it has stayed silent strikesToDown polls in a row
+    // connected (or slow to accept) but no answer: busy, not down (also with no known state: a fresh router), until it has stayed silent strikesToDown polls in a row
     const strikes = prev.strikes + 1;
     up = prev.up && strikes < strikesToDown;
     if (!up) downReason = "probe timeout";

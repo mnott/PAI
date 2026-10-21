@@ -338,10 +338,11 @@ describe("local server up/down and prefix cache", () => {
       const r = await run("busy-e", stub("open", { alive: false }));
       expect([r.up, r.downReason]).toEqual([false, "no HTTP answer"]);
     });
-    it("3 consecutive timeouts with no HTTP ever are down: probe timeout", async () => {
+    it("fresh state: a first timeout is unknown, not down; timeoutStrikes timeouts from start are down", async () => {
       const t = stub("open", { alive: false, timeout: true });
       const r = [await run("busy-f", t), await run("busy-f", t), await run("busy-f", t)];
-      expect(r.map((x) => x.up)).toEqual([false, false, false]);
+      expect(r.map((x) => x.up)).toEqual([true, true, false]);
+      expect(r[0]!.downReason).toBeUndefined();
       expect(r[2]!.downReason).toBe("probe timeout");
       await run("busy-g", stub("open", { alive: true, ids: ["m-served"] }));
       const g = [await run("busy-g", { ...t }), await run("busy-g", t), await run("busy-g", t)];
