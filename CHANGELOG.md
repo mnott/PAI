@@ -6,6 +6,133 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Cockpit layout:** the cockpit is arranged in sections by purpose, and sections and tiles can be rearranged by drag and drop; tiles drop where the pointer is. `router.cockpit.sections` limits the page to the listed sections. Cards fold, and folds and open lists survive a refresh and a redraw. A refresh no longer moves the page, and the page fits its viewport at any zoom and font size.
+- **Cockpit models:** the Models section shows one card per consumer, titled by purpose (including the PAI embedding card and on-demand models), with live tiles, a metric tile with sparkline, a single local-model switch, and a start/stop action configured per runtime. Models carry editable aliases (pencil next to the headline, working on touch with save, cancel and reset). Numbers use binary GB and match the engine's own monitor; disabled providers and unloaded tiers no longer appear as down.
+- **Cockpit on a phone:** session names, the sessions and pause tables, and stacked tables fit the screen; headers are compact and card names stay readable.
+- **Cockpit readability:** every model keeps one distinct colour across all charts, axes and legends are readable, rings are drawn by model, and tables, totals, workers, pool and system read cleanly. Job chips, card purpose lines, a scheduler line and server memory in GB were added; a flagged report is no longer shown as a failed run.
+- **Delegation tiers and routing:** routing follows three delegation tiers — t0 session, t1 orchestrator, t2 worker — instead of nine class rows; every class routes by its tier list, and the chain set in the cockpit is the order routing uses. The default delegation table ships with PAI. `pai worker route` shows and sets the routing, the cockpit has a routing section with per-class model chips and model ranks per role, and a session can override the routing for itself. Local tiers exist for Strata and scripts, and the local switch stops every local engine.
+- **Escalation one tier up:** a worker that cannot finish is retried one tier higher, automatically, from the salvaged branch — on a full context, a missing tool or a repeated failure. A loop stop with saved work escalates at once; a local run that committed is reviewed rather than redone on the cloud, and a loop after committing counts as finished work.
+- **Worker pool and reload:** pool spares are pre-started, task-less workers that take one task each; the pool seeds the local provider and refreshes stale spares, and pane titles show the worker's purpose. `pai reload` restarts the daemon, and the pool host reloads itself after a build.
+- **Worker panes are owned by the process:** `worker run`, `pane run` and `plan run` start their command inside the pane that owns it, so closing the pane ends the process. A process started inside a pane, or a worker's child worker, gets its own pane. The auditor is now a bug detector only: it writes to a ledger and kills orphan sides, and never reopens a pane.
+- **Providers test:** `pai providers test` checks what workers would really use, including the native Claude provider, which is probed by spawning like a worker and reading the reply.
+- **Install:** the repo is its own plugin marketplace, so installing takes two commands, and the setup skill was rewritten to install PAI on its own with sequential steps and correct counts.
+- **Documentation:** concept pages for tiers, routing policy, escalation, session profiles, workers, providers, panes, pool, router, local models, loop guard and notifications; install and first-workers pages; a cockpit page walking through each section with screenshots. The README and docs index lead with the install skill and orchestration. Stale worker and config docs were rewritten, and a test now requires documented keys and commands to exist.
+
+### Changed
+
+- **Config values out of code:** defaults for delegation, router, cockpit layout, panes, notices and runtimes live in shipped defaults files under the user config instead of in code. `pai config get --source` shows where a value comes from.
+- **PAILot only for replies:** automatic notices never go to PAILot; a run end produces at most one notice, and the messenger is rate-limited.
+- **Workers:** a worker never runs in place while editing — an existing branch is reused or renamed. Run reports reach a background session's tab, and panes for a background session are found through the Claude daemon's control socket.
+
+### Fixed
+
+- **Reload and daemon:** shipped defaults resolve from the daemon bundle, not the working directory; `pai reload` starts a stopped daemon or reports the failure. A pool host self-update always comes back and reload waits for it.
+- **Loop guard:** the guard fingerprints content, so touching a file no longer gets a repeated command past it.
+- **Killing workers:** the owning session may kill its worker when it runs as a background session.
+- **Context meter:** context fill is the largest turn, not the run's token total.
+- **Workers:** a missing or unseen pane never blocks a worker start; pooled runs end and fall through like fresh ones; a pooled worker is alive only while its slot process is; read files are not reported as changes; AG2 shape slips are repaired before validating; the follow view prints plain text and titles only to a terminal.
+- **Panes:** launcher panes show the live status and input lines; one rule decides pane or not, and resume no longer takes `--no-pane`; ended pane runs are not violations.
+
+## [0.72.1] - 2026-10-20
+
+### Added
+
+- **Router:** idle local conversations are parked to disk during long builds, freeing memory for the build and restoring them afterwards.
+
+### Fixed
+
+- **Tests:** the budget cache test is deterministic.
+
+## [0.72.0] - 2026-10-20
+
+### Added
+
+- **Fair local scheduling:** the router schedules requests fairly across sessions for local engines, and worker deadlines count active time rather than time spent queued.
+- **Cloud routing:** infra, install and external tasks are routed to the cloud, and local workers get their own contract.
+
+### Fixed
+
+- **Workers:** router queue wait counts as waiting, with one admission path; the cloud-routing keywords are narrower, so fewer tasks are sent to the cloud by accident.
+
+## [0.71.5] - 2026-10-20
+
+### Fixed
+
+- **Nudges:** GPU-idle nudges reach the owning session.
+
+## [0.71.4] - 2026-10-20
+
+### Added
+
+- **Builds:** stalled build jobs are flagged and their owner is told.
+
+## [0.71.3] - 2026-10-20
+
+### Added
+
+- **Workers:** a stopped worker carries who stopped it and why.
+
+### Fixed
+
+- **Loop guard:** repeated instant door failures and piecewise read loops are caught.
+
+## [0.71.2] - 2026-10-20
+
+### Added
+
+- **Builds:** build keys serialise one target, and `PAI_BUILD_JOBS` caps compiler parallelism. Sessions are nudged when the local model idles while their workers build.
+
+### Fixed
+
+- **Builds:** Xcode compilers a stopped build left behind are reaped; derived build keys use the repository, not the worktree; build doors match by repo-relative path, absolute paths included.
+- **Daemon:** registry scans are incremental and coalesced, and scheduler tasks read only what changed.
+- **Workers:** the process table is read without ENOBUFS; the local-idle line shows only served local models.
+
+## [0.71.1] - 2026-10-20
+
+### Fixed
+
+- **Workers:** every worker starts with an identical prompt prefix, so local engines reuse their cache across workers.
+
+## [0.71.0] - 2026-10-20
+
+### Added
+
+- **Panes:** background commands run in a visible pane, enforced by the guard. Every process gets its own pane in the starting session's tab, never a window, and the host tab is recorded for each pane. A pane auditor flags processes without a pane.
+- **Supervision:** a banner at session start and after compaction states the supervision rules.
+- **Plans:** the orchestrator can mark independent parts as overlapping, and model-idle time is accounted.
+- **Workers:** a hang probe tells the model where a test run is stuck; a provider's parallel cap can be read and set from conversation.
+
+### Fixed
+
+- **Panes:** the largest pane is split along its long side; Claude session ids map to iTerm panes from the statusline; the auditor waits 30 s after start and needs two failed checks.
+- **Models:** status comes from what is loaded, consumers are matched by model id, and the footprint replaces RSS; the cockpit models tile lists only loaded models.
+- **Workers:** test runs keep their command intact; the per-run note token goes into the task for loopback providers, keeping the system prompt a shared prefix.
+
+## [0.70.0] - 2026-10-19
+
+### Added
+
+- **Home:** PAI lives in `~/.pai`, independent of Claude Code, with a `migrate` command and correct stop hints.
+- **Models:** one inventory of every local model runtime, its models and users, with process-tree memory for local servers and size on disk per model; disabled providers are not counted as users.
+- **Builds:** one machine-wide build queue enforced by the guard, separate test slots, and simulators shut down after a test job.
+- **Workers:** the daemon knows the local model, so sessions never scan ports or start model servers; concurrency comes from the provider cap or the session's `max_parallel`; workers are grouped by session, then model, with the local queue on its own.
+- **Plans and cockpit:** plan runner phases are visible in `ps`, the cockpit and a plan pane, and gate timings are recorded. Cockpit tiles collapse and remember it, and a models tile shows what is in use.
+
+### Changed
+
+- **Obsidian:** sync runs in the daemon on change and writes only changed notes, never from workers; the switch only stops writing, vault indexing stays on.
+- **Memory:** embed passes have a time budget, run niced and yield to local work.
+
+### Fixed
+
+- **Workers:** a session may only kill its own workers; worktrees no longer pile up (hourly gc, immediate cleanup of empty results, size cap); queued workers get a pane at once; a down or disabled local provider is refused at once with a pointer to `--local`; no "no local model" report without a fresh probe.
+- **Plans:** one pane per plan run, never a new window; the plan pane exemption covers only the plan's own worker.
+- **Guards:** polling calls and build-door polls count as waits for the loop guard.
+- **CLI:** the session name is re-applied on every new launch.
+
 ## [0.69.0] - 2026-10-19
 
 ### Added
