@@ -342,6 +342,8 @@ export interface PoolHost {
   port: number;
   logDir: string;
   state(): PoolState;
+  /** The listen succeeded: from now on this process owns the port, so it records its pid and start in the state file. */
+  listening(): void;
   /** Run one task through the pool; the /task route body. */
   runTask(task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse>;
   /** Kill every slot, write final state, close the server. */
@@ -446,13 +448,14 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const startMtime = opts.bundlePath ? fileMtime(opts.bundlePath) : null;
   if (startMtime !== null) state.bundleMtimeMs = startMtime;
 
+  // the state file names this process as the host: it is written only once the port is owned (see listening())
+  let owned = false;
   const persist = (): void => {
     state.updatedAt = nowStamp(now());
     state.slots = [...slots.values()].map((s) => s.record);
     state.spares = [...spares.values()].flat().map((e) => e.rec);
-    writePoolState(state, poolStatePath(logDir));
+    if (owned) writePoolState(state, poolStatePath(logDir));
   };
-  persist();
 
   const dropSlot = (key: string, why: string): void => {
     const s = slots.get(key);
@@ -1438,6 +1441,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     server,
     port,
     logDir,
+    listening: () => {
+      owned = true;
+      persist();
+    },
     state: () => ({ ...state, slots: [...slots.values()].map((s) => s.record) }),
     runTask,
     shutdown,

@@ -71,6 +71,7 @@ const host = createPoolHost({
 // when a healthy host owns it the newcomer steps aside, so there is exactly one owner
 const listen = (): void => {
   host.server.listen(port, "127.0.0.1", () => {
+    host.listening();
     if (logDir) {
       mkdirSync(logDir, { recursive: true });
       writeFileSync(poolPidPath(logDir), `${process.pid}\n`, "utf8");
