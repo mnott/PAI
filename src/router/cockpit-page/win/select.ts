@@ -1,5 +1,11 @@
 /** cockpit-page/win — styled Select and Menu (spec 5.1). Pure ES5 inside a string. */
 
+/** The page-side shapes the ES5 code mirrors (types here are for the TS side only). */
+export type WinSelectOption = { value: string; label: string; hint?: string; group?: string; disabled?: boolean };
+export type WinSelectApi = { element: HTMLElement; setOptions(o: WinSelectOption[]): void; setValue(v: string | null): void; setDisabled(on: boolean, reason?: string): void };
+export type WinMenuItem = { label: string; title?: string; disabled?: boolean; run?: () => void };
+export type WinMenuApi = { element: HTMLElement; setMenu(items: WinMenuItem[]): void };
+
 /** One popup, appended to <body>, positioned under the button (flips up when there is no room).
  *  Shared by Select and Menu; both themes come from the CSS variables only. */
 export const WIN_SELECT_JS = String.raw`var _wpop=null,_wan=null;
