@@ -125,10 +125,11 @@ function vshort(v){
 }
 /** Worker runs: label (2 lines max, full name in the title); its small dim line is "provider · run id"; verdict as a short word (full text in the title); tokens. */
 function renderWorkers(d){
- setHtml($("workers"),d.workers.length?table(["label .txt","verdict .txt","tokens"],d.workers.slice(0,WORKER_ROWS).map(function(s){
+ setHtml($("workers"),d.workers.length?table(["label .txt","verdict","tokens"],d.workers.slice(0,WORKER_ROWS).map(function(s){
   var lab=esc(s.name||s.worker),sub=esc((s.workerProvider||"-")+" · "+s.worker.slice(0,9)+"…");
-  return['<span title="'+esc((s.name?s.name+" · ":"")+"run "+s.worker)+'" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-align:left">'+(s.name?lab+' <small class="dim">'+sub+'</small>':'<small class="dim">'+sub+'</small>')+'</span>','<span class="'+vcls(s.verdict)+'" title="'+esc(s.verdict||"worker")+'">'+esc(vshort(s.verdict))+'</span>',fmt(tot(s))]
- }),{"tokens":"Total tokens of the run."}):'<span class="dim">no worker sessions in this window</span>');
+  var full=(s.name?s.name+" · ":"")+"run "+s.worker+" · "+(s.workerProvider||"-");
+  return['<span class="cell2" title="'+esc(full)+'">'+(s.name?'<span class="l1">'+lab+'</span>':'')+'<small class="dim l2">'+sub+'</small></span>','<span class="'+vcls(s.verdict)+'" title="'+esc(s.verdict||"worker")+'">'+esc(vshort(s.verdict))+'</span>',fmt(tot(s))]
+ }),{"tokens":"Total tokens of the run."},{"label":"max-width:0"}):'<span class="dim">no worker sessions in this window</span>');
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};

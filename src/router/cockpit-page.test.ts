@@ -3400,9 +3400,9 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     const html = m.el().innerHTML;
     const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1]);
     expect(heads).toEqual(["label", "verdict", "tokens"]);
-    expect(html).toContain('title="run.ts split step 1: provider test moved out of the router file · run 20261021-063345-95575"');
-    expect(html).toContain("-webkit-line-clamp:2");
-    expect(html).toContain('<small class="dim">glm · 20261021-…</small>');
+    expect(html).toContain('title="run.ts split step 1: provider test moved out of the router file · run 20261021-063345-95575 · glm"');
+    expect(html).toContain('<span class="l1">run.ts split step 1');
+    expect(html).toContain('<small class="dim l2">glm · 20261021-…</small>');
     expect(html).toContain('<span class="ok" title="ok">ok</span>');
     expect(html).toContain('<span class="bad" title="failed: x">failed</span>');
     expect(html).toContain('<td class="txt" data-l="label"'); // stacked label for phones; the label column wraps, numbers never do
