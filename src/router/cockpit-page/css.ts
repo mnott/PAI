@@ -40,6 +40,9 @@ th,td{text-align:right;padding:2px 4px;border-bottom:1px solid var(--line);white
 .tw td button{padding:0 3px;font-size:11px;margin:1px 0}
 td.txt,th.txt{min-width:10ch;width:0}
 td.txt{white-space:normal;overflow-wrap:anywhere}
+/* the non-.txt columns shrink to their content, so the first .txt column takes the free width */
+th:not(.txt),td:not(.txt){width:1%}
+.cell2 .l1,.cell2 .l2{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
 th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:left}
 /* a table never scrolls sideways: fixed layout, headers and numbers on one line,
  * text cells wrap or ellipsise with the full text in the cell's title */
