@@ -110,15 +110,19 @@ function winSplit(node,box,bounded,st,cfg,kids){
   var c3=node.ch[i];
   var h3;
   if(c3.k==="s"){
-   var allMin=true;
-   for(var q=0;q<c3.ch.length;q++)if(!winGhost(st,c3.ch[q].id)&&!winMin(st,c3.ch[q].id))allMin=false;
-   if(allMin&&vis.length>0){
+   var allMin=true,any=false;
+   for(var q=0;q<c3.ch.length;q++)if(!winGhost(st,c3.ch[q].id)){any=true;if(!winMin(st,c3.ch[q].id))allMin=false}
+   // a band with no visible card takes no space; all visible minimized shrinks to HEAD_H
+   if(allMin&&any){
     // every visible card of the band is minimized: the band shrinks to HEAD_H;
     // the headers go through the normal split, which gives each one HEAD_H
     h3=cfg.HEAD_H;
     var sub0=winSplit(c3,{w:box.w,h:cfg.HEAD_H},false,st,cfg,kids);
     for(var q2=0;q2<sub0.length;q2++)
      out.push({n:sub0[q2].n,x:sub0[q2].x,y:y3+sub0[q2].y,w:sub0[q2].w,h:sub0[q2].h});
+   }else if(!any){
+    // a band with no visible card takes no space (spec 3.4: ghosts are skipped)
+    continue;
    }else{
     var sub=winSplit(c3,{w:box.w,h:sz},false,st,cfg,kids);
     var maxB=0;
@@ -126,7 +130,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
      out.push({n:sub[j].n,x:sub[j].x,y:y3+sub[j].y,w:sub[j].w,h:sub[j].h});
      if(sub[j].y+sub[j].h>maxB)maxB=sub[j].y+sub[j].h;
     }
-    // the band grows past its px when the stacked content is taller (narrow mode);
+    // the band grows to max(px, content) when the stacked content is taller (narrow mode);
     // the next band starts below the content, never on top of it
     h3=Math.max(sz,maxB);
    }
@@ -144,7 +148,9 @@ function layout(tree,kids,box,state,cfg){
  // only the root container is unbounded: its column holds band px. Everything below
  // (group bodies, nested splits) is bounded and lays columns by weight.
  var root=box.h===undefined;
- var out=[{n:tree,x:0,y:0,w:box.w,h:root?0:box.h,bounded:!root}];
+ // a bare root leaf (the whole tree is one card) gets its type's defaultH, not 0
+ var h0=root?(tree.k==="c"?winDefH(cfg,winLeafType(kids,tree.id)):0):box.h;
+ var out=[{n:tree,x:0,y:0,w:box.w,h:h0,bounded:!root}];
  var guard=0;
  while(out.length){
   var it=out.pop(),n=it.n;

@@ -248,6 +248,26 @@ describe("win layout (spec 3.2)", () => {
     expect(plain.rects.a.h).toBe(cfg.defaultH);
   });
 
+  it("E1: a root band whose cards are all ghosts takes no space", () => {
+    // the band's only child is a ghost -> no visible card -> no HEAD_H+GAP for the band
+    const t = split("c", [split("r", [leaf("g"), leaf("h")], [0.5, 0.5]), leaf("below")], [400, 200]);
+    const { rects, height } = layout(t, {}, root(1000), { g: { seen: 1 }, h: { seen: 2 } }, cfg);
+    expect(rects.g).toBeUndefined();
+    expect(rects.h).toBeUndefined();
+    expect(rects.below.y).toBe(0);
+    expect(height).toBe(200);
+  });
+
+  it("E2: a bare root leaf as the whole tree gets its type's defaultH, not 0", () => {
+    const { rects, height } = layout(leaf("a"), { a: { type: "metric" } }, root(1000), {}, cfg);
+    expect(rects.a.h).toBe(120); // metric defaultH
+    expect(rects.a.body.h).toBe(120 - cfg.HEAD_H);
+    expect(height).toBe(120);
+    // no type entry -> cfg defaultH
+    const r2 = layout(leaf("b"), {}, root(1000), {}, cfg);
+    expect(r2.rects.b.h).toBe(cfg.defaultH);
+  });
+
   it("D6: extra content fields on kids cannot change the rects", () => {
     const tree = split("c", [split("r", [leaf("a"), leaf("g")], [0.6, 0.4]), leaf("b")], [400, 200]);
     const kids = { g: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]) };
