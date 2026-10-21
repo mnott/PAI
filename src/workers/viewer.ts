@@ -1265,6 +1265,12 @@ export async function followWorkers(
         ) {
           writeLiveness();
           await sleep(250);
+          // a same-id restart inside the window (pool slot died, fresh run) revives the run in this pane
+          const again = loadStatus(logDir, lingerOn);
+          if (again && !isTerminal(again.state)) {
+            finished.delete(lingerOn);
+            return { done: false };
+          }
         }
         // interrupted, resumed inside the window, or a draft appeared: follow on
         if (aborted || target !== lingerOn || holdAutoExit(promptText())) return { done: false };

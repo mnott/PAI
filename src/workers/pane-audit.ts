@@ -311,7 +311,9 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
     const childUp = alive(r.child);
     if (ex && !wrapperUp && !childUp) continue;
     // the wrapper writes its exit file the moment the child ends; a grace covers the closing itself
-    if (ex && wrapperUp && nowMs - ex.endedMs > panePolicy().launchGraceMs) {
+    // a failed run's wrapper holds its pane open on purpose (pane-exec hold), until the operator closes it
+    const held = ex !== null && ex.code !== 0 && ex.reason !== "pane closed" && !ex.cancelled;
+    if (ex && wrapperUp && !held && nowMs - ex.endedMs > panePolicy().launchGraceMs) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, now);

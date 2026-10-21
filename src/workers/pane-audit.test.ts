@@ -243,6 +243,11 @@ describe("auditLaunches: the bug detector for the pane-owns-the-process rule", (
     expect(f.map((x) => x.kind)).toEqual(["orphan-wrapper"]);
     expect(r.closed).toEqual(["w-1"]);
   });
+  it("a failed run's wrapper holds its pane on purpose: not an orphan, however old the exit file", async () => {
+    const r = rig([100]);
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 1, endedMs: NOW.getTime() - 60_000 }) }, NOW)).toEqual([]);
+    expect(r.killed).toEqual([]);
+  });
   it("the wrapper is still closing the pane (exit file seconds old): left alone", async () => {
     const r = rig([100]);
     expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 0, endedMs: NOW.getTime() - 2000 }) }, NOW)).toEqual([]);
