@@ -6,9 +6,9 @@
  * these functions, so no YAML/JSON round-trip is needed to exercise them.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { nativeAnthropicModels, type WorkerProvider, type WorkersConfig } from "./config.js";
-import { buildRunEnv } from "./run-env.js";
+import { buildRunEnv, routerUrl } from "./run-env.js";
 import {
   LaunchError,
   buildLaunchPlan,
@@ -196,7 +196,7 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
   };
 
   it("anthropic (built-in): --model only, no base URL/token, no ANTHROPIC_API_KEY leak", async () => {
-    const plan = await withLeakedKey(() => buildLaunchPlan(fixture, "anthropic", undefined, [], "/tmp/pai-launch-test"));
+    const plan = await withLeakedKey(() => buildLaunchPlan(fixture, "anthropic", undefined, [], "/tmp/pai-launch-test", () => ({ live: true }), true));
     // pinned by pinnedSettingsArgs: router when enabled, else api.anthropic.com
     expect(plan.argv.slice(2)).toEqual(["--model", nativeAnthropicModels().default]);
     expect(plan.argv[0]).toBe("--settings");
@@ -204,6 +204,33 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
     expect(plan.env.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(plan.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(plan.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it("anthropic with the router enabled: live route pins the router, dead route pins api.anthropic.com", async () => {
+    const live = await buildLaunchPlan(fixture, "anthropic", undefined, [], "/tmp/pai-launch-test", () => ({ live: true }), true);
+    expect(JSON.parse(live.argv[1]).env.ANTHROPIC_BASE_URL).toBe(routerUrl());
+    expect(live.route).toEqual({ live: true });
+    const err = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const dead = await buildLaunchPlan(
+        fixture, "anthropic", undefined, [], "/tmp/pai-launch-test",
+        () => ({ live: false, reason: "router at X not reachable (ECONNREFUSED)", fix: "start it with: pai router start" }),
+        true
+      );
+      expect(JSON.parse(dead.argv[1]).env.ANTHROPIC_BASE_URL).toBe("https://api.anthropic.com");
+      expect(dead.route?.live).toBe(false);
+      expect(err).toHaveBeenCalledTimes(1);
+      expect(String(err.mock.calls[0][0])).toContain("ECONNREFUSED");
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it("a provider route is never probed", async () => {
+    const probe = vi.fn(() => ({ live: false as const }));
+    const plan = await buildLaunchPlan(fixture, "glm", undefined, [], "/tmp/pai-launch-test", probe, true);
+    expect(probe).not.toHaveBeenCalled();
+    expect(plan.route).toBeUndefined();
   });
 
   it("anthropic-protocol provider (glm-shape): base URL + auth token from the YAML, model passed through", async () => {

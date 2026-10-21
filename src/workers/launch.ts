@@ -22,7 +22,7 @@ import {
   type WorkerProvider,
   type WorkersConfig,
 } from "./config.js";
-import { buildRunEnv, pinnedSettingsArgs } from "./run-env.js";
+import { buildRunEnv, pinnedSettingsArgs, nativeRoutePreflight, type RouteProbe } from "./run-env.js";
 import { SESSION_PROVIDER_ENV } from "./session-provider.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
 
@@ -171,6 +171,8 @@ export interface LaunchPlan {
   /** Full claude argv (argv[0] "claude" excluded). */
   argv: string[];
   env: NodeJS.ProcessEnv;
+  /** Route preflight verdict for a router-pinned native launch; absent when not probed. */
+  route?: RouteProbe;
 }
 
 /**
@@ -184,7 +186,9 @@ export async function buildLaunchPlan(
   providerName: string,
   modelName: string | undefined,
   extraArgs: string[],
-  logDir: string
+  logDir: string,
+  probe?: (route: string, model?: string) => RouteProbe,
+  routerEnabled?: boolean
 ): Promise<LaunchPlan> {
   const provider = resolveLaunchProvider(workers, providerName);
   if (provider.engine === "codex") {
@@ -216,9 +220,12 @@ export async function buildLaunchPlan(
   env[SESSION_PROVIDER_ENV] = providerName;
   // One rule for every spawn: pinnedSettingsArgs decides the route (provider
   // URL + token, else the router when enabled, else api.anthropic.com).
-  const pin = pinnedSettingsArgs(env);
+  // A native launch pinned to the router is preflighted first (dead route =
+  // first-party URL + one stderr line), the same check launchInDir runs.
+  const pf = nativeRoutePreflight(env, undefined, probe, routerEnabled);
+  const pin = pinnedSettingsArgs(env, pf.routerEnabled);
   const argv = [...pin, "--model", model, ...extraArgs];
-  return { providerName, provider, model, argv, env };
+  return { providerName, provider, model, argv, env, ...(pf.probe ? { route: pf.probe } : {}) };
 }
 
 /** `****abcd`-style masking for `--dry-run` env printing — never the full

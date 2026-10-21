@@ -15,6 +15,7 @@ import { workersLogDir, ledgerPath } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
 import { SESSION_NAME_ENV, getProfile } from "../../workers/session-profile-store.js";
 import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
+import { routeVerdictLine } from "../../workers/run-env.js";
 import { printExitDir } from "./exit-dir.js";
 
 export interface Harness {
@@ -24,6 +25,8 @@ export interface Harness {
   cwd: string;
   provider: string;
   model: string;
+  /** Route preflight verdict (see buildLaunchPlan); absent when not probed. */
+  route?: LaunchPlan["route"];
 }
 
 /** `--name N "/Name N"`: label the session and tab (same as launchPrompt in lib/launch.ts). `named`: the session already carries N, so no /Name is sent. */
@@ -39,7 +42,7 @@ export async function buildHarness(
   plan.env[SESSION_NAME_ENV] = opts.name;
   const wp = getProfile(opts.name)?.workers?.provider;
   if (wp) plan.env[SESSION_WORKER_PROVIDER_ENV] = wp;
-  return { cmd: "claude", argv: plan.argv, env: plan.env, cwd: opts.cwd, provider: plan.providerName, model: plan.model };
+  return { cmd: "claude", argv: plan.argv, env: plan.env, cwd: opts.cwd, provider: plan.providerName, model: plan.model, route: plan.route };
 }
 
 const quote = (a: string) => (/[\s"'$`\\{}]/.test(a) ? JSON.stringify(a) : a);
@@ -58,7 +61,8 @@ export function dryRunText(h: Harness): string {
     .sort()
     .filter((k) => /^(ANTHROPIC_|CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC|ENABLE_TOOL_SEARCH|PAI_WORKER|PAI_SESSION_)/.test(k))
     .map((k) => `  ${k}=${masked[k]}`);
-  return [execLine(h), ...(env.length ? ["env:", ...env] : [])].join("\n");
+  const verdict = routeVerdictLine(h.route);
+  return [...(verdict ? [verdict] : []), execLine(h), ...(env.length ? ["env:", ...env] : [])].join("\n");
 }
 
 /** Run the harness in the foreground; returns its exit code. */

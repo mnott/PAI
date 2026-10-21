@@ -33,6 +33,7 @@ import {
 } from "../../../workers/launch.js";
 import { renderTable, err, dim, bold, ok } from "../../lib/utils.js";
 import { sessionStartTarget, type ViewDeps } from "../../../workers/route-table.js";
+import { routeVerdictLine } from "../../../workers/run-env.js";
 import { budgetCache } from "../../../workers/budget.js";
 
 export interface LaunchCliOpts {
@@ -110,6 +111,8 @@ function printDryRun(plan: LaunchPlan): void {
   console.log(bold("Dry run — would exec:"));
   console.log();
   console.log(`  cwd:  ${process.cwd()}`);
+  const verdict = routeVerdictLine(plan.route);
+  if (verdict) console.log(`  route: ${verdict}`);
   console.log(`  argv: claude ${plan.argv.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(" ")}`);
   console.log(`  env:`);
   const masked = maskLaunchEnv(plan.env);

@@ -44,7 +44,7 @@ import {
   type WorkersConfig,
   type WorkerProvider,
 } from "../../workers/config.js";
-import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs } from "../../workers/run-env.js";
+import { buildRunEnv, claudeCommand, pinnedSettingsArgs, nativeLaunchSettingsArgs, nativeRoutePreflight, routeVerdictLine } from "../../workers/run-env.js";
 import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
@@ -813,7 +813,11 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     } else {
       console.log("\n" + chalk.bold("Dry run — would exec (FRESH path):") + "\n");
       console.log(`  cwd:  ${chalk.cyan(cwd)}`);
-      console.log(`  argv: claude --name "${name}" "${launchPrompt(name)}"`);
+      const pf = nativeRoutePreflight(process.env);
+      const verdict = routeVerdictLine(pf.probe);
+      if (verdict) console.log(`  route: ${verdict}`);
+      const pin = pf.probe && !pf.probe.live ? pinnedSettingsArgs(process.env, false) : [];
+      console.log(`  argv: ${["claude", ...pin.map((a) => (/[\s"{]/.test(a) ? `'${a}'` : a))].join(" ")} --name "${name}" "${launchPrompt(name)}"`);
     }
     console.log();
     return;

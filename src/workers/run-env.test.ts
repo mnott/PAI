@@ -11,7 +11,7 @@ import http from "node:http";
 import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs, probeRoute, routeLoopbackViaRouter } from "./run-env.js";
+import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs, probeRoute, routeLoopbackViaRouter, routeVerdictLine, nativeRoutePreflight } from "./run-env.js";
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-runenv-test-"));
@@ -420,5 +420,14 @@ describe("route preflight", () => {
     } finally {
       err.mockRestore();
     }
+  });
+
+  it("preflight verdict line: live, broken, and absent", () => {
+    expect(routeVerdictLine({ live: true })).toBe("route live");
+    const line = routeVerdictLine({ live: false, reason: "router at X not reachable (ECONNREFUSED)", fix: "start it with: pai router start" });
+    expect(line).toContain("ECONNREFUSED");
+    expect(line).toContain("https://api.anthropic.com");
+    expect(routeVerdictLine(undefined)).toBeNull();
+    expect(nativeRoutePreflight({ ANTHROPIC_BASE_URL: "https://p.invalid" }, undefined, () => ({ live: false }), true)).toEqual({ routerEnabled: true });
   });
 });
