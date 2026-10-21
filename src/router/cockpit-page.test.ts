@@ -120,7 +120,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     expect(html).toContain('<div class="tw">');
     expect(html).toContain("<thead>");
     expect(html).toContain("<tbody>");
-    expect(html).toContain('<td data-l="model (hit% n)">' + MODEL50 + "</td>");
+    expect(html).toContain('<td class="txt" data-l="model (hit% n)">' + MODEL50 + "</td>");
     expect(html).toContain('<td data-l="<5m">');
     expect(html).toContain('<td data-l="5-30m">');
     expect(html).toContain("75%");
@@ -136,9 +136,9 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     expect(html).toContain('<div class="tw">');
     expect(html).toContain("<thead>");
     expect(html).toContain("<tbody>");
-    expect(html).toContain('<td data-l="session" style="width:35%;');
+    expect(html).toContain('<td class="txt" data-l="session" style="width:35%;');
     expect(html).toContain(NAME60);
-    expect(html).toContain('<td data-l="models" style="white-space:nowrap"><span title="' + MODEL50 + '">' + MODEL50 + "</span></td>");
+    expect(html).toContain('<td class="txt" data-l="models" style="white-space:nowrap"><span title="' + MODEL50 + '">' + MODEL50 + "</span></td>");
     expect(html).toContain('<td data-l="req">3</td>');
     expect(html).toContain('<td data-l="last">1m</td>');
   });
@@ -207,7 +207,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
       lastTs: new Date().toISOString(), worker: "w1", verdict: "ok",
     }]);
     // the rendered markup: the name span is the first-column span carrying the title
-    expect(html).toContain('<td data-l="session" style="width:35%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span title="');
+    expect(html).toContain('<td class="txt" data-l="session" style="width:35%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span title="');
     expect(html).toContain(NAME90);
     // the harness: main 375 px, card inside it (card padding 10 px each side)
     const cardW = 375 - 20;
@@ -2932,11 +2932,17 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(html).toContain('<td data-l="session">alpha</td>');
     expect(html).toContain('<td data-l="req">3</td>');
     // the box never scrolls sideways: no overflow-x rule, no sticky column, cells wrap
-    expect(COCKPIT_HTML).toMatch(/\.tw\{max-width:100%\}/);
+    expect(COCKPIT_HTML).toMatch(/\.tw\{max-width:100%;container-type:inline-size\}/); // the box is a size container: a half-width card stacks its rows via @container
     expect(COCKPIT_HTML).not.toMatch(/\.tw\{overflow-x:auto\}/);
     expect(COCKPIT_HTML).not.toContain("scrollbar-color:var(--dim) var(--card)");
     expect(COCKPIT_HTML).not.toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky/);
-    expect(COCKPIT_HTML).toMatch(/th,td\{[^}]*white-space:normal;overflow-wrap:break-word\}/);
+    // headers and numbers never break mid-word: nowrap, no overflow-wrap; the text
+    // columns (.txt) absorb the squeeze with anywhere-wrap
+    expect(COCKPIT_HTML).toMatch(/th,td\{[^}]*white-space:nowrap[^}]*\}/);
+    expect(COCKPIT_HTML).not.toMatch(/th,td\{[^}]*overflow-wrap/);
+    expect(COCKPIT_HTML).toMatch(/td\.txt\{[^}]*overflow-wrap:anywhere[^}]*\}/);
+    expect(COCKPIT_HTML).not.toMatch(/(^|\n)[^{}]*th[^{}]*\{[^}]*overflow-wrap:anywhere/);
+    expect(COCKPIT_HTML).not.toContain("table.dense");
     // below the phone breakpoint a row is a stacked card: label: value pairs, no columns.
     // parse the media block and check declarations, so selector grouping and property
     // order don't matter — the behaviour is what counts, not the spelling.
@@ -2988,7 +2994,7 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(na).not.toContain("pos");
   });
 
-  it("table(): a table with no fully-empty column renders byte-identical to the old helper", () => {
+  it("table(): a column class rides on the header and its cells; a plain column is byte-identical to the old helper", () => {
     // the helper as it was before empty-column dropping existed, spelled out here so the
     // comparison stays meaningful after the page source changes
     const old = new Function("esc", `function table(head,rows,tips){return'<div class="tw"><table><thead><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+rows.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'}; return table;`)((s: unknown) => String(s ?? ""));
@@ -3002,6 +3008,13 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(t(head, rows, tips)).toBe(old(head, rows, tips));
     expect(t(head, rows)).toBe(old(head, rows));
     expect(t(head, [])).toBe(old(head, [])); // no rows: nothing is fully-empty-by-rows, all headers stay
+    // a text column: the class rides on th and every td, data-l keeps the bare label,
+    // the tip is keyed by the bare label; a numeric column (no class) stays nowrap markup
+    const cls = t(["session .txt", "req"], [["alpha", "3"]], { session: "the session" });
+    expect(cls).toContain('<th class="txt" title="the session">session</th>');
+    expect(cls).toContain('<td class="txt" data-l="session">alpha</td>');
+    expect(cls).toContain('<td data-l="req">3</td>');
+    expect(cls).not.toContain("dense");
   });
 
   it("the stacked phone layout gets no label line for a dropped column (data-l only for kept columns)", () => {
@@ -3404,7 +3417,7 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     expect(html).toContain('<small class="dim">20261021-063345-95575</small>');
     expect(html).toContain('<span class="ok">ok</span>');
     expect(html).toContain('<span class="bad">failed: x</span>');
-    expect(html).toContain('<td data-l="label"'); // stacked label for phones
+    expect(html).toContain('<td class="txt" data-l="label"'); // stacked label for phones; the label column wraps, numbers never do
   });
 
   it("speed: one cell per 1h/24h pair, seven columns instead of eleven, header tooltips explain the pair", () => {
@@ -3414,8 +3427,10 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     const html = m.el().innerHTML;
     expect([...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1])).toEqual(["provider", "model", "req", "TTFT p50", "TTFT p90", "read tok/s", "write tok/s"]);
     expect(html).toContain('<td data-l="req">3 <span class="dim">·</span> 30</td>');
-    expect(html).toContain('400 ms <span class="dim">·</span> 500 ms');
-    expect(html).toContain('<span class="dim">-</span> <span class="dim">·</span> 900 ms'.replace('<span class="dim">-</span>', "-"));
+    // the cell shows the last-hour value; the 24 h value rides in the cell's title (a pair of
+    // nowrap values does not fit a half-width card, and a number never breaks from its unit)
+    expect(html).toContain('<span title="400 ms · 500 ms">400 ms</span>');
+    expect(html).toContain('<span title="- · 900 ms">-</span>');
     expect(html).toMatch(/<th title="[^"]*1h · 24h: last hour, then last 24 hours\.">TTFT p50<\/th>/);
   });
 

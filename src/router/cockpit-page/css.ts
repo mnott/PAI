@@ -31,14 +31,22 @@ section[data-section].stacked{grid-column:span ${L.gridCols}!important}
 .pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
-.tw{max-width:100%}
-table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 4px;border-bottom:1px solid var(--line);white-space:normal;overflow-wrap:break-word}
+.tw{max-width:100%;container-type:inline-size}
+/* auto layout: a column is never squeezed under its min-content (a nowrap header or
+ * number keeps its full word); the text columns (.txt) shrink to 0 and absorb the squeeze */
+table{border-collapse:collapse;width:100%}
+/* headers and numbers never break: nowrap, no overflow-wrap; the text columns (.txt) absorb the squeeze */
+th,td{text-align:right;padding:2px 4px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tw td button{padding:0 3px;font-size:11px;margin:1px 0}
-table.dense th,table.dense td{overflow-wrap:anywhere}
+td.txt,th.txt{min-width:10ch;width:0}
+td.txt{white-space:normal;overflow-wrap:anywhere}
 th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:left}
-/* a table never scrolls sideways: cells wrap, long text ellipsises with the full text in a title */
+/* a table never scrolls sideways: fixed layout, headers and numbers on one line,
+ * text cells wrap or ellipsise with the full text in the cell's title */
 /* below the phone breakpoint a table row is a stacked card: label: value pairs, no columns */
 @media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw thead,.tw tbody{display:block;width:auto;max-width:100%;min-width:0}.tw tr{display:block;width:auto;max-width:100%;min-width:0;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;width:auto;max-width:100%;min-width:0}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}.tw td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}}
+/* a card narrower than 400px (half-width tile) stacks the same way: a table never scrolls and a header never breaks */
+@container(max-width:400px){.tw{overflow-x:visible}.tw table{display:block}.tw thead,.tw tbody{display:block;width:auto;max-width:100%;min-width:0}.tw tr{display:block;width:auto;max-width:100%;min-width:0;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;width:auto;max-width:100%;min-width:0}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}.tw td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}
