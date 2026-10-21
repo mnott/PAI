@@ -12,7 +12,8 @@ export type WinNode = WinLeaf | WinSplit;
 export const WIN_TREE_JS = String.raw`function leaf(id){return{k:"c",id:String(id)}}
 function split(d,ch,sz){return{k:"s",d:d==="c"?"c":"r",ch:ch||[],sz:sz||[]}}
 function isSplit(n){return!!n&&n.k==="s"}
-/** Bottom-up normalize: children first, then this node. isRoot marks the top node. */
+/** Bottom-up normalize: children first, then this node. isRoot marks the top node:
+ *  a root column holds band px (left alone); every other split holds weights. */
 function normalize(node,isRoot){
  if(!isSplit(node))return node;
  var ch=[],sz=[],i;
