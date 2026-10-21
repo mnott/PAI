@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { loadConfig } from "../daemon/config.js";
-import { ROUTER_PORT } from "../router/router.js";
+import { routerPort } from "../router/router.js";
 import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
 import { workersYamlPath } from "./workers-config.js";
 
@@ -224,7 +224,7 @@ export function buildRunEnv(
   return env;
 }
 
-/** First-party route a native run is pinned to when caveman is off. */
+/** First-party route a native run is pinned to when no route is set. */
 export const ANTHROPIC_FIRST_PARTY_URL = "https://api.anthropic.com";
 
 /**
@@ -245,27 +245,20 @@ export function addSchedulingHeaders(env: NodeJS.ProcessEnv, ids: { session?: st
 
 /** Loopback URL of the local model router — the route every accounted run takes. */
 export function routerUrl(): string {
-  return `http://127.0.0.1:${ROUTER_PORT}`;
+  return `http://127.0.0.1:${routerPort()}`;
 }
 
 /**
  * The argv head every Claude Code spawn starts from, for an env built by
  * buildRunEnv. The user settings' env block outranks the process env
  * (measured 2026-09-22: an unreachable ANTHROPIC_BASE_URL in the process env
- * was ignored while settings.json carried a caveman proxy route, and a glm
+ * was ignored while settings.json carried a proxy route, and a glm
  * worker's bearer token ended at Anthropic with a 401), so a route set in
  * `env` is not enough once a machine-wide proxy is installed — it is pinned
- * again with `--settings`, which outranks user settings. A native run goes
- * through `caveman claude` when workers.caveman is on and the CLI is on
- * PATH; off, it is pinned to api.anthropic.com so a global route cannot
- * pull it in either.
+ * again with `--settings`, which outranks user settings. A native run is
+ * pinned to api.anthropic.com so a global route cannot pull it in either.
  */
-export function claudeCommand(env: NodeJS.ProcessEnv, caveman: boolean, routerEnabled?: boolean): string[] {
-  const route = env.ANTHROPIC_BASE_URL;
-  if (!route && caveman) {
-    if (onPath("caveman", env)) return ["caveman", "claude"];
-    process.stderr.write("pai: workers.caveman is on but `caveman` is not on PATH; running claude directly\n");
-  }
+export function claudeCommand(env: NodeJS.ProcessEnv, routerEnabled?: boolean): string[] {
   // set by buildRunEnv for a headless non-anthropic worker: no operator output style
   const extra = env.CLAUDE_CODE_DISABLE_CLAUDE_MDS === "1" ? { outputStyle: "default" } : undefined;
   return ["claude", ...pinnedSettingsArgs(env, routerEnabled, extra)];

@@ -269,10 +269,9 @@ describe("parseWorkersConfig", () => {
     expect(off.mcpSets.desktop).toEqual([]);
   });
 
-  it("defaults caveman to false and reads a boolean, names the field on a bad one", () => {
-    expect(parseWorkersConfig(undefined).caveman).toBe(false);
-    expect(parseWorkersConfig({ caveman: true }).caveman).toBe(true);
-    expect(() => parseWorkersConfig({ caveman: "yes" })).toThrow(/\.caveman/);
+  it("ignores the obsolete caveman key", () => {
+    expect(() => parseWorkersConfig({ caveman: true })).not.toThrow();
+    expect(() => parseWorkersConfig({ caveman: "yes" })).not.toThrow();
   });
 });
 

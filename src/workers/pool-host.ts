@@ -303,7 +303,7 @@ export interface PoolHostOptions {
   envFor?: (providerName: string, provider: WorkerProvider, routerOn?: boolean) => NodeJS.ProcessEnv;
   /** Router liveness probe for loopback providers; defaults to the real one. */
   probeRouter?: () => Promise<boolean>;
-  cmdHead?: (env: NodeJS.ProcessEnv, caveman: boolean) => string[];
+  cmdHead?: (env: NodeJS.ProcessEnv) => string[];
   /**
    * Route slot traffic through the local model router when it is enabled
    * (the default resolves it from the daemon config): the router resolves
@@ -416,7 +416,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   // the process env — see pinnedSettingsArgs)
   const routerOn = opts.routerEnabled ?? loadConfig().router.enabled;
   const envFor = opts.envFor ?? ((name: string, p: WorkerProvider, via?: boolean) => buildRunEnv(p, true, undefined, name, via ?? routerOn));
-  const cmdHead = opts.cmdHead ?? ((env: NodeJS.ProcessEnv, caveman: boolean) => claudeCommand(env, caveman, routerOn));
+  const cmdHead = opts.cmdHead ?? ((env: NodeJS.ProcessEnv) => claudeCommand(env, routerOn));
   const now = opts.now ?? (() => new Date());
   const ledger = ledgerPath(logDir);
   mkdirSync(logDir, { recursive: true });
@@ -489,7 +489,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // ...but it does have a stable name; the job it serves is in slots/<name>.current (worker-id.ts)
     const slotName = slotNameFor(cwd);
     env[POOL_SLOT_ENV] = slotName;
-    let cmd: string[] = [...cmdHead(env, config.caveman)];
+    let cmd: string[] = [...cmdHead(env)];
     const addendum = loadContractAddendum(providerName, provider.contract);
     cmd.push("--model", model);
     cmd.push("--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir));
