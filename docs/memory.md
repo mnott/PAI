@@ -144,24 +144,16 @@ When the configured backend is unavailable (for example Ollama is not running), 
 
 Ollama cuts inputs longer than 510 tokens differently from the model itself (cosine about 0.45 against the reference). For `ollama-f16`, each text is therefore cut to 510 content tokens with the model's own tokenizer at embed time (the count is logged). Chunk boundaries in the database are not changed.
 
-## Status Dashboard
+## Memory status in the cockpit
 
-The daemon serves a read-only status page so unattended embedding and index passes can be watched, also from a phone on the tailnet. It is on by default and uses only `node:http`, with no external assets.
+The memory status page that used to be served on `127.0.0.1:8770` (config key `dashboard`) is gone; the same view is the **Memory** section of the cockpit (`/cockpit`, `router.cockpit.sections` to place it). The daemon keeps sampling and answers the router over IPC (`memory_dashboard`); `/cockpit/memory` is the JSON behind the section.
 
-```yaml
-dashboard:
-  enabled: true        # default
-  port: 8770           # default
-  bind: 127.0.0.1      # default; add the tailnet IP to reach it from other devices
-```
+The section shows, with green/amber/red status:
 
-`pai daemon status` prints the URL. `GET /` is the page (refreshes every 10 s), `GET /api/status` the JSON behind it. Requests whose `Host` header is not the bound address, `localhost`, or this machine's tailnet name or IP (from `tailscale status --json`) get 403, which blocks DNS rebinding. Only GET and HEAD are accepted; the default bind is never `0.0.0.0`.
-
-The page shows, with green/amber/red status:
-
-- **Index**: files, chunks and embedding coverage, the recorded index binding against the configured backend, and the `pai memory reembed` hint on a mismatch (red).
+- **Index**: files, chunks, chunks without vectors (the backlog) and embedding coverage, the recorded index binding against the configured backend, and the `pai memory reembed` hint on a mismatch (red).
 - **Jobs** (table `pai_embedding_jobs`): phase, done/total as a bar, rate over the last minutes, ETA, and `STALLED` (red) when `done` has not moved for 5 min.
-- **Backend**: the configured backend's availability (red when unavailable) and, for Ollama, the loaded models with their GPU share (`size_vram` / `size`).
-- **Passes**: index, embed and vault pass state, last success, the failure with its error and next retry (red), and the next scheduled time.
+- **Backend**: the configured backend and model, its availability (red when unavailable) and, for Ollama, the loaded models with their GPU share (`size_vram` / `size`).
+- **Passes**: last index pass and last embed pass (time, duration, chunks done), the failure with its error and next retry (red), and the nightly schedule (`maintenanceHour`).
+- **Actions**: `embed backlog` (the same as `pai memory embed --all --background`, with chunks done / backlog at start, rate and ETA), `stop` (stops it cleanly; re-run to continue) and `index now` (one index pass). One run at a time: a run started by the CLI, the cockpit or the daemon's pass is detected through `<PAI home>/state/memory-run.json` and shown as "running (started by …)".
 
 Counts come from catalog statistics (`pg_class.reltuples`, `pg_stats`) and are marked "est."; real counts are refreshed in the background at most every 5 min (20 s statement timeout, estimate kept on failure). Nothing is computed per request.

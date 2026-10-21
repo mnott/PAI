@@ -43,6 +43,7 @@ import type { BudgetMap } from "../workers/budget.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
+import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
 
@@ -517,6 +518,13 @@ export function sameOriginAction(req: http.IncomingMessage): boolean {
   }
 }
 
+/** Memory section sources (daemon status, run marker); tests install fakes. */
+let memoryDepsOverride: Partial<MemoryDeps> | null = null;
+
+export function setMemoryDeps(deps: Partial<MemoryDeps> | null): void {
+  memoryDepsOverride = deps;
+}
+
 /** The process-wide runtime sampler the router command installs; tests install their own. */
 let runtimeSampler: RuntimeSampler | null = null;
 
@@ -933,7 +941,7 @@ export function handleCockpit(
   if (req.method === "GET" && url.pathname === "/cockpit/job") {
     const home = actionDepsOverride?.home ?? paiHomeDir();
     const j = home ? readCockpitJob(home, url.searchParams.get("id") ?? "") : null;
-    send(j ? 200 : 404, "application/json", j ? JSON.stringify({ ...j, ...(runtimeJobProgress(home, j) ?? {}) }) : JSON.stringify({ error: "no such job" }));
+    send(j ? 200 : 404, "application/json", j ? JSON.stringify({ ...j, ...(runtimeJobProgress(home, j) ?? memoryJobProgress(home, j) ?? {}) }) : JSON.stringify({ error: "no such job" }));
     return true;
   }
   if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
@@ -957,6 +965,11 @@ export function handleCockpit(
   } else if (url.pathname === "/cockpit/models") {
     cockpitModelsPayload().then(
       (inv) => send(200, "application/json", JSON.stringify(inv)),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
+  } else if (url.pathname === "/cockpit/memory") {
+    cockpitMemoryPayload({ ...liveMemoryDeps(), ...(memoryDepsOverride ?? {}) }).then(
+      (m) => send(200, "application/json", JSON.stringify(m)),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/scheduler") {

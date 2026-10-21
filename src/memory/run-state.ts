@@ -1,0 +1,121 @@
+/**
+ * run-state.ts — the one marker of a running index or embed run.
+ *
+ * `pai memory embed`, `pai memory index --direct` and the daemon's pass child
+ * (`pai memory pass`) write <PAI home>/state/memory-run.json while they run:
+ * who started it, its pid and how far it is. The cockpit's Memory section
+ * reads it to show progress and to refuse a second run; a marker whose pid is
+ * gone is stale and ignored.
+ */
+
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { paiHomePath } from "../config/pai-home.js";
+
+export type RunKind = "embed" | "index";
+export type RunStarter = "cli" | "cockpit" | "daemon";
+
+export interface RunState {
+  kind: RunKind;
+  pid: number;
+  by: RunStarter;
+  /** ISO time the run began. */
+  startedAt: string;
+  /** Chunks without vectors when an embed run began; null when unknown (index). */
+  backlogStart: number | null;
+  /** Chunks embedded so far. */
+  done: number;
+  /** ISO time of the last update. */
+  updatedAt: string;
+  /** The cockpit job this run belongs to, "" when not started from the cockpit. */
+  jobId: string;
+}
+
+export function runStateFile(home?: string): string {
+  return home ? `${home}/state/memory-run.json` : paiHomePath("state", "memory-run.json");
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The running run, null when there is none or its marker is stale (pid gone). */
+export function readRun(home?: string, isAlive: (pid: number) => boolean = alive): RunState | null {
+  try {
+    const r = JSON.parse(readFileSync(runStateFile(home), "utf8")) as RunState;
+    return r && typeof r.pid === "number" && isAlive(r.pid) ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+function write(file: string, r: RunState): void {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(r) + "\n", "utf8");
+  renameSync(tmp, file);
+}
+
+/** Who started this process: the cockpit sets PAI_RUN_BY / PAI_COCKPIT_JOB when it spawns a run. */
+export function starterFromEnv(env: NodeJS.ProcessEnv = process.env): { by: RunStarter; jobId: string } {
+  const by = env.PAI_RUN_BY === "cockpit" || env.PAI_RUN_BY === "daemon" ? env.PAI_RUN_BY : "cli";
+  return { by, jobId: env.PAI_COCKPIT_JOB ?? "" };
+}
+
+export interface RunHandle {
+  /** Record the backlog at start (known once the embed run has counted it). */
+  setBacklog(n: number): void;
+  /** Record progress (throttled to one write per `minGapMs`). */
+  progress(done: number): void;
+  /** Remove the marker (only if it is still this run's). */
+  release(): void;
+}
+
+/** Take the marker for this process; null when another live run holds it. */
+export function acquireRun(
+  kind: RunKind,
+  o: { by?: RunStarter; jobId?: string; backlogStart?: number | null; home?: string; now?: () => number; minGapMs?: number } = {},
+): RunHandle | null {
+  const file = runStateFile(o.home);
+  const held = readRun(o.home);
+  if (held && held.pid !== process.pid) return null;
+  const now = o.now ?? Date.now;
+  const starter = starterFromEnv();
+  const state: RunState = {
+    kind,
+    pid: process.pid,
+    by: o.by ?? starter.by,
+    startedAt: new Date(now()).toISOString(),
+    backlogStart: o.backlogStart ?? null,
+    done: 0,
+    updatedAt: new Date(now()).toISOString(),
+    jobId: o.jobId ?? starter.jobId,
+  };
+  write(file, state);
+  let last = now();
+  const gap = o.minGapMs ?? 2000;
+  return {
+    setBacklog(n) {
+      state.backlogStart = n;
+      try { write(file, state); } catch { /* best effort */ }
+    },
+    progress(done) {
+      const t = now();
+      if (t - last < gap) return;
+      last = t;
+      state.done = done;
+      state.updatedAt = new Date(t).toISOString();
+      try { write(file, state); } catch { /* progress is best effort */ }
+    },
+    release() {
+      try {
+        if (readRun(o.home)?.pid === process.pid) rmSync(file, { force: true });
+      } catch { /* a stale marker is ignored by readRun */ }
+    },
+  };
+}

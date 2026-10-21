@@ -23,6 +23,8 @@ export interface EmbedPassRecord {
   at: number;
   outcome: EmbedPassOutcome;
   embedded: number;
+  /** How long the pass ran (ms); absent on records from before this was kept. */
+  durationMs?: number;
   /** Why it yielded (outcome "yielded" only). */
   reason?: string;
 }

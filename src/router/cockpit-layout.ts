@@ -151,6 +151,13 @@ const SHIPPED = {
   hitBad: 0.5,
   errorWarn: 0.02,
   errorBad: 0.1,
+  // Memory section: title, refresh, embedding coverage colours (ratios 0..1), and how long
+  // a started run may take to write its marker before the card stops reading "starting".
+  memoryTitle: "Memory",
+  memoryPollMs: 5000,
+  memoryCoverageWarn: 0.99,
+  memoryCoverageBad: 0.5,
+  memoryStartGraceSecs: 120,
 } as const;
 
 /** The layout policy of the cockpit page, read at page-build time. */
@@ -253,6 +260,13 @@ export interface CockpitLayout {
   /** an error rate at/above errorBad reads red, at/above errorWarn amber (ratios 0..1). */
   errorWarn: number;
   errorBad: number;
+  /** Memory section: its title, refresh interval (ms), and embedding coverage ratio below which
+   *  it reads amber (Warn) / red (Bad); a started run is "starting" for at most the grace (s). */
+  memoryTitle: string;
+  memoryPollMs: number;
+  memoryCoverageWarn: number;
+  memoryCoverageBad: number;
+  memoryStartGraceSecs: number;
 }
 
 /** The shipped probe fallbacks, kept only for when the defaults file is missing a key. */
@@ -349,5 +363,10 @@ export function cockpitLayout(): CockpitLayout {
     hitBad: num(s, "hitBad", SHIPPED.hitBad),
     errorWarn: num(s, "errorWarn", SHIPPED.errorWarn),
     errorBad: num(s, "errorBad", SHIPPED.errorBad),
+    memoryTitle: str(s, "memoryTitle", SHIPPED.memoryTitle),
+    memoryPollMs: num(s, "memoryPollMs", SHIPPED.memoryPollMs),
+    memoryCoverageWarn: num(s, "memoryCoverageWarn", SHIPPED.memoryCoverageWarn),
+    memoryCoverageBad: num(s, "memoryCoverageBad", SHIPPED.memoryCoverageBad),
+    memoryStartGraceSecs: num(s, "memoryStartGraceSecs", SHIPPED.memoryStartGraceSecs),
   };
 }

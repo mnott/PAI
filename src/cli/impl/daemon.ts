@@ -194,7 +194,6 @@ async function cmdStatus(): Promise<number> {
     console.log(dim(`    PID:         ${resolveDaemonPid() ?? "unknown"}`));
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
-    if (s["dashboard"]) console.log(dim(`    Dashboard:   ${s["dashboard"]}`));
     const quiet = readQuiet();
     if (quiet.on) console.log(warn(`    Quiet:       ${describeQuiet(quiet)}`));
 

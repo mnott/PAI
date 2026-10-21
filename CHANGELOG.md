@@ -8,6 +8,7 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Added
 
+- **Cockpit Memory section:** the memory status page moved from the separate `127.0.0.1:8770` server (config key `dashboard`, now removed) into the cockpit's Memory section, with `embed backlog` / `stop` / `index now` actions that show progress, rate and ETA and refuse a second run.
 - **Cockpit layout:** the cockpit is arranged in sections by purpose, and sections and tiles can be rearranged by drag and drop; tiles drop where the pointer is. `router.cockpit.sections` limits the page to the listed sections. Cards fold, and folds and open lists survive a refresh and a redraw. A refresh no longer moves the page, and the page fits its viewport at any zoom and font size.
 - **Cockpit models:** the Models section shows one card per consumer, titled by purpose (including the PAI embedding card and on-demand models), with live tiles, a metric tile with sparkline, a single local-model switch, and a start/stop action configured per runtime. Models carry editable aliases (pencil next to the headline, working on touch with save, cancel and reset). Numbers use binary GB and match the engine's own monitor; disabled providers and unloaded tiers no longer appear as down.
 - **Cockpit on a phone:** session names, the sessions and pause tables, and stacked tables fit the screen; headers are compact and card names stay readable. Tables drop columns that are empty in every row, and chart text keeps its size at any chart width.

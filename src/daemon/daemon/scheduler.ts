@@ -54,6 +54,7 @@ import {
   shutdownRequested,
   setIndexInProgress,
   setLastIndexTime,
+  setLastIndexPass,
   setIndexSchedulerTimer,
   setEmbedInProgress,
   setLastEmbedTime,
@@ -159,6 +160,7 @@ export async function runIndex(): Promise<void> {
     );
     const elapsed = Date.now() - t0;
     setLastIndexTime(Date.now());
+    setLastIndexPass({ at: Date.now(), durationMs: elapsed, projects, files: result.filesProcessed, chunks: result.chunksCreated });
     passFailures.delete("index");
     process.stderr.write(
       `[pai-daemon] Index complete: ${projects} projects, ` +
@@ -368,7 +370,7 @@ export async function runEmbed(): Promise<void> {
           throw e;
         });
         if (r) {
-          setLastEmbedPass({ at: Date.now(), outcome: r.outcome ?? "done", embedded: r.count, ...(r.reason ? { reason: r.reason } : {}) });
+          setLastEmbedPass({ at: Date.now(), durationMs: Date.now() - t0, outcome: r.outcome ?? "done", embedded: r.count, ...(r.reason ? { reason: r.reason } : {}) });
           return { count: r.count };
         }
         process.stderr.write("[pai-daemon] embed pass: cannot spawn child; running in-process at normal priority\n");
@@ -387,7 +389,7 @@ export async function runEmbed(): Promise<void> {
           maxMillis: maxMinutes * 60_000,
           batchSize: EMBED_PASS_BATCH_SIZE,
           shouldYield: liveYieldCheck(maxLoad),
-          onEnd: (r) => setLastEmbedPass({ at: Date.now(), ...r }),
+          onEnd: (r) => setLastEmbedPass({ at: Date.now(), durationMs: Date.now() - t0, ...r }),
         },
       );
       return { count };

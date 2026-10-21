@@ -1,26 +1,22 @@
 /**
- * dashboard.ts — read-only memory status dashboard served by the daemon.
+ * dashboard.ts — the memory status the cockpit's Memory section shows.
  *
  * Embedding and index passes run unattended for hours; a crashed embed pass
- * went unnoticed for 7 h. This puts what is running and whether it is healthy
- * on one page (and /api/status) reachable from a phone on the tailnet.
+ * went unnoticed for 7 h. DashboardState samples what is running and whether
+ * it is healthy; the daemon answers it over IPC (`memory_dashboard`) and the
+ * router's /cockpit/memory renders it. No server of its own.
  *
  * Nothing here computes anything per request: a background tick (30 s) samples
  * the job table, binding and backend health, and real row counts are refreshed
  * at most every 5 min. Requests only assemble the cached values.
  */
 
-import { execFile } from "node:child_process";
-import { createServer, type Server } from "node:http";
-import { promisify } from "node:util";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { EmbeddingBinding, StorageBackend } from "../storage/interface.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 import { bindingMatches, mismatchReason } from "../memory/embedding-binding.js";
-import { DASHBOARD_HTML } from "./dashboard-page.js";
-import type { DashboardConfig } from "./config.js";
 import { paiHomePath } from "../config/pai-home.js";
 
 const TICK_MS = 30_000;
@@ -34,34 +30,6 @@ const HISTORY_PRUNE_AGE_MS = 2 * 60 * 60_000; // 2 hours
 export type Level = "green" | "amber" | "red";
 const RANK: Record<Level, number> = { green: 0, amber: 1, red: 2 };
 const worst = (ls: Level[]): Level => ls.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), "green" as Level);
-
-// ---------------------------------------------------------------------------
-// Host check (DNS-rebinding guard)
-// ---------------------------------------------------------------------------
-
-/** Host header without port; IPv6 literals keep their brackets stripped. */
-function hostName(header: string | undefined): string {
-  if (!header) return "";
-  const h = header.trim().toLowerCase();
-  if (h.startsWith("[")) return h.slice(1, h.indexOf("]"));
-  return h.replace(/:\d+$/, "");
-}
-
-export function hostAllowed(header: string | undefined, allowed: Iterable<string>): boolean {
-  const h = hostName(header);
-  return h !== "" && new Set([...allowed].map((a) => a.toLowerCase())).has(h);
-}
-
-/** Tailnet DNS name and IPs of this machine from `tailscale status --json`; empty when unavailable. */
-export async function tailnetHosts(): Promise<string[]> {
-  try {
-    const { stdout } = await promisify(execFile)("tailscale", ["status", "--json"], { timeout: 3000 });
-    const self = (JSON.parse(stdout) as { Self?: { DNSName?: string; TailscaleIPs?: string[] } }).Self;
-    return [self?.DNSName?.replace(/\.$/, ""), ...(self?.TailscaleIPs ?? [])].filter((x): x is string => !!x);
-  } catch {
-    return [];
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Sources (everything the dashboard reads; faked in tests)
@@ -377,53 +345,14 @@ export class DashboardState {
   }
 }
 
-// ---------------------------------------------------------------------------
-// HTTP server
-// ---------------------------------------------------------------------------
-
-export interface DashboardHandle {
-  server: Server;
-  url: string;
-  stop(): void;
-}
-
-export async function startDashboard(
-  cfg: DashboardConfig,
-  src: DashboardSource,
-  opts: { extraHosts?: string[]; historyPath?: string } = {},
-): Promise<DashboardHandle> {
+/** Start the sampling tick (30 s); the first sample is taken before this resolves. */
+export async function startDashboardState(src: DashboardSource, opts: { historyPath?: string } = {}): Promise<{ state: DashboardState; stop(): void }> {
   const state = new DashboardState(src, Date.now, opts.historyPath);
   await state.loadHistory();
-  const allowed = [cfg.bind, "localhost", "127.0.0.1", "::1", ...(opts.extraHosts ?? (await tailnetHosts()))];
-
-  const server = createServer((req, res) => {
-    const deny = (code: number, msg: string) => { res.writeHead(code, { "content-type": "text/plain" }); res.end(msg); };
-    if (!hostAllowed(req.headers.host, allowed)) return deny(403, "forbidden host");
-    if (req.method !== "GET" && req.method !== "HEAD") return deny(405, "read-only");
-    const path = (req.url ?? "/").split("?")[0];
-    if (path === "/api/status") {
-      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-      return res.end(JSON.stringify(state.status()));
-    }
-    if (path === "/") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      return res.end(DASHBOARD_HTML);
-    }
-    deny(404, "not found");
-  });
-
   await state.tick();
   const timer = setInterval(() => void state.tick(), TICK_MS);
   timer.unref();
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(cfg.port, cfg.bind, resolve);
-  });
-  return {
-    server,
-    url: `http://${cfg.bind}:${cfg.port}/`,
-    stop: () => { clearInterval(timer); server.close(); },
-  };
+  return { state, stop: () => clearInterval(timer) };
 }
 
 // ---------------------------------------------------------------------------
