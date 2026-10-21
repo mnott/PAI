@@ -10,6 +10,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from "node:path";
 
 export interface LocalStart {
+  /** instance id `<model>#<n>`; records written before instances existed have none (read as `<tier>#1`) */
+  id?: string;
   tier: string;
   provider: string;
   port: number;
@@ -18,6 +20,8 @@ export interface LocalStart {
   /** how long the start may take before it counts as failed */
   readyMs: number;
   log: string;
+  /** memory the start promised, GB: counted as used by other starts until this one is ready */
+  needGb?: number;
   /** set when the launch failed (server exited, not ready in time) */
   failed?: string;
 }
@@ -35,33 +39,57 @@ export interface LocalStartView {
 
 export const localStartPath = (logDir: string): string => join(logDir, "local-start.json");
 
-export function writeLocalStart(logDir: string, s: LocalStart): void {
+const keyOf = (s: Pick<LocalStart, "id" | "tier">): string => s.id ?? `${s.tier}#1`;
+
+const valid = (s: unknown): s is LocalStart =>
+  !!s && typeof (s as LocalStart).tier === "string" && typeof (s as LocalStart).startedAt === "number" && typeof (s as LocalStart).port === "number";
+
+/** All starts in flight or failed, by instance id. A file holding one bare record (older format) reads as `{<tier>#1: it}`. */
+export function readLocalStarts(logDir: string): Record<string, LocalStart> {
+  const path = localStartPath(logDir);
+  if (!existsSync(path)) return {};
+  try {
+    const j = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (valid(j)) return { [keyOf(j)]: j };
+    const out: Record<string, LocalStart> = {};
+    if (j && typeof j === "object") for (const [id, r] of Object.entries(j)) if (valid(r)) out[id] = r;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeAll(logDir: string, all: Record<string, LocalStart>): void {
   const path = localStartPath(logDir);
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(s) + "\n", "utf8");
+  writeFileSync(tmp, JSON.stringify(all) + "\n", "utf8");
   renameSync(tmp, path);
 }
 
-export function clearLocalStart(logDir: string): void {
-  rmSync(localStartPath(logDir), { force: true });
+export function writeLocalStart(logDir: string, s: LocalStart): void {
+  writeAll(logDir, { ...readLocalStarts(logDir), [keyOf(s)]: s });
 }
 
-/** Mark the recorded start failed (kept so the cockpit can say so). */
-export function failLocalStart(logDir: string, reason: string): void {
-  const s = readLocalStart(logDir);
-  if (s) writeLocalStart(logDir, { ...s, failed: reason });
+/** Drop the record of instance `id`; without an id, every record. */
+export function clearLocalStart(logDir: string, id?: string): void {
+  if (id === undefined) return void rmSync(localStartPath(logDir), { force: true });
+  const { [id]: _gone, ...rest } = readLocalStarts(logDir);
+  if (Object.keys(rest).length === 0) rmSync(localStartPath(logDir), { force: true });
+  else writeAll(logDir, rest);
 }
 
+/** Mark the recorded start failed (kept so the cockpit can say so); without an id, the most recent one. */
+export function failLocalStart(logDir: string, reason: string, id?: string): void {
+  const all = readLocalStarts(logDir);
+  const key = id ?? Object.keys(all).sort((a, b) => all[b].startedAt - all[a].startedAt)[0];
+  if (key && all[key]) writeAll(logDir, { ...all, [key]: { ...all[key], failed: reason } });
+}
+
+/** The most recent start (single-slot view for callers that show one). */
 export function readLocalStart(logDir: string): LocalStart | null {
-  const path = localStartPath(logDir);
-  if (!existsSync(path)) return null;
-  try {
-    const s = JSON.parse(readFileSync(path, "utf8")) as LocalStart;
-    return typeof s.tier === "string" && typeof s.startedAt === "number" && typeof s.port === "number" ? s : null;
-  } catch {
-    return null;
-  }
+  const all = Object.values(readLocalStarts(logDir));
+  return all.sort((a, b) => b.startedAt - a.startedAt)[0] ?? null;
 }
 
 /** The start as the cockpit shows it: loading until readyMs, then (or when marked) failed. */

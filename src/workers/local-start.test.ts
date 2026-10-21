@@ -31,3 +31,28 @@ describe("record file", () => {
     expect(readLocalStart(d)).toBeNull();
   });
 });
+
+describe("one record per instance", () => {
+  it("keeps several starts side by side; clear and fail act on one id", async () => {
+    const { readLocalStarts } = await import("./local-start.js");
+    const d = mkdtempSync(join(tmpdir(), "pai-start-"));
+    writeLocalStart(d, { ...base, id: "a#1" });
+    writeLocalStart(d, { ...base, id: "a#2", port: 8035, startedAt: base.startedAt + 1 });
+    expect(Object.keys(readLocalStarts(d)).sort()).toEqual(["a#1", "a#2"]);
+    expect(readLocalStart(d)?.id).toBe("a#2");
+    failLocalStart(d, "x", "a#1");
+    expect(readLocalStarts(d)["a#1"].failed).toBe("x");
+    expect(readLocalStarts(d)["a#2"].failed).toBeUndefined();
+    clearLocalStart(d, "a#1");
+    expect(Object.keys(readLocalStarts(d))).toEqual(["a#2"]);
+    clearLocalStart(d, "a#2");
+    expect(readLocalStart(d)).toBeNull();
+  });
+  it("reads an older single-record file as <tier>#1", async () => {
+    const { readLocalStarts, localStartPath } = await import("./local-start.js");
+    const { writeFileSync } = await import("node:fs");
+    const d = mkdtempSync(join(tmpdir(), "pai-start-"));
+    writeFileSync(localStartPath(d), JSON.stringify(base));
+    expect(Object.keys(readLocalStarts(d))).toEqual(["coder-next#1"]);
+  });
+});

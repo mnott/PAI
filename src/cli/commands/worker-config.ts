@@ -56,8 +56,10 @@ import {
   unsetClass,
   updateProvider,
 } from "../../workers/providers.js";
-import { clearLocalStart, failLocalStart, writeLocalStart } from "../../workers/local-start.js";
-import { activeTier, fetchServedModels, fmtRss, LocalTierError, parseServers, planStart, readLocalConfig, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
+import { clearLocalStart, failLocalStart, readLocalStarts, writeLocalStart } from "../../workers/local-start.js";
+import { instanceNumber, instancesFromProcesses, readInstances, reconcileInstances, writeInstances, type LocalInstance } from "../../workers/local-instances.js";
+import { allocatePort, checkStart, freeMemoryGb, neededGb, sizeOnDiskGb } from "../../workers/local-memory.js";
+import { fetchServedModels, fmtRss, LocalTierError, parseServers, planStart, readLocalConfig, resolveModelPath, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
 import { PROMPTS, aggregate, planArms, readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
 import {
   POLICY_MODES,
@@ -772,39 +774,29 @@ export function serverLine(s: RunningServer): string {
   return `${name}  provider=${s.provider ?? "?"}  port=${s.port ?? "?"}  pid=${s.pid}  rss=${fmtRss(s.rssKb)}`;
 }
 
-/** Stop every local server PAI knows, then wait until their ports are free. */
-export async function stopAll(cfg: LocalConfig): Promise<void> {
-  for (const s of listServers(cfg)) process.kill(s.pid, "SIGTERM");
-  const deadline = Date.now() + 60_000;
-  while (listServers(cfg).length > 0 && Date.now() < deadline) await sleep(1000);
-  for (const s of listServers(cfg)) process.kill(s.pid, "SIGKILL");
-  const ports = [...new Set(Object.values(cfg.tiers).map((t) => t.port))];
-  const freeBy = Date.now() + 30_000;
-  while (Date.now() < freeBy && (await Promise.all(ports.map(isUp))).some(Boolean)) await sleep(1000);
-}
-
 export async function isUp(port: number): Promise<boolean> {
   return (await fetchServedModels(port)) !== null;
 }
 
-/** The active tier (its port answers with its model name), null when none. */
-export async function currentTier(cfg: LocalConfig): Promise<LocalTier | null> {
-  return activeTier(cfg, fetchServedModels);
-}
-
 export interface StartDeps {
-  /** workers.yaml whose `local:` follows the switch (default: the live one). */
-  yamlPath?: string;
-  /** Ledger file for the LOCAL-SWITCH line (default: the workers ledger). */
+  /** Ledger file for the LOCAL-START / LOCAL-STOP lines (default: the workers ledger). */
   ledger?: string;
-  stop?: (cfg: LocalConfig) => Promise<void>;
   up?: (port: number) => Promise<boolean>;
-  current?: (cfg: LocalConfig) => Promise<LocalTier | null>;
   /** Start the server; returns its exit code while it has exited, null while it runs. */
   launch?: (plan: StartPlan) => () => number | null;
   pollMs?: number;
-  /** Where the start-in-flight record goes (default: the workers log dir). */
+  /** Where the state files go (default: the workers log dir). */
   startDir?: string;
+  /** Live servers of catalogue models (default: ps + lsof). */
+  servers?: () => RunningServer[];
+  /** Free memory after the reserve, GB (default: measured). */
+  freeGb?: () => Promise<number | undefined>;
+  /** Disk size of the model, GB (default: measured). */
+  diskGb?: (tier: LocalTier) => number;
+  /** Port allocator override (default: allocatePort with a bind test). */
+  bindable?: (port: number) => Promise<boolean>;
+  /** Start although memory is short. */
+  force?: boolean;
 }
 
 function launchDetached(plan: StartPlan): () => number | null {
@@ -817,75 +809,188 @@ function launchDetached(plan: StartPlan): () => number | null {
   return () => child.exitCode;
 }
 
+/** Live servers of catalogue models, one per (model, port). */
+function liveServers(cfg: LocalConfig): RunningServer[] {
+  return instancesFromProcesses(psTable("pid=,rss=,command="), cfg, scriptListeners(cfg));
+}
+
+/** The instances running now: the state file joined with the live servers (processes win); written back. */
+export function currentInstances(cfg: LocalConfig, deps: Pick<StartDeps, "startDir" | "servers"> = {}): LocalInstance[] {
+  const dir = deps.startDir ?? logDir();
+  const rows = reconcileInstances(readInstances(dir), (deps.servers ?? (() => liveServers(cfg)))(), cfg);
+  writeInstances(dir, rows);
+  return rows;
+}
+
 /**
- * Stop every local server, start `tier`'s and wait until it answers; then
- * point workers.yaml `local:` at the tier's provider and write LOCAL-SWITCH.
+ * Start one more instance of `model` and wait until it answers. Other
+ * instances keep running; a short memory or a full model (maxInstances) refuses.
  */
-export async function startTier(
-  cfg: LocalConfig,
-  target: string,
-  tier: LocalTier,
-  plan: StartPlan = planStart(cfg, tier),
-  deps: StartDeps = {},
-): Promise<void> {
-  const from = await (deps.current ?? currentTier)(cfg).catch(() => null);
-  const startDir = deps.startDir ?? logDir();
-  await (deps.stop ?? stopAll)(cfg);
-  writeLocalStart(startDir, { tier: tier.tier, provider: tier.provider, port: tier.port, startedAt: Date.now(), readyMs: plan.readyMs, log: plan.logPath });
+export async function startInstance(cfg: LocalConfig, model: string, deps: StartDeps = {}): Promise<LocalInstance> {
+  const tier = cfg.tiers[model];
+  if (!tier) throw new LocalTierError(`no model "${model}" (configured: ${Object.keys(cfg.tiers).join(", ") || "none"})`);
+  const dir = deps.startDir ?? logDir();
+  const rows = currentInstances(cfg, deps);
+  const mine = rows.filter((r) => r.model === model && r.state !== "failed");
+  if (mine.length >= tier.maxInstances) throw new LocalTierError(`${model}: ${mine.length} of ${tier.maxInstances} instances already running (maxInstances)`);
+  let n = 1;
+  while (rows.some((r) => r.id === `${model}#${n}`)) n++;
+  const id = `${model}#${n}`;
+
+  const inflight = Object.values(readLocalStarts(dir)).filter((s) => s.failed === undefined && Date.now() - s.startedAt <= s.readyMs);
+  const needGb = neededGb({ memoryGb: tier.memoryGb, diskGb: tier.engine === "vllm-mlx" ? (deps.diskGb ?? ((t) => sizeOnDiskGb(resolveModelPath(t.model))))(tier) : undefined });
+  const freeGb = await (deps.freeGb ?? (() => freeMemoryGb(cfg.launcher.reserveGb)))();
+  const check = checkStart({ label: `${model} #${n}`, needGb, freeGb, reserveGb: cfg.launcher.reserveGb, inflightGb: inflight.reduce((a, s) => a + (s.needGb ?? 0), 0), force: deps.force });
+  if (!check.ok) throw new LocalTierError(check.message!);
+
+  const taken = [...rows.map((r) => r.port), ...Object.values(readLocalStarts(dir)).map((s) => s.port)];
+  const port = await allocatePort(tier.port, taken, deps.bindable);
+  const plan = planStart(cfg, tier, port, n);
+  const instance: LocalInstance = { id, model, provider: tier.provider, url: loopbackUrl(port), origin: "managed", port, state: "starting", startedAt: Date.now(), log: plan.logPath };
+  writeLocalStart(dir, { id, tier: model, provider: tier.provider, port, startedAt: instance.startedAt, readyMs: plan.readyMs, log: plan.logPath, needGb });
+  writeInstances(dir, [...rows.filter((r) => r.id !== id), instance]);
   const exited = (deps.launch ?? launchDetached)(plan);
-  out(dim(`starting ${tier.label} (${tier.provider}) on :${tier.port}, log ${plan.logPath}`));
+  out(dim(`starting ${tier.label} #${n} (${tier.provider}) on :${port}, log ${plan.logPath}`));
   const up = deps.up ?? isUp;
   const deadline = Date.now() + plan.readyMs;
-  while (!(await up(tier.port))) {
+  const failWith = (error: string, msg: string): never => {
+    failLocalStart(dir, error, id);
+    writeInstances(dir, readInstances(dir).map((r) => (r.id === id ? { ...r, state: "failed" as const, error } : r)));
+    throw new LocalTierError(msg);
+  };
+  while (!(await up(port))) {
     const code = exited();
     // a script may hand off to a background server and exit 0
-    if (code !== null && !(tier.engine === "script" && code === 0)) {
-      failLocalStart(startDir, `server exited (${code})`);
-      throw new LocalTierError(`server exited (${code}); see ${plan.logPath}`);
-    }
-    if (Date.now() > deadline) {
-      failLocalStart(startDir, "not ready in time");
-      throw new LocalTierError(`not ready after ${Math.round(plan.readyMs / 60000)} min; see ${plan.logPath}`);
-    }
+    if (code !== null && !(tier.engine === "script" && code === 0)) failWith(`server exited (${code})`, `server exited (${code}); see ${plan.logPath}`);
+    if (Date.now() > deadline) failWith("not ready in time", `not ready after ${Math.round(plan.readyMs / 60000)} min; see ${plan.logPath}`);
     await sleep(deps.pollMs ?? 5000);
   }
-  clearLocalStart(startDir);
-  const yamlPath = deps.yamlPath ?? workersYamlPath();
-  setLocalPreference(yamlPath, tier.provider);
-  appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-SWITCH", {
-    from: from?.tier ?? "none",
-    to: tier.tier,
-    provider: tier.provider,
+  clearLocalStart(dir, id);
+  const s = (deps.servers ?? (() => liveServers(cfg)))().find((x) => x.port === port);
+  const ready: LocalInstance = { ...instance, state: "ready", ...(s ? { pid: s.pid } : {}) };
+  writeInstances(dir, [...readInstances(dir).filter((r) => r.id !== id), ready]);
+  appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-START", {
+    model, id, port, pid: s?.pid ?? "?", freeGb: check.freeGb === undefined ? "?" : Math.round(check.freeGb * 10) / 10, needGb: Math.round(needGb * 10) / 10,
   });
-  const s = listServers(cfg).find((x) => x.port === tier.port);
-  out(ok(`${target} up: ${tier.provider} on port ${tier.port}${s ? `, rss ${fmtRss(s.rssKb)}` : ""}`));
+  out(ok(`${id} up: ${tier.provider} on port ${port}${s ? `, rss ${fmtRss(s.rssKb)}` : ""}`));
+  return ready;
+}
+
+/** Deprecated `pai worker local <tier>` / cockpit switch: starts one instance and no longer stops the others. */
+export async function startTier(cfg: LocalConfig, target: string, _tier?: LocalTier, _plan?: StartPlan, deps: StartDeps = {}): Promise<void> {
+  await startInstance(cfg, target, deps);
+}
+
+export interface StopDeps extends Pick<StartDeps, "ledger" | "startDir" | "servers" | "pollMs" | "up"> {
+  /** Requests in flight on an instance (default: none known). */
+  inflight?: (id: string) => number;
+  /** Stop although requests are in flight. */
+  confirm?: boolean;
+  /** Stop one server: SIGTERM its pid and the engine children below it; resolves when the port is free. */
+  kill?: (inst: LocalInstance) => Promise<void>;
+}
+
+/** pid and every descendant (the engine child of a Strata server.py). */
+function pidTree(root: number): number[] {
+  const kids = new Map<number, number[]>();
+  for (const l of psTable("pid=,ppid=").split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)/.exec(l);
+    if (m) kids.set(Number(m[2]), [...(kids.get(Number(m[2])) ?? []), Number(m[1])]);
+  }
+  const all = [root];
+  for (let i = 0; i < all.length; i++) all.push(...(kids.get(all[i]) ?? []));
+  return all;
+}
+
+async function killInstance(inst: LocalInstance, up: (port: number) => Promise<boolean>): Promise<void> {
+  if (inst.pid === undefined) return;
+  const tree = pidTree(inst.pid);
+  const signal = (sig: NodeJS.Signals) => tree.forEach((p) => { try { process.kill(p, sig); } catch { /* already gone */ } });
+  signal("SIGTERM");
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline && (await up(inst.port))) await sleep(1000);
+  if (await up(inst.port)) signal("SIGKILL");
+}
+
+/**
+ * Stop instances: `target` is an instance id (`gyro#2`) or a model name (its
+ * highest-numbered instances first; `count` of them, default one, `all` for
+ * every one). Only those pids and their children are signalled, the other
+ * copies keep running. Requests in flight refuse the stop unless `confirm`.
+ */
+export async function stopInstance(cfg: LocalConfig, target: string, opts: { count?: number; all?: boolean } = {}, deps: StopDeps = {}): Promise<LocalInstance[]> {
+  const dir = deps.startDir ?? logDir();
+  const rows = currentInstances(cfg, deps);
+  const byId = rows.find((r) => r.id === target);
+  const mine = rows.filter((r) => r.model === target).sort((a, b) => instanceNumber(b.id) - instanceNumber(a.id));
+  const picked = byId ? [byId] : opts.all ? mine : mine.slice(0, opts.count ?? 1);
+  if (picked.length === 0) throw new LocalTierError(`no running instance "${target}" (running: ${rows.map((r) => r.id).join(", ") || "none"})`);
+  if (!deps.confirm) {
+    const busy = picked.map((p) => [p.id, (deps.inflight ?? (() => 0))(p.id)] as const).filter(([, c]) => c > 0);
+    if (busy.length) throw new LocalTierError(`${busy.map(([i, c]) => `${i} has ${c} request(s) in flight`).join(", ")}; confirm to stop anyway (--yes)`);
+  }
+  for (const p of picked) {
+    await (deps.kill ?? ((i) => killInstance(i, deps.up ?? isUp)))(p);
+    writeInstances(dir, readInstances(dir).filter((r) => r.id !== p.id));
+    clearLocalStart(dir, p.id);
+    appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-STOP", { model: p.model, id: p.id, port: p.port, pid: p.pid ?? "?" });
+  }
+  return picked;
+}
+
+/** Stop every local server PAI knows (the instances, then anything left on a catalogue port), then wait until the ports are free. */
+export async function stopAll(cfg: LocalConfig): Promise<void> {
+  for (const m of new Set(currentInstances(cfg).map((r) => r.model))) await stopInstance(cfg, m, { all: true }, { confirm: true });
+  for (const s of listServers(cfg)) process.kill(s.pid, "SIGTERM");
+  const deadline = Date.now() + 60_000;
+  while (listServers(cfg).length > 0 && Date.now() < deadline) await sleep(1000);
+  for (const s of listServers(cfg)) process.kill(s.pid, "SIGKILL");
+  const ports = [...new Set(Object.values(cfg.tiers).map((t) => t.port))];
+  const freeBy = Date.now() + 30_000;
+  while (Date.now() < freeBy && (await Promise.all(ports.map(isUp))).some(Boolean)) await sleep(1000);
 }
 
 async function printLocalStatus(cfg: LocalConfig): Promise<void> {
   const servers = listServers(cfg);
-  const active = await currentTier(cfg);
-  if (servers.length === 0) out(dim("no local model server running"));
+  const rows = currentInstances(cfg);
+  if (servers.length === 0 && rows.length === 0) out(dim("no local model server running"));
   for (const s of servers) {
-    out(serverLine(s));
+    const inst = rows.find((r) => r.port === s.port);
+    out(`${inst ? `${inst.id}  ` : ""}${serverLine(s)}`);
   }
-  out(active ? `active: ${active.tier} (${active.label})` : dim("active: none"));
-  out(dim(`tiers: ${Object.keys(cfg.tiers).join(", ") || "(none configured)"}`));
+  const pending = rows.filter((x) => x.state !== "ready" && !servers.some((s) => s.port === x.port));
+  for (const x of pending) out(`${x.id}  ${x.state}  port=${x.port}${x.error ? `  ${x.error}` : ""}`);
+  out(dim(`models: ${Object.keys(cfg.tiers).join(", ") || "(none configured)"}`));
 }
 
 export const workerLocalCommand: CommandDef = {
   name: "local",
-  summary: "Which local model runs; the operator switches tiers",
+  summary: "Which local models run; the operator starts and stops them",
   description:
     "Without TARGET: one line with the running local model (the daemon's answer, `--local` runs on it). Sessions never probe ports or start servers.\n" +
-    "TARGET is a tier name (stops every local server — vllm-mlx, Strata, scripts — starts that tier, points workers.yaml local: at it), `off` (stops all) or `status` (what is up).\n" +
-    "Tiers are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).",
-  args: [{ name: "TARGET", required: false, summary: "A tier name, off, or status; omit for the running local model" }],
-  options: [{ name: "dry-run", type: "boolean", summary: "Print the exact commands without starting or stopping anything" }],
-  examples: ["pai worker local", "pai worker local status", "pai worker local big --dry-run"],
+    "  start MODEL [--count N]   start N more instances of MODEL (own port each; refused when memory or maxInstances is short; --force skips the memory check)\n" +
+    "  stop MODEL|ID [--count N | --all]   stop instances (highest number first); refused while requests are in flight unless --yes\n" +
+    "  status                    what is up\n" +
+    "  off                       stop every local server\n" +
+    "  MODEL                     deprecated alias of `start MODEL` (kept one release). It no longer stops the other models first.\n" +
+    "Models are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).",
+  args: [
+    { name: "TARGET", required: false, summary: "start, stop, status, off, or a model name; omit for the running local model" },
+    { name: "NAME", required: false, summary: "The model (start) or model / instance id (stop)" },
+  ],
+  options: [
+    { name: "dry-run", type: "boolean", summary: "Print the exact commands without starting or stopping anything" },
+    { name: "count", type: "string", value: "N", summary: "start / stop: how many instances (default 1)" },
+    { name: "all", type: "boolean", summary: "stop: every instance of the model" },
+    { name: "force", type: "boolean", summary: "start: skip the memory check" },
+    { name: "yes", type: "boolean", summary: "stop: even with requests in flight" },
+  ],
+  examples: ["pai worker local", "pai worker local status", "pai worker local start big --count 2", "pai worker local stop big#2", "pai worker local off"],
   seeAlso: ["pai worker policy", "pai worker config path"],
   async run(ctx) {
     try {
-      const target = ctx.args.TARGET as string | undefined;
+      let target = ctx.args.TARGET as string | undefined;
+      let name = ctx.args.NAME as string | undefined;
       if (!target) {
         const line = await sessionWorkersLine();
         if (line) out(line);
@@ -898,17 +1003,29 @@ export const workerLocalCommand: CommandDef = {
         await stopAll(cfg);
         return void out(ok("local model servers stopped"));
       }
-      const tier = cfg.tiers[target];
-      if (!tier) throw new LocalTierError(`no tier "${target}" (configured: ${Object.keys(cfg.tiers).join(", ") || "none"})`);
-      const plan = planStart(cfg, tier);
+      let verb = target;
+      if (verb !== "start" && verb !== "stop") {
+        out(dim(`note: \`pai worker local ${target}\` is now \`pai worker local start ${target}\`; it no longer stops the other models`));
+        verb = "start";
+        name = target;
+        target = "start";
+      }
+      if (!name) throw new LocalTierError(`pai worker local ${verb} needs a model${verb === "stop" ? " or instance id" : ""}`);
+      const count = ctx.opts.count !== undefined ? Math.max(1, Math.floor(Number(ctx.opts.count)) || 1) : 1;
+      if (verb === "stop") {
+        if (ctx.dryRun) return void out(`would stop ${ctx.opts.all ? "all instances" : `${count} instance(s)`} of ${name}`);
+        const done = await stopInstance(cfg, name, { count, all: !!ctx.opts.all }, { confirm: !!ctx.opts.yes });
+        return void out(ok(`stopped ${done.map((d) => d.id).join(", ")}`));
+      }
+      const tier = cfg.tiers[name];
+      if (!tier) throw new LocalTierError(`no model "${name}" (configured: ${Object.keys(cfg.tiers).join(", ") || "none"})`);
       if (ctx.dryRun) {
-        for (const l of stopLines(cfg)) out(l);
-        out("sleep 10");
+        const plan = planStart(cfg, tier);
         out(plan.line);
         out(`until curl -s -m 3 ${loopbackUrl(tier.port, "/v1/models")} > /dev/null; do sleep 5; done`);
         return;
       }
-      await startTier(cfg, target, tier, plan);
+      for (let i = 0; i < count; i++) await startInstance(cfg, name, { force: !!ctx.opts.force });
     } catch (e) {
       fail(e, "pai worker local status");
     }

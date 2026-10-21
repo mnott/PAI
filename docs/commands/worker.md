@@ -1388,28 +1388,39 @@ See also: `pai worker policy`, `pai worker classes`
 
 ### pai worker local
 
-Which local model runs; the operator switches tiers
+Which local models run; the operator starts and stops them
 
 ```
-pai worker local [TARGET] [options]
+pai worker local [TARGET] [NAME] [options]
 ```
 
 Without TARGET: one line with the running local model (the daemon's answer, `--local` runs on it). Sessions never probe ports or start servers.
-TARGET is a tier name (stops every local server — vllm-mlx, Strata, scripts — starts that tier, points workers.yaml local: at it), `off` (stops all) or `status` (what is up).
-Tiers are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).
+  start MODEL [--count N]   start N more instances of MODEL (own port each; refused when memory or maxInstances is short; --force skips the memory check)
+  stop MODEL|ID [--count N | --all]   stop instances (highest number first); refused while requests are in flight unless --yes
+  status                    what is up
+  off                       stop every local server
+  MODEL                     deprecated alias of `start MODEL` (kept one release). It no longer stops the other models first.
+Models are listed under local_tiers: in workers.yaml. This does not change where workers are routed (see `pai worker policy`).
 
 | Argument | Required | Description |
 |---|---|---|
-| `TARGET` | no | A tier name, off, or status; omit for the running local model |
+| `TARGET` | no | start, stop, status, off, or a model name; omit for the running local model |
+| `NAME` | no | The model (start) or model / instance id (stop) |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--dry-run` | flag | — | Print the exact commands without starting or stopping anything |
+| `--count N` | string | — | start / stop: how many instances (default 1) |
+| `--all` | flag | — | stop: every instance of the model |
+| `--force` | flag | — | start: skip the memory check |
+| `--yes` | flag | — | stop: even with requests in flight |
 
 ```sh
 pai worker local
 pai worker local status
-pai worker local big --dry-run
+pai worker local start big --count 2
+pai worker local stop big#2
+pai worker local off
 ```
 
 See also: `pai worker policy`, `pai worker config path`
@@ -1648,7 +1659,7 @@ See also: `pai worker providers`
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
 | `pai worker route` | Print the routing table: per delegation tier the ordered models |
-| `pai worker local` | Which local model runs; the operator switches tiers |
+| `pai worker local` | Which local models run; the operator starts and stops them |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |
 | `pai worker proxy` | The local proxy for OpenAI-style providers |
