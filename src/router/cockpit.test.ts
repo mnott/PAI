@@ -3,6 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_WEIGHTS, buildCockpitData, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
+import { clearJobNameCache } from "./sessions.js";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -299,6 +300,33 @@ describe("cockpit http", () => {
       expect(bare).toContain("served");
       expect(bare).not.toMatch(/[0-9a-f]{8}/);
       expect(JSON.parse((await ask("/cockpit/queue")).body).localModelTitle).toContain("session d875bcac");
+
+      // a session the registry lists only by its project slug still shows its job name on the scheduler line
+      const uuid2 = "224db3e0-bafb-4bf7-bc09-2c63f6ab8e19";
+      const jobDir = join(tmp, "cfg", "jobs", "224db3e0");
+      mkdirSync(jobDir, { recursive: true });
+      writeFileSync(join(jobDir, "state.json"), JSON.stringify({ name: "PAI (4)" }));
+      writeFileSync(join(logDir, "router-sched.json"), JSON.stringify({
+        at: Date.now(), workers: {},
+        engines: { gyro: { inflight: { session: uuid2, worker: "w1", sinceMs: 1 }, queued: {}, counters: {} } },
+      }));
+      const prevHome = process.env.PAI_HOME;
+      const prevJobs = process.env.CLAUDE_CONFIG_DIR;
+      const home = join(tmp, "pai-home");
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, "agent-sessions.json"), JSON.stringify({ [uuid2]: "pai" }));
+      process.env.PAI_HOME = home;
+      process.env.CLAUDE_CONFIG_DIR = join(tmp, "cfg");
+      clearJobNameCache();
+      try {
+        expect(JSON.parse((await ask("/cockpit/queue")).body).localModelTitle).toContain("gyro in flight: PAI (4)");
+      } finally {
+        if (prevHome === undefined) delete process.env.PAI_HOME;
+        else process.env.PAI_HOME = prevHome;
+        if (prevJobs === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = prevJobs;
+        clearJobNameCache();
+      }
 
       // the page carries the panel and its buttons
       const page = await ask("/cockpit");

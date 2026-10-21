@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { jobSessionName, loadSessionMap, withJobNames, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, type WorkerWindow } from "./sessions.js";
+import { jobSessionName, loadSessionMap, resolveSessionName, withJobNames, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 
 describe("session mapper", () => {
   const dir = mkdtempSync(join(tmpdir(), "sess-"));
@@ -219,5 +219,79 @@ describe("background-job session names", () => {
     writeFileSync(join(projects, "-x-pai", "aaaaaaaa-9999.jsonl"), "");
     const map = loadSessionMap({ ...src, projectsDir: projects });
     expect(sessionDisplayName("aaaaaaaa-9999", map, jobs)).toBe("PAI (4)");
+  });
+});
+
+describe("display-name precedence: a session's own name beats its project slug", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sess-prec-"));
+  const jobs = join(dir, "jobs");
+  const job = (id8: string, name: string) => {
+    mkdirSync(join(jobs, id8), { recursive: true });
+    writeFileSync(join(jobs, id8, "state.json"), JSON.stringify({ name }));
+  };
+  job("224db3e0", "PAI (4)");
+  job("3333aaaa", "Job A");
+  job("4444bbbb", "Job B");
+  job("5555cccc", "Job C");
+  job("6666dddd", "Job D");
+  const ab = join(dir, "ab");
+  mkdirSync(ab);
+  writeFileSync(join(ab, "session-names.json"), JSON.stringify({ U1: "AIBroker Name", U2: "AIBroker B", U3: "AIBroker C" }));
+  writeFileSync(join(dir, "claude-map.json"), JSON.stringify({ "3333aaaa-1": { uid: "u1" }, "4444bbbb-1": { uid: "u2" }, "5555cccc-1": { uid: "u3" } }));
+  writeFileSync(join(dir, "w.status"), JSON.stringify({ id: "w1", label: "worker label", state: "done", rc: 0, claudeSession: "6666dddd-1" }));
+  // every session gets the project slug — the bug: an entry existed, so the job-name lookup never ran
+  writeFileSync(join(dir, "agents.json"), JSON.stringify({ "224db3e0-bafb-4bf7-bc09-2c63f6ab8e19": "pai", "3333aaaa-1": "pai", "4444bbbb-1": "pai", "5555cccc-1": "pai", "6666dddd-1": "pai" }));
+  const src = { workerDirs: [dir], agentSessionsFile: join(dir, "agents.json"), claudeMapFile: join(dir, "claude-map.json"), aibrokerDir: ab, jobsDir: jobs };
+
+  it("agent-sessions 'pai' plus a job name shows the job name; the slug stays as project", () => {
+    const map = loadSessionMap(src);
+    expect(sessionDisplayName("224db3e0-bafb-4bf7-bc09-2c63f6ab8e19", map, jobs)).toBe("PAI (4)");
+    expect(map.get("224db3e0-bafb-4bf7-bc09-2c63f6ab8e19")).toMatchObject({ project: "pai" });
+  });
+
+  it("an AIBroker name beats the job name and the slug", () => {
+    const map = loadSessionMap(src);
+    expect(sessionDisplayName("3333aaaa-1", map, jobs)).toBe("AIBroker Name");
+    expect(map.get("3333aaaa-1")).toMatchObject({ project: "pai", aibroker: true });
+  });
+
+  it("a worker id keeps its label over job name and slug", () => {
+    const map = loadSessionMap(src);
+    expect(sessionDisplayName("6666dddd-1", map, jobs)).toBe("worker label");
+    expect(map.get("6666dddd-1")).toMatchObject({ worker: "w1", project: "pai" });
+  });
+
+  it("only agent-sessions stays 'pai' as today", () => {
+    writeFileSync(join(dir, "only.json"), JSON.stringify({ "8888ffff-1": "pai" }));
+    const only = loadSessionMap({ ...src, agentSessionsFile: join(dir, "only.json") });
+    expect(sessionDisplayName("8888ffff-1", only, jobs)).toBe("pai");
+    expect(sessionDisplayName("7777eeee-1", only, jobs)).toBeNull();
+  });
+
+  it("withJobNames resolves ids the map carries only as a slug, and never relabels a named session", () => {
+    const map = loadSessionMap(src);
+    const named = withJobNames(map, ["4444bbbb-1", "5555cccc-1"], jobs);
+    expect(named.get("4444bbbb-1")).toMatchObject({ name: "AIBroker B", project: "pai" });
+    expect(named.get("5555cccc-1")).toMatchObject({ name: "AIBroker C", project: "pai" });
+    expect(named.get("224db3e0-bafb-4bf7-bc09-2c63f6ab8e19")).toBe(map.get("224db3e0-bafb-4bf7-bc09-2c63f6ab8e19"));
+  });
+
+  it("resolveSessionName: worker and AIBroker entries stand; a slug-only entry takes the job name", () => {
+    const worker: SessionInfo = { name: "worker label", worker: "w1", project: "pai" };
+    expect(resolveSessionName("x", worker, () => "Job X")).toBe(worker);
+    const named: SessionInfo = { name: "AIBroker Name", project: "pai", aibroker: true };
+    expect(resolveSessionName("x", named, () => "Job X")).toBe(named);
+    expect(resolveSessionName("x", { name: "pai", project: "pai" }, () => "Job X")).toEqual({ name: "Job X", project: "pai" });
+    expect(resolveSessionName("x", undefined, () => "Job X")).toEqual({ name: "Job X" });
+    expect(resolveSessionName("x", undefined, () => null)).toBeUndefined();
+  });
+
+  it("time attribution does not relabel a session an AIBroker name already tops", () => {
+    const windows: WorkerWindow[] = [
+      { worker: "f1", label: "worker label", provider: "glm", model: "glm-5.3-flash", startMs: Date.parse("2026-10-16T18:46:00Z"), endMs: Date.parse("2026-10-16T18:49:00Z"), state: "done" },
+    ];
+    const rows = [{ ts: "2026-10-16T18:47:40Z", session_id: "3333aaaa-1", model: "glm-5.3-flash", provider: "glm" }];
+    const map = loadSessionMap(src);
+    expect(withWorkerAttribution(map, rows, windows).get("3333aaaa-1")).toMatchObject({ name: "AIBroker Name" });
   });
 });
