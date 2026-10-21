@@ -19,8 +19,9 @@ function kpiMetric(key,t){
 }
 /** metric: big value + sub line. The card id after "kpis." picks the metric. */
 Win.registerType("metric",{minW:110,minH:68,defaultH:90,
- mount:function(ctx){ctx.body.innerHTML='<div class="wm"><b class="wm-v" data-k="v"></b><span class="wm-s" data-k="s"></span></div>'},
+ mount:function(ctx){ctx.body.innerHTML='<div class="wm"><div class="wm-sp" data-k="spark"></div><b class="wm-v" data-k="v"></b><small class="wm-u" data-k="u"></small><span class="wm-s" data-k="s"></span></div>'},
  update:function(ctx,d){
+  if(ctx.id.indexOf("kpis.")!==0){sysMetricUpdate(ctx,d);return}
   if(!d||!d.totals)return;
   var m=kpiMetric(ctx.id.slice(5),d.totals);
   ctx.text("v",m.v);ctx.text("s",m.sub);

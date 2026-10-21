@@ -230,5 +230,5 @@ function render(){
 function load(){
  feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;render();if(Win)Win.update("data",j)});
 }
-function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;renderSystem();renderPower();renderDonuts()})}
+function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;renderSystem();renderPower();renderDonuts();if(Win)winFeedSystem(j)})}
 `;

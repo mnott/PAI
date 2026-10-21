@@ -253,7 +253,31 @@ function init(main,defaults,opts){
  }else window.addEventListener("resize",sync);
  return api;
 }
-var api={init:init,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
+/** Add cards by data (a structural change, spec 3.4): rows = [[id,...],...], one row split per entry, appended to
+ *  the group's column. A row whose ids the group's tree already holds (a saved layout) only gets its cards built. */
+function addCards(group,specs,rows){
+ var g=W.cards[group],i,j,fresh=[];
+ if(!g)return 0;
+ for(i=0;i<specs.length;i++)if(!W.cards[specs[i].id]){W.cards[specs[i].id]=buildCard(specs[i]);fresh.push(specs[i].id)}
+ if(!fresh.length)return 0;
+ var have={},cur=W.kids[group]&&W.kids[group].k?W.kids[group]:null,a=cur?ids(cur):[],add=[];
+ for(i=0;i<a.length;i++)have[a[i]]=1;
+ for(i=0;i<rows.length;i++){
+  var row=[];for(j=0;j<rows[i].length;j++)if(!have[rows[i][j]])row.push(leaf(rows[i][j]));
+  if(row.length===rows[i].length)add.push(split("r",row,row.map(function(){return 1/row.length})));
+  else for(j=0;j<row.length;j++)add.push(row[j]);
+ }
+ if(add.length){
+  var ch=cur?(cur.d==="c"?cur.ch.slice():[cur]):[];
+  for(i=0;i<add.length;i++)ch.push(add[i]);
+  W.kids[group]=normalize(split("c",ch,ch.map(function(){return 1/ch.length})),false);
+ }
+ g.body.style.overflow="hidden";g.body.classList.add("cgroup");
+ for(i=0;i<fresh.length;i++){g.body.appendChild(W.cards[fresh[i]].el);W.order.push(fresh[i])}
+ relayout();save();
+ return fresh.length;
+}
+var api={init:init,addCards:addCards,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},

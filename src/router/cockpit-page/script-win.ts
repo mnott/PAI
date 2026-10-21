@@ -13,6 +13,7 @@ import { WIN_ANCHOR_JS } from "./win/anchor.js";
 import { WIN_CARD_JS } from "./win/card.js";
 import { WIN_KPIS_JS } from "./win/cards-kpis.js";
 import { WIN_POOL_JS } from "./win/cards-pool.js";
+import { WIN_SYSTEM_JS } from "./win/cards-system.js";
 
 /** The runtime source: the pure parts plus the card runtime, returning {Win, leaf, split, anchorInit}. */
 export const WIN_RUNTIME_JS = [WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS, WIN_INFO_JS, WIN_ANCHOR_JS, WIN_CARD_JS].join("\n");
@@ -30,6 +31,7 @@ ${WIN_RUNTIME_JS}
 if(WINON){
 ${WIN_KPIS_JS}
 ${WIN_POOL_JS}
+${WIN_SYSTEM_JS}
  /** The sections' defaults as root bands: [[defaults, band px], ...] in page order. */
  function winCompose(parts){
   var leaves=[],px=[],cards=[],kids={},st={},i,k;
@@ -49,7 +51,9 @@ ${WIN_POOL_JS}
   // the converted section lives in the new root; its old container stays in the DOM (the old render still fills it) but is not shown
   if(old)old.style.display="none";
   var oldPool=document.querySelector('[data-section="pool"]');if(oldPool)oldPool.style.display="none";
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340]]));
+  var oldSys=document.querySelector('[data-section="system"]');if(oldSys)oldSys.style.display="none";
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900]]));
+  window.winFeedSystem=winFeedSystem;
   WinT.anchorInit(document,window,root);
  })();
 }

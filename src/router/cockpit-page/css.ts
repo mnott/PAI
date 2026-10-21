@@ -202,6 +202,8 @@ main.win .card.min .cbody{display:none}
 .cmin{flex:none;padding:0 6px}
 .cwlive{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 main#win-root[hidden]{display:none}
-.wm{padding:6px 10px;min-width:0}.wm-v{display:block;font-size:20px;font-weight:600}.wm-s{display:block;color:var(--dim);font-size:12px}
+.wm{padding:6px 10px;min-width:0}.wm-v{display:inline;font-size:20px;font-weight:600}.wm-s{display:block;color:var(--dim);font-size:12px}
 body.winon{display:flex;flex-direction:column}body.winon>main#win-root{order:1}body.winon>main:not(#win-root){order:2}
+.wm{position:relative;height:100%}.wm-s{margin-top:2px}.wm-u{color:var(--dim);margin-left:3px;font-size:12px}.wm-sp{position:absolute;right:8px;top:6px;width:40%;height:32px}
+.wc-svg{height:calc(100% - 22px);overflow:hidden}.wc-leg{height:22px;overflow:hidden;padding:0 10px}
 `;

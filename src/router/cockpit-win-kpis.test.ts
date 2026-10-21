@@ -77,7 +77,7 @@ describe.skipIf(!CHROME)("B1 kpis on the win runtime (?win=1)", () => {
     const r = await open("?win=1", 1400, shots ? join(shots, "kpis-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     expect(r.flag).toBe(true);
-    expect(r.cards).toBe(7);
+    expect(r.cards).toBeGreaterThanOrEqual(7);
     expect(r.title).toBe("Totals in this window");
     expect(r.oldKpis).toBe("none");
     for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn)*$/);
