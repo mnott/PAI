@@ -12,7 +12,8 @@ import { cockpitHtml } from "./cockpit-page.js";
 import { expandHome, loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
-import { jobSessionName, loadSessionMap, loadWorkerWindows, withJobNames, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
+import { defaultSources, jobSessionName, loadSessionMap, loadWorkerWindows, withJobNames, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
+import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
@@ -744,16 +745,19 @@ export function cockpitQueue(
     });
   }
   const snap = readSchedFile(logDir, now);
-  const names = schedNames(logDir);
+  // the scheduler line resolves through the display-name order: the agent-sessions
+  // registry gives every session a project slug, and a session's own background-job
+  // name beats that slug; a worker's own session name tops both
+  const names = loadSessionMap({ workerDirs: [], agentSessionsFile: paiHomePath("agent-sessions.json"), jobsDir: defaultSources().jobsDir });
   for (const e of Object.values(snap?.engines ?? {})) {
     for (const sid of [e.inflight?.session, ...Object.keys(e.queued), ...Object.keys(e.counters)]) {
-      if (sid && !names[sid]) {
-        const job = jobSessionName(sid);
-        if (job) names[sid] = job;
-      }
+      if (!sid || names.get(sid)?.aibroker) continue;
+      const job = jobSessionName(sid, defaultSources().jobsDir);
+      if (job) names.set(sid, { ...(names.get(sid) ?? {}), name: job });
     }
   }
-  const sched = schedPlain(snap, names);
+  for (const [id, name] of Object.entries(schedNames(logDir))) names.set(id, { ...(names.get(id) ?? {}), name });
+  const sched = schedPlain(snap, Object.fromEntries([...names].map(([id, info]) => [id, info.name])));
   return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 

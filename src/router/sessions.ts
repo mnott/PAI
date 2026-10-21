@@ -1,7 +1,10 @@
 /**
- * sessions.ts — Claude Code session id → display name, from PAI data only:
- * worker status files (claudeSession → label) and the agent-session registry
- * (session id → project). Unknown ids map to null.
+ * sessions.ts — Claude Code session id → display name, from PAI data only, in
+ * one resolution order (highest first): worker run label > AIBroker name >
+ * Claude Code background-job name > agent-session registry entry (a project
+ * slug every session gets) > transcript-directory fallback. A lower source
+ * never overwrites a higher one; the registry value stays in `project` for a
+ * UI that shows the project separately. Unknown ids map to null.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -12,6 +15,10 @@ import { paiHomePath } from "../config/pai-home.js";
 export interface SessionInfo {
   /** display name */
   name: string;
+  /** agent-sessions registry value (project slug): kept even when a higher source names the session */
+  project?: string;
+  /** set when the name comes from AIBroker: tops the job name without losing the slug */
+  aibroker?: boolean;
   /** worker id when the session is a worker run */
   worker?: string;
   state?: string;
@@ -41,12 +48,18 @@ export function defaultSources(): SessionSources {
     projectsDir: join(home, ".claude", "projects"),
     aibrokerDir: process.env.AIBROKER_HOME || join(home, ".aibroker"),
     claudeMapFile: paiHomePath("session-claude-map.json"),
-    jobsDir: join(process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "jobs"),
+    // CLAUDE_CONFIG_DIR is the .claude dir itself (the jobs dir is <it>/jobs)
+    jobsDir: process.env.CLAUDE_CONFIG_DIR ? join(process.env.CLAUDE_CONFIG_DIR, "jobs") : join(home, ".claude", "jobs"),
   };
 }
 
 const JOB_TTL_MS = 30_000;
 const jobCache = new Map<string, { at: number; name: string | null }>();
+
+/** Drop the job-name cache (tests flip the jobs dir mid-run). */
+export function clearJobNameCache(): void {
+  jobCache.clear();
+}
 
 /**
  * Name of a Claude Code background-job session: jobs/<id8>/state.json, "name"
@@ -66,13 +79,38 @@ export function jobSessionName(id: string | undefined, jobsDir: string | undefin
   return name;
 }
 
-/** Ids the map does not know, named from their background-job state when there is one. */
+/**
+ * One resolution order, highest first: worker run label > AIBroker name >
+ * background-job name > agent-sessions entry > transcript fallback. A lower
+ * source never overwrites a higher one; the agent-sessions value survives as
+ * `project`. `jobName` supplies the job name for ids the map does not carry
+ * one for (the cockpit resolves it per rendered row).
+ */
+export function resolveSessionName(
+  id: string,
+  info: SessionInfo | undefined,
+  jobName: (id: string) => string | null = (i) => jobSessionName(i)
+): SessionInfo | undefined {
+  if (!info) {
+    const name = jobName(id);
+    return name ? { name } : undefined;
+  }
+  // a worker label or an AIBroker name already tops the job; a bare registry
+  // entry (the slug itself) yields to the job name
+  if (info.worker || info.aibroker) return info;
+  const name = jobName(id);
+  return name ? { ...info, name } : info;
+}
+
+/** Ids the map does not carry a job name for, resolved through the order above. */
 export function withJobNames(map: Map<string, SessionInfo>, ids: Iterable<string | undefined>, jobsDir?: string): Map<string, SessionInfo> {
   let out: Map<string, SessionInfo> | undefined;
   for (const id of ids) {
-    if (!id || map.has(id) || out?.has(id)) continue;
-    const name = jobSessionName(id, jobsDir);
-    if (name) (out ??= new Map(map)).set(id, { name });
+    if (!id) continue;
+    const info = map.get(id);
+    if (info?.project !== undefined) continue;
+    const resolved = resolveSessionName(id, info, (i) => jobSessionName(i, jobsDir));
+    if (resolved && resolved !== info) (out ??= new Map(map)).set(id, resolved);
   }
   return out ?? map;
 }
@@ -119,37 +157,10 @@ function aibrokerNames(dir: string): Map<string, string> {
 
 /** Full map session id → info. Reads every status file once; callers cache it. */
 export function loadSessionMap(src: SessionSources = defaultSources()): Map<string, SessionInfo> {
+  // lowest first, each source overwrites only what is below it: transcript
+  // fallback < agent-sessions entry < job name < AIBroker name < worker label
   const map = new Map<string, SessionInfo>();
-  const agents = existsSync(src.agentSessionsFile) ? readJson(src.agentSessionsFile) : undefined;
-  if (agents) for (const [id, name] of Object.entries(agents)) if (typeof name === "string") map.set(id, { name });
-  for (const dir of src.workerDirs) {
-    if (!existsSync(dir)) continue;
-    for (const f of readdirSync(dir)) {
-      if (!f.endsWith(".status")) continue;
-      const s = readJson(join(dir, f));
-      if (!s || typeof s.claudeSession !== "string") continue;
-      map.set(s.claudeSession, {
-        name: typeof s.label === "string" && s.label ? s.label : String(s.id ?? f),
-        worker: typeof s.id === "string" ? s.id : undefined,
-        state: typeof s.state === "string" ? s.state : undefined,
-        verdict: workerVerdict(s),
-        provider: typeof s.provider === "string" ? s.provider : undefined,
-      });
-    }
-  }
-  // AIBroker's names for interactive sessions: Claude id -> iTerm uuid (statusline map) -> name. Worker runs keep their label.
-  if (src.aibrokerDir && src.claudeMapFile) {
-    const names = aibrokerNames(src.aibrokerDir);
-    const claude = names.size ? readJson(src.claudeMapFile) : undefined;
-    if (claude) {
-      for (const [id, e] of Object.entries(claude)) {
-        const uid = (e as { uid?: unknown } | null)?.uid;
-        const name = typeof uid === "string" ? names.get(uid.toUpperCase()) : undefined;
-        if (name && !map.get(id)?.worker) map.set(id, { name });
-      }
-    }
-  }
-  // Last resort for interactive sessions the registry does not list: the project directory of the transcript.
+  // The project directory of the transcript: today's fallback for ids nothing else lists.
   if (src.projectsDir && existsSync(src.projectsDir)) {
     for (const d of readdirSync(src.projectsDir)) {
       const name = d.split("-").filter(Boolean).pop();
@@ -162,16 +173,61 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
       }
       for (const f of files) {
         const id = f.endsWith(".jsonl") ? f.slice(0, -6) : "";
-        if (id && !map.has(id)) map.set(id, { name: jobSessionName(id, src.jobsDir) ?? name });
+        if (id) map.set(id, { name });
       }
+    }
+  }
+  // The agent-session registry: a project slug every session gets — a name, never a display override.
+  const agents = existsSync(src.agentSessionsFile) ? readJson(src.agentSessionsFile) : undefined;
+  if (agents)
+    for (const [id, project] of Object.entries(agents)) {
+      if (typeof project !== "string" || !project) continue;
+      const info = map.get(id);
+      map.set(id, info ? { ...info, name: project, project } : { name: project, project });
+    }
+  // Claude Code background-job names: a session's own name beats the project slug.
+  if (src.jobsDir)
+    for (const [id, info] of map) {
+      if (info.worker || info.aibroker) continue;
+      const name = jobSessionName(id, src.jobsDir);
+      if (name) map.set(id, { ...info, name });
+    }
+  // AIBroker's names for interactive sessions: Claude id -> iTerm uuid (statusline map) -> name.
+  if (src.aibrokerDir && src.claudeMapFile) {
+    const names = aibrokerNames(src.aibrokerDir);
+    const claude = names.size ? readJson(src.claudeMapFile) : undefined;
+    if (claude) {
+      for (const [id, e] of Object.entries(claude)) {
+        const uid = (e as { uid?: unknown } | null)?.uid;
+        const name = typeof uid === "string" ? names.get(uid.toUpperCase()) : undefined;
+        if (name) map.set(id, { ...(map.get(id) ?? {}), name, aibroker: true });
+      }
+    }
+  }
+  // The worker run label tops the order.
+  for (const dir of src.workerDirs) {
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".status")) continue;
+      const s = readJson(join(dir, f));
+      if (!s || typeof s.claudeSession !== "string") continue;
+      map.set(s.claudeSession, {
+        ...(map.get(s.claudeSession) ?? {}),
+        name: typeof s.label === "string" && s.label ? s.label : String(s.id ?? f),
+        worker: typeof s.id === "string" ? s.id : undefined,
+        state: typeof s.state === "string" ? s.state : undefined,
+        verdict: workerVerdict(s),
+        provider: typeof s.provider === "string" ? s.provider : undefined,
+      });
     }
   }
   return map;
 }
 
-/** Display name of a session id, null when PAI does not know it. */
+/** Display name of a session id, resolved through the order above; null when PAI does not know it. */
 export function sessionDisplayName(id: string | undefined, map: Map<string, SessionInfo> = loadSessionMap(), jobsDir?: string): string | null {
-  return (id && (map.get(id)?.name || (map.has(id) ? null : jobSessionName(id, jobsDir)))) || null;
+  if (!id) return null;
+  return resolveSessionName(id, map.get(id), (i) => jobSessionName(i, jobsDir))?.name || null;
 }
 
 // ---- one-shot attribution -------------------------------------------------
@@ -260,6 +316,7 @@ export function withWorkerAttribution(
 ): Map<string, SessionInfo> {
   const unknown = new Map<string, Array<{ t: number; model?: string; provider?: string }>>();
   for (const r of rows) {
+    // a worker run keeps its label
     if (!r.session_id || map.get(r.session_id)?.worker) continue;
     const t = Date.parse(r.ts);
     if (!Number.isFinite(t)) continue;
@@ -270,6 +327,8 @@ export function withWorkerAttribution(
   if (!unknown.size) return map;
   const out = new Map(map);
   for (const [id, reqs] of unknown) {
+    // a session already named by a source above the worker label (AIBroker) is not relabelled
+    if (map.get(id)?.aibroker) continue;
     const hits = new Map<string, WorkerWindow>();
     for (const w of windows) {
       const { from, to } = windowBounds(w, now);
