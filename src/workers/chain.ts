@@ -114,6 +114,8 @@ export interface ChainOptions {
   modelFlag?: string;
   label?: string;
   noPane?: boolean;
+  /** --no-pool: every stage runs fresh and is never refused for flags that keep it out of the pool. */
+  noPool?: boolean;
   mcpFlag?: string;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
@@ -176,6 +178,7 @@ export async function runChain(opts: ChainOptions, deps: ChainDeps = {}): Promis
       modelFlag: opts.modelFlag,
       label: `${baseLabel} · ${stage}`,
       noPane: opts.noPane,
+      noPool: opts.noPool,
       mcpFlag: opts.mcpFlag,
       specPath: opts.specPath,
       claudeArgs: swapPromptArg(opts.claudeArgs, prompt),

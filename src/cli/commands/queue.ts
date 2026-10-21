@@ -107,6 +107,7 @@ const runCmd: CommandDef = {
     { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only workers.escalate.cloud.tier)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model the items' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The items' workers go ahead of the runs waiting for a slot on the provider" },
+    { name: "no-pool", type: "boolean", summary: "The items' workers start fresh, never using the worker pool" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },
   ],
   examples: ["pai queue run", "pai queue run --detach", "pai queue run --parallel 2", "pai queue run --escalate sonnet"],
@@ -135,7 +136,7 @@ const runCmd: CommandDef = {
     }
     const reporter = origin ? new QueueReporter(basename(repo), runMessenger(logDir), origin) : null;
     const onEvent = reporter ? (k: "ready" | "needs-decision", it: QueueItem) => (k === "ready" ? reporter.onReady(it) : reporter.onNeedsDecision(it)) : undefined;
-    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === cloudTier, ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), onEvent }, realQueueDeps(logDir, repo));
+    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === cloudTier, ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), ...(ctx.opts["no-pool"] === true ? { noPool: true } : {}), onEvent }, realQueueDeps(logDir, repo));
     await reporter?.finish();
     finishDetached(logDir);
     out(`ready: ${s.ready.join(", ") || "none"}; too-big: ${s.tooBig.join(", ") || "none"}; needs-decision: ${s.needsDecision.join(", ") || "none"}`);

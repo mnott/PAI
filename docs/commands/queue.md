@@ -63,6 +63,7 @@ Runs each pending item as a worker in its own worktree branch, up to N at once. 
 | `--escalate TIER` | string | — | Run the cloud items on TIER (only workers.escalate.cloud.tier) |
 | `--model MODEL` | string | — | Model the items' workers get: default, fast or a model id (default: the provider's worker_model) |
 | `--now` | flag | — | The items' workers go ahead of the runs waiting for a slot on the provider |
+| `--no-pool` | flag | — | The items' workers start fresh, never using the worker pool |
 | `--detach` | flag | — | Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it |
 
 ```sh

@@ -541,7 +541,8 @@ describe("pool host HTTP", () => {
     const port = (h.host.server.address() as { port: number }).port;
 
     expect(await poolHostAlive(port)).toBe(true);
-    const resp = await postTaskToPool(port, task({ id: "w-http", prompt: "over http" }), 10_000);
+    const out = await postTaskToPool(port, task({ id: "w-http", prompt: "over http" }), 10_000);
+    const resp = "ok" in out ? out.ok : undefined;
     expect(resp?.pooled).toBe(true);
     expect(resp?.rc).toBe(0);
     expect(resp?.status?.pool?.task).toBe(1);

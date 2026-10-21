@@ -61,6 +61,7 @@ const runCmd: CommandDef = {
     { name: "provider", type: "string", value: "NAME", summary: "Run the parts on this provider instead of the plan's (the value local is resolved at run start)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model the parts' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The parts' workers go ahead of the runs waiting for a slot on the provider" },
+    { name: "no-pool", type: "boolean", summary: "The parts' workers start fresh, never using the worker pool" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports its events back to it" },
     { name: "dry-run", type: "boolean", summary: "Print the schedule that would run; start nothing" },
     { name: "allow-dirty", type: "boolean", summary: "Run although the repo has uncommitted changes to files a part touches" },
@@ -76,7 +77,7 @@ const runCmd: CommandDef = {
     if (esc !== undefined && esc !== cloudTier) throw new CliError(`--escalate takes ${cloudTier}, not ${String(esc)}`, `pai plan run PLAN.yaml --escalate ${cloudTier}`);
     const log = runLogPath(path);
     const { merged, unitsChecked } = resumeState(readRunLog(log));
-    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === cloudTier, ...(ctx.opts["force-local"] === true ? { forceLocal: true } : {}), ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
+    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === cloudTier, ...(ctx.opts["force-local"] === true ? { forceLocal: true } : {}), ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), ...(ctx.opts["no-pool"] === true ? { noPool: true } : {}), merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
     if (ctx.opts["dry-run"] === true || ctx.dryRun) {
       out(renderSchedule(plan, opts));
       return 0;

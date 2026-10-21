@@ -26,6 +26,7 @@ export const workerRunShape = {
   label: z.string().min(1).describe("Short task label shown in worker_ps / the status line and worker pane."),
   cwd: z.string().optional().describe("Working directory (default: here)."),
   allowed_tools: z.string().optional().describe("Comma-separated tool allowlist passed to the worker."),
+  no_pool: z.boolean().optional().describe("Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own allowed_tools, mcp) is refused."),
   mcp: z.string().optional().describe("MCP servers/sets the worker may use (comma-separated)."),
 };
 

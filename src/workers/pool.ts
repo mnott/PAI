@@ -509,10 +509,16 @@ export function poolPort(config: WorkersConfig): number {
   return config.pool?.port ?? DEFAULT_POOL_PORT;
 }
 
+/** How one post to the pool host ended: the host's answer (`ok` pooled, `miss` its refusal reason) or why none came. */
+export type PoolPostOutcome =
+  | { ok: PoolTaskResponse }
+  | { miss: NonNullable<PoolTaskResponse["reason"]> | "refused" }
+  | { error: "unreachable" | "timeout" | "claim-error"; detail: string };
+
 /**
- * Post one task to the pool host. Resolves null when the host is not
- * listening (callers fall back to a fresh spawn); resolves a PoolTaskResponse
- * otherwise. No undici here: the host holds the connection for the whole task
+ * Post one task to the pool host. Resolves a typed outcome and never rejects:
+ * `unreachable` = nothing listens (callers fall back to a fresh spawn), `timeout` = the socket deadline fired,
+ * `claim-error` = the connection broke or the answer was unreadable after it was made. No undici here: the host holds the connection for the whole task
  * (minutes), which Node's fetch would cut off with its 300 s headers timeout.
  */
 export function postTaskToPool(
@@ -520,8 +526,10 @@ export function postTaskToPool(
   task: PoolTaskRequest,
   timeoutMs: number,
   path: "/task" | "/claim" = "/task"
-): Promise<PoolTaskResponse | null> {
+): Promise<PoolPostOutcome> {
   return new Promise((resolve) => {
+    let connected = false;
+    const fail = (detail: string): void => resolve({ error: connected ? "claim-error" : "unreachable", detail });
     const body = JSON.stringify(task);
     const req = httpRequest(
       {
@@ -532,16 +540,18 @@ export function postTaskToPool(
         headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
       },
       (res: IncomingMessage) => {
+        connected = true;
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
           try {
-            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as PoolTaskResponse);
-          } catch {
-            resolve(null);
+            const resp = JSON.parse(Buffer.concat(chunks).toString("utf8")) as PoolTaskResponse;
+            resolve(resp.pooled ? { ok: resp } : { miss: resp.reason ?? "refused" });
+          } catch (e) {
+            fail(`unreadable answer: ${e instanceof Error ? e.message : String(e)}`);
           }
         });
-        res.on("error", () => resolve(null));
+        res.on("error", (e) => fail(e.message));
       }
     );
     // the timer bounds connect+send only; the response may take the whole task
@@ -550,9 +560,10 @@ export function postTaskToPool(
       // slot and answers on its own; abandoning the socket is the client's
       // best move and the fresh-spawn fallback is NOT taken mid-task
       req.destroy();
-      resolve(null);
+      resolve({ error: "timeout", detail: `no answer within ${timeoutMs} ms` });
     });
-    req.on("error", () => resolve(null));
+    req.on("socket", (s) => s.on("connect", () => (connected = true)));
+    req.on("error", (e) => fail(e.message));
     req.end(body);
   });
 }
