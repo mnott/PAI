@@ -1,4 +1,4 @@
-/** Step 16: Task bus — optional external tracker for cross-session work. */
+/** Step 15: Task bus — optional external tracker for cross-session work. */
 
 import { c, line, section, type Rl, prompt, promptYesNo, readConfigRaw } from "../utils.js";
 import { listProjects } from "../../../../tasks/providers/todoist.js";
@@ -10,7 +10,7 @@ type RawTaskConfig = Partial<TaskConfig> & {
 };
 
 export async function stepTaskBus(rl: Rl): Promise<Record<string, unknown>> {
-  section("Step 16: Task Bus (Optional)");
+  section("Step 15: Task Bus (Optional)");
 
   const existing = readConfigRaw();
   const current = (existing.tasks ?? {}) as RawTaskConfig;

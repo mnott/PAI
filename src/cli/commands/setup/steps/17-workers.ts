@@ -1,4 +1,4 @@
-/** Step 17: Worker providers — subagents on configured providers. */
+/** Step 16: Worker providers — subagents on configured providers. */
 
 import { c, line, section, type Rl, promptYesNo, readConfigRaw } from "../utils.js";
 import { installWorkers } from "../../../../workers/install.js";
@@ -6,7 +6,7 @@ import { readWorkersSection } from "../../../../workers/config.js";
 import { describeProviders, setWorkersEnabled } from "../../../../workers/providers.js";
 
 export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
-  section("Step 17: Worker Providers (Optional)");
+  section("Step 16: Worker Providers (Optional)");
 
   const existing = readConfigRaw();
   const current = existing.workers as { enabled?: boolean; providers?: Record<string, unknown> } | undefined;

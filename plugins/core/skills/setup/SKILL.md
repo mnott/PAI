@@ -50,7 +50,7 @@ Verify: setup ends without an error and `pai memory search "test"` runs (it find
 
 ## 4. Daemon
 
-Check: `pai daemon status` says running.
+Check: `pai daemon status` says running. Under a HOME that is not the account home (a sandbox or test), setup writes the service file but does not load it: the status stays "not running" and the command to load it is printed.
 
 Setup installs the daemon as a login service (launchd on macOS, a systemd user unit on Linux). If it is not running:
 
@@ -137,7 +137,7 @@ Report each line as pass or fail with the command output:
 2. `pai --version` works
 3. `pai daemon status` says running
 4. `pai memory search "test"` runs without error
-5. `pai worker providers` lists a provider and `pai worker providers test` answers
+5. `pai worker providers` lists a provider; if you added one in phase 5, `pai worker providers test NAME` answers (the built-in `anthropic` provider has nothing to test: `claude --version` and a logged-in `claude` cover it)
 6. `pai worker config check` exits 0
 7. `pai worker route` shows a model on every tier
 8. `pai router status` running and the cockpit page loads (if phase 7 was done)

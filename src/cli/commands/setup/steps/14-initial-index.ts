@@ -1,4 +1,4 @@
-/** Step 12: Initial index — optionally starts the daemon and runs registry scan. */
+/** Step 17: Initial index — optionally starts the daemon and runs registry scan. */
 
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
@@ -6,7 +6,7 @@ import { c, line, section, type Rl, promptYesNo } from "../utils.js";
 import { stepDirectories } from "./13-directories.js";
 
 export async function stepInitialIndex(rl: Rl): Promise<void> {
-  section("Step 12: Initial Index");
+  section("Step 17: Initial Index");
   line();
   line("  Indexing scans your registered projects and builds the search index.");
   line("  The daemon runs indexing automatically every 5 minutes once started.");

@@ -54,7 +54,7 @@ export const SETTINGS_HOOKS: HookEntry[] = [
 ];
 
 export async function stepDaName(rl: Rl): Promise<string> {
-  section("Step 8b: Assistant Name");
+  section("Step 10: Assistant Name");
   line();
   line("  Choose a name for your AI assistant. This name appears in tab titles");
   line("  and session notes when hooks are active.");
@@ -68,7 +68,7 @@ export async function stepDaName(rl: Rl): Promise<string> {
 }
 
 export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
-  section("Step 8: Settings Patch");
+  section("Step 11: Settings Patch");
   line();
   line("  PAI will add env vars, all hook registrations, permissions, and flags");
   line("  to ~/.claude/settings.json. Existing values are never overwritten.");

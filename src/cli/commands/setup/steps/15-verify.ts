@@ -1,4 +1,4 @@
-/** Step 13: Setup summary — displays all configuration choices made during setup. */
+/** Step 18: Setup summary — displays all configuration choices made during setup. */
 
 import chalk from "chalk";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
@@ -34,9 +34,9 @@ export function stepSummary(
   console.log(chalk.dim("  CLAUDE.md:        ") + chalk.cyan(claudeMdGenerated ? "~/.claude/CLAUDE.md (generated)" : "(unchanged)"));
   console.log(chalk.dim("  PAI skill:        ") + chalk.cyan(paiSkillInstalled ? "~/.claude/skills/PAI/SKILL.md (installed)" : "(unchanged)"));
   console.log(chalk.dim("  Steering rules:   ") + chalk.cyan(aiSteeringRulesInstalled ? "~/.claude/skills/PAI/AI-STEERING-RULES.md (installed)" : "(unchanged)"));
-  console.log(chalk.dim("  Skill stubs:      ") + chalk.cyan(skillStubsInstalled ? "18 MCP prompt stubs symlinked to ~/.claude/skills/" : "(unchanged)"));
+  console.log(chalk.dim("  Skill stubs:      ") + chalk.cyan(skillStubsInstalled ? "MCP prompt stubs symlinked to ~/.claude/skills/" : "(unchanged)"));
   console.log(chalk.dim("  Hooks (shell):    ") + chalk.cyan(hooksInstalled ? "pai-pre-compact.sh, pai-session-stop.sh (installed)" : "(unchanged)"));
-  console.log(chalk.dim("  Hooks (TS):       ") + chalk.cyan(tsHooksInstalled ? "14 .mjs hooks installed to ~/.claude/Hooks/" : "(unchanged)"));
+  console.log(chalk.dim("  Hooks (TS):       ") + chalk.cyan(tsHooksInstalled ? ".mjs hooks installed to ~/.claude/Hooks/" : "(unchanged)"));
   console.log(chalk.dim("  Assistant name:   ") + chalk.cyan(daName));
   console.log(chalk.dim("  Settings:         ") + chalk.cyan(settingsPatched ? "env vars, hooks, permissions, flags (patched)" : "(unchanged)"));
   console.log(chalk.dim("  Daemon:           ") + chalk.cyan(daemonInstalled ? `${daemonServiceName(plat)} (installed)` : "(not installed by setup)"));

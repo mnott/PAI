@@ -1,4 +1,4 @@
-/** Step 7b: TypeScript (.mjs) hooks installation to ~/.claude/Hooks/. */
+/** Step 9: TypeScript (.mjs) hooks installation to ~/.claude/Hooks/. */
 
 import {
   existsSync, readdirSync, lstatSync, readlinkSync,
@@ -11,7 +11,7 @@ import { c, line, section, type Rl, promptYesNo, getDistHooksDir } from "../util
 const useSymlinks = platform() !== "win32";
 
 export async function stepTsHooks(rl: Rl): Promise<boolean> {
-  section("Step 7b: TypeScript Hooks Installation");
+  section("Step 9: TypeScript Hooks Installation");
   line();
   line("  PAI ships compiled TypeScript hooks (.mjs) that fire on session events,");
   line("  tool use, and context compaction to capture context and update notes.");

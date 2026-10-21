@@ -1,4 +1,4 @@
-/** Step 10: PAI MCP server registration in ~/.claude.json. */
+/** Step 13: PAI MCP server registration in ~/.claude.json. */
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { c, line, section, type Rl, promptYesNo } from "../utils.js";
 
 export async function stepMcp(rl: Rl): Promise<boolean> {
-  section("Step 10: MCP Registration");
+  section("Step 13: MCP Registration");
   line();
   line("  Registering the PAI MCP server (pai) lets Claude Code");
   line("  call PAI tools directly.");
