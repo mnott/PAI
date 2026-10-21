@@ -86,21 +86,43 @@ function fitTables(root){
  for(i=0;i<ws.length;i++)ws[i].classList.remove("stacked");
  for(i=0;i<ws.length;i++){w=ws[i];t=w.querySelector("table");if(t&&(t.scrollWidth>w.clientWidth||w.scrollWidth>w.clientWidth))w.classList.add("stacked")}
 }
+/** The one owner of live DOM writes: pick the anchor (the first tile or section whose top is at or below the
+ *  viewport top, never one inside the written element), run the write, then scroll so the anchor sits at the
+ *  same offset. Safari has no scroll anchoring, so every write that can change a height goes through here. */
+var scrollWhy="",scrollLast=window.scrollY,scrollDebug=typeof location!=="undefined"&&/[?&]debug=scroll/.test(location.search);
+function liveWrite(el,write,why){
+ var cs=document.querySelectorAll("main section[data-section],main [data-tid]"),anchor=null,top=0,inner=null,itop=0,i,r;
+ for(i=0;i<cs.length;i++){
+  r=cs[i].getBoundingClientRect();if(r.top<0)continue;
+  if(el&&cs[i]!==el&&el.contains&&el.contains(cs[i])){if(!inner&&cs[i].getAttribute("data-tid")){inner=cs[i].getAttribute("data-tid");itop=r.top}continue}
+  anchor=cs[i];top=r.top;break;
+ }
+ var y0=window.scrollY;
+ if(scrollDebug)scrollWhy=why||"write";
+ var res=write(),d=0,again=null;
+ // a tile inside the written element is found again by its id; else the first tile or section after it holds the view
+ if(inner)again=el.querySelector('[data-tid="'+String(inner).replace(/"/g,'\\"')+'"]');
+ if(again)d=again.getBoundingClientRect().top-itop;
+ else if(anchor&&anchor.isConnected)d=anchor.getBoundingClientRect().top-top;
+ if(Math.abs(d)>=1)window.scrollTo({left:window.scrollX,top:window.scrollY+d,behavior:"instant"});
+ if(scrollDebug&&window.scrollY!==y0)console.log("[scroll] "+why+" moved "+y0+" -> "+window.scrollY);
+ return res;
+}
+if(scrollDebug)window.addEventListener("scroll",function(){var y=window.scrollY;if(Math.abs(y-scrollLast)>2)console.log("[scroll] "+scrollLast+" -> "+y+" after "+(scrollWhy||"(none)"));scrollLast=y;scrollWhy=""});
 function setHtml(el,html){
  if(el.__html===html)return false;
- var main=document.querySelector("main"),anchor=null,top=0,i,r,kids;
- if(main){kids=main.children;for(i=0;i<kids.length;i++){r=kids[i].getBoundingClientRect();if(r.bottom>0){anchor=kids[i];top=r.top;break}}}
  var ae=document.activeElement,fk=null,prev="";
  if(ae&&ae!==el&&el.contains&&el.contains(ae)&&ae.tagName)fk=dataKey(ae);
  var hold=el.style&&typeof el.offsetHeight==="number"&&el.offsetHeight>0;
  var held=0;
  if(hold){prev=el.style.minHeight;held=el.offsetHeight;el.style.minHeight=held+"px"}
- el.innerHTML=html;el.__html=html;fitTables(el);
- if(fk){var c=el.querySelectorAll(fk.split("|")[0]);for(i=0;i<c.length;i++)if(dataKey(c[i])===fk){c[i].focus({preventScroll:true});break}}
- if(anchor){var d=anchor.getBoundingClientRect().top-top;if(d)window.scrollBy(0,d)}
+ liveWrite(el,function(){
+  el.innerHTML=html;el.__html=html;fitTables(el);
+  if(fk){var c=el.querySelectorAll(fk.split("|")[0]);for(var i=0;i<c.length;i++)if(dataKey(c[i])===fk){c[i].focus({preventScroll:true});break}}
+ },"setHtml#"+(el.id||el.className||el.tagName));
  // the release runs even when the frame never fires (headless virtual time): a pending
-// rAF would leave the held min-height on the panel forever (the workers card's empty space)
- function release(){if(held&&el.style.minHeight===held+"px")el.style.minHeight=prev;held=0}
+ // rAF would leave the held min-height on the panel forever (the workers card's empty space)
+ function release(){if(held&&el.style.minHeight===held+"px")liveWrite(el,function(){el.style.minHeight=prev},"release#"+(el.id||el.className));held=0}
  if(hold){requestAnimationFrame(release);setTimeout(release,200)}
  return true;
 }
@@ -396,7 +418,8 @@ function wireSpan(t,nm){
 function tileAttrs(id,name,val){return' data-tid="'+esc(id)+'" data-tname="'+esc(name)+'" data-tval="'+esc(val)+'"'}
 function tileGrip(name){return'<span class="tgrip" data-tgrip tabindex="0" title="move tile" aria-label="move '+esc(name)+'" aria-pressed="false" role="button">⠿</span>'}
 /** Re-apply the saved order and minimized state to every tile container under root (run after each setHtml of a tile section). */
-function orderTiles(root){
+function orderTiles(root){liveWrite(root,function(){orderTilesIn(root)},"orderTiles#"+(root.id||""))}
+function orderTilesIn(root){
  var tgs=root.querySelectorAll?root.querySelectorAll("[data-tkey]"):[];
  for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
  tileGrips();

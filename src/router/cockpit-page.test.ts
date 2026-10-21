@@ -1953,15 +1953,17 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
 describe("cockpit refresh keeps the page still", () => {
   const helper = COCKPIT_HTML.match(/function dataKey[\s\S]*?\nfunction setHtml[\s\S]*?\n\}\n/)![0];
   function env(opts: { anchorTops?: number[]; onWrite?: () => void } = {}) {
-    const calls = { scrollBy: [] as Array<[number, number]>, writes: 0, focused: [] as unknown[] };
+    const calls = { scrollTo: [] as number[], writes: 0, focused: [] as unknown[] };
     const tops = opts.anchorTops ?? [-50, 100];
     let step = 0;
-    const kid = (i: number) => ({ getBoundingClientRect: () => ({ top: tops[Math.min(step, tops.length - 1)]! + i * 0, bottom: tops[Math.min(step, tops.length - 1)]! + 200 }) });
-    const doc: any = { activeElement: null, querySelector: () => ({ children: [kid(0)] }) };
-    const win = { scrollBy: (x: number, y: number) => calls.scrollBy.push([x, y]) };
+    let scrollY = 0;
+    // the first card at or below the viewport top; its top follows the write step, less the scroll applied since
+    const card = { isConnected: true, contains: () => false, getAttribute: () => null, getBoundingClientRect: () => ({ top: tops[Math.min(step, tops.length - 1)]! - scrollY }) };
+    const doc: any = { activeElement: null, querySelectorAll: () => [card] };
+    const win = { get scrollY() { return scrollY; }, scrollX: 0, scrollTo: (o: { top: number }) => { scrollY = o.top; calls.scrollTo.push(o.top); }, addEventListener() {} };
     const raf: Array<() => void> = [];
-    const make = new Function("document", "window", "requestAnimationFrame", `${helper}\nreturn setHtml;`);
-    const setHtml = make(doc, win, (f: () => void) => raf.push(f)) as (el: unknown, h: string) => boolean;
+    const make = new Function("document", "window", "location", "requestAnimationFrame", `${helper}\nreturn setHtml;`);
+    const setHtml = make(doc, win, { search: "" }, (f: () => void) => raf.push(f)) as (el: unknown, h: string) => boolean;
     const el: any = {
       style: { minHeight: "" }, offsetHeight: 300, __h: "",
       get innerHTML() { return this.__h; },
@@ -1980,11 +1982,11 @@ describe("cockpit refresh keeps the page still", () => {
   });
 
   it("a rebuild above the viewport that changes height scrolls back by the anchor drift and holds the old height for one frame", () => {
-    const { calls, setHtml, el, raf } = env({ anchorTops: [-50, -20] });
+    const { calls, setHtml, el, raf } = env({ anchorTops: [10, 40] });
     let held = "";
     const e2 = Object.assign(el, {});
     setHtml(e2, "<i>x</i>");
-    expect(calls.scrollBy).toEqual([[0, 30]]);
+    expect(calls.scrollTo).toEqual([30]);
     expect(e2.style.minHeight).toBe("300px");
     held = e2.style.minHeight;
     raf.forEach((f) => f());
@@ -1993,9 +1995,9 @@ describe("cockpit refresh keeps the page still", () => {
   });
 
   it("no scroll correction when the anchor did not move", () => {
-    const { calls, setHtml, el } = env({ anchorTops: [-50, -50] });
+    const { calls, setHtml, el } = env({ anchorTops: [10, 10] });
     setHtml(el, "<i>x</i>");
-    expect(calls.scrollBy).toEqual([]);
+    expect(calls.scrollTo).toEqual([]);
   });
 
   it("focus inside the panel returns to the element with the same data-* id, without scrolling", () => {
@@ -2725,7 +2727,7 @@ function tileDragHarness(inv: unknown) {
   dom.document.documentElement = { clientHeight: 800 };
   const fn = new Function(
     "localStorage", "document", "window", "setTimeout", "clearTimeout", "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct",
-    `${ACT_STATE_SRC}\n${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}function wireMinAll(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
+    `${ACT_STATE_SRC}\nfunction liveWrite(e,w){return w()}\n${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}function wireMinAll(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
   );
   const api = fn(ls, dom.document, windowStub, () => 0, () => {}, () => dom.panel, inv, () => true, () => {}, () => {},
     (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%") as Record<string, (...args: unknown[]) => unknown>;
