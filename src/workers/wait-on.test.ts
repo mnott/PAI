@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { waitOn, statusMarker, statusQueue, realDeps, type WaitOnDeps } from "./wait-on.js";
+import { waitOn, statusMarker, statusQueue, realDeps, killProcessTree, type WaitOnDeps } from "./wait-on.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import type { WaitingOn } from "./waiting.js";
 
@@ -137,6 +137,19 @@ describe("waitOn ceiling and stall kill", () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(alive(c.pid!)).toBe(false);
   }, 20_000);
+
+  it("does not kill a silent script whose tree holds a `pai worker run` client (idle by design)", async () => {
+    const kid = `require("child_process").spawn(process.execPath,["-e","setInterval(()=>{},1000)","pai","worker","run"],{stdio:"ignore"});setInterval(()=>{},1000)`;
+    const c = spawn(process.execPath, ["-e", kid], { stdio: "ignore" });
+    const out: string[] = [];
+    const log = join(dir, "wrun.log");
+    writeFileSync(log, "RUN v1\n");
+    const rc = await waitOn({ pid: c.pid!, log, maxSecs: 8, maxMinutes: 100, stallMinutes: 0.02, tail: 0 }, { ...realDeps, out: (l) => out.push(l) });
+    expect(rc).toBe(3);
+    expect(out.some((l) => l.includes("silent but busy (worker run in tree)"))).toBe(true);
+    expect(alive(c.pid!)).toBe(true);
+    await killProcessTree(c.pid!, 200);
+  }, 30_000);
 
   it("does not kill a silent child that is burning CPU: silent but busy", async () => {
     const c = spin();

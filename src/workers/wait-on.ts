@@ -139,9 +139,23 @@ function treeLoopbackConn(tree: number[]): boolean {
   }
 }
 
-/** Silent is not hung: CPU time of the tree advanced over a one-second sample, or it holds a loopback connection open. */
+/** A `pai worker run` client in the tree: the work runs in a pane under its own deadline, so the client itself is idle by design. */
+function treeWorkerRun(tree: number[]): boolean {
+  try {
+    const rows = execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n");
+    return rows.some((r) => {
+      const m = r.trim().match(/^(\d+)\s+(.*)$/);
+      return !!m && tree.includes(Number(m[1])) && isWorkerRunCmd(m[2]);
+    });
+  } catch {
+    return false;
+  }
+}
+
+/** Silent is not hung: a worker run client in the tree, CPU time advanced over a one-second sample, or an open loopback connection. */
 export async function treeBusy(pid: number): Promise<{ busy: boolean; why: string }> {
   const tree = processTree(pid);
+  if (treeWorkerRun(tree)) return { busy: true, why: "worker run in tree" };
   const before = treeCpuSecs(tree);
   await new Promise((r) => setTimeout(r, 1000));
   const after = treeCpuSecs(processTree(pid));
