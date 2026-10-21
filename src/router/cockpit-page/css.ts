@@ -188,6 +188,9 @@ main.win .card.min .chead{border-bottom:0}
 main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto;contain:strict}
 main.win .cbody.cgroup{overflow:hidden}
 main.win .card.min .cbody{display:none}
+.wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}
+.wgutter[data-axis=y]{cursor:row-resize}
+.wgutter:hover,.wgutter:focus-visible{background:var(--acc);opacity:.45;outline:none}
 .cgrip{background:none;border:0;padding:0 2px;color:var(--dim);cursor:grab;font:inherit;line-height:1;touch-action:none}
 .cgrip:hover,.cgrip:focus-visible{color:var(--acc);outline:none}
 .ctitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}

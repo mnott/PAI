@@ -2,6 +2,8 @@
  *  Needs, in the same script scope: WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS
  *  (WIN_INFO_JS optional: with it the ⓘ renders and is wired). */
 
+import { WIN_GUTTER_JS } from "./gutter.js";
+
 /** The page-side shapes the ES5 code mirrors (types here are for the TS side only). */
 export type WinCtx = {
   id: string;
@@ -42,10 +44,10 @@ export type WinTypeDef = {
  *  - main gets an explicit height; a ResizeObserver on main re-runs layout only when its width changed.
  *  - minimize: Win.toggleMin(id) / the – + button; the card shows only its header (HEAD_H), the body
  *    is display:none but its state is kept; saved (debounced 150 ms, one write) with the layout. */
-export const WIN_CARD_JS = String.raw`var Win=(function(){
+const WIN_CARD_BODY_JS = String.raw`var Win=(function(){
 var HEAD_H=28,SAVE_MS=150;
 var TYPES={group:{accepts:["*"],minW:220,minH:HEAD_H+40,defaultH:300}};
-var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{}};
+var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null};
 function registerType(name,def){TYPES[name]=def||{}}
 function el(tag,cls){var e=document.createElement(tag);if(cls)e.className=cls;return e}
 function mkCtx(c){
@@ -173,6 +175,7 @@ function relayout(){
  W.lastW=w;W.n++;
  var r=layout(W.tree,W.kids,{w:w},layState(),cfgOf());
  W.main.style.height=r.height+"px";
+ W.rects=r.rects;
  for(var i=0;i<W.order.length;i++){
   var c=W.cards[W.order[i]],rect=r.rects[c.id];
   if(!rect){c.el.style.display="none";continue}
@@ -186,7 +189,74 @@ function relayout(){
    c.bw=rect.body.w;c.bh=rect.body.h;
    if(c.mounted&&def.resize)def.resize(c.ctx,rect.body.w,rect.body.h);
   }
+ } paintGutters();
+}
+/** Gutters (spec 3.3): one .wgutter in the GAP between siblings of every split, in the container that holds the
+ *  split (main for the root tree, a group's body for its kids). Elements are kept by key so focus survives. */
+function gutterBox(ea,eb,ax,gap){
+ if(ax==="x")return{l:ea.x1,t:Math.min(ea.y0,eb.y0),w:gap,h:Math.max(ea.y1,eb.y1)-Math.min(ea.y0,eb.y0)};
+ return{l:Math.min(ea.x0,eb.x0),t:ea.y1,w:Math.max(ea.x1,eb.x1)-Math.min(ea.x0,eb.x0),h:gap};
+}
+function gutterWalk(key,parent,tree,bounded,seen,state){
+ var cfg=Object.create(cfgOf());cfg.bounded=bounded;
+ (function walk(n,path){
+  if(n.k!=="s")return;
+  var i,j;
+  for(i=0;i+1<n.ch.length;i++){
+   if(!gutterAt(tree,path,i,state,W.rects,cfg))continue;
+   var ea=winGExt(n.ch[i],W.rects),eb=winGExt(n.ch[i+1],W.rects),ax=n.d==="r"?"x":"y";
+   var id=key+"|"+path.join(",")+"|"+i,g=W.gut[id];
+   if(!g||g.parentNode!==parent){
+    g=el("div","wgutter");g.tabIndex=0;g.setAttribute("role","separator");
+    g.setAttribute("aria-orientation",ax==="x"?"vertical":"horizontal");
+    g.setAttribute("aria-label","resize");
+    g.setAttribute("data-key",key);g.setAttribute("data-path",path.join(","));g.setAttribute("data-index",String(i));g.setAttribute("data-axis",ax);
+    parent.appendChild(g);W.gut[id]=g;
+   }
+   seen[id]=1;
+   var b=gutterBox(ea,eb,ax,cfg.GAP),s=g.style;
+   s.left=b.l+"px";s.top=b.t+"px";s.width=b.w+"px";s.height=b.h+"px";
+  }
+  for(j=0;j<n.ch.length;j++)walk(n.ch[j],path.concat([j]));
+ })(tree,[]);
+}
+function paintGutters(){
+ var seen={},state=layState(),id;
+ if(W.tree)gutterWalk("",W.main,W.tree,false,seen,state);
+ for(id in W.kids){
+  var c=W.cards[id];
+  if(c&&W.kids[id]&&W.kids[id].k&&!isMin(id)&&c.el.style.display!=="none")gutterWalk(id,c.body,W.kids[id],true,seen,state);
  }
+ for(id in W.gut)if(!seen[id]){var g=W.gut[id];if(g.parentNode)g.parentNode.removeChild(g);delete W.gut[id]}
+}
+/** Which container a gutter event is for: sets the tree key and the bounded flag the shared cfg carries. */
+function gutterFor(e){
+ var g=e.target&&e.target.closest?e.target.closest(".wgutter"):null;
+ if(!g)return;
+ W.gkey=g.getAttribute("data-key")||"";
+ W.gcfg=Object.create(cfgOf());W.gcfg.bounded=!!W.gkey;
+}
+function gutterOpts(){
+ var o={
+  getTree:function(){return W.gkey?W.kids[W.gkey]:W.tree},
+  getRects:function(){return W.rects},
+  getState:function(){return layState()},
+  getKids:function(){return W.kids},
+  preview:function(t){if(W.gkey)W.kids[W.gkey]=t;else W.tree=t;relayout()},
+  apply:function(t){if(W.gkey)W.kids[W.gkey]=t;else W.tree=t;relayout();save()},
+  announce:announce
+ };
+ Object.defineProperty(o,"cfg",{get:function(){return W.gcfg||cfgOf()}});
+ return o;
+}
+function gutterWire(){
+ var o=gutterOpts();
+ document.addEventListener("pointerdown",gutterFor,true);
+ document.addEventListener("keydown",function(e){
+  gutterFor(e);
+  if(e.target&&e.target.closest&&e.target.closest(".wgutter")&&winGutterKey(e,o,16))e.preventDefault();
+ });
+ winGutterDrag(document,window,o);
 }
 /** The ResizeObserver callback: main's height is set by layout itself, so only a width change relayouts. */
 function sync(){if(W.main.clientWidth!==W.lastW){relayout();return true}return false}
@@ -241,6 +311,7 @@ function init(main,defaults,opts){
  var l=loadWin(W.opts.storage,defaults,known,W.opts.now);
  W.tree=l.tree;W.kids=l.kids;W.st=l.st;
  main.classList.add("win");
+ if(!main.__winGut){main.__winGut=1;gutterWire()}
  if(typeof winInfoWire==="function"&&!main.__winInfo){main.__winInfo=1;winInfoWire(document,window)}
  // the cards present in the loaded tree, in reading order; the rest are not drawn
  var drawn={},ord=[];
@@ -290,3 +361,6 @@ var api={init:init,addCards:addCards,registerType:registerType,update:update,rel
 return api;
 })();
 `;
+
+/** The card runtime with the resize gutters (win/gutter.ts) it wires: one string, one scope. */
+export const WIN_CARD_JS = `${WIN_GUTTER_JS}\n${WIN_CARD_BODY_JS}`;
