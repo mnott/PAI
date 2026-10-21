@@ -1360,7 +1360,6 @@ async function startShim(): Promise<void> {
               stages: args.chain.split(","),
               className: args.class,
               label: args.label,
-              noPane: true, // the daemon has no terminal: not pane-gated
               ...(args.no_pool ? { noPool: true } : {}),
               mcpFlag: args.mcp,
               specPath,
@@ -1375,7 +1374,6 @@ async function startShim(): Promise<void> {
             className: args.class,
             capabilityFlag: args.capability,
             label: args.label,
-            noPane: true, // the daemon has no terminal: not pane-gated
             ...(args.no_pool ? { noPool: true } : {}),
             mcpFlag: args.mcp,
             specPath,
@@ -1745,7 +1743,6 @@ async function startShim(): Promise<void> {
           providerFlag: old.provider,
           modelFlag: old.model,
           label: `↩ ${old.label}`,
-          noPane: true,
           claudeArgs: ["--resume", old.claudeSession, "-p", args.text],
           resumeOf: args.id,
           onWorkerStart: (wid) => {

@@ -152,7 +152,7 @@ export async function executeRun(a: ExecuteArgs): Promise<number> {
 }
 
 export async function executeCodexRun(a: CodexArgs): Promise<number> {
-  const { config, logDir, target, model, label, parsed, noPane } = a;
+  const { config, logDir, target, model, label, parsed, systemWaiver } = a;
   if (!parsed.headless || parsed.prompt === null) {
     throw new Error(
       `provider "${target.providerName}" (engine codex) supports headless runs only: ` +
@@ -163,7 +163,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
-  const paneVerified = await requireVisiblePane(logDir, config, wid, term, noPane, false, ledgerPath(logDir));
+  const paneVerified = await requireVisiblePane(logDir, config, wid, term, systemWaiver, false, ledgerPath(logDir));
   const session = resolveSession(term);
   const spawnerSession = resolveSpawnerSession(logDir, cwd, process.env);
 
@@ -251,7 +251,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
 
   if (paneVerified) status.pane = { opened: true, exec: true };
-  else void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  else void announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
   const t0 = Date.now();
   const proc = await spawnOwned(wid, ["codex", ...buildCodexArgs(prompt, parsed.callerModel ? undefined : model)], {

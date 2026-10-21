@@ -86,7 +86,7 @@ import { runGates } from "./gate.js";
 import type { PreparedRun } from "./execute-prepare.js";
 
 export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
-  const { config, logDir, target, model, label, parsed, limit, noPane } = a;
+  const { config, logDir, target, model, label, parsed, limit, systemWaiver } = a;
   const {
     headless, wid, adopted, cwd, term, paneVerified, session, sessionKey, spawnerSession, worktree, preamble,
     addendum, trailerApplied, env, claudeCmd, cmd, chromeArgs, mcpArgs, toolArgs, toolsFlag, slimArgs, promptText, state,
@@ -165,7 +165,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // Follow pane: headless only (interactive runs ARE the chat pane). Verified
   // above when the gate applies; best effort otherwise.
   if (paneVerified) status.pane = { opened: true, exec: true };
-  else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, noPane, ledger, status);
+  else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
   let proc: ReturnType<typeof spawn>;
   try {

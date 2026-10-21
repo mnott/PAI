@@ -91,6 +91,8 @@ export function resolveSession(
 export function workerInScope(worker: WorkerStatus, term: string): boolean {
   if (!term) return false;
   const uuid = itermUuid(term);
+  // the host terminal the worker was started from: its own iTerm session id counts as well as the registry's
+  if (uuid && itermUuid(worker.term) === uuid) return true;
   if (worker.session?.id && uuid) return worker.session.id === uuid;
   return tabKey(worker.term) === tabKey(term) && tabKey(term) !== "";
 }

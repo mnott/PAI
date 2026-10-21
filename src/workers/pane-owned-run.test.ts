@@ -45,7 +45,7 @@ const sh = (script: string) => ["sh", "-c", script];
 
 describe("a worker's command runs inside the pane that owns it", () => {
   it("pane first, then the command as the wrapper's child; exit code propagates; the pane closes", async () => {
-    expect(await requireVisiblePane(dir, cfg, "w-own", "T", false, false, join(dir, "ledger.log"))).toBe(true);
+    expect(await requireVisiblePane(dir, cfg, "w-own", "T", undefined, false, join(dir, "ledger.log"))).toBe(true);
     expect(events).toEqual([expect.stringContaining("pane exec w-own")]);
     events.push("spawn");
     const proc = await spawnOwned("w-own", sh("echo out; echo err >&2; exit 7"), { env: process.env, cwd: dir, stdio: ["pipe", "pipe", "pipe"], render: "plain", title: "t" });
@@ -61,7 +61,7 @@ describe("a worker's command runs inside the pane that owns it", () => {
   }, 15_000);
 
   it("a run that never reaches its command cancels its pane (the pane closes, nothing runs)", async () => {
-    await requireVisiblePane(dir, cfg, "w-cancel", "T", false, false, join(dir, "ledger.log"));
+    await requireVisiblePane(dir, cfg, "w-cancel", "T", undefined, false, join(dir, "ledger.log"));
     releasePane("w-cancel");
     expect(await wrappers[0]).toBe(0);
     expect(events).toContain("pane-close");
@@ -69,11 +69,11 @@ describe("a worker's command runs inside the pane that owns it", () => {
 
   it("a pane that cannot open fails the run; only the config waiver or the override runs directly", async () => {
     vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new Error("split failed"));
-    await expect(requireVisiblePane(dir, cfg, "w-bad", "T", false, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: split failed/);
+    await expect(requireVisiblePane(dir, cfg, "w-bad", "T", undefined, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: split failed/);
     expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-REFUSED/);
-    expect(await requireVisiblePane(dir, { ...cfg, panes: { required: false } }, "w-np", "T", true, false, join(dir, "ledger.log"))).toBe(false);
+    expect(await requireVisiblePane(dir, { ...cfg, panes: { required: false } }, "w-np", "T", undefined, false, join(dir, "ledger.log"))).toBe(false);
     vi.mocked(pane.headlessAllowed).mockReturnValue("override");
-    expect(await requireVisiblePane(dir, cfg, "w-ov", "T", false, false, join(dir, "ledger.log"))).toBe(false);
+    expect(await requireVisiblePane(dir, cfg, "w-ov", "T", undefined, false, join(dir, "ledger.log"))).toBe(false);
     // no pane owns it: the command is a plain child of the caller
     const proc = await spawnOwned("w-np", sh("exit 4"), { env: process.env, cwd: dir, stdio: ["pipe", "pipe", "pipe"], title: "t" });
     expect(await new Promise((r) => proc.on("close", r))).toBe(4);
@@ -81,6 +81,6 @@ describe("a worker's command runs inside the pane that owns it", () => {
 
   it("no terminal at all: refused unless waived", async () => {
     vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new pane.NoTerminalError("no terminal here"));
-    await expect(requireVisiblePane(dir, cfg, "w-nt", "", false, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: no terminal/);
+    await expect(requireVisiblePane(dir, cfg, "w-nt", "", undefined, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: no terminal/);
   });
 });

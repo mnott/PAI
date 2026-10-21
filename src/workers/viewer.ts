@@ -1102,8 +1102,8 @@ export async function followWorkers(
         reason: exitReason,
         secs: Math.floor((Date.now() - started) / 1000),
       });
-      // pane mode (--auto-exit): the pane ends with its follow, whatever the profile does
-      if (autoExit) await closeOwnPane(env);
+      // pane mode (--auto-exit): the pane ends with its follow, whatever the profile does — only a clean end
+      if (autoExit && exitReason === "worker-ended") await closeOwnPane(env);
     }
   }
 
@@ -1236,6 +1236,19 @@ export async function followWorkers(
     const lingerOn = target; // resume swaps `target` under us (see above)
     if (lingerOn !== null && finished.has(lingerOn)) {
       if (autoExit) {
+        // the pane belongs to the worker's process: a same-id restart (slot died, fresh run) revives the
+        // run in this pane; a failed, killed or lost run keeps its failure on screen until the operator
+        // closes the pane; only a clean end whose process is gone may close it
+        const now = loadStatus(logDir, lingerOn);
+        if (now && !isTerminal(now.state)) {
+          finished.delete(lingerOn);
+          return { done: false };
+        }
+        if (!now || now.state !== "done" || (typeof now.pid === "number" && now.pid > 0 && ownsPid(now))) {
+          writeLiveness();
+          await sleep(500);
+          return { done: false };
+        }
         // a draft in the prompt holds the countdown: the operator may be
         // about to say or resume something
         if (holdAutoExit(promptText())) {
@@ -1294,7 +1307,7 @@ function sleep(ms: number): Promise<void> {
  * The status bar's worker line for THIS session's pool: workers its claude
  * session (or, failing that, its terminal) spawned, plus their descendants
  * (ownership as supervision's ownershipKey / scope's workerInScope define it).
- * Other sessions' live workers show as a dim `(+M elsewhere)` suffix. With no
+ * Terminal first, Claude session second. Other terminals' live workers show as a dim `(+M elsewhere)` suffix. With no
  * session identity at all (no `term`, no `claudeSession`) the bar keeps the
  * machine-wide count.
  */
@@ -1310,8 +1323,11 @@ export function statusLineOutput(
   if (!term && !claudeSession) return renderStatusLine(statuses, now);
 
   const byId = new Map(statuses.map((s) => [s.id, s]));
+  // the host terminal first (a resume or fork changes the Claude session id, never the terminal the operator
+  // sits in); the Claude session id attributes only a worker that recorded no terminal of its own
   const ownsRoot = (s: WorkerStatus): boolean =>
-    (!!claudeSession && s.spawnerSession === claudeSession) || (!!term && workerInScope(s, term));
+    (!!term && workerInScope(s, term)) ||
+    (!!claudeSession && s.spawnerSession === claudeSession && !(term && (s.term || s.session?.id)));
   const isMine = (s: WorkerStatus): boolean => {
     const seen = new Set<string>();
     for (let w: WorkerStatus | undefined = s; w && !seen.has(w.id); w = w.parent ? byId.get(w.parent) : undefined) {

@@ -996,9 +996,9 @@ describe("announcePane (records, never opens)", () => {
 
   it("names the reason in the status and on stderr; never opens a pane", async () => {
     const status = { pane: undefined } as { pane?: unknown };
-    await announcePane(dir, cfg, "w1", "term-1", true, ledger, status as never);
-    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: --no-pane\n");
-    expect(status.pane).toMatchObject({ opened: false, reason: "--no-pane" });
+    await announcePane(dir, cfg, "w1", "term-1", "keepalive", ledger, status as never);
+    expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: system job keepalive\n");
+    expect(status.pane).toMatchObject({ opened: false, reason: "system job keepalive" });
     expect(pane.openPaneForWorker).not.toHaveBeenCalled();
   });
 });
@@ -1027,42 +1027,42 @@ describe("requireVisiblePane", () => {
 
   it("no terminal at all: the start is refused (no pane: no terminal), PANE-NOTERMINAL and PANE-REFUSED on the ledger", async () => {
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new pane.NoTerminalError("neither TMUX nor ITERM_SESSION_ID is set"));
-    await expect(requireVisiblePane(dir, cfg, "w1", "", false, false, ledger)).rejects.toThrow(/^no pane: no terminal/);
+    await expect(requireVisiblePane(dir, cfg, "w1", "", undefined, false, ledger)).rejects.toThrow(/^no pane: no terminal/);
     const lines = parseLedger(readFileSync(ledger, "utf8"));
     expect(lines.some((l) => l.event === "PANE-REFUSED" && l.fields.id === "w1")).toBe(true);
   });
 
   it("workers.panes.required=false waives the pane: false, PANE-WAIVED on the ledger, status shows the reason", async () => {
     const waived = { ...cfg, panes: { required: false } };
-    await expect(requireVisiblePane(dir, waived, "w1", "", false, false, ledger)).resolves.toBe(false);
+    await expect(requireVisiblePane(dir, waived, "w1", "", undefined, false, ledger)).resolves.toBe(false);
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
     expect(parseLedger(readFileSync(ledger, "utf8")).some((l) => l.event === "PANE-WAIVED" && l.fields.id === "w1")).toBe(true);
   });
 
   it("a pane that cannot open refuses the start: the command does not run unseen", async () => {
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("pane verification failed: split failed"));
-    await expect(requireVisiblePane(dir, cfg, "w2", "term-1", false, false, ledger)).rejects.toThrow(/^no pane: pane verification failed/);
+    await expect(requireVisiblePane(dir, cfg, "w2", "term-1", undefined, false, ledger)).rejects.toThrow(/^no pane: pane verification failed/);
     const lines = parseLedger(readFileSync(ledger, "utf8"));
     expect(lines.some((l) => l.event === "PANE-REFUSED" && l.fields.id === "w2")).toBe(true);
   });
 
   it("--no-pane is no waiver: the pane is still opened (and refused when it cannot be)", async () => {
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new Error("split failed"));
-    await expect(requireVisiblePane(dir, cfg, "w1", "term-1", true, false, ledger)).rejects.toThrow(/^no pane: split failed/);
+    await expect(requireVisiblePane(dir, cfg, "w1", "term-1", undefined, false, ledger)).rejects.toThrow(/^no pane: split failed/);
     expect(pane.openVerifiedPane).toHaveBeenCalledTimes(1);
   });
 
   it("skips (false) for --print-cmd dry runs, even inside a worker", async () => {
-    expect(await requireVisiblePane(dir, cfg, "w1", "", false, true, ledger)).toBe(false);
+    expect(await requireVisiblePane(dir, cfg, "w1", "", undefined, true, ledger)).toBe(false);
     vi.stubEnv("PAI_WORKER", "1");
-    expect(await requireVisiblePane(dir, cfg, "w1", "term-1", false, true, ledger)).toBe(false);
+    expect(await requireVisiblePane(dir, cfg, "w1", "term-1", undefined, true, ledger)).toBe(false);
     expect(pane.openVerifiedPane).not.toHaveBeenCalled();
   });
 
   it("a worker's child (PAI_WORKER=1) opens its own pane through the launcher", async () => {
     vi.stubEnv("PAI_WORKER", "1");
     vi.mocked(pane.openVerifiedPane).mockResolvedValue({ where: "split of host", paneUid: "P1" } as never);
-    await requireVisiblePane(dir, cfg, "w-child", "term-1", false, false, ledger).catch(() => undefined);
+    await requireVisiblePane(dir, cfg, "w-child", "term-1", undefined, false, ledger).catch(() => undefined);
     expect(pane.openVerifiedPane).toHaveBeenCalled();
   });
 
@@ -1070,7 +1070,7 @@ describe("requireVisiblePane", () => {
     vi.stubEnv("PAI_WORKER_AUTOPANE", "0");
     vi.mocked(pane.openVerifiedPane).mockRejectedValue(new pane.NoTerminalError("no terminal"));
     const off = { ...cfg, pane: { ...cfg.pane, enabled: false } };
-    await expect(requireVisiblePane(dir, off, "w1", "term-1", false, false, ledger)).rejects.toThrow(/^no pane: /);
+    await expect(requireVisiblePane(dir, off, "w1", "term-1", undefined, false, ledger)).rejects.toThrow(/^no pane: /);
     expect(pane.openVerifiedPane).toHaveBeenCalledTimes(1);
   });
 });

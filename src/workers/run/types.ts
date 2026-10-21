@@ -4,6 +4,7 @@
  * existing import path keeps working.
  */
 
+import { type SystemJob } from "../pane-waiver.js";
 import { parseRunnerArgs } from "../args.js";
 import { readWorkersSection } from "../config.js";
 import { type PortCheck } from "../local-provider.js";
@@ -21,7 +22,8 @@ export interface RunOptions {
   className?: string;
   modelFlag?: string;
   label?: string;
-  noPane?: boolean;
+  /** Typed system waiver (keepalive heartbeat): the start may run headless, ledgered PANE-WAIVED kind=system. Nothing else waives a pane. */
+  systemWaiver?: SystemJob;
   /** --no-stagger: skip the same-provider start gate. */
   noStagger?: boolean;
   /** --no-queue: skip the per-provider concurrency cap. */
@@ -207,7 +209,7 @@ export interface ExecuteArgs {
   label: string;
   parsed: ReturnType<typeof parseRunnerArgs>;
   claudeArgs: string[];
-  noPane: boolean;
+  systemWaiver?: SystemJob;
   noStagger?: boolean;
   noQueue?: boolean;
   priority?: "front";

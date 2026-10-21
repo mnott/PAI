@@ -30,6 +30,7 @@
  * the profile is still written, with font Menlo-Regular and no parent.
  */
 
+import { pidAlive, readExit, readRecord } from "./pane-exec.js";
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import {
@@ -1315,10 +1316,29 @@ function planEnded(logDir: string, wid: string): boolean {
   }
 }
 
+/**
+ * The single rule for closing a worker's pane from outside: its own process has exited AND the worker ended
+ * cleanly ("done"). A failed, killed or lost worker's pane stays showing the failure until the operator closes
+ * it; a same-id restart reuses the pane, so a pane whose process is still alive is never closed. The pane's
+ * process is the one the pane-exec wrapper ran (exit file written) or, for a pane without a wrapper record,
+ * the pid in the status file.
+ */
+export function paneMayClose(logDir: string, wid: string): boolean {
+  if (wid.startsWith("plan-") || wid.startsWith("pane-")) return planEnded(logDir, wid);
+  try {
+    const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string; pid?: number };
+    if (st.state !== "done") return false;
+    if (readRecord(wid)) return readExit(wid) !== null;
+    return !(typeof st.pid === "number" && st.pid > 0 && pidAlive(st.pid));
+  } catch {
+    return false;
+  }
+}
+
 /** The replacement rule: a new pane in a scope closes that scope's panes of ended workers. */
 export async function closeEndedInScope(logDir: string, scope: string, ops: PaneOps = realPaneOps): Promise<void> {
   for (const e of loadRegistry(logDir, scope)) {
-    if (!workerEnded(logDir, e.worker)) continue;
+    if (!paneMayClose(logDir, e.worker)) continue;
     await ops.closeIterm(e.session).catch(() => false);
     dropEntry(logDir, e);
   }

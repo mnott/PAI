@@ -116,7 +116,6 @@ export function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: Worke
   return (a.runner ?? runWorker)({
     providerFlag: ANTHROPIC_NATIVE,
     label: `${a.label} (fall-through)`,
-    noPane: a.noPane,
     noPool: a.opts?.noPool,
     mcpFlag: a.mcpFlag,
     cwd: a.cwd,

@@ -162,7 +162,7 @@ export async function runKeepaliveBeat(opts: BeatOptions = {}): Promise<BeatMetr
       claudeArgs: ["-p", HEARTBEAT_PROMPT],
       className: KEEPALIVE_CLASS,
       label: KEEPALIVE_LABEL,
-      noPane: true,
+      systemWaiver: "keepalive",
       quiet: true,
       worktreeFlag: false,
       id,

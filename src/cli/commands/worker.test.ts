@@ -95,7 +95,6 @@ describe("worker run: what is handed to the engine", () => {
     expect(r.run.className).toBe("implement");
     expect(r.run.label).toContain("Fix the loop");
     expect(r.run.worktreeFlag).toBeUndefined();
-    expect(r.run.noPane).toBe(false);
     expect(r.run.noReportRetry).toBe(false);
   });
   it("maps --role and --for to --class and --capability, and the no- switches to false", () => {
@@ -106,7 +105,7 @@ describe("worker run: what is handed to the engine", () => {
     expect(r.run.worktreeFlag).toBe(false);
     expect(r.run.browser).toBe(false);
     expect(r.run.noReportRetry).toBe(true);
-    expect(r.run.noPane).toBe(true);
+    expect(r.run).not.toHaveProperty("noPane");
     expect(r.run.orchestrate).toBe(true);
   });
   it("passes --orchestrate through to the run plan", () => {

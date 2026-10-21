@@ -76,6 +76,8 @@ const execCmd: CommandDef = {
   run: async (ctx: RunContext) =>
     runPaneExec(String(ctx.args.ID), {
       setTitle: (t) => writePaneTitle(t, process.env),
+      // a failed process keeps its pane: the wrapper stays up until the operator closes the pane
+      hold: () => new Promise<void>(() => setInterval(() => undefined, 1 << 30)),
       closePane: async () => {
         // registry entry and iTerm session by run id; the session by its own id when the registry has none
         const { workers } = readWorkersSection();

@@ -225,16 +225,16 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     const paneT0 = Date.now();
     const term = (await resolveHostSession()).term;
     const ledger = ledgerPath(a.logDir);
-    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
+    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger);
     a.panePrepared = { verified };
     a.setupPaneMs = Date.now() - paneT0;
     const status = loadStatus(a.logDir, wid);
     if (status) {
       if (verified) status.pane = { opened: true, exec: true };
-      else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
+      else await announcePane(a.logDir, a.config, wid, term, a.systemWaiver, ledger, status);
       saveStatus(a.logDir, status);
     } else if (!verified) {
-      await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger);
+      await announcePane(a.logDir, a.config, wid, term, a.systemWaiver, ledger);
     }
   };
   const panePending = preparePane();
@@ -468,11 +468,11 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
       status.session = hostSession;
       saveStatus(a.logDir, status);
     }
-    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.noPane, false, ledger);
+    const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger);
     a.panePrepared = { verified };
     a.setupPaneMs = Date.now() - paneT0;
     if (verified) status.pane = { opened: true, exec: true };
-    else await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger, status);
+    else await announcePane(a.logDir, a.config, wid, term, a.systemWaiver, ledger, status);
     saveStatus(a.logDir, status);
   })().catch((e) => {
     a.paneError = e instanceof Error ? e : new Error(String(e));
