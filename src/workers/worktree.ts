@@ -2001,6 +2001,86 @@ function gcScratchTrees(
   }
 }
 
+/** True when every commit main..`tip` is on main by hash or by patch-id (`git cherry` prints no "+"). */
+function landedOnMain(repo: string, tip: string): boolean {
+  const main = mainRef(repo);
+  if (isAncestor(repo, tip, main)) return true;
+  return !git(repo, ["cherry", main, tip]).split("\n").some((l) => l.startsWith("+ "));
+}
+
+/**
+ * Worktrees under the logDir whose work is already on main, whatever their age: the worker is
+ * not running, the tree is clean, and the HEAD (and branch tip) commits are on main by hash or
+ * by patch (a cherry-pick has a new hash). Worktrees whose branch was deleted or renamed are
+ * judged by their HEAD. Anything else is kept; `report` (the CLI) lists it with the reason. Returns the reclaimed dirs.
+ */
+function gcLandedTrees(
+  logDir: string,
+  statuses: WorkerStatus[],
+  repos: (string | undefined)[],
+  out: GcEntry[],
+  report: boolean,
+  archive: (id: string, dir: string, branch: string, st: WorkerStatus | null) => void
+): Set<string> {
+  const keep = (id: string, skipped: string): void => {
+    if (report) out.push({ id, skipped });
+  };
+  const reclaimed = new Set<string>();
+  const root = realpathOr(worktreesDir(logDir));
+  const byDir = new Map<string, WorkerStatus>();
+  for (const st of statuses) {
+    const t = ownedTree(st);
+    if (t) byDir.set(realpathOr(t.dir), st);
+  }
+  const seenRepo = new Set<string>();
+  for (const cwd of repos) {
+    if (!cwd || !existsSync(cwd)) continue;
+    let raw: string;
+    try {
+      raw = git(cwd, ["worktree", "list", "--porcelain"]);
+    } catch {
+      continue;
+    }
+    const blocks = raw.split("\n\n").map((b) => b.trim()).filter(Boolean);
+    const mainDir = (blocks[0] ?? "").split("\n")[0]?.slice("worktree ".length);
+    if (!mainDir || seenRepo.has(mainDir)) continue;
+    seenRepo.add(mainDir);
+    for (const block of blocks.slice(1)) {
+      const field = (k: string): string | undefined => block.split("\n").find((l) => l.startsWith(k + " "))?.slice(k.length + 1);
+      const dir = field("worktree");
+      if (!dir || !existsSync(dir) || block.includes("\nprunable")) continue;
+      const real = realpathOr(dir);
+      if (!real.startsWith(root + sep) || isSlotWorktree(real) || basename(real).startsWith("spare-")) continue;
+      const st = byDir.get(real) ?? null;
+      const id = st?.id ?? basename(real);
+      if (st && isLive(st)) {
+        keep(id, "worker is running");
+        continue;
+      }
+      const branch = field("branch")?.replace(/^refs\/heads\//, "");
+      try {
+        if (git(real, ["status", "--porcelain"])) {
+          keep(id, "kept: uncommitted changes");
+          continue;
+        }
+        const tips = [git(real, ["rev-parse", "HEAD"])];
+        if (branch) tips.push(git(mainDir, ["rev-parse", `refs/heads/${branch}`]));
+        if (!tips.every((t) => landedOnMain(mainDir, t))) {
+          keep(id, "kept: commits not on main");
+          continue;
+        }
+      } catch (e) {
+        keep(id, `kept: ${(e as Error).message.split("\n")[0]}`);
+        continue;
+      }
+      const before = out.length;
+      archive(id, real, branch ?? `detached/${id}`, st);
+      if (out[before]?.archive) reclaimed.add(real);
+    }
+  }
+  return reclaimed;
+}
+
 /**
  * Archive worktrees of finished workers older than `olderThanHours` and
  * status-less orphan directories: uncommitted state is salvaged onto the
@@ -2041,10 +2121,14 @@ export function gcWorktrees(
     }
   };
 
+  // Landed work goes first, at any age; in a dry run the trees stay on disk, so they are skipped below.
+  const landed = gcLandedTrees(logDir, statuses, [...new Set([...statuses.map((s) => s.cwd), foreignRepo, process.cwd()])], out, report, archive);
+  const mark = out.length;
+
   const young: { st: WorkerStatus; tree: { dir: string; branch: string }; end: number }[] = [];
   for (const st of statuses) {
     const tree = ownedTree(st);
-    if (!tree || !existsSync(tree.dir) || isLive(st) || isSlotWorktree(tree.dir)) continue;
+    if (!tree || !existsSync(tree.dir) || isLive(st) || isSlotWorktree(tree.dir) || landed.has(realpathOr(tree.dir))) continue;
     let end = 0;
     try {
       // whole ms like Date.now(): a sub-ms-newer mtime must not read as "after now"
@@ -2101,7 +2185,7 @@ export function gcWorktrees(
     for (const ent of readdirSync(root, { withFileTypes: true })) {
       const dir = join(root, ent.name);
       // owned by a status (the last id of a resume chain) is that status's business
-      if (!ent.isDirectory() || owned.has(resolve(dir)) || isSlotWorktree(dir) || ent.name.startsWith("spare-")) continue;
+      if (!ent.isDirectory() || owned.has(resolve(dir)) || isSlotWorktree(dir) || ent.name.startsWith("spare-") || landed.has(realpathOr(dir))) continue;
       try {
         if (Math.floor(statSync(dir).mtimeMs) > cutoff) continue;
       } catch {
@@ -2117,6 +2201,9 @@ export function gcWorktrees(
   const repos = new Set(statuses.map((s) => s.cwd).filter((c) => existsSync(c)));
   if (foreignRepo) repos.add(foreignRepo);
   gcOrphanBranches(logDir, repos, protect, dryRun, out);
+  // a tree kept by the landed check that the age rule then archived is not "kept"
+  const archivedIds = new Set(out.slice(mark).filter((e) => e.archive).map((e) => e.id));
+  for (let i = mark - 1; i >= 0; i--) if (out[i]!.skipped?.startsWith("kept:") && archivedIds.has(out[i]!.id)) out.splice(i, 1);
   if (!dryRun) {
     for (const repo of new Set(statuses.map((s) => s.cwd))) {
       try {
