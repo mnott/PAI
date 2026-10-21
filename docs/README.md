@@ -63,6 +63,7 @@ PAI keeps session memory in a local database (SQLite, or PostgreSQL with pgvecto
 - [Design notes](design/postgres-only.md) · [registry method map](design/registry-method-map.md)
 - [MCP skill guide](dev/mcp-skill-guide.md)
 - [Config migration log](dev/config-migration-log.md): constants moved from code into the shipped defaults
+- [Cockpit page source layout](dev/cockpit-page.md): which file holds which part of the cockpit page
 - [ARCHITECTURE](../ARCHITECTURE.md) · [Plugin architecture](../PLUGIN-ARCHITECTURE.md)
 - Building from a checkout needs Bun (`bun install && bun run build`); the installed `pai` runs on Node 20 or newer.
 
