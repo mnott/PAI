@@ -1362,6 +1362,38 @@ export function stubScan(cwd: string, oldHead: string): string {
   );
 }
 
+/** First repo among the status's worktree, cwd and the invocation cwd that has refs/heads/<branch>. */
+function repoHoldingBranch(st: WorkerStatus): string | null {
+  for (const d of new Set([st.worktreeDir, st.cwd, process.cwd()].filter((x): x is string => !!x && existsSync(x)))) {
+    const repo = commonDir(d);
+    if (!repo) continue;
+    try {
+      git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${st.branch}`]);
+      return repo;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/** Keep the branch tip under refs/pai-archive/<id>, delete the branch, read both back; throws unless confirmed. */
+function archiveAndDropBranch(repo: string, id: string, branch: string): string {
+  const tip = git(repo, ["rev-parse", `refs/heads/${branch}`]);
+  const archive = archiveRefAt(repo, tip) ?? (git(repo, ["update-ref", `refs/pai-archive/${id}`, tip]), `refs/pai-archive/${id}`);
+  if (!branchArchived(repo, `refs/heads/${branch}`, [archive])) throw new Error(`archive ${archive} does not keep ${branch}`);
+  git(repo, ["branch", "-D", branch]);
+  let still = true;
+  try {
+    git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]);
+  } catch {
+    still = false;
+  }
+  if (still) throw new Error(`branch ${branch} still exists in ${repo} after delete`);
+  if (git(repo, ["rev-parse", "--verify", archive]) !== tip) throw new Error(`archive ${archive} does not hold ${tip}`);
+  return archive;
+}
+
 /** `pai worker discard <id>`: drop worktree and branch after salvaging what they carry. */
 export function discardWorker(logDir: string, id: string): string {
   const cur = loadStatus(logDir, id);
@@ -1371,32 +1403,27 @@ export function discardWorker(logDir: string, id: string): string {
   }
   const st = mustHaveBranch(logDir, id);
   if (isSlotWorktree(st.worktreeDir!)) {
-    // For slot worktrees, we don't remove the worktree, just detach if needed and delete the branch
+    // The slot stays; its branch is archived and deleted in the repo that holds it.
+    const repo = repoHoldingBranch(st);
+    if (!repo) throw new Error(`no repo holds branch ${st.branch} (tried ${[st.worktreeDir, st.cwd, process.cwd()].join(", ")}); nothing discarded`);
     try {
-      const currentBranch = git(st.worktreeDir!, ["rev-parse", "--abbrev-ref", "HEAD"]);
-      if (currentBranch === st.branch) {
-        git(st.worktreeDir!, ["checkout", "-q", "--detach"]);
-      }
+      if (git(st.worktreeDir!, ["rev-parse", "--abbrev-ref", "HEAD"]) === st.branch) git(st.worktreeDir!, ["checkout", "-q", "--detach"]);
     } catch {
-      // If we cannot determine or change the branch, proceed with deletion anyway
+      // slot gone or unreadable: the branch is not checked out there
     }
-    try {
-      git(st.cwd, ["branch", "-D", st.branch!]);
-    } catch {
-      // If deletion fails, we still return a message
-    }
-    return `discarded worker ${id}: slot worktree kept, branch ${st.branch} deleted`;
+    const archive = archiveAndDropBranch(repo, id, st.branch!);
+    saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: archive });
+    invalidatePendingCache(logDir, repo);
+    return `discarded worker ${id}: slot worktree kept, branch ${st.branch} deleted in ${repo}, state kept in ${archive}`;
   }
   let archived: { archive?: string } = {};
   if (existsSync(st.worktreeDir!)) {
     archived = archiveWorktree(logDir, id, st.worktreeDir!, st.branch!);
   } else {
-    removeWorktree(st.cwd, st.worktreeDir!, true);
-    try {
-      git(st.cwd, ["branch", "-D", st.branch!]);
-    } catch {
-      // already gone
-    }
+    const repo = repoHoldingBranch(st);
+    if (!repo) throw new Error(`no repo holds branch ${st.branch} (tried ${[st.cwd, process.cwd()].join(", ")}); nothing discarded`);
+    removeWorktree(repo, st.worktreeDir!, true);
+    archived = { archive: archiveAndDropBranch(repo, id, st.branch!) };
   }
   const s = {
     ...st,

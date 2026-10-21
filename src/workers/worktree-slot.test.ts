@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,6 +90,39 @@ describe("slot worktrees", () => {
     expect(msg).toContain("slot worktree kept");
     expect(existsSync(slotDir)).toBe(true);
     expect(() => git(repo, ["rev-parse", "--verify", "worker/s3"])).toThrow();
+  });
+
+  it("discard with the slot gone archives and deletes the branch in the repo that holds it", () => {
+    const { slotDir } = makeTask("dg5", true);
+    const missing = join(dir, "gone-cwd");
+    saveStatus(logDir, { ...loadStatus(logDir, "dg5")!, cwd: missing });
+    git(repo, ["worktree", "remove", "--force", slotDir]);
+    const spy = vi.spyOn(process, "cwd").mockReturnValue(repo);
+    try {
+      const tip = git(repo, ["rev-parse", "worker/dg5"]);
+      const msg = discardWorker(logDir, "dg5");
+      expect(msg).toContain("deleted");
+      expect(() => git(repo, ["rev-parse", "--verify", "worker/dg5"])).toThrow();
+      expect(git(repo, ["rev-parse", "refs/pai-archive/dg5"])).toBe(tip);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("discard where no repo has the branch fails and says nothing deleted", () => {
+    const { slotDir } = makeTask("dg6", true);
+    const other = join(dir, "other");
+    mkdirSync(other, { recursive: true });
+    git(other, ["init", "-q"]);
+    saveStatus(logDir, { ...loadStatus(logDir, "dg6")!, cwd: join(dir, "gone-cwd"), worktreeDir: join(logDir, "slots", "gone-9") });
+    git(repo, ["worktree", "remove", "--force", slotDir]);
+    const spy = vi.spyOn(process, "cwd").mockReturnValue(other);
+    try {
+      expect(() => discardWorker(logDir, "dg6")).toThrow(/nothing discarded/);
+      expect(git(repo, ["rev-parse", "--verify", "worker/dg6"])).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // e) "gc never removes a slot worktree": const { slotDir } = makeTask("s4", true); gcWorktrees(logDir, 0); expect(existsSync(slotDir)).toBe(true).
