@@ -22,6 +22,7 @@ import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
 const TICK_MS = 30_000;
 const COUNTS_TTL_MS = 5 * 60_000;
+const BINDING_TTL_MS = 5 * 60_000; // the binding changes only on a re-embed; one query per 5 min is plenty
 const STALL_MS = 5 * 60_000;
 const RATE_WINDOW_MS = 5 * 60_000;
 const HISTORY_MAX = 120; // 1 h of 30 s samples
@@ -94,6 +95,9 @@ interface Cache {
   counts: (Counts & { exact: boolean; at: number }) | null;
   binding: EmbeddingBinding | null;
   bindingError: string | null;
+  /** consecutive failed binding checks and when the streak began; the last good binding is kept meanwhile */
+  bindingFails: number;
+  bindingFailSince: number | null;
   jobs: RawJob[];
   backend: { ok: boolean; reason: string } | null;
   loaded: LoadedModel[] | null;
@@ -138,10 +142,11 @@ function phaseOf(s: Record<string, unknown>): JobView["phase"] {
 }
 
 export class DashboardState {
-  private cache: Cache = { counts: null, binding: null, bindingError: null, jobs: [], backend: null, loaded: null };
+  private cache: Cache = { counts: null, binding: null, bindingError: null, bindingFails: 0, bindingFailSince: null, jobs: [], backend: null, loaded: null };
   private samples = new Map<string, { list: JobSample[]; history: JobSample[]; progressAt: number; lastDone: number }>();
   private lastExactAt: number;
   private exactRunning = false;
+  private lastBindingAt = -Infinity;
   private lastPersistAt: number;
   private historyPath: string;
 
@@ -205,9 +210,21 @@ export class DashboardState {
     }
     this.refreshExact(t);
 
-    c.bindingError = null;
-    const b = await run(() => this.src.binding(), (e) => { c.bindingError = e instanceof Error ? e.message : String(e); });
-    if (b !== undefined) c.binding = b;
+    // Cached: re-checked every BINDING_TTL_MS (a failed check is retried on the next tick).
+    if (c.bindingFails > 0 || t - this.lastBindingAt >= BINDING_TTL_MS) {
+      const b = await run(() => this.src.binding(), (e) => {
+        c.bindingError = e instanceof Error ? e.message : String(e);
+        c.bindingFails++;
+        c.bindingFailSince ??= t;
+      });
+      if (b !== undefined) {
+        c.binding = b;
+        c.bindingError = null;
+        c.bindingFails = 0;
+        c.bindingFailSince = null;
+        this.lastBindingAt = t;
+      }
+    }
 
     const jobs = await run(() => this.src.jobs(), () => {});
     if (jobs) {
@@ -274,7 +291,7 @@ export class DashboardState {
     const reembedJob = this.findReembedJob(c.jobs, be.id);
     const reembedActive = reembedJob && !["done"].includes(phaseOf(reembedJob.state));
 
-    const indexLevel: Level = (mismatch && !reembedActive) || c.bindingError ? "red" : reembedActive ? "amber" : "green";
+    const indexLevel: Level = mismatch && !reembedActive ? "red" : reembedActive ? "amber" : "green";
     const backendLevel: Level = c.backend && !c.backend.ok ? "red" : c.backend ? "green" : "amber";
 
     const passes = this.src.passes().map((p) => ({
@@ -295,7 +312,6 @@ export class DashboardState {
     const level = worst([indexLevel, backendLevel, ...jobs.map((j) => j.level), ...passes.map((p) => p.level)]);
     const reason =
       level === "green" ? "all systems healthy"
-      : c.bindingError ? `binding check failed: ${c.bindingError}`
       : jobs.find((j) => j.stalled) ? `job ${jobs.find((j) => j.stalled)!.name} stalled`
       : c.backend && !c.backend.ok ? `backend unavailable: ${c.backend.reason}`
       : passes.find((p) => p.failure) ? `pass ${passes.find((p) => p.failure)!.name} failed`
@@ -322,6 +338,8 @@ export class DashboardState {
         mismatch,
         hint,
         error: c.bindingError,
+        /** failing binding check (last good binding stays in `binding`); the reader applies its red thresholds */
+        bindingFailure: c.bindingError ? { failures: c.bindingFails, since: c.bindingFailSince, reason: c.bindingError } : null,
       },
       jobs,
       passes,

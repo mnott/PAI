@@ -220,11 +220,39 @@ interface LastPass { at: number; chunks: number | null; result: string; by: stri
 
 type Pass = { name: string; running: boolean; lastEnd: number; nextAt: number | null; failure: { at: number; error: string; attempts: number; gaveUp: boolean; retryAt: number | null } | null };
 
+/** The last daemon answer and the current failure streak of the daemon call (a router-process cache). */
+const lastGood: { d: DaemonMemory | null; fails: number; since: number | null } = { d: null, fails: 0, since: null };
+
+/** Forget the kept data and failure streak (tests). */
+export function resetMemoryStale(): void {
+  lastGood.d = null;
+  lastGood.fails = 0;
+  lastGood.since = null;
+}
+
+const hhmmss = (ms: number): string => new Date(ms).toTimeString().slice(0, 8);
+
 export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()): Promise<unknown> {
   const L = cockpitLayout();
   const now = deps.now();
   const stallMs = L.memoryStallSecs * 1000;
-  const d = await deps.daemon();
+  const fresh = await deps.daemon();
+  // A failed daemon call keeps the last good data, marked stale; no data yet = nothing to keep.
+  let fail: { failures: number; since: number; reason: string } | null = null;
+  if (fresh) {
+    lastGood.d = fresh;
+    lastGood.fails = 0;
+    lastGood.since = null;
+  } else {
+    lastGood.fails++;
+    lastGood.since ??= now;
+    fail = { failures: lastGood.fails, since: lastGood.since, reason: "daemon not answering" };
+  }
+  const d = fresh ?? lastGood.d;
+  const bf = d?.status?.index.bindingFailure ?? null;
+  if (!fail && bf) fail = { failures: bf.failures, since: bf.since ?? now, reason: `binding check failed: ${bf.reason}` };
+  const red = !!fail && (fail.failures >= L.memoryFailRedCount || now - fail.since >= L.memoryFailRedSecs * 1000);
+  const stale = !!fail && !red && d !== null;
   const s = d?.status ?? null;
   const run = deps.run();
   const files = s?.index.files ?? null;
@@ -279,13 +307,19 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   const loadedAll = s?.backend.loaded ?? [];
   const loaded = model ? loadedAll.find((m) => sameModel(m.name, model)) ?? null : null;
   const stalled = jobs.find((j) => j.stalled);
-  const level: Level = s?.level ?? (d ? "amber" : "red");
+  const baseLevel: Level = s?.level ?? (d ? "amber" : "red");
+  const level: Level = red ? "red" : baseLevel;
   return {
     at: now,
+    stale,
+    staleSince: stale && fail ? fail.since : null,
+    failures: fail?.failures ?? 0,
     title: L.memoryTitle,
-    daemon: d !== null,
+    daemon: fresh !== null,
     level: stalled && level === "green" ? "red" : level,
-    reason: stalled && level === "green" ? `job ${stalled.name} stalled` : s?.reason ?? (d ? "status not sampled yet" : "daemon not answering"),
+    reason: fail && red ? fail.reason
+      : stale && fail ? `stale since ${hhmmss(fail.since)} (${fail.reason})`
+      : stalled && level === "green" ? `job ${stalled.name} stalled` : s?.reason ?? (d ? "status not sampled yet" : "daemon not answering"),
     stallSecs: L.memoryStallSecs,
     counts: { files, chunks, embedded, backlog, coverage, coverageLevel, exact: s?.index.countsExact ?? false },
     segments: s?.index.segments ?? (embedded !== null && backlog !== null ? { fresh: 0, old: embedded, missing: backlog } : null),

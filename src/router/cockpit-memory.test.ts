@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cockpitMemoryPayload, memoryJobProgress, runProgress, type DaemonMemory, type MemoryDeps } from "./cockpit-memory.js";
+import { cockpitMemoryPayload, resetMemoryStale, memoryJobProgress, runProgress, type DaemonMemory, type MemoryDeps } from "./cockpit-memory.js";
 import { defaultDeps, memoryRunRefusal, readCockpitJob, runCockpitAction, type ActionDeps } from "./cockpit-actions.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { cockpitLayout } from "./cockpit-layout.js";
@@ -11,6 +11,7 @@ import { acquireRun, readFinishedRun, readRun, runStateFile, type RunState } fro
 let home = "";
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pai-cockpit-memory-"));
+  resetMemoryStale();
 });
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
@@ -82,6 +83,7 @@ describe("memory payload", () => {
   it("derives the backlog from chunks and vectors when the daemon did not count it, and reads red when the daemon is down", async () => {
     const p = (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ embedBacklog: null }) }))) as any;
     expect(p.counts.backlog).toBe(2_000_000 - 1_877_697);
+    resetMemoryStale();
     const down = (await cockpitMemoryPayload(deps({ daemon: async () => null }))) as any;
     expect(down).toMatchObject({ daemon: false, level: "red", reason: "daemon not answering" });
     expect(down.counts.backlog).toBeNull();
@@ -437,5 +439,42 @@ describe("memory faults: backend tile, pass merge, kept finished run, empty back
     expect(s.jobs[0]).toMatchObject({ id: "run-starting", done: 0, phase: "starting" });
     expect(f.memRunPill(s)).toContain("starting");
     expect(f.memHtml(s)).toContain("starting…");
+  });
+});
+
+describe("stale vs red on a failing source", () => {
+  const T = (n: number) => NOW + n * 1000;
+  it("keeps the last good data stale on a daemon blip and turns red after the count threshold", async () => {
+    resetMemoryStale();
+    const L = cockpitLayout();
+    await cockpitMemoryPayload(deps());
+    let p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(5) }))) as Record<string, any>;
+    expect(p).toMatchObject({ stale: true, failures: 1, staleSince: T(5), level: "green", counts: { chunks: 2_000_000 } });
+    expect(p.reason).toMatch(/^stale since \d\d:\d\d:\d\d \(daemon not answering\)$/);
+    for (let i = 2; i < L.memoryFailRedCount; i++) p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(5 + i) }))) as Record<string, any>;
+    expect(p.stale).toBe(true);
+    p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(5 + L.memoryFailRedCount) }))) as Record<string, any>;
+    expect(p).toMatchObject({ stale: false, level: "red", reason: "daemon not answering", failures: L.memoryFailRedCount });
+  });
+
+  it("turns red by duration before the count is reached, and recovers on the next good answer", async () => {
+    resetMemoryStale();
+    const L = cockpitLayout();
+    await cockpitMemoryPayload(deps());
+    await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(1) }));
+    const p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(1 + L.memoryFailRedSecs) }))) as Record<string, any>;
+    expect(p).toMatchObject({ level: "red", failures: 2 });
+    const ok = (await cockpitMemoryPayload(deps())) as Record<string, any>;
+    expect(ok).toMatchObject({ stale: false, failures: 0, level: "green" });
+  });
+
+  it("a failing binding check is stale first, red after its threshold", async () => {
+    resetMemoryStale();
+    const bf = (failures: number, since: number) => daemon({ status: status({ index: { ...(status() as any).index, bindingFailure: { failures, since, reason: "connection timeout" } } }) });
+    let p = (await cockpitMemoryPayload(deps({ daemon: async () => bf(1, NOW) }))) as Record<string, any>;
+    expect(p).toMatchObject({ stale: true, level: "green", failures: 1 });
+    expect(p.reason).toMatch(/\(binding check failed: connection timeout\)/);
+    p = (await cockpitMemoryPayload(deps({ daemon: async () => bf(cockpitLayout().memoryFailRedCount, NOW) }))) as Record<string, any>;
+    expect(p).toMatchObject({ stale: false, level: "red", reason: "binding check failed: connection timeout" });
   });
 });

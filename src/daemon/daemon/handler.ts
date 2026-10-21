@@ -5,7 +5,7 @@
 import type { Socket } from "node:net";
 import type { IpcRequest, IpcResponse } from "./types.js";
 import type { NotificationMode } from "../../notifications/types.js";
-import { memoryDashboard } from "./dashboard-live.js";
+import { memoryBacklog, memoryDashboard } from "./dashboard-live.js";
 import {
   patchNotificationConfig,
 } from "../../notifications/config.js";
@@ -116,7 +116,7 @@ export async function handleRequest(
 
   // Special: memory_dashboard — the sampled memory status for the cockpit's Memory section
   if (method === "memory_dashboard") {
-    const backlog = await storageBackend?.countUnembeddedChunks().catch(() => null) ?? null;
+    const backlog = await memoryBacklog(storageBackend);
     sendResponse(socket, { id, ok: true, result: memoryDashboard(backlog) });
     socket.end();
     return;
