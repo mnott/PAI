@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 
 export const LOCAL_STATUS_REFRESH_MS = 30_000;
 /** A cache older than this means the daemon is not refreshing it. */
-export const LOCAL_STATUS_MAX_AGE_MS = 90_000;
+export const LOCAL_STATUS_MAX_AGE_MS = 180_000;
 
 export interface LocalRunning {
   provider: string;
@@ -58,21 +58,32 @@ export function writeLocalStatus(logDir: string, st: LocalStatus): void {
   renameSync(tmp, path);
 }
 
+export type LocalStatusRead = { status: LocalStatus; reason?: undefined } | { status: null; reason: string };
+
+/** Like readLocalStatus, but says why there is no answer: missing, unparsable, stale (age) or bad shape. */
+export function readLocalStatusWhy(logDir: string, now = Date.now(), maxAgeMs = LOCAL_STATUS_MAX_AGE_MS): LocalStatusRead {
+  const path = localStatusPath(logDir);
+  if (!existsSync(path)) return { status: null, reason: "status file missing" };
+  let st: LocalStatus;
+  try {
+    st = JSON.parse(readFileSync(path, "utf8")) as LocalStatus;
+  } catch {
+    return { status: null, reason: "status file unparsable" };
+  }
+  if (!st || typeof st !== "object") return { status: null, reason: "status file has a bad shape" };
+  // schema 1 cached `running` as one object or null
+  const raw = st.running as unknown;
+  st.running = Array.isArray(raw) ? (raw as LocalRunning[]) : raw && typeof raw === "object" ? [raw as LocalRunning] : [];
+  const at = Date.parse(st.at);
+  if (Number.isNaN(at) || !Array.isArray(st.down) || !Array.isArray(st.disabled)) return { status: null, reason: "status file has a bad shape" };
+  const age = now - at;
+  if (age > maxAgeMs) return { status: null, reason: `status ${Math.round(age / 1000)} s old (max ${Math.round(maxAgeMs / 1000)} s)` };
+  return { status: st };
+}
+
 /** The daemon's cached answer; null when absent, damaged or older than maxAgeMs. */
 export function readLocalStatus(logDir: string, now = Date.now(), maxAgeMs = LOCAL_STATUS_MAX_AGE_MS): LocalStatus | null {
-  const path = localStatusPath(logDir);
-  if (!existsSync(path)) return null;
-  try {
-    const st = JSON.parse(readFileSync(path, "utf8")) as LocalStatus;
-    // schema 1 cached `running` as one object or null
-    const raw = st.running as unknown;
-    st.running = Array.isArray(raw) ? (raw as LocalRunning[]) : raw && typeof raw === "object" ? [raw as LocalRunning] : [];
-    const at = Date.parse(st.at);
-    if (Number.isNaN(at) || now - at > maxAgeMs || !Array.isArray(st.down) || !Array.isArray(st.disabled)) return null;
-    return st;
-  } catch {
-    return null;
-  }
+  return readLocalStatusWhy(logDir, now, maxAgeMs).status;
 }
 
 /** Text + JSON of the answer for the CLI and the MCP tool. */

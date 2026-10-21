@@ -272,13 +272,27 @@ export async function currentLocalStatus(
 
 /** Daemon side: refresh the cache now and every 30 s. Returns the stop function. */
 export function startLocalStatusRefresh(): () => void {
+  let busy = false;
+  let lastWrite = 0;
+  let lastLog = 0;
   const refresh = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
     try {
       const { workers } = readWorkersSection();
       const dir = workersLogDir(workers);
-      writeLocalStatus(dir, await computeLocalStatus(workers, dir));
+      const st = await computeLocalStatus(workers, dir);
+      writeLocalStatus(dir, st);
+      const now = Date.now();
+      if (now - lastLog >= 60_000) {
+        process.stderr.write(`[local-status] wrote running=${st.running.length} after ${lastWrite ? Math.round((now - lastWrite) / 1000) : 0}s\n`);
+        lastLog = now;
+      }
+      lastWrite = now;
     } catch (e) {
       process.stderr.write(`[pai-daemon] Local status refresh error: ${e instanceof Error ? e.message : String(e)}\n`);
+    } finally {
+      busy = false;
     }
   };
   void refresh();

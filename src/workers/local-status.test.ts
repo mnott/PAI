@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { WorkersConfig } from "./config.js";
 import { computeLocalStatus, currentLocalStatus, resolveLocalInstances, resolveLocalProvider } from "./local-provider.js";
-import { localStatusLine, primaryLocal, readLocalStatus, writeLocalStatus, type LocalStatus } from "./local-status.js";
+import { localStatusLine, localStatusPath, primaryLocal, readLocalStatus, readLocalStatusWhy, writeLocalStatus, type LocalStatus } from "./local-status.js";
 
 const prov = (baseUrl: string, model: string, enabled = true) => ({
   enabled,
@@ -52,7 +52,19 @@ describe("cache", () => {
     expect(readLocalStatus(dir)).toBeNull();
     writeLocalStatus(dir, st);
     expect(readLocalStatus(dir, 1_000_000 + 30_000)).toEqual(st);
-    expect(readLocalStatus(dir, 1_000_000 + 91_000)).toBeNull();
+    expect(readLocalStatus(dir, 1_000_000 + 181_000)).toBeNull();
+  });
+
+  it("readLocalStatusWhy names missing, unparsable, bad shape and stale", () => {
+    const dir = tmp();
+    expect(readLocalStatusWhy(dir).reason).toMatch(/missing/);
+    writeFileSync(localStatusPath(dir), "{nope");
+    expect(readLocalStatusWhy(dir).reason).toMatch(/unparsable/);
+    writeFileSync(localStatusPath(dir), JSON.stringify({ at: "x", running: [] }));
+    expect(readLocalStatusWhy(dir).reason).toMatch(/bad shape/);
+    writeLocalStatus(dir, st);
+    expect(readLocalStatusWhy(dir, 1_000_000 + 200_000).reason).toBe("status 200 s old (max 180 s)");
+    expect(readLocalStatusWhy(dir, 1_000_000 + 1_000).status).toEqual(st);
   });
 
   it("resolveLocalProvider uses the fresh cached answer without probing", async () => {
