@@ -18,6 +18,7 @@ import { exitFilePath, listRecords, pidAlive, readExit, recordPath, type ExitRec
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
+import { killTree } from "./kill-tree.js";
 import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
@@ -200,6 +201,8 @@ export async function auditTick(
     running?: (wid: string) => boolean;
     /** Launcher audit seam (default: the real pane-exec records and processes). */
     launches?: () => Promise<unknown>;
+    /** Stops a worker through the normal end path (kill-tree: SIGTERM, the runner salvages and ends). */
+    stop?: (wid: string, why: string) => Promise<unknown>;
   } = {}
 ): Promise<PaneVerdict[]> {
   const now = deps.now?.() ?? new Date();
@@ -243,10 +246,19 @@ export async function auditTick(
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
     next[v.id] = v.mark;
-    if (told[v.id] !== v.mark) appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
+    if (told[v.id] === v.mark) continue;
+    appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
+    // a worker without its pane does not run on: it ends through the normal path, which salvages its work
+    if (v.kind === "worker" && v.mark === "NO PANE") await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, now);
   }
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
   return verdicts;
+}
+
+/** End a worker that runs without a registered pane (kill-tree is the normal end path); ledgered PANE-STOPPED. */
+async function stopUnpaned(logDir: string, id: string, why: string, stop: ((wid: string, why: string) => Promise<unknown>) | undefined, now: Date): Promise<void> {
+  appendLedger(ledgerPath(logDir), "PANE-STOPPED", { id, why }, now);
+  await (stop ?? ((wid, reason) => killTree(logDir, wid, { only: true, by: "pane audit", reason })))(id, why).catch(() => undefined);
 }
 
 export interface LaunchFinding {
@@ -266,6 +278,10 @@ export interface LaunchAuditDeps {
   workers?: () => Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }>;
   /** Files of an ended launch older than this are removed. */
   keepMs?: number;
+  /** Whether a pane is registered for the worker (default: the pane registry). */
+  registered?: (id: string) => boolean;
+  /** Stops an unlaunched worker (default: kill-tree). */
+  stop?: (wid: string, why: string) => Promise<unknown>;
 }
 
 const killReal = (pid: number, sig: NodeJS.Signals, group: boolean): void => {
@@ -279,7 +295,7 @@ const killReal = (pid: number, sig: NodeJS.Signals, group: boolean): void => {
 /**
  * The launcher audit, a bug detector: a pane-exec whose child is gone while its wrapper (the pane) lives, or
  * whose wrapper is gone while the child lives, has an orphan side, which is killed / closed here; a running
- * worker that never went through the launcher (and has no "no terminal" record) is only noted. Ledger lines
+ * worker that never went through the launcher (no pane registered, no waiver record) is stopped. Ledger lines
  * only: PANE-ORPHAN, PANE-UNLAUNCHED. Never a session notice, never PAILot.
  */
 export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now: Date = new Date()): Promise<LaunchFinding[]> {
@@ -314,12 +330,15 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
   // a running worker nobody launched through a pane, and with no recorded reason to run without one
   const told = readJson(join(logDir, "pane-audit-unlaunched.json"));
   const flagged: Record<string, string> = {};
+  const registered = d.registered ?? ((id: string) => loadRegistry(logDir).some((e) => e.worker === id));
   for (const w of (d.workers ?? (() => runningWorkers(logDir)))()) {
-    if (w.exec || w.exempt || nowMs - w.startedMs < panePolicy().startGraceMs) continue;
+    if (w.exec || w.exempt || nowMs - w.startedMs < panePolicy().startGraceMs || registered(w.id)) continue;
     flagged[w.id] = "1";
     if (!told[w.id]) {
-      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why: "running without having been started through the pane launcher" }, now);
-      out.push({ id: w.id, kind: "unlaunched", action: "noted" });
+      const why = "running without having been started through the pane launcher";
+      appendLedger(ledger, "PANE-UNLAUNCHED", { id: w.id, why }, now);
+      await stopUnpaned(logDir, w.id, why, d.stop, now);
+      out.push({ id: w.id, kind: "unlaunched", action: "stopped" });
     }
   }
   writeFileSync(join(logDir, "pane-audit-unlaunched.json"), JSON.stringify(flagged), "utf8");

@@ -37,7 +37,7 @@
  * cwd) is byte-identical across tasks and stays in the server's prefix cache.
  */
 
-import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, statSync, unlinkSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { dirname, join } from "node:path";
 import { ANTHROPIC_NATIVE, DEFAULT_POOL_PORT, defaultWorkersConfig, type WorkersConfig, type WorkerProvider } from "./config.js";
@@ -171,6 +171,37 @@ export function poolDir(logDir: string): string {
 
 export function poolStatePath(logDir: string): string {
   return join(poolDir(logDir), "state.json");
+}
+
+/** Present while the host hands its port to the replacement built from a newer bundle (reload). */
+export function poolReloadMarkerPath(logDir: string): string {
+  return join(poolDir(logDir), "reloading");
+}
+
+export function writeReloadMarker(logDir: string): void {
+  try {
+    mkdirSync(poolDir(logDir), { recursive: true });
+    writeFileSync(poolReloadMarkerPath(logDir), String(Date.now()), "utf8");
+  } catch {
+    /* the marker only shortens a client's wait */
+  }
+}
+
+export function clearReloadMarker(logDir: string): void {
+  try {
+    unlinkSync(poolReloadMarkerPath(logDir));
+  } catch {
+    /* gone */
+  }
+}
+
+/** A reload handover is under way (marker younger than `maxAgeMs`): a refused connection then means "retry", not "no host". */
+export function reloadInProgress(logDir: string, maxAgeMs = 30_000): boolean {
+  try {
+    return Date.now() - statSync(poolReloadMarkerPath(logDir)).mtimeMs < maxAgeMs;
+  } catch {
+    return false;
+  }
 }
 
 export function poolMetricsPath(logDir: string): string {
@@ -519,7 +550,10 @@ export function postTaskToPool(
   port: number,
   task: PoolTaskRequest,
   timeoutMs: number,
-  path: "/task" | "/claim" = "/task"
+  path: "/task" | "/claim" = "/task",
+  /** True while the host is handing over to its replacement: a refused connection is retried (nothing was sent) until it ends or `handoverWaitMs` passes. */
+  handover?: () => boolean,
+  handoverWaitMs = 20_000
 ): Promise<PoolTaskResponse | null> {
   return new Promise((resolve) => {
     const body = JSON.stringify(task);
@@ -552,7 +586,14 @@ export function postTaskToPool(
       req.destroy();
       resolve(null);
     });
-    req.on("error", () => resolve(null));
+    req.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "ECONNREFUSED" && handover?.() && handoverWaitMs > 0) {
+        // the replacement host is not listening yet: nothing reached a host, so the post is safe to repeat
+        setTimeout(() => void postTaskToPool(port, task, timeoutMs, path, handover, handoverWaitMs - 300).then(resolve), 300);
+        return;
+      }
+      resolve(null);
+    });
     req.end(body);
   });
 }

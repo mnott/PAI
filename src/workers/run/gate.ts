@@ -48,6 +48,7 @@ import {
   poolSettings,
   SLOT_TOOLS,
   postTaskToPool,
+  reloadInProgress,
   type PoolTaskResponse,
 } from "../pool.js";
 import { type ExecuteArgs } from "./types.js";
@@ -216,7 +217,11 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this.
   // The pane is open (or verified) before the task is posted.
   const preparePane = async (): Promise<void> => {
-    if (a.paneOpening) return a.paneOpening; // gateStart already started it, beside admission
+    if (a.paneOpening) {
+      await a.paneOpening; // gateStart already started it, beside admission; its failure is kept in paneError
+      if (a.paneError) throw a.paneError;
+      return;
+    }
     if (a.panePrepared) return;
     const paneT0 = Date.now();
     const term = (await resolveHostSession()).term;
@@ -251,6 +256,9 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       const argv = [...followCommand(wid).split(" "), "--auto-exit"];
       const proc = await spawnOwned(wid, argv, { env: process.env, cwd, stdio: ["ignore", "pipe", "pipe"], title: `${a.label ?? wid} (pooled)` });
       proc.on("error", () => undefined);
+      // the host owns the status file; the pane that follows this run is its registered pane
+      const st = loadStatus(a.logDir, wid);
+      if (st) saveStatus(a.logDir, { ...st, pane: { opened: true, exec: true } });
     });
     return following;
   };
@@ -288,7 +296,8 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
         ...(a.admissionMs !== undefined ? { admissionMs: a.admissionMs } : {}),
       },
       timeoutMs,
-      claim ? "/claim" : "/task"
+      claim ? "/claim" : "/task",
+      () => reloadInProgress(a.logDir)
     );
   } catch {
     resp = null;

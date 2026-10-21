@@ -40,25 +40,36 @@ export async function requireVisiblePane(
   dryRun: boolean,
   ledger: string
 ): Promise<boolean> {
-  if (dryRun || noPane) return false; // config and PAI_WORKER_AUTOPANE no longer skip a pane: the pane rule has no switch
-  const allow = headlessAllowed();
-  if (allow) {
-    process.stderr.write(`[pai worker] hidden run allowed for ${wid}: ${allow}\n`);
+  void noPane; // --no-pane is no waiver: only workers.panes.required=false (or the operator's override) lets a start run unseen
+  if (dryRun) return false;
+  const waiver = paneWaiver(config);
+  if (waiver) {
+    appendLedger(ledger, "PANE-WAIVED", { id: wid, why: waiver });
+    process.stderr.write(`[pai worker] pane waived for ${wid}: ${waiver}\n`);
     return false;
   }
   if (paneHandles.has(wid)) return true;
+  const refuse = (reason: string): never => {
+    appendLedger(ledger, "PANE-REFUSED", { id: wid, reason });
+    process.stderr.write(`[pai worker] ${wid} not started: no pane: ${reason}\n`);
+    throw new Error(`no pane: ${reason}`);
+  };
   try {
     const pane = await launchPane({ logDir, config, id: wid, kind: "worker", term });
-    if (!pane) return false;
+    if (!pane) return refuse(noTerminalReasons.get(wid) ?? "no terminal to open one in");
     paneHandles.set(wid, pane);
     process.stderr.write(`[pai worker] pane opened for ${wid}: ${pane.where}\n`);
     return true;
   } catch (e) {
-    const reason = (e instanceof Error ? e.message : String(e)).slice(0, 300);
-    appendLedger(ledger, "WORKER-NO-PANE", { id: wid, reason });
-    process.stderr.write(`[pai worker] ${wid} not started: its pane could not be opened: ${reason}\n`);
-    throw new Error(`pane could not be opened: ${reason}`);
+    if (e instanceof Error && e.message.startsWith("no pane: ")) throw e;
+    return refuse((e instanceof Error ? e.message : String(e)).slice(0, 300));
   }
+}
+
+/** Why this start may run without a pane (workers.panes.required false, or the operator's hidden-run override), else null. */
+export function paneWaiver(config: { panes?: { required: boolean } }): string | null {
+  if (config.panes?.required === false) return "workers.panes.required=false";
+  return headlessAllowed();
 }
 
 /**

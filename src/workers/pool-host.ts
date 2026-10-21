@@ -94,6 +94,8 @@ import {
   slotShouldReap,
   warmOrCold,
   writePoolState,
+  writeReloadMarker,
+  clearReloadMarker,
   poolHostStale,
   type PoolSlotRecord,
   type PoolSpareRecord,
@@ -831,7 +833,17 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   /** One pooled task, end to end. */
+  /** Tasks being served right now, spare-served ones included (they hold no slot): a reload waits for them. */
+  let inflight = 0;
   const runTask = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
+    inflight++;
+    try {
+      return await runTaskInner(task, clientGone);
+    } finally {
+      inflight--;
+    }
+  };
+  const runTaskInner = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
     const provider = getProviderOrNative(config, task.provider);
     if (!provider) return { pooled: false, reason: "engine" };
     // the client screens eligibility before shipping the task; the host
@@ -1338,8 +1350,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
     if (now().getTime() - seenSince < (opts.bundleStableMs ?? 5000)) return false;
     // a busy or claimed slot defers the reload until it is idle
-    if (claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) return false;
+    if (inflight > 0 || claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) return false;
     reloading = true;
+    writeReloadMarker(logDir);
     appendLedger(ledger, "POOL-HOST-RELOAD", { pid: process.pid, bundle: opts.bundlePath, note: "newer build on disk" });
     // slots go first (the replacement owns the state file), then the listener is released for it
     for (const [k, s] of slots) {
@@ -1361,9 +1374,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       }
     }
     if (up) {
+      clearReloadMarker(logDir);
       opts.onReloaded?.();
       return true;
     }
+    clearReloadMarker(logDir);
     // the replacement is not up: take the port back and keep serving
     await new Promise<void>((resolve) => {
       server.once("error", () => resolve());

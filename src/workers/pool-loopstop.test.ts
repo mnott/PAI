@@ -148,7 +148,7 @@ describe("the pool client after a stopped pooled run (prefer-local)", () => {
     const logDir = mkdtempSync(join(tmpdir(), "pai-loopstop-client-"));
     const runner = vi.fn().mockResolvedValue(0);
     const a = {
-      config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port, continuation: true }, capacity: { enabled: true }, pane: { enabled: true } },
+      config: { panes: { required: false }, pool: { enabled: true, maxSlots: 1, idleSecs: 0, port, continuation: true }, capacity: { enabled: true }, pane: { enabled: true } },
       logDir, quiet: true, id: "w-loop", label: "x", model: "m", cwd: tmpdir(), noPane: true, worktreeFlag: false, reportFormat: "ag2", noBrowser: true, noStagger: true,
       route: { policy: "prefer-local", reason: "local", local: true },
       runner,

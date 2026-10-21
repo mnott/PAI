@@ -37,7 +37,7 @@ const parsedOf = (over: Record<string, unknown> = {}) => ({
 
 const args = (logDir: string, over: Record<string, unknown> = {}, pool: Record<string, unknown> = {}) =>
   ({
-    config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 1, spares: 1, continuation: false, ...pool } },
+    config: { panes: { required: false }, pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 1, spares: 1, continuation: false, ...pool } },
     logDir,
     quiet: true,
     id: "w-sk",
