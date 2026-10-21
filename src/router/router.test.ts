@@ -344,3 +344,15 @@ describe("router 502 names the dead hop", () => {
     }
   });
 });
+
+describe("router: tier-launched local providers", () => {
+  it("routes a disabled loopback provider a tier launches; others stay unrouted", async () => {
+    const { withTierProviders } = await import("../workers/local-provider.js");
+    const tiered = withTierProviders(providers, ["off"]);
+    expect(routingTable(tiered).get("devstral-small-2")).toBe("off");
+    expect(resolveModel("devstral-small-2", tiered)).toMatchObject({ kind: "provider", name: "off" });
+    const none = withTierProviders(providers, []);
+    expect(routingTable(none).has("devstral-small-2")).toBe(false);
+    expect(resolveModel("devstral-small-2", none)).toMatchObject({ kind: "unknown" });
+  });
+});

@@ -34,6 +34,7 @@ import { sharedParker } from "./parking.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
 
 /** The router's port (router.port in config.yaml). */
@@ -387,7 +388,7 @@ function safeBody(raw: Buffer): Record<string, unknown> | null {
 }
 
 export function createRouter(
-  loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
+  loadProviders: () => Record<string, WorkerProvider> = () => withTierProviders(readWorkersSection().workers.providers),
   claudeBase: string = claudeUpstream(),
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
   onUsage?: (row: UsageRow) => void,
@@ -405,7 +406,7 @@ export function createRouter(
  * while every entry point shares one BustDetector/GapTracker.
  */
 export function routerHandler(
-  loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
+  loadProviders: () => Record<string, WorkerProvider> = () => withTierProviders(readWorkersSection().workers.providers),
   claudeBase: string = claudeUpstream(),
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
   onUsage?: (row: UsageRow) => void,

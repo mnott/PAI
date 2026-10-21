@@ -288,3 +288,20 @@ export function resolveRunnerProvider(provider: string): Promise<string> {
   const { workers } = readWorkersSection();
   return resolvePlanProvider(workers, workersLogDir(workers), provider);
 }
+
+/**
+ * The providers the router routes: the configured set with every loopback
+ * provider a `local:` tier launches switched on, so a model a tier started is
+ * routable while its entry stays `enabled: false`. Read per request, so a tier
+ * change needs no router restart.
+ */
+export function withTierProviders(
+  providers: Record<string, WorkerProvider>,
+  tierProviders: string[] = tierProviderNames()
+): Record<string, WorkerProvider> {
+  const out: Record<string, WorkerProvider> = {};
+  for (const [name, p] of Object.entries(providers)) {
+    out[name] = !p.enabled && isLocalCandidate(p, name, tierProviders) ? { ...p, enabled: true } : p;
+  }
+  return out;
+}
