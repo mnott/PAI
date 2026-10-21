@@ -35,6 +35,7 @@ import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
 import { readSchedFile, schedPlain, sharedScheduler } from "./scheduler.js";
 import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
+import { isLoopbackUrl } from "../utils/loopback.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
 import { readProfiles } from "../workers/session-profile-store.js";
@@ -170,7 +171,7 @@ export function enabledLocalLimits(ls: ProviderLimits[], providers: Record<strin
   return ls.filter((l) => l.kind !== "local" || (l.provider in providers && providers[l.provider]!.enabled !== false));
 }
 
-function configuredProviders(): Record<string, { enabled?: boolean; models?: Record<string, unknown> }> {
+function configuredProviders(): Record<string, { enabled?: boolean; baseUrl?: string; models?: Record<string, unknown> }> {
   try {
     return readWorkersSection().workers.providers;
   } catch {
@@ -194,7 +195,7 @@ export function buildCockpitData(
   now: number = Date.now(),
   sessions: Map<string, SessionInfo> = new Map(),
   pool: PoolCarry | null = null,
-  providers: Record<string, { enabled?: boolean; models?: Record<string, unknown> }> = {}
+  providers: Record<string, { enabled?: boolean; baseUrl?: string; models?: Record<string, unknown> }> = {}
 ) {
   allRows = foldProviders(allRows, providers, modelOwners(providers));
   const { span, bucket } = WINDOWS[win];
@@ -331,7 +332,7 @@ export function buildCockpitData(
       buckets: PAUSE_BUCKETS.map((label) => ({ label, ...(pm.get(label) ?? { n: 0, hit: 0, write: 0, miss: 0, readTok: 0, writeTok: 0 }) })),
     })),
     bustParts,
-    speed: buildSpeed(allRows, now, canonicalModel),
+    speed: buildSpeed(allRows, now, canonicalModel, (p) => isLoopbackUrl(providers[p]?.baseUrl ?? "")),
     promptByProvider,
     promptSince,
     workers: sessionRows.filter((s) => s.worker),

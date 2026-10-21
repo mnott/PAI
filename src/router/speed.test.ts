@@ -22,12 +22,27 @@ describe("speed", () => {
       row({}),
       row({ status: 503, ttftMs: 5 }),
     ];
-    const [s] = buildSpeed(rows, NOW);
+    const [s] = buildSpeed(rows, NOW, (m) => m, () => true);
     expect(buildSpeed(rows, NOW)).toHaveLength(1);
     expect(s!.h1.requests).toBe(2);
     expect(s!.h24.requests).toBe(3);
     expect(s!.h24.ttftP50).toBe(300);
     expect(s!.h1.writeTps).toBe(100);
+  });
+  it("prompt speed counts cache reads and creation", () => {
+    expect(readRate(row({ input_tokens: 2, cache_read_input_tokens: 497_951, cache_creation_input_tokens: 48, ttftMs: 5000 }))).toBeCloseTo(99_600.2, 0);
+  });
+  it("cloud output speed uses the whole reply time, local uses the decode window", () => {
+    const burst = row({ output_tokens: 822, ttftMs: 11_447, decodeMs: 2, ms: 11_449 });
+    expect(writeRate(burst, true)).toBe(411_000);
+    expect(writeRate(burst, false)).toBeCloseTo(71.8, 1);
+    expect(writeRate(row({ output_tokens: 100, decodeMs: 2000, ms: 9000 }))).toBe(50);
+  });
+  it("tags local from the provider predicate and applies it to the rates", () => {
+    const rows = [row({ provider: "loc", ttftMs: 100, output_tokens: 100, decodeMs: 1000, ms: 4000 }), row({ provider: "cl", ttftMs: 100, output_tokens: 100, decodeMs: 1000, ms: 4000 })];
+    const out = buildSpeed(rows, NOW, (m) => m, (p) => p === "loc");
+    expect(out.find((r) => r.provider === "loc")).toMatchObject({ local: true, h24: { writeTps: 100 } });
+    expect(out.find((r) => r.provider === "cl")).toMatchObject({ local: false, h24: { writeTps: 25 } });
   });
   it("sniffer stamps the first content delta, not message_start", () => {
     const sn = new UsageSniffer("text/event-stream");

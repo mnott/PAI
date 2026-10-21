@@ -21,6 +21,8 @@ export interface SpeedStats {
 export interface SpeedRow {
   provider: string;
   model: string;
+  /** provider base URL is loopback */
+  local: boolean;
   h1: SpeedStats;
   h24: SpeedStats;
 }
@@ -32,26 +34,35 @@ export function percentile(xs: number[], p: number): number | null {
 }
 
 /**
- * Read tok/s = uncached input tokens / TTFT. Anthropic semantics: input_tokens
- * excludes cache reads. Local usage carries no cache fields, so for those the
- * figure is prefill including whatever the server had cached.
+ * Prompt tok/s = prompt tokens processed / TTFT. Anthropic semantics: input_tokens
+ * excludes cache reads and writes, so cloud rows count all three (a cached prompt
+ * would otherwise read ~0). Local usage carries no cache fields: input_tokens already
+ * is the whole prompt.
  */
 export function readRate(r: UsageRow): number | null {
-  if (r.ttftMs === undefined || r.ttftMs <= 0 || !r.input_tokens) return null;
-  return r.input_tokens / (r.ttftMs / 1000);
+  const prompt = (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
+  if (r.ttftMs === undefined || r.ttftMs <= 0 || !prompt) return null;
+  return prompt / (r.ttftMs / 1000);
 }
 
-export function writeRate(r: UsageRow): number | null {
-  if (r.decodeMs === undefined || r.decodeMs <= 0 || (r.output_tokens ?? 0) < MIN_DECODE_TOKENS) return null;
-  return r.output_tokens! / (r.decodeMs / 1000);
+/**
+ * Output tok/s. A local server streams token by token, so first content to end is the
+ * decode time. A cloud reply reaches the router with hidden thinking before the first
+ * visible token or in bursts (decode window of a few ms for hundreds of tokens), so
+ * its rate is output tokens over the whole reply time: a lower bound, never inflated.
+ */
+export function writeRate(r: UsageRow, local = true): number | null {
+  const ms = local ? r.decodeMs : r.ttftMs === undefined ? undefined : r.ms;
+  if (ms === undefined || ms <= 0 || (r.output_tokens ?? 0) < MIN_DECODE_TOKENS) return null;
+  return r.output_tokens! / (ms / 1000);
 }
 
 const round = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
 
-function stats(rows: UsageRow[]): SpeedStats {
+function stats(rows: UsageRow[], local: boolean): SpeedStats {
   const ttft = rows.map((r) => r.ttftMs!);
   const reads = rows.map(readRate).filter((v): v is number => v !== null);
-  const writes = rows.map(writeRate).filter((v): v is number => v !== null);
+  const writes = rows.map((r) => writeRate(r, local)).filter((v): v is number => v !== null);
   return {
     requests: rows.length,
     ttftP50: round(percentile(ttft, 0.5)),
@@ -62,7 +73,7 @@ function stats(rows: UsageRow[]): SpeedStats {
 }
 
 /** One entry per provider+model with timed successful rows in the last 24 h, busiest first. */
-export function buildSpeed(allRows: UsageRow[], now: number, canon: (m: string) => string = (m) => m): SpeedRow[] {
+export function buildSpeed(allRows: UsageRow[], now: number, canon: (m: string) => string = (m) => m, isLocal: (provider: string) => boolean = () => false): SpeedRow[] {
   const groups = new Map<string, { provider: string; model: string; rows: UsageRow[] }>();
   for (const r of allRows) {
     if (r.status >= 400 || r.ttftMs === undefined) continue;
@@ -77,8 +88,9 @@ export function buildSpeed(allRows: UsageRow[], now: number, canon: (m: string) 
     .map((g) => ({
       provider: g.provider,
       model: g.model,
-      h1: stats(g.rows.filter((r) => Date.parse(r.ts) >= now - 3_600_000)),
-      h24: stats(g.rows),
+      local: isLocal(g.provider),
+      h1: stats(g.rows.filter((r) => Date.parse(r.ts) >= now - 3_600_000), isLocal(g.provider)),
+      h24: stats(g.rows, isLocal(g.provider)),
     }))
     .sort((a, b) => b.h24.requests - a.h24.requests);
 }
