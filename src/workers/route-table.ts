@@ -24,6 +24,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { budgetFull, type BudgetMap } from "./budget.js";
+import type { LocalInstance } from "./local-instances.js";
 import { isLocalCandidate, readLocalPreference, tierProviderNames } from "./local-provider.js";
 import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
 import { detectSessionName } from "./session-name.js";
@@ -91,6 +92,49 @@ export interface RouteChoice {
 }
 
 
+/** A routing entry that names a set of endpoints instead of one provider. */
+export type Selector =
+  | { kind: "local" }
+  | { kind: "model"; name: string }
+  | { kind: "tag"; name: string }
+  | { kind: "class"; name: string };
+
+/** `local`, `model:<name>`, `tag:<t>`, `class:<c>`; null for a provider entry ("gyro-m", "glm/fast"), which stays valid. */
+export function parseSelector(entry: string): Selector | null {
+  const e = entry.trim();
+  if (e === "local") return { kind: "local" };
+  const m = /^(model|tag|class):(.*)$/.exec(e);
+  if (!m) return null;
+  const name = m[2].trim();
+  if (!name || /\s/.test(name)) throw new Error(`selector "${e}" needs a name after "${m[1]}:"`);
+  return { kind: m[1] as "model" | "tag" | "class", name };
+}
+
+const loopbackUrl = (url: string): boolean => {
+  try {
+    return isLocalProvider(url);
+  } catch {
+    return false;
+  }
+};
+
+/** The healthy instances a selector matches right now; the caller's pickInstance chooses among them. Provider entries match the instances of that provider. */
+export function resolveSelector(selector: string, instances: LocalInstance[]): LocalInstance[] {
+  const ready = instances.filter((i) => i.state === "ready");
+  const sel = parseSelector(selector);
+  if (!sel) return ready.filter((i) => i.provider === parseEntry(selector).provider);
+  switch (sel.kind) {
+    case "local":
+      return ready.filter((i) => i.origin === "managed" || loopbackUrl(i.url));
+    case "model":
+      return ready.filter((i) => i.model === sel.name);
+    case "tag":
+      return ready.filter((i) => i.characteristics?.tags?.includes(sel.name));
+    case "class":
+      return ready.filter((i) => i.characteristics?.classes?.includes(sel.name));
+  }
+}
+
 const providerOf = (workers: WorkersConfig, name: string): WorkerProvider | undefined =>
   name === ANTHROPIC_NATIVE ? nativeAnthropicProvider(workers.nativeModels) : getProviderOrNative(workers, name);
 
@@ -122,6 +166,7 @@ export function validateRoute(workers: WorkersConfig, row: string, models: unkno
   if (!entries.length) throw new Error(`${row} needs at least one model`);
   if (entries.length > MAX_ROUTE_MODELS) throw new Error(`at most ${MAX_ROUTE_MODELS} models per row`);
   for (const e of entries) {
+    if (parseSelector(e)) continue;
     const { provider, model } = parseEntry(e);
     const p = providerOf(workers, provider);
     if (!p || p.engine === "image") throw new Error(`no provider named "${provider}" in "${e}"`);
@@ -231,6 +276,7 @@ export function applyPolicyToRoutes(mode: PolicyMode, path?: string): string {
 
 /** "local gyro-m" or "glm/glm-5.3-flash": the model an entry resolves to for its class. */
 export function entryLabel(workers: WorkersConfig, tier: TierDef, entry: string): string {
+  if (parseSelector(entry)) return entry;
   const { provider, model } = parseEntry(entry);
   const p = providerOf(workers, provider);
   if (p && isLocalProvider(p.baseUrl)) return `local ${provider}`;
@@ -245,6 +291,8 @@ export interface ViewDeps {
   /** Is this local provider's server answering? Default: one models request. */
   running?: (name: string, p: WorkerProvider) => Promise<boolean>;
   budgets?: BudgetMap;
+  /** The registry (managed + registered endpoints); selector chips resolve against it. */
+  instances?: LocalInstance[];
   logDir: string;
   now?: Date;
   /** The effective table of this session: its overridden rows replace the global ones (marked `overridden`). */
@@ -254,6 +302,10 @@ export interface ViewDeps {
 }
 
 async function chipOf(workers: WorkersConfig, tier: TierDef, entry: string, deps: ViewDeps, state: ReturnType<typeof readRoutingState>): Promise<RouteChip> {
+  if (parseSelector(entry)) {
+    const n = resolveSelector(entry, deps.instances ?? []).length;
+    return { entry, label: entry, provider: entry, local: entry === "local" || /^model:/.test(entry), state: n ? "available" : "idle", why: n ? "" : "no matching instance" };
+  }
   const { provider } = parseEntry(entry);
   const p = providerOf(workers, provider);
   const base = { entry, label: entryLabel(workers, tier, entry), provider };

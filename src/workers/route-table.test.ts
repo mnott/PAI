@@ -25,7 +25,7 @@ import {
 } from "./route-lists.js";
 import { readProfiles, type SessionProfile } from "./session-profile-store.js";
 import type { WorkersConfig } from "./config.js";
-import { applyPolicyToRoutes, clearSessionRoute, flowText, setSessionRoute, routeChoices, routeRows, routeText, sessionStartTarget, setRoute, validateRoute } from "./route-table.js";
+import { parseSelector, resolveSelector, applyPolicyToRoutes, clearSessionRoute, flowText, setSessionRoute, routeChoices, routeRows, routeText, sessionStartTarget, setRoute, validateRoute } from "./route-table.js";
 import { routeRun, writePolicy, clearPolicy, POLICY_MODES } from "./policy.js";
 import { resolveTarget, setCooldown, NoProviderError } from "./routing.js";
 import { routeClassOf } from "./run.js";
@@ -549,5 +549,55 @@ describe("per-session overrides", () => {
     const path = liveShaped();
     expect(setSessionRoute("s", "review", ["glm"], { path, profilesPath: profiles() }).id).toBe("t2");
     expect(() => setSessionRoute("s", "implement", ["nobody/x"], { path, profilesPath: profiles() })).toThrow(/no provider/);
+  });
+});
+
+describe("selectors", () => {
+  const inst = (id: string, over: Partial<import("./local-instances.js").LocalInstance>): import("./local-instances.js").LocalInstance => ({
+    id,
+    model: id.split("#")[0],
+    provider: id.split("#")[0],
+    url: "http://127.0.0.1:8035",
+    origin: "managed",
+    port: 8035,
+    state: "ready",
+    startedAt: 0,
+    log: "",
+    ...over,
+  });
+  const all = [
+    inst("gyro-m#1", {}),
+    inst("gyro-m#2", { port: 8036, url: "http://127.0.0.1:8036" }),
+    inst("box", { origin: "registered", url: "http://10.0.0.5:8000", characteristics: { classes: ["code"], tags: ["gpu"] } }),
+    inst("down#1", { state: "failed" }),
+  ];
+  const ids = (sel: string) => resolveSelector(sel, all).map((i) => i.id);
+
+  it("parses the grammar, provider entries are not selectors", () => {
+    expect(parseSelector("local")).toEqual({ kind: "local" });
+    expect(parseSelector("tag:gpu")).toEqual({ kind: "tag", name: "gpu" });
+    expect(parseSelector("glm/fast")).toBeNull();
+    expect(parseSelector("gyro-m")).toBeNull();
+    expect(() => parseSelector("model:")).toThrow(/needs a name/);
+  });
+
+  it("resolves against the registry, healthy instances only", () => {
+    expect(ids("local")).toEqual(["gyro-m#1", "gyro-m#2"]);
+    expect(ids("model:gyro-m")).toEqual(["gyro-m#1", "gyro-m#2"]);
+    expect(ids("tag:gpu")).toEqual(["box"]);
+    expect(ids("class:code")).toEqual(["box"]);
+    expect(ids("class:nope")).toEqual([]);
+    expect(ids("down")).toEqual([]);
+  });
+
+  it("an old provider name still resolves", () => {
+    expect(ids("gyro-m")).toEqual(["gyro-m#1", "gyro-m#2"]);
+    expect(ids("box")).toEqual(["box"]);
+  });
+
+  it("validateRoute stores selectors next to provider names", () => {
+    const w = { providers: {}, tiers: [] } as unknown as WorkersConfig;
+    expect(validateRoute(w, "t2", ["tag:gpu", "local", "tag:gpu"])).toEqual(["tag:gpu", "local"]);
+    expect(() => validateRoute(w, "t2", ["class:"])).toThrow(/needs a name/);
   });
 });
