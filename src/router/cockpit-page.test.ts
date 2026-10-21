@@ -3123,6 +3123,88 @@ describe("local server tile and section title", () => {
   });
 });
 
+describe("chart text keeps its size at any chart width", () => {
+  const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
+  const chartSrc = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "stackedBars"].map(get).join("\n");
+  const colorOf = () => "#3b6fe0";
+  const fmt = (n: number) => String(n);
+  // the page's CSS font-size of svg text: 10 px (svg text{fill:var(--dim);font-size:10px})
+  const FONT_PX = (COCKPIT_HTML.match(/svg text\{[^}]*font-size:(\d+)px\}/)![1] as unknown as number) * 1;
+
+  /** The real renderer: stackedBars into a container of the given pixel width. */
+  const renderAt = (clientWidth: number): { vbW: number; inner: string; cw: number } => {
+    const el: any = { innerHTML: "", clientWidth };
+    new Function("el", "$", "colorOf", "fmt", "setHtml", `${SH}\n${chartSrc}\nstackedBars(el,["10h","11h","12h"],[{input:1_570_000_000},{input:1_570_000_000},{input:1_570_000_000}],["input"],760,220);`)(
+      el, (id: string) => ({ innerHTML: "" }), colorOf, fmt
+    );
+    const m = el.innerHTML.match(/<svg width="100%" viewBox="0 0 ([0-9.]+) 220"/);
+    return { vbW: m ? +m[1] : 0, inner: el.innerHTML, cw: el.__cw };
+  };
+
+  it("the viewBox width is the container's measured pixel width, not the configured canvas width", () => {
+    expect(renderAt(400).vbW).toBe(400);
+    expect(renderAt(1200).vbW).toBe(1200);
+    // an unmeasurable container falls back to the configured width
+    expect(renderAt(0).vbW).toBe(760);
+  });
+
+  it("the same data at 400 and 1200 px: the axis label font-size in user units equals the CSS px — text does not scale with the chart", () => {
+    const a = renderAt(400), b = renderAt(1200);
+    // viewBox width == container width: a user unit is one CSS px at both widths, so the
+    // CSS font-size (10 px) is 10 user units at either width — the rendered size is constant
+    const fontUnits = (r: { vbW: number; cw: number }) => FONT_PX * (r.cw / r.vbW);
+    expect(fontUnits(a)).toBe(10);
+    expect(fontUnits(b)).toBe(10);
+    // the old fixed viewBox scaled the text: 10 px rendered as 10*760/400 at 400 px and
+    // 10*760/1200 at 1200 px — the same data at two widths gave different label sizes
+    const scaled = (w: number) => FONT_PX * (760 / w);
+    expect(scaled(400)).not.toBe(scaled(1200));
+    // the axis label text is the same at both widths
+    expect(a.inner).toContain(">1.57G</text>");
+    expect(b.inner).toContain(">1.57G</text>");
+  });
+
+  it("the bars and gridlines span the drawn width at either width", () => {
+    const a = renderAt(400), b = renderAt(1200);
+    for (const r of [a, b]) {
+      // the last column's slot ends at vbW-6; its rect starts 1 px in and ends 1 px short of the slot
+      const xs = [...r.inner.matchAll(/<rect x="([0-9.]+)"[^>]*width="([0-9.]+)"/g)].map((m) => +m[1] + +m[2]);
+      expect(Math.max(...xs)).toBeCloseTo(r.vbW - 7, 1);
+      const grid = [...r.inner.matchAll(/<line x1="[0-9.]+" x2="([0-9.]+)"/g)].map((m) => +m[1]);
+      expect(Math.max(...grid)).toBeCloseTo(r.vbW - 6, 1);
+    }
+  });
+
+  it("the resize path redraws a chart only when its container width changed past the slack, debounced", () => {
+    expect(COCKPIT_HTML).toContain("CHART_RESIZE_SLACK_PX=8");
+    expect(COCKPIT_HTML).toContain("CHART_RESIZE_DEBOUNCE_MS=150");
+    const cr = COCKPIT_HTML.match(/var CHARTS=[^\n]*\n/)![0] + COCKPIT_HTML.match(/function chartResize\(\)\{[\s\S]*?\n\}\n/)![0];
+    const el: any = { clientWidth: 500, __cw: 400 }; // grew past the slack
+    const el2: any = { clientWidth: 404, __cw: 400 }; // grew within the slack
+    const win: any = { render: () => {} };
+    let calls = 0;
+    win.render = () => calls++;
+    const timers: Array<() => void> = [];
+    new Function("$", "window", "clearTimeout", "setTimeout", "CHART_RESIZE_SLACK_PX", "CHART_RESIZE_DEBOUNCE_MS", "chartTimer", `${cr}chartResize();`)(
+      (id: string) => (id === "series" ? el : id === "daily" ? el2 : { clientWidth: 0 }),
+      win,
+      () => {},
+      (f: () => void) => { timers.push(f); return 1; },
+      8, 150, null
+    );
+    expect(timers.length).toBe(1); // debounced
+    timers[0]();
+    expect(calls).toBe(1); // series redraws; daily (4 px change) does not
+    // the redraw re-measures: __cw is stamped by chartW during the draw
+    expect(renderAt(500).cw).toBe(500);
+  });
+
+  it("the page wires the chart redraw to a ResizeObserver on main and the resize event", () => {
+    expect(COCKPIT_HTML).toContain("new ResizeObserver(chartResize).observe(document.querySelector(\"main\"))");
+    expect(COCKPIT_HTML).toContain('window.addEventListener("resize",chartResize)');
+  });
+});
+
 describe("generated model colours", () => {
   it("25 models all get distinct colours; generated hues stay 12 degrees from every palette hue", () => {
     const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];

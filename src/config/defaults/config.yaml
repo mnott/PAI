@@ -212,13 +212,19 @@ router:
       donutRadiusPx: 48
       donutStrokePx: 16
       donutViewBoxPx: 140
-      # chart canvases (SVG viewBox sizes).
+      # chart canvases: width is the fallback when the container cannot be measured
+      # (the svg draws at the container's real pixel width, so text keeps its size at
+      # any width); height is the fixed pixel height.
       tokensChartWidthPx: 760
       tokensChartHeightPx: 220
       powerChartWidthPx: 760
       powerChartHeightPx: 150
       dailyChartWidthPx: 520
       dailyChartHeightPx: 200
+      # chart redraw on resize: a width change at or below the slack is ignored (px);
+      # the redraw is debounced by this many ms.
+      chartResizeSlackPx: 8
+      chartResizeDebounceMs: 150
       # history window of the "Tokens per day per model" chart, in days.
       dailyDays: 14
       # table row limits: sessions by tokens, worker runs.

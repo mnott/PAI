@@ -93,6 +93,9 @@ tabs();applyCollapse();applyLayout(layoutRows(document.querySelectorAll("section
 /** Row stacking follows the live main width (ResizeObserver, else a resize listener). */
 if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(function(){stackRows()}).observe(document.querySelector("main"))}catch(e){}}
 window.addEventListener("resize",stackRows);
+/** Chart redraw follows the container width (the svg draws at real pixels — see chartW). */
+if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(chartResize).observe(document.querySelector("main"))}catch(e){}}
+window.addEventListener("resize",chartResize);
 $("reset").onclick=resetLayout;
 if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
 if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});setInterval(tick,${L.clockTickMs});
