@@ -44,8 +44,8 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { WorkersConfig } from "./config.js";
-import { ledgerPath, panesDir, statusPath } from "./paths.js";
+import { readWorkersSection, type WorkersConfig } from "./config.js";
+import { ledgerPath, panesDir, statusPath, workersLogDir } from "./paths.js";
 import { appendLedger } from "./ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { itermUuid, scopeKey } from "./scope.js";
@@ -708,6 +708,34 @@ export interface PaneOps {
   rebalanceIterm?(ids: string[]): Promise<void>;
 }
 
+/**
+ * The one place a real iTerm session is closed. Only a pane PAI opened (one in
+ * the pane registry) is closed: an inherited ITERM_SESSION_ID names the
+ * operator's own session, and closing that twice on 2026-10-21 took their
+ * window down. Anything else is refused with one stderr line.
+ */
+export async function closeRegisteredIterm(
+  id: string,
+  run: typeof osascript = osascript,
+  registered: (id: string) => boolean = isRegisteredSession
+): Promise<boolean> {
+  if (!registered(id)) {
+    process.stderr.write(`[pai worker] pane: refusing to close iTerm session ${id}: not a pane PAI opened\n`);
+    return false;
+  }
+  const p = await run(END_SESSION_SCRIPT, [id]);
+  return p.stdout.trim() === "closed";
+}
+
+function isRegisteredSession(id: string): boolean {
+  try {
+    const uid = itermUuid(id) || id;
+    return loadRegistry(workersLogDir(readWorkersSection().workers)).some((e) => (itermUuid(e.session) || e.session) === uid);
+  } catch {
+    return false;
+  }
+}
+
 export const realPaneOps: PaneOps = {
   async listIterm() {
     if (process.platform !== "darwin") return [];
@@ -721,10 +749,7 @@ export const realPaneOps: PaneOps = {
     }
     return sessions.map((x) => ({ id: x.id, name: `${x.name ?? ""} ${cmdByTty.get(x.tty) ?? ""}`.trim() }));
   },
-  async closeIterm(id) {
-    const p = await osascript(END_SESSION_SCRIPT, [id]);
-    return p.stdout.trim() === "closed";
-  },
+  closeIterm: (id) => closeRegisteredIterm(id),
   async rebalanceIterm(ids) {
     if (ids.length) await osascript(REBALANCE_SCRIPT, [ids.join(",")]);
   },

@@ -31,7 +31,7 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { closeEndedPanes, closeOwnPane, workerEnded, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
+import { closeRegisteredIterm, closeEndedPanes, closeOwnPane, workerEnded, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 import { writePaneRunStatus } from "./pane-run.js";
 import { scopeKey } from "./scope.js";
@@ -66,6 +66,20 @@ const fakeOps = (over: Partial<PaneOps> = {}): PaneOps & { closedIterm: string[]
     ...over,
   };
 };
+
+describe("closeRegisteredIterm", () => {
+  it("never runs osascript for a session PAI did not open; closes a registered one", async () => {
+    const calls: string[][] = [];
+    const run = (async (_script: string, args: string[]) => (calls.push(args), { stdout: "closed\n", stderr: "" })) as never;
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const uid = "D38D3E5D-19E8-4FE5-A78A-26E8E571FE27";
+    expect(await closeRegisteredIterm(uid, run, () => false)).toBe(false);
+    expect(calls).toEqual([]);
+    expect(err.mock.calls.map((c) => String(c[0])).join("")).toContain("refusing to close");
+    expect(await closeRegisteredIterm(uid, run, () => true)).toBe(true);
+    expect(calls).toEqual([[uid]]);
+  });
+});
 
 describe("pane registry", () => {
   it("keeps all three entries when three workers open panes at once", async () => {

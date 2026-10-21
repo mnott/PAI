@@ -87,7 +87,7 @@ describe("followPaneRun", () => {
     const o = opts(["sh", "-c", "echo hello; exit 2"]);
     await runInPane(o);
     let shown = "";
-    await followPaneRun(dir, o.opened[0], (s) => (shown += s), 0, 10);
+    await followPaneRun(dir, o.opened[0], (s) => (shown += s), 0, 10, {}, closeOps());
     expect(shown).toContain("hello");
     expect(shown).toContain("[exit 2");
   });
@@ -100,7 +100,7 @@ describe("followPaneRun", () => {
     const was = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
     Object.defineProperty(process.stdout, "isTTY", { value: tty, configurable: true });
     try {
-      await followPaneRun(dir, o.opened[0], () => undefined, 0, 10);
+      await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, {}, closeOps());
       const written = err.mock.calls.map((c) => String(c[0])).join("");
       if (!tty) {
         expect(written).toBe("");
@@ -141,6 +141,10 @@ describe("followPaneRun", () => {
     expect(ops.closed).toHaveLength(1);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1000);
   }, 10_000);
+
+  it("the test guard strips terminal identity, so a default-env run can never close a real pane", () => {
+    for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE"]) expect(process.env[k]).toBeUndefined();
+  });
 
   it("outside a terminal pane nothing is closed", async () => {
     const o = opts(["echo hi"]);

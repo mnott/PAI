@@ -97,15 +97,25 @@ for (const key of ["API_TIMEOUT_MS", "CLAUDE_STREAM_IDLE_TIMEOUT_MS", "CLAUDE_BY
  * also being protected. CLAUDE_CONFIG_DIR stays — cockpit.test.ts sets it
  * itself and a run without it reads the guarded home, not the real one.
  *
- * ITERM_SESSION_ID is a terminal id, not a Claude identity, and pane tests
- * depend on the inherited one: pane-registry.test.ts writes it at import time
- * and its top-level tests read it through process.env (closeOwnPane,
- * resolveHostSession), so deleting it here broke 11 pane tests. It stays
- * inherited; callerIdentity's term is covered by the CLAUDE_CODE_* /
- * CLAUDE_JOB_DIR / TERM_SESSION_ID deletions.
+ * Terminal identity (TERM_SESSION_ID, ITERM_SESSION_ID, TMUX, TMUX_PANE, the
+ * ones pane.ts and pane-title.ts read to address a real terminal session) is
+ * stripped too. On 2026-10-21, twice, followPaneRun tests that defaulted to
+ * process.env and the real pane ops finished a run and closeOwnPane closed the
+ * iTerm session inherited from the Claude session that had started the suite:
+ * the operator's window disappeared. A test that needs a terminal id passes it
+ * in explicitly (pane-registry.test.ts sets its own in beforeEach).
  */
 for (const key of Object.keys(process.env)) {
-  if (key.startsWith("CLAUDE_CODE_") || key === "CLAUDE_JOB_DIR" || key === "CLAUDE_PID" || key === "CLAUDECODE" || key === "TERM_SESSION_ID") {
+  if (
+    key.startsWith("CLAUDE_CODE_") ||
+    key === "CLAUDE_JOB_DIR" ||
+    key === "CLAUDE_PID" ||
+    key === "CLAUDECODE" ||
+    key === "TERM_SESSION_ID" ||
+    key === "ITERM_SESSION_ID" ||
+    key === "TMUX" ||
+    key === "TMUX_PANE"
+  ) {
     delete process.env[key];
   }
 }
