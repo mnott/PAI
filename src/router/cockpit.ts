@@ -25,7 +25,7 @@ import { localStartView, readLocalStart, type LocalStartView } from "../workers/
 import { activeTier, fetchServedModels, firstRunningTier, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
-import { readLocalStatus } from "../workers/local-status.js";
+import { primaryLocal, readLocalStatus } from "../workers/local-status.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
@@ -654,14 +654,15 @@ function localTierNames(): { tier: string; label: string; memoryGb?: number }[] 
 async function localRunningInfo(): Promise<{ tier: string; label: string; model: string; memGb: string } | null> {
   try {
     const st = readLocalStatus(workersLogDir(readWorkersSection().workers));
-    if (!st?.running) return null;
+    const run = primaryLocal(st);
+    if (!run) return null;
     const cfg = readLocalConfig(workersYamlPath());
     const tiers = cfg.tiers;
-    const active = (await activeTier(cfg, fetchServedModels)) ?? Object.values(tiers).find((t) => t.provider === st.running!.provider);
+    const active = (await activeTier(cfg, fetchServedModels)) ?? Object.values(tiers).find((t) => t.provider === run.provider);
     const inv = readInventory(workersLogDir(readWorkersSection().workers));
-    const rt = inv?.runtimes.find((r) => r.status === "running" && r.users.some((u) => u.startsWith(`worker:${st.running!.provider}`)));
+    const rt = inv?.runtimes.find((r) => r.status === "running" && r.users.some((u) => u.startsWith(`worker:${run.provider}`)));
     const mb = rt?.models.reduce((a, m) => a + (m.memoryMb ?? 0), 0) ?? 0;
-    return { tier: active?.tier ?? "", label: active?.label ?? "", model: st.running.model, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
+    return { tier: active?.tier ?? "", label: active?.label ?? "", model: run.model, memGb: mb ? String(Math.max(1, Math.round(mb / 1024))) : "?" };
   } catch {
     return null;
   }

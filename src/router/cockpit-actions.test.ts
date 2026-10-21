@@ -85,7 +85,7 @@ function testDeps(tmp: string, calls: Record<string, string[]>, failJob = false)
     workersYaml: join(tmp, "workers.yaml"),
     home: tmp,
     workers,
-    localStatus: { at: new Date().toISOString(), running: { provider: "local30", model: "qwen3-coder", why: "" }, down: [], disabled: [] },
+    localStatus: { at: new Date().toISOString(), running: [{ provider: "local30", model: "qwen3-coder", why: "" }], down: [], disabled: [] },
     tiers: ["small", "big"],
     runtimeCommands: { ollama: { start: "ollama serve", stop: "kill", ready: "http://127.0.0.1:11434/api/tags" } },
     refreshInventory: async (rt: string) => void calls.refresh?.push(rt),
@@ -288,8 +288,8 @@ describe("cockpit actions", () => {
   it("role helpers: classes on a provider, the running model for the confirm text", () => {
     expect(classesOnProvider(workers, "glm")).toEqual(["implement"]);
     expect(classesOnProvider(workers, "other")).toEqual([]);
-    expect(runningLocalModel({ at: "x", running: { provider: "local30", model: "qwen3-coder", why: "" }, down: [], disabled: [] })).toBe("local30 (qwen3-coder)");
-    expect(runningLocalModel({ at: "x", running: null, down: [], disabled: [] })).toBeNull();
+    expect(runningLocalModel({ at: "x", running: [{ provider: "local30", model: "qwen3-coder", why: "" }], down: [], disabled: [] })).toBe("local30 (qwen3-coder)");
+    expect(runningLocalModel({ at: "x", running: [], down: [], disabled: [] })).toBeNull();
     expect(cockpitJobFile("/h", "abc")).toBe("/h/cockpit-jobs/abc.json");
     expect(readCockpitJob("/h", "../escape")).toBeNull();
   });

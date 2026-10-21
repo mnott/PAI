@@ -127,7 +127,7 @@ export async function takeSample(logDir: string, workers: WorkersConfig, now = D
     const mine = statuses.filter((s) => s.provider === name);
     const queued = queue.filter((q) => q.provider === name).length;
     // only a provider that is enabled and served (the daemon's local-status names it) or has work is worth a line
-    const served = status?.running?.provider === name;
+    const served = (status?.running ?? []).some((r) => r.provider === name);
     if (!(p.enabled && served) && !mine.length && !queued) continue;
     providers.push({
       provider: name,

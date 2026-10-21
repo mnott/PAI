@@ -23,7 +23,7 @@ import { setClass } from "../workers/providers.js";
 import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.js";
 import { readLocalConfig } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
-import { readLocalStatus } from "../workers/local-status.js";
+import { primaryLocal, readLocalStatus } from "../workers/local-status.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
@@ -253,7 +253,8 @@ function writeJob(home: string, j: LocalJobState): void {
 
 /** The running local model's name, for the "stops X first" confirm text. */
 export function runningLocalModel(st: ReturnType<typeof readLocalStatus>): string | null {
-  return st?.running ? `${st.running.provider} (${st.running.model})` : null;
+  const r = primaryLocal(st);
+  return r ? `${r.provider} (${r.model})` : null;
 }
 
 /** The tier names in workers.yaml (same reader `pai worker local` uses). */

@@ -13,7 +13,7 @@ export function cachedLocalAnswer(): string {
   try {
     const st = readLocalStatus(workersLogDir(readWorkersSection().workers));
     // only a fresh probe may say "none"; a hook never probes
-    return st?.running ? localStatusLine(st) : UNKNOWN_ANSWER;
+    return st?.running?.length ? localStatusLine(st) : UNKNOWN_ANSWER;
   } catch {
     return UNKNOWN_ANSWER;
   }

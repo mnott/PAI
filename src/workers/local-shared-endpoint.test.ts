@@ -40,7 +40,7 @@ describe("two providers on one endpoint", () => {
     const logDir = mkdtempSync(join(tmpdir(), "shared-ep-"));
     for (let i = 0; i < 3; i++) {
       const st = await computeLocalStatus(cfg, logDir, { yamlPath: join(logDir, "none.yaml") });
-      expect(st.running?.provider).toBe("gyro-m");
+      expect(st.running[0]?.provider).toBe("gyro-m");
       expect(st.down).toEqual(["iq3"]);
     }
   });

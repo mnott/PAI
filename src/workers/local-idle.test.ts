@@ -119,7 +119,7 @@ describe("local idle watcher", () => {
   describe("takeSample lists only served providers", () => {
     const local = (enabled: boolean) => ({ enabled, baseUrl: "http://127.0.0.1:8010/v1", maxConcurrent: 2 });
     const cfg2 = { providers: { gyro: local(true), off: local(false), down: local(true), cloud: { enabled: true, baseUrl: "https://api.example.com" } } } as unknown as WorkersConfig;
-    const status = (provider: string | null) => ({ at: new Date().toISOString(), running: provider ? { provider, model: "m", why: "" } : null, down: [], disabled: [] });
+    const status = (provider: string | null) => ({ at: new Date().toISOString(), running: provider ? [{ provider, model: "m", why: "" }] : [], down: [], disabled: [] });
     const names = async (dir: string, st: ReturnType<typeof status>) => (await takeSample(dir, cfg2, Date.now(), async () => 50, st)).providers.map((p) => p.provider);
     const tmp = () => mkdtempSync(join(tmpdir(), "pai-li-"));
 

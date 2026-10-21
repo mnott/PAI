@@ -36,6 +36,7 @@ import { loadStatuses } from "./status.js";
 import { workersYamlPath } from "./workers-config.js";
 import { workersLogDir } from "./paths.js";
 import { effectiveCap } from "./capacity.js";
+import { readInstances, type LocalInstance } from "./local-instances.js";
 import {
   LOCAL_STATUS_REFRESH_MS,
   readLocalStatus,
@@ -160,10 +161,14 @@ export async function resolveLocalProvider(
   // is not refreshing the cache (or a test injects its own port check).
   // A cached "none" is never trusted: only a fresh probe may say none.
   const cached = opts.check ? null : readLocalStatus(logDir);
-  const r = cached?.running;
-  const p = r ? cfg.providers[r.provider] : undefined;
-  if (r && p && isLocalCandidate(p, r.provider, tierProviderNames(opts.yamlPath))) {
-    return { name: r.provider, why: `daemon: ${r.why}` };
+  const tp = tierProviderNames(opts.yamlPath);
+  const cachedUp = (cached?.running ?? []).filter((r) => {
+    const p = cfg.providers[r.provider];
+    return p && isLocalCandidate(p, r.provider, tp);
+  });
+  if (cachedUp.length === (cached?.running.length ?? -1) && cachedUp.length) {
+    // the cache lists every running model, the first being the daemon's pick
+    return { name: cachedUp[0].provider, why: `daemon: ${cachedUp[0].why}` };
   }
   const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck, tierProviderNames(opts.yamlPath)))
     .filter(([, running]) => running)
@@ -197,6 +202,27 @@ export function pickLocal(up: string[], logDir: string, yamlPath: string = worke
   return { name: best.name, why: "most recently started/used" };
 }
 
+/**
+ * The running instances of a local model (provider): ready rows of the state
+ * file, the instance-1 URL when none is recorded (a server started by hand
+ * before the state file existed).
+ */
+export function resolveLocalInstances(
+  cfg: Pick<WorkersConfig, "providers">,
+  logDir: string,
+  provider: string
+): LocalInstance[] {
+  const rows = readInstances(logDir).filter((i) => i.provider === provider && i.state === "ready");
+  if (rows.length) return rows;
+  const p = cfg.providers[provider];
+  const hp = p ? providerHostPort(p) : null;
+  if (!p || !hp) return [];
+  return [{
+    id: `${provider}#1`, model: provider, provider, url: p.baseUrl.replace(/\/+$/, ""), origin: "managed",
+    port: hp.port, state: "ready", startedAt: 0, log: "",
+  }];
+}
+
 /** Probe every local provider and decide which one `--local` runs on. */
 export async function computeLocalStatus(
   cfg: Pick<WorkersConfig, "providers">,
@@ -210,15 +236,19 @@ export async function computeLocalStatus(
   const disabled = Object.entries(cfg.providers)
     .filter(([n, p]) => !isLocalCandidate(p, n, tiers) && isLoopbackProvider(p))
     .map(([n]) => n);
-  let running: LocalStatus["running"] = null;
+  const running: LocalStatus["running"] = [];
   if (up.length) {
+    const entry = (name: string, why: string) => ({ provider: name, model: cfg.providers[name]?.models.default ?? "?", why });
+    let pick: LocalResolution;
     try {
-      const pick = pickLocal(up, logDir, opts.yamlPath);
-      running = { provider: pick.name, model: cfg.providers[pick.name]?.models.default ?? "?", why: pick.why };
+      pick = pickLocal(up, logDir, opts.yamlPath);
     } catch {
-      // `local:` names a provider that is not up: report the first running one
-      running = { provider: up[0], model: cfg.providers[up[0]]?.models.default ?? "?", why: "only running local server" };
+      // `local:` names a provider that is not up: the first running one leads
+      pick = { name: up[0], why: "only running local server" };
     }
+    // the model `--local` favours first, then the other running models
+    running.push(entry(pick.name, pick.why));
+    for (const n of up) if (n !== pick.name) running.push(entry(n, "also running"));
   }
   return { at: (opts.now ?? new Date()).toISOString(), running, down, disabled };
 }
@@ -235,8 +265,8 @@ export async function currentLocalStatus(
   const workers = opts.cfg ?? readWorkersSection().workers;
   const dir = logDir ?? workersLogDir(workers as WorkersConfig);
   const cached = opts.check ? null : readLocalStatus(dir);
-  const cp = cached?.running ? workers.providers[cached.running.provider] : undefined;
-  if (cached?.running && cp && isLocalCandidate(cp, cached.running.provider, tierProviderNames())) return cached;
+  const tp = tierProviderNames();
+  if (cached?.running.length && cached.running.every((r) => { const cp = workers.providers[r.provider]; return cp && isLocalCandidate(cp, r.provider, tp); })) return cached;
   return computeLocalStatus(workers, dir, { check: opts.check });
 }
 

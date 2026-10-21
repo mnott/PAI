@@ -16,14 +16,26 @@ export const LOCAL_STATUS_REFRESH_MS = 30_000;
 /** A cache older than this means the daemon is not refreshing it. */
 export const LOCAL_STATUS_MAX_AGE_MS = 90_000;
 
+export interface LocalRunning {
+  provider: string;
+  model: string;
+  why: string;
+}
+
 export interface LocalStatus {
   /** ISO time the daemon computed this. */
   at: string;
-  running: { provider: string; model: string; why: string } | null;
+  /** Every running local model (one entry per model, not per instance); empty when none. */
+  running: LocalRunning[];
   /** Enabled local providers with nothing listening. */
   down: string[];
   /** Local providers switched off in workers.yaml. */
   disabled: string[];
+}
+
+/** The model callers that need exactly one use: the first of `running` (the one `--local` favours). */
+export function primaryLocal(st: Pick<LocalStatus, "running"> | null | undefined): LocalRunning | null {
+  return st?.running?.[0] ?? null;
 }
 
 export const localStatusPath = (logDir: string): string => join(logDir, "local-status.json");
@@ -31,8 +43,9 @@ export const localStatusPath = (logDir: string): string => join(logDir, "local-s
 export const NO_SERVER_HINT = "do not start model servers";
 
 export function localStatusLine(st: LocalStatus): string {
-  if (st.running) {
-    return `local: ${st.running.provider} (${st.running.model}) running — use \`pai worker run --local\``;
+  if (st.running.length) {
+    const list = st.running.map((r) => `${r.provider} (${r.model})`).join(", ");
+    return `local: ${list} running — use \`pai worker run --local\``;
   }
   return `local: none running — local work is not available; ${NO_SERVER_HINT}`;
 }
@@ -51,6 +64,9 @@ export function readLocalStatus(logDir: string, now = Date.now(), maxAgeMs = LOC
   if (!existsSync(path)) return null;
   try {
     const st = JSON.parse(readFileSync(path, "utf8")) as LocalStatus;
+    // schema 1 cached `running` as one object or null
+    const raw = st.running as unknown;
+    st.running = Array.isArray(raw) ? (raw as LocalRunning[]) : raw && typeof raw === "object" ? [raw as LocalRunning] : [];
     const at = Date.parse(st.at);
     if (Number.isNaN(at) || now - at > maxAgeMs || !Array.isArray(st.down) || !Array.isArray(st.disabled)) return null;
     return st;
