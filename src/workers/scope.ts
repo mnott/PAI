@@ -224,7 +224,7 @@ export function recordSessionMapEntry(
 /**
  * The claude session a new run was spawned by, when it can be known: a run
  * inside another worker inherits its spawner (chain stages keep the
- * orchestrator's tab that way); otherwise a fresh map entry for `cwd`.
+ * orchestrator's tab that way); then the session id in the environment; otherwise a fresh map entry for `cwd`.
  */
 export function resolveSpawnerSession(
   logDir: string,
@@ -237,6 +237,9 @@ export function resolveSpawnerSession(
     const inherited = loadStatus(logDir, parentId)?.spawnerSession;
     if (inherited) return inherited;
   }
+  // the spawning session names itself in its tool environment: exact, and the only answer when the
+  // session (a background one, say) runs in a different directory than the worker
+  if (env.CLAUDE_CODE_SESSION_ID) return env.CLAUDE_CODE_SESSION_ID;
   const path = sessionMapPath(logDir);
   if (!existsSync(path) || !cwd) return null;
   try {

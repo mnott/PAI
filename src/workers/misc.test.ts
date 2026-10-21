@@ -85,6 +85,8 @@ describe("spawner session map", () => {
   });
   it("returns null without a map", () => {
     expect(resolveSpawnerSession(join(dir, "missing"), cwd, {}, t0)).toBeNull();
+    // a background session in another directory: its own env names it, no map entry needed
+    expect(resolveSpawnerSession(join(dir, "missing"), "/other-repo", { CLAUDE_CODE_SESSION_ID: "bg-1" }, t0)).toBe("bg-1");
   });
 });
 
