@@ -46,15 +46,15 @@ function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined
 function winMin(st,id){var s=st&&st[id];return!!s&&!!s.min}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
-function winLeafType(kids,id){return kids&&kids[id]?"group":"leaf"}
+function winLeafType(kids,id){var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
 /** Lay out one split into pieces {n,x,y,w,h}. bounded: the container has a fixed h. */
 function winSplit(node,box,bounded,st,cfg,kids){
  var n=node.ch.length,i,out=[];
- // ghosts take no space: the gutter count is over the visible children only
+ // ghosts take no space: gutters and weights are over the visible children only
  var vis=[];for(i=0;i<n;i++)if(!winGhost(st,node.ch[i].id))vis.push(i);
  var gap=vis.length>1?cfg.GAP:0,total=box.w-(vis.length-1)*gap;
  if(node.d==="r"){
-  var t=0;for(i=0;i<node.sz.length;i++)t+=node.sz[i];if(t<=0)t=1;
+  var t=0;for(i=0;i<vis.length;i++)t+=node.sz[vis[i]]||0;if(t<=0)t=1;
   var ws=[];
   for(i=0;i<node.sz.length;i++){
    ws.push(node.sz[i]/t*total);
@@ -76,8 +76,9 @@ function winSplit(node,box,bounded,st,cfg,kids){
   var x=0;
   for(i=0;i<vis.length;i++){
    var ci=vis[i],w=ws[ci],ch=node.ch[ci];
-   // a band row is bounded by the band's px: children fill the band, not their defaultH
-   var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h!==undefined?box.h:(winDefH(cfg,winLeafType(kids,ch.id))||box.h));
+   // a row with a fixed height (band cell, bounded container): children fill it;
+   // a bare root row has no height of its own: children get their defaultH
+   var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h>0?box.h:winDefH(cfg,winLeafType(kids,ch.id)));
    out.push({n:ch,x:x,y:0,w:w,h:hh2});
    x+=w+gap;
   }
@@ -109,13 +110,26 @@ function winSplit(node,box,bounded,st,cfg,kids){
   var c3=node.ch[i];
   var h3;
   if(c3.k==="s"){
-   var sub=winSplit(c3,{w:box.w,h:sz},false,st,cfg,kids);
-   var maxB=0;
-   for(var j=0;j<sub.length;j++){
-    out.push({n:sub[j].n,x:sub[j].x,y:y3+sub[j].y,w:sub[j].w,h:sub[j].h});
-    if(sub[j].y+sub[j].h>maxB)maxB=sub[j].y+sub[j].h;
+   var allMin=true;
+   for(var q=0;q<c3.ch.length;q++)if(!winGhost(st,c3.ch[q].id)&&!winMin(st,c3.ch[q].id))allMin=false;
+   if(allMin&&vis.length>0){
+    // every visible card of the band is minimized: the band shrinks to HEAD_H;
+    // the headers go through the normal split, which gives each one HEAD_H
+    h3=cfg.HEAD_H;
+    var sub0=winSplit(c3,{w:box.w,h:cfg.HEAD_H},false,st,cfg,kids);
+    for(var q2=0;q2<sub0.length;q2++)
+     out.push({n:sub0[q2].n,x:sub0[q2].x,y:y3+sub0[q2].y,w:sub0[q2].w,h:sub0[q2].h});
+   }else{
+    var sub=winSplit(c3,{w:box.w,h:sz},false,st,cfg,kids);
+    var maxB=0;
+    for(var j=0;j<sub.length;j++){
+     out.push({n:sub[j].n,x:sub[j].x,y:y3+sub[j].y,w:sub[j].w,h:sub[j].h});
+     if(sub[j].y+sub[j].h>maxB)maxB=sub[j].y+sub[j].h;
+    }
+    // the band grows past its px when the stacked content is taller (narrow mode);
+    // the next band starts below the content, never on top of it
+    h3=Math.max(sz,maxB);
    }
-   h3=Math.min(sz,maxB);
   }else{
    h3=winMin(st,c3.id)?cfg.HEAD_H:(winPx(st,c3.id)!==null?winPx(st,c3.id):sz);
    out.push({n:c3,x:0,y:y3,w:box.w,h:h3});
@@ -127,8 +141,10 @@ function winSplit(node,box,bounded,st,cfg,kids){
 function layout(tree,kids,box,state,cfg){
  var rects={},height=0;
  if(!tree||box.w<=0)return{rects:rects,height:0};
- var bounded=box.h!==undefined;
- var out=[{n:tree,x:0,y:0,w:box.w,h:bounded?box.h:0}];
+ // only the root container is unbounded: its column holds band px. Everything below
+ // (group bodies, nested splits) is bounded and lays columns by weight.
+ var root=box.h===undefined;
+ var out=[{n:tree,x:0,y:0,w:box.w,h:root?0:box.h,bounded:!root}];
  var guard=0;
  while(out.length){
   var it=out.pop(),n=it.n;
@@ -137,7 +153,7 @@ function layout(tree,kids,box,state,cfg){
    var min=winMin(state,n.id);
    var h=min?cfg.HEAD_H:it.h;
    rects[n.id]={x:it.x,y:it.y,w:it.w,h:h,body:{w:it.w,h:Math.max(0,h-cfg.HEAD_H)}};
-   var kt=kids&&kids[n.id];
+   var kt=kids&&kids[n.id]&&kids[n.id].k?kids[n.id]:null;
    if(kt&&!min){
     // bounded: the group body has a fixed box, so its columns lay out by weight
     var r=layout(kt,kids,{w:it.w,h:Math.max(0,h-cfg.HEAD_H)},state,cfg);
@@ -146,13 +162,15 @@ function layout(tree,kids,box,state,cfg){
    continue;
   }
   if(guard++>10000)continue;
-  var ch=winSplit(n,{w:it.w,h:it.h},bounded,state,cfg,kids);
+  var ch=winSplit(n,{w:it.w,h:it.h},it.bounded,state,cfg,kids);
   for(var i=0;i<ch.length;i++){
    var c=ch[i];
-   out.push({n:c.n,x:it.x+c.x,y:it.y+c.y,w:c.w,h:c.h});
+   // a split cell always has a fixed height (band px or the bounded box), so below the
+   // root every split lays its column by weight
+   out.push({n:c.n,x:it.x+c.x,y:it.y+c.y,w:c.w,h:c.h,bounded:true});
   }
  }
- if(!bounded){
+ if(root){
   var max=0,id;
   for(id in rects)if(rects[id].y+rects[id].h>max)max=rects[id].y+rects[id].h;
   height=max;

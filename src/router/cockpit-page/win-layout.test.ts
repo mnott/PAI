@@ -185,7 +185,86 @@ describe("win layout (spec 3.2)", () => {
     );
   });
 
-  it("the function takes no content: only tree, kids, box, state, cfg change output", () => {
-    expect(layout.length).toBe(5);
+  it("D1: a narrow-stacked root band grows past its px and the next band starts below it", () => {
+    // band row at width 200 stacks; each child gets defaultH 300 -> the band is 608, not 400
+    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
+    const t = split("c", [row, leaf("below")], [400, 200]);
+    const { rects, height } = layout(t, {}, root(200), {}, cfg);
+    expect(rects.a.h).toBe(300);
+    expect(rects.b.y).toBe(308);
+    expect(rects.b.y + rects.b.h).toBe(608);
+    // the band must not clip to its px: below starts after the stacked content, no overlap
+    expect(rects.below.y).toBe(616);
+    expect(rects.below.h).toBe(200);
+    expect(rects.below.y).toBeGreaterThanOrEqual(rects.b.y + rects.b.h + cfg.GAP);
+    expect(height).toBe(616 + 200);
+  });
+
+  it("D2: a column nested under a row inside a root band lays its sz as weights, not px", () => {
+    // root band (400 px) > row > column [a,b] weights 0.25/0.75 -> heights 98 / 294 of the
+    // band's 400, not 0.25/0.75 px
+    const col = split("c", [leaf("a"), leaf("b")], [0.25, 0.75]);
+    const t = split("c", [split("r", [col, leaf("side")], [0.5, 0.5])], [400]);
+    const { rects } = layout(t, {}, root(1000), {}, cfg);
+    const avail = 400 - cfg.GAP;
+    expect(rects.a.h).toBeCloseTo(0.25 * avail);
+    expect(rects.b.h).toBeCloseTo(0.75 * avail);
+    expect(rects.b.y).toBeCloseTo(rects.a.h + cfg.GAP);
+    expect(rects.a.h).toBeGreaterThan(cfg.HEAD_H);
+  });
+
+  it("D3: a bare root row gives its children defaultH, not the empty box height", () => {
+    const { rects } = layout(split("r", [leaf("a"), leaf("b")], [0.5, 0.5]), {}, root(1000), {}, cfg);
+    expect(rects.a.h).toBe(cfg.defaultH);
+    expect(rects.b.h).toBe(cfg.defaultH);
+    expect(rects.a.h).toBeGreaterThan(0);
+  });
+
+  it("D4: row weights renormalize over the visible children; ghosts take no space", () => {
+    // a and b visible (0.3 + 0.7 = 1), g a ghost: the two share the whole width, not 30/70%
+    const t = split("r", [leaf("a"), leaf("g"), leaf("b")], [0.3, 0.2, 0.7]);
+    const { rects } = layout(t, {}, bounded(1008, 400), { g: { seen: 123 } }, cfg);
+    expect(rects.g).toBeUndefined();
+    expect(rects.a.w).toBeCloseTo(0.3 * 1000);
+    expect(rects.b.w).toBeCloseTo(0.7 * 1000);
+    expect(rects.b.x - (rects.a.x + rects.a.w)).toBe(cfg.GAP);
+  });
+
+  it("D5: a card's type drives minW and defaultH (fallback to the cfg defaults)", () => {
+    const kids = { a: { type: "chart" }, b: { type: "metric" } };
+    // row at width 400: chart minW 300 -> narrow mode; metric defaultH 120, chart 260
+    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
+    const { rects } = layout(row, kids, root(400), {}, cfg);
+    expect(rects.a.h).toBe(260); // chart defaultH, not cfg.defaultH 300
+    expect(rects.b.h).toBe(120); // metric defaultH
+    expect(rects.b.y).toBe(268);
+    // minW from the type: width 250 < chart minW 300 stacks; width 620 >= 300 stays a row
+    const wide = layout(row, kids, root(620), {}, cfg);
+    expect(wide.rects.a.y).toBe(0);
+    expect(wide.rects.b.y).toBe(0);
+    expect(wide.rects.b.x).toBeGreaterThan(0);
+    // a type with no entries falls back to cfg minW/defaultH
+    const plain = layout(row, { a: { type: "unknown" }, b: { type: "unknown" } }, root(400), {}, cfg);
+    expect(plain.rects.a.h).toBe(cfg.defaultH);
+  });
+
+  it("D6: extra content fields on kids cannot change the rects", () => {
+    const tree = split("c", [split("r", [leaf("a"), leaf("g")], [0.6, 0.4]), leaf("b")], [400, 200]);
+    const kids = { g: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]) };
+    const box = root(1200);
+    const st = {};
+    const r1 = layout(tree, kids, box, st, cfg);
+    const r2 = layout(tree, kids, box, st, cfg);
+    expect(r2).toEqual(r1);
+    // the same tree and kids, but the kid entries carry content fields
+    const loaded = {
+      g: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]),
+      a: { type: "metric", value: 42, rows: [1, 2, 3], title: "cpu load" },
+      b: { type: "chart", series: [9, 9], html: "<div>long content</div>" },
+      k1: { value: 7 },
+      k2: { value: 8 },
+    };
+    const r3 = layout(tree, loaded, box, st, cfg);
+    expect(r3).toEqual(r1);
   });
 });
