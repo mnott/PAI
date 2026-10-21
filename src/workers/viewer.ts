@@ -456,17 +456,18 @@ interface FollowHandle {
 }
 
 /**
- * The follow exit decision for one worker: it is over once its result event
- * was rendered, or once its status reached a terminal state — pooled
- * runs keep their pid alive after the status says done, so the pid is no
- * evidence; a worker killed without writing a result still ends. A status never read
- * (undefined) means "not over": follow keeps waiting for the first event.
+ * The follow exit decision for one worker: it is over once its status reached a
+ * terminal state — pooled runs keep their pid alive after the status says done,
+ * so the pid is no evidence. A rendered result event alone never ends it (a pool
+ * slot dying mid-task writes one, then the run restarts under the same id and
+ * its status stays running); it only counts when no status was ever read. A status
+ * never read without a result means "not over": follow keeps waiting.
  */
 export function workerEnded(
   resultRendered: boolean,
   state: WorkerStatus["state"] | undefined
 ): boolean {
-  return resultRendered || isTerminal(state);
+  return isTerminal(state) || (resultRendered && state === undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -763,8 +764,9 @@ export async function followWorkers(
     }
     if (step.activity) lastEventAt = Date.now();
     if (e.type === "result") {
+      // a result event is not an end: a pool slot that died mid-task logs a synthetic
+      // one and the same run id carries on non-pooled; only the status ends the follow
       meterStatus = st;
-      finished.add(wid);
     } else if (wid === target || target === null) {
       meterStatus = st;
     }
