@@ -295,6 +295,8 @@ router:
       timeoutStrikes: 3
       # TCP connect timeout of the local-server probe
       tcpTimeoutMs: 3000
+      # the router logs one line when its event loop is blocked longer than this, naming the requests in flight
+      stallLogMs: 1000
   # Request scheduling for local engines (src/router/scheduler.ts): one request
   # in flight per engine, fair across the workers' owning sessions.
   scheduling:

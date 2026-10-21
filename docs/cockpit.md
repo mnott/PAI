@@ -199,3 +199,4 @@ The sampler behind the Models tiles is `router.samples` (`sampleMs`, `historyLen
 |---|---|---|
 | `timeoutStrikes` | 3 | A local server whose TCP connect or `/v1/models` answer times out is busy, not down; it turns down after this many consecutive timeouts (refused / not serving = down at once) |
 | `tcpTimeoutMs` | 3000 | TCP connect timeout of the local-server probe |
+| `stallLogMs` | 1000 | The router logs one line when its event loop is blocked longer than this, with the requests in flight and the slow synchronous handlers |
