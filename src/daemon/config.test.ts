@@ -58,8 +58,8 @@ describe("loadConfig", () => {
     expect(cfg.logLevel).toBe("info");
   });
 
-  it("defaults the dashboard to enabled on loopback port 8770", () => {
-    expect(loadConfig().dashboard).toEqual({ enabled: true, port: 8770, bind: "127.0.0.1" });
+  it("no longer carries a dashboard server config (the memory view lives in the cockpit)", () => {
+    expect(loadConfig()).not.toHaveProperty("dashboard");
   });
 
   it("loads config.json when no config.yaml exists", () => {

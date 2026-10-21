@@ -24,6 +24,8 @@ export let startTime = Date.now();
 /** True while a project index pass is running. */
 export let indexInProgress = false;
 export let lastIndexTime = 0;
+/** Latest index pass: when it ended, how long it took, what it saw; null before the first. */
+export let lastIndexPass: { at: number; durationMs: number; projects: number; files: number; chunks: number } | null = null;
 export let indexSchedulerTimer: ReturnType<typeof setInterval> | null = null;
 
 /** True while an embedding pass is running. */
@@ -71,6 +73,7 @@ export function setNotificationConfig(c: NotificationConfig): void { notificatio
 export function setShutdownRequested(v: boolean): void { shutdownRequested = v; }
 export function setIndexInProgress(v: boolean): void { indexInProgress = v; }
 export function setLastIndexTime(v: number): void { lastIndexTime = v; }
+export function setLastIndexPass(v: NonNullable<typeof lastIndexPass>): void { lastIndexPass = v; }
 export function setIndexSchedulerTimer(v: ReturnType<typeof setInterval> | null): void { indexSchedulerTimer = v; }
 export function setEmbedInProgress(v: boolean): void { embedInProgress = v; }
 export function setLastEmbedPass(v: import("../../memory/embed-pass.js").EmbedPassRecord | null): void { lastEmbedPass = v; }

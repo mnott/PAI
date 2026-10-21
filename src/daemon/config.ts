@@ -111,15 +111,6 @@ export interface EmbeddingConfig {
   ollama: { baseUrl: string };
 }
 
-export interface DashboardConfig {
-  /** Serve the read-only status dashboard. Default: true. */
-  enabled: boolean;
-  /** TCP port. Default: 8770 (8765-8768 are taken by other local services). */
-  port: number;
-  /** Bind address. Default "127.0.0.1"; add the tailnet IP to reach it from a phone. */
-  bind: string;
-}
-
 export interface ObsidianConfig {
   /** Gates only the writing side (sync, master notes, symlinks). Default: false. */
   enabled: boolean;
@@ -167,7 +158,7 @@ export interface RouterConfig {
   samples?: { sampleMs?: number; historyLen?: number; engineStatusTimeoutMs?: number; cardReadingMaxAgeMs?: number };
   /**
    * Cockpit page: `sections` lists the section ids to render, in page order (cloud, routing, workers, pool, models,
-   * system, kpis, tokens, cache, speed, pause, sessions, runs, daily). Missing or empty = all. Re-read per page load.
+   * system, memory, kpis, tokens, cache, speed, pause, sessions, runs, daily). Missing or empty = all. Re-read per page load.
    */
   cockpit?: { sections?: string[] };
 }
@@ -244,8 +235,6 @@ export interface PaiDaemonConfig {
   /** Interactive-session settings (currently just the cache keepalive). */
   sessions: SessionsConfig;
 
-  /** Read-only memory status dashboard (src/daemon/dashboard.ts). */
-  dashboard: DashboardConfig;
 
   /** Obsidian sync switch (off by default). */
   obsidian: ObsidianConfig;

@@ -88,7 +88,7 @@ $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="da
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 /* a section that is not on the page fetches nothing */
-var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
+var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers"),needMemory=has("memory");
 tabs();applyCollapse();applyLayout(layoutRows(document.querySelectorAll("section[data-section]")));secGrips();
 /** Row stacking follows the live main width (ResizeObserver, else a resize listener). */
 if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(function(){stackRows();fitTables()}).observe(document.querySelector("main"))}catch(e){}}
@@ -97,8 +97,8 @@ window.addEventListener("resize",function(){stackRows();fitTables()});
 if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(chartResize).observe(document.querySelector("main"))}catch(e){}}
 window.addEventListener("resize",chartResize);
 $("reset").onclick=resetLayout;
-if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();
-if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});setInterval(tick,${L.clockTickMs});
+if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();if(needMemory)loadMemory();
+if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});if(needMemory)setInterval(loadMemory,${L.memoryPollMs});setInterval(tick,${L.clockTickMs});
 })();
 </script></body></html>
 `;

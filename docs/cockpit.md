@@ -63,6 +63,13 @@ A card folds by clicking its header. By default a running coding runtime is open
 
 ![Models: the local engine card with speed, memory, workers and conversation cache tiles and the local model switch, then one card per consumer on the shared runtimes](images/cockpit-models.jpg)
 
+### Memory (`memory`)
+
+Answers: is the memory index healthy and is it embedding. Files, chunks, chunks without vectors (the backlog) and coverage; the embedding backend and model; the last index pass and last embed pass (time, duration, chunks done); the nightly schedule (`maintenanceHour`); embedding jobs, backend availability and pass failures. The title, thresholds and refresh interval come from `router.cockpit.layout` (`memoryTitle`, `memoryCoverageWarn`, `memoryCoverageBad`, `memoryPollMs`). This is the page that used to be served on port 8770; that server no longer exists.
+
+- **embed backlog** runs `pai memory embed --all --background` detached and shows chunks embedded so far / backlog at start, rate, ETA and the last log line. **stop** ends it cleanly (the command is safe to stop and re-run). **index now** runs one index pass (`pai memory index --direct --background`).
+- One run at a time. A run started by the CLI, the cockpit or the daemon's own pass is found through `<PAI home>/state/memory-run.json` and the card reads "running (started by …)"; a second start is refused.
+
 ### System — memory, load, temperature, power (`system`)
 
 Answers: is the machine under pressure. Metric tiles for memory, load, temperature and power over the selected window, each with a sparkline of its recent history; a tile whose every sample is 0 is hidden and listed as "hidden". The **Power and GPU/CPU load** chart sits inside this section. Below, one tile per local server: status (with the reason when it is down), memory (RSS), end-to-end and decode tokens per second, and prefix-cache hit rate. `/cockpit/system` returns the same servers with a `downReason` for each one that is down.

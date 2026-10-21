@@ -5,6 +5,7 @@
 import type { Socket } from "node:net";
 import type { IpcRequest, IpcResponse } from "./types.js";
 import type { NotificationMode } from "../../notifications/types.js";
+import { memoryDashboard } from "./dashboard-live.js";
 import {
   patchNotificationConfig,
 } from "../../notifications/config.js";
@@ -100,9 +101,6 @@ export async function handleRequest(
         lastVaultIndexTime: lastVaultIndexTime ? new Date(lastVaultIndexTime).toISOString() : null,
         vaultPath: daemonConfig.vaultPath ?? null,
         workQueue: getQueueStats(),
-        dashboard: daemonConfig.dashboard.enabled
-          ? `http://${daemonConfig.dashboard.bind}:${daemonConfig.dashboard.port}/`
-          : null,
         passFailures: Object.fromEntries(
           [...passFailures].map(([k, v]) => [k, { ...v, at: new Date(v.at).toISOString() }])
         ),
@@ -112,6 +110,14 @@ export async function handleRequest(
         backendOutage: getBackendOutage(),
       },
     });
+    socket.end();
+    return;
+  }
+
+  // Special: memory_dashboard — the sampled memory status for the cockpit's Memory section
+  if (method === "memory_dashboard") {
+    const backlog = await storageBackend?.countUnembeddedChunks().catch(() => null) ?? null;
+    sendResponse(socket, { id, ok: true, result: memoryDashboard(backlog) });
     socket.end();
     return;
   }

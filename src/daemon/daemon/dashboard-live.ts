@@ -6,13 +6,15 @@
 import { readFileSync } from "node:fs";
 import { resolveFromModule } from "../../module-paths.js";
 import { getConfiguredBackend } from "../../memory/backends/index.js";
-import { liveSource, startDashboard, type DashboardHandle, type PassSnapshot } from "../dashboard.js";
+import { liveSource, startDashboardState, type DashboardState, type PassSnapshot } from "../dashboard.js";
 import { defaults, type PaiDaemonConfig } from "../config.js";
 import {
   daemonConfig,
   embedInProgress,
   indexInProgress,
   lastEmbedTime,
+  lastEmbedPass,
+  lastIndexPass,
   lastIndexTime,
   lastVaultIndexTime,
   passFailures,
@@ -56,12 +58,12 @@ export function livePasses(now = Date.now()): PassSnapshot[] {
   ];
 }
 
-/** Start the dashboard when enabled; a failure to bind is logged, never fatal for the daemon. */
-export async function startLiveDashboard(config: PaiDaemonConfig): Promise<DashboardHandle | null> {
-  if (!config.dashboard.enabled) return null;
+let live: { state: DashboardState; stop(): void } | null = null;
+
+/** Start sampling the memory status for the cockpit; a failure is logged, never fatal for the daemon. */
+export async function startMemoryStatus(config: PaiDaemonConfig): Promise<void> {
   try {
-    const handle = await startDashboard(
-      config.dashboard,
+    live = await startDashboardState(
       liveSource({
         storage: storageBackend,
         backend: () => getConfiguredBackend(config),
@@ -70,10 +72,26 @@ export async function startLiveDashboard(config: PaiDaemonConfig): Promise<Dashb
         passes: livePasses,
       }),
     );
-    process.stderr.write(`[pai-daemon] Dashboard: ${handle.url}\n`);
-    return handle;
   } catch (e) {
-    process.stderr.write(`[pai-daemon] Dashboard not started: ${e instanceof Error ? e.message : String(e)}\n`);
-    return null;
+    process.stderr.write(`[pai-daemon] Memory status not started: ${e instanceof Error ? e.message : String(e)}\n`);
   }
+}
+
+export function stopMemoryStatus(): void {
+  live?.stop();
+  live = null;
+}
+
+/** The IPC `memory_dashboard` answer: the sampled status plus the pass records the cockpit's Memory section shows. */
+export function memoryDashboard(backlog: number | null): Record<string, unknown> {
+  return {
+    status: live ? live.state.status() : null,
+    embedBacklog: backlog,
+    maintenanceHour: daemonConfig.maintenanceHour ?? null,
+    indexIntervalSecs: daemonConfig.indexIntervalSecs,
+    embedIntervalSecs: daemonConfig.embedIntervalSecs,
+    embedMaxMinutes: daemonConfig.embedMaxMinutes ?? null,
+    lastIndexPass,
+    lastEmbedPass,
+  };
 }
