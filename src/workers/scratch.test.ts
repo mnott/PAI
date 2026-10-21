@@ -1,24 +1,31 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { applyScratchEnv, removeScratch, scratchDir } from "./scratch.js";
 import { tmpScratchReason } from "../hooks/ts/lib/worker-bash-rules.js";
 import { decideWorkerGuard } from "../hooks/ts/lib/worker-guard.js";
 
 describe("worker scratch dir", () => {
-  it("gives each worker its own TMPDIR and removes it", () => {
-    const logDir = mkdtempSync(join(tmpdir(), "pai-scratch-"));
+  it("gives each worker its own TMPDIR outside any git repo and removes it", () => {
     const a: Record<string, string | undefined> = {};
     const b: Record<string, string | undefined> = {};
-    applyScratchEnv(a, logDir, "w1");
-    applyScratchEnv(b, logDir, "w2");
-    expect(a.TMPDIR).not.toBe(b.TMPDIR);
-    expect(a.TMPDIR).toBe(scratchDir(logDir, "w1"));
-    writeFileSync(join(a.TMPDIR!, "edit.py"), "x");
-    removeScratch(logDir, "w1");
-    expect(existsSync(a.TMPDIR!)).toBe(false);
-    expect(existsSync(b.TMPDIR!)).toBe(true);
+    applyScratchEnv(a, "w1-test");
+    applyScratchEnv(b, "w2-test");
+    try {
+      expect(a.TMPDIR).not.toBe(b.TMPDIR);
+      expect(a.TMPDIR).toBe(scratchDir("w1-test"));
+      expect(statSync(a.TMPDIR!).mode & 0o777).toBe(0o700);
+      const inRepo = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: a.TMPDIR });
+      expect(inRepo.status).not.toBe(0);
+      writeFileSync(join(a.TMPDIR!, "edit.py"), "x");
+      removeScratch("w1-test");
+      expect(existsSync(a.TMPDIR!)).toBe(false);
+      expect(existsSync(b.TMPDIR!)).toBe(true);
+    } finally {
+      removeScratch("w1-test");
+      removeScratch("w2-test");
+    }
   });
 });
 

@@ -1403,7 +1403,7 @@ export function discardWorker(logDir: string, id: string): string {
     if (msg) return msg;
   }
   const st = mustHaveBranch(logDir, id);
-  removeScratch(logDir, id);
+  removeScratch(id);
   if (isSlotWorktree(st.worktreeDir!)) {
     // The slot stays; its branch is archived and deleted in the repo that holds it.
     const repo = repoHoldingBranch(st);
@@ -1714,7 +1714,7 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   }
   git(repo, ["worktree", "remove", "--force", dir]);
   if (hasBranch) git(repo, ["branch", "-D", branch]);
-  removeScratch(logDir, id);
+  removeScratch(id);
   return { archive: target, knowledge, salvaged: salvage.lines };
 }
 

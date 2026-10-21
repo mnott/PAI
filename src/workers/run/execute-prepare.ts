@@ -202,7 +202,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
-  applyScratchEnv(env, logDir, wid);
+  applyScratchEnv(env, wid);
   // the router's fair queue shares a local engine between owning sessions
   addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid });
   const noteToken = newNoteToken();

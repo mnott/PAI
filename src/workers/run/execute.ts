@@ -184,7 +184,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     }
   }
   env.PAI_WORKER_ID = wid;
-  applyScratchEnv(env, logDir, wid);
+  applyScratchEnv(env, wid);
   // codex takes instructions through the prompt, not a system prompt flag
   const prompt =
     (a.limit ? deadlinePromptLine(a.limit) + "\n\n" : "") +
