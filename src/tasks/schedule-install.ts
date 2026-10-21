@@ -116,6 +116,7 @@ export function installSchedule(intervalSecs = DEFAULT_INTERVAL_SECS): InstallRe
 
   // Plain write: a plist is generated, not user data, so the json-store guard
   // would be the wrong tool — there is nothing here anyone could not regenerate.
+  mkdirSync(dirname(SCHEDULE_LOG), { recursive: true });
   writeFileSync(SCHEDULE_PLIST, plist, "utf8");
 
   if (!serviceManagerAllowed(`launchctl load ${SCHEDULE_PLIST}`)) {

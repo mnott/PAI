@@ -21,7 +21,7 @@
 
 import { existsSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 
 /** The rule line to gate, matched by prefix so wording tweaks after the
  *  prefix do not silently re-enable per-prompt injection. */
@@ -29,7 +29,7 @@ export const CONFIRM_RULE_PREFIX = "After every new session or compact, confirm"
 
 export function whisperConfirmMarkerPath(sessionId: string): string {
   const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "") || "nosession";
-  return join(tmpdir(), "pai-whisper-confirm", safe);
+  return paiHomePath("state", "whisper-confirm", safe);
 }
 
 /**

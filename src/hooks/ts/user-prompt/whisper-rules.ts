@@ -21,7 +21,7 @@
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 import { resolveAdvisorMode, type AdvisorConfig } from "../lib/advisor-budget.js";
 import {
   CONFIRM_RULE_PREFIX,
@@ -184,7 +184,7 @@ function currentLocalTime(): string {
 function resetReinjectCounter(sessionId: string): void {
   try {
     const safe = sessionId.replace(/[^A-Za-z0-9_-]/g, "") || "nosession";
-    const f = join(tmpdir(), "pai-whisper-reinject", `${safe}.count`);
+    const f = paiHomePath("state", "whisper-reinject", `${safe}.count`);
     if (existsSync(f)) unlinkSync(f);
   } catch { /* best effort — a stale count is not worth failing the hook over */ }
 }

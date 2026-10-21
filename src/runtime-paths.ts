@@ -14,8 +14,9 @@
  * daemon test to be written would clobber the live socket with nothing to stop
  * it.
  *
- * So each path is read from an environment variable with the historical /tmp
- * value as its default. Behaviour is unchanged for every real invocation; the
+ * So each path is read from an environment variable. The sockets keep their
+ * /tmp meeting-point default (other processes dial them); logs and the status
+ * line cache default under PAI_HOME (logs/, cache/), never a shared /tmp name. Behaviour is unchanged for every real invocation; the
  * test setup overrides the variables and the whole class becomes unreachable
  * rather than merely absent, the same way the home guard works.
  *
@@ -38,7 +39,7 @@ export function aibrokerSocketPath(): string {
 
 /** Where the daemon's stdout and stderr are collected. */
 export function daemonLogPath(): string {
-  return process.env.PAI_DAEMON_LOG_PATH ?? "/tmp/pai-daemon.log";
+  return process.env.PAI_DAEMON_LOG_PATH ?? paiHomePath("logs", "daemon.log");
 }
 
 /** Pidfile for the running daemon. */
@@ -48,7 +49,7 @@ export function daemonPidPath(): string {
 
 /** Where the launchd scheduler tick writes its output. */
 export function schedulerLogPath(): string {
-  return process.env.PAI_SCHEDULER_LOG_PATH ?? "/tmp/pai-scheduler.log";
+  return process.env.PAI_SCHEDULER_LOG_PATH ?? paiHomePath("logs", "scheduler.log");
 }
 
 /**
@@ -58,7 +59,7 @@ export function schedulerLogPath(): string {
  * fixtures to the real thing. Read by statusline-command.sh as PAI_CACHE_DIR.
  */
 export function paiCacheDir(): string {
-  return process.env.PAI_CACHE_DIR ?? "/tmp/claude";
+  return process.env.PAI_CACHE_DIR ?? paiHomePath("cache");
 }
 
 /**

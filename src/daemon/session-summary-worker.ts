@@ -28,7 +28,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, basename, dirname } from "node:path";
-import { homedir } from "node:os";
 
 import {
   findNotesDir,
@@ -45,7 +44,8 @@ import {
 import { getRegistryBackend } from "../storage/factory.js";
 import { storageBackend, daemonConfig } from "./daemon/state.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
-import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
+import { claudeProjectsDir, legacyConfigDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
+import { findClaudeBinary } from "../memory/kg-extraction.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -68,7 +68,7 @@ const MAX_USER_MESSAGES = 30;
 /** File tracking last summary timestamps per project — resolved under
  *  PAI_HOME, falling back to the pre-2026-09-19 ~/.config/pai location. */
 function oldCooldownFile(): string {
-  return join(homedir(), ".config", "pai", "summary-cooldowns.json");
+  return join(legacyConfigDir(), "summary-cooldowns.json");
 }
 
 function cooldownFilePath(): string {
@@ -80,7 +80,7 @@ export function migrateSummaryCooldowns(opts: { dryRun?: boolean } = {}): Migrat
 }
 
 /** Claude Code projects directory. */
-const CLAUDE_PROJECTS_DIR = () => join(homedir(), ".claude", "projects");
+const CLAUDE_PROJECTS_DIR = () => claudeProjectsDir();
 
 // ---------------------------------------------------------------------------
 // Types
@@ -380,29 +380,6 @@ export async function getGitContext(cwd: string, sinceTime?: string): Promise<st
 // ---------------------------------------------------------------------------
 // Claude CLI spawning
 // ---------------------------------------------------------------------------
-
-/**
- * Find the `claude` CLI binary.
- * Checks PATH first, then common installation locations.
- */
-function findClaudeBinary(): string | null {
-  // Check known locations first (launchd PATH is minimal, bare "claude" won't resolve)
-  const candidates = [
-    join(homedir(), ".local", "bin", "claude"),
-    join(homedir(), ".claude", "local", "claude"),
-    "/usr/local/bin/claude",
-    "/opt/homebrew/bin/claude",
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      if (existsSync(candidate)) return candidate;
-    } catch { /* skip */ }
-  }
-
-  // Last resort: try bare "claude" in case PATH has it
-  return "claude";
-}
 
 /**
  * Spawn a Claude model via the CLI to generate a session summary.

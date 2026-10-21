@@ -99,7 +99,7 @@ pai daemon logs [options]
 
 Show the end of the daemon log.
 
-Tail the daemon log (/tmp/pai-daemon.log)
+Tail the daemon log (<PAI_HOME>/logs/daemon.log)
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

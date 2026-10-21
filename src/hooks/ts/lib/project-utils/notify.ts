@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { claudeHomeDir } from '../../../../config/pai-home.js';
 
 /**
  * Check if a messaging MCP server (AIBroker, Whazaa, or Telex) is configured.
@@ -13,7 +13,7 @@ import { homedir } from 'os';
  */
 export function isWhatsAppEnabled(): boolean {
   try {
-    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    const settingsPath = join(claudeHomeDir(), 'settings.json');
     if (!existsSync(settingsPath)) return false;
 
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));

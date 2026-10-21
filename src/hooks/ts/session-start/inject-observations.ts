@@ -17,6 +17,7 @@
  * Silent on any failure — never blocks session start.
  */
 
+import { paiSocketPath } from "../../../runtime-paths.js";
 import { connect } from 'net';
 import { randomUUID } from 'crypto';
 import { isProbeSession } from '../lib/project-utils.js';

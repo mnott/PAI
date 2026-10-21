@@ -49,12 +49,11 @@ import {
   renameSync,
 } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir } from "node:os";
 import { AIBROKER_REGISTRY, itermUuid, sessionMapPath, type SessionMapEntry } from "../../workers/scope.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { smartDecodeDir, type DirListings } from "./utils.js";
-import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
+import { claudeHomeDir, claudeProjectsDir, legacyConfigDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../config/pai-home.js";
 import { fmtAge as fmtAgeMs } from "../../utils/fmt-age.js";
 import { workerSessionFilter } from "./worker-sessions.js";
 
@@ -135,7 +134,7 @@ export interface ScannedSession {
 // clc session registry (~/.claude/session.json)
 // ---------------------------------------------------------------------------
 
-const CLC_SESSIONS_FILE = join(homedir(), ".claude", "session.json");
+const CLC_SESSIONS_FILE = join(claudeHomeDir(), "session.json");
 
 interface ClcEntry {
   name?: string;
@@ -241,7 +240,7 @@ async function buildRegistryRootPathMap(): Promise<Map<string, string>> {
  * use. So parse results are cached on disk and only changed files re-read.
  */
 function oldScanCacheFile(): string {
-  return join(homedir(), ".config", "pai", "session-scan-cache.json");
+  return join(legacyConfigDir(), "session-scan-cache.json");
 }
 
 export function scanCacheFilePath(): string {
@@ -563,7 +562,7 @@ export interface ScanOptions {
   workers?: boolean;
 }
 
-const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
+const CLAUDE_PROJECTS_DIR = claudeProjectsDir();
 
 // UUID format: 8-4-4-4-12 hex digits
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

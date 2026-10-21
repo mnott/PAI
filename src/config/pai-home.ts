@@ -37,6 +37,26 @@ export function legacyPaiHomeDir(): string {
   return join(homedir(), ".claude", "pai");
 }
 
+/** Claude Code's own config dir: CLAUDE_CONFIG_DIR if set, else ~/.claude. */
+export function claudeHomeDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+}
+
+/** Claude Code's per-project session store (`<claude home>/projects`). */
+export function claudeProjectsDir(): string {
+  return join(claudeHomeDir(), "projects");
+}
+
+/** The pre-PAI_HOME per-user config dir (~/.config/pai): migration source only. */
+export function legacyConfigDir(): string {
+  return join(homedir(), ".config", "pai");
+}
+
+/** Both live PAI home dirs for a given HOME: the default and the pre-migration one. */
+export function livePaiHomeDirs(home: string): string[] {
+  return [join(home, ".pai"), join(home, ".claude", "pai")];
+}
+
 /** The default PAI home: independent of Claude Code. */
 export function defaultPaiHomeDir(): string {
   return join(homedir(), ".pai");

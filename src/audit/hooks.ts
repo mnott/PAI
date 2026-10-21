@@ -7,6 +7,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -48,7 +49,7 @@ export interface HooksReport {
 }
 
 function settingsPaths(cwd: string): string[] {
-  return [join(homedir(), ".claude", "settings.json"), join(cwd, ".claude", "settings.json")].filter(existsSync);
+  return [join(claudeHomeDir(), "settings.json"), join(cwd, ".claude", "settings.json")].filter(existsSync);
 }
 
 function readSettings(path: string): SettingsJson {
@@ -61,7 +62,7 @@ function readSettings(path: string): SettingsJson {
 
 /** Expand ${PAI_DIR} and $HOME/${HOME} the way settings.json's own hooks do. */
 function expandCommand(command: string, env: Record<string, string>): string {
-  const paiDir = env.PAI_DIR ?? process.env.PAI_DIR ?? join(homedir(), ".claude");
+  const paiDir = env.PAI_DIR ?? process.env.PAI_DIR ?? claudeHomeDir();
   return command
     .replace(/\$\{PAI_DIR\}/g, paiDir)
     .replace(/\$\{HOME\}/g, homedir())
@@ -75,7 +76,7 @@ function syntheticStdin(cwd: string, eventName: string): string {
     cwd,
     hook_event_name: eventName,
     prompt: "audit",
-    transcript_path: join(homedir(), ".claude", "projects", "audit", `${sessionId}.jsonl`),
+    transcript_path: join(claudeProjectsDir(), "audit", `${sessionId}.jsonl`),
   });
 }
 

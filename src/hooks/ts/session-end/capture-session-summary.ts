@@ -7,6 +7,7 @@
  * documenting what was accomplished during the session.
  */
 
+import { paiSocketPath } from "../../../runtime-paths.js";
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';

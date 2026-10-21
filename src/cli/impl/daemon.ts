@@ -20,7 +20,7 @@ import {
   unlinkSync,
   mkdirSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir, userInfo } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
@@ -295,6 +295,8 @@ function installServiceDarwin(daemonBin: string): boolean {
     mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
   }
 
+  // launchd does not create the log's parent directory; without it the job fails to start.
+  mkdirSync(dirname(DAEMON_LOG), { recursive: true });
   const plistContent = generatePlist(daemonBin);
   try {
     writeFileSync(PLIST_PATH, plistContent, "utf8");

@@ -27,6 +27,7 @@ import { homedir } from 'os';
 import { resolve, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
 import {
+  claudeHomeDir,
   paiHomePath,
   resolvePaiFile,
   migratePaiFile,
@@ -43,7 +44,8 @@ function loadEnvFile(): void {
   // Check common locations for .env
   const possiblePaths = [
     resolve(process.env.ADAPTER_DIR || process.env.PAI_DIR || '', '.env'),
-    resolve(homedir(), '.claude', '.env'),
+    paiHomePath('.env'),
+    resolve(claudeHomeDir(), '.env'),
   ];
 
   for (const envPath of possiblePaths) {
@@ -89,7 +91,7 @@ function loadEnvFile(): void {
 loadEnvFile();
 
 function defaultAdapterDir(): string {
-  return resolve(homedir(), '.claude');
+  return resolve(claudeHomeDir());
 }
 
 /**

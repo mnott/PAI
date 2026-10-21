@@ -20,6 +20,7 @@
  * Never blocks Claude Code: always exits 0, tolerant of missing transcript.
  */
 
+import { paiSocketPath } from "../../../runtime-paths.js";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { connect } from "node:net";
 import { decideMcpGate, PASS_OUTPUT, type GateHookInput } from "../lib/mcp-deferred-gate.js";
