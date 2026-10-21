@@ -2528,21 +2528,68 @@ describe("cockpit tile drag on the real rendered page (live bug: tiles had no da
     expect((h.match(/data-tgrip/g) ?? []).length).toBe(tiles.length);
   });
 
-  it("a pointer drag of a real rendered tile reorders the tiles and persists under pai.cockpit.tiles.v1", () => {
-    const { api, store, tilesOf, loadedTiles } = tileDragHarness(inv);
-    api.renderModels();
-    const cont = loadedTiles();
-    expect(cont.getAttribute("data-tkey")).toBe("gyro-m / flash-next tiles");
-    expect(tilesOf(cont).map((t: any) => t.getAttribute("data-tid"))).toEqual(["speed", "memory", "workers", "conversation-cache"]);
-    const grip = cont.children[0].querySelector("[data-tgrip]"); // Speed tile
-    expect(grip).toBeTruthy();
-    api.startDrag({ button: 0, pointerType: "mouse", pointerId: 1, clientX: 10, clientY: 10, preventDefault() {} }, grip, "tile");
-    expect(api.getDrag()).toBeTruthy(); // the drag found the tile via closest("[data-tid]")
-    api.moveDrag({ clientX: 150, clientY: 10 });
-    api.upDrag({ clientX: 150, clientY: 10 }); // past the first tile's mid: move right
-    const after = tilesOf(cont).map((t: any) => t.getAttribute("data-tid"));
-    expect(after).toEqual(["memory", "speed", "workers", "conversation-cache"]);
-    expect(JSON.parse(store["pai.cockpit.tiles.v1"])).toEqual({ "gyro-m / flash-next tiles": after });
+  // the real listeners: tileGrips() wires pointerdown on the grip; sDrag adds pointermove/up on it
+  const dragViaListeners = (h: ReturnType<typeof tileDragHarness>, from: number, to: number, pos: "left" | "right" | "top" | "bottom", opts: { captureThrows?: boolean; stacked?: boolean } = {}) => {
+    const cont = h.loadedTiles();
+    const tiles = h.tilesOf(cont);
+    // 4 tiles of 100x40: one row, or stacked in one column
+    tiles.forEach((t: any, i: number) => { t.getBoundingClientRect = () => (opts.stacked ? { left: 0, top: i * 50, width: 100, height: 40 } : { left: i * 110, top: 0, width: 100, height: 40 }); });
+    const grip = tiles[from].querySelector("[data-tgrip]");
+    if (opts.captureThrows) grip.setPointerCapture = () => { throw new Error("NotFoundError"); };
+    const box = tiles[to].getBoundingClientRect();
+    const x = pos === "left" ? box.left + 10 : pos === "right" ? box.left + 90 : box.left + 50;
+    const y = pos === "top" ? box.top + 5 : pos === "bottom" ? box.top + 35 : box.top + 20;
+    h.dom.document.elementFromPoint = (px: number, py: number) => tiles.find((t: any) => { const r = t.getBoundingClientRect(); return px >= r.left && px < r.left + r.width && py >= r.top && py < r.top + r.height; }) ?? null;
+    const fire = (type: string, cx: number, cy: number) => {
+      const e = { type, button: 0, pointerType: "mouse", pointerId: 7, clientX: cx, clientY: cy, preventDefault() {} };
+      for (const hd of grip.handlers.filter((hh: { type: string }) => hh.type === type)) hd.fn(e);
+    };
+    const gb = tiles[from].getBoundingClientRect();
+    fire("pointerdown", gb.left + 5, gb.top + 5);
+    for (let i = 1; i <= 10; i++) fire("pointermove", gb.left + 5 + ((x - gb.left - 5) * i) / 10, gb.top + 5 + ((y - gb.top - 5) * i) / 10);
+    fire("pointerup", x, y);
+    return h.tilesOf(cont).map((t: any) => t.getAttribute("data-tid"));
+  };
+
+  it("dropping on the right half of the third tile moves Speed after Workers and persists", () => {
+    const h = tileDragHarness(inv);
+    h.api.renderModels();
+    const after = dragViaListeners(h, 0, 2, "right");
+    expect(after).toEqual(["memory", "workers", "speed", "conversation-cache"]);
+    expect(JSON.parse(h.store["pai.cockpit.tiles.v1"])).toEqual({ "gyro-m / flash-next tiles": after });
+    // a poll rebuild keeps the order
+    h.api.renderModels();
+    expect(h.tilesOf(h.loadedTiles()).map((t: any) => t.getAttribute("data-tid"))).toEqual(after);
+  });
+
+  it("the left half drops before the tile under the pointer; a different tile than the first decides", () => {
+    const h = tileDragHarness(inv);
+    h.api.renderModels();
+    expect(dragViaListeners(h, 0, 2, "left")).toEqual(["memory", "speed", "workers", "conversation-cache"]);
+  });
+
+  it("wrapped rows: across rows the vertical midpoint decides", () => {
+    const h = tileDragHarness(inv);
+    h.api.renderModels();
+    expect(dragViaListeners(h, 0, 2, "bottom", { stacked: true })).toEqual(["memory", "workers", "speed", "conversation-cache"]);
+    const h2 = tileDragHarness(inv);
+    h2.api.renderModels();
+    expect(dragViaListeners(h2, 0, 2, "top", { stacked: true })).toEqual(["memory", "speed", "workers", "conversation-cache"]);
+  });
+
+  it("dropping on itself is a no-op and saves nothing", () => {
+    const h = tileDragHarness(inv);
+    h.api.renderModels();
+    expect(dragViaListeners(h, 1, 1, "right")).toEqual(["speed", "memory", "workers", "conversation-cache"]);
+    expect(h.store["pai.cockpit.tiles.v1"]).toBeUndefined();
+  });
+
+  it("a pointer the browser cannot capture (setPointerCapture throws) still drags: the root cause of the live no-op", () => {
+    const h = tileDragHarness(inv);
+    h.api.renderModels();
+    const after = dragViaListeners(h, 0, 2, "right", { captureThrows: true });
+    expect(after).toEqual(["memory", "workers", "speed", "conversation-cache"]);
+    expect(h.store["pai.cockpit.tiles.v1"]).toBeDefined();
   });
 
   it("the keyboard Alt+ArrowRight path reorders the real rendered tiles and persists", () => {

@@ -498,7 +498,8 @@ function sDrag(e,g,kind){
  if(kind==="section"){
   var sec=g.closest("section");drag.sec=sec;drag.title=(sec.querySelector("h2")||{}).textContent||sec.getAttribute("data-section");
  }else drag.tile=g.closest("[data-tid]");
- g.setPointerCapture&&g.setPointerCapture(e.pointerId);
+ // a pointer the browser does not know (synthetic events) cannot be captured: the drag still runs on the grip
+ try{g.setPointerCapture&&g.setPointerCapture(e.pointerId)}catch(x){}
  g.addEventListener("pointermove",mDrag);
  g.addEventListener("pointerup",uDrag);
  g.addEventListener("pointercancel",aDrag);
@@ -515,14 +516,24 @@ function zone(rect,x,y){
  if(dx>rect.width*2/3)return"right";
  return"inside";
 }
+/** The tile under the pointer in the dragged tile's own container, and whether a drop goes
+ *  before it: by the horizontal midpoint within a row, by the vertical one across wrapped rows. */
+function tileDrop(d,x,y){
+ var el=document.elementFromPoint(x,y),t=el&&el.closest?el.closest("[data-tid]"):null;
+ if(!t||t===d.tile||t.parentNode!==d.tile.parentNode)return null;
+ var r=t.getBoundingClientRect(),m=d.tile.getBoundingClientRect();
+ var row=Math.abs(r.top-m.top)<m.height/2;
+ return{t:t,r:r,before:row?x<r.left+r.width/2:y<r.top+r.height/2,row:row};
+}
 function mDrag(e){
  if(!drag)return;
  drag.moved=true;drag.x=e.clientX;drag.y=e.clientY;
  if(!drag.armed)return;
  edgeScroll(e.clientY);
  if(drag.kind==="tile"){
-  var cont=drag.tile.parentNode,t=cont.querySelector("[data-tid]"),r=t.getBoundingClientRect();
-  showInd(r,e.clientX<r.left+r.width/2?"left":"right",false);
+  var td=tileDrop(drag,e.clientX,e.clientY);
+  if(!td){hideInd();return}
+  showInd(td.r,td.row?(td.before?"left":"right"):(td.before?"above":"below"),false);
   return;
  }
  var el=document.elementFromPoint(e.clientX,e.clientY);
@@ -547,10 +558,12 @@ function uDrag(e){
   // stale parent's children array, and ordering by it would undo that move
   for(var k=0;k<cont.children.length;k++)if(cont.children[k].parentNode===cont&&cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
   var id=d.tile.getAttribute("data-tid"),p=ord.indexOf(id);
-  var r=(cont.querySelector("[data-tid]")||d.tile).getBoundingClientRect();
-  var np=e.clientX<r.left+r.width/2?p-1:p+1;
-  if(p>=0&&np>=0&&np<ord.length&&np!==p){
-   ord.splice(p,1);ord.splice(np,0,id);
+  var td=tileDrop(d,e.clientX,e.clientY);
+  if(td&&p>=0){
+   ord.splice(p,1);
+   var ti=ord.indexOf(td.t.getAttribute("data-tid"));
+   if(ti<0)return;
+   ord.splice(td.before?ti:ti+1,0,id);
    // __tkey is set by renderModels; fall back to the container's own data-tkey
    var o=tileOrder();o[cont.__tkey||cont.getAttribute("data-tkey")]=ord;saveTileOrder(o);applyTileOrder(cont);
   }
