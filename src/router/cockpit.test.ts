@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { TOKEN_WEIGHTS, buildCockpitData, cachedRows, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens, withStarting } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { clearJobNameCache } from "./sessions.js";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nowStamp, saveStatus, type WorkerStatus } from "../workers/status.js";
@@ -527,11 +527,14 @@ describe("cockpit cache rings and providers table", () => {
 });
 
 describe("built cockpit page", () => {
-  const built = join(process.cwd(), "dist", "cli", "index.mjs");
-  it.skipIf(!existsSync(built))("has no 'not reported' heading in the tile grid", () => {
-    const js = readFileSync(built, "utf8");
-    expect(js).toContain("function ringTiles");
-    expect(js).not.toContain('bignum dim">not reported');
+  const dist = join(process.cwd(), "dist");
+  const files = existsSync(dist)
+    ? [join(dist, "cli", "index.mjs"), ...readdirSync(dist).filter((f) => f.endsWith(".mjs")).map((f) => join(dist, f))].filter((f) => existsSync(f))
+    : [];
+  it.skipIf(files.length === 0)("has no 'not reported' heading in the tile grid", () => {
+    const holders = files.map((f) => readFileSync(f, "utf8")).filter((js) => js.includes("function ringTiles"));
+    expect(holders.length).toBeGreaterThan(0);
+    for (const js of holders) expect(js).not.toContain('bignum dim">not reported');
   });
 });
 
