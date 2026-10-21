@@ -53,7 +53,7 @@ Answers: which local model runtimes exist, what uses them and how they are doing
 
 Controls:
 
-- **Start / stop** buttons run the commands configured under `start` and `stop` commands of a runtime under `models.runtimes` (see [local models](concepts/local-models.md)). A runtime without a command has no button. They are the same action as `pai models start|stop`.
+- **Start / stop** buttons run the commands configured under `start` and `stop` commands of a runtime under `models.runtimes` (see [local models](concepts/local-models.md)). A runtime without a command has no button. They are the same action as `pai models start|stop`. Several consumers can share one runtime, and a stop takes the whole runtime down: on a card whose runtime serves other consumers, the stop names them ("stop ollama: also PAI embedding - click again") and needs a second click within `confirmMs`; a click after that re-arms it without acting. A runtime serving only this card's consumers stops in one click. Start and load are unaffected.
 - **Local model:** a button per coding tier switches the local engine to that tier. The active tier is disabled; switching while another model runs asks for a second click and names what it stops. **off** stops every local server. Both run as a job whose progress the card follows.
 - **Alias:** the pencil beside a card's title opens an inline field in place of the title, with ✓ (save), ✕ (cancel) and, when an alias is set, ↺ (back to the original name). Enter saves and Escape cancels too; tapping elsewhere cancels. An empty value removes the alias. The alias is written to `models.labels` in your config, and it then names the model in the cards, the rings and the speed table. An embedding consumer is titled by `models.embeddingLabel`.
 
@@ -172,6 +172,7 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `stampStaleSecs` | 15 | Age after which the stamp reads "stale" |
 | `jobFirstDelayMs`, `jobPollMs`, `jobMaxTries` | 2000, 5000, 120 | Following a local switch, off or runtime job: first delay, poll interval, tries |
 | `serverCounterStaleSecs` | 60 | A server prefix-cache counter older than this is marked |
+| `confirmMs` | 4000 | An inline confirm (a stop that also takes other consumers down) stays armed this long |
 | `foldDefaultKind` | `coding` | A Models card of this kind starts open, the rest folded |
 
 The sampler behind the Models tiles is `router.samples` (`sampleMs`, `historyLen`, `engineStatusTimeoutMs`, `cardReadingMaxAgeMs`), also in the shipped defaults.

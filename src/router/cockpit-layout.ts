@@ -121,6 +121,8 @@ const SHIPPED = {
   jobFirstDelayMs: 2000,
   jobMaxTries: 120,
   serverCounterStaleSecs: 60,
+  // an inline confirm (a shared runtime's stop) stays armed this long (ms) before it reverts
+  confirmMs: 4000,
   foldDefaultKind: "coding",
   // drag-and-drop tunables (router.cockpit.layout): the rows override is empty
   // by default — the layout derives from the section order and the span classes.
@@ -197,6 +199,8 @@ export interface CockpitLayout {
   jobMaxTries: number;
   /** a server prefix-cache counter older than this is marked. */
   serverCounterStaleSecs: number;
+  /** an inline confirm (a shared runtime's stop) stays armed this long (ms) before it reverts. */
+  confirmMs: number;
   /** fold default: a card whose data-def equals this opens, everything else folds. */
   foldDefaultKind: string;
   /** drag-and-drop layout: configured rows (list of section-name lists);
@@ -256,6 +260,7 @@ export function cockpitLayout(): CockpitLayout {
     jobFirstDelayMs: num(s, "jobFirstDelayMs", SHIPPED.jobFirstDelayMs),
     jobMaxTries: num(s, "jobMaxTries", SHIPPED.jobMaxTries),
     serverCounterStaleSecs: num(s, "serverCounterStaleSecs", SHIPPED.serverCounterStaleSecs),
+    confirmMs: num(s, "confirmMs", SHIPPED.confirmMs),
     foldDefaultKind: str(s, "foldDefaultKind", SHIPPED.foldDefaultKind),
     rows: strLists(s, "rows", SHIPPED.rows),
     maxPerRow: num(s, "maxPerRow", SHIPPED.maxPerRow),

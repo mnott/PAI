@@ -987,7 +987,8 @@ describe("cockpit Models cards", () => {
   it("only the applicable button shows: running/idle -> stop alone, stopped -> start alone; never a disabled twin", () => {
     const h = modelsHtml(inv);
     // ollama is idle with start+stop configured: stop only, no start (not even disabled)
-    expect(h).toContain('data-a="runtime" data-t="ollama" data-v="stop" data-confirm="stops ollama"');
+    // ollama serves two consumers here: the stop names the other one and asks for a second click
+    expect(h).toContain('data-a="runtime" data-t="ollama" data-v="stop" data-confirm="stop ollama: also ');
     expect(h).not.toContain('data-v="start"');
     const stopped = modelsHtml({
       at: "x",
@@ -1062,7 +1063,8 @@ describe("cockpit Models cards", () => {
       runtimeCommands: { "docker-model-runner": { start: "a", stop: "b" } },
       live: { at: 1, runtimes: [] },
     });
-    expect(loaded).toContain('data-v="stop" data-confirm="stops docker-model-runner">unload</button>');
+    // no other consumer on this runtime: the stop/unload is one click, no confirm
+    expect(loaded).toContain('data-v="stop">unload</button>');
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
     expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
@@ -2384,6 +2386,80 @@ describe("cockpit drag-and-drop layout", () => {
   });
 });
 
+/** The page's stop-confirm code (wireAct + the baked CONFIRM_MS), run against a fake
+ *  action row whose buttons carry the rendered data-* attributes. */
+function confirmHarness(cfText: string | null, confirmMs = 4000) {
+  const src = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\nfunction wireAct[\s\S]*?\n\}\n/)![0];
+  const msg: any = { textContent: "", className: "msg" };
+  const btn: any = {
+    confirmed: false, disabled: false, textContent: "stop",
+    getAttribute: (k: string) => ({ "data-confirm": cfText, "data-a": "runtime", "data-t": "ollama", "data-v": "stop" } as Record<string, string | null>)[k] ?? null,
+  };
+  const el = { querySelectorAll: () => [btn], querySelector: () => msg };
+  const posts: unknown[][] = [];
+  const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
+  const fn = new Function("postAction", "setTimeout", "clearTimeout", "CONFIRM_MS", `${src}\nreturn wireAct;`)(
+    (...a: unknown[]) => posts.push(a),
+    (f: () => void, ms: number) => { timers.push({ fn: f, ms, live: true }); return timers.length - 1; },
+    // clearTimeout takes the id setTimeout returned (the page stores it +1, so id-1 is the entry)
+    (id: number) => { const t = timers[id - 1]; if (t) t.live = false; },
+    confirmMs
+  ) as (el: unknown, cb?: unknown) => void;
+  fn(el, () => {});
+  return { btn, msg, posts, timers, click: () => btn.onclick({ stopPropagation() {} }) };
+}
+
+/** The page's renderModels wired against the miniDom of the real modelsHtml output:
+ *  the real stop button, the real wireAct, a fake postAction that records posts. */
+function stopHarness(inv: unknown, confirmMs = 4000) {
+  const renderBody = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
+  const confirmSrc = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\nfunction wireAct[\s\S]*?\n\}\n/)![0];
+  // the miniDom nodes are plain objects: an onclick assignment sticks
+  const dom = miniDom(realModelsHtml(inv), (n: any) => Object.defineProperty(n, "onclick", { value: undefined, writable: true, configurable: true, enumerable: true }));
+  const posts: unknown[][] = [];
+  const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
+  const fn = new Function(
+    "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct", "document", "postAction", "loadModels", "watchJob", "setTimeout", "clearTimeout", "CONFIRM_MS",
+    `var mEditing=false;\nfunction tileGrips(){}\nfunction applyTileOrder(){}\nfunction setTip(){}\n${confirmSrc}\n${TILE_RENDER_SRC}\n${renderBody}\nreturn renderModels;`
+  );
+  const renderModels = fn(
+    () => dom.panel, inv, () => true, () => {}, () => {},
+    (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%",
+    dom.document,
+    (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)({ ok: true }); },
+    () => {}, () => {},
+    (f: () => void, ms: number) => { timers.push({ fn: f, ms, live: true }); return timers.length - 1; },
+    (id: number) => { if (timers[id]) timers[id]!.live = false; },
+    confirmMs
+  ) as () => void;
+  try { renderModels(); } catch (e) { throw new Error(`renderModels threw: ${(e as Error).message}`); }
+  // the stop button of the card for a given runtime, as the real markup renders it
+  // (the button sits in the header's .act span, not directly in the card)
+  const stopBtn = (rt: string) => {
+    const card = dom.all.find((n: any) => n.classes.has("mcard") && n.getAttribute("data-rt") === rt);
+    const btn = card && dom.all.find((n: any) => {
+      if (n.tag !== "button" || n.getAttribute("data-a") !== "runtime" || n.getAttribute("data-v") !== "stop") return false;
+      for (let p = n.parentNode; p; p = p.parentNode) if (p === card) return true;
+      return false;
+    });
+    if (!btn) throw new Error(`no stop button on the ${rt} card`);
+    return btn;
+  };
+  // the miniDom drops text nodes: give every node a textContent, decoded from its own markup
+  const textOf = (n: any) => {
+    const open = Object.keys(n.attrs).map((k) => (n.attrs[k] === "" ? ` ${k}` : ` ${k}="${n.attrs[k]}"`)).join("");
+    const m = new RegExp(`<${n.tag}${open}>([^<]*)</${n.tag}>`).exec(dom.panel.innerHTML);
+    return m ? m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">") : "";
+  };
+  for (const n of dom.all) n.textContent = textOf(n);
+  const click = (btn: any) => {
+    if (typeof btn.onclick !== "function") throw new Error(`onclick not wired on ${btn.getAttribute("data-v")} (wired rows: ${dom.all.filter((n: any) => typeof n.onclick === "function").length})`);
+    btn.onclick({ stopPropagation() {} });
+  };
+  const fire = (i: number) => { if (timers[i]?.live) { timers[i]!.live = false; timers[i]!.fn(); } };
+  return { posts, timers, click, fire, stopBtn, textOf };
+}
+
 /** The page's render helpers, extracted verbatim from the shipped page. */
 const TILE_RENDER_SRC = [
   COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
@@ -2402,7 +2478,7 @@ const realModelsHtml = new Function("esc", "pct", `${TILE_RENDER_SRC}; return mo
 /** A minimal DOM that parses the rendered html: children, parentNode, getAttribute,
  *  querySelector, appendChild, and addEventListener that records handlers, so the page's
  *  own wiring runs against the real markup. No hand-made fixtures. */
-function miniDom(html: string) {
+function miniDom(html: string, init?: (node: any) => void) {
   const roots: any[] = [];
   const stack: any[] = [];
   for (const m of html.matchAll(/<\/([a-zA-Z][a-zA-Z0-9]*)\s*>|<([a-zA-Z][a-zA-Z0-9]*)([^>]*)\/?>|([^<]+)/g)) {
@@ -2429,9 +2505,22 @@ function miniDom(html: string) {
         for (let n: any = node; n; n = n.parentNode) if (match(n)) return n;
         return null;
       },
+      querySelectorAll: (sel: string) => {
+        const out: any[] = [];
+        const match = (n: any) =>
+          sel.startsWith(".") ? n.classes.has(sel.slice(1))
+            : sel.startsWith("[") ? n.attrs[sel.slice(1, -1)] !== undefined
+              : n.tag === sel;
+        const walk = (n: any) => { if (match(n)) out.push(n); for (const c of liveKids(n)) walk(c); };
+        for (const c of liveKids(node)) walk(c); // descendants, like the real querySelectorAll
+        return out;
+      },
       querySelector: (sel: string) => {
         let found: any = null;
-        const match = (n: any) => (sel === "[data-tgrip]" ? n.attrs["data-tgrip"] !== undefined : sel === "[data-tid]" ? n.getAttribute("data-tid") !== null : false);
+        const match = (n: any) =>
+          sel.startsWith(".") ? n.classes.has(sel.slice(1))
+            : sel.startsWith("[") ? n.attrs[sel.slice(1, -1)] !== undefined
+              : n.tag === sel;
         const walk = (n: any) => { if (!found && match(n)) found = n; for (const c of liveKids(n)) walk(c); };
         for (const c of liveKids(node)) walk(c); // a real querySelector matches descendants, not the element itself
         return found;
@@ -2445,6 +2534,7 @@ function miniDom(html: string) {
     };
     if (closing) stack.pop();
     else {
+      if (init) init(node);
       // the stack's top is the innermost open element (closing tags pop it): the new node's parent
       const parent = stack.length ? stack[stack.length - 1] : null;
       if (parent) { node.parentNode = parent; parent.children.push(node); } else roots.push(node);
@@ -2466,7 +2556,18 @@ function miniDom(html: string) {
     createElement: () => ({ style: {}, dataset: {}, classList: { toggle() {} }, remove() {} }),
     body: { appendChild() {} },
   };
-  const panel: any = { innerHTML: html, __html: html, querySelectorAll: bySel };
+  // like a real element: querySelectorAll matches descendants by class, attribute or tag
+  const panelQSA = (sel: string) => {
+    const out: any[] = [];
+    const match = (n: any) =>
+      sel.startsWith(".") ? n.classes.has(sel.slice(1))
+        : sel.startsWith("[") ? n.attrs[sel.slice(1, -1)] !== undefined
+          : n.tag === sel;
+    const walk = (n: any) => { if (match(n)) out.push(n); for (const c of liveKids(n)) walk(c); };
+    for (const r of roots) walk(r);
+    return out;
+  };
+  const panel: any = { innerHTML: html, __html: html, querySelectorAll: (sel: string) => (bySel(sel) as any[]).length ? bySel(sel) : panelQSA(sel) };
   return { roots, all, document, panel };
 }
 
@@ -2615,6 +2716,118 @@ describe("cockpit tile drag on the real rendered page (live bug: tiles had no da
     api.renderModels();
     const cont2 = dom2.document.querySelectorAll(".rt-tiles").find((c: any) => c.getAttribute("data-tkey") === "gyro-m / flash-next tiles");
     expect(tilesOf(cont2).map((t: any) => t.getAttribute("data-tid"))).toEqual(["conversation-cache", "workers", "memory", "speed"]);
+  });
+});
+
+describe("cockpit stop confirm: a shared runtime names what else it stops", () => {
+  const sharedInv = {
+    at: "x",
+    runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["paperfull-chat", "pai-embedding"], models: [
+      { model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["paperfull-chat"] },
+      { model: "arctic-embed", kind: "embedding", loaded: false, usedBy: ["pai-embedding"] },
+    ] }],
+    runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
+    consumers: [
+      { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat" },
+      { name: "pai-embedding", runtime: "ollama", model: "arctic-embed", label: "PAI embedding" },
+    ],
+    duplicates: [],
+    live: { at: 1, runtimes: [] },
+  };
+  const singleInv = {
+    at: "x",
+    runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["paperfull-chat"], models: [
+      { model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["paperfull-chat"] },
+    ] }],
+    runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
+    consumers: [{ name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat" }],
+    duplicates: [],
+    live: { at: 1, runtimes: [] },
+  };
+
+  it("a shared runtime's stop button carries the confirm text naming the other consumers", () => {
+    const h = realModelsHtml(sharedInv);
+    const chat = h.split('<div class="mcard').find((c) => c.includes('data-model="qwen3:8b"'))!;
+    expect(chat).toContain('data-a="runtime" data-t="ollama" data-v="stop" data-confirm="stop ollama: also PAI embedding - click again"');
+    const emb = h.split('<div class="mcard').find((c) => c.includes('data-model="arctic-embed"'))!;
+    expect(emb).toContain('data-confirm="stop ollama: also Paperfull chat - click again"');
+    // a runtime serving only this card's consumers stops in one click: no confirm at all
+    const s = realModelsHtml(singleInv);
+    expect(s).toContain('data-a="runtime" data-t="ollama" data-v="stop">stop</button>');
+    expect(s).not.toContain("click again");
+    // start/load buttons are unaffected
+    const stopped = realModelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "stopped", port: 11434, users: ["paperfull-chat", "pai-embedding"], models: [] }],
+      runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
+      consumers: [
+        { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat" },
+        { name: "pai-embedding", runtime: "ollama", model: "arctic-embed", label: "PAI embedding" },
+      ],
+      live: { at: 1, runtimes: [] },
+    });
+    expect(stopped).toContain('data-v="start" data-confirm="starts ollama"');
+    expect(stopped).not.toContain("click again");
+  });
+
+  it("shared runtime: first click shows the confirm text and does not post; the second posts the stop action", () => {
+    const h = stopHarness(sharedInv);
+    const btn = h.stopBtn("ollama");
+    expect(btn.textContent).toBe("stop");
+    h.click(btn);
+    expect(h.posts.length).toBe(0);
+    expect(btn.textContent).toBe("stop ollama: also PAI embedding - click again");
+    h.click(btn);
+    expect(h.posts.map((p) => p.slice(0, 3))).toEqual([["runtime", "ollama", "stop"]]);
+  });
+
+  it("the confirm reverts when the second click never comes", () => {
+    const h = stopHarness(sharedInv);
+    const btn = h.stopBtn("ollama");
+    h.click(btn);
+    expect(h.posts.length).toBe(0);
+    expect(h.timers[0]!.ms).toBe(4000);
+    h.fire(0); // the confirm window closes
+    expect(btn.textContent).toBe("stop");
+    h.click(btn); // a click after the revert arms again, still without posting
+    expect(h.posts.length).toBe(0);
+    expect(btn.textContent).toBe("stop ollama: also PAI embedding - click again");
+  });
+
+  it("a single-consumer runtime stops on the first click", () => {
+    const h = stopHarness(singleInv);
+    h.click(h.stopBtn("ollama"));
+    expect(h.posts.map((p) => p.slice(0, 3))).toEqual([["runtime", "ollama", "stop"]]);
+  });
+
+  it("confirmMs is config-driven (router.cockpit.layout.confirmMs)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-cockpit-confirm-"));
+    const prev = process.env.PAI_CONFIG_FILE;
+    try {
+      writeFileSync(join(dir, "config.yaml"), "router:\n  cockpit:\n    layout:\n      confirmMs: 2500\n");
+      process.env.PAI_CONFIG_FILE = join(dir, "config.yaml");
+      expect(cockpitHtml()).toContain("CONFIRM_MS=2500");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.PAI_CONFIG_FILE;
+      else process.env.PAI_CONFIG_FILE = prev;
+    }
+    expect(COCKPIT_HTML).toContain("CONFIRM_MS=4000");
+  });
+
+  it("wireAct: a button without data-confirm posts at once; the revert timer clears on the second click", () => {
+    const plain = confirmHarness(null);
+    plain.click();
+    expect(plain.posts.map((p) => p.slice(0, 3))).toEqual([["runtime", "ollama", "stop"]]);
+    expect(plain.timers.length).toBe(0);
+    const armed = confirmHarness("stop ollama: also PAI embedding - click again");
+    armed.click();
+    expect(armed.posts.length).toBe(0);
+    expect(armed.btn.textContent).toBe("stop ollama: also PAI embedding - click again");
+    armed.click();
+    expect(armed.posts.map((p) => p.slice(0, 3))).toEqual([["runtime", "ollama", "stop"]]);
+    expect(armed.timers[0]!.live).toBe(false);
+    expect(armed.btn.textContent).toBe("stop");
   });
 });
 

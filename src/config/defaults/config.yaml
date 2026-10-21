@@ -242,6 +242,9 @@ router:
       jobMaxTries: 120
       # a server prefix-cache counter older than this (seconds) is marked.
       serverCounterStaleSecs: 60
+      # an inline confirm on the cockpit (a stop that also takes other consumers down)
+      # stays armed this long (ms) before it reverts; a second click within it runs the action.
+      confirmMs: 4000
       # fold default: a model card whose kind equals this opens, the rest fold.
       foldDefaultKind: coding
       # drag-and-drop layout: rows of section names, each row 1..maxPerRow

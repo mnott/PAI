@@ -651,16 +651,27 @@ function postAction(action,target,value,cb){
   .then(function(r){return r.json()}).then(function(j){cb(j)}).catch(function(){cb({ok:false,message:"action failed"})});
 }
 /** Buttons in an action row: disabled while the action runs; the result text lands on the card.
- * A button click must not reach the card header's fold toggle (the button is inside the header button). */
+ * A button click must not reach the card header's fold toggle (the button is inside the header button).
+ * A data-confirm button arms on the first click (its own label shows the confirm text) and runs on a
+ * second click within CONFIRM_MS; the revert timer restores the label. The row's .msg stays for the
+ * action's result. */
+var CONFIRM_MS=${n(L.confirmMs)};
 function wireAct(el,onDone){
  var btns=el.querySelectorAll("button");
  for(var i=0;i<btns.length;i++)(function(b){
   b.onclick=function(e){
    if(e&&e.stopPropagation)e.stopPropagation();
    var cf=b.getAttribute("data-confirm");
-   if(cf&&!b.confirmed){b.confirmed=true;var m0=el.querySelector(".msg");if(m0){m0.textContent=cf;m0.className="msg"}return}
+   if(cf&&!b.confirmed){
+    b.confirmed=true;
+    if(b.__label===undefined)b.__label=b.textContent;
+    b.textContent=cf;
+    // +1 so the stored id is never 0 (a falsy id would skip the clearTimeout on the second click)
+    b.__cfTimer=setTimeout(function(){b.confirmed=false;b.textContent=b.__label},CONFIRM_MS)+1;
+    return}
    b.confirmed=false;
-   for(var k=0;k<btns.length;k++)btns[k].disabled=true;
+   if(b.__label!==undefined)b.textContent=b.__label;
+   for(var k=0;k<btns.length;k++){btns[k].disabled=true;if(btns[k].__cfTimer){clearTimeout(btns[k].__cfTimer);btns[k].__cfTimer=null}}
    postAction(b.getAttribute("data-a"),b.getAttribute("data-t")||null,b.getAttribute("data-v")||null,function(j){
     var m=el.querySelector(".msg");if(m){m.textContent=(j&&j.message)||"";m.className="msg"+(j&&j.ok?"":" bad")}
     for(var k=0;k<btns.length;k++)btns[k].disabled=false;
@@ -818,14 +829,33 @@ function modelsHtml(inv){
    return n;
   }).join(", ");
  }
+ /* the display name of a consumer in a confirm: its config label, else the name without the worker: prefix */
+ function consumerName(n){
+  var c=consumers.filter(function(x){return x.name===n})[0];
+  if(c&&c.label)return c.label;
+  return String(n).replace(/^worker:/,"");
+ }
  /** Header buttons: start/stop from the configured commands only — no command, no button.
-  * Only the applicable one shows: running/idle -> stop, stopped -> start; never a disabled twin. */
- function rtBtns(r){
+  * Only the applicable one shows: running/idle -> stop, stopped -> start; never a disabled twin.
+  * A stop on a runtime serving other consumers names them and needs a second click
+  * (the same inline confirm as the local model switch); a single-consumer runtime stops in one click. */
+ function rtBtns(r,rt2){
   var c=cmds[r.name]||{};
   var dmr=r.kind==="docker-model-runner";
   // docker model runner: idle (nothing loaded) -> load, loaded -> unload; others: stopped -> start, else stop
   if(r.status==="stopped"||(dmr&&r.status==="idle"))return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start" data-confirm="starts '+esc(r.name)+'">'+(dmr&&r.status==="idle"?"load":"start")+'</button>':"";
-  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop" data-confirm="stops '+esc(r.name)+'">'+(dmr?"unload":"stop")+'</button>':"";
+  // the other consumers of this runtime: the card's own consumers (its model's users and
+  // the consumers pointing at its model) are not "other"; a runtime-wide user that
+  // points at no model (or at a model the runtime does not list) is not a card's own either
+  var own={};
+  r.models.forEach(function(m){
+   (m.usedBy||[]).forEach(function(u){own[u]=1});
+   consumersOf(consumers,rt2,m).forEach(function(c){own[c.name]=1});
+  });
+  var others=usersOf(consumers,rt2,{model:"",kind:"chat",loaded:false,usedBy:[]}).filter(function(u){return !own[u]});
+  // a runtime serving only this card's consumers stops in one click: no data-confirm at all
+  var cf=others.length?' data-confirm="stop '+esc(r.name)+': also '+esc(others.map(consumerName).join(", "))+' - click again"':"";
+  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop"'+cf+'>'+(dmr?"unload":"stop")+'</button>':"";
  }
  var cards="";
  inv.runtimes.forEach(function(rt){
@@ -884,7 +914,7 @@ function modelsHtml(inv){
    // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
    '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
-   (rtBtns(r)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r)+'</span>':"")+
+   (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'</span>':"")+
    '<span class="num">'+esc(key)+'</span></div>';
   var body="";
   if(down){
