@@ -76,18 +76,22 @@ function pruneGhosts(tree,kids,st,knownIds,now){
  return tree;
 }
 /** Insert missing static ids next to their default neighbour (else as a new band at the end).
- *  next is the id the default layout places right after id; the anchor is the first default
+ *  prevOf maps an id to the id the default layout places right before it; the anchor is the first default
  *  neighbour that lives in this container and is known (an unknown id is not an anchor).
  *  Root tree and group bodies alike; missing holds only ids this container owns, so a
  *  group's ids never land in the root. Returns the new tree. */
-function insertMissing(node,missing,nextOf,knownIds,isRoot,defaultsNode){
+function insertMissing(node,missing,prevOf,knownIds,isRoot,defaultsNode){
  if(!missing.length)return node;
  var known={},i;
  for(i=0;i<knownIds.length;i++)known[knownIds[i]]=1;
+ // anchors are cards the saved tree already had, never ones this pass just inserted
+ var present={},defIds={},pi,sv=ids(node),dv=ids(defaultsNode);
+ for(pi=0;pi<sv.length;pi++)present[sv[pi]]=1;
+ for(pi=0;pi<dv.length;pi++)defIds[dv[pi]]=1;
  function anchorOf(n,id){
-  var nxt=nextOf[id];
-  while(nxt&&!(known[nxt]&&findLeaf(n,nxt)))nxt=nextOf[nxt];
-  return nxt;
+  var prv=prevOf[id];
+  while(prv&&!(known[prv]&&present[prv]))prv=prevOf[prv];
+  return prv;
  }
  /** The chain of nodes from n down to the leaf id (n itself first), or null. */
  function pathTo(n,id){
@@ -117,14 +121,16 @@ function place(n,id){
     var path=pathTo(n,nxt);
     var ri=-1,k;
     if(path){
-     var row=path[path.length-1];
-     if(row.k==="s"&&row.d==="r"){
+     var row=path.length>=2?path[path.length-2]:null;
+     if(row&&row.k==="s"&&row.d==="r"){
       for(k=0;k<row.ch.length;k++)if(row.ch[k].k==="c"&&row.ch[k].id===nxt){ri=k;break}
      }
     }
     if(ri>=0){
      // the anchor lives in a row in the saved tree: join that row, side by side
-     var par=path[path.length-1];
+     var par=row;
+     // skip saved cards the defaults do not know (ghosts): they keep their place after the anchor
+     while(ri+1<par.ch.length&&par.ch[ri+1].k==="c"&&!defIds[par.ch[ri+1].id])ri++;
      par.ch.splice(ri+1,0,leaf(id));par.sz.splice(ri+1,0,0.5);
      return n;
     }
@@ -172,20 +178,21 @@ function missingIn(defNode,node,knownIds){
  for(m=0;m<out.length;m++)if(known[out[m]])out2.push(out[m]);
  return out2;
 }
-/** The id the default layout places right after id (root and group bodies), or null. */
-function nextOfDefault(defaults){
- var next={};
+/** id -> the card the default layout places right before it in the same parent (root and
+ *  group bodies), or null for a first child. */
+function prevOfDefault(defaults){
+ var prev={};
  function walk(n){
   if(!n||n.k==="c")return;
   for(var i=0;i<n.ch.length;i++){
    var c=n.ch[i];
-   if(c.k==="c")next[c.id]=(i+1<n.ch.length&&n.ch[i+1].k==="c")?n.ch[i+1].id:null;
+   if(c.k==="c")prev[c.id]=(i>0&&n.ch[i-1].k==="c")?n.ch[i-1].id:null;
    walk(c);
   }
  }
  walk(defaults.tree);
  for(var g in defaults.kids||{})walk(defaults.kids[g]);
- return next;
+ return prev;
 }
 /** Load the layout: parse, prune ghosts, insert missing static cards, merge default min
  *  flags under the saved state. Invalid or old data -> defaults. Old keys are deleted. */
@@ -196,14 +203,21 @@ function loadWin(storage,defaults,knownIds,now){
  try{raw=storage.getItem(WIN_KEY)}catch(e){}
  var obj=parseWin(raw);
  if(!obj)return defaultsOf(defaults);
- var tree=obj.tree,kids=obj.kids&&typeof obj.kids==="object"?obj.kids:{};
- var st=obj.st&&typeof obj.st==="object"?obj.st:{};
- tree=pruneGhosts(tree,kids,st,knownIds||[],now);
- var nextOf=nextOfDefault(defaults);
- tree=insertMissing(tree,missingIn(defaults.tree,tree,knownIds||[]),nextOf,knownIds||[],true,defaults.tree);
+ return reconcileSaved(obj,defaults,knownIds,now);
+}
+/** Reconcile a parsed saved layout with the defaults: prune ghosts, insert missing static
+ *  cards, merge default min flags under the saved state. Returns { tree, kids, st }. */
+function reconcileSaved(saved,defaults,knownIds,now){
+ now=typeof now==="number"?now:Date.now();
+ knownIds=knownIds||[];
+ var tree=saved.tree,kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
+ var st=saved.st&&typeof saved.st==="object"?saved.st:{};
+ tree=pruneGhosts(tree,kids,st,knownIds,now);
+ var prevOf=prevOfDefault(defaults);
+ tree=insertMissing(tree,missingIn(defaults.tree,tree,knownIds),prevOf,knownIds,true,defaults.tree);
  for(var g in kids){
   var defKid=(defaults.kids||{})[g];
-  if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds||[]),nextOf,knownIds||[],false,defKid);
+  if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds),prevOf,knownIds,false,defKid);
  }
  var sd=defaults.stDefaults||{};
  for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);

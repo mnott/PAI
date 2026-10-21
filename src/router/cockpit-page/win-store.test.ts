@@ -11,11 +11,11 @@ const treeSrc = readFileSync(fileURLToPath(new URL("./win/tree.ts", import.meta.
 const tm = treeSrc.match(/export const WIN_TREE_JS = String\.raw`([\s\S]*?)`;/);
 if (!tm) throw new Error("WIN_TREE_JS not found in win/tree.ts");
 const api = (new Function(
-  `${tm[1]}\n${sm[1]}\nreturn {leaf:leaf,split:split,ids:ids,findLeaf:findLeaf,parentOf:parentOf,loadWin:loadWin,saveWin:saveWin,resetWin:resetWin};`,
+  `${tm[1]}\n${sm[1]}\nreturn {leaf:leaf,split:split,ids:ids,findLeaf:findLeaf,parentOf:parentOf,loadWin:loadWin,reconcileSaved:reconcileSaved,saveWin:saveWin,resetWin:resetWin};`,
 ) as any)();
 const leaf = (id: string) => api.leaf(id);
 const split = (d: string, ch: any[], sz: number[]) => api.split(d, ch, sz);
-const { ids, findLeaf, parentOf, loadWin, saveWin, resetWin } = api;
+const { ids, findLeaf, parentOf, loadWin, reconcileSaved, saveWin, resetWin } = api;
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_760_000_000_000;
@@ -44,11 +44,9 @@ const defaults = () => ({
   stDefaults: { a: { min: 1 } },
 });
 const KNOWN = ["a", "b", "c", "g1", "g2"];
-// the same without the group: the ghost tests' saved tree carries only root cards, so the
-// group's static ids must not be "missing" there.
 const KNOWN_NO_GROUP = ["a", "b", "c"];
-// the same layout with the group removed: tests whose saved tree carries no group card use
-// this as the default, so the group's static ids are not "missing" there.
+// the default layout without the group, and the ids it knows: tests whose saved tree carries
+// no group card use these, so the group's static ids are not "missing" there.
 const defaultsNoGroup = () => ({
   tree: split("c", [leaf("a"), split("r", [leaf("b"), leaf("c")], [0.5, 0.5])], [300, 400]),
   kids: {},
@@ -143,6 +141,12 @@ describe("win store (spec 6)", () => {
     expect(r.tree.ch[2].id).toBe("b");
     expect(r.tree.ch[3].k).toBe("c");
     expect(r.tree.ch[3].id).toBe("c");
+  });
+
+  it("reconcileSaved inserts a missing static id after its default predecessor", () => {
+    const r = reconcileSaved({ tree: split("c", [leaf("a"), leaf("b")], [300, 400]), kids: {}, st: {} }, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
+    expect(ids(r.tree)).toEqual(["a", "b", "c"]);
+    expect(r.st.a).toEqual({ min: 1 });
   });
 
   it("a missing id inside a group body is inserted in that body, not the root", () => {
