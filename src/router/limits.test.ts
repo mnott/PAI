@@ -21,6 +21,7 @@ import {
   staleReading,
   type LastGoodEntry,
   type LimitWindow,
+  staleText,
   decodeTokPerSec,
   tokensPerSec,
 } from "./limits.js";
@@ -144,6 +145,13 @@ describe("last good readings and 429 backoff", () => {
     const p = res.find((l) => l.provider === "p")!;
     expect(p.windows).toEqual([]);
     expect(p.error).toBe("provider asked us to slow down");
+  });
+
+  it("StaleTextNoEmptyParens: an empty or whitespace cause renders no parentheses", () => {
+    expect(staleText(180_000, "")).toBe("usage reading 3 min old");
+    expect(staleText(180_000, "   ")).toBe("usage reading 3 min old");
+    expect(staleText(180_000, "", 120_000)).toBe("usage reading 3 min old, next try in 2 min");
+    expect(staleText(180_000, "last fetch failed: timeout")).toBe("usage reading 3 min old (last fetch failed: timeout)");
   });
 
   it("ResetAtKeptFromLastGood: the stale reading keeps the old resetAt, so the gauge never says reset unknown", () => {

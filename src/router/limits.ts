@@ -126,9 +126,10 @@ export function humanMinutes(ms: number): string {
 /** The plain-words error for a reading that is not fresh. */
 export function staleText(ageMs: number, cause: string, retryInMs?: number): string {
   const retry = retryInMs && retryInMs > 0 ? `, next try in ${humanMinutes(retryInMs)}` : "";
+  const why = cause.trim();
   return cause === "http 429"
     ? `usage reading ${humanMinutes(ageMs)} old, provider asked us to slow down${retry}`
-    : `usage reading ${humanMinutes(ageMs)} old (${cause})${retry}`;
+    : `usage reading ${humanMinutes(ageMs)} old${why ? ` (${why})` : ""}${retry}`;
 }
 
 /**
