@@ -10,14 +10,14 @@
 
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { readWorkersSection } from "../config.js";
+import { DEFAULT_POOL_PORT, readWorkersSection } from "../config.js";
 import { workersLogDir } from "../paths.js";
 import { poolHostAlive, poolPidPath, poolSettings } from "../pool.js";
 import { createPoolHost } from "../pool-host.js";
 import { createBindHandler, installExitLogging, logHostExit, openHostLog } from "../pool-host-run.js";
 
 const portFlag = process.argv.indexOf("--port");
-const fallbackPort = 8798;
+const fallbackPort = DEFAULT_POOL_PORT;
 const port = portFlag > 0 ? parseInt(process.argv[portFlag + 1], 10) || fallbackPort : fallbackPort;
 
 // config problems must not crash a detached process into silence

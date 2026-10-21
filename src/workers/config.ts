@@ -363,6 +363,9 @@ export interface WorkersTreeConfig {
   maxChildren: number;
 }
 
+/** Fallback pool port when a parsed config omits it; the shipped default is in defaults/workers.yaml. */
+export const DEFAULT_POOL_PORT = 8798;
+
 /**
  * The worker session pool (workers.pool): long-lived headless claude slots
  * that successive small runs talk to instead of each spawning a fresh
@@ -644,7 +647,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       enabled: bool(pool.enabled, false),
       maxSlots: num(pool.maxSlots, 3),
       idleSecs: num(pool.idleSecs, 900),
-      port: num(pool.port, 8798),
+      port: num(pool.port, DEFAULT_POOL_PORT),
       native: bool(pool.native, true),
       spares: num(pool.spares, 1),
       idleKillSec: num(pool.idleKillSec, 1800),

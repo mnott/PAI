@@ -53,7 +53,7 @@ export function standalonePoolHostPath(): string | null {
 
 function setPoolEnabled(enabled: boolean): void {
   const { raw, workers } = readWorkersSection();
-  workers.pool = { ...(workers.pool ?? { enabled, maxSlots: 3, idleSecs: 900, port: 8798 }), enabled };
+  workers.pool = { ...(workers.pool), enabled };
   writeWorkersSection(raw, workers);
 }
 
