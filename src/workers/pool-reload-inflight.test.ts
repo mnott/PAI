@@ -161,7 +161,7 @@ describe("the reload handover", () => {
     const task = { id: "w-retry" } as PoolTaskRequest;
     const res = await postTaskToPool(port, task, 5000, "/claim", () => reloadInProgress(logDir));
     await new Promise<void>((r) => replacement.close(() => r()));
-    expect(res).toMatchObject({ pooled: true, rc: 0 });
+    expect(res).toMatchObject({ ok: { pooled: true, rc: 0 } });
   });
 
   it("without a handover a refused connection is a miss at once (no host)", async () => {
@@ -169,7 +169,7 @@ describe("the reload handover", () => {
     const port = await new Promise<number>((r) => probe.listen(0, "127.0.0.1", () => r((probe.address() as { port: number }).port)));
     await new Promise<void>((r) => probe.close(() => r()));
     const t0 = Date.now();
-    expect(await postTaskToPool(port, { id: "w-none" } as PoolTaskRequest, 5000, "/claim", () => false)).toBeNull();
+    expect(await postTaskToPool(port, { id: "w-none" } as PoolTaskRequest, 5000, "/claim", () => false)).toMatchObject({ error: "unreachable" });
     expect(Date.now() - t0).toBeLessThan(1500);
   });
 });
