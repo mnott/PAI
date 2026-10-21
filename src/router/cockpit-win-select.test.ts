@@ -22,9 +22,11 @@ var Menu=eval(${JSON.stringify(WIN_SELECT_JS)}+";Menu");
 var picks=[];
 window.onerror=function(m,s,l,c,e){window.__err=String(m)+" @"+l+":"+c};
 var sel=Select.create({options:[{value:"a",label:"Alpha"},{value:"b",label:"Beta",hint:"fast"},{value:"c",label:"Gamma",disabled:true}],value:"a",placeholder:"pick",ariaLabel:"test select",onChange:function(v){picks.push(v)}});
-document.body.appendChild(sel.element);
+document.body.appendChild(sel);
+var sel2=Select.create({options:[{value:"g1",label:"G one",group:"Grp A"},{value:"g2",label:"G two",group:"Grp A"},{value:"g3",label:"G three",group:"Grp B"}],value:"g2"});
+document.body.appendChild(sel2);
 var menu=Menu.create({items:[{label:"one",run:function(){picks.push("m1")}}],ariaLabel:"test menu"});
-document.body.appendChild(menu.element);
+document.body.appendChild(menu);
 function key(el,k){el.dispatchEvent(new KeyboardEvent("keydown",{key:k,bubbles:true,cancelable:true}))}
 function click(el){el.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}))}
 function mdown(el){el.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,cancelable:true}))}
@@ -40,38 +42,52 @@ function out(){
  r.selects=document.querySelectorAll("select").length;
  parent.postMessage(JSON.stringify({
   picks:picks,
-  btnVal:sel.element.querySelector(".wv").textContent,
+  btnVal:sel.querySelector(".wv").textContent,
   open:!!pop(),
-  expanded:sel.element.getAttribute("aria-expanded"),
+  expanded:sel.getAttribute("aria-expanded"),
   active:act(),
-  ad:sel.element.getAttribute("aria-activedescendant"),
+  ad:sel.getAttribute("aria-activedescendant"),
   optCount:optEls().length,
   dbg:r
  }),"*");
 }
 var r={};
 setTimeout(function(){
- click(sel.element);r.open1=!!pop();r.parent1=pop().parentNode.tagName;r.role1=pop().getAttribute("role");
+ click(sel);r.open1=!!pop();r.parent1=pop().parentNode.tagName;r.role1=pop().getAttribute("role");
  r.selRole=optEls()[0].getAttribute("role");
  var s0=optEls().find(function(x){return x.getAttribute("aria-selected")==="true"});
  r.selAria=s0?s0.getAttribute("data-i"):null;
  r.popBg=getComputedStyle(pop()).backgroundColor;
  r.optCount=optEls().length;
- key(sel.element,"ArrowDown");r.act1=act();r.ad=sel.element.getAttribute("aria-activedescendant");
- key(sel.element,"ArrowDown");r.act2=act();
- key(sel.element,"ArrowDown");r.act3=act();
- key(sel.element,"Enter");r.picksEnter=picks.slice();r.closed1=!pop();r.btnVal1=sel.element.querySelector(".wv").textContent;
- click(sel.element);key(sel.element,"Escape");r.escClosed=!pop();r.expAfterEsc=sel.element.getAttribute("aria-expanded");
- click(sel.element);var n0=optEls().length;
+ key(sel,"ArrowDown");r.act1=act();r.ad=sel.getAttribute("aria-activedescendant");
+ key(sel,"ArrowDown");r.act2=act();
+ key(sel,"ArrowDown");r.act3=act();
+ key(sel,"Enter");r.picksEnter=picks.slice();r.closed1=!pop();r.btnVal1=sel.querySelector(".wv").textContent;
+ click(sel);key(sel,"Escape");r.escClosed=!pop();r.expAfterEsc=sel.getAttribute("aria-expanded");
+ click(sel);var n0=optEls().length;
  sel.setOptions([{value:"x",label:"Xray"},{value:"y",label:"Yankee"}]);
  r.stillOpen=!!pop();r.n0=n0;r.n1=optEls().length;
- sel.setValue("y");r.valAfterSet=sel.element.querySelector(".wv").textContent;
+ sel.setValue("y");r.valAfterSet=sel.querySelector(".wv").textContent;
  var s=optEls().find(function(x){return x.classList.contains("wsel")});r.optSel=s?s.getAttribute("data-i"):null;
  mdown(document.body);r.outsideClosed=!pop();
- sel.setDisabled(true,"busy");r.dis=sel.element.disabled;r.title=sel.element.getAttribute("title")||"";
+ sel.setDisabled(true,"busy");r.dis=sel.disabled;r.title=sel.getAttribute("title")||"";
  sel.setDisabled(false);
- click(menu.element);r.menuOpen=menu.element.getAttribute("aria-expanded");r.menuRole=pop().getAttribute("role");
- key(menu.element,"Enter");r.menuPicks=picks.slice();r.menuClosed=!pop();
+ click(menu);r.menuOpen=menu.getAttribute("aria-expanded");r.menuRole=pop().getAttribute("role");
+ key(menu,"Enter");r.menuPicks=picks.slice();r.menuClosed=!pop();
+ // D1: grouped options keep value/label, one heading per group
+ click(sel2);
+ r.grpOpts=optEls().map(function(x){return x.textContent}).join("|");
+ r.grpHeads=Array.prototype.map.call(document.querySelectorAll(".wpop .wgrp"),function(x){return x.textContent}).join("|");
+ r.grpAct=act();
+ mdown(document.body);
+ // D2/D4: two popups, one owner; the previous instance is reset fully
+ click(sel);click(menu);
+ r.twoSelExp=sel.getAttribute("aria-expanded");r.twoPops=document.querySelectorAll(".wpop").length;
+ r.menuAd=menu.getAttribute("aria-activedescendant");
+ click(sel);r.reopenRole=pop()?pop().getAttribute("role"):null;r.menuExpAfter=menu.getAttribute("aria-expanded");
+ mdown(document.body);
+ // D3: create returns the element itself
+ r.isEl=sel instanceof HTMLElement&&typeof sel.setValue==="function"&&typeof menu.setMenu==="function";
  out();
 },300);
 </script>`;
@@ -117,6 +133,7 @@ interface ProbeResult {
     btnVal1: string; escClosed: boolean; expAfterEsc: string; stillOpen: boolean; n0: number; n1: number; act3: string;
     valAfterSet: string; optSel: string | null; outsideClosed: boolean; dis: boolean; title: string;
     menuOpen: string; menuRole: string; menuPicks: string[]; menuClosed: boolean;
+    grpOpts: string; grpHeads: string; grpAct: string; twoSelExp: string; twoPops: number; menuAd: string | null; reopenRole: string | null; menuExpAfter: string; isEl: boolean;
     popBg: string; cardVar: string; selects: number; selRole: string | null; selAria: string | null; ad: string | null; optCount: number;
   };
 }
@@ -175,6 +192,19 @@ describe.skipIf(!CHROME)("win Select and Menu (A9, spec 5.1) in Chromium", () =>
     expect(r.menuRole, "Menu popup role").toBe("menu");
     expect(r.menuPicks, "menu item ran").toEqual(["b", "m1"]);
     expect(r.menuClosed, "menu closes after run").toBe(true);
+  }, 120_000);
+
+  it("group headings keep the grouped options (D1), one popup owner resets the previous (D2/D4), create returns the element (D3)", async () => {
+    const r = (await probe("light", "light-grp")).dbg;
+    expect(r.grpOpts, "grouped options rendered with labels").toBe("G one|G two|G three");
+    expect(r.grpHeads, "one heading per group").toBe("Grp A|Grp B");
+    expect(r.grpAct, "current grouped value active").toBe("1");
+    expect(r.twoSelExp, "opening Menu resets Select aria-expanded").toBe("false");
+    expect(r.twoPops, "one popup at a time").toBe(1);
+    expect(r.menuAd, "menu aria-activedescendant").toBe("wmi0");
+    expect(r.reopenRole, "Select click opens Select, not tears down Menu").toBe("listbox");
+    expect(r.menuExpAfter, "Menu reset when Select opens").toBe("false");
+    expect(r.isEl, "create returns the element with methods").toBe(true);
   }, 120_000);
 
   it("popup background equals --card in both themes (no white in dark)", async () => {

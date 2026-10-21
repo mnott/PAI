@@ -2,14 +2,22 @@
 
 /** The page-side shapes the ES5 code mirrors (types here are for the TS side only). */
 export type WinSelectOption = { value: string; label: string; hint?: string; group?: string; disabled?: boolean };
-export type WinSelectApi = { element: HTMLElement; setOptions(o: WinSelectOption[]): void; setValue(v: string | null): void; setDisabled(on: boolean, reason?: string): void };
+export type WinSelectApi = HTMLElement & { setOptions(o: WinSelectOption[]): void; setValue(v: string | null): void; setDisabled(on: boolean, reason?: string): void };
 export type WinMenuItem = { label: string; title?: string; disabled?: boolean; run?: () => void };
-export type WinMenuApi = { element: HTMLElement; setMenu(items: WinMenuItem[]): void };
+export type WinMenuApi = HTMLElement & { setMenu(items: WinMenuItem[]): void };
 
 /** One popup, appended to <body>, positioned under the button (flips up when there is no room).
  *  Shared by Select and Menu; both themes come from the CSS variables only. */
-export const WIN_SELECT_JS = String.raw`var _wpop=null,_wan=null;
-function _wclosePop(){if(_wpop&&_wpop.parentNode)document.body.removeChild(_wpop);_wpop=null;_wan=null}
+export const WIN_SELECT_JS = String.raw`var _wcur=null;
+function _wclosePop(){if(_wcur&&_wcur.pop.parentNode)document.body.removeChild(_wcur.pop);_wcur=null}
+document.addEventListener("mousedown",function(e){
+ if(!_wcur)return;
+ var t=e.target,c=_wcur;
+ if(t===c.btn||c.btn.contains(t)||t===c.pop||c.pop.contains(t))return;
+ c.close(false);
+});
+window.addEventListener("resize",function(){if(_wcur)_wpos(_wcur.pop,_wcur.btn)});
+window.addEventListener("scroll",function(){if(_wcur)_wpos(_wcur.pop,_wcur.btn)},true);
 function _wpos(pop,btn){
  var r=btn.getBoundingClientRect(),vw=window.innerWidth,vh=window.innerHeight;
  pop.style.visibility="hidden";pop.style.maxHeight="";
@@ -24,10 +32,10 @@ function _wpos(pop,btn){
  if(left+pop.offsetWidth>vw-4)left=Math.max(4,vw-4-pop.offsetWidth);
  pop.style.left=left+"px";pop.style.top=top+"px";
 }
-function _wopenPop(btn,pop){
- if(_wpop&&_wpop!==pop)_wclosePop();
+function _wopenPop(btn,pop,close){
+ if(_wcur&&_wcur.pop!==pop)_wcur.close(false);
  if(!pop.parentNode)document.body.appendChild(pop);
- _wpop=pop;_wan=btn;btn.setAttribute("aria-expanded","true");
+ _wcur={btn:btn,pop:pop,close:close};btn.setAttribute("aria-expanded","true");
  _wpos(pop,btn);
 }
 function _witemEl(o,i,sel){
@@ -40,10 +48,9 @@ function _witemEl(o,i,sel){
  if(o.disabled)el.setAttribute("aria-disabled","true");
  return el;
 }
-/** Select.create({options,value,placeholder,ariaLabel,onChange}) -> {element,setOptions,setValue,setDisabled}.
+/** Select.create({options,value,placeholder,ariaLabel,onChange}) -> button element carrying .setOptions/.setValue/.setDisabled.
  *  No native <select>: the popup is a styled listbox on <body>. */
 function Select(o){
- var api={};
  o=o||{};
  var btn=document.createElement("button");
  btn.type="button";btn.className="wctl wsel-btn";
@@ -70,12 +77,12 @@ function Select(o){
   if(i>=0)btn.setAttribute("aria-activedescendant",it[i].id);else btn.removeAttribute("aria-activedescendant");
  }
  function firstEnabled(from,dir){
-  for(var k=from;k>=0&&k<opts.length;k+=dir)if(!opts[k].disabled&&!opts[k].group)return k;
+  for(var k=from;k>=0&&k<opts.length;k+=dir)if(!opts[k].disabled)return k;
   return -1;
  }
  function openP(){
   if(dis||open)return;
-  open=true;_wopenPop(btn,pop);
+  open=true;_wopenPop(btn,pop,closeP);
   var act=-1;
   for(var i=0;i<opts.length;i++)if(opts[i].value===val&&!opts[i].disabled){act=i;break}
   if(act<0)act=firstEnabled(0,1);
@@ -87,7 +94,7 @@ function Select(o){
   if(back)btn.focus();
  }
  function pick(i){
-  var o=opts[i];if(!o||o.disabled||o.group)return;
+  var o=opts[i];if(!o||o.disabled)return;
   val=o.value;paintBtn();
   // refresh the marks (the old selection loses it) without closing: pick fires onChange once
   render();
@@ -96,9 +103,11 @@ function Select(o){
  }
  function render(){
   pop.textContent="";
+  var lastG=null;
   for(var i=0;i<opts.length;i++){
    var o=opts[i];
-   if(o.group){var g=document.createElement("div");g.className="wgrp";g.textContent=o.group;pop.appendChild(g);continue}
+   if(o.group&&o.group!==lastG){var g=document.createElement("div");g.className="wgrp";g.textContent=o.group;pop.appendChild(g)}
+   lastG=o.group||null;
    var el=_witemEl(o,i,o.value===val);el.setAttribute("data-i",String(i));pop.appendChild(el);
   }
   if(open)_wpos(pop,btn);
@@ -124,7 +133,7 @@ function Select(o){
   if(k==="Enter"){e.preventDefault();pick(_wactIndex());return}
   if(k.length===1&&!e.ctrlKey&&!e.metaKey&&!e.altKey){
    var l=k.toLowerCase(),n=opts.length,cur=_wactIndex();
-   for(var t=1;t<=n;t++){var i=(cur+t)%n;if(!opts[i].disabled&&!opts[i].group&&String(opts[i].label).toLowerCase().indexOf(l)===0){setActive(i);e.preventDefault();return}}
+   for(var t=1;t<=n;t++){var i=(cur+t)%n;if(!opts[i].disabled&&String(opts[i].label).toLowerCase().indexOf(l)===0){setActive(i);e.preventDefault();return}}
   }
  });
  function _wactIndex(){
@@ -138,26 +147,17 @@ function Select(o){
   while(el&&el!==pop&&!el.getAttribute("data-i"))el=el.parentNode;
   if(el&&el!==pop)pick(+el.getAttribute("data-i"));
  });
- document.addEventListener("mousedown",function(e){
-  if(!open)return;
-  var t=e.target;
-  if(t===btn||btn.contains(t)||t===pop||pop.contains(t))return;
-  closeP(false);
- });
- window.addEventListener("resize",function(){if(open)_wpos(pop,btn)});
- window.addEventListener("scroll",function(){if(open)_wpos(pop,btn)},true);
- btn.addEventListener("blur",function(){if(open&&_wan!==btn)closeP(false)});
+ var api=btn;
  api.setOptions=function(o2){opts=o2||[];render();if(open)setActive(_wactIndex())};
  api.setValue=function(v){val=v;paintBtn();if(open){render();setActive(_wactIndex())}};
  api.setDisabled=function(on,r){dis=!!on;reason=r||"";btn.disabled=dis;if(reason)btn.title=reason;else btn.removeAttribute("title");if(dis)closeP(false)};
- api.element=btn;
  api.setOptions(o.options||[]);api.setValue(o.value==null?null:o.value);
- return api;
+ return btn;
 }
 Select.create=function(o){return Select(o)};
 /** Menu({items:[{label,title?,disabled?,run?}],ariaLabel}) -> button element; action items, no value. */
 function Menu(o){
- o=o||{};var api={};
+ o=o||{};
  var btn=document.createElement("button");
  btn.type="button";btn.className="wctl wmenu-btn";
  btn.setAttribute("aria-haspopup","menu");btn.setAttribute("aria-expanded","false");
@@ -166,23 +166,29 @@ function Menu(o){
  var pop=document.createElement("div");pop.className="wpop";pop.setAttribute("role","menu");
  var items=[],open=false;
  function els(){return pop.querySelectorAll("[data-i]")}
- function setActive(i){var it=els();for(var j=0;j<it.length;j++)it[j].classList.toggle("wact",j===i)}
+ function setActive(i){
+  var it=els();
+  for(var j=0;j<it.length;j++)it[j].classList.toggle("wact",j===i);
+  var a=i>=0?pop.querySelector('[data-i="'+i+'"]'):null;
+  if(a)btn.setAttribute("aria-activedescendant",a.id);else btn.removeAttribute("aria-activedescendant");
+ }
  function actIndex(){var it=els();for(var j=0;j<it.length;j++)if(it[j].classList.contains("wact"))return +it[j].getAttribute("data-i");return -1}
  function firstEnabled(from,dir){for(var k=from;k>=0&&k<items.length;k+=dir)if(!items[k].disabled)return k;return -1}
- function openP(){if(open)return;open=true;_wopenPop(btn,pop);btn.setAttribute("aria-expanded","true");setActive(firstEnabled(0,1));btn.focus()}
- function closeP(back){if(!open)return;open=false;_wclosePop();btn.setAttribute("aria-expanded","false");if(back)btn.focus()}
+ function openP(){if(open)return;open=true;_wopenPop(btn,pop,closeP);setActive(firstEnabled(0,1));btn.focus()}
+ function closeP(back){if(!open)return;open=false;_wclosePop();btn.setAttribute("aria-expanded","false");btn.removeAttribute("aria-activedescendant");if(back)btn.focus()}
  function run(i){var it=items[i];if(!it||it.disabled)return;closeP(true);if(it.run)it.run()}
- api.setMenu=function(list){
+ function setMenu(list){
   items=list||[];pop.textContent="";
   for(var i=0;i<items.length;i++){
    var el=document.createElement("div");el.className="wopt"+(items[i].disabled?" wdis":"");
    el.setAttribute("role","menuitem");if(items[i].title)el.title=items[i].title;
-   el.setAttribute("data-i",String(i));
+   el.setAttribute("data-i",String(i));el.id="wmi"+i;
+   if(items[i].disabled)el.setAttribute("aria-disabled","true");
    var s=document.createElement("span");s.className="wolab";s.textContent=items[i].label;el.appendChild(s);
    pop.appendChild(el);
   }
   if(open)_wpos(pop,btn);
- };
+ }
  btn.addEventListener("click",function(){open?closeP(true):openP()});
  btn.addEventListener("keydown",function(e){
   var k=e.key;
@@ -199,14 +205,9 @@ function Menu(o){
   while(el&&el!==pop&&!el.getAttribute("data-i"))el=el.parentNode;
   if(el&&el!==pop)run(+el.getAttribute("data-i"));
  });
- document.addEventListener("mousedown",function(e){
-  if(!open)return;var t=e.target;
-  if(t===btn||btn.contains(t)||t===pop||pop.contains(t))return;
-  closeP(false);
- });
- api.element=btn;
- api.setMenu(o.items||[]);
- return api;
+ btn.setMenu=setMenu;
+ btn.setMenu(o.items||[]);
+ return btn;
 }
 Menu.create=function(o){return Menu(o)};
 `;
