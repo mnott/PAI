@@ -57,4 +57,40 @@ describe("gcWorktrees foreign", () => {
     expect(refs()).toContain("refs/heads/wip/open");
     expect(res.find((r) => r.id === "wip/open")?.skipped).toBe("kept: not merged");
   });
+
+  describe("detached HEAD", () => {
+    const cleanDir = join(dir, "jobs", "tmp", "base");
+    const dirtyDir = join(dir, "jobs", "tmp", "wt-runner");
+    const openDetached = join(dir, "jobs", "tmp", "ahead");
+    const slotDir = join(dir, "slots", "local30x8-1");
+
+    it("removes clean in-main, archives dirty in-main with its diff, keeps not-in-main and slots", () => {
+      mkdirSync(join(dir, "jobs", "tmp"), { recursive: true });
+      mkdirSync(join(dir, "slots"), { recursive: true });
+      for (const d of [cleanDir, dirtyDir, slotDir]) git(repo, ["worktree", "add", "-q", "--detach", d]);
+      git(repo, ["worktree", "add", "-q", "--detach", openDetached]);
+      writeFileSync(join(openDetached, "ahead.txt"), "a\n", "utf8");
+      git(openDetached, ["add", "."]);
+      git(openDetached, ["commit", "-q", "-m", "ahead"]);
+      writeFileSync(join(dirtyDir, "base.txt"), "base\nextra line\n", "utf8");
+      const headSha = git(repo, ["rev-parse", "HEAD"]).slice(0, 7);
+
+      const dry = gcWorktrees(logDir, 0, true, Date.now(), true, undefined, repo);
+      expect(dry.find((r) => r.id === `detached-base-${headSha}`)?.archive).toBeTruthy();
+      expect(dry.find((r) => r.id === `detached-wt-runner-${headSha}`)?.knowledge?.dirty).toContain("base.txt");
+      expect(dry.find((r) => r.skipped === "kept: not merged" && r.id.startsWith("detached-ahead-"))).toBeTruthy();
+      expect(existsSync(cleanDir) && existsSync(dirtyDir)).toBe(true);
+
+      const res = gcWorktrees(logDir, 0, false, Date.now(), true, undefined, repo);
+      expect(res.find((r) => r.id === `detached-base-${headSha}`)?.archive).toBeTruthy();
+      expect(existsSync(cleanDir)).toBe(false);
+      expect(existsSync(dirtyDir)).toBe(false);
+      const ref = `refs/pai-archive/detached-wt-runner-${headSha}`;
+      expect(git(repo, ["show", `${ref}:base.txt`])).toContain("extra line");
+      expect(git(repo, ["diff", "HEAD", ref])).toContain("+extra line");
+      expect(existsSync(openDetached)).toBe(true);
+      expect(existsSync(slotDir)).toBe(true);
+      expect(res.some((r) => r.id.includes("local30x8"))).toBe(false);
+    });
+  });
 });
