@@ -1,3 +1,5 @@
+import { paiHomePath } from "../../config/pai-home.js";
+
 export const pause = {
   description:
     "Save a checkpoint and prepare to exit safely, knowing you will come back to the same conversation",
@@ -31,7 +33,7 @@ Order is: **compose → write file → persist via CLI → print**. Never reorde
 2. **Write it to a file** with the Write tool:
 
    \`\`\`
-   /tmp/pai-checkpoint-<session-id>.md
+   ${paiHomePath("state", "checkpoints")}/<session-id>.md
    \`\`\`
 
    Use the \`sessionId\` from the startup system reminders for \`<session-id>\`. Write the
@@ -41,7 +43,7 @@ Order is: **compose → write file → persist via CLI → print**. Never reorde
 3. **Persist it** via Bash:
 
    \`\`\`bash
-   pai pause --body-file /tmp/pai-checkpoint-<session-id>.md --session-id <session-id>
+   pai pause --body-file ${paiHomePath("state", "checkpoints")}/<session-id>.md --session-id <session-id>
    \`\`\`
 
    This writes the body into \`## Continue\` in the project TODO.md **and** appends it to

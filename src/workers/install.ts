@@ -20,11 +20,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { claudeHomeDir } from "../config/pai-home.js";
 import { readSettingsJson, writeSettingsJson } from "../cli/lib/settings-manager.js";
 
-const CLAUDE_DIR = join(homedir(), ".claude");
-const HOOKS_DIR = join(CLAUDE_DIR, "Hooks");
-const LOCAL_BIN = join(homedir(), ".local", "bin");
+// Resolved at call time so a changed HOME / CLAUDE_CONFIG_DIR (tests, dry runs) is honoured.
+const claudeDir = (): string => claudeHomeDir();
+const hooksDir = (): string => join(claudeDir(), "Hooks");
+const localBin = (): string => join(homedir(), ".local", "bin");
 
 export const NEW_AGENT_HOOK = "${PAI_DIR}/Hooks/route-agents-to-worker.mjs";
 const OLD_AGENT_HOOK_STEM = "route-agents-to-glm";
@@ -177,7 +179,7 @@ function installShims(lines: string[]): boolean {
   const pai = paiPath();
   let changed = false;
   for (const name of ["glm", "glm-run", "glm-ps", "glm-log", "worker-say", "kimi"]) {
-    const path = join(LOCAL_BIN, name);
+    const path = join(localBin(), name);
     const ours = `# pai worker shim`;
     let current: string | null = null;
     if (existsSync(path)) {
@@ -189,7 +191,7 @@ function installShims(lines: string[]): boolean {
     }
     if (current !== null && !current.includes(ours)) {
       // one-time move-aside; never clobber what a later run moved there
-      const aside = join(LOCAL_BIN, `${name}.pre-pai`);
+      const aside = join(localBin(), `${name}.pre-pai`);
       if (!existsSync(aside)) {
         renameSync(path, aside);
         lines.push(`${name}: previous version kept as ${name}.pre-pai`);
@@ -205,7 +207,7 @@ function installShims(lines: string[]): boolean {
       continue;
     }
     const body = shim(name, pai);
-    mkdirSync(LOCAL_BIN, { recursive: true });
+    mkdirSync(localBin(), { recursive: true });
     writeFileSync(path, body, { encoding: "utf8", mode: 0o755 });
     try {
       chmodSync(path, 0o755);
@@ -223,7 +225,7 @@ function installShims(lines: string[]): boolean {
 // ---------------------------------------------------------------------------
 
 function removeOldHook(lines: string[]): boolean {
-  const old = join(HOOKS_DIR, "route-agents-to-glm.sh");
+  const old = join(hooksDir(), "route-agents-to-glm.sh");
   if (!existsSync(old)) return false;
   unlinkSync(old);
   lines.push(`removed ${OLD_AGENT_HOOK_STEM}.sh (registration migrated above)`);
@@ -237,8 +239,8 @@ export function installWorkers(): InstallResult {
   let changed = patchAgentHook(lines);
   if (installShims(lines)) changed = true;
   if (removeOldHook(lines)) changed = true;
-  if (!existsSync(LOCAL_BIN)) {
-    lines.push(`note: ${LOCAL_BIN} did not exist; make sure it is on PATH`);
+  if (!existsSync(localBin())) {
+    lines.push(`note: ${localBin()} did not exist; make sure it is on PATH`);
   }
   return { lines, changed };
 }

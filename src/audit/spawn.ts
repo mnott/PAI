@@ -6,12 +6,12 @@
 
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { parseSessionUsage } from "./session-usage.js";
 import { countTokens } from "./tokens.js";
+import { claudeProjectsDir } from "../config/pai-home.js";
 
 export type SpawnGroupName = "agentSubagents" | "workersInteractive" | "workersHeadless";
 
@@ -50,7 +50,7 @@ function newestN(paths: string[], n: number): string[] {
 
 /** Newest N ~/.claude/projects/<project>/<session>/subagents/*.jsonl files. */
 export function newestAgentSubagentLogs(n = 10): string[] {
-  const projectsDir = join(homedir(), ".claude", "projects");
+  const projectsDir = claudeProjectsDir();
   const found: string[] = [];
   let projectDirs: string[];
   try {
@@ -171,7 +171,7 @@ export async function firstSessionId(path: string): Promise<string | null> {
 /** `~/.claude/projects/**\/<sessionId>.jsonl`, searched only under the projects dir. */
 export function findSessionTranscript(
   sessionId: string,
-  projectsDir: string = join(homedir(), ".claude", "projects")
+  projectsDir: string = claudeProjectsDir()
 ): string | null {
   const target = `${sessionId}.jsonl`;
   const stack = [projectsDir];

@@ -16,10 +16,10 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { RegistryBackend } from "../storage/registry-interface.js";
 import { smartDecodeDir } from "../cli/lib/utils.js";
+import { claudeHomeDir } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,7 +59,7 @@ type SessionRegistry = Record<string, RegistryEntry>;
  *          missing / unparseable.
  */
 export function buildEncodedDirMap(
-  jsonPath: string = join(homedir(), ".claude", "session-registry.json")
+  jsonPath: string = join(claudeHomeDir(), "session-registry.json")
 ): Map<string, string> {
   const map = new Map<string, string>();
   if (!existsSync(jsonPath)) return map;
@@ -247,7 +247,7 @@ export interface MigrationResult {
  */
 export async function migrateFromJson(
   backend: RegistryBackend,
-  registryPath: string = join(homedir(), ".claude", "session-registry.json")
+  registryPath: string = join(claudeHomeDir(), "session-registry.json")
 ): Promise<MigrationResult> {
   const result: MigrationResult = {
     projectsInserted: 0,

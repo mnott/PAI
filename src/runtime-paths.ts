@@ -25,6 +25,8 @@
  * the environment held at import and make the override order matter.
  */
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { paiHomePath } from "./config/pai-home.js";
 
 /** IPC socket for the PAI daemon. */
@@ -35,6 +37,11 @@ export function paiSocketPath(): string {
 /** IPC socket for the AIBroker daemon — read by PAI, owned by AIBroker. */
 export function aibrokerSocketPath(): string {
   return process.env.PAI_AIBROKER_SOCKET_PATH ?? "/tmp/aibroker.sock";
+}
+
+/** AIBroker's state dir (managers.json, session-names.json): AIBROKER_HOME or ~/.aibroker. */
+export function aibrokerHomeDir(): string {
+  return process.env.AIBROKER_HOME || join(homedir(), ".aibroker");
 }
 
 /** Where the daemon's stdout and stderr are collected. */

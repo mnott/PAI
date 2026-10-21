@@ -22,10 +22,10 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { encodeDir } from "../cli/lib/utils.js";
 import { scanIncremental, type ScanOptions } from "../hooks/ts/lib/transcript-scan.js";
+import { claudeProjectsDir } from "../config/pai-home.js";
 
 /** How many recent user prompts to carry. */
 const MAX_PROMPTS = 6;
@@ -133,7 +133,7 @@ export function resolveTranscriptDir(project: {
   encoded_dir?: string | null;
   root_path: string;
 }): string {
-  const base = join(homedir(), ".claude", "projects");
+  const base = claudeProjectsDir();
 
   const recorded = project.encoded_dir ? join(base, project.encoded_dir) : null;
   if (recorded && hasTranscripts(recorded)) return recorded;

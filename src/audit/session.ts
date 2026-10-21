@@ -6,17 +6,17 @@
  */
 
 import { readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseSessionUsage, totalUsageTokens, type SessionUsageReport } from "./session-usage.js";
 import { encodeDir } from "../cli/lib/utils.js";
 import { firstTurnBreakdown, type FirstTurnBreakdown } from "./first-turn.js";
 import { loadConfig } from "../daemon/config.js";
 import { deriveSessionTrigger, type WindowSource, type SessionTriggerSource } from "./context-trigger.js";
+import { claudeProjectsDir } from "../config/pai-home.js";
 
 /** Newest *.jsonl under ~/.claude/projects, excluding subagents/. */
 export function newestSessionLog(): string | null {
-  const projectsDir = join(homedir(), ".claude", "projects");
+  const projectsDir = claudeProjectsDir();
   let best: { path: string; mtime: number } | null = null;
   let projectDirs: string[];
   try {
@@ -115,7 +115,7 @@ export interface SessionHistoryRow {
  * across sessions without an ad-hoc script.
  */
 export async function sessionHistory(cwd: string, limit = 20): Promise<SessionHistoryRow[]> {
-  const dir = join(homedir(), ".claude", "projects", encodeDir(cwd));
+  const dir = join(claudeProjectsDir(), encodeDir(cwd));
   let entries: string[];
   try {
     entries = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));

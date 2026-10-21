@@ -11,8 +11,8 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { STOP_WORDS } from "../utils/stop-words.js";
+import { claudeProjectsDir } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Public API types
@@ -88,13 +88,7 @@ function tokenize(text: string): string[] {
  * @returns  Absolute path to the most recently modified .jsonl file, or null.
  */
 export function findLatestTranscript(encodedDir: string): string | null {
-  const sessionsDir = join(
-    homedir(),
-    ".claude",
-    "projects",
-    encodedDir,
-    "sessions"
-  );
+  const sessionsDir = join(claudeProjectsDir(), encodedDir, "sessions");
 
   if (!existsSync(sessionsDir)) return null;
 

@@ -275,7 +275,7 @@ export interface StartPlan {
 }
 
 export function logPathFor(provider: string): string {
-  return join(homedir(), ".cache/pai/local-server", `${provider}.log`);
+  return paiHomePath("logs", "local", `${provider}.log`);
 }
 
 const VLLM_READY_MS = 10 * 60 * 1000;

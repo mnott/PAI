@@ -41,10 +41,12 @@ import {
 } from "./config.js";
 import { resolveTarget } from "./routing.js";
 import { workersLogDir } from "./paths.js";
+import { claudeHomeDir } from "../config/pai-home.js";
+import { aibrokerHomeDir } from "../runtime-paths.js";
 
 /** settings.json location; CLAUDE_SETTINGS_PATH points it at a copy for dry runs. */
 export function fallbackSettingsPath(): string {
-  return process.env.CLAUDE_SETTINGS_PATH ?? join(homedir(), ".claude", "settings.json");
+  return process.env.CLAUDE_SETTINGS_PATH ?? join(claudeHomeDir(), "settings.json");
 }
 
 /** The note `on` writes so a human landing in the log dir sees the switch. */
@@ -264,7 +266,7 @@ export function listClaudeSessions(): { source: "aibroker" | "ps"; lines: string
   // AIBroker registry (~/.aibroker/managers.json): manager name → session
   // record. Best-effort — any parse problem falls through to ps.
   try {
-    const regPath = join(homedir(), ".aibroker", "managers.json");
+    const regPath = join(aibrokerHomeDir(), "managers.json");
     if (existsSync(regPath)) {
       const reg = JSON.parse(readFileSync(regPath, "utf8")) as Record<string, unknown>;
       const names = Object.keys(reg);

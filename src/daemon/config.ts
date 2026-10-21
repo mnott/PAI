@@ -18,6 +18,8 @@ import { postgresConnectionString } from "../storage/postgres/config.js";
 import { effectiveMainConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import {
   paiHomePath,
+  claudeHomeDir,
+  legacyConfigDir,
   resolvePaiFile,
   migratePaiFile,
   PaiFileMigrationError,
@@ -382,11 +384,11 @@ const NEW_CONFIG_FILE = paiHomePath("config.json");
 
 /** Briefly the canonical location between 2026-09-19's two migrations —
  *  read during the transition, never written to again. */
-const OLD_CONFIG_FILE = join(homedir(), ".claude", "pai.json");
+const oldConfigFile = (): string => join(claudeHomeDir(), "pai.json");
 
 /** Where the config lived before 2026-09-19 — read during the transition,
  *  never written to once NEW_CONFIG_FILE exists (see `pai config migrate`). */
-const LEGACY_CONFIG_FILE = join(homedir(), ".config", "pai", "config.json");
+const legacyConfigFile = (): string => join(legacyConfigDir(), "config.json");
 
 /**
  * The path any read/write of the PAI config actually uses: PAI_CONFIG_FILE
@@ -397,7 +399,7 @@ const LEGACY_CONFIG_FILE = join(homedir(), ".config", "pai", "config.json");
 export function paiConfigFilePath(): string {
   const override = process.env.PAI_CONFIG_FILE;
   if (override) return override;
-  return resolvePaiFile(NEW_CONFIG_FILE, [OLD_CONFIG_FILE, LEGACY_CONFIG_FILE], "pai config migrate");
+  return resolvePaiFile(NEW_CONFIG_FILE, [oldConfigFile(), legacyConfigFile()], "pai config migrate");
 }
 
 export const CONFIG_FILE = paiConfigFilePath();
@@ -450,7 +452,7 @@ export type ConfigMigrateResult = MigrateFileResult;
  * config.json.migrated-<YYYYMMDD> (never deleted).
  */
 export function migrateConfigFile(opts: { dryRun?: boolean } = {}): ConfigMigrateResult {
-  const result = migratePaiFile(NEW_CONFIG_FILE, [OLD_CONFIG_FILE, LEGACY_CONFIG_FILE], opts);
+  const result = migratePaiFile(NEW_CONFIG_FILE, [oldConfigFile(), legacyConfigFile()], opts);
   if (!result.dryRun && result.fromPath) {
     // config.json can hold secrets (e.g. the Postgres password) — lock down
     // both the new location and the `.migrated-<stamp>` copy left behind.
