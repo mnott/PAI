@@ -22,7 +22,7 @@ import { COCKPIT_HTML } from "./cockpit-page.js";
 import { handleCockpit, setRuntimeSampler } from "./cockpit.js";
 import type { ModelInventory } from "../workers/model-inventory.js";
 import type { WorkersConfig, WorkerProvider } from "../workers/config.js";
-import type { WorkerStatus } from "../workers/status.js";
+import { newWorkerId, type WorkerStatus } from "../workers/status.js";
 import type { SchedSnapshot } from "./scheduler.js";
 
 const dirs: string[] = [];
@@ -90,9 +90,7 @@ const sched: SchedSnapshot = {
 
 function status(over: Partial<WorkerStatus>): WorkerStatus {
   // the id encodes this process's spawn time, so ownsPid() accepts the pid without a `ps` match on `started`
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  const id = `20261020-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${process.pid}`;
+  const id = newWorkerId();
   return { id, pid: process.pid, label: "fix-x", cwd: "/x", term: "", provider: "gyro-m", model: "flash-next", state: "running", started: "2026-10-20 10:00:00", updated: "", turns: 1, tools: 0, last: "", rc: null, secs: 1, session: { id: "u", name: "PAI" }, ...over } as WorkerStatus;
 }
 
