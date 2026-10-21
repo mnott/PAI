@@ -21,7 +21,7 @@ import { readWorkersSection, type WorkersConfig } from "./config.js";
 import { workersLogDir } from "./paths.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { isLocalCandidate, providerHostPort } from "./local-provider.js";
-import { readLocalConfig } from "./local-tiers.js";
+import { firstRunningTier, readLocalConfig } from "./local-tiers.js";
 import { workersYamlPath } from "./workers-config.js";
 
 export const MODEL_INVENTORY_REFRESH_MS = 30_000;
@@ -358,7 +358,7 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
       })
   );
   // the running tier is the active one; every other tier's server being down is the operator's switch, not a failure
-  const active = out.find((r) => r.status !== "stopped" && tierOf.has(r));
+  const active = firstRunningTier(out, (r) => tierOf.has(r), (r) => r.status !== "stopped");
   if (active) {
     for (const r of out) {
       if (r !== active && r.status === "stopped" && tierOf.has(r)) {

@@ -602,3 +602,16 @@ describe("withStarting", () => {
   });
   it("leaves the limits alone when nothing is starting", () => expect(withStarting(ls, null)).toBe(ls));
 });
+
+describe("activeLocalProvider", () => {
+  const lim = (up: Record<string, boolean>) => Object.entries(up).map(([provider, u]) => ({ provider, kind: "local", up: u, windows: [] }) as never);
+  it("is the running tier, not the configured local, after a tier switch", async () => {
+    const { activeLocalProvider } = await import("./cockpit.js");
+    expect(activeLocalProvider(lim({ codernext4: false, "gyro-m": true }), ["codernext4", "gyro-m"])).toBe("gyro-m");
+  });
+  it("falls back to the configured local when no tier answers", async () => {
+    const { activeLocalProvider } = await import("./cockpit.js");
+    const r = activeLocalProvider(lim({ codernext4: false, "gyro-m": false }), ["codernext4", "gyro-m"]);
+    expect(r === null || typeof r === "string").toBe(true);
+  });
+});

@@ -22,7 +22,7 @@ import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } f
 import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { localStartView, readLocalStart, type LocalStartView } from "../workers/local-start.js";
-import { activeTier, fetchServedModels, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
+import { activeTier, fetchServedModels, firstRunningTier, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
 import { readLocalStatus } from "../workers/local-status.js";
@@ -187,6 +187,20 @@ function configuredLocal(): string | null {
     return typeof doc?.local === "string" && doc.local ? doc.local : null;
   } catch {
     return null;
+  }
+}
+
+/** The running tier's provider (the inventory's definition of active); when no tier answers, the configured `local:` one, which is then the one that is down. */
+export function activeLocalProvider(l: ProviderLimits[], tierProviders: string[] = tierProviderList()): string | null {
+  const running = firstRunningTier(l, (x) => x.kind === "local" && tierProviders.includes(x.provider), (x) => x.up === true);
+  return running?.provider ?? configuredLocal();
+}
+
+function tierProviderList(): string[] {
+  try {
+    return Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => t.provider);
+  } catch {
+    return [];
   }
 }
 
@@ -1012,7 +1026,7 @@ export function handleCockpit(
       ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withStarting(l), routing, activeLocal: configuredLocal(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withStarting(l), routing, activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

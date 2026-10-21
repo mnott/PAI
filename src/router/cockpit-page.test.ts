@@ -67,7 +67,7 @@ describe("cockpit page compression", () => {
     expect(html).toContain("<details");
     expect(html).not.toMatch(/<details[^>]*\bopen\b/);
     expect(html).toContain("1 local model down");
-    expect(html).toContain("17 local models not loaded (switch in Models)");
+    expect(html).toContain("17 inactive local tiers (switch in Models)");
     const outside = html.replace(/<details[\s\S]*?<\/details>/g, "");
     expect(outside).toContain("up1");
     expect(outside).not.toContain("dead0");
@@ -280,7 +280,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
 });
 
 describe("live-shaped payloads", () => {
-  it("Local block: an unloaded tier is not loaded, never down; only the configured local model can be down", () => {
+  it("Local block: an inactive tier is grey, never down; only the configured local model can be down", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const run = (activeLocal: string | null) => {
       const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
@@ -290,7 +290,7 @@ describe("live-shaped payloads", () => {
       return els.local!.innerHTML;
     };
     const h = run("gyro-m");
-    expect(h).toContain("1 local model not loaded");
+    expect(h).toContain("1 inactive local tier");
     expect(h.replace(/downs/g, "")).not.toContain("down");
     expect(run("flashnext-iq3")).toContain("1 local model down");
   });

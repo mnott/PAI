@@ -112,7 +112,7 @@ function renderLimits(){
  });
  if(st.length)lo+=st.map(startChip).join(" ");
  if(lt)lo='<div class="tgroup" data-tkey="local">'+lt+'</div>'+lo;
- if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' inactive local '+(nl.length===1?'tier':'tiers')+' (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip dim">'+esc(n)+'</span>'}).join(" ")+'</details>';
  setHtml($("cloud"),c?'<div class="tgroup" data-tkey="cloud">'+c+'</div>':'<span class="dim">no cloud limit sources</span>');
  // the poll rebuild must not reset the order and minimized tiles the user arranged
  orderTiles($("cloud"));
