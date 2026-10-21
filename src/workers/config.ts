@@ -332,6 +332,14 @@ export interface LocalIdleConfig {
   backoffMinutes: number;
 }
 
+/** Loop guard (workers.loopGuard): how much of its last output a denied repeated read gets back. */
+export interface LoopGuardConfig {
+  /** Lines of the last output echoed in the denial. */
+  echoLines: number;
+  /** Characters of the last output echoed in the denial. */
+  echoChars: number;
+}
+
 /** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
 export interface WorkersSupervisionConfig {
   pointer: boolean;
@@ -541,6 +549,8 @@ export interface WorkersConfig {
   localIdle: LocalIdleConfig;
   /** Escalation one tier up (workers.escalate); see escalation.ts. */
   escalate: EscalateConfig;
+  /** Loop guard echo size (workers.loopGuard); see hooks/ts/lib/loop-guard.ts. */
+  loopGuard: LoopGuardConfig;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
   /** Hourly gc archives finished workers' worktrees older than this many hours (workers.gcOlderThanHours). */
@@ -599,6 +609,7 @@ export function defaultWorkersConfig(): WorkersConfig {
   const escalate = parseEscalate(w.escalate, (path, msg) => {
     throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`);
   });
+  const loopGuard = obj(w.loopGuard);
   return {
     enabled: bool(w.enabled, false),
     active: null,
@@ -665,6 +676,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       backoffMinutes: num(localIdle.backoffMinutes, 10),
     },
     escalate,
+    loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000) },
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
     worktreesMaxGb: num(w.worktreesMaxGb, 20),
@@ -1335,6 +1347,16 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       localIdle[k] = t[k] as number;
     }
   }
+  const loopGuard = { ...d.loopGuard };
+  if (w.loopGuard !== undefined) {
+    if (typeof w.loopGuard !== "object" || w.loopGuard === null || Array.isArray(w.loopGuard)) bad(".loopGuard", "must be an object");
+    const t = w.loopGuard as Record<string, unknown>;
+    for (const k of ["echoLines", "echoChars"] as const) {
+      if (t[k] === undefined) continue;
+      if (typeof t[k] !== "number" || !Number.isInteger(t[k]) || (t[k] as number) < 0) bad(`.loopGuard.${k}`, "must be a non-negative integer");
+      loopGuard[k] = t[k] as number;
+    }
+  }
   if (w.noBrowserByDefault !== undefined && typeof w.noBrowserByDefault !== "boolean") {
     bad(".noBrowserByDefault", "must be true or false");
   }
@@ -1423,6 +1445,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     capacity,
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
+    loopGuard,
     noBrowserByDefault,
     gcOlderThanHours,
     worktreesMaxGb,
@@ -1555,6 +1578,7 @@ export function writeWorkersSection(
         capacity: workers.capacity,
         localIdle: workers.localIdle,
         escalate: workers.escalate,
+        loopGuard: workers.loopGuard,
         tiers: workers.tiers,
         noBrowserByDefault: workers.noBrowserByDefault,
         gcOlderThanHours: workers.gcOlderThanHours,

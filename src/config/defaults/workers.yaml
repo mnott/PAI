@@ -138,6 +138,12 @@ workers:
     # loop-stop (a loop-guard stop that left committed or salvaged work
     # escalates at once, without waiting for `failures`).
     triggers: [context, missing-tool, repeated-failure, loop-stop]
+  # Loop guard: a denied repeat of a read-only call (Bash read, Read, Grep,
+  # Glob) gets the call's last output back, trimmed to these sizes, so the
+  # model stops asking for it again. Secret-looking lines are masked.
+  loopGuard:
+    echoLines: 40
+    echoChars: 3000
   # Runs strip browser tools unless --browser is passed.
   noBrowserByDefault: false
   # Hourly gc archives finished workers' worktrees older than this many hours.
