@@ -23,6 +23,7 @@ import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
+import { registryModels, type RegistryModel } from "./cockpit-registry-models.js";
 import { readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { instanceEngineKey, readInstances } from "../workers/local-instances.js";
 import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-health.js";
@@ -594,6 +595,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     runtimes: inv.runtimes.map((r) => ({ ...r, ...(r.tier || tierAtPort(r.port) === undefined ? {} : { tier: tierAtPort(r.port) }), label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
     instances: localInstanceRows(),
+    registryModels: registryModelsNow(),
     running: (await localRunningInfo())[0] ?? null,
     runningModels: await localRunningInfo(),
     starting: currentStart(),
@@ -608,6 +610,15 @@ export async function cockpitModelsPayload(): Promise<unknown> {
   // a sampler that is installed but does not answer: the live readings are missing for now
   if (!live) return { ...withLabels, transient: "live sampler not answering" };
   return { ...withLabels, live };
+}
+
+/** Every registry model with its live instances, stopped ones included (the model cards). */
+function registryModelsNow(): RegistryModel[] {
+  try {
+    return registryModels(readLocalConfig(workersYamlPath()), localInstanceRows());
+  } catch {
+    return [];
+  }
 }
 
 function runtimeJobsFor(): ReturnType<typeof runningRuntimeJobs> {

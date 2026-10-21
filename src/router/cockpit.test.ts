@@ -651,3 +651,30 @@ describe("enabledLocalLimits tier-launched", () => {
     expect(out.map((l) => l.provider)).toEqual(["codernext4"]);
   });
 });
+
+describe("registryModels (B8a)", () => {
+  const tier = (name: string, config: string, port = 8035) => ({ tier: name, engine: "strata", provider: name, label: name, model: "", served: "", port, flags: [], maxInstances: 4, config });
+  const cfg = {
+    launcher: {},
+    tiers: {
+      "gyro-m": tier("gyro-m", "/s/gyro-m.json"),
+      iq3s: tier("iq3s", "/s/iq3_s.json"),
+      "coder-next": { ...tier("coder-next", ""), engine: "script", config: undefined, start: "/s/serve.sh", port: 8034, maxInstances: 1 },
+    },
+  } as unknown as import("../workers/local-tiers.js").LocalConfig;
+
+  it("marks exactly one card running per Strata file; a model with no instance is stopped", async () => {
+    const { registryModels } = await import("./cockpit-registry-models.js");
+    const rows = [
+      { id: "gyro-m#1", model: "gyro-m", port: 8035, pid: 11, state: "ready", inflight: 0 },
+      { id: "iq3s#1", model: "iq3s", port: 8036, pid: 12, state: "ready", inflight: 1 },
+    ];
+    const both = registryModels(cfg, rows);
+    expect(both.map((m) => [m.name, m.state])).toEqual([["gyro-m", "running"], ["iq3s", "running"], ["coder-next", "stopped"]]);
+    expect(both[0].instances).toEqual([{ id: "gyro-m#1", pid: 11, port: 8035, inflight: 0 }]);
+    expect(both[1].instances.map((i) => i.id)).toEqual(["iq3s#1"]);
+    const one = registryModels(cfg, rows.slice(0, 1));
+    expect(one.map((m) => m.state)).toEqual(["running", "stopped", "stopped"]);
+    expect(one[2]).toMatchObject({ file: "/s/serve.sh", engine: "script", port: 8034, tier: "coder-next", instances: [], maxInstances: 1 });
+  });
+});
