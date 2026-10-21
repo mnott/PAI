@@ -85,20 +85,30 @@ export function orchestratorLabel(cfg: Cfg, o: Setup["orchestrator"]): string {
   return `${shortModel(model)} (${o.provider})`;
 }
 
-/** True when a model server answers at host:port within timeoutMs. */
-export type PortCheck = (host: string, port: number, timeoutMs: number) => Promise<boolean>;
+/**
+ * True when a model server answers at host:port within timeoutMs. With `models`, it must also serve
+ * one of them: several providers can share one endpoint, and only the one whose model is loaded is up.
+ */
+export type PortCheck = (host: string, port: number, timeoutMs: number, models?: string[]) => Promise<boolean>;
+
+/** Every model id a provider is configured with. */
+export function providerModelIds(p: { models: Record<string, unknown> }): string[] {
+  return [...new Set(Object.values(p.models).filter((m): m is string => typeof m === "string" && m !== ""))];
+}
 
 /**
  * A model server is running when GET /v1/models answers 2xx with a JSON body.
  * A bare TCP connect reported ports as running that no model server answered.
  */
-export const httpModelsCheck: PortCheck = async (host, port, timeoutMs) => {
+export const httpModelsCheck: PortCheck = async (host, port, timeoutMs, models) => {
   try {
     const h = host.includes(":") ? `[${host}]` : host;
     const res = await fetch(`http://${h}:${port}/v1/models`, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return false;
-    await res.json();
-    return true;
+    const body = (await res.json()) as { data?: Array<{ id?: unknown }> } | null;
+    const ids = (body?.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
+    // a server that lists no models cannot say what it serves: the endpoint decides
+    return !models?.length || !ids.length || models.some((m) => ids.includes(m));
   } catch {
     return false;
   }
@@ -116,7 +126,7 @@ export async function downLocalProviders(cfg: Cfg, check: PortCheck = httpModels
       try {
         const u = new URL(p.baseUrl);
         const host = u.hostname.replace(/^\[|\]$/g, "");
-        ok = await check(host, Number(u.port) || (u.protocol === "https:" ? 443 : 80), PORT_TIMEOUT_MS);
+        ok = await check(host, Number(u.port) || (u.protocol === "https:" ? 443 : 80), PORT_TIMEOUT_MS, providerModelIds(p));
       } catch {
         ok = false;
       }

@@ -478,7 +478,11 @@ export async function localLimits(
   // An accepted TCP connection proves nothing: launchd (or any socket holder) accepts for a server
   // that is not running. Up means the server answers HTTP, and serves this provider's model.
   const probe = listening ? await servedModels(u) : { alive: false };
-  const served = probe.ids;
+  // A busy server may time out without a list: keep the last list it gave, so providers sharing the endpoint do not both turn up
+  const endpoint = `${u.hostname}:${port}`;
+  if (probe.ids) lastServed.set(endpoint, probe.ids);
+  else if (!probe.alive) lastServed.delete(endpoint);
+  const served = probe.ids ?? (probe.alive ? lastServed.get(endpoint) : undefined);
   const up = probe.alive && modelServed(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
   let rssMb: number | undefined;
   let prefixCache: PrefixCacheStats | undefined;
@@ -506,6 +510,9 @@ export async function localLimits(
     fetchedAt: now,
   };
 }
+
+/** The last model list each endpoint (host:port) gave, for polls where it answers without one. */
+const lastServed = new Map<string, string[]>();
 
 /** GET /v1/models: `alive` = the server answered HTTP at all (any status); `ids` = the models it lists, when it can say. */
 async function servedModels(base: URL): Promise<{ alive: boolean; ids?: string[] }> {
