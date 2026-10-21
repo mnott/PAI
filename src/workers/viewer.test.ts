@@ -272,13 +272,13 @@ describe("applyEvent wrapping", () => {
     message: { content: [{ type: "tool_use", name: "Bash", input: { command } }] },
   });
 
-  it("a heredoc command keeps its lines and caps at 6 with a count", () => {
+  it("a heredoc command keeps its full text, no line cap", () => {
     const cmd = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n");
     const step = applyEvent(plain, initialFollowState(""), bash(cmd), "", undefined, OFF, 80);
-    expect(step.lines).toHaveLength(7);
+    expect(step.lines).toHaveLength(10);
     expect(step.lines[0]).toBe("12:09:00 │ $ line0");
     expect(step.lines[1]).toBe(" ".repeat(8) + " │   line1");
-    expect(step.lines[6]).toBe(" ".repeat(8) + " │   … +4 lines");
+    expect(step.lines[9]).toBe(" ".repeat(8) + " │   line9");
   });
 
   it("a long single line wraps at the width, no mid-word cut, bar kept", () => {

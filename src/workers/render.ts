@@ -298,12 +298,11 @@ export function contextMeter(
   return label;
 }
 
-/** Lines of a multi-line text, trimmed of blank edges; the first `max` kept, the rest counted. */
-export function capLines(text: string, max = 6): string[] {
+/** Lines of a multi-line text, trimmed of blank edges; never capped (the pane wraps rows itself). */
+export function fullLines(text: string): string[] {
   const lines = text.replace(/\s+$/, "").split("\n").map((l) => l.replace(/\s+$/, ""));
   while (lines.length && lines[0] === "") lines.shift();
-  if (lines.length <= max) return lines;
-  return [...lines.slice(0, max), `… +${lines.length - max} lines`];
+  return lines;
 }
 
 function renderToolUse(
@@ -327,7 +326,7 @@ function renderToolUse(
     // the job, not the mechanism: wait-on and detached starts read in plain words (raw command: `pai worker replay`)
     const plain = waitOnCallLine(get("command")) ?? detachedLine(get("command"));
     if (plain) return [`${prefix}${c("yellow", plain)}`];
-    const cmd = capLines(get("command"));
+    const cmd = fullLines(get("command"));
     return cmd.map((ln, k) => (k === 0 ? `${prefix}${c("dim", "$")} ${ln}` : `${prefix}  ${ln}`));
   }
   if (name === "Edit") {
@@ -415,9 +414,9 @@ export function renderEvent(
       } else if (isError) {
         // guard/hook denials are expected friction (amber); other errors are real (red)
         const denied = parseDenialText(text) !== null || / blocked:/.test(text);
-        capLines(text).forEach((ln, k) => out.push(`${prefix}    ${c(denied ? "yellow" : "red", k === 0 ? "! " + ln : "  " + ln)}`));
+        fullLines(text).forEach((ln, k) => out.push(`${prefix}    ${c(denied ? "yellow" : "red", k === 0 ? "! " + ln : "  " + ln)}`));
       } else if (text.trim()) {
-        for (const ln of capLines(text)) out.push(`${prefix}    ${c("dim", ln)}`);
+        for (const ln of fullLines(text)) out.push(`${prefix}    ${c("dim", ln)}`);
       }
     }
   } else if (e.type === "result") {
