@@ -186,6 +186,10 @@ export interface PaiDaemonConfig {
   embedOnStartup: boolean;
   /** Wall-clock budget of one embed pass in minutes (default 60); the rest waits for the next cycle. */
   embedMaxMinutes?: number;
+  /** Total minutes the embed phase of one anchored cycle may keep running passes (default 300). */
+  embedCycleMaxMinutes?: number;
+  /** Minutes to wait before resuming after a pass yielded to load or a local worker (default 10). */
+  embedResumeMinutes?: number;
   /** Load average (1 min) above which an embed pass yields (default 8). */
   embedMaxLoad?: number;
 

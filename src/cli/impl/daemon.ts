@@ -12,7 +12,7 @@
  */
 
 import { LAUNCHD_LABEL } from "../../daemon/daemon-pid.js";
-import { formatEmbedStatus } from "../../memory/embed-pass.js";
+import { formatEmbedStatus, lastRecordedEmbedPass } from "../../memory/embed-pass.js";
 import {
   existsSync,
   readFileSync,
@@ -219,7 +219,7 @@ async function cmdStatus(): Promise<number> {
     if (s["lastIndexTime"]) {
       console.log(dim(`    Last index:  ${s["lastIndexTime"]}`));
     }
-    for (const line of formatEmbedStatus(s as Parameters<typeof formatEmbedStatus>[0])) {
+    for (const line of formatEmbedStatus({ ...(s as Parameters<typeof formatEmbedStatus>[0]), recordedPass: lastRecordedEmbedPass() })) {
       console.log(dim(`    ${line}`));
     }
     if (s["db"]) {

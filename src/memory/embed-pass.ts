@@ -6,7 +6,10 @@
  * while a local-model worker holds the machine or the load average is high.
  */
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { loadavg } from "node:os";
+import { paiHomePath } from "../config/pai-home.js";
 import { isLocalProvider, readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { loadStatuses, isLive } from "../workers/status.js";
@@ -81,6 +84,8 @@ const OUTCOME_TEXT: Record<EmbedPassOutcome, string> = {
 export function formatEmbedStatus(s: {
   embedBacklog?: number | null;
   lastEmbedPass?: { at: string; outcome: EmbedPassOutcome; embedded: number; reason?: string } | null;
+  /** From the persisted pass log, so it survives a daemon restart. */
+  recordedPass?: EmbedPassLogEntry | null;
 }): string[] {
   const lines: string[] = [];
   if (typeof s.embedBacklog === "number") {
@@ -92,5 +97,116 @@ export function formatEmbedStatus(s: {
       `Last embed:  ${OUTCOME_TEXT[p.outcome]}, ${p.embedded} chunks at ${p.at}${p.reason ? ` (${p.reason})` : ""}`,
     );
   }
+  const r = s.recordedPass;
+  if (r) {
+    const mins = Math.round((r.end - r.start) / 60_000);
+    lines.push(
+      `Embed pass:  ${new Date(r.end).toISOString()} ${r.embedded} embedded in ${mins} min, ` +
+        `${r.backlogLeft ?? "?"} left, stopped: ${r.stopReason}${r.detail ? ` (${r.detail})` : ""}`,
+    );
+  }
   return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Nightly cycle: keep embedding until the backlog is gone or the window closes
+// ---------------------------------------------------------------------------
+
+/** Total wall-clock window of one anchored cycle's embed phase. A single pass
+ *  (embedMaxMinutes) is only a slice of it: at ~5 chunks/s a 60 minute pass
+ *  clears ~18k chunks, less than a busy day adds, so one pass per night
+ *  never caught up. */
+export const DEFAULT_EMBED_CYCLE_MAX_MINUTES = 300;
+/** How long to wait before retrying after a pass yielded to load or a local worker. */
+export const DEFAULT_EMBED_RESUME_MINUTES = 10;
+
+export type EmbedStopReason =
+  | "done"          // backlog empty
+  | "pass-budget"   // one pass hit embedMaxMinutes (the cycle continues)
+  | "cycle-budget"  // embedCycleMaxMinutes spent, backlog remains
+  | "yielded"       // load / local worker (the cycle waits and retries)
+  | "no-progress"   // a pass embedded nothing and did not yield: stop, do not spin
+  | "error"
+  | "shutdown";
+
+/** One embed pass as persisted for `pai daemon status` and the cockpit. */
+export interface EmbedPassLogEntry {
+  start: number;
+  end: number;
+  embedded: number;
+  /** Chunks still without vectors after the pass; null when the count failed. */
+  backlogLeft: number | null;
+  stopReason: EmbedStopReason;
+  /** Detail for yielded / error. */
+  detail?: string;
+}
+
+const MAX_LOGGED_PASSES = 200;
+
+/** Small state file under the PAI home holding the most recent passes, oldest first. */
+export function embedPassLogPath(): string {
+  return paiHomePath("embed-passes.json");
+}
+
+export function recordEmbedPass(entry: EmbedPassLogEntry, path = embedPassLogPath()): void {
+  try {
+    const all = readEmbedPasses(path);
+    all.push(entry);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(all.slice(-MAX_LOGGED_PASSES)) + "\n");
+  } catch { /* the record is informational; never fail a pass over it */ }
+}
+
+/** Recorded passes, oldest first. For the cockpit Memory section and `pai daemon status`. */
+export function readEmbedPasses(path = embedPassLogPath()): EmbedPassLogEntry[] {
+  try {
+    const v = JSON.parse(readFileSync(path, "utf8"));
+    return Array.isArray(v) ? (v as EmbedPassLogEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The most recent recorded pass, or null. */
+export function lastRecordedEmbedPass(path = embedPassLogPath()): EmbedPassLogEntry | null {
+  const all = readEmbedPasses(path);
+  return all.length ? all[all.length - 1] : null;
+}
+
+export interface EmbedCycleDeps {
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  /** Run one pass; it records itself. Returns null when it did not run. */
+  runPass: () => Promise<EmbedPassLogEntry | null>;
+  cycleMaxMinutes: number;
+  resumeMinutes: number;
+  shutdown?: () => boolean;
+}
+
+/**
+ * Drive embed passes until the backlog is empty or the cycle window closes.
+ * A pass budget stop continues immediately; a yield waits resumeMinutes and
+ * resumes (the backlog is the cursor, so resuming is just running again).
+ */
+export async function runEmbedCycle(d: EmbedCycleDeps): Promise<{ passes: number; embedded: number; stopReason: EmbedStopReason }> {
+  const deadline = d.now() + d.cycleMaxMinutes * 60_000;
+  let passes = 0;
+  let embedded = 0;
+  for (;;) {
+    if (d.shutdown?.()) return { passes, embedded, stopReason: "shutdown" };
+    if (d.now() >= deadline) return { passes, embedded, stopReason: "cycle-budget" };
+    const r = await d.runPass();
+    if (!r) return { passes, embedded, stopReason: passes ? "no-progress" : "error" };
+    passes++;
+    embedded += r.embedded;
+    if (r.stopReason === "done" || r.backlogLeft === 0) return { passes, embedded, stopReason: "done" };
+    if (r.stopReason === "error") return { passes, embedded, stopReason: "error" };
+    if (r.stopReason === "yielded") {
+      const wait = d.resumeMinutes * 60_000;
+      if (d.now() + wait >= deadline) return { passes, embedded, stopReason: "cycle-budget" };
+      await d.sleep(wait);
+      continue;
+    }
+    if (r.embedded === 0) return { passes, embedded, stopReason: "no-progress" };
+  }
 }

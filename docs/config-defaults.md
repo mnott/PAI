@@ -25,7 +25,7 @@ More on the commands: [config.md](config.md). Worker keys: [workers-config.md](w
 
 | Area | Keys (in `config.yaml` unless noted) | What they set |
 |---|---|---|
-| Daemon passes | `indexIntervalSecs` 300, `embedIntervalSecs` 600, `embedMaxMinutes` 60, `embedMaxLoad` 8, `passPriority` | How often and how hard the daemon indexes and embeds. |
+| Daemon passes | `indexIntervalSecs` 300, `embedIntervalSecs` 600, `embedMaxMinutes` 60, `embedCycleMaxMinutes` 300, `embedResumeMinutes` 10, `embedMaxLoad` 8, `passPriority` | How often and how hard the daemon indexes and embeds. |
 | Storage and embeddings | `storageBackend`, `postgres.*`, `embedding.*` | Backend and embedding source. |
 | Search | `search.*` | Mode, rerank, recency boost, limits. |
 | Notices to your phone | `notices.pailot.*`, `notices.runReports.*`, `notices.trouble.*` | What may reach PAILot: rate limit (default 5 per minute), de-duplication window (24 h), run-report throttles, worker-trouble thresholds. |

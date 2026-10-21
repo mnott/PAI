@@ -20,6 +20,11 @@ obsidianSyncIntervalSecs: 1800
 embedOnStartup: false
 # Wall-clock budget of one embed pass in minutes; the backlog continues next cycle.
 embedMaxMinutes: 60
+# Total window of one anchored cycle's embed phase: passes repeat until the
+# backlog is empty or this many minutes are spent.
+embedCycleMaxMinutes: 300
+# Minutes to wait before resuming after a pass yielded to load or a local worker.
+embedResumeMinutes: 10
 # Load average above which an embed pass yields. Also yields while a
 # local-model worker runs.
 embedMaxLoad: 8
