@@ -78,9 +78,47 @@ function renderQueue(q){
   tr.ondragend=function(){from=null;qdrag=false;tr.style.opacity="";loadQueue()};
  })(rs[k])}
 }
-function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lastOk=Date.now();renderQueue(j)}).catch(function(){})}
-function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;lastOk=Date.now();renderLimits();renderModels()}).catch(function(){})}
-function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;lastOk=Date.now();renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
+/**
+ * Hold-last-good: every poll goes through feed(). A failed fetch (network, timeout, non-2xx) or a payload the server marks
+ * transient keeps the last good payload on screen with a "stale · 42 s · reason" marker on the section header; past
+ * HOLD_SEC the section shows its error (the degraded payload, else onErr). A good payload clears the marker and is applied at once.
+ */
+var HOLD_SEC=${n(L.holdLastGoodSecs)},FEEDS={};
+function feedAge(F){return Math.round((Date.now()-(F.at||F.t0))/1000)}
+function feedHeld(F){return F.good!==null&&Date.now()-F.at<HOLD_SEC*1000}
+function feedState(F,key){
+ var held=feedHeld(F);
+ if(F.err&&!held&&!F.shown){F.shown=1;if(F.degraded)F.apply(F.degraded);else if(F.onErr)F.onErr(F.err)}
+ var a=feedAge(F),age=a<90?a+" s":Math.round(a/60)+" min";
+ for(var i=0;i<F.secs.length;i++){
+  var sec=document.querySelector('[data-section="'+F.secs[i]+'"]'),h=sec&&sec.querySelector("h2");if(!h)continue;
+  var m=h.querySelector('[data-stale="'+key+'"]');
+  if(!F.err){if(m)h.removeChild(m);continue}
+  if(!m){m=document.createElement("span");m.setAttribute("data-stale",key);h.appendChild(m)}
+  m.className="stalemark"+(held?"":" err");
+  m.textContent=(held?"stale":"unavailable")+" · "+age+" · "+F.err;
+  m.title=m.textContent;
+ }
+}
+function feedTick(){for(var k in FEEDS)if(FEEDS[k].err)feedState(FEEDS[k],k)}
+function feed(key,url,secs,apply,onErr){
+ var F=FEEDS[key]||(FEEDS[key]={good:null,at:0,t0:0,err:null,degraded:null,shown:0,secs:secs});
+ F.apply=apply;F.onErr=onErr;
+ function bad(why,j){
+  if(!F.err){F.t0=Date.now();F.shown=0}
+  F.err=why;F.degraded=j||null;feedState(F,key);
+ }
+ return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(function(j){
+  if(j&&j.transient){
+   bad(String(j.transient),j);
+   if(F.good===null)apply(j);
+   return}
+  F.good=j;F.at=Date.now();F.err=null;F.degraded=null;F.shown=0;lastOk=F.at;feedState(F,key);apply(j);
+ },function(e){bad(String((e&&e.message)||"fetch failed"),null)}).catch(function(){});
+}
+function loadQueue(){feed("queue","/cockpit/queue",["workers"],function(j){renderQueue(j)},function(){setHtml($("queuepanel"),'<span class="dim">queue status unavailable</span>')})}
+function loadModels(){feed("models","/cockpit/models",["models"],function(j){mdl=j;renderLimits();renderModels()})}
+function loadLimits(){feed("limits","/cockpit/limits",["cloud","routing","models","system","cache"],function(j){lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}
@@ -98,7 +136,7 @@ if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(chartResize).obse
 window.addEventListener("resize",chartResize);
 $("reset").onclick=resetLayout;
 if(needData)load();if(needSys)loadSystem();if(needLim)loadLimits();if(needModels)loadModels();if(needPool)loadPool();if(needQueue)loadQueue();if(needMemory)loadMemory();
-if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});if(needMemory)setInterval(loadMemory,${L.memoryPollMs});setInterval(tick,${L.clockTickMs});
+if(needData&&needSys)setInterval(function(){load();loadSystem()},${L.pollMs});else if(needData)setInterval(load,${L.pollMs});else if(needSys)setInterval(loadSystem,${L.pollMs});if(needLim)setInterval(loadLimits,${L.limitsPollMs});if(needModels)setInterval(loadModels,${L.pollMs});if(needPool)setInterval(loadPool,${L.poolPollMs});if(needQueue)setInterval(loadQueue,${L.pollMs});if(needMemory)setInterval(loadMemory,${L.memoryPollMs});setInterval(tick,${L.clockTickMs});setInterval(feedTick,${L.clockTickMs});
 })();
 </script></body></html>
 `;

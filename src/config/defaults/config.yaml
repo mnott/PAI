@@ -260,6 +260,8 @@ router:
       clockTickMs: 1000
       # the stamp reads "stale" past this age, in seconds.
       stampStaleSecs: 15
+      # a failed fetch or a payload marked transient keeps the last good one on screen this long (marker "stale · 42 s · reason"), then the error shows.
+      holdLastGoodSecs: 120
       # a local switch/off job: first delay, poll interval, max tries.
       jobFirstDelayMs: 2000
       jobPollMs: 5000
