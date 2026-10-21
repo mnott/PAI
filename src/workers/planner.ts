@@ -229,7 +229,6 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
           providerFlag: opts.providerFlag,
           modelFlag: opts.modelFlag,
           label: shortText(task.title, 40),
-          noPane: opts.noPane,
           noPool: opts.noPool,
           mcpFlag: opts.mcpFlag,
           claudeArgs: swapPromptArg(opts.claudeArgs, taskPrompt(goal, task, i + w, tasks.length)),

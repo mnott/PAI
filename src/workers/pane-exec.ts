@@ -162,6 +162,8 @@ export interface ExecDeps {
   setTitle?: (t: string) => void;
   /** Close the pane that runs this wrapper; called after the exit file is written. */
   closePane?: () => Promise<void>;
+  /** A failed child's pane stays open showing the failure: awaited instead of closing (the CLI passes one that never resolves; the operator closes the pane). */
+  hold?: (rec: { code: number; reason?: string }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
   /** Process the signal handlers attach to (tests pass their own emitter). */
   proc?: NodeJS.Process;
@@ -184,6 +186,11 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   const grace = d.killGraceMs ?? panePolicy().killGraceMs;
   const finish = async (rec: Omit<ExitRecord, "id" | "endedMs">, linger = 0): Promise<number> => {
     writeJson(exitFilePath(id), { id, endedMs: now(), ...rec } satisfies ExitRecord);
+    if (rec.code !== 0 && rec.reason !== "pane closed" && !rec.cancelled && d.hold) {
+      err(`\n[failed (exit ${rec.code}) — this pane stays open; close it when you have read it]\n`);
+      await d.hold(rec);
+      return rec.code;
+    }
     if (linger > 0) await new Promise((r) => setTimeout(r, linger * 1000));
     await d.closePane?.().catch(() => undefined);
     return rec.code;

@@ -19,7 +19,7 @@ import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../..
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
-import { checkPaneForWorker, closeEndedPanes, openFollowPane, openPaneForWorker, resolveHostSession, workerEnded } from "../../workers/pane.js";
+import { checkPaneForWorker, closeEndedPanes, openFollowPane, paneMayClose, openPaneForWorker, resolveHostSession, workerEnded } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
@@ -105,7 +105,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
     if (!existsSync(cwd)) throw new Error(`--cwd: directory does not exist: ${cwd}`);
     if (!statSync(cwd).isDirectory()) throw new Error(`--cwd: not a directory: ${cwd}`);
   }
-  const noPane = o["no-pane"] === true;
+  if (o["no-pane"] === true) process.stderr.write("[pai worker] --no-pane is ignored: every start needs a visible pane\n");
   let claudeArgs = ctx.rest;
   let specPath: string | undefined;
   const spec = str(o.spec);
@@ -148,7 +148,6 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
         providerFlag: str(o.provider),
         modelFlag: str(o.model),
         label,
-        noPane,
         noPool: o["no-pool"] === true ? true : undefined,
         mcpFlag: str(o.mcp),
         specPath,
@@ -173,7 +172,6 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       mcpFlag: str(o.mcp),
       specPath,
       cwd,
-      noPane,
       noStagger: o["no-stagger"] === true ? true : undefined,
       noQueue: o["no-queue"] === true ? true : undefined,
       worktreeFlag: o["no-worktree"] === true ? false : o.worktree === true ? true : undefined,
@@ -267,7 +265,7 @@ const runCommand: CommandDef = {
     { name: "spec", type: "string", value: "FILE", summary: "Read the task from this file (or - for stdin) instead of -p" },
     { name: "cwd", type: "string", value: "DIR", summary: "Directory the worker runs in (default: here)" },
     { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
-    { name: "no-pane", type: "boolean", summary: "Start without a pane" },
+    { name: "no-pane", type: "boolean", summary: "Ignored: every start needs a visible pane" },
     { name: "no-queue", type: "boolean", summary: "Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent)" },
     { name: "no-stagger", type: "boolean", summary: "Do not wait for an earlier run on the same provider to warm its prompt cache" },
     { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
@@ -514,7 +512,7 @@ const paneCommand: CommandDef = {
           dir,
           (wid) => {
             const st = loadStatus(dir, wid);
-            if (st !== null) return st.state !== "running" && st.state !== "queued";
+            if (st !== null) return paneMayClose(dir, wid);
             // a pane-run pane: ended once its run wrote its end state (or its runner died)
             return isPaneRunId(wid) && workerEnded(dir, wid);
           },

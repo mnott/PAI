@@ -10,6 +10,7 @@ import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { type WorkerStatus } from "../status.js";
 import { headlessAllowed } from "../pane.js";
+import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
 import { type OwnedPane } from "../pane-exec.js";
 import { type StatusLineSpec } from "../pane-bar.js";
@@ -28,7 +29,7 @@ export function releasePane(wid: string | undefined): void {
  * Open the worker's pane FIRST: the pane's command is `pai pane exec <id>`, which will own the claude process
  * (see pane-exec.ts). Resolves true when the pane exists and waits for the command (spawnOwned starts it in
  * there). false, with no failure: no terminal at all (recorded "no terminal"), `dryRun` (--print-cmd), an
- * explicit noPane, the operator's override, or workers.pane.enabled false; the command then runs directly.
+ * a typed system waiver, the operator's override, or workers.pane.enabled false; the command then runs directly.
  * A pane that cannot be opened for any other reason rejects: the command does not run unseen.
  */
 export async function requireVisiblePane(
@@ -36,12 +37,17 @@ export async function requireVisiblePane(
   config: ReturnType<typeof readWorkersSection>["workers"],
   wid: string,
   term: string,
-  noPane: boolean,
+  systemWaiver: SystemJob | undefined,
   dryRun: boolean,
   ledger: string
 ): Promise<boolean> {
-  void noPane; // --no-pane is no waiver: only workers.panes.required=false (or the operator's override) lets a start run unseen
   if (dryRun) return false;
+  // the typed system waiver (daemon jobs) is the only per-start waiver; a caller's own "no pane" request does not exist any more
+  if (systemWaiver) {
+    recordSystemWaiver(ledger, systemWaiver, wid);
+    process.stderr.write(`[pai worker] pane waived for ${wid}: system job ${systemWaiver}\n`);
+    return false;
+  }
   const waiver = paneWaiver(config);
   if (waiver) {
     appendLedger(ledger, "PANE-WAIVED", { id: wid, why: waiver });
@@ -105,7 +111,7 @@ export async function announcePane(
   config: ReturnType<typeof readWorkersSection>["workers"],
   wid: string,
   term: string,
-  noPane: boolean,
+  systemWaiver: SystemJob | undefined,
   ledger: string,
   status?: WorkerStatus
 ): Promise<void> {
@@ -118,7 +124,7 @@ export async function announcePane(
     setPane({ opened: true, exec: true });
     return;
   }
-  const why = noTerminalReasons.get(wid) ?? (noPane ? "--no-pane" : headlessAllowed() ?? "no pane owns this run");
+  const why = noTerminalReasons.get(wid) ?? (systemWaiver ? `system job ${systemWaiver}` : headlessAllowed() ?? "no pane owns this run");
   process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
   setPane({ opened: false, reason: why });
   void ledger;

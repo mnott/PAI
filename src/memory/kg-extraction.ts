@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { claudeHomeDir } from "../config/pai-home.js";
 
 import { buildTripleExtractionPrompt } from "../daemon/templates/triple-extraction-prompt.js";
+import { recordSystemJobStart } from "../workers/pane-waiver.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
 import type { StorageBackend } from "../storage/interface.js";
 
@@ -72,6 +73,7 @@ export async function spawnClaude(
   }
 
   const { spawn } = await import("node:child_process");
+  recordSystemJobStart("kg-extraction");
 
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;

@@ -132,7 +132,8 @@ export async function followPaneRun(
     if (st && st.state !== "running") {
       endedAt ||= Date.now();
       if (Date.now() - endedAt >= lingerSecs * 1000) {
-        // the pane closes itself whatever the exit code; the full output stays in the log
+        // a clean end closes the pane; a failed or lost run keeps it open showing the failure until the operator closes it
+        if (st.state !== "done") await new Promise<void>(() => setInterval(() => undefined, 1 << 30));
         await closeOwnPane(env, ops).catch(() => false);
         return;
       }

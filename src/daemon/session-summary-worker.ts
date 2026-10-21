@@ -43,6 +43,7 @@ import {
 } from "../memory/kg-extraction.js";
 import { getRegistryBackend } from "../storage/factory.js";
 import { storageBackend, daemonConfig } from "./daemon/state.js";
+import { recordSystemJobStart } from "../workers/pane-waiver.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
 import { claudeProjectsDir, legacyConfigDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import { findClaudeBinary } from "../memory/kg-extraction.js";
@@ -409,6 +410,7 @@ export async function spawnSummarizer(prompt: string, tier: ModelTier = "sonnet"
   }
 
   const { spawn } = await import("node:child_process");
+  recordSystemJobStart("session-summary");
 
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;

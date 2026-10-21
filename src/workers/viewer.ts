@@ -33,7 +33,7 @@ import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
 import { localIdleLine, readLocalIdle } from "./local-idle.js";
 import { readSchedFile, schedLine } from "../router/scheduler.js";
-import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { isChatPane, isLive, isTerminal, loadStatus, pidAlive, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { formatWorktreesStats, worktreesStats } from "./worktree.js";
 import { readInbox } from "./handoff.js";
@@ -1099,8 +1099,8 @@ export async function followWorkers(
         reason: exitReason,
         secs: Math.floor((Date.now() - started) / 1000),
       });
-      // pane mode (--auto-exit): the pane ends with its follow, whatever the profile does
-      if (autoExit) await closeOwnPane(env);
+      // pane mode (--auto-exit): the pane ends with its follow, whatever the profile does — only a clean end
+      if (autoExit && exitReason === "worker-ended") await closeOwnPane(env);
     }
   }
 
@@ -1233,6 +1233,19 @@ export async function followWorkers(
     const lingerOn = target; // resume swaps `target` under us (see above)
     if (lingerOn !== null && finished.has(lingerOn)) {
       if (autoExit) {
+        // the pane belongs to the worker's process: a same-id restart (slot died, fresh run) revives the
+        // run in this pane; a failed, killed or lost run keeps its failure on screen until the operator
+        // closes the pane; only a clean end whose process is gone may close it
+        const now = loadStatus(logDir, lingerOn);
+        if (now && !isTerminal(now.state)) {
+          finished.delete(lingerOn);
+          return { done: false };
+        }
+        if (!now || now.state !== "done" || (typeof now.pid === "number" && now.pid > 0 && pidAlive(now.pid))) {
+          writeLiveness();
+          await sleep(500);
+          return { done: false };
+        }
         // a draft in the prompt holds the countdown: the operator may be
         // about to say or resume something
         if (holdAutoExit(promptText())) {

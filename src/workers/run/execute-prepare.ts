@@ -124,7 +124,7 @@ export interface PreparedRun {
 }
 
 export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> {
-  const { config, logDir, target, model, label, parsed, noPane, limit, noBrowser } = a;
+  const { config, logDir, target, model, label, parsed, systemWaiver, limit, noBrowser } = a;
   const headless = parsed.headless;
 
   // openai-protocol providers run through the local proxy (started on demand)
@@ -149,7 +149,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (a.paneError) throw a.paneError;
   const paneVerified = a.panePrepared
     ? a.panePrepared.verified
-    : headless && (await requireVisiblePane(logDir, config, wid, term, noPane, a.printCmd === true, ledgerPath(logDir)));
+    : headless && (await requireVisiblePane(logDir, config, wid, term, systemWaiver, a.printCmd === true, ledgerPath(logDir)));
   a.spawnT0 = Date.now();
   const session = resolveSession(term);
   const sessionKey = await detectSessionName();

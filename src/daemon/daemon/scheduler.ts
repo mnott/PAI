@@ -7,7 +7,7 @@
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
-import { closeEndedPanes, loadRegistry, workerEnded } from "../../workers/pane.js";
+import { closeEndedPanes, loadRegistry, paneMayClose, workerEnded } from "../../workers/pane.js";
 import { isPaneRunId } from "../../workers/pane-run.js";
 import { realReaperDeps, reapOrphansOnce, REAP_TICK_MS, type ReaperState } from "../../workers/reaper.js";
 import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
@@ -572,7 +572,8 @@ const PANE_REAP_TICK_MS = 2_000;
 
 /** True once a worker is terminal and has been for longer than the reap grace. */
 export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean {
-  if (!st || st.state === "running" || st.state === "queued") return false;
+  // only a clean end: a failed, killed or lost worker's pane stays showing the failure until the operator closes it
+  if (!st || st.state !== "done") return false;
   const at = Date.parse(st.updated.replace(" ", "T"));
   return Number.isNaN(at) || now - at > PANE_REAP_GRACE_MS;
 }
@@ -589,7 +590,8 @@ export async function reapEndedPanesOnce(logDir: string, now = Date.now()): Prom
     logDir,
     (wid) => {
       const st = loadStatus(logDir, wid);
-      if (st !== null) return paneReapable(st, now);
+      // clean end AND the pane's own process gone (a pooled run's follow, a restarted same-id run still alive)
+      if (st !== null) return paneReapable(st, now) && paneMayClose(logDir, wid);
       // a pane-run pane: ended once its run wrote its end state (or its runner died)
       return isPaneRunId(wid) && workerEnded(logDir, wid);
     },
