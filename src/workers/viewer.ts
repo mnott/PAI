@@ -269,6 +269,9 @@ export interface FollowStep {
   state: FollowState;
 }
 
+/** Pane width assumed when the output is not a terminal (piped replay). */
+const FALLBACK_COLUMNS = Number(process.env.COLUMNS) > 0 ? Number(process.env.COLUMNS) : 100;
+
 /**
  * Gutter the rendered body of one event, wrapping when the pane width is
  * known. Unwrapped (null `wrapWidth`, e.g. piped output): the first row gets
@@ -384,7 +387,7 @@ export function replayOutput(
   const st =
     loadStatuses(logDir).find((s) => s.id === wid) ??
     ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
-  const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : null;
+  const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : FALLBACK_COLUMNS;
   const out: string[] = [headerLine(c, st), ...denialLines(st)];
   const raw = readFileSync(path, "utf8");
   const lines = tailLines !== undefined ? raw.trimEnd().split("\n").slice(-tailLines) : raw.split("\n");
@@ -751,7 +754,7 @@ export async function followWorkers(
       st.cwd ?? "",
       multi ? c("cyan", wid.slice(-4)) : undefined,
       undefined,
-      columns()
+      columns() ?? FALLBACK_COLUMNS
     );
     if (step.day) {
       out(c("dim", `── ${step.day} ──`));
@@ -930,7 +933,7 @@ export async function followWorkers(
         "",
         undefined,
         undefined,
-        columns()
+        columns() ?? FALLBACK_COLUMNS
       );
       if (step.day) out(c("dim", `── ${step.day} ──`));
       for (const ln of step.lines) out(ln);

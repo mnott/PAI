@@ -266,6 +266,37 @@ describe("makeOperatorInput", () => {
 // ---------------------------------------------------------------------------
 
 describe("applyEvent wrapping", () => {
+  const bash = (command: string) => ({
+    type: "assistant",
+    _ts: ts(12, 9),
+    message: { content: [{ type: "tool_use", name: "Bash", input: { command } }] },
+  });
+
+  it("a heredoc command keeps its lines and caps at 6 with a count", () => {
+    const cmd = Array.from({ length: 10 }, (_, i) => `line${i}`).join("\n");
+    const step = applyEvent(plain, initialFollowState(""), bash(cmd), "", undefined, OFF, 80);
+    expect(step.lines).toHaveLength(7);
+    expect(step.lines[0]).toBe("12:09:00 │ $ line0");
+    expect(step.lines[1]).toBe(" ".repeat(8) + " │   line1");
+    expect(step.lines[6]).toBe(" ".repeat(8) + " │   … +4 lines");
+  });
+
+  it("a long single line wraps at the width, no mid-word cut, bar kept", () => {
+    const cmd = "alpha ".repeat(30).trim();
+    const step = applyEvent(plain, initialFollowState(""), bash(cmd), "", undefined, OFF, 50);
+    expect(step.lines.length).toBeGreaterThan(2);
+    for (const ln of step.lines) expect(ln.length).toBeLessThanOrEqual(50);
+    expect(step.lines.slice(1).every((l) => l.startsWith(" ".repeat(8) + " │ "))).toBe(true);
+    expect(step.lines.join(" ")).not.toContain("…");
+  });
+
+  it("a width change is respected on the next event", () => {
+    const cmd = "alpha ".repeat(30).trim();
+    const wide = applyEvent(plain, initialFollowState(""), bash(cmd), "", undefined, OFF, 120);
+    const narrow = applyEvent(plain, initialFollowState(""), bash(cmd), "", undefined, OFF, 40);
+    expect(narrow.lines.length).toBeGreaterThan(wide.lines.length);
+  });
+
   it("folds a 120-character row at 40 columns into 29-wide rows behind the gutter", () => {
     const step = applyEvent(
       plain,

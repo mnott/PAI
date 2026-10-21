@@ -298,6 +298,14 @@ export function contextMeter(
   return label;
 }
 
+/** Lines of a multi-line text, trimmed of blank edges; the first `max` kept, the rest counted. */
+export function capLines(text: string, max = 6): string[] {
+  const lines = text.replace(/\s+$/, "").split("\n").map((l) => l.replace(/\s+$/, ""));
+  while (lines.length && lines[0] === "") lines.shift();
+  if (lines.length <= max) return lines;
+  return [...lines.slice(0, max), `… +${lines.length - max} lines`];
+}
+
 function renderToolUse(
   c: Paint,
   prefix: string,
@@ -319,7 +327,8 @@ function renderToolUse(
     // the job, not the mechanism: wait-on and detached starts read in plain words (raw command: `pai worker replay`)
     const plain = waitOnCallLine(get("command")) ?? detachedLine(get("command"));
     if (plain) return [`${prefix}${c("yellow", plain)}`];
-    return [`${prefix}${c("dim", "$")} ${shortText(get("command"), 160)}`];
+    const cmd = capLines(get("command"));
+    return cmd.map((ln, k) => (k === 0 ? `${prefix}${c("dim", "$")} ${ln}` : `${prefix}  ${ln}`));
   }
   if (name === "Edit") {
     const out = [`${prefix}${c("mag", "~")} Editing ${relPath(get("file_path"), cwd)}`];
@@ -406,9 +415,9 @@ export function renderEvent(
       } else if (isError) {
         // guard/hook denials are expected friction (amber); other errors are real (red)
         const denied = parseDenialText(text) !== null || / blocked:/.test(text);
-        out.push(`${prefix}    ${c(denied ? "yellow" : "red", "! " + shortText(text, 200))}`);
+        capLines(text).forEach((ln, k) => out.push(`${prefix}    ${c(denied ? "yellow" : "red", k === 0 ? "! " + ln : "  " + ln)}`));
       } else if (text.trim()) {
-        out.push(`${prefix}    ${c("dim", shortText(text, 120))}`);
+        for (const ln of capLines(text)) out.push(`${prefix}    ${c("dim", ln)}`);
       }
     }
   } else if (e.type === "result") {
