@@ -295,8 +295,13 @@ describe("live-shaped payloads", () => {
 });
 
 describe("cockpit layout follow-up", () => {
-  it("cloud and local models are cards in one responsive grid across the full width", () => {
-    expect(COCKPIT_HTML).toMatch(/\.pgrid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(260px,100%\),1fr\)\)/);
+  it("cloud and local models are cards in one responsive row across the full width", () => {
+    // a wrapping flex row, never a grid: a grid's last row can sit partial (one tile,
+    // half width, empty space beside it); flex: 1 1 makes every row fill, last row included
+    expect(COCKPIT_HTML).toMatch(/\.pgrid\{display:flex;flex-wrap:wrap;gap:8px;min-width:0;align-items:start\}/);
+    expect(COCKPIT_HTML).toMatch(/\.pgrid>\*\{flex:1 1 260px;min-width:min\(260px,100%\)/);
+    expect(COCKPIT_HTML).toMatch(/\.pgrid \.downs\{flex-basis:100%\}/);
+    expect(COCKPIT_HTML).not.toMatch(/\.pgrid\{[^}]*display:grid/);
     expect(COCKPIT_HTML).toContain('<div class="pgrid" id="cloud">');
     expect(COCKPIT_HTML).toContain('<div class="pgrid" id="local">');
     // two sub-headers, Local cards first, then Cloud cards
@@ -1447,7 +1452,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
 
   it("providerTileMinPx moves the provider grid's min column width", () => {
     write({ providerTileMinPx: 300 });
-    expect(cockpitHtml()).toContain(".pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))");
+    expect(cockpitHtml()).toContain(".pgrid>*{flex:1 1 300px;min-width:min(300px,100%)}");
   });
 
   it("runtimeCardMinPx moves the runtime grid's min column width", () => {
