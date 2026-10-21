@@ -1,5 +1,5 @@
 /**
- * `pai router start|stop|status|run|stats` — local model router on port 8790.
+ * `pai router start|stop|status|run|stats` — local model router on router.port.
  * See src/router/router.ts. Names, flags and stdout match the old CLI.
  */
 
@@ -33,7 +33,7 @@ const out = (s: string) => void process.stdout.write(s + "\n");
 const startCommand: CommandDef = {
   name: "start",
   summary: "Start the router in the background",
-  description: "Starts the local model router (127.0.0.1:8790). If it is already running, says so and does nothing.",
+  description: "Starts the local model router (127.0.0.1:<router.port>). If it is already running, says so and does nothing.",
   examples: ["pai router start", "pai router status"],
   seeAlso: ["pai router stop", "pai router status"],
   run() {
