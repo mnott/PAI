@@ -239,6 +239,24 @@ function tempConfig(yaml: string): () => void {
   };
 }
 
+/** Upstream is gated, not timed: B queues behind A, and is released only once two pings
+ *  have arrived on B's stream — no wall-clock budget to miss under load. */
+async function expectQueuedPings() {
+  let release!: () => void;
+  const t = await setup(() => 0, true, new Promise<void>((r) => (release = r)));
+  const until = async (ok: () => boolean) => { while (!ok()) await new Promise((r) => setTimeout(r, 5)); };
+  const first = t.call("one", "A", "w1");
+  await until(() => t.served.length === 1);
+  let seen = "";
+  const second = t.call("two", "B", "w2", true, (text) => (seen = text));
+  await until(() => (seen.match(/event: ping/g) ?? []).length >= 2);
+  release();
+  const [, b] = await Promise.all([first, second]);
+  expect(b.status).toBe(200);
+  expect(b.text.match(/event: ping/g)!.length).toBeGreaterThanOrEqual(2);
+  expect(b.text).toContain("message_delta");
+}
+
 describe("router.scheduling values from config", () => {
   afterEach(() => setSchedConfigSource(() => DEFAULT_SCHED));
 
@@ -312,14 +330,7 @@ describe("router.scheduling values from config", () => {
     const cleanup = tempConfig("router:\n  scheduling:\n    pingMs: 25\n");
     try {
       setSchedConfigSource(() => schedConfigFrom(loadConfig().router.scheduling));
-      const t = await setup(() => 150, true);
-      const first = t.call("one", "A", "w1");
-      await new Promise((r) => setTimeout(r, 10));
-      const second = await t.call("two", "B", "w2");
-      await first;
-      expect(second.status).toBe(200);
-      expect(second.text.match(/event: ping/g)!.length).toBeGreaterThanOrEqual(2);
-      expect(second.text).toContain("message_delta");
+      await expectQueuedPings();
     } finally {
       cleanup();
     }
@@ -333,7 +344,7 @@ afterEach(() => {
   delete process.env.PAI_ROUTER_PING_MS;
 });
 
-async function setup(holdMs: (n: number) => number, stream = false) {
+async function setup(holdMs: (n: number) => number, stream = false, gate?: Promise<void>) {
   let active = 0;
     let maxActive = 0;
     const served: string[] = [];
@@ -345,7 +356,7 @@ async function setup(holdMs: (n: number) => number, stream = false) {
         active++;
         maxActive = Math.max(maxActive, active);
         served.push(tag);
-        setTimeout(() => {
+        const respond = () => {
           active--;
           if (stream) {
             res.writeHead(200, { "content-type": "text/event-stream" });
@@ -354,7 +365,9 @@ async function setup(holdMs: (n: number) => number, stream = false) {
             res.writeHead(200, { "content-type": "application/json" });
             res.end(JSON.stringify({ id: "m", usage: { input_tokens: tag.startsWith("long") ? 9000 : 10, output_tokens: 3 } }));
           }
-        }, holdMs(served.length));
+        };
+        if (gate) void gate.then(respond);
+        else setTimeout(respond, holdMs(served.length));
       });
     });
     await new Promise<void>((r) => up.listen(0, "127.0.0.1", r));
@@ -366,13 +379,13 @@ async function setup(holdMs: (n: number) => number, stream = false) {
     await new Promise<void>((r) => router.listen(0, "127.0.0.1", r));
     closers.push(() => { router.close(); up.close(); });
     const port = (router.address() as AddressInfo).port;
-    const call = (tag: string, session: string, worker: string, bodyStream = stream) =>
+    const call = (tag: string, session: string, worker: string, bodyStream = stream, onData?: (text: string) => void) =>
       new Promise<{ status: number; text: string }>((resolve, reject) => {
         const rq = http.request(
           { host: "127.0.0.1", port, path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "eng", "x-pai-session": session, "x-pai-worker": worker } },
           (res) => {
             let text = "";
-            res.on("data", (c) => (text += c));
+            res.on("data", (c) => { text += c; onData?.(text); });
             res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
           }
         );
@@ -403,14 +416,7 @@ describe("router scheduling", () => {
 
   it("pings a queued stream every interval, then delivers the response", async () => {
     process.env.PAI_ROUTER_PING_MS = "25";
-    const t = await setup(() => 150, true);
-    const first = t.call("one", "A", "w1");
-    await new Promise((r) => setTimeout(r, 10));
-    const second = await t.call("two", "B", "w2");
-    await first;
-    expect(second.status).toBe(200);
-    expect(second.text.match(/event: ping/g)!.length).toBeGreaterThanOrEqual(2);
-    expect(second.text).toContain("message_delta");
+    await expectQueuedPings();
   });
 
   it("fails open when the scheduler config source throws", async () => {
