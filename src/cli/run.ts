@@ -6,9 +6,9 @@
 
 import { readFileSync } from "node:fs";
 import { resolveFromModule } from "../module-paths.js";
-import type { CommandDef, GroupDef } from "./define.js";
+import type { CommandDef, GroupDef, Io } from "./define.js";
 import { CliError } from "./define.js";
-import { colorEnabled, makeStyle, renderCommandHelp, renderOverview, suggest, usageLine, type Style } from "./help.js";
+import { colorEnabled, makeStyle, renderCommandHelp, renderOverview, suggest, usageLine } from "./help.js";
 import { parseArgs, UsageError } from "./parse.js";
 
 export function cliVersion(): string {
@@ -20,11 +20,7 @@ export function cliVersion(): string {
   }
 }
 
-export interface Io {
-  out(s: string): void;
-  err(s: string): void;
-  style: Style;
-}
+export type { Io };
 
 export function defaultIo(): Io {
   return {
@@ -111,7 +107,7 @@ export async function runCli(groups: GroupDef[], argv: string[], io: Io = defaul
       io.err("See: pai help more");
       return 1;
     }
-    return (await cmd.run(parsed)) ?? 0;
+    return (await cmd.run(parsed, io)) ?? 0;
   } catch (e) {
     if (e instanceof UsageError) {
       io.err(st.red(`pai: ${e.message}`));

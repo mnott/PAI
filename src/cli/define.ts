@@ -4,6 +4,8 @@
  * text people see and the behaviour they get cannot drift apart.
  */
 
+import type { Style } from "./help.js";
+
 export interface ArgDef {
   /** Upper-case placeholder shown in Usage, e.g. NAME_OR_ID. */
   name: string;
@@ -68,7 +70,12 @@ export interface CommandDef {
   passthrough?: boolean;
   /** Options and words this command does not know are kept, in order, in `rest` (for commands that wrap another program). */
   allowUnknown?: boolean;
-  run?: (ctx: RunContext) => Promise<number | void> | number | void;
+  /**
+   * The command's run. `io` is the same Io the dispatcher got: commands that
+   * spawn a probe process read `io.run` when it is set (tests inject a runner;
+   * production leaves it unset and spawns for real).
+   */
+  run?: (ctx: RunContext, io?: Io) => Promise<number | void> | number | void;
 }
 
 export type GroupId = "sessions" | "providers" | "help" | "workers" | "memory" | "daemon";
@@ -79,6 +86,15 @@ export interface GroupDef {
   /** Shown on the overview screen; otherwise only under `pai help more`. */
   daily: boolean;
   commands: CommandDef[];
+}
+
+/** A command run's output channel; `run` is the spawn seam probe commands use (tests inject it). */
+export interface Io {
+  out(s: string): void;
+  err(s: string): void;
+  style: Style;
+  /** Replaces spawning a probe process (argv, env, timeout) — tests only. */
+  run?: (argv: string[], env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<{ rc: number; stdout: string; stderr: string }>;
 }
 
 /** Shared flags: one spelling, one meaning, everywhere. */

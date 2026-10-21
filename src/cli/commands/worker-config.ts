@@ -11,8 +11,20 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } fr
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
-import { PROVIDER_TAGS, WorkersConfigError, expandHome, readWorkersSection, type ClassTarget } from "../../workers/config.js";
-import { applyPolicyToRoutes, clearSessionRoute, resolveSessionArg, routeRows, routeText, setRoute, setSessionRoute } from "../../workers/route-table.js";
+import {
+  ANTHROPIC_NATIVE,
+  PROVIDER_TAGS,
+  WorkersConfigError,
+  expandHome,
+  getProviderOrNative,
+  nativeAnthropicProvider,
+  readWorkersSection,
+  type ClassTarget,
+  type WorkerProvider,
+  type WorkersConfig,
+} from "../../workers/config.js";
+import { applyPolicyToRoutes, clearSessionRoute, resolveSessionArg, routeRows, routeText, servingChip, setRoute, setSessionRoute } from "../../workers/route-table.js";
+import { findTier, parseEntry } from "../../workers/route-lists.js";
 import { budgetCache } from "../../workers/budget.js";
 import { ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { appendLedger } from "../../workers/ledger.js";
@@ -62,7 +74,7 @@ import { describeMcp } from "../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../workers/controls.js";
 import { loadStatus } from "../../workers/status.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../workers/proxy/server.js";
-import { CliError, type CommandDef, type OptDef } from "../define.js";
+import { CliError, type CommandDef, type Io, type OptDef, type RunContext } from "../define.js";
 import { dim, err, ok, warn } from "../lib/utils.js";
 import { useCommand } from "./providers.js";
 import { psTable } from "../../workers/ps-table.js";
@@ -329,31 +341,81 @@ const enableDisable = (enable: boolean): CommandDef => ({
   },
 });
 
+/** The provider a worker run would use now: the t2 tier's first available entry, else the active provider. */
+async function resolveTestTarget(workers: WorkersConfig, logDir: string): Promise<{ name: string; provider: WorkerProvider; why: string } | null> {
+  const tier = findTier(workers.tiers, "t2");
+  if (tier) {
+    const rows = await routeRows({ ...workers, tiers: [tier] }, { logDir });
+    const chip = servingChip(rows[0]?.chips ?? []);
+    if (chip) {
+      const { provider } = parseEntry(chip.entry);
+      const p = getProviderOrNative(workers, provider);
+      if (p) return { name: provider, provider: p, why: `routing uses it now (${tier.id}: ${chip.label})` };
+    }
+  }
+  // no entry of the row serves: the active provider stands unless the row
+  // itself is the routing (a row with entries means routing decides)
+  const active = workers.active && workers.active !== "auto" ? workers.active : null;
+  if (active && !(tier && tier.models.length)) {
+    const p = getProviderOrNative(workers, active);
+    if (p) return { name: active, provider: p, why: "the active provider" };
+  }
+  return null;
+}
+
 const providersTestCommand: CommandDef = {
   name: "test",
-  summary: "Send one word through a provider to check it answers",
-  description: "Sends a tiny prompt and prints the reply and the time it took. Exits 1 if the provider does not answer. Without a name it tests the active provider.",
-  args: [{ name: "NAME", summary: "Provider to test (default: the active one)" }],
+  summary: "Check a provider answers — without a name, what workers would use now",
+  description:
+    "With a NAME, sends a tiny prompt through that provider and prints the reply and the time it took; exits 1 if it does not answer. " +
+    "Without a NAME it tests the provider routing would use for a worker now: the t2 tier's first available entry, else the active provider. " +
+    "The built-in `anthropic` provider is Claude Code's own login: it probes the local `claude` CLI (installed and logged in) and never needs an API key.",
+  args: [{ name: "NAME", summary: "Provider to test (default: what routing would use now)" }],
   examples: ["pai worker providers test", "pai worker providers test glm"],
-  seeAlso: ["pai worker providers list"],
-  async run(ctx) {
+  seeAlso: ["pai worker providers list", "pai worker route"],
+  async run(ctx, io?) {
     try {
       const name = ctx.args.NAME as string | undefined;
       const { workers } = readWorkersSection();
-      const pname = name ?? workers.active ?? "";
-      if (!pname || !workers.providers[pname]) {
-        throw new WorkersConfigError(name ? `no provider named "${name}"` : "no active provider — name one explicitly");
+      const logDir = workersLogDir(workers);
+      let pname: string;
+      let provider: WorkerProvider;
+      let why: string;
+      if (name) {
+        // the built-in login is synthesized; any other name must exist
+        const p = name === ANTHROPIC_NATIVE ? nativeAnthropicProvider(workers.nativeModels) : workers.providers[name];
+        if (!p) throw new WorkersConfigError(`no provider named "${name}"`);
+        pname = name;
+        provider = p;
+        why = "named";
+      } else {
+        // the built-in login is never a tier entry: with no routing target and
+        // no active provider, workers run on it (the default), so test it
+        const target = await resolveTestTarget(workers, logDir);
+        if (target) {
+          ({ name: pname, provider, why } = target);
+        } else if (!workers.active || workers.active === "auto") {
+          pname = ANTHROPIC_NATIVE;
+          provider = nativeAnthropicProvider(workers.nativeModels);
+          why = "the default: no active provider";
+        } else {
+          throw new WorkersConfigError(
+            `no provider available for a worker right now — add one with: pai worker providers add <name> --url <url> --model <model> --key-file <path>, ` +
+              `or make one the active provider with: pai worker providers use <name> (see: pai worker providers)`
+          );
+        }
       }
-      out(dim(`  probing ${pname} (${workers.providers[pname].models.default}) …`));
-      const r = await testProvider(pname, workers.providers[pname], workersLogDir(workers), undefined, workers.caveman);
+      io?.out(dim(`  probing ${pname} (${provider.models.default}) — ${why} …`));
+      const r = await testProvider(pname, provider, logDir, undefined, workers.caveman, io?.run ? { run: io.run } : undefined);
       const head = `${r.provider} ${r.model}  ${(r.latencyMs / 1000).toFixed(1)}s`;
+      const say = (s: string) => void (io?.out(s) ?? out(s));
       if (r.skipped) {
-        out(dim(`  ${head}  ${r.skipped}`));
-        out(`  reply: ${r.result.slice(0, 200)}`);
+        say(dim(`  ${head}  ${r.skipped}`));
+        say(`  next: ${r.result.slice(0, 200)}`);
         return 0;
       }
-      out(r.ok ? ok(`  ${head}`) : err(`  ${head}`));
-      out(`  reply: ${r.result.slice(0, 200)}`);
+      say(r.ok ? ok(`  ${head}`) : err(`  ${head}`));
+      say(`  reply: ${r.result.slice(0, 200)}`);
       return r.ok ? 0 : 1;
     } catch (e) {
       fail(e, PROVIDERS_HINT);
@@ -420,7 +482,7 @@ export const workerProvidersCommand: CommandDef = {
   examples: ["pai worker providers", "pai worker providers use glm", "pai worker providers test glm"],
   seeAlso: ["pai providers", "pai worker classes", "pai worker config"],
   subcommands: [providersListCommand, useCommand, ...PROVIDER_EDIT_COMMANDS],
-  run: providersListCommand.run,
+  run: (ctx: RunContext, io?: Io) => providersListCommand.run!(ctx, io),
 };
 
 // ---------------------------------------------------------------------------
@@ -513,7 +575,7 @@ export const workerClassesCommand: CommandDef = {
   examples: ["pai worker classes", "pai worker classes set review kimi"],
   seeAlso: ["pai worker providers", "pai worker policy"],
   subcommands: [classListCommand, classSetCommand, classUnsetCommand],
-  run: classListCommand.run,
+  run: (ctx: RunContext, io?: Io) => classListCommand.run!(ctx, io),
 };
 
 export const workerRolesCommand: CommandDef = {
