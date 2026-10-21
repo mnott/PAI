@@ -133,6 +133,9 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       const res = await resolveLocalProvider(config, logDir);
       providerFlag = res.name;
       providerWhy = "local";
+      // a tier-launched server answers although its provider entry is off; it is running, so this run may use it
+      const resolved = config.providers[res.name];
+      if (resolved) resolved.enabled = true;
       if (!opts.quiet) process.stderr.write(`pai worker: local provider ${res.name} (${res.why})\n`);
     } catch (e) {
       // --print-cmd is a dry run: nothing must answer a port for the argv

@@ -31,6 +31,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { isLoopbackProvider } from "./run-env.js";
+import { readLocalConfig } from "./local-tiers.js";
 import { loadStatuses } from "./status.js";
 import { workersYamlPath } from "./workers-config.js";
 import { workersLogDir } from "./paths.js";
@@ -69,12 +70,31 @@ export function providerHostPort(p: WorkerProvider): { host: string; port: numbe
   }
 }
 
-/** Probe every enabled loopback provider in parallel: name → running. */
+/**
+ * Providers a `local:` tier launches. `pai worker local <tier>` and the cockpit
+ * start those without touching `enabled:`, so a running tier server is a
+ * candidate for --local even when its provider entry is switched off.
+ */
+export function tierProviderNames(yamlPath: string = workersYamlPath()): string[] {
+  try {
+    return Object.values(readLocalConfig(yamlPath).tiers).map((t) => t.provider);
+  } catch {
+    return [];
+  }
+}
+
+/** A loopback provider --local may run on: enabled, or launched by a tier. */
+function isLocalCandidate(p: WorkerProvider, name: string, tierProviders: string[]): boolean {
+  return (p.enabled || tierProviders.includes(name)) && isLoopbackProvider(p);
+}
+
+/** Probe every candidate loopback provider in parallel: name → running. */
 export async function probeLoopback(
   cfg: Pick<WorkersConfig, "providers">,
-  check: PortCheck = httpModelsCheck
+  check: PortCheck = httpModelsCheck,
+  tierProviders: string[] = tierProviderNames()
 ): Promise<Record<string, boolean>> {
-  const local = Object.entries(cfg.providers).filter(([, p]) => p.enabled && isLoopbackProvider(p));
+  const local = Object.entries(cfg.providers).filter(([n, p]) => isLocalCandidate(p, n, tierProviders));
   const out: Record<string, boolean> = {};
   await Promise.all(
     local.map(async ([name, p]) => {
@@ -141,8 +161,11 @@ export async function resolveLocalProvider(
   // A cached "none" is never trusted: only a fresh probe may say none.
   const cached = opts.check ? null : readLocalStatus(logDir);
   const r = cached?.running;
-  if (r && cfg.providers[r.provider]?.enabled) return { name: r.provider, why: `daemon: ${r.why}` };
-  const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck))
+  const p = r ? cfg.providers[r.provider] : undefined;
+  if (r && p && isLocalCandidate(p, r.provider, tierProviderNames(opts.yamlPath))) {
+    return { name: r.provider, why: `daemon: ${r.why}` };
+  }
+  const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck, tierProviderNames(opts.yamlPath)))
     .filter(([, running]) => running)
     .map(([name]) => name);
   if (!up.length) throw new NoLocalServerError(noServerMessage());
@@ -180,11 +203,12 @@ export async function computeLocalStatus(
   logDir: string,
   opts: { check?: PortCheck; yamlPath?: string; now?: Date } = {}
 ): Promise<LocalStatus> {
-  const probed = await probeLoopback(cfg, opts.check ?? httpModelsCheck);
+  const tiers = tierProviderNames(opts.yamlPath);
+  const probed = await probeLoopback(cfg, opts.check ?? httpModelsCheck, tiers);
   const up = Object.entries(probed).filter(([, v]) => v).map(([n]) => n);
   const down = Object.entries(probed).filter(([, v]) => !v).map(([n]) => n);
   const disabled = Object.entries(cfg.providers)
-    .filter(([, p]) => !p.enabled && isLoopbackProvider(p))
+    .filter(([n, p]) => !isLocalCandidate(p, n, tiers) && isLoopbackProvider(p))
     .map(([n]) => n);
   let running: LocalStatus["running"] = null;
   if (up.length) {
@@ -211,7 +235,8 @@ export async function currentLocalStatus(
   const workers = opts.cfg ?? readWorkersSection().workers;
   const dir = logDir ?? workersLogDir(workers as WorkersConfig);
   const cached = opts.check ? null : readLocalStatus(dir);
-  if (cached?.running && workers.providers[cached.running.provider]?.enabled) return cached;
+  const cp = cached?.running ? workers.providers[cached.running.provider] : undefined;
+  if (cached?.running && cp && isLocalCandidate(cp, cached.running.provider, tierProviderNames())) return cached;
   return computeLocalStatus(workers, dir, { check: opts.check });
 }
 

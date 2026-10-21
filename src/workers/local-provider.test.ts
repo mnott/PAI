@@ -108,3 +108,24 @@ describe("readLocalPreference", () => {
     expect(readLocalPreference(join(dir, "c.yaml"))).toBe("flashnext-iq3");
   });
 });
+
+describe("tier providers", () => {
+  const dir = tmp();
+  const yamlPath = join(dir, "workers.yaml");
+  writeFileSync(
+    yamlPath,
+    "local_tiers:\n  t:\n    engine: script\n    label: T\n    provider: tierprov\n    start: /bin/true\n    port: 8034\n    memoryGb: 1\n"
+  );
+  const c = {
+    providers: { tierprov: prov("http://127.0.0.1:8034", false), other: prov("http://127.0.0.1:8011") },
+  } as unknown as Pick<WorkersConfig, "providers">;
+
+  it("a running tier server is found although its provider is disabled", async () => {
+    const r = await resolveLocalProvider(c, tmp(), { check: async (_h, p) => p === 8034, yamlPath });
+    expect(r.name).toBe("tierprov");
+  });
+
+  it("no server up: clear error", async () => {
+    await expect(resolveLocalProvider(c, tmp(), { check: noneUp, yamlPath })).rejects.toThrow(/no local model server is running/);
+  });
+});
