@@ -2397,8 +2397,18 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     // the box scrolls inside itself with a theme-coloured thin scrollbar; the first column sticks
     expect(COCKPIT_HTML).toMatch(/\.tw\{[^}]*max-width:100%[^}]*scrollbar-color:var\(--dim\) var\(--card\);scrollbar-width:thin\}/);
     expect(COCKPIT_HTML).toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky;left:0;background:var\(--card\)\}/);
-    // below the phone breakpoint a row is a stacked card: label: value pairs, no columns
-    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{\.tw\{overflow-x:visible\}\.tw table\{display:block\}\.tw thead\{display:block\}\.tw tbody\{display:block/);
+    // below the phone breakpoint a row is a stacked card: label: value pairs, no columns.
+    // parse the media block and check declarations, so selector grouping and property
+    // order don't matter — the behaviour is what counts, not the spelling.
+    // the header block and the table block share this breakpoint in separate media rules;
+    // take the one containing the .tw rules
+    const phone = [...COCKPIT_HTML.matchAll(/@media\(max-width:480px\)\{([\s\S]*?)\}(?=\n|$)/g)].map((m) => m[1]).find((b) => b.includes(".tw"));
+    expect(phone).toBeDefined();
+    const decl = (sel: string) =>
+      [...phone!.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => m[1].split(",").some((s) => s.trim() === sel));
+    expect(decl(".tw tbody").some((m) => /display:\s*block/.test(m[2]))).toBe(true);
+    expect(decl(".tw thead").some((m) => /display:\s*none/.test(m[2]))).toBe(true);
+    expect(decl(".tw tr:first-child").some((m) => /display:\s*none/.test(m[2]))).toBe(true);
     expect(COCKPIT_HTML).toMatch(/\.tw td::before\{content:attr\(data-l\)/);
   });
 
