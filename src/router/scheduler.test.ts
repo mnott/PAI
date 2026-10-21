@@ -200,6 +200,13 @@ describe("RequestScheduler", () => {
     expect(schedLine(null)).toBe("");
   });
 
+  it("copies of one model read as one engine with a count", () => {
+    const e = (session: string) => ({ inflight: { session, worker: "w", sinceMs: 1 }, queued: {}, counters: { [session]: 5 } });
+    expect(schedLine({ at: 1, workers: {}, engines: { gyro: e("s1"), "gyro#2": e("s2") } })).toBe(
+      "local scheduler: gyro x2 in flight (s1, s2), s1 5 tokens served, s2 5 tokens served"
+    );
+  });
+
   it("names sessions when known, else the first 8 chars — never a raw uuid; counters read as tokens served", () => {
     const uuid = "d875bcac-1111-2222-3333-444455556666";
     const s = { at: 1, workers: {}, engines: { gyro: { inflight: { session: uuid, worker: "w", sinceMs: 1 }, queued: {}, counters: { [uuid]: 18120 } } } };

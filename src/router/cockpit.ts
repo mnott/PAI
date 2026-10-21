@@ -226,6 +226,8 @@ export function buildCockpitData(
   const byModel = new Map<string, Tok & { model: string; provider: string; requests: number; errors: number }>();
   const byProvider = new Map<string, Tok & { provider: string; requests: number; errors: number; retries: number; ms: number }>();
   const ttftByProvider = new Map<string, number[]>();
+  /** per copy of a local model: provider\0instance -> counts (tooltip of the provider aggregate) */
+  const byInstance = new Map<string, Tok & { provider: string; instance: string; requests: number; errors: number; ms: number }>();
   const bySession = new Map<string, Tok & { session: string; name: string | null; requests: number; errors: number; busts: number; lastTs: string; models: Set<string> }>();
   const pause = new Map<string, Map<string, { n: number; hit: number; write: number; miss: number; readTok: number; writeTok: number }>>();
   const bustParts: Record<string, number> = {};
@@ -258,6 +260,15 @@ export function buildCockpitData(
     if (isErr) p.errors++;
     if (retries.has(r)) p.retries++;
     byProvider.set(r.provider, p);
+    if (r.instance) {
+      const ik = `${r.provider}\u0000${r.instance}`;
+      const i = byInstance.get(ik) ?? { ...tok(), provider: r.provider, instance: r.instance, requests: 0, errors: 0, ms: 0 };
+      addTok(i, r);
+      i.requests++;
+      i.ms += r.ms ?? 0;
+      if (isErr) i.errors++;
+      byInstance.set(ik, i);
+    }
     if (!isErr && r.ttftMs !== undefined) {
       const ts = ttftByProvider.get(r.provider) ?? [];
       ts.push(r.ttftMs);
@@ -343,7 +354,7 @@ export function buildCockpitData(
     totals: { ...withRatio(total), requests: rows.length, errors },
     series,
     byModel: [...byModel.values()].map(withRatio).sort((a, b) => b.requests - a.requests),
-    byProvider: [...byProvider.values()].map((p) => ({ ...withRatio(p), avgMs: p.requests ? Math.round(p.ms / p.requests) : 0, ttftP50: percentile(ttftByProvider.get(p.provider) ?? [], 0.5) })),
+    byProvider: [...byProvider.values()].map((p) => ({ ...withRatio(p), avgMs: p.requests ? Math.round(p.ms / p.requests) : 0, ttftP50: percentile(ttftByProvider.get(p.provider) ?? [], 0.5), instances: [...byInstance.values()].filter((i) => i.provider === p.provider).sort((a, b) => a.instance.localeCompare(b.instance, undefined, { numeric: true })).map((i) => ({ ...withRatio(i), avgMs: i.requests ? Math.round(i.ms / i.requests) : 0 })) })),
     bySession: sessionRows,
     cachePause: [...pause.entries()].map(([model, pm]) => ({
       model,

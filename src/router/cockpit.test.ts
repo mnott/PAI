@@ -42,6 +42,15 @@ describe("cockpit provider keys", () => {
     expect(d.byProvider.map((p) => p.provider).sort()).toEqual(["glm", "local30x8", "unknown"]);
     expect(Object.keys(d.promptByProvider).sort()).toEqual(["glm", "local30x8", "unknown"]);
   });
+  it("per-instance breakdown nests under the provider aggregate", () => {
+    const d = buildCockpitData(
+      [row(1, { provider: "gyro" }), row(2, { provider: "gyro", instance: "#2" }), row(3, { provider: "gyro", instance: "#2", status: 500 }), row(4, { provider: "gyro", instance: "#10" })],
+      "1h", NOW
+    );
+    expect(d.byProvider).toHaveLength(1);
+    expect(d.byProvider[0].requests).toBe(4);
+    expect(d.byProvider[0].instances.map((i) => `${i.instance}/${i.requests}/${i.errors}`)).toEqual(["#2/2/1", "#10/1/0"]);
+  });
   it("without a config rows stay as logged", () => {
     const d = buildCockpitData([row(2, { provider: "coder8" })], "1h", NOW);
     expect(d.byProvider.map((p) => p.provider)).toEqual(["coder8"]);

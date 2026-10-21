@@ -26,6 +26,8 @@ export interface UsageRow extends Usage {
   ts: string;
   model: string;
   provider: string;
+  /** copy of a local model that served the request ("#2"); absent for single-instance and cloud rows */
+  instance?: string;
   status: number;
   ms: number;
   bytes: number;

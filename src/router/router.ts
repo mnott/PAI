@@ -36,7 +36,7 @@ import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
-import { instanceEngineKey, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
+import { instanceEngineKey, instanceNumber, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -532,6 +532,7 @@ export function routerHandler(
       const prov = target.kind === "claude" ? ANTHROPIC_NATIVE : target.name;
       // scheduler / parker engine: one per running instance (n=1 keeps the bare provider name)
       let engine = prov;
+      let instanceTag: string | undefined;
       if (target.kind === "provider" && isLocal(up.url)) {
         const picked = pickInstance(prov, instancesOf().filter((i) => i.provider === target.name), (k) => held.get(k) ?? 0);
         if (picked) {
@@ -539,6 +540,7 @@ export function routerHandler(
           up.url.protocol = u.protocol;
           up.url.host = u.host;
           engine = instanceEngineKey(picked);
+          instanceTag = `#${instanceNumber(picked.id)}`;
           held.set(engine, (held.get(engine) ?? 0) + 1);
           let freed = false;
           const free = () => {
@@ -569,6 +571,7 @@ export function routerHandler(
           cache: verdict(usage),
         };
         const needsInput = target.kind === "provider" && row.input_tokens === 0 && (row.output_tokens ?? 0) > 0 && status < 400;
+        if (instanceTag) row.instance = instanceTag;
         if (session) row.session = session;
         if (sessionId) row.session_id = sessionId;
         row.requested_model = requested;

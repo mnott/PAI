@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import type { UsageRow } from "./usage.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -393,7 +394,8 @@ describe("router: spread over local instances", () => {
     // the provider's own url is a dead port: only instance expansion can reach a server
     const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: "http://127.0.0.1:1", models: { default: "gyro-m" } } } }).providers;
     let running: LocalInstance[] = [inst(1, pa), inst(2, pb)];
-    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, { instances: () => running });
+    const rows: UsageRow[] = [];
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, (row) => rows.push(row), undefined, { instances: () => running });
     const port = await listen(r);
     try {
       const codes = await Promise.all(Array.from({ length: 6 }, () => post(port)));
@@ -401,6 +403,9 @@ describe("router: spread over local instances", () => {
       expect(hits.a).toBeGreaterThan(0);
       expect(hits.b).toBeGreaterThan(0);
       expect(hits.a + hits.b).toBe(6);
+      await vi.waitFor(() => expect(rows).toHaveLength(6));
+      expect(new Set(rows.map((x) => x.provider))).toEqual(new Set(["gyro"]));
+      expect(new Set(rows.map((x) => x.instance))).toEqual(new Set(["#1", "#2"]));
       running = [inst(2, pb)];
       const before = { ...hits };
       await Promise.all(Array.from({ length: 3 }, () => post(port)));

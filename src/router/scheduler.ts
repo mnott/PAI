@@ -392,13 +392,26 @@ export function readSchedFile(dir: string, now = Date.now()): SchedSnapshot | nu
 export function schedLine(s: SchedSnapshot | null, names?: Record<string, string>): string {
   if (!s) return "";
   const label = (sid: string): string => names?.[sid] ?? sid.slice(0, 8);
-  const parts: string[] = [];
+  // copies of one model (`gyro-m`, `gyro-m#2`) read as one engine: `gyro-m x2`
+  const groups = new Map<string, Array<SchedSnapshot["engines"][string]>>();
   for (const [name, e] of Object.entries(s.engines)) {
-    const q = Object.entries(e.queued);
-    if (!e.inflight && !q.length) continue;
-    const c = Object.entries(e.counters).map(([k, v]) => `${label(k)} ${v} tokens served`);
+    if (!e.inflight && !Object.keys(e.queued).length) continue;
+    const base = name.replace(/#\d+$/, "");
+    groups.set(base, [...(groups.get(base) ?? []), e]);
+  }
+  const parts: string[] = [];
+  for (const [base, es] of groups) {
+    const inflight = es.filter((e) => e.inflight).map((e) => label(e.inflight!.session));
+    const queued: Record<string, number> = {};
+    const counters: Record<string, number> = {};
+    for (const e of es) {
+      for (const [k, n] of Object.entries(e.queued)) queued[k] = (queued[k] ?? 0) + n;
+      for (const [k, n] of Object.entries(e.counters)) counters[k] = (counters[k] ?? 0) + n;
+    }
+    const q = Object.entries(queued);
+    const c = Object.entries(counters).map(([k, v]) => `${label(k)} ${v} tokens served`);
     parts.push(
-      `${name} ${e.inflight ? `in flight (${label(e.inflight.session)})` : "idle"}` +
+      `${base}${es.length > 1 ? ` x${es.length}` : ""} ${inflight.length ? `in flight (${inflight.join(", ")})` : "idle"}` +
         (q.length ? `, queued ${q.map(([k, n]) => `${label(k)} ${n}`).join(" ")}` : "") +
         (c.length ? `, ${c.join(", ")}` : "")
     );
