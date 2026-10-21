@@ -79,6 +79,13 @@ svg text{fill:var(--dim);font-size:10px}
 .mt{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .mt-label{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim)}
 .mt{position:relative}.tgrip{position:absolute;top:4px;right:6px;opacity:0;transition:opacity .12s;cursor:grab;color:var(--dim);font-size:11px;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}
+.pgroup{position:relative}.pgrid>.tgroup{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 100%;min-width:0;align-items:start}.tgroup>.pgroup{flex:1 1 ${L.providerTileMinPx}px;min-width:min(${L.providerTileMinPx}px,100%)}
+.tctl{position:absolute;top:2px;right:20px;opacity:0;transition:opacity .12s;border:0;background:none;color:var(--dim);font-size:13px;line-height:1;cursor:pointer;padding:2px 4px}
+.mt:hover .tctl,.pgroup:hover .tctl,.pgroup:hover .tgrip,.tctl:focus-visible,.tmin .tctl{opacity:.7}@media(hover:none){.tctl{opacity:.6}}
+.tchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.tchips>.tmin{flex:0 0 auto}
+.tmin{display:flex;flex-direction:row;align-items:center;gap:8px;padding:4px 44px 4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;margin:0;min-width:0}
+.tmin::before{content:attr(data-tname);font-weight:600}.tmin::after{content:attr(data-tval);color:var(--dim);font-variant-numeric:tabular-nums}
+.tmin>*:not(.tctl):not(.tgrip){display:none}.tmin .tgrip{right:6px;opacity:.6}
 .mt:hover .tgrip,.tgrip:focus-visible{opacity:.6}@media(hover:none){.tgrip{opacity:.5}}
 .sgrip{background:none;border:0;padding:0 4px 0 0;color:var(--dim);cursor:grab;font:inherit;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}.sgrip:hover{color:var(--acc)}.sgrip:focus-visible{outline:2px solid var(--acc);border-radius:4px}
 .dropind{position:fixed;z-index:9;pointer-events:none;border:2px solid var(--acc);border-radius:8px;background:color-mix(in srgb,var(--acc) 12%,transparent)}

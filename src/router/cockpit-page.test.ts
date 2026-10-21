@@ -736,7 +736,7 @@ describe("cockpit Models cards", () => {
     const tile = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}\n${COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]}; return metricTile;`)((s: unknown) => String(s ?? ""))({ title: "Speed", value: "58.5", unit: "t/s", sub: "", series: [] }) as string;
     expect(tile).not.toMatch(/<span class="mt-value"><span class="tgrip"/);
     // the tile opens with its stable drag id, then the grip
-    expect(tile).toMatch(/^<div class="mt" data-tid="speed"><span class="tgrip" data-tgrip/);
+    expect(tile).toMatch(/^<div class="mt" data-tid="speed" data-tname="Speed" data-tval="[^"]*"><span class="tgrip" data-tgrip/);
     expect(COCKPIT_HTML).toMatch(/\.tgrip\{position:absolute;top:\d+px;right:\d+px;opacity:0/);
     expect(COCKPIT_HTML).toMatch(/@media\(hover:none\)\{\.tgrip\{opacity:\.5\}\}/);
     expect(COCKPIT_HTML).toMatch(/\.mt:hover \.tgrip/);
@@ -2249,7 +2249,7 @@ describe("cockpit drag-and-drop layout", () => {
   const api = (secs: unknown[], mainWidth = 1200) => {
     const main: any = { children: secs.slice(), clientWidth: mainWidth, appendChild(n: any) { const i = main.children.indexOf(n); if (i >= 0) main.children.splice(i, 1); main.children.push(n); } };
     main.querySelectorAll = (sel: string) => (sel === "section[data-section]" ? main.children : []);
-    const document = { querySelector: (s: string) => (s === "main" ? main : null), querySelectorAll: (s: string) => main.querySelectorAll(s) };
+    const document = { querySelector: (s: string) => (s === "main" ? main : null), querySelectorAll: (s: string) => main.querySelectorAll(s), createElement: () => ({ setAttribute() {}, appendChild() {} }) };
     const fn = new Function("localStorage", "document", "window", `${src}\nreturn {spanOf:spanOf,deriveRows:deriveRows,PAGE_ROWS:PAGE_ROWS.slice(),savedRows:savedRows,defaultRows:defaultRows,cleanRows:cleanRows,layoutRows:layoutRows,saveRows:saveRows,applyLayout:applyLayout,moveSec:moveSec,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,resetLayout:resetLayout,stackRows:stackRows};`);
     return { a: fn(ls, document, { innerWidth: mainWidth, addEventListener() {} }) as Record<string, (...args: unknown[]) => unknown>, main };
   };
@@ -2373,7 +2373,7 @@ describe("cockpit drag-and-drop layout", () => {
 
   it("tile order persists across a setHtml rebuild: applyTileOrder reorders by data-tid, new tiles go last", () => {
     // parentNode set by appendChild, like a real element: applyTileOrder orders live children only
-    const mk = (id: string, parent: any) => ({ style: {}, parentNode: parent, getAttribute: (k: string) => (k === "data-tid" ? id : null) });
+    const mk = (id: string, parent: any) => ({ style: {}, parentNode: parent, classList: { toggle() {} }, appendChild() {}, getAttribute: (k: string) => (k === "data-tid" ? id : null) });
     const el: any = { __tkey: "rt / m tiles", __html: "src" };
     const t1 = mk("Speed", el), t2 = mk("Memory", el), t3 = mk("Workers", el);
     const kids = [t1, t2, t3];
@@ -2568,7 +2568,15 @@ function miniDom(html: string, init?: (node: any) => void) {
       tag: closing ? m[1]! : m[2]!, attrs, classes: new Set<string>((attrs["class"] ?? "").split(/\s+/).filter(Boolean)),
       children: [], parentNode: null, handlers: [] as Array<{ type: string; fn: (e: unknown) => void }>,
       getAttribute: (k: string) => attrs[k] ?? null,
-      classList: { contains: (c: string) => node.classes.has(c) },
+      classList: { contains: (c: string) => node.classes.has(c), toggle: (c: string, on: boolean) => { if (on) node.classes.add(c); else node.classes.delete(c); } },
+      setAttribute: (k: string, v: string) => { attrs[k] = v; },
+      get nextSibling() { const p = node.parentNode; if (!p) return null; const k = p.children.filter((c: any) => c.parentNode === p); return k[k.indexOf(node) + 1] ?? null; },
+      insertBefore(n: any, ref: any) {
+        const o = n.parentNode; if (o) { const i = o.children.indexOf(n); if (i >= 0) o.children.splice(i, 1); }
+        n.parentNode = node; const at = ref ? node.children.indexOf(ref) : -1;
+        if (at >= 0) node.children.splice(at, 0, n); else node.children.push(n);
+      },
+      removeChild(n: any) { const i = node.children.indexOf(n); if (i >= 0) node.children.splice(i, 1); n.parentNode = null; },
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
       addEventListener: (type: string, fn: (e: unknown) => void) => { node.handlers.push({ type, fn }); },
       removeEventListener() {}, setPointerCapture() {},
@@ -2626,7 +2634,18 @@ function miniDom(html: string, init?: (node: any) => void) {
   const document: any = {
     querySelectorAll: bySel,
     querySelector: (sel: string) => all.find((n) => sel === "main" && n.tag === "main") ?? null,
-    createElement: () => ({ style: {}, dataset: {}, classList: { toggle() {} }, remove() {} }),
+    createElement: (tag: string) => {
+      const attrs: Record<string, string | null> = {};
+      const classes = new Set<string>();
+      const n: any = {
+        tag, attrs, classes, style: {}, dataset: {}, children: [], parentNode: null, className: "", remove() {},
+        classList: { contains: (c: string) => classes.has(c), toggle: (c: string, on: boolean) => { if (on) classes.add(c); else classes.delete(c); } },
+        getAttribute: (k: string) => attrs[k] ?? null, setAttribute: (k: string, v: string) => { attrs[k] = v; },
+        appendChild(c: any) { const p = c.parentNode; if (p) { const i = p.children.indexOf(c); if (i >= 0) p.children.splice(i, 1); } c.parentNode = n; n.children.push(c); },
+        get nextSibling() { return null; },
+      };
+      return n;
+    },
     body: { appendChild() {} },
   };
   // like a real element: querySelectorAll matches descendants by class, attribute or tag
