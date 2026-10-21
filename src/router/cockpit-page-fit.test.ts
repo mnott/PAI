@@ -149,9 +149,9 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
     it(`${label}: every table wrapper has scrollWidth <= clientWidth`, async () => {
       const r = await shoot(width, main, shots ? join(shots, `cockpit-${width}${main ? "-main" + main : ""}.png`) : undefined);
       const secs = new Set(r.tables.map((t) => t.sec));
-      // sessions, runs, speed, pause, providers (cache) and the workers queue table all rendered
+      // sessions, pause, providers (cache) and the workers queue table all rendered
       // (System renders metric tiles now, not a table)
-      for (const s of ["sessions", "runs", "pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
+      for (const s of ["sessions", "pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
       for (const t of r.tables) {
         expect(t.scrollWidth, `${t.sec}: wrapper ${t.clientWidth}px, content ${t.scrollWidth}px`).toBeLessThanOrEqual(t.clientWidth);
         expect(t.tableW, `${t.sec}: table ${t.tableW}px in wrapper ${t.clientWidth}px`).toBeLessThanOrEqual(t.clientWidth);
@@ -162,16 +162,6 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
       expect(r.doc, "page itself must not scroll sideways").toBeLessThanOrEqual(r.vw);
       // a stacked label (td::before) never wraps: one line box, whatever the card width
       for (const b of r.befores) expect(b.h, `${b.sec} label "${b.label}": ${b.h}px high at ${b.fs}px font`).toBeLessThanOrEqual(b.fs * 1.6);
-      if (width === 822) {
-        const runs = r.tables.find((t) => t.sec === "runs")!;
-        expect(runs.clientWidth, "Worker runs sits in a half-width card").toBeLessThan(450);
-        expect(runs.stacked, "Worker runs fits as a table at 822 px: not stacked").toBe(false);
-        expect(runs.thead, "Worker runs keeps its thead").toBe(true);
-        expect(runs.rowH.length, "Worker runs rows measured").toBeGreaterThan(0);
-        expect(runs.firstW, `Worker runs label column ${runs.firstW}px of table ${runs.tableW}px`).toBeGreaterThanOrEqual(runs.tableW * 0.55);
-        runs.subs.forEach((s, i) => expect(s.inside, `Worker runs row ${i}: dim provider line visible inside the cell`).toBe(true));
-        for (const h of runs.rowH) expect(h, `Worker runs row ${h}px high at line height ${runs.lh}px`).toBeLessThanOrEqual(runs.lh * 2.6);
-      }
       if (width === 375) expect(r.tables.find((t) => t.sec === "sessions")!.stacked, "sessions does not fit at 375 px: stacked").toBe(true);
     }, 120_000);
   }

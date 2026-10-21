@@ -28,6 +28,13 @@ export interface SessionInfo {
   /** worker outcome: ok, failed, or the raw state while running */
   verdict?: string;
   provider?: string;
+  /** worker runs: the spawning session's AIBroker name, else the profile key, for grouping */
+  parent?: string;
+  /** worker runs: Claude id of the orchestrator whose Bash launched the run (a name lookup in the same map) */
+  spawner?: string;
+  /** worker runs: start and end (ms; a running run ends null) */
+  startMs?: number;
+  endMs?: number | null;
 }
 
 export interface SessionSources {
@@ -196,6 +203,13 @@ function aibrokerNames(dir: string): Map<string, string> {
   return out;
 }
 
+/** AIBroker name of the launching session, else its profile key. */
+function workerParent(s: Record<string, unknown>): string | undefined {
+  const name = (s.session as { name?: unknown } | null | undefined)?.name;
+  if (typeof name === "string" && name) return name;
+  return typeof s.sessionKey === "string" && s.sessionKey ? s.sessionKey : undefined;
+}
+
 /** Full map session id → info. Reads every status file once; callers cache it. */
 export function loadSessionMap(src: SessionSources = defaultSources()): Map<string, SessionInfo> {
   return drain(loadSessionMapSteps(src));
@@ -267,6 +281,10 @@ export function* loadSessionMapSteps(src: SessionSources = defaultSources()): Ge
         state: typeof s.state === "string" ? s.state : undefined,
         verdict: workerVerdict(s),
         provider: typeof s.provider === "string" ? s.provider : undefined,
+        parent: workerParent(s),
+        spawner: typeof s.spawnerSession === "string" && s.spawnerSession ? s.spawnerSession : undefined,
+        startMs: parseLocalTs(s.started),
+        endMs: s.state === "running" || s.state === "queued" ? null : (parseLocalTs(s.updated) ?? null),
       });
     }
   }

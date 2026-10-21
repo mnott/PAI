@@ -143,13 +143,32 @@ function vshort(v){
  var w=v.indexOf("ok")===0?"ok":v.indexOf("failed")===0?"failed":v.indexOf("report flagged")>=0?"flagged":v.indexOf("escalated")===0?"escalated ↗":v.indexOf("handed")===0?"handed":v.indexOf("running")===0||v.indexOf("waiting")===0?"running":v.indexOf("stopped")===0?"stopped":v.split(/[ :(]/)[0];
  return w+c;
 }
-/** Worker runs: label (2 lines max, full name in the title); its small dim line is "provider · run id"; verdict as a short word (full text in the title); tokens. */
+/** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
+function workerGroups(ws,W){
+ function wt(s){return s.input*W.input+s.cacheWrite*W.cacheWrite+s.cacheRead*W.cacheRead+s.output*W.output}
+ var by={},order=[],max=0;
+ ws.forEach(function(s){var k=s.workerParent||"other",r={s:s,w:wt(s),start:s.workerStart||0};if(r.w>max)max=r.w;if(!by[k]){by[k]={name:k,runs:[],total:0,newest:0};order.push(by[k])}var g=by[k];g.runs.push(r);g.total+=r.w;if(r.start>g.newest)g.newest=r.start});
+ order.forEach(function(g){g.runs.sort(function(a,b){return b.start-a.start})});
+ order.sort(function(a,b){return b.newest-a.newest});
+ return{groups:order,max:max};
+}
+var WR_FOLD_KEY="pai.cockpit.wrfold";
+function wrFolded(){try{return JSON.parse(localStorage.getItem(WR_FOLD_KEY)||"{}")||{}}catch(e){return{}}}
+/** Worker runs: one row per run (status dot, label with the full text in the tooltip, model chip, token bar + number, duration, cache hit%), grouped per spawning session with a fold header. */
 function renderWorkers(d){
- setHtml($("workers"),d.workers.length?table(["label .txt","verdict","tokens"],d.workers.slice(0,WORKER_ROWS).map(function(s){
-  var lab=esc(s.name||s.worker),sub=esc((s.workerProvider||"-")+" · "+s.worker.slice(0,9)+"…");
-  var full=(s.name?s.name+" · ":"")+"run "+s.worker+" · "+(s.workerProvider||"-");
-  return['<span class="cell2" title="'+esc(full)+'">'+(s.name?'<span class="l1">'+lab+'</span>':'')+'<small class="dim l2">'+sub+'</small></span>','<span class="'+vcls(s.verdict)+'" title="'+esc(s.verdict||"worker")+'">'+esc(vshort(s.verdict))+'</span>',fmt(tot(s))]
- }),{"tokens":"Total tokens of the run."},{"label":"max-width:0"}):'<span class="dim">no worker sessions in this window</span>');
+ var el=$("workers");
+ if(!d.workers.length){setHtml(el,'<span class="dim">no worker sessions in this window</span>');return}
+ var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},g=workerGroups(d.workers.slice(0,WORKER_ROWS),W),fold=wrFolded(),now=Date.now();
+ setHtml(el,g.groups.map(function(grp){
+  var shut=!!fold[grp.name],head='<a href="#" class="wr-head" data-wrfold="'+esc(grp.name)+'" title="'+esc(grp.name+" · "+grp.runs.length+(grp.runs.length===1?" run":" runs")+" · "+fmt(grp.total)+" weighted tokens")+'"><span class="wr-car">'+(shut?"▸":"▾")+'</span><b>'+esc(grp.name)+'</b><span class="dim">'+grp.runs.length+(grp.runs.length===1?" run · ":" runs · ")+fmt(grp.total)+'</span></a>';
+  if(shut)return'<div class="wr-group">'+head+'</div>';
+  return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
+   var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
+   var model=(s.models&&s.models[0])||"–",pc=r.w>0?Math.max(2,Math.round(r.w/g.max*100)):0;
+   var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
+   return'<div class="wr-row" title="'+esc(full)+'"><i class="wr-dot wr-'+st+'" title="'+esc(s.verdict||"worker")+'"></i><span class="wr-lab">'+esc(lab)+'</span><span class="badge" title="'+esc((s.models||[]).join(", ")||"no model")+'">'+esc(model)+'</span><span class="wr-bar" title="weighted tokens: '+fmt(r.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(r.w?fmt(r.w):"–")+'</span><span class="wr-du">'+du+'</span><span class="'+hitCls(s.hitRatio)+'" title="cache hit">'+(s.requests?pct(s.hitRatio):"–")+'</span></div>'}).join("")+'</div>'}).join(""));
+ el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-wrfold")!=null))t=t.parentNode;
+  if(!t||t===el)return;ev.preventDefault();var f=wrFolded(),k=t.getAttribute("data-wrfold");if(f[k])delete f[k];else f[k]=1;try{localStorage.setItem(WR_FOLD_KEY,JSON.stringify(f))}catch(e){}renderWorkers(data)};
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};

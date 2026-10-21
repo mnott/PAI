@@ -3498,44 +3498,73 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     expect(html).not.toContain("more sessions");
   });
 
-  // CHANGED for the 3-column table: the heads (provider column dropped), the verdict cell (short word,
-  // full text in its title) and the dim suffix (now "provider · run id"). The rest is unchanged.
-  it("worker runs: label, verdict, tokens; the dim line is provider + run id; the verdict is a short word with the full text in its title", () => {
-    const w = { worker: "20261021-063345-95575", name: "run.ts split step 1: provider test moved out of the router file", workerProvider: "glm", requests: 4, input: 70, cacheWrite: 0, cacheRead: 0, output: 5, verdict: "ok" };
-    const m = mount({ workers: [w, { ...w, name: "", worker: "w-2", verdict: "failed: x" }] }, "renderWorkers(data)", "workers");
-    m.run();
-    const html = m.el().innerHTML;
-    const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1]);
-    expect(heads).toEqual(["label", "verdict", "tokens"]);
-    expect(html).toContain('title="run.ts split step 1: provider test moved out of the router file · run 20261021-063345-95575 · glm"');
-    expect(html).toContain('<span class="l1">run.ts split step 1');
-    expect(html).toContain('<small class="dim l2">glm · 20261021-…</small>');
-    expect(html).toContain('<span class="ok" title="ok">ok</span>');
-    expect(html).toContain('<span class="bad" title="failed: x">failed</span>');
-    expect(html).toContain('<td class="txt" data-l="label"'); // stacked label for phones; the label column wraps, numbers never do
-  });
+  describe("worker runs as compact grouped rows", () => {
+    const WR = () => `${fn("workerGroups")}\n${fn("wrFolded")}\nvar WR_FOLD_KEY="pai.cockpit.wrfold";\n${fn("dur")}`;
+    const run = (id: string, over: Record<string, unknown> = {}) => ({
+      worker: id, name: `label ${id}`, workerProvider: "glm", models: ["glm-5.3-flash"], requests: 4, hitRatio: 0.5,
+      input: 100, cacheWrite: 0, cacheRead: 0, output: 0, verdict: "ok", workerParent: "PAI", workerStart: 1000, workerEnd: 61000, ...over,
+    });
+    const mountWr = (workers: unknown[]) => mount({ workers }, "renderWorkers(data)", "workers", WR());
 
-  it("worker runs: 3 header cells", () => {
-    const w = { worker: "w-1", name: "n", workerProvider: "glm", requests: 1, input: 1, cacheWrite: 0, cacheRead: 0, output: 0, verdict: "ok" };
-    const m = mount({ workers: [w] }, "renderWorkers(data)", "workers");
-    m.run();
-    expect((m.el().innerHTML.match(/<th[ >]/g) ?? []).length).toBe(3);
-  });
+    it("groups per spawning session, newest run first, groups by their newest run; the header shows run count and weighted total", () => {
+      delete store["pai.cockpit.wrfold"];
+      const m = mountWr([run("old", { workerStart: 1000 }), run("a-new", { workerParent: "AIBroker", workerStart: 9000 }), run("new", { workerStart: 5000 })]);
+      m.run();
+      const h = m.el().innerHTML;
+      expect(h.indexOf("data-wrfold=\"AIBroker\"")).toBeLessThan(h.indexOf("data-wrfold=\"PAI\""));
+      expect(h.indexOf("label new")).toBeLessThan(h.indexOf("label old"));
+      expect(h).toContain("2 runs · 200"); // weighted: input x1
+      expect(h).toContain("1 run · 100");
+      expect(h).not.toContain("<table");
+    });
 
-  it("worker runs: verdicts become a short word + compact commit suffix, the colour class unchanged, the full verdict in the title", () => {
-    const w = { worker: "w-1", name: "n", workerProvider: "glm", requests: 1, input: 1, cacheWrite: 0, cacheRead: 0, output: 0 };
-    const cases: [string, string, string][] = [
-      ["escalated → 20261021-084726-26751 · 1 commit", "warn", "escalated ↗ · 1c"],
-      ["done · report flagged · 2 commits", "warn", "flagged · 2c"],
-      ["ok · 1 commit", "ok", "ok · 1c"],
-      ["handed to session", "warn", "handed"],
-      ["running", "dim", "running"],
-    ];
-    const m = mount({ workers: cases.map(([verdict], i) => ({ ...w, worker: `w-${i}`, verdict })) }, "renderWorkers(data)", "workers");
-    m.run();
-    const html = m.el().innerHTML;
-    for (const [verdict, cls, short] of cases) expect(html).toContain(`<span class="${cls}" title="${verdict}">${short}</span>`);
-    expect(html).not.toContain(">20261021-084726-26751<");
+    it("bar widths share one scale; the number sits beside the bar; the label carries the full text in a tooltip", () => {
+      const m = mountWr([run("big", { input: 400, output: 20 }), run("small", { input: 100 })]); // big = 400 + 20*5
+      m.run();
+      const h = m.el().innerHTML;
+      expect(h).toContain('<i style="width:100%"></i>');
+      expect(h).toContain('<i style="width:20%"></i>'); // 100 / 500
+      expect(h).toContain('<span class="wr-n">500</span>');
+      expect(h).toContain('title="label big · run big · glm · ok"');
+      expect(h).toContain('<span class="wr-du">1m 00s</span>');
+      expect(h).toContain('<span class="badge" title="glm-5.3-flash">glm-5.3-flash</span>');
+    });
+
+    it("status dot: running, ok, failed; missing values render as a dash", () => {
+      const m = mountWr([
+        run("r", { verdict: "running", workerEnd: null, workerStart: Date.now() }), run("o"), run("f", { verdict: "failed" }),
+        run("x", { verdict: null, models: [], requests: 0, input: 0, workerStart: null, workerEnd: null, workerParent: null }),
+      ]);
+      m.run();
+      const h = m.el().innerHTML;
+      expect(h).toContain("wr-dot wr-run");
+      expect(h).toContain("wr-dot wr-ok");
+      expect(h).toContain("wr-dot wr-bad");
+      const x = h.slice(h.indexOf('data-wrfold="other"'));
+      expect(x).toContain('<span class="badge" title="no model">–</span>');
+      expect(x).toContain('<span class="wr-n">–</span>');
+      expect(x).toContain('<span class="wr-du">–</span>');
+      expect(x).toContain('title="cache hit">–</span>');
+      expect(x).toContain('<i style="width:0%"></i>');
+    });
+
+    it("a group header click folds the group; the state survives a refresh", () => {
+      delete store["pai.cockpit.wrfold"];
+      const m = mountWr([run("a")]);
+      m.run();
+      (m.el().onclick as (e: unknown) => void)({ target: { getAttribute: (a: string) => (a === "data-wrfold" ? "PAI" : null), parentNode: null }, preventDefault() {} });
+      expect(m.el().innerHTML).not.toContain("wr-row");
+      expect(m.el().innerHTML).toContain("▸");
+      m.run();
+      expect(m.el().innerHTML).not.toContain("wr-row");
+      delete store["pai.cockpit.wrfold"];
+    });
+
+    it("empty window keeps the empty state", () => {
+      const m = mountWr([]);
+      m.run();
+      expect(m.el().innerHTML).toContain("no worker sessions in this window");
+    });
   });
 
   it("speed: bars, not a table; renderSpeed follows the window and marks local servers", () => {
