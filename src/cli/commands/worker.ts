@@ -821,6 +821,7 @@ const gcCommand: CommandDef = {
   options: [
     { name: "older-than", type: "string", value: "HOURS", default: "24", summary: "Minimum age of a finished worker, in hours" },
     { name: "all-finished", type: "boolean", summary: "Any finished worker, regardless of age" },
+    { name: "foreign", type: "boolean", summary: "Also archive merged, clean worktrees of this repo that PAI did not create (refs/pai-archive/BRANCH); unmerged ones are kept" },
     { ...OPT.dryRun, summary: "Print what would be archived and what each worktree carries, change nothing" },
   ],
   examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72", "pai worker gc --all-finished"],
@@ -830,7 +831,7 @@ const gcCommand: CommandDef = {
       const raw = str(ctx.opts["older-than"]) ?? "24";
       const hours = Number(raw);
       if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
-      const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true);
+      const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true, undefined, flag(ctx, "foreign") ? process.cwd() : undefined);
       const verb = ctx.dryRun ? "would archive" : "archived";
       for (const r of res) {
         out(r.skipped ? `skipped ${r.id}: ${r.skipped}` : `${verb} ${r.id} -> ${r.archive}`);
