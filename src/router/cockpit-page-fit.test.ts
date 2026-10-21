@@ -6,12 +6,13 @@
  */
 
 import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
+import { checkRows, tileFixtureHtml, type TileLayout, type TileMeasure } from "./cockpit-tile-rows-fit.js";
 
 const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 
@@ -99,19 +100,71 @@ async function shoot(width: number, main: number | null, shot?: string): Promise
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
 }
 
+/** Chrome with a host page embedding `html` in an iframe; returns the iframe's postMessage payload. */
+async function measure(html: string, tag: string): Promise<TileMeasure> {
+  const host = join(tmp, `host-${tag}.html`);
+  writeFileSync(host, `<!doctype html><html><body style="margin:0">${html}<script>onmessage=function(e){document.body.setAttribute("data-tiles",e.data)}</script></body></html>`);
+  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "tp-" + tag)}`, "--window-size=1400,900", "--virtual-time-budget=4000"];
+  const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", `file://${host}`], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
+  const m = /data-tiles="([^"]*)"/.exec(dom);
+  if (!m) throw new Error(`no tile result for ${tag}`);
+  return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+}
+
 describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), real layout in Chromium", () => {
   const shots = process.env.PAI_FIT_SHOTS;
   for (const [label, width, main] of [["822 px viewport", 822, null], ["385 px main width inside a wide viewport (half-width card)", 900, 385], ["375 px phone", 375, null]] as const) {
     it(`${label}: every table wrapper has scrollWidth <= clientWidth`, async () => {
       const r = await shoot(width, main, shots ? join(shots, `cockpit-${width}${main ? "-main" + main : ""}.png`) : undefined);
       const secs = new Set(r.tables.map((t) => t.sec));
-      // sessions, runs, speed, pause, providers (cache), workers queue and the local-server table all rendered
-      for (const s of ["sessions", "runs", "speed", "pause", "cache", "workers", "system"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
+      // sessions, runs, speed, pause, providers (cache) and the workers queue table all rendered
+      // (System renders metric tiles now, not a table)
+      for (const s of ["sessions", "runs", "speed", "pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
       for (const t of r.tables) {
         expect(t.scrollWidth, `${t.sec}: wrapper ${t.clientWidth}px, content ${t.scrollWidth}px`).toBeLessThanOrEqual(t.clientWidth);
         expect(t.tableW, `${t.sec}: table ${t.tableW}px in wrapper ${t.clientWidth}px`).toBeLessThanOrEqual(t.clientWidth);
       }
       expect(r.doc, "page itself must not scroll sideways").toBeLessThanOrEqual(r.vw);
     }, 120_000);
+  }
+});
+
+/** The real page CSS, rendered in Chromium: a .rt-tiles grid must never leave a partial
+ *  last row — every row's tiles together span the full grid width, at wide and 2-column
+ *  container widths, for tile counts with last-row remainder 1, 2 and 3. */
+describe.skipIf(!CHROME)(".rt-tiles last row fills the grid, real CSS in Chromium", () => {
+  // a temp config only — never the live files; PAI_CONFIG_FILE points at it
+  const L: TileLayout = { wideBreakpointPx: 700, oneColBreakpointPx: 339, wideCols: 4, narrowCols: 2 };
+  let dir = "";
+  let html = "";
+  const prevConfigFile = process.env.PAI_CONFIG_FILE;
+  const prevHome = process.env.PAI_HOME;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-tile-fit-"));
+    writeFileSync(join(dir, "config.yaml"), `router:\n  cockpit:\n    layout:\n      tilesWideBreakpointPx: ${L.wideBreakpointPx}\n      tilesWideCols: ${L.wideCols}\n      tilesNarrowCols: ${L.narrowCols}\n      tilesOneColBreakpointPx: ${L.oneColBreakpointPx}\n`);
+    process.env.PAI_CONFIG_FILE = join(dir, "config.json");
+    delete process.env.PAI_HOME;
+    html = cockpitHtml().match(/<style>[\s\S]*?<\/style>/g)!.join("");
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (prevConfigFile === undefined) delete process.env.PAI_CONFIG_FILE;
+    else process.env.PAI_CONFIG_FILE = prevConfigFile;
+    if (prevHome === undefined) delete process.env.PAI_HOME;
+    else process.env.PAI_HOME = prevHome;
+  });
+
+  const widths: [string, number][] = [
+    ["wide", L.wideBreakpointPx + 200],
+    ["2-col", L.wideBreakpointPx - 20],
+  ];
+  for (const [mode, containerPx] of widths) {
+    for (const n of [11, 5, 6, 7]) {
+      it(`${mode} container (${containerPx}px), ${n} tiles: every row spans the full grid width`, async () => {
+        const m = await measure(html + tileFixtureHtml(n, containerPx), `${mode}-${n}`);
+        expect(m.rows.length, `${mode}/${n}: rows found`).toBeGreaterThan(0);
+        expect(checkRows(m, `${mode}/${n}`)).toEqual([]);
+      }, 120_000);
+    }
   }
 });
