@@ -28,6 +28,8 @@ export interface UsageRow extends Usage {
   provider: string;
   /** copy of a local model that served the request ("#2"); absent for single-instance and cloud rows */
   instance?: string;
+  /** host:port of the endpoint that served the request (managed or registered); absent for cloud rows */
+  host?: string;
   status: number;
   ms: number;
   bytes: number;

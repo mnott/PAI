@@ -26,6 +26,9 @@ import {
 import { budgetCache } from "./budget.js";
 import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
 import { classRoute, entryProvider } from "./route-lists.js";
+import { endpointRegistry, readInstances, type LocalInstance } from "./local-instances.js";
+import type { LocalConfig } from "./local-tiers.js";
+import { parseSelector, resolveSelector } from "./route-table.js";
 import { cooldownRemaining, exclusionReason, quotaExceeded, readRoutingState } from "./routing.js";
 
 export const POLICY_MODES = ["cloud-only", "local-only", "prefer-local", "prefer-cloud", "auto"] as const;
@@ -176,6 +179,24 @@ export interface RouteFlags {
 }
 
 /**
+ * The providers a route list names, in order: a provider entry is itself, a
+ * selector (`local`, `model:`, `tag:`, `class:`) the providers of the healthy
+ * endpoints of the registry (managed + registered) it matches right now.
+ */
+function expandSelectors(config: WorkersConfig, logDir: string, list: string[], instances?: () => LocalInstance[]): string[] {
+  if (!list.some((e) => parseSelector(e))) return list.map(entryProvider);
+  const managed = instances ? instances() : readInstances(logDir);
+  const launched = { tiers: Object.fromEntries(tierProviderNames().map((p) => [p, { provider: p }])) } as unknown as LocalConfig;
+  const registry = endpointRegistry(managed, config.providers, launched);
+  const out: string[] = [];
+  for (const e of list) {
+    const names = parseSelector(e) ? resolveSelector(e, registry).map((i) => i.provider) : [entryProvider(e)];
+    for (const n of names) if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
  * The route of a class list (route-lists.ts): the single source of truth, the
  * policy modes are views of it. The entries are walked in order: a local entry
  * serves when its server runs (a model that is not loaded is skipped, never
@@ -188,11 +209,11 @@ async function listRoute(
   logDir: string,
   list: string[],
   flags: RouteFlags,
-  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean }
+  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] }
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const policyMode = readPolicy(logDir)?.mode;
   const isLocal = (name: string) => isLocalProvider(config.providers[name]?.baseUrl ?? "");
-  const entries = list.map(entryProvider);
+  const entries = expandSelectors(config, logDir, list, deps.instances);
   const hasCloud = entries.some((n) => !isLocal(n));
   const mode: PolicyMode = !hasCloud ? "local-only" : (policyMode ?? (isLocal(entries[0]) ? "prefer-local" : "prefer-cloud"));
   const res = (reason: string, local: string | null) => ({
@@ -237,7 +258,7 @@ export async function routeRun(
   config: WorkersConfig,
   logDir: string,
   flags: RouteFlags,
-  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean } = {}
+  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const list = classRoute(config.tiers ?? [], flags.className ?? "implement");
   if (list.length) return listRoute(config, logDir, list, flags, deps);

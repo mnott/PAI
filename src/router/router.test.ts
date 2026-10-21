@@ -420,3 +420,65 @@ describe("router: spread over local instances", () => {
     }
   });
 });
+
+describe("router: managed and registered endpoints", () => {
+  const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+  const post = (port: number, provider: string, model: string) =>
+    new Promise<number>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "x-pai-provider": provider } }, (x) => {
+        x.resume();
+        x.on("end", () => resolve(x.statusCode ?? 0));
+      });
+      q.end(JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] }));
+    });
+  const serve = () =>
+    http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ usage: { input_tokens: 1, output_tokens: 1 } }));
+      });
+    });
+
+  it("a managed and a registered endpoint are both resolved; rows carry the host; unhealthy ones are skipped", async () => {
+    const a = serve();
+    const b = serve();
+    const pa = await listen(a);
+    const pb = await listen(b);
+    const prov = parseWorkersConfig({
+      providers: {
+        gyro: { baseUrl: "http://127.0.0.1:1", models: { default: "gyro-m" } },
+        box: { baseUrl: `http://127.0.0.1:${pb}`, models: { default: "box-m" }, characteristics: { tags: ["big"] } },
+      },
+    }).providers;
+    const managed: LocalInstance = {
+      id: "gyro-m#1", model: "gyro-m", provider: "gyro", url: `http://127.0.0.1:${pa}`, origin: "managed",
+      port: pa, pid: process.pid, state: "ready", startedAt: 0, log: "",
+    };
+    let up = true;
+    const rows: UsageRow[] = [];
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, (row) => rows.push(row), undefined, {
+      instances: () => [managed],
+      healthy: (i) => i.origin === "managed" || up,
+    });
+    const port = await listen(r);
+    try {
+      expect(await post(port, "gyro", "gyro-m")).toBe(200);
+      expect(await post(port, "box", "box-m")).toBe(200);
+      await vi.waitFor(() => expect(rows).toHaveLength(2));
+      const byProv = Object.fromEntries(rows.map((x) => [x.provider, x]));
+      expect(byProv.gyro.host).toBe(`127.0.0.1:${pa}`);
+      expect(byProv.gyro.instance).toBe("#1");
+      expect(byProv.box.host).toBe(`127.0.0.1:${pb}`);
+      expect(byProv.box.instance).toBeUndefined();
+      up = false;
+      expect(await post(port, "box", "box-m")).toBe(200);
+      await vi.waitFor(() => expect(rows).toHaveLength(3));
+      expect(rows[2].host).toBeUndefined();
+    } finally {
+      r.close();
+      a.close();
+      b.close();
+    }
+  });
+});

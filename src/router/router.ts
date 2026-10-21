@@ -34,9 +34,11 @@ import { sharedParker } from "./parking.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
-import { withTierProviders } from "../workers/local-provider.js";
+import { tierProviderNames, withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
-import { instanceEngineKey, instanceNumber, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
+import { endpointRegistry, instanceEngineKey, instanceNumber, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
+import type { LocalConfig } from "../workers/local-tiers.js";
+import { resolveSelector } from "../workers/route-table.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -223,8 +225,22 @@ export interface RouterOptions {
    * spelling. Default: router log line + a [model] record in tool-errors.jsonl.
    */
   onToolCaseFix?: (info: { from: string; to: string; model: string; provider: string; session?: string }) => void;
-  /** running instances of local models; default: local-instances.json, live pids only, cached 2 s */
+  /** managed instances of local models; default: local-instances.json, live pids only, cached 2 s. Registered endpoints (providers with characteristics) are merged in per request. */
   instances?: () => LocalInstance[];
+  /** health of an endpoint (the probe cache); default: every endpoint is up. An unhealthy one is skipped like a dead pid. */
+  healthy?: (i: LocalInstance) => boolean;
+}
+
+/** Catalogue shape endpointRegistry needs: which providers a managed model launches (cached 2 s). */
+function launchedConfig(): () => LocalConfig {
+  let at = 0;
+  let cfg = { tiers: {} } as LocalConfig;
+  return () => {
+    if (Date.now() - at < 2000) return cfg;
+    at = Date.now();
+    cfg = { tiers: Object.fromEntries(tierProviderNames().map((p) => [p, { provider: p }])) } as unknown as LocalConfig;
+    return cfg;
+  };
 }
 
 /** Managed instances from the state file whose process is alive; cached 2 s so start/stop needs no router restart. */
@@ -445,6 +461,8 @@ export function routerHandler(
   const gaps = new GapTracker();
   const warned = new Set<string>();
   const instancesOf = options?.instances ?? stateFileInstances();
+  const launched = launchedConfig();
+  const healthy = options?.healthy ?? (() => true);
   /** requests routed to an instance and not yet released, by engine key */
   const held = new Map<string, number>();
   let warnedCompressed = false;
@@ -533,14 +551,18 @@ export function routerHandler(
       // scheduler / parker engine: one per running instance (n=1 keeps the bare provider name)
       let engine = prov;
       let instanceTag: string | undefined;
-      if (target.kind === "provider" && isLocal(up.url)) {
-        const picked = pickInstance(prov, instancesOf().filter((i) => i.provider === target.name), (k) => held.get(k) ?? 0);
+      let host: string | undefined;
+      if (target.kind === "provider") {
+        // every row resolves against the registry (managed + registered), then the least busy endpoint serves
+        const registry = endpointRegistry(instancesOf(), providers, launched());
+        const picked = pickInstance(prov, resolveSelector(target.name, registry).filter(healthy), (k) => held.get(k) ?? 0);
         if (picked) {
           const u = new URL(picked.url);
           up.url.protocol = u.protocol;
           up.url.host = u.host;
           engine = instanceEngineKey(picked);
-          instanceTag = `#${instanceNumber(picked.id)}`;
+          if (picked.origin === "managed") instanceTag = `#${instanceNumber(picked.id)}`;
+          host = u.host;
           held.set(engine, (held.get(engine) ?? 0) + 1);
           let freed = false;
           const free = () => {
@@ -572,6 +594,7 @@ export function routerHandler(
         };
         const needsInput = target.kind === "provider" && row.input_tokens === 0 && (row.output_tokens ?? 0) > 0 && status < 400;
         if (instanceTag) row.instance = instanceTag;
+        if (host) row.host = host;
         if (session) row.session = session;
         if (sessionId) row.session_id = sessionId;
         row.requested_model = requested;

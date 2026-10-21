@@ -351,6 +351,19 @@ describe("set / validate", () => {
 });
 
 describe("routing reads the lists", () => {
+  it("a selector entry expands to the providers of the registry's matching endpoints", async () => {
+    const path = liveShaped();
+    const { workers } = readWorkersSection(path);
+    workers.tiers = workers.tiers.map((t) => (t.classes?.includes("implement") ? { ...t, models: ["model:gyro-m", "anthropic"] } : t));
+    const logDir = join(dir, "logs-sel");
+    const inst = { id: "gyro-m#2", model: "gyro-m", provider: "gyro-m", url: "http://127.0.0.1:8010", origin: "managed" as const, port: 8010, pid: 1, state: "ready" as const, startedAt: 0, log: "" };
+    const hit = (await routeRun(workers, logDir, { className: "implement" }, { ping: loaded(8010), instances: () => [inst] }))!;
+    expect(hit.providerFlag).toBe("gyro-m");
+    // no matching endpoint: the selector drops out, cloud serves
+    const none = (await routeRun(workers, logDir, { className: "implement" }, { ping: loaded(8010), instances: () => [] }))!;
+    expect(none.providerFlag).toBeNull();
+  });
+
   it("element 0 serves; a local entry that is not running is skipped, in order", async () => {
     const path = liveShaped();
     setRoute("implement", ["iq3s", "gyro-m", "anthropic", "glm/fast"], path);
