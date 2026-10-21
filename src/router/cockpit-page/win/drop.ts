@@ -32,7 +32,8 @@ function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined
 function winMin(st,id){var s=st&&st[id];return!!s&&!!s.min}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
-function winLeafType(kids,id){var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
+/** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
+function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
 function winClone(n){
  if(!n)return null;
  if(n.k==="c")return{k:"c",id:n.id};
@@ -156,13 +157,13 @@ function winSplit(node,box,bounded,st,cfg,kids){
   var ws=[];
   for(i=0;i<node.sz.length;i++)ws.push(node.sz[i]/t*total);
   var wide=true;
-  for(i=0;i<vis.length;i++)if(ws[vis[i]]<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id)))wide=false;
+  for(i=0;i<vis.length;i++)if(ws[vis[i]]<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
   if(!wide){
    var h0=bounded?Math.max(0,(box.h-(vis.length-1)*gap)/vis.length):0;
    var y=0;
    for(i=0;i<vis.length;i++){
     var c=node.ch[vis[i]];
-    var hh=winMin(st,c.id)?cfg.HEAD_H:(bounded?h0:winDefH(cfg,winLeafType(kids,c.id)));
+    var hh=winMin(st,c.id)?cfg.HEAD_H:(bounded?h0:winDefH(cfg,winLeafType(kids,c.id,cfg)));
     out.push({n:c,x:0,y:y,w:box.w,h:hh});
     y+=hh+gap;
    }
@@ -171,7 +172,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
   var x=0;
   for(i=0;i<vis.length;i++){
    var ci=vis[i],w=ws[ci],ch=node.ch[ci];
-   var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h>0?box.h:winDefH(cfg,winLeafType(kids,ch.id)));
+   var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h>0?box.h:winDefH(cfg,winLeafType(kids,ch.id,cfg)));
    out.push({n:ch,x:x,y:0,w:w,h:hh2});
    x+=w+gap;
   }
@@ -231,7 +232,7 @@ function layout(tree,kids,box,state,cfg){
  var rects={},height=0;
  if(!tree||box.w<=0)return{rects:rects,height:0};
  var root=box.h===undefined;
- var h0=root?(tree.k==="c"?winDefH(cfg,winLeafType(kids,tree.id)):0):box.h;
+ var h0=root?(tree.k==="c"?winDefH(cfg,winLeafType(kids,tree.id,cfg)):0):box.h;
  var out=[{n:tree,x:0,y:0,w:box.w,h:h0,bounded:!root}];
  var guard=0;
  while(out.length){
@@ -267,14 +268,14 @@ function layout(tree,kids,box,state,cfg){
 function winFits(tree,kids,state,cfg,box){
  var r=layout(tree,kids,box,state,cfg);
  for(var id in r.rects){
-  var rc=r.rects[id],tp=winLeafType(kids,id);
+  var rc=r.rects[id],tp=winLeafType(kids,id,cfg);
   var mw=winMinW(cfg,tp),mh=winMinH(cfg,tp);
   var rowStack=false;
   var P=parentOf(tree,id);
   if(P&&P.d==="r"){
    var t=0,vis=0;
    for(var i=0;i<P.ch.length;i++)if(!winGhost(state,P.ch[i].id)){t+=P.sz[i]||0;vis++}
-   if(t>0&&vis>1&&(P.sz[0]/t)*(box.w-(vis-1)*cfg.GAP)<winMinW(cfg,winLeafType(kids,P.ch[0].id)))rowStack=true;
+   if(t>0&&vis>1&&(P.sz[0]/t)*(box.w-(vis-1)*cfg.GAP)<winMinW(cfg,winLeafType(kids,P.ch[0].id,cfg)))rowStack=true;
   }
   if(!rowStack&&(rc.w<mw||rc.h<mh))return false;
  }
@@ -309,7 +310,7 @@ function moveCard(tree,dragId,targetId,zone,opts){
  }else if(P&&P===t&&P.d==="c"&&dir==="c"){
   // root column, top/bottom: D gets its own band of remembered px or defaultH
   var k=P.ch.indexOf(T),px=winPx(st,dragId);
-  var h=px!==null?px:winDefH(cfg,winLeafType(kids,dragId));
+  var h=px!==null?px:winDefH(cfg,winLeafType(kids,dragId,cfg));
   P.ch.splice(after?k+1:k,0,D);
   P.sz.splice(after?k+1:k,0,h);
  }else{

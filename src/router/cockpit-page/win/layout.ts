@@ -46,7 +46,39 @@ function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined
 function winMin(st,id){var s=st&&st[id];return!!s&&!!s.min}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
-function winLeafType(kids,id){var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
+/** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
+function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
+/** The least height a node needs at width w: a card its type's minH (a group HEAD_H plus its kids), a row the tallest
+ *  child (the sum when narrow mode stacks it), a column enough that every child's weight share holds its need. */
+function winNeed(node,w,st,cfg,kids){
+ var i,vis=[];
+ for(i=0;i<(node.ch||[]).length;i++)if(!winGhost(st,node.ch[i].id))vis.push(node.ch[i]);
+ if(node.k==="c"){
+  if(winGhost(st,node.id))return 0;
+  if(winMin(st,node.id))return cfg.HEAD_H;
+  var ty=winType(cfg,winLeafType(kids,node.id,cfg)),mh=ty.minH!==undefined?ty.minH:(cfg.minH||0),kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
+  return kt?Math.max(mh,cfg.HEAD_H+winNeed(kt,w,st,cfg,kids)):mh;
+ }
+ var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,need=0,sum=0,k;
+ for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id))t+=node.sz[i]||0;
+ if(t<=0)t=1;
+ if(node.d==="r"){
+  var wide=true;
+  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&(node.sz[i]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[i].id,cfg)))wide=false;
+  for(i=0;i<node.ch.length;i++){
+   if(winGhost(st,node.ch[i].id))continue;
+   k=winNeed(node.ch[i],wide?(node.sz[i]||0)/t*total:w,st,cfg,kids);
+   if(wide)need=Math.max(need,k);else sum+=k+gap;
+  }
+  return wide?need:Math.max(0,sum-gap);
+ }
+ for(i=0;i<node.ch.length;i++){
+  if(winGhost(st,node.ch[i].id))continue;
+  k=winNeed(node.ch[i],w,st,cfg,kids);
+  sum+=k;need=Math.max(need,(node.sz[i]||0)>0?k/((node.sz[i]||0)/t):0);
+ }
+ return Math.max(sum,need)+(vis.length-1)*gap;
+}
 /** Lay out one split into pieces {n,x,y,w,h}. bounded: the container has a fixed h. */
 function winSplit(node,box,bounded,st,cfg,kids){
  var n=node.ch.length,i,out=[];
@@ -60,14 +92,14 @@ function winSplit(node,box,bounded,st,cfg,kids){
    ws.push(node.sz[i]/t*total);
   }
   var wide=true;
-  for(i=0;i<vis.length;i++)if(ws[vis[i]]<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id)))wide=false;
+  for(i=0;i<vis.length;i++)if(ws[vis[i]]<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
   if(!wide){
    // narrow mode: stack; root gives each child its defaultH, bounded an equal share
    var h0=bounded?Math.max(0,(box.h-(vis.length-1)*gap)/vis.length):0;
    var y=0;
    for(i=0;i<vis.length;i++){
     var c=node.ch[vis[i]];
-    var hh=winMin(st,c.id)?cfg.HEAD_H:(bounded?h0:winDefH(cfg,winLeafType(kids,c.id)));
+    var hh=winMin(st,c.id)?cfg.HEAD_H:(bounded?Math.max(h0,winNeed(c,box.w,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
     out.push({n:c,x:0,y:y,w:box.w,h:hh});
     y+=hh+gap;
    }
@@ -78,7 +110,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
    var ci=vis[i],w=ws[ci],ch=node.ch[ci];
    // a row with a fixed height (band cell, bounded container): children fill it;
    // a bare root row has no height of its own: children get their defaultH
-   var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h>0?box.h:winDefH(cfg,winLeafType(kids,ch.id)));
+   var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h>0?box.h:winDefH(cfg,winLeafType(kids,ch.id,cfg)));
    out.push({n:ch,x:x,y:0,w:w,h:hh2});
    x+=w+gap;
   }
@@ -135,7 +167,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
     h3=Math.max(sz,maxB);
    }
   }else{
-   h3=winMin(st,c3.id)?cfg.HEAD_H:(winPx(st,c3.id)!==null?winPx(st,c3.id):sz);
+   h3=winMin(st,c3.id)?cfg.HEAD_H:Math.max(winPx(st,c3.id)!==null?winPx(st,c3.id):sz,winNeed(c3,box.w,st,cfg,kids));
    out.push({n:c3,x:0,y:y3,w:box.w,h:h3});
   }
   y3+=h3+gap;
@@ -149,7 +181,7 @@ function layout(tree,kids,box,state,cfg){
  // (group bodies, nested splits) is bounded and lays columns by weight.
  var root=box.h===undefined;
  // a bare root leaf (the whole tree is one card) gets its type's defaultH, not 0
- var h0=root?(tree.k==="c"?winDefH(cfg,winLeafType(kids,tree.id)):0):box.h;
+ var h0=root?(tree.k==="c"?winDefH(cfg,winLeafType(kids,tree.id,cfg)):0):box.h;
  var out=[{n:tree,x:0,y:0,w:box.w,h:h0,bounded:!root}];
  var guard=0;
  while(out.length){

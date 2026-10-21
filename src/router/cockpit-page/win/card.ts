@@ -148,7 +148,8 @@ function paintMin(c){
  c.min.setAttribute("aria-label",(m?"restore ":"minimize ")+c.titleText);
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
-function cfgOf(){W.cfg.types=TYPES;return W.cfg}
+/** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;return W.cfg}
 function mountCard(c){
  var def=TYPES[c.type]||{};
  c.mounted=true;
