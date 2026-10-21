@@ -19,6 +19,7 @@ import { WIN_ROUTING_JS } from "./win/cards-routing.js";
 import { WIN_CLOUD_JS } from "./win/cards-cloud.js";
 import { WIN_WORKERS_JS } from "./win/cards-workers.js";
 import { WIN_MODELS_JS } from "./win/cards-models.js";
+import { WIN_REGISTRY_JS } from "./win/cards-registry.js";
 import { WIN_ACTIONS_JS } from "./win/actions.js";
 import { WIN_SELECT_JS } from "./win/select.js";
 
@@ -56,6 +57,7 @@ ${WIN_ROUTING_JS}
 ${WIN_CLOUD_JS}
 ${WIN_WORKERS_JS}
 ${WIN_MODELS_JS}
+${WIN_REGISTRY_JS}
  /** The sections' defaults as root bands: [[defaults, band px], ...] in page order. */
  function winCompose(parts){
   var leaves=[],px=[],cards=[],kids={},st={},i,k;
@@ -81,7 +83,8 @@ ${WIN_MODELS_JS}
   var oldRt=document.querySelector('[data-section="routing"]');if(oldRt)oldRt.style.display="none";
   var oldCl=document.querySelector('[data-section="cloud"]');if(oldCl)oldCl.style.display="none";
   var oldWk=document.querySelector('[data-section="workers"]');if(oldWk)oldWk.style.display="none";
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520]]));
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520],[registryDefaults(),460]]));
+  wrgStart();
   // the limits poll already calls renderRouting: the routing cards ride on it
   var oldRender=renderRouting;renderRouting=function(){oldRender();if(lim){winFeedLimits(lim);limitsSync(lim)}};
   // the queue feed: the win cards first, so a throwing old panel cannot leave them empty
