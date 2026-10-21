@@ -1561,6 +1561,7 @@ function gcOrphanBranches(logDir: string, repos: Iterable<string>, protect: Set<
     if (!repo || seen.has(repo)) continue;
     seen.add(repo);
     const live = checkedOutBranches(r);
+    const repoName = basename(basename(repo) === ".git" ? dirname(repo) : repo);
     let names: string[];
     try {
       names = git(repo, ["for-each-ref", "--format=%(refname:short)", ...OWNED_PREFIXES.map((x) => `refs/heads/${x}`)]).split("\n").filter(Boolean);
@@ -1571,10 +1572,10 @@ function gcOrphanBranches(logDir: string, repos: Iterable<string>, protect: Set<
       if (live.has(branch) || protect.has(branch) || (hostUp && spares.has(branch))) continue;
       try {
         const res = archiveOrphanBranch(repo, branch, dryRun);
-        if ("kept" in res) out.push({ id: branch, branch: true, skipped: res.kept });
-        else out.push({ id: branch, branch: true, archive: res.archive });
+        if ("kept" in res) out.push({ id: branch, branch: true, repoName, skipped: res.kept });
+        else out.push({ id: branch, branch: true, repoName, archive: res.archive });
       } catch (e) {
-        out.push({ id: branch, branch: true, skipped: (e as Error).message.split("\n")[0] });
+        out.push({ id: branch, branch: true, repoName, skipped: (e as Error).message.split("\n")[0] });
       }
     }
   }
@@ -1614,6 +1615,8 @@ export interface GcEntry {
   archive?: string;
   /** an orphan branch (no worktree): id is the branch name */
   branch?: boolean;
+  /** repo (directory name) an orphan branch lives in */
+  repoName?: string;
   skipped?: string;
   knowledge?: Knowledge;
   /** one line per file copied into the main checkout */
@@ -2048,7 +2051,14 @@ export function gcWorktrees(
  */
 export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
   const out: GcEntry[] = [];
-  const owned = new Set(loadStatuses(logDir).map((s) => ownedTree(s)?.dir).filter((d): d is string => !!d).map((d) => resolve(d)));
+  // A finished worker's status keeps naming its slot, so only a live owner protects a slot tree.
+  const owned = new Set(
+    loadStatuses(logDir)
+      .filter((s) => isLive(s) || !isSlotWorktree(s.worktreeDir ?? ""))
+      .map((s) => ownedTree(s)?.dir)
+      .filter((d): d is string => !!d)
+      .map((d) => resolve(d))
+  );
   const cands: { id: string; dir: string }[] = [];
   const list = (root: string, keep: (n: string) => boolean, idOf: (n: string) => string): void => {
     if (!existsSync(root)) return;

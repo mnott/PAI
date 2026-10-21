@@ -841,8 +841,8 @@ const gcCommand: CommandDef = {
         out(
           r.branch
             ? r.skipped
-              ? `branch ${r.id}: ${r.skipped}`
-              : `${ctx.dryRun ? "would delete" : "deleted"} branch ${r.id} (archive ${r.archive})`
+              ? `branch ${r.id} [${r.repoName}]: ${r.skipped}`
+              : `${ctx.dryRun ? "would delete" : "deleted"} branch ${r.id} [${r.repoName}] (archive ${r.archive})`
             : r.skipped
               ? `skipped ${r.id}: ${r.skipped}`
               : `${verb} ${r.id} -> ${r.archive}`
@@ -858,7 +858,7 @@ const gcCommand: CommandDef = {
       const files = done.reduce((n, r) => n + (r.salvaged?.filter((l) => l.startsWith("salvaged ")).length ?? 0), 0);
       out(
         `${done.length} ${ctx.dryRun ? "would be archived" : "archived"}, salvaged ${files} file(s), kept ${kept.length}` +
-          (kept.length ? ` (${kept.map((r) => `${r.id}: ${r.skipped}`).join("; ")})` : "")
+          (kept.length ? ` (${kept.map((r) => `${r.id}${r.repoName ? ` [${r.repoName}]` : ""}: ${r.skipped}`).join("; ")})` : "")
       );
     }),
 };

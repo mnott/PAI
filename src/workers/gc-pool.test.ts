@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gcPoolWorktrees, git, worktreesDir } from "./worktree.js";
+import { saveStatus, type WorkerStatus } from "./status.js";
 import { poolSettings } from "./pool.js";
 import { defaultWorkersConfig } from "./config.js";
 
@@ -52,5 +53,22 @@ describe("no reserve worktrees", () => {
     } finally {
       child.kill();
     }
+  });
+
+  it("gc --pool removes a detached slot a finished worker's status still names, archives its HEAD, keeps one a live worker owns", () => {
+    const base = { cwd: repo, term: "", provider: "p", model: "m", started: "", updated: "", turns: 0, tools: 0, last: "", secs: null, label: "t" };
+    const idle = join(logDir, "slots", "local-idle");
+    const held = join(logDir, "slots", "local-held");
+    git(repo, ["worktree", "add", "--detach", idle, "main"]);
+    git(repo, ["worktree", "add", "--detach", held, "main"]);
+    const st = (id: string, dir: string, extra: Partial<WorkerStatus>): WorkerStatus =>
+      ({ ...base, id, pid: 0, rc: 0, state: "done", worktreeDir: dir, branch: `worker/${id}`, ...extra }) as WorkerStatus;
+    saveStatus(logDir, st("fin-1", idle, {}));
+    saveStatus(logDir, st("live-1", held, { state: "running", pid: process.pid, rc: null }));
+    const res = gcPoolWorktrees(logDir, false);
+    expect(res.find((e) => e.id === "slot-local-idle")?.archive).toBe("refs/pai-archive/slot-local-idle");
+    expect(existsSync(idle)).toBe(false);
+    expect(git(repo, ["rev-parse", "refs/pai-archive/slot-local-idle"])).toBe(git(repo, ["rev-parse", "main"]));
+    expect(existsSync(held)).toBe(true);
   });
 });
