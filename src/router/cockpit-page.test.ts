@@ -536,7 +536,7 @@ describe("cockpit page scripts", () => {
 });
 
 describe("cockpit workers panel", () => {
-  const table = COCKPIT_HTML.match(/function table\([\s\S]*?\n/)![0]; // the one-line helper, cut at its newline
+  const table = COCKPIT_HTML.match(/function table\(head,rows,tips\)\{[\s\S]*?\n\}\n/)![0]; // the helper, whole
   const vcls = COCKPIT_HTML.match(/function vcls\([\s\S]*?\n/)![0];
   const body = COCKPIT_HTML.match(/var qdrag[\s\S]*?\n\}/)![0];
   const render = (q: unknown) => {
@@ -2947,6 +2947,54 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(decl(".tw thead").some((m) => /display:\s*none/.test(m[2]))).toBe(true);
     expect(decl(".tw tr:first-child").some((m) => /display:\s*none/.test(m[2]))).toBe(true);
     expect(COCKPIT_HTML).toMatch(/\.tw td::before\{content:attr\(data-l\)/);
+  });
+
+  /** table() with the page's esc: the helper (one line per statement) cut from the page source. */
+  const tableFull = (esc: (s: unknown) => string) =>
+    new Function("esc", `${COCKPIT_HTML.match(/function table\(head,rows,tips\)\{[\s\S]*?\n\}\n/)![0]}; return table;`)(esc) as
+      (h: string[], r: string[][], tips?: Record<string, string>) => string;
+
+  it("table(): a column empty in every row is not rendered — no header, no cells, no stacked label", () => {
+    const t = tableFull((s: unknown) => String(s ?? ""));
+    const html = t(["worker", "pos", "move"], [["w1", '<span class="dim">-</span>', '<span class="dim">-</span>'], ["w2", "-", "  "]]);
+    expect(html).not.toContain("pos");
+    expect(html).not.toContain("move");
+    expect(html).not.toContain('data-l="pos"');
+    expect(html).not.toContain('data-l="move"');
+    expect(html).toContain('<th>worker</th>');
+    expect(html).toContain('<td data-l="worker">w1</td>');
+    // a column with one value anywhere stays, and the tooltip rides on the kept header
+    const kept = t(["worker", "now"], [["w1", '<span class="dim">-</span>'], ["w2", "editing"]], { now: "current activity" });
+    expect(kept).toContain('<th title="current activity">now</th>');
+    expect(kept).toContain('<td data-l="now">editing</td>');
+    expect(kept).toContain('<td data-l="now"><span class="dim">-</span></td>');
+  });
+
+  it("table(): a table with no fully-empty column renders byte-identical to the old helper", () => {
+    // the helper as it was before empty-column dropping existed, spelled out here so the
+    // comparison stays meaningful after the page source changes
+    const old = new Function("esc", `function table(head,rows,tips){return'<div class="tw"><table><thead><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+rows.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'}; return table;`)((s: unknown) => String(s ?? ""));
+    const t = tableFull((s: unknown) => String(s ?? ""));
+    const head = ["session", "models", "req", "tokens", "hit%"];
+    const rows = [
+      ["alpha", "m1, m2", "3", "1.2k", '<span class="ok">50.0%</span>'],
+      ["beta", "m3", "7", "820", '<span class="dim">0.0%</span>'],
+    ];
+    const tips = { "hit%": "cache_read / (read + write + fresh input)" };
+    expect(t(head, rows, tips)).toBe(old(head, rows, tips));
+    expect(t(head, rows)).toBe(old(head, rows));
+    expect(t(head, [])).toBe(old(head, [])); // no rows: nothing is fully-empty-by-rows, all headers stay
+  });
+
+  it("the stacked phone layout gets no label line for a dropped column (data-l only for kept columns)", () => {
+    const t = tableFull((s: unknown) => String(s ?? ""));
+    const html = t(["session", "now"], [["alpha", '<span class="dim">-</span>'], ["beta", "  "]]);
+    // the stacked card prints each cell's label via .tw td::before{content:attr(data-l)}:
+    // no cell carries the dropped column's label, so no label line can appear
+    expect(html).not.toContain("now");
+    expect((html.match(/data-l=/g) ?? []).length).toBe(2); // one per rendered cell, all "session"
+    expect(html).toContain('data-l="session">alpha');
+    expect(html).toContain('data-l="session">beta');
   });
 
   it("the verdict colour helper: ok prefixes green, failed red, report flagged amber, the rest dim, undefined dim (no crash)", () => {
