@@ -666,12 +666,12 @@ function wireAct(el,onDone){
     b.confirmed=true;
     if(b.__label===undefined)b.__label=b.textContent;
     b.textContent=cf;
-    // +1 so the stored id is never 0 (a falsy id would skip the clearTimeout on the second click)
-    b.__cfTimer=setTimeout(function(){b.confirmed=false;b.textContent=b.__label},CONFIRM_MS)+1;
+    // the real timer id, stored as-is: the second click must clear it (armed is b.confirmed)
+    b.__cfTimer=setTimeout(function(){b.confirmed=false;b.textContent=b.__label},CONFIRM_MS);
     return}
    b.confirmed=false;
    if(b.__label!==undefined)b.textContent=b.__label;
-   for(var k=0;k<btns.length;k++){btns[k].disabled=true;if(btns[k].__cfTimer){clearTimeout(btns[k].__cfTimer);btns[k].__cfTimer=null}}
+   for(var k=0;k<btns.length;k++){btns[k].disabled=true;if(btns[k].__cfTimer!=null){clearTimeout(btns[k].__cfTimer);btns[k].__cfTimer=null}}
    postAction(b.getAttribute("data-a"),b.getAttribute("data-t")||null,b.getAttribute("data-v")||null,function(j){
     var m=el.querySelector(".msg");if(m){m.textContent=(j&&j.message)||"";m.className="msg"+(j&&j.ok?"":" bad")}
     for(var k=0;k<btns.length;k++)btns[k].disabled=false;

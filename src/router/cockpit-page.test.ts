@@ -2401,8 +2401,8 @@ function confirmHarness(cfText: string | null, confirmMs = 4000) {
   const fn = new Function("postAction", "setTimeout", "clearTimeout", "CONFIRM_MS", `${src}\nreturn wireAct;`)(
     (...a: unknown[]) => posts.push(a),
     (f: () => void, ms: number) => { timers.push({ fn: f, ms, live: true }); return timers.length - 1; },
-    // clearTimeout takes the id setTimeout returned (the page stores it +1, so id-1 is the entry)
-    (id: number) => { const t = timers[id - 1]; if (t) t.live = false; },
+    // clearTimeout takes the id setTimeout returned (the page stores the real id)
+    (id: number) => { const t = timers[id]; if (t) t.live = false; },
     confirmMs
   ) as (el: unknown, cb?: unknown) => void;
   fn(el, () => {});
@@ -2429,6 +2429,7 @@ function stopHarness(inv: unknown, confirmMs = 4000) {
     (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)({ ok: true }); },
     () => {}, () => {},
     (f: () => void, ms: number) => { timers.push({ fn: f, ms, live: true }); return timers.length - 1; },
+    // clearTimeout takes the id setTimeout returned (the page stores the real id)
     (id: number) => { if (timers[id]) timers[id]!.live = false; },
     confirmMs
   ) as () => void;
@@ -2456,8 +2457,10 @@ function stopHarness(inv: unknown, confirmMs = 4000) {
     if (typeof btn.onclick !== "function") throw new Error(`onclick not wired on ${btn.getAttribute("data-v")} (wired rows: ${dom.all.filter((n: any) => typeof n.onclick === "function").length})`);
     btn.onclick({ stopPropagation() {} });
   };
+  // advance past CONFIRM_MS: every timer still live fires, like a real clock
+  const advance = (ms: number) => { for (const t of timers) if (t.live && t.ms <= ms) { t.live = false; t.fn(); } };
   const fire = (i: number) => { if (timers[i]?.live) { timers[i]!.live = false; timers[i]!.fn(); } };
-  return { posts, timers, click, fire, stopBtn, textOf };
+  return { posts, timers, click, fire, advance, stopBtn, textOf };
 }
 
 /** The page's render helpers, extracted verbatim from the shipped page. */
@@ -2828,6 +2831,20 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
     expect(armed.posts.map((p) => p.slice(0, 3))).toEqual([["runtime", "ollama", "stop"]]);
     expect(armed.timers[0]!.live).toBe(false);
     expect(armed.btn.textContent).toBe("stop");
+  });
+
+  it("the second click clears the revert timer: past CONFIRM_MS the label stays reverted and confirmed stays false", () => {
+    const h = stopHarness(sharedInv);
+    const btn = h.stopBtn("ollama");
+    h.click(btn); // arms: the confirm label shows, the revert timer runs
+    expect(btn.textContent).toBe("stop ollama: also PAI embedding - click again");
+    h.click(btn); // confirms: posts, reverts the label, must clear the timer
+    expect(h.posts.length).toBe(1);
+    expect(btn.textContent).toBe("stop");
+    expect(h.timers[0]!.live).toBe(false);
+    h.advance(4000); // past CONFIRM_MS: the cleared timer must not fire
+    expect(btn.textContent).toBe("stop");
+    expect(btn.confirmed).toBe(false);
   });
 });
 
