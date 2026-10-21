@@ -24,7 +24,7 @@ const data = (errors: number) => ({
 const PROBE = `<script>setTimeout(function(){
 var root=document.getElementById("win-root");
 function boxes(){return Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){var r=c.getBoundingClientRect();return c.getAttribute("data-card")+":"+[r.left,r.top,r.width,r.height].map(Math.round).join(",")}).join("|")}
-function vals(){return Array.prototype.map.call(document.querySelectorAll('#win-root [data-type="metric"]'),function(c){var v=c.querySelector('[data-k="v"]');return c.getAttribute("data-card")+"="+v.textContent+(v.className.indexOf("bad")>=0?"!":v.className.indexOf("warn")>=0?"~":"")}).join("|")}
+function vals(){return Array.prototype.map.call(document.querySelectorAll('#win-root [data-card^="kpis."][data-type="metric"]'),function(c){var v=c.querySelector('[data-k="v"]');return c.getAttribute("data-card")+"="+v.textContent+(v.className.indexOf("bad")>=0?"!":v.className.indexOf("warn")>=0?"~":"")}).join("|")}
 var o={flag:!!root&&!root.hidden,rootHidden:root?root.hidden:null,cards:document.querySelectorAll("#win-root [data-card^='kpis']").length,heads:Array.prototype.map.call(document.querySelectorAll("#win-root [data-card^='kpis']>.chead"),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")}),
  oldKpis:getComputedStyle(document.querySelector('[data-section="kpis"]')).display,title:(document.querySelector('#win-root [data-card="kpis"] .ctt')||{}).textContent,
  vals:vals(),boxes:boxes(),err:window.__err||null};
