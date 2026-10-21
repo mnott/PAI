@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // A headless worker running this suite carries the launcher's PAI_WORKER=1;
 // the code under test must not mistake the test process for a worker.
@@ -186,6 +186,7 @@ describe("checkAndEnqueueContextHandover — enqueue attempt vs confirmed outcom
     const { writeFileSync, unlinkSync, existsSync } = await import("node:fs");
     const sessionId = "old-format-test-session";
     const path = triggerStatePath(sessionId);
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify({ fired: ["warmup", "refresh"] }), "utf-8");
     try {
       const state = loadTriggerState(sessionId);
@@ -302,6 +303,7 @@ describe("resetHandoverTriggerState — compaction reset (the one-handover-per-s
       // Both thresholds already confirmed — exactly the state a session is
       // left in after its first model-written handover, and exactly the
       // state that used to persist for the session's entire remaining life.
+      mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, JSON.stringify({ confirmed: ["warmup", "refresh"], pending: null }), "utf-8");
 
       // Sanity check on the bug itself: before any reset, the real loader
@@ -363,6 +365,7 @@ describe("resetHandoverTriggerState — compaction reset (the one-handover-per-s
     const cachePath = contextHandoverCachePath(sessionId);
 
     try {
+      mkdirSync(dirname(markerPath), { recursive: true });
       writeFileSync(markerPath, JSON.stringify({ confirmed: ["warmup", "refresh"], pending: null }), "utf-8");
       writeContextHandoverCache({
         sessionId,

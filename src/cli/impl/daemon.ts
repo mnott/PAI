@@ -58,6 +58,11 @@ export function daemonServiceName(plat: NodeJS.Platform = process.platform): str
   return plat === "linux" ? SYSTEMD_UNIT_NAME : PLIST_LABEL;
 }
 
+/** Where `daemon install` writes its service file: the launchd plist (macOS) or the systemd user unit (Linux). */
+export function daemonServiceFilePath(plat: NodeJS.Platform = process.platform): string {
+  return plat === "linux" ? SYSTEMD_UNIT_PATH : PLIST_PATH;
+}
+
 /**
  * Resolve the absolute path to the built daemon entry point.
  * tsdown may emit this module's own chunk directly under dist/ rather than

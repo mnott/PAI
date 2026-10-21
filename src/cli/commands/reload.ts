@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { homedir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
@@ -20,7 +20,7 @@ import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { bundleBuildStamp } from "../../workers/pool.js";
 import { cliVersion } from "../run.js";
-import { daemonRestartCmd, daemonServiceName } from "../impl/daemon.js";
+import { daemonRestartCmd, daemonServiceFilePath, daemonServiceName } from "../impl/daemon.js";
 import { serviceManagerAllowed } from "../../service-manager.js";
 import { daemonLogPath } from "../../runtime-paths.js";
 import { CliError, type CommandDef } from "../define.js";
@@ -127,13 +127,6 @@ export async function reloadAll(
   if (!pool) lines.push("pool host: not running, skipped");
   else lines.push(`pool host: pid ${pidText(pool.oldPid)} -> ${pidText(pool.newPid)}, ${code}${pool.starting ? ", still starting (see pai worker pool status)" : ""}${pool.builtAt ? ` (bundle built ${pool.builtAt})` : ""}`);
   return { lines, daemonFailed };
-}
-
-/** Where `daemon install` writes its service file: the launchd plist (macOS) or the systemd user unit (Linux). */
-function daemonServiceFilePath(plat: NodeJS.Platform = process.platform): string {
-  return plat === "linux"
-    ? join(homedir(), ".config", "systemd", "user", daemonServiceName(plat))
-    : join(homedir(), "Library", "LaunchAgents", `${daemonServiceName(plat)}.plist`);
 }
 
 function liveDeps(): ReloadDeps {
