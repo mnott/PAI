@@ -94,6 +94,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
       bashCmd !== undefined && actionKey(bashCmd) !== null ? worktreeFingerprint(input.cwd || process.cwd()) : null,
       Date.now(),
       input.cwd || process.cwd(),
+      readWorkersSection().workers.loopGuard,
     );
     if (r.state !== state) saveLoopState(file, r.state);
     if (r.deny) {

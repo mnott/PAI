@@ -571,3 +571,55 @@ describe("piecewise read loop", () => {
     expect(r.some((x) => x.deny)).toBe(false);
   });
 });
+
+describe("loop guard: a denied repeat gets its last output back", () => {
+  const run = (cmd: string, out: string, tool = "Bash", cfg?: { echoLines: number; echoChars: number }, n = 4) => {
+    let s = emptyLoopState();
+    const input = tool === "Bash" ? cmd : { pattern: cmd };
+    for (let i = 0; i < n; i++) s = recordLoopResult(stepLoopGuard(s, tool, input).state, tool, input, out);
+    return stepLoopGuard(s, tool, input, null, Date.now(), undefined, cfg);
+  };
+  it("a repeated grep is denied with its previous output", () => {
+    const r = run("grep -n foo src/a.ts", "12:foo one\n40:foo two");
+    expect(r.deny).toBe(true);
+    expect(r.reason).toContain("you ran this command 4 times");
+    expect(r.reason).toContain("Its last output was:\n12:foo one\n40:foo two\nUse this output; do not run it again.");
+  });
+  it("Grep and Glob tool repeats echo too", () => {
+    expect(run("foo", "a.ts:1:foo", "Grep").reason).toContain("Its last output was:\na.ts:1:foo");
+    expect(run("**/*.ts", "a.ts\nb.ts", "Glob").reason).toContain("Its last output was:\na.ts\nb.ts");
+  });
+  it("the echo is trimmed to the configured lines and chars", () => {
+    const out = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n");
+    const dflt = run("grep -n x src/a.ts", out).reason as string;
+    expect(dflt).toContain("line39");
+    expect(dflt).not.toContain("line40");
+    const small = run("grep -n x src/a.ts", out, "Bash", { echoLines: 2, echoChars: 3000 }).reason as string;
+    expect(small).toContain("line1\n[...trimmed]");
+    expect(small).not.toContain("line2");
+    const chars = run("grep -n x src/a.ts", out, "Bash", { echoLines: 40, echoChars: 12 }).reason as string;
+    expect(chars).toContain("line0\nline1\n\n[...trimmed]");
+    expect(chars).not.toContain("line2");
+  });
+  it("a non-read command's denial has no echo", () => {
+    const r = run("ls > /tmp/x.txt && echo built", "built");
+    expect(r.deny).toBe(true);
+    expect(r.reason).toBeUndefined();
+  });
+  it("secret-looking lines are masked", () => {
+    const r = run("cat src/.env.ts", "PORT=1\nAPI_KEY=abc123\nnote: password is hunter2\nok");
+    expect(r.reason).toContain("PORT=1");
+    expect(r.reason).toContain("ok");
+    expect(r.reason).not.toContain("abc123");
+    expect(r.reason).not.toContain("hunter2");
+    expect(r.reason).toContain("[line masked: looks like a secret]");
+  });
+  it("stores nothing for a non-read call and bounds the kept results", () => {
+    let s = emptyLoopState();
+    s = recordLoopResult(stepLoopGuard(s, "Bash", "npm run lint").state, "Bash", "npm run lint", "x");
+    expect(s.last).toBeUndefined();
+    for (let i = 0; i < 20; i++) s = recordLoopResult(stepLoopGuard(s, "Read", { file_path: `f${i}.ts` }).state, "Read", { file_path: `f${i}.ts` }, "y".repeat(20000));
+    expect(Object.keys(s.last ?? {}).length).toBeLessThanOrEqual(8);
+    expect(Object.values(s.last ?? {}).every((v) => v.length <= 8000)).toBe(true);
+  });
+});

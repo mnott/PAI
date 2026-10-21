@@ -35,6 +35,12 @@ const SIMILARITY = 0.9;
 const READ_OVERLAP = 0.8;
 const RESULT_CHARS = 2000;
 const WINDOW_CAP = 64;
+/** Last results kept for echo (read-only calls only): entries and chars each. */
+const LAST_CAP = 8;
+const LAST_CHARS = 8000;
+/** Shipped defaults of workers.loopGuard; the hook passes the configured values. */
+export const DEFAULT_ECHO = { echoLines: 40, echoChars: 3000 };
+export type EchoConfig = typeof DEFAULT_ECHO;
 
 const SELF = "If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
 export const LOOP_DENY_REASON = `loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
@@ -57,6 +63,8 @@ export interface LoopState {
   window: string[];
   /** Normalised result text per window entry; null while unknown. */
   outs?: Array<string | null>;
+  /** Window key -> raw last result (secret lines masked) of a read-only call, handed back when a repeat is denied. */
+  last?: Record<string, string>;
   /** Denials per cluster head since the last edit. */
   denials?: Record<string, number>;
   /** Runner invocations per action key since the last edit (see actionKey). */
@@ -200,7 +208,7 @@ function inlineEdit(command: string): boolean {
   return /\b(?:sed|perl)\s+(?:-\w+\s+)*-i|\bgit apply\b|\bpatch\s+-?\w*\s*-?p\d|\btee\s+(?!\/tmp)\S|(?:^|[;&|]\s*)cat\s*>>?\s*(?!\/tmp)[\w.]/.test(command.split(/&&|;|\|/).slice(0, -1).join(";") || "");
 }
 
-const READ_VERB = /^(?:sed|head|tail|cat|grep|egrep|rg|awk|nl|wc|echo|printf|true)$/;
+const READ_VERB = /^(?:sed|head|tail|cat|grep|egrep|rg|awk|nl|wc|od|echo|printf|true)$/;
 
 /**
  * Sorted file operands of a read-only command (sed -n / head / tail / cat / grep / awk print on files, joined by
@@ -377,6 +385,43 @@ function resultsSimilar(a: string | null | undefined, b: string | null | undefin
   return inter / (x.size + y.size - inter) >= SIMILARITY;
 }
 
+const SECRET_LINE = /pass(?:word|wd)|secret|token|api[_-]?key|credential|authorization|bearer|private key|^\s*(?:export\s+)?[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASS\w*|CRED\w*|AUTH\w*)\s*=|\b(?:sk|ghp|gho|xox[bap])[-_][A-Za-z0-9_-]{16,}|\b[A-Za-z0-9+]{40,}={0,2}(?![\w/])/i;
+const MASKED_LINE = "[line masked: looks like a secret]";
+
+/** Result text with lines that look like secrets replaced by a marker. */
+export function maskSecrets(text: string): string {
+  return text.split("\n").map((l) => (SECRET_LINE.test(l) ? MASKED_LINE : l)).join("\n");
+}
+
+function rawText(response: unknown): string {
+  if (typeof response === "string") return response;
+  if (response && typeof response === "object") {
+    const r = response as Record<string, unknown>;
+    if ("stdout" in r || "stderr" in r) return [r.stdout, r.stderr].filter((x) => typeof x === "string" && x).join("\n");
+    const content = (r.file as { content?: unknown } | undefined)?.content ?? r.content;
+    if (typeof content === "string") return content;
+  }
+  return stable(response);
+}
+
+/** A call whose output the guard may hand back: Read, Grep, Glob, or a Bash command classified read-only. */
+function echoable(tool: string, input: string | Record<string, unknown> | undefined): boolean {
+  if (tool === "Bash") return typeof input === "string" && readOnlyFiles(input) !== null;
+  return tool === "Read" || tool === "Grep" || tool === "Glob";
+}
+
+/** Output trimmed to the first `lines` lines and `chars` characters, with a note when cut. */
+function trimEcho(text: string, cfg: EchoConfig): string {
+  const lines = text.split("\n");
+  let out = lines.slice(0, cfg.echoLines).join("\n");
+  let cut = lines.length > cfg.echoLines;
+  if (out.length > cfg.echoChars) {
+    out = out.slice(0, cfg.echoChars);
+    cut = true;
+  }
+  return cut ? `${out}\n[...trimmed]` : out;
+}
+
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
   if (EDIT_TOOLS.has(tool)) return emptyLoopState();
@@ -400,7 +445,10 @@ export function recordLoopResult(state: LoopState, tool: string, input: string |
   const outs = [...(state.outs ?? [])];
   while (outs.length < state.window.length) outs.push(null);
   outs[last] = resultSig(response);
-  return { ...state, outs };
+  if (!echoable(tool, input)) return { ...state, outs };
+  const kept = Object.entries(state.last ?? {}).filter(([k]) => k !== key).slice(-(LAST_CAP - 1));
+  const text = maskSecrets(rawText(response)).slice(0, LAST_CHARS);
+  return { ...state, outs, last: Object.fromEntries([...kept, [key, text]]) };
 }
 
 export interface LoopStep {
@@ -424,7 +472,7 @@ function hangNote(state: LoopState, command: string): string {
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string): LoopStep {
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
   if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
@@ -519,12 +567,15 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     const denials = { ...(state.denials ?? {}) };
     denials[head] = (denials[head] ?? 0) + 1;
     const cmd = tool === "Bash" ? (typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command) : undefined;
+    const prior = state.last?.[state.window[idx[idx.length - 1]]];
+    const echoed = prior && echo.echoLines > 0 && echo.echoChars > 0 ? ` Its last output was:\n${trimEcho(prior, echo)}\nUse this output; do not run it again.` : "";
+    const hung = hungBefore(state, idx);
     return {
       state: { ...state, denials },
       deny: true,
       stop: denials[head] >= LOOP_STOP_DENIALS,
       evasion: typeof cmd === "string" && loopGuardEvasion(cmd, head.split("\t")[1] ?? ""),
-      reason: hungBefore(state, idx) ? `${loopDenyReason(tool)}${HANG_SUFFIX}` : undefined,
+      reason: hung || echoed ? `${loopDenyReason(tool)}${hung ? HANG_SUFFIX : ""}${echoed}` : undefined,
       key: head.split("\t")[1],
       count: LOOP_MAX_REPEATS + denials[head],
     };
