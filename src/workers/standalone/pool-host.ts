@@ -14,6 +14,7 @@ import { readWorkersSection } from "../config.js";
 import { workersLogDir } from "../paths.js";
 import { poolHostAlive, poolPidPath, poolSettings } from "../pool.js";
 import { createPoolHost } from "../pool-host.js";
+import { createBindHandler, installExitLogging, logHostExit, openHostLog } from "../pool-host-run.js";
 
 const portFlag = process.argv.indexOf("--port");
 const fallbackPort = 8798;
@@ -30,6 +31,16 @@ try {
   logDir = "";
 }
 
+// a death leaves a trace: stderr/stdout land in host.log (the spawner points them there) and a crash writes POOL-HOST-EXIT
+installExitLogging({
+  logDir,
+  pid: process.pid,
+  on: (ev, cb) => process.on(ev, cb),
+  exit: (code) => process.exit(code),
+  write: (line) => process.stderr.write(line),
+});
+process.on("exit", (code) => logHostExit(logDir, process.pid, `exit code ${code}`));
+
 const host = createPoolHost({
   port,
   // a build replaces this file: once no slot is busy the host starts its successor on the same argv and exits
@@ -37,7 +48,8 @@ const host = createPoolHost({
   // the listener is already closed when reexec runs: start the successor and report whether it answers /healthz
   reexec: async () => {
     const argv = process.argv.slice(1).filter((a) => a !== "--handover");
-    const child = spawn(process.execPath, [...argv, "--handover"], { detached: true, stdio: "ignore", cwd: process.cwd() });
+    const fd = logDir ? openHostLog(logDir) : null;
+    const child = spawn(process.execPath, [...argv, "--handover"], { detached: true, stdio: fd === null ? "ignore" : ["ignore", fd, fd], cwd: process.cwd() });
     let exited = false;
     child.once("exit", () => (exited = true));
     child.unref();
@@ -55,9 +67,8 @@ const host = createPoolHost({
   ...(logDir ? {} : { noReaper: idleSecs <= 0 }),
 });
 
-// a successor started by a reloading host waits for the old listener to release the port
-const handover = process.argv.includes("--handover");
-let bindTries = 0;
+// every start (pai worker pool on, pai reload, self-reload) tolerates a port still held by its predecessor;
+// when a healthy host owns it the newcomer steps aside, so there is exactly one owner
 const listen = (): void => {
   host.server.listen(port, "127.0.0.1", () => {
     if (logDir) {
@@ -67,14 +78,19 @@ const listen = (): void => {
     process.stderr.write(`pai worker pool host listening on http://127.0.0.1:${host.port} (cwd ${host.logDir})\n`);
   });
 };
-host.server.on("error", (e: NodeJS.ErrnoException) => {
-  if (handover && e.code === "EADDRINUSE" && ++bindTries < 40) {
-    setTimeout(listen, 250);
-    return;
-  }
-  process.stderr.write(`pai worker pool host: cannot listen on ${port}: ${e.message}\n`);
-  process.exit(1);
-});
+host.server.on(
+  "error",
+  createBindHandler({
+    listen,
+    alive: () => poolHostAlive(port),
+    retry: (fn, ms) => setTimeout(fn, ms),
+    fail: (code, reason) => {
+      process.stderr.write(`pai worker pool host: ${reason}\n`);
+      logHostExit(logDir, process.pid, reason);
+      process.exit(code);
+    },
+  })
+);
 listen();
 
 process.once("SIGTERM", () => {

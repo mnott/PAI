@@ -8,11 +8,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, statSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkersSection, writeWorkersSection } from "./config.js";
 import { ledgerPath } from "./paths.js";
+import { openHostLog } from "./pool-host-run.js";
 import { fmtTokens } from "./status.js";
 import {
   formatCarryByProvider,
@@ -96,12 +97,14 @@ async function startPoolHost(logDir: string, port: number, waitMs: number): Prom
   }
   mkdirSync(logDir, { recursive: true });
   mkdirSync(poolDir(logDir), { recursive: true }); // the pid file lands before the host's first state write
-  const child = spawn(process.execPath, [script, "--port", String(port)], {
+  const logFd = openHostLog(logDir);
+  const child = spawn(process.execPath, [script, "--port", String(port), "--handover"], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     cwd: logDir,
   });
   child.unref();
+  closeSync(logFd);
   writeFileSync(poolPidPath(logDir), `${child.pid}\n`, "utf8");
   for (let i = 0; i < waitMs / 250; i++) {
     if (await poolHostAlive(port)) return { pid: child.pid, up: true };
