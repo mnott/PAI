@@ -375,7 +375,7 @@ function modelsHtml(inv){
    // the runtime chip carries the runtime's note (models.runtimes.<name>.note) as its title,
    // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
    '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
-   '<span class="badge'+(down?' bad':r.slow?' warn':'')+'"'+(r.slow?' title="the last probe was slow or failed; the last good reading is held"':'')+'>'+(r.slow&&!down?"slow":state)+'</span>'+
+   '<span class="badge mstate'+(down?' bad':r.slow?' warn':'')+'"'+(r.slow?' title="the last probe was slow or failed; the last good reading is held"':'')+'>'+(r.slow&&!down?"slow":state)+'</span>'+
    (tr?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+tr.btns+'<span class="msg"></span></span>':rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
    '<span class="num">'+esc(key)+'</span></div></div>';
   var body="";
@@ -416,7 +416,7 @@ function modelsHtml(inv){
   cards+='<div class="mcard'+(down?" down":stopped?" stopped":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'" data-tname="'+esc(hasModel?titleOf(r.models[0]):r.name)+'" data-tval="'+esc(r.status)+'"><span class="tgrip" data-tgrip tabindex="0" title="move card" aria-label="move card" aria-pressed="false" role="button">⠿</span>'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
- var h='<div class="rt-grid" data-tkey="models cards">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
+ var h='<div class="rt-grid" data-tkey="models cards" data-tinline="1">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
  // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;

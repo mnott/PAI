@@ -701,7 +701,7 @@ describe("cockpit Models cards", () => {
       duplicates: [],
       live: { at: 1, runtimes: [] },
     });
-    expect(h).toContain('<div class="rt-grid" data-tkey="models cards">');
+    expect(h).toContain('<div class="rt-grid" data-tkey="models cards" data-tinline="1">');
     expect(h).toContain('data-tval="running"');
     const card = h.split('<div class="mcard')[1]!;
     expect(card).toContain('data-tid="ollama / qwen3:8b"');
@@ -1012,7 +1012,7 @@ describe("cockpit Models cards", () => {
     });
     // kind equals the runtime name: no kind chip at all, the name shows once in the header
     const dupHead = dup.slice(dup.indexOf('<div class="mhead"'), dup.indexOf('<div class="mbody"'));
-    expect((dupHead.match(/<span class="badge">[^<]*<\/span>/g) ?? []).length).toBe(2); // runtime chip + status chip, no kind chip
+    expect((dupHead.match(/<span class="badge[^"]*">[^<]*<\/span>/g) ?? []).length).toBe(2); // runtime chip + status chip, no kind chip
     expect(dupHead).toContain('<span class="badge">docker-model-runner :8090</span>');
     expect(dupHead).not.toContain('<span class="badge">docker-model-runner</span><span class="badge">docker-model-runner');
     const fold = modelsHtml({
@@ -1036,7 +1036,7 @@ describe("cockpit Models cards", () => {
     expect(h).toContain('class="mcard down"');
     expect(h).toContain("coder :8036 down — gyro (worker provider) cannot work");
     expect(h).toContain('<span class="rt-dot down"></span>');
-    expect(h).toContain('<span class="badge bad">down</span>');
+    expect(h).toContain('<span class="badge mstate bad">down</span>');
     expect(h).not.toContain("not loaded:");
     // no duplicates line for different models on different runtimes
     expect(h).not.toContain("duplicates:");
@@ -1093,7 +1093,7 @@ describe("cockpit Models cards", () => {
   });
   it("an idle runner reads available (loads on first request), never idle or stopped", () => {
     const h = modelsHtml(inv);
-    expect(h).toContain('<span class="badge">available (loads on first request)</span>');
+    expect(h).toContain('<span class="badge mstate">available (loads on first request)</span>');
     expect(h).not.toContain(">idle<");
     expect(h).not.toContain(">stopped<");
   });

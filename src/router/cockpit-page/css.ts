@@ -128,6 +128,10 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead .badge{flex:0 0 auto}
 .mbody{padding:8px 10px;display:none;flex-direction:column;gap:8px;min-width:0}
 .mcard.open .mbody{display:flex}
+.mcard.tmin{display:block;padding:0;border:1px solid var(--line);border-radius:8px;font-size:inherit;gap:0}.mcard.tmin::before,.mcard.tmin::after{content:none}
+.mcard.tmin>*:not(.tctl):not(.tgrip):not(.mhead){display:none}.mcard.tmin .mbody,.mcard.tmin .chev,.mcard.tmin .lblbtn,.mcard.tmin .mid,.mcard.tmin .mchips>:not(.mstate){display:none}
+.mcard.tmin>.mhead{display:flex}.mcard.tmin .mhead{flex-direction:row;align-items:center;padding:6px 64px 6px 10px;border-bottom-color:transparent}.mcard.tmin .mtitle{flex:1 1 auto;padding-right:0}.mcard.tmin .mhead b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}.mcard.tmin .mchips{flex:0 0 auto}
+.mcard>.tctl{opacity:1;color:var(--fg);font-size:15px;font-weight:700;top:4px;right:22px;border:1px solid var(--line);border-radius:4px;padding:1px 6px;background:var(--card)}.mcard>.tctl:hover{color:var(--acc);border-color:var(--acc)}.mcard.tmin>.tgrip{right:6px;top:6px}
 .mcard.down{border-color:var(--bad)}.linst{display:flex;flex-direction:column;gap:2px;font-size:12px}
 .mdown{color:var(--bad);font-size:12px}.mdim{color:var(--dim);font-size:12px}.rt-dot.off{background:transparent;box-shadow:inset 0 0 0 2px var(--dim)}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */

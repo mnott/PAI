@@ -341,7 +341,9 @@ function applyTileOrder(el){
   ord=po;mins=pm;
  }
  var open=[],chips=[];
- all.forEach(function(t){(mins.indexOf(t.getAttribute("data-tid"))>=0?chips:open).push(t)});
+ // a data-tinline container keeps its minimized tiles in place (one header line, same column width) instead of a chips row
+ var inl=el.getAttribute&&el.getAttribute("data-tinline");
+ all.forEach(function(t){(mins.indexOf(t.getAttribute("data-tid"))>=0&&!inl?chips:open).push(t)});
  open.forEach(function(t){el.appendChild(t)});
  keep.forEach(function(t){el.appendChild(t)});
  if(chips.length){
