@@ -79,7 +79,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 /* a wide table scrolls inside its own box, never past the page; the first column stays put */
 .tw table th:first-child,.tw table td:first-child{position:sticky;left:0;background:var(--card)}
 /* below the phone breakpoint a table row is a stacked card: label: value pairs, no columns */
-@media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw tr{display:block;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;min-width:0}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}.tw td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}}
+@media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw thead,.tw tbody{display:block;width:auto;max-width:100%;min-width:0}.tw tr{display:block;width:auto;max-width:100%;min-width:0;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;width:auto;max-width:100%;min-width:0}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}.tw td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}
 .bad{color:var(--bad)}.warn{color:var(--warn)}.ok{color:var(--ok)}.dim{color:var(--dim)}
 .kpis{display:flex;gap:8px 20px;flex-wrap:wrap}.kpi b{font-size:20px;display:block;font-weight:600}.kpi span{color:var(--dim)}

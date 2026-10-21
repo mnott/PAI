@@ -171,9 +171,23 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
   /** The declarations a selector gets at a given viewport width, media queries resolved. */
   const appliedDecls = (sel: string, width: number): string =>
     cssRules(COCKPIT_HTML)
-      .filter((r) => r.maxW >= width && r.sel.split(",").map((s) => s.trim()).includes(sel))
+      .filter((r) => (r.maxW === Infinity ? true : r.maxW >= width) && r.sel.split(",").map((s) => s.trim()).includes(sel))
       .map((r) => r.decls)
       .join(";");
+  /** The declarations a selector gets from the phone (max-width) rules only.
+   *  The media query is one brace block, so cssRules cannot see inside it: match
+   *  the rule blocks directly against the media body. */
+  const phoneDecls = (sel: string): string => {
+    const css = COCKPIT_HTML.match(/<style>([\s\S]*?)<\/style>/)![1];
+    const marker = "@media(max-width:480px){.tw{";
+    const at = css.indexOf(marker);
+    const body = at < 0 ? "" : css.slice(at + marker.length, css.indexOf("\n", at));
+    const out: string[] = [];
+    for (const m of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (m[1].split(",").map((s) => s.trim()).includes(sel)) out.push(m[2]);
+    }
+    return out.join(";");
+  };
   /** The used width of an inline-block span: min(max-width, containing-block width),
    *  the shrink-to-fit rule a browser applies at this width. */
   const usedSpanWidth = (sel: string, width: number, containerWidth: number): number => {
@@ -201,6 +215,48 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     // the cell can shrink in the stacked phone layout (min-width:0)
     expect(appliedDecls("#sessions td:first-child", 375)).toContain("min-width:0");
     expect(appliedDecls(".tw td", 375)).toContain("min-width:0");
+  });
+
+  /** The used width of a block row inside the stacked table at a viewport width:
+   *  a block box fills its containing block, capped by its own max-width; a row whose
+   *  content is wider than the card only overflows if the row itself has no cap. */
+  const usedRowWidth = (sel: string, width: number, containerWidth: number): number => {
+    const d = appliedDecls(sel, width);
+    const disp = d.match(/display:([^;]+)/)?.[1] ?? "";
+    const mw = d.match(/max-width:([^;]+)/)?.[1] ?? "";
+    const cap = mw === "100%" ? containerWidth : mw.endsWith("px") ? +mw.slice(0, -2) : Infinity;
+    return disp === "block" ? Math.min(containerWidth, cap) : Math.max(containerWidth, cap);
+  };
+
+  it("stacked mode: tbody and tr are blocks sized to the card, so a 90-char session row is no wider than the .tw box", () => {
+    const NAME90 = "escalation: loop stop with saved work escalates at once · cb1776b3 done · review pending n"; // 90 chars
+    expect(NAME90.length).toBe(90);
+    const html = renderSessions([{
+      name: NAME90, session: "20261021-015130-55831", models: [MODEL50], requests: 3,
+      input: 1000, cacheWrite: 100, cacheRead: 500, output: 200, hitRatio: 0.5, busts: 0, errors: 0,
+      lastTs: new Date().toISOString(), worker: "w1", verdict: "ok",
+    }]);
+    expect(html).toContain("<tbody>");
+    expect(html).toContain(NAME90);
+    // the harness: viewport 375 px, card inside main (card padding 10 px each side)
+    const cardW = 375 - 20;
+    // tbody must not stay a table-row-group: that wraps in an anonymous table box sized to the widest content
+    expect(appliedDecls(".tw tbody", 375)).toContain("display:block");
+    expect(appliedDecls(".tw tbody", 375)).toContain("max-width:100%");
+    expect(appliedDecls(".tw tr", 375)).toContain("display:block");
+    expect(appliedDecls(".tw tr", 375)).toContain("max-width:100%");
+    expect(appliedDecls(".tw td", 375)).toContain("max-width:100%");
+    // a row with the 90-char name sizes to the card, not to its content
+    expect(usedRowWidth(".tw tbody", 375, cardW)).toBeLessThanOrEqual(cardW);
+    expect(usedRowWidth(".tw tr", 375, cardW)).toBeLessThanOrEqual(cardW);
+    // desktop (non-stacked) layout untouched: the phone rules don't apply at 900 px,
+    // and the base rules carry no display override (tbody stays table-row-group there)
+    expect(phoneDecls(".tw tbody")).toContain("display:block");
+    expect(phoneDecls(".tw tr")).toContain("display:block");
+    // no base (non-media) rule touches tbody/tr display: desktop keeps the table layout
+    // (cssRules misparses the phone block as base rules, so scan the base CSS before the media blocks)
+    const baseCss = COCKPIT_HTML.match(/<style>([\s\S]*?)<\/style>/)![1].split("@media(")[0];
+    expect([...baseCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].split(",").map((s) => s.trim()).some((s) => s === ".tw tbody" || s === ".tw tr"))).toEqual([]);
   });
 
   it("the pause and sessions panels render through table(), not a hand-rolled table", () => {
@@ -2342,7 +2398,7 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(COCKPIT_HTML).toMatch(/\.tw\{[^}]*max-width:100%[^}]*scrollbar-color:var\(--dim\) var\(--card\);scrollbar-width:thin\}/);
     expect(COCKPIT_HTML).toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky;left:0;background:var\(--card\)\}/);
     // below the phone breakpoint a row is a stacked card: label: value pairs, no columns
-    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{\.tw\{overflow-x:visible\}\.tw table\{display:block\}\.tw tr\{display:block/);
+    expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{\.tw\{overflow-x:visible\}\.tw table\{display:block\}\.tw thead\{display:block\}\.tw tbody\{display:block/);
     expect(COCKPIT_HTML).toMatch(/\.tw td::before\{content:attr\(data-l\)/);
   });
 
