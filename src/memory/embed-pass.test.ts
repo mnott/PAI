@@ -4,7 +4,13 @@ import { initializeFederationSchema } from "../storage/sqlite/federation-schema.
 import { SQLiteBackend } from "../storage/sqlite.js";
 import { embedChunksWithBackend } from "./indexer/async.js";
 import { runEmbed } from "../cli/commands/memory/embed.js";
-import { embedYieldReason, formatEmbedStatus } from "./embed-pass.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  embedYieldReason, formatEmbedStatus, runEmbedCycle, recordEmbedPass, readEmbedPasses, lastRecordedEmbedPass,
+  type EmbedPassLogEntry,
+} from "./embed-pass.js";
 import type { EmbeddingBackend } from "./backends/types.js";
 
 const configured = vi.hoisted(() => ({ backend: null as unknown }));
@@ -132,5 +138,83 @@ describe("status fields", () => {
     expect(formatEmbedStatus({ lastEmbedPass: { at: "t", outcome: "yielded", embedded: 0, reason: "load average 9.0 above 8" } })[0])
       .toBe("Last embed:  yielded, 0 chunks at t (load average 9.0 above 8)");
     expect(formatEmbedStatus({})).toEqual([]);
+  });
+});
+
+describe("embed cycle scheduling", () => {
+  const entry = (o: Partial<EmbedPassLogEntry>): EmbedPassLogEntry => ({
+    start: 0, end: 0, embedded: 100, backlogLeft: 50, stopReason: "pass-budget", ...o,
+  });
+  const harness = (results: Array<EmbedPassLogEntry | null>, cycleMaxMinutes = 300) => {
+    let t = 0;
+    const sleeps: number[] = [];
+    let i = 0;
+    return {
+      sleeps,
+      run: () =>
+        runEmbedCycle({
+          now: () => t,
+          sleep: async (ms) => { sleeps.push(ms); t += ms; },
+          runPass: async () => { t += 60 * 60_000; return results[i++] ?? null; },
+          cycleMaxMinutes,
+          resumeMinutes: 10,
+        }),
+    };
+  };
+
+  it("continues after a pass budget stop until the backlog is empty", async () => {
+    const h = harness([entry({}), entry({}), entry({ stopReason: "done", backlogLeft: 0 })]);
+    expect(await h.run()).toEqual({ passes: 3, embedded: 300, stopReason: "done" });
+  });
+
+  it("stops with cycle-budget when the window is spent", async () => {
+    const h = harness([entry({}), entry({}), entry({})], 120);
+    expect(await h.run()).toMatchObject({ passes: 2, stopReason: "cycle-budget" });
+  });
+
+  it("waits out a yield, then resumes", async () => {
+    const h = harness([entry({ stopReason: "yielded", embedded: 0 }), entry({ stopReason: "done", backlogLeft: 0 })]);
+    expect(await h.run()).toMatchObject({ passes: 2, stopReason: "done" });
+    expect(h.sleeps).toEqual([10 * 60_000]);
+  });
+
+  it("stops instead of spinning when a pass embeds nothing", async () => {
+    const h = harness([entry({ embedded: 0 })]);
+    expect(await h.run()).toMatchObject({ passes: 1, stopReason: "no-progress" });
+  });
+
+  it("stops on error and on a pass that did not run", async () => {
+    expect((await harness([entry({ stopReason: "error", embedded: 0 })]).run()).stopReason).toBe("error");
+    expect((await harness([null]).run()).stopReason).toBe("error");
+  });
+
+  it("does not start a pass after shutdown", async () => {
+    const r = await runEmbedCycle({
+      now: () => 0, sleep: async () => {}, runPass: async () => entry({}),
+      cycleMaxMinutes: 60, resumeMinutes: 1, shutdown: () => true,
+    });
+    expect(r).toEqual({ passes: 0, embedded: 0, stopReason: "shutdown" });
+  });
+});
+
+describe("embed pass log", () => {
+  it("records, reads back and caps passes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "embed-log-"));
+    const path = join(dir, "embed-passes.json");
+    expect(lastRecordedEmbedPass(path)).toBeNull();
+    for (let i = 0; i < 205; i++) {
+      recordEmbedPass({ start: i, end: i + 1, embedded: i, backlogLeft: 5, stopReason: "done" }, path);
+    }
+    expect(readEmbedPasses(path)).toHaveLength(200);
+    expect(lastRecordedEmbedPass(path)).toMatchObject({ embedded: 204 });
+    rmSync(dir, { recursive: true });
+  });
+
+  it("formats the recorded pass for status", () => {
+    const [line] = formatEmbedStatus({
+      recordedPass: { start: 0, end: 90 * 60_000, embedded: 18000, backlogLeft: 4000, stopReason: "cycle-budget" },
+    });
+    expect(line).toContain("18000 embedded in 90 min");
+    expect(line).toContain("4000 left, stopped: cycle-budget");
   });
 });

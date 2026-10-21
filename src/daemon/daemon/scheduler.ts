@@ -35,6 +35,12 @@ import {
   EMBED_PASS_BATCH_SIZE,
   liveYieldCheck,
   type EmbedPassOutcome,
+  type EmbedPassLogEntry,
+  type EmbedStopReason,
+  DEFAULT_EMBED_CYCLE_MAX_MINUTES,
+  DEFAULT_EMBED_RESUME_MINUTES,
+  recordEmbedPass,
+  runEmbedCycle,
 } from "../../memory/embed-pass.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
@@ -123,11 +129,11 @@ const VAULT_INDEX_MIN_INTERVAL_MS = 30 * 60 * 1000;
 export function quietRunners(): Record<Exclude<DeferredKind, "registry-scan" | "triple-extraction" | "obsidian-sync">, () => Promise<void>> {
   return {
     index: () => runIndex().then(() => runVaultIndex()),
-    embed: () => runEmbed(),
+    embed: () => runEmbed().then(() => undefined),
     maintenance: async () => {
       await runIndex();
       await runVaultIndex();
-      await runEmbed();
+      await runEmbedPhase();
       await runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path));
     },
   };
@@ -252,7 +258,7 @@ export function startIndexScheduler(): void {
       ? Promise.resolve()
       : runIndex()
       .then(() => runVaultIndex())
-      .then(() => (withEmbed ? runEmbed() : undefined))
+      .then(() => (withEmbed ? runEmbedPhase() : undefined))
       .then(() => (withEmbed ? runStalePassDaily(async () => (await registryBackend.listProjects({ status: "active" })).map((r) => r.root_path)) : undefined))
       .catch((e) => {
         process.stderr.write(`[pai-daemon] ${label} index error: ${e}\n`);
@@ -327,23 +333,24 @@ export function msUntilNextAnchor(hour: number | undefined, intervalMs: number):
 /**
  * Run an embedding pass for all unembedded chunks (Postgres backend only).
  */
-export async function runEmbed(): Promise<void> {
+export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
   if (embedInProgress) {
     process.stderr.write("[pai-daemon] Embed already in progress, skipping.\n");
-    return;
+    return null;
   }
 
   if (indexInProgress) {
     process.stderr.write("[pai-daemon] Index in progress, deferring embed pass.\n");
-    return;
+    return null;
   }
 
   if (!storageBackend.supportsPostgresFeatures) {
-    return;
+    return null;
   }
 
   setEmbedInProgress(true);
   const t0 = Date.now();
+  let ended: { outcome: EmbedPassOutcome; reason?: string } = { outcome: "done" };
 
   try {
     process.stderr.write("[pai-daemon] Starting scheduled embed pass...\n");
@@ -368,6 +375,7 @@ export async function runEmbed(): Promise<void> {
           throw e;
         });
         if (r) {
+          ended = { outcome: r.outcome ?? "done", ...(r.reason ? { reason: r.reason } : {}) };
           setLastEmbedPass({ at: Date.now(), outcome: r.outcome ?? "done", embedded: r.count, ...(r.reason ? { reason: r.reason } : {}) });
           return { count: r.count };
         }
@@ -387,7 +395,10 @@ export async function runEmbed(): Promise<void> {
           maxMillis: maxMinutes * 60_000,
           batchSize: EMBED_PASS_BATCH_SIZE,
           shouldYield: liveYieldCheck(maxLoad),
-          onEnd: (r) => setLastEmbedPass({ at: Date.now(), ...r }),
+          onEnd: (r) => {
+            ended = { outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}) };
+            setLastEmbedPass({ at: Date.now(), ...r });
+          },
         },
       );
       return { count };
@@ -404,13 +415,46 @@ export async function runEmbed(): Promise<void> {
     process.stderr.write(
       `[pai-daemon] Embed pass complete: ${count} chunks embedded (${elapsed}ms)\n`
     );
+    return await recordPass(t0, count, ended.outcome === "budget" ? "pass-budget" : ended.outcome, ended.reason);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     process.stderr.write(`[pai-daemon] Embed error: ${msg}\n`);
-    failPass("embed", e, runEmbed);
+    failPass("embed", e, () => runEmbed().then(() => undefined));
+    return await recordPass(t0, 0, "error", msg);
   } finally {
     setEmbedInProgress(false);
   }
+}
+
+/** Persist one pass (start, end, embedded, backlog left, stop reason) for status and the cockpit. */
+async function recordPass(start: number, embedded: number, stopReason: EmbedStopReason, detail?: string): Promise<EmbedPassLogEntry> {
+  const backlogLeft = await Promise.resolve()
+    .then(() => storageBackend.countUnembeddedChunks())
+    .catch(() => null);
+  const entry: EmbedPassLogEntry = {
+    start, end: Date.now(), embedded, backlogLeft, stopReason, ...(detail ? { detail } : {}),
+  };
+  recordEmbedPass(entry);
+  return entry;
+}
+
+/**
+ * The embed phase of an anchored index cycle: repeat passes until the backlog
+ * is empty or embedCycleMaxMinutes is spent, waiting out yields to load or a
+ * local-model worker. A single pass per night could not keep up.
+ */
+export async function runEmbedPhase(): Promise<void> {
+  const r = await runEmbedCycle({
+    now: Date.now,
+    sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+    runPass: runEmbed,
+    cycleMaxMinutes: daemonConfig.embedCycleMaxMinutes ?? DEFAULT_EMBED_CYCLE_MAX_MINUTES,
+    resumeMinutes: daemonConfig.embedResumeMinutes ?? DEFAULT_EMBED_RESUME_MINUTES,
+    shutdown: () => shutdownRequested,
+  });
+  process.stderr.write(
+    `[pai-daemon] Embed cycle ended (${r.stopReason}): ${r.passes} pass(es), ${r.embedded} chunks embedded\n`
+  );
 }
 
 /**

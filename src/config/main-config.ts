@@ -111,6 +111,8 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   embedOnStartup:
     "Run an embed pass 60s after daemon start. Off by default: with a large backlog it makes every restart a CPU storm.",
   embedMaxMinutes: "Wall-clock budget of one embed pass in minutes (default 60); the backlog continues next cycle.",
+  embedCycleMaxMinutes: "Total minutes the embed phase of one anchored cycle keeps running passes until the backlog is empty (default 300).",
+  embedResumeMinutes: "Minutes to wait before resuming after an embed pass yielded to load or a local worker (default 10).",
   embedMaxLoad: "Load average above which an embed pass yields (default 8). Also yields while a local-model worker runs.",
   passPriority: 'Priority of scheduled index/embed passes: "background" (default; low-priority child process) or "normal" (in-process).',
   maintenanceHour: "Local hour (0-23) to anchor the recurring index/embed cycle to, so maintenance runs in a fixed window.",
