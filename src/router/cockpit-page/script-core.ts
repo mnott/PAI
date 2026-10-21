@@ -78,6 +78,14 @@ function $(id){return document.getElementById(id)||document.createElement("div")
  *  the first main child below the viewport top is the anchor, scrollBy corrects its drift; the old height is held until the next frame so
  *  a shorter intermediate rendering cannot collapse the page; focus inside the panel moves to the equivalent element (same data-*). */
 function dataKey(e){var k=e.tagName.toLowerCase(),a=e.attributes||[];for(var i=0;i<a.length;i++)if(a[i].name.indexOf("data-")===0)k+="|"+a[i].name+"="+a[i].value;return k}
+/** A table stacks into cards only when it does not fit as a table: lay every .tw out unstacked,
+ *  stack the ones whose table is wider than the box. Measuring unstacked first keeps it from oscillating. */
+function fitTables(root){
+ root=root||document;if(!root.querySelectorAll)return;
+ var ws=root.querySelectorAll(".tw"),i,w,t;
+ for(i=0;i<ws.length;i++)ws[i].classList.remove("stacked");
+ for(i=0;i<ws.length;i++){w=ws[i];t=w.querySelector("table");if(t&&(t.scrollWidth>w.clientWidth||w.scrollWidth>w.clientWidth))w.classList.add("stacked")}
+}
 function setHtml(el,html){
  if(el.__html===html)return false;
  var main=document.querySelector("main"),anchor=null,top=0,i,r,kids;
@@ -86,7 +94,7 @@ function setHtml(el,html){
  if(ae&&ae!==el&&el.contains&&el.contains(ae)&&ae.tagName)fk=dataKey(ae);
  var hold=el.style&&typeof el.offsetHeight==="number"&&el.offsetHeight>0;
  if(hold){prev=el.style.minHeight;el.style.minHeight=el.offsetHeight+"px"}
- el.innerHTML=html;el.__html=html;
+ el.innerHTML=html;el.__html=html;fitTables(el);
  if(fk){var c=el.querySelectorAll(fk.split("|")[0]);for(i=0;i<c.length;i++)if(dataKey(c[i])===fk){c[i].focus({preventScroll:true});break}}
  if(anchor){var d=anchor.getBoundingClientRect().top-top;if(d)window.scrollBy(0,d)}
  if(hold)requestAnimationFrame(function(){el.style.minHeight=prev});

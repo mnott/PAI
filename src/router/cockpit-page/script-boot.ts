@@ -91,8 +91,8 @@ setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
 var needData=has("kpis","tokens","cache","speed","pause","sessions","runs","daily"),needSys=has("system","tokens","cache","cloud"),needLim=has("cloud","routing","models","system","cache"),needModels=has("models"),needPool=has("pool"),needQueue=has("workers");
 tabs();applyCollapse();applyLayout(layoutRows(document.querySelectorAll("section[data-section]")));secGrips();
 /** Row stacking follows the live main width (ResizeObserver, else a resize listener). */
-if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(function(){stackRows()}).observe(document.querySelector("main"))}catch(e){}}
-window.addEventListener("resize",stackRows);
+if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(function(){stackRows();fitTables()}).observe(document.querySelector("main"))}catch(e){}}
+window.addEventListener("resize",function(){stackRows();fitTables()});
 /** Chart redraw follows the container width (the svg draws at real pixels — see chartW). */
 if(typeof ResizeObserver!=="undefined"){try{new ResizeObserver(chartResize).observe(document.querySelector("main"))}catch(e){}}
 window.addEventListener("resize",chartResize);

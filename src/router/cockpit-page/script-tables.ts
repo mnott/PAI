@@ -59,7 +59,7 @@ function localDetail(prov,pc,tot,age){
 }
 /** One box for every table: fixed layout, so the table never scrolls sideways — headers and
  *  numbers sit on one line (nowrap) and the text columns wrap or ellipsise, the full text in
- *  the cell's title. Below the phone breakpoint CSS turns each row into a stacked card — the
+ *  the cell's title. When the table does not fit its box (fitTables) CSS turns each row into a stacked card — the
  *  column label rides on each cell as data-l.
  *  A column empty in every row is not rendered at all (header, cells, stacked label):
  *  it only wastes width, and only when rows exist to judge by. A cell is empty when
@@ -112,7 +112,7 @@ function renderSessions(d){
   rows.push(['<a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a>'].concat(row(all[0]).slice(1).map(blank)));
  }
  var cap="width:${n(L.sessionNameMaxPct)}%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
- setHtml(el,'<style>@media(max-width:480px){#sessions td{width:auto!important;max-width:none!important;white-space:normal!important}}@container(max-width:400px){#sessions td{width:auto!important;max-width:none!important;white-space:normal!important}}</style>'+table(["session .txt","models .txt","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"}));
+ setHtml(el,table(["session .txt","models .txt","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"}));
  el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-sessmore")!=null))t=t.parentNode;
   if(!t||t===el)return;ev.preventDefault();try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(e){}renderSessions(data)};
 }
