@@ -191,27 +191,26 @@ function ringName(m){
  for(i=0;i<cs.length;i++)if(cs[i].model===m&&cs[i].label)return cs[i].label;
  return shortModel(m);
 }
-/** Local models: one row per catalogue model, running or not — start, stop (all its instances), "- n +" instance count —
- * and under it one row per instance (state, port, pid, rss, in flight, own stop). A stop with requests in flight
- * arms an inline confirm and then sends value=confirm. */
-function tierRow(tiers,instances,starting,rssOf){
- var rows=tiers.map(function(t){
-  var name=typeof t==="string"?t:t.tier,label=(typeof t==="string"?"":t.label)||name,gb=typeof t==="string"?null:t.memoryGb,max=typeof t==="string"?null:t.maxInstances;
-  var mine=(instances||[]).filter(function(i){return i.model===name});
-  var live=mine.filter(function(i){return i.state!=="failed"}),busy=live.reduce(function(a,i){return a+(i.inflight||0)},0);
-  var sc=starting&&starting.tier===name?' <span class="'+(starting.state==="failed"?'bad':'warn')+'" title="'+esc(starting.log)+'">'+(starting.state==="failed"?esc(starting.message):'loading '+starting.sinceSec+' s')+'</span>':"";
-  var stopCf=busy?' data-confirm="'+busy+' request'+(busy===1?'':'s')+' in flight - click again to stop" data-v="confirm"':"";
-  var btns='<button data-a="local.start" data-t="'+esc(name)+'"'+(max&&live.length>=max?' disabled':'')+'>start</button>'+
-   (live.length?'<button data-a="local.stop" data-t="'+esc(name)+'"'+stopCf+'>stop</button>':"")+
-   '<button data-a="local.scale" data-t="'+esc(name)+'" data-v="'+Math.max(0,live.length-1)+'"'+(live.length?'':' disabled')+' title="one instance fewer">-</button>'+
-   '<span class="num" title="running instances'+(max?' (max '+max+')':'')+'">'+live.length+'</span>'+
-   '<button data-a="local.scale" data-t="'+esc(name)+'" data-v="'+(live.length+1)+'"'+(max&&live.length>=max?' disabled':'')+' title="one instance more">+</button>';
-  var inst=mine.map(function(i){
-   var rss=rssOf&&rssOf(i.port);
-   return'<div class="inst"><span class="'+(i.state==="failed"?'bad':i.state==="ready"?'ok':'warn')+'">'+esc(i.id)+'</span> <span class="dim">'+esc(i.state)+' · :'+i.port+(i.pid!=null?' · pid '+i.pid:'')+(rss?' · '+esc(rss):'')+' · '+(i.inflight||0)+' in flight'+(i.error?' · '+esc(i.error):'')+'</span> '+
-    '<button data-a="local.stop" data-t="'+esc(i.id)+'"'+(i.inflight?' data-confirm="'+i.inflight+' in flight - click again to stop" data-v="confirm"':'')+'>stop</button></div>'}).join("");
-  return'<div class="lmodel" data-model-tier="'+esc(name)+'"><b>'+esc(label)+'</b>'+(gb?' <span class="dim">'+esc(gb)+' GB</span>':'')+' '+btns+sc+inst+'</div>'}).join("");
- return'<span class="tiercap">Local model:</span>'+rows+'<button data-a="local.off" data-confirm="stop every local model - click again">off</button>';
+/** One catalogue model's own controls, for its own card: start, stop (all its instances), "- n +" instance count —
+ * and one line per instance (state, port, pid, rss, in flight, own stop). A stop with requests in flight
+ * arms an inline confirm and then sends value=confirm. Returns {btns, inst, live, wanted}: wanted = an instance
+ * was started or requested (so a server that does not answer is down, not merely stopped). */
+function tierRow(t,instances,starting,rssOf){
+ var name=typeof t==="string"?t:t.tier,max=typeof t==="string"?null:t.maxInstances;
+ var mine=(instances||[]).filter(function(i){return i.model===name});
+ var live=mine.filter(function(i){return i.state!=="failed"}),busy=live.reduce(function(a,i){return a+(i.inflight||0)},0);
+ var sc=starting&&starting.tier===name?' <span class="'+(starting.state==="failed"?'bad':'warn')+'" title="'+esc(starting.log)+'">'+(starting.state==="failed"?esc(starting.message):'loading '+starting.sinceSec+' s')+'</span>':"";
+ var stopCf=busy?' data-confirm="'+busy+' request'+(busy===1?'':'s')+' in flight - click again to stop" data-v="confirm"':"";
+ var btns='<button data-a="local.start" data-t="'+esc(name)+'"'+(max&&live.length>=max?' disabled':'')+'>start</button>'+
+  (live.length?'<button data-a="local.stop" data-t="'+esc(name)+'"'+stopCf+'>stop</button>':"")+
+  '<button data-a="local.scale" data-t="'+esc(name)+'" data-v="'+Math.max(0,live.length-1)+'"'+(live.length?'':' disabled')+' title="one instance fewer">-</button>'+
+  '<span class="num" title="running instances'+(max?' (max '+max+')':'')+'">'+live.length+'</span>'+
+  '<button data-a="local.scale" data-t="'+esc(name)+'" data-v="'+(live.length+1)+'"'+(max&&live.length>=max?' disabled':'')+' title="one instance more">+</button>'+sc;
+ var inst=mine.map(function(i){
+  var rss=rssOf&&rssOf(i.port);
+  return'<div class="inst"><span class="'+(i.state==="failed"?'bad':i.state==="ready"?'ok':'warn')+'">'+esc(i.id)+'</span> <span class="dim">'+esc(i.state)+' · :'+i.port+(i.pid!=null?' · pid '+i.pid:'')+(rss?' · '+esc(rss):'')+' · '+(i.inflight||0)+' in flight'+(i.error?' · '+esc(i.error):'')+'</span> '+
+   '<button data-a="local.stop" data-t="'+esc(i.id)+'"'+(i.inflight?' data-confirm="'+i.inflight+' in flight - click again to stop" data-v="confirm"':'')+'>stop</button></div>'}).join("");
+ return{btns:btns,inst:inst,wanted:mine.length>0||!!sc};
 }
 /** Models section: one foldable card per consumer runtime — the runtime PAI's embedding runs on, the worker
  * providers' local models (tiers) and the declared consumers (models.consumers) — grouped under their runtime.
@@ -226,16 +225,7 @@ function modelsHtml(inv){
  function rssOf(port){var t=0,hit=false;(inv.runtimes||[]).forEach(function(x){if(x.port===port)(x.models||[]).forEach(function(m){if(m.memoryMb){t+=m.memoryMb;hit=true}})});return hit?(t>=1024?gbm(t)+" GB":t+" MB"):""}
  var cmds=inv.runtimeCommands||{};
  var consumers=inv.consumers||[];
- var tierBtns=tiers.length?tierRow(tiers,inv.instances,inv.starting,rssOf):"";
- /* the local model switch shows once: in the card of the engine runtime the workers use (a running runtime
-  * that is neither ollama nor docker model runner, hosting the running model, else one with a worker user);
-  * with no such card it sits at the section bottom */
- var localRt="";
- if(tierBtns){
-  var eng0=inv.runtimes.filter(function(x){return x.status!=="stopped"&&x.kind!=="ollama"&&x.kind!=="docker-model-runner"});
-  var hit=eng0.filter(function(x){return running&&(x.models||[]).some(function(m){return m.model===running.model})})[0]||eng0.filter(function(x){return(x.users||[]).some(function(u){return String(u).indexOf("worker:")===0})})[0];
-  if(hit)localRt=hit.name;
- }
+ var tierOfName={};tiers.forEach(function(t){tierOfName[typeof t==="string"?t:t.tier]=t});
  function mem(m){return m==null?"–":m>=1024?gbm(m)+" GB":m+" MB"}
  function n0(v){return v==null?"–":Math.round(v)}
  /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer;
@@ -307,6 +297,9 @@ function modelsHtml(inv){
   var c=cmds[r.name]||{};
   var dmr=r.kind==="docker-model-runner";
   // docker model runner: idle (nothing loaded) -> load, loaded -> unload; others: stopped -> start, else stop
+  // an on-demand runtime (ollama, docker model runner) loads and unloads: the button follows the card's real loaded state
+  var ond=dmr||r.kind==="ollama",isLoaded=r.models.some(function(m){return m.loaded});
+  if(ond&&r.status!=="stopped"&&!isLoaded)return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start">load</button>':"";
   if(r.status==="stopped"||(dmr&&r.status==="idle"))return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start">'+(dmr&&r.status==="idle"?"load":"start")+'</button>':"";
   // the other consumers of this runtime: the card's own consumers (its model's users and
   // the consumers pointing at its model) are not "other"; a runtime-wide user that
@@ -319,7 +312,7 @@ function modelsHtml(inv){
   var others=usersOf(consumers,rt2,{model:"",kind:"chat",loaded:false,usedBy:[]}).filter(function(u){return !own[u]});
   // a runtime serving only this card's consumers stops in one click: no data-confirm at all
   var cf=others.length?' data-confirm="stop '+esc(r.name)+': also '+esc(others.map(consumerName).join(", "))+' - click again"':"";
-  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop"'+cf+'>'+(dmr?"unload":"stop")+'</button>':"";
+  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop"'+cf+'>'+(ond?"unload":"stop")+'</button>':"";
  }
  var cards="";
  inv.runtimes.forEach(function(rt){
@@ -343,15 +336,18 @@ function modelsHtml(inv){
   if(r.split&&hasModel){users=(r.models[0].usedBy||[]).slice();consumersOf(consumers,rt,r.models[0]).forEach(function(c){if(users.indexOf(c.name)<0)users.push(c.name)})}
   // a runtime with no models of its own: every consumer pointing at it still waits on it
   if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
-  var down=r.status==="stopped";
+  // a catalogue model with no instance anybody started is stopped (grey), not down (red)
+  var tr=r.tier&&tierOfName[r.tier]?tierRow(tierOfName[r.tier],inv.instances,inv.starting&&inv.starting.tier===r.tier?inv.starting:null,rssOf):null;
+  var stopped=r.status==="stopped"&&!!tr&&!tr.wanted;
+  var down=r.status==="stopped"&&!stopped;
   var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
   // a running on-demand runtime (ollama, docker model runner) whose model is not in memory loads it on the first request
   var idle=!down&&(r.status==="idle"||(hasModel&&!loaded.length&&(r.kind==="ollama"||r.kind==="docker-model-runner")));
-  var state=down?"down":idle?"available (loads on first request)":"running";
+  var state=stopped?"stopped":down?"down":idle?"available (loads on first request)":"running";
   // the tile order is keyed by the card's position in the grid, not its model id:
   // a renamed alias must not scramble the tiles the user arranged
   var tkey=r.name+" / "+(hasModel?r.models[0].model:"")+" tiles";
-  var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
+  var key=stopped?r.name+(r.port==null?"":" :"+r.port):down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
    :idle?(hasModel?r.models.length+" installed":"no model")
    :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
   /* purpose first: the title is the consumer's label (config only), the model id is grey secondary text;
@@ -370,7 +366,7 @@ function modelsHtml(inv){
    return first?first.replace(/^worker:/,""):shortModel(m.model);
   }
   // two rows: the title on its own row beside the status dot (full name, wraps), the chips on the row below
-  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.slow?" slow":idle?" idle":"")+'"></span>'+
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(stopped?" off":down?" down":r.slow?" slow":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
    '</div><div class="mchips">'+
@@ -380,10 +376,12 @@ function modelsHtml(inv){
    // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
    '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
    '<span class="badge'+(down?' bad':r.slow?' warn':'')+'"'+(r.slow?' title="the last probe was slow or failed; the last good reading is held"':'')+'>'+(r.slow&&!down?"slow":state)+'</span>'+
-   (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
+   (tr?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+tr.btns+'<span class="msg"></span></span>':rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
    '<span class="num">'+esc(key)+'</span></div></div>';
   var body="";
-  if(down){
+  if(stopped){
+   body+='<div class="mdim">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" stopped</div>";
+  }else if(down){
    body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
   }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
@@ -412,13 +410,13 @@ function modelsHtml(inv){
   else if(r.split&&hasModel)sub=r.models[0].label||"";
   else if(!consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))sub=r.label||"";
   if(users.indexOf(sub)>=0)sub="";
-  if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
-  if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'" data-tname="'+esc(hasModel?titleOf(r.models[0]):r.name)+'" data-tval="'+esc(r.status)+'"><span class="tgrip" data-tgrip tabindex="0" title="move card" aria-label="move card" aria-pressed="false" role="button">⠿</span>'+head+'<div class="mbody">'+body+'</div></div>';
+  if(stopped)body+='<div class="mdim">will use any running local model</div>';
+  else if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
+  if(tr&&tr.inst)body+='<div class="linst">'+tr.inst+'</div>';
+  cards+='<div class="mcard'+(down?" down":stopped?" stopped":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'" data-tname="'+esc(hasModel?titleOf(r.models[0]):r.name)+'" data-tval="'+esc(r.status)+'"><span class="tgrip" data-tgrip tabindex="0" title="move card" aria-label="move card" aria-pressed="false" role="button">⠿</span>'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
  var h='<div class="rt-grid" data-tkey="models cards">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
- if(tierBtns&&!localRt)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
  // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
  return h;
@@ -491,6 +489,9 @@ function renderModels(){
  // the poll rebuild must not reset the tile order the user arranged
  orderTiles(el);
  wireMinAll(el);
+ // the global switch lives in the panel header: one off for every local model
+ var lo=$("localoff");
+ if(lo){var haveTiers=!!(mdl&&(mdl.tiers||[]).length);lo.hidden=!haveTiers;if(haveTiers&&!lo.firstChild){setHtml(lo,'<button data-a="local.off" data-confirm="stop every local model - click again" title="stop every local model">off</button><span class="msg"></span>');wireAct(lo,function(){loadModels()})}}
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
  // a runtime job the server reports as running (started before a page reload): busy card, watched unless already
  var rj=(mdl&&mdl.runtimeJobs)||{};

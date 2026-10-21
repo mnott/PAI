@@ -449,7 +449,7 @@ describe("cockpit action endpoint", () => {
       expect(page.body).toContain('data-section="routing"');
       expect(page.body).toContain("model.label");
       expect(page.body).toContain("in flight - click again to stop");
-      expect(page.body).toContain("Local model:");
+      expect(page.body).toContain('id="localoff"');
       expect(page.body).toContain('class="pgroup" data-prov=');
       expect(page.body).toContain('<div class="phead">');
       expect(page.body).not.toMatch(/\balert\(/);

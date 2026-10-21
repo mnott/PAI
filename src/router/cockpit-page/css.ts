@@ -85,7 +85,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mt{position:relative}.tgrip{position:absolute;top:4px;right:6px;opacity:0;transition:opacity .12s;cursor:grab;color:var(--dim);font-size:11px;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}
 .pgroup{position:relative}.pgrid>.tgroup{display:flex;flex-wrap:wrap;gap:8px;flex:1 1 100%;min-width:0;align-items:start}.tgroup>.pgroup{flex:1 1 ${L.providerTileMinPx}px;min-width:min(${L.providerTileMinPx}px,100%)}
 .tctl{position:absolute;top:2px;right:20px;opacity:0;transition:opacity .12s;border:0;background:none;color:var(--dim);font-size:13px;line-height:1;cursor:pointer;padding:2px 4px}
-.mt:hover .tctl,.pgroup:hover .tctl,.pgroup:hover .tgrip,.tctl:focus-visible,.tmin .tctl{opacity:.7}@media(hover:none){.tctl{opacity:.6}}
+.mt:hover .tctl,.pgroup:hover .tctl,.mcard .tctl,.pgroup:hover .tgrip,.tctl:focus-visible,.tmin .tctl{opacity:.7}@media(hover:none){.tctl{opacity:.6}}
 .rings>.tset{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(${L.ringMinWidthPx}px,1fr));gap:6px}.rings>.tchips{grid-column:1/-1}.kpi:hover .tctl,.ring:hover .tctl,.kpi:hover .tgrip,.ring:hover .tgrip{opacity:.7}.tchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.tchips>.tmin{flex:0 0 auto}
 .tmin{display:flex;flex-direction:row;align-items:center;gap:8px;padding:4px 44px 4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;margin:0;min-width:0}
 .tmin::before{content:attr(data-tname);font-weight:600}.tmin::after{content:attr(data-tval);color:var(--dim);font-variant-numeric:tabular-nums}
@@ -105,7 +105,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mt-sub{font-size:11px;color:var(--dim);min-height:1em;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mt-fill{display:flex;align-items:center;gap:6px;min-width:0}.mt-bar{flex:0 0 40%;height:4px;border-radius:2px;background:var(--line);overflow:hidden}.mt-bar i{display:block;height:100%;background:var(--acc)}.mt-fill .mt-sub{flex:1 1 auto;min-width:0}
 .mt-spark{display:block;width:100%;max-width:100%;height:${L.sparkHeightPx}px;margin-top:auto;overflow:visible;color:var(--acc)}.mt-spark .mt-alt{color:var(--warn);stroke:var(--warn)}.mt-spark .mt-warn{stroke:var(--warn)}.mt-spark .mt-ok{stroke:var(--ok)}.mt-spark .mt-bad{stroke:var(--bad)}
-.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(${L.runtimeCardMinPx}px,100%),1fr));gap:8px;min-width:0;align-items:stretch}
+.rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(${L.runtimeCardMinPx}px,100%),1fr));gap:8px;min-width:0;align-items:start}
 .rt-card{container-type:inline-size;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:8px;min-width:0;max-width:100%;overflow:hidden}
 .rt-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap}
 .rt-head b{font-size:14px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -120,7 +120,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 .mcard.open .mhead{border-bottom-color:var(--line)}
 .mhead:hover{color:var(--acc)}
-.mtitle{display:flex;align-items:center;gap:6px;min-width:0;padding-right:18px}.mchips{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}.mcard:hover .tgrip{opacity:.6}.mcard>.tgrip{z-index:1}
+.mtitle{display:flex;align-items:center;gap:6px;min-width:0;padding-right:18px}.mchips{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}.mcard:hover .tgrip{opacity:.6}.mcard>.tgrip,.mcard>.tctl{z-index:1}
 .mhead b{font-size:13px;font-weight:600;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;white-space:normal}
 .mhead .mid{flex:0 1 auto;min-width:0;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mhead .chev{flex:0 0 auto;width:12px;color:var(--dim)}
@@ -128,7 +128,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead .badge{flex:0 0 auto}
 .mbody{padding:8px 10px;display:none;flex-direction:column;gap:8px;min-width:0}
 .mcard.open .mbody{display:flex}
-.mcard.down{border-color:var(--bad)}
+.mcard.down{border-color:var(--bad)}.linst{display:flex;flex-direction:column;gap:2px;font-size:12px}
 .mdown{color:var(--bad);font-size:12px}.mdim{color:var(--dim);font-size:12px}.rt-dot.off{background:transparent;box-shadow:inset 0 0 0 2px var(--dim)}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
 .mhead .act{flex:0 0 auto;margin-left:auto}

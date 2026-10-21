@@ -1071,7 +1071,8 @@ describe("cockpit Models cards", () => {
     // ollama is idle with start+stop configured: stop only, no start (not even disabled)
     // ollama serves two consumers here: the stop names the other one and asks for a second click
     expect(h).toContain('data-a="runtime" data-t="ollama" data-v="stop" data-confirm="stop ollama: also ');
-    expect(h).not.toContain('data-v="start"');
+    // the ollama card whose model is not in memory offers load, never a stop
+    expect(h).not.toContain('data-v="start">start');
     const stopped = modelsHtml({
       at: "x",
       runtimes: [{ name: "ollama", kind: "ollama", status: "stopped", port: 11434, users: ["pai-embedding"], models: [] }],
@@ -1150,7 +1151,7 @@ describe("cockpit Models cards", () => {
     expect(loaded).toContain('data-v="stop">unload</button>');
   });
   it("the grid follows the container at any width: cards share the row, tiles sit in one row, chips ellipsize", () => {
-    expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:stretch}");
+    expect(COCKPIT_HTML).toContain(".rt-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:8px;min-width:0;align-items:start}");
     expect(COCKPIT_HTML).toContain(".rt-tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}");
     // four tiles in one row only when the card itself is wide; a balanced 2x2 below 720px,
     // one column under ~340px — explicit columns per range via a container query on the card, never 3+1
@@ -2137,22 +2138,19 @@ describe("cockpit Models: one local switch, editable aliases", () => {
   const base = { at: "x", duplicates: [], consumers: [], live: { at: 1, runtimes: [] }, tiers };
   const count = (h: string) => (h.match(/Local model:/g) ?? []).length;
 
-  it("tierRow renders once, inside the strata card, with two running runtimes", () => {
-    const h = modelsHtml({ ...base, running: { model: "flash-next", tier: "gyro-m" }, runtimes: [strata, ollama] });
-    expect(count(h)).toBe(1);
+  it("each catalogue model's start/scale controls sit on its own card; no global Local model row", () => {
+    const h = modelsHtml({ ...base, running: { model: "flash-next", tier: "gyro-m" }, runtimes: [{ ...strata, tier: "gyro-m" }, ollama] });
+    expect(count(h)).toBe(0);
     expect(h).toContain('data-a="local.start" data-t="gyro-m"');
     expect(h).not.toContain('data-a="local.switch"');
     const cards = h.split('<div class="mcard').slice(1);
-    expect(cards.filter((c) => c.includes("Local model:")).length).toBe(1);
-    expect(cards.find((c) => c.includes('data-rt="gyro-m"'))).toContain("Local model:");
-    expect(cards.find((c) => c.includes('data-rt="ollama"'))).not.toContain("Local model:");
+    expect(cards.find((c) => c.includes('data-rt="gyro-m"'))).toContain('data-a="local.start" data-t="gyro-m"');
+    expect(cards.find((c) => c.includes('data-rt="ollama"'))).not.toContain("local.start");
   });
 
-  it("tierRow sits once at the section bottom when no local engine card is rendered", () => {
+  it("a runtime without a tier carries no local controls", () => {
     const h = modelsHtml({ ...base, running: null, runtimes: [{ ...strata, status: "stopped", models: [] }, ollama] });
-    expect(count(h)).toBe(1);
-    expect(h.lastIndexOf("Local model:")).toBeGreaterThan(h.lastIndexOf('<div class="mcard'));
-    expect(h.slice(h.indexOf("rt-grid"))).toMatch(/rt-chips[^>]*>.*Local model:/);
+    expect(h).not.toContain("local.start");
   });
 
   it("an alias in the payload is the card title; the model id stays secondary; the pencil is outside the fold toggle target", () => {
@@ -2955,10 +2953,12 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
     const chat = h.split('<div class="mcard').find((c) => c.includes('data-model="qwen3:8b"'))!;
     expect(chat).toContain('data-a="runtime" data-t="ollama" data-v="stop" data-confirm="stop ollama: also PAI embedding - click again"');
     const emb = h.split('<div class="mcard').find((c) => c.includes('data-model="arctic-embed"'))!;
-    expect(emb).toContain('data-confirm="stop ollama: also Paperfull chat - click again"');
+    // a model not in memory offers load, not unload
+    expect(emb).toContain('data-v="start">load</button>');
+    expect(emb).not.toContain("click again");
     // a runtime serving only this card's consumers stops in one click: no confirm at all
     const s = realModelsHtml(singleInv);
-    expect(s).toContain('data-a="runtime" data-t="ollama" data-v="stop">stop</button>');
+    expect(s).toContain('data-a="runtime" data-t="ollama" data-v="stop">unload</button>');
     expect(s).not.toContain("click again");
     // start/load buttons are unaffected
     const stopped = realModelsHtml({
@@ -2978,7 +2978,7 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
   it("shared runtime: first click shows the confirm text and does not post; the second posts the stop action", () => {
     const h = stopHarness(sharedInv);
     const btn = h.stopBtn("ollama");
-    expect(btn.textContent).toBe("stop");
+    expect(btn.textContent).toBe("unload");
     h.click(btn);
     expect(h.posts.length).toBe(0);
     expect(btn.textContent).toBe("stop ollama: also PAI embedding - click again");
@@ -2993,7 +2993,7 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
     expect(h.posts.length).toBe(0);
     expect(h.timers[0]!.ms).toBe(4000);
     h.fire(0); // the confirm window closes
-    expect(btn.textContent).toBe("stop");
+    expect(btn.textContent).toBe("unload");
     h.click(btn); // a click after the revert arms again, still without posting
     expect(h.posts.length).toBe(0);
     expect(btn.textContent).toBe("stop ollama: also PAI embedding - click again");
@@ -3059,10 +3059,10 @@ describe("cockpit stop confirm: a shared runtime names what else it stops", () =
     expect(btn.textContent).toBe("stop ollama: also PAI embedding - click again");
     h.click(btn); // confirms: posts, reverts the label, must clear the timer
     expect(h.posts.length).toBe(1);
-    expect(btn.textContent).toBe("stop");
+    expect(btn.textContent).toBe("unload");
     expect(h.timers[0]!.live).toBe(false);
     h.advance(4000); // past CONFIRM_MS: the cleared timer must not fire
-    expect(btn.textContent).toBe("stop");
+    expect(btn.textContent).toBe("unload");
     expect(btn.confirmed).toBe(false);
   });
 });
@@ -3785,16 +3785,54 @@ describe("cockpit Models: instances per model", () => {
   const inst = (id: string, inflight: number) => ({ id, model: "gyro-m", port: 8035, pid: 11, state: "ready", inflight });
   const base = { at: "x", duplicates: [], consumers: [], live: { at: 1, runtimes: [] }, tiers, runtimes: [], running: null };
 
-  it("a stopped catalogue model is a startable row; no stop, scale down disabled", () => {
-    const h = modelsHtml({ ...base, instances: [] });
-    expect(h).toContain('data-a="local.start" data-t="small"');
-    expect(h).not.toContain('data-a="local.stop"');
-    expect(h).toMatch(/data-a="local.scale" data-t="small" data-v="0" disabled/);
-    expect(h).toContain('data-a="local.scale" data-t="small" data-v="1"');
+  const rts = [
+    { name: "gyro-m", kind: "strata", status: "running", port: 8035, tier: "gyro-m", users: [], models: [{ model: "flash-next", kind: "coding", loaded: true, usedBy: [] }] },
+    { name: "small", kind: "openai-server", status: "stopped", port: 8036, tier: "small", users: ["worker:small"], models: [{ model: "small-m", kind: "coding", loaded: false, usedBy: [] }] },
+  ];
+  it("a stopped catalogue model is a startable card of its own; no stop, scale down disabled; grey, no red", () => {
+    const h = modelsHtml({ ...base, runtimes: rts, instances: [] });
+    const card = h.split('<div class="mcard').find((c) => c.includes('data-rt="small"'))!;
+    expect(card).toContain('data-a="local.start" data-t="small"');
+    expect(card).not.toContain('data-a="local.stop"');
+    expect(card).toMatch(/data-a="local.scale" data-t="small" data-v="0" disabled/);
+    expect(card).toContain('data-a="local.scale" data-t="small" data-v="1"');
+    // stopped: grey dot, no red frame, no "cannot work", grey consumers line
+    expect(card).toMatch(/^ stopped"/);
+    expect(card).toContain('rt-dot off');
+    expect(card).not.toContain("mdown");
+    expect(card).not.toContain("cannot work");
+    expect(card).not.toContain("badge bad");
+    expect(card).toContain("will use any running local model");
+    // each model's controls sit on its own card, none on the other
+    const other = h.split('<div class="mcard').find((c) => c.includes('data-rt="gyro-m"'))!;
+    expect(other).not.toContain('data-t="small"');
+    expect(h).not.toContain("Local model:");
+    expect(h).not.toContain('data-a="local.off"');
+  });
+
+  it("minimize control shows on every card, the grid sizes cards to content, off sits in the panel header, load/unload follow the loaded state", () => {
+    expect(COCKPIT_HTML).toMatch(/\.mcard \.tctl[^{]*\{[^}]*opacity:\.7/);
+    expect(COCKPIT_HTML).toMatch(/\.rt-grid\{[^}]*align-items:start/);
+    expect(COCKPIT_HTML).toContain('id="localoff"');
+    expect(COCKPIT_HTML).toContain('data-a="local.off"');
+    const h = modelsHtml({ ...base, instances: [], runtimes: [
+      { name: "ollama", kind: "ollama", status: "running", port: 11434, users: [], models: [{ model: "e5", kind: "embedding", loaded: false, usedBy: ["a"] }] },
+      { name: "ollama", kind: "ollama", status: "running", port: 11434, users: [], models: [{ model: "q", kind: "chat", loaded: true, usedBy: ["b"] }] },
+    ], runtimeCommands: { ollama: { start: "s", stop: "k" } } });
+    expect(h).toContain('data-v="start">load</button>');
+    expect(h).toContain('data-v="stop">unload</button>');
+  });
+
+  it("an instance started but not answering reads red down", () => {
+    const h = modelsHtml({ ...base, runtimes: rts, instances: [{ id: "small#1", model: "small", port: 8036, state: "starting", inflight: 0 }] });
+    const card = h.split('<div class="mcard').find((c) => c.includes('data-rt="small"'))!;
+    expect(card).toMatch(/^ down"/);
+    expect(card).toContain("cannot work");
+    expect(card).toContain("small#1");
   });
 
   it("a running model shows its instances (port, pid, in flight); stop with requests in flight arms a confirm and sends value=confirm", () => {
-    const h = modelsHtml({ ...base, instances: [inst("gyro-m#1", 2), inst("gyro-m#2", 0)] });
+    const h = modelsHtml({ ...base, runtimes: rts, instances: [inst("gyro-m#1", 2), inst("gyro-m#2", 0)] });
     expect(h).toContain("gyro-m#1");
     expect(h).toContain(":8035 · pid 11");
     expect(h).toContain("2 in flight");

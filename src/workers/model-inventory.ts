@@ -56,6 +56,8 @@ export interface InventoryRuntime {
   /** the last probe failed or was slow: status and models are the last good reading, held until DOWN_AFTER_MISSES misses */
   slow?: boolean;
   port?: number;
+  /** the local catalogue tier this runtime serves (its own start/stop/scale controls on the card) */
+  tier?: string;
   /** false when a worker provider on this endpoint is disabled in workers.yaml: not listed anywhere */
   enabled?: boolean;
   models: InventoryModel[];
@@ -100,7 +102,7 @@ export interface InventoryInput {
   runtimes: DeclaredRuntime[];
   consumers: DeclaredConsumer[];
   /** the `local_tiers` set: the tier's provider and its button label; its running server is the active tier */
-  tiers?: Array<{ provider: string; label: string }>;
+  tiers?: Array<{ provider: string; label: string; tier?: string }>;
 }
 
 const exec = (cmd: string, args: string[]): Promise<string | null> =>
@@ -351,7 +353,10 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         attach(rt, e.wanted.filter((w) => !notServed.includes(w)).map((w) => ({ name: w.name, model: served ? w.model : undefined })));
         if (notServed.length) rt.notServed = notServed.map((w) => w.name);
         const tier = (input.tiers ?? []).find((t) => e.names.includes(t.provider));
-        if (tier) tierOf.set(rt, tier.label);
+        if (tier) {
+          tierOf.set(rt, tier.label);
+          if (tier.tier) rt.tier = tier.tier;
+        }
         out.push(rt);
       })
   );
@@ -467,7 +472,7 @@ export function readInventoryInput(): InventoryInput {
     Array.isArray(v) ? (v.filter((x) => x && typeof x === "object" && ok(x as Record<string, unknown>)) as T[]) : [];
   let tiers: InventoryInput["tiers"];
   try {
-    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => ({ provider: t.provider, label: t.label }));
+    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => ({ provider: t.provider, label: t.label, tier: t.tier }));
   } catch {
     tiers = [];
   }
