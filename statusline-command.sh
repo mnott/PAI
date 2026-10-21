@@ -1030,7 +1030,7 @@ fi
 if [ -n "$worker_status_cmd" ]; then
     # third arg: this session's claude id — lets the worker line claim workers
     # spawned from this session's Bash tool, which carry no terminal identity
-    worker_line="$("$worker_status_cmd" "${ITERM_SESSION_ID:-${TERM_SESSION_ID:-}}" "${PWD:-}" "${statusline_session_id:-}" 2>/dev/null)"
+    worker_line="$("$worker_status_cmd" "${ITERM_SESSION_ID:-}" "${PWD:-}" "${statusline_session_id:-}" 2>/dev/null)"
     if [ -n "$worker_line" ]; then
         printf "${LINE3_PRIMARY}🐝 ${RESET}${LINE3_ACCENT}%s${RESET}\n" "$worker_line"
     fi

@@ -154,16 +154,16 @@ describe("attribution: host terminal first, Claude session second", () => {
     expect(line).not.toContain("elsewhere");
   });
 
-  it("a worker spawned by a session with no iTerm id of its own counts as mine, another session's is elsewhere", () => {
+  it("a worker spawned by a session with no iTerm id of its own counts as mine, another session's is not shown", () => {
     saveStatus(dir, { ...base, pid: process.pid, started: nowStamp(), updated: nowStamp(), id: "20260917-100003-4", term: "", spawnerSession: "bg-session" });
     saveStatus(dir, { ...base, pid: process.pid, started: nowStamp(), updated: nowStamp(), id: "20260917-100004-5", term: "", spawnerSession: "other-session" });
     const line = statusLineOutput(dir, "w1t0p0:11111111-0000-0000-0000-000000000000", "/x", "bg-session", now);
     expect(line).toMatch(/^▶1/);
-    expect(line).toContain("(+1 elsewhere)");
+    expect(line).not.toContain("elsewhere");
   });
 
-  it("a worker of another terminal is elsewhere even with the same Claude session id", () => {
+  it("a worker of another terminal is not shown even with the same Claude session id", () => {
     saveStatus(dir, { ...base, pid: process.pid, started: nowStamp(), updated: nowStamp(), id: "20260917-100002-3", term: "w9t0p0:99999999-0000-0000-0000-000000000000", spawnerSession: "new-session" });
-    expect(statusLineOutput(dir, term, "/x", "new-session", now)).toContain("(+1 elsewhere)");
+    expect(statusLineOutput(dir, term, "/x", "new-session", now)).toBe("");
   });
 });

@@ -1313,7 +1313,7 @@ function sleep(ms: number): Promise<void> {
  * The status bar's worker line for THIS session's pool: workers its claude
  * session (or, failing that, its terminal) spawned, plus their descendants
  * (ownership as supervision's ownershipKey / scope's workerInScope define it).
- * Terminal first, Claude session second. Other terminals' live workers show as a dim `(+M elsewhere)` suffix. With no
+ * Terminal first, Claude session second. Other sessions' workers are not shown. With no
  * session identity at all (no `term`, no `claudeSession`) the bar keeps the
  * machine-wide count.
  */
@@ -1343,9 +1343,5 @@ export function statusLineOutput(
     return false;
   };
   const mine = statuses.filter(isMine);
-  const elsewhere = statuses.filter((s) => !isMine(s) && isLive(s)).length;
-  const line = renderStatusLine(mine, now);
-  if (!elsewhere) return line;
-  const suffix = makeColor(true)("dim", `(+${elsewhere} elsewhere)`);
-  return line ? `${line} ${suffix}` : suffix;
+  return renderStatusLine(mine, now);
 }

@@ -377,19 +377,19 @@ describe("statusLineOutput session scope", () => {
   } as WorkerStatus;
   const now = new Date("2026-09-17T10:00:45");
 
-  it("each session's bar counts its own workers and flags the rest as elsewhere", () => {
+  it("each session's bar counts only its own workers", () => {
     saveStatus(logDir, { ...base, id: "20260917-100000-1" });
     saveStatus(logDir, { ...base, id: "20260917-100001-2", spawnerSession: "claude-sess-2" });
     const one = statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now);
     const two = statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-2", now);
-    expect(one).toMatch(/^▶1 · prov · oldest 45s .*\(\+1 elsewhere\)/);
-    expect(two).toMatch(/^▶1 · prov · oldest 45s .*\(\+1 elsewhere\)/);
+    expect(one).toMatch(/^▶1 · prov · oldest 45s [^(]*$/);
+    expect(two).toMatch(/^▶1 · prov · oldest 45s [^(]*$/);
   });
   it("a child of my worker counts as mine", () => {
     saveStatus(logDir, { ...base, id: "20260917-100004-5", spawnerSession: null, parent: "20260917-100000-1" });
     const one = statusLineOutput(logDir, "w11t0p0:BBBB-CCCC", "/nowhere", "claude-sess-1", now);
     expect(one).toMatch(/^▶2 \(1 nested\) · prov ×2/);
-    expect(one).toContain("(+1 elsewhere)");
+    expect(one).not.toContain("elsewhere");
   });
   it("no session identity keeps the machine-wide count", () => {
     expect(statusLineOutput(logDir, "", "/nowhere", "", now)).toBe("▶3 (1 nested) · prov ×3 · oldest 45s");
