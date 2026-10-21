@@ -14,6 +14,7 @@ import { join, dirname, basename } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
 import { paiSocketPath } from "../runtime-paths.js";
+import { postgresConnectionString } from "../storage/postgres/config.js";
 import { effectiveMainConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import {
   paiHomePath,
@@ -306,8 +307,7 @@ function perUserDbName(): string {
 
 /** Derive the per-user connection string */
 function perUserConnectionString(): string {
-  const db = perUserDbName();
-  return `postgresql://pai:pai@localhost:5432/${db}`;
+  return postgresConnectionString({ database: perUserDbName() });
 }
 
 // ---------------------------------------------------------------------------

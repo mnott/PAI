@@ -25,7 +25,7 @@ import { resolveTarget } from "./routing.js";
 import { ensureNoMcpConfig, workersLogDir } from "./paths.js";
 import { buildRunEnv, loopbackRouterChoice } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
-import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
+import { proxyPort, ensureProxyRunning } from "./proxy/server.js";
 
 export type { ModelTier } from "./config.js";
 
@@ -129,7 +129,7 @@ export async function planLlmSpawn(
   let proxyUrl: string | undefined;
   if (provider.protocol === "openai") {
     mkdirSync(logDir, { recursive: true });
-    proxyUrl = `${await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir)}/${providerName}`;
+    proxyUrl = `${await ensureProxyRunning(proxyPort(), logDir)}/${providerName}`;
   }
 
   const model = tierModel(provider, tier);

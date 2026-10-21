@@ -24,7 +24,7 @@ import {
 } from "./config.js";
 import { buildRunEnv, pinnedSettingsArgs } from "./run-env.js";
 import { SESSION_PROVIDER_ENV } from "./session-provider.js";
-import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "./proxy/server.js";
+import { proxyPort, ensureProxyRunning } from "./proxy/server.js";
 
 export class LaunchError extends WorkersConfigError {}
 
@@ -196,7 +196,7 @@ export async function buildLaunchPlan(
 
   let proxyUrl: string | undefined;
   if (provider.protocol === "openai") {
-    const base = await ensureProxyRunning(DEFAULT_PROXY_PORT, logDir);
+    const base = await ensureProxyRunning(proxyPort(), logDir);
     proxyUrl = `${base}/${providerName}`;
   }
   const env = buildRunEnv(provider, false, proxyUrl);

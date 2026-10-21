@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
+import { postgresConnectionString } from "../../../../storage/postgres/config.js";
 import { c, line, section, type Rl, prompt, promptMenu, promptYesNo, readConfigRaw, setupOptions, getDockerDir, hasDocker, testPostgresConnection } from "../utils.js";
 
 async function startDocker(rl: Rl): Promise<boolean> {
@@ -75,7 +76,7 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
   const forced =
     setupOptions.storage ??
     (setupOptions.yes
-      ? (await testPostgresConnection("postgresql://pai:pai@localhost:5432/pai")) ? "postgres" : "sqlite"
+      ? (await testPostgresConnection(postgresConnectionString({}))) ? "postgres" : "sqlite"
       : undefined);
 
   const choice = forced ? (forced === "sqlite" ? 1 : 0) : await promptMenu(rl, [
@@ -114,7 +115,7 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
       console.log(c.dim("  Waiting 3 seconds for container to be ready..."));
       await new Promise((r) => setTimeout(r, 3000));
 
-      const connStr = "postgresql://pai:pai@localhost:5432/pai";
+      const connStr = postgresConnectionString({});
       console.log(c.dim(`  Testing connection to ${connStr}...`));
 
       const ok2 = await testPostgresConnection(connStr);

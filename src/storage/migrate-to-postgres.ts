@@ -25,7 +25,7 @@ import { federationDbPath } from "./sqlite/federation-db.js";
 import { registryDbPath } from "./sqlite/registry-db.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { PaiClient } from "../daemon/ipc-client.js";
-import type { PostgresConfig } from "./postgres/config.js";
+import { postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
 
 const { Pool: PgPool } = pg;
 
@@ -79,10 +79,7 @@ export interface MigrationResult {
 // ---------------------------------------------------------------------------
 
 function resolvePgConnectionString(config: PostgresConfig): string {
-  return (
-    config.connectionString ??
-    `postgresql://${config.user ?? "pai"}:${config.password ?? "pai"}@${config.host ?? "localhost"}:${config.port ?? 5432}/${config.database ?? "pai"}`
-  );
+  return postgresConnectionString(config);
 }
 
 function resolvePgDatabaseName(config: PostgresConfig): string {

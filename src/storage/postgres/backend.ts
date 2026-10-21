@@ -22,7 +22,7 @@ import type {
   SkillTelemetryRow, RecordSkillInvocationInput, QuerySkillTelemetryOptions,
 } from "../interface.js";
 import type { SearchResult, SearchOptions } from "../../memory/search.js";
-import type { PostgresConfig } from "./config.js";
+import { postgresConnectionString, type PostgresConfig } from "./config.js";
 import { LEGACY_EMBEDDING_BINDING } from "../../memory/embedding-binding.js";
 import { bufferToVector } from "./helpers.js";
 import { searchKeyword, searchSemantic } from "./search.js";
@@ -53,9 +53,7 @@ export class PostgresBackend implements StorageBackend {
    * Safe to call multiple times (fully idempotent).
    */
   static async ensureDatabase(config: PostgresConfig): Promise<void> {
-    const connStr =
-      config.connectionString ??
-      `postgresql://${config.user ?? "pai"}:${config.password ?? "pai"}@${config.host ?? "localhost"}:${config.port ?? 5432}/${config.database ?? "pai"}`;
+    const connStr = postgresConnectionString(config);
     const url = new URL(connStr);
     const targetDb = url.pathname.slice(1);
 
@@ -271,9 +269,7 @@ export class PostgresBackend implements StorageBackend {
   }
 
   constructor(config: PostgresConfig) {
-    const connStr =
-      config.connectionString ??
-      `postgresql://${config.user ?? "pai"}:${config.password ?? "pai"}@${config.host ?? "localhost"}:${config.port ?? 5432}/${config.database ?? "pai"}`;
+    const connStr = postgresConnectionString(config);
 
     this.pool = new PgPool({
       connectionString: connStr,

@@ -73,7 +73,7 @@ import { installWorkers } from "../../workers/install.js";
 import { describeMcp } from "../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../workers/controls.js";
 import { loadStatus } from "../../workers/status.js";
-import { DEFAULT_PROXY_PORT, ensureProxyRunning, stopProxy } from "../../workers/proxy/server.js";
+import { proxyPort, ensureProxyRunning, stopProxy } from "../../workers/proxy/server.js";
 import { CliError, type CommandDef, type Io, type OptDef, type RunContext } from "../define.js";
 import { dim, err, ok, warn } from "../lib/utils.js";
 import { useCommand } from "./providers.js";
@@ -1112,7 +1112,7 @@ export const workerProxyCommand: CommandDef = {
   summary: "The local proxy for OpenAI-style providers",
   description: "Starts (or checks) the loopback-only Anthropic-to-OpenAI proxy. `run` starts it on demand anyway; `proxy stop` stops it again.",
   args: [{ name: "STOP", summary: "Write stop to stop the proxy" }],
-  options: [{ name: "port", type: "number", value: "N", summary: `Port to listen on (default ${DEFAULT_PROXY_PORT})` }],
+  options: [{ name: "port", type: "number", value: "N", summary: `Port to listen on (default ${proxyPort()})` }],
   examples: ["pai worker proxy", "pai worker proxy stop"],
   seeAlso: ["pai worker providers add"],
   async run(ctx) {
@@ -1120,7 +1120,7 @@ export const workerProxyCommand: CommandDef = {
       const stop = ctx.args.STOP as string | undefined;
       if (stop === "stop") return void out(stopProxy(logDir()));
       if (stop) throw new WorkersConfigError(`unknown proxy argument "${stop}" (expected: stop)`);
-      const url = await ensureProxyRunning((ctx.opts.port as number | undefined) ?? DEFAULT_PROXY_PORT, logDir());
+      const url = await ensureProxyRunning((ctx.opts.port as number | undefined) ?? proxyPort(), logDir());
       out(`proxy listening on ${url} — point openai providers at ${url}/<provider>`);
     } catch (e) {
       fail(e, "pai worker proxy");

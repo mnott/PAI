@@ -3,7 +3,7 @@
  * OpenAI Chat Completions on the back, loopback only.
  *
  * One proxy serves every OpenAI-protocol provider: Claude Code points
- * ANTHROPIC_BASE_URL at `http://127.0.0.1:8797/<provider>` and the provider
+ * ANTHROPIC_BASE_URL at `http://127.0.0.1:<proxy.port>/<provider>` and the provider
  * name in the path selects the upstream (`upstreamUrl` + `keyFile` from the
  * workers config, re-read per request so config edits apply without a
  * restart). `run` starts the proxy on demand (detached, pid file under the
@@ -28,7 +28,10 @@ import {
   type AnthropicRequest,
 } from "./translate.js";
 
-export const DEFAULT_PROXY_PORT = 8797;
+/** The configured proxy port (workers.proxy.port; shipped default in defaults/workers.yaml). */
+export function proxyPort(): number {
+  return readWorkersSection().workers.proxy.port;
+}
 const HOST = "127.0.0.1";
 
 /** How providers are looked up — swapped out by the tests. */
@@ -200,7 +203,7 @@ async function handleMessages(
 // ---------------------------------------------------------------------------
 
 /** Listen on host:port (loopback). Resolves with the bound port. */
-export function listenProxy(server: Server, port = DEFAULT_PROXY_PORT): Promise<number> {
+export function listenProxy(server: Server, port = proxyPort()): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, HOST, () => {
@@ -211,7 +214,7 @@ export function listenProxy(server: Server, port = DEFAULT_PROXY_PORT): Promise<
 }
 
 /** True when something already accepts connections on the port. */
-export function proxyListening(port = DEFAULT_PROXY_PORT, timeoutMs = 400): Promise<boolean> {
+export function proxyListening(port = proxyPort(), timeoutMs = 400): Promise<boolean> {
   return new Promise((resolve) => {
     const sock = connect({ port, host: HOST });
     const done = (ok: boolean) => {
