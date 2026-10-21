@@ -17,7 +17,7 @@ import { defaultWorkersConfig, isLocalProvider, type WorkersConfig } from "./con
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { eventLine, type Messenger } from "./run-events.js";
-import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
+import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { readLocalStatus, type LocalStatus } from "./local-status.js";
 import { isChatPane, isLive, loadStatusesCached, ownsPidCached, type WorkerStatus } from "./status.js";
 

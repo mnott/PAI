@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { paiHomePath } from "../../config/pai-home.js";
 import { ANTHROPIC_NATIVE, type WorkersConfig } from "../../workers/config.js";
-import { isLocalCandidate, tierProviderNames } from "../../workers/local-provider.js";
+import { isLocalCandidate, tierProviderNames } from "../../workers/local-candidate.js";
 import { budgetExceeded, budgetSkipReason, budgetWall, type BudgetReading } from "../../workers/budget.js";
 
 export interface Health {

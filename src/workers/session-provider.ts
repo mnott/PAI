@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "./config.js";
 import { loadStatus } from "./status.js";
-import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
+import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 
 export const SESSION_PROVIDER_ENV = "PAI_SESSION_PROVIDER";
 /** The worker side of a setup launch ("anthropic + kimi workers"): class and unflagged runs follow it; "cloud" never reads it. */

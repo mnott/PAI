@@ -46,7 +46,9 @@ import {
 import { PORT_TIMEOUT_MS, httpModelsCheck, providerModelIds, type PortCheck } from "../cli/lib/setups.js";
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
-export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
+import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
+
+export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck, isLocalCandidate, tierProviderNames };
 
 /** A busy single-slot server answers /v1/models slowly; 500 ms read it as down. */
 
@@ -69,24 +71,6 @@ export function providerHostPort(p: WorkerProvider): { host: string; port: numbe
   } catch {
     return null;
   }
-}
-
-/**
- * Providers a `local:` tier launches. `pai worker local <tier>` and the cockpit
- * start those without touching `enabled:`, so a running tier server is a
- * candidate for --local even when its provider entry is switched off.
- */
-export function tierProviderNames(yamlPath: string = workersYamlPath()): string[] {
-  try {
-    return Object.values(readLocalConfig(yamlPath).tiers).map((t) => t.provider);
-  } catch {
-    return [];
-  }
-}
-
-/** A loopback provider --local may run on: enabled, or launched by a tier. */
-export function isLocalCandidate(p: WorkerProvider, name: string, tierProviders: string[]): boolean {
-  return (p.enabled || tierProviders.includes(name)) && isLoopbackProvider(p);
 }
 
 /** Probe every candidate loopback provider in parallel: name → running. */

@@ -16,7 +16,7 @@ import {
   nativeOrchestratorModel,
 } from "../../workers/config.js";
 import { isLoopbackProvider } from "../../workers/run-env.js";
-import { isLocalCandidate, tierProviderNames } from "../../workers/local-provider.js";
+import { isLocalCandidate, tierProviderNames } from "../../workers/local-candidate.js";
 import { probeServedModels, serves } from "../../workers/served-models.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 

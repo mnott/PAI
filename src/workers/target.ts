@@ -16,7 +16,8 @@
 
 import { CliError } from "../cli/define.js";
 import { ANTHROPIC_NATIVE, getProviderOrNative, readWorkersSection, type WorkersConfig } from "./config.js";
-import { isLocalCandidate, probeLoopback, resolveLocalProvider, tierProviderNames, type ResolveLocalOpts } from "./local-provider.js";
+import { probeLoopback, resolveLocalProvider, type ResolveLocalOpts } from "./local-provider.js";
+import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { detectSessionProvider } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";

@@ -25,7 +25,8 @@ import {
 } from "./config.js";
 import { budgetFull, type BudgetMap } from "./budget.js";
 import type { LocalInstance } from "./local-instances.js";
-import { isLocalCandidate, readLocalPreference, tierProviderNames } from "./local-provider.js";
+import { readLocalPreference } from "./local-provider.js";
+import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
 import { detectSessionName } from "./session-name.js";
 import { readProfiles, updateProfile, type Profiles, type SessionProfile } from "./session-profile-store.js";
