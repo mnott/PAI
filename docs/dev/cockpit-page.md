@@ -8,10 +8,10 @@ The cockpit is one HTML page with inline CSS and an inline script, built once pe
 | `cockpit-page/shell.ts` | document head, theme bootstrap, the header and the `<section data-section="…">` markup of every section |
 | `cockpit-page/css.ts` | the whole stylesheet |
 | `cockpit-page/script-core.ts` | colours (model palette, `assignColors`), `setHtml` (no-jump redraw), formatters, folds, layout rows and drag and drop |
-| `cockpit-page/script-models.ts` | limits gauges, the local server tile, the Routing section, the Models cards (aliases, start/stop, local switch, confirms) |
-| `cockpit-page/script-charts.ts` | system data and the line, bar and legend charts |
-| `cockpit-page/script-tables.ts` | donuts and rings, provider tiles, `table()` (scroll box, stacked rows on phones), sessions/runs, render and load |
-| `cockpit-page/script-boot.ts` | pool panel, queue, theme toggle, startup wiring and the polls |
+| `cockpit-page/script-models.ts` | limits gauges, the local server tile (up/down and `downReason`), the Routing section, the Models cards (aliases, start/stop, local switch, confirms) |
+| `cockpit-page/script-charts.ts` | system data (metric tiles with sparklines, server tiles, the power chart) and the line, bar and legend charts |
+| `cockpit-page/script-tables.ts` | donuts and rings, provider tiles (fill their row), `table()` (no horizontal scroll; stacks into cards, class `.tw.stacked`, only when a measurement says it does not fit), sessions/runs (worker runs: label / verdict word / tokens), render and load |
+| `cockpit-page/script-boot.ts` | pool panel (provider-neutral, off reason from `src/router/pool-panel.ts`), queue, theme toggle, startup wiring and the polls |
 | `cockpit-page/favicon.ts`, `types.ts` | favicon data URI; helper types for baked values |
 
 Rules that keep it working:
