@@ -228,14 +228,26 @@ describe("win action field contract (spec 5.2)", () => {
         const def = WIN_VERBS[verb];
         expect(def.route, `${verb} must carry its route`).toBe(`/cockpit/queue/${verb.split(".")[1]}`);
         const body = winBody(def, ARGS[verb]);
-        const r = await ask(def.route, JSON.stringify(body));
-        const j = JSON.parse(r.body);
-        const why = `${verb} body ${JSON.stringify(body)} -> ${r.status} ${r.body}`;
-        expect(r.status, why).toBe(200);
-        expect(j.error, why).toBeUndefined();
-        expect(j.id, why).toBe("w1");
-        expect(Array.isArray(j.order), why).toBe(true);
+        const statuses: [string, string, string][] = [];
+        const host = {
+          fetch: async (url: string, opts: any) => {
+            const r = await ask(url, opts.body);
+            return { status: r.status, text: async () => r.body };
+          },
+          setStatus: (id: string, kind: string, text: string) => void statuses.push([id, kind, text]),
+          setBusy: () => {},
+          refresh: () => {},
+        };
+        const r = await runAction("card", verb, ARGS[verb], null, host, { pollMs: 1 });
+        const why = `${verb} body ${JSON.stringify(body)} -> ${r.message}`;
+        expect(r.ok, why).toBe(true);
+        expect(statuses[statuses.length - 1][1], why).toBe("ok");
       }
+      // a refusal comes back as {ok:false,message}, shown as the refusal
+      const host = { fetch: async (url: string, opts: any) => { const r = await ask(url, opts.body); return { status: r.status, text: async () => r.body }; }, setStatus: () => {}, setBusy: () => {}, refresh: () => {} };
+      const miss = await runAction("card", "queue.up", { id: "nope" }, null, host, { pollMs: 1 });
+      expect(miss.ok).toBe(false);
+      expect(miss.message).toMatch(/no worker named "nope"/);
     } finally {
       srv.close();
     }

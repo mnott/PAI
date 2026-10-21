@@ -1016,20 +1016,20 @@ export function handleCockpit(
       .then((raw) => JSON.parse(raw || "{}") as { id?: string; position?: number })
       .catch(() => ({} as { id?: string; position?: number }));
     body.then(({ id, position }) => {
-      if (!id || typeof id !== "string") return send(400, "application/json", JSON.stringify({ error: "id required" }));
+      if (!id || typeof id !== "string") return send(400, "application/json", JSON.stringify({ ok: false, message: "id required", error: "id required" }));
       const move = url.pathname.endsWith("/move");
-      if (move && !(typeof position === "number" && Number.isFinite(position) && position >= 1)) return send(400, "application/json", JSON.stringify({ error: "position (>= 1) required" }));
+      if (move && !(typeof position === "number" && Number.isFinite(position) && position >= 1)) return send(400, "application/json", JSON.stringify({ ok: false, message: "position (>= 1) required", error: "position (>= 1) required" }));
       try {
         const { workers } = readWorkersSection();
         const logDir = queueLogDir(workers);
         const status = loadStatus(logDir, id);
-        if (!status) return send(404, "application/json", JSON.stringify({ error: `no worker named "${id}"` }));
+        if (!status) return send(404, "application/json", JSON.stringify({ ok: false, message: `no worker named "${id}"`, error: `no worker named "${id}"` }));
         const order = move
           ? reorderQueueTo(logDir, status.provider, id, position as number)
           : reorderQueue(logDir, status.provider, id, url.pathname.endsWith("/front") || url.pathname.endsWith("/next") ? "front" : "up");
-        send(200, "application/json", JSON.stringify({ id, provider: status.provider, order }));
+        send(200, "application/json", JSON.stringify({ ok: true, id, provider: status.provider, order }));
       } catch (e) {
-        send(409, "application/json", JSON.stringify({ error: (e as Error).message }));
+        send(409, "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message }));
       }
     });
     return true;
