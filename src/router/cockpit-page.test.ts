@@ -337,14 +337,16 @@ describe("cockpit layout follow-up", () => {
     expect(COCKPIT_HTML).not.toMatch(/alert\(|confirm\(|prompt\(/);
   });
 
-  it("the routing section is read-only: the flow line on top, then three tier rows with ordered chips and arrows coloured by state", () => {
+  it("the routing section: the flow line on top, then three tier rows with ordered chips and arrows coloured by state", () => {
     expect(COCKPIT_HTML).toContain('data-section="routing"');
     expect(COCKPIT_HTML.indexOf('data-section="cloud"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="routing"'));
     expect(COCKPIT_HTML.indexOf('data-section="routing"')).toBeLessThan(COCKPIT_HTML.indexOf('data-section="workers"'));
     const body = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string }> = { routing: { innerHTML: "" } };
     const doc = { querySelector: () => ({}), querySelectorAll: () => [] };
-    const run = new Function("lim", "$", "esc", "document", `${SH}\n${body}\nrenderRouting();`);
+    const wire = COCKPIT_HTML.match(/function wireRouting[\s\S]*?\n\}/)![0];
+    const eps = COCKPIT_HTML.match(/function renderEndpoints[\s\S]*?\n\}/)![0];
+    const run = new Function("lim", "$", "esc", "document", `${SH}\n${body}\n${wire}\n${eps}\nrenderRouting();`);
     const lim = {
       routing: {
         flow: "t0 Session: opus → t1 Orchestrator: sonnet → t2 Worker: local gyro-m",
@@ -381,10 +383,46 @@ describe("cockpit layout follow-up", () => {
     expect(h).toContain("implement · research · draft · review · complex");
     expect(h).toContain('class="rtsess"');
     for (const editing of ["draggable", "rtx", "rtadd", "rtlist"]) expect(h).not.toContain(editing);
+    // the selector menu: one per tier row, no choices -> no menu
+    expect(h).not.toContain("rtsel");
     for (const w of ["--ok", "--warn", "--bad"]) expect(COCKPIT_HTML).toMatch(new RegExp(`\\.rtchip\\.[a-z]+\\{[^}]*${w}`));
-    // the routing section itself stays read-only: no drag/edit wiring inside it
+    // no drag wiring inside it
     const routingSrc = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
-    for (const gone of ['action:"route"', "rtDrag", "b.clear=true", "ArrowLeft"]) expect(routingSrc).not.toContain(gone);
+    for (const gone of ["rtDrag", "b.clear=true", "ArrowLeft"]) expect(routingSrc).not.toContain(gone);
+  });
+
+  it("each tier row has a selector menu; a pick posts route.set with the pick first; registered endpoints list with enable/disable", () => {
+    const body = COCKPIT_HTML.match(/function renderRouting[\s\S]*?\n\}/)![0];
+    const wire = COCKPIT_HTML.match(/function wireRouting[\s\S]*?\n\}/)![0];
+    const eps = COCKPIT_HTML.match(/function renderEndpoints[\s\S]*?\n\}/)![0];
+    const els: Record<string, { innerHTML: string; querySelectorAll: () => unknown[] }> = { routing: { innerHTML: "", querySelectorAll: () => [] }, endpoints: { innerHTML: "", querySelectorAll: () => [] } };
+    const posts: unknown[][] = [];
+    const sel = { value: "model:qwen", disabled: false, parentNode: { querySelector: () => null, getAttribute: () => "gyro-m,anthropic/sonnet,model:qwen" }, getAttribute: () => "t2", onchange: null as null | (() => void) };
+    const doc = { querySelector: () => ({}), querySelectorAll: () => [] };
+    const lim = { routing: {
+      flow: "f", choices: [{ entry: "local", label: "local (any healthy local endpoint)" }, { entry: "model:qwen", label: "model:qwen" }],
+      rows: [{ id: "t2", label: "t2 Worker", classes: [], chips: [{ entry: "gyro-m", label: "local gyro-m", state: "idle", why: "" }, { entry: "anthropic/sonnet", label: "anthropic/sonnet", state: "available", why: "" }] }],
+      endpoints: [
+        { id: "mac2", model: "mac2", provider: "mac2", origin: "registered", host: "10.0.0.2:8000", healthy: true, enabled: true, tags: ["fast"], classes: [] },
+        { id: "gyro-m#1", model: "gyro-m", provider: "gyro-m", origin: "managed", host: "127.0.0.1:8100", healthy: true, enabled: true, tags: [], classes: [] },
+      ] } };
+    const run = new Function("lim", "$", "esc", "document", "postAction", "loadLimits", "setHtml", "wireAct", `${SH}\n${body}\n${wire}\n${eps}\nrenderRouting();return wireRouting;`);
+    const setHtml = (el: { innerHTML: string }, h: string) => { el.innerHTML = h; return true; };
+    const wireRouting = run(lim, (id: string) => els[id], (x: string) => x, doc, (...a: unknown[]) => posts.push(a), () => {}, setHtml, () => {});
+    const h = els.routing!.innerHTML;
+    expect(h).toContain('class="rtsel" data-tier="t2"');
+    expect(h).toContain('<option value="local">');
+    expect(h).toContain('<option value="model:qwen">');
+    expect(h).toContain('data-entries="gyro-m,anthropic/sonnet"');
+    const e = els.endpoints!.innerHTML;
+    expect(e).toContain("registered · 10.0.0.2:8000");
+    expect(e).toContain("managed · 127.0.0.1:8100");
+    expect(e).toContain('data-a="endpoint.enable" data-t="mac2" data-v="off"');
+    expect(e.match(/endpoint\.enable/g)).toHaveLength(1);
+    expect(e).not.toMatch(/start|stop/i);
+    wireRouting({ querySelectorAll: () => [sel] });
+    sel.onchange!();
+    expect(posts[0]!.slice(0, 3)).toEqual(["route.set", "t2", "model:qwen,gyro-m,anthropic/sonnet"]);
   });
 
   it("shows a loading state until the first limits poll arrives", () => {

@@ -548,6 +548,33 @@ export async function runCockpitAction(
       return fail(e instanceof Error ? e.message : String(e));
     }
   }
+  if (action === "route.set") {
+    // a tier row takes a list of entries: provider names or selectors (local, model:, tag:, class:); same writer as `pai worker route set`
+    if (!target) return fail("target (tier) required");
+    try {
+      const { setRoute } = await import("../workers/route-table.js");
+      const models = Array.isArray(body.models) ? body.models : value !== undefined ? value.split(",") : body.models;
+      const change = setRoute(target, models, deps.configPath);
+      writeLedgerLine(deps, action, change.id, `set:${change.entries.join(">")}`);
+      return { ok: true, message: `${change.id} → ${change.entries.join(" → ")}` };
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (action === "endpoint.enable") {
+    // registered endpoints only: routing on/off, PAI never starts or stops them
+    if (!target) return fail("target (endpoint) required");
+    if (value !== "on" && value !== "off") return fail(`value must be on or off, got "${value ?? ""}"`);
+    if (!deps.workers.providers[target]?.characteristics) return fail(`"${target}" is not a registered endpoint (providers.${target}.characteristics)`);
+    try {
+      const { setProviderEnabled } = await import("../workers/providers.js");
+      setProviderEnabled(target, value === "on", deps.configPath);
+      writeLedgerLine(deps, action, target, `routing ${value}`);
+      return { ok: true, message: `${target} routing ${value}` };
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+  }
   if (action === "cloud.role") {
     const role = value;
     if (!target) return fail("target (provider) required");

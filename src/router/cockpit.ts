@@ -24,6 +24,8 @@ import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runt
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { instanceEngineKey, readInstances } from "../workers/local-instances.js";
+import { createEndpointHealth } from "../workers/endpoint-health.js";
+import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpoints.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
 import { readLocalStatus } from "../workers/local-status.js";
@@ -719,8 +721,11 @@ async function localRunningInfo(): Promise<Array<{ tier: string; label: string; 
   }
 }
 
-/** The routing table, read-only (per tier the ordered models with their live state, read from the same limits the gauges show) and the flow line of what each tier resolves to now. */
-async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; flow: string }> {
+/** Probe cache for the registered endpoints the cockpit lists (one probe per endpoint per interval). */
+const cockpitEndpointHealth = createEndpointHealth();
+
+/** The routing table with the selectors a row can take and the endpoint registry (per tier the ordered models with their live state, read from the same limits the gauges show) and the flow line of what each tier resolves to now. */
+async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; flow: string; choices: { entry: string; label: string }[]; endpoints: EndpointRow[] }> {
   try {
     const { workers } = readWorkersSection();
     const budgets: BudgetMap = {};
@@ -731,9 +736,13 @@ async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[];
     }
     const running = async (name: string) => ls.some((l) => l.kind === "local" && l.provider === name && l.up === true);
     const rows = await routeRows(workers, { logDir: workersLogDir(workers), budgets, running, profiles: readProfiles() });
-    return { rows, flow: flowText(rows) };
+    const managed = readInstances(workersLogDir(workers)).filter((i) => i.state === "ready");
+    const registered = Object.entries(workers.providers).filter(([, p]) => p.characteristics && p.enabled !== false).map(([name, p]) => ({ id: name, model: name, provider: name, url: p.baseUrl, origin: "registered" as const, port: 0, state: "ready" as const, startedAt: 0, log: "", characteristics: p.characteristics }));
+    await cockpitEndpointHealth.refresh(registered);
+    const endpoints = endpointRows(workers, managed, (i) => cockpitEndpointHealth.isHealthy(i));
+    return { rows, flow: flowText(rows), choices: selectorChoices(workers, endpoints), endpoints };
   } catch {
-    return { rows: [], flow: "" };
+    return { rows: [], flow: "", choices: [], endpoints: [] };
   }
 }
 

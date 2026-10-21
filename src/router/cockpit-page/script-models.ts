@@ -120,16 +120,49 @@ function renderLimits(){
  keepDowns($("local"));
  orderTiles($("local"));
 }
-/** Routing section, read-only: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers) and the sessions overriding it. Edited in workers.yaml or with pai worker route set. */
+/** Routing section: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers, a selector menu) and the sessions overriding it. The menu (local, model:, tag:, class:, providers) puts the pick first in the tier's row through route.set, the workers.yaml writer; the rest stay as fallbacks. */
 function renderRouting(){
  var r=lim&&lim.routing;if(!r||!document.querySelector('[data-section="routing"]'))return;
  var rows=r.rows||[];
  var chipsOf=function(cs){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+'</span>'}).join("")};
  var flow=rows.length?'<div class="rtflow" id="rtflow">'+esc(r.flow||"")+'</div>':"";
+ var menu=function(row){
+  var opts=(r.choices||[]).map(function(c){return'<option value="'+esc(c.entry)+'">'+esc(c.label)+'</option>'}).join("");
+  return opts?'<select class="rtsel" data-tier="'+esc(row.id)+'" aria-label="selector for '+esc(row.label)+'" title="Serve this tier from a selector: local, model:, tag:, class: or a provider. The pick goes first; the other entries stay as fallbacks."><option value="">selector…</option>'+opts+'</select>':"";
+ };
  setHtml($("routing"),rows.length?flow+rows.map(function(row){
   var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips)+'</span></div>'}).join("");
   var tip=[row.description,row.note].filter(Boolean).join(" — ");
-  return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
+  return'<div class="rtrow" data-tier="'+esc(row.id)+'" data-entries="'+esc((row.chips||[]).map(function(c){return c.entry}).join(","))+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span>'+menu(row)+'<span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span><span class="rtmsg dim"></span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
+ wireRouting($("routing"));
+ renderEndpoints(r.endpoints||[]);
+}
+/** A selector pick posts route.set for its tier; the limits poll then redraws the row. */
+function wireRouting(el){
+ if(!el||!el.querySelectorAll)return;
+ var sels=el.querySelectorAll("select.rtsel");
+ for(var i=0;i<sels.length;i++)(function(sel){
+  sel.onchange=function(){
+   var pick=sel.value;if(!pick)return;
+   var row=sel.parentNode,msg=row.querySelector(".rtmsg");
+   var rest=(row.getAttribute("data-entries")||"").split(",").filter(function(x){return x&&x!==pick});
+   sel.disabled=true;
+   postAction("route.set",sel.getAttribute("data-tier"),[pick].concat(rest).join(","),function(j){
+    sel.disabled=false;sel.value="";
+    if(msg){msg.textContent=(j&&j.message)||"";msg.className="rtmsg"+(j&&j.ok?" dim":" bad")}
+    if(j&&j.ok)loadLimits();
+   });
+  };
+ })(sels[i]);
+}
+/** Registered endpoints in the Models section: origin, host, health, routing on/off. PAI never starts or stops them; managed instances have their start/stop in the cards below. */
+function renderEndpoints(eps){
+ var el=$("endpoints");if(!el)return;
+ var h=eps.length?'<div class="eplist">'+eps.map(function(e){
+  var cls=e.healthy?"ok":e.enabled?"bad":"dim";
+  var toggle=e.origin==="registered"?'<span class="act ep-act" data-ep="'+esc(e.id)+'"><button type="button" class="b" data-a="endpoint.enable" data-t="'+esc(e.id)+'" data-v="'+(e.enabled?"off":"on")+'">'+(e.enabled?"disable routing":"enable routing")+'</button><span class="msg"></span></span>':"";
+  return'<div class="eprow" data-ep="'+esc(e.id)+'"><b>'+esc(e.id)+'</b> <span class="dim">'+esc(e.origin)+' · '+esc(e.host)+'</span> <span class="'+cls+'">'+(e.healthy?"healthy":e.enabled?"down":"routing off")+'</span>'+((e.tags||[]).concat((e.classes||[]).map(function(c){return"class:"+c})).length?' <span class="dim">'+esc((e.tags||[]).concat((e.classes||[]).map(function(c){return"class:"+c})).join(" · "))+'</span>':"")+' '+toggle+'</div>'}).join("")+'</div>':"";
+ if(setHtml(el,h)){var acts=el.querySelectorAll(".act");for(var i=0;i<acts.length;i++)wireAct(acts[i],function(){loadLimits()})}
 }
 var mdl=null,mEditing=false,BLUR_CANCEL_MS=400;
 /** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
