@@ -106,11 +106,12 @@ function speedBars(sp,w,localSet){
  });
  return h+'</div>';
 }
-function renderSpeed(){
+function speedHtml(){
  var sp=(data&&data.speed)||[],ls={};
  ((sys&&sys.servers)||[]).forEach(function(s){ls[s.provider]=1});((lim&&lim.limits)||[]).forEach(function(l){if(l.kind==="local")ls[l.provider]=1});
- setHtml($("speed"),sp.length?speedBars(sp,win,ls):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>');
+ return sp.length?speedBars(sp,win,ls):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>';
 }
+function renderSpeed(){setHtml($("speed"),speedHtml())}
 /** Providers: provider, req, err%, hit% by default; retries, avg ms, ttft p50 and tokens ride in the provider cell's title (retries also as a badge). */
 function renderProviders(d){
  setHtml($("providers"),table(["provider .txt","req","err%","hit%"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);
@@ -121,8 +122,8 @@ function renderProviders(d){
 /** Sessions by tokens: name column capped, models as first +N, rows past the top N folded into one expandable row (state in localStorage like folds). */
 var SESS_MORE_KEY="pai.cockpit.sessmore";
 function sessMore(){try{return localStorage.getItem(SESS_MORE_KEY)==="1"}catch(e){return false}}
-function renderSessions(d){
- var el=$("sessions"),all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore();
+function sessionsHtml(d){
+ var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore();
  function row(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';
   var ms=s.models||[],mc=ms.length?esc(ms[0])+(ms.length>1?' <span class="dim">+'+(ms.length-1)+'</span>':''):'';
   return['<span title="'+esc((s.name?s.name+" · ":"")+s.session)+'">'+nm+v+'</span>','<span title="'+esc(ms.join(", "))+'">'+mc+'</span>',s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+hitCls(s.hitRatio)+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}
@@ -132,7 +133,11 @@ function renderSessions(d){
   rows.push(['<a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a>'].concat(row(all[0]).slice(1).map(blank)));
  }
  var cap="width:${n(L.sessionNameMaxPct)}%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
- setHtml(el,table(["session .txt","models .txt","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"}));
+ return table(["session .txt","models .txt","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"});
+}
+function renderSessions(d){
+ var el=$("sessions");
+ setHtml(el,sessionsHtml(d));
  el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-sessmore")!=null))t=t.parentNode;
   if(!t||t===el)return;ev.preventDefault();try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(e){}renderSessions(data)};
 }
@@ -155,20 +160,30 @@ function workerGroups(ws,W){
 var WR_FOLD_KEY="pai.cockpit.wrfold";
 function wrFolded(){try{return JSON.parse(localStorage.getItem(WR_FOLD_KEY)||"{}")||{}}catch(e){return{}}}
 /** Worker runs: one row per run (status dot, label with the full text in the tooltip, model chip, token bar + number, duration, cache hit%), grouped per spawning session with a fold header. */
-function renderWorkers(d){
- var el=$("workers");
- if(!d.workers.length){setHtml(el,'<span class="dim">no worker sessions in this window</span>');return}
+function workersHtml(d){
+ if(!d.workers.length)return'<span class="dim">no worker sessions in this window</span>';
  var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},g=workerGroups(d.workers.slice(0,WORKER_ROWS),W),fold=wrFolded(),now=Date.now();
- setHtml(el,g.groups.map(function(grp){
+ return g.groups.map(function(grp){
   var shut=!!fold[grp.name],head='<a href="#" class="wr-head" data-wrfold="'+esc(grp.name)+'" title="'+esc(grp.name+" · "+grp.runs.length+(grp.runs.length===1?" run":" runs")+" · "+fmt(grp.total)+" weighted tokens")+'"><span class="wr-car">'+(shut?"▸":"▾")+'</span><b>'+esc(grp.name)+'</b><span class="dim">'+grp.runs.length+(grp.runs.length===1?" run · ":" runs · ")+fmt(grp.total)+'</span></a>';
   if(shut)return'<div class="wr-group">'+head+'</div>';
   return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
    var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
    var model=(s.models&&s.models[0])||"–",pc=r.w>0?Math.max(2,Math.round(r.w/g.max*100)):0;
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
-   return'<div class="wr-row" title="'+esc(full)+'"><i class="wr-dot wr-'+st+'" title="'+esc(s.verdict||"worker")+'"></i><span class="wr-lab">'+esc(lab)+'</span><span class="badge" title="'+esc((s.models||[]).join(", ")||"no model")+'">'+esc(model)+'</span><span class="wr-bar" title="weighted tokens: '+fmt(r.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(r.w?fmt(r.w):"–")+'</span><span class="wr-du">'+du+'</span><span class="'+hitCls(s.hitRatio)+'" title="cache hit">'+(s.requests?pct(s.hitRatio):"–")+'</span></div>'}).join("")+'</div>'}).join(""));
+   return'<div class="wr-row" title="'+esc(full)+'"><i class="wr-dot wr-'+st+'" title="'+esc(s.verdict||"worker")+'"></i><span class="wr-lab">'+esc(lab)+'</span><span class="badge" title="'+esc((s.models||[]).join(", ")||"no model")+'">'+esc(model)+'</span><span class="wr-bar" title="weighted tokens: '+fmt(r.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(r.w?fmt(r.w):"–")+'</span><span class="wr-du">'+du+'</span><span class="'+hitCls(s.hitRatio)+'" title="cache hit">'+(s.requests?pct(s.hitRatio):"–")+'</span></div>'}).join("")+'</div>'}).join("");
+}
+function renderWorkers(d){
+ var el=$("workers");
+ setHtml(el,workersHtml(d));
  el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-wrfold")!=null))t=t.parentNode;
   if(!t||t===el)return;ev.preventDefault();var f=wrFolded(),k=t.getAttribute("data-wrfold");if(f[k])delete f[k];else f[k]=1;try{localStorage.setItem(WR_FOLD_KEY,JSON.stringify(f))}catch(e){}renderWorkers(data)};
+}
+/** Cache verdict by pause: one row per model, hit% and request count per pause bucket. */
+function pauseHtml(d){
+ var ph=d.cachePause.map(function(cm){
+  return[esc(cm.model)].concat(cm.buckets.map(function(b){if(!b.n)return'<span class="dim">-</span>';var hr=b.hit/b.n;return'<span class="'+hitCls(hr)+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span>'}));
+ });
+ return ph.length?table(["model (hit% n) .txt"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>';
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};
@@ -212,10 +227,7 @@ function render(){
  setTip($("wnote"),wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.");
  var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
  renderDonuts();
- var ph=d.cachePause.map(function(cm){
-  return[esc(cm.model)].concat(cm.buckets.map(function(b){if(!b.n)return'<span class="dim">-</span>';var hr=b.hit/b.n;return'<span class="'+hitCls(hr)+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span>'}));
- });
- setHtml($("pause"),ph.length?table(["model (hit% n) .txt"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>');
+ setHtml($("pause"),pauseHtml(d));
  renderProviders(d);renderSessions(d);renderWorkers(d);
  var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
  // one assignment over the union of every model shown anywhere on the page (window, daily, rings, speed):

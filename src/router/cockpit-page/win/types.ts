@@ -7,7 +7,7 @@
  *    list  {html} | {rows:{items,key,make,fill}}   html, or a keyed row list (ctx.list)
  *    metric {v, u, s, x(html), spark(html), cls:{warn,bad}}  big value, unit, sub line, extra html, sparkline html, classes of the value
  *  and on every type: title (card title), status ([kind,text]), after(ctx) (run after drawing; the section's own wiring).
- *  A spec may also carry mount(ctx) (run once after the markup exists) and, for the list, cls (the slot's class, default "wr"). */
+ *  A spec may also carry mount(ctx) (run once after the markup exists), resize(ctx,w,h) (table, list) and, for the list, cls (the slot's class, default "wr"). */
 
 export const WIN_TYPES_JS = String.raw`function winDrawCommon(ctx,d){
  if(d.title!==undefined)ctx.title(d.title);
@@ -23,6 +23,7 @@ Win.registerType("kv",{minW:150,minH:96,defaultH:96,viewed:true,
   winDrawCommon(ctx,d);
  }});
 Win.registerType("table",{minW:300,minH:80,defaultH:160,viewed:true,
+ resize:function(ctx,w,h){if(ctx.spec&&ctx.spec.resize)ctx.spec.resize(ctx,w,h)},
  mount:function(ctx){ctx.body.innerHTML='<div class="tw" data-k="t"></div>';winSpecMount(ctx)},
  update:function(ctx,d){
   if(d.title!==undefined)ctx.title(d.title);
@@ -37,6 +38,7 @@ Win.registerType("note",{minW:150,minH:48,defaultH:60,viewed:true,
   winDrawCommon(ctx,{status:d.status,after:d.after});
  }});
 Win.registerType("list",{minW:200,minH:60,defaultH:90,viewed:true,
+ resize:function(ctx,w,h){if(ctx.spec&&ctx.spec.resize)ctx.spec.resize(ctx,w,h)},
  mount:function(ctx){ctx.body.innerHTML='<div class="'+((ctx.spec&&ctx.spec.cls)||"wr")+'" data-k="l"></div>';winSpecMount(ctx)},
  update:function(ctx,d){
   if(d.title!==undefined)ctx.title(d.title);

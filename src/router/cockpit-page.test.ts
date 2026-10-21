@@ -10,7 +10,7 @@ const OLD_HTML = COCKPIT_HTML.replace(/\/\*win-begin\*\/[\s\S]*?\/\*win-end\*\//
 
 /** Stand-in for the page's setHtml in tests that run a render function against plain fake elements. */
 const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
-const RENDERERS = ["var SESS_MORE_KEY", "function sessMore", "function renderProviders", "function renderSessions", "function renderWorkers"].map((n) => COCKPIT_HTML.match(new RegExp(n + "[\\s\\S]*?\\n(?:\\}\\n|(?=function))"))![0]).join("\n");
+const RENDERERS = ["var SESS_MORE_KEY", "function sessMore", "function renderProviders", "function sessionsHtml", "function renderSessions", "function workersHtml", "function renderWorkers", "function speedHtml", "function pauseHtml"].map((n) => COCKPIT_HTML.match(new RegExp(n + "[\\s\\S]*?\\n(?:\\}\\n|(?=function))"))![0]).join("\n");
 // renderLimits builds the local tile with localTile, which reads the model names through ringName/shortModel and gbm
 const LT = ["gbm", "shortModel", "ringName", "localTile"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
 /** The tile markup helpers (one-liners) and a no-op order pass, for the renderers extracted in isolation. */
@@ -261,8 +261,8 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
       const i = COCKPIT_HTML.indexOf(needle);
       return i < 0 ? "" : COCKPIT_HTML.slice(i, COCKPIT_HTML.indexOf("\n", i));
     };
-    const pauseLine = lineOf('setHtml($("pause")');
-    const sessLine = lineOf(" setHtml(el,table([\"session .txt\"");
+    const pauseLine = lineOf(" return ph.length?table(");
+    const sessLine = lineOf(" return table([\"session .txt\"");
     expect(pauseLine).not.toBe("");
     expect(sessLine).not.toBe("");
     expect(pauseLine).toContain("table(");
