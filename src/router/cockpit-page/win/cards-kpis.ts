@@ -17,25 +17,18 @@ function kpiMetric(key,t){
  if(key==="cache-write")return{v:fmt(t.cacheWrite),sub:"",tone:""};
  return{v:String(t.errors),sub:(ex*100).toFixed(ex<0.1?1:0)+"% of requests",tone:cls(ex,ERROR_WARN,ERROR_BAD)};
 }
-/** metric: big value + sub line. The card id after "kpis." picks the metric. */
-var METRIC_DEF={minW:110,minH:96,defaultH:96,
- mount:function(ctx){ctx.body.innerHTML='<div class="wm"><div class="wm-sp" data-k="spark"></div><b class="wm-v" data-k="v"></b><small class="wm-u" data-k="u"></small><span class="wm-s" data-k="s"></span><div class="wm-x" data-k="x" style="font-size:11px;overflow:auto"></div></div>'},
- update:function(ctx,d){
-  if(ctx.id.indexOf("kpis.")!==0){sysMetricUpdate(ctx,d);return}
-  if(!d||!d.totals)return;
-  var m=kpiMetric(ctx.id.slice(5),d.totals);
-  ctx.text("v",m.v);ctx.text("s",m.sub);
-  ctx.cls("v","warn",m.tone==="warn");ctx.cls("v","bad",m.tone==="bad");
- }};
-Win.registerType("metric",METRIC_DEF);
-/** metricm: the same card for the memory group, whose sub lines wrap to three rows. */
-Win.registerType("metricm",Object.assign({},METRIC_DEF,{minH:140,defaultH:140}));
+/** The kpis cards' view: the card id after "kpis." picks the metric. */
+function kpiView(d,ctx){
+ if(!d||!d.totals)return null;
+ var m=kpiMetric(ctx.id.slice(5),d.totals);
+ return{v:m.v,s:m.sub,cls:{warn:m.tone==="warn",bad:m.tone==="bad"}};
+}
 /** The group's one row needs the group box to fit it: header + metric body. */
 Win.registerType("group",{accepts:["*"],minW:220,minH:68,defaultH:124});
 function kpiDefaults(){
  var cards=[{id:"kpis",type:"group",title:"Totals in this window",info:KPI_INFO}],ch=[],sz=[],i;
  for(i=0;i<KPI_IDS.length;i++){
-  cards.push({id:"kpis."+KPI_IDS[i],type:"metric",title:KPI_TITLES[KPI_IDS[i]],feeds:["data"]});
+  cards.push({id:"kpis."+KPI_IDS[i],type:"metric",title:KPI_TITLES[KPI_IDS[i]],feeds:["data"],view:kpiView});
   ch.push(WinT.leaf("kpis."+KPI_IDS[i]));sz.push(1/KPI_IDS.length);
  }
  return{tree:WinT.leaf("kpis"),kids:{kpis:WinT.split("r",ch,sz)},stDefaults:{},cards:cards};

@@ -6,7 +6,7 @@
  *  the registered queue.next / queue.up actions (/cockpit/queue/<verb>); the result is the table card's status. Waiting
  *  rows of a serialising provider drag-reorder as a row-level HTML5 drag inside their card (queue.move); while a row
  *  drag is active in a card that card is not repainted (WK_DRAG, the card.busyDrag of the spec). The `table`/`note` types
- *  are registered in cards-pool, which hands every `workers.*` card to wkTableUpdate / wkNoteUpdate. */
+ *  are the generic types of win/types.ts; the cards here only carry views (wkTableView / wkLocalView / wkWtView). */
 
 export const WIN_WORKERS_JS = String.raw`var WK_INFO="Workers by the session that started them, then by model. A serialising provider (cap 1, e.g. the local model) has its own block on top: its queue is shared across sessions. Drag a waiting row (or use next / up) to reorder it; running workers are never interrupted.";
 var WK_BTN='<button type="button" data-q="next" data-id="@" title="runs next; the running worker is not interrupted">next</button> <button type="button" data-q="up" data-id="@" title="move one place up">up</button>';
@@ -105,28 +105,23 @@ function wkWire(ctx){
   if(WQ)Win.update("queue",WQ);
  });
 }
-function wkTableUpdate(ctx,q){
- if(!q||!q.providers||WK_DRAG===ctx.id)return;
- if(!ctx.body.__wk){ctx.body.__wk=1;wkWire(ctx)}
+function wkTableView(q,ctx){
+ if(!q||!q.providers||WK_DRAG===ctx.id)return null;
  var b=wkBlockOf(ctx.id.slice(8));
- if(b)ctx.title(b.title);
- ctx.html("t",wkBlockHtml(b));
- wkMarkRows(ctx.body);
+ return{title:b?b.title:undefined,html:wkBlockHtml(b),after:function(c){
+  if(!c.body.__wk){c.body.__wk=1;wkWire(c)}
+  wkMarkRows(c.body);
+ }};
 }
-function wkNoteUpdate(ctx,q){
- if(!q||!q.providers)return;
- if(ctx.id==="workers.local"){
-  ctx.text("n",q.localModel||"no local model reported");
-  ctx.attr("n","title",q.localModelTitle||null);
- }else ctx.text("n",q.worktrees||"no worktrees reported");
-}
+function wkLocalView(q){return q&&q.providers?{text:q.localModel||"no local model reported",title:q.localModelTitle||null}:null}
+function wkWtView(q){return q&&q.providers?{text:q.worktrees||"no worktrees reported"}:null}
 /** The block cards, added by data (a structural change); a block already in the layout is only built. */
 function wkSync(q){
  var bl=wkBlocks(q),specs=[],rows=[],i;
  WK_BLOCKS={};
  for(i=0;i<bl.length;i++){
   WK_BLOCKS[bl[i].id]=bl[i];
-  specs.push({id:"workers."+bl[i].id,type:"table",title:bl[i].title,feeds:["queue"]});
+  specs.push({id:"workers."+bl[i].id,type:"table",title:bl[i].title,feeds:["queue"],view:wkTableView});
   rows.push(["workers."+bl[i].id]);
  }
  if(specs.length&&Win.addCards("workers",specs,rows))Win.update("queue",q);
@@ -138,6 +133,6 @@ function winFeedQueue(q){
 }
 function workersDefaults(){
  return{tree:WinT.leaf("workers"),stDefaults:{},kids:{workers:WinT.split("c",[WinT.leaf("workers.local"),WinT.leaf("workers.wt")],[0.5,0.5])},
-  cards:[{id:"workers",type:"group",title:"Workers — running and waiting",info:WK_INFO},{id:"workers.local",type:"note",title:"local model",feeds:["queue"]},{id:"workers.wt",type:"note",title:"worktrees",feeds:["queue"]}]};
+  cards:[{id:"workers",type:"group",title:"Workers — running and waiting",info:WK_INFO},{id:"workers.local",type:"note",title:"local model",feeds:["queue"],view:wkLocalView},{id:"workers.wt",type:"note",title:"worktrees",feeds:["queue"],view:wkWtView}]};
 }
 `;

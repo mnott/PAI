@@ -4,8 +4,8 @@
  *  Group `memory`: `kv` card `memory.kv` (pill + reason; the running pill sits in its status slot as ctx.status("run", ...)),
  *  `metric` cards `memory.index|backend|passes|daemon` and one dynamic `metric` card `memory.job:<id>` per job (Win.addCards).
  *  embed / index now / stop are header actions of the group card, disabled with their reason in the title; results go
- *  through WinA.runAction into the group card's status slot. The `kv`/`metric` types are registered in cards-pool/cards-kpis,
- *  which hand every `memory.*` card to memKvUpdate / memMetricUpdate. */
+ *  through WinA.runAction into the group card's status slot. The `kv`/`metric` types are the generic ones of win/types.ts;
+ *  the cards here carry memKvView / memMetricView. */
 
 export const WIN_MEMORY_JS = String.raw`var MEM_INFO="Memory index: how much of the store is embedded, the backend, running jobs, scheduled passes and the daemon.";
 var WMEM=null,WMEM_JOBS={};
@@ -28,14 +28,12 @@ function memPillText(m){
  var p=r.kind==="embed"&&r.backlogStart>0?" "+Math.round(100*r.done/r.backlogStart)+"%":"";
  return(r.kind==="embed"?"embedding":"indexing")+p+(r.rate!=null?" · "+r.rate+"/s":"")+(r.etaSec!=null?" · ETA "+memDur(r.etaSec):"")+(r.kind==="index"||r.etaSec==null?" · "+memDur(r.elapsedSec):"");
 }
-function memKvUpdate(ctx,m){
- if(!m)return;
+function memKvView(m){
+ if(!m)return null;
  var pill=!m.daemon?"daemon down":m.level==="green"?"healthy":m.level==="amber"?"attention":"problem";
- ctx.html("v",'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>');
- ctx.html("s",esc(m.reason||""));
- var run=memPillText(m);
- ctx.status(run?"run":"",run);
- if(m.run)ctx.attr("s","title",memRunLine(m.run));
+ var run=memPillText(m),d={v:'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>',s:esc(m.reason||""),status:[run?"run":"",run]};
+ if(m.run)d.t=memRunLine(m.run);
+ return d;
 }
 function memLine(cls,html){return'<div class="mt-sub'+(cls?" "+cls:"")+'">'+html+'</div>'}
 function memSegBar(m){
@@ -90,20 +88,19 @@ function memDaemonView(m){
  if(!d)return{v:null,u:"",s:m.daemon?"status not sampled yet":"daemon not answering",x:""};
  return{v:memDur(d.uptimeSecs),u:"",s:"uptime",x:memLine("","pid "+esc(String(d.pid))+" · v"+esc(d.version)+" · storage "+esc(d.storage))};
 }
-function memMetricUpdate(ctx,m){
- if(!m)return;
- var id=ctx.id.slice(7),v;
+function memMetricView(m,ctx){
+ if(!m)return null;
+ var id=ctx.id.slice(7),v,status=null;
  if(id==="index")v=memIndexView(m);
  else if(id==="backend")v=memBackendView(m);
  else if(id==="passes")v=memPassesView(m);
  else if(id==="daemon")v=memDaemonView(m);
  else{
   var j=(m.jobs||[]).filter(function(x){return"job:"+x.id===id})[0];
-  if(!j){ctx.status("stale","gone");return}
-  ctx.status("","");v=memJobView(j,m);
+  if(!j)return{status:["stale","gone"]};
+  status=["",""];v=memJobView(j,m);
  }
- ctx.text("v",v.v==null?"–":v.v);ctx.text("u",v.v==null?"":v.u);ctx.text("s",v.s);ctx.html("x",v.x);
- ctx.cls("v","bad",v.tone==="bad");
+ return{v:v.v==null?"–":v.v,u:v.v==null?"":v.u,s:v.s,x:v.x,cls:{bad:v.tone==="bad"},status:status};
 }
 /** One metric card per job, added by data (a structural change). */
 function memJobSync(m){
@@ -112,7 +109,7 @@ function memJobSync(m){
   var id="memory.job:"+list[i].id;
   if(WMEM_JOBS[id])continue;
   WMEM_JOBS[id]=1;
-  specs.push({id:id,type:"metricm",title:(list[i].kind==="reembed"?"Re-embed ":"")+list[i].name,feeds:["memory"]});
+  specs.push({id:id,type:"metricm",title:(list[i].kind==="reembed"?"Re-embed ":"")+list[i].name,feeds:["memory"],view:memMetricView});
   rows.push([id]);
  }
  if(specs.length&&Win.addCards("memory",specs,rows))Win.update("memory",m);
@@ -121,9 +118,9 @@ function memJobSync(m){
 function winFeedMemory(m){WMEM=m;Win.update("memory",m);memJobSync(m)}
 function memDefaults(){
  var cards=[{id:"memory",type:"group",title:"Memory",info:MEM_INFO,feeds:["memory"],actions:MEM_ACTS.map(memAction)}],names=["index","backend","passes","daemon"],ch=[],i;
- cards.push({id:"memory.kv",type:"kv",title:"status",feeds:["memory"]});
+ cards.push({id:"memory.kv",type:"kv",title:"status",feeds:["memory"],view:memKvView});
  for(i=0;i<names.length;i++){
-  cards.push({id:"memory."+names[i],type:"metricm",title:names[i]==="index"?"Index":names[i]==="backend"?"Backend":names[i]==="passes"?"Passes":"Daemon",feeds:["memory"]});
+  cards.push({id:"memory."+names[i],type:"metricm",title:names[i]==="index"?"Index":names[i]==="backend"?"Backend":names[i]==="passes"?"Passes":"Daemon",feeds:["memory"],view:memMetricView});
   ch.push(WinT.leaf("memory."+names[i]));
  }
  var row=WinT.split("r",ch,ch.map(function(){return 1/ch.length}));

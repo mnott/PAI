@@ -11,6 +11,7 @@ import { WIN_STORE_JS } from "./win/store.js";
 import { WIN_INFO_JS } from "./win/info.js";
 import { WIN_ANCHOR_JS } from "./win/anchor.js";
 import { WIN_CARD_JS } from "./win/card.js";
+import { WIN_TYPES_JS } from "./win/types.js";
 import { WIN_KPIS_JS } from "./win/cards-kpis.js";
 import { WIN_POOL_JS } from "./win/cards-pool.js";
 import { WIN_SYSTEM_JS } from "./win/cards-system.js";
@@ -51,6 +52,7 @@ function winHost(){
  return{fetch:WIN_HOST.fetch,setStatus:WIN_HOST.setStatus,setBusy:WIN_HOST.setBusy,clearStatus:WIN_HOST.clearStatus,refresh:function(){},announce:WIN_HOST.announce};
 }
 if(WINON){
+${WIN_TYPES_JS}
 ${WIN_KPIS_JS}
 ${WIN_POOL_JS}
 ${WIN_SYSTEM_JS}

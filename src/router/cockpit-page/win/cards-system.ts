@@ -5,7 +5,7 @@
  *  Cards: group `system` > groups `sys-metrics` (14 `metric` cards `system.<name>`), `sys-power` (chart card
  *  `system.power-chart`), `sys-servers` (dynamic: four `metric` cards `system.srv:<provider>/<rss|e2e|decode|prefix>`
  *  per up server, added by data through Win.addCards). The `metric` type itself is registered in cards-kpis;
- *  its update hands every non-`kpis.` card to sysMetricUpdate. */
+ *  their cards carry sysMetricView / sysServerView. */
 
 /** The metric table, the history helper `sysSeries`, the metric/server/chart updates and the shipped defaults. */
 export const WIN_SYSTEM_JS = String.raw`var SYS_INFO="Memory, load, temperature and power of this machine, and the local model servers.";
@@ -53,47 +53,39 @@ var SYSM={
 };
 var SYS_NAMES=["memory","swap","wired","compressed","cpu-load","gpu-load","ane-load","soc-temp","cpu-w","gpu-w","ane-w","system-w","power","energy"];
 var SYS_ZERO=["ane-load","cpu-w","gpu-w","ane-w"];
-/** Write one metric card: value, unit, sub line, sparkline. */
-function sysPaint(ctx,v,unit,sub,data){
- ctx.text("v",v);ctx.text("u",v==="–"?"":unit);ctx.text("s",sub);
- ctx.html("spark",'<svg class="mt-spark" viewBox="0 0 100 32" preserveAspectRatio="none" width="100%" height="100%">'+metricSpark([{data:data}])+'</svg>');
+/** One metric card's data: value, unit, sub line, sparkline. */
+function sysMetric(v,unit,sub,data){
+ return{v:v,u:v==="–"?"":unit,s:sub,spark:'<svg class="mt-spark" viewBox="0 0 100 32" preserveAspectRatio="none" width="100%" height="100%">'+metricSpark([{data:data}])+'</svg>'};
 }
 /** A system.<name> card from the system payload. */
-function sysMetricCard(ctx,d,name){
- var c=d.current||{};
+function sysMetricView(d,ctx){
+ if(!d||d.current===undefined)return null;
+ var name=ctx.id.slice(7),c=d.current||{};
  if(name==="energy"){
   var wh=(d.series&&d.series.wh&&d.series.wh[win])||0,cov=(d.series&&d.series.coveredMin&&d.series.coveredMin[win])||0;
-  ctx.title("energy "+win);
-  sysPaint(ctx,String(wh),"Wh",cov+" min of 1-min samples",sysSeries(d,"wh"+win,null,wh));
-  return;
+  return Object.assign({title:"energy "+win},sysMetric(String(wh),"Wh",cov+" min of 1-min samples",sysSeries(d,"wh"+win,null,wh)));
  }
- var m=SYSM[name];if(!m)return;
+ var m=SYSM[name];if(!m)return null;
  var tip=(d.unavailable&&d.unavailable.all)?d.unavailable.all:((c.notes||[]).join("; ")||("source: "+(c.source||"none")));
- if(m[6]&&sysUnused(d,m[5])){sysPaint(ctx,"0",m[3],"0 in this window",sysSeries(d,m[1],m[5],0));return}
+ if(m[6]&&sysUnused(d,m[5]))return sysMetric("0",m[3],"0 in this window",sysSeries(d,m[1],m[5],0));
  var r=sysRead(c,m[1]);
- sysPaint(ctx,r.v==null?"–":m[2](r.v),m[3],(r.age?"~"+r.age+" old · ":"")+(r.v==null?tip:m[4](c,d)),sysSeries(d,m[1],m[5],r.v));
+ return sysMetric(r.v==null?"–":m[2](r.v),m[3],(r.age?"~"+r.age+" old · ":"")+(r.v==null?tip:m[4](c,d)),sysSeries(d,m[1],m[5],r.v));
 }
 function srvDecode(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];return r?(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps):null}
 function srvE2eSub(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p})[0];return r&&r.h24.requests?"no requests in the last hour (24 h: "+fmt(r.h24.requests)+(r.h24.ttftP50!=null?", ttft p50 "+(r.h24.ttftP50/1000).toFixed(1)+" s":"")+")":"no requests in the last 24 h"}
 /** A system.srv:<provider>/<what> card; reads the page's sys/data/lim, the payload is only the trigger. */
-function sysServerCard(ctx){
+function sysServerView(_d,ctx){
  var id=ctx.id.slice(11),k=id.lastIndexOf("/"),p=id.slice(0,k),what=id.slice(k+1),d=sys;
- if(!d)return;
+ if(!d)return null;
  var s=(d.servers||[]).filter(function(x){return x.provider===p})[0];
- if(!s||s.up===false){ctx.status("stale","down");return}
- ctx.status("","");
+ if(!s||s.up===false)return{status:["stale","down"]};
+
  var pc=s.prefixCache,tot=pc?pc.hits+pc.misses:0,v,txt,unit,sub;
  if(what==="rss"){v=s.rssMb;txt=gbm;unit="GB";sub="resident memory"}
  else if(what==="e2e"){v=s.tokensPerSec;txt=String;unit="tok/s";sub=v!=null?(s.tokensPerSecWindow==="24h"?"router, 24 h":s.tokensPerSecWindow==="1h"?"router, last hour":"end to end"):data?srvE2eSub(p):"loading"}
  else if(what==="decode"){v=srvDecode(p);txt=fmt;unit="tok/s";sub="decode"}
  else{v=pc?pc.hitRate:null;txt=function(x){return(x*100).toFixed(1)};unit="%";sub=pc?pc.hits+"/"+tot:lim?"server reports no prefix-cache counter":"loading: first limits poll pending"}
- sysPaint(ctx,v==null?"–":txt(v),unit,sub,sysSeries(d,"srv:"+p+":"+what,null,v));
-}
-/** The metric type's update for every card that is not a kpis.* one. */
-function sysMetricUpdate(ctx,d){
- if(ctx.id.indexOf("memory.")===0){memMetricUpdate(ctx,d);return}
- if(ctx.id.indexOf("system.srv:")===0){sysServerCard(ctx);return}
- if(d&&d.current!==undefined)sysMetricCard(ctx,d,ctx.id.slice(7));
+ return Object.assign({status:["",""]},sysMetric(v==null?"–":txt(v),unit,sub,sysSeries(d,"srv:"+p+":"+what,null,v)));
 }
 var WCH={};
 /** Per-id chart hooks {mount,update,resize} for the data charts (cards-charts); the power chart is the default. */
@@ -134,7 +126,7 @@ function sysServerSync(d){
   var row=[];
   for(j=0;j<SRV_WHAT.length;j++){
    var id="system.srv:"+list[i].provider+"/"+SRV_WHAT[j][0];
-   row.push(id);specs.push({id:id,type:"metric",title:list[i].provider+" "+SRV_WHAT[j][1],feeds:["system","data"]});
+   row.push(id);specs.push({id:id,type:"metric",title:list[i].provider+" "+SRV_WHAT[j][1],feeds:["system","data"],view:sysServerView});
   }
   rows.push(row);
  }
@@ -149,7 +141,7 @@ function sysDefaults(){
   {id:"sys-servers",type:"group",title:"Local model servers"}],st={},i,r1=[],r2=[],r3=[];
  for(i=0;i<SYS_NAMES.length;i++){
   var id="system."+SYS_NAMES[i],t=SYS_NAMES[i]==="energy"?"energy":SYSM[SYS_NAMES[i]][0];
-  cards.push({id:id,type:"metric",title:t,feeds:["system"]});
+  cards.push({id:id,type:"metric",title:t,feeds:["system"],view:sysMetricView});
   (i<5?r1:i<10?r2:r3).push(WinT.leaf(id));
   if(SYS_ZERO.indexOf(SYS_NAMES[i])>=0)st[id]={min:1};
  }

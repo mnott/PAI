@@ -31,26 +31,14 @@ function poolSlotsHtml(p){
  return table(["provider .txt","model .txt","cwd .txt","state .txt","task .txt","branch .txt","first","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',s.task?esc(s.task):"-",s.branch?esc(s.branch):"-",s.firstRequest?'<span class="'+(s.firstRequest==="warm"?"ok":"warn")+'">'+s.firstRequest+'</span>':"-",poolDur(s.ageSecs),poolDur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]}));
 }
 function poolOffText(p){return"Pool off · host not running"+(p.hostLastSeen?" · last seen "+p.hostLastSeen:"")+(p.hostBuiltAt?" · last built "+p.hostBuiltAt:"")+(p.offReason?" · why: "+p.offReason:"")+" — every worker starts cold (no pre-started spare). Turn on with pai worker pool on."}
-Win.registerType("kv",{minW:150,minH:96,defaultH:96,
- mount:function(ctx){ctx.body.innerHTML='<div class="wm"><b class="wm-v" data-k="v"></b><span class="wm-s" data-k="s"></span></div>'},
- update:function(ctx,p){
-  if(ctx.id.indexOf("memory.")===0){memKvUpdate(ctx,p);return}
-  if(!poolOk(p)||poolOff(p))return;
-  var m=poolKv(ctx.id.slice(5),p);
-  ctx.html("v",m.v);ctx.html("s",m.s);ctx.attr("s","title",m.t);
- }});
-Win.registerType("table",{minW:300,minH:80,defaultH:160,
- mount:function(ctx){ctx.body.innerHTML='<div class="tw" data-k="t"></div>'},
- update:function(ctx,p){
-  if(ctx.id.indexOf("workers.")===0){wkTableUpdate(ctx,p);return}
-  if(poolOk(p)&&!poolOff(p))ctx.html("t",poolSlotsHtml(p));
- }});
-Win.registerType("note",{minW:150,minH:48,defaultH:60,
- mount:function(ctx){ctx.body.innerHTML='<div class="wm"><span class="wm-s" data-k="n"></span></div>'},
- update:function(ctx,p){
-  if(ctx.id.indexOf("workers.")===0){wkNoteUpdate(ctx,p);return}
-  if(poolOk(p)&&poolOff(p))ctx.text("n",poolOffText(p));
- }});
+/** The views of the pool cards (what the generic kv/table/note types draw). */
+function poolKvView(p,ctx){
+ if(!poolOk(p)||poolOff(p))return null;
+ var m=poolKv(ctx.id.slice(5),p);
+ return{v:m.v,s:m.s,t:m.t};
+}
+function poolSlotsView(p){return poolOk(p)&&!poolOff(p)?{html:poolSlotsHtml(p)}:null}
+function poolOffView(p){return poolOk(p)&&poolOff(p)?{text:poolOffText(p)}:null}
 /** A copy of a kids tree without the leaf id; weights renormalize, a one-child split collapses. */
 function poolWithout(n,id){
  if(n.k==="c")return n.id===id?null:n;
@@ -71,11 +59,11 @@ function poolSwap(p){
 function poolDefaults(){
  var cards=[{id:"pool",type:"group",title:"Worker pool",info:POOL_INFO}],ch=[],i;
  for(i=0;i<POOL_KV.length;i++){
-  cards.push({id:"pool."+POOL_KV[i],type:"kv",title:POOL_TITLES[POOL_KV[i]],feeds:["pool"]});
+  cards.push({id:"pool."+POOL_KV[i],type:"kv",title:POOL_TITLES[POOL_KV[i]],feeds:["pool"],view:poolKvView});
   ch.push(WinT.leaf("pool."+POOL_KV[i]));
  }
- cards.push({id:"pool.slots",type:"table",title:"slots",feeds:["pool"]});
- cards.push({id:"pool.off",type:"note",title:"Pool off",feeds:["pool"]});
+ cards.push({id:"pool.slots",type:"table",title:"slots",feeds:["pool"],view:poolSlotsView});
+ cards.push({id:"pool.off",type:"note",title:"Pool off",feeds:["pool"],view:poolOffView});
  var row=WinT.split("r",ch,ch.map(function(){return 1/ch.length}));
  return{tree:WinT.leaf("pool"),kids:{pool:WinT.split("c",[row,WinT.leaf("pool.slots"),WinT.leaf("pool.off")],[0.3,0.6,0.1])},stDefaults:{},cards:cards};
 }

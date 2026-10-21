@@ -37,6 +37,8 @@ export type WinTypeDef = {
  *  - Win.registerType(name, def) per 2.1; "group" is built in (accepts everything, no content).
  *  - mount(ctx) runs once, when the card is first shown un-minimized; update(ctx, data) per feed
  *    payload; resize(ctx, w, h) when the body box changes.
+ *  - A spec may carry view(payload, ctx): its result is what update draws (null = skip); the generic types
+ *    (win/types.ts: kv, table, note, list) draw only from that data and know no card ids.
  *  - Win.update(feed, payload): updates every mounted card whose feeds include feed (and replays
  *    the last payload when a minimized card is restored and mounts).
  *  - ctx per 4.1: text/attr/cls/html/list skip unchanged values; html is a keyed morph, list a
@@ -57,7 +59,7 @@ function mkCtx(c){
   if(!s||!c.body.contains(s)){s=c.body.querySelector('[data-k="'+k+'"]');slots[k]=s}
   return s;
  }
- var ctx={id:c.id,body:c.body};
+ var ctx={id:c.id,body:c.body,spec:c.spec};
  ctx.text=function(k,s){var e=slot(k);s=String(s==null?"":s);if(e&&e.textContent!==s)e.textContent=s};
  ctx.attr=function(k,name,v){var e=slot(k);if(!e)return;if(v===null||v===undefined){if(e.hasAttribute(name))e.removeAttribute(name)}else if(e.getAttribute(name)!==String(v))e.setAttribute(name,String(v))};
  ctx.cls=function(k,name,on){var e=slot(k);if(e&&e.classList.contains(name)!==!!on)e.classList.toggle(name,!!on)};
@@ -157,13 +159,22 @@ function paintMin(c){
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
 function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;return W.cfg}
+/** One feed payload into one card: a spec's view(payload, ctx) turns it into the data its (generic) type draws
+ *  (null = nothing to draw); a type marked viewed draws nothing for a spec without a view. */
+function feedCard(c,payload){
+ var def=TYPES[c.type]||{},data=payload;
+ if(!def.update)return;
+ if(c.spec.view){data=c.spec.view(payload,c.ctx);if(data==null)return}
+ else if(def.viewed)return;
+ def.update(c.ctx,data);
+}
 function mountCard(c){
  var def=TYPES[c.type]||{};
  c.mounted=true;
  if(def.mount)def.mount(c.ctx);
  // replay the last payload of each feed the card listens to
  var f=c.spec.feeds||[];
- for(var i=0;i<f.length;i++)if(W.fed[f[i]]!==undefined&&def.update)def.update(c.ctx,W.fed[f[i]]);
+ for(var i=0;i<f.length;i++)if(W.fed[f[i]]!==undefined)feedCard(c,W.fed[f[i]]);
  paintActions(c);
 }
 function place(c,r){
@@ -290,7 +301,7 @@ function update(feed,payload){
   var c=W.cards[W.order[i]],f=c.spec.feeds||[],def=TYPES[c.type]||{};
   if(f.indexOf(feed)<0)continue;
   if(!c.mounted){if(kidsOf(c.id))paintActions(c);continue}
-  if(def.update)def.update(c.ctx,payload);
+  feedCard(c,payload);
   paintActions(c);n++;
  }
  return n;

@@ -59,25 +59,22 @@ function limStop(l){
  return{id:"stop",label:"stop",title:"stop this local server",
   run:function(ctx){var b=Win.el(ctx.id).querySelector('[data-act="stop"]');WinA.winClick(b,ctx.id,"local.stop",{target:l},winHost())}};
 }
-Win.registerType("list",{minW:200,minH:60,defaultH:90,
- mount:function(ctx){
-  ctx.body.innerHTML='<div class="wr" data-k="l"></div>';
-  ctx.body.addEventListener("click",function(e){var b=e.target;if(b&&b.getAttribute&&b.getAttribute("data-start"))limStart(ctx,b)});
- },
- update:function(ctx,d){
-  if(!d||!d.limits)return;
-  if(ctx.id===LIM_NONE){
-   var n=d.limits.filter(function(l){return l.kind!=="local"}).length;
-   ctx.html("l",'<span class="dim">'+(n?n+" cloud source"+(n===1?"":"s"):"no cloud limit sources")+'</span>');
-   return;
-  }
-  var dn=limDown(d);
-  ctx.title(dn.length+" local model"+(dn.length===1?"":"s")+" down");
-  ctx.list("l",dn,function(n){return n},function(){var e=document.createElement("div");e.className="rtsess";return e},function(e,n){
-   var h='<span class="chip bad">'+esc(n)+'</span> <button type="button" class="cbtn" data-start="'+esc(n)+'" title="start '+esc(n)+'">start</button>';
-   if(e.__h!==h){e.innerHTML=h;e.__h=h}
-  });
- }});
+function limNoneView(d){
+ if(!d||!d.limits)return null;
+ var n=d.limits.filter(function(l){return l.kind!=="local"}).length;
+ return{html:'<span class="dim">'+(n?n+" cloud source"+(n===1?"":"s"):"no cloud limit sources")+'</span>'};
+}
+function limDownView(d){
+ if(!d||!d.limits)return null;
+ var dn=limDown(d);
+ return{title:dn.length+" local model"+(dn.length===1?"":"s")+" down",rows:{items:dn,key:function(n){return n},make:function(){var e=document.createElement("div");e.className="rtsess";return e},fill:function(e,n){
+  var h='<span class="chip bad">'+esc(n)+'</span> <button type="button" class="cbtn" data-start="'+esc(n)+'" title="start '+esc(n)+'">start</button>';
+  if(e.__h!==h){e.innerHTML=h;e.__h=h}
+ }}};
+}
+function limDownMount(ctx){
+ ctx.body.addEventListener("click",function(e){var b=e.target;if(b&&b.getAttribute&&b.getAttribute("data-start"))limStart(ctx,b)});
+}
 /** Rows of at most 3 cards per band for a dynamic group. */
 function limRows(ids){var rows=[],i;for(i=0;i<ids.length;i+=3)rows.push(ids.slice(i,i+3));return rows}
 /** The server and provider cards, added by data (a structural change). */
@@ -96,9 +93,9 @@ function limitsSync(d){
  Win.hide("limits.local.down",!limDown(d).length);
 }
 function limLocalDefaults(){
- return{tree:WinT.leaf("limits-local"),stDefaults:{},cards:[{id:"limits-local",type:"group",title:"Local servers",info:LIML_INFO},{id:"limits.local.down",type:"list",title:"0 local models down",feeds:["limits"],hidden:true}],kids:{"limits-local":WinT.leaf("limits.local.down")}};
+ return{tree:WinT.leaf("limits-local"),stDefaults:{},cards:[{id:"limits-local",type:"group",title:"Local servers",info:LIML_INFO},{id:"limits.local.down",type:"list",title:"0 local models down",feeds:["limits"],hidden:true,view:limDownView,mount:limDownMount}],kids:{"limits-local":WinT.leaf("limits.local.down")}};
 }
 function limCloudDefaults(){
- return{tree:WinT.leaf("limits-cloud"),stDefaults:{},cards:[{id:"limits-cloud",type:"group",title:"Cloud limits",info:LIMC_INFO},{id:LIM_NONE,type:"list",title:"Cloud sources",feeds:["limits"]}],kids:{"limits-cloud":WinT.leaf(LIM_NONE)}};
+ return{tree:WinT.leaf("limits-cloud"),stDefaults:{},cards:[{id:"limits-cloud",type:"group",title:"Cloud limits",info:LIMC_INFO},{id:LIM_NONE,type:"list",title:"Cloud sources",feeds:["limits"],view:limNoneView,mount:limDownMount}],kids:{"limits-cloud":WinT.leaf(LIM_NONE)}};
 }
 `;

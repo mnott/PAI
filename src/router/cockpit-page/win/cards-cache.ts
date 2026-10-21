@@ -3,8 +3,8 @@
  *  provHit/ringName/assignColors/LOW_REQ in scope), needs `Win` and `WinT`. Feed `cache` = {data, sys, lim} (the page's
  *  /cockpit/data, /cockpit/system and /cockpit/limits readings, pushed by winFeedCache after every renderDonuts).
  *  Group `cache`, a column of: the group `cache-rings` (one `ring` card per model with enough requests, or the single
- *  big-donut `cache.solo`, or `cache.none`), the `chips` cards `cache.low` and `cache.note`, the `cache-list` card
- *  `cache.local` ("Local prefix cache") and the `cache-table` card `cache.providers`. */
+ *  big-donut `cache.solo`, or `cache.none`), the `chips` cards `cache.low` and `cache.note`, the `list` card
+ *  `cache.local` ("Local prefix cache") and the `table` card `cache.providers`. */
 
 export const WIN_CACHE_JS = String.raw`var CACHE_INFO="cache_read / (read + write + fresh input), per provider / model.";
 var CACHE_LOCAL_INFO="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money.";
@@ -89,18 +89,11 @@ Win.registerType("chips",{minW:160,minH:48,defaultH:60,
   if(ctx.id==="cache.low"){ctx.html("c",lowChips(cacheModels(p.data))||'<span class="dim">no low-request models</span>');return}
   ctx.html("c",cacheNoteHtml(p.data));
  }});
-Win.registerType("cache-list",{minW:200,minH:60,defaultH:90,
- mount:function(ctx){ctx.body.innerHTML='<div class="wm" data-k="l"></div>'},
- update:function(ctx,p){
-  if(!p||!p.data)return;
-  ctx.html("l",cacheLocalHtml(p.data,p.sys)||'<span class="dim">no local server reports a prefix cache</span>');
- }});
-Win.registerType("cache-table",{minW:300,minH:80,defaultH:160,
- mount:function(ctx){ctx.body.innerHTML='<div class="tw" data-k="t"></div>'},
- update:function(ctx,p){
-  if(!p||!p.data)return;
-  ctx.html("t",cacheProvidersHtml(p.data,p.sys));
- }});
+function cacheLocalView(p){
+ if(!p||!p.data)return null;
+ return{html:cacheLocalHtml(p.data,p.sys)||'<span class="dim">no local server reports a prefix cache</span>'};
+}
+function cacheProvidersView(p){return p&&p.data?{html:cacheProvidersHtml(p.data,p.sys)}:null}
 function cacheRows(ids){var rows=[],i;for(i=0;i<ids.length;i+=CACHE_RING_ROW)rows.push(ids.slice(i,i+CACHE_RING_ROW));return rows}
 /** The rings group's kids: rows of at most CACHE_RING_ROW rings. */
 function cacheRingTree(ids){
@@ -127,8 +120,8 @@ function cacheDefaults(){
  var cards=[{id:"cache",type:"group",title:"Cache hit ratio",info:CACHE_INFO},{id:"cache-rings",type:"group",title:"Hit ratio per model"},
   {id:"cache.none",type:"ring",title:"Cache hit ratio",feeds:["cache"]},
   {id:"cache.low",type:"chips",title:"low-request models",feeds:["cache"]},{id:"cache.note",type:"chips",title:"totals",feeds:["cache"]},
-  {id:"cache.local",type:"cache-list",title:"Local prefix cache",info:CACHE_LOCAL_INFO,feeds:["cache"]},
-  {id:"cache.providers",type:"cache-table",title:"Providers",info:CACHE_PROV_INFO,feeds:["cache"]}];
+  {id:"cache.local",type:"list",cls:"wm",title:"Local prefix cache",info:CACHE_LOCAL_INFO,feeds:["cache"],view:cacheLocalView},
+  {id:"cache.providers",type:"table",title:"Providers",info:CACHE_PROV_INFO,feeds:["cache"],view:cacheProvidersView}];
  var chips=WinT.split("r",[WinT.leaf("cache.low"),WinT.leaf("cache.note")],[0.5,0.5]);
  return{tree:WinT.leaf("cache"),kids:{cache:WinT.split("c",[WinT.leaf("cache-rings"),chips,WinT.leaf("cache.local"),WinT.leaf("cache.providers")],[0.32,0.12,0.16,0.4]),"cache-rings":WinT.leaf("cache.none")},stDefaults:{},cards:cards};
 }
