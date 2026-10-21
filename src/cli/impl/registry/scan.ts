@@ -13,7 +13,7 @@ import { transcriptFiles, claudeProjectsDir } from "../../../registry/moved.js";
 import { unregistrableReason, pruneWorktreeProjects, workerWorktreesRoot } from "../../../registry/registrable.js";
 import { upsertProject, upsertSession } from "./utils.js";
 import { loadScanIndex, saveScanIndex, mtimeOf, notesSignature, encodedDirRefusedReason, yieldToEventLoop, type ScanIndex } from "./scan-index.js";
-import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../../config/pai-home.js";
+import { defaultPaiHomeDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../../../config/pai-home.js";
 import { getRegistryBackend } from "../../../storage/factory.js";
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
 
@@ -66,7 +66,7 @@ const CLAUDE_PROJECTS_DIR = () => join(homedir(), ".claude", "projects");
  *  "config.json" there, but that name is taken at PAI_HOME by the daemon
  *  config, so the new location is registry-scan.json instead. */
 function oldScanConfigFile(): string {
-  return join(homedir(), ".pai", "config.json");
+  return join(defaultPaiHomeDir(), "config.json");
 }
 
 function scanConfigFilePath(): string {

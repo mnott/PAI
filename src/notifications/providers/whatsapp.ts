@@ -22,6 +22,7 @@
 
 import { connect } from "node:net";
 import { randomUUID } from "node:crypto";
+import { aibrokerSocketPath } from "../../runtime-paths.js";
 import type {
   NotificationProvider,
   NotificationPayload,
@@ -34,7 +35,7 @@ import type {
  * Hardcoded rather than imported: PAI must not depend on AIBroker. This is a
  * protocol constant between them, like the agent mark in tasks/poller.ts.
  */
-const HUB_SOCKET = "/tmp/aibroker.sock";
+const hubSocket = (): string => aibrokerSocketPath();
 const HUB_TIMEOUT_MS = 10_000;
 
 /**
@@ -58,7 +59,7 @@ function callHub(
       resolve(ok);
     }
 
-    const socket = connect(HUB_SOCKET, () => {
+    const socket = connect(hubSocket(), () => {
       const request = {
         jsonrpc: "2.0",
         id: randomUUID(),

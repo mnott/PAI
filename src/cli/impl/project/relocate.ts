@@ -26,7 +26,7 @@
 
 import { existsSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { join, sep, basename } from "node:path";
-import { homedir } from "node:os";
+import { loadScanConfig, resolveHome } from "../registry/scan.js";
 
 /**
  * A directory name reduced to what a rename is unlikely to have changed.
@@ -195,7 +195,7 @@ export function relocateRenamedAncestor(rootPath: string): string | undefined {
 }
 
 /**
- * The pre-existing guess: the project's leaf name in one of a few usual places.
+ * The pre-existing guess: the project's leaf name in one of the configured scan_dirs.
  *
  * Kept, and kept SECOND, because it answers a different question — "the project
  * itself was moved somewhere I know about" rather than "an ancestor was renamed".
@@ -205,12 +205,7 @@ export function relocateRenamedAncestor(rootPath: string): string | undefined {
  */
 function suggestByBasename(rootPath: string): string | undefined {
   const name = basename(rootPath);
-  const candidates = [
-    join(homedir(), "dev", name),
-    join(homedir(), "dev", "ai", name),
-    join(homedir(), "Desktop", name),
-    join(homedir(), "Projects", name),
-  ];
+  const candidates = loadScanConfig().scan_dirs.map((d) => join(resolveHome(d), name));
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }

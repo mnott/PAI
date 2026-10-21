@@ -6,18 +6,17 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
 import { initializeFederationSchema } from "./federation-schema.js";
-import { paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
+import { defaultPaiHomeDir, paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
 
 export type { Database };
 
 /** Old federation.db path, inside the ~/.pai/ directory (pre-2026-09-19). */
 export function oldFederationPath(): string {
-  return join(homedir(), ".pai", "federation.db");
+  return join(defaultPaiHomeDir(), "federation.db");
 }
 
 /** Federation DB path: PAI_HOME/federation.db if present, else the old

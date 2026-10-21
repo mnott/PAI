@@ -11,7 +11,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { paiHomePath, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
+import { paiHomePath, defaultPaiHomeDir, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -35,7 +35,7 @@ const EXTRACT_SECTIONS = [
 ];
 
 /** Identity file location. */
-const IDENTITY_FILE = () => join(homedir(), ".pai", "identity.txt");
+const IDENTITY_FILE = () => join(defaultPaiHomeDir(), "identity.txt");
 
 // ---------------------------------------------------------------------------
 // L0: Identity

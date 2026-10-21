@@ -100,7 +100,6 @@ function getPaiSrcDir(): string {
 function getTemplatesDir(): string {
   const candidates = [
     join(getPaiSrcDir(), "templates"),
-    join(homedir(), "dev", "ai", "PAI", "templates"),
     join("/", "usr", "local", "lib", "node_modules", "@mnott", "pai", "templates"),
   ];
   for (const c of candidates) {
