@@ -12,11 +12,26 @@ import { cockpitHtml } from "./cockpit-page.js";
 const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 
 const OLD_LAYOUT = [["cloud"], ["system"], ["models"], ["workers"], ["pool"], ["kpis"], ["cache"], ["tokens"], ["speed"], ["pause"], ["sessions"], ["daily"], ["runs"], ["routing"]];
+const NOW = Date.now();
 const MEMORY = {
-  daemon: true, level: "green", reason: "all systems healthy", title: "Memory",
-  counts: { files: 500, chunks: 2_000_000, embedded: 1_877_697, backlog: 122_303, coverage: 0.9388, coverageLevel: "amber", exact: true },
-  backend: { id: "ollama-f16", model: "arctic", dims: 768, available: true, level: "green", reason: "ready" },
-  run: null, jobs: [], passes: [],
+  at: NOW, daemon: true, level: "amber", reason: "re-embed neutral-b-reembed running", title: "Memory", stallSecs: 300,
+  counts: { files: 500, chunks: 2_000_000, embedded: 1_877_697, backlog: 122_303, coverage: 0.9388, coverageLevel: "amber", exact: false },
+  segments: { fresh: 111_111, old: 1_766_586, missing: 122_303 }, reembedding: true,
+  binding: { mismatch: true, hint: "re-embed to neutral-b in progress", error: null, bound: { backend: "neutral-a", model: "model-a" }, configured: { backend: "neutral-b", model: "model-b", dims: 8 } },
+  backend: { id: "neutral-b", model: "model-b", dims: 8, available: true, reason: "ready", loaded: [], loadedModel: "model-b:1", gpuShare: 0.75 },
+  daemonInfo: { pid: 4321, uptimeSecs: 7300, version: "1.2.3", storage: "neutral-store" },
+  jobs: [
+    { id: "job-neutral-b-reembed", kind: "reembed", name: "neutral-b-reembed", phase: "embed", done: 111_111, total: 1_000_000, pct: 11.1, rate: 12.5, etaSec: 5000, doneAt: NOW + 5_000_000, lastProgressAt: NOW - 400_000, stalled: true, series: [1, 5, 9, 12, 12.5], by: null },
+    { id: "run-embed", kind: "embed", name: "embed run", phase: "embed", done: 50, total: 100, pct: 50, rate: 2, etaSec: 25, doneAt: NOW + 25_000, lastProgressAt: NOW - 1000, stalled: false, series: [2, 2, 2], by: "cockpit" },
+  ],
+  passes: [
+    { name: "index", state: "ok", lastEnd: NOW - 3_600_000, nextAt: NOW + 3_600_000, failure: null, detail: null },
+    { name: "embed", state: "failed", lastEnd: NOW - 7_200_000, nextAt: NOW + 7_200_000, failure: { at: NOW, error: "neutral failure", attempts: 1, gaveUp: false, retryAt: NOW + 600_000 }, detail: { embedded: 321, backlogLeft: 55, stopReason: "pass-budget", note: null, at: NOW - 7_200_000 } },
+  ],
+  lastIndex: { at: NOW - 3_600_000, durationSec: 95, files: 40, chunks: 300 }, lastEmbed: null,
+  schedule: { maintenanceHour: 3, indexIntervalSecs: 86400, embedIntervalSecs: 86400 },
+  run: { kind: "embed", by: "cockpit", pid: 1, jobId: "", startedAt: new Date(NOW - 5000).toISOString(), elapsedSec: 5, done: 50, backlogStart: 100, rate: 2, etaSec: 25, tail: "", stoppable: true },
+  starting: null, lastRun: null,
 };
 
 let server: Server;
@@ -31,7 +46,7 @@ beforeAll(async () => {
     if (url.startsWith("/page")) {
       // seed the browser's storage before the page script runs
       const seed = `<script>try{localStorage.setItem("pai.cockpit.layout.v1",${JSON.stringify(JSON.stringify(OLD_LAYOUT))})}catch(e){}</script>`;
-      const probe = `<script>setTimeout(function(){var s=document.getElementById("sec-memory");document.body.setAttribute("data-probe",JSON.stringify({sec:!!s,panel:s?s.textContent:"",layout:localStorage.getItem("pai.cockpit.layout.v1")}))},1500)</script>`;
+      const probe = `<script>setTimeout(function(){var s=document.getElementById("sec-memory");document.body.setAttribute("data-probe",JSON.stringify({sec:!!s,panel:s?s.textContent:"",tiles:s?Array.prototype.map.call(s.querySelectorAll(".mt"),function(t){return t.getAttribute("data-tid")}):[],rings:s?s.querySelectorAll(".mt svg circle").length:0,gauges:s?s.querySelectorAll(".mt-bar").length:0,sparks:s?s.querySelectorAll(".mt-spark").length:0,grips:s?s.querySelectorAll(".mt [data-tgrip]").length:0,mins:s?s.querySelectorAll(".mt .tctl").length:0,segs:s?s.querySelectorAll("[data-part=segments] i").length:0,stalled:s?s.querySelectorAll("[data-part=stalled]").length:0,layout:localStorage.getItem("pai.cockpit.layout.v1")}))},1500)</script>`;
       res.setHeader("content-type", "text/html");
       return res.end(cockpitHtml().replace("<body>", "<body>" + seed).replace("</body>", probe + "</body>"));
     }
@@ -60,7 +75,29 @@ describe.skipIf(!CHROME)("cockpit Memory card in the real page", () => {
     expect(m, "probe result in the dump").not.toBeNull();
     const p = JSON.parse(m![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
     expect(p.sec, "section with id sec-memory").toBe(true);
-    expect(p.panel).toContain("122303");
+    const t: string = p.panel;
+    // index tile: coverage, estimate marker, files, split legend, bound vs configured, hint
+    for (const x of ["93.9", "embedded of 2.00M chunks (est.)", "500", "new backend", "old backend, still to replace", "missing", "122303", "bound to neutral-a / model-a", "configured neutral-b / model-b", "re-embed to neutral-b in progress"]) expect(t, x).toContain(x);
+    expect(p.segs).toBe(3);
+    // backend tile: id, availability, loaded model, GPU share gauge
+    for (const x of ["neutral-b", "available", "model-b:1", "GPU share 75%"]) expect(t, x).toContain(x);
+    // job tiles: ring %, rate, done/total, ETA, done-about, phase, stalled
+    for (const x of ["11.1", "12.5 chunks/s", "111.1k / 1.00M done", "ETA", "done about", "last progress", "STALLED"]) expect(t, x).toContain(x);
+    expect(p.stalled).toBe(1);
+    // passes tile
+    for (const x of ["index", "embed", "failed", "next", "neutral failure", "retry at", "embedded 321", "55 left", "pass-budget", "40 files"]) expect(t, x).toContain(x);
+    // daemon tile
+    for (const x of ["pid 4321", "v1.2.3", "storage neutral-store"]) expect(t, x).toContain(x);
+    // header pill + actions
+    expect(t).toContain("attention");
+    expect(t).toContain("embed backlog");
+    expect(t).toContain("stop");
+    // nested-tile mechanism: ids, grips, minimize buttons, rings, sparklines
+    expect(p.tiles).toEqual(expect.arrayContaining(["index", "backend", "re-embed-neutral-b-reembed", "embed-run", "passes", "daemon"]));
+    expect(p.grips).toBe(p.tiles.length);
+    expect(p.mins).toBe(p.tiles.length);
+    expect(p.rings).toBeGreaterThanOrEqual(4);
+    expect(p.sparks).toBe(p.tiles.length);
     expect(JSON.parse(p.layout).flat()).toContain("memory");
   }, 120_000);
 });
