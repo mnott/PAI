@@ -3,7 +3,7 @@ import { existsSync, readdirSync, mkdirSync, mkdtempSync, writeFileSync } from "
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gcPoolWorktrees, git, worktreesDir } from "./worktree.js";
+import { busyPid, gcPoolWorktrees, git, worktreesDir } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 import { poolSettings } from "./pool.js";
 import { defaultWorkersConfig } from "./config.js";
@@ -26,7 +26,7 @@ describe("no reserve worktrees", () => {
     expect(existsSync(worktreesDir(logDir)) && readdirSync(worktreesDir(logDir))).toEqual([]);
   });
 
-  it("gc --pool removes an idle spare and a detached slot, keeps one with a process inside", () => {
+  it("gc --pool removes an idle spare and a detached slot, keeps one with a process inside", async () => {
     const spare = join(worktreesDir(logDir), "spare-1-1");
     git(repo, ["worktree", "add", spare, "-b", "spare/spare-1-1", "main"]);
     const slot = join(logDir, "slots", "local-1");
@@ -36,9 +36,12 @@ describe("no reserve worktrees", () => {
     git(repo, ["worktree", "add", busy, "-b", "spare/spare-1-2", "main"]);
 
     // the test process itself is exempt from busyPid, so hold the cwd from a child
-    
     const child = spawn("sleep", ["30"], { cwd: busy, stdio: "ignore" });
     try {
+      await new Promise<void>((ok, fail) => { child.once("spawn", ok); child.once("error", fail); });
+      // under load the process scan can lag the spawn: wait until the product's own check sees it
+      for (const until = Date.now() + 5000; Date.now() < until && !busyPid(busy); ) await new Promise((r) => setTimeout(r, 50));
+      expect(busyPid(busy)).toBeGreaterThan(0);
       const dry = gcPoolWorktrees(logDir, true);
       expect(dry.filter((e) => e.archive).map((e) => e.id).sort()).toEqual(["slot-local-1", "spare-1-1"]);
       expect(existsSync(spare)).toBe(true);
@@ -53,7 +56,7 @@ describe("no reserve worktrees", () => {
     } finally {
       child.kill();
     }
-  });
+  }, 30_000);
 
   it("gc --pool removes a detached slot a finished worker's status still names, archives its HEAD, keeps one a live worker owns", () => {
     const base = { cwd: repo, term: "", provider: "p", model: "m", started: "", updated: "", turns: 0, tools: 0, last: "", secs: null, label: "t" };
