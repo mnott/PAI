@@ -9,7 +9,7 @@ import { mkdirSync } from "node:fs";
 import { parseRunnerArgs, shortText } from "../args.js";
 import { assertProviderRunnable, getProviderOrNative, readWorkersSection } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
-import { LOCAL_MECHANISM_LINE, NoLocalServerError, resolveLocalProvider } from "../local-provider.js";
+import { LOCAL_MECHANISM_LINE, NoLocalServerError, isLocalCandidate, resolveLocalProvider, tierProviderNames } from "../local-provider.js";
 import { workersLogDir } from "../paths.js";
 import { UNLABELED } from "../status.js";
 import { returnControlsIfHeld } from "../controls.js";
@@ -144,7 +144,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       // keeps the hard error — nothing spawns onto a server that is down.
       if (!(opts.printCmd && e instanceof NoLocalServerError)) throw e;
       const first = Object.entries(config.providers).find(
-        ([, p]) => p.enabled && isLoopbackProvider(p)
+        ([n, p]) => isLocalCandidate(p, n, tierProviderNames()) && isLoopbackProvider(p)
       );
       if (!first) throw e;
       providerFlag = first[0];

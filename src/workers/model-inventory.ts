@@ -20,7 +20,9 @@ import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { readWorkersSection, type WorkersConfig } from "./config.js";
 import { workersLogDir } from "./paths.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { providerHostPort } from "./local-provider.js";
+import { isLocalCandidate, providerHostPort } from "./local-provider.js";
+import { readLocalConfig } from "./local-tiers.js";
+import { workersYamlPath } from "./workers-config.js";
 
 export const MODEL_INVENTORY_REFRESH_MS = 30_000;
 export const MODEL_INVENTORY_MAX_AGE_MS = 90_000;
@@ -54,6 +56,8 @@ export interface InventoryRuntime {
   /** the last probe failed or was slow: status and models are the last good reading, held until DOWN_AFTER_MISSES misses */
   slow?: boolean;
   port?: number;
+  /** a `local_tiers` tier that is not the running one: not a failure, the operator switched away from it */
+  inactive?: { tier: string; active: string };
   /** false when a worker provider on this endpoint is disabled in workers.yaml: not listed anywhere */
   enabled?: boolean;
   models: InventoryModel[];
@@ -97,6 +101,8 @@ export interface InventoryInput {
   embedding: { backend: string; model?: string; ollamaUrl: string; inProcessModel: string };
   runtimes: DeclaredRuntime[];
   consumers: DeclaredConsumer[];
+  /** the `local_tiers` set: the tier's provider and its button label; its running server is the active tier */
+  tiers?: Array<{ provider: string; label: string }>;
 }
 
 const exec = (cmd: string, args: string[]): Promise<string | null> =>
@@ -293,7 +299,8 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
 }
 
 async function detectProviders(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime[]> {
-  const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
+  const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; configured: number; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
+  const tierProviders = (input.tiers ?? []).map((t) => t.provider);
   // every loopback provider keeps its port slot; a DISABLED one (workers.yaml
   // provider enabled:false) contributes no user, no model and enabled:false —
   // the runtime is then not listed at all, not as a red "down, N consumers waiting" card
@@ -302,15 +309,18 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
     const hp = providerHostPort(p);
     if (!hp) continue;
     const key = String(hp.port);
-    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], defaults: [], wanted: [] }).get(key)!;
+    const e = byPort.set(key, byPort.get(key) ?? { host: hp.host, port: hp.port, names: [], enabled: [], configured: 0, defaults: [], wanted: [] }).get(key)!;
     e.names.push(name);
-    if (!p.enabled) continue;
+    if (p.enabled) e.configured++;
+    // a provider a local tier launches is a candidate like an enabled one (the shared predicate of local-provider.ts)
+    if (!isLocalCandidate(p, name, tierProviders)) continue;
     e.enabled.push(name);
     e.wanted.push({ name: `worker:${name}`, model: p.models.default });
     if (p.models.default && !e.defaults.includes(p.models.default)) e.defaults.push(p.models.default);
   }
   const ollamaPort = urlPort(input.embedding.ollamaUrl);
   const out: InventoryRuntime[] = [];
+  const tierOf = new Map<InventoryRuntime, string>();
   await Promise.all(
     [...byPort.values()]
       .filter((e) => e.port !== ollamaPort)
@@ -328,7 +338,8 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
           kind: decl?.kind ?? "openai-server",
           status: running ? "running" : "stopped",
           port: e.port,
-          enabled: e.enabled.length > 0,
+          // a tier-only provider (enabled:false) is listed while its server answers, or grey once another tier runs; otherwise unlisted like any disabled one
+          enabled: e.enabled.length > 0 && (e.configured > 0 || running),
           models: (running && ids.length ? ids : e.defaults).map((m) => ({ model: m, kind: "coding" as const, loaded: running, usedBy: [] })),
           users: [],
         };
@@ -341,9 +352,21 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         const notServed = served ? e.wanted.filter((w) => w.model && !served.has(w.model.toLowerCase())) : [];
         attach(rt, e.wanted.filter((w) => !notServed.includes(w)).map((w) => ({ name: w.name, model: served ? w.model : undefined })));
         if (notServed.length) rt.notServed = notServed.map((w) => w.name);
+        const tier = (input.tiers ?? []).find((t) => e.names.includes(t.provider));
+        if (tier) tierOf.set(rt, tier.label);
         out.push(rt);
       })
   );
+  // the running tier is the active one; every other tier's server being down is the operator's switch, not a failure
+  const active = out.find((r) => r.status !== "stopped" && tierOf.has(r));
+  if (active) {
+    for (const r of out) {
+      if (r !== active && r.status === "stopped" && tierOf.has(r)) {
+        r.inactive = { tier: tierOf.get(r)!, active: tierOf.get(active)! };
+        r.enabled = true; // a tier-only provider whose server is down is shown grey once another tier runs
+      }
+    }
+  }
   return out;
 }
 
@@ -450,7 +473,14 @@ export function readInventoryInput(): InventoryInput {
   const m = (raw.models ?? {}) as { runtimes?: unknown; consumers?: unknown };
   const list = <T,>(v: unknown, ok: (x: Record<string, unknown>) => boolean): T[] =>
     Array.isArray(v) ? (v.filter((x) => x && typeof x === "object" && ok(x as Record<string, unknown>)) as T[]) : [];
+  let tiers: InventoryInput["tiers"];
+  try {
+    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => ({ provider: t.provider, label: t.label }));
+  } catch {
+    tiers = [];
+  }
   return {
+    tiers,
     providers: readWorkersSection().workers.providers,
     embedding: { backend: cfg.embedding.backend, model: cfg.embedding.model, ollamaUrl: cfg.embedding.ollama.baseUrl, inProcessModel: cfg.embeddingModel },
     runtimes: list<DeclaredRuntime>(m.runtimes, (x) => typeof x.name === "string" && typeof x.kind === "string"),

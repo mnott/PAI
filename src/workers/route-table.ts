@@ -24,7 +24,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { budgetFull, type BudgetMap } from "./budget.js";
-import { readLocalPreference } from "./local-provider.js";
+import { isLocalCandidate, readLocalPreference, tierProviderNames } from "./local-provider.js";
 import { cooldownRemaining, quotaExceeded, readRoutingState } from "./routing.js";
 import { detectSessionName } from "./session-name.js";
 import { readProfiles, updateProfile, type Profiles, type SessionProfile } from "./session-profile-store.js";
@@ -210,7 +210,8 @@ export function clearSessionRoute(session: string, name?: string, profilesPath?:
 
 /** The enabled local provider `local:` names, else the first enabled one. */
 export function configuredLocal(workers: WorkersConfig): string | null {
-  const locals = Object.entries(workers.providers).filter(([, p]) => p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl)).map(([n]) => n);
+  const tiers = tierProviderNames();
+  const locals = Object.entries(workers.providers).filter(([n, p]) => p.engine !== "image" && isLocalProvider(p.baseUrl) && isLocalCandidate(p, n, tiers)).map(([n]) => n);
   const pref = readLocalPreference();
   return pref && locals.includes(pref) ? pref : (locals[0] ?? null);
 }

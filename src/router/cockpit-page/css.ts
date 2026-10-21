@@ -129,7 +129,7 @@ svg text{fill:var(--dim);font-size:10px}
 .mbody{padding:8px 10px;display:none;flex-direction:column;gap:8px;min-width:0}
 .mcard.open .mbody{display:flex}
 .mcard.down{border-color:var(--bad)}
-.mdown{color:var(--bad);font-size:12px}
+.mdown{color:var(--bad);font-size:12px}.mdim{color:var(--dim);font-size:12px}.rt-dot.off{background:transparent;box-shadow:inset 0 0 0 2px var(--dim)}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
 .mhead .act{flex:0 0 auto;margin-left:auto}
 .mhead .num{margin-left:8px}

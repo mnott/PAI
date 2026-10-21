@@ -84,7 +84,7 @@ export function tierProviderNames(yamlPath: string = workersYamlPath()): string[
 }
 
 /** A loopback provider --local may run on: enabled, or launched by a tier. */
-function isLocalCandidate(p: WorkerProvider, name: string, tierProviders: string[]): boolean {
+export function isLocalCandidate(p: WorkerProvider, name: string, tierProviders: string[]): boolean {
   return (p.enabled || tierProviders.includes(name)) && isLoopbackProvider(p);
 }
 

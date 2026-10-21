@@ -284,15 +284,17 @@ function modelsHtml(inv){
   if(r.split&&hasModel){users=(r.models[0].usedBy||[]).slice();consumersOf(consumers,rt,r.models[0]).forEach(function(c){if(users.indexOf(c.name)<0)users.push(c.name)})}
   // a runtime with no models of its own: every consumer pointing at it still waits on it
   if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
-  var down=r.status==="stopped";
+  // a tier the operator switched away from: grey, not a failure
+  var inact=r.status==="stopped"&&r.inactive;
+  var down=r.status==="stopped"&&!inact;
   var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
   // a running on-demand runtime (ollama, docker model runner) whose model is not in memory loads it on the first request
   var idle=!down&&(r.status==="idle"||(hasModel&&!loaded.length&&(r.kind==="ollama"||r.kind==="docker-model-runner")));
-  var state=down?"down":idle?"available (loads on first request)":"running";
+  var state=down?"down":inact?"inactive":idle?"available (loads on first request)":"running";
   // the tile order is keyed by the card's position in the grid, not its model id:
   // a renamed alias must not scramble the tiles the user arranged
   var tkey=r.name+" / "+(hasModel?r.models[0].model:"")+" tiles";
-  var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
+  var key=inact?r.name+(r.port==null?"":" :"+r.port):down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
    :idle?(hasModel?r.models.length+" installed":"no model")
    :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
   /* purpose first: the title is the consumer's label (config only), the model id is grey secondary text;
@@ -311,7 +313,7 @@ function modelsHtml(inv){
    return first?first.replace(/^worker:/,""):shortModel(m.model);
   }
   // two rows: the title on its own row beside the status dot (full name, wraps), the chips on the row below
-  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.slow?" slow":idle?" idle":"")+'"></span>'+
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.slow?" slow":inact?" off":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
    '</div><div class="mchips">'+
@@ -324,7 +326,9 @@ function modelsHtml(inv){
    (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
    '<span class="num">'+esc(key)+'</span></div></div>';
   var body="";
-  if(down){
+  if(inact){
+   body+='<div class="mdim">inactive — '+esc(r.inactive.active)+' is the local model now'+(users.length?'<br>'+esc(purposeOf(users))+': will use '+esc(r.inactive.active)+' / unavailable until switched':'')+'</div>';
+  }else if(down){
    body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
   }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;

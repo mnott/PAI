@@ -24,6 +24,7 @@ import {
   type WorkersConfig,
 } from "./config.js";
 import { budgetCache } from "./budget.js";
+import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
 import { classRoute, entryProvider } from "./route-lists.js";
 import { cooldownRemaining, exclusionReason, quotaExceeded, readRoutingState } from "./routing.js";
 
@@ -154,10 +155,11 @@ export async function findLocal(
   only?: string[]
 ): Promise<{ name: string | null; why: string }> {
   const state = readRoutingState(logDir);
+  const tiers = tierProviderNames();
   const candidates = Object.entries(config.providers)
     .filter(
       ([name, p]) =>
-        (!only || only.includes(name)) && p.enabled && p.engine !== "image" && isLocalProvider(p.baseUrl) && cooldownRemaining(state, name) === 0
+        (!only || only.includes(name)) && p.engine !== "image" && isLocalProvider(p.baseUrl) && isLocalCandidate(p, name, tiers) && cooldownRemaining(state, name) === 0
     )
     .sort(([a], [b]) => (only ? only.indexOf(a) - only.indexOf(b) : 0));
   if (!candidates.length) return { name: null, why: "no local provider" };

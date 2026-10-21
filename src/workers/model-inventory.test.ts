@@ -158,6 +158,39 @@ describe("computeInventory", () => {
     expect(inv.runtimes.some((r) => r.name === "strata")).toBe(false);
   });
 
+  describe("local tiers", () => {
+    const tiers = [
+      { provider: "coder", label: "Coder-Next 4bit" },
+      { provider: "flashnext-iq3", label: "Flash-Next" },
+    ];
+    const t = (over: Record<string, unknown>) => ({ ...deps({ "http://127.0.0.1:8035/v1/models": null, ...over }) });
+
+    it("the active tier has a card although its provider is disabled; the other tier is inactive, not down", async () => {
+      const inv = await computeInventory(input({ tiers, runtimes: [] }), t({ "http://127.0.0.1:8034/v1/models": { data: [{ id: "coder-next" }] } }));
+      const active = inv.runtimes.find((r) => r.port === 8034)!;
+      expect(active).toMatchObject({ status: "running" });
+      expect(active.inactive).toBeUndefined();
+      const other = inv.runtimes.find((r) => r.port === 8035)!;
+      expect(other.status).toBe("stopped");
+      expect(other.inactive).toEqual({ tier: "Flash-Next", active: "Coder-Next 4bit" });
+    });
+
+    it("a disabled tier that is down is listed grey while another tier is active, unlisted otherwise", async () => {
+      const flashUp = { "http://127.0.0.1:8035/v1/models": { data: [{ id: "flash-next" }] } };
+      const on = await computeInventory(input({ tiers, runtimes: [] }), { ...deps(flashUp) });
+      expect(on.runtimes.find((r) => r.port === 8034)?.inactive).toEqual({ tier: "Coder-Next 4bit", active: "Flash-Next" });
+      const off = await computeInventory(input({ tiers, runtimes: [] }), t({}));
+      expect(off.runtimes.some((r) => r.port === 8034)).toBe(false);
+    });
+
+    it("an expected tier that is down with no tier running stays a failure, not inactive", async () => {
+      const inv = await computeInventory(input({ tiers, runtimes: [] }), t({}));
+      const flash = inv.runtimes.find((r) => r.port === 8035)!;
+      expect(flash.status).toBe("stopped");
+      expect(flash.inactive).toBeUndefined();
+    });
+  });
+
   it("tolerates no docker and no ollama", async () => {
     const inv = await computeInventory(input({ consumers: [] }), { ...deps(), getJson: async () => null, run: async () => null });
     expect(inv.runtimes.find((r) => r.name === "docker-model-runner")).toBeUndefined();
