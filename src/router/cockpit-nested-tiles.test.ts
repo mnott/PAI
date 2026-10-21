@@ -21,6 +21,8 @@ function el(tag: string, attrs: Record<string, string> = {}): any {
 }
 function detach(c: any) { const p = c.parentNode; if (p) { const i = p.children.indexOf(c); if (i >= 0) p.children.splice(i, 1); c.parentNode = null; } }
 
+const TH = ["tileAttrs", "tileGrip"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([^\\n]*\\n`))![0]).join("\n");
+
 const src = [
   COCKPIT_HTML.match(/var LKEY="[^\n]*\n/)![0].replace(/^var /, "var "),
   COCKPIT_HTML.match(/function tileOrder\(\)[^\n]*\n/)![0],
@@ -115,7 +117,7 @@ describe("nested tiles: order and minimize inside a section", () => {
   it("Cloud: one tile per provider keyed by the provider name, no hardcoded list", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, any> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\nfunction setHtml(e,h){e.innerHTML=h;return true}\nfunction applyTileOrder(){}\nfunction tileGrips(){}\n${body}\nrenderLimits();`);
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `${TH}\nfunction keepDowns(){}\nfunction setHtml(e,h){e.innerHTML=h;return true}\nfunction applyTileOrder(){}\nfunction tileGrips(){}function orderTiles(){}\n${body}\nrenderLimits();`);
     const lim = { activeLocal: null, limits: [
       { provider: "prov-a", kind: "cloud", windows: [{ name: "w", percent: 41.2 }] },
       { provider: "prov-b", kind: "cloud", windows: [{ name: "w", percent: 9 }] },
@@ -127,5 +129,86 @@ describe("nested tiles: order and minimize inside a section", () => {
       expect(h).toContain(`data-tid="${p}" data-tname="${p}" data-tval="${v}"`);
     }
     expect(h).toContain("data-tgrip");
+  });
+
+  /** The tiles of the container `key` in a rendered html string, as fresh elements (what setHtml leaves after a poll). */
+  const fromHtml = (h: string, key: string) => {
+    const sec = el("div"), cont = el("div", { "data-tkey": key });
+    sec.appendChild(cont);
+    const re = /<div class="[^"]*"[^>]*? data-tid="([^"]*)" data-tname="([^"]*)" data-tval="([^"]*)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(h))) cont.appendChild(el("div", { class: "t", "data-tid": m[1]!, "data-tname": m[2]!, "data-tval": m[3]! }));
+    cont.__tkey = key;
+    return cont;
+  };
+  const survives = (h: string, key: string, ids: string[]) => {
+    const t = harness();
+    const c1 = fromHtml(h, key);
+    expect(t.api.tids(c1)).toEqual(ids);
+    t.api.applyTileOrder(c1);
+    t.store["pai.cockpit.tiles.v1"] = JSON.stringify({ [key]: [...ids].reverse() });
+    const c2 = fromHtml(h, key); // the poll rebuild
+    t.api.applyTileOrder(c2);
+    expect(t.api.tids(c2)).toEqual([...ids].reverse());
+    t.press(t.tile(c2, ids[0]!));
+    const chip = t.tile(c2, ids[0]!);
+    expect(chip.classes.has("tmin")).toBe(true);
+    expect(c2.__chips.children).toHaveLength(1);
+    expect(chip.getAttribute("data-tname")).toBeTruthy();
+    expect(chip.getAttribute("data-tval")).toBeTruthy();
+    const c3 = fromHtml(h, key); // minimized state survives the next poll too
+    t.api.applyTileOrder(c3);
+    expect(t.tile(c3, ids[0]!).classes.has("tmin")).toBe(true);
+  };
+
+  it("Local servers: each running server is an orderable, minimizable tile in its own group", () => {
+    const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
+    const lt = ["gbm", "shortModel", "ringName", "localTile"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+    const els: Record<string, any> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `${TH}\n${lt}\nfunction keepDowns(){}\nfunction setHtml(e,h){e.innerHTML=h;return true}\nfunction orderTiles(r){r.__ordered=1}\n${body}\nrenderLimits();`);
+    const lim = { activeLocal: null, limits: [
+      { provider: "srv-a", kind: "local", up: true, windows: [], served: ["m/one"], rssMb: 2048, tokensPerSec: 31.4 },
+      { provider: "srv-b", kind: "local", up: true, windows: [], served: [] },
+      { provider: "srv-c", kind: "local", up: false, windows: [] },
+    ] };
+    fn(lim, (id: string) => els[id], (s: string) => s, () => "<g>", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
+    const h = els.local.innerHTML as string;
+    expect(h).toContain('<div class="tgroup" data-tkey="local">');
+    expect(h).toContain('data-tid="srv-a" data-tname="srv-a" data-tval="31 tok/s"');
+    expect(h).toContain('data-tid="srv-b" data-tname="srv-b" data-tval="up"');
+    expect(h).toContain("data-tgrip");
+    expect(h.indexOf("</div>" + "<details")).toBeGreaterThan(h.indexOf("srv-b")); // the down list sits outside the tile group, never a tile
+    expect(els.local.__ordered).toBe(1);
+    survives(h, "local", ["srv-a", "srv-b"]);
+  });
+
+  it("Cache rings: each ring is an orderable tile keyed by provider and model", () => {
+    const rt = COCKPIT_HTML.match(/function ringTiles\([\s\S]*?\n\}\n/)![0];
+    const fn = new Function("esc", "donut", "emptyRing", "assignColors", "ringName", "ageMark", "lim", "LOW_REQ", `${TH}\n${rt}\nreturn ringTiles;`)(
+      (s: string) => s, () => "<svg/>", () => "<svg/>", () => {}, (m: string) => m, () => "", {}, 5) as (ms: any, s: any[]) => string;
+    const ms = { a: { provider: "p1", model: "m1", cacheRead: 30, cacheWrite: 0, input: 70, requests: 9 }, b: { provider: "p2", model: "m2", cacheRead: 5, cacheWrite: 5, input: 0, requests: 8 } };
+    const h = fn(ms, []);
+    expect(h).toContain('data-tid="p1 / m1" data-tname="m1" data-tval="30%"');
+    expect(h).toContain('data-tid="p2 / m2" data-tname="m2" data-tval="50%"');
+    expect(h).toContain("data-tgrip");
+    const dd = COCKPIT_HTML.match(/function renderDonuts[\s\S]*?\n\}\n/)![0];
+    expect(dd).toContain('<div class="tset" data-tkey="rings">');
+    expect(dd.indexOf('orderTiles($("donut"))')).toBeGreaterThan(dd.indexOf('setHtml($("donut")'));
+    survives(h, "rings", ["p1 / m1", "p2 / m2"]);
+  });
+
+  it("Totals: each KPI is an orderable, minimizable tile whose chip value drops the markup", () => {
+    const rd = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
+    expect(rd).toContain('<div class="tset" data-tkey="kpis">');
+    expect(rd).toContain("tileAttrs(k[0],k[0],k[1].replace(");
+    expect(rd.indexOf('orderTiles($("kpis"))')).toBeGreaterThan(rd.indexOf('setHtml($("kpis")'));
+    const attrs = new Function("esc", `${TH}\nreturn tileAttrs;`)((x: string) => x) as (a: string, b: string, c: string) => string;
+    const kp = ["a", "b", "c"].map((k) => `<div class="kpi"${attrs(k, k, "1")}>`).join("");
+    survives(kp, "kpis", ["a", "b", "c"]);
+  });
+
+  it("every tile container the page renders is re-ordered by orderTiles after its setHtml", () => {
+    for (const k of ["sys", "syssrv", "cloud", "local", "rings", "kpis"]) expect(COCKPIT_HTML).toContain(`data-tkey="${k}"`);
+    for (const sel of ['orderTiles($("sys"))', 'orderTiles($("sysservers"))', 'orderTiles($("cloud"))', 'orderTiles($("local"))', 'orderTiles($("donut"))', 'orderTiles($("kpis"))', "orderTiles(el)"]) expect(COCKPIT_HTML).toContain(sel);
   });
 });

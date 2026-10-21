@@ -11,7 +11,7 @@ describe("System section: metric tiles with history", () => {
   /** Runs the real renderSystem once per payload (a poll each); returns the last #sys / #sysservers html and the history rings. */
   const polls = (payloads: any[]) => {
     const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, syshid: { innerHTML: "" }, sysservers: { innerHTML: "" } };
-    const fn = new Function("payloads", "$", "fmt", `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=3,win="1h",data={},lim=null,sys=null;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}var document={querySelectorAll:function(){return[]}};\n${src}\npayloads.forEach(function(p){sys=p;renderSystem()});return SYSH;`);
+    const fn = new Function("payloads", "$", "fmt", `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=3,win="1h",data={},lim=null,sys=null;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}function orderTiles(){}var document={querySelectorAll:function(){return[]}};\n${src}\npayloads.forEach(function(p){sys=p;renderSystem()});return SYSH;`);
     const hist = fn(payloads, (id: string) => els[id], (n: number) => String(n));
     return { sys: els.sys!.innerHTML, srv: els.sysservers!.innerHTML, hist };
   };

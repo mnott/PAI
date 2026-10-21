@@ -32,7 +32,7 @@ function ringTiles(ms,servers){
   if(m.cacheRead+m.cacheWrite>0){var r=dn?m.cacheRead/dn:0;ring=low?(r>0?donut(r):emptyRing()):donut(r)}
   else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache'+ageMark(srv)+'</div>'}
   else{ring=emptyRing();cap='<div class="s">'+(lim?"not reported":'<span class="dim" title="loading: first limits poll pending">…</span>')+'</div>'}
-  return'<div class="ring">'+ring+'<div class="n">'+esc(ringName(m.model))+'</div><div class="s">'+esc(m.provider)+' · '+m.requests+' req</div>'+cap+'</div>'
+  return'<div class="ring"'+tileAttrs(m.provider+" / "+m.model,ringName(m.model),low?"–":(dn?Math.round(m.cacheRead/dn*100)+"%":"–"))+'>'+tileGrip(ringName(m.model))+ring+'<div class="n">'+esc(ringName(m.model))+'</div><div class="s">'+esc(m.provider)+' · '+m.requests+' req</div>'+cap+'</div>'
  }).join("");
 }
 /** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
@@ -137,9 +137,10 @@ function renderDonuts(){ renderSpeed();
  var mk=Object.keys(ms),dh="",allSrv2=(sys&&sys.servers)||[];
  if(mk.length===1&&ms[mk[0]].cacheRead+ms[mk[0]].cacheWrite>0){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
   dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,${L.bigDonutSizePx})+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
- }else dh=ringTiles(ms,allSrv2);
+ }else{dh=ringTiles(ms,allSrv2);if(dh)dh='<div class="tset" data-tkey="rings">'+dh+'</div>'}
  var lowc=dh.indexOf('class="solo"')>=0?"":lowChips(ms);
  setHtml($("donut"),dh||(lowc?"":'<span class="dim">no data</span>'));
+ orderTiles($("donut"));
  setHtml($("donutlow"),lowc);
  function chip(l,v,tt){return'<span class="chip"'+(tt?' title="'+esc(tt)+'"':'')+'>'+l+' <b>'+v+'</b></span>'}
  var note=chip("overall",pct(t.hitRatio),"cache_read / (read + write + fresh input), all providers and models");
@@ -155,7 +156,8 @@ function renderDonuts(){ renderSpeed();
 }
 function render(){
  if(!data)return;var d=data,t=d.totals;
- setHtml($("kpis"),[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),ERROR_WARN,ERROR_BAD)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join(""));
+ setHtml($("kpis"),'<div class="tset" data-tkey="kpis">'+[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),ERROR_WARN,ERROR_BAD)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"'+tileAttrs(k[0],k[0],k[1].replace(/<[^>]*>/g,""))+'>'+tileGrip(k[0])+'<b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join("")+'</div>');
+ orderTiles($("kpis"));
  var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});models.sort();
  assignColors(models);
  var sel=$("msel");if(msel&&models.indexOf(msel)<0)msel="";

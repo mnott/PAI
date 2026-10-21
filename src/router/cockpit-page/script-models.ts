@@ -88,30 +88,31 @@ function localTile(l){
  var m=l.served&&l.served.length?String(l.served[0]):"",al=m&&ringName(m)!==shortModel(m)?ringName(m):"";
  function r(k,v,t){return'<span class="dim">'+k+'</span><span class="nw"'+(t?' title="'+esc(t)+'"':"")+'>'+v+'</span>'}
  var rows=(l.rssMb?r("memory",esc(gbm(l.rssMb))+" GB"):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+' tok/s'):"")+(m?r("model",esc(shortModel(m)),m):"");
- return'<div class="pgroup ltile" data-prov="'+esc(l.provider)+'"><div class="phead"><span class="lname" title="'+esc(l.provider)+'">'+esc(al||l.provider)+'</span><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"")+'</div>';
+ return'<div class="pgroup ltile" data-prov="'+esc(l.provider)+'"'+tileAttrs(l.provider,al||l.provider,l.tokensPerSec?Math.round(l.tokensPerSec)+" tok/s":"up")+'>'+tileGrip(al||l.provider)+'<div class="phead"><span class="lname" title="'+esc(l.provider)+'">'+esc(al||l.provider)+'</span><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"")+'</div>';
 }
 function renderLimits(){
- if(!lim)return;var c="",lo="",dn=[],nl=[];
+ if(!lim)return;var c="",lo="",lt="",dn=[],nl=[];
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
    if(!l.up){(l.provider===lim.activeLocal?dn:nl).push(l.provider);return}
-   lo+=localTile(l);
+   lt+=localTile(l);
    return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
   var w0=l.windows[0];
-  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'" data-tid="'+esc(l.provider)+'" data-tname="'+esc(l.provider)+'" data-tval="'+(w0?Math.round(w0.percent)+'%':"–")+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(l.provider)+'" role="img">⠿</span><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
+  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"'+tileAttrs(l.provider,l.provider,w0?Math.round(w0.percent)+'%':"–")+'>'+tileGrip(l.provider)+'<div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
+ if(lt)lo='<div class="tgroup" data-tkey="local">'+lt+'</div>'+lo;
  if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
  setHtml($("cloud"),c?'<div class="tgroup" data-tkey="cloud">'+c+'</div>':'<span class="dim">no cloud limit sources</span>');
  // the poll rebuild must not reset the order and minimized tiles the user arranged
- var cg=$("cloud").querySelector?$("cloud").querySelector(".tgroup"):null;
- if(cg){cg.__tkey="cloud";applyTileOrder(cg);tileGrips()}
+ orderTiles($("cloud"));
  if(dn.length)lo+='<details class="downs" data-kind="dn"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  setHtml($("local"),lo||'<span class="dim">no local providers</span>');
  keepDowns($("local"));
+ orderTiles($("local"));
 }
 /** Routing section, read-only: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers) and the sessions overriding it. Edited in workers.yaml or with pai worker route set. */
 function renderRouting(){
@@ -406,9 +407,7 @@ function renderModels(){
  var changed=setHtml(el,mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>');
  applyModelFold();
  // the poll rebuild must not reset the tile order the user arranged
- var tgs=el.querySelectorAll(".rt-tiles");
- for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
- tileGrips();
+ orderTiles(el);
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
  // a runtime job the server reports as running (started before a page reload): busy card, watched unless already
  var rj=(mdl&&mdl.runtimeJobs)||{};

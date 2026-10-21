@@ -418,7 +418,7 @@ describe("one key per model", () => {
 });
 
 describe("cockpit cache rings and providers table", () => {
-  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail", "shortModel", "ringName"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail", "shortModel", "ringName", "tileAttrs", "tileGrip"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
   // ringTiles assigns colours: the colour helpers come along, with a stub localStorage
   const colorBody = [
     COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
