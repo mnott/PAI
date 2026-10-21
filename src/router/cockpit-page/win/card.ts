@@ -49,7 +49,7 @@ export type WinTypeDef = {
 const WIN_CARD_BODY_JS = String.raw`var Win=(function(){
 var HEAD_H=28,SAVE_MS=150,FIT_MAX=360;
 var TYPES={group:{accepts:["*"],minW:220,minH:HEAD_H+40,defaultH:300}};
-var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null,auto:false,fit:{},fitT:0};
+var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null,auto:false,fit:{},fitT:0,defRoot:[]};
 function registerType(name,def){TYPES[name]=def||{}}
 function el(tag,cls){var e=document.createElement(tag);if(cls)e.className=cls;return e}
 function mkCtx(c){
@@ -335,10 +335,19 @@ function gutterWire(){
 /** The ResizeObserver callback: main's height is set by layout itself, so only a width change relayouts. */
 function sync(){if(W.main.clientWidth!==W.lastW){relayout();return true}return false}
 function kidsOf(id){return!!(W.kids&&W.kids[id]&&W.kids[id].k)}
+/** The default tree's root cards are all in the tree: a layout composed before that (a warm-up page) is never persisted. */
+function complete(){
+ var have={},a=ids(W.tree),i;
+ for(i=0;i<a.length;i++)have[a[i]]=1;
+ for(var g in W.kids){a=ids(W.kids[g]);for(i=0;i<a.length;i++)have[a[i]]=1}
+ for(i=0;i<W.defRoot.length;i++)if(!have[W.defRoot[i]])return false;
+ return true;
+}
 function save(){
  if(W.timer)clearTimeout(W.timer);
  W.timer=setTimeout(function(){
   W.timer=null;
+  if(!complete())return;
   var now=W.opts.now||Date.now(),st={},id;
   for(id in W.st)st[id]=W.st[id];
   for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}
@@ -387,7 +396,7 @@ function init(main,defaults,opts){
  try{var sv=parseWin(W.opts.storage.getItem(WIN_KEY));hadSaved=!!sv&&sv.auto!==1}catch(e){}
  var l=loadWin(W.opts.storage,defaults,known,W.opts.now);
  W.auto=!hadSaved&&!opts.noFit;
- W.tree=l.tree;W.kids=l.kids;W.st=l.st;
+ W.tree=l.tree;W.kids=l.kids;W.st=l.st;W.defRoot=ids(defaults.tree);
  main.classList.add("win");
  if(!main.__winGut){main.__winGut=1;gutterWire()}
  if(!main.__winFreeze){main.__winFreeze=1;
@@ -443,7 +452,7 @@ var api={init:init,addCards:addCards,hide:hide,registerType:registerType,update:
  cfg:cfgOf,announce:announce,layState:layState,
  /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
  apply:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
- flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
+ flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;if(!complete())return;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
 return api;
 })();
 `;

@@ -203,7 +203,24 @@ function loadWin(storage,defaults,knownIds,now){
  try{raw=storage.getItem(WIN_KEY)}catch(e){}
  var obj=parseWin(raw);
  if(!obj)return defaultsOf(defaults);
- return reconcileSaved(obj,defaults,knownIds,now);
+ var r=reconcileSaved(obj,defaults,knownIds,now);
+ if(obj.auto===1)r.tree=repairOrder(r.tree,defaults.tree);
+ return r;
+}
+/** A layout saved by a page that composed before the default tree was complete can hold the root bands in a
+ *  scrambled order. Only an auto layout (no user move) whose root differs from the default solely by that order
+ *  is put back; anything else is the user's and stays. */
+function repairOrder(tree,def){
+ if(!tree||!def||tree.k!=="s"||def.k!=="s"||tree.d!=="c"||def.d!=="c"||tree.ch.length!==def.ch.length)return tree;
+ var at={},i;
+ for(i=0;i<tree.ch.length;i++){if(tree.ch[i].k!=="c")return tree;at[tree.ch[i].id]=i}
+ var ch=[],sz=[];
+ for(i=0;i<def.ch.length;i++){
+  if(def.ch[i].k!=="c"||at[def.ch[i].id]===undefined)return tree;
+  ch.push(tree.ch[at[def.ch[i].id]]);sz.push(tree.sz[at[def.ch[i].id]]);
+ }
+ var fixed={k:"s",d:"c",ch:ch,sz:sz};
+ return JSON.stringify(fixed)===JSON.stringify(def)?fixed:tree;
 }
 /** Reconcile a parsed saved layout with the defaults: prune ghosts, insert missing static
  *  cards, merge default min flags under the saved state. Returns { tree, kids, st }. */
