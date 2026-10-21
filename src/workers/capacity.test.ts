@@ -29,6 +29,8 @@ function harness(statuses: (elapsedMs: number) => WorkerStatus[], self: string, 
     now: () => t,
     sleep: async (ms: number) => {
       t += ms;
+      // an injected sleep resolves at once, so a gate nobody frees would spin the event loop forever
+      if (t > 3_600_000) throw new Error("harness: the gate was never released within one virtual hour");
     },
     load: () => statuses(t),
     isAlive: (pid: number) => pid !== DEAD,
@@ -106,7 +108,7 @@ describe("workers.capacity values from config", () => {
       st("a", { state: ms >= 2000 ? "done" : "running", started: ms >= 2000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 2000 ? DEAD : 100 }),
       st("b", { state: ms >= 4000 ? "done" : "running", started: ms >= 4000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 4000 ? DEAD : 100 }),
       st("c", { state: ms >= 6000 ? "done" : "running", started: ms >= 6000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 6000 ? DEAD : 100 }),
-      st("d"),
+      st("d", { state: ms >= 6000 ? "done" : "running", started: ms >= 6000 ? "2020-01-01 00:00:00" : nowStamp(), pid: ms >= 6000 ? DEAD : 100 }),
     ], "self", 1);
     let alarmed = 0;
     // no alarmMs override: the gate's own bound must come from the config
@@ -118,7 +120,7 @@ describe("workers.capacity values from config", () => {
   it("heartbeatMs from a user config beats the log at the configured interval", async () => {
     const capacity = userCapacity("workers:\n  capacity:\n    heartbeatMs: 1000\n");
     expect(capacity.heartbeatMs).toBe(1_000);
-    const h = harness((elapsed) => [st("a"), st("b"), st("c"), st("d", { started: elapsed > 1500 ? nowStamp() : "2020-01-01 00:00:00" })], "self");
+    const h = harness((elapsed) => ["a", "b", "c", "d"].map((id) => (elapsed > 5000 ? st(id, { state: "done", pid: DEAD }) : st(id))), "self");
     await capacityGate({ ...h.base, cap: 1, config: capacity });
     expect(h.lines.filter((l) => l.includes("still waiting")).length).toBeGreaterThanOrEqual(1); // beats at 1 s, not the default 60 s
   });
