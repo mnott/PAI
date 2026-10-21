@@ -96,7 +96,7 @@ describe.skipIf(!CHROME)("B4 pool on the win runtime (?win=1)", () => {
     expect(r.tasks).toContain("7");
     expect(r.slots).toContain("opus");
     expect(r.oldPool).toBe("none");
-    for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn)*$/);
+    for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl)*$/);
   }, 120_000);
 
   it("off with the host down: one note card, no kv cards", async () => {

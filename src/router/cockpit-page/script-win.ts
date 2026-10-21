@@ -21,6 +21,7 @@ import { WIN_WORKERS_JS } from "./win/cards-workers.js";
 import { WIN_MODELS_JS } from "./win/cards-models.js";
 import { WIN_REGISTRY_JS } from "./win/cards-registry.js";
 import { WIN_ACTIONS_JS } from "./win/actions.js";
+import { WIN_CHARTS_JS } from "./win/cards-charts.js";
 import { WIN_SELECT_JS } from "./win/select.js";
 
 /** The runtime source: the pure parts plus the card runtime, returning {Win, leaf, split, anchorInit}. */
@@ -52,6 +53,7 @@ if(WINON){
 ${WIN_KPIS_JS}
 ${WIN_POOL_JS}
 ${WIN_SYSTEM_JS}
+${WIN_CHARTS_JS}
 ${WIN_MEMORY_JS}
 ${WIN_ROUTING_JS}
 ${WIN_CLOUD_JS}
@@ -83,7 +85,9 @@ ${WIN_REGISTRY_JS}
   var oldRt=document.querySelector('[data-section="routing"]');if(oldRt)oldRt.style.display="none";
   var oldCl=document.querySelector('[data-section="cloud"]');if(oldCl)oldCl.style.display="none";
   var oldWk=document.querySelector('[data-section="workers"]');if(oldWk)oldWk.style.display="none";
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520],[registryDefaults(),460]]));
+  var oldTk=document.querySelector('[data-section="tokens"]');if(oldTk)oldTk.style.display="none";
+  var oldDy=document.querySelector('[data-section="daily"]');if(oldDy)oldDy.style.display="none";
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520]].concat(chartsDefaults().parts).concat([[registryDefaults(),460]])));
   wrgStart();
   // the limits poll already calls renderRouting: the routing cards ride on it
   var oldRender=renderRouting;renderRouting=function(){oldRender();if(lim){winFeedLimits(lim);limitsSync(lim)}};

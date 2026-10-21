@@ -97,7 +97,7 @@ describe.skipIf(!CHROME)("B2 system on the win runtime (?win=1)", () => {
     expect(r.ids.filter((i: string) => /^system\.srv:/.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/e2e", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
     expect(r.oldSys).toBe("none");
     expect(r.syshid).toBe(false);
-    for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn)*$/);
+    for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl)*$/);
     expect(r.vals).toContain("system.memory=8.0 / of 36 GB · pressure 20%");
     expect(r.vals).toContain("system.cpu-load=10 / all clusters");
     // the four zero metrics start minimized (unmounted until restored); restoring shows 0 and the reason

@@ -16,7 +16,7 @@ export type WinCtx = {
   title(s: string): void;
   status(kind: string, s: string): void;
 };
-export type WinCardAction = { id: string; label: string; icon?: string; title?: string; enabled?: (ctx: WinCtx) => boolean | string; run?: (ctx: WinCtx) => void };
+export type WinCardAction = { id: string; label: string; icon?: string; title?: string; enabled?: (ctx: WinCtx) => boolean | string; run?: (ctx: WinCtx) => void; pressed?: (ctx: WinCtx) => boolean; make?: (ctx: WinCtx) => HTMLElement };
 export type WinCardSpec = { id: string; type: string; title: string; info?: string; actions?: WinCardAction[]; feeds?: string[] };
 export type WinTypeDef = {
   accepts?: string[];
@@ -85,6 +85,7 @@ function announce(text){
  W.live.textContent=text;
 }
 function actionBtn(c,a){
+ if(a.make)return a.make(c.ctx);
  var b=el("button","cbtn cact");b.type="button";b.setAttribute("data-act",a.id);
  b.textContent=(a.icon?a.icon+" ":"")+a.label;
  b.addEventListener("click",function(){if(!b.disabled)a.run(c.ctx)});
@@ -95,6 +96,8 @@ function paintActions(c){
  for(var i=0;i<c.acts.length;i++){
   var a=c.acts[i],b=c.actEls[i],en=a.enabled?a.enabled(c.ctx):true;
   var on=en===true,why=typeof en==="string"?en:(a.title||"");
+  if(a.pressed){var pr=a.pressed(c.ctx)?"true":"false";if(b.getAttribute("aria-pressed")!==pr)b.setAttribute("aria-pressed",pr)}
+  if(b.setDisabled){b.setDisabled(!on,on?"":why);continue}
   if(b.disabled!==!on)b.disabled=!on;
   if(why)b.title=why;else if(b.hasAttribute("title"))b.removeAttribute("title");
  }
@@ -118,7 +121,7 @@ function buildCard(spec){
  var acts=spec.actions||[];
  for(var i=0;i<acts.length;i++){
   // rule 5: a control is rendered only if it has a handler
-  if(typeof acts[i].run!=="function")continue;
+  if(typeof acts[i].run!=="function"&&typeof acts[i].make!=="function")continue;
   c.acts.push(acts[i]);var b=actionBtn(c,acts[i]);c.actEls.push(b);head.appendChild(b);
  }
  var min=el("button","cbtn cmin");min.type="button";min.textContent="–";min.setAttribute("aria-expanded","true");

@@ -96,6 +96,7 @@ function sysMetricUpdate(ctx,d){
  if(d&&d.current!==undefined)sysMetricCard(ctx,d,ctx.id.slice(7));
 }
 var WCH={};
+/** Per-id chart hooks {mount,update,resize} for the data charts (cards-charts); the power chart is the default. */
 /** The power/GPU/CPU line chart as a string at an explicit pixel box (no DOM measuring). */
 function sysChartSvg(d,w,h){
  var ss=(d.series&&d.series.series)||[],keys=PKEYS;
@@ -121,9 +122,9 @@ function sysChartDraw(ctx){
  ctx.html("legend",PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join(""));
 }
 Win.registerType("chart",{minW:260,minH:150,defaultH:220,
- mount:function(ctx){ctx.body.innerHTML='<div class="wc-svg" data-k="svg"></div><div class="legend wc-leg" data-k="legend"></div>'},
- update:function(ctx,d){if(!d||!d.series)return;var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.d=d;sysChartDraw(ctx)},
- resize:function(ctx,w,h){var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.w=w;s.h=h;sysChartDraw(ctx)}});
+ mount:function(ctx){if(WCHX[ctx.id]){WCHX[ctx.id].mount(ctx);return}ctx.body.innerHTML='<div class="wc-svg" data-k="svg"></div><div class="legend wc-leg" data-k="legend"></div>'},
+ update:function(ctx,d){if(WCHX[ctx.id]){WCHX[ctx.id].update(ctx,d);return}if(!d||!d.series)return;var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.d=d;sysChartDraw(ctx)},
+ resize:function(ctx,w,h){if(WCHX[ctx.id]){WCHX[ctx.id].resize(ctx,w,h);return}var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.w=w;s.h=h;sysChartDraw(ctx)}});
 /** The up servers' four cards per server, added by data (a structural change). */
 var SRV_WHAT=[["rss","RSS"],["e2e","end-to-end"],["decode","decode"],["prefix","prefix cache"]];
 function sysServerSync(d){

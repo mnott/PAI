@@ -165,13 +165,18 @@ function gapLayout(totals,w,padL){
  return{cols:cols,bw:(w-padL-6)/units,step:labelStep((w-padL-6)/units),compressed:cols.some(function(c){return c.g>0})}
 }
 function gapMark(x,top,bot){return'<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+top+'" y2="'+bot+'" stroke="var(--line)" stroke-dasharray="2 3"/>'}
+/** The page-side wrapper of the legacy section: measures el, draws into it. The win cards call stackedBarsSvg at the card's own size. */
 function stackedBars(el,labels,series,keys,w,h,tickFmt){
- var cw=chartW(el,w),padB=18,padT=6,max=1,agg=mergeFactor(series.length,cw-44-6,1);
+ var r=stackedBarsSvg(el,chartW(el,w),labels,series,keys,h,chartSvg(el,w,h));
+ el.__agg=r.agg;setHtml(el,r.html);return r.cap;
+}
+/** Stacked bars at an explicit pixel width cw: {html, cap, agg}. ref only names the chart for aggCap ({id:"daily"}). */
+function stackedBarsSvg(ref,cw,labels,series,keys,h,head){
+ var padB=18,padT=6,max=1,agg=mergeFactor(series.length,cw-44-6,1);
  if(agg>1){labels=mergeLabels(labels,agg);series=mergeSeries(series,keys,agg)}
- el.__agg=agg;
  var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
  var padL=padFor([fmtAxis(max)]),H=h-padB-padT;
- var L=gapLayout(sums,cw,padL),svg=chartSvg(el,w,h);
+ var L=gapLayout(sums,cw,padL),svg=head;
  for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(cw-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
  var x=padL,ri=0;
  L.cols.forEach(function(c){
@@ -183,19 +188,22 @@ function stackedBars(el,labels,series,keys,w,h,tickFmt){
    ri++}
   x+=cw;
  });
- setHtml(el,svg+'</svg>');
- return barCap(el,L.compressed,agg);
+ return{html:svg+'</svg>',cap:barCap(ref,L.compressed,agg),agg:agg};
 }
 /** What chartCap shows: true (idle gaps compressed), a bucket-size text (merged), both joined, or false. */
 function barCap(el,compressed,agg){var t=[];if(compressed)t.push("idle hours compressed: the x axis is not time-linear");if(agg>1)t.push(aggCap(el,agg));return t.length?t.join(" · "):false}
 function twoToneModelBars(el,labels,buckets,models,w,h){
- var cw=chartW(el,w),padB=18,padT=6,mc=models.length,max=1,agg=mergeFactor(buckets.length,cw-44-6,Math.max(1,mc));
+ var r=twoToneSvg(el,chartW(el,w),labels,buckets,models,h,chartSvg(el,w,h));
+ el.__agg=r.agg;setHtml(el,r.html);return r.cap;
+}
+/** Two-tone per-model bars at an explicit pixel width cw: {html, cap, agg}. */
+function twoToneSvg(ref,cw,labels,buckets,models,h,head){
+ var padB=18,padT=6,mc=models.length,max=1,agg=mergeFactor(buckets.length,cw-44-6,Math.max(1,mc));
  if(agg>1){labels=mergeLabels(labels,agg);buckets=mergeModelBuckets(buckets,agg)}
- el.__agg=agg;
  models.forEach(function(m){colorOf(m)});
  var totals=buckets.map(function(arr){var t=0;arr.forEach(function(s){t+=s.total});return t});totals.forEach(function(v){if(v>max)max=v});
  var padL=padFor([fmtAxis(max)]),W=cw-padL-6,H=h-padB-padT;
- var L=gapLayout(totals,cw,padL),mwid=mc?L.bw/mc:L.bw,svg=chartSvg(el,w,h);
+ var L=gapLayout(totals,cw,padL),mwid=mc?L.bw/mc:L.bw,svg=head;
  for(var g=0;g<=3;g++){var yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(cw-6)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(max*g/3)+'</text>'}
  var x=padL,ri=0;
  L.cols.forEach(function(c){
@@ -212,8 +220,7 @@ function twoToneModelBars(el,labels,buckets,models,w,h){
    ri++}
   x+=cw;
  });
- setHtml(el,svg+'</svg>');
- return barCap(el,L.compressed,agg);
+ return{html:svg+'</svg>',cap:barCap(ref,L.compressed,agg),agg:agg};
 }
 function legend(el,keys,extra){setHtml(el,keys.map(function(k){return'<span><i style="background:'+colorOf(k)+'"></i>'+esc(k)+'</span>'}).join("")+(extra||""))}
 /** One legend line: a small caption, then the swatch items. */

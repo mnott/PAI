@@ -1931,10 +1931,10 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
     expect(padFor(["784M"])).toBeGreaterThan(padFor(["42"]));
     expect(padFor(["1.57G"])).toBeGreaterThan(padFor(["784M"]));
     // the bar charts size their left padding from the formatted max label
-    const bars = COCKPIT_HTML.match(/function stackedBars\([\s\S]*?\n\}\n/)![0];
+    const bars = COCKPIT_HTML.match(/function stackedBarsSvg\([\s\S]*?\n\}\n/)![0];
     expect(bars).toContain("padL=padFor([fmtAxis(max)])");
     expect(bars).toContain("fmtAxis(max*g/3)");
-    expect(COCKPIT_HTML.match(/function twoToneModelBars\([\s\S]*?\n\}\n/)![0]).toContain("padL=padFor([fmtAxis(max)])");
+    expect(COCKPIT_HTML.match(/function twoToneSvg\([\s\S]*?\n\}\n/)![0]).toContain("padL=padFor([fmtAxis(max)])");
   });
 
   it("no legend item says idle compressed; the caption appears once, only when buckets were compressed", () => {
@@ -3332,7 +3332,7 @@ describe("local server tile and section title", () => {
 
 describe("chart text keeps its size at any chart width", () => {
   const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
-  const chartSrc = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "mergeModelBuckets", "aggCap", "barCap", "stackedBars", "twoToneModelBars", "lineChart"].map(get).join("\n");
+  const chartSrc = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "mergeModelBuckets", "aggCap", "barCap", "stackedBarsSvg", "twoToneSvg", "stackedBars", "twoToneModelBars", "lineChart"].map(get).join("\n");
   const CONSTS = "var MIN_LABEL_GAP_PX=48,MIN_BAR_PX=3,data={bucketMs:300000},KINDS=[[\"input\",\"i\"],[\"cacheWrite\",\"w\"],[\"cacheRead\",\"r\"],[\"output\",\"o\"]];";
   const colorOf = () => "#3b6fe0";
   const fmt = (n: number) => String(n);
@@ -3432,7 +3432,7 @@ describe("generated model colours", () => {
 
 describe("readable time axes, power chart under System, tokens chart at half width", () => {
   const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
-  const src = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "mergeModelBuckets", "aggCap", "barCap", "trimEmpty", "emptyChart", "stackedBars", "twoToneModelBars", "lineChart"].map(get).join("\n");
+  const src = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "mergeModelBuckets", "aggCap", "barCap", "trimEmpty", "emptyChart", "stackedBarsSvg", "twoToneSvg", "stackedBars", "twoToneModelBars", "lineChart"].map(get).join("\n");
   const CONSTS = 'var MIN_LABEL_GAP_PX=48,MIN_BAR_PX=3,data={bucketMs:300000},KINDS=[["input","i"],["cacheWrite","w"],["cacheRead","r"],["output","o"]];';
   const run = (body: string, el: any) => new Function("el", "$", "colorOf", "fmt", "setHtml", `${SH}\n${CONSTS}\n${src}\n${body}`)(el, () => ({ innerHTML: "" }), () => "#3b6fe0", String);
   const stamps = (n: number) => Array.from({ length: n }, (_, i) => `${String(Math.floor(i / 12) + 6).padStart(2, "0")}:${String((i % 12) * 5).padStart(2, "0")}`);
