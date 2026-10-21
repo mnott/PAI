@@ -141,6 +141,7 @@ describe("route reason: the real source", () => {
       const s = await capture({ local: true, "print-cmd": true }, {}, task);
       const j = JSON.parse(s.slice(s.indexOf('{"cmd"')));
       const stdin = (j.stdin as string)
+        .replace(/Scratch dir: [^\n]*\n/, "")
         .replace(/(You are running in your own git worktree:[^\n]*\n[^\n]*\n)?Hard deadline[^\n]*\nNotes from[^\n]*\n/, "<volatile>\n")
         .replace(/\(worker id [^)]*\)/g, "(worker id W)");
       return { cmd: JSON.stringify(j.cmd).replace(/PAI note \[[0-9a-f]+\]/g, "PAI note [T]"), stdin, gitStatus: j.gitStatus };

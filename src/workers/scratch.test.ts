@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { applyScratchEnv, removeScratch, scratchDir } from "./scratch.js";
+import { applyScratchEnv, removeScratch, scratchDir, scratchPromptLine } from "./scratch.js";
 import { tmpScratchReason } from "../hooks/ts/lib/worker-bash-rules.js";
 import { decideWorkerGuard } from "../hooks/ts/lib/worker-guard.js";
 
@@ -54,5 +54,30 @@ describe("tmpScratchReason", () => {
     const input = { tool_name: "Bash", tool_input: { command: "python3 /tmp/edit.py" } };
     expect(decideWorkerGuard(input, { PAI_WORKER: "1" }, ctx).decision).toBe("deny");
     expect(decideWorkerGuard(input, {}, ctx).decision).toBe("allow");
+  });
+});
+
+describe("scratch path in prompt and guard text", () => {
+  it("preamble line carries the absolute scratch dir", () => {
+    const env: Record<string, string | undefined> = {};
+    const dir = applyScratchEnv(env, "w3-test");
+    try {
+      const line = scratchPromptLine(dir);
+      expect(dir.startsWith("/")).toBe(true);
+      expect(line).toContain(`Scratch dir: ${dir}`);
+      expect(line).toContain("does not expand $TMPDIR");
+    } finally {
+      removeScratch("w3-test");
+    }
+  });
+  it("guard refusal for literal /tmp quotes the absolute TMPDIR", () => {
+    const old = process.env.TMPDIR;
+    process.env.TMPDIR = "/var/x/pai-scratch/w4";
+    try {
+      expect(tmpScratchReason("echo hi > /tmp/probe.js")).toContain("/var/x/pai-scratch/w4");
+    } finally {
+      if (old === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = old;
+    }
   });
 });

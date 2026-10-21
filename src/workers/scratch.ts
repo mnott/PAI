@@ -25,3 +25,8 @@ export function applyScratchEnv(env: Record<string, string | undefined>, id: str
 export function removeScratch(id: string): void {
   rmSync(scratchDir(id), { recursive: true, force: true });
 }
+
+/** Prompt line stating the scratch dir literally: Write/Edit do not expand $TMPDIR and would create a folder named "$TMPDIR". */
+export function scratchPromptLine(dir: string): string {
+  return `Scratch dir: ${dir} — use this absolute path in Write/Edit; the Write tool does not expand $TMPDIR (Bash does).`;
+}

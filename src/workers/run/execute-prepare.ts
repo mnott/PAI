@@ -4,7 +4,7 @@
  * ends here (refused start, --print-cmd dry run).
  */
 
-import { applyScratchEnv } from "../scratch.js";
+import { applyScratchEnv, scratchPromptLine } from "../scratch.js";
 import { NOTE_TOKEN_ENV, newNoteToken } from "../note-delivery.js";
 import { TroubleWatcher } from "../worker-trouble.js";
 import type { BashRun, WorkerReport } from "../report.js";
@@ -202,7 +202,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
-  applyScratchEnv(env, wid);
+  const scratch = applyScratchEnv(env, wid);
   // the router's fair queue shares a local engine between owning sessions
   addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid });
   const noteToken = newNoteToken();
@@ -275,6 +275,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     ? [
         ...(worktree ? [worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)] : []),
         ...(limit ? [deadlinePromptLine(limit)] : []),
+        scratchPromptLine(scratch),
         noteTokenSentence(noteToken), // per-run token: measured 2026-10-20, it cut the shared prefix after 2.3k of 9k tokens
       ]
     : [];
@@ -309,6 +310,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
         ? [worktree ? (volatileInTask ? "" : worktreeSystemPrompt(wid, worktree.branch, worktree.dir, worktree.snapshot)) : inPlaceSystemPrompt()]
         : []),
       ...(headless && limit && !volatileInTask ? [deadlinePromptLine(limit)] : []),
+      ...(headless && !volatileInTask ? [scratchPromptLine(scratch)] : []),
       ...parsed.callerSystemPrompts,
     ])
   );
