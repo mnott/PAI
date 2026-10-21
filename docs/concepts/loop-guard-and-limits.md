@@ -17,7 +17,12 @@ progress, and waiting verbs and bounded sleeps are exempt.
 - **Denial.** After 4 similar calls with similar results, the next one (the 5th)
   is denied with: "loop guard: you ran this command 4 times with the same result
   and nothing changed. Stop repeating it." The worker is told to commit and
-  report, or to report the blocker.
+  report, or to report the blocker. When the repeated call only reads (Read,
+  Grep, Glob, or a read-only shell command such as `grep`, `sed -n`, `cat`), the
+  denial also hands back that call's last output, trimmed to
+  `workers.loopGuard.echoLines` lines (default 40) and
+  `workers.loopGuard.echoChars` characters (default 3000), with lines that look
+  like secrets masked, so the worker can go on without asking again.
 - **Content fingerprint.** For runner commands (tests, builds), editing files
   through Bash counts as progress: the guard compares a content-based
   fingerprint of the worktree (tracked diff plus non-empty untracked files).
