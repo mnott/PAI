@@ -42,11 +42,13 @@ describe("System section: metric tiles with history", () => {
     expect(r.sys).toMatch(/data-tid="cpu-load"[\s\S]*?<path class="line [^"]*" [^>]* d="M[0-9.]+,[0-9.]+L/);
   });
 
-  it("the tile grid is 4 wide, 2 wide, or 1 column - never 3 plus 1", () => {
+  it("the tile grid is a 12-track wide mode, 2 wide, or 1 column - never 3 plus 1", () => {
     const css = COCKPIT_HTML.match(/<style>[\s\S]*?<\/style>/g)!.join("");
     const cols = [...css.matchAll(/\.rt-tiles[^{]*\{grid-template-columns:([^;}]*)/g)].map((m) => m[1]!);
     expect(cols.length).toBeGreaterThan(0);
-    for (const c of cols) expect(c).toMatch(/^(repeat\((2|4),minmax\(0,1fr\)\)|minmax\(0,1fr\))$/);
+    for (const c of cols) expect(c).toMatch(/^(repeat\((2|12),minmax\(0,1fr\)\)|minmax\(0,1fr\))$/);
+    // wide mode: every tile spans 3 of the 12 tracks (remainder rules: cockpit-tile-rows.test.ts)
+    expect(css).toMatch(/@container \(min-width:720px\)\{\.rt-tiles:not\(\.two\)\{grid-template-columns:repeat\(12,minmax\(0,1fr\)\)\}\.rt-tiles:not\(\.two\) \.mt\{grid-column:span 3\}/);
     // the System grids are .rt-tiles inside a size container, like the Models cards
     expect(COCKPIT_HTML).toContain('<div id="sys" style="container-type:inline-size">');
     expect(COCKPIT_HTML).toContain('<div id="sysservers" style="margin-top:8px;container-type:inline-size">');
