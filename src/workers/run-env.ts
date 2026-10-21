@@ -6,6 +6,7 @@
  * runner uses, instead of importing the whole runner into the daemon.
  */
 
+import { execFile, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -338,4 +339,87 @@ export async function loopbackRouterChoice(
   const up = routeLoopbackViaRouter(provider, await probe());
   if (!up) process.stderr.write(`pai: router down, ${providerName} runs direct (no router prefix fix)\n`);
   return up;
+}
+
+/** The probe body, run in a child node so the sync launch path can wait on it. */
+const PROBE_SCRIPT = `
+const [url, model, ms] = process.argv.slice(1);
+fetch(url + "/v1/messages", {
+  method: "POST",
+  headers: { "content-type": "application/json", "anthropic-version": "2023-06-01" },
+  body: JSON.stringify({ model, max_tokens: 1, messages: [{ role: "user", content: "." }] }),
+  signal: AbortSignal.timeout(Number(ms)),
+}).then(async (r) => {
+  const t = await r.text();
+  let m = t.slice(0, 200);
+  try { m = JSON.parse(t).error.message ?? m; } catch {}
+  console.log(JSON.stringify({ status: r.status, message: m }));
+}, (e) => console.log(JSON.stringify({ code: (e.cause && e.cause.code) || e.name || "error" })));
+`;
+
+const PROBE_TIMEOUT_MS = 3000;
+const PROBE_MODEL = "claude-haiku-4-5";
+
+export interface RouteProbe {
+  live: boolean;
+  /** Operator-facing reason when not live. */
+  reason?: string;
+  /** Operator-facing fix when not live. */
+  fix?: string;
+}
+
+/** Interprets the probe child's output: 4xx = live (401 expected, nothing was
+ *  sent that could be accepted), refused/timeout/5xx = a broken hop. */
+export function interpretProbe(route: string, out: string): RouteProbe {
+  let r: { status?: number; code?: string; message?: string };
+  try {
+    r = JSON.parse(out.trim());
+  } catch {
+    return { live: false, reason: `router at ${route} gave no answer`, fix: "start it with: pai router start" };
+  }
+  if (r.status !== undefined) {
+    if (r.status < 500) return { live: true };
+    return {
+      live: false,
+      reason: `router upstream failed (${r.status}: ${r.message ?? ""})`, fix: "check router.claudeUpstream in config.yaml",
+    };
+  }
+  return { live: false, reason: `router at ${route} not reachable (${r.code ?? "error"})`, fix: "start it with: pai router start" };
+}
+
+/** Async probe of `route` — one unauthenticated POST /v1/messages, max_tokens 1. */
+export function probeRoute(route: string, model: string = PROBE_MODEL): Promise<RouteProbe> {
+  return new Promise((resolve) => {
+    execFile(process.execPath, ["-e", PROBE_SCRIPT, route, model, String(PROBE_TIMEOUT_MS)], { timeout: PROBE_TIMEOUT_MS + 2000 }, (_e, out) =>
+      resolve(interpretProbe(route, out ?? ""))
+    );
+  });
+}
+
+/** Sync probe for the interactive launch path. No credential is sent. */
+export function probeRouteSync(route: string, model: string = PROBE_MODEL): RouteProbe {
+  const r = spawnSync(process.execPath, ["-e", PROBE_SCRIPT, route, model, String(PROBE_TIMEOUT_MS)], {
+    encoding: "utf8",
+    timeout: PROBE_TIMEOUT_MS + 2000,
+  });
+  return interpretProbe(route, r.stdout ?? "");
+}
+
+/**
+ * `--settings` argv for a native interactive launch. Router enabled and the
+ * route dead (router down, or its upstream failing) = one stderr line naming
+ * the hop and the fix, and the session is pinned to api.anthropic.com instead.
+ * Otherwise the usual pin; a provider route (ANTHROPIC_BASE_URL set) is never probed.
+ */
+export function nativeLaunchSettingsArgs(
+  env: NodeJS.ProcessEnv,
+  model?: string,
+  probe: (route: string, model?: string) => RouteProbe = probeRouteSync,
+  routerEnabled: boolean = loadConfig().router.enabled
+): string[] {
+  if (!routerEnabled || env.ANTHROPIC_BASE_URL) return [];
+  const p = probe(routerUrl(), model);
+  if (p.live) return [];
+  process.stderr.write(`pai: ${p.reason} — launching direct to ${ANTHROPIC_FIRST_PARTY_URL}; ${p.fix}\n`);
+  return pinnedSettingsArgs(env, false);
 }
