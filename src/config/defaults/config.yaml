@@ -260,8 +260,11 @@ router:
       touchPressMs: 350
       # during a drag the page auto-scrolls within this of the viewport edge (px).
       edgeScrollPx: 40
-      # colour thresholds: a value at/above the Bad threshold colours red,
-      # at/above the Warn threshold amber, below the Warn threshold green.
+      # colour thresholds, stated per pair: for a limits gauge and an error
+      # rate higher is worse — a value at/above the Bad threshold colours red,
+      # at/above the Warn threshold amber, below the Warn threshold green. For
+      # the cache hit ratio lower is worse — below the Bad threshold red,
+      # below the Warn threshold amber, at/above the Warn threshold green.
       # gaugeWarnPct/gaugeBadPct are percentages of a limits gauge; the others
       # are ratios (0..1) of a cache hit ratio or an error rate.
       gaugeWarnPct: 70
