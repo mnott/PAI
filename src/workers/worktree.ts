@@ -14,7 +14,7 @@
  * place; `--no-worktree` opts out, `--worktree` forces one on.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { tmpdir, platform } from "node:os";
@@ -1530,19 +1530,42 @@ export function worktreesStats(logDir: string): { count: number; bytes: number }
   return { count: dirs.length, bytes: dirs.length ? dirBytes(root) : 0 };
 }
 
-const statsCache = new Map<string, { at: number; stats: { count: number; bytes: number } }>();
+const statsCache = new Map<string, { at: number; stats: { count: number; bytes: number }; refreshing: boolean }>();
 
-/** worktreesStats, recomputed at most once a minute per logDir (the cockpit polls every few seconds). */
+/** Bytes under `dir` (du -sk) without blocking the event loop, 0 when unreadable. */
+function dirBytesAsync(dir: string): Promise<number> {
+  return new Promise((resolve) => {
+    execFile("du", ["-sk", dir], { encoding: "utf8" }, (_e, stdout) => resolve((parseInt(String(stdout).split("\t")[0] ?? "", 10) || 0) * 1024));
+  });
+}
+
+/**
+ * Worktree count and size for the cockpit, which polls every few seconds on the router's event
+ * loop. The count is a cheap readdir; the size is a `du` over every worktree (seconds), so it is
+ * refreshed in the background at most once a minute and the last reading is served meanwhile.
+ * `bytes` is -1 until the first `du` has finished.
+ */
 export function worktreesStatsCached(logDir: string, now = Date.now()): { count: number; bytes: number } {
+  const root = worktreesDir(logDir);
   const hit = statsCache.get(logDir);
-  if (hit && now - hit.at < 60_000) return hit.stats;
-  const stats = worktreesStats(logDir);
-  statsCache.set(logDir, { at: now, stats });
-  return stats;
+  const count = existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
+  if (count === 0) return { count: 0, bytes: 0 };
+  if (!hit || (now - hit.at >= 60_000 && !hit.refreshing)) {
+    const entry = hit ?? { at: now, stats: { count, bytes: -1 }, refreshing: false };
+    entry.refreshing = true;
+    statsCache.set(logDir, entry);
+    void dirBytesAsync(root).then((bytes) => {
+      entry.stats = { count, bytes };
+      entry.at = Date.now();
+      entry.refreshing = false;
+    });
+  }
+  const cur = statsCache.get(logDir)!;
+  return { count, bytes: cur.stats.bytes };
 }
 
 export function formatWorktreesStats(s: { count: number; bytes: number }): string {
-  return `worktrees: ${s.count} (${(s.bytes / 1024 ** 3).toFixed(1)} GB)`;
+  return s.bytes < 0 ? `worktrees: ${s.count}` : `worktrees: ${s.count} (${(s.bytes / 1024 ** 3).toFixed(1)} GB)`;
 }
 
 /** Finished workers whose worktree is still on disk (not merged, not discarded, not archived). */

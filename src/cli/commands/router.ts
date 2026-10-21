@@ -7,6 +7,7 @@ import { parkConfigFrom, setParkConfigSource, sharedParker } from "../../router/
 import http from "node:http";
 import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, ROUTER_PORT } from "../../router/router.js";
 import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
 import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, setRuntimeSampler } from "../../router/cockpit.js";
@@ -168,10 +169,15 @@ const runCommand: CommandDef = {
         await startTier(cfg, tier, t);
       },
     });
-    const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());
+    // built once: each holds its own TTL cache, so a new one per request would reread every status file on every poll
+    const sessionMap = cachedSessionMap();
+    const workerWindows = cachedWorkerWindows();
+    const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
-    const handler = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp });
+    const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp });
+    const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
+    const handler = stalls.wrap(inner);
     return new Promise<number>(() => {
       const server = http.createServer(handler);
       const tail = remote ? http.createServer(handler) : undefined;

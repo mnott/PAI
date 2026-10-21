@@ -4,7 +4,7 @@
  * gets numbers and display names, never keys, bodies or prompt content.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
@@ -34,7 +34,7 @@ import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
 import { readSchedFile, schedPlain, sharedScheduler } from "./scheduler.js";
-import { isLive, loadStatus, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
+import { isLive, loadStatus, loadStatusesCached, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
 import { readProfiles } from "../workers/session-profile-store.js";
@@ -344,20 +344,47 @@ export function buildCockpitData(
   };
 }
 
-/** Reread the usage log only when its size or mtime changed. */
+/**
+ * The usage log as rows, kept in memory: a log that only grew is read from where the last read
+ * stopped (the router appends a row per request, so a full reread of tens of MB on every append
+ * would block the event loop); one that shrank or was replaced is read again from the start.
+ */
 export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
-  let key = "";
   let rows: UsageRow[] = [];
+  let offset = 0;
+  let mtimeMs = 0;
   return () => {
     try {
       const st = statSync(file);
-      const k = `${st.size}:${st.mtimeMs}`;
-      if (k !== key) {
-        rows = readUsage(file);
-        key = k;
+      if (st.size === offset && st.mtimeMs === mtimeMs) return rows;
+      if (st.size < offset) {
+        rows = [];
+        offset = 0;
       }
+      const fd = openSync(file, "r");
+      try {
+        const buf = Buffer.alloc(st.size - offset);
+        const n = readSync(fd, buf, 0, buf.length, offset);
+        const text = buf.subarray(0, n).toString("utf8");
+        const end = text.lastIndexOf("\n") + 1; // a torn last line waits for its newline
+        const added: UsageRow[] = [];
+        for (const l of text.slice(0, end).split("\n")) {
+          if (!l) continue;
+          try {
+            added.push(JSON.parse(l) as UsageRow);
+          } catch {
+            /* skip torn line */
+          }
+        }
+        if (added.length) rows = rows.concat(added);
+        offset += Buffer.byteLength(text.slice(0, end), "utf8");
+      } finally {
+        closeSync(fd);
+      }
+      mtimeMs = st.mtimeMs;
     } catch {
       rows = [];
+      offset = 0;
     }
     return rows;
   };
@@ -395,8 +422,19 @@ export function cachedWorkerWindows(ttlMs = 60_000): () => WorkerWindow[] {
  * cheap (unknown ids in the window only) and runs per request against the
  * rows being rendered.
  */
+const NAMED_TTL_MS = 30_000;
+const namedMemo = new WeakMap<object, { at: number; map: Map<string, SessionInfo> }>();
+
+/**
+ * Attributing every usage row to a worker window walks all rows against all windows (hundreds
+ * of ms on a big log), so the result is reused for as long as the session map it builds on lives.
+ */
 function namedSessionMap(rows: UsageRow[], sessionMap: () => Map<string, SessionInfo>, workerWindows: () => WorkerWindow[]): Map<string, SessionInfo> {
-  return withJobNames(withWorkerAttribution(sessionMap(), rows, workerWindows()), rows.map((r) => r.session_id));
+  const hit = namedMemo.get(sessionMap);
+  if (hit && Date.now() - hit.at < NAMED_TTL_MS) return hit.map;
+  const map = withJobNames(withWorkerAttribution(sessionMap(), rows, workerWindows()), rows.map((r) => r.session_id));
+  namedMemo.set(sessionMap, { at: Date.now(), map });
+  return map;
 }
 
 export function parseWindow(q: string | null): CockpitWindow {
@@ -660,7 +698,7 @@ function schedNames(logDir: string): Record<string, string> {
     /* a broken registry: the 8-char fallback stands */
   }
   try {
-    for (const s of loadStatuses(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
+    for (const s of loadStatusesCached(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
   } catch {
     /* no statuses: the 8-char fallback stands */
   }
@@ -725,7 +763,7 @@ export function cockpitQueue(
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
   const sessionMax: SessionLimits = {};
-  const statuses = loadStatuses(logDir);
+  const statuses = loadStatusesCached(logDir);
   for (const s of statuses) {
     const max = s.sessionKey ? getProfile(s.sessionKey)?.max_parallel : undefined;
     if (max && (s.state === "queued" || (s.state === "running" && isLive(s, owns)))) sessionMax[sessionGroup(s)] = max;
@@ -733,7 +771,7 @@ export function cockpitQueue(
   for (const s of statuses) {
     if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model });
   }
-  for (const r of queueRows(logDir, caps)) {
+  for (const r of queueRows(logDir, caps, undefined, statuses)) {
     const s = r.status;
     // a run held by its session's max_parallel waits in the session queue; it sits in its own provider's rows
     row(s && r.provider.startsWith("session~") ? s.provider : r.provider).waiting.push({

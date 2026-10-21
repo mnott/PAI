@@ -259,6 +259,7 @@ export interface CockpitLayout {
 const SHIPPED_PROBE = {
   timeoutStrikes: 3,
   tcpTimeoutMs: 3000,
+  stallLogMs: 1000,
 } as const;
 
 /** The local-server probe policy (`router.cockpit.probe`), read where the router builds its limits. */
@@ -267,6 +268,8 @@ export interface CockpitProbe {
   timeoutStrikes: number;
   /** TCP connect timeout of the local-server probe (ms). */
   tcpTimeoutMs: number;
+  /** an event-loop stall longer than this is written to the router log (ms). */
+  stallLogMs: number;
 }
 
 export function cockpitProbeSettings(): CockpitProbe {
@@ -277,6 +280,7 @@ export function cockpitProbeSettings(): CockpitProbe {
   return {
     timeoutStrikes: num(s, "timeoutStrikes", SHIPPED_PROBE.timeoutStrikes),
     tcpTimeoutMs: num(s, "tcpTimeoutMs", SHIPPED_PROBE.tcpTimeoutMs),
+    stallLogMs: num(s, "stallLogMs", SHIPPED_PROBE.stallLogMs),
   };
 }
 
