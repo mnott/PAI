@@ -623,3 +623,35 @@ describe("loop guard: a denied repeat gets its last output back", () => {
     expect(Object.values(s.last ?? {}).every((v) => v.length <= 8000)).toBe(true);
   });
 });
+
+describe("loop guard: a denied runner re-run gets the end of its last output", () => {
+  const cmd = "npx vitest run src/router/sessions.test.ts";
+  const out = [...Array.from({ length: 100 }, (_, i) => `line${i}`), "FAIL sessions", "API_KEY=abc123", "Tests 1 failed"].join("\n");
+  const run = (cfg?: { echoLines: number; echoChars: number; echoRunnerLines?: number }) => {
+    let s = emptyLoopState();
+    for (let i = 0; i < 2; i++) s = recordLoopResult(stepLoopGuard(s, "Bash", cmd, "fp").state, "Bash", cmd, out);
+    return stepLoopGuard(s, "Bash", cmd, "fp", Date.now(), undefined, cfg);
+  };
+  it("the third identical run is denied with the tail, not the head", () => {
+    const r = run();
+    expect(r.deny).toBe(true);
+    expect(r.reason).toContain("Its last output ended with:");
+    expect(r.reason).toContain("Tests 1 failed");
+    expect(r.reason).toContain("FAIL sessions");
+    expect(r.reason).not.toContain("line0\n");
+    expect(r.reason).toContain("Read the failure above and change code or the test before running it again.");
+  });
+  it("trims to echoRunnerLines and echoChars", () => {
+    const two = run({ echoLines: 40, echoChars: 3000, echoRunnerLines: 2 }).reason as string;
+    expect(two).toContain("Tests 1 failed");
+    expect(two).not.toContain("FAIL sessions");
+    const chars = run({ echoLines: 40, echoChars: 10, echoRunnerLines: 40 }).reason as string;
+    expect(chars).toContain("s 1 failed");
+    expect(chars).not.toContain("line99");
+  });
+  it("masks secret-looking lines", () => {
+    const r = run().reason as string;
+    expect(r).not.toContain("abc123");
+    expect(r).toContain("[line masked");
+  });
+});
