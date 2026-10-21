@@ -1305,9 +1305,9 @@ function localDetail(prov,pc,tot,age){
  *  scrollbar, sticky first column); below the phone breakpoint CSS turns each row
  *  into a stacked card — the column label rides on each cell as data-l. */
 function table(head,rows,tips){return'<div class="tw"><table><thead><tr>'+head.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+rows.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'}
-/** Verdict colour by prefix: ok* green, failed red, "report flagged" amber, the rest dim.
+/** Verdict colour by prefix: ok* green, failed red, "report flagged" and an escalated hand-off amber, the rest dim.
  *  A missing verdict is dim, never a crash. One helper for both verdict tables. */
-function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v).indexOf("failed")===0?"bad":String(v).indexOf("report flagged")>=0?"warn":"dim"}
+function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v).indexOf("failed")===0?"bad":String(v).indexOf("report flagged")>=0||String(v).indexOf("escalated")===0||String(v).indexOf("handed to session")===0?"warn":"dim"}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
 function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
 function renderSpeed(){

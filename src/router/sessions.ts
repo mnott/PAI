@@ -133,10 +133,14 @@ function workerVerdict(s: Record<string, unknown>): string {
     return `waiting (warm-up) ${Math.max(0, Math.floor(w.elapsedSec))}s/${Math.floor(w.limitSec)}s`;
   }
   if (s.state !== "done" && s.state !== "failed" && s.state !== "error") return String(s.state ?? "?");
-  if (s.state !== "done" || (typeof s.rc === "number" && s.rc !== 0)) return "failed";
-  // a clean run whose report the validator flagged is done, not failed
+  // a run that escalated handed its work on: say where it went, not "failed"
   const commits = typeof s.commits === "number" ? s.commits : undefined;
   const suffix = commits !== undefined ? ` · ${commits} commit${commits === 1 ? "" : "s"}` : "";
+  if (typeof s.escalated === "string" && s.escalated) {
+    return typeof s.escalatedTo === "string" && s.escalatedTo ? `escalated → ${s.escalatedTo}${suffix}` : "handed to session";
+  }
+  if (s.state !== "done" || (typeof s.rc === "number" && s.rc !== 0)) return "failed";
+  // a clean run whose report the validator flagged is done, not failed
   return s.reportValid === false ? `done · report flagged${suffix}` : `ok${suffix}`;
 }
 
