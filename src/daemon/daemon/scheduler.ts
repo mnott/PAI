@@ -21,7 +21,7 @@ import { buildsDir, listBuildsSync } from "../../builds/queue.js";
 import { stallMinutes } from "../../builds/config.js";
 import { buildStallTick } from "../../builds/stall.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
-import { probeRouter, routerIsStale, routerRunningPid, runRouterTick, spawnRouter } from "../../router/supervisor.js";
+import { probeRouter, routerSwapArgs, routerIsStale, routerRunningPid, runRouterTick, spawnRouter } from "../../router/supervisor.js";
 import { restartRouter } from "../../router/restart.js";
 import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
@@ -878,8 +878,7 @@ export function startRouterSupervisor(): void {
       restart: async () => {
         const r = await restartRouter({
           oldPid: routerRunningPid() ?? undefined,
-          spawnNew: () => spawnRouter(cliEntry(), ["--wait-bind", "10"]),
-          signalOld: (pid) => process.kill(pid, "SIGTERM"),
+          spawnNew: (old) => spawnRouter(cliEntry(), routerSwapArgs(old)),
           isUp: () => probeRouter(undefined, 500),
         });
         process.stderr.write(`[pai-daemon] Router supervisor: new build, router swapped (pid ${r.oldPid ?? "none"} -> ${r.newPid}, refused ${r.gapMs ?? 0} ms)\n`);

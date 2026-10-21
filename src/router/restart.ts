@@ -1,7 +1,6 @@
 export interface RestartDeps {
   oldPid: number | undefined;                 // running router, if any
-  spawnNew: () => number | undefined;         // starts the new router (it waits for the port itself), returns its pid
-  signalOld: (pid: number) => void;           // SIGTERM to the old router
+  spawnNew: (oldPid: number | undefined) => number | undefined; // starts the new router, returns its pid; it warms up, then stops oldPid itself and takes the port (see routerSwapArgs)
   isUp: () => Promise<boolean>;               // true when GET /cockpit/system answers on the router port
   now?: () => number;                         // default Date.now
   pollMs?: number;                            // default 50
@@ -23,7 +22,7 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
   const sleep = d.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
 
   // Start the new router first
-  const newPid = d.spawnNew();
+  const newPid = d.spawnNew(d.oldPid);
 
   let oldPid = d.oldPid;
   let signalTime: number | undefined = undefined;
@@ -32,11 +31,7 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
   let consecutiveFailures = 0;
   let maxGapMs = 0;
 
-  // If there's an old router, signal it to shut down
-  if (oldPid !== undefined) {
-    signalTime = now();
-    d.signalOld(oldPid);
-  }
+  if (oldPid !== undefined) signalTime = now();
 
   const startTime = now();
 

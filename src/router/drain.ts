@@ -1,8 +1,9 @@
 import http from 'http';
 
 /** Close the servers, force-closing what is still open after `timeoutMs` (router.drainMs in config.yaml). */
-export function drainServers(servers: http.Server[], opts: { timeoutMs: number }): Promise<void> {
-  const { timeoutMs } = opts;
+export function drainServers(servers: http.Server[], opts: { timeoutMs: number; idleGraceMs?: number }): Promise<void> {
+  const { timeoutMs, idleGraceMs = 0 } = opts;
+  const startedAt = Date.now();
 
   // Track servers that are already closed or not listening
   const closedServers = new Set<http.Server>();
@@ -48,7 +49,6 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number }
             handleServerClose(server);
             resolve();
           } else {
-            // Call closeIdleConnections after close callback
             server.closeIdleConnections();
             handleServerClose(server);
             resolve();
@@ -71,7 +71,7 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number }
   // Set up periodic idle connection cleanup
   idleCloseTimer = setInterval(() => {
     for (const server of servers) {
-      if (closingServers.has(server)) {
+      if (closingServers.has(server) && Date.now() - startedAt >= idleGraceMs) {
         server.closeIdleConnections();
       }
     }

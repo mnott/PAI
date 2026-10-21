@@ -99,6 +99,7 @@ A port other than the default never touches the pid file.
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--port PORT` | string | 8790 | Port to listen on |
+| `--replace PID` | string | — | After warming up, stop this router (SIGTERM) and take over its port (used by `pai router restart`) |
 | `--usage-file PATH` | string | — | Read the cockpit's accounting from this file and record nothing (second instances) |
 | `--wait-bind SECONDS` | string | — | Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`) |
 

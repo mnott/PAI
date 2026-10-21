@@ -20,7 +20,7 @@ import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
-import { routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { routerSwapArgs, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { loadConfig } from "../../daemon/config.js";
@@ -86,6 +86,7 @@ const runCommand: CommandDef = {
     "A port other than the default never touches the pid file.",
   options: [
     { name: "port", type: "string", value: "PORT", default: String(routerPort()), summary: "Port to listen on" },
+    { name: "replace", type: "string", value: "PID", summary: "After warming up, stop this router (SIGTERM) and take over its port (used by `pai router restart`)" },
     { name: "usage-file", type: "string", value: "PATH", summary: "Read the cockpit's accounting from this file and record nothing (second instances)" },
     { name: "wait-bind", type: "string", value: "SECONDS", summary: "Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`)" },
   ],
@@ -181,10 +182,25 @@ const runCommand: CommandDef = {
     const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
     const handler = stalls.wrap(inner);
     return new Promise<number>(() => {
-      const server = http.createServer(handler);
-      const tail = remote ? http.createServer(handler) : undefined;
+      // after SIGTERM the open keep-alive sockets stay served by this process, each reply tells its client to reconnect (to the new router)
+      let draining = false;
+      const serving: typeof handler = (req, res) => {
+        if (draining) res.setHeader("Connection", "close");
+        return handler(req, res);
+      };
+      const server = http.createServer(serving);
+      const tail = remote ? http.createServer(serving) : undefined;
       const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
-      listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs }).then(() => {
+      // the old router keeps serving through this process's warm-up: it is stopped only now, so the port is refused for one retry interval
+      const replace = Number(ctx.opts.replace ?? 0);
+      if (replace > 0) {
+        try {
+          process.kill(replace, "SIGTERM");
+        } catch {
+          /* already gone */
+        }
+      }
+      listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs, intervalMs: 1 }).then(() => {
         if (!managed) return;
         mkdirSync(dirname(routerPidFile()), { recursive: true });
         writeFileSync(routerPidFile(), String(process.pid));
@@ -193,7 +209,7 @@ const runCommand: CommandDef = {
         process.exit(1);
       });
       if (tail) {
-        listenRetry(tail, port, addr, { waitMs: waitBindMs }).then(async () => {
+        listenRetry(tail, port, addr, { waitMs: waitBindMs, intervalMs: 1 }).then(async () => {
           out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
         }, (e: unknown) => {
           process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
@@ -201,7 +217,8 @@ const runCommand: CommandDef = {
         });
       }
       const bye = () => {
-        void drainServers(tail ? [server, tail] : [server], { timeoutMs: loadConfig().router.drainMs }).then(() => {
+        draining = true;
+        void drainServers(tail ? [server, tail] : [server], { timeoutMs: loadConfig().router.drainMs, idleGraceMs: 1500 }).then(() => {
           if (managed) {
             try {
               if (readFileSync(routerPidFile(), "utf8").trim() === String(process.pid)) unlinkSync(routerPidFile());
@@ -227,8 +244,7 @@ const restartCommand: CommandDef = {
   async run() {
     const result = await restartRouter({
       oldPid: routerRunningPid() ?? undefined,
-      spawnNew: () => spawnRouter(process.argv[1]!, ["--wait-bind", "10"]),
-      signalOld: (pid) => process.kill(pid, "SIGTERM"),
+      spawnNew: (old) => spawnRouter(process.argv[1]!, routerSwapArgs(old)),
       isUp: () => probeRouter(routerPort(), 500)
     });
     out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms)`));
