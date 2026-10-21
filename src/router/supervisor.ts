@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { paiHomePath } from "../config/pai-home.js";
 import { dirname } from "node:path";
 import { connect } from "node:net";
@@ -50,15 +50,34 @@ export function probeRouter(port = routerPort(), timeoutMs = LOCAL_PROBE_TIMEOUT
   });
 }
 
+/**
+ * True when the running router predates the current build: the router writes
+ * its pid file once it is bound, so an entry file newer than that means it
+ * still serves old code.
+ */
+export function routerIsStale(cliEntry: string): boolean {
+  try {
+    return statSync(cliEntry).mtimeMs > statSync(routerPidFile()).mtimeMs;
+  } catch {
+    return false;
+  }
+}
+
 export interface RouterTickDeps {
   probe: () => Promise<boolean>;
   start: () => void;
+  /** Optional: true when the answering router predates the current build. */
+  stale?: () => boolean;
+  /** Required with `stale`: gapless swap (new router waits for the port, old one drains). */
+  restart?: () => Promise<void>;
 }
 
-/** One health check: starts the router when down, never replaces a live router. */
-export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "started"> {
+/** One health check: starts the router when down, swaps it gaplessly when the build changed. */
+export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "started" | "restarted"> {
   if (await deps.probe()) {
-    return "up";
+    if (!deps.stale?.() || !deps.restart) return "up";
+    await deps.restart();
+    return "restarted";
   }
   deps.start();
   return "started";
