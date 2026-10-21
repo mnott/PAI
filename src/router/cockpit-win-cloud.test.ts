@@ -1,5 +1,5 @@
 /**
- * B7 `cloud`: the real page with ?win=1 shows limits as server / down-list / provider cards, start and stop through runAction. Headless Chromium, skipped when none is installed.
+ * B7 `cloud`: the real page with  shows limits as server / down-list / provider cards, start and stop through runAction. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes cloud-<width>-<theme>.png.
  */
 
@@ -43,7 +43,7 @@ var o={err:window.__err||null,gyro:txt("limits.local.srv:gyro"),iq3s:txt("limits
  downHidden:!card("limits.local.down")||card("limits.local.down").style.display==="none",
  over:["limits.local.srv:gyro","limits.cloud:glm","limits.cloud:claude"].map(function(i){var b=card(i)&&card(i).querySelector(".cbody");return b?[i,b.scrollHeight-b.clientHeight]:[i,-1]}),
  scrollbarColor:card("limits.cloud:glm")?getComputedStyle(card("limits.cloud:glm").querySelector(".cbody")).scrollbarColor:null,
- oldCl:getComputedStyle(document.querySelector('[data-section="cloud"]')).display,
+ 
  vis:Array.prototype.filter.call(document.querySelectorAll("#win-root .card"),function(c){return c.style.display!=="none"}).map(function(c){return c.getAttribute("data-card")})};
 if(!card("limits.local.srv:gyro")){document.body.setAttribute("data-r",JSON.stringify(o));return}
 var stop=card("limits.local.srv:gyro").querySelector('[data-act="stop"]');
@@ -98,10 +98,10 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B7 cloud on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B7 cloud on the win runtime", () => {
   it("server cards, the down list and provider cards replace the old section", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "cloud-1400-light.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "cloud-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     expect(r.vis).toEqual(expect.arrayContaining(["limits-local", "limits.local.srv:gyro", "limits.local.srv:iq3s", "limits.local.down", "limits-cloud", "limits.cloud:glm", "limits.cloud:claude"]));
     expect(r.gyro).toContain("up");
@@ -112,7 +112,6 @@ describe.skipIf(!CHROME)("B7 cloud on the win runtime (?win=1)", () => {
     expect(r.gauges).toBe(2);
     expect(r.glm).toContain("60%");
     expect(r.claude).toContain("no reading");
-    expect(r.oldCl).toBe("none");
     // F1/F2: a card's default height fits its content (no overflow scroll, the gauge labels are not clipped)
     for (const [id, over] of r.over) expect(over, id).toBeLessThanOrEqual(0);
     expect(r.scrollbarColor).not.toBe("auto");
@@ -121,17 +120,17 @@ describe.skipIf(!CHROME)("B7 cloud on the win runtime (?win=1)", () => {
   it("F3: with no local model down the down list card is not shown; it is shown with one", async () => {
     coderUp = true;
     try {
-      const r = await open("?win=1", 1400);
+      const r = await open("", 1400);
       expect(r.err).toBeNull();
       expect(r.downHidden).toBe(true);
       expect(r.vis).not.toContain("limits.local.down");
     } finally { coderUp = false; }
-    expect((await open("?win=1", 1400)).downHidden).toBe(false);
+    expect((await open("", 1400)).downHidden).toBe(false);
   }, 120_000);
 
   it("stop confirms on a second click and posts local.stop; start posts local.start; status shows the result", async () => {
     posts.length = 0;
-    const r = await open("?win=1", 1400);
+    const r = await open("", 1400);
     expect(r.armed).toContain("click again");
     expect(posts).toContainEqual({ action: "local.stop", target: "gyro" });
     expect(posts).toContainEqual({ action: "local.start", target: "coder" });
@@ -139,10 +138,4 @@ describe.skipIf(!CHROME)("B7 cloud on the win runtime (?win=1)", () => {
     expect(r.startSt).toBe("done");
   }, 120_000);
 
-  it("without the flag the old cloud section is unchanged", async () => {
-    const r = await open("", 1400);
-    expect(r.err).toBeNull();
-    expect(r.oldCl).not.toBe("none");
-    expect(r.vis).toEqual([]);
-  }, 120_000);
 });

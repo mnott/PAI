@@ -1,6 +1,5 @@
-/** cockpit-page — the win runtime on the page, behind ?win=1 (spec 7 preamble): the A-core strings in
- *  their own function scope (their helper names do not meet the page's), the converted sections' cards,
- *  and Win.init on main#win-root. Without the flag nothing here runs and the old page is untouched. */
+/** cockpit-page — the win runtime on the page: the A-core strings in their own function scope (their
+ *  helper names do not meet the page's), the cards of every section, and Win.init on main#win-root. */
 
 import type { CockpitLayout } from "../cockpit-layout.js";
 import type { Num, Str } from "./types.js";
@@ -30,17 +29,17 @@ import { WIN_SELECT_JS } from "./win/select.js";
 /** The runtime source: the pure parts plus the card runtime, returning {Win, leaf, split, anchorInit}. */
 export const WIN_RUNTIME_JS = [WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS, WIN_INFO_JS, WIN_ANCHOR_JS, WIN_CARD_JS].join("\n");
 
-export const scriptWin = (_L: CockpitLayout, _n: Num, _q: Str, _hex: Str): string => String.raw`/* win runtime (?win=1) */
+export const scriptWin = (_L: CockpitLayout, _n: Num, _q: Str, _hex: Str): string => String.raw`/* win runtime */
 /*win-begin*/
-var WINON=/[?&]win=1(&|$)/.test(location.search),Win=null,WinT=null,WinA=null,WIN_HOST=null;
-if(WINON){
+var Win=null,WinT=null,WinA=null,WIN_HOST=null;
+{
  WinT=(function(){
 ${WIN_RUNTIME_JS}
   return{Win:Win,leaf:leaf,split:split,anchorInit:anchorInit};
  })();
  Win=WinT.Win;window.Win=Win;
 }
-if(WINON){
+{
  WinA=(function(){
 ${WIN_ACTIONS_JS}
 ${WIN_SELECT_JS}
@@ -52,7 +51,6 @@ ${WIN_SELECT_JS}
 function winHost(){
  return{fetch:WIN_HOST.fetch,setStatus:WIN_HOST.setStatus,setBusy:WIN_HOST.setBusy,clearStatus:WIN_HOST.clearStatus,refresh:function(){},announce:WIN_HOST.announce};
 }
-if(WINON){
 ${WIN_TYPES_JS}
 ${WIN_KPIS_JS}
 ${WIN_POOL_JS}
@@ -79,33 +77,11 @@ ${WIN_CACHE_JS}
   return{tree:WinT.split("c",leaves,px),kids:kids,stDefaults:st,cards:cards};
  }
  (function(){
-  var root=document.getElementById("win-root"),old=document.querySelector('[data-section="kpis"]');
-  if(!root)return;
-  root.hidden=false;document.body.classList.add("winon");
-  // the converted section lives in the new root; its old container stays in the DOM (the old render still fills it) but is not shown
-  if(old)old.style.display="none";
-  var oldPool=document.querySelector('[data-section="pool"]');if(oldPool)oldPool.style.display="none";
-  var oldSys=document.querySelector('[data-section="system"]');if(oldSys)oldSys.style.display="none";
-  var oldMem=document.querySelector('[data-section="memory"]');if(oldMem)oldMem.style.display="none";
-  var oldMdl=document.querySelector('[data-section="models"]');if(oldMdl)oldMdl.style.display="none";
-  var oldRt=document.querySelector('[data-section="routing"]');if(oldRt)oldRt.style.display="none";
-  var oldCl=document.querySelector('[data-section="cloud"]');if(oldCl)oldCl.style.display="none";
-  var oldCa=document.querySelector('[data-section="cache"]');if(oldCa)oldCa.style.display="none";
-  var oldWk=document.querySelector('[data-section="workers"]');if(oldWk)oldWk.style.display="none";
-  var oldTk=document.querySelector('[data-section="tokens"]');if(oldTk)oldTk.style.display="none";
-  var oldDy=document.querySelector('[data-section="daily"]');if(oldDy)oldDy.style.display="none";
-  ["speed","pause","sessions","runs"].forEach(function(k){var o=document.querySelector('[data-section="'+k+'"]');if(o)o.style.display="none"});
+  var root=document.getElementById("win-root");
   Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[cacheDefaults(),620],[workersDefaults(),420],[modelsDefaults(),520]].concat(chartsDefaults().parts).concat(tablesDefaults().parts).concat([[registryDefaults(),460]])));
   wrgStart();
-  // the limits poll already calls renderRouting: the routing cards ride on it
-  var oldRender=renderRouting;renderRouting=function(){oldRender();if(lim){winFeedLimits(lim);limitsSync(lim)}};
-  // the queue feed: the win cards first, so a throwing old panel cannot leave them empty
-  var oldQueue=renderQueue;renderQueue=function(q){try{winFeedQueue(q)}finally{oldQueue(q)}};
-  var oldDonuts=renderDonuts;renderDonuts=function(){oldDonuts();winFeedCache()};
-  var oldRenderM=renderModels;renderModels=function(){if(mdl)winFeedModels(mdl);oldRenderM()};
   window.winFeedModels=winFeedModels;window.winFeedSystem=winFeedSystem;window.winFeedMemory=winFeedMemory;window.winFeedLimits=winFeedLimits;
   WinT.anchorInit(document,window,root);
  })();
-}
 /*win-end*/
 `;

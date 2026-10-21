@@ -440,18 +440,15 @@ describe("cockpit action endpoint", () => {
     try {
       const page = await ask(srv, "/cockpit", "GET");
       expect(page.status).toBe(200);
-      expect(page.body).toContain('data-a="local.start"');
-      expect(page.body).toContain('data-a="local.scale"');
-      expect(page.body).not.toContain('data-a="local.switch"');
-      expect(page.body).toContain('data-a="local.off"');
-      expect(page.body).toContain('data-a="runtime"');
-      expect(page.body).toContain("pai.cockpit.models.folded");
-      expect(page.body).toContain('data-section="routing"');
+      // the window runtime registers the action rows (spec 5.2); the old data-a markup is gone
+      expect(page.body).toContain('<main id="win-root">');
+      expect(page.body).toContain('"local.start":{');
+      expect(page.body).toContain('"local.scale":{');
+      expect(page.body).not.toContain('"local.switch":{');
+      expect(page.body).toContain('"local.off":{');
+      expect(page.body).toContain('"runtime":{fields:["target","value"]');
       expect(page.body).toContain("model.label");
-      expect(page.body).toContain("in flight - click again to stop");
-      expect(page.body).toContain('id="localoff"');
-      expect(page.body).toContain('class="pgroup" data-prov=');
-      expect(page.body).toContain('<div class="phead">');
+      expect(page.body).toContain('class="phead"');
       expect(page.body).not.toMatch(/\balert\(/);
       expect(page.body).not.toMatch(/\bconfirm\(/);
       expect(page.body).not.toMatch(/\bprompt\(/);

@@ -1,5 +1,5 @@
 /**
- * B11 `speed`, `pause`, `sessions`, `runs`: the real page with ?win=1 shows four cards built from the page's own table builders;
+ * B11 `speed`, `pause`, `sessions`, `runs`: the real page with  shows four cards built from the page's own table builders;
  * the runs fold and the sessions "+N more" row are row-level disclosures, a value-only update moves no box. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes tables-<width>.png.
  */
@@ -31,7 +31,7 @@ function q(id){return document.querySelector('#win-root [data-card="'+id+'"]')}
 function box(id){var r=q(id).getBoundingClientRect();return[r.left,r.top,r.width,r.height].map(Math.round).join(",")}
 function info(id){var c=q(id);return{rows:c.querySelectorAll("tbody tr").length,types:c.getAttribute("data-type"),bars:c.querySelectorAll(".sp-t").length,heads:c.querySelectorAll(".chead .ctitle").length,
  groups:c.querySelectorAll(".wr-group").length,wrows:c.querySelectorAll(".wr-row").length,folds:c.querySelectorAll("[data-wrfold]").length,more:c.querySelectorAll("[data-sessmore]").length,text:c.querySelector(".cbody").textContent.length}}
-var ids=["speed","pause","sessions","runs"],o={err:window.__err||null,old:ids.map(function(i){return getComputedStyle(document.querySelector('[data-section="'+i+'"]')).display}).join(","),boxes:ids.map(box).join("|")};
+var ids=["speed","pause","sessions","runs"],o={err:window.__err||null,boxes:ids.map(box).join("|")};
 ids.forEach(function(i){o[i]=info(i)});
 q("runs").querySelector("[data-wrfold]").click();o.afterFold=info("runs");o.foldSaved=localStorage.getItem("pai.cockpit.wrfold");
 q("sessions").querySelector("[data-sessmore]").click();o.afterMore=info("sessions");o.moreSaved=localStorage.getItem("pai.cockpit.sessmore");
@@ -79,12 +79,11 @@ async function open(query: string, width: number, shot?: string) {
 }
 
 
-describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", () => {
   it("renders the four cards from the page builders; folds are row-level; a value update moves no box", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "tables-1400.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "tables-1400.png") : undefined);
     expect(r.err).toBeNull();
-    expect(r.old).toBe("none,none,none,none");
     expect(r.speed.bars).toBe(6); // 2 models x (ttft, write, read)
     expect(r.pause.rows).toBe(2);
     expect(r.sessions.rows).toBe(10 + 1); // top rows + the "+N more" row

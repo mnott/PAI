@@ -64,7 +64,7 @@ function memJobView(j,m){
  if(j.finished){
   var f=j.finished,ok=f.outcome==="done",bad=f.outcome==="failed";
   return{v:j.pct==null?null:j.pct.toFixed(1),u:"%",s:"finished · "+(ok?"ok":bad?"failed":esc(f.outcome)),
-   x:memLine("",fmt(j.done)+(j.total!=null?" / "+fmt(j.total):"")+" done · took "+memDur(f.durationSec))+memLine("dim","ended "+memAt(f.endedAt)+(j.by?" · by "+esc(j.by):""))+(f.reason&&!ok?memLine("warn",esc(f.reason)):"")};
+   x:memLine("",fmt(j.done)+(j.total!=null?" / "+fmt(j.total):"")+" done · took "+memDur(f.durationSec)+(j.rate!=null?" · "+j.rate.toFixed(1)+" chunks/s average":""))+memLine("dim","ended "+memAt(f.endedAt)+(j.by?" · by "+esc(j.by):""))+(f.reason&&!ok?memLine("warn",esc(f.reason)):"")};
  }
  var run=m&&m.run&&j.id==="run-"+m.run.kind?m.run:null;
  var x=memLine("",fmt(j.done)+(j.total!=null?" / "+fmt(j.total):"")+" done · ETA "+(j.etaSec==null?"–":memDur(j.etaSec))+(j.doneAt?" · about "+memClock(j.doneAt):""))+
@@ -76,7 +76,7 @@ function memPassesView(m){
  var ps=m.passes||[],x="",bad=ps.some(function(p){return p.state==="failed"});
  ps.forEach(function(p){
   var col=p.state==="failed"?"bad":p.state==="running"?"warn":"ok";
-  x+=memLine("",'<b>'+esc(p.name)+'</b> <span class="'+col+'">'+p.state+'</span> · last '+(p.last?memAt(p.last.at)+(p.last.chunks!=null?" · "+fmt(p.last.chunks)+" chunks":"")+" · "+esc(p.last.result):p.lastEnd?memAt(p.lastEnd):"none since start")+(p.nextAt?" · next "+memAt(p.nextAt):""));
+  x+=memLine("",'<b>'+esc(p.name)+'</b> <span class="'+col+'">'+p.state+'</span> · last '+(p.last?memAt(p.last.at)+(p.last.chunks!=null?" · "+fmt(p.last.chunks)+" chunks":"")+" · "+esc(p.last.result)+(p.last.by?" · by "+esc(p.last.by):""):p.lastEnd?memAt(p.lastEnd):"none since start")+(p.nextAt?" · next "+memAt(p.nextAt):""));
   if(p.failure)x+=memLine("bad",esc(p.failure.error)+" ("+(p.failure.gaveUp?"gave up until next scheduled run":p.failure.retryAt?"retry at "+memAt(p.failure.retryAt):"no retry scheduled")+")");
  });
  var sc=m.schedule;
@@ -109,7 +109,7 @@ function memJobSync(m){
   var id="memory.job:"+list[i].id;
   if(WMEM_JOBS[id])continue;
   WMEM_JOBS[id]=1;
-  specs.push({id:id,type:"metricm",title:(list[i].kind==="reembed"?"Re-embed ":"")+list[i].name,feeds:["memory"],view:memMetricView});
+  specs.push({id:id,type:"metricm",title:(list[i].finished?"Last ":"")+(list[i].kind==="reembed"?"Re-embed ":"")+list[i].name,feeds:["memory"],view:memMetricView});
   rows.push([id]);
  }
  if(specs.length&&Win.addCards("memory",specs,rows))Win.update("memory",m);

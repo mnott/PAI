@@ -21,20 +21,6 @@ function lowChips(ms){
  var tt=low.map(function(m){var dn=m.cacheRead+m.cacheWrite+m.input;return m.provider+" · "+m.model+": "+m.requests+" req"+(dn&&m.cacheRead+m.cacheWrite>0?", hit "+pct(m.cacheRead/dn):"")}).join("\n");
  return'<span class="chip dim" title="'+esc(tt)+'">+'+low.length+' model'+(low.length===1?'':'s')+' with &lt;'+LOW_REQ+' requests</span>';
 }
-/** One tile per provider/model, all the same shape: ring, provider, model + req. Loopback without cache fields: the server prefix-cache ring, else an empty ring. Models under LOW_REQ requests are dimmed, sorted last and never red. */
-function ringTiles(ms,servers){
- var list=Object.keys(ms).map(function(k){return ms[k]}).filter(function(m){return m.requests>=LOW_REQ});
- list.sort(function(a,b){var la=a.requests<LOW_REQ?1:0,lb=b.requests<LOW_REQ?1:0;return la!==lb?la-lb:b.requests-a.requests});
- assignColors(list.map(function(m){return m.model}));
- return list.map(function(m){
-  var dn=m.cacheRead+m.cacheWrite+m.input,low=m.requests<LOW_REQ,ring,cap="";
-  var srv=(servers||[]).filter(function(s){return s.provider===m.provider})[0];
-  if(m.cacheRead+m.cacheWrite>0){var r=dn?m.cacheRead/dn:0;ring=low?(r>0?donut(r):emptyRing()):donut(r)}
-  else if(srv&&srv.prefixCache&&!low){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache'+ageMark(srv)+'</div>'}
-  else{ring=emptyRing();cap='<div class="s">'+(lim?"not reported":'<span class="dim" title="loading: first limits poll pending">…</span>')+'</div>'}
-  return'<div class="ring"'+tileAttrs(m.provider+" / "+m.model,ringName(m.model),low?"–":(dn?Math.round(m.cacheRead/dn*100)+"%":"–"))+'>'+tileGrip(ringName(m.model))+ring+'<div class="n">'+esc(ringName(m.model))+'</div><div class="s">'+esc(m.provider)+' · '+m.requests+' req</div>'+cap+'</div>'
- }).join("");
-}
 /** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
 /** " (Ns old)" when the server counter is a kept reading older than one poll interval (60 s). */
 function ageMark(s){
@@ -44,13 +30,6 @@ function provHit(p,servers){
  var srv=(servers||[]).filter(function(s){return s.provider===p.provider})[0];
  if(p.cacheRead+p.cacheWrite>0||!srv)return pct(p.hitRatio);
  return srv.prefixCache?'<span title="server prefix-cache counter since server start">'+pct(srv.prefixCache.hitRate)+'*</span>'+ageMark(srv):'<span class="dim">n/a</span>';
-}
-/** Line under a local server's ring: tokensSaved (server counter, since server start) against the router log's prompt total (since its first row). */
-function reuseLine(pc,tot,since){
- var w=since?" since "+since.slice(0,16).replace("T"," "):"";
- if(!tot)return'<div class="s dim" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start); no prompt tokens in the router log.">cached '+fmt(pc.tokensSaved)+' · no log</div>';
- if(tot<pc.tokensSaved)return'<div class="s" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved (server counter, since server start) vs '+fmt(tot)+' prompt tokens in the router log'+w+' — windows differ, no ratio.">cached '+fmt(pc.tokensSaved)+' vs '+fmt(tot)+' (windows differ)</div>';
- return'<div class="s" title="Prompt tokens served from cache: '+fmt(pc.tokensSaved)+' saved by the server since it started, of '+fmt(tot)+' prompt tokens in the router log'+w+'.">cached '+pct(pc.tokensSaved/tot)+' · '+fmt(pc.tokensSaved)+' / '+fmt(tot)+'</div>';
 }
 /** One compact line per loopback provider (no ring: the providers grid tile already shows the hit rate). */
 function localDetail(prov,pc,tot,age){
@@ -82,8 +61,6 @@ function table(head,rows,tips,tdStyle){
 /** Verdict colour by prefix: ok* green, failed red, "report flagged" and an escalated hand-off amber, the rest dim.
  *  A missing verdict is dim, never a crash. One helper for both verdict tables. */
 function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v).indexOf("failed")===0?"bad":String(v).indexOf("report flagged")>=0||String(v).indexOf("escalated")===0||String(v).indexOf("handed to session")===0?"warn":"dim"}
-/** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
-function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
 /** Speed per model as bars. One row per model, three columns (TTFT p50 with a whisker to p90, output tok/s, prompt read tok/s), each on ONE scale shared by all rows.
  *  Window: "1h" reads h1, every other selector value reads h24 (the server keeps only those two). A missing value is an empty bar and "–", never 0.
  *  localSet: provider names served by a local server. Pure (no DOM) so the tests can run it. */
@@ -111,14 +88,6 @@ function speedHtml(){
  ((sys&&sys.servers)||[]).forEach(function(s){ls[s.provider]=1});((lim&&lim.limits)||[]).forEach(function(l){if(l.kind==="local")ls[l.provider]=1});
  return sp.length?speedBars(sp,win,ls):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>';
 }
-function renderSpeed(){setHtml($("speed"),speedHtml())}
-/** Providers: provider, req, err%, hit% by default; retries, avg ms, ttft p50 and tokens ride in the provider cell's title (retries also as a badge). */
-function renderProviders(d){
- setHtml($("providers"),table(["provider .txt","req","err%","hit%"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);
-  var tt="retries "+p.retries+" · avg "+p.avgMs+" ms · ttft p50 "+(p.ttftP50!=null?fmt(p.ttftP50)+" ms":"-")+" · tokens "+fmt(tot(p));
-  return['<span title="'+esc(tt)+'">'+esc(p.provider)+(p.retries?' <span class="warn">↻'+p.retries+'</span>':'')+'</span>',p.requests,'<span class="'+cls(e,ERROR_WARN,ERROR_BAD)+'">'+pct(e)+'</span>',provHit(p,(sys&&sys.servers)||[])]}),{"err%":"Share of requests that failed.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
-  '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div><div class="dim">Hover a provider for retries, average ms, TTFT p50 and tokens.</div>');
-}
 /** Sessions by tokens: name column capped, models as first +N, rows past the top N folded into one expandable row (state in localStorage like folds). */
 var SESS_MORE_KEY="pai.cockpit.sessmore";
 function sessMore(){try{return localStorage.getItem(SESS_MORE_KEY)==="1"}catch(e){return false}}
@@ -134,19 +103,6 @@ function sessionsHtml(d){
  }
  var cap="width:${n(L.sessionNameMaxPct)}%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
  return table(["session .txt","models .txt","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"});
-}
-function renderSessions(d){
- var el=$("sessions");
- setHtml(el,sessionsHtml(d));
- el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-sessmore")!=null))t=t.parentNode;
-  if(!t||t===el)return;ev.preventDefault();try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(e){}renderSessions(data)};
-}
-/** Short verdict word from the same verdict string vcls reads; a commit count becomes a "· Nc" suffix. */
-function vshort(v){
- if(v==null)return"worker";
- v=String(v);var m=/ · (\d+) commits?$/.exec(v),c=m?" · "+m[1]+"c":"";
- var w=v.indexOf("ok")===0?"ok":v.indexOf("failed")===0?"failed":v.indexOf("report flagged")>=0?"flagged":v.indexOf("escalated")===0?"escalated ↗":v.indexOf("handed")===0?"handed":v.indexOf("running")===0||v.indexOf("waiting")===0?"running":v.indexOf("stopped")===0?"stopped":v.split(/[ :(]/)[0];
- return w+c;
 }
 /** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
 function workerGroups(ws,W){
@@ -172,12 +128,6 @@ function workersHtml(d){
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
    return'<div class="wr-row" title="'+esc(full)+'"><i class="wr-dot wr-'+st+'" title="'+esc(s.verdict||"worker")+'"></i><span class="wr-lab">'+esc(lab)+'</span><span class="badge" title="'+esc((s.models||[]).join(", ")||"no model")+'">'+esc(model)+'</span><span class="wr-bar" title="weighted tokens: '+fmt(r.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(r.w?fmt(r.w):"–")+'</span><span class="wr-du">'+du+'</span><span class="'+hitCls(s.hitRatio)+'" title="cache hit">'+(s.requests?pct(s.hitRatio):"–")+'</span></div>'}).join("")+'</div>'}).join("");
 }
-function renderWorkers(d){
- var el=$("workers");
- setHtml(el,workersHtml(d));
- el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-wrfold")!=null))t=t.parentNode;
-  if(!t||t===el)return;ev.preventDefault();var f=wrFolded(),k=t.getAttribute("data-wrfold");if(f[k])delete f[k];else f[k]=1;try{localStorage.setItem(WR_FOLD_KEY,JSON.stringify(f))}catch(e){}renderWorkers(data)};
-}
 /** Cache verdict by pause: one row per model, hit% and request count per pause bucket. */
 function pauseHtml(d){
  var ph=d.cachePause.map(function(cm){
@@ -185,62 +135,8 @@ function pauseHtml(d){
  });
  return ph.length?table(["model (hit% n) .txt"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>';
 }
-function renderDonuts(){ renderSpeed();
- if(!data)return;var d=data,t=d.totals,ms={};
- d.byModel.forEach(function(m){var k=m.provider+"\u0000"+m.model,o=ms[k]||(ms[k]={provider:m.provider,model:m.model,cacheRead:0,cacheWrite:0,input:0,requests:0});o.cacheRead+=m.cacheRead;o.cacheWrite+=m.cacheWrite;o.input+=m.input;o.requests+=m.requests});
- var mk=Object.keys(ms),dh="",allSrv2=(sys&&sys.servers)||[];
- if(mk.length===1&&ms[mk[0]].cacheRead+ms[mk[0]].cacheWrite>0){var m=ms[mk[0]],dn=m.cacheRead+m.cacheWrite+m.input;
-  dh='<div class="solo">'+donut(dn?m.cacheRead/dn:0,${L.bigDonutSizePx})+'<div class="bignum">'+pct(t.hitRatio)+'<span>overall hit ratio</span><span>'+esc(m.provider)+' · '+esc(m.model)+' · '+m.requests+' req</span></div></div>';
- }else{dh=ringTiles(ms,allSrv2);if(dh)dh='<div class="tset" data-tkey="rings">'+dh+'</div>'}
- var lowc=dh.indexOf('class="solo"')>=0?"":lowChips(ms);
- setHtml($("donut"),dh||(lowc?"":'<span class="dim">no data</span>'));
- orderTiles($("donut"));
- setHtml($("donutlow"),lowc);
- function chip(l,v,tt){return'<span class="chip"'+(tt?' title="'+esc(tt)+'"':'')+'>'+l+' <b>'+v+'</b></span>'}
- var note=chip("overall",pct(t.hitRatio),"cache_read / (read + write + fresh input), all providers and models");
- var sk=d.sessionSplit;
- if(sk)note+=chip("continuous",pct(sk.continuous.hitRatio)+" ("+sk.continuous.sessions+" sess)","continuous sessions: "+sk.continuous.sessions+" sessions, "+sk.continuous.requests+" requests")+chip("one-shot",pct(sk.oneShot.hitRatio)+" ("+sk.oneShot.sessions+" sess)","one-shot sessions: "+sk.oneShot.sessions+" sessions, "+sk.oneShot.requests+" requests");
- if(d.pool&&d.pool.tasks)note+=chip("pool",d.pool.tasks+" task(s) · "+fmt(d.pool.tokensCarried),d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried");
- setHtml($("donutnote"),note);
- var loc=(sys&&sys.servers||[]).filter(function(s){return s.up!==false});
- var lh="";
- loc.forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(data.promptByProvider||{})[s.provider],ageMark(s))});
- $("donutlocaltitle").style.display=lh?"":"none";
- setHtml($("donutlocal"),lh);
-}
-function render(){
- if(!data)return;var d=data,t=d.totals;
- setHtml($("kpis"),'<div class="tset" data-tkey="kpis">'+[["requests",fmt(t.requests)],["input",fmt(t.input)],["output",fmt(t.output)],["cache read",fmt(t.cacheRead)],["cache write",fmt(t.cacheWrite)],["errors",'<span class="'+cls(t.errors/Math.max(1,t.requests),ERROR_WARN,ERROR_BAD)+'">'+t.errors+'</span>']].map(function(k){return'<div class="kpi"'+tileAttrs(k[0],k[0],k[1].replace(/<[^>]*>/g,""))+'>'+tileGrip(k[0])+'<b>'+k[1]+'</b><span>'+k[0]+'</span></div>'}).join("")+'</div>');
- orderTiles($("kpis"));
- var models=[];d.byModel.forEach(function(m){if(models.indexOf(m.model)<0)models.push(m.model)});models.sort();
- assignColors(models);
- var sel=$("msel");if(msel&&models.indexOf(msel)<0)msel="";
- setHtml(sel,'<option value="">all models</option>'+models.map(function(m){return'<option'+(m===msel?' selected':'')+'>'+esc(m)+'</option>'}).join(""));
- sel.onchange=function(){msel=this.value;render()};
- var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},wt=mode==="weighted";
- var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(msel&&m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
- var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
- var labs=d.series.map(function(b){return label(b.t,d.window)});
- var gap=msel?stackedBars($("series"),labs,series,KINDS.map(function(k){return k[0]}),${L.tokensChartWidthPx},${L.tokensChartHeightPx}):twoToneModelBars($("series"),labs,buckets,models,${L.tokensChartWidthPx},${L.tokensChartHeightPx});
- chartCap($("seriescap"),gap);
- setHtml($("legend"),legendLine("kinds",KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("")+(msel?"":'<span><i style="background:'+colorOf("input")+';opacity:.25"></i>total (light)</span><span><i style="background:'+colorOf("input")+'"></i>non-cached (solid)</span>')+(msel?"":legendLine("models",models.map(function(m){return'<span><i style="background:'+colorOf(m)+'"></i>'+esc(ringName(m))+'</span>'}).join(""))))+(msel?"":"</div>"));
- setTip($("wnote"),wt?"Weighted: tokens times Anthropic price ratios relative to fresh input (cache read "+W.cacheRead+", cache write "+W.cacheWrite+", output "+W.output+"). The same ratios are applied to every other provider, whatever its real prices.":"Raw: token counts as reported.");
- var mb=document.querySelectorAll("#mode button");for(var i=0;i<mb.length;i++){mb[i].className=mb[i].getAttribute("data-m")===mode?"on":"";mb[i].onclick=function(){mode=this.getAttribute("data-m");localStorage.setItem("cockpitMode",mode);render()}}
- renderDonuts();
- setHtml($("pause"),pauseHtml(d));
- renderProviders(d);renderSessions(d);renderWorkers(d);
- var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
- // one assignment over the union of every model shown anywhere on the page (window, daily, rings, speed):
- // a chart with a smaller model set must not wipe the colours of the models another chart shows
- var um={},ui;models.forEach(function(m){um[m]=1});dm.forEach(function(m){um[m]=1});
- d.byModel.forEach(function(m){um[m.model]=1});(d.speed||[]).forEach(function(r){um[r.model]=1});
- assignColors(Object.keys(um));
- var dgap=stackedBars($("daily"),dd.map(function(t){return new Date(t).toLocaleDateString([],{day:"numeric",month:"numeric"})}),ds,dm,${L.dailyChartWidthPx},${L.dailyChartHeightPx});
- chartCap($("dailycap"),dgap);
- legend($("dlegend"),dm);
-}
 function load(){
- feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;if(Win){try{Win.update("data",j)}catch(e){}}render()});
+ feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;Win.update("data",j);winFeedCache()});
 }
-function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;if(Win){try{winFeedSystem(j)}catch(e){}}renderSystem();renderPower();renderDonuts()})}
+function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;winFeedSystem(j);winFeedCache()})}
 `;

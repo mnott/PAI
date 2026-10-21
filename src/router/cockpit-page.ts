@@ -45,26 +45,10 @@ function buildHtml(L: CockpitLayout): string {
   return parts.map((p) => p(L, n, q, hex)).join("");
 }
 
-/** Stable ids of the page's top-level sections, in page order (config key router.cockpit.sections). */
-export const COCKPIT_SECTION_IDS = ["cloud", "routing", "workers", "pool", "models", "system", "memory", "kpis", "tokens", "cache", "speed", "pause", "sessions", "runs", "daily"] as const;
-
-/** The full page: every section, built once at module load from the config defaults. */
+/** The full page, built once at module load from the config defaults. */
 export const COCKPIT_HTML = buildHtml(cockpitLayout());
 
-/**
- * The page with only the listed sections, in the listed order. Unlisted sections are cut out of the
- * HTML (no DOM) and the script skips their fetches. Undefined or empty list = the full page; unknown ids are ignored
- * (all unknown = full page, so a typo never yields a blank cockpit). The layout policy is re-read
- * on every call, so a user config override changes the served page.
- */
-export function cockpitHtml(sections?: readonly string[]): string {
-  const full = buildHtml(cockpitLayout());
-  const want = (sections ?? []).filter((id) => (COCKPIT_SECTION_IDS as readonly string[]).includes(id));
-  if (!want.length) return full;
-  const re = /<section data-section="([a-z]+)"[\s\S]*?<\/section>\n?/g;
-  const found = new Map<string, string>();
-  const [head, rest] = [full.slice(0, full.indexOf("<main>") + 7), full.slice(full.indexOf("<main>") + 7)];
-  const tail = rest.slice(rest.indexOf("</main>"));
-  for (const m of rest.slice(0, rest.indexOf("</main>")).matchAll(re)) found.set(m[1]!, m[0].endsWith("\n") ? m[0] : m[0] + "\n");
-  return head + [...new Set(want)].map((id) => found.get(id) ?? "").join("") + tail;
+/** The page; the layout policy is re-read on every call, so a user config override changes the served page. */
+export function cockpitHtml(): string {
+  return buildHtml(cockpitLayout());
 }

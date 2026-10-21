@@ -6,6 +6,7 @@ import { cockpitMemoryPayload, resetMemoryStale, memoryJobProgress, runProgress,
 import { defaultDeps, memoryRunRefusal, readCockpitJob, runCockpitAction, type ActionDeps } from "./cockpit-actions.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { cockpitLayout } from "./cockpit-layout.js";
+import { WIN_MEMORY_JS } from "./cockpit-page/win/cards-memory.js";
 import { acquireRun, readFinishedRun, readRun, runStateFile, type RunState } from "../memory/run-state.js";
 
 let home = "";
@@ -214,39 +215,52 @@ describe("memory actions", () => {
 });
 
 /** The page functions of the Memory section, evaluated from the served page. */
+/** The memory view functions of the window runtime (win/cards-memory.ts) run in isolation on a payload: the cards' text
+ *  as one string, the group's actions with their enabled-or-reason, the running pill. */
 function pageFns() {
-  const src = COCKPIT_HTML.match(/var mem=null[\s\S]*?(?=function renderMemory)/)![0];
+  const helpers = COCKPIT_HTML.match(/var mem=null[\s\S]*?(?=function loadMemory)/)![0];
   const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
   const fmt = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n)));
-  const table = (head: string[], rows: unknown[][]) => `<table>${head.join("|")}${rows.map((r) => r.join("|")).join("\n")}</table>`;
-  const metricTile = (o: any) => `<tile ${o.title}|${o.value}${o.unit ?? ""}|${o.sub}|${o.secondary?.value ?? ""}>${o.extra ?? ""}${o.fill ? o.fill.text : ""}</tile>`;
-  const donut = (r: number) => `<ring ${r}>`;
-  const emptyRing = () => "<ring>";
-  return new Function("esc", "fmt", "table", "metricTile", "donut", "emptyRing", `${src}; return {memHtml, memRunLine, memDur, memRunPill};`)(esc, fmt, table, metricTile, donut, emptyRing) as {
-    memHtml: (m: unknown) => string;
-    memRunLine: (r: unknown) => string;
-    memDur: (s: number) => string;
-    memRunPill: (m: unknown) => string;
+  const fns = new Function("esc", "fmt", `${helpers}\n${WIN_MEMORY_JS}\nreturn {memKvView, memMetricView, MEM_ACTS, memPillText};`)(esc, fmt) as {
+    memKvView: (m: unknown) => { v: string; s: string; t?: string; status: string[] };
+    memMetricView: (m: unknown, ctx: { id: string }) => { v: string; u: string; s: string; x: string; status: string[] | null };
+    MEM_ACTS: [string, string, string, (m: unknown) => true | string][];
+    memPillText: (m: unknown) => string;
+  };
+  return {
+    /** Every memory card's text: the status card, the four metric cards and one per job. */
+    memHtml: (m: any) => {
+      const kv = fns.memKvView(m);
+      const parts = [kv.v, kv.s, kv.t ?? "", kv.status.join(" ")];
+      for (const id of ["index", "backend", "passes", "daemon", ...(m.jobs ?? []).map((j: any) => "job:" + j.id)]) {
+        const v = fns.memMetricView(m, { id: "memory." + id });
+        parts.push(v.v, v.u, v.s, v.x, ...(v.status ?? []));
+      }
+      return parts.join("\n");
+    },
+    /** The group's actions: true when enabled, else the reason shown in the tooltip. */
+    memActs: (m: unknown) => Object.fromEntries(fns.MEM_ACTS.map((a) => [a[0], a[3](m)])) as Record<string, true | string>,
+    memKv: fns.memKvView,
+    memRunPill: fns.memPillText,
   };
 }
 
 describe("memory section page", () => {
   it("is on the page with its configured title and a poll interval from the layout", () => {
-    expect(COCKPIT_HTML).toContain('data-section="memory"');
-    expect(COCKPIT_HTML).toContain(`<h2>${cockpitLayout().memoryTitle}`);
+    expect(COCKPIT_HTML).toContain('{id:"memory",type:"group",title:"Memory"');
     expect(COCKPIT_HTML).toContain(`setInterval(loadMemory,${cockpitLayout().memoryPollMs})`);
   });
 
   it("renders the live numbers: counts, backlog, backend and model, last passes, nightly schedule", async () => {
     const m = await cockpitMemoryPayload(deps());
-    const h = pageFns().memHtml(m);
-    expect(h).toContain("122303");
+    const f = pageFns();
+    const h = f.memHtml(m);
+    expect(h).toContain("missing 122.3k");
     expect(h).toContain("ollama-f16");
     expect(h).toContain("arctic");
     expect(h).toContain("nightly maintenance at 03:00");
-    expect(h).toContain("embed backlog");
-    expect(h).not.toContain(" disabled");
-    expect(h).not.toContain("memory.stop");
+    expect(f.memActs(m)).toMatchObject({ embed: true, index: true }); // not disabled
+    expect(f.memActs(m).stop).toBe("nothing to stop"); // no stop on an idle system
   });
 
   it("shows the busy state: run line with progress, buttons disabled, stop offered, started by named", async () => {
@@ -256,13 +270,11 @@ describe("memory section page", () => {
     expect(h).toContain("embed running (started by cockpit)");
     expect(h).toContain("1.0k / 122.3k chunks (0.8%)");
     expect(h).toContain("ETA");
-    expect(h).toContain('data-a="memory.embed" disabled');
-    expect(h).toContain('data-a="memory.index" disabled');
-    expect(h).toContain('data-a="memory.stop"');
-    // a daemon pass: busy, but no stop button
-    const d = f.memHtml(await cockpitMemoryPayload(deps({ run: () => run({ by: "daemon" }) })));
-    expect(d).toContain("started by daemon");
-    expect(d).not.toContain("memory.stop");
+    expect(f.memActs(m)).toMatchObject({ embed: "a run is in progress", index: "a run is in progress", stop: true });
+    // a daemon pass: busy, but no stop
+    const dm = await cockpitMemoryPayload(deps({ run: () => run({ by: "daemon" }) }));
+    expect(f.memHtml(dm)).toContain("started by daemon");
+    expect(f.memActs(dm).stop).toBe("nothing to stop");
   });
 });
 
@@ -393,7 +405,9 @@ describe("memory faults: backend tile, pass merge, kept finished run, empty back
     const t = p.jobs.find((j: any) => j.id === "last-embed");
     expect(t).toMatchObject({ done: 300, total: 600, rate: 1, by: "cockpit", finished: { outcome: "stopped", reason: "stopped on request", durationSec: 300 } });
     const h = pageFns().memHtml(p);
-    for (const x of ["Last embed run", "stopped · stopped on request", "300 / 600 done", "took 5 m 00 s", "1.0 chunks/s average", "by cockpit"]) expect(h, x).toContain(x);
+    expect(p.jobs.find((j: any) => j.id === "last-embed")).toMatchObject({ name: "embed run", finished: { outcome: "stopped" } });
+    expect(COCKPIT_HTML).toContain('(list[i].finished?"Last ":"")'); // the card is titled "Last embed run"
+    for (const x of ["finished · stopped", "stopped on request", "300 / 600 done", "took 5 m 00 s", "1.0 chunks/s average", "by cockpit"]) expect(h, x).toContain(x);
     // a running run of the same kind replaces the kept tile
     const q = await pay(status(), { run: () => run(), finished: (k) => (k === "embed" ? f : null) });
     expect(q.jobs.map((j: any) => j.id)).toEqual(["run-embed"]);
@@ -426,9 +440,11 @@ describe("memory faults: backend tile, pass merge, kept finished run, empty back
 
   it("embed button is disabled with the tooltip at backlog 0, enabled otherwise; index stays enabled", async () => {
     const p = await pay(status(), { daemon: async () => daemon({ status: status(), embedBacklog: 0 }) });
-    const h = pageFns().memHtml(p);
-    expect(h).toMatch(/data-a="memory.embed" disabled title="nothing to embed \(backlog 0\)"/);
-    expect(h).toMatch(/data-a="memory.index" title="one index pass"/);
+    const acts = pageFns().memActs(p);
+    expect(acts.embed).toBe("nothing to embed (backlog 0)"); // disabled, the reason is the tooltip
+    expect(acts.index).toBe(true);
+    const q = await pay(status(), { daemon: async () => daemon({ status: status(), embedBacklog: 5 }) });
+    expect(pageFns().memActs(q)).toMatchObject({ embed: true, index: true });
   });
 
   it("while a run is going: running pill text, front tile with stop and tail, busy marker; before the marker a starting tile", async () => {
@@ -436,8 +452,10 @@ describe("memory faults: backend tile, pass merge, kept finished run, empty back
     const p = await pay(status(), { run: () => run({ done: 61_000, backlogStart: 122_000 }), finished: () => fin() });
     expect(p.jobs[0].id).toBe("run-embed");
     const h = f.memHtml(p);
-    expect(h).toContain('data-part="busy"');
-    expect(h.indexOf('data-a="memory.stop"')).toBeLessThan(h.indexOf("Last embed run"));
+    expect(f.memActs(p).stop).toBe(true); // stop offered
+    expect(f.memActs(p).embed).toBe("a run is in progress"); // busy
+    expect(h).toContain("embed running (started by cockpit)"); // the run line on the status card
+    expect(h).toContain("chunks/s"); // the run is the front job card
     expect(f.memRunPill(p)).toMatch(/embedding 50% · [\d.]+\/s · ETA/);
     // starting gap
     const at = new Date(NOW - 1000).toISOString();

@@ -110,7 +110,7 @@ function wkTableView(q,ctx){
  var b=wkBlockOf(ctx.id.slice(8));
  return{title:b?b.title:undefined,html:wkBlockHtml(b),after:function(c){
   if(!c.body.__wk){c.body.__wk=1;wkWire(c)}
-  wkMarkRows(c.body);
+  wkMarkRows(c.body);fitTables(c.body);
  }};
 }
 function wkLocalView(q){return q&&q.providers?{text:q.localModel||"no local model reported",title:q.localModelTitle||null}:null}

@@ -1,5 +1,5 @@
 /**
- * Box-stability (spec 9.2): the real page (?win=1) is rendered with fixture A, every .card rect and scrollY are snapshotted, then
+ * Box-stability (spec 9.2): the real page is rendered with fixture A, every .card rect and scrollY are snapshotted, then
  * fixture B (3x queue rows, long error strings, a model added to a dynamic list, values going null, window 1h -> Week) is pushed
  * without structural change. A card is fitted once (first data) and only grows when its content would overflow: so no card may
  * shrink or move up, a card may only grow (the cards below shift by the growth), and the page keeps the viewport still (anchor).
@@ -136,16 +136,16 @@ function table(title: string, a: Snap, b: Snap) {
   console.log(`${title}: scrollY ${a.y}->${b.y}, ${rows.length} moved\n${rows.join("\n")}`);
 }
 
-describe.skipIf(!CHROME)("box stability (?win=1)", () => {
+describe.skipIf(!CHROME)("box stability", () => {
   it("a card does not shrink when its content does, and grows (no inner scroll) when its content overflows", async () => {
-    const r = await open("?win=1&swing=1");
+    const r = await open("?swing=1");
     expect(r.err).toBeNull();
     const w = r.R.SW as Record<string, number>;
     expect(w.h1!).toBeGreaterThan(w.h0!); // overflow: the card grew
     expect(w.h2!).toBe(w.h1!); // content gone again: the height stays
   }, 120_000);
 
-  for (const q of ["?win=1", "?win=1&anchor=off"]) {
+  for (const q of ["", "?anchor=off"]) {
     it(`data-only change B: no card shrinks or moves up, only overflow grows (${q})`, async () => {
       const r = await open(q);
       expect(r.err).toBeNull();
@@ -165,7 +165,7 @@ describe.skipIf(!CHROME)("box stability (?win=1)", () => {
       const grew = ms.filter((m) => m.h1 > m.h0 + 0.5);
       const firstChangeTop = Math.min(...grew.map((m) => m.t0), ...gone.map((id) => A.cards[id]!.top), ...born.map((id) => B.cards[id]!.top));
       expect(ms.filter((m) => m.t0 < firstChangeTop && (m.t1 !== m.t0 || m.h1 !== m.h0)).map((m) => m.id)).toEqual([]);
-      if (q === "?win=1") {
+      if (q === "") {
         // the viewport stays still: the topmost card at or below the viewport top keeps its offset
         const vis = ms.filter((m) => m.t0 >= A.y).sort((x, y) => x.t0 - y.t0)[0]!;
         expect(Math.abs(vis.t1 - B.y - (vis.t0 - A.y))).toBeLessThanOrEqual(1);
@@ -182,7 +182,7 @@ describe.skipIf(!CHROME)("box stability (?win=1)", () => {
       for (const id of added) expect(id).toMatch(/models/);
       const ms = moves(B, C);
       expect(ms.filter((m) => m.h1 < m.h0 - 0.5).map((m) => `${m.id} ${m.h0}->${m.h1}`)).toEqual([]);
-      if (q === "?win=1") {
+      if (q === "") {
         const vis = ms.filter((m) => m.t0 >= B.y).sort((x, y) => x.t0 - y.t0)[0]!;
         expect(Math.abs(vis.t1 - C.y - (vis.t0 - B.y))).toBeLessThanOrEqual(1);
       }

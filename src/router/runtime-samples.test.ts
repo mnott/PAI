@@ -509,9 +509,9 @@ describe("/cockpit/models with the sampler", () => {
     expect(g.history.decode).toEqual([73.4]);
   });
 
-  it("the page renders one foldable card per runtime in the grid", () => {
-    expect(COCKPIT_HTML).toContain('class="rt-grid"');
-    expect(COCKPIT_HTML).toContain('<div class="mcard');
+  it("the page renders one card per runtime (models.rt:<runtime>) on the window", () => {
+    expect(COCKPIT_HTML).toContain('<main id="win-root">');
+    expect(COCKPIT_HTML).toContain('id:"models.rt:"+r.name');
     expect(COCKPIT_HTML).toContain("installed, none loaded");
   });
 });

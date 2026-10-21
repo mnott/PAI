@@ -1,5 +1,5 @@
 /**
- * B1 `kpis`: the real page with ?win=1 shows the totals as a group of six metric cards in main#win-root;
+ * B1 `kpis`: the real page with  shows the totals as a group of six metric cards in main#win-root;
  * without the flag the old page is unchanged. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes system-<width>-<theme>.png.
  */
@@ -39,7 +39,7 @@ function overlap(){var cs=Array.prototype.slice.call(document.querySelectorAll("
 var root=document.getElementById("win-root");
 var o={cards:document.querySelectorAll("#win-root .card").length,ids:Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){return c.getAttribute("data-card")}),
  heads:Array.prototype.map.call(document.querySelectorAll("#win-root .chead"),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")}),
- oldSys:getComputedStyle(document.querySelector('[data-section="system"]')).display,syshid:!!document.querySelector("#win-root #syshid"),
+ syshid:!!document.querySelector("#win-root #syshid"),
  vals:vals(),boxes:boxes(),overlap:overlap(),paths:document.querySelectorAll('#win-root [data-card="system.power-chart"] path').length,legend:document.querySelectorAll('#win-root [data-card="system.power-chart"] .legend span').length,
  spark:document.querySelectorAll('#win-root [data-card="system.memory"] svg path').length,err:window.__err||null,ov:window.__ov};
 window.WINPAY&&(function(){
@@ -88,14 +88,13 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B2 system on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
   it("shows 14 metric cards, the chart and the up server's cards; zero metrics are minimized; updates move no box; a new server adds only its cards", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "system-1400-light.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "system-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     for (const id of ["system", "sys-metrics", "sys-power", "sys-servers", "system.power-chart", "system.memory", "system.energy", "system.ane-load", "system.cpu-w", "system.gpu-w", "system.ane-w"]) expect(r.ids).toContain(id);
     expect(r.ids.filter((i: string) => /^system\.srv:/.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/e2e", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
-    expect(r.oldSys).toBe("none");
     expect(r.syshid).toBe(false);
     for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl)*$/);
     expect(r.vals).toContain("system.memory=8.0 / of 36 GB · pressure 20%");

@@ -1,6 +1,6 @@
 /**
- * B4 regressions: under ?win=1 every group of the win root is at least as tall as its cards need
- * (no collapsed or overlapping cards), and a feed's status text appears only on its own sections.
+ * B4 regressions: under  every group of the win root is at least as tall as its cards need
+ * (no collapsed or overlapping cards).
  * Headless Chromium on the real page with live-shaped feeds, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes fit-win.png and fit-noflag.png.
  */
@@ -32,8 +32,7 @@ let poolFails = false;
 
 const PROBE = `<script>setTimeout(function(){
 var cards={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .card"),function(c){if(c.style.display==="none")return;var r=c.getBoundingClientRect();cards[c.getAttribute("data-card")]={x:Math.round(r.left),y:Math.round(r.top),w:Math.round(r.width),h:Math.round(r.height)}});
-var marks={};Array.prototype.forEach.call(document.querySelectorAll("[data-stale]"),function(m){var s=m.closest("section");var k=m.getAttribute("data-stale")+"@"+(s?s.getAttribute("data-section"):"?");marks[k]=m.textContent});
-document.body.setAttribute("data-r",JSON.stringify({err:window.__err||null,cards:cards,marks:marks,feeds:Object.keys(window.FEEDS||{}).map(function(k){return k+":"+(FEEDS[k].err||"ok")})}));
+document.body.setAttribute("data-r",JSON.stringify({err:window.__err||null,cards:cards,}));
 },1800)</script>`;
 
 let server: Server;
@@ -79,12 +78,12 @@ async function open(query: string, width: number, shot?: string) {
 }
 const MIN_H = 60;
 
-describe.skipIf(!CHROME)("win root bands fit their cards (?win=1)", () => {
+describe.skipIf(!CHROME)("win root bands fit their cards", () => {
   for (const width of [1400, 900]) {
     it(`${width} px: every kv/metric card is readable, cards of a group do not overlap`, async () => {
       poolFails = false;
       const shots = process.env.PAI_WIN_SHOTS;
-      const r = await open("?win=1", width, shots && width === 1400 ? join(shots, "fit-win.png") : undefined);
+      const r = await open("", width, shots && width === 1400 ? join(shots, "fit-win.png") : undefined);
       expect(r.err).toBeNull();
       if (process.env.FIT_DBG) console.log(JSON.stringify(r.cards));
       const ids = Object.keys(r.cards).filter((k) => /^(kpis|pool)\./.test(k) && k !== "pool.off");
@@ -100,23 +99,4 @@ describe.skipIf(!CHROME)("win root bands fit their cards (?win=1)", () => {
       expect(r.cards.pool!.y + r.cards.pool!.h).toBeGreaterThanOrEqual(poolBottom);
     }, 120_000);
   }
-});
-
-describe.skipIf(!CHROME)("a feed's status text is on its own sections only", () => {
-  it("a failing pool feed marks the pool section, not limits, routing or models", async () => {
-    poolFails = true;
-    const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("", 1400, shots ? join(shots, "fit-noflag.png") : undefined);
-    expect(r.err).toBeNull();
-    const sections = Object.keys(r.marks).map((k) => k.split("@")[1]);
-    expect(r.marks["pool@pool"]).toBeDefined();
-    for (const s of ["cloud", "routing", "models"]) expect(sections, s).not.toContain(s);
-  }, 120_000);
-
-  it("healthy feeds show no status text at all", async () => {
-    poolFails = false;
-    const r = await open("", 1400);
-    expect(r.marks).toEqual({});
-    expect(r.feeds.filter((f) => !f.endsWith(":ok"))).toEqual([]);
-  }, 120_000);
 });

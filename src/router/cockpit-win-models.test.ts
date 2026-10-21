@@ -1,5 +1,5 @@
 /**
- * B8 `models`: the real page with ?win=1 shows the routing section as a flow card plus one card per tier
+ * B8 `models`: the real page with  shows the routing section as a flow card plus one card per tier
  * (styled Select, chips with x, route.set through runAction, result in the card status); no native select in the cards. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes models-<width>-<theme>.png.
  */
@@ -42,7 +42,7 @@ function txt(id){var c=card(id);return c?c.textContent.replace(/\\s+/g," "):null
 function st(id){var c=card(id);var s=c&&c.querySelector(".cstatus");return s?s.textContent:null}
 var ids=Array.prototype.map.call(document.querySelectorAll('#win-root [data-card^="models.rt:"]'),function(c){return c.getAttribute("data-card")});
 var o={err:window.__err||null,ids:ids,ep:txt("models.endpoints"),run:txt("models.rt:strata/gyro-m.gguf"),stop:txt("models.rt:strata2/iq3s.gguf"),
- oldM:getComputedStyle(document.querySelector('[data-section="models"]')).display,
+ 
  minall:!!document.querySelector('#win-root [data-act="minall"]'),
  offDis:!!(card("models")&&card("models").querySelector('[data-act="off"]')),
  offLabel:card("models")?card("models").querySelector('[data-act="off"]').textContent:null,offTitle:card("models")?card("models").querySelector('[data-act="off"]').title:null,
@@ -101,17 +101,16 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B8 models on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B8 models on the win runtime", () => {
   it("every runtime is a card, stopped ones too; endpoints list; old section hidden; no minimize-all", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "models-1400-light.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "models-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     expect(r.ids).toEqual(["models.rt:strata/gyro-m.gguf", "models.rt:strata2/iq3s.gguf"]);
     expect(r.run).toContain("running");
     expect(r.stop).toContain("stopped");
     expect(r.ep).toContain("ep1");
     expect(r.ep).toContain("disable routing");
-    expect(r.oldM).toBe("none");
     expect(r.minall).toBe(false);
     expect(r.offDis).toBe(true);
     // F5: the header action says what it does; F4: the endpoints card lists the router endpoints from the limits feed
@@ -123,16 +122,10 @@ describe.skipIf(!CHROME)("B8 models on the win runtime (?win=1)", () => {
 
   it("+ posts local.scale with count 2; the endpoint toggle posts endpoint.enable", async () => {
     posts.length = 0;
-    const r = await open("?win=1", 1400);
+    const r = await open("", 1400);
     expect(posts.find((p) => p.action === "local.scale")).toEqual({ action: "local.scale", target: "gyro-m", count: 2 });
     expect(posts.find((p) => p.action === "endpoint.enable")).toEqual({ action: "endpoint.enable", target: "ep1", value: "off" });
     expect(r.after).toBe("done");
   }, 120_000);
 
-  it("without the flag the old models section is unchanged", async () => {
-    const r = await open("", 1400);
-    expect(r.err).toBeNull();
-    expect(r.oldM).not.toBe("none");
-    expect(r.vis).toEqual([]);
-  }, 120_000);
 });

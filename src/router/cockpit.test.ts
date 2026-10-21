@@ -192,7 +192,6 @@ describe("cockpit http", () => {
     expect(page.status).toBe(200);
     expect(page.body).toContain("<svg");
     expect(page.body).toContain("trimEmpty");
-    expect(page.body).toContain("emptyChart");
     expect(page.body).toContain("no data in this window");
     expect(page.body).toContain("staleAge"); // stale system readings keep their number
     expect(page.body).toContain('["0","33","66","100"]'); // fixed percent axis tick labels
@@ -339,13 +338,13 @@ describe("cockpit http", () => {
 
       // the page carries the panel and its buttons
       const page = await ask("/cockpit");
-      expect(page.body).toContain('id="queuepanel"');
+      expect(page.body).toContain('"workers."+bl[i].id');
       expect(page.body).toContain("runs next; the running worker is not interrupted");
       expect(page.body).toContain("nothing waiting");
       // drag and drop wiring: draggable rows post to /move, refresh pauses while dragging
-      expect(page.body).toContain('draggable="true"');
-      expect(page.body).toContain('post("move"');
-      expect(page.body).toContain("if(qdrag)return");
+      expect(page.body).toContain('setAttribute("draggable","true")');
+      expect(page.body).toContain('"queue."+verb');
+      expect(page.body).toContain("WK_DRAG===ctx.id");
     } finally {
       srv.close();
       if (prevYaml === undefined) delete process.env.PAI_WORKERS_YAML;
@@ -423,118 +422,6 @@ describe("one key per model", () => {
     expect(Object.keys(d.series.find((b) => Object.keys(b.models).length)!.models)).toEqual(["claude-opus-5-5"]);
     expect(Object.keys(d.daily.models)).toEqual(["claude-opus-5-5"]);
     expect(d.bySession[0]!.models).toEqual(["claude-opus-5-5"]);
-  });
-});
-
-describe("cockpit cache rings and providers table", () => {
-  const body = ["ageMark", "emptyRing", "lowChips", "ringTiles", "provHit", "reuseLine", "localDetail", "shortModel", "ringName", "tileAttrs", "tileGrip"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
-  // ringTiles assigns colours: the colour helpers come along, with a stub localStorage
-  const colorBody = [
-    COCKPIT_HTML.match(/var colors=[\s\S]*?function saveColors[^\n]*\n/)![0],
-    COCKPIT_HTML.match(/function assignColors\([\s\S]*?\n\}\n/)![0],
-    COCKPIT_HTML.match(/function hslHex\([\s\S]*?\n\}\n/)![0],
-    COCKPIT_HTML.match(/function genColor\([\s\S]*?\n\}\n/)![0],
-    COCKPIT_HTML.match(/function hueOf\([\s\S]*?\n\}\n/)![0],
-    COCKPIT_HTML.match(/function colorOf\([\s\S]*?\n\}\n/)![0],
-  ].join("\n");
-  const baked = COCKPIT_HTML.match(/var JOB_TRIES=\d+,[\s\S]*?SRV_STALE_SEC=\d+;/)![0] + COCKPIT_HTML.match(/LOW_REQ=\d+,STALE_SEC=\d+,COLOR_PRUNE_DAYS=\d+/)![0] + ";" + COCKPIT_HTML.match(/var KINDS=[\s\S]*?PAL=\[[^\]]+\]/)![0] + ";";
-  // `lim=null` sits inside the baked var line (null = first limits poll pending, loadLimits() sets it);
-  // drop it so the helpers resolve `lim` on the global object, where tests can flip the poll state
-  const baked2 = baked.replace(/,lim=null/, "").replace(/;LOW_REQ=/, ";var LOW_REQ=");
-  const fns = new Function(
-    "donut", "pct", "esc", "fmt", "localStorage", "mdl",
-    `${baked2}\n${colorBody}\n${body}\nreturn {lowChips, ringTiles, provHit, reuseLine, localDetail};`
-  )(
-    (r: number) => `<svg class="donut">${(r * 100).toFixed(1)}</svg>`,
-    (r: number) => `${(r * 100).toFixed(1)}%`,
-    (s: string) => s,
-    (n: number) => String(n),
-    { getItem: () => null, setItem: () => {} },
-    { runtimes: [], consumers: [] },
-  ) as {
-    lowChips: (ms: Record<string, unknown>) => string;
-    ringTiles: (ms: Record<string, unknown>, servers: unknown[]) => string;
-    provHit: (p: unknown, servers: unknown[]) => string;
-    reuseLine: (pc: unknown, tot: number | undefined, since?: string) => string;
-    localDetail: (prov: string, pc: unknown, tot?: number) => string;
-  };
-  const m = (provider: string, model: string, requests: number, cacheRead = 0, input = 0) => ({ provider, model, requests, cacheRead, cacheWrite: 0, input });
-  const pc = { hits: 1205, misses: 9, hitRate: 0.993, tokensSaved: 22_660_000 };
-
-  it("no-cache loopback tile shows the server prefix-cache ring, labelled", () => {
-    const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, [{ provider: "local30x8", prefixCache: pc }]);
-    expect(html).toContain("99.3");
-    expect(html).toContain("server prefix cache");
-    expect(html).toContain("local30x8");
-    // rings are titled by model (alias or short name), the provider is the second line
-    expect(html).toContain('<div class="n">qwen</div>');
-    expect(html).toContain('<div class="s">local30x8 · 164 req</div>');
-    expect(html).not.toContain("bignum");
-  });
-  it("the local prefix cache panel is a ring-free detail line; the ring appears once per provider", () => {
-    const line = fns.localDetail("local30x8", { ...pc, entries: 12, memoryMb: 512.4 }, 5000);
-    expect(line).not.toContain("donut");
-    for (const w of ["1205 hit / 9 miss", "tokens saved", "12 entries", "512 MB", "since start", "since restart"]) expect(line).toContain(w);
-    const tile = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, [{ provider: "local30x8", prefixCache: pc }]);
-    expect((tile + line).match(/class="donut"/g)).toHaveLength(1);
-    expect(COCKPIT_HTML).toMatch(/setHtml\(\$\("donutlocal"\),lh\);/);
-  });
-  it("without server stats the tile is an empty grey ring with a small caption", () => {
-    (globalThis as unknown as { lim: unknown }).lim = { ok: true }; // limits polled: caption "not reported", not loading dots
-    const html = fns.ringTiles({ a: m("local30x8", "qwen", 164, 0, 1000) }, []);
-    expect(html).toContain("not reported");
-    expect(html).toContain('<div class="s">not reported</div>');
-    expect(html).not.toContain("donut");
-    expect(html).toContain('<div class="n">qwen</div>');
-    expect(html).toContain('<div class="s">local30x8 · 164 req</div>');
-  });
-  it("models under 5 requests are not tiles, sorted order unchanged for the rest", () => {
-    (globalThis as unknown as { lim: unknown }).lim = null; // before the first poll the caption is the loading dots — irrelevant here
-    const html = fns.ringTiles({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) }, []);
-    expect(html).toContain("sonnet");
-    expect(html).not.toContain("haiku");
-    expect(html.match(/class="ring"/g)).toHaveLength(1);
-  });
-  it("low-request models become one chip with hover details", () => {
-    const chip = fns.lowChips({ a: m("anthropic", "haiku", 1, 0, 500), b: m("anthropic", "sonnet", 262, 900, 100) });
-    expect(chip).toContain("+1 model with &lt;5 requests");
-    expect(chip).toContain("anthropic · haiku: 1 req");
-    expect(chip).not.toContain("sonnet");
-  });
-  it("providers table: loopback hit% is the marked server figure, never 0.0%", () => {
-    const p = { provider: "local30x8", cacheRead: 0, cacheWrite: 0, hitRatio: 0 };
-    expect(fns.provHit(p, [{ provider: "local30x8", prefixCache: pc }])).toContain("99.3%*");
-    expect(fns.provHit(p, [{ provider: "local30x8" }])).toContain("n/a");
-    expect(fns.provHit({ provider: "anthropic", cacheRead: 9, cacheWrite: 0, hitRatio: 0.995 }, [])).toBe("99.5%");
-  });
-  it("prompt total comes from loopback rows; ratio only when the windows are comparable", () => {
-    const rows = [row(2, { provider: "local30x8", input_tokens: 4000, cache_read_input_tokens: undefined })];
-    const d = buildCockpitData(rows, "1h", NOW);
-    expect(d.promptByProvider["local30x8"]).toBe(4000);
-    expect(d.promptSince["local30x8"]).toBeDefined();
-    expect(fns.reuseLine({ tokensSaved: 1000 }, 4000, "2026-10-17T20:00:00Z")).toContain("25.0%");
-    const diff = fns.reuseLine(pc, 3_340_000, "2026-10-17T20:00:00Z");
-    expect(diff).toContain("windows differ");
-    expect(diff).toContain("since server start");
-  });
-  it("providers carry a ttft p50 from their timed rows", () => {
-    const rows = [row(2, { ttftMs: 100 }), row(3, { ttftMs: 300 }), row(4, { ttftMs: 200 })];
-    expect(buildCockpitData(rows, "1h", NOW).byProvider[0]!.ttftP50).toBe(200);
-  });
-  it("the grid no longer renders a 'not reported' heading", () => {
-    expect(COCKPIT_HTML).not.toContain('bignum dim">not reported');
-  });
-});
-
-describe("built cockpit page", () => {
-  const dist = join(process.cwd(), "dist");
-  const files = existsSync(dist)
-    ? [join(dist, "cli", "index.mjs"), ...readdirSync(dist).filter((f) => f.endsWith(".mjs")).map((f) => join(dist, f))].filter((f) => existsSync(f))
-    : [];
-  it.skipIf(files.length === 0)("has no 'not reported' heading in the tile grid", () => {
-    const holders = files.map((f) => readFileSync(f, "utf8")).filter((js) => js.includes("function ringTiles"));
-    expect(holders.length).toBeGreaterThan(0);
-    for (const js of holders) expect(js).not.toContain('bignum dim">not reported');
   });
 });
 

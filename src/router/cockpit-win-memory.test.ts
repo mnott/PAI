@@ -1,5 +1,5 @@
 /**
- * B3 `memory`: the real page with ?win=1 shows the memory group (kv + metric cards, a dynamic card per job) in
+ * B3 `memory`: the real page with  shows the memory group (kv + metric cards, a dynamic card per job) in
  * main#win-root, its embed/index/stop actions are header buttons of the group card (disabled with a reason, result in the
  * card status via runAction); without the flag the old page is unchanged. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes memory-<width>.png.
@@ -44,7 +44,7 @@ function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');
 function btn(a){var b=document.querySelector('#win-root [data-card="memory"] [data-act="'+a+'"]');return b?{dis:b.disabled,title:b.title||""}:null}
 function st(id){var c=document.querySelector('#win-root [data-card="'+id+'"] .cstatus');return c?c.getAttribute("data-kind")+"|"+c.textContent:null}
 var o={err:window.__err||null,over:["memory.index","memory.backend","memory.passes","memory.daemon"].map(function(i){var b=document.querySelector('#win-root [data-card="'+i+'"] .cbody');return b?b.scrollHeight-b.clientHeight:-1}),vis:vis(),kv:txt("memory.kv"),kvst:st("memory.kv"),index:txt("memory.index"),backend:txt("memory.backend"),job:txt("memory.job:run-embed"),passes:txt("memory.passes"),daemon:txt("memory.daemon"),
- embed:btn("embed"),index2:btn("index"),stop:btn("stop"),oldMem:getComputedStyle(document.querySelector('[data-section="memory"]')).display,oldRt:document.querySelectorAll('#win-root [data-rt="memory"]').length,
+ embed:btn("embed"),index2:btn("index"),stop:btn("stop"),oldRt:document.querySelectorAll('#win-root [data-rt="memory"]').length,
  heads:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="memory"] > .chead'),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")})};
 document.body.setAttribute("data-r1",JSON.stringify(o));
 var b=document.querySelector('#win-root [data-card="memory"] [data-act="index"]');
@@ -93,11 +93,11 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B3 memory on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B3 memory on the win runtime", () => {
   it("a run is active: cards, run pill in the kv status, embed/index disabled with the reason, stop enabled", async () => {
     running = true; backlog = 122_303;
     const shots = process.env.PAI_WIN_SHOTS;
-    const o = (await open("?win=1", 1400, shots ? join(shots, "memory-1400.png") : undefined)).r1;
+    const o = (await open("", 1400, shots ? join(shots, "memory-1400.png") : undefined)).r1;
     expect(o.err).toBeNull();
     // F1: the memory metric cards fit their content (no scrollbar)
     for (const v of o.over) expect(v).toBeLessThanOrEqual(0);
@@ -112,14 +112,13 @@ describe.skipIf(!CHROME)("B3 memory on the win runtime (?win=1)", () => {
     expect(o.embed).toEqual({ dis: true, title: "a run is in progress" });
     expect(o.index2).toEqual({ dis: true, title: "a run is in progress" });
     expect(o.stop.dis).toBe(false);
-    expect(o.oldMem).toBe("none");
     expect(o.oldRt).toBe(0);
     expect(o.heads[0]).toMatch(/^cgrip,ctitle,cstatus(,cbtn)+$/);
   }, 120_000);
 
   it("idle with backlog 0: embed refused with its reason, index now runs through runAction into the group status", async () => {
     running = false; backlog = 0;
-    const r = await open("?win=1", 1400);
+    const r = await open("", 1400);
     expect(r.r1.embed).toEqual({ dis: true, title: "nothing to embed (backlog 0)" });
     expect(r.r1.index2.dis).toBe(false);
     expect(r.r1.stop).toEqual({ dis: true, title: "nothing to stop" });
@@ -127,11 +126,4 @@ describe.skipIf(!CHROME)("B3 memory on the win runtime (?win=1)", () => {
     expect(r.st).toBe("ok|index pass started");
   }, 120_000);
 
-  it("without the flag the old memory section is unchanged", async () => {
-    running = true; backlog = 122_303;
-    const r = await open("", 1400);
-    expect(r.r1.err).toBeNull();
-    expect(r.r1.oldMem).not.toBe("none");
-    expect(r.r1.vis).toEqual([]);
-  }, 120_000);
 });

@@ -1,5 +1,5 @@
 /**
- * B6 `routing`: the real page with ?win=1 shows the routing section as a flow card plus one card per tier
+ * B6 `routing`: the real page with  shows the routing section as a flow card plus one card per tier
  * (styled Select, chips with x, route.set through runAction, result in the card status); no native select in the cards. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes routing-<width>-<theme>.png.
  */
@@ -41,7 +41,7 @@ function st(id){var c=card(id);var s=c&&c.querySelector(".cstatus");return s?s.t
 var o={err:window.__err||null,flow:txt("routing.flow"),impl:txt("routing.implement"),rev:txt("routing.review"),
  natives:document.querySelectorAll('#win-root [data-card^="routing"] select').length,
  selBtns:document.querySelectorAll('#win-root [data-card^="routing"] button.wsel-btn').length,
- oldRt:getComputedStyle(document.querySelector('[data-section="routing"]')).display,
+ 
  vis:Array.prototype.filter.call(document.querySelectorAll("#win-root .card"),function(c){return c.style.display!=="none"}).map(function(c){return c.getAttribute("data-card")}),
  popBg:null};
 if(!card("routing.review")){document.body.setAttribute("data-r",JSON.stringify(o));return}
@@ -101,10 +101,10 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B6 routing on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B6 routing on the win runtime", () => {
   it("a flow card and one card per tier; styled Select, no native select; the old section is hidden", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "routing-1400-light.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "routing-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     expect(r.vis).toEqual(expect.arrayContaining(["routing", "routing.flow", "routing.implement", "routing.review"]));
     expect(r.flow).toContain("implement -> local");
@@ -113,14 +113,13 @@ describe.skipIf(!CHROME)("B6 routing on the win runtime (?win=1)", () => {
     expect(r.impl).toContain("PAI:");
     expect(r.natives).toBe(0);
     expect(r.selBtns).toBe(2);
-    expect(r.oldRt).toBe("none");
     expect(r.opts).toEqual(["local", "glm", "tag: fast"]);
     expect(r.popBg).not.toBe("rgba(0, 0, 0, 0)");
   }, 120_000);
 
   it("x on the last entry is refused in the status; a Select pick posts route.set with the pick first", async () => {
     posts.length = 0;
-    const r = await open("?win=1", 1400);
+    const r = await open("", 1400);
     expect(r.refused).toBe("a tier needs at least one entry");
     expect(posts.filter((p) => p.target === "review")).toEqual([]);
     const p = posts.find((x) => x.action === "route.set" && x.target === "implement");
@@ -128,10 +127,4 @@ describe.skipIf(!CHROME)("B6 routing on the win runtime (?win=1)", () => {
     expect(r.after).toBe("route set");
   }, 120_000);
 
-  it("without the flag the old routing section is unchanged", async () => {
-    const r = await open("", 1400);
-    expect(r.err).toBeNull();
-    expect(r.oldRt).not.toBe("none");
-    expect(r.vis).toEqual([]);
-  }, 120_000);
 });

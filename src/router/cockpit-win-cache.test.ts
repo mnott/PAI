@@ -1,5 +1,5 @@
 /**
- * B10 `cache`: the real page with ?win=1 shows the cache group (a ring card per model, chips cards, the local prefix cache
+ * B10 `cache`: the real page with  shows the cache group (a ring card per model, chips cards, the local prefix cache
  * list, the providers table) in main#win-root; a single model gives the one big-donut card; without the flag the old page is
  * unchanged. Headless Chromium, skipped when none is installed. PAI_WIN_SHOTS=<dir> writes cache-<width>.png.
  */
@@ -37,7 +37,7 @@ function rc(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');i
 var o={err:window.__err||null,vis:vis(),rects:["cache.ring:anthropic/claude-opus","cache.ring:glm/glm-5","cache.ring:local/gyro-m","cache.low","cache.note","cache.local","cache.providers"].map(rc),rings:document.querySelectorAll('#win-root [data-card^="cache.ring:"] svg').length,
  solo:txt("cache.solo"),soloSvg:(document.querySelector('#win-root [data-card="cache.solo"] svg')||{getAttribute:function(){return null}}).getAttribute("width"),
  glm:txt("cache.ring:glm/glm-5"),local:txt("cache.ring:local/gyro-m"),low:txt("cache.low"),note:txt("cache.note"),prefix:txt("cache.local"),prov:txt("cache.providers"),
- none:txt("cache.none"),oldCa:getComputedStyle(document.querySelector('[data-section="cache"]')).display};
+ none:txt("cache.none"),};
 document.body.setAttribute("data-r",JSON.stringify(o));
 },2500)</script>`;
 
@@ -81,11 +81,11 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B10 cache on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B10 cache on the win runtime", () => {
   it("a ring card per model with enough requests, chips, local prefix cache list and providers table", async () => {
     solo = false;
     const shots = process.env.PAI_WIN_SHOTS;
-    const o = await open("?win=1", 1400, shots ? join(shots, "cache-1400.png") : undefined);
+    const o = await open("", 1400, shots ? join(shots, "cache-1400.png") : undefined);
     expect(o.err).toBeNull();
     expect(o.vis).toEqual(expect.arrayContaining(["cache", "cache-rings", "cache.ring:anthropic/claude-opus", "cache.ring:glm/glm-5", "cache.ring:local/gyro-m", "cache.low", "cache.note", "cache.local", "cache.providers"]));
     expect(o.vis).not.toContain("cache.none");
@@ -100,7 +100,6 @@ describe.skipIf(!CHROME)("B10 cache on the win runtime (?win=1)", () => {
     expect(o.prefix).toContain("70 hit / 10 miss");
     expect(o.prov).toContain("anthropic");
     expect(o.prov).toContain("Busts: ttl x2");
-    expect(o.oldCa).toBe("none");
     const rs = o.rects as number[][];
     for (const r of rs) { expect(r).not.toBeNull(); expect(r[2]! - r[0]!).toBeGreaterThan(100); expect(r[3]! - r[1]!).toBeGreaterThan(40); }
     for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
@@ -111,7 +110,7 @@ describe.skipIf(!CHROME)("B10 cache on the win runtime (?win=1)", () => {
 
   it("one model with cache fields gives the single big-donut card", async () => {
     solo = true;
-    const o = await open("?win=1", 1400);
+    const o = await open("", 1400);
     expect(o.err).toBeNull();
     expect(o.vis).toContain("cache.solo");
     expect(o.vis).not.toContain("cache.none");
@@ -120,11 +119,4 @@ describe.skipIf(!CHROME)("B10 cache on the win runtime (?win=1)", () => {
     expect(o.soloSvg).toBe("170");
   }, 120_000);
 
-  it("without the flag the old cache section is unchanged", async () => {
-    solo = false;
-    const o = await open("", 1400);
-    expect(o.err).toBeNull();
-    expect(o.oldCa).not.toBe("none");
-    expect(o.vis).toEqual([]);
-  }, 120_000);
 });

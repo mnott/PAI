@@ -1,5 +1,5 @@
 /**
- * B9 `tokens` + `daily`: the real page with ?win=1 shows two chart cards drawn at the card's own pixel size;
+ * B9 `tokens` + `daily`: the real page with  shows two chart cards drawn at the card's own pixel size;
  * mode toggle (aria-pressed), model Select, caption and legend slots, no box change on updates. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes charts-<width>.png.
  */
@@ -29,7 +29,7 @@ function box(id){var c=document.querySelector('#win-root [data-card="'+id+'"]'),
 function info(id){var c=document.querySelector('#win-root [data-card="'+id+'"]'),s=c.querySelector("svg"),b=c.querySelector(".cbody").getBoundingClientRect();
  return{svgW:s?+s.getAttribute("width"):0,svgH:s?+s.getAttribute("height"):0,bodyW:Math.round(b.width),rects:c.querySelectorAll("svg rect").length,cap:c.querySelector('[data-k="cap"]').textContent,legend:c.querySelectorAll('[data-k="legend"] span').length,
   heads:Array.prototype.map.call(c.querySelectorAll(".chead > *"),function(k){return k.className.split(" ")[0]}),pressed:Array.prototype.map.call(c.querySelectorAll("[aria-pressed]"),function(k){return k.getAttribute("data-act")+"="+k.getAttribute("aria-pressed")}).join(",")}}
-var o={err:window.__err||null,tokens:info("tokens"),daily:info("daily"),oldTk:getComputedStyle(document.querySelector('[data-section="tokens"]')).display,oldDy:getComputedStyle(document.querySelector('[data-section="daily"]')).display,
+var o={err:window.__err||null,tokens:info("tokens"),daily:info("daily"),
  selects:document.querySelectorAll("#win-root select").length,boxes:box("tokens")+"|"+box("daily"),rectsTwoTone:0};
 var rawBtn=document.querySelector('#win-root [data-card="tokens"] [data-act="mode-raw"]');rawBtn.click();o.afterRaw=info("tokens");o.modeSaved=localStorage.getItem("cockpitMode");
 window.Win.update("data",window.WINPAY);o.boxes2=box("tokens")+"|"+box("daily");o.tokens2=info("tokens");
@@ -77,13 +77,11 @@ async function open(query: string, width: number, shot?: string) {
 }
 
 
-describe.skipIf(!CHROME)("B9 tokens + daily on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B9 tokens + daily on the win runtime", () => {
   it("draws both charts at the card's pixel size; the toggle, the Select and the update change the svg, never a box", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "charts-1400.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "charts-1400.png") : undefined);
     expect(r.err).toBeNull();
-    expect(r.oldTk).toBe("none");
-    expect(r.oldDy).toBe("none");
     expect(r.selects).toBe(0);
     // the svg is exactly the card body's width (no viewBox scaling, nothing measured by the chart)
     expect(r.tokens.svgW).toBe(r.tokens.bodyW);

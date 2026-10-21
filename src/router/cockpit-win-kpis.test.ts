@@ -1,5 +1,5 @@
 /**
- * B1 `kpis`: the real page with ?win=1 shows the totals as a group of six metric cards in main#win-root;
+ * B1 `kpis`: the real page with  shows the totals as a group of six metric cards in main#win-root;
  * without the flag the old page is unchanged. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes kpis-<width>-<theme>.png.
  */
@@ -26,7 +26,7 @@ var root=document.getElementById("win-root");
 function boxes(){return Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){var r=c.getBoundingClientRect();return c.getAttribute("data-card")+":"+[r.left,r.top,r.width,r.height].map(Math.round).join(",")}).join("|")}
 function vals(){return Array.prototype.map.call(document.querySelectorAll('#win-root [data-card^="kpis."][data-type="metric"]'),function(c){var v=c.querySelector('[data-k="v"]');return c.getAttribute("data-card")+"="+v.textContent+(v.className.indexOf("bad")>=0?"!":v.className.indexOf("warn")>=0?"~":"")}).join("|")}
 var o={flag:!!root&&!root.hidden,rootHidden:root?root.hidden:null,cards:document.querySelectorAll("#win-root [data-card^='kpis']").length,heads:Array.prototype.map.call(document.querySelectorAll("#win-root [data-card^='kpis']>.chead"),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")}),
- oldKpis:getComputedStyle(document.querySelector('[data-section="kpis"]')).display,title:(document.querySelector('#win-root [data-card="kpis"] .ctt')||{}).textContent,
+ title:(document.querySelector('#win-root [data-card="kpis"] .ctt')||{}).textContent,
  vals:vals(),boxes:boxes(),err:window.__err||null};
 if(window.Win){window.Win.update("data",{totals:{requests:1,input:2,output:3,cacheRead:4,cacheWrite:5,errors:0}});o.vals2=vals();o.boxes2=boxes()}
 document.body.setAttribute("data-r",JSON.stringify(o));
@@ -71,15 +71,14 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B1 kpis on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B1 kpis on the win runtime", () => {
   it("shows the totals as a group of six metric cards; values update without moving a box", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "kpis-1400-light.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "kpis-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     expect(r.flag).toBe(true);
     expect(r.cards).toBeGreaterThanOrEqual(7);
     expect(r.title).toBe("Totals in this window");
-    expect(r.oldKpis).toBe("none");
     for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn)*$/);
     expect(r.vals).toBe("kpis.requests=5.0k|kpis.input=9.00M|kpis.output=400.0k|kpis.cache-read=90.00M|kpis.cache-write=1.00M|kpis.errors=900!");
     expect(r.vals2).toBe("kpis.requests=1|kpis.input=2|kpis.output=3|kpis.cache-read=4|kpis.cache-write=5|kpis.errors=0");
@@ -89,12 +88,4 @@ describe.skipIf(!CHROME)("B1 kpis on the win runtime (?win=1)", () => {
     expect(tops.size).toBe(1);
   }, 120_000);
 
-  it("without the flag the old page is unchanged and win-root stays hidden and empty", async () => {
-    const r = await open("", 1400);
-    expect(r.err).toBeNull();
-    expect(r.flag).toBe(false);
-    expect(r.rootHidden).toBe(true);
-    expect(r.cards).toBe(0);
-    expect(r.oldKpis).not.toBe("none");
-  }, 120_000);
 });

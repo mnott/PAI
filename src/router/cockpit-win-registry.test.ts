@@ -177,7 +177,7 @@ setTimeout(function(){if(e){o.status=e.querySelector(".cstatus").textContent;o.s
  o.bk=b&&b.textContent.replace(/\\s+/g," ");document.body.setAttribute("data-r",JSON.stringify(o))},700);
 },1500)</script>`;
 
-describe.skipIf(!CHROME)("B8b-client settings group on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B8b-client settings group on the win runtime", () => {
   let server: Server, base = "", tmp = "";
   const browsers = new Set<ChildProcess>();
   const seen: string[] = [];
@@ -212,7 +212,7 @@ describe.skipIf(!CHROME)("B8b-client settings group on the win runtime (?win=1)"
 
   it("renders the editor and the backups list; Save is disabled before Validate and Validate posts to the fake server", async () => {
     const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p")}`, "--window-size=1400,1800", "--virtual-time-budget=8000"];
-    const dom = await run([...args, "--dump-dom", `${base}/page?win=1`]);
+    const dom = await run([...args, "--dump-dom", `${base}/page`]);
     const m = /data-r="([^"]*)"/.exec(dom);
     if (!m) throw new Error("no probe result in dump");
     const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));

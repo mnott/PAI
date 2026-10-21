@@ -1,5 +1,5 @@
-/** The win block shares one script with the old page until cut-over: it may not declare any
- *  identifier the old page declares (a duplicate var/function silently replaces the old one). */
+/** The win block shares one script with the rest of the page: it may not declare any
+ *  identifier the rest declares (a duplicate var/function silently replaces the other). */
 
 import { describe, expect, it } from "vitest";
 import { COCKPIT_HTML } from "./cockpit-page.js";
@@ -26,8 +26,8 @@ describe("win block globals", () => {
   const winNames = declared(block);
 
   it("the extraction sees both sides", () => {
-    expect(oldNames.has("postAction")).toBe(true);
-    expect(winNames.has("WINON")).toBe(true);
+    expect(oldNames.has("feed")).toBe(true);
+    expect(winNames.has("Win")).toBe(true);
   });
 
   it("no identifier is declared by both the win block and the old page", () => {

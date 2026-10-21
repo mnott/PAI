@@ -1,5 +1,5 @@
 /**
- * B3 `memory`: the real page with ?win=1 shows the memory group (kv + metric cards, a dynamic card per job) in
+ * B3 `memory`: the real page with  shows the memory group (kv + metric cards, a dynamic card per job) in
  * main#win-root, its embed/index/stop actions are header buttons of the group card (disabled with a reason, result in the
  * card status via runAction); without the flag the old page is unchanged. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes workers-<width>.png.
@@ -36,7 +36,7 @@ function vis(){return Array.prototype.filter.call(document.querySelectorAll("#wi
 function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');return c?c.textContent.replace(/\\s+/g," "):null}
 function st(id){var c=document.querySelector('#win-root [data-card="'+id+'"] .cstatus');return c?c.getAttribute("data-kind")+"|"+c.textContent:null}
 var o={err:window.__err||null,vis:vis(),local:txt("workers.local"),wt:txt("workers.wt"),plans:txt("workers.plans"),prov:txt("workers.prov:local"),sess:txt("workers.sess:Whazaa"),tests:txt("workers.tests"),
- oldWk:getComputedStyle(document.querySelector('[data-section="workers"]')).display,
+ 
  drag:document.querySelectorAll('#win-root [data-card="workers.prov:local"] tr[draggable="true"]').length,
  btns:document.querySelectorAll('#win-root [data-card="workers.prov:local"] button[data-q]').length};
 document.body.setAttribute("data-r1",JSON.stringify(o));
@@ -97,11 +97,11 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B5 workers on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B5 workers on the win runtime", () => {
   it("block cards per provider/session/plan/build, note cards, row buttons run queue verbs, a row drag posts queue/move", async () => {
     posts.length = 0;
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "workers-1400.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "workers-1400.png") : undefined);
     const o = r.r1;
     expect(o.err).toBeNull();
     expect(o.vis).toEqual(expect.arrayContaining(["workers", "workers.local", "workers.wt", "workers.plans", "workers.prov:local", "workers.sess:Whazaa", "workers.tests"]));
@@ -111,7 +111,6 @@ describe.skipIf(!CHROME)("B5 workers on the win runtime (?win=1)", () => {
     expect(o.prov).toContain("second waiting");
     expect(o.sess).toContain("glm job");
     expect(o.tests).toContain("vitest");
-    expect(o.oldWk).toBe("none");
     expect(o.drag).toBe(2);
     expect(o.btns).toBe(4);
     expect(posts).toContain('/cockpit/queue/up {"id":"w-b"}');
@@ -119,10 +118,4 @@ describe.skipIf(!CHROME)("B5 workers on the win runtime (?win=1)", () => {
     expect(r.st).toMatch(/^ok\|/);
   }, 120_000);
 
-  it("without the flag the old workers section is unchanged", async () => {
-    const r = await open("", 1400);
-    expect(r.r1.err).toBeNull();
-    expect(r.r1.oldWk).not.toBe("none");
-    expect(r.r1.vis).toEqual([]);
-  }, 120_000);
 });

@@ -1,5 +1,5 @@
 /**
- * Guard: no native-white control on ?win=1. Every button/input/textarea/select inside #win-root has an effective background
+ * Guard: no native-white control on . Every button/input/textarea/select inside #win-root has an effective background
  * that follows the page theme (dark: luminance < 0.2, light: > 0.5), with readable text. Fixtures render the model cards (a
  * running instance row, small ollama models with nothing loaded), the registry editor and the backups card.
  * Headless Chromium, skipped when none is installed.
@@ -82,7 +82,7 @@ function run(args: string[]): Promise<string> {
   });
 }
 async function open(theme: string) {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, "--window-size=1300,4600", "--virtual-time-budget=8000", "--dump-dom", `${base}/page?win=1&theme=${theme}`];
+  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, "--window-size=1300,4600", "--virtual-time-budget=8000", "--dump-dom", `${base}/page?theme=${theme}`];
   const dom = await run(args);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");

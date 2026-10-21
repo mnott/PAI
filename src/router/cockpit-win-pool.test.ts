@@ -1,5 +1,5 @@
 /**
- * B4 `pool`: the real page with ?win=1 shows the totals as a group of six metric cards in main#win-root;
+ * B4 `pool`: the real page with  shows the totals as a group of six metric cards in main#win-root;
  * without the flag the old page is unchanged. Headless Chromium, skipped when none is installed.
  * PAI_WIN_SHOTS=<dir> writes pool-<width>-<theme>.png.
  */
@@ -39,7 +39,7 @@ const fixturePool = () => ({
 const PROBE = `<script>setTimeout(function(){
 function vis(){return Array.prototype.filter.call(document.querySelectorAll("#win-root .card"),function(c){return c.style.display!=="none"}).map(function(c){return c.getAttribute("data-card")})}
 function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');return c?c.textContent.replace(/\\s+/g," "):null}
-var o={err:window.__err||null,vis:vis(),host:txt("pool.host"),tasks:txt("pool.tasks"),slots:txt("pool.slots"),off:txt("pool.off"),oldPool:getComputedStyle(document.querySelector('[data-section="pool"]')).display,
+var o={err:window.__err||null,vis:vis(),host:txt("pool.host"),tasks:txt("pool.tasks"),slots:txt("pool.slots"),off:txt("pool.off"),
  heads:Array.prototype.map.call(document.querySelectorAll("#win-root .chead"),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")})};
 document.body.setAttribute("data-r",JSON.stringify(o));
 },1500)</script>`;
@@ -84,24 +84,23 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("B4 pool on the win runtime (?win=1)", () => {
+describe.skipIf(!CHROME)("B4 pool on the win runtime", () => {
   it("on: six kv cards over the slots table, no note; the old section is hidden", async () => {
     poolOn = true;
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("?win=1", 1400, shots ? join(shots, "pool-1400-light.png") : undefined);
+    const r = await open("", 1400, shots ? join(shots, "pool-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     expect(r.vis).toEqual(expect.arrayContaining(["pool", "pool.pool", "pool.host", "pool.tasks", "pool.hit", "pool.spares", "pool.not-pooled", "pool.slots"]));
     expect(r.vis).not.toContain("pool.off");
     expect(r.host).toContain("up");
     expect(r.tasks).toContain("7");
     expect(r.slots).toContain("opus");
-    expect(r.oldPool).toBe("none");
     for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl)*$/);
   }, 120_000);
 
   it("off with the host down: one note card, no kv cards", async () => {
     poolOn = false;
-    const r = await open("?win=1", 1400);
+    const r = await open("", 1400);
     expect(r.err).toBeNull();
     expect(r.vis).toContain("pool.off");
     expect(r.vis).not.toContain("pool.host");
@@ -113,7 +112,7 @@ describe.skipIf(!CHROME)("B4 pool on the win runtime (?win=1)", () => {
   it.each(["live", "partial"] as const)("%s payload: kv values and the slots card are filled, no note", async (sh) => {
     poolOn = true;
     shape = sh;
-    const r = await open("?win=1", 1400);
+    const r = await open("", 1400);
     shape = "fixture";
     expect(r.vis).toEqual(expect.arrayContaining(["pool.host", "pool.tasks", "pool.slots"]));
     expect(r.vis).not.toContain("pool.off");
@@ -122,11 +121,4 @@ describe.skipIf(!CHROME)("B4 pool on the win runtime (?win=1)", () => {
     expect(r.slots).toContain("no slots");
   }, 120_000);
 
-  it("without the flag the old pool section is unchanged", async () => {
-    poolOn = true;
-    const r = await open("", 1400);
-    expect(r.err).toBeNull();
-    expect(r.oldPool).not.toBe("none");
-    expect(r.vis).toEqual([]);
-  }, 120_000);
 });

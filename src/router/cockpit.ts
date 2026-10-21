@@ -1005,18 +1005,6 @@ export function cockpitQueue(
  * unless router.bind opens a second listener (then every cockpit route,
  * writes included, is token-gated — see src/router/cockpit-auth.ts).
  */
-/** Sections to show: ?sections=a,b overrides router.cockpit.sections, which is re-read on every page load. Empty = all. */
-function cockpitSections(url: URL): string[] {
-  const q = url.searchParams.get("sections");
-  if (q !== null) return q.split(",").map((x) => x.trim()).filter(Boolean);
-  try {
-    const l = loadConfig().router.cockpit?.sections;
-    return Array.isArray(l) ? l.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
 export function handleCockpit(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -1084,7 +1072,7 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml(cockpitSections(url));
+      html = cockpitHtml();
     } catch {
       /* falls through to the 503 */
     }

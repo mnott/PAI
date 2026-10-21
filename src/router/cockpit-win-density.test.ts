@@ -1,7 +1,7 @@
 /**
  * Density: a card's default height is its content's height (within the type's minimum), so the page has no large empty card areas.
  * Pure: layout() with cfg.fit shrinks default bands, saved px and no-fit layouts are unchanged.
- * Headless Chromium on the real page (?win=1, no saved layout): every measured card is at most SLACK px taller than its content.
+ * Headless Chromium on the real page (, no saved layout): every measured card is at most SLACK px taller than its content.
  * PAI_DENSITY_SHOT=<png> writes a 1300x5000 screenshot; PAI_DENSITY_TABLE=1 prints the table.
  */
 
@@ -106,10 +106,10 @@ function run(args: string[]): Promise<string> {
   });
 }
 
-describe.skipIf(!CHROME)("every default card is as tall as its content (?win=1)", () => {
+describe.skipIf(!CHROME)("every default card is as tall as its content", () => {
   it(`no card is more than ${SLACK} px taller than its content`, async () => {
     const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p")}`, "--window-size=1300,5000", "--virtual-time-budget=8000"];
-    const url = `${base}/page?win=1`;
+    const url = `${base}/page`;
     const dom = await run([...args, "--dump-dom", url]);
     const shot = process.env.PAI_DENSITY_SHOT;
     if (shot) await run([...args, `--screenshot=${shot}`, url]);
