@@ -561,6 +561,12 @@ export interface WorkersConfig {
   worktreesMaxGb: number;
   /** Daemon reaper for orphaned worker processes (workers.reaper, default on). */
   reaper: boolean;
+  /**
+   * Run native-Anthropic workers through `caveman claude` (workers.caveman).
+   * Off pins them to api.anthropic.com even when the user settings route
+   * every claude through a proxy; see claudeCommand in run-env.ts.
+   */
+  caveman: boolean;
   /** Machine-wide Claude Code fallback; null = off. */
   fallback: WorkersFallback | null;
   /**
@@ -677,6 +683,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
     worktreesMaxGb: num(w.worktreesMaxGb, 20),
     reaper: bool(w.reaper, true),
+    caveman: bool(w.caveman, false),
     fallback: null,
     nativeModels: nativeAnthropicModels(),
     costTier: num(w.costTier, 3),
@@ -1368,6 +1375,11 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
   }
   const reaper = w.reaper !== false;
 
+  if (w.caveman !== undefined && typeof w.caveman !== "boolean") {
+    bad(".caveman", "must be true or false");
+  }
+  const caveman = w.caveman === true;
+
   const active = w.active === undefined || w.active === null ? null : str(w.active);
   if (active !== null && active !== "auto" && !(active in providers)) {
     // Tolerated at parse time (a provider may have been removed while active
@@ -1440,6 +1452,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     gcOlderThanHours,
     worktreesMaxGb,
     reaper,
+    caveman,
     fallback,
     nativeModels: { ...d.nativeModels },
     costTier: d.costTier,
@@ -1573,6 +1586,7 @@ export function writeWorkersSection(
         gcOlderThanHours: workers.gcOlderThanHours,
         worktreesMaxGb: workers.worktreesMaxGb,
         reaper: workers.reaper,
+        caveman: workers.caveman,
         ...(workers.fallback ? { fallback: workers.fallback } : {}),
       }
     : workers.fallback

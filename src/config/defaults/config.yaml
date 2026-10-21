@@ -143,10 +143,6 @@ vaultIndex:
 # Keep `pai router` (127.0.0.1:8790) running under the daemon.
 router:
   enabled: false
-  # TCP port the router listens on; every router URL (worker routing, cockpit links) derives from it.
-  port: 8790
-  # Upstream for claude-* model ids (inbound auth is passed through).
-  claudeUpstream: https://api.anthropic.com
   bind: loopback
   # Cockpit page layout policy (src/router/cockpit-layout.ts): grid breakpoints,
   # column counts, tile min/max widths, chart heights, sample/history window

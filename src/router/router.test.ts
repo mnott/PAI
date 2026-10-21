@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWorkersConfig } from "../workers/config.js";
 import http from "node:http";
-import { claudeUpstream, routerPort } from "./router.js";
 import { createRouter, duplicateModelIds, estimateTokens, modelsReply, prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
 
 const dir = mkdtempSync(join(tmpdir(), "router-"));
@@ -44,24 +43,11 @@ describe("router", () => {
     expect(r).toMatchObject({ kind: "claude", base: "http://c/w/claude" });
   });
 
-  it("takes the claude upstream and port from config, default api.anthropic.com / 8790", () => {
-    const saved = process.env.PAI_CONFIG_FILE;
-    const cfgDir = mkdtempSync(join(tmpdir(), "router-cfg-"));
-    try {
-      process.env.PAI_CONFIG_FILE = join(cfgDir, "none.json");
-      expect(claudeUpstream()).toBe("https://api.anthropic.com");
-      expect(routerPort()).toBe(8790);
-      expect(resolveModel("claude-haiku-4-5", providers, claudeUpstream())).toMatchObject({ kind: "claude", base: "https://api.anthropic.com" });
-      writeFileSync(join(cfgDir, "config.yaml"), "router:\n  claudeUpstream: http://up.example/anthropic\n  port: 8899\n");
-      process.env.PAI_CONFIG_FILE = join(cfgDir, "config.json");
-      expect(claudeUpstream()).toBe("http://up.example/anthropic");
-      expect(routerPort()).toBe(8899);
-      const r = prepare("/v1/messages", hdr, body({ model: "claude-haiku-4-5", messages: [] }), providers);
-      expect(r.ok && r.target).toMatchObject({ kind: "claude", base: "http://up.example/anthropic" });
-    } finally {
-      if (saved === undefined) delete process.env.PAI_CONFIG_FILE;
-      else process.env.PAI_CONFIG_FILE = saved;
-    }
+  it("defaults the claude base to first-party Anthropic", () => {
+    const r = resolveModel("claude-haiku-4-5-20251001", providers);
+    expect(r).toMatchObject({ kind: "claude", base: "https://api.anthropic.com" });
+    const p = prepare("/v1/messages", hdr, body({ model: "claude-haiku-4-5-20251001", messages: [] }), providers);
+    expect(p.ok && p.up.url.href).toBe("https://api.anthropic.com/v1/messages");
   });
 
   it("strips thinking only for non-anthropic targets", () => {

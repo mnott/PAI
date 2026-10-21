@@ -34,6 +34,7 @@ const provider: WorkerProvider = {
 
 const config = (pool: Record<string, unknown> = {}): WorkersConfig => ({
   ...defaultWorkersConfig(),
+  caveman: false,
   pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 0, native: true, spares: 1, idleKillSec: 1800, continuation: false, ...pool },
   providers: { fakeprov: provider },
 });

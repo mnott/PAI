@@ -1099,7 +1099,7 @@ async function startShim(): Promise<void> {
         const { workers } = readWorkersSection();
         const p = workers.providers[args.name];
         if (!p) return workerError(new Error(`no provider named "${args.name}"`));
-        const r = await testProvider(args.name, p, workersLogDir(workers), undefined);
+        const r = await testProvider(args.name, p, workersLogDir(workers), undefined, workers.caveman);
         if (r.skipped) {
           return workerText(
             `${r.provider} ${r.model}  ${r.skipped}\nreply: ${r.result.slice(0, 200)}`

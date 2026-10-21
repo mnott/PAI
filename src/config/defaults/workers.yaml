@@ -156,6 +156,9 @@ workers:
   worktreesMaxGb: 20
   # Daemon reaper for orphaned worker processes.
   reaper: true
+  # Run native-Anthropic workers through `caveman claude`; off pins them to
+  # api.anthropic.com even when user settings route claude through a proxy.
+  caveman: false
   # Cost tier used when a provider names none (1 cheapest … 5 most expensive).
   costTier: 3
   # Budget-routing skip percentage used when a provider names none.

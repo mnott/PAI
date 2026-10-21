@@ -286,7 +286,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // shared 5,445 (system+tools). The documented switch (env CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS =
   // setting includeGitInstructions:false) drops it, and the git section of the system prompt with it.
   if (volatileInTask) env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = "1";
-  const claudeCmd = claudeCommand(env);
+  const claudeCmd = claudeCommand(env, config.caveman);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
   const slimArgs = headless ? slimProfileArgs(logDir, wid, parsed.rest, env, undefined, target.provider) : [];

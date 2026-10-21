@@ -514,22 +514,23 @@ function activeResumeProvider(
 function providerPlan(
   name: string,
   provider: WorkerProvider,
-  model: string
+  model: string,
+  w: Pick<WorkersConfig, "caveman">
 ): ProviderResumePlan {
   const env = buildRunEnv(provider, false);
   env[SESSION_PROVIDER_ENV] = name;
-  return { provider: name, model, cmd: claudeCommand(env), env };
+  return { provider: name, model, cmd: claudeCommand(env, w.caveman), env };
 }
 
 function resolveResumeRoute(
   ranOn: string | null,
-  w: Pick<WorkersConfig, "active" | "providers">
+  w: Pick<WorkersConfig, "active" | "providers" | "caveman">
 ): ResumeRoute {
   const match = matchTranscriptProvider(ranOn, w.providers);
   if (match) {
     // A transcript that ran on a configured provider must resume on it:
     // model as the session recorded it, variant and all.
-    return { match, ranOn, plan: providerPlan(match.provider, w.providers[match.provider], match.model) };
+    return { match, ranOn, plan: providerPlan(match.provider, w.providers[match.provider], match.model, w) };
   }
   // No provider owns the transcript's model — an Anthropic-login session, or
   // a model renamed since (observed 2026-10-16: claude-opus-5-5 while glm was
@@ -544,7 +545,7 @@ function resolveResumeRoute(
   return {
     match: null,
     ranOn,
-    plan: providerPlan(active.name, active.provider, active.provider.models.default),
+    plan: providerPlan(active.name, active.provider, active.provider.models.default, w),
   };
 }
 
@@ -556,7 +557,7 @@ function resolveResumeRoute(
 export function resumeRoute(
   uuid: string,
   cwd: string,
-  workers?: Pick<WorkersConfig, "active" | "providers">,
+  workers?: Pick<WorkersConfig, "active" | "providers" | "caveman">,
   home = homedir()
 ): ResumeRoute {
   const ranOn = transcriptModelFor(uuid, encodedProjectDir(cwd), home);
@@ -579,7 +580,7 @@ export function resumeRoute(
 export function providerResumePlan(
   uuid: string,
   cwd: string,
-  workers?: Pick<WorkersConfig, "active" | "providers">,
+  workers?: Pick<WorkersConfig, "active" | "providers" | "caveman">,
   home = homedir()
 ): ProviderResumePlan | null {
   return resumeRoute(uuid, cwd, workers, home).plan;
@@ -756,10 +757,11 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
   const freshPromptArgs = [launchPrompt(name)];
 
   // A broken workers config must degrade to claude, never crash the picker.
-  let workers: Pick<WorkersConfig, "enabled" | "active" | "providers"> = {
+  let workers: Pick<WorkersConfig, "enabled" | "active" | "providers" | "caveman"> = {
     enabled: false,
     active: null,
     providers: {},
+    caveman: false,
   };
   try {
     workers = readWorkersSection().workers;

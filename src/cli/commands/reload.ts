@@ -12,7 +12,7 @@ import { homedir, userInfo } from "node:os";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
-import { routerPort } from "../../router/router.js";
+import { ROUTER_PORT } from "../../router/router.js";
 import { restartRouter } from "../../router/restart.js";
 import { probeRouter, routerRunningPid, spawnRouter } from "../../router/supervisor.js";
 import { poolReloadLive } from "../../workers/pool-cli.js";
@@ -189,7 +189,7 @@ function liveDeps(): ReloadDeps {
           oldPid: routerRunningPid() ?? undefined,
           spawnNew: () => spawnRouter(entry, ["--wait-bind", "10"]),
           signalOld: (pid) => process.kill(pid, "SIGTERM"),
-          isUp: () => probeRouter(routerPort(), 500),
+          isUp: () => probeRouter(ROUTER_PORT, 500),
         })).newPid,
     },
     pool: { reload: () => poolReloadLive(workersLogDir(readWorkersSection().workers)) },

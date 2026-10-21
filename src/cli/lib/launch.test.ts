@@ -342,7 +342,7 @@ describe("providerResumePlan — an unmatched transcript still pins a provider",
     models: { default: "glm-5.3[1m]", fast: "glm-4.6-flash" },
     env: {},
   };
-  const workers = { active: "glm", providers: { glm } };
+  const workers = { active: "glm", providers: { glm }, caveman: false };
 
   /**
    * The observed incident (2026-10-16): an Oct-4 transcript that ran on

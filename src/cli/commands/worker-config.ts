@@ -406,7 +406,7 @@ const providersTestCommand: CommandDef = {
         }
       }
       io?.out(dim(`  probing ${pname} (${provider.models.default}) — ${why} …`));
-      const r = await testProvider(pname, provider, logDir, undefined, io?.run ? { run: io.run } : undefined);
+      const r = await testProvider(pname, provider, logDir, undefined, workers.caveman, io?.run ? { run: io.run } : undefined);
       const head = `${r.provider} ${r.model}  ${(r.latencyMs / 1000).toFixed(1)}s`;
       const say = (s: string) => void (io?.out(s) ?? out(s));
       if (r.skipped) {
