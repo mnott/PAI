@@ -27,6 +27,8 @@ import { setClass } from "../workers/providers.js";
 import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.js";
 import { readLocalConfig } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
+import { instanceEngineKey } from "../workers/local-instances.js";
+import { sharedScheduler, type SchedSnapshot } from "./scheduler.js";
 import { primaryLocal, readLocalStatus } from "../workers/local-status.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
@@ -326,6 +328,12 @@ export function orchestratorProvider(workers: ActionDeps["workers"]): string {
   return workers.active && workers.active !== "auto" ? workers.active : "";
 }
 
+/** Requests running or waiting on one engine key in a scheduler snapshot. */
+export function engineInflight(snap: SchedSnapshot, key: string): number {
+  const e = snap.engines[key];
+  return e ? (e.inflight ? 1 : 0) + Object.values(e.queued).reduce((a, n) => a + n, 0) : 0;
+}
+
 export function defaultDeps(): ActionDeps {
   const { workers } = readWorkersSection();
   const logDir = workersLogDir(workers);
@@ -347,7 +355,10 @@ export function defaultDeps(): ActionDeps {
     },
     stopModel: async (target, opts) => {
       const { stopInstance } = await import("../cli/commands/worker-config.js");
-      await stopInstance(readLocalConfig(workersYamlPath()), target, opts, { confirm: opts.confirm });
+      const { currentInstances } = await import("../cli/commands/worker-config.js");
+      const cfg = readLocalConfig(workersYamlPath());
+      const keys = new Map(currentInstances(cfg).map((r) => [r.id, instanceEngineKey(r)]));
+      await stopInstance(cfg, target, opts, { confirm: opts.confirm, inflight: (id) => engineInflight(sharedScheduler().snapshot(), keys.get(id) ?? id) });
     },
     runningCount: async (model) => {
       const { currentInstances } = await import("../cli/commands/worker-config.js");

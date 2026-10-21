@@ -96,12 +96,12 @@ function startChip(l){
  return'<span class="chip '+(failed?'bad':'warn')+'" data-prov="'+esc(l.provider)+'" title="'+esc(s.log)+'">'+esc(l.provider)+' · '+(failed?esc(s.message):'loading '+s.sinceSec+' s')+'</span>';
 }
 function renderLimits(){
- if(!lim)return;var c="",lo="",lt="",dn=[],nl=[],st=[];
+ if(!lim)return;var c="",lo="",lt="",dn=[],st=[];
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
    if(!l.up&&l.starting){st.push(l);return}
-   if(!l.up){(l.provider===lim.activeLocal?dn:nl).push(l.provider);return}
+   if(!l.up){if((lim.runningLocal||[lim.activeLocal]).indexOf(l.provider)>=0)dn.push(l.provider);return}
    lt+=localTile(l);
    return}
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
@@ -112,7 +112,6 @@ function renderLimits(){
  });
  if(st.length)lo+=st.map(startChip).join(" ");
  if(lt)lo='<div class="tgroup" data-tkey="local">'+lt+'</div>'+lo;
- if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' inactive local '+(nl.length===1?'tier':'tiers')+' (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip dim">'+esc(n)+'</span>'}).join(" ")+'</details>';
  setHtml($("cloud"),c?'<div class="tgroup" data-tkey="cloud">'+c+'</div>':'<span class="dim">no cloud limit sources</span>');
  // the poll rebuild must not reset the order and minimized tiles the user arranged
  orderTiles($("cloud"));
@@ -144,16 +143,27 @@ function ringName(m){
  for(i=0;i<cs.length;i++)if(cs[i].model===m&&cs[i].label)return cs[i].label;
  return shortModel(m);
 }
-/** Local-model buttons: caption, one button per tier (label, memory need), the active one highlighted and
- * disabled, an inline confirm that names what the switch stops, and off. */
-function tierRow(tiers,running,starting){
- var btns=tiers.map(function(t){
-  var name=typeof t==="string"?t:t.tier,label=(typeof t==="string"?"":t.label)||name,gb=typeof t==="string"?null:t.memoryGb;
-  var cur=!!(running&&running.tier===name);
-  var cf=running&&!cur?' data-confirm="stops '+esc(running.label||running.model)+' first, needs ~'+(gb?esc(gb):"?")+' GB. Click again to confirm."':"";
-  return'<button data-a="local.switch" data-t="'+esc(name)+'" class="tier'+(cur?' cur':'')+'"'+(cur?' disabled':'')+cf+'>'+esc(label)+(gb?' · '+esc(gb)+' GB':'')+'</button>'}).join("");
- var sc=starting?' <span class="'+(starting.state==="failed"?'bad':'warn')+'" title="'+esc(starting.log)+'">'+esc(starting.tier)+' · '+(starting.state==="failed"?esc(starting.message):'loading '+starting.sinceSec+' s')+'</span>':"";
- return'<span class="tiercap">Local model:</span> '+btns+'<button data-a="local.off">off</button>'+sc;
+/** Local models: one row per catalogue model, running or not — start, stop (all its instances), "- n +" instance count —
+ * and under it one row per instance (state, port, pid, rss, in flight, own stop). A stop with requests in flight
+ * arms an inline confirm and then sends value=confirm. */
+function tierRow(tiers,instances,starting,rssOf){
+ var rows=tiers.map(function(t){
+  var name=typeof t==="string"?t:t.tier,label=(typeof t==="string"?"":t.label)||name,gb=typeof t==="string"?null:t.memoryGb,max=typeof t==="string"?null:t.maxInstances;
+  var mine=(instances||[]).filter(function(i){return i.model===name});
+  var live=mine.filter(function(i){return i.state!=="failed"}),busy=live.reduce(function(a,i){return a+(i.inflight||0)},0);
+  var sc=starting&&starting.tier===name?' <span class="'+(starting.state==="failed"?'bad':'warn')+'" title="'+esc(starting.log)+'">'+(starting.state==="failed"?esc(starting.message):'loading '+starting.sinceSec+' s')+'</span>':"";
+  var stopCf=busy?' data-confirm="'+busy+' request'+(busy===1?'':'s')+' in flight - click again to stop" data-v="confirm"':"";
+  var btns='<button data-a="local.start" data-t="'+esc(name)+'"'+(max&&live.length>=max?' disabled':'')+'>start</button>'+
+   (live.length?'<button data-a="local.stop" data-t="'+esc(name)+'"'+stopCf+'>stop</button>':"")+
+   '<button data-a="local.scale" data-t="'+esc(name)+'" data-v="'+Math.max(0,live.length-1)+'"'+(live.length?'':' disabled')+' title="one instance fewer">-</button>'+
+   '<span class="num" title="running instances'+(max?' (max '+max+')':'')+'">'+live.length+'</span>'+
+   '<button data-a="local.scale" data-t="'+esc(name)+'" data-v="'+(live.length+1)+'"'+(max&&live.length>=max?' disabled':'')+' title="one instance more">+</button>';
+  var inst=mine.map(function(i){
+   var rss=rssOf&&rssOf(i.port);
+   return'<div class="inst"><span class="'+(i.state==="failed"?'bad':i.state==="ready"?'ok':'warn')+'">'+esc(i.id)+'</span> <span class="dim">'+esc(i.state)+' · :'+i.port+(i.pid!=null?' · pid '+i.pid:'')+(rss?' · '+esc(rss):'')+' · '+(i.inflight||0)+' in flight'+(i.error?' · '+esc(i.error):'')+'</span> '+
+    '<button data-a="local.stop" data-t="'+esc(i.id)+'"'+(i.inflight?' data-confirm="'+i.inflight+' in flight - click again to stop" data-v="confirm"':'')+'>stop</button></div>'}).join("");
+  return'<div class="lmodel" data-model-tier="'+esc(name)+'"><b>'+esc(label)+'</b>'+(gb?' <span class="dim">'+esc(gb)+' GB</span>':'')+' '+btns+sc+inst+'</div>'}).join("");
+ return'<span class="tiercap">Local model:</span>'+rows+'<button data-a="local.off" data-confirm="stop every local model - click again">off</button>';
 }
 /** Models section: one foldable card per consumer runtime — the runtime PAI's embedding runs on, the worker
  * providers' local models (tiers) and the declared consumers (models.consumers) — grouped under their runtime.
@@ -165,9 +175,10 @@ function modelsHtml(inv){
  if(!inv||!inv.runtimes)return"";
  var tiers=inv.tiers||[];
  var running=(inv.running&&inv.running.model)?inv.running:null;
+ function rssOf(port){var t=0,hit=false;(inv.runtimes||[]).forEach(function(x){if(x.port===port)(x.models||[]).forEach(function(m){if(m.memoryMb){t+=m.memoryMb;hit=true}})});return hit?(t>=1024?gbm(t)+" GB":t+" MB"):""}
  var cmds=inv.runtimeCommands||{};
  var consumers=inv.consumers||[];
- var tierBtns=tiers.length?tierRow(tiers,running,inv.starting):"";
+ var tierBtns=tiers.length?tierRow(tiers,inv.instances,inv.starting,rssOf):"";
  /* the local model switch shows once: in the card of the engine runtime the workers use (a running runtime
   * that is neither ollama nor docker model runner, hosting the running model, else one with a worker user);
   * with no such card it sits at the section bottom */
@@ -284,17 +295,15 @@ function modelsHtml(inv){
   if(r.split&&hasModel){users=(r.models[0].usedBy||[]).slice();consumersOf(consumers,rt,r.models[0]).forEach(function(c){if(users.indexOf(c.name)<0)users.push(c.name)})}
   // a runtime with no models of its own: every consumer pointing at it still waits on it
   if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
-  // a tier the operator switched away from: grey, not a failure
-  var inact=r.status==="stopped"&&r.inactive;
-  var down=r.status==="stopped"&&!inact;
+  var down=r.status==="stopped";
   var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
   // a running on-demand runtime (ollama, docker model runner) whose model is not in memory loads it on the first request
   var idle=!down&&(r.status==="idle"||(hasModel&&!loaded.length&&(r.kind==="ollama"||r.kind==="docker-model-runner")));
-  var state=down?"down":inact?"inactive":idle?"available (loads on first request)":"running";
+  var state=down?"down":idle?"available (loads on first request)":"running";
   // the tile order is keyed by the card's position in the grid, not its model id:
   // a renamed alias must not scramble the tiles the user arranged
   var tkey=r.name+" / "+(hasModel?r.models[0].model:"")+" tiles";
-  var key=inact?r.name+(r.port==null?"":" :"+r.port):down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
+  var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
    :idle?(hasModel?r.models.length+" installed":"no model")
    :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
   /* purpose first: the title is the consumer's label (config only), the model id is grey secondary text;
@@ -313,7 +322,7 @@ function modelsHtml(inv){
    return first?first.replace(/^worker:/,""):shortModel(m.model);
   }
   // two rows: the title on its own row beside the status dot (full name, wraps), the chips on the row below
-  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.slow?" slow":inact?" off":idle?" idle":"")+'"></span>'+
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.slow?" slow":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
    '</div><div class="mchips">'+
@@ -326,9 +335,7 @@ function modelsHtml(inv){
    (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
    '<span class="num">'+esc(key)+'</span></div></div>';
   var body="";
-  if(inact){
-   body+='<div class="mdim">inactive — '+esc(r.inactive.active)+' is the local model now'+(users.length?'<br>'+esc(purposeOf(users))+': will use '+esc(r.inactive.active)+' / unavailable until switched':'')+'</div>';
-  }else if(down){
+  if(down){
    body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
   }else if(!loaded.length){
    var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;

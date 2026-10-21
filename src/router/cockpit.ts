@@ -23,6 +23,7 @@ import { currentInventory, readInventory, readInventoryInput } from "../workers/
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { readLocalConfig, tierButtons } from "../workers/local-tiers.js";
+import { instanceEngineKey, readInstances } from "../workers/local-instances.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
 import { readLocalStatus } from "../workers/local-status.js";
@@ -578,6 +579,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     ...inv,
     runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
+    instances: localInstanceRows(),
     running: (await localRunningInfo())[0] ?? null,
     runningModels: await localRunningInfo(),
     starting: currentStart(),
@@ -674,10 +676,25 @@ export function withStarting(ls: ProviderLimits[], views: LocalStartView | Local
   });
 }
 
-/** The tiers (name, label, memory need), for the cards' Start/Stop row. */
-function localTierNames(): { tier: string; label: string; memoryGb?: number }[] {
+/** The tiers (name, label, memory need, instance cap), for the cards' Start/Stop row. */
+function localTierNames(): { tier: string; label: string; memoryGb?: number; maxInstances?: number }[] {
   try {
-    return tierButtons(readLocalConfig(workersYamlPath()));
+    const cfg = readLocalConfig(workersYamlPath());
+    return tierButtons(cfg).map((b) => ({ ...b, maxInstances: cfg.tiers[b.tier]?.maxInstances }));
+  } catch {
+    return [];
+  }
+}
+
+/** The managed instances (id, model, port, pid, state) with the requests running or queued on each, for the model cards' per-instance rows. */
+function localInstanceRows(): Array<{ id: string; model: string; port: number; pid?: number; state: string; error?: string; inflight: number }> {
+  try {
+    const logDir = workersLogDir(readWorkersSection().workers);
+    const engines = sharedScheduler().snapshot().engines;
+    return readInstances(logDir).map((i) => {
+      const e = engines[instanceEngineKey(i)];
+      return { id: i.id, model: i.model, port: i.port, ...(i.pid !== undefined ? { pid: i.pid } : {}), state: i.state, ...(i.error ? { error: i.error } : {}), inflight: e ? (e.inflight ? 1 : 0) + Object.values(e.queued).reduce((a, n) => a + n, 0) : 0 };
+    });
   } catch {
     return [];
   }

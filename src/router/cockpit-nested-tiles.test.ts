@@ -181,7 +181,7 @@ describe("nested tiles: order and minimize inside a section", () => {
     expect(h).toContain('data-tid="srv-a" data-tname="srv-a" data-tval="31 tok/s"');
     expect(h).toContain('data-tid="srv-b" data-tname="srv-b" data-tval="up"');
     expect(h).toContain("data-tgrip");
-    expect(h.indexOf("</div>" + "<details")).toBeGreaterThan(h.indexOf("srv-b")); // the down list sits outside the tile group, never a tile
+    expect(h).not.toContain("srv-c"); // a stopped model is a startable row in Models, not a tile here
     expect(els.local.__ordered).toBe(1);
     survives(h, "local", ["srv-a", "srv-b"]);
   });

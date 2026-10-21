@@ -440,18 +440,18 @@ describe("cockpit action endpoint", () => {
     try {
       const page = await ask(srv, "/cockpit", "GET");
       expect(page.status).toBe(200);
-      expect(page.body).toContain('data-a="local.switch"');
+      expect(page.body).toContain('data-a="local.start"');
+      expect(page.body).toContain('data-a="local.scale"');
+      expect(page.body).not.toContain('data-a="local.switch"');
       expect(page.body).toContain('data-a="local.off"');
       expect(page.body).toContain('data-a="runtime"');
       expect(page.body).toContain("pai.cockpit.models.folded");
       expect(page.body).toContain('data-section="routing"');
       expect(page.body).toContain("model.label");
-      expect(page.body).toContain("first, needs ~");
+      expect(page.body).toContain("in flight - click again to stop");
       expect(page.body).toContain("Local model:");
       expect(page.body).toContain('class="pgroup" data-prov=');
       expect(page.body).toContain('<div class="phead">');
-      expect(page.body).toContain("tier'+(cur?' cur':'')");
-      expect(page.body).toContain("running.label||running.model");
       expect(page.body).not.toMatch(/\balert\(/);
       expect(page.body).not.toMatch(/\bconfirm\(/);
       expect(page.body).not.toMatch(/\bprompt\(/);
@@ -627,5 +627,20 @@ describe("runtime duplicate guard, progress and fresh inventory", () => {
       setActionHooks({});
       if (saved !== undefined) process.env.PAI_HOME = saved;
     }
+  });
+});
+
+describe("local.stop in-flight count from the scheduler", () => {
+  it("counts the running and queued requests of one engine key", async () => {
+    const { engineInflight } = await import("./cockpit-actions.js");
+    const snap = {
+      engines: {
+        "gyro-m": { inflight: { session: "s", worker: "w", sinceMs: 1 }, queued: { a: 2, b: 1 }, counters: {} },
+        "gyro-m#2": { inflight: null, queued: {}, counters: {} },
+      },
+    } as never;
+    expect(engineInflight(snap, "gyro-m")).toBe(4);
+    expect(engineInflight(snap, "gyro-m#2")).toBe(0);
+    expect(engineInflight(snap, "other")).toBe(0);
   });
 });

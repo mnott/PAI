@@ -67,7 +67,7 @@ describe("cockpit page compression", () => {
     expect(html).toContain("<details");
     expect(html).not.toMatch(/<details[^>]*\bopen\b/);
     expect(html).toContain("1 local model down");
-    expect(html).toContain("17 inactive local tiers (switch in Models)");
+    expect(html).not.toContain("inactive local");
     const outside = html.replace(/<details[\s\S]*?<\/details>/g, "");
     expect(outside).toContain("up1");
     expect(outside).not.toContain("dead0");
@@ -280,7 +280,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
 });
 
 describe("live-shaped payloads", () => {
-  it("Local block: an inactive tier is grey, never down; only the configured local model can be down", () => {
+  it("Local block: only a local model that should be running can be down; a stopped one is a startable Models row", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const run = (activeLocal: string | null) => {
       const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
@@ -290,7 +290,7 @@ describe("live-shaped payloads", () => {
       return els.local!.innerHTML;
     };
     const h = run("gyro-m");
-    expect(h).toContain("1 inactive local tier");
+    expect(h).not.toContain("inactive local");
     expect(h.replace(/downs/g, "")).not.toContain("down");
     expect(run("flashnext-iq3")).toContain("1 local model down");
   });
@@ -2086,6 +2086,8 @@ describe("cockpit Models: one local switch, editable aliases", () => {
   it("tierRow renders once, inside the strata card, with two running runtimes", () => {
     const h = modelsHtml({ ...base, running: { model: "flash-next", tier: "gyro-m" }, runtimes: [strata, ollama] });
     expect(count(h)).toBe(1);
+    expect(h).toContain('data-a="local.start" data-t="gyro-m"');
+    expect(h).not.toContain('data-a="local.switch"');
     const cards = h.split('<div class="mcard').slice(1);
     expect(cards.filter((c) => c.includes("Local model:")).length).toBe(1);
     expect(cards.find((c) => c.includes('data-rt="gyro-m"'))).toContain("Local model:");
@@ -3704,5 +3706,49 @@ describe("local server tiles say why they are empty", () => {
     expect(COCKPIT_HTML).toContain("no requests in the last hour (24 h: ");
     expect(COCKPIT_HTML).toContain("ttft p50 ");
     expect(COCKPIT_HTML).toContain("server reports no prefix-cache counter");
+  });
+});
+
+describe("cockpit Models: instances per model", () => {
+  const src = [
+    COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function actRow[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function tierRow[\s\S]*?\n\}/)![0],
+    COCKPIT_HTML.match(/function gb\(b,d\)\{[^\n]*\}/)![0],
+    COCKPIT_HTML.match(/function gbm\(m\)\{[^\n]*\}/)![0],
+    COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
+  ].join("\n");
+  const modelsHtml = new Function("esc", "pct", `${src}; return modelsHtml;`)(
+    (s: unknown) => String(s ?? ""),
+    (x: number) => (x * 100).toFixed(1) + "%"
+  ) as (inv: unknown) => string;
+  const tiers = [
+    { tier: "gyro-m", label: "Gyro-M", memoryGb: 60, maxInstances: 2 },
+    { tier: "small", label: "Small" },
+  ];
+  const inst = (id: string, inflight: number) => ({ id, model: "gyro-m", port: 8035, pid: 11, state: "ready", inflight });
+  const base = { at: "x", duplicates: [], consumers: [], live: { at: 1, runtimes: [] }, tiers, runtimes: [], running: null };
+
+  it("a stopped catalogue model is a startable row; no stop, scale down disabled", () => {
+    const h = modelsHtml({ ...base, instances: [] });
+    expect(h).toContain('data-a="local.start" data-t="small"');
+    expect(h).not.toContain('data-a="local.stop"');
+    expect(h).toMatch(/data-a="local.scale" data-t="small" data-v="0" disabled/);
+    expect(h).toContain('data-a="local.scale" data-t="small" data-v="1"');
+  });
+
+  it("a running model shows its instances (port, pid, in flight); stop with requests in flight arms a confirm and sends value=confirm", () => {
+    const h = modelsHtml({ ...base, instances: [inst("gyro-m#1", 2), inst("gyro-m#2", 0)] });
+    expect(h).toContain("gyro-m#1");
+    expect(h).toContain(":8035 · pid 11");
+    expect(h).toContain("2 in flight");
+    expect(h).toContain('data-a="local.stop" data-t="gyro-m#1" data-confirm="2 in flight - click again to stop" data-v="confirm"');
+    expect(h).toContain('data-a="local.stop" data-t="gyro-m#2">');
+    expect(h).toContain('data-a="local.stop" data-t="gyro-m" data-confirm="2 requests in flight - click again to stop" data-v="confirm"');
+    // at maxInstances the start and + buttons are off
+    expect(h).toMatch(/data-a="local.start" data-t="gyro-m" disabled/);
+    expect(h).toMatch(/data-a="local.scale" data-t="gyro-m" data-v="3" disabled/);
   });
 });
