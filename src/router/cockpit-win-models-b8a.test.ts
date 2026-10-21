@@ -89,3 +89,140 @@ describe("registry-backups card minimized at load", () => {
     expect(c.slots.l).toContain("restore");
   });
 });
+
+// ---- C1 restored guards: the runtime card (the page's own helpers, a fake Win/WinA) ----
+import { COCKPIT_HTML } from "./cockpit-page.js";
+import { fnSrc, varSrc } from "./cockpit-page-src.js";
+
+function rtLib() {
+  const posts: { verb: string; args: any }[] = [];
+  const labels: { id: string; verb: string; args: any }[] = [];
+  const slot: any = { firstChild: null, appendChild(x: any) { slot.firstChild = x; x.parentNode = slot; }, removeChild(x: any) { slot.firstChild = null; x.parentNode = null; } };
+  const btn = { dataset: {} };
+  const inputs: any[] = [];
+  const src = `var TYPES={};var Win={registerType:function(n,d){TYPES[n]=d},el:function(){return{querySelector:function(q){return q.indexOf("data-act")>=0?H.btn:H.slot}}},ctx:function(){return null},update:function(){},addCards:function(){return true}};
+var WinT={leaf:function(){},split:function(){}};function winHost(){return null}var WMDX=null;
+var WinA={winClick:function(b,id,verb,args){H.posts.push({verb:verb,args:args})},runAction:function(id,verb,args){H.labels.push({id:id,verb:verb,args:args});return Promise.resolve({ok:true})}};
+var document={createElement:function(){var i={listeners:{},value:"",setAttribute:function(){},focus:function(){},addEventListener:function(k,f){i.listeners[k]=f}};H.inputs.push(i);return i}};
+${varSrc(COCKPIT_HTML, "BLUR_CANCEL_MS")}
+${["esc", "gb", "gbm", "shortModel", "pct"].map((n) => fnSrc(COCKPIT_HTML, n)).join("\n")}`;
+  const H = { posts, labels, slot, btn, inputs };
+  const api = new Function("H", `${src}\n${WIN_MODELS_JS}\nreturn{TYPES:TYPES,WMD_SET:function(inv){WMD={inv:inv}},wmdActs:wmdActs,wmdCards:wmdCards};`)(H) as {
+    TYPES: Record<string, Type>; WMD_SET: (i: any) => void; wmdActs: (id: string) => any[]; wmdCards: (i: any) => any[];
+  };
+  return { ...H, ...api };
+}
+const rtInv = (extra: Record<string, unknown> = {}) => ({
+  tiers: [], instances: [], registryModels: [], live: { runtimes: [],
+  }, runtimeCommands: { "vllm-big": { start: "start vllm" }, ollama: { stop: "stop ollama" } },
+  consumers: [
+    { name: "agent-a", runtime: "ollama", model: "qwen3:8b" },
+    { name: "agent-b", runtime: "ollama", model: "llama3:8b" },
+    { name: "pai-embedding", runtime: "ollama", model: "nomic-embed-text:latest" },
+    { name: "agent-c", runtime: "vllm-big", model: "big" },
+  ],
+  runtimes: [
+    { name: "ollama", kind: "ollama", port: 11434, status: "running", users: [], models: [
+      { model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["agent-a"] },
+      { model: "llama3:8b", kind: "chat", loaded: false, usedBy: ["agent-b"] },
+      { model: "nomic-embed-text", kind: "embedding", loaded: false, usedBy: [] }] },
+    { name: "vllm-big", kind: "vllm", port: 8000, status: "stopped", users: [], models: [{ model: "big", kind: "chat", loaded: false, usedBy: ["agent-c"] }] },
+  ],
+  ...extra,
+});
+
+describe("C1 guards: runtime cards", () => {
+  // w=2 model alias: the pencil opens an input; Enter posts model.label target=<runtime> value=model:<id>=<alias>; Escape posts nothing.
+  it("the alias editor posts model.label on Enter and nothing on Escape", async () => {
+    const m = rtLib(), inv = rtInv();
+    m.WMD_SET(inv);
+    const id = "models.rt:ollama/qwen3:8b";
+    const alias = m.wmdActs(id).find((a) => a.id === "alias")!;
+    expect(alias.enabled()).toBe(true);
+    alias.run();
+    expect(m.slot.firstChild).toBe(m.inputs[0]);
+    m.inputs[0].value = "  Fast ";
+    m.inputs[0].listeners.keydown({ key: "Enter", preventDefault() {}, stopPropagation() {} });
+    expect(m.labels).toEqual([{ id, verb: "model.label", args: { target: "ollama", value: "model:qwen3:8b=Fast" } }]);
+    expect(m.slot.firstChild).toBeNull();
+    alias.run();
+    m.inputs[1].listeners.keydown({ key: "Escape", stopPropagation() {} });
+    expect(m.labels.length).toBe(1);
+    expect(m.slot.firstChild).toBeNull();
+  });
+
+  // w=3 runtime card content: one card per consumer model, down/idle/slow wording, kind chip, applicable start/stop, stop confirm with requests in flight.
+  it("a runtime splits into one card per consumer model and says what is down, idle or slow", () => {
+    const m = rtLib(), inv = rtInv();
+    m.WMD_SET(inv);
+    const cards = m.wmdCards(inv);
+    expect(cards.map((c) => c.id)).toEqual(["models.rt:ollama/qwen3:8b", "models.rt:ollama/llama3:8b", "models.rt:ollama/nomic-embed-text", "models.rt:vllm-big/big"]);
+    const embed = cards[2]!;
+    expect(embed.users).toEqual(["pai-embedding"]); // the :latest consumer finds the plain model
+    const paint = (c: any) => {
+      const ctx = ctxFor(c.id);
+      m.TYPES.runtime!.mount(ctx);
+      m.TYPES.runtime!.update(ctx, inv);
+      return ctx.slots;
+    };
+    const q = paint(cards[0]), l = paint(cards[1]), d = paint(cards[3]);
+    expect(q.badges).toContain("running");
+    const slowInv = rtInv();
+    (slowInv.runtimes[0] as { slow?: boolean }).slow = true; // a slow probe reads amber "slow"
+    m.WMD_SET(slowInv);
+    const sctx = ctxFor(cards[0]!.id);
+    m.TYPES.runtime!.mount(sctx);
+    m.TYPES.runtime!.update(sctx, slowInv);
+    expect(sctx.slots.badges).toContain('badge mstate warn">slow<');
+    expect(q.badges).not.toContain(">ollama</span>"); // kind chip hidden when kind == name
+    expect(d.badges).toContain(">vllm</span>");
+    expect(l.badges).toContain("available (loads on first request)");
+    expect(d.badges).toContain("down");
+    expect(d.note).toBe("vllm-big :8000 down — agent-c cannot work");
+    m.WMD_SET(inv);
+    const act = (id: string, a: string) => m.wmdActs(id).find((x) => x.id === a)!.enabled();
+    expect(act("models.rt:vllm-big/big", "start")).toBe(true);
+    expect(act("models.rt:vllm-big/big", "stop")).toBe("not running");
+    expect(act("models.rt:ollama/qwen3:8b", "start")).toBe("already running");
+    expect(act("models.rt:ollama/qwen3:8b", "stop")).toBe(true);
+  });
+
+  it("stopping a runtime that has requests in flight posts value=confirm, an idle one posts none", () => {
+    const m = rtLib();
+    const inv = (inflight: number) => rtInv({
+      tiers: [{ tier: "gyro-m", maxInstances: 2 }], instances: [{ id: "gyro-m-1", model: "gyro-m", state: "ready", port: 8101, inflight }],
+      consumers: [], runtimes: [{ name: "strata", kind: "strata", port: 8101, status: "running", tier: "gyro-m", users: ["worker:local"], models: [{ model: "g.gguf", kind: "chat", loaded: true, usedBy: [] }] }],
+    });
+    for (const [n, want] of [[2, "confirm"], [0, undefined]] as const) {
+      m.posts.length = 0;
+      m.WMD_SET(inv(n));
+      m.wmdActs("models.rt:strata/g.gguf").find((a) => a.id === "stop")!.run();
+      expect(m.posts).toEqual([{ verb: "local.stop", args: { target: "gyro-m", value: want } }]);
+    }
+  });
+
+  // w=3b Speed / Memory / Conversation-cache cells and the context fill: binary GB with one decimal, decode/prefill text, fill bar from live/last tokens over max context.
+  it("the cells show decode, prefill, GB, the conversation cache and the context fill", () => {
+    const m = rtLib();
+    const inv = rtInv({
+      live: { runtimes: [{ name: "ollama", live: { rssMb: 20480, engine: { decode: 41.26, prefill: 812.4, phase: "generating", gpuMemUsed: 115964116992, parked: 3, slots: 8, reusedPct: 62, maxContext: 32768, liveUsed: 8192 } } }] },
+    });
+    m.WMD_SET(inv);
+    const c = m.wmdCards(inv)[0]!, ctx = ctxFor(c.id);
+    m.TYPES.runtime!.mount(ctx);
+    m.TYPES.runtime!.update(ctx, inv);
+    expect(ctx.slots.cells).toContain("41.3");
+    expect(ctx.slots.cells).toContain("t/s");
+    expect(ctx.slots.cells).toContain("generating · decode · prefill 812 t/s");
+    expect(ctx.slots.cells).toContain("20.0"); // 20480 MB
+    expect(ctx.slots.cells).toContain("GPU 108.0"); // 115964116992 bytes
+    expect(ctx.slots.cells).toContain("Conversation cache");
+    expect(ctx.slots.cells).toContain('<b class="wmdv">3</b><small class="wm-u">/ 8</small>');
+    expect(ctx.slots.cells).toContain("reused 62.0% of prompt tokens");
+    expect(ctx.slots.ctx).toContain("width:25.0%");
+    expect(ctx.slots.ctx).toContain("context 25% · 8.2k / 32K");
+    const gb = new Function(`${fnSrc(COCKPIT_HTML, "gb")}\nreturn gb;`)() as (b: number, d?: number) => string;
+    expect(gb(115964116992, 0)).toBe("108");
+    expect(gb(1.53e9)).toBe("1.4");
+  });
+});

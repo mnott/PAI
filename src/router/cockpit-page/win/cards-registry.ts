@@ -26,6 +26,7 @@ function wrgFail(io,e){io.status("err","no answer: "+(e&&e.message?e.message:Str
 /** Load the registry text (replaces the editor text unless it holds unsaved edits, or force) and the backups. */
 function wrgLoad(S,io,force){
  return io.get("/cockpit/registry").then(function(r){
+  if(!r||typeof r.yaml!=="string"){S.loaded=false;io.status("err","registry not available"+(r&&r.error?": "+r.error:""));io.paint();return wrgBackups(S,io)}
   var keep=wrgDirty(S)&&!force;
   S.hash=r.hash;S.saved=r.yaml;S.loaded=true;
   if(!keep){S.text=r.yaml;S.passed=null;S.diff=""}
@@ -118,6 +119,7 @@ function wrgTa(){var e=Win.el(WRG_ID);return e?e.querySelector("textarea.wrg-ta"
 function wrgPaint(setText){
  var ta=wrgTa(),c=Win.ctx(WRG_ID),b=Win.ctx(WRG_BK);
  if(ta&&setText)ta.value=WRG.text;
+ if(ta)ta.readOnly=!WRG.loaded;
  if(c){c.text("diff",WRG.diff);c.attr("diff","hidden",WRG.diff?null:"");wrgDupPaint(c)}
  if(b)b.html("l",wrgBackupsHtml(WRG));
  Win.update("registry",WRG);
@@ -138,7 +140,7 @@ Win.registerType("editor",{minW:360,minH:220,defaultH:360,
  mount:function(ctx){
   ctx.body.innerHTML='<div class="wrg" style="display:flex;flex-direction:column;height:100%;gap:4px;padding:4px"><div class="wrg-f" data-k="dup" hidden style="flex:none"></div><textarea class="wrg-ta" spellcheck="false" aria-label="workers.yaml registry text" style="flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;font:12px/1.4 ui-monospace,Menlo,monospace;resize:none;tab-size:2"></textarea><pre class="wrg-diff" data-k="diff" hidden style="flex:0 1 35%;margin:0;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre"></pre></div>';
   var ta=ctx.body.querySelector("textarea");
-  ta.value=WRG.text;
+  ta.value=WRG.text;ta.readOnly=!WRG.loaded;
   ta.addEventListener("input",function(){WRG.text=ta.value;Win.update("registry",WRG)});
   ctx.body.addEventListener("click",function(ev){
    var t=ev.target,io=wrgIo;
@@ -153,6 +155,7 @@ Win.registerType("editor",{minW:360,minH:220,defaultH:360,
  update:function(ctx,S){
   var ta=ctx.body.querySelector("textarea");
   if(ta&&ta.value!==S.text)ta.value=S.text;
+  if(ta)ta.readOnly=!S.loaded;
  }});
 /** The backups card paints from WRG itself, so a card minimized at load fills the moment it mounts (restore). */
 Win.registerType("backups",{minW:200,minH:60,defaultH:120,

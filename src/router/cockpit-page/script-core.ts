@@ -119,7 +119,7 @@ function metricSpark(series){
  }).join("");
 }
 /** Baked policy values, declared before the helpers that use them so each extracted function stays self-contained. */
-var JOB_TRIES=${n(L.jobMaxTries)},JOB_POLL=${n(L.jobPollMs)},SRV_STALE_SEC=${n(L.serverCounterStaleSecs)};
+var JOB_TRIES_CFG=${n(L.jobMaxTries)},JOB_POLL_CFG=${n(L.jobPollMs)},SRV_STALE_SEC=${n(L.serverCounterStaleSecs)};
 /** Colour thresholds (router.cockpit.layout.thresholds): a hit ratio below HIT_WARN reads amber,
  *  below HIT_BAD red; an error rate at/above ERROR_WARN amber, at/above ERROR_BAD red. */
 var HIT_WARN=${n(L.hitWarn)},HIT_BAD=${n(L.hitBad)},ERROR_WARN=${n(L.errorWarn)},ERROR_BAD=${n(L.errorBad)};

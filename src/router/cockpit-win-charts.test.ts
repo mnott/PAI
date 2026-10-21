@@ -104,3 +104,57 @@ describe.skipIf(!CHROME)("B9 tokens + daily on the win runtime", () => {
     expect(r.afterSel.legend).toBe(5); // the caption + 4 kinds, no model legend
   }, 120_000);
 });
+
+// ---- C1 restored guards: chart thinning and sparkline (the page's own functions, node only) ----
+import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
+import { WIN_CHARTS_JS } from "./cockpit-page/win/cards-charts.js";
+import { fnSrc, varSrc } from "./cockpit-page-src.js";
+
+const FNS = ["esc", "fmt", "fmtAxis", "padFor", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "aggCap", "gapCols", "gapLayout", "gapMark", "barCap", "stackedBarsSvg"];
+const chartLib = () => new Function(`var data={bucketMs:60000};function colorOf(){return"#3b6fe0"}\n${varSrc(PAGE, "MIN_LABEL_GAP_PX")}\n${FNS.map((n) => fnSrc(PAGE, n)).join("\n")}\nreturn{stackedBarsSvg:stackedBarsSvg,MIN_BAR_PX:MIN_BAR_PX,MIN_LABEL_GAP_PX:MIN_LABEL_GAP_PX};`)() as {
+  stackedBarsSvg: (ref: unknown, cw: number, labels: string[], series: Record<string, number>[], keys: string[], h: number, head: string) => { html: string; cap: string | false; agg: number };
+  MIN_BAR_PX: number; MIN_LABEL_GAP_PX: number;
+};
+const buckets = (n: number) => ({ labels: Array.from({ length: n }, (_, i) => `b${i}`), series: Array.from({ length: n }, (_, i) => ({ a: 10 + (i % 7) })) });
+
+describe("C1 guards: charts", () => {
+  // w=4 chart thinning: labels keep MIN_LABEL_GAP_PX apart on a narrow card and all show on a wide one; merged bars stay >= MIN_BAR_PX and the caption names the bucket size.
+  it("thins the time labels to the gap, merges bars to the minimum width, and redraws at the measured width", () => {
+    const L = chartLib(), { labels, series } = buckets(24);
+    const xs = (html: string) => [...html.matchAll(/<text x="([\d.]+)" y="\d+" text-anchor="middle"/g)].map((m) => Number(m[1]));
+    const narrow = xs(L.stackedBarsSvg({ id: "series" }, 385, labels, series, ["a"], 200, "<svg>").html);
+    expect(narrow.length).toBeGreaterThan(1);
+    expect(narrow.length).toBeLessThan(24);
+    for (let i = 1; i < narrow.length; i++) expect(narrow[i]! - narrow[i - 1]!).toBeGreaterThanOrEqual(L.MIN_LABEL_GAP_PX - 0.5);
+    expect(xs(L.stackedBarsSvg({ id: "series" }, 1200, labels, series, ["a"], 200, "<svg>").html).length).toBe(24);
+
+    const big = buckets(400), r = L.stackedBarsSvg({ id: "series" }, 385, big.labels, big.series, ["a"], 200, "<svg>");
+    expect(r.agg).toBeGreaterThan(1);
+    expect(r.cap).toBe(`${r.agg}-minute buckets`);
+    const widths = [...r.html.matchAll(/<rect [^>]*width="([\d.]+)"/g)].map((m) => Number(m[1]));
+    expect(widths.length).toBeGreaterThan(0);
+    for (const w of widths) expect(w).toBeGreaterThanOrEqual(L.MIN_BAR_PX - 0.05);
+
+    // the resize hook redraws at the width it is handed: the svg viewBox width follows the container
+    const painted: string[] = [];
+    const src = `var T={},WCH={},WinT={leaf:function(){},split:function(){}},WinA={},Win={};var DAILY_DAYS=14,mode="weighted",msel="";function assignColors(){}\n${fnSrc(PAGE, "label")}\n${FNS.map((n) => fnSrc(PAGE, n)).join("\n")}\nvar data={bucketMs:60000};function colorOf(){return"#3b6fe0"}\n${varSrc(PAGE, "MIN_LABEL_GAP_PX")}\n${WIN_CHARTS_JS}\nreturn WCHX.daily;`;
+    const hook = new Function(src)() as { update: Function; resize: Function };
+    const d = { byModel: [], speed: [], daily: { models: { m: [1, 2, 3, 4] }, days: [1, 2, 3, 4].map((i) => 1_700_000_000_000 + i * 86_400_000) } };
+    const ctx = { id: "daily", html: (k: string, h: string) => { if (k === "svg") painted.push(h); } };
+    hook.update(ctx, d);
+    hook.resize(ctx, 640, 300);
+    hook.resize(ctx, 385, 300);
+    expect(painted.map((h) => /viewBox="0 0 (\d+) \d+"/.exec(h)![1])).toEqual(["640", "385"]);
+  });
+
+  // w=4b sparkline: a null point is interpolated into one continuous path; leading and trailing nulls drop.
+  it("metricSpark interpolates a null point and drops leading and trailing nulls", () => {
+    const spark = new Function(`${fnSrc(PAGE, "esc")}\n${fnSrc(PAGE, "metricSpark")}\nreturn metricSpark;`)() as (s: unknown[]) => string;
+    const html = spark([{ data: [null, 2, null, 4, null] }]);
+    const line = /class="line[^"]*"[^>]* d="([^"]+)"/.exec(html)![1]!;
+    expect(line.match(/M/g)!.length).toBe(1); // one continuous path
+    const pts = line.slice(1).split("L").map((p) => p.split(",").map(Number));
+    expect(pts.length).toBe(3); // indices 1..3: both end nulls dropped, the middle one kept
+    expect(pts[1]![1]).toBeCloseTo((pts[0]![1]! + pts[2]![1]!) / 2, 1);
+  });
+});

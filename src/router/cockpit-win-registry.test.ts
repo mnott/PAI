@@ -227,3 +227,28 @@ describe.skipIf(!CHROME)("B8b-client settings group on the win runtime", () => {
     expect(seen).toContain("POST /cockpit/registry/validate");
   }, 120_000);
 });
+
+describe("registry editor without a registry", () => {
+  // Guards C1 (B): a failed or empty GET /cockpit/registry leaves the editor empty and read-only with the error in the status; the page never prints the text "undefined".
+  it("a registry GET that fails or returns no yaml shows the error, an empty read-only textarea and a disabled Save", async () => {
+    const types: Record<string, { mount: Function; update: Function }> = {};
+    const stubs = `var T=arguments[0];var Win={registerType:function(n,d){T[n]=d},el:function(){return null},ctx:function(){return null},update:function(){}};
+var WinT={leaf:function(){},split:function(){}};var WIN_HOST=null;function esc(s){return String(s)}`;
+    const L = new Function(`${stubs}\n${WIN_REGISTRY_JS}\nreturn{WRG:WRG,wrgLoad:wrgLoad,wrgCanSave:wrgCanSave,wrgCanCheck:wrgCanCheck};`).call(null, types) as Api & { wrgCanCheck: (S: any) => true | string };
+    for (const reply of [{ error: "HTTP 500" }, {}, null]) {
+      const S = { ...L.WRG, backups: [] }, log: [string, string][] = [];
+      await L.wrgLoad(S, { get: async (u: string) => (u === "/cockpit/registry" ? reply : { backups: [] }), post: async () => ({}), status: (k: string, t: string) => log.push([k, t]), paint: () => {} }, false);
+      expect(S.text).toBe("");
+      expect(S.loaded).toBe(false);
+      expect(log[0]![0]).toBe("err");
+      expect(log[0]![1]).toContain("registry not available");
+      expect(L.wrgCanSave(S)).toBe("registry not loaded");
+      const ta = { value: "", readOnly: false, addEventListener() {} };
+      const ctx = { body: { innerHTML: "", querySelector: () => ta, addEventListener() {} } };
+      types.editor!.mount(ctx);
+      types.editor!.update(ctx, S);
+      expect(ta.value).toBe("");
+      expect(ta.readOnly).toBe(true);
+    }
+  });
+});

@@ -139,3 +139,28 @@ describe.skipIf(!CHROME)("B7 cloud on the win runtime", () => {
   }, 120_000);
 
 });
+
+// ---- C1 restored guard: the local server card ----
+import { WIN_CLOUD_JS } from "./cockpit-page/win/cards-cloud.js";
+import { fnSrc } from "./cockpit-page-src.js";
+import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
+
+describe("C1 guards: local server card", () => {
+  // w=8 local servers: the card header is the alias from models.labels (else the provider), tok/s never wraps, memory reads in GB with one decimal.
+  it("titles the card with the model alias and shows nowrap tok/s and RSS in GB", () => {
+    const stubs = `var T={},mdl=arguments[0],Win={registerType:function(n,d){T[n]=d}},WinT={},WinA={};function ago(){return""};function gauge(){return""}\n${["esc", "gbm", "shortModel", "ringName"].map((n) => fnSrc(PAGE, n)).join("\n")}`;
+    const T = new Function("mdl", `${stubs}\n${WIN_CLOUD_JS}\nreturn T;`)({ runtimes: [{ modelLabels: { "org/gyro-m": "Gyro Medium" } }] }) as Record<string, { update: Function }>;
+    const run = (served: string[]) => {
+      const out: Record<string, string> = {};
+      const ctx = { id: "limits.local.srv:gyro", status() {}, html: (_: string, h: string) => { out.html = h; }, title: (t: string) => { out.title = t; } };
+      T.server!.update(ctx, { limits: [{ provider: "gyro", kind: "local", up: true, rssMb: 20480, tokensPerSec: 41.4, served, windows: [] }] });
+      return out;
+    };
+    const a = run(["org/gyro-m"]);
+    expect(a.title).toBe("Gyro Medium");
+    expect(a.html).toContain('<span class="nw">20.0 GB</span>');
+    expect(a.html).toContain('<span class="nw">41 tok/s</span>');
+    expect(a.html).toContain('<span class="nw" title="org/gyro-m">gyro-m</span>');
+    expect(run(["org/other"]).title).toBe("gyro"); // no alias: the provider name
+  });
+});

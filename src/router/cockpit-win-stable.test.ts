@@ -189,3 +189,45 @@ describe.skipIf(!CHROME)("box stability", () => {
     }, 120_000);
   }
 });
+
+// ---- C1 restored guard: hold-last-good feeds ----
+import { fnSrc, varSrc } from "./cockpit-page-src.js";
+import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
+
+describe("C1 guards: hold-last-good", () => {
+  // w=1 hold-last-good: a failed fetch keeps the last card values; past HOLD_SEC the card shows the error; a good payload clears it.
+  it("a failed poll keeps the last good values, shows the error only after HOLD_SEC, and a good payload clears it", async () => {
+    const hold = Number(/HOLD_SEC=(\d+)/.exec(varSrc(PAGE, "HOLD_SEC"))![1]);
+    const src = ["feedHeld", "feedState", "feedTick", "feed"].map((n) => fnSrc(PAGE, n)).join("\n");
+    let now = 1_000_000, reply: () => Promise<{ ok: boolean; status?: number; json: () => Promise<unknown> }>;
+    const applied: unknown[] = [], errs: string[] = [];
+    const api = new Function("Date", "fetch", `var lastOk=0,HOLD_SEC=${hold},FEEDS={};\n${src}\nreturn{feed:feed,feedTick:feedTick};`)({ now: () => now }, () => reply()) as { feed: Function; feedTick: () => void };
+    const ok = (j: unknown) => () => Promise.resolve({ ok: true, json: () => Promise.resolve(j) });
+    const poll = async () => { await api.feed("k", "/x", [], (j: unknown) => applied.push(j), (e: string) => errs.push(e)); };
+
+    reply = ok({ v: 1 });
+    await poll();
+    expect(applied).toEqual([{ v: 1 }]);
+
+    reply = () => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) });
+    now += (hold - 1) * 1000;
+    await poll(); api.feedTick();
+    expect(applied).toEqual([{ v: 1 }]); // the card keeps its last values, no error yet
+    expect(errs).toEqual([]);
+
+    now += 2000; // past the hold
+    api.feedTick();
+    expect(errs).toEqual(["HTTP 503"]);
+    api.feedTick();
+    expect(errs.length).toBe(1); // shown once
+
+    reply = ok({ v: 2 });
+    await poll();
+    expect(applied.at(-1)).toEqual({ v: 2 });
+    reply = () => Promise.reject(new Error("net down"));
+    await poll();
+    now += (hold + 1) * 1000;
+    api.feedTick();
+    expect(errs).toEqual(["HTTP 503", "net down"]); // the good payload cleared the shown error: the next failure holds again, then shows
+  });
+});

@@ -98,6 +98,16 @@ function wmdCells(e,inv){
   wmdCell("Workers",String(w.filter(function(x){return x.state==="running"}).length),"",(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+" · spares "+((lv&&lv.sparesReady)||0))+
   wmdCell("Conversation cache",eng&&eng.parked!=null?String(eng.parked):"–",eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"no prompt reuse reported");
 }
+function wmdKf(n){return n==null?"–":n>=1000?(n>=10000?Math.round(n/1000)+"k":(n/1000).toFixed(1)+"k"):String(n)}
+/** Context fill: the running request's tokens, else the last one's, over the engine's max context; "" when not reported. */
+function wmdCtx(e,inv){
+ var lv=wmdLive(inv,e.r),eng=lv&&lv.engine;
+ if(e.stopped||e.down||!e.loaded.length||!eng||eng.maxContext==null)return"";
+ var used=eng.liveUsed!=null?eng.liveUsed:eng.lastUsed;
+ if(used==null)return"";
+ var p=Math.min(100,used/eng.maxContext*100),mx=eng.maxContext%1024===0?Math.round(eng.maxContext/1024)+"K":wmdKf(eng.maxContext);
+ return'<div class="wmd-cf" title="context fill: tokens of the running (else last) request over the max context" style="height:6px;border-radius:3px;background:var(--line);overflow:hidden"><i style="display:block;height:100%;width:'+p.toFixed(1)+'%;background:var(--acc)"></i></div><small class="dim">context '+Math.round(p)+'% · '+wmdKf(used)+' / '+mx+'</small>';
+}
 function wmdChips(e,inv){
  var lv=wmdLive(inv,e.r),w=(lv&&lv.workers)||[];
  return w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+(x.session&&x.session!=="?"?" <b>"+esc(x.session)+"</b>":"")+(x.state==="queued"?' <span class="warn">queued</span>':x.state==="running"?' <span class="dim">running</span>':"")+"</span>"}).join("");
@@ -157,7 +167,7 @@ function wmdEdit(id){
 }
 Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
  mount:function(ctx){
-  ctx.body.innerHTML='<div class="wmd"><div class="wmd-top"><span data-k="badges"></span><span data-k="edit"></span></div><div class="wmd-g" data-k="cells"></div><div class="rt-chips" data-k="chips"></div><div class="dim wmd-n" data-k="note"></div><div class="wmd-i" data-k="inst"></div></div>';
+  ctx.body.innerHTML='<div class="wmd"><div class="wmd-top"><span data-k="badges"></span><span data-k="edit"></span></div><div class="wmd-g" data-k="cells"></div><div data-k="ctx"></div><div class="rt-chips" data-k="chips"></div><div class="dim wmd-n" data-k="note"></div><div class="wmd-i" data-k="inst"></div></div>';
   ctx.body.addEventListener("click",function(ev){
    var b=ev.target;
    if(!b||!b.classList||!b.classList.contains("wmd-stop"))return;
@@ -173,6 +183,7 @@ Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
    (e.tier?' <span class="num" title="running instances'+(e.tier.max?" (max "+e.tier.max+")":"")+'">'+e.tier.live.length+(e.tier.max?" / "+e.tier.max:"")+"</span>":"")+
    (e.tier&&e.tier.starting?' <span class="'+(e.tier.starting.state==="failed"?"bad":"warn")+'">'+(e.tier.starting.state==="failed"?esc(e.tier.starting.message):"loading "+e.tier.starting.sinceSec+" s")+"</span>":""));
   ctx.html("cells",wmdCells(e,inv));
+  ctx.html("ctx",wmdCtx(e,inv));
   ctx.html("chips",e.stopped||e.down?"":wmdChips(e,inv));
   ctx.html("note",wmdNote(e));
   ctx.list("inst",e.tier?e.tier.mine:[],function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){var h=wmdInst(i);if(d.__h!==h){d.innerHTML=h;d.__h=h}});

@@ -47,8 +47,8 @@ export type WinActionResult = { ok: boolean; message: string };
  *    within WIN_CONFIRM_MS runs; winClick(el, cardId, verb, args, host) is the click entry. */
 export const WIN_ACTIONS_JS = String.raw`var STATUS_OK_MS=8000;
 var WIN_CONFIRM_MS=4000;
-var JOB_POLL=2000;
-var JOB_TRIES=180;
+var JOB_POLL=typeof JOB_POLL_CFG==="number"?JOB_POLL_CFG:2000;
+var JOB_TRIES=typeof JOB_TRIES_CFG==="number"?JOB_TRIES_CFG:180;
 var ACTIONS={};
 function defAction(verb,def){ACTIONS[verb]=def;return def}
 function actionDef(verb){return ACTIONS[verb]||null}

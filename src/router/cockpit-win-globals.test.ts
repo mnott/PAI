@@ -39,3 +39,48 @@ describe("win block globals", () => {
     expect(WIN_RUNTIME_JS).not.toContain("var CONFIRM_MS=");
   });
 });
+
+// ---- C1 restored guard: config knobs the cards still read ----
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach } from "vitest";
+import { cockpitHtml } from "./cockpit-page.js";
+import { fnSrc, varSrc } from "./cockpit-page-src.js";
+
+describe("C1 guards: layout knobs", () => {
+  // w=5 config knobs: each knob that a card still reads moves that card's output, as the surviving gaugeMin/pollMs tests do (the dead ones are not asserted).
+  let dir = "";
+  const prev = process.env.PAI_CONFIG_FILE, prevHome = process.env.PAI_HOME;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "pai-cockpit-knobs-")); process.env.PAI_CONFIG_FILE = join(dir, "config.json"); delete process.env.PAI_HOME; });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (prev === undefined) delete process.env.PAI_CONFIG_FILE; else process.env.PAI_CONFIG_FILE = prev;
+    if (prevHome === undefined) delete process.env.PAI_HOME; else process.env.PAI_HOME = prevHome;
+  });
+  const page = (layout: Record<string, number>) => {
+    writeFileSync(join(dir, "config.yaml"), `router:\n  cockpit:\n    layout:\n${Object.entries(layout).map(([k, v]) => `      ${k}: ${v}`).join("\n")}\n`);
+    return cockpitHtml();
+  };
+  const readings = (html: string) => {
+    const spark = (new Function(`${fnSrc(html, "esc")}\n${fnSrc(html, "metricSpark")}\nreturn metricSpark;`)() as (s: unknown[]) => string)([{ data: [1, 2, 3] }]);
+    const days = Number(/DAILY_DAYS=(\d+)/.exec(html)![1]);
+    const th = new Function(`${varSrc(html, "ERROR_WARN")}\n${fnSrc(html, "cls")}\nreturn[ERROR_WARN,ERROR_BAD,cls(0.05,ERROR_WARN,ERROR_BAD)];`)() as [number, number, string];
+    const job = new Function(`${varSrc(html, "JOB_TRIES_CFG")}\n${WIN_ACTIONS_JS}\nreturn[JOB_TRIES,JOB_POLL];`)() as [number, number];
+    const bar = new Function(`${varSrc(html, "MIN_BAR_PX")}\n${fnSrc(html, "mergeFactor")}\nreturn mergeFactor(100,400,1);`)() as number;
+    return { spark, days, th, job, bar };
+  };
+  it("sparkHeightPx, sparkViewMaxPx, dailyDays, errorWarn/errorBad, jobPollMs/jobMaxTries and minBarPx move their outputs", () => {
+    const a = readings(page({})), b = readings(page({ sparkHeightPx: 40, sparkViewMaxPx: 200, dailyDays: 7, errorWarn: 0.06, errorBad: 0.5, jobPollMs: 777, jobMaxTries: 9, minBarPx: 10 }));
+    expect(a.spark).toContain("100.0,");
+    expect(a.spark).toContain(",32L");
+    expect(b.spark).toContain("200.0,");
+    expect(b.spark).toContain(",40L");
+    expect([a.days, b.days]).toEqual([14, 7]);
+    expect(a.th[2]).toBe("warn"); // 5% is above the default 2%
+    expect(b.th).toEqual([0.06, 0.5, ""]); // and below the configured 6%
+    expect(a.job).toEqual([120, 5000]);
+    expect(b.job).toEqual([9, 777]); // the action runner polls with the configured policy
+    expect(b.bar).toBeGreaterThan(a.bar);
+  });
+});

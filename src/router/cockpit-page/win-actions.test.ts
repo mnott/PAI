@@ -343,3 +343,32 @@ async function pump(ms: number) {
   }
   await drain();
 }
+
+describe("C1 guards: job watcher wording", () => {
+  // w=7 job watcher text: a runtime job shows "<message> ... N s · last log line" while it runs ("starting", "stopping") and the text clears into the result when it ends.
+  it("shows the job message with seconds and the last log line while it runs, then the result", async () => {
+    vi.useFakeTimers();
+    defAction("job-w", { fields: ["target"], build: (a: any) => ({ action: "local.stop", target: a.target }) });
+    for (const [word, done] of [["starting", "started"], ["stopping", "stopped"]] as const) {
+      let polls = 0;
+      const h = fakeHost((c) => {
+        if (c.url === "/cockpit/action") return ok({ ok: true, message: word, jobId: "jw" });
+        polls++;
+        return polls < 3
+          ? ok({ id: "jw", state: "running", message: word, elapsedSec: polls * 5, tail: "loading shards" })
+          : ok({ id: "jw", state: "done", message: done });
+      });
+      const p = runAction("c", "job-w", { target: "gyro-m" }, null, h.host);
+      await pump(6);
+      const r = await p;
+      const pending = h.statuses.filter((s) => s[1] === "pending").map((s) => s[2]);
+      expect(pending).toContain(`${word} ...`);
+      expect(pending).toContain(`${word} ... 5 s · loading shards`);
+      expect(pending).toContain(`${word} ... 10 s · loading shards`);
+      expect(r).toEqual({ ok: true, message: done });
+      expect(h.lastStatus()).toEqual(["c", "ok", done]); // the progress text is replaced by the result
+      expect(h.busy.at(-1)![1]).toBe(false);
+    }
+    vi.useRealTimers();
+  });
+});

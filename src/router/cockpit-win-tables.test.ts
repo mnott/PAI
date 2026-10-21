@@ -100,3 +100,42 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
     expect(r.boxes2).toBe(r.boxes);
   }, 120_000);
 });
+
+// ---- C1 restored guard: the sessions table fold ----
+import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
+import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
+import { fnSrc, varSrc } from "./cockpit-page-src.js";
+
+describe("C1 guards: sessions fold", () => {
+  // w=6 sessions table: sessions past the top rows fold into one "+N more sessions (X tokens)" row that expands on click and stays expanded across a refresh; the models cell reads "first +N" with all models in its title.
+  it("folds the rest into one expandable row, keeps it open across refreshes, and folds the models cell", () => {
+    const store: Record<string, string> = {};
+    const localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
+    const updates: string[] = [];
+    const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "table", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
+    const lib = new Function("localStorage", `var U=arguments[1],SESSION_ROWS=50,wrFolded=function(){return{}},WR_FOLD_KEY="k",WCHX={},Win={update:function(){U.push("data")}},data={},fitTables=function(){};\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${fns}\n${WIN_TABLES_JS}\nreturn{html:sessionsHtml,wire:wtWire};`);
+    const api = lib(localStorage, updates) as { html: (d: unknown) => string; wire: (c: unknown) => void };
+    const sess = (i: number) => ({ session: `s${String(i).padStart(7, "0")}x`, name: `n${i}`, models: i === 0 ? ["m-a", "m-b", "m-c"] : ["m-a"], requests: 1, input: 10, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts: 0, errors: 0, lastTs: new Date().toISOString() });
+    const d = { bySession: Array.from({ length: 12 }, (_, i) => sess(i)) };
+    const rows = (h: string) => (h.match(/<tr>/g) ?? []).length - 1;
+
+    const folded = api.html(d);
+    expect(rows(folded)).toBe(11); // 10 sessions + the fold row
+    expect(folded).toMatch(/\+2 more sessions \(\d+ tokens\)/);
+    expect(folded).toContain('data-sessmore="1"');
+    expect(folded).toMatch(/m-a <span class="dim">\+2<\/span>/); // first model + N
+    expect(folded).toContain('title="m-a, m-b, m-c"');
+
+    let onClick: ((e: unknown) => void) | undefined;
+    api.wire({ body: { addEventListener: (_: string, f: (e: unknown) => void) => { onClick = f; }, contains: () => true } });
+    const link = { hasAttribute: (a: string) => a === "data-sessmore", getAttribute: () => "1" };
+    onClick!({ target: { closest: () => link }, preventDefault() {} });
+    expect(store["pai.cockpit.sessmore"]).toBe("1");
+    expect(updates).toEqual(["data"]); // the click re-feeds the data
+    for (let refresh = 0; refresh < 2; refresh++) {
+      const open = api.html(d);
+      expect(rows(open)).toBe(13); // all 12 + "show fewer"
+      expect(open).toContain("show fewer sessions");
+    }
+  });
+});
