@@ -50,6 +50,23 @@ describe("falling through stale candidates", () => {
     expect(dir).toBe(sub);
   });
 
+  it("ignores a per-session directory the transcript did not run in", () => {
+    // The transcript sits under the encoding of the cwd it ran in; resuming from
+    // any other directory finds nothing, so a disagreeing record is not a candidate.
+    const ranIn = join(tmp, "ran-here");
+    const elsewhere = join(tmp, "elsewhere");
+    mkdirSync(ranIn);
+    mkdirSync(elsewhere);
+
+    const { dir } = resolveSessionDir({
+      clcDirectory: elsewhere,
+      decodedPath: ranIn,
+      encodedDir: ranIn.replace(/[^a-zA-Z0-9]/g, "-"),
+    });
+
+    expect(dir).toBe(realpathSync(ranIn));
+  });
+
   it("falls to the third candidate when the first two are gone", () => {
     const live = join(tmp, "last-hope");
     mkdirSync(live);

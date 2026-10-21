@@ -75,9 +75,15 @@ export function resolveSessionDir(session: {
   clcDirectory?: string;
   registryRootPath?: string;
   decodedPath?: string;
+  encodedDir?: string;
 }): { dir: string | undefined; tried: string[] } {
+  // The transcript lives under the encoding of the directory the session RAN
+  // in, and `claude --resume` looks only there. A recorded directory that
+  // encodes differently is another place, not a more specific spelling of it.
+  const ranIn = (d?: string) =>
+    !d || !session.encodedDir || d.replace(/[^a-zA-Z0-9]/g, "-") === session.encodedDir;
   const tried = [
-    session.clcDirectory,
+    ranIn(session.clcDirectory) ? session.clcDirectory : undefined,
     session.registryRootPath,
     session.decodedPath,
   ].filter((d): d is string => typeof d === "string" && d.length > 0);

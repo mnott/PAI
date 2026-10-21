@@ -99,3 +99,49 @@ describe("status priority is not overridden by transcript volume", () => {
     expect(winner([fatTranscriptOnly, thinResumable])).toBe(thinResumable.uuid);
   });
 });
+
+describe("a session is listed under the project of its cwd, not under its name", () => {
+  const PAI = "/Users/owner/dev/ai/PAI";
+  const CASELEAF = "/Users/owner/dev/apps/Paperfull/apps/CaseLeaf";
+  const project = (slug: string, display_name: string, root_path: string) => ({
+    slug, display_name, root_path, session_count: 5, last_active: Date.now(), status: "active",
+  });
+  const projects = [project("pai", "PAI", PAI), project("caseleaf", "CaseLeaf", CASELEAF)];
+
+  // Measured 2026-10-21: renamed back and forth between PAI and CaseLeaf, cwd CaseLeaf.
+  const renamed = disk({
+    uuid: "cdd93e8d-458c-4a63-a9cf-c24488cdd6f4",
+    friendlyName: "PAI",
+    decodedPath: CASELEAF,
+    registryRootPath: CASELEAF,
+    userLines: 400,
+    msgCount: 4000,
+    mtime: Date.now(),
+  });
+
+  it("does not let a session renamed PAI take the PAI row", () => {
+    const out = buildDeduped([], [renamed], projects, true);
+    const paiRow = out.find((e) => e.name === "PAI")!;
+    expect(paiRow.status).toBe("project");
+    expect(paiRow.diskSession).toBeUndefined();
+    expect(paiRow.project).toBe(PAI); // what openMatch hands launchInDir as cwd
+  });
+
+  it("lists the renamed session under the cwd project and marks the name", () => {
+    const out = buildDeduped([], [renamed], projects, true);
+    const row = out.find((e) => e.diskSession?.uuid === renamed.uuid)!;
+    expect(row.name).toBe("CaseLeaf");
+    expect(row.sessionName).toBe("PAI");
+    expect(row.project).toBe(CASELEAF); // resume keeps the session's own cwd
+  });
+
+  it("leaves a session whose name and cwd agree alone, including from a subdirectory", () => {
+    const home = disk({ uuid: "11111111-0000-0000-0000-000000000000", friendlyName: "PAI", decodedPath: PAI, registryRootPath: PAI });
+    const sub = disk({ uuid: "22222222-0000-0000-0000-000000000000", friendlyName: "PAI", decodedPath: `${PAI}/src`, registryRootPath: `${PAI}/src`, userLines: 9, msgCount: 99 });
+    for (const s of [home, sub]) {
+      const row = buildDeduped([], [s], projects, true).find((e) => e.name === "PAI")!;
+      expect(row.diskSession?.uuid).toBe(s.uuid);
+      expect(row.sessionName).toBeUndefined();
+    }
+  });
+});

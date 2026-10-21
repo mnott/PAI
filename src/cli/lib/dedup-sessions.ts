@@ -24,6 +24,7 @@ import chalk from "chalk";
 import { renderTable, dim, header, warn } from "./utils.js";
 import { fmtAge, type ScannedSession } from "./session-scan.js";
 import { type AiBrokerSessionMeta } from "./aibroker-client.js";
+import { basename } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,6 +62,8 @@ export interface UnifiedSession {
   lastPrompt: string;
   /** For project-source entries: number of historical sessions ever */
   sessionCount?: number;
+  /** The name the session carries, when it disagrees with the project of its cwd. */
+  sessionName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +182,42 @@ function winsTiebreak(candidate: UnifiedSession, incumbent: UnifiedSession): boo
   return candidate.lastActivity > incumbent.lastActivity;
 }
 
+const projectKey = (s: string): string => normalizeName(s).toLowerCase().replace(/[-_]+/g, " ").trim();
+const trimSlash = (p: string): string => p.replace(/\/+$/, "");
+const within = (dir: string, root: string): boolean => {
+  const d = trimSlash(dir);
+  const r = trimSlash(root);
+  return d === r || d.startsWith(r + "/");
+};
+
+/**
+ * Which project row a disk session belongs under.
+ *
+ * A session is a conversation that ran in a directory; its NAME is a label the
+ * operator can change with /Name. Grouping by name alone put a session renamed
+ * "PAI" whose cwd was CaseLeaf under the PAI row, so `pai PAI` resumed it in
+ * CaseLeaf (reported 2026-10-21). When the name belongs to a registered project
+ * and the session's cwd is not inside that project, the session is grouped
+ * under the project of its cwd instead (the longest registered root containing
+ * it, else the directory's own name) and keeps its label in `sessionName`.
+ */
+function placeSession(
+  s: ScannedSession,
+  name: string,
+  projects: RegisteredProject[]
+): { name: string; sessionName?: string } {
+  const cwd = s.registryRootPath ?? s.decodedPath;
+  if (!cwd) return { name };
+  const key = projectKey(name);
+  const named = projects.filter((p) => projectKey(p.display_name ?? p.slug) === key || projectKey(p.slug) === key);
+  if (named.length === 0 || named.some((p) => within(cwd, p.root_path))) return { name };
+  const home = projects
+    .filter((p) => within(cwd, p.root_path))
+    .sort((a, b) => trimSlash(b.root_path).length - trimSlash(a.root_path).length)[0];
+  const cwdName = normalizeName(home?.display_name ?? home?.slug ?? basename(cwd));
+  return { name: cwdName, sessionName: name };
+}
+
 export function buildDeduped(
   liveSessions: AiBrokerSessionMeta[],
   diskSessions: ScannedSession[],
@@ -226,7 +265,8 @@ export function buildDeduped(
   // Process disk sessions
   for (const s of diskSessions) {
     const raw = s.friendlyName ?? s.shortId;
-    const normalized = normalizeName(raw);
+    const placed = placeSession(s, normalizeName(raw), registeredProjects ?? []);
+    const normalized = placed.name;
     const key = normalized.toLowerCase();
 
     let status: UnifiedStatus;
@@ -244,6 +284,7 @@ export function buildDeduped(
       name: normalized,
       status,
       diskSession: s,
+      ...(placed.sessionName ? { sessionName: placed.sessionName } : {}),
       lastActivity: s.mtime,
       project: s.decodedPath ?? "",
       lastPrompt: s.lastUserPrompt ?? "",
@@ -380,7 +421,7 @@ export function renderDedupedSessions(entries: UnifiedSession[], maxRows?: numbe
     const project = dim(shortenProject(projectPath, 28));
     return [
       dim(String(i + 1)),
-      chalk.white(entry.name),
+      chalk.white(entry.name) + (entry.sessionName ? dim(` (named "${entry.sessionName}")`) : ""),
       fmtUnifiedStatus(entry.status),
       age,
       project,
