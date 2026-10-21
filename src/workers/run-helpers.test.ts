@@ -69,6 +69,19 @@ vi.mock("./pane.js", async (importOriginal) => {
   return { ...actual, openPaneForWorker: vi.fn(), openVerifiedPane: vi.fn() };
 });
 
+// The wrapper handshake needs a live `pai pane exec` in a real pane: the test opens through the stubbed
+// openVerifiedPane and gets a stand-in owned pane, instead of waiting out the hello timeout for a wrapper.
+vi.mock("./pane-exec.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pane-exec.js")>();
+  return {
+    ...actual,
+    openOwnedPane: vi.fn(async (o: { id: string; open: (command: string) => Promise<string> }) => {
+      const where = await o.open("pai pane exec (stub)");
+      return { id: o.id, where, start: vi.fn(), cancel: vi.fn() };
+    }),
+  };
+});
+
 describe("headlessToolGrants", () => {
   it("grants the core tool set when the caller brings no allowedTools", () => {
     // a headless run cannot approve a permission-gated tool mid-flight: with
