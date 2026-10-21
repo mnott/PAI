@@ -141,3 +141,35 @@ describe("worker windows: type shape", () => {
     expect(w.label).toBe("l");
   });
 });
+
+describe("AIBroker session names", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sess-ab-"));
+  const ab = join(dir, "aibroker");
+  mkdirSync(ab);
+  writeFileSync(join(ab, "managers.json"), JSON.stringify({ "UID-1": { sessionId: "UID-1", name: "PAI" }, "UID-2": { name: "Chosen" } }));
+  writeFileSync(join(ab, "session-names.json"), JSON.stringify({ "uid-2": "Operator Name" }));
+  writeFileSync(join(dir, "claude-map.json"), JSON.stringify({ "c-1": { uid: "uid-1" }, "c-2": { uid: "UID-2" }, "c-w": { uid: "UID-1" }, "c-x": { uid: "UID-9" } }));
+  writeFileSync(join(dir, "w.status"), JSON.stringify({ id: "w1", label: "worker label", state: "done", rc: 0, claudeSession: "c-w" }));
+  writeFileSync(join(dir, "agents.json"), JSON.stringify({ "c-1": "proj", "c-x": "fallback" }));
+  const base = { workerDirs: [dir], agentSessionsFile: join(dir, "agents.json"), claudeMapFile: join(dir, "claude-map.json") };
+
+  it("a known Claude session id shows the AIBroker name; worker label and unknown ids are unchanged", () => {
+    const map = loadSessionMap({ ...base, aibrokerDir: ab });
+    expect(sessionDisplayName("c-1", map)).toBe("PAI");
+    expect(sessionDisplayName("c-2", map)).toBe("Operator Name");
+    expect(sessionDisplayName("c-w", map)).toBe("worker label");
+    expect(sessionDisplayName("c-x", map)).toBe("fallback");
+  });
+
+  it("a missing or garbled AIBroker source changes nothing", () => {
+    const bad = join(dir, "bad");
+    mkdirSync(bad);
+    writeFileSync(join(bad, "managers.json"), "{not json");
+    writeFileSync(join(bad, "session-names.json"), "[1,2");
+    for (const aibrokerDir of [join(dir, "nope"), bad, undefined]) {
+      const map = loadSessionMap({ ...base, aibrokerDir });
+      expect(sessionDisplayName("c-1", map)).toBe("proj");
+      expect(sessionDisplayName("c-2", map)).toBeNull();
+    }
+  });
+});

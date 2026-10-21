@@ -25,6 +25,10 @@ export interface SessionSources {
   agentSessionsFile: string;
   /** Claude Code transcript root: <dir>/<encoded cwd>/<session id>.jsonl */
   projectsDir?: string;
+  /** AIBroker state dir (managers.json, session-names.json); absent or unreadable changes nothing */
+  aibrokerDir?: string;
+  /** statusline registry: Claude session id -> { uid: iTerm session uuid } */
+  claudeMapFile?: string;
 }
 
 export function defaultSources(): SessionSources {
@@ -33,6 +37,8 @@ export function defaultSources(): SessionSources {
     workerDirs: [paiHomePath("logs", "workers"), join(home, ".claude", "logs", "workers")],
     agentSessionsFile: paiHomePath("agent-sessions.json"),
     projectsDir: join(home, ".claude", "projects"),
+    aibrokerDir: process.env.AIBROKER_HOME || join(home, ".aibroker"),
+    claudeMapFile: paiHomePath("session-claude-map.json"),
   };
 }
 
@@ -61,6 +67,21 @@ function workerVerdict(s: Record<string, unknown>): string {
   return s.reportValid === false ? `done · report flagged${suffix}` : `ok${suffix}`;
 }
 
+/** iTerm session uuid -> AIBroker name: managers.json (sessionId -> {name}) overlaid by the operator's session-names.json (uuid -> name). */
+function aibrokerNames(dir: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const managers = readJson(join(dir, "managers.json"));
+  if (managers) {
+    for (const [key, v] of Object.entries(managers)) {
+      const name = (v as { name?: unknown } | null)?.name;
+      if (typeof name === "string" && name) out.set(key.toUpperCase(), name);
+    }
+  }
+  const chosen = readJson(join(dir, "session-names.json"));
+  if (chosen) for (const [key, name] of Object.entries(chosen)) if (typeof name === "string" && name) out.set(key.toUpperCase(), name);
+  return out;
+}
+
 /** Full map session id → info. Reads every status file once; callers cache it. */
 export function loadSessionMap(src: SessionSources = defaultSources()): Map<string, SessionInfo> {
   const map = new Map<string, SessionInfo>();
@@ -79,6 +100,18 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
         verdict: workerVerdict(s),
         provider: typeof s.provider === "string" ? s.provider : undefined,
       });
+    }
+  }
+  // AIBroker's names for interactive sessions: Claude id -> iTerm uuid (statusline map) -> name. Worker runs keep their label.
+  if (src.aibrokerDir && src.claudeMapFile) {
+    const names = aibrokerNames(src.aibrokerDir);
+    const claude = names.size ? readJson(src.claudeMapFile) : undefined;
+    if (claude) {
+      for (const [id, e] of Object.entries(claude)) {
+        const uid = (e as { uid?: unknown } | null)?.uid;
+        const name = typeof uid === "string" ? names.get(uid.toUpperCase()) : undefined;
+        if (name && !map.get(id)?.worker) map.set(id, { name });
+      }
     }
   }
   // Last resort for interactive sessions the registry does not list: the project directory of the transcript.
