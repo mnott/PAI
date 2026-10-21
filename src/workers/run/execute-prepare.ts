@@ -5,6 +5,8 @@
  */
 
 import { NOTE_TOKEN_ENV, newNoteToken } from "../note-delivery.js";
+import { TroubleWatcher } from "../worker-trouble.js";
+import type { BashRun, WorkerReport } from "../report.js";
 import { appendSystemPromptArgs, stripPromptValues } from "../args.js";
 import {
   addSchedulingHeaders,
@@ -39,7 +41,7 @@ import { stripBrowserNames } from "../browser-tools.js";
 import { expandMcpNames, mcpServersFromToolGrants, writeMcpConfig } from "../mcp.js";
 import { pinNotices, projectLaunchConfig } from "../project-config.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "../proxy/server.js";
-import { type ExecuteArgs } from "./types.js";
+import type { ExecuteArgs, StreamEvent } from "./types.js";
 import { modelFlagArgs } from "./model.js";
 import {
   headlessPromptText,
@@ -52,6 +54,48 @@ import {
   interactiveMcpTools,
 } from "./argv.js";
 import { requireVisiblePane } from "./pane-handles.js";
+
+/**
+ * The mutable state of one run. Only the readline / signal callbacks assign most of it and the code after the
+ * await reads it, so it is a holder object: a plain `let` would be flow-narrowed to its initial value at the read.
+ */
+export interface RunState {
+  /** last result event + its parsed report */
+  resultEvent: StreamEvent | null;
+  resultReport: WorkerReport | null;
+  /**
+   * latest per-turn fill (input side of the newest assistant usage, reset at a compact boundary): a compact
+   * result must drop the context meter to THIS value — a result event's usage is the run's cumulative total
+   */
+  lastFill: number | null;
+  /** stdin lifecycle: operator messages in flight, and the close timer armed after a result */
+  operatorInFlight: number;
+  closeTimer: NodeJS.Timeout | null;
+  eventsFd: number | null;
+  killed: boolean;
+  /** tail of claude's stderr, kept for a start that dies before any model event */
+  stderrTail: string;
+  trouble: TroubleWatcher | undefined;
+  troubleTimer: ReturnType<typeof setInterval> | undefined;
+  /** every Bash call + outcome: the end-of-run proof check reads these */
+  bashRuns: BashRun[];
+}
+
+export function newRunState(): RunState {
+  return {
+    resultEvent: null,
+    resultReport: null,
+    lastFill: null,
+    operatorInFlight: 0,
+    closeTimer: null,
+    eventsFd: null,
+    killed: false,
+    stderrTail: "",
+    trouble: undefined,
+    troubleTimer: undefined,
+    bashRuns: [],
+  };
+}
 
 export interface PreparedRun {
   headless: boolean;
@@ -76,6 +120,7 @@ export interface PreparedRun {
   toolsFlag: string[];
   slimArgs: string[];
   promptText: string | null;
+  state: RunState;
 }
 
 export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> {
@@ -304,5 +349,6 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     toolsFlag,
     slimArgs,
     promptText,
+    state: newRunState(),
   };
 }
