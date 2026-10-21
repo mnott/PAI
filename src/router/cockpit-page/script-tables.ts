@@ -116,11 +116,18 @@ function renderSessions(d){
  el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-sessmore")!=null))t=t.parentNode;
   if(!t||t===el)return;ev.preventDefault();try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(e){}renderSessions(data)};
 }
-/** Worker runs: label (2 lines max, run id in the title and as a small dim suffix), verdict, provider, tokens. */
+/** Short verdict word from the same verdict string vcls reads; a commit count becomes a "· Nc" suffix. */
+function vshort(v){
+ if(v==null)return"worker";
+ v=String(v);var m=/ · (\d+) commits?$/.exec(v),c=m?" · "+m[1]+"c":"";
+ var w=v.indexOf("ok")===0?"ok":v.indexOf("failed")===0?"failed":v.indexOf("report flagged")>=0?"flagged":v.indexOf("escalated")===0?"escalated ↗":v.indexOf("handed")===0?"handed":v.indexOf("running")===0||v.indexOf("waiting")===0?"running":v.indexOf("stopped")===0?"stopped":v.split(/[ :(]/)[0];
+ return w+c;
+}
+/** Worker runs: label (2 lines max, full name in the title); its small dim line is "provider · run id"; verdict as a short word (full text in the title); tokens. */
 function renderWorkers(d){
- setHtml($("workers"),d.workers.length?table(["label .txt","verdict .txt","provider .txt","tokens"],d.workers.slice(0,WORKER_ROWS).map(function(s){
-  var lab=esc(s.name||s.worker);
-  return['<span title="'+esc((s.name?s.name+" · ":"")+"run "+s.worker)+'" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-align:left">'+lab+(s.name?' <small class="dim">'+esc(s.worker)+'</small>':'')+'</span>','<span class="'+vcls(s.verdict)+'">'+esc(s.verdict||"worker")+'</span>',esc(s.workerProvider||"-"),fmt(tot(s))]
+ setHtml($("workers"),d.workers.length?table(["label .txt","verdict .txt","tokens"],d.workers.slice(0,WORKER_ROWS).map(function(s){
+  var lab=esc(s.name||s.worker),sub=esc((s.workerProvider||"-")+" · "+s.worker.slice(0,9)+"…");
+  return['<span title="'+esc((s.name?s.name+" · ":"")+"run "+s.worker)+'" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-align:left">'+(s.name?lab+' <small class="dim">'+sub+'</small>':'<small class="dim">'+sub+'</small>')+'</span>','<span class="'+vcls(s.verdict)+'" title="'+esc(s.verdict||"worker")+'">'+esc(vshort(s.verdict))+'</span>',fmt(tot(s))]
  }),{"tokens":"Total tokens of the run."}):'<span class="dim">no worker sessions in this window</span>');
 }
 function renderDonuts(){ renderSpeed();
