@@ -1072,8 +1072,8 @@ describe("cockpit Models cards", () => {
     // four tiles in one row only when the card itself is wide; a balanced 2x2 below 720px,
     // one column under ~340px — explicit columns per range via a container query on the card, never 3+1
     expect(COCKPIT_HTML).toMatch(/\.rt-card\{[^}]*container-type:inline-size/);
-    expect(COCKPIT_HTML).toMatch(/@container \(min-width:720px\)\{\.rt-tiles\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)\}/);
-    expect(COCKPIT_HTML).toMatch(/@container \(max-width:339px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+    expect(COCKPIT_HTML).toMatch(/@container \(min-width:720px\)\{\.rt-tiles:not\(\.two\)\{grid-template-columns:repeat\(12,minmax\(0,1fr\)\)\}/);
+    expect(COCKPIT_HTML).toMatch(/@container \(max-width:339px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\.rt-tiles \.mt\{grid-column:auto\}\}/);
     // sparklines align at the bottom of every tile; value + unit never break apart
     expect(COCKPIT_HTML).toMatch(/\.mt-spark\{[^}]*margin-top:auto[^}]*\}/);
     expect(COCKPIT_HTML).toMatch(/\.mt-value\{[^}]*white-space:nowrap/);
@@ -1467,7 +1467,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
 
   it("tilesWideBreakpointPx and tilesWideCols move the metric-tile container query", () => {
     write({ tilesWideBreakpointPx: 800, tilesWideCols: 3 });
-    expect(cockpitHtml()).toMatch(/@container \(min-width:800px\)\{\.rt-tiles\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}/);
+    expect(cockpitHtml()).toMatch(/@container \(min-width:800px\)\{\.rt-tiles:not\(\.two\)\{grid-template-columns:repeat\(9,minmax\(0,1fr\)\)\}\.rt-tiles:not\(\.two\) \.mt\{grid-column:span 3\}/);
   });
 
   it("tilesNarrowCols moves the metric-tile base column count", () => {
@@ -1477,7 +1477,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
 
   it("tilesOneColBreakpointPx moves the one-column container query", () => {
     write({ tilesOneColBreakpointPx: 400 });
-    expect(cockpitHtml()).toMatch(/@container \(max-width:400px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\}/);
+    expect(cockpitHtml()).toMatch(/@container \(max-width:400px\)\{\.rt-tiles,\.rt-tiles\.two\{grid-template-columns:minmax\(0,1fr\)\}\.rt-tiles \.mt\{grid-column:auto\}\}/);
   });
 
   it("ringMinWidthPx moves the cache rings grid", () => {

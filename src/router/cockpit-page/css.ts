@@ -106,9 +106,15 @@ svg text{fill:var(--dim);font-size:10px}
 .mhead .msg{color:var(--dim);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mhead .msg.bad{color:var(--bad)}
 .badge{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim);white-space:nowrap}
+/* never a partial last row: wide mode is a ${L.tilesWideCols * 3}-track grid, every tile spans
+ * ${L.tilesWideCols === 4 ? 3 : L.tilesWideCols} tracks, and the last row's remainder 1/2/3 tiles
+ * widen to fill it (the nth-child rules assume ${L.tilesWideCols} tiles per row). The odd-last-tile
+ * rule belongs to 2-column mode only, so it never fights the remainder rules in wide mode. */
 .rt-tiles{display:grid;grid-template-columns:repeat(${L.tilesNarrowCols},minmax(0,1fr));gap:8px;min-width:0}
-@container (min-width:${L.tilesWideBreakpointPx}px){.rt-tiles{grid-template-columns:repeat(${L.tilesWideCols},minmax(0,1fr))}.rt-tiles.two{grid-template-columns:repeat(${L.tilesNarrowCols},minmax(0,1fr))}}
-@container (max-width:${L.tilesOneColBreakpointPx}px){.rt-tiles,.rt-tiles.two{grid-template-columns:minmax(0,1fr)}}
+.rt-tiles.two .mt:last-child:nth-child(odd){grid-column:1/-1}
+@container (max-width:${L.tilesWideBreakpointPx - 1}px){.rt-tiles .mt:last-child:nth-child(odd){grid-column:1/-1}}
+@container (min-width:${L.tilesWideBreakpointPx}px){.rt-tiles:not(.two){grid-template-columns:repeat(${L.tilesWideCols * 3},minmax(0,1fr))}.rt-tiles:not(.two) .mt{grid-column:span ${L.tilesWideCols === 4 ? 3 : L.tilesWideCols}}.rt-tiles:not(.two) .mt:last-child:nth-child(${L.tilesWideCols}n+1){grid-column:1/-1}.rt-tiles:not(.two) .mt:nth-last-child(2):nth-child(${L.tilesWideCols}n+1),.rt-tiles:not(.two) .mt:nth-last-child(2):nth-child(${L.tilesWideCols}n+1) ~ .mt{grid-column:span ${Math.floor((L.tilesWideCols * 3) / 2)}}.rt-tiles:not(.two) .mt:nth-last-child(3):nth-child(${L.tilesWideCols}n+1),.rt-tiles:not(.two) .mt:nth-last-child(3):nth-child(${L.tilesWideCols}n+1) ~ .mt{grid-column:span ${L.tilesWideCols}}}.rt-tiles.two{grid-template-columns:repeat(${L.tilesNarrowCols},minmax(0,1fr))}}
+@container (max-width:${L.tilesOneColBreakpointPx}px){.rt-tiles,.rt-tiles.two{grid-template-columns:minmax(0,1fr)}.rt-tiles .mt{grid-column:auto}}
 .rt-tiles .mt{padding:8px 9px}
 .rt-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0}
 .rt-chips .chip{max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
