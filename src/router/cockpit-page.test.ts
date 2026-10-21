@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COCKPIT_FAVICON_SVG, COCKPIT_HTML, cockpitHtml } from "./cockpit-page.js";
 import { POOL_PANEL_JS } from "./pool-panel.js";
+/** The page without the ?win=1 runtime block: the legacy scans below police the old page code only (migrated at C1). */
+const OLD_HTML = COCKPIT_HTML.replace(/\/\*win-begin\*\/[\s\S]*?\/\*win-end\*\//, "");
+
 
 /** Stand-in for the page's setHtml in tests that run a render function against plain fake elements. */
 const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
@@ -23,7 +26,7 @@ describe("cockpit page compression", () => {
     const texts = html.split(/<[^>]*>/).map((t) => t.trim()).filter(Boolean);
     expect(texts.filter((t) => t.length > 120)).toEqual([]);
     expect(html).not.toContain("<p ");
-    const script = COCKPIT_HTML.match(/<script>[\s\S]*?<\/script>/)![0];
+    const script = OLD_HTML.match(/<script>[\s\S]*?<\/script>/)![0];
     expect(script).not.toContain("<p ");
   });
 
@@ -268,7 +271,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
   });
 
   it("no section renders a bare table outside a .tw box: the queue blocks go through table() too", () => {
-    const script = COCKPIT_HTML.match(/<script>[\s\S]*<\/script>/)![0];
+    const script = OLD_HTML.match(/<script>[\s\S]*<\/script>/)![0];
     // the only markup that builds rows is table() itself; everything else passes cells to table()
     expect(script.match(/<tr/g) ?? []).toEqual(["<tr", "<tr", "<tr"]); // table()'s thead row, body row, closing tags
     expect(script.match(/<td/g) ?? []).toEqual(["<td"]); // table()'s cell template (the closing tag is '</td>')
@@ -2076,13 +2079,13 @@ describe("cockpit refresh keeps the page still", () => {
     fn(() => el, null, (_e: unknown, h: string) => { writes.push(h); return true; }, () => {}, () => {}, () => "");
     expect(writes).toEqual([]);
     expect(el.innerHTML).toContain("data");
-    for (const m of COCKPIT_HTML.matchAll(/\.focus\(([^)]*)\)/g)) expect(m[1]).toContain("preventScroll:true");
+    for (const m of OLD_HTML.matchAll(/\.focus\(([^)]*)\)/g)) expect(m[1]).toContain("preventScroll:true");
   });
 
   it("no panel is rebuilt with a raw innerHTML write except the fold chevron", () => {
-    const raw = COCKPIT_HTML.match(/\w+\.innerHTML=/g) ?? [];
+    const raw = OLD_HTML.match(/\w+\.innerHTML=/g) ?? [];
     expect(raw.filter((r) => r !== "b.innerHTML=" && r !== "el.innerHTML=")).toEqual([]);
-    expect(COCKPIT_HTML.match(/el\.innerHTML=/g)?.length).toBe(1); // inside setHtml
+    expect(OLD_HTML.match(/el\.innerHTML=/g)?.length).toBe(1); // inside setHtml
   });
 });
 

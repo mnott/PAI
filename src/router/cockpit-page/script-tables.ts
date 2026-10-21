@@ -228,7 +228,7 @@ function render(){
  legend($("dlegend"),dm);
 }
 function load(){
- feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;render()});
+ feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;render();if(Win)Win.update("data",j)});
 }
 function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;renderSystem();renderPower();renderDonuts()})}
 `;

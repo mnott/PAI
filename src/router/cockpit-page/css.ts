@@ -201,4 +201,7 @@ main.win .card.min .cbody{display:none}
 .cbtn[disabled]{opacity:.5;cursor:default}
 .cmin{flex:none;padding:0 6px}
 .cwlive{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+main#win-root[hidden]{display:none}
+.wm{padding:6px 10px;min-width:0}.wm-v{display:block;font-size:20px;font-weight:600}.wm-s{display:block;color:var(--dim);font-size:12px}
+body.winon{display:flex;flex-direction:column}body.winon>main#win-root{order:1}body.winon>main:not(#win-root){order:2}
 `;

@@ -45,6 +45,7 @@ ${POOL_PANEL_HTML}
 <section data-section="runs" class="card c6"><h2>Worker runs</h2><div id="workers"></div></section>
 <section data-section="daily" class="card c6"><h2>Tokens per day per model (${L.dailyDays} d)</h2><div id="daily"></div><div id="dailycap"></div><div class="legend" id="dlegend"></div></section>
 </main>
+<main id="win-root" hidden></main>
 <script>
 (function(){
 `;

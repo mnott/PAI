@@ -1,0 +1,42 @@
+/** cockpit-page — the win runtime on the page, behind ?win=1 (spec 7 preamble): the A-core strings in
+ *  their own function scope (their helper names do not meet the page's), the converted sections' cards,
+ *  and Win.init on main#win-root. Without the flag nothing here runs and the old page is untouched. */
+
+import type { CockpitLayout } from "../cockpit-layout.js";
+import type { Num, Str } from "./types.js";
+import { WIN_TREE_JS } from "./win/tree.js";
+import { WIN_LAYOUT_JS } from "./win/layout.js";
+import { WIN_MORPH_JS } from "./win/morph.js";
+import { WIN_STORE_JS } from "./win/store.js";
+import { WIN_INFO_JS } from "./win/info.js";
+import { WIN_ANCHOR_JS } from "./win/anchor.js";
+import { WIN_CARD_JS } from "./win/card.js";
+import { WIN_KPIS_JS } from "./win/cards-kpis.js";
+
+/** The runtime source: the pure parts plus the card runtime, returning {Win, leaf, split, anchorInit}. */
+export const WIN_RUNTIME_JS = [WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS, WIN_INFO_JS, WIN_ANCHOR_JS, WIN_CARD_JS].join("\n");
+
+export const scriptWin = (_L: CockpitLayout, _n: Num, _q: Str, _hex: Str): string => String.raw`/* win runtime (?win=1) */
+/*win-begin*/
+var WINON=/[?&]win=1(&|$)/.test(location.search),Win=null,WinT=null;
+if(WINON){
+ WinT=(function(){
+${WIN_RUNTIME_JS}
+  return{Win:Win,leaf:leaf,split:split,anchorInit:anchorInit};
+ })();
+ Win=WinT.Win;window.Win=Win;
+}
+if(WINON){
+${WIN_KPIS_JS}
+ (function(){
+  var root=document.getElementById("win-root"),old=document.querySelector('[data-section="kpis"]');
+  if(!root)return;
+  root.hidden=false;document.body.classList.add("winon");
+  // the converted section lives in the new root; its old container stays in the DOM (the old render still fills it) but is not shown
+  if(old)old.style.display="none";
+  Win.init(root,kpiDefaults());
+  WinT.anchorInit(document,window,root);
+ })();
+}
+/*win-end*/
+`;
