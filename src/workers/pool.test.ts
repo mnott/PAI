@@ -101,6 +101,17 @@ describe("eligibility gate", () => {
     expect(toolGrantMatchesSlot([])).toBe(true);
   });
 
+  it("tools: ToolSearch is ignored when matching the slot grant", () => {
+    const tools = (allowedTools: string[]) => ({
+      ...base(),
+      parsed: { callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools },
+    });
+    expect(poolIneligibleReason(tools(["Read,Edit,Write,Bash,Grep,Glob,ToolSearch"]))).toBeNull();
+    expect(poolIneligibleReason(tools(["ToolSearch,Read,Edit,Write,Bash,Grep,Glob"]))).toBeNull();
+    expect(poolIneligibleReason(tools(["ToolSearch", "Read", "Edit,Write", "Bash,Grep,Glob"]))).toBeNull();
+    expect(poolIneligibleReason(tools(["Read,Grep,ToolSearch"]))).toBe("tools");
+  });
+
   it("interactive runs are never pooled", () => {
     expect(poolIneligibleReason({ ...base(), headless: false })).toBe("interactive");
     expect(poolIneligibleReason({ ...base(), prompt: null })).toBe("interactive");
