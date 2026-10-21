@@ -2970,6 +2970,21 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(kept).toContain('<td data-l="now"><span class="dim">-</span></td>');
   });
 
+  it("table(): emptiness is the cell's text, not its markup — an empty dim span drops, a dim span with a value stays", () => {
+    const t = tableFull((s: unknown) => String(s ?? ""));
+    // the live Workers "pos" column: <span class="dim"></span> in every row — no text at all
+    const html = t(["worker", "pos"], [["w1", '<span class="dim"></span>'], ["w2", '<span class="dim">&nbsp;</span>']]);
+    expect(html).not.toContain("pos");
+    expect(html).not.toContain('data-l="pos"');
+    expect(html).toContain('<th>worker</th>');
+    // the same markup with text inside stays, and a placeholder text stays a placeholder (dropped)
+    const kept = t(["worker", "pos"], [["w1", '<span class="dim">3</span>'], ["w2", '<span class="dim">1</span>']]);
+    expect(kept).toContain('<th>pos</th>');
+    expect(kept).toContain('<td data-l="pos"><span class="dim">3</span></td>');
+    const na = t(["worker", "pos"], [["w1", '<span class="dim">n/a</span>'], ["w2", '<span class="dim">…</span>']]);
+    expect(na).not.toContain("pos");
+  });
+
   it("table(): a table with no fully-empty column renders byte-identical to the old helper", () => {
     // the helper as it was before empty-column dropping existed, spelled out here so the
     // comparison stays meaningful after the page source changes
