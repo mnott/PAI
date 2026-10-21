@@ -1,0 +1,449 @@
+/** cockpit-page — script: limits, routing and the Models section. */
+
+import type { CockpitLayout } from "../cockpit-layout.js";
+import type { Num, Str } from "./types.js";
+
+/** gauge through the model-card job watcher. */
+export const scriptModels = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`function gauge(l,w,age){
+ var p=Math.max(0,Math.min(100,w.percent)),r=44,cx=60,cy=56,a=Math.PI*p/100;
+ var x=cx-r*Math.cos(a),y=cy-r*Math.sin(a);
+ var arc='<path d="M '+(cx-r)+' '+cy+' A '+r+' '+r+' 0 0 1 '+(cx+r)+' '+cy+'" fill="none" stroke="var(--line)" stroke-width="10" stroke-linecap="round"/>';
+ if(p>0)arc+='<path d="M '+(cx-r)+' '+cy+' A '+r+' '+r+' 0 0 1 '+x.toFixed(1)+' '+y.toFixed(1)+'" fill="none" stroke="'+sev(p)+'" stroke-width="10" stroke-linecap="round"/>';
+ return '<div class="gauge"><svg width="120" height="70" viewBox="0 0 120 70">'+arc+'<text x="60" y="54" text-anchor="middle" style="font-size:16px;font-weight:600;fill:var(--fg)">'+Math.round(w.percent)+'%</text></svg>'+
+  '<div class="n">'+esc(l.provider)+' '+esc(w.name)+(age?' <span class="warn" title="'+esc(l.error||"")+'">· '+esc(age)+' old</span>':'')+(w.estimated?' <span class="warn">estimated</span>':'')+'</div>'+
+  '<div class="s" data-reset="'+(w.resetAt||0)+'">'+(w.resetAt?'resets in '+dur(w.resetAt-Date.now()):'reset unknown')+'</div></div>';
+}
+/** The action row shared by the model cards and the cloud gauges. */
+function actRow(cls,attrs,btns,msg){
+ return'<div class="act '+cls+'"'+attrs+'>'+btns+'<span class="msg">'+esc(msg||"")+'</span></div>';
+}
+function postAction(action,target,value,cb){
+ var body={action:action};if(target!=null)body.target=target;if(value!=null)body.value=value;
+ fetch("/cockpit/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),cache:"no-store"})
+  .then(function(r){return r.json()}).then(function(j){cb(j)}).catch(function(){cb({ok:false,message:"action failed"})});
+}
+/** Buttons in an action row: disabled while the action runs; the result text lands on the card.
+ * A button click must not reach the card header's fold toggle (the button is inside the header button).
+ * A data-confirm button arms on the first click (its own label shows the confirm text) and runs on a
+ * second click within CONFIRM_MS; the revert timer restores the label. The row's .msg stays for the
+ * action's result. */
+var CONFIRM_MS=${n(L.confirmMs)};
+function wireAct(el,onDone){
+ var btns=el.querySelectorAll("button");
+ for(var i=0;i<btns.length;i++)(function(b){
+  b.onclick=function(e){
+   if(e&&e.stopPropagation)e.stopPropagation();
+   var cf=b.getAttribute("data-confirm");
+   if(cf&&!b.confirmed){
+    b.confirmed=true;
+    if(b.__label===undefined)b.__label=b.textContent;
+    b.textContent=cf;
+    // the real timer id, stored as-is: the second click must clear it (armed is b.confirmed)
+    b.__cfTimer=setTimeout(function(){b.confirmed=false;b.textContent=b.__label},CONFIRM_MS);
+    return}
+   b.confirmed=false;
+   if(b.__label!==undefined)b.textContent=b.__label;
+   for(var k=0;k<btns.length;k++){btns[k].disabled=true;if(btns[k].__cfTimer!=null){clearTimeout(btns[k].__cfTimer);btns[k].__cfTimer=null}}
+   postAction(b.getAttribute("data-a"),b.getAttribute("data-t")||null,b.getAttribute("data-v")||null,function(j){
+    var m=el.querySelector(".msg");if(m){m.textContent=(j&&j.message)||"";m.className="msg"+(j&&j.ok?"":" bad")}
+    for(var k=0;k<btns.length;k++)btns[k].disabled=false;
+    if(onDone)onDone(j);
+   });
+  };
+ })(btns[i]);
+}
+/** The Local block is rebuilt by innerHTML on every poll: remember per details kind whether the user opened it and re-apply after the rebuild. */
+var downsOpen={};
+function keepDowns(el){
+ var ds=el.querySelectorAll("details.downs");
+ for(var i=0;i<ds.length;i++)(function(d){
+  var k=d.getAttribute("data-kind");
+  if(downsOpen[k])d.open=true;
+  d.ontoggle=function(){downsOpen[k]=d.open};
+ })(ds[i]);
+}
+/** A running local server as a tile like the provider tiles: name (alias if set) and status in the header,
+ *  then a two-column table — memory in GB, tokens/s with its unit, the model short name (full id in the title). */
+function localTile(l){
+ var m=l.served&&l.served.length?String(l.served[0]):"",al=m&&ringName(m)!==shortModel(m)?ringName(m):"";
+ function r(k,v,t){return'<span class="dim">'+k+'</span><span class="nw"'+(t?' title="'+esc(t)+'"':"")+'>'+v+'</span>'}
+ var rows=(l.rssMb?r("memory",esc(gbm(l.rssMb))+" GB"):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+' tok/s'):"")+(m?r("model",esc(shortModel(m)),m):"");
+ return'<div class="pgroup ltile" data-prov="'+esc(l.provider)+'"><div class="phead"><span class="lname" title="'+esc(l.provider)+'">'+esc(al||l.provider)+'</span><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"")+'</div>';
+}
+function renderLimits(){
+ if(!lim)return;var c="",lo="",dn=[],nl=[];
+ lim.limits.forEach(function(l){
+  var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
+  if(l.kind==="local"){
+   if(!l.up){(l.provider===lim.activeLocal?dn:nl).push(l.provider);return}
+   lo+=localTile(l);
+   return}
+  l.windows.forEach(function(w){h+=gauge(l,w,age)});
+  if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
+  else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
+  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
+ });
+ if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ setHtml($("cloud"),c||'<span class="dim">no cloud limit sources</span>');
+ if(dn.length)lo+='<details class="downs" data-kind="dn"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
+ setHtml($("local"),lo||'<span class="dim">no local providers</span>');
+ keepDowns($("local"));
+}
+/** Routing section, read-only: the flow line of the configured tiers with what each resolves to now (first available entry), then one row per tier (description tooltip, ordered chips coloured by state, the classes it covers) and the sessions overriding it. Edited in workers.yaml or with pai worker route set. */
+function renderRouting(){
+ var r=lim&&lim.routing;if(!r||!document.querySelector('[data-section="routing"]'))return;
+ var rows=r.rows||[];
+ var chipsOf=function(cs){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+'</span>'}).join("")};
+ var flow=rows.length?'<div class="rtflow" id="rtflow">'+esc(r.flow||"")+'</div>':"";
+ setHtml($("routing"),rows.length?flow+rows.map(function(row){
+  var sessLines=(row.sessions||[]).map(function(s){return'<div class="rtsess" style="margin-left:24px"><span class="rtlabel dim"'+(s.note?' title="'+esc(s.note)+'"':"")+'>'+esc(s.session)+':</span><span class="rtchips">'+chipsOf(s.chips)+'</span></div>'}).join("");
+  var tip=[row.description,row.note].filter(Boolean).join(" — ");
+  return'<div class="rtrow" data-tier="'+esc(row.id)+'"><span class="rtlabel"'+(tip?' title="'+esc(tip)+'"':"")+'>'+esc(row.label)+'</span><span class="rtchips">'+chipsOf(row.chips)+'</span><span class="rtcls dim" style="font-size:11px;margin-left:8px">'+esc((row.classes||[]).join(" · "))+'</span>'+sessLines+'</div>'}).join(""):'<span class="dim">no routing table</span>');
+}
+var mdl=null,mEditing=false,BLUR_CANCEL_MS=400;
+/** Short model name: the last path segment of the id ("huggingface.co/…/multilingual-e5-base" → "multilingual-e5-base");
+ * the full id rides in the title attribute. */
+function shortModel(m){var s=String(m==null?"":m),i=s.lastIndexOf("/");return i>=0?s.slice(i+1):s}
+/** A model's display name: the alias the user set on any runtime or consumer, else the short model name. */
+function ringName(m){
+ var rs=(mdl&&mdl.runtimes)||[];
+ for(var i=0;i<rs.length;i++){var ml=rs[i].modelLabels||{};if(ml[m])return ml[m]}
+ var cs=(mdl&&mdl.consumers)||[];
+ for(i=0;i<cs.length;i++)if(cs[i].model===m&&cs[i].label)return cs[i].label;
+ return shortModel(m);
+}
+/** Local-model buttons: caption, one button per tier (label, memory need), the active one highlighted and
+ * disabled, an inline confirm that names what the switch stops, and off. */
+function tierRow(tiers,running){
+ var btns=tiers.map(function(t){
+  var name=typeof t==="string"?t:t.tier,label=(typeof t==="string"?"":t.label)||name,gb=typeof t==="string"?null:t.memoryGb;
+  var cur=!!(running&&running.tier===name);
+  var cf=running&&!cur?' data-confirm="stops '+esc(running.label||running.model)+' first, needs ~'+(gb?esc(gb):"?")+' GB. Click again to confirm."':"";
+  return'<button data-a="local.switch" data-t="'+esc(name)+'" class="tier'+(cur?' cur':'')+'"'+(cur?' disabled':'')+cf+'>'+esc(label)+(gb?' · '+esc(gb)+' GB':'')+'</button>'}).join("");
+ return'<span class="tiercap">Local model:</span> '+btns+'<button data-a="local.off">off</button>';
+}
+/** Models section: one foldable card per consumer runtime — the runtime PAI's embedding runs on, the worker
+ * providers' local models (tiers) and the declared consumers (models.consumers) — grouped under their runtime.
+ * A runtime whose configured commands can start/stop it carries start/stop buttons on the header (inline
+ * confirm, no dialogs); a runtime without configured commands shows no button. A runtime down with consumers
+ * reads red "down — <consumer> cannot work"; an idle runner reads "available (loads on first request)".
+ * Fold state persists in pai.cockpit.models.folded; default: a running coding runtime open, everything else folded. */
+function modelsHtml(inv){
+ if(!inv||!inv.runtimes)return"";
+ var tiers=inv.tiers||[];
+ var running=(inv.running&&inv.running.model)?inv.running:null;
+ var cmds=inv.runtimeCommands||{};
+ var consumers=inv.consumers||[];
+ var tierBtns=tiers.length?tierRow(tiers,running):"";
+ /* the local model switch shows once: in the card of the engine runtime the workers use (a running runtime
+  * that is neither ollama nor docker model runner, hosting the running model, else one with a worker user);
+  * with no such card it sits at the section bottom */
+ var localRt="";
+ if(tierBtns){
+  var eng0=inv.runtimes.filter(function(x){return x.status!=="stopped"&&x.kind!=="ollama"&&x.kind!=="docker-model-runner"});
+  var hit=eng0.filter(function(x){return running&&(x.models||[]).some(function(m){return m.model===running.model})})[0]||eng0.filter(function(x){return(x.users||[]).some(function(u){return String(u).indexOf("worker:")===0})})[0];
+  if(hit)localRt=hit.name;
+ }
+ function mem(m){return m==null?"–":m>=1024?gbm(m)+" GB":m+" MB"}
+ function n0(v){return v==null?"–":Math.round(v)}
+ /* the same rounding as Strata's monitor (serve/web/app.js): decode 1 decimal, prefill integer;
+ * every GB on the card goes through gb() — binary GB (1024^3), 1 decimal used / 0 total */
+ function f1(v){return v==null?"–":Number(v).toFixed(1)}
+ function kfmt(n){return n==null?"–":n>=1000?(n>=10000?Math.round(n/1000)+"k":(n/1000).toFixed(1)+"k"):String(n)}
+ function ctxfmt(n){return n&&n%1024===0?Math.round(n/1024)+"K":kfmt(n)}
+ /** Strata's Speed tile: decode = the running request, else the last one; prefill = this request, else the last. */
+ function speedTile(eng,h){
+  var st=eng&&eng.phase;
+  var sub=st==="generating"?"Decode now":st==="reading"?"Decode":eng&&eng.lastDecode!=null?"Decode last request":"Decode";
+  var psub=st==="reading"?"Prefill now":st==="generating"?"Prefill this request":eng&&eng.lastPromptMs?"Prefill last request":"Prefill";
+  return metricTile({title:"Speed",value:f1(eng&&eng.decode),unit:eng&&eng.decode!=null?"t/s":"",sub:(eng&&eng.phase?esc(eng.phase)+" · ":"")+sub,
+   secondary:{value:n0(eng&&eng.prefill),unit:eng&&eng.prefill!=null?"t/s":"",sub:psub},
+   series:[{data:h.decode||[]},{data:h.prefill||[]}]})
+ }
+ /** Strata's VRAM measure (the engine's hardware reading) beside the process RSS. */
+ function memoryTile(eng,lv,loaded,h){
+  var ram=lv&&lv.rssMb!=null?lv.rssMb:(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null);
+  var gpu=eng&&eng.gpuMemUsed!=null,sub="RAM"+(ram!=null?" "+gbm(ram)+" GB":" · not reported")+(gpu?" · GPU "+gb(eng.gpuMemUsed)+(eng.gpuMemTotal!=null?" / "+gb(eng.gpuMemTotal,0)+" GB":""):" · GPU not reported");
+  return metricTile({title:"Memory",value:ram!=null?gbm(ram):"–",unit:ram!=null?"GB":"",sub:sub+(loaded[0]&&loaded[0].mappedMb?" · "+gbm(loaded[0].mappedMb)+" GB file mapped":"")+(h.pressurePct&&h.pressurePct.length?" · machine pressure "+n0(h.pressurePct[h.pressurePct.length-1])+"%":""),
+   series:[{data:h.memoryMb||[]}]})
+ }
+ /** Strata's context fill: the running request's tokens, else the last one's, over the engine's max context. */
+ function ctxOf(eng){
+  if(!eng||eng.maxContext==null)return null;
+  var used=eng.liveUsed!=null?eng.liveUsed:eng.lastUsed;
+  if(used==null)return null;
+  return {pct:Math.min(100,used/eng.maxContext*100),text:Math.round(used/eng.maxContext*100)+"% · "+kfmt(used)+" / "+ctxfmt(eng.maxContext)}
+ }
+ function liveOf(r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(x){return x.name===r.name})[0];return l?Object.assign({},l.live,{history:l.history}):null}
+ /** A consumer's model names the runtime's model: equal, or equal up to ollama's ":latest" tag. */
+ function sameModel(a,b){return !!a&&!!b&&(a===b||a.replace(/:latest$/,"")===b.replace(/:latest$/,""))}
+ /** The consumers of one model on one runtime: by the model the consumer names;
+  * a consumer without a model counts only on a runtime with a single model. */
+ function consumersOf(cs2,rt2,m){
+  return cs2.filter(function(c){
+   if(c.runtime!==rt2.name&&c.runtime!==rt2.kind)return false;
+   return c.model?sameModel(c.model,m.model):rt2.models.length===1;
+  });
+ }
+ /** What uses this runtime/model: the inventory's users plus the consumers (PAI's embedding backend, apps). */
+ function usersOf(cs2,rt2,m){
+  var u=(rt2.users||[]).slice();
+  consumersOf(cs2,rt2,m).forEach(function(c){if(u.indexOf(c.name)<0)u.push(c.name)});
+  return u;
+ }
+ /** The consumer sentence: what each user needs the runtime for. */
+ function purposeOf(u){
+  return u.map(function(n){
+   var c=consumers.filter(function(x){return x.name===n})[0];
+   if(c){var d=c.purpose||c.label;return d&&d!==n?n+" ("+d+")":n}
+   if(n==="pai-embedding")return "PAI's embedding (memory search embeds new content)";
+   if(n.indexOf("worker:")===0)return n.slice(7)+" (worker provider)";
+   return n;
+  }).join(", ");
+ }
+ /* the display name of a consumer in a confirm: its config label, else the name without the worker: prefix */
+ function consumerName(n){
+  var c=consumers.filter(function(x){return x.name===n})[0];
+  if(c&&c.label)return c.label;
+  return String(n).replace(/^worker:/,"");
+ }
+ /** Header buttons: start/stop from the configured commands only — no command, no button.
+  * Only the applicable one shows: running/idle -> stop, stopped -> start; never a disabled twin.
+  * A stop on a runtime serving other consumers names them and needs a second click
+  * (the same inline confirm as the local model switch); a single-consumer runtime stops in one click. */
+ function rtBtns(r,rt2){
+  var c=cmds[r.name]||{};
+  var dmr=r.kind==="docker-model-runner";
+  // docker model runner: idle (nothing loaded) -> load, loaded -> unload; others: stopped -> start, else stop
+  if(r.status==="stopped"||(dmr&&r.status==="idle"))return c.start?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="start" data-confirm="starts '+esc(r.name)+'">'+(dmr&&r.status==="idle"?"load":"start")+'</button>':"";
+  // the other consumers of this runtime: the card's own consumers (its model's users and
+  // the consumers pointing at its model) are not "other"; a runtime-wide user that
+  // points at no model (or at a model the runtime does not list) is not a card's own either
+  var own={};
+  r.models.forEach(function(m){
+   (m.usedBy||[]).forEach(function(u){own[u]=1});
+   consumersOf(consumers,rt2,m).forEach(function(c){own[c.name]=1});
+  });
+  var others=usersOf(consumers,rt2,{model:"",kind:"chat",loaded:false,usedBy:[]}).filter(function(u){return !own[u]});
+  // a runtime serving only this card's consumers stops in one click: no data-confirm at all
+  var cf=others.length?' data-confirm="stop '+esc(r.name)+': also '+esc(others.map(consumerName).join(", "))+' - click again"':"";
+  return c.stop?'<button data-a="runtime" data-t="'+esc(r.name)+'" data-v="stop"'+cf+'>'+(dmr?"unload":"stop")+'</button>':"";
+ }
+ var cards="";
+ inv.runtimes.forEach(function(rt){
+  // one card per consumer model: a runtime hosting several consumer-labelled models
+  // (ollama: qwen3:8b for chat, arctic-embed for embeddings) splits into one card per
+  // model; a runtime without several labelled models keeps one card for all its models
+  var rts=[];
+  var keyed=rt.models.filter(function(m){return m.label||(m.usedBy||[]).length||consumers.some(function(c){return(c.runtime===rt.name||c.runtime===rt.kind)&&sameModel(c.model,m.model)})});
+  // a consumer's model the runtime does not list (yet) still gets its card
+  consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&c.model&&!rt.models.some(function(m){return sameModel(c.model,m.model)}))keyed.push({model:c.model,kind:"embedding",loaded:false,usedBy:[c.name]})});
+  if(keyed.length>1||(keyed.length&&consumers.some(function(c){return c.name==="pai-embedding"&&(c.runtime===rt.name||c.runtime===rt.kind)})))keyed.forEach(function(m){rts.push(Object.assign({},rt,{models:[m],split:true}))});
+  // a runtime with no models of its own still shows its declared consumers (a stopped ollama)
+  else if(!rt.models.length&&consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))rts.push(Object.assign({},rt,{models:[{model:"",kind:"chat",loaded:false,usedBy:[]}]}));
+  else rts.push(rt);
+  rts.forEach(function(r){
+  var lv=liveOf(r),eng=lv&&lv.engine,h=lv&&lv.history||{},w=(lv&&lv.workers||[]);
+  var loaded=r.models.filter(function(m){return m.loaded});
+  var hasModel=!!(r.models.length&&r.models[0].model);
+  var users=usersOf(consumers,rt,r.models[0]||{model:"",kind:"chat",loaded:false,usedBy:[]});
+  // a card is per consumer: on a runtime shared by several, the runtime-wide users stay out of it
+  if(r.split&&hasModel){users=(r.models[0].usedBy||[]).slice();consumersOf(consumers,rt,r.models[0]).forEach(function(c){if(users.indexOf(c.name)<0)users.push(c.name)})}
+  // a runtime with no models of its own: every consumer pointing at it still waits on it
+  if(!hasModel)consumers.forEach(function(c){if((c.runtime===rt.name||c.runtime===rt.kind)&&users.indexOf(c.name)<0)users.push(c.name)});
+  var down=r.status==="stopped";
+  var coding=loaded.some(function(m){return m.kind==="coding"})||r.models.some(function(m){return m.kind==="coding"});
+  // a running on-demand runtime (ollama, docker model runner) whose model is not in memory loads it on the first request
+  var idle=!down&&(r.status==="idle"||(hasModel&&!loaded.length&&(r.kind==="ollama"||r.kind==="docker-model-runner")));
+  var state=down?"down":idle?"available (loads on first request)":"running";
+  // the tile order is keyed by the card's position in the grid, not its model id:
+  // a renamed alias must not scramble the tiles the user arranged
+  var tkey=r.name+" / "+(hasModel?r.models[0].model:"")+" tiles";
+  var key=down?(users.length?users.length+" consumer"+(users.length===1?"":"s")+" waiting":r.name+(r.port==null?"":" :"+r.port))
+   :idle?(hasModel?r.models.length+" installed":"no model")
+   :loaded.length?mem(loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)):r.models.length+" models";
+  /* purpose first: the title is the consumer's label (config only), the model id is grey secondary text;
+   * without a label the consumer name, then the model id */
+  function titleOf(m){
+   // the inventory's per-model label first (models.consumers[].label / models.labels),
+   // then the payload's consumer label, then the runtime label — all from config
+   var lbl=m.label||"";
+   if(!lbl){var cc=consumers.filter(function(x){return sameModel(x.model,m.model)&&(x.runtime===rt.name||x.runtime===rt.kind)})[0];if(cc&&cc.label)lbl=cc.label}
+   if(!lbl)lbl=(r.modelLabels&&r.modelLabels[m.model])||r.label||"";
+   if(lbl)return lbl;
+   var cs=consumersOf(consumers,rt,m);
+   if(cs.length)return cs[0].name;
+   var u=(m.usedBy||[]).length?m.usedBy:(rt.models.length===1?users:[]);
+   var first=u.length?String(u[0]):"";
+   return first?first.replace(/^worker:/,""):shortModel(m.model);
+  }
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":idle?" idle":"")+'"></span>'+
+   '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
+   (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
+   (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
+   (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
+   // the runtime chip carries the runtime's note (models.runtimes.<name>.note) as its title,
+   // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
+   '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
+   '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
+   (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'</span>':"")+
+   '<span class="num">'+esc(key)+'</span></div>';
+  var body="";
+  if(down){
+   body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
+  }else if(!loaded.length){
+   var size=r.models.reduce(function(a,m){return a+(m.sizeMb||0)},0)||null;
+   body+='<div class="rt-tiles two" data-tkey="'+esc(tkey)+'">'+
+    metricTile({title:"Memory / size",value:mem(size),unit:"",sub:hasModel?r.models.length+" model"+(r.models.length===1?"":"s")+" installed, none loaded":"no model installed",series:[]})+
+    metricTile({title:"Users",value:users.length,unit:"",sub:users.length?esc(purposeOf(users)):"no declared consumer",series:[]})+
+    '</div>';
+  }else{
+   var ctx=ctxOf(eng);
+   body+='<div class="rt-tiles" data-tkey="'+esc(tkey)+'">'+
+    speedTile(eng,h)+
+    memoryTile(eng,lv,loaded,h)+
+    metricTile({title:"Workers",value:w.filter(function(x){return x.state==="running"}).length,unit:"",sub:(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+(lv&&lv.conversationSlots!=null?" · slots "+lv.conversationSlots:"")+" · spares "+(lv&&lv.sparesReady?lv.sparesReady:0),
+     series:[{data:h.queued||[]}]})+
+    metricTile({title:"Conversation cache",value:eng&&eng.parked!=null?eng.parked:"–",unit:eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",
+     sub:eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"prompt reuse not reported",
+     fill:ctx?{pct:ctx.pct,text:ctx.text}:null,
+     series:[{data:h.reusedPct||[]}]})+'</div>';
+   var chips=w.map(function(x){return'<span class="chip" title="'+esc(x.id)+'">'+esc(x.label||x.id)+(x.session&&x.session!=="?"?' <b>'+esc(x.session)+'</b>':"")+(x.state==="queued"?' <span class="warn">queued</span>':x.state==="running"?' <span class="dim">running</span>':"")+'</span>'}).join("");
+   if(chips)body+='<div class="rt-chips">'+chips+'</div>';
+  }
+  // the purpose line is the card's own consumer's description (config), never the runtime's or another consumer's
+  var own=consumers.filter(function(c){return users.indexOf(c.name)>=0&&(c.runtime===rt.name||c.runtime===rt.kind)});
+  var sub="";
+  if(own.length)sub=(own.filter(function(c){return c.purpose||c.label})[0]||{}).purpose||(own.filter(function(c){return c.label})[0]||{}).label||"";
+  else if(r.split&&hasModel)sub=r.models[0].label||"";
+  else if(!consumers.some(function(c){return c.runtime===rt.name||c.runtime===rt.kind}))sub=r.label||"";
+  if(users.indexOf(sub)>=0)sub="";
+  if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
+  if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
+  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
+  });
+ });
+ var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
+ if(tierBtns&&!localRt)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
+ // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
+ (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});
+ return h;
+}
+/** Fold state of the model cards: pai.cockpit.models.folded lists the folded card ids
+ * (runtime + first model id, so two cards on one runtime fold separately).
+ * Default: a runtime running a coding model opens, everything else folds.
+ * The whole header line is the toggle: it is a <button>, so Enter/Space fire a click too. */
+var MCOLLAPSE_KEY="pai.cockpit.models.folded";
+// the saved array is the folded list; __init marks "the defaults were applied once",
+// so a card absent from the list after that is open, not unknown
+function mFolded(){var s={};try{var r=localStorage.getItem(MCOLLAPSE_KEY);if(r){JSON.parse(r).forEach(function(k){s[k]=1});s.__init=1}}catch(e){}return s}
+function saveMFolded(s){try{var a=[];for(var k in s)if(s[k]&&k!=="__init")a.push(k);localStorage.setItem(MCOLLAPSE_KEY,JSON.stringify(a))}catch(e){}}
+function applyModelFold(){
+ var el=$("modelspanel"),saved=mFolded(),init=saved.__init,known={};
+ var cards=el.querySelectorAll(".mcard");
+ for(var i=0;i<cards.length;i++)(function(c){
+  var rt=c.getAttribute("data-rt")||"",md=c.getAttribute("data-model")||"";
+  var id=rt+(md?" / "+md:"");known[id]=1;
+  var open=c.classList.contains("open");
+  // the stored array is the folded list: an id in it is folded, an id not in it is open
+  // (a re-rendered card has lost its class, so after init the absence of the id is the only truth)
+  if(id in saved)open=!saved[id];
+  else if(init===1)open=true;
+  else{
+   var d=c.getAttribute("data-def");
+   open=d===${q(L.foldDefaultKind)};
+   // only the folded cards are stored; an open card is the absence of its id
+   if(!open)saved[id]=1;
+  }
+  c.classList.toggle("open",open);
+  var b=c.querySelector(".mhead");
+  if(b){b.setAttribute("aria-expanded",open?"true":"false");var ch=b.querySelector(".chev");if(ch)ch.textContent=open?"▾":"▸"}
+  if(!b.onclick){b.onkeydown=function(e){if(e.target===b&&(e.key==="Enter"||e.key===" ")){e.preventDefault();b.onclick()}};}
+  if(!b.onclick)b.onclick=function(){
+   var nowOpen=!c.classList.contains("open");
+   c.classList.toggle("open",nowOpen);
+   var folded=JSON.parse(localStorage.getItem(MCOLLAPSE_KEY)||"[]");
+   folded=nowOpen?folded.filter(function(k){return k!==id}):folded.concat([id]);
+   try{localStorage.setItem(MCOLLAPSE_KEY,JSON.stringify(folded))}catch(e){}
+   b.setAttribute("aria-expanded",nowOpen?"true":"false");
+   var ch=b.querySelector(".chev");if(ch)ch.textContent=nowOpen?"▾":"▸";
+  };
+ })(cards[i]);
+ // a card that left the inventory: its saved state goes with it
+ // (not while no card is rendered: the "…" placeholder is not an empty inventory)
+ if(cards.length)for(var k in saved)if(k!=="__init"&&!(k in known))delete saved[k];
+ saved.__init=1;saveMFolded(saved);
+}
+function renderModels(){
+ var el=$("modelspanel");if(!el)return;
+ // a pending poll never replaces a rendering that already shows data
+ if(!mdl&&el.__html)return;
+ if(mdl&&mEditing)return;
+ var changed=setHtml(el,mdl?modelsHtml(mdl):'<span class="dim" title="loading: first models poll pending">…</span>');
+ applyModelFold();
+ // the poll rebuild must not reset the tile order the user arranged
+ var tgs=el.querySelectorAll(".rt-tiles");
+ for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
+ tileGrips();
+ setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
+ if(!changed)return;
+ var acts=el.querySelectorAll(".act");
+ for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
+ var lbls=el.querySelectorAll(".lblbtn");
+ for(var k=0;k<lbls.length;k++)(function(btn){
+  var head=btn.parentNode,card=head.parentNode,t=head.querySelector("b");
+  var rt=card.getAttribute("data-rt"),md=card.getAttribute("data-model");
+  btn.onkeydown=function(e){e.stopPropagation()};
+  btn.onclick=function(e){
+   e.stopPropagation();
+   if(head.querySelector("input.lblin"))return;
+   var alias=btn.getAttribute("data-alias")||"";
+   var inp=document.createElement("input");inp.type="text";inp.className="lblin";inp.setAttribute("data-lblin",rt+"/"+md);
+   inp.value=alias;inp.placeholder="alias";
+   var done=false,timer=null,ui=[];
+   function mk(txt,cls,title,fn){
+    var b=document.createElement("button");b.type="button";b.className="lblact "+cls;b.textContent=txt;b.title=title;b.setAttribute("aria-label",title);
+    b.onclick=function(ev){ev.stopPropagation();fn()};b.onkeydown=function(ev){ev.stopPropagation()};
+    head.appendChild(b);ui.push(b);return b;
+   }
+   function close(){
+    done=true;mEditing=false;if(timer){clearTimeout(timer);timer=null}
+    ui.forEach(function(n){if(head.contains(n))head.removeChild(n)});ui=[];
+    if(head.contains(inp))head.replaceChild(t,inp);
+    renderModels();
+   }
+   function save(val){
+    if(done)return;done=true;if(timer){clearTimeout(timer);timer=null}
+    postAction("model.label",rt,"model:"+md+"="+val,function(j2){
+     if(j2&&j2.ok){close();loadModels()}
+     else{done=false;msg.textContent=(j2&&j2.message)||"save failed"}
+    });
+   }
+   inp.onclick=function(ev){ev.stopPropagation()};
+   inp.onfocus=function(){if(timer){clearTimeout(timer);timer=null}};
+   inp.onkeydown=function(ev){ev.stopPropagation();if(ev.key==="Enter"){ev.preventDefault();save(inp.value.trim())}else if(ev.key==="Escape"){close()}};
+   // blur alone never saves: unless a button is tapped (or focus returns) within a moment, cancel
+   inp.onblur=function(){if(done)return;if(timer)clearTimeout(timer);timer=setTimeout(function(){timer=null;if(!done)close()},BLUR_CANCEL_MS)};
+   head.replaceChild(inp,t);
+   mk("✓","lblok","save alias",function(){save(inp.value.trim())});
+   mk("✕","lblno","cancel",close);
+   if(alias)mk("↺","lblrs","reset to the original name",function(){save("")});
+   var msg=document.createElement("span");msg.className="lblmsg dim";head.appendChild(msg);ui.push(msg);
+   mEditing=true;inp.focus({preventScroll:true});
+  };
+ })(lbls[k]);
+}
+/** A local switch/off job: poll its state; the card refreshes from the inventory. */
+function watchJob(id){
+ var tries=0;
+ function step(){
+  fetch("/cockpit/job?id="+encodeURIComponent(id),{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
+   var el=$("modelspanel");var msgs=el.querySelectorAll(".act .msg");
+   for(var i=0;i<msgs.length;i++)msgs[i].textContent=(j&&j.message)||"";
+   if(j&&(j.state==="done"||j.state==="failed")){loadModels();return}
+   if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL);
+  }).catch(function(){if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL)});
+ }
+ setTimeout(step,JOB_FIRST);
+}
+`;
