@@ -1,7 +1,7 @@
 # Delegation tiers
 
 PAI splits a job over three levels. A level is a **tier**: a role with an
-ordered list of models. A tier is not a fallback rank; a worker does not run
+ordered list of models (each entry names a provider, an API endpoint; see [providers](providers.md)). A tier is not a fallback rank; a worker does not run
 "on t2 because t1 failed".
 
 | Tier | Name | Who it is | Shipped model list (first available serves) |
@@ -10,7 +10,9 @@ ordered list of models. A tier is not a fallback rank; a worker does not run
 | `t1` | Orchestrator | Splits a job, plans, reviews. Its workers implement the parts. | `anthropic/sonnet`, `glm/glm-5.3-flash` |
 | `t2` | Worker | Implements the parts, runs quick checks. | `local`, `anthropic/sonnet`, `glm/glm-5.3-flash` |
 
-Opus serves the session while the Anthropic budget lasts; when it is out, the
+These are the shipped defaults. A fresh install has only the `anthropic` provider; entries for providers you did not add are skipped.
+
+Opus serves the session while the Anthropic budget lasts (see [budget walls](routing-policy.md#budget-walls-and-fallback)); when it is out, the
 next entry (glm) serves. Sonnet plans. Workers go local first.
 
 ## Why local first, and when cloud comes first
@@ -40,7 +42,7 @@ Each tier names the classes it serves in its `classes` key. The tier with
 | t1 | `orchestrate`, `plan` |
 | t2 | `implement`, `research`, `draft`, `review`, `complex`, `simple`, `spotcheck` |
 
-`pai worker run --class implement` therefore resolves through the t2 list.
+`pai worker run --class implement` therefore resolves through the t2 list. In short: `implement` writes code, `research` investigates, `draft` writes a first version, `review` checks a diff, `complex` is a large code job, `simple` and `spotcheck` are small bounded jobs, `orchestrate` and `plan` split and plan a job.
 `pai worker classes` lists classes and where each runs; `classes set <class>
 <provider>` pins one to a provider.
 
@@ -63,8 +65,8 @@ cockpit's Routing section shows the same table read-only; edit with
 ## Where it lives
 
 The table is the `tiers:` list in `workers.yaml`. The shipped default is
-`src/config/defaults/workers.yaml`; your `~/.pai/workers.yaml` is merged over
-it, and arrays replace. A `tiers:` block in your file therefore **replaces the
+`src/config/defaults/workers.yaml`; your `workers.yaml` in the [PAI home](../README.md#words-used-in-these-docs) (`~/.pai`, or `~/.claude/pai` on older installs) is merged over
+it, and arrays replace (a list in your file replaces the shipped list, it is not added to it). A `tiers:` block in your file therefore **replaces the
 shipped list wholesale**, with no concatenation; copy the rows you want to keep.
 `pai config get <key> --source` shows which file a value came from. Row keys
 seen in the shipped file: `id`, `name`, `description`, `models`, `classes`,

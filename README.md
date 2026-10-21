@@ -1,6 +1,8 @@
 # PAI Knowledge OS
 
-PAI is an operating layer for Claude Code. It gives every session a memory: notes written in the background, searchable across sessions, projects and vaults, all stored locally. It also lets one Claude Code session delegate work to workers on any provider, a local model first, over three delegation tiers with routing policy, escalation and limits. A router and a cockpit page show what the models, the worker pool and your token budget are doing.
+PAI is an operating layer for Claude Code. From the first day it gives every session a memory: notes written in the background, searchable across sessions, projects and vaults, all stored locally. `pai` starts or resumes a Claude Code session in the current project, and `pai pause` and `pai end` save your place.
+
+It can also hand work to cheaper background Claude Code runs (workers) on other providers or a local model, with a router and a cockpit page that show what the models and your token budget are doing. You do not need this to start. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
 
 ![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](docs/images/cockpit-limits-routing.jpg)
 
@@ -8,33 +10,18 @@ PAI is an operating layer for Claude Code. It gives every session a memory: note
 
 ## Install
 
-Prerequisites: [Claude Code](https://claude.com/claude-code) and Node.js 20 or newer. Docker is only needed if you choose PostgreSQL.
+Prerequisites: [Claude Code](https://claude.com/claude-code) and Node.js 20 or newer. Docker is only needed for the optional PostgreSQL storage (semantic search); the default sqlite needs nothing.
 
-**With the install skill (recommended).** Two commands inside Claude Code add this repository as a plugin marketplace and install the `pai` plugin, whose `setup` skill does the install:
+Inside Claude Code, add this repository as a plugin marketplace and install the `pai` plugin:
 
 ```
 /plugin marketplace add mnott/PAI
 /plugin install pai@pai
 ```
 
-Then say **"set up PAI"**. The skill checks each phase first (package, `pai setup`, daemon, first workers) and does only what is missing.
+Then say **"set up PAI"**. `/plugin` lists `pai` once it is installed. The skill checks each phase first and does only what is missing, and ends with a pass/fail list of its checks.
 
-**From a clone or the npm package.** Load the plugin for one session instead of installing it:
-
-```bash
-npm i -g @tekmidian/pai
-claude --plugin-dir "$(npm root -g)/@tekmidian/pai"
-```
-
-**Without the plugin.** Install the package and run the wizard yourself:
-
-```bash
-npm i -g @tekmidian/pai
-pai setup                     # interactive; or: pai setup --yes --storage sqlite
-pai daemon status             # should show "running"
-```
-
-Details, storage choices, the daemon and updates: [docs/install/index.md](docs/install/index.md).
+Without the plugin, from a clone, or for a one-session plugin load: [docs/install/index.md](docs/install/index.md). Memory works as soon as setup is done; workers are optional ([First workers](docs/install/first-workers.md)).
 
 ## Where to go next
 
@@ -44,7 +31,7 @@ Details, storage choices, the daemon and updates: [docs/install/index.md](docs/i
 
 ### Concepts
 
-Orchestration first: [delegation tiers](docs/concepts/delegation-tiers.md) · [routing policy](docs/concepts/routing-policy.md) · [escalation](docs/concepts/escalation.md) · [workers](docs/concepts/workers.md) · [panes](docs/concepts/panes.md) · [pool](docs/concepts/pool.md) · [local models](docs/concepts/local-models.md) · [router](docs/concepts/router.md) · [loop guard and limits](docs/concepts/loop-guard-and-limits.md) · [notifications](docs/concepts/notifications.md) · [session profiles](docs/concepts/session-profiles.md) · [providers](docs/concepts/providers.md)
+[Workers](docs/concepts/workers.md) · [delegation tiers](docs/concepts/delegation-tiers.md) · [panes](docs/concepts/panes.md) · [providers](docs/concepts/providers.md), and the rest in [docs/README.md](docs/README.md).
 
 ### Cockpit
 
@@ -70,13 +57,7 @@ pai help <command>  # full help for one command
 
 ## Acknowledgments
 
-PAI Knowledge OS is inspired by [Daniel Miessler](https://github.com/danielmiessler)'s concept of Personal AI Infrastructure and his [Fabric](https://github.com/danielmiessler/fabric) project — a Python CLI for augmenting human capabilities with reusable AI prompt patterns. Fabric is excellent and solves a different problem; PAI takes the same philosophy in a different direction: persistent memory, session continuity, and deep Claude Code integration. See [FEATURE.md](FEATURE.md) for a detailed comparison.
-
-The automatic observation capture system — classifying tool calls into structured observations with progressive context injection — is inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by [thedotmack](https://github.com/thedotmack). claude-mem demonstrated that automatic memory capture during Claude Code sessions dramatically improves continuity. PAI adapts this concept with a rule-based classifier, PostgreSQL storage, and three-layer progressive disclosure.
-
-The three-store hybrid memory architecture — combining SQLite/PostgreSQL chunks with a knowledge graph and vector embeddings, graph-completion search (vector seeds → graph traversal → re-rank), and the feedback EMA relevance loop — is inspired by [Cognee](https://github.com/topoteretes/cognee) by [topoteretes](https://github.com/topoteretes). Cognee showed that unifying structured knowledge graphs with unstructured vector retrieval produces dramatically better recall. PAI adapts this pattern to the personal knowledge OS context with project-scoped multi-tenancy and content-address entity deduplication.
-
-Section-aware retrieval (heading paths on chunks, `memory_outline`) borrows from [PageIndex](https://github.com/VectifyAI/PageIndex) by [VectifyAI](https://github.com/VectifyAI), which retrieves from long documents by navigating a heading tree rather than by similarity alone. PAI keeps its keyword, vector and graph search and adds the tree as structure the model can navigate, without an LLM call per query.
+Inspired by Daniel Miessler's Personal AI Infrastructure, claude-mem, Cognee and PageIndex. Full credit and links: [docs/README.md](docs/README.md#acknowledgments).
 
 ## License
 

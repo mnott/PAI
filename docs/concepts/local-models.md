@@ -1,15 +1,20 @@
 # Local models
 
-A local model is served by an engine on your machine and reached through a
-worker provider on a loopback URL. PAI keeps **one coding model in memory at a
+A local model runs on your own machine (through an engine such as ollama or
+vllm-mlx) and PAI talks to it at a localhost address through a provider. PAI keeps **one coding model in memory at a
 time**: switching starts the new one only after stopping the old one.
 
 ## Local tiers
 
 A local tier is a named, ready-to-start model. Tiers live under `local_tiers:`
-in `workers.yaml` (user file; `pai worker config path` prints it). Each tier
-names a worker provider, so its port and served model name default to that
-provider's `url` and `model`.
+in `workers.yaml` (user file in the [PAI home](../README.md#words-used-in-these-docs);
+`pai worker config path` prints it). Each tier names a worker provider, so its
+port and served model name default to that provider's `url` and `model`.
+Create the provider first, pointing at the local address:
+
+```
+pai worker providers add ornith --url http://127.0.0.1:8013 --model ornith-1.5-35b
+```
 
 ```yaml
 local_tiers:
@@ -29,10 +34,11 @@ local_tiers:
     start: ~/bin/start-model.sh # required for script, run detached
 ```
 
-Fields verified in `src/workers/local-tiers.ts`: `provider` (required), `engine`
+Fields: `provider` (required), `engine`
 (`vllm-mlx` default, `strata`, `script`), `model` (required for vllm-mlx),
 `served`, `port`, `label`, `memoryGb`, `flags`, and for strata `config` and
 `python`. Shared start flags come from `local_launcher:`.
+Strata is a third-party local model server; PAI starts it from the `config` file you give.
 
 ## Switching
 
@@ -40,13 +46,14 @@ Fields verified in `src/workers/local-tiers.ts`: `provider` (required), `engine`
 pai worker local               # one line: the running local model
 pai worker local status        # what is up
 pai worker local big --dry-run # print the exact commands, change nothing
-pai worker local big           # stop every local server, start the tier
+pai worker local big           # stops EVERY local server, starts the tier
 pai worker local off           # stop all
 ```
 
-Switching stops every local server (vllm-mlx, Strata, scripts), starts the tier
+**Switching stops every local server running on the machine** (vllm-mlx, Strata, scripts), starts the tier
 and points `local:` in `workers.yaml` at it. It does **not** change where
 workers are routed; that is `pai worker policy` and `pai worker route`.
+To check it worked, run a worker with `--local`: `pai worker ps` shows the local model name.
 
 ## Other runtimes: `pai models`
 
@@ -64,7 +71,7 @@ models:
   runtimes:
     ollama:
       start: ollama serve
-      stop: pkill ollama
+      stop: pkill ollama                       # stops every process named ollama; use a narrower command if you run others
       ready: http://127.0.0.1:11434/api/tags   # 2xx, or a command exiting 0
       note: free text shown on the runtime chip
 ```
@@ -98,8 +105,8 @@ configured command cannot be started this way.
 The daemon computes the answer every 30 seconds and caches it in the workers log
 directory. `pai worker local`, `--local` runs, the router and the MCP tool
 `local_status` only read that cache; they fall back to a direct probe only when
-the cache is missing or stale. Sessions should never probe ports or start model
-servers themselves.
+the cache is missing or stale. PAI reads that result; you do not need to probe ports
+or start model servers yourself.
 
 Local runs are scheduled by the router, one request per engine at a time (see
 [router](router.md)).
