@@ -23,7 +23,7 @@ At session start, PAI injects recent observations as layered context:
 
 1. **Compact index** (~100 tokens) — observation type counts and active projects
 2. **Timeline** (~500 tokens) — recent observations with timestamps
-3. **On-demand** — full details available via MCP tools
+3. **On-demand** — full details via `pai observation search`
 
 This means Claude starts every session already knowing what you were working on, without you re-explaining anything.
 
@@ -40,17 +40,11 @@ Ask Claude naturally:
 Or use the CLI:
 
 ```bash
-# List recent observations
-pai observation list
-
-# Filter by type
-pai observation list --type decision
-
-# Filter by project
-pai observation list --project pai
-
-# Show stats
-pai observation stats
+pai observation list                    # recent observations (--limit N, default 20)
+pai observation list --type decision    # decision, bugfix, feature, refactor, discovery, change
+pai observation list --project pai      # one project (--session ID for one session)
+pai observation search "retry"          # by title or text
+pai observation stats                   # totals by kind and by project
 ```
 
 ## Session summaries

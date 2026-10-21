@@ -45,23 +45,20 @@ Todoist → Settings → Integrations → Developer → API token.
 
 ### 2. Configure
 
-In `~/.pai/config.yaml` (or `config.json` until you run `pai config yaml`):
+Easiest: `pai task config --token --project <id> --findings <id> --auto-dispatch true`
+(`--from-env` adopts `TODOIST_API_KEY`; `--disable` turns the bus off and keeps the settings).
+Or edit `~/.pai/config.yaml`:
 
-```jsonc
-{
-  "tasks": {
-    "enabled": true,
-    "autoDispatch": true,        // false = report ownership, do not dispatch
-    "providers": {
-      "todoist": {
-        "enabled": true,
-        "apiKey": "<your API token>",
-        "rootProjectId": "<id of the parent project holding your session projects>",
-        "findingsSectionId": "<id of the section where findings are filed>"
-      }
-    }
-  }
-}
+```yaml
+tasks:
+  enabled: true          # default false
+  autoDispatch: true     # default false: report ownership, do not dispatch
+  providers:
+    todoist:
+      enabled: true      # default false
+      apiKey: <your API token>   # or TODOIST_API_KEY in the environment
+      rootProjectId: <id of the parent project holding your session projects>
+      findingsSectionId: <id of the section where findings are filed>
 ```
 
 `rootProjectId` is the **parent** project. Each session that should own work gets
@@ -84,7 +81,7 @@ projects can share a name, and the search will not tell you.
 ### 3. Install the schedule
 
 ```sh
-pai task schedule install     # launchd, StartInterval
+pai task schedule install     # launchd, every 15 minutes by default
 pai task schedule status
 ```
 
@@ -104,7 +101,7 @@ Path 1 degrades rather than breaking. With AIBroker, PAI dispatches and spawns
 sessions. Without it, PAI reports:
 
 ```
-3 tasks belong to BirnPartners — run `pai birnpartners`
+3 tasks belong to my-app — run pai my-app
 ```
 
 Same feature, you do the routing. This is deliberate: PAI ships cross-platform,

@@ -37,6 +37,7 @@ PAI keeps session memory in a local database (SQLite, or PostgreSQL with pgvecto
 - [Observations](observations.md) · [Session notes](session-notes.md)
 - [Context preservation](context-preservation.md) · [Auto-compact](auto-compact.md)
 - [Session management](session-management.md) · [Zettelkasten](zettelkasten.md) · [Rules and privacy](rules-and-privacy.md)
+- [PAI home](pai-home.md) · [Task bus](task-bus.md)
 - [What you can ask](what-you-can-ask.md) · [Use cases](use-cases.md) · [Skills](skills.md)
 
 ## Reference

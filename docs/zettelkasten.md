@@ -15,7 +15,7 @@ PAI indexes your entire vault — following symlinks, deduplicating by inode, pa
 | `pai zettel health` | Structural audit — dead links, orphans, disconnected clusters, health score |
 | `pai zettel suggest` | Proactive connection suggestions combining semantic similarity, tags, and graph proximity |
 
-All tools work as CLI commands (`pai zettel <command>`) and MCP tools (`zettel_*`) accessible through the daemon.
+All six are CLI commands (`pai zettel <command>`; `--vault-project-id` picks the vault where needed). `pai zettel health` takes `--scope full|recent|project`, `--days N` and `--include`. Claude runs them through the shell.
 
 ## Vault Indexing
 
@@ -32,11 +32,9 @@ All link types are parsed and resolved:
 
 External URLs (`https://`, `mailto:`, etc.) are excluded — only relative paths are treated as vault connections. URL-encoded paths (e.g. `my%20note.md`) are decoded automatically.
 
-- Full index: ~10 seconds for ~1,000 files
-- Incremental: ~2 seconds (hash-based change detection)
-- Runs automatically via the daemon scheduler
+Re-indexing is incremental (hash-based change detection) and runs automatically from the daemon scheduler.
 
 ## Switches
 
-- `vaultIndex.enabled` (default `true`): read-only indexing of `vaultPath` for memory search. Set to `false` to skip the vault index pass.
+- `vaultIndex.enabled` (default `true`): read-only indexing of the configured vault path for memory search. Set to `false` to skip the vault index pass.
 - `obsidian.enabled` (default `false`): the Obsidian sync that writes into the PAI-generated vault (session notes, master notes, symlinks). It never affects vault indexing.

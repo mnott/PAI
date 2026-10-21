@@ -3,7 +3,8 @@
 PAI keeps everything it owns in one directory, **`~/.pai`**. It does not live
 inside Claude Code's directory: PAI has to work independent of any one harness,
 and nothing PAI writes should be able to collide with files Claude Code itself
-adds under `~/.claude`. (Operator decision 2026-09-20, reconfirmed 2026-10-19.)
+adds under `~/.claude`. Older installs used `~/.claude/pai` (legacy); see
+`pai home migrate` below.
 
 ## Resolution
 
