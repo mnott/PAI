@@ -44,9 +44,9 @@ export type WinActionResult = { ok: boolean; message: string };
  *    refresh; a job that never ends finishes err "no result after N s".
  *  - confirm: armConfirm(el, def) arms on the first click (the button's own label shows the
  *    confirm text; the state lives on the element, so polls cannot lose it), a second click
- *    within CONFIRM_MS runs; winClick(el, cardId, verb, args, host) is the click entry. */
+ *    within WIN_CONFIRM_MS runs; winClick(el, cardId, verb, args, host) is the click entry. */
 export const WIN_ACTIONS_JS = String.raw`var STATUS_OK_MS=8000;
-var CONFIRM_MS=4000;
+var WIN_CONFIRM_MS=4000;
 var JOB_POLL=2000;
 var JOB_TRIES=180;
 var ACTIONS={};
@@ -196,7 +196,7 @@ function armConfirm(el,cf){
  el.__cfTimer=setTimeout(function(){
   el.__armed=0;el.__cfTimer=null;
   if(el.__label!==undefined)el.textContent=el.__label;
- },CONFIRM_MS);
+ },WIN_CONFIRM_MS);
 }
 function disarmConfirm(el){
  if(el.__cfTimer!=null){clearTimeout(el.__cfTimer);el.__cfTimer=null}
