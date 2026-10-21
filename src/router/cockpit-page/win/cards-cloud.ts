@@ -28,7 +28,7 @@ function limServerHtml(l){
  var s=l.starting,failed=s.state==="failed";
  return'<div class="phead"><span class="'+(failed?"bad":"warn")+'" title="'+esc(s.log)+'">'+(failed?esc(s.message):"starting · loading "+s.sinceSec+" s")+'</span></div>';
 }
-Win.registerType("server",{minW:180,minH:88,defaultH:120,
+Win.registerType("server",{minW:180,minH:130,defaultH:130,
  mount:function(ctx){ctx.body.innerHTML='<div class="wr" data-k="b"></div>'},
  update:function(ctx,d){
   if(!d||!d.limits)return;
@@ -39,7 +39,7 @@ Win.registerType("server",{minW:180,minH:88,defaultH:120,
   var al=l.served&&l.served.length&&ringName(String(l.served[0]))!==shortModel(String(l.served[0]))?ringName(String(l.served[0])):"";
   ctx.title(al||l.provider);
  }});
-Win.registerType("provider",{minW:200,minH:110,defaultH:130,
+Win.registerType("provider",{minW:200,minH:160,defaultH:160,
  mount:function(ctx){ctx.body.innerHTML='<div class="gauges" data-k="g"></div>'},
  update:function(ctx,d){
   if(!d||!d.limits)return;
@@ -93,9 +93,10 @@ function limitsSync(d){
  }
  var a=ls.length&&Win.addCards("limits-local",ls,limRows(lr)),b=cs.length&&Win.addCards("limits-cloud",cs,limRows(cr));
  if(a||b)Win.update("limits",d);
+ Win.hide("limits.local.down",!limDown(d).length);
 }
 function limLocalDefaults(){
- return{tree:WinT.leaf("limits-local"),stDefaults:{},cards:[{id:"limits-local",type:"group",title:"Local servers",info:LIML_INFO},{id:"limits.local.down",type:"list",title:"0 local models down",feeds:["limits"]}],kids:{"limits-local":WinT.leaf("limits.local.down")}};
+ return{tree:WinT.leaf("limits-local"),stDefaults:{},cards:[{id:"limits-local",type:"group",title:"Local servers",info:LIML_INFO},{id:"limits.local.down",type:"list",title:"0 local models down",feeds:["limits"],hidden:true}],kids:{"limits-local":WinT.leaf("limits.local.down")}};
 }
 function limCloudDefaults(){
  return{tree:WinT.leaf("limits-cloud"),stDefaults:{},cards:[{id:"limits-cloud",type:"group",title:"Cloud limits",info:LIMC_INFO},{id:LIM_NONE,type:"list",title:"Cloud sources",feeds:["limits"]}],kids:{"limits-cloud":WinT.leaf(LIM_NONE)}};

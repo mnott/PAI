@@ -24,12 +24,13 @@ const limits = () => ({
   limits: [
     { provider: "gyro", kind: "local", up: true, rssMb: 20480, tokensPerSec: 41, served: ["org/gyro-m"], windows: [] },
     { provider: "iq3s", kind: "local", up: false, starting: { state: "loading", sinceSec: 12, message: "", log: "" }, windows: [] },
-    { provider: "coder", kind: "local", up: false, windows: [] },
+    { provider: "coder", kind: "local", up: coderUp, windows: [] },
     { provider: "glm", kind: "cloud", windows: [win("5h", 30), win("week", 60)] },
     { provider: "claude", kind: "cloud", windows: [], error: "no key" },
   ],
   routing: { flow: "", endpoints: [], choices: [], rows: [] },
 });
+let coderUp = false;
 const posts: { [k: string]: unknown }[] = [];
 
 /** Reads the cards, then drives the stop (confirm) of the gyro server and the start of the down coder model. */
@@ -39,12 +40,15 @@ function txt(id){var c=card(id);return c?c.textContent.replace(/\\s+/g," "):null
 function st(id){var c=card(id);var s=c&&c.querySelector(".cstatus");return s?s.textContent:null}
 var o={err:window.__err||null,gyro:txt("limits.local.srv:gyro"),iq3s:txt("limits.local.srv:iq3s"),down:txt("limits.local.down"),
  glm:txt("limits.cloud:glm"),claude:txt("limits.cloud:claude"),gauges:document.querySelectorAll('#win-root [data-card="limits.cloud:glm"] .gauge').length,
+ downHidden:!card("limits.local.down")||card("limits.local.down").style.display==="none",
+ over:["limits.local.srv:gyro","limits.cloud:glm","limits.cloud:claude"].map(function(i){var b=card(i)&&card(i).querySelector(".cbody");return b?[i,b.scrollHeight-b.clientHeight]:[i,-1]}),
+ scrollbarColor:card("limits.cloud:glm")?getComputedStyle(card("limits.cloud:glm").querySelector(".cbody")).scrollbarColor:null,
  oldCl:getComputedStyle(document.querySelector('[data-section="cloud"]')).display,
  vis:Array.prototype.filter.call(document.querySelectorAll("#win-root .card"),function(c){return c.style.display!=="none"}).map(function(c){return c.getAttribute("data-card")})};
 if(!card("limits.local.srv:gyro")){document.body.setAttribute("data-r",JSON.stringify(o));return}
 var stop=card("limits.local.srv:gyro").querySelector('[data-act="stop"]');
 stop.click();o.armed=stop.textContent;stop.click();
-card("limits.local.down").querySelector("[data-start]").click();
+var sb=card("limits.local.down").querySelector("[data-start]");if(sb)sb.click();
 setTimeout(function(){o.stopSt=st("limits.local.srv:gyro");o.startSt=st("limits.local.down");document.body.setAttribute("data-r",JSON.stringify(o))},800);
 },1500)</script>`;
 
@@ -109,6 +113,20 @@ describe.skipIf(!CHROME)("B7 cloud on the win runtime (?win=1)", () => {
     expect(r.glm).toContain("60%");
     expect(r.claude).toContain("no reading");
     expect(r.oldCl).toBe("none");
+    // F1/F2: a card's default height fits its content (no overflow scroll, the gauge labels are not clipped)
+    for (const [id, over] of r.over) expect(over, id).toBeLessThanOrEqual(0);
+    expect(r.scrollbarColor).not.toBe("auto");
+  }, 120_000);
+
+  it("F3: with no local model down the down list card is not shown; it is shown with one", async () => {
+    coderUp = true;
+    try {
+      const r = await open("?win=1", 1400);
+      expect(r.err).toBeNull();
+      expect(r.downHidden).toBe(true);
+      expect(r.vis).not.toContain("limits.local.down");
+    } finally { coderUp = false; }
+    expect((await open("?win=1", 1400)).downHidden).toBe(false);
   }, 120_000);
 
   it("stop confirms on a second click and posts local.stop; start posts local.start; status shows the result", async () => {

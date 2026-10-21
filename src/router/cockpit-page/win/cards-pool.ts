@@ -31,7 +31,7 @@ function poolSlotsHtml(p){
  return table(["provider .txt","model .txt","cwd .txt","state .txt","task .txt","branch .txt","first","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',s.task?esc(s.task):"-",s.branch?esc(s.branch):"-",s.firstRequest?'<span class="'+(s.firstRequest==="warm"?"ok":"warn")+'">'+s.firstRequest+'</span>':"-",poolDur(s.ageSecs),poolDur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]}));
 }
 function poolOffText(p){return"Pool off · host not running"+(p.hostLastSeen?" · last seen "+p.hostLastSeen:"")+(p.hostBuiltAt?" · last built "+p.hostBuiltAt:"")+(p.offReason?" · why: "+p.offReason:"")+" — every worker starts cold (no pre-started spare). Turn on with pai worker pool on."}
-Win.registerType("kv",{minW:150,minH:68,defaultH:90,
+Win.registerType("kv",{minW:150,minH:96,defaultH:96,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><b class="wm-v" data-k="v"></b><span class="wm-s" data-k="s"></span></div>'},
  update:function(ctx,p){
   if(ctx.id.indexOf("memory.")===0){memKvUpdate(ctx,p);return}

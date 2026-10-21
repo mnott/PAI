@@ -186,6 +186,7 @@ main.win .card{position:absolute;padding:0;border:0;outline:1px solid var(--line
 main.win .chead{position:absolute;left:0;right:0;top:0;height:28px;display:flex;align-items:center;gap:6px;padding:0 6px;border-bottom:1px solid var(--line);min-width:0}
 main.win .card.min .chead{border-bottom:0}
 main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto;contain:strict}
+main.win .cbody{scrollbar-width:thin;scrollbar-color:var(--line) transparent}main.win .cbody::-webkit-scrollbar{width:8px;height:8px}main.win .cbody::-webkit-scrollbar-track{background:transparent}main.win .cbody::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 main.win .cbody.cgroup{overflow:hidden}
 main.win .card.min .cbody{display:none}
 .wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}

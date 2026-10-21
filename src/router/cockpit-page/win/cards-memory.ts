@@ -112,7 +112,7 @@ function memJobSync(m){
   var id="memory.job:"+list[i].id;
   if(WMEM_JOBS[id])continue;
   WMEM_JOBS[id]=1;
-  specs.push({id:id,type:"metric",title:(list[i].kind==="reembed"?"Re-embed ":"")+list[i].name,feeds:["memory"]});
+  specs.push({id:id,type:"metricm",title:(list[i].kind==="reembed"?"Re-embed ":"")+list[i].name,feeds:["memory"]});
   rows.push([id]);
  }
  if(specs.length&&Win.addCards("memory",specs,rows))Win.update("memory",m);
@@ -123,7 +123,7 @@ function memDefaults(){
  var cards=[{id:"memory",type:"group",title:"Memory",info:MEM_INFO,feeds:["memory"],actions:MEM_ACTS.map(memAction)}],names=["index","backend","passes","daemon"],ch=[],i;
  cards.push({id:"memory.kv",type:"kv",title:"status",feeds:["memory"]});
  for(i=0;i<names.length;i++){
-  cards.push({id:"memory."+names[i],type:"metric",title:names[i]==="index"?"Index":names[i]==="backend"?"Backend":names[i]==="passes"?"Passes":"Daemon",feeds:["memory"]});
+  cards.push({id:"memory."+names[i],type:"metricm",title:names[i]==="index"?"Index":names[i]==="backend"?"Backend":names[i]==="passes"?"Passes":"Daemon",feeds:["memory"]});
   ch.push(WinT.leaf("memory."+names[i]));
  }
  var row=WinT.split("r",ch,ch.map(function(){return 1/ch.length}));

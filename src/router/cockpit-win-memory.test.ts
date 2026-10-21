@@ -43,7 +43,7 @@ function vis(){return Array.prototype.filter.call(document.querySelectorAll("#wi
 function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');return c?c.textContent.replace(/\\s+/g," "):null}
 function btn(a){var b=document.querySelector('#win-root [data-card="memory"] [data-act="'+a+'"]');return b?{dis:b.disabled,title:b.title||""}:null}
 function st(id){var c=document.querySelector('#win-root [data-card="'+id+'"] .cstatus');return c?c.getAttribute("data-kind")+"|"+c.textContent:null}
-var o={err:window.__err||null,vis:vis(),kv:txt("memory.kv"),kvst:st("memory.kv"),index:txt("memory.index"),backend:txt("memory.backend"),job:txt("memory.job:run-embed"),passes:txt("memory.passes"),daemon:txt("memory.daemon"),
+var o={err:window.__err||null,over:["memory.index","memory.backend","memory.passes","memory.daemon"].map(function(i){var b=document.querySelector('#win-root [data-card="'+i+'"] .cbody');return b?b.scrollHeight-b.clientHeight:-1}),vis:vis(),kv:txt("memory.kv"),kvst:st("memory.kv"),index:txt("memory.index"),backend:txt("memory.backend"),job:txt("memory.job:run-embed"),passes:txt("memory.passes"),daemon:txt("memory.daemon"),
  embed:btn("embed"),index2:btn("index"),stop:btn("stop"),oldMem:getComputedStyle(document.querySelector('[data-section="memory"]')).display,oldRt:document.querySelectorAll('#win-root [data-rt="memory"]').length,
  heads:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="memory"] > .chead'),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")})};
 document.body.setAttribute("data-r1",JSON.stringify(o));
@@ -99,6 +99,8 @@ describe.skipIf(!CHROME)("B3 memory on the win runtime (?win=1)", () => {
     const shots = process.env.PAI_WIN_SHOTS;
     const o = (await open("?win=1", 1400, shots ? join(shots, "memory-1400.png") : undefined)).r1;
     expect(o.err).toBeNull();
+    // F1: the memory metric cards fit their content (no scrollbar)
+    for (const v of o.over) expect(v).toBeLessThanOrEqual(0);
     expect(o.vis).toEqual(expect.arrayContaining(["memory", "memory.kv", "memory.index", "memory.backend", "memory.job:run-embed", "memory.passes", "memory.daemon"]));
     expect(o.kv).toContain("attention");
     expect(o.kvst).toMatch(/^run\|embedding 50%/);

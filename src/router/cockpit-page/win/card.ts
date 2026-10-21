@@ -101,6 +101,7 @@ function paintActions(c){
 }
 function buildCard(spec){
  var c={id:spec.id,type:spec.type,spec:spec,mounted:false,box:"",bw:-1,bh:-1,titleText:null};
+ if(spec.hidden){W.hide=W.hide||{};W.hide[spec.id]=1}
  var e=el("div","card");
  e.setAttribute("data-card",spec.id);e.setAttribute("data-type",spec.type);e.setAttribute("role","group");
  var head=el("div","chead");
@@ -137,7 +138,8 @@ function layState(){
  for(var g in W.kids){a=ids(W.kids[g]);for(i=0;i<a.length;i++)all.push(a[i])}
  for(i=0;i<all.length;i++){
   id=all[i];
-  if(!W.cards[id]){o[id]={seen:(W.st[id]&&W.st[id].seen)||1}}
+  if(W.hide&&W.hide[id])o[id]={seen:1};
+  else if(!W.cards[id]){o[id]={seen:(W.st[id]&&W.st[id].seen)||1}}
   else if(isMin(id))o[id]={min:1};
  }
  return o;
@@ -350,7 +352,9 @@ function addCards(group,specs,rows){
  relayout();save();
  return fresh.length;
 }
-var api={init:init,addCards:addCards,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
+/** Win.hide(id,on): a hidden card takes no space (a ghost to the layout), its place in the tree is kept. */
+function hide(id,on){W.hide=W.hide||{};if(!!W.hide[id]===!!on)return;W.hide[id]=on?1:0;if(W.main)relayout()}
+var api={init:init,addCards:addCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},

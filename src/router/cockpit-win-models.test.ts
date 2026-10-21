@@ -45,6 +45,7 @@ var o={err:window.__err||null,ids:ids,ep:txt("models.endpoints"),run:txt("models
  oldM:getComputedStyle(document.querySelector('[data-section="models"]')).display,
  minall:!!document.querySelector('#win-root [data-act="minall"]'),
  offDis:!!(card("models")&&card("models").querySelector('[data-act="off"]')),
+ offLabel:card("models")?card("models").querySelector('[data-act="off"]').textContent:null,offTitle:card("models")?card("models").querySelector('[data-act="off"]').title:null,
  vis:Array.prototype.filter.call(document.querySelectorAll("#win-root .card"),function(c){return c.style.display!=="none"}).map(function(c){return c.getAttribute("data-card")})};
 if(!ids.length){document.body.setAttribute("data-r",JSON.stringify(o));return}
 var sa=card("models.rt:strata2/iq3s.gguf").querySelector('[data-act="start"]');o.startDisabled=sa.disabled;
@@ -113,6 +114,10 @@ describe.skipIf(!CHROME)("B8 models on the win runtime (?win=1)", () => {
     expect(r.oldM).toBe("none");
     expect(r.minall).toBe(false);
     expect(r.offDis).toBe(true);
+    // F5: the header action says what it does; F4: the endpoints card lists the router endpoints from the limits feed
+    expect(r.offLabel).toBe("stop all local");
+    expect(r.offTitle).toBe("stop every local model server (asks to confirm)");
+    expect(r.ep).toContain("healthy");
     expect(r.startDisabled).toBe(false);
   }, 120_000);
 

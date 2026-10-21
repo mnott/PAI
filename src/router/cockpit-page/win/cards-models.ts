@@ -168,7 +168,7 @@ Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
  }});
 Win.registerType("eplist",{minW:260,minH:60,defaultH:90,
  mount:function(ctx){
-  ctx.body.innerHTML='<div class="wmd-e" data-k="rows"></div>';
+  ctx.body.innerHTML='<div class="wmd-e" style="padding:6px 10px"><div data-k="rows"></div><div class="dim" data-k="none"></div></div>';
   ctx.body.addEventListener("click",function(ev){
    var b=ev.target;
    if(b&&b.classList&&b.classList.contains("wmd-en"))WinA.winClick(b,ctx.id,"endpoint.enable",{target:b.getAttribute("data-t"),value:b.getAttribute("data-v")},winHost());
@@ -177,6 +177,7 @@ Win.registerType("eplist",{minW:260,minH:60,defaultH:90,
  update:function(ctx,d){
   var eps=d&&d.routing&&d.routing.endpoints;
   if(!eps)return;
+  ctx.text("none",eps.length?"":"no endpoints registered");
   ctx.list("rows",eps,function(e){return e.id},function(){var x=document.createElement("div");x.className="eprow";return x},function(x,e){
    var cls=e.healthy?"ok":e.enabled?"bad":"dim",tags=(e.tags||[]).concat((e.classes||[]).map(function(c){return"class:"+c})).join(" · ");
    var h='<b>'+esc(e.id)+'</b> <span class="dim">'+esc(e.origin)+" · "+esc(e.host)+'</span> <span class="'+cls+'">'+(e.healthy?"healthy":e.enabled?"down":"routing off")+"</span>"+(tags?' <span class="dim">'+esc(tags)+"</span>":"")+
@@ -204,7 +205,7 @@ function winFeedModels(inv){
 }
 function wmdOff(){WinA.winClick(Win.el("models").querySelector('[data-act="off"]'),"models","local.off",{},winHost())}
 function modelsDefaults(){
- var cards=[{id:"models",type:"group",title:"Models",info:WMD_INFO,feeds:["models"],actions:[{id:"off",label:"local off",title:"stop every local model",run:wmdOff}]},
+ var cards=[{id:"models",type:"group",title:"Models",info:WMD_INFO,feeds:["models"],actions:[{id:"off",label:"stop all local",title:"stop every local model server (asks to confirm)",run:wmdOff}]},
   {id:"models.endpoints",type:"eplist",title:"Endpoints",feeds:["limits"]}];
  return{tree:WinT.leaf("models"),kids:{models:WinT.leaf("models.endpoints")},stDefaults:{},cards:cards};
 }
