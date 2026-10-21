@@ -8,6 +8,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
@@ -124,6 +125,37 @@ function readJson(file: string): Record<string, unknown> | undefined {
   }
 }
 
+/**
+ * Commits the run left on its branch, counted live: a killed run ends before
+ * the record path writes `commits`, yet its work survives — the branch (it
+ * outlives `pai worker merge`) or the `refs/pai-archive/<id>` ref gc left
+ * behind. Counted from the repo's object store, so a removed worktree still
+ * counts. null when nothing can be counted.
+ */
+function branchCommits(s: Record<string, unknown>): number | null {
+  const cwd = typeof s.cwd === "string" ? s.cwd : undefined;
+  const id = typeof s.id === "string" ? s.id : undefined;
+  const base = typeof s.worktreeBase === "string" ? s.worktreeBase : undefined;
+  if (!cwd || !id || !base) return null;
+  const refs: string[] = [];
+  if (typeof s.branch === "string" && s.branch) refs.push(`refs/heads/${s.branch}`);
+  refs.push(`refs/pai-archive/${id}-branch`, `refs/pai-archive/${id}`);
+  for (const ref of refs) {
+    try {
+      const out = execFileSync("git", ["-C", cwd, "rev-list", "--count", `${base}..${ref}`], {
+        encoding: "utf8",
+        timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      const n = parseInt(out.trim(), 10);
+      if (Number.isFinite(n) && n > 0) return n;
+    } catch {
+      // ref gone or cwd not a repo: try the next one
+    }
+  }
+  return null;
+}
+
 function workerVerdict(s: Record<string, unknown>): string {
   // a run parked at the capacity gate waits for a provider slot
   if (s.state === "queued") return "queued (provider cap)";
@@ -134,7 +166,10 @@ function workerVerdict(s: Record<string, unknown>): string {
   }
   if (s.state !== "done" && s.state !== "failed" && s.state !== "error") return String(s.state ?? "?");
   // a run that escalated handed its work on: say where it went, not "failed"
-  const commits = typeof s.commits === "number" ? s.commits : undefined;
+  // a killed run never records `commits` (its end path stops before the record
+  // step) — count them from its branch, which the escalation keeps for merge
+  let commits = typeof s.commits === "number" ? s.commits : undefined;
+  if (commits === undefined && s.escalated) commits = branchCommits(s) ?? undefined;
   const suffix = commits !== undefined ? ` · ${commits} commit${commits === 1 ? "" : "s"}` : "";
   if (typeof s.escalated === "string" && s.escalated) {
     return typeof s.escalatedTo === "string" && s.escalatedTo ? `escalated → ${s.escalatedTo}${suffix}` : "handed to session";
