@@ -134,6 +134,54 @@ describe("cockpit actions", () => {
     expect(readFileSync(join(tmp, "ledger.log"), "utf8")).toContain("failed:_server_exited");
   });
 
+  function instDeps(tmp: string, calls: Record<string, string[]>, have: number, refuse = "") {
+    return {
+      ...(testDeps(tmp, calls) as object),
+      startModel: async (m: string) => {
+        if (refuse) throw new Error(refuse);
+        calls.start!.push(m);
+      },
+      stopModel: async (t: string, o: object) => void calls.stop!.push(`${t}:${JSON.stringify(o)}`),
+      runningCount: () => have,
+    } as never;
+  }
+  const instCalls = () => ({ ...emptyCalls(), start: [] as string[], stop: [] as string[] });
+
+  it("local.start starts one instance; a memory refusal comes back as ok:false", async () => {
+    const tmp = newDir();
+    const calls = instCalls();
+    const r = await runCockpitAction({ action: "local.start", target: "big" }, instDeps(tmp, calls, 0));
+    expect(r.ok).toBe(true);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.start).toEqual(["big"]);
+    expect(readCockpitJob(tmp, r.jobId!)!.state).toBe("done");
+    const no = await runCockpitAction({ action: "local.start", target: "big" }, instDeps(tmp, instCalls(), 0, "needs 40 GB, 8 free"));
+    expect(no).toEqual({ ok: false, message: "needs 40 GB, 8 free" });
+    expect((await runCockpitAction({ action: "local.start", target: "nope" }, instDeps(tmp, calls, 0))).ok).toBe(false);
+  });
+
+  it("local.stop passes the target and the confirm flag", async () => {
+    const tmp = newDir();
+    const calls = instCalls();
+    await runCockpitAction({ action: "local.stop", target: "big#2" }, instDeps(tmp, calls, 2));
+    await runCockpitAction({ action: "local.stop", target: "big", value: "confirm" }, instDeps(tmp, calls, 2));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.stop).toEqual(['big#2:{"confirm":false}','big:{"confirm":true}']);
+  });
+
+  it("local.scale starts the missing instances or stops the extras", async () => {
+    const tmp = newDir();
+    const up = instCalls();
+    await runCockpitAction({ action: "local.scale", target: "big", value: "3" }, instDeps(tmp, up, 1));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(up.start).toEqual(["big", "big"]);
+    const down = instCalls();
+    await runCockpitAction({ action: "local.scale", target: "big", count: 1 }, instDeps(tmp, down, 3));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(down.stop).toEqual(['big:{"count":2}']);
+    expect((await runCockpitAction({ action: "local.scale", target: "big", value: "x" }, instDeps(tmp, down, 3))).ok).toBe(false);
+  });
+
   it("local.off runs stopAll", async () => {
     const tmp = newDir();
     const calls = emptyCalls();

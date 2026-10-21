@@ -9,6 +9,10 @@
  * routing ledger (who=cockpit, action, target, result) and answers
  * {ok, message}. local.switch / local.off run detached and answer at once
  * with a job id; the card shows progress from the inventory refresh.
+ * local.start {model} / local.stop {model|id} / local.scale {model, count}
+ * work on instances (startInstance / stopInstance); an immediate refusal
+ * (memory, maxInstances, requests in flight) answers {ok:false,message}.
+ * local.switch / local.off stay one release as wrappers.
  */
 
 import { spawn } from "node:child_process";
@@ -39,6 +43,14 @@ export interface ActionDeps {
   startTier: (tierName: string) => Promise<void>;
   /** `pai worker local off`: stop every local server. */
   stopAll: () => Promise<void>;
+  /** `pai worker local start <model>`: one more instance (refuses on short memory / maxInstances). */
+  startModel?: (model: string) => Promise<void>;
+  /** `pai worker local stop <model|id>`: `count` instances (default one) or `all`; refuses with requests in flight unless `confirm`. */
+  stopModel?: (target: string, opts: { count?: number; all?: boolean; confirm?: boolean }) => Promise<void>;
+  /** Running (non-failed) instances of a model, for local.scale. */
+  runningCount?: (model: string) => number | Promise<number>;
+  /** Ms to wait for an immediate refusal (memory, maxInstances, in flight) before answering with the job id; default 1500. */
+  earlyMs?: number;
   /** `pai worker classes set <class> <provider>`. */
   setClass: (cls: string, target: string) => void;
   /** `pai config set models.labels.<runtime>[/<model>] <label>`. */
@@ -111,7 +123,7 @@ export function cockpitJobFile(home: string, id: string): string {
 
 export interface LocalJobState {
   id: string;
-  kind: "switch" | "off" | "runtime" | "memory";
+  kind: "switch" | "off" | "start" | "stop" | "scale" | "runtime" | "memory";
   tier: string;
   /** the runtime of a "runtime" job (tier stays "") */
   runtime?: string;
@@ -329,6 +341,18 @@ export function defaultDeps(): ActionDeps {
       const { stopAll } = await import("../cli/commands/worker-config.js");
       await stopAll(readLocalConfig(workersYamlPath()));
     },
+    startModel: async (model) => {
+      const { startInstance } = await import("../cli/commands/worker-config.js");
+      await startInstance(readLocalConfig(workersYamlPath()), model);
+    },
+    stopModel: async (target, opts) => {
+      const { stopInstance } = await import("../cli/commands/worker-config.js");
+      await stopInstance(readLocalConfig(workersYamlPath()), target, opts, { confirm: opts.confirm });
+    },
+    runningCount: async (model) => {
+      const { currentInstances } = await import("../cli/commands/worker-config.js");
+      return currentInstances(readLocalConfig(workersYamlPath())).filter((r) => r.model === model && r.state !== "failed").length;
+    },
     setClass: (cls, target) => void setClass(cls, target),
     setLabel: (path, value, opts) => void setConfigValueOp(path, value, opts),
     unsetLabel: (path) => void unsetConfigValueOp(path),
@@ -368,7 +392,7 @@ export async function runtimeStartStop(
  * answer at once with a jobId and run through hooks.runLocalJob.
  */
 export async function runCockpitAction(
-  body: { action?: unknown; target?: unknown; value?: unknown; class?: unknown; models?: unknown; session?: unknown; clear?: unknown },
+  body: { action?: unknown; target?: unknown; value?: unknown; count?: unknown; class?: unknown; models?: unknown; session?: unknown; clear?: unknown },
   deps: ActionDeps,
   hooks: ActionHooks = {}
 ): Promise<ActionResult> {
@@ -388,6 +412,26 @@ export async function runCockpitAction(
     writeLedgerLine(deps, action, target, `job ${id}: started`);
     void finishLocalJob(deps, hooks, id, "switch", target);
     return { ok: true, message: `switching to ${target}`, jobId: id };
+  }
+  if (action === "local.start" || action === "local.stop" || action === "local.scale") {
+    const kind = action === "local.start" ? "start" : action === "local.stop" ? "stop" : "scale";
+    const models = deps.tiers ?? tierNames(deps.workersYaml);
+    if (!target) return fail(kind === "stop" ? "target (model or instance id) required" : "target (model) required");
+    if (kind !== "stop" && !models.includes(target)) return fail(`no model "${target}" (configured: ${models.join(", ") || "none"})`);
+    let count = 0;
+    if (kind === "scale") {
+      count = Number(body.count ?? value);
+      if (!Number.isInteger(count) || count < 0) return fail(`count must be a whole number, got "${String(body.count ?? value ?? "")}"`);
+    }
+    const id = randomBytes(6).toString("hex");
+    const verb = kind === "start" ? `starting ${target}` : kind === "stop" ? `stopping ${target}` : `scaling ${target} to ${count}`;
+    writeJob(deps.home, { id, kind, tier: target, state: "running", message: verb, at: new Date().toISOString() });
+    writeLedgerLine(deps, action, target, `job ${id}: started`);
+    const job = finishLocalJob(deps, hooks, id, kind, target, { count, confirm: value === "confirm" });
+    // a refusal (short memory, maxInstances, requests in flight) comes back at once, not as a job to poll
+    const early = await Promise.race([job, new Promise<null>((res) => setTimeout(() => res(null), deps.earlyMs ?? 1500))]);
+    if (early && !early.ok) return { ok: false, message: early.message };
+    return { ok: true, message: verb, jobId: id };
   }
   if (action === "runtime") {
     const runtime = target;
@@ -632,17 +676,52 @@ async function defaultRefreshInventory(): Promise<void> {
 }
 
 /** Runs the injected local job, records its outcome in the job file and ledger. */
-async function finishLocalJob(deps: ActionDeps, hooks: ActionHooks, id: string, kind: "switch" | "off", tier: string): Promise<void> {
-  const run = hooks.runLocalJob ?? (kind === "switch" ? () => deps.startTier(tier) : () => deps.stopAll());
+async function finishLocalJob(
+  deps: ActionDeps,
+  hooks: ActionHooks,
+  id: string,
+  kind: "switch" | "off" | "start" | "stop" | "scale",
+  tier: string,
+  opts: { count?: number; confirm?: boolean } = {}
+): Promise<{ ok: boolean; message: string }> {
+  const action = `local.${kind}`;
+  const legacy = hooks.runLocalJob ?? (kind === "switch" ? () => deps.startTier(tier) : () => deps.stopAll());
+  const run =
+    kind === "start"
+      ? () => needDep(deps.startModel)(tier)
+      : kind === "stop"
+        ? () => needDep(deps.stopModel)(tier, { confirm: opts.confirm })
+        : kind === "scale"
+          ? () => scaleModel(deps, tier, opts.count ?? 0)
+          : () => legacy(kind, tier);
   try {
-    await run(kind, tier);
-    writeJob(deps.home, { id, kind, tier, state: "done", message: kind === "off" ? "local servers stopped" : `${tier} up`, at: new Date().toISOString() });
-    writeLedgerLine(deps, kind === "off" ? "local.off" : "local.switch", tier || "-", `job ${id}: done`);
+    await run();
+    const message = kind === "off" ? "local servers stopped" : kind === "stop" ? `${tier} stopped` : kind === "scale" ? `${tier} at ${opts.count}` : `${tier} up`;
+    writeJob(deps.home, { id, kind, tier, state: "done", message, at: new Date().toISOString() });
+    writeLedgerLine(deps, action, tier || "-", `job ${id}: done`);
+    return { ok: true, message };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     writeJob(deps.home, { id, kind, tier, state: "failed", message: msg, at: new Date().toISOString() });
-    writeLedgerLine(deps, kind === "off" ? "local.off" : "local.switch", tier || "-", `job ${id}: failed: ${msg}`);
+    writeLedgerLine(deps, action, tier || "-", `job ${id}: failed: ${msg}`);
+    return { ok: false, message: msg };
   }
+}
+
+function needDep<T>(f: T | undefined): T {
+  if (!f) throw new Error("local model control is not wired in this process");
+  return f;
+}
+
+/** Bring a model to `count` running instances: start the missing ones one by one, or stop the highest-numbered extras. */
+async function scaleModel(deps: ActionDeps, model: string, count: number): Promise<void> {
+  const have = await needDep(deps.runningCount)(model);
+  if (count === have) return;
+  if (count > have) {
+    for (let i = have; i < count; i++) await needDep(deps.startModel)(model);
+    return;
+  }
+  await needDep(deps.stopModel)(model, count === 0 ? { all: true } : { count: have - count });
 }
 
 /** The ledger lines of cockpit actions (for the card's result text / history). */
