@@ -22,7 +22,7 @@ import {
 import { defaultWorkersConfig, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { eventsPath, ledgerPath, slotCurrentPath, statusPath } from "./paths.js";
 import { parseLedger } from "./ledger.js";
-import { ROUTER_PORT } from "../router/router.js";
+import { routerPort } from "../router/router.js";
 import { git } from "./worktree.js";
 
 // ---------------------------------------------------------------------------
@@ -41,7 +41,6 @@ const provider = (over: Partial<WorkerProvider> = {}): WorkerProvider => ({
 
 const testConfig = (over: { maxSlots?: number; idleSecs?: number } = {}): WorkersConfig => ({
   ...defaultWorkersConfig(),
-  caveman: false,
   pool: { enabled: true, maxSlots: over.maxSlots ?? 1, idleSecs: over.idleSecs ?? 0, port: 0, native: true },
   providers: {
     fakeprov: provider(),
@@ -456,8 +455,8 @@ describe("pool slot route", () => {
     const h = makeHost({}, undefined, { routerEnabled: true, prodBuilders: true });
     liveHosts.push(h.host);
     await h.host.runTask(task());
-    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
-    expect(pinned(h.argvs[0]!).env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${routerPort()}`);
+    expect(pinned(h.argvs[0]!).env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${routerPort()}`);
     // no provider-direct route anywhere in the slot launch: the settings pin
     // outranks the process env, so a direct URL there would win
     expect(h.argvs[0]!.join(" ")).not.toContain("example.invalid");
@@ -470,14 +469,14 @@ describe("pool slot route", () => {
     expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe("https://example.invalid");
     const pin = pinned(h.argvs[0]!);
     expect(pin.env.ANTHROPIC_BASE_URL).toBe("https://example.invalid");
-    expect(JSON.stringify(pin)).not.toContain(String(ROUTER_PORT));
+    expect(JSON.stringify(pin)).not.toContain(String(routerPort()));
   });
 
   it("LoopbackSlotUsesRouterWhenUp — a loopback provider's slot goes through the router even with the global flag off", async () => {
     const h = makeHost({}, undefined, { routerEnabled: false, prodBuilders: true, probeRouter: async () => true });
     liveHosts.push(h.host);
     await h.host.runTask(task({ provider: "loopprov" }));
-    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${routerPort()}`);
     expect(h.envs[0]!.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: loopprov");
   });
 
@@ -495,7 +494,7 @@ describe("pool slot route", () => {
     const r = await h.host.runTask(task({ model: "glm-5.3-flash" }));
     expect(r.pooled).toBe(true);
     // route: only the router — its usage log is where the rows must land
-    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${ROUTER_PORT}`);
+    expect(h.envs[0]!.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${routerPort()}`);
     // model: on the argv, so the router resolves it to the provider and each
     // usage row's model joins the pool metric's model column
     const argv = h.argvs[0]!;

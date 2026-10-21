@@ -9,7 +9,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { dirname } from "node:path";
 import { connect } from "node:net";
 import { pidAlive } from "../workers/status.js";
-import { ROUTER_PORT } from "./router.js";
+import { routerPort } from "./router.js";
 
 export const routerPidFile = (): string => paiHomePath("router.pid");
 export const routerLogFile = (): string => paiHomePath("logs", "router.log");
@@ -35,7 +35,7 @@ export function spawnRouter(cliEntry: string, extraArgs: string[] = []): number 
 }
 
 /** True when something accepts TCP connections on the router port. */
-export function probeRouter(port = ROUTER_PORT, timeoutMs = 2000): Promise<boolean> {
+export function probeRouter(port = routerPort(), timeoutMs = 2000): Promise<boolean> {
   return new Promise((resolve) => {
     const sock = connect({ host: "127.0.0.1", port });
     const done = (up: boolean) => {

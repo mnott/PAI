@@ -3,7 +3,7 @@
  * ANTHROPIC_BASE_URL here and /model picks the provider: each POST
  * /v1/messages (and count_tokens) is routed by the body's `model`.
  *
- *   claude ids  → api.anthropic.com (CLAUDE_UPSTREAM), inbound auth passed through
+ *   claude ids  → router.claudeUpstream, inbound auth passed through
  *   other ids   → the workers.yaml provider that lists the model; inbound auth
  *                 dropped, the provider key injected as Authorization: Bearer
  *
@@ -32,13 +32,16 @@ import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { sharedParker } from "./parking.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
+import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
 
-export const ROUTER_PORT = 8790;
+/** The router's port (router.port in config.yaml). */
+export const routerPort = (): number => loadConfig().router.port;
+/** Upstream for claude ids (router.claudeUpstream in config.yaml). */
+export const claudeUpstream = (): string => loadConfig().router.claudeUpstream;
 
 /** Queued-stream ping interval (router.scheduling.pingMs); PAI_ROUTER_PING_MS shortens it for tests. */
 const pingMs = (): number => Number(process.env.PAI_ROUTER_PING_MS) || sharedScheduler().pingMs();
-export const CLAUDE_UPSTREAM = "https://api.anthropic.com";
 
 export type Target =
   | { kind: "claude"; model: string; base: string }
@@ -100,7 +103,7 @@ export interface ResolveHints {
 export function resolveModel(
   rawModel: string,
   providers: Record<string, WorkerProvider>,
-  claudeBase: string = CLAUDE_UPSTREAM,
+  claudeBase: string = claudeUpstream(),
   hints: ResolveHints = {}
 ): Resolution {
   const model = stripContextSuffix(rawModel);
@@ -262,7 +265,7 @@ export function prepare(
   inHeaders: http.IncomingHttpHeaders,
   rawBody: Buffer,
   providers: Record<string, WorkerProvider>,
-  claudeBase: string = CLAUDE_UPSTREAM,
+  claudeBase: string = claudeUpstream(),
   hints: Omit<ResolveHints, "provider"> = {}
 ): { ok: true; up: Upstream; target: Target; requested: string } | { ok: false; status: number; message: string } {
   let body: Record<string, unknown>;
@@ -391,7 +394,7 @@ function safeBody(raw: Buffer): Record<string, unknown> | null {
 
 export function createRouter(
   loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
-  claudeBase: string = CLAUDE_UPSTREAM,
+  claudeBase: string = claudeUpstream(),
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
   onUsage?: (row: UsageRow) => void,
   /** serves GET pages (the cockpit) before routing; true = handled */
@@ -409,7 +412,7 @@ export function createRouter(
  */
 export function routerHandler(
   loadProviders: () => Record<string, WorkerProvider> = () => readWorkersSection().workers.providers,
-  claudeBase: string = CLAUDE_UPSTREAM,
+  claudeBase: string = claudeUpstream(),
   log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
   onUsage?: (row: UsageRow) => void,
   /** serves GET pages (the cockpit) before routing; true = handled */

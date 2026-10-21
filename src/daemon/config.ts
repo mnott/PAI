@@ -130,6 +130,10 @@ export interface VaultIndexConfig {
 export interface RouterConfig {
   /** Keep `pai router` (127.0.0.1:8790) running under the daemon. Default: false. */
   enabled: boolean;
+  /** TCP port of the router. Default: 8790. */
+  port: number;
+  /** Upstream for claude-* model ids. Default: https://api.anthropic.com. */
+  claudeUpstream: string;
   /**
    * Listen scope: "loopback" (default — 127.0.0.1 only, as always), or beyond
    * it: "tailscale" (the utun address inside 100.64.0.0/10) or an explicit

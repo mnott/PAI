@@ -76,7 +76,6 @@ async function testNativeClaude(
   provider: WorkerProvider,
   logDir: string,
   timeoutMs: number,
-  caveman: boolean,
   run: (argv: string[], env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<ProbeRunResult>
 ): Promise<ProviderTestResult> {
   const model = provider.models.default;
@@ -131,14 +130,13 @@ export async function testProvider(
   provider: WorkerProvider,
   logDir: string,
   timeoutMs = 90_000,
-  caveman = false,
   deps: ProviderTestDeps = {}
 ): Promise<ProviderTestResult> {
   assertProviderRunnable(providerName, provider);
   const run = deps.run ?? runProbeProcess;
   const model = provider.models.default;
 
-  if (provider.native) return testNativeClaude(providerName, provider, logDir, timeoutMs, caveman, run);
+  if (provider.native) return testNativeClaude(providerName, provider, logDir, timeoutMs, run);
 
   if (provider.engine === "codex") {
     const skipped = codexInstalled() ? undefined : "codex not installed";
@@ -158,7 +156,7 @@ export async function testProvider(
     proxyUrl = `${base}/${providerName}`;
   }
   const env = buildRunEnv(provider, true, proxyUrl, providerName);
-  const [bin, ...head] = claudeCommand(env, caveman);
+  const [bin, ...head] = claudeCommand(env);
   const t0 = Date.now();
   const r = await run(
     [

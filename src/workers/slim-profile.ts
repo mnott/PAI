@@ -3,7 +3,7 @@
  *
  * A default `claude -p` run reads the user settings: ~/.claude/CLAUDE.md, the
  * enabled plugins' SessionStart context, every SessionStart/UserPromptSubmit
- * injection (Whispr, caveman, handover...), skills, output style. Measured
+ * injection (Whispr, handover...), skills, output style. Measured
  * 2026-10-16 on a "reply OK" worker, roughly a third of the first request.
  * A worker needs none of it, only the PreToolUse guards and its contract.
  *

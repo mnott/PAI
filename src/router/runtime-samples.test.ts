@@ -66,7 +66,6 @@ function workersConfig(providers: Record<string, WorkerProvider>, poolSpares = 1
     gcOlderThanHours: 24,
     worktreesMaxGb: 50,
     reaper: true,
-    caveman: false,
     fallback: null,
     nativeModels: { default: "m" },
   } as unknown as WorkersConfig;
