@@ -128,7 +128,9 @@ function wmdActs(id){
    run:function(){var e=ent();if(e.tier)runIt("start","local.start",{target:e.tier.name});else runIt("start","runtime",{target:e.r.name,value:"start"})}},
   {id:"stop",label:"stop",enabled:function(){var e=ent();if(!e)return"no data yet";
     if(e.tier)return e.tier.live.length?true:"nothing running";
-    if(e.down||e.r.status==="stopped")return"not running";return e.cmds.stop?true:"no stop command configured"},
+    if(e.down||e.r.status==="stopped")return"not running";
+    if((e.r.kind==="ollama"||e.r.kind==="docker-model-runner")&&!e.loaded.length)return"nothing loaded";
+    return e.cmds.stop?true:"no stop command configured"},
    run:function(){var e=ent();if(e.tier)runIt("stop","local.stop",{target:e.tier.name,value:e.tier.busy?"confirm":undefined});else runIt("stop","runtime",{target:e.r.name,value:"stop"})}},
   {id:"less",label:"-",title:"one instance fewer",enabled:function(){var e=ent();return e&&e.tier&&e.tier.live.length?true:"no running instance"},
    run:function(){var e=ent();runIt("less","local.scale",{target:e.tier.name,count:Math.max(0,e.tier.live.length-1)})}},
