@@ -12,7 +12,7 @@ import { cockpitHtml } from "./cockpit-page.js";
 import { expandHome, loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
-import { loadSessionMap, loadWorkerWindows, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
+import { jobSessionName, loadSessionMap, loadWorkerWindows, withJobNames, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
@@ -395,7 +395,7 @@ export function cachedWorkerWindows(ttlMs = 60_000): () => WorkerWindow[] {
  * rows being rendered.
  */
 function namedSessionMap(rows: UsageRow[], sessionMap: () => Map<string, SessionInfo>, workerWindows: () => WorkerWindow[]): Map<string, SessionInfo> {
-  return withWorkerAttribution(sessionMap(), rows, workerWindows());
+  return withJobNames(withWorkerAttribution(sessionMap(), rows, workerWindows()), rows.map((r) => r.session_id));
 }
 
 export function parseWindow(q: string | null): CockpitWindow {
@@ -743,7 +743,17 @@ export function cockpitQueue(
       model: s?.model ?? "",
     });
   }
-  const sched = schedPlain(readSchedFile(logDir, now), schedNames(logDir));
+  const snap = readSchedFile(logDir, now);
+  const names = schedNames(logDir);
+  for (const e of Object.values(snap?.engines ?? {})) {
+    for (const sid of [e.inflight?.session, ...Object.keys(e.queued), ...Object.keys(e.counters)]) {
+      if (sid && !names[sid]) {
+        const job = jobSessionName(sid);
+        if (job) names[sid] = job;
+      }
+    }
+  }
+  const sched = schedPlain(snap, names);
   return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 

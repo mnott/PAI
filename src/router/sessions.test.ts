@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, type WorkerWindow } from "./sessions.js";
+import { jobSessionName, loadSessionMap, withJobNames, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, type WorkerWindow } from "./sessions.js";
 
 describe("session mapper", () => {
   const dir = mkdtempSync(join(tmpdir(), "sess-"));
@@ -171,5 +171,53 @@ describe("AIBroker session names", () => {
       expect(sessionDisplayName("c-1", map)).toBe("proj");
       expect(sessionDisplayName("c-2", map)).toBeNull();
     }
+  });
+});
+
+describe("background-job session names", () => {
+  const dir = mkdtempSync(join(tmpdir(), "jobs-"));
+  const jobs = join(dir, "jobs");
+  const job = (id8: string, body: string) => {
+    mkdirSync(join(jobs, id8), { recursive: true });
+    writeFileSync(join(jobs, id8, "state.json"), body);
+  };
+  job("aaaaaaaa", JSON.stringify({ name: "PAI (4)", respawnFlags: { env: { TOKEN: "sekret-token" } } }));
+  job("bbbbbbbb", "{not json");
+  job("dddddddd", JSON.stringify({ name: "Job D" }));
+  writeFileSync(join(dir, "w.status"), JSON.stringify({ id: "w1", label: "worker label", state: "done", rc: 0, claudeSession: "dddddddd-1" }));
+  writeFileSync(join(dir, "agents.json"), "{}");
+  const ab = join(dir, "ab");
+  mkdirSync(ab);
+  writeFileSync(join(ab, "session-names.json"), JSON.stringify({ U1: "Broker Name" }));
+  writeFileSync(join(dir, "claude-map.json"), JSON.stringify({ "dddddddd-2": { uid: "u1" } }));
+  const src = { workerDirs: [dir], agentSessionsFile: join(dir, "agents.json"), claudeMapFile: join(dir, "claude-map.json"), aibrokerDir: ab, jobsDir: jobs };
+
+  it("an id unknown everywhere else takes the job name; the name is the only field that surfaces", () => {
+    const map = loadSessionMap(src);
+    expect(sessionDisplayName("aaaaaaaa-1111", map, jobs)).toBe("PAI (4)");
+    const named = withJobNames(map, ["aaaaaaaa-1111"], jobs);
+    expect(named.get("aaaaaaaa-1111")).toEqual({ name: "PAI (4)" });
+    expect(JSON.stringify([...named])).not.toContain("sekret");
+  });
+
+  it("a worker label and an AIBroker name win over the job name", () => {
+    const map = loadSessionMap(src);
+    expect(sessionDisplayName("dddddddd-1", map, jobs)).toBe("worker label");
+    expect(sessionDisplayName("dddddddd-2", map, jobs)).toBe("Broker Name");
+  });
+
+  it("malformed or missing state.json falls back to nothing", () => {
+    const map = loadSessionMap(src);
+    expect(sessionDisplayName("bbbbbbbb-1", map, jobs)).toBeNull();
+    expect(sessionDisplayName("cccccccc-1", map, jobs)).toBeNull();
+    expect(jobSessionName("../../x", jobs)).toBeNull();
+  });
+
+  it("a transcript-derived project name yields to the job name", () => {
+    const projects = join(dir, "projects");
+    mkdirSync(join(projects, "-x-pai"), { recursive: true });
+    writeFileSync(join(projects, "-x-pai", "aaaaaaaa-9999.jsonl"), "");
+    const map = loadSessionMap({ ...src, projectsDir: projects });
+    expect(sessionDisplayName("aaaaaaaa-9999", map, jobs)).toBe("PAI (4)");
   });
 });

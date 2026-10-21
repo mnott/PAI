@@ -27,6 +27,8 @@ export interface SessionSources {
   projectsDir?: string;
   /** AIBroker state dir (managers.json, session-names.json); absent or unreadable changes nothing */
   aibrokerDir?: string;
+  /** Claude Code background jobs: <dir>/<first 8 chars of session id>/state.json, field "name" only */
+  jobsDir?: string;
   /** statusline registry: Claude session id -> { uid: iTerm session uuid } */
   claudeMapFile?: string;
 }
@@ -39,7 +41,40 @@ export function defaultSources(): SessionSources {
     projectsDir: join(home, ".claude", "projects"),
     aibrokerDir: process.env.AIBROKER_HOME || join(home, ".aibroker"),
     claudeMapFile: paiHomePath("session-claude-map.json"),
+    jobsDir: join(process.env.CLAUDE_CONFIG_DIR || join(home, ".claude"), "jobs"),
   };
+}
+
+const JOB_TTL_MS = 30_000;
+const jobCache = new Map<string, { at: number; name: string | null }>();
+
+/**
+ * Name of a Claude Code background-job session: jobs/<id8>/state.json, "name"
+ * only (the file also holds respawn env settings — nothing else is read out of
+ * it or kept). Cached per id like the session map; null when absent or malformed.
+ */
+export function jobSessionName(id: string | undefined, jobsDir: string | undefined = defaultSources().jobsDir, now: number = Date.now()): string | null {
+  if (!id || !jobsDir) return null;
+  const id8 = id.slice(0, 8);
+  if (!/^[0-9A-Za-z-]{8}$/.test(id8)) return null;
+  const key = `${jobsDir}\0${id8}`;
+  const hit = jobCache.get(key);
+  if (hit && now - hit.at < JOB_TTL_MS) return hit.name;
+  const raw = readJson(join(jobsDir, id8, "state.json"))?.name;
+  const name = typeof raw === "string" && raw ? raw : null;
+  jobCache.set(key, { at: now, name });
+  return name;
+}
+
+/** Ids the map does not know, named from their background-job state when there is one. */
+export function withJobNames(map: Map<string, SessionInfo>, ids: Iterable<string | undefined>, jobsDir?: string): Map<string, SessionInfo> {
+  let out: Map<string, SessionInfo> | undefined;
+  for (const id of ids) {
+    if (!id || map.has(id) || out?.has(id)) continue;
+    const name = jobSessionName(id, jobsDir);
+    if (name) (out ??= new Map(map)).set(id, { name });
+  }
+  return out ?? map;
 }
 
 function readJson(file: string): Record<string, unknown> | undefined {
@@ -127,7 +162,7 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
       }
       for (const f of files) {
         const id = f.endsWith(".jsonl") ? f.slice(0, -6) : "";
-        if (id && !map.has(id)) map.set(id, { name });
+        if (id && !map.has(id)) map.set(id, { name: jobSessionName(id, src.jobsDir) ?? name });
       }
     }
   }
@@ -135,8 +170,8 @@ export function loadSessionMap(src: SessionSources = defaultSources()): Map<stri
 }
 
 /** Display name of a session id, null when PAI does not know it. */
-export function sessionDisplayName(id: string | undefined, map: Map<string, SessionInfo> = loadSessionMap()): string | null {
-  return (id && map.get(id)?.name) || null;
+export function sessionDisplayName(id: string | undefined, map: Map<string, SessionInfo> = loadSessionMap(), jobsDir?: string): string | null {
+  return (id && (map.get(id)?.name || (map.has(id) ? null : jobSessionName(id, jobsDir)))) || null;
 }
 
 // ---- one-shot attribution -------------------------------------------------
