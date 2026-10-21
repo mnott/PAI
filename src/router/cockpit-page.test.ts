@@ -390,7 +390,7 @@ describe("cockpit layout follow-up", () => {
   });
 
   it("shows a loading state until the first limits poll arrives", () => {
-    expect(COCKPIT_HTML).toContain("lim?'<span class=\"dim\">not reported</span>':'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
+    expect(COCKPIT_HTML).toContain('lim?"not reported":"loading: first limits poll pending"');
     expect(COCKPIT_HTML).toContain("lim?\"not reported\":'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
     expect(COCKPIT_HTML).toContain("lim=j;lastOk=Date.now();renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
   });
@@ -404,50 +404,49 @@ describe("cockpit layout follow-up", () => {
   });
 });
 
-describe("cockpit system tiles: unused metrics", () => {
-  const body = COCKPIT_HTML.match(/function renderSystem\(\)\{[\s\S]*?\n\}\n/)![0];
-  function render(series: Array<Record<string, number>>, current: Record<string, number>) {
-    const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, sysservers: { innerHTML: "" } };
-    const sys = { current, series: { series, wh: { "1h": 0 }, coveredMin: { "1h": 0 } }, servers: [] };
-    const fn = new Function(
-      "sys", "$", "esc", "gb", "LAST", "win", "data", "lim", "table", "renderDonuts",
-      `${SH}\n${body}\nrenderSystem();`
-    );
-    fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b), {}, "1h", {}, null, () => "", () => {});
-    return els.sys!.innerHTML;
-  }
+/** The real System renderer with the real metric tile helpers; returns what it wrote into #sys, #syshid and #sysservers. */
+function renderSys(sys: any, o: { win?: string; data?: any; fresh?: boolean } = {}) {
+  const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, syshid: { innerHTML: "" }, sysservers: { innerHTML: "" } };
+  const one = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([^\\n]*\\n`))![0];
+  const many = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
+  const src = [one("esc"), one("gb"), one("gbm"), many("metricSpark"), many("metricTile"), one("staleAge"), one("ringPush"), many("renderSystem")].join("\n");
+  const fn = new Function(
+    "sys", "$", "win", "data", "lim", "fmt",
+    `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=60;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}var document={querySelectorAll:function(){return[]}};\n${src}\nrenderSystem();return SYSH;`
+  );
+  fn(sys, (id: string) => els[id], o.win ?? "1h", o.data ?? {}, null, (n: number) => String(n));
+  return { sys: els.sys!.innerHTML, hid: els.syshid!.innerHTML, srv: els.sysservers!.innerHTML };
+}
+const GB = 1073741824;
+const sysOf = (series: Array<Record<string, number>>, current: Record<string, number>, servers: unknown[] = []) => ({ current, series: { series, wh: { "1h": 4 }, coveredMin: { "1h": 60 } }, servers });
+const tileTitles = (html: string) => [...html.matchAll(/<span class="mt-label">(?:<span class="mt-icon">[^<]*<\/span>)?([^<]*)<\/span>/g)].map((m) => m[1]);
 
+describe("cockpit system tiles: unused metrics", () => {
   it("hides ANE tiles when ANE is 0 for the whole window and says so", () => {
-    const html = render([{ t: 1, n: 1, ane: 0, aneW: 0, gpu: 5 }, { t: 2, n: 1, ane: 0, aneW: 0, gpu: 7 }], { ane: 0, aneW: 0, gpu: 6 });
-    expect(html).not.toContain("<span>ANE load</span>");
-    expect(html).not.toContain("<span>ANE W</span>");
-    expect(html).toContain("<span>GPU load</span>");
-    expect(html).toContain("hidden: ANE load, ANE W (0 in this window)");
+    const r = renderSys(sysOf([{ t: 1, n: 1, ane: 0, aneW: 0, gpu: 5 }, { t: 2, n: 1, ane: 0, aneW: 0, gpu: 7 }], { ane: 0, aneW: 0, gpu: 6 }));
+    expect(tileTitles(r.sys)).not.toContain("ANE load");
+    expect(tileTitles(r.sys)).not.toContain("ANE W");
+    expect(tileTitles(r.sys)).toContain("GPU load");
+    expect(r.hid).toContain("hidden: ANE load, ANE W (0 in this window)");
   });
 
   it("shows ANE tiles once any bucket has ANE use", () => {
-    const html = render([{ t: 1, n: 1, ane: 0, aneW: 0 }, { t: 2, n: 1, ane: 12, aneW: 0.4 }], { ane: 12, aneW: 0.4 });
-    expect(html).toContain("<span>ANE load</span>");
-    expect(html).toContain("<span>ANE W</span>");
-    expect(html).not.toContain("hidden:");
+    const r = renderSys(sysOf([{ t: 1, n: 1, ane: 0, aneW: 0 }, { t: 2, n: 1, ane: 12, aneW: 0.4 }], { ane: 12, aneW: 0.4 }));
+    expect(tileTitles(r.sys)).toContain("ANE load");
+    expect(tileTitles(r.sys)).toContain("ANE W");
+    expect(r.hid).toBe("");
   });
 
-  it("the local server table shows RSS in GB with one decimal, never MB", () => {
-    const rows: unknown[][] = [];
-    const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, sysservers: { innerHTML: "" } };
-    const sys = { current: {}, series: { series: [], wh: { "1h": 0 }, coveredMin: { "1h": 0 } }, servers: [{ provider: "gyro-m", up: true, rssMb: 47723 }] };
-    const fn = new Function(
-      "sys", "$", "esc", "gb", "gbm", "LAST", "win", "data", "lim", "table", "renderDonuts",
-      `${SH}\n${body}\nrenderSystem();`
-    );
-    fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b), (m: number) => (m / 1024).toFixed(1), {}, "1h", {}, null, (_h: unknown, r: unknown[][]) => { rows.push(...r); return ""; }, () => {});
-    expect(rows[0]![2]).toBe("46.6 GB");
+  it("the local server tiles show RSS in GB with one decimal, never MB", () => {
+    const r = renderSys(sysOf([], {}, [{ provider: "gyro-m", up: true, rssMb: 47723 }]));
+    expect(r.srv).toContain('<span class="mt-value">46.6<small>GB</small></span>');
+    expect(tileTitles(r.srv)).toEqual(["gyro-m RSS", "gyro-m end-to-end", "gyro-m decode", "gyro-m prefix cache"]);
   });
 
   it("keeps tiles when the window has no samples for them", () => {
-    const html = render([{ t: 1, n: 1 }], {});
-    expect(html).toContain("<span>ANE load</span>");
-    expect(html).not.toContain("hidden:");
+    const r = renderSys(sysOf([{ t: 1, n: 1 }], {}));
+    expect(tileTitles(r.sys)).toContain("ANE load");
+    expect(r.hid).toBe("");
   });
 });
 
@@ -3053,22 +3052,15 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
   });
 
   it("the system tiles carry their units next to the value", () => {
-    const body = COCKPIT_HTML.match(/function renderSystem\(\)\{[\s\S]*?\n\}\n/)![0];
-    const els: Record<string, { innerHTML: string }> = { sys: { innerHTML: "" }, sysservers: { innerHTML: "" } };
-    const sys = { current: { memUsed: 8 * 1073741824, memTotal: 36 * 1073741824, cpu: 42, cpuW: 12.3, totalW: 30.5, socTemp: 55.2 }, series: { series: [], wh: { "1h": 4 }, coveredMin: { "1h": 60 } }, servers: [] };
-    const fn = new Function(
-      "sys", "$", "esc", "gb", "LAST", "win", "data", "lim", "table", "renderDonuts",
-      `${SH}\n${body}\nrenderSystem();`
-    );
-    fn(sys, (id: string) => els[id], (s: string) => s, (b: number) => String(b / 1073741824), {}, "1h", {}, null, () => "", () => {});
-    const html = els.sys!.innerHTML;
-    expect(html).toContain("<b>8 GB</b>");
-    expect(html).toContain("of 36 GB");
-    expect(html).toContain("<b>42%</b>");
-    expect(html).toContain("<b>12.3 W</b>");
-    expect(html).toContain("<b>30.5 W</b>");
-    expect(html).toContain("<b>55.2 °C</b>");
-    expect(html).toContain("<b>4 Wh</b>");
+    const r = renderSys(sysOf([], { memUsed: 8 * GB, memTotal: 36 * GB, cpu: 42, cpuW: 12.3, totalW: 30.5, socTemp: 55.2 }));
+    const h = r.sys;
+    expect(h).toContain('<span class="mt-value">8.0<small>GB</small></span>');
+    expect(h).toContain("of 36 GB");
+    expect(h).toContain('<span class="mt-value">42<small>%</small></span>');
+    expect(h).toContain('<span class="mt-value">12.3<small>W</small></span>');
+    expect(h).toContain('<span class="mt-value">30.5<small>W</small></span>');
+    expect(h).toContain('<span class="mt-value">55.2<small>°C</small></span>');
+    expect(h).toContain('<span class="mt-value">4<small>Wh</small></span>');
   });
 
   it("a disabled pool with a down host renders one compact line, not the dashboard of zeros", () => {
@@ -3140,7 +3132,8 @@ describe("local server tile and section title", () => {
 
 describe("chart text keeps its size at any chart width", () => {
   const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
-  const chartSrc = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "stackedBars"].map(get).join("\n");
+  const chartSrc = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "mergeModelBuckets", "aggCap", "barCap", "stackedBars", "twoToneModelBars", "lineChart"].map(get).join("\n");
+  const CONSTS = "var MIN_LABEL_GAP_PX=48,MIN_BAR_PX=3,data={bucketMs:300000},KINDS=[[\"input\",\"i\"],[\"cacheWrite\",\"w\"],[\"cacheRead\",\"r\"],[\"output\",\"o\"]];";
   const colorOf = () => "#3b6fe0";
   const fmt = (n: number) => String(n);
   // the page's CSS font-size of svg text: 10 px (svg text{fill:var(--dim);font-size:10px})
@@ -3149,7 +3142,7 @@ describe("chart text keeps its size at any chart width", () => {
   /** The real renderer: stackedBars into a container of the given pixel width. */
   const renderAt = (clientWidth: number): { vbW: number; inner: string; cw: number } => {
     const el: any = { innerHTML: "", clientWidth };
-    new Function("el", "$", "colorOf", "fmt", "setHtml", `${SH}\n${chartSrc}\nstackedBars(el,["10h","11h","12h"],[{input:1_570_000_000},{input:1_570_000_000},{input:1_570_000_000}],["input"],760,220);`)(
+    new Function("el", "$", "colorOf", "fmt", "setHtml", `${SH}\n${CONSTS}\n${chartSrc}\nstackedBars(el,["10h","11h","12h"],[{input:1_570_000_000},{input:1_570_000_000},{input:1_570_000_000}],["input"],760,220);`)(
       el, (id: string) => ({ innerHTML: "" }), colorOf, fmt
     );
     const m = el.innerHTML.match(/<svg width="100%" viewBox="0 0 ([0-9.]+) 220"/);
@@ -3234,5 +3227,79 @@ describe("generated model colours", () => {
       const d = Math.abs(fn.hueOf(g) - fn.hueOf(p));
       expect(Math.min(d, 360 - d)).toBeGreaterThanOrEqual(12);
     }
+  });
+});
+
+describe("readable time axes, power chart under System, tokens chart at half width", () => {
+  const get = (n: string) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([\\s\\S]*?\\n\\}\\n`))![0];
+  const src = ["chartW", "chartSvg", "padFor", "fmtAxis", "esc", "gapCols", "gapLayout", "gapMark", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "mergeModelBuckets", "aggCap", "barCap", "trimEmpty", "emptyChart", "stackedBars", "twoToneModelBars", "lineChart"].map(get).join("\n");
+  const CONSTS = 'var MIN_LABEL_GAP_PX=48,MIN_BAR_PX=3,data={bucketMs:300000},KINDS=[["input","i"],["cacheWrite","w"],["cacheRead","r"],["output","o"]];';
+  const run = (body: string, el: any) => new Function("el", "$", "colorOf", "fmt", "setHtml", `${SH}\n${CONSTS}\n${src}\n${body}`)(el, () => ({ innerHTML: "" }), () => "#3b6fe0", String);
+  const stamps = (n: number) => Array.from({ length: n }, (_, i) => `${String(Math.floor(i / 12) + 6).padStart(2, "0")}:${String((i % 12) * 5).padStart(2, "0")}`);
+  const xs = (html: string, y: number) => [...html.matchAll(new RegExp(`<text x="([0-9.]+)" y="${y}" text-anchor="middle">`, "g"))].map((m) => +m[1]);
+  const minGap = (v: number[]) => Math.min(...v.slice(1).map((x, i) => x - v[i]));
+
+  it("lineChart thins time labels by the real width: >= 48 px apart at 385 px, every bucket still labelled at 1200 px", () => {
+    const labels = stamps(60), series = labels.map((_, i) => ({ totalW: 10 + i, gpu: 5, cpu: 5 }));
+    const keys = [["totalW", "power W", "#d98a1c", 0], ["gpu", "GPU", "#3b6fe0", 1]];
+    const at = (w: number) => { const el: any = { innerHTML: "", clientWidth: w }; run(`lineChart(el,${JSON.stringify(labels)},${JSON.stringify(series)},${JSON.stringify(keys)},760,150);`, el); return xs(el.innerHTML, 146); };
+    const narrow = at(385), wide = at(1200);
+    expect(narrow.length).toBeGreaterThan(1);
+    expect(minGap(narrow)).toBeGreaterThanOrEqual(48);
+    expect(minGap(wide)).toBeGreaterThanOrEqual(48);
+    expect(wide.length).toBeGreaterThan(narrow.length);
+    expect(at(4000).length).toBe(60);
+  });
+
+  it("stackedBars and twoToneModelBars thin their labels too", () => {
+    const labels = stamps(24), kinds = ["input", "output"];
+    const series = labels.map((_, i) => ({ input: 100 + i, output: 50 }));
+    const el: any = { innerHTML: "", clientWidth: 385 };
+    run(`stackedBars(el,${JSON.stringify(labels)},${JSON.stringify(series)},${JSON.stringify(kinds)},760,220);`, el);
+    const v = xs(el.innerHTML, 216);
+    expect(v.length).toBeGreaterThan(1);
+    expect(minGap(v)).toBeGreaterThanOrEqual(48);
+  });
+
+  it("merging buckets keeps every bar >= minBarPx and the caption names the bucket size", () => {
+    const labels = stamps(144); // 12 h of 5-minute buckets
+    const buckets = labels.map((_, i) => [{ model: "a", requests: 1, input: 10 + i, cacheWrite: 0, cacheRead: 5, output: 3, total: 18 + i }, { model: "b", requests: 2, input: 4, cacheWrite: 0, cacheRead: 0, output: 1, total: 5 }]);
+    const barW = (html: string) => [...html.matchAll(/<rect [^>]*width="([0-9.]+)"/g)].map((m) => +m[1]);
+    for (const w of [385, 822, 1200]) {
+      const el: any = { innerHTML: "", clientWidth: w, id: "series" };
+      const cap = run(`return twoToneModelBars(el,${JSON.stringify(labels)},${JSON.stringify(buckets)},["a","b"],760,220);`, el);
+      const widths = barW(el.innerHTML).filter((x) => x > 1.5);
+      expect(Math.min(...widths)).toBeGreaterThanOrEqual(3);
+      if (w === 385) { expect(cap).toMatch(/^\d+-minute buckets$/); expect(parseInt(cap, 10)).toBeGreaterThan(5); expect(el.__agg).toBeGreaterThan(1); }
+    }
+    // merged totals are conserved: the tallest 385 px bar equals the sum of its merged buckets
+    const el: any = { innerHTML: "", clientWidth: 385, id: "series" };
+    run(`twoToneModelBars(el,${JSON.stringify(labels)},${JSON.stringify(buckets)},["a","b"],760,220);`, el);
+    const f = el.__agg as number;
+    const sumA = Array.from({ length: f }, (_, i) => 18 + (144 - f + i)).reduce((a, b) => a + b, 0);
+    expect(sumA).toBeGreaterThan(0);
+    const wide: any = { innerHTML: "", clientWidth: 1200, id: "series" };
+    expect(run(`return twoToneModelBars(el,${JSON.stringify(labels.slice(0, 48))},${JSON.stringify(buckets.slice(0, 48))},["a","b"],760,220);`, wide)).toBe(false);
+    expect(wide.__agg).toBe(1);
+  });
+
+  it("the caption shows a merged-bucket text via chartCap", () => {
+    const cap = get("chartCap");
+    const el: any = { innerHTML: "" };
+    new Function("el", `${SH}\n${cap}\nchartCap(el,"10-minute buckets");`)(el);
+    expect(el.innerHTML).toContain("10-minute buckets");
+    expect(el.innerHTML).not.toContain("idle hours");
+  });
+
+  it("the power chart sits in the System section, between the KPI tiles and the server table; tokens holds none", () => {
+    const sys = COCKPIT_HTML.match(/<section data-section="system"[\s\S]*?<\/section>/)![0];
+    const tok = COCKPIT_HTML.match(/<section data-section="tokens"[\s\S]*?<\/section>/)![0];
+    expect(sys).toContain('id="power"');
+    expect(sys).toContain('id="plegend"');
+    expect(sys.indexOf('id="sys"')).toBeLessThan(sys.indexOf('id="power"'));
+    expect(sys.indexOf('id="power"')).toBeLessThan(sys.indexOf('id="sysservers"'));
+    expect(tok).not.toContain('id="power"');
+    expect(tok).not.toContain("Power and GPU/CPU load");
+    expect(tok).toContain('id="series"');
   });
 });
