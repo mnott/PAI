@@ -82,6 +82,20 @@ describe("writePaneTitle", () => {
     }
   });
 
+  it("tmux: a stale TMUX_PANE (display-message fails) is never retitled", () => {
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const tmux = vi.fn((args: string[]) => {
+        if (args[0] === "display-message") throw new Error("can't find pane");
+      });
+      writePaneTitle("tests", { TMUX: "x", TMUX_PANE: "%99" }, tmux, false);
+      expect(tmux).toHaveBeenCalledTimes(1);
+      expect(tmux).not.toHaveBeenCalledWith(expect.arrayContaining(["select-pane"]));
+    } finally {
+      err.mockRestore();
+    }
+  });
+
   it("tmux without TMUX_PANE: select-pane -T without a target; a failing tmux is swallowed", () => {
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {

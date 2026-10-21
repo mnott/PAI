@@ -255,7 +255,7 @@ export async function startSession(a: StartArgs): Promise<number> {
       cwd,
       resume: resume?.uuid,
       name,
-      named: !!resume && terminalHasName(name),
+      named: !!resume && terminalHasName(name, process.env.ITERM_SESSION_ID ?? ""),
     });
   } catch (e) {
     if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {

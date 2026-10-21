@@ -147,7 +147,7 @@ export async function projectChecks(cwd: string, d: CheckDeps = {}): Promise<Che
       ? { ok: false, what: `${PREAMBLE_REL} is ${size} bytes, over the ${PREAMBLE_MAX_BYTES} limit`, fix: `$EDITOR ${PREAMBLE_REL}` }
       : { ok: true, what: `${PREAMBLE_REL} size ok (${size} bytes)` });
   }
-  const env = d.env ?? process.env;
+  const env = d.env ?? {}; // no ambient terminal ids: the CLI entry passes its env, the daemon passes none
   const backend = paneBackend(env, d.platform ?? process.platform, env.ITERM_SESSION_ID);
   if (backend === "tmux") out.push({ ok: true, what: "worker panes open in tmux" });
   else {

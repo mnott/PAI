@@ -62,7 +62,7 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
   }
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
-  const term = process.env.ITERM_SESSION_ID ?? "";
+  const term = (await resolveHostSession()).term;
   const outPath = a.outPath ?? join(logDir, `${wid}.png`);
 
   const status: WorkerStatus = {
@@ -165,7 +165,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   const term = (await resolveHostSession()).term;
   const paneVerified = await requireVisiblePane(logDir, config, wid, term, noPane, false, ledgerPath(logDir));
   const session = resolveSession(term);
-  const spawnerSession = resolveSpawnerSession(logDir, cwd);
+  const spawnerSession = resolveSpawnerSession(logDir, cwd, process.env);
 
   let worktree: WorktreeInfo | null = null;
   if (worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })) {

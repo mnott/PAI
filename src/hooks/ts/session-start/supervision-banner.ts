@@ -12,7 +12,7 @@ import { isWorkerSession } from "../lib/worker-session.js";
 
 async function main() {
   if (isWorkerSession()) return;
-  const banner = await supervisionBannerForSession();
+  const banner = await supervisionBannerForSession(process.env);
   if (banner) console.log(banner);
   process.exit(0);
 }

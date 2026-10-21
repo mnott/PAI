@@ -143,7 +143,7 @@ export function strayWorkerProcesses(
 export function psOutput(
   logDir: string,
   showAll: boolean,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   color = process.stdout.isTTY === true
 ): string {
   const c = makeColor(color);

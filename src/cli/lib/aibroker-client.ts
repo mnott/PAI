@@ -48,7 +48,13 @@ interface AiBrokerSessionsResult {
 // set it means it. The fallback goes through runtime-paths so the test guard
 // can redirect it — writing to a live socket from a test is the same hazard as
 // writing to live user state, and this one is not even ours.
-const DEFAULT_SOCKET = process.env.AIBROKER_SOCKET ?? aibrokerSocketPath();
+const brokerSocket = (): string => process.env.AIBROKER_SOCKET ?? aibrokerSocketPath();
+
+/** The caller's own terminal identity, stamped on a request only when the caller passes it (CLI entry points). */
+export interface CallerStamp {
+  sessionId?: string;
+  itermSessionId?: string;
+}
 
 /**
  * How long to wait for `send_to_session`, which must exceed the server's own
@@ -76,14 +82,16 @@ const SEND_TIMEOUT_MS = 30_000;
  * @param method   IPC method name (e.g. "session_content", "send_to_session")
  * @param params   Method parameters object
  * @param timeoutMs  Connection + response timeout in milliseconds (default: 8 000)
+ * @param caller   Terminal identity to stamp on the request; none is read from the environment
  */
 export function callAiBroker(
   method: string,
   params: Record<string, unknown> = {},
-  timeoutMs = 8_000
+  timeoutMs = 8_000,
+  caller: CallerStamp = {}
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    const socketPath = DEFAULT_SOCKET;
+    const socketPath = brokerSocket();
     let done = false;
     let buffer = "";
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -107,12 +115,11 @@ export function callAiBroker(
     const socket = connect(socketPath, () => {
       const request = {
         id: randomUUID(),
-        sessionId: process.env.TERM_SESSION_ID ?? "pai-cli",
+        sessionId: caller.sessionId ?? "pai-cli",
         method,
         params,
       };
-      const itermId = process.env.ITERM_SESSION_ID;
-      if (itermId) Object.assign(request, { itermSessionId: itermId });
+      if (caller.itermSessionId) Object.assign(request, { itermSessionId: caller.itermSessionId });
       socket.write(JSON.stringify(request) + "\n");
     });
 
@@ -264,12 +271,12 @@ export async function sendToSession(
   sessionId: string,
   text: string,
   timeoutMs = SEND_TIMEOUT_MS,
-  opts?: { noReply?: boolean }
+  opts?: { noReply?: boolean; caller?: CallerStamp }
 ): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
   try {
     const params: Record<string, unknown> = { target: sessionId, message: text };
     if (opts?.noReply) params.noReply = true;
-    await callAiBroker("send_to_session", params, timeoutMs);
+    await callAiBroker("send_to_session", params, timeoutMs, opts?.caller);
     return { ok: true };
   } catch (e) {
     const error = String(e);
@@ -291,17 +298,20 @@ export async function sendToSession(
  * Switch iTerm2 focus to the session identified by `target`.
  *
  * `target` can be a sessionId, paiName, or tab index number (as string).
- * After switching, activates the iTerm2 application itself so the window
- * comes to the foreground.
+ * With `activate`, activates the iTerm2 application itself afterwards so the
+ * window comes to the foreground (interactive CLI only).
  *
  * Returns { ok: true } if AIBroker confirmed the switch, or
  * { ok: false, error } if AIBroker is not running or the session was not found.
  */
-export async function switchToSession(target: string): Promise<{ ok: boolean; error?: string }> {
+export async function switchToSession(
+  target: string,
+  opts: { activate?: boolean; caller?: CallerStamp } = {}
+): Promise<{ ok: boolean; error?: string }> {
   try {
-    await callAiBroker("switch", { target });
-    // Bring iTerm2 itself to the foreground (the IPC only selects the tab)
-    if (process.platform === "darwin") {
+    await callAiBroker("switch", { target }, undefined, opts.caller);
+    // Bring iTerm2 itself to the foreground (the IPC only selects the tab); only the interactive CLI opts in
+    if (opts.activate && process.platform === "darwin") {
       const { spawnSync } = await import("node:child_process");
       spawnSync("osascript", ["-e", 'tell application "iTerm" to activate'], {
         stdio: "ignore",

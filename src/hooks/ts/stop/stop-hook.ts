@@ -169,10 +169,9 @@ const AIBROKER_TIMEOUT_MS = 2_000;
 /**
  * Ask AIBroker for the persisted user-chosen name for the current iTerm2 session.
  * Returns the name string, or null if AIBroker is not running or no name is set.
- * Uses ITERM_SESSION_ID environment variable as the session identifier.
+ * The session identifier is passed in by the hook entry point.
  */
-async function getPersistentTabName(): Promise<string | null> {
-  const itermSessionId = process.env.ITERM_SESSION_ID;
+async function getPersistentTabName(itermSessionId: string | undefined): Promise<string | null> {
   if (!itermSessionId) return null;
 
   return new Promise((resolve) => {
@@ -866,7 +865,7 @@ async function main() {
   // Re-assert persistent name — overrides any auto-title Claude Code may have set.
   // If the user ran /Name "Solar" earlier, that name sticks for the life of the session.
   {
-    const persistentName = await getPersistentTabName();
+    const persistentName = await getPersistentTabName(process.env.ITERM_SESSION_ID);
     if (persistentName) {
       try {
         setTabTitle(persistentName);

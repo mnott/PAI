@@ -376,7 +376,7 @@ const psCommand: CommandDef = {
       if (pending) out(`${pending} unmerged result(s) — pai worker pending`);
       const left = leftoverWorktrees(dir);
       if (left) out(`worktrees: ${left} finished, not merged; pai worker gc --dry-run`);
-      out(psOutput(dir, flag(ctx, "all")));
+      out(psOutput(dir, flag(ctx, "all"), process.env));
     }),
 };
 
@@ -526,9 +526,9 @@ const paneCommand: CommandDef = {
       process.stderr.write((host.via === "none" ? `host session: none (${host.reason})` : `host session: ${host.uid} via ${host.via}`) + "\n");
       const id = ctx.args.ID as string | undefined;
       if (id) {
-        out(flag(ctx, "check") ? await checkPaneForWorker(id, workers.pane.fontSize, term) : (await openPaneForWorker(dir, workers, id, term)).message);
+        out(flag(ctx, "check") ? await checkPaneForWorker(id, workers.pane.fontSize, term, process.env) : (await openPaneForWorker(dir, workers, id, term, process.env)).message);
       } else {
-        out(await openFollowPane(dir, workers, term, flag(ctx, "check")));
+        out(await openFollowPane(dir, workers, term, flag(ctx, "check"), process.env));
       }
     }),
 };

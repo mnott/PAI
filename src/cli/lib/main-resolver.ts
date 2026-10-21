@@ -215,7 +215,7 @@ function launchSession(
   // config (provider when routing is on), a wanted resume stays claude because
   // its transcript is claude-format. Duplicating that dance here is also how
   // probeResume ended up fixed in one copy and not the others.
-  launchInDir(projectDir, name, { resumableUuid, dryRun, named: terminalHasName(name) });
+  launchInDir(projectDir, name, { resumableUuid, dryRun, named: terminalHasName(name, process.env.ITERM_SESSION_ID ?? "") });
   return true;
 }
 
@@ -311,7 +311,10 @@ async function doSwitch(
     console.log();
     return true;
   }
-  const result = await switchToSession(entry.liveSessionId);
+  const result = await switchToSession(entry.liveSessionId, {
+    activate: true,
+    caller: { sessionId: process.env.TERM_SESSION_ID, itermSessionId: process.env.ITERM_SESSION_ID },
+  });
   if (result.ok) {
     // Name AND id. "Switched to live session: pai" was reported three times on
     // 2026-08-04 by a user watching nothing happen, and the message gave no way
