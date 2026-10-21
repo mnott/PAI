@@ -33,7 +33,7 @@ Each section is below with the title the page shows. The id in brackets is what 
 
 ### Limits and local servers (`cloud`)
 
-Answers: how much of each provider's allowance is used, and which local servers are up. Two groups: **Local** has one tile per local model server, showing up or down, memory in GB, tokens per second and the model; **Cloud** has one card per provider with a gauge per usage window (for example a five-hour and a weekly window) and its reset time. A gauge marked `estimated` is not read from the provider but derived; one marked `old` could not be refreshed and shows the age of its last reading. A provider that fails to answer shows its error in place of gauges. Limits refresh every `limitsPollMs`.
+Answers: how much of each provider's allowance is used, and which local servers are up. Two groups: **Local** has one tile per local model server, showing up or down, memory in GB, tokens per second and the model. A server is up only when its endpoint actually serves that provider's model (several providers can share one port, so an answering port alone is not enough). A server that is slow to answer is busy, not down: it turns down when the connection is refused, when the endpoint answers without serving the model, or after `timeoutStrikes` timeouts in a row (see [Probe keys](#probe-keys)). A down tile says why; **Cloud** has one card per provider with a gauge per usage window (for example a five-hour and a weekly window) and its reset time. A gauge marked `estimated` is not read from the provider but derived; one marked `old` could not be refreshed and shows the age of its last reading. A provider that fails to answer shows its error in place of gauges. Limits refresh every `limitsPollMs`.
 
 ### Routing (`routing`)
 
@@ -45,7 +45,7 @@ Answers: what is running and what is queued behind a provider's capacity cap. Pe
 
 ### Worker pool (`pool`)
 
-Answers: is the worker pool healthy. Its status as the pool reports it, refreshed every `poolPollMs`.
+Answers: is the worker pool healthy. Its status as the pool reports it, refreshed every `poolPollMs`. The text is provider-neutral. When the pool is off, the panel gives the reason (for example config disabled, host down, or claims disabled because a terminal pane is required) next to how to turn it on.
 
 ### Models — runtimes (`models`)
 
@@ -65,7 +65,9 @@ A card folds by clicking its header. By default a running coding runtime is open
 
 ### System — memory, load, temperature, power (`system`)
 
-Answers: is the machine under pressure. Tiles for memory, load, temperature and power over the selected window; a tile whose every sample is 0 is hidden and listed as "hidden". Below, a table per local server: status, memory (RSS), end-to-end and decode tokens per second, and prefix-cache hit rate.
+Answers: is the machine under pressure. Metric tiles for memory, load, temperature and power over the selected window, each with a sparkline of its recent history; a tile whose every sample is 0 is hidden and listed as "hidden". The **Power and GPU/CPU load** chart sits inside this section. Below, one tile per local server: status (with the reason when it is down), memory (RSS), end-to-end and decode tokens per second, and prefix-cache hit rate. `/cockpit/system` returns the same servers with a `downReason` for each one that is down.
+
+Tile grids never leave a partial last row: in wide mode the grid has 12 tracks, and when the last row is short its tiles widen to fill it, so there is no 3+1.
 
 ![Workers and the worker pool, the Models cards, System tiles and Totals in this window](images/cockpit-workers-system.jpg)
 
@@ -75,17 +77,17 @@ Answers: how much in all. Requests, tokens and errors over the selected 1 hour, 
 
 ### Tokens per bucket by kind (`tokens`)
 
-Answers: when were tokens spent and of what kind. Stacked bars per time bucket in four kinds: fresh input, cache write, cache read and output. **weighted** counts them by price weight, **raw** counts tokens; the selector beside it narrows to one model. Under it, **Power and GPU/CPU load** uses the same buckets: watts on the left axis, load percent on a fixed 0-100 right axis.
+Answers: when were tokens spent and of what kind. Stacked bars per time bucket in four kinds: fresh input, cache write, cache read and output. **weighted** counts them by price weight, **raw** counts tokens; the selector beside it narrows to one model. The **Power and GPU/CPU load** chart (watts on the left axis, load percent on a fixed 0-100 right axis) is shown in the System section.
 
 ### Cache hit ratio and Providers (`cache`)
 
-Answers: is the cache earning its keep. **Cache hit ratio** is `cache_read / (read + write + fresh input)`, one ring per provider and model; models under `lowRequestMin` requests are folded into a chip instead. A local server that reports no cache fields per request shows its own prefix-cache counter instead, marked `*` (it covers the time since that server started, so its window differs from the router log). **Providers** is a table per provider with requests, tokens, average latency and time to first token.
+Answers: is the cache earning its keep. **Cache hit ratio** is `cache_read / (read + write + fresh input)`, one ring per provider and model; models under `lowRequestMin` requests are folded into a chip instead. A local server that reports no cache fields per request shows its own prefix-cache counter instead, marked `*` (it covers the time since that server started, so its window differs from the router log). **Providers** is one tile per provider; the tiles fill their row. Each has requests, tokens, average latency and time to first token.
 
 ![Cache hit ratio and Providers, Tokens per day per model and Tokens per bucket by kind](images/cockpit-usage.jpg)
 
 ### Speed per model (`speed`)
 
-Answers: how fast is each model. Per provider and model, for the last hour and the last 24 hours: median and 90th-percentile time to first token, read speed (input tokens divided by time to first token, so prefill) and write speed (output tokens divided by decode time, replies of 16 or more tokens only).
+Answers: how fast is each model. Per provider and model, each value as a pair `1h · 24h` (last hour, then last 24 hours): median and 90th-percentile time to first token, read speed (input tokens divided by time to first token, so prefill) and write speed (output tokens divided by decode time, replies of 16 or more tokens only).
 
 ### Cache verdict by pause (`pause`)
 
@@ -97,11 +99,15 @@ Answers: which sessions cost the most. The top `sessionsRows` sessions with mode
 
 ### Worker runs (`runs`)
 
-Answers: how did delegated workers end. The latest `workerRows` workers with label, provider, requests, tokens and verdict. Verdicts: **ok** and **done** in green, **report flagged** in amber (the worker finished but its report needs a look), **failed** in red; anything else is dim.
+Answers: how did delegated workers end. The latest `workerRows` workers as label, verdict and tokens; the label takes two lines at most, with the provider and run id small beneath, and the full label is in the tooltip. The verdict is a short word and its full text is in the tooltip. Verdicts: **ok** and **done** in green, **report flagged** in amber (the worker finished but its report needs a look), **failed** in red; anything else is dim.
 
 ### Tokens per day per model (`daily`)
 
 Answers: the long view. A stacked chart of tokens per day and model over the last `dailyDays` days (14 by default), with a model legend.
+
+### Tables
+
+Tables never scroll sideways and never break a header or a number mid-word. The first text column takes the free width. A table that does not fit its section (measured, not a fixed breakpoint) stacks into cards, one per row; a table that fits stays a table, whatever the screen.
 
 ## Layout
 
