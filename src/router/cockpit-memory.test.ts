@@ -334,3 +334,20 @@ describe("memory payload: tiles data", () => {
     expect(p.passes[1]).toMatchObject({ state: "failed", failure: { error: "boom", retryAt: NOW + 60_000 }, detail: { embedded: 321, backlogLeft: 55, stopReason: "pass-budget" } });
   });
 });
+
+describe("transient degradation (stale)", () => {
+  const at = async (d: MemoryDeps) => (await cockpitMemoryPayload(d)) as any;
+  it("a good payload carries no stale field", async () => {
+    expect((await at(deps())).stale).toBeUndefined();
+  });
+  it("a daemon that does not answer marks the payload stale with the reason", async () => {
+    const p = await at(deps({ daemon: async () => null }));
+    expect(p.stale).toEqual({ since: NOW, reason: "daemon not answering" });
+  });
+  it("a failed binding check marks the payload stale", async () => {
+    const s = status();
+    (s as any).index.error = "binding check timed out";
+    const p = await at(deps({ daemon: async () => daemon({ status: s }) }));
+    expect(p.stale).toEqual({ since: NOW, reason: "binding check failed" });
+  });
+});

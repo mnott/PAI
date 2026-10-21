@@ -78,9 +78,40 @@ function renderQueue(q){
   tr.ondragend=function(){from=null;qdrag=false;tr.style.opacity="";loadQueue()};
  })(rs[k])}
 }
-function loadQueue(){fetch("/cockpit/queue",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lastOk=Date.now();renderQueue(j)}).catch(function(){})}
-function loadModels(){fetch("/cockpit/models",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mdl=j;lastOk=Date.now();renderLimits();renderModels()}).catch(function(){})}
-function loadLimits(){fetch("/cockpit/limits",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){lim=j;lastOk=Date.now();renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()}).catch(function(){})}
+/** Hold-last-good, for every endpoint: the last good payload stays on screen over a failed fetch (network, timeout,
+ *  non-2xx) or a payload the server marks degraded (stale:{since,reason}) until HOLD_MS has passed since the last good
+ *  one; the section header carries a "stale" marker meanwhile, then the error state. A good payload — real changes
+ *  included — is applied at once and clears the marker. */
+var HOLD_MS=${n(L.holdLastGoodSecs)}*1000,FETCH_MS=${n(L.holdLastGoodSecs)}*250,goodAt={},bootAt=Date.now();
+function staleMark(secs,key,txt,err){
+ for(var i=0;i<secs.length;i++){
+  var sec=document.querySelector('section[data-section="'+secs[i]+'"]');if(!sec)continue;
+  var h=sec.querySelector("h2"),m=sec.querySelector('.stalemark[data-sk="'+key+'"]');
+  if(!txt){if(m)m.remove();sec.classList.remove("sec-err");continue}
+  if(!m&&h){m=document.createElement("span");m.className="stalemark";m.setAttribute("data-sk",key);h.appendChild(m)}
+  if(m){m.textContent=txt;m.className="stalemark"+(err?" err":"")}
+  if(err)sec.classList.add("sec-err");else sec.classList.remove("sec-err");
+ }
+}
+function pull(key,url,secs,apply,onErr){
+ var ctl=typeof AbortController!=="undefined"?new AbortController():null,tm=ctl?setTimeout(function(){ctl.abort()},FETCH_MS):0;
+ function hold(why){
+  var age=Math.round((Date.now()-(goodAt[key]||bootAt))/1000);
+  if(Date.now()-(goodAt[key]||bootAt)<HOLD_MS){if(goodAt[key])staleMark(secs,key,"stale · "+age+" s · "+why,false);return}
+  staleMark(secs,key,"error · "+age+" s · "+why,true);if(onErr)onErr(why);
+ }
+ fetch(url,ctl?{cache:"no-store",signal:ctl.signal}:{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("http "+r.status);return r.json()}).then(function(j){
+  clearTimeout(tm);
+  if(j&&j.stale){
+   if(goodAt[key]){hold(j.stale.reason||"degraded");return}
+   apply(j);staleMark(secs,key,"stale · "+(j.stale.reason||"degraded"),false);return;
+  }
+  goodAt[key]=Date.now();lastOk=goodAt[key];staleMark(secs,key,"",false);apply(j);
+ }).catch(function(e){clearTimeout(tm);hold(e&&e.name==="AbortError"?"timeout":e&&e.message&&e.message.indexOf("http ")===0?e.message:"network error")});
+}
+function loadQueue(){pull("queue","/cockpit/queue",["workers"],function(j){renderQueue(j)},function(){var el=$("queuepanel");if(!qdrag)setHtml(el,'<span class="dim">queue status unavailable</span>')})}
+function loadModels(){pull("models","/cockpit/models",["models"],function(j){mdl=j;renderLimits();renderModels()})}
+function loadLimits(){pull("limits","/cockpit/limits",["cloud"],function(j){lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()})}
 function tabs(){var b=document.querySelectorAll("#tabs button");for(var i=0;i<b.length;i++){b[i].className=b[i].getAttribute("data-w")===win?"on":"";b[i].onclick=function(){win=this.getAttribute("data-w");localStorage.setItem("cockpitWin",win);tabs();load();loadSystem()}}}
 /** Theme: the system's until the user picks one (only a click is saved); the button shows the other mode. */
 function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l=t==="dark"?"Light mode":"Dark mode";b.title=l;b.setAttribute("aria-label",l)}

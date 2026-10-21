@@ -43,6 +43,7 @@ import type { BudgetMap } from "../workers/budget.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
+import { staleMark } from "./cockpit-stale.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -552,8 +553,9 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     runtimeJobs: runtimeJobsFor(),
   };
   if (!runtimeSampler) return withLabels;
-  const live = await runtimeSampler.payload();
-  if (!live) return withLabels;
+  const live = await runtimeSampler.payload().catch(() => null);
+  // an installed sampler that gives nothing is a transient gap, not a fact about the runtimes
+  if (!live) return { ...withLabels, ...staleMark(Date.now(), "runtime sampler not answering") };
   return { ...withLabels, live };
 }
 
@@ -957,9 +959,9 @@ export function handleCockpit(
     if (!system) return send(503, "application/json", '{"error":"system metrics not configured"}'), true;
     Promise.all([
       system.snapshot(parseWindow(url.searchParams.get("window"))),
-      limits.get().catch((): ProviderLimits[] => []),
+      limits.get().then((ls) => ({ ls, failed: false }), () => ({ ls: [] as ProviderLimits[], failed: true })),
     ]).then(
-      ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls) })),
+      ([snap, lr]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(lr.ls), ...staleMark(Date.now(), lr.failed ? "server probes unavailable" : null) })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/models") {

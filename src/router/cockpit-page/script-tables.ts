@@ -189,7 +189,7 @@ function render(){
  legend($("dlegend"),dm);
 }
 function load(){
- fetch("/cockpit/data?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){data=j;lastOk=Date.now();render()}).catch(function(){});
+ pull("data","/cockpit/data?window="+win,["kpis"],function(j){data=j;render()});
 }
-function loadSystem(){fetch("/cockpit/system?window="+win,{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){sys=j;lastOk=Date.now();renderSystem();renderPower();renderDonuts()}).catch(function(){})}
+function loadSystem(){pull("system","/cockpit/system?window="+win,["system"],function(j){sys=j;renderSystem();renderPower();renderDonuts()})}
 `;

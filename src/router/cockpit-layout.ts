@@ -155,6 +155,7 @@ const SHIPPED = {
   // a started run may take to write its marker before the card stops reading "starting".
   memoryTitle: "Memory",
   memoryPollMs: 5000,
+  holdLastGoodSecs: 120,
   memoryCoverageWarn: 0.99,
   memoryCoverageBad: 0.5,
   memoryStartGraceSecs: 120,
@@ -267,6 +268,8 @@ export interface CockpitLayout {
    *  it reads amber (Warn) / red (Bad); a started run is "starting" for at most the grace (s). */
   memoryTitle: string;
   memoryPollMs: number;
+  /** how long a section keeps showing its last good payload over failed or degraded fetches before it shows the error state */
+  holdLastGoodSecs: number;
   memoryCoverageWarn: number;
   memoryCoverageBad: number;
   memoryStartGraceSecs: number;
@@ -373,6 +376,7 @@ export function cockpitLayout(): CockpitLayout {
     errorBad: num(s, "errorBad", SHIPPED.errorBad),
     memoryTitle: str(s, "memoryTitle", SHIPPED.memoryTitle),
     memoryPollMs: num(s, "memoryPollMs", SHIPPED.memoryPollMs),
+    holdLastGoodSecs: num(s, "holdLastGoodSecs", SHIPPED.holdLastGoodSecs),
     memoryCoverageWarn: num(s, "memoryCoverageWarn", SHIPPED.memoryCoverageWarn),
     memoryCoverageBad: num(s, "memoryCoverageBad", SHIPPED.memoryCoverageBad),
     memoryStartGraceSecs: num(s, "memoryStartGraceSecs", SHIPPED.memoryStartGraceSecs),

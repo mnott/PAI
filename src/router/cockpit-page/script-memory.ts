@@ -115,5 +115,5 @@ function renderMemory(){
   postAction(b.getAttribute("data-a"),null,null,function(j){memMsg=j&&j.ok?null:{text:(j&&j.message)||"action failed",ok:false};loadMemory()});
  }})(bs[i]);
 }
-function loadMemory(){fetch("/cockpit/memory",{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){mem=j;lastOk=Date.now();renderMemory()}).catch(function(){})}
+function loadMemory(){pull("memory","/cockpit/memory",["memory"],function(j){mem=j;renderMemory()},function(){setHtml($("memorypanel"),'<span class="dim">memory status unavailable</span>')})}
 `;

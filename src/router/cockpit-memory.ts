@@ -7,6 +7,7 @@
  * running index/embed run (src/memory/run-state.ts) with its progress.
  */
 
+import { staleMark } from "./cockpit-stale.js";
 import { readdirSync } from "node:fs";
 import type { DashboardState } from "../daemon/dashboard.js";
 import { PaiClient } from "../daemon/ipc-client.js";
@@ -231,6 +232,8 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   const level: Level = s?.level ?? (d ? "amber" : "red");
   return {
     at: now,
+    // a daemon that does not answer or a binding check that failed is transient: the page keeps its last good payload for a while
+    ...staleMark(now, d === null ? "daemon not answering" : s?.index.error ? "binding check failed" : null),
     title: L.memoryTitle,
     daemon: d !== null,
     level: stalled && level === "green" ? "red" : level,

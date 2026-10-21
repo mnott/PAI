@@ -305,6 +305,8 @@ router:
       memoryCoverageWarn: 0.99
       memoryCoverageBad: 0.5
       memoryStartGraceSecs: 120
+      # seconds a section keeps its last good payload over failed or degraded fetches before it shows the error state
+      holdLastGoodSecs: 120
     probe:
       # a local server whose TCP connect or /v1/models answer times out is busy, not down;
       # it turns down after this many consecutive timeouts (refused / not serving = down at once)

@@ -22,6 +22,7 @@ try{var T=localStorage.getItem("pai.cockpit.theme")||(matchMedia("(prefers-color
 /** Closing style tag, header, main with every section, and the opening of the page script. */
 export const shellBody = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`</style><style>
 #legend>.lgline{gap:2px 8px;font-size:11px}#legend>.lgline span{white-space:nowrap}
+.stalemark{margin-left:8px;font:11px/14px inherit;font-weight:400;text-transform:none;letter-spacing:0;color:var(--warn)}.stalemark.err{color:var(--bad)}section.sec-err>:not(h2){opacity:.55}
 </style></head><body>
 <header><h1>PAI router cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
