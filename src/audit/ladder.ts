@@ -18,11 +18,12 @@ import { join } from "node:path";
 import { usageContextTokens } from "../workers/run.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
 import { ensureNoMcpConfig } from "../workers/paths.js";
+import { nativeAnthropicModels } from "../workers/config.js";
 
 export const PROBE_PROMPT = "Reply with exactly the single word OK and nothing else. Do not use any tool.";
 export const LADDER_TOOLS = "Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch";
 export const LADDER_TIMEOUT_MS = 180_000;
-export const DEFAULT_LADDER_MODEL = "haiku";
+export const defaultLadderModel = (): string => nativeAnthropicModels().fast ?? nativeAnthropicModels().default;
 
 export interface LadderRung {
   id: string;
@@ -138,7 +139,7 @@ export async function auditLadder(opts: {
   logDir: string;
   cwd?: string;
 }): Promise<LadderReport> {
-  const model = opts.model ?? DEFAULT_LADDER_MODEL;
+  const model = opts.model ?? defaultLadderModel();
   const emptyMcpPath = ensureNoMcpConfig(opts.logDir);
   const realMcpPath = opts.mcpConfigPath ?? newestMcpConfig(opts.logDir) ?? emptyMcpPath;
   const cwd = opts.cwd ?? process.cwd();

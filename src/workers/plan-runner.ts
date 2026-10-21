@@ -8,6 +8,7 @@
  * Everything that touches workers, git or the clock goes through RunnerDeps.
  */
 
+import { escalationCloud } from "./config.js";
 import { classifyRoute, routeLine } from "./route-classifier.js";
 import { withRunLock, type LockDeps } from "./run-lock.js";
 import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -38,8 +39,8 @@ export interface StartRequest {
   label: string;
   spec: string;
   provider: string;
-  /** "local" runs on plan.provider; "sonnet" is the escalation. */
-  tier: "local" | "sonnet";
+  /** "local" runs on plan.provider; any other value is the cloud escalation tier (workers.escalate.cloud.tier). */
+  tier: string;
   attempt: number;
   /** Model for a local-tier worker (`pai worker run --model`); the sonnet tier names its own. */
   model?: string;
@@ -316,10 +317,11 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
   const attemptPart = async (p: PlanPart): Promise<void> => {
     // a local plan: the route classifier may send the part straight to the cloud, and two failed
     // local attempts always escalate there (route-classifier.ts); --force-local keeps it local
-    const cloud = { tier: "sonnet" as const, provider: "anthropic" };
+    const { tier: cloudTier, provider: cloudProvider } = escalationCloud();
+    const cloud = { tier: cloudTier, provider: cloudProvider };
     const verdict = planWasLocal && !opts.forceLocal ? classifyRoute({ kind: p.kind, label: label(p), text: p.spec }) : undefined;
     if (verdict) deps.log({ event: "route", part: p.id, unit: p.unit, note: routeLine(verdict) });
-    const ladder: Array<{ tier: "local" | "sonnet"; provider: string }> =
+    const ladder: Array<{ tier: string; provider: string }> =
       verdict?.where === "cloud"
         ? [cloud, cloud]
         : [
@@ -330,7 +332,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
     let failure: string | undefined;
     for (let i = 0; i < ladder.length; i++) {
       const { tier, provider } = ladder[i];
-      if (tier === "sonnet") {
+      if (tier !== "local") {
         escalations++;
         deps.log({ event: "escalate", part: p.id, unit: p.unit, attempt: i + 1, tier, note: tail(failure ?? "", 10) });
       }
@@ -411,7 +413,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
   };
 
   const idleFields = (): Pick<RunLogEntry, "idleMs" | "wallMs" | "overlaps"> => ({ idleMs: idleTotal, wallMs: deps.now() - startedAt, overlaps });
-  deps.log({ event: "run-start", note: `parallel=${opts.parallel}${opts.escalate ? " escalate=sonnet" : ""}` });
+  deps.log({ event: "run-start", note: `parallel=${opts.parallel}${opts.escalate ? ` escalate=${escalationCloud().tier}` : ""}` });
   // a resumed run may have units complete but unchecked (killed between merge and check)
   for (const u of plan.units) await checkUnit(u.id);
   for (;;) {

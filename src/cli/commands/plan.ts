@@ -6,7 +6,7 @@
 import { planLockPath, readRunLock } from "../../workers/run-lock.js";
 import { existsSync } from "node:fs";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
-import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
+import { escalationCloud, getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { PlanTracker } from "../../workers/plan-status.js";
@@ -72,10 +72,11 @@ const runCmd: CommandDef = {
     const loaded = load(path);
     const plan = typeof ctx.opts.provider === "string" ? { ...loaded, provider: ctx.opts.provider } : loaded;
     const esc = ctx.opts.escalate;
-    if (esc !== undefined && esc !== "sonnet") throw new CliError(`--escalate takes sonnet, not ${String(esc)}`, "pai plan run PLAN.yaml --escalate sonnet");
+    const cloudTier = escalationCloud().tier;
+    if (esc !== undefined && esc !== cloudTier) throw new CliError(`--escalate takes ${cloudTier}, not ${String(esc)}`, `pai plan run PLAN.yaml --escalate ${cloudTier}`);
     const log = runLogPath(path);
     const { merged, unitsChecked } = resumeState(readRunLog(log));
-    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === "sonnet", ...(ctx.opts["force-local"] === true ? { forceLocal: true } : {}), ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
+    const opts = { parallel: parallelOf(plan, ctx.opts.parallel), escalate: esc === cloudTier, ...(ctx.opts["force-local"] === true ? { forceLocal: true } : {}), ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), merged, unitsChecked, lockPath: planLockPath(resolve(path)), stopPath: planStopPath(resolve(path)) };
     if (ctx.opts["dry-run"] === true || ctx.dryRun) {
       out(renderSchedule(plan, opts));
       return 0;

@@ -69,7 +69,7 @@ function withWindows(r: BudgetReading, windows: LimitWindow[]): BudgetReading {
 export async function fetchBudgetReading(name: string, p: WorkerProvider): Promise<BudgetReading> {
   const now = Date.now();
   try {
-    if (p.native || name === "anthropic") {
+    if (p.native) {
       // the shared door: a reading the router or another probe took within the
       // poll interval is reused, and a 429 backoff is honoured, not retried
       const r = await anthropicShared(now);

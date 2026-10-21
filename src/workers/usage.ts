@@ -13,6 +13,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
 import { loadStatuses, type WorkerStatus } from "./status.js";
 import { isLocalProvider } from "./config.js";
+import { effectiveWorkersYamlRaw } from "../config/shipped-defaults.js";
+import { workersYamlPath } from "./workers-config.js";
 import type { UsageBlock } from "../utils/input-side-tokens.js";
 
 export interface CacheCreationSplit {
@@ -258,26 +260,33 @@ export function workerUsage(logDir: string, sel: WorkerSelect, baseUrls: Record<
 // Transcript side (tier 0): cost from a price table
 // ---------------------------------------------------------------------------
 
-/** USD per million tokens. Edit here when prices change; cache read 0.1x, write 5m 1.25x, write 1h 2x of input. */
-export const PRICE_TABLE: Record<"opus" | "sonnet" | "haiku", { input: number; output: number }> = {
-  opus: { input: 5, output: 25 },
-  sonnet: { input: 3, output: 15 },
-  haiku: { input: 1, output: 5 },
-};
+/** USD per million tokens by model family (matched on the model name): workers.yaml `prices`, the shipped table under it. Cache read 0.1x, write 5m 1.25x, write 1h 2x of input. */
+export function priceTable(): Record<string, { input: number; output: number }> {
+  const raw = effectiveWorkersYamlRaw(workersYamlPath()).prices;
+  const out: Record<string, { input: number; output: number }> = {};
+  if (raw && typeof raw === "object") {
+    for (const [fam, v] of Object.entries(raw as Record<string, unknown>)) {
+      const p = v as { input?: unknown; output?: unknown } | null;
+      if (p && typeof p.input === "number" && typeof p.output === "number") out[fam.toLowerCase()] = { input: p.input, output: p.output };
+    }
+  }
+  return out;
+}
 export const CACHE_READ_X = 0.1;
 export const CACHE_WRITE_5M_X = 1.25;
 export const CACHE_WRITE_1H_X = 2;
 
 export function priceTableText(): string {
-  const lines = Object.entries(PRICE_TABLE).map(([f, p]) => `  ${f.padEnd(7)} input $${p.input}/M, output $${p.output}/M`);
+  const lines = Object.entries(priceTable()).map(([f, p]) => `  ${f.padEnd(7)} input $${p.input}/M, output $${p.output}/M`);
   return `Prices (USD per million tokens, matched on the model name):\n${lines.join("\n")}\n  cache read ${CACHE_READ_X}x input, cache write 5m ${CACHE_WRITE_5M_X}x, cache write 1h ${CACHE_WRITE_1H_X}x`;
 }
 
 /** Cost of a tally by model family, or null when the model matches no family. */
 export function priceTally(model: string, t: Tally): number | null {
-  const fam = (Object.keys(PRICE_TABLE) as Array<keyof typeof PRICE_TABLE>).find((f) => model.toLowerCase().includes(f));
+  const table = priceTable();
+  const fam = Object.keys(table).find((f) => model.toLowerCase().includes(f));
   if (!fam) return null;
-  const p = PRICE_TABLE[fam];
+  const p = table[fam];
   const inp = p.input / 1e6;
   return t.input * inp + t.output * (p.output / 1e6) + t.cacheRead * inp * CACHE_READ_X + t.cacheWrite5m * inp * CACHE_WRITE_5M_X + t.cacheWrite1h * inp * CACHE_WRITE_1H_X;
 }

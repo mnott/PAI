@@ -730,7 +730,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const spareCapable = (providerName: string): boolean => {
     const p = getProviderOrNative(config, providerName);
     if (!p || (p.engine ?? "claude") !== "claude") return false;
-    return !((providerName === "anthropic" || p.native) && !settings.native);
+    return !(p.native && !settings.native);
   };
 
   /** Bring a key up to workers.pool.spares in the background (nothing stops a key that has none yet). */

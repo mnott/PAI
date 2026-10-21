@@ -22,6 +22,8 @@ export class MainConfigError extends Error {}
 
 /** The config.yaml sibling of a given config.json path (same directory). */
 export function yamlSiblingPath(jsonPath: string): string {
+  // PAI_CONFIG_FILE may point straight at a YAML file (any name)
+  if (/\.ya?ml$/i.test(jsonPath)) return jsonPath;
   return join(dirname(jsonPath), "config.yaml");
 }
 

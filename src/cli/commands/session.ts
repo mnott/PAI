@@ -379,7 +379,7 @@ export function applyProfileChat(choice: { provider: string; model?: string }, n
 
 /** A profile's model alias ("opus") passes through on the native login; otherwise the provider's own table decides. */
 function chatModel(provider: Parameters<typeof modelFor>[0] & { native?: boolean }, wanted: string | undefined): string | undefined {
-  return provider.native && wanted === "opus" ? "opus" : modelFor(provider, wanted);
+  return modelFor(provider, wanted);
 }
 
 // ---------------------------------------------------------------------------

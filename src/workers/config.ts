@@ -17,7 +17,7 @@
  * Code.
  */
 
-import { DEFAULT_ESCALATE, parseEscalate, type EscalateConfig } from "./escalation.js";
+import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig } from "./escalation.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -204,10 +204,9 @@ export function nativeAnthropicModels(): WorkerProvider["models"] {
   const providers = d.providers as Record<string, unknown> | undefined;
   const anthropic = providers?.anthropic as Record<string, unknown> | undefined;
   const models = anthropic?.models as Record<string, unknown> | undefined;
-  const def = typeof models?.default === "string" ? models.default : "sonnet";
-  const out: WorkerProvider["models"] = { default: def };
-  if (typeof models?.fast === "string") out.fast = models.fast;
-  if (typeof models?.image === "string") out.image = models.image;
+  if (typeof models?.default !== "string") throw new WorkersConfigError("defaults workers.yaml providers.anthropic.models.default is missing");
+  const out: WorkerProvider["models"] = { default: models.default };
+  for (const [k, v] of Object.entries(models)) if (typeof v === "string" && k !== "default") out[k] = v;
   return out;
 }
 
@@ -1790,4 +1789,13 @@ export function providerContextWindow(p: WorkerProvider): number {
 /** Directory under which inline keys (MCP `key` field) are stored, 0600. */
 export function keysDir(): string {
   return paiHomePath("keys");
+}
+
+/** The cloud escalation target (workers.escalate.cloud) of the active config; the shipped default when the config cannot be read. */
+export function escalationCloud(): CloudTarget {
+  try {
+    return readWorkersSection().workers.escalate.cloud;
+  } catch {
+    return DEFAULT_ESCALATE.cloud;
+  }
 }

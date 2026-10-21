@@ -162,7 +162,7 @@ export class PlanReporter extends Reporter {
 
   onLog(e: RunLogEntry): void {
     if (e.event === "part-end" && typeof e.tokens === "number") {
-      if (e.tier === "sonnet") this.cloudTokens += e.tokens;
+      if (e.tier && e.tier !== "local") this.cloudTokens += e.tokens;
       else this.localTokens += e.tokens;
     }
     if (e.event === "model-idle" && e.tier === "local" && typeof e.ms === "number") this.idleMs += e.ms;

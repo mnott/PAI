@@ -126,31 +126,27 @@ function getAdvisorGuidance(): string {
     case "conservative":
       return [
         `ADVISOR MODE (conservative — weekly budget at ${pct ?? "?"}%):`,
-        "Main context is opus (most expensive — 20x haiku, 5x sonnet). Delegate aggressively to subagents.",
-        "Default subagents to SONNET (Agent tool, model: sonnet). Use haiku for simple lookups/verification.",
-        "For substantial tasks, use swarm mode: spawn a sonnet orchestrator that delegates to haiku workers.",
-        "Keep main context responses short — the goal is to minimize opus token burn.",
+        "The main context is the most expensive tier. Delegate through `pai worker run`; the class map picks the model, so workers never run on it.",
+        "Use the cheaper worker classes (spotcheck, simple) for lookups and verification.",
+        "Keep main context responses short — the goal is to minimize main-context token burn.",
       ].join(" ");
 
     case "strict":
       return [
         `ADVISOR MODE (strict — weekly budget at ${pct ?? "?"}%):`,
-        "Main context is opus (most expensive — 20x haiku, 5x sonnet). Minimize work done here.",
-        "Default subagents to SONNET (Agent tool, model: sonnet) for implementation and research. Use haiku for simple tasks.",
-        "For any substantial task, use swarm mode: spawn ONE sonnet orchestrator that delegates to haiku workers.",
-        "Keep main context responses short — receive results from agents, summarize briefly, done.",
-        "Never spawn opus subagents. Every line of opus output costs 5x what sonnet costs.",
+        "The main context is the most expensive tier. Minimize work done here.",
+        "Delegate implementation and research through `pai worker run` (the class map picks the model) and use the cheaper classes for simple tasks.",
+        "Keep main context responses short — receive results from workers, summarize briefly, done.",
       ].join(" ");
 
     case "critical":
       return [
         `ADVISOR MODE (critical — weekly budget at ${pct ?? "?"}%):`,
-        "MINIMIZE ALL TOKEN USAGE. Main context is opus — the most expensive model (20x haiku, 5x sonnet).",
-        "For ANY non-trivial task, immediately spawn a sonnet orchestrator agent and let it handle everything.",
+        "MINIMIZE ALL TOKEN USAGE. The main context is the most expensive tier.",
+        "For ANY non-trivial task, hand it to `pai worker run` at once and let the worker handle everything.",
         "Main context should only send the task and receive the final result — do not do work here.",
-        "Keep main context responses extremely concise — short answers, minimal explanation.",
-        "Use sonnet for orchestration, haiku for workers. Never spawn opus subagents. Skip spotchecks.",
-        "The user is near their weekly limit — do as little as possible in opus main context.",
+        "Keep main context responses extremely concise — short answers, minimal explanation. Skip spotchecks.",
+        "The user is near their weekly limit — do as little as possible in the main context.",
       ].join(" ");
 
     default:

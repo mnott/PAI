@@ -55,7 +55,7 @@ export function stripContextSuffix(model: string): string {
 }
 
 function isClaudeId(model: string): boolean {
-  return /^claude-/.test(model) || ["sonnet", "opus", "haiku", "default", "opusplan"].includes(model);
+  return /^claude-/.test(model) || loadConfig().router.claudeModelAliases.includes(model);
 }
 
 /** model id (suffix-free) → provider name, from enabled non-native providers. */

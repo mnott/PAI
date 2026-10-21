@@ -251,7 +251,7 @@ export async function startSession(a: StartArgs): Promise<number> {
     harness = await buildHarness(workers, {
       provider: setup.orchestrator.provider,
       // the native "opus" alias is not in the worker model table (sonnet/haiku), so it passes through
-      model: provider.native && setup.orchestrator.model === "opus" ? "opus" : modelFor(provider, setup.orchestrator.model),
+      model: modelFor(provider, setup.orchestrator.model),
       cwd,
       resume: resume?.uuid,
       name,

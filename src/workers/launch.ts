@@ -155,8 +155,6 @@ export function resolveLaunchProvider(
  *  provider's configured model ids), else the provider's default. */
 export function resolveLaunchModel(provider: WorkerProvider, modelName?: string): string {
   if (!modelName) return provider.models.default;
-  // the login's own chat tier alias; the worker table only names sonnet/haiku
-  if (provider.native && modelName === "opus") return modelName;
   const valid = Object.values(provider.models);
   if (!valid.includes(modelName)) {
     throw new LaunchError(`model "${modelName}" is not configured for this provider. Configured: ${valid.join(", ")}`);

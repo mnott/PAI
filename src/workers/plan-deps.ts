@@ -13,7 +13,7 @@ import { eventsPath } from "./paths.js";
 import { loadStatuses } from "./status.js";
 import { killTree } from "./kill-tree.js";
 import { sumRunUsage } from "./usage.js";
-import { getProviderOrNative, readWorkersSection } from "./config.js";
+import { escalationCloud, getProviderOrNative, readWorkersSection } from "./config.js";
 import { GATE_MARK } from "./worktree.js";
 import { PlanTracker, gatePhaseName } from "./plan-status.js";
 import { appendRunLog, tail, type GateEvent, type MergeOutcome, type RunnerDeps, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
@@ -70,7 +70,7 @@ export async function dirtyPaths(repo: string): Promise<string[]> {
 
 /** Args of the part worker: `--worktree` is explicit so the caller's own mode is never inherited. */
 export function workerArgs(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string): string[] {
-  const model = req.tier === "sonnet" ? "sonnet" : req.model;
+  const model = req.tier !== "local" ? escalationCloud().model : req.model;
   return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(model ? ["--model", model] : []), ...(req.priority ? ["--now"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--output-format", "json"];
 }
 
