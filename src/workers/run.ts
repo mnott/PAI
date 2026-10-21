@@ -104,14 +104,11 @@ import {
   appendLedger,
 } from "./ledger.js";
 import {
-  decideEndReason,
   endFields,
   parentInfo,
-  type EndInfo,
 } from "./endreason.js";
 import {
   peekLoopStop,
-  takeLoopStop,
 } from "./loop-stop.js";
 import {
   TroubleWatcher,
@@ -220,12 +217,9 @@ import {
 } from "./pane-title.js";
 import {
   assertChildAllowed,
-  checkOrphanedChildren,
-  isWorkerId,
   launchParent,
 } from "./tree.js";
 import {
-  deliverHandoff,
   isHandoffMessage,
 } from "./handoff.js";
 import {
@@ -233,7 +227,6 @@ import {
   adoptTree,
   markResumed,
   salvageOnExit,
-  archiveEmptyResult,
   commitLines,
   gcWorktreesThrottled,
   inPlaceSystemPrompt,
@@ -244,7 +237,6 @@ import {
   type WorktreeInfo,
 } from "./worktree.js";
 import {
-  AG2_REASK_TEXT,
   promptTrailer,
   noteTokenSentence,
   workerContractPrompt,
@@ -279,9 +271,6 @@ import {
   type Preamble,
 } from "./preamble.js";
 import {
-  killTree,
-} from "./kill-tree.js";
-import {
   armResultGrace,
   leftoverNote,
 } from "./result-grace.js";
@@ -290,7 +279,6 @@ import {
   deadlinePromptLine,
   extendLimit,
   resolveLimit,
-  type RunLimit,
 } from "./deadline.js";
 import {
   blockedMsOf,
@@ -340,15 +328,10 @@ import {
   type PoolTaskResponse,
 } from "./pool.js";
 import {
-  resultFromOutput,
-} from "./run/provider-test.js";
-import {
   type RunOptions,
   type StreamEvent,
   type ImageExecuteArgs,
-  type FinaliseArgs,
   type ExecuteArgs,
-  type Ag2ReaskArgs,
   type CodexArgs,
 } from "./run/types.js";
 import {
@@ -392,6 +375,17 @@ import {
   preEventFailure,
   announcePane,
 } from "./run/pane-handles.js";
+import {
+  SIGNAL_SALVAGE_MS,
+  fireDeadline,
+  trackBlocked,
+  recordSignalEnd,
+  finaliseRun,
+  relaunchOptions,
+  worktreeExtras,
+  reaskAg2Report,
+  printResult,
+} from "./run/finalise.js";
 
 /**
  * Run one worker. Returns the process exit code to pass through.
@@ -754,90 +748,6 @@ export async function assertLocalProviderAlive(
 }
 
 /**
- * The finalisation every engine shares: orphaned-children check, state, the
- * WORKER-END ledger line, worktree outcome, parent handoff, final rc. A worker
- * owns its children's results (the worker contract says so): if it
- * backgrounded a sub-worker and exited without waiting, the run must not
- * report success, whatever the process returned.
- */
-/** Per-git-call bound for the salvage a kill signal runs before exiting. */
-const SIGNAL_SALVAGE_MS = 5_000;
-
-/** The deadline fired: record it on the status and in the ledger (the caller then stops the child). */
-export function fireDeadline(logDir: string, status: WorkerStatus, ledger: string, limit: RunLimit): void {
-  const waited = Math.round(((status.queueWaitedMs ?? 0) + blockedMsOf(logDir, status.id)) / 60_000);
-  const what = limit.absolute ? `deadline reached after ${limit.minutes} min` : `deadline reached after ${limit.minutes} active min${waited ? ` (waited ${waited} min, not counted)` : ""}`;
-  status.timedOut = true;
-  status.last = what;
-  saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes, waitedMin: waited });
-  // the deadline stops the run's own process; its sub-workers go with it
-  void killTree(logDir, status.id, { skipRoot: true, by: "deadline", reason: `parent worker ${what}` }).catch(() => undefined);
-}
-
-/**
- * Keep the status' deadline and blockedMs in step with build-gate waits (the
- * run's deadline counts active time), so ps shows the real time left. Returns the stop function.
- */
-function trackBlocked(logDir: string, status: WorkerStatus, limit: RunLimit | null): () => void {
-  if (!limit) return () => undefined;
-  const base = limit.deadlineAt;
-  const t = setInterval(() => {
-    const b = blockedMsOf(logDir, status.id);
-    if (b === (status.blockedMs ?? 0)) return;
-    status.blockedMs = b;
-    if (!limit.absolute) status.deadlineAt = base + b;
-    saveStatus(logDir, status);
-  }, 15_000);
-  t.unref();
-  return () => clearInterval(t);
-}
-
-/** Decide why a signal ended the run and put it on the status; the caller writes WORKER-END. */
-export function recordSignalEnd(logDir: string, status: WorkerStatus, signal: string): EndInfo {
-  const end = decideEndReason({
-    logDir,
-    id: status.id,
-    signal,
-    timedOut: status.timedOut,
-    parentPid: status.parentPid,
-    parentComm: status.parentComm,
-    parentBackground: status.parentBackground,
-  });
-  status.endReason = end.reason;
-  status.endBy = end.by;
-  status.endNote = end.note;
-  if (end.killReason) status.endKillReason = end.killReason;
-  if (end.forced) status.endForced = true;
-  return end;
-}
-
-/**
- * A run the loop guard stopped: the status note and the report that ends it.
- * Commits on the branch make it finished work to review (r=~), none a failure
- * (r=-). Shared by the fresh finalise and the pool host's per-task ending.
- */
-export function applyLoopStop(
-  status: WorkerStatus,
-  loopStop: { reason: string },
-  report: WorkerReport | null,
-  fallbackText: string | undefined,
-  worktree: { dir: string; base: string } | null | undefined
-): WorkerReport {
-  const reason = `loop-stopped: ${loopStop.reason}`;
-  status.loopStopped = true;
-  status.last = shortText(reason, 90);
-  // a loop after committing is finished work to review, not a failure
-  const commits = worktree ? commitLines(worktree.dir, worktree.base) : [];
-  if (commits.length) {
-    const why = `loop-stopped after committing: ${loopStop.reason}`;
-    const list = `commits: ${commits.join("; ")}`;
-    return { ...(report ?? {}), result: "~", why, notes: [why, list, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
-  }
-  return { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
-}
-
-/**
  * Escalation one tier up (escalation.ts) for a run that just ended: context over the
  * configured fraction, a missing tool, or repeated failure. Resolves to the exit code
  * of the re-run (t2 -> t1, whose spec starts with the salvage merge of the ended
@@ -952,83 +862,6 @@ function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: WorkerStatus
       a.onWorkerStart?.(id2);
     },
   });
-}
-
-export async function finaliseRun(f: FinaliseArgs): Promise<number> {
-  const { logDir, ledger, ok, rc } = f;
-  let { status, report } = f;
-  const wid = status.id;
-  // first, whatever the outcome (rc 143 included): uncommitted edits in the
-  // worktree must reach the branch before anything can drop the worktree
-  const salvaged = f.worktree
-    ? salvageOnExit(ledger, wid, status.label || UNLABELED, f.worktree.dir)
-    : [];
-  if (salvaged.length) {
-    const msg = `WORKER-SALVAGE: committed uncommitted edits (${salvaged.join(", ")})`;
-    report = { ...(report ?? {}), notes: [report?.notes ?? f.fallbackText, msg].filter(Boolean).join("\n"), result: report?.result ?? "-" };
-  }
-  if (f.timedOut) {
-    const reason = status.last.startsWith("deadline reached") ? status.last : `deadline reached after ${f.timedOut} min`;
-    status.timedOut = true;
-    status.last = reason;
-    // partial state = the salvage summary (r=~: stopped, not failed outright)
-    report = { ...(report ?? {}), result: "~", why: reason, notes: [reason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
-  }
-  const loopStop = takeLoopStop(logDir, wid);
-  if (loopStop) report = applyLoopStop(status, loopStop, report, f.fallbackText, f.worktree);
-  const orphanReason = checkOrphanedChildren(logDir, wid);
-  const succeeded = ok && !orphanReason && !f.timedOut && !loopStop;
-  status.state = succeeded ? "done" : "failed";
-  status.rc = rc;
-  status.secs = f.secs;
-  if (orphanReason) {
-    status.last = shortText(orphanReason, 90);
-    report = { ...(report ?? {}), notes: orphanReason, result: "-" };
-    appendLedger(ledger, "WORKER-ORPHAN-CHILDREN", { id: wid, reason: orphanReason });
-  }
-  const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop });
-  status.endReason = end.reason;
-  // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
-  status.claimsContinue = report?.result === "~";
-  saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end) });
-
-  if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
-
-  const reviewed = f.worktree ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
-  if (reviewed) {
-    process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
-    appendLedger(ledger, "WORKER-FALLTHROUGH-REVIEW", { id: wid, reason: reviewed.why });
-    report = { ...(report ?? {}), ...reviewed };
-    status.claimsContinue = true;
-    saveStatus(logDir, status);
-    f.onReviewed?.();
-  }
-  const early = await f.beforeHandoff?.(status, report);
-  if (typeof early === "number") return early;
-
-  const finalRc = rc !== 0 ? rc : succeeded ? 0 : 1;
-  if (status.parent && isWorkerId(logDir, status.parent)) {
-    try {
-      await deliverHandoff(logDir, {
-        from: wid,
-        to: status.parent,
-        kind: "result",
-        text: shortText(report?.notes ?? f.fallbackText ?? (succeeded ? "done" : "failed"), 400),
-        data: {
-          rc: finalRc,
-          ok: succeeded,
-          ...(status.branch ? { branch: status.branch, commits: status.commits ?? 0 } : {}),
-          ...(report ? { report } : {}),
-        },
-      });
-    } catch {
-      // the inbox line is best effort; it must never fail the exit path
-    }
-  }
-  // nothing to merge: the worktree goes now instead of piling up until gc
-  if (f.worktree && status.worktreeDir) archiveEmptyResult(logDir, status);
-  return finalRc;
 }
 
 async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof readWorkersSection>["workers"] }): Promise<number> {
@@ -2212,58 +2045,6 @@ async function executeRun(a: ExecuteArgs): Promise<number> {
   });
 }
 
-/**
- * Options for a relaunch (empty-response retry, quota reroute): the original
- * run's options, minus the preset id (the relaunch is a new worker), with the
- * given changes applied. Nothing is copied field by field, so a new RunOptions
- * field is carried over by default.
- */
-export function relaunchOptions(orig: RunOptions, changes: Partial<RunOptions>): RunOptions {
-  return { ...orig, id: undefined, ...changes };
-}
-
-/** The worktree fields printResult adds to a json payload, when there is one. */
-export function worktreeExtras(s: WorkerStatus): Record<string, unknown> | undefined {
-  return s.branch ? { branch: s.branch, commits: s.commits ?? 0 } : undefined;
-}
-
-/**
- * The one bounded re-ask, cap exactly one: `claude --resume <session>` with
- * AG2_REASK_TEXT, single-shot `--output-format json` (one turn, no streaming
- * plumbing needed). Same env/model/mcp/tool flags as the original launch —
- * only --resume and the fixed re-ask prompt are new — so the resumed turn
- * sees the same grants the worker ran with.
- */
-export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
-  let cmd: string[] = [...(a.claudeCmd ?? ["claude"])];
-  cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));
-  cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag, ...(a.slimArgs ?? []));
-  cmd.push("--resume", a.sessionId, "-p", AG2_REASK_TEXT, "--output-format", "json");
-  cmd = ensureToolSearch(cmd);
-  const proc = spawn(cmd[0], cmd.slice(1), { env: a.env, cwd: a.cwd, stdio: ["ignore", "pipe", "inherit"] });
-  const timer = setTimeout(() => {
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      /* already gone */
-    }
-  }, a.timeoutMs ?? 60_000);
-  let out = "";
-  proc.stdout.on("data", (chunk: Buffer) => {
-    out += chunk.toString("utf8");
-  });
-  await new Promise<void>((resolve) => {
-    proc.on("error", () => resolve());
-    proc.on("close", () => resolve());
-  });
-  clearTimeout(timer);
-  return resultFromOutput(out);
-}
-
-// ---------------------------------------------------------------------------
-// codex engine (2d)
-// ---------------------------------------------------------------------------
-
 async function executeCodexRun(a: CodexArgs): Promise<number> {
   const { config, logDir, target, model, label, parsed, noPane } = a;
   if (!parsed.headless || parsed.prompt === null) {
@@ -2517,38 +2298,9 @@ async function executeCodexRun(a: CodexArgs): Promise<number> {
 // result printing
 // ---------------------------------------------------------------------------
 
-export function printResult(
-  fmt: "text" | "json" | "stream-json",
-  resultEvent: StreamEvent | null,
-  rc: number,
-  logDir: string,
-  wid: string,
-  report?: WorkerReport | null,
-  extras?: Record<string, unknown>
-): void {
-  if (fmt === "stream-json") return; // already mirrored live
-  if (fmt === "json") {
-    const payload = report
-      ? { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), report, ...extras }
-      : { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), ...extras };
-    console.log(JSON.stringify(payload));
-    return;
-  }
-  if (resultEvent) {
-    console.log(resultEvent.result ?? "");
-  } else {
-    process.stderr.write(
-      `pai worker: run produced no result (rc=${rc}); see ${eventsPath(logDir, wid)}\n`
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// providers test: the 90-second pong probe (moved to run/provider-test.ts)
-// ---------------------------------------------------------------------------
-
 export { buildRunEnv } from "./run-env.js";
 export * from "./run/argv.js";
+export * from "./run/finalise.js";
 export * from "./run/model.js";
 export * from "./run/pane-handles.js";
 export * from "./run/provider-test.js";
