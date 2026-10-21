@@ -19,7 +19,7 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 main{padding:10px 14px;display:grid;gap:10px;grid-template-columns:repeat(${L.gridCols},minmax(0,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}.tw{overflow-x:auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}
 .gauge .s{overflow-wrap:anywhere}
 .c12{grid-column:span ${L.gridCols}}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}
 @media(max-width:${L.gridBreakpointPx}px){.c8,.c6,.c4{grid-column:span ${L.gridCols}}}
@@ -31,11 +31,12 @@ section[data-section].stacked{grid-column:span ${L.gridCols}!important}
 .pgroup{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:0;margin:4px 0}.phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
-.tw{max-width:100%;scrollbar-color:var(--dim) var(--card);scrollbar-width:thin}
-table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tw{max-width:100%}
+table{border-collapse:collapse;width:100%}th,td{text-align:right;padding:2px 4px;border-bottom:1px solid var(--line);white-space:normal;overflow-wrap:break-word}
+.tw td button{padding:0 3px;font-size:11px;margin:1px 0}
+table.dense th,table.dense td{overflow-wrap:anywhere}
 th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:left}
-/* a wide table scrolls inside its own box, never past the page; the first column stays put */
-.tw table th:first-child,.tw table td:first-child{position:sticky;left:0;background:var(--card)}
+/* a table never scrolls sideways: cells wrap, long text ellipsises with the full text in a title */
 /* below the phone breakpoint a table row is a stacked card: label: value pairs, no columns */
 @media(max-width:480px){.tw{overflow-x:visible}.tw table{display:block}.tw thead,.tw tbody{display:block;width:auto;max-width:100%;min-width:0}.tw tr{display:block;width:auto;max-width:100%;min-width:0;border-bottom:1px solid var(--line);padding:4px 0}.tw thead,.tw tr:first-child{display:none}.tw th,.tw td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;width:auto;max-width:100%;min-width:0}.tw td::before{content:attr(data-l);color:var(--dim);font-weight:500}.tw td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}

@@ -163,6 +163,8 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `dailyChartWidthPx`, `dailyChartHeightPx` | 520, 200 | Tokens per day chart size |
 | `dailyDays` | 14 | Days in Tokens per day per model |
 | `sessionsRows` | 20 | Rows in Sessions by tokens |
+| `sessionsTopRows` | 10 | Sessions shown before the rest collapse into one "+N more sessions" row |
+| `sessionNameMaxPct` | 35 | Session-name column cap, percent of the table width |
 | `workerRows` | 15 | Rows in Worker runs |
 | `lowRequestMin` | 5 | Models under this many requests become chips, not rings |
 | `pollMs` | 5000 | Refresh of the main data |
