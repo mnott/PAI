@@ -16,6 +16,7 @@ import {
   localLimits,
   modelServed,
   parsePrefixCacheStats,
+  parseStrataCacheStats,
   parseRetryAfter,
   readLastGood,
   staleReading,
@@ -473,6 +474,14 @@ describe("local server up/down and prefix cache", () => {
     expect(got.prefixCache?.hits).toBe(3);
     expect(readLastGood(file).l?.prefixCache?.hits).toBe(3);
   }, 20_000);
+
+  it("parseStrataCacheStats: conversation_cache request counters become hits/misses; none = undefined", () => {
+    const body = '{"conversation_cache":{"parked":1,"bytes":478390820,"requests":4,"requests_reused":3,"reused_tokens":381,"prompt_tokens":750}}';
+    expect(parseStrataCacheStats(body)).toEqual({ hits: 3, misses: 1, hitRate: 0.75, tokensSaved: 381, entries: 1, memoryMb: 456 });
+    expect(parseStrataCacheStats('{"conversation_cache":{"requests":0,"requests_reused":0}}')?.hitRate).toBe(0);
+    expect(parseStrataCacheStats('{"engine":{}}')).toBeUndefined();
+    expect(parseStrataCacheStats("not json")).toBeUndefined();
+  });
 
   it("parsePrefixCacheStats: counters in, nothing out when the server carries none", () => {
     expect(parsePrefixCacheStats('{"engine_cache":{"hits":0,"misses":0,"tokens_saved":0}}')).toEqual({ hits: 0, misses: 0, hitRate: 0, tokensSaved: 0 });

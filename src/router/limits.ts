@@ -609,6 +609,28 @@ export function parsePrefixCacheStats(body: string): PrefixCacheStats | undefine
   }
 }
 
+/** The conversation-cache counters in a Strata GET /metrics body (it has no /v1/cache/stats): a request that reused parked tokens is a hit. */
+export function parseStrataCacheStats(body: string): PrefixCacheStats | undefined {
+  try {
+    const c = (JSON.parse(body) as { conversation_cache?: Record<string, unknown> | null }).conversation_cache;
+    const requests = num(c?.requests);
+    const hits = num(c?.requests_reused);
+    if (!c || requests === undefined || hits === undefined) return undefined;
+    const slots = num(c.parked);
+    const bytes = num(c.bytes);
+    return {
+      hits,
+      misses: Math.max(0, requests - hits),
+      hitRate: requests ? hits / requests : 0,
+      tokensSaved: num(c.reused_tokens) ?? 0,
+      ...(slots !== undefined ? { entries: slots } : {}),
+      ...(bytes !== undefined ? { memoryMb: Math.round(bytes / 1048576) } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCacheStats | undefined> {
   let headers: Record<string, string> = {};
   try {
@@ -617,7 +639,13 @@ async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCac
     /* no key: the endpoint may not need one */
   }
   try {
-    return parsePrefixCacheStats(await getJson(new URL("/v1/cache/stats", base), headers, PREFIX_STATS_TIMEOUT_MS));
+    const vllm = parsePrefixCacheStats(await getJson(new URL("/v1/cache/stats", base), headers, PREFIX_STATS_TIMEOUT_MS));
+    if (vllm) return vllm;
+  } catch {
+    /* not a vllm-mlx server: try Strata's metrics */
+  }
+  try {
+    return parseStrataCacheStats(await getJson(new URL("/metrics", base), headers, PREFIX_STATS_TIMEOUT_MS));
   } catch {
     return undefined;
   }

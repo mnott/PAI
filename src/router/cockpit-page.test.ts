@@ -388,7 +388,7 @@ describe("cockpit layout follow-up", () => {
   });
 
   it("shows a loading state until the first limits poll arrives", () => {
-    expect(COCKPIT_HTML).toContain('lim?"not reported":"loading: first limits poll pending"');
+    expect(COCKPIT_HTML).toContain('lim?"server reports no prefix-cache counter":"loading: first limits poll pending"');
     expect(COCKPIT_HTML).toContain("lim?\"not reported\":'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
     expect(COCKPIT_HTML).toContain("lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
   });
@@ -3639,5 +3639,13 @@ describe("runtime start/stop progress on the card", () => {
     const act = btn.parentNode;
     expect(act.classes.has("rt-act")).toBe(true);
     expect(act.children.some((c: any) => c.classes.has("msg"))).toBe(true);
+  });
+});
+
+describe("local server tiles say why they are empty", () => {
+  it("end-to-end tile carries the window reason and the 24 h counts; prefix cache says the server reports none", () => {
+    expect(COCKPIT_HTML).toContain("no requests in the last hour (24 h: ");
+    expect(COCKPIT_HTML).toContain("ttft p50 ");
+    expect(COCKPIT_HTML).toContain("server reports no prefix-cache counter");
   });
 });

@@ -77,11 +77,13 @@ function renderSystem(){
  var allSrv=sys.servers||[];
  var srv=allSrv.filter(function(s){return s.up!==false});
  function dec(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];return r?(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps):null}
+ /** Why a local server's end-to-end tile has no value: the speed table's counts for its provider. */
+ function e2eSub(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p})[0];return r&&r.h24.requests?"no requests in the last hour (24 h: "+fmt(r.h24.requests)+(r.h24.ttftP50!=null?", ttft p50 "+(r.h24.ttftP50/1000).toFixed(1)+" s":"")+")":"no requests in the last 24 h"}
  /** A local server tile; the history is the client ring of the last polls. */
  function S(s,what,v,txt,unit,sub){return metricTile({title:s.provider+" "+what,value:v==null?null:txt(v),unit:unit,sub:sub,series:[{data:hist("srv:"+s.provider+":"+what,null,v)}]})}
  setHtml($("sysservers"),srv.length?'<div class="rt-tiles" data-tkey="syssrv">'+srv.map(function(s){
   var pc=s.prefixCache,tot=pc?pc.hits+pc.misses:0;
-  return S(s,"RSS",s.rssMb,gbm,"GB","resident memory")+S(s,"end-to-end",s.tokensPerSec,String,"tok/s","end to end")+S(s,"decode",dec(s.provider),fmt,"tok/s","decode")+S(s,"prefix cache",pc?pc.hitRate:null,function(v){return(v*100).toFixed(1)},"%",pc?pc.hits+"/"+tot:lim?"not reported":"loading: first limits poll pending")
+  return S(s,"RSS",s.rssMb,gbm,"GB","resident memory")+S(s,"end-to-end",s.tokensPerSec,String,"tok/s",s.tokensPerSec!=null?"end to end":data?e2eSub(s.provider):"loading")+S(s,"decode",dec(s.provider),fmt,"tok/s","decode")+S(s,"prefix cache",pc?pc.hitRate:null,function(v){return(v*100).toFixed(1)},"%",pc?pc.hits+"/"+tot:lim?"server reports no prefix-cache counter":"loading: first limits poll pending")
  }).join("")+'</div>':'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>');
  // the poll rebuild must not reset the tile order the user arranged
  orderTiles($("sys"));orderTiles($("sysservers"));
