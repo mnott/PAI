@@ -3538,19 +3538,14 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     expect(html).not.toContain(">20261021-084726-26751<");
   });
 
-  it("speed: one cell per 1h/24h pair, seven columns instead of eleven, header tooltips explain the pair", () => {
+  it("speed: bars, not a table; renderSpeed follows the window and marks local servers", () => {
     const h = (r: number, t: number | null) => ({ requests: r, ttftP50: t, ttftP90: t == null ? null : t * 2, readTps: t == null ? null : 100, writeTps: t == null ? null : 40 });
-    const m = mount({ speed: [{ provider: "glm", model: "glm-5.3", h1: h(3, 400), h24: h(30, 500) }, { provider: "anthropic", model: "opus", h1: h(0, null), h24: h(2, 900) }] }, "renderSpeed()", "speed");
+    const m = mount({ speed: [{ provider: "glm", model: "glm-5.3", h1: h(3, 400), h24: h(30, 500) }, { provider: "anthropic", model: "opus", h1: h(0, null), h24: h(2, 900) }] }, "renderSpeed()", "speed", fn("speedBars") + "\nvar win=\"1h\",lim=null;");
     m.run();
     const html = m.el().innerHTML;
-    expect([...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1])).toEqual(["provider", "model", "req", "TTFT p50", "TTFT p90", "read tok/s", "write tok/s"]);
-    expect(html).toContain('<td data-l="req">3 <span class="dim">·</span> 30</td>');
-    // each cell is the pair again (24 h part dim); a table that does not fit stacks by measurement, so nowrap pairs are safe
-    expect(html).toContain('400 ms <span class="dim">· 500 ms</span>');
-    expect(html).toContain('- <span class="dim">· 900 ms</span>');
-    expect(html).toContain('100 <span class="dim">· 100</span>');
-    expect(html).not.toContain('<span title="400 ms');
-    expect(html).toMatch(/<th title="[^"]*1h · 24h: last hour, then last 24 hours\.">TTFT p50<\/th>/);
+    expect(html).not.toContain("<table");
+    expect(html).toContain("0.4 s (p90 0.8 s)");
+    expect(html).toContain("last hour");
   });
 
   it("providers: provider, req, err%, hit% by default; retries, avg ms, ttft p50 and tokens in the provider cell's title", () => {

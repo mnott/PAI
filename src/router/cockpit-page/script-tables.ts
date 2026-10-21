@@ -84,12 +84,32 @@ function table(head,rows,tips,tdStyle){
 function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v).indexOf("failed")===0?"bad":String(v).indexOf("report flagged")>=0||String(v).indexOf("escalated")===0||String(v).indexOf("handed to session")===0?"warn":"dim"}
 /** Cache rings for the c4 card: cloud per model, then per model served by a local server (mapping from /cockpit/system). */
 function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
+/** Speed per model as bars. One row per model, three columns (TTFT p50 with a whisker to p90, output tok/s, prompt read tok/s), each on ONE scale shared by all rows.
+ *  Window: "1h" reads h1, every other selector value reads h24 (the server keeps only those two). A missing value is an empty bar and "–", never 0.
+ *  localSet: provider names served by a local server. Pure (no DOM) so the tests can run it. */
+function speedBars(sp,w,localSet){
+ var k=w==="1h"?"h1":"h24",span=w==="1h"?"last hour":"last 24 h",num=function(v){return v!=null&&isFinite(v)};
+ var rows=sp.map(function(r){return{r:r,s:r[k]||{}}}).sort(function(a,b){return(b.s.requests||0)-(a.s.requests||0)});
+ function mx(f){var m=0;rows.forEach(function(x){var v=f(x.s);if(num(v)&&v>m)m=v});return m}
+ var mT=mx(function(s){return num(s.ttftP90)?s.ttftP90:s.ttftP50}),mW=mx(function(s){return s.writeTps}),mR=mx(function(s){return s.readTps});
+ function sec(ms){return(ms/1000).toFixed(1)+" s"}
+ function tps(v){return(v<10?v.toFixed(1):String(Math.round(v)))+" tok/s"}
+ function pc(v,m){return m>0?Math.max(1,Math.min(100,v/m*100)).toFixed(1):"0"}
+ function track(inner,label,col){return'<div class="sp-c"><div class="sp-t">'+inner+'</div><div class="sp-l'+(col?'':' dim')+'">'+label+'</div></div>'}
+ function bar(v,m,col){return num(v)?track('<i style="width:'+pc(v,m)+'%;background:'+col+'"></i>',tps(v),1):track('',"–",0)}
+ var h='<div class="sp"><style>.sp{display:grid;gap:6px 10px;grid-template-columns:minmax(80px,1.1fr) repeat(3,minmax(0,1fr));align-items:center;font-size:12px}.sp>div{min-width:0}.sp-h{color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sp-n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sp-t{position:relative;height:8px;border-radius:4px;background:var(--line);overflow:hidden}.sp-t i{position:absolute;left:0;top:0;bottom:0;border-radius:4px}.sp-t b{position:absolute;top:3px;height:2px;background:var(--fg);opacity:.55}.sp-l{margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sp-tag{font-size:10px;padding:0 4px;border:1px solid var(--line);border-radius:3px;color:var(--dim);margin-left:4px}</style>'
+  +'<div class="sp-h"></div><div class="sp-h" title="Median time from request sent to first content token; the thin line reaches to p90. '+span+'.">Time to first token · '+span+'</div><div class="sp-h" title="Output tokens / decode time, replies of 16+ tokens only. '+span+'.">Output speed · '+span+'</div><div class="sp-h" title="Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads). '+span+'.">Prompt read speed · '+span+'</div>';
+ rows.forEach(function(x){
+  var r=x.r,s=x.s,loc=localSet&&localSet[r.provider],t=s.ttftP50,t9=s.ttftP90,tt;
+  if(num(t)){tt=track('<i style="width:'+pc(t,mT)+'%;background:#3b6fe0"></i>'+(num(t9)&&t9>t?'<b style="left:'+pc(t,mT)+'%;width:'+(pc(t9,mT)-pc(t,mT)).toFixed(1)+'%"></b>':''),sec(t)+(num(t9)?' (p90 '+sec(t9)+')':''),1)}else tt=track('',"–",0);
+  h+='<div class="sp-n'+(s.requests?'':' dim')+'" title="'+esc(r.provider+" / "+r.model+" · "+(s.requests||0)+" requests, "+span)+'">'+esc(r.model)+' <span class="dim">'+(s.requests||0)+'</span><span class="sp-tag">'+(loc?"LOCAL":"CLOUD")+'</span></div>'+tt+bar(s.writeTps,mW,"#3bb36f")+bar(s.readTps,mR,"#e0703b");
+ });
+ return h+'</div>';
+}
 function renderSpeed(){
- var sp=(data&&data.speed)||[];
- function c(st,k,u){return st[k]==null?"-":fmt(st[k])+u}
- function pair(r,k,u){var a=c(r.h1,k,u),b=c(r.h24,k,u);return a==="-"&&b==="-"?'<span class="dim">-</span>':a+' <span class="dim">· '+b+'</span>'}
- var pr="1h · 24h: last hour, then last 24 hours.";
- setHtml($("speed"),sp.length?table(["provider .txt","model .txt","req","TTFT p50","TTFT p90","read tok/s","write tok/s"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+' <span class="dim">·</span> '+r.h24.requests,pair(r,"ttftP50"," ms"),pair(r,"ttftP90"," ms"),pair(r,"readTps",""),pair(r,"writeTps","")]}),{"req":"Requests: last hour · last 24 hours.","TTFT p50":"Median time from request sent to first content token. "+pr,"TTFT p90":"90th percentile TTFT. "+pr,"read tok/s":"Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads). "+pr,"write tok/s":"Output tokens / decode time, replies of 16+ tokens only. "+pr}):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>');
+ var sp=(data&&data.speed)||[],ls={};
+ ((sys&&sys.servers)||[]).forEach(function(s){ls[s.provider]=1});((lim&&lim.limits)||[]).forEach(function(l){if(l.kind==="local")ls[l.provider]=1});
+ setHtml($("speed"),sp.length?speedBars(sp,win,ls):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>');
 }
 /** Providers: provider, req, err%, hit% by default; retries, avg ms, ttft p50 and tokens ride in the provider cell's title (retries also as a badge). */
 function renderProviders(d){

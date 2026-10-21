@@ -151,7 +151,7 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
       const secs = new Set(r.tables.map((t) => t.sec));
       // sessions, runs, speed, pause, providers (cache) and the workers queue table all rendered
       // (System renders metric tiles now, not a table)
-      for (const s of ["sessions", "runs", "speed", "pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
+      for (const s of ["sessions", "runs", "pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
       for (const t of r.tables) {
         expect(t.scrollWidth, `${t.sec}: wrapper ${t.clientWidth}px, content ${t.scrollWidth}px`).toBeLessThanOrEqual(t.clientWidth);
         expect(t.tableW, `${t.sec}: table ${t.tableW}px in wrapper ${t.clientWidth}px`).toBeLessThanOrEqual(t.clientWidth);
@@ -205,20 +205,6 @@ describe.skipIf(!CHROME)("provider tiles fill their row and the workers card end
     expect(r.workers, "workers probe ran").toBeDefined();
     expect(r.workers!.gap, `gap below the last child: ${r.workers!.gap.toFixed(1)}px`).toBeLessThan(24);
   }, 120_000);
-});
-
-describe.skipIf(!CHROME)("speed shows 1h · 24h pairs and still fits", () => {
-  it("822 px: speed is a full-width table with pairs, not stacked, no overflow; 385 px main: fits or stacks", async () => {
-    const r = await shoot(822, null);
-    const sp = r.tables.find((t) => t.sec === "speed")!;
-    expect(sp.stacked, "speed fits as a table at 822 px: not stacked").toBe(false);
-    expect(sp.scrollWidth, `speed wrapper ${sp.clientWidth}px, content ${sp.scrollWidth}px`).toBeLessThanOrEqual(sp.clientWidth);
-    expect(sp.tableW).toBeLessThanOrEqual(sp.clientWidth);
-    expect(sp.thead, "speed keeps its thead").toBe(true);
-    const n = await shoot(900, 385);
-    const sn = n.tables.find((t) => t.sec === "speed")!;
-    expect(sn.stacked || sn.scrollWidth <= sn.clientWidth, `speed at 385 px: stacked=${sn.stacked}, content ${sn.scrollWidth}px in ${sn.clientWidth}px`).toBe(true);
-  }, 180_000);
 });
 
 /** The real page CSS, rendered in Chromium: a .rt-tiles grid must never leave a partial
