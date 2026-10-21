@@ -45,11 +45,18 @@ function task(id: string, edit: (wt: string) => void): void {
 const dropOne = (wt: string) => writeFileSync(join(wt, "src", "a.test.ts"), "it('a', () => {});\ntest('c', () => {});\n", "utf8");
 
 describe("merge test scan", () => {
-  it("reverts a normal merge that removes a test case", () => {
+  it("refuses, merging nothing, a normal merge that removes a test case", () => {
     const tree = git(repo, ["rev-parse", "HEAD^{tree}"]);
+    const head = git(repo, ["rev-parse", "HEAD"]);
     task("t1", dropOne);
     expect(() => mergeWorker(logDir, "t1")).toThrow(/test scan failed: src\/a\.test\.ts loses 1 test case\(s\).*PAI_MERGE_ALLOW_TEST_LOSS=1/);
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(head); // no merge, no revert commit
     expect(git(repo, ["rev-parse", "HEAD^{tree}"])).toBe(tree);
+    process.env.PAI_MERGE_ALLOW_TEST_LOSS = "1"; // the advised re-run works
+    expect(mergeWorker(logDir, "t1")).toContain("merged");
+    expect(readFileSync(join(repo, "src", "a.test.ts"), "utf8")).not.toBe(three);
+    delete process.env.PAI_MERGE_ALLOW_TEST_LOSS;
+    git(repo, ["reset", "-q", "--hard", head]);
     expect(readFileSync(join(repo, "src", "a.test.ts"), "utf8")).toBe(three);
   });
 

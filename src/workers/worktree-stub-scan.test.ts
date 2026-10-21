@@ -36,8 +36,10 @@ function task(id: string, file: string, body: string): void {
 describe("merge stub scan", () => {
   it("reverts a merge that adds a stub under src/, without --verify", () => {
     const before = git(repo, ["rev-parse", "HEAD^{tree}"]);
+    const head = git(repo, ["rev-parse", "HEAD"]);
     task("s1", "src/s1.ts", "export const x = 1;\nexport function f() {\n  throw new Error('not implemented');\n}\n");
-    expect(() => mergeWorker(logDir, "s1")).toThrow(/stub scan failed: src\/s1\.ts:3: reverted [0-9a-f]+/);
+    expect(() => mergeWorker(logDir, "s1")).toThrow(/stub scan failed: src\/s1\.ts:3: nothing merged/);
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(repo, ["rev-parse", "HEAD^{tree}"])).toBe(before);
     expect(existsSync(join(repo, "src", "s1.ts"))).toBe(false);
     expect(git(repo, ["rev-parse", "--verify", "worker/s1"])).toBeTruthy();

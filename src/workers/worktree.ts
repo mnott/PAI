@@ -1106,7 +1106,8 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
     ? salvageUncommitted(st.worktreeDir!, st.label || UNLABELED)
     : { committed: [], skipped: [] };
   const incoming = parseInt(git(st.cwd, ["rev-list", "--count", `HEAD..${st.branch}`]), 10) || 0;
-  if (incoming <= 0) {
+  const reapply = incoming <= 0 ? findRevertedMerge(st.cwd, st.branch!) : null;
+  if (incoming <= 0 && !reapply) {
     throw new Error(
       `worker ${id}: branch ${st.branch} has no commits to merge. ` +
         `The worktree ${st.worktreeDir} was NOT removed — uncommitted work there would be destroyed. ` +
@@ -1120,9 +1121,13 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   assertNoNodeModules(st.cwd, mergeBase, st.branch!, id);
   assertNoDirtyOverlap(st.cwd, incomingPaths, id, st.branch!);
   if (opts.noCommit) return applyNoCommit(st.cwd, id, st.branch!, st.worktreeDir!, mergeBase, incomingPaths);
+  // static scans on the branch's own changes, before anything is committed: a failure leaves HEAD untouched
+  const [scanFrom, scanTo] = reapply ? [`${reapply.merge}^1`, reapply.merge] : [mergeBase, st.branch!];
+  assertStaticScans(st.cwd, scanFrom, scanTo);
   const oldHead = git(st.cwd, ["rev-parse", "HEAD"]);
   try {
-    git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
+    if (reapply) git(st.cwd, ["revert", "--no-edit", reapply.revert]);
+    else git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
   } catch (e) {
     let files: string[] = [];
     let inProgress = false;
@@ -1149,8 +1154,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
     st.cwd,
     opts.verify,
     () => revertMerge(st.cwd, oldHead),
-    () => findAddedStub(st.cwd, oldHead),
-    () => scanDiffForTestLoss(git(st.cwd, ["diff", "-U0", "--no-color", "--no-renames", oldHead, "HEAD"]))
+    () => null
   );
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
@@ -1189,6 +1193,35 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   }
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
   return withGate(verifyLine, merged);
+}
+
+/** Stub and test-loss scans over `from..to`; throws before any merge exists, so the advised re-run works. */
+function assertStaticScans(cwd: string, from: string, to: string): void {
+  const hit = scanDiffForStub(git(cwd, ["diff", "-U0", "--no-color", from, to, "--", "src/"]));
+  if (hit) throw new Error(`stub scan failed: ${hit}: nothing merged; the worker branch is kept`);
+  if (process.env.PAI_MERGE_ALLOW_TEST_LOSS === "1") return;
+  const loss = scanDiffForTestLoss(git(cwd, ["diff", "-U0", "--no-color", "--no-renames", from, to]));
+  if (loss) {
+    throw new Error(
+      `test scan failed: ${loss}: nothing merged; the worker branch is kept (a deliberate removal: re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
+    );
+  }
+}
+
+/** The merge of `branch` in HEAD's history and the revert commit the gate made of it, when both exist; else null. */
+function findRevertedMerge(cwd: string, branch: string): { merge: string; revert: string } | null {
+  try {
+    const tip = git(cwd, ["rev-parse", branch]);
+    const merge = git(cwd, ["rev-list", "--merges", "--parents", "HEAD"])
+      .split("\n")
+      .map((l) => l.split(" "))
+      .find((p) => p[2] === tip)?.[0];
+    if (!merge) return null;
+    const revert = git(cwd, ["log", "--format=%H", "-n", "1", `--grep=This reverts commit ${merge}`, `${merge}..HEAD`]);
+    return revert ? { merge, revert } : null;
+  } catch {
+    return null;
+  }
 }
 
 const withGate = (gate: string, msg: string): string => (gate ? `${gate}\n${msg}` : msg);

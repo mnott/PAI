@@ -53,6 +53,14 @@ describe("merge --verify", () => {
     expect(git(repo, ["rev-parse", "--verify", "worker/v2"])).toBeTruthy();
   });
 
+  it("re-merging a branch whose merge the gate reverted re-applies it", () => {
+    task("v2b");
+    expect(() => mergeWorker(logDir, "v2b", { verify: "exit 3" })).toThrow(/verify failed/);
+    expect(existsSync(join(repo, "v2b.txt"))).toBe(false);
+    expect(mergeWorker(logDir, "v2b")).toContain("merged");
+    expect(existsSync(join(repo, "v2b.txt"))).toBe(true);
+  });
+
   it("a fast-forward is reverted by range", () => {
     const old = git(repo, ["rev-parse", "HEAD"]);
     const before = tree();
