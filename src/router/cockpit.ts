@@ -169,10 +169,10 @@ export function retryRows(rows: UsageRow[]): Set<UsageRow> {
   return out;
 }
 
-/** Local-server readings of a provider that is disabled (or no longer configured) are dropped, like the models inventory does. */
-export function enabledLocalLimits(ls: ProviderLimits[], providers: Record<string, { enabled?: boolean }>): ProviderLimits[] {
+/** Local-server readings of a provider that is disabled and not launched by a tier (or no longer configured) are dropped, like the models inventory does. */
+export function enabledLocalLimits(ls: ProviderLimits[], providers: Record<string, { enabled?: boolean }>, tierProviders: string[] = tierProviderList()): ProviderLimits[] {
   if (!Object.keys(providers).length) return ls;
-  return ls.filter((l) => l.kind !== "local" || (l.provider in providers && providers[l.provider]!.enabled !== false));
+  return ls.filter((l) => l.kind !== "local" || (l.provider in providers && (providers[l.provider]!.enabled !== false || tierProviders.includes(l.provider))));
 }
 
 function configuredProviders(): Record<string, { enabled?: boolean; baseUrl?: string; models?: Record<string, unknown> }> {

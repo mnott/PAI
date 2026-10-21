@@ -643,3 +643,11 @@ describe("activeLocalProvider", () => {
     expect(r === null || typeof r === "string").toBe(true);
   });
 });
+
+describe("enabledLocalLimits tier-launched", () => {
+  it("keeps the local reading of a disabled provider a tier launches", () => {
+    const ls = [{ provider: "codernext4", kind: "local", up: true }, { provider: "stray", kind: "local", up: true }] as unknown as Parameters<typeof enabledLocalLimits>[0];
+    const out = enabledLocalLimits(ls, { codernext4: { enabled: false }, stray: { enabled: false } }, ["codernext4"]);
+    expect(out.map((l) => l.provider)).toEqual(["codernext4"]);
+  });
+});

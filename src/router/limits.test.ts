@@ -434,6 +434,20 @@ describe("local server up/down and prefix cache", () => {
     expect(stale.prefixCache).toBeUndefined();
   });
 
+  it("a disabled provider launched by a tier is listed as a running local; one no tier launches is not", async () => {
+    const srv = http.createServer((_q, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+    });
+    const port = await listen(srv);
+    const dir = mkdtempSync(join(tmpdir(), "pc-"));
+    const off = { ...local(port), enabled: false };
+    const mk = (tiers: string[]) => new LimitsCache({ providers: () => ({ tiered: off, stray: off }), rows: () => [], lastGoodFile: join(dir, "lg.json"), gate: new Backoff(60_000), fetchAnthropic: async () => "{}", tierProviders: () => tiers }, 1);
+    const got = await mk(["tiered"]).get(Date.now());
+    await close(srv);
+    expect(got.filter((x) => x.kind === "local").map((x) => [x.provider, x.up])).toEqual([["tiered", true]]);
+  });
+
   it("restart: a new LimitsCache serves the persisted reading with its age; older than 10 min it is dropped", async () => {
     const srv = http.createServer((q, res) => {
       if (q.url === "/v1/cache/stats") return void res.destroy();

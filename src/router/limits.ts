@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
 import { serves } from "../workers/served-models.js";
+import { isLocalCandidate, tierProviderNames } from "../workers/local-provider.js";
 import type { UsageRow } from "./usage.js";
 import { writeRate, percentile } from "./speed.js";
 import { isLoopbackHostname } from "../utils/loopback.js";
@@ -699,6 +700,8 @@ export interface LimitsDeps {
   rows: () => UsageRow[];
   advisorFile?: string;
   estimateFile?: string;
+  /** Providers a `local:` tier launches (default: workers.yaml); they are local candidates while `enabled: false`. */
+  tierProviders?: () => string[];
   /** Last-good store override (tests); defaults to lastGoodPath(). */
   lastGoodFile?: string;
   /** Shared poll gate override (tests); defaults to gateFile(). */
@@ -815,9 +818,11 @@ export class LimitsCache {
         ...(this.deps.fetchAnthropic ? { fetchUsage: this.deps.fetchAnthropic } : {}),
       })
     );
+    const tiers = this.deps.tierProviders?.() ?? tierProviderNames();
     for (const [name, p] of Object.entries(providers)) {
-      if (p.native || name === ANTHROPIC_NATIVE || p.enabled === false || !p.baseUrl) continue;
+      if (p.native || name === ANTHROPIC_NATIVE || !p.baseUrl) continue;
       if (isLocalUrl(p.baseUrl)) {
+        if (!isLocalCandidate(p, name, tiers)) continue;
         jobs.push(
           localLimits(name, p, rows, now, (pending) => {
             const done = pending.then((stats) => this.prefixArrived(name, stats, now));
@@ -826,6 +831,7 @@ export class LimitsCache {
           }, this.deps.probe ?? {})
         );
       }
+      else if (p.enabled === false) continue;
       else if (p.usage) plan(name, (lg) => providerPlanLimits(name, p, now, lg));
       else if (caps[name]) {
         jobs.push(Promise.resolve({ provider: name, kind: "estimated", windows: estimateWindows(rows, name, caps[name]!, now), fetchedAt: now }));
