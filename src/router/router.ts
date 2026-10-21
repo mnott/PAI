@@ -36,6 +36,7 @@ import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { withTierProviders } from "../workers/local-provider.js";
 import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
+import { instanceEngineKey, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -222,6 +223,32 @@ export interface RouterOptions {
    * spelling. Default: router log line + a [model] record in tool-errors.jsonl.
    */
   onToolCaseFix?: (info: { from: string; to: string; model: string; provider: string; session?: string }) => void;
+  /** running instances of local models; default: local-instances.json, live pids only, cached 2 s */
+  instances?: () => LocalInstance[];
+}
+
+/** Managed instances from the state file whose process is alive; cached 2 s so start/stop needs no router restart. */
+function stateFileInstances(): () => LocalInstance[] {
+  let at = 0;
+  let rows: LocalInstance[] = [];
+  return () => {
+    if (Date.now() - at < 2000) return rows;
+    at = Date.now();
+    try {
+      rows = readInstances(workersLogDir(readWorkersSection().workers)).filter((i) => {
+        if (i.origin === "registered" || !i.pid) return false;
+        try {
+          process.kill(i.pid, 0);
+          return true;
+        } catch (e) {
+          return (e as NodeJS.ErrnoException).code === "EPERM";
+        }
+      });
+    } catch {
+      rows = [];
+    }
+    return rows;
+  };
 }
 
 // accept-encoding dropped: usage is parsed from the plain response as it streams
@@ -417,6 +444,9 @@ export function routerHandler(
   const busts = new BustDetector();
   const gaps = new GapTracker();
   const warned = new Set<string>();
+  const instancesOf = options?.instances ?? stateFileInstances();
+  /** requests routed to an instance and not yet released, by engine key */
+  const held = new Map<string, number>();
   let warnedCompressed = false;
   const onDuplicate = (model: string, cands: string[]) => {
     if (warned.has(model)) return;
@@ -500,6 +530,25 @@ export function routerHandler(
       if (!prep.ok) return fail(prep.status, prep.message);
       const { up, target, requested } = prep;
       const prov = target.kind === "claude" ? ANTHROPIC_NATIVE : target.name;
+      // scheduler / parker engine: one per running instance (n=1 keeps the bare provider name)
+      let engine = prov;
+      if (target.kind === "provider" && isLocal(up.url)) {
+        const picked = pickInstance(prov, instancesOf().filter((i) => i.provider === target.name), (k) => held.get(k) ?? 0);
+        if (picked) {
+          const u = new URL(picked.url);
+          up.url.protocol = u.protocol;
+          up.url.host = u.host;
+          engine = instanceEngineKey(picked);
+          held.set(engine, (held.get(engine) ?? 0) + 1);
+          let freed = false;
+          const free = () => {
+            if (freed) return;
+            freed = true;
+            held.set(engine, Math.max(0, (held.get(engine) ?? 1) - 1));
+          };
+          res.on("close", free);
+        }
+      }
       const isCount = path.includes("/count_tokens");
       const session = sessionTag(req.headers["x-claude-code-session-id"]);
       const sessionId = headerValue(req.headers["x-claude-code-session-id"], 64);
@@ -624,7 +673,7 @@ export function routerHandler(
         if (target.kind === "provider" && isLocal(up.url) && e.code === "ECONNREFUSED") {
           return fail(
             503,
-            `local model down — ECONNREFUSED reaching ${up.url.origin} (provider ${target.name} in workers.yaml); start it with pai worker local <tier>`,
+            `local model down — ECONNREFUSED reaching ${up.url.origin} (provider ${target.name} in workers.yaml); start it with pai worker local start <model>`,
             target.model,
             prov
           );
@@ -647,7 +696,7 @@ export function routerHandler(
       if (target.kind === "provider" && !isCount && isLocal(up.url) && schedEnabled()) {
         try {
           const sched = sharedScheduler();
-          sharedParker().noteEngine(prov, up.url.origin);
+          sharedParker().noteEngine(engine, up.url.origin);
           sched.idleHook ??= (e, w, n) => sharedParker().maybePark(e, w, n);
           const sess = headerValue(req.headers["x-pai-session"], 80) || "anon";
           const worker = headerValue(req.headers["x-pai-worker"], 80) || `conn:${sessionId?.slice(0, 8) ?? req.socket.remotePort ?? "?"}`;
@@ -669,7 +718,7 @@ export function routerHandler(
           }
           scheduled = true;
           sched
-            .acquire(prov, sess, worker, {
+            .acquire(engine, sess, worker, {
               onAbort: (cb) =>
                 res.on("close", () => {
                   gone = true;
@@ -682,7 +731,7 @@ export function routerHandler(
                 const go = () =>
                   forward((u, opts) => ticket.release(u ? { prefill: u.input_tokens > 0 ? newPrefill(u) : estimateTokens(up.body), decode: u.output_tokens } : undefined, opts));
                 // a parked conversation is restored while this request holds the engine (active time), never failing it
-                sharedParker().restoreIfParked(prov, worker, sched.slotHolder(prov)).then(go, go);
+                sharedParker().restoreIfParked(engine, worker, sched.slotHolder(engine)).then(go, go);
               },
               () => {
                 stopPings();

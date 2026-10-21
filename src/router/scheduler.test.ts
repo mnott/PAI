@@ -51,6 +51,20 @@ describe("RequestScheduler", () => {
     expect(r.order).toEqual(["a1", "a2"]);
   });
 
+  it("separate engines (instances of one model) do not block each other", async () => {
+    const r = rig();
+    const got: string[] = [];
+    void r.s.acquire("gyro-m", "A", "w1").then(() => got.push("w1"));
+    void r.s.acquire("gyro-m#2", "A", "w2").then(() => got.push("w2"));
+    void r.s.acquire("gyro-m", "A", "w3").then(() => got.push("w3"));
+    await flush();
+    expect(got).toEqual(["w1", "w2"]);
+    const snap = r.s.snapshot().engines;
+    expect(snap["gyro-m"].inflight?.worker).toBe("w1");
+    expect(snap["gyro-m#2"].inflight?.worker).toBe("w2");
+    expect(snap["gyro-m"].queued).toEqual({ A: 1 });
+  });
+
   it("is fair across sessions: long prefills push a session behind", async () => {
     const r = rig();
     r.ask("a1", "A");

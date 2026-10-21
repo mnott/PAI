@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parseWorkersConfig } from "../workers/config.js";
 import http from "node:http";
 import { claudeUpstream, routerPort } from "./router.js";
+import type { LocalInstance } from "../workers/local-instances.js";
 import { createRouter, duplicateModelIds, estimateTokens, modelsReply, prepare, resolveModel, routingTable, stripContextSuffix, stripThinking } from "./router.js";
 
 const dir = mkdtempSync(join(tmpdir(), "router-"));
@@ -354,5 +355,63 @@ describe("router: tier-launched local providers", () => {
     const none = withTierProviders(providers, []);
     expect(routingTable(none).has("devstral-small-2")).toBe(false);
     expect(resolveModel("devstral-small-2", none)).toMatchObject({ kind: "unknown" });
+  });
+});
+
+describe("router: spread over local instances", () => {
+  const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+  const post = (port: number) =>
+    new Promise<number>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "gyro" } }, (x) => {
+        x.resume();
+        x.on("end", () => resolve(x.statusCode ?? 0));
+      });
+      q.end(JSON.stringify({ model: "gyro-m", messages: [{ role: "user", content: "hi" }] }));
+    });
+  const inst = (n: number, port: number): LocalInstance => ({
+    id: `gyro-m#${n}`, model: "gyro-m", provider: "gyro", url: `http://127.0.0.1:${port}`, origin: "managed",
+    port, pid: process.pid, state: "ready", startedAt: 0, log: "",
+  });
+
+  it("2 instances take N concurrent requests; a dead one is skipped; none -> 503", async () => {
+    const hits: Record<string, number> = { a: 0, b: 0 };
+    const mk = (k: string) =>
+      http.createServer((req, res) => {
+        req.resume();
+        req.on("end", () => {
+          hits[k]++;
+          setTimeout(() => {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ usage: { input_tokens: 1, output_tokens: 1 } }));
+          }, 20);
+        });
+      });
+    const a = mk("a");
+    const b = mk("b");
+    const pa = await listen(a);
+    const pb = await listen(b);
+    // the provider's own url is a dead port: only instance expansion can reach a server
+    const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: "http://127.0.0.1:1", models: { default: "gyro-m" } } } }).providers;
+    let running: LocalInstance[] = [inst(1, pa), inst(2, pb)];
+    const r = createRouter(() => prov, "http://127.0.0.1:1", () => {}, undefined, undefined, { instances: () => running });
+    const port = await listen(r);
+    try {
+      const codes = await Promise.all(Array.from({ length: 6 }, () => post(port)));
+      expect(codes).toEqual([200, 200, 200, 200, 200, 200]);
+      expect(hits.a).toBeGreaterThan(0);
+      expect(hits.b).toBeGreaterThan(0);
+      expect(hits.a + hits.b).toBe(6);
+      running = [inst(2, pb)];
+      const before = { ...hits };
+      await Promise.all(Array.from({ length: 3 }, () => post(port)));
+      expect(hits.a).toBe(before.a);
+      expect(hits.b).toBe(before.b + 3);
+      running = [];
+      expect(await post(port)).toBe(503);
+    } finally {
+      r.close();
+      a.close();
+      b.close();
+    }
   });
 });

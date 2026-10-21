@@ -182,3 +182,25 @@ export function registeredInstances(providers: Record<string, RegisteredProvider
   }
   return out;
 }
+
+const rrCounters = new Map<string, number>();
+
+/**
+ * The instance (of `running`, already one provider's; `model` keys the round-robin) to send the next request to: the ready one with the
+ * fewest requests in flight (`busy` by engine key); ties go round-robin per
+ * model. Null when none is ready.
+ */
+export function pickInstance(
+  model: string,
+  running: LocalInstance[],
+  busy: (engineKey: string) => number,
+): LocalInstance | null {
+  const ready = running.filter((i) => i.state === "ready");
+  if (!ready.length) return null;
+  const load = ready.map((i) => busy(instanceEngineKey(i)));
+  const min = Math.min(...load);
+  const tied = ready.filter((_, k) => load[k] === min);
+  const n = rrCounters.get(model) ?? 0;
+  rrCounters.set(model, n + 1);
+  return tied[n % tied.length];
+}
