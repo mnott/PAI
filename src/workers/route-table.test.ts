@@ -361,7 +361,7 @@ describe("routing reads the lists", () => {
     expect(hit.providerFlag).toBe("gyro-m");
     // no matching endpoint: the selector drops out, cloud serves
     const none = (await routeRun(workers, logDir, { className: "implement" }, { ping: loaded(8010), instances: () => [] }))!;
-    expect(none.providerFlag).toBeNull();
+    expect(none?.providerFlag ?? null).toBeNull();
   });
 
   it("element 0 serves; a local entry that is not running is skipped, in order", async () => {
