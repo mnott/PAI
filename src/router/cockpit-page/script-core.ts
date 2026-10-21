@@ -322,7 +322,8 @@ function applyTileOrder(el){
   var tid=t.getAttribute("data-tid"),min=mins.indexOf(tid)>=0,nm=t.getAttribute("data-tname")||tid;
   t.classList.toggle("tmin",min);
   var b=t.__tmb;
-  if((el.getAttribute&&el.getAttribute("data-tnomin"))){t.__tcont=el;return}
+  t.__tcont=el;wireSpan(t,nm);
+  if((el.getAttribute&&el.getAttribute("data-tnomin"))){return}
   if(!b){
    b=t.__tmb=document.createElement("button");b.type="button";b.className="tctl";
    b.onclick=function(){
@@ -338,7 +339,50 @@ function applyTileOrder(el){
   b.setAttribute("aria-label",(min?"restore ":"minimize ")+nm);b.title=min?"restore":"minimize";
   b.textContent=min?"+":"–";
  });
+ applySpans(el,open);
  el.__html=""; // the html no longer matches the source string: a later identical poll must re-apply
+}
+/** Tile widths in a 12-column grid: 12 full, 6 half, 4 third, 3 quarter. Saved beside the order under
+ *  tkey+"#w" ({tid:span}). A container with no saved span keeps its own auto layout untouched; one with
+ *  any gets the 12-column grid, and its other tiles keep the width they had (measured, snapped). */
+var SPANS=[12,6,4,3],SPAN_MARK={12:"1",6:"\u00bd",4:"\u2153",3:"\u00bc"};
+function snapSpan(w,full){
+ if(!(full>0)||!(w>0))return 12;
+ var r=w/full*12,best=12;
+ SPANS.forEach(function(c){if(Math.abs(c-r)<Math.abs(best-r))best=c});
+ return best;
+}
+function applySpans(el,open){
+ var key=tkeyOf(el),sp=tileOrder()[key+"#w"]||{},any=false,i;
+ for(i=0;i<open.length;i++)if(sp[open[i].getAttribute("data-tid")])any=true;
+ if(!any){el.classList.toggle("tspan",false);for(i=0;i<open.length;i++){if(open[i].style&&open[i].style.removeProperty)open[i].style.removeProperty("--sp");open[i].__sp=0;if(open[i].__twd)open[i].__twd.textContent="\u2194"}return}
+ // measure the auto layout before the 12-column grid replaces it
+ el.classList.toggle("tspan",false);
+ var full=el.offsetWidth||0;
+ for(i=0;i<open.length;i++){var t=open[i];t.__dsp=snapSpan(t.offsetWidth||0,full)}
+ el.classList.toggle("tspan",true);
+ for(i=0;i<open.length;i++){
+  var t2=open[i],v=sp[t2.getAttribute("data-tid")]||t2.__dsp||12;
+  t2.__sp=v;
+  if(t2.style&&t2.style.setProperty)t2.style.setProperty("--sp",String(v));
+  if(t2.__twd)t2.__twd.textContent=SPAN_MARK[v]||"\u2194";
+ }
+}
+/** The width control on a tile: a click cycles full, half, third, quarter and saves it. */
+function wireSpan(t,nm){
+ var b=t.__twd;
+ if(!b){
+  b=t.__twd=document.createElement("button");b.type="button";b.className="twd";
+  b.onclick=function(){
+   var c=t.__tcont,s=tileOrder(),k=tkeyOf(c)+"#w",m=Object.assign({},s[k]||{}),id=t.getAttribute("data-tid");
+   var cur=m[id]||(t.__sp?t.__dsp:snapSpan(t.offsetWidth||0,c.offsetWidth||0))||12,nx=SPANS[(SPANS.indexOf(cur)+1)%SPANS.length];
+   m[id]=nx;s[k]=m;saveTileOrder(s);applyTileOrder(c);
+   if(t.__twd&&t.__twd.focus)t.__twd.focus({preventScroll:true});
+  };
+  t.appendChild(b);
+ }
+ b.setAttribute("aria-label","width of "+nm);b.title="width: click to cycle full, half, third, quarter";
+ if(!b.textContent)b.textContent="\u2194";
 }
 /** Tile ids, chip name and chip value as attributes, and the move grip: the markup every orderable tile carries. */
 function tileAttrs(id,name,val){return' data-tid="'+esc(id)+'" data-tname="'+esc(name)+'" data-tval="'+esc(val)+'"'}

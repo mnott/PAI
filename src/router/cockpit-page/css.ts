@@ -86,6 +86,10 @@ svg text{fill:var(--dim);font-size:10px}
 .tmin{display:flex;flex-direction:row;align-items:center;gap:8px;padding:4px 44px 4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;margin:0;min-width:0}
 .tmin::before{content:attr(data-tname);font-weight:600}.tmin::after{content:attr(data-tval);color:var(--dim);font-variant-numeric:tabular-nums}
 .tmin>*:not(.tctl):not(.tgrip){display:none}.tmin .tgrip{right:6px;opacity:.6}
+.twd{position:absolute;top:2px;right:34px;opacity:0;transition:opacity .12s;border:0;background:none;color:var(--dim);font-size:12px;line-height:1;cursor:pointer;padding:2px 4px;z-index:1}
+.mt:hover .twd,.mcard:hover .twd,.pgroup:hover .twd,.kpi:hover .twd,.ring:hover .twd,.twd:focus-visible{opacity:.7}@media(hover:none){.twd{opacity:.6}}.tmin .twd{display:none}
+.tspan{display:grid!important;grid-template-columns:repeat(12,minmax(0,1fr))!important}.tspan>[data-tid]{grid-column:span var(--sp,12)!important}
+@media(max-width:699px){.tspan>[data-tid]{grid-column:1/-1!important}}
 .mt:hover .tgrip,.tgrip:focus-visible{opacity:.6}@media(hover:none){.tgrip{opacity:.5}}
 .sgrip{background:none;border:0;padding:0 4px 0 0;color:var(--dim);cursor:grab;font:inherit;line-height:1;user-select:none;-webkit-user-select:none;touch-action:none}.sgrip:hover{color:var(--acc)}.sgrip:focus-visible{outline:2px solid var(--acc);border-radius:4px}
 .dropind{position:fixed;z-index:9;pointer-events:none;border-radius:2px;background:var(--acc);box-shadow:0 0 0 1px color-mix(in srgb,var(--acc) 40%,transparent)}

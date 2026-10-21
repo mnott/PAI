@@ -2413,7 +2413,7 @@ describe("cockpit drag-and-drop layout", () => {
   it("tile order persists across a setHtml rebuild: applyTileOrder reorders by data-tid, new tiles go last", () => {
     // parentNode set by appendChild, like a real element: applyTileOrder orders live children only
     const mk = (id: string, parent: any) => ({ style: {}, parentNode: parent, classList: { toggle() {} }, appendChild() {}, getAttribute: (k: string) => (k === "data-tid" ? id : null) });
-    const el: any = { __tkey: "rt / m tiles", __html: "src" };
+    const el: any = { __tkey: "rt / m tiles", __html: "src", classList: { toggle() {} } };
     const t1 = mk("Speed", el), t2 = mk("Memory", el), t3 = mk("Workers", el);
     const kids = [t1, t2, t3];
     Object.defineProperty(el, "children", { get: () => kids });
@@ -2425,7 +2425,7 @@ describe("cockpit drag-and-drop layout", () => {
     o[el.__tkey] = ["Workers", "Memory"];
     A.saveTileOrder(o);
     // the poll rebuild: fresh elements, source order
-    const el2: any = { __tkey: el.__tkey, __html: "src" };
+    const el2: any = { __tkey: el.__tkey, __html: "src", classList: { toggle() {} } };
     const r1 = mk("Speed", el2), r2 = mk("Memory", el2), r3 = mk("Workers", el2);
     const kids2 = [r1, r2, r3];
     Object.defineProperty(el2, "children", { get: () => kids2 });

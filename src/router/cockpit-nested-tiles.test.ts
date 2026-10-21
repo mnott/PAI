@@ -29,6 +29,10 @@ const src = [
   COCKPIT_HTML.match(/function saveTileOrder\([^\n]*\n/)![0],
   COCKPIT_HTML.match(/function tids\([\s\S]*?\n\}\n/)![0],
   COCKPIT_HTML.match(/function tkeyOf\([^\n]*\n/)![0],
+  COCKPIT_HTML.match(/var SPANS=[^\n]*\n/)![0],
+  COCKPIT_HTML.match(/function snapSpan\([\s\S]*?\n\}\n/)![0],
+  COCKPIT_HTML.match(/function applySpans\([\s\S]*?\n\}\n/)![0],
+  COCKPIT_HTML.match(/function wireSpan\([\s\S]*?\n\}\n/)![0],
   COCKPIT_HTML.match(/function applyTileOrder\([\s\S]*?\n\}\n/)![0],
 ].join("\n");
 
