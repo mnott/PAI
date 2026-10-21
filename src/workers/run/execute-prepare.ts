@@ -12,6 +12,8 @@ import {
   addSchedulingHeaders,
   buildRunEnv,
   claudeCommand,
+  claudeSettingsExtra,
+  pinnedSettings,
   isLoopbackProvider,
   routeLoopbackViaRouter,
 } from "../run-env.js";
@@ -289,7 +291,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   const claudeCmd = claudeCommand(env);
   let cmd: string[] = [...claudeCmd];
   cmd.push(...modelFlagArgs(headless, model, Boolean(parsed.callerModel)));
-  const slimArgs = headless ? slimProfileArgs(logDir, wid, parsed.rest, env, undefined, target.provider) : [];
+  const slimArgs = headless ? slimProfileArgs(logDir, wid, parsed.rest, env, undefined, target.provider, pinnedSettings(env, undefined, claudeSettingsExtra(env))) : [];
   cmd.push(...chromeArgs, ...mcpArgs, ...toolArgs, ...toolsFlag, ...slimArgs, ...restArgs);
   if (headless) {
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
+import { pinnedSettings } from "./run-env.js";
 import { poolSlotSettingsId, slimProfileArgs, slimSettings } from "./slim-profile.js";
 
 const USER = {
@@ -43,6 +44,20 @@ describe("slim worker profile", () => {
     expect(slimProfileArgs(dir, "w1", [], { PAI_WORKER_FULL_PROFILE: "1" }, user)).toEqual([]);
     expect(slimProfileArgs(dir, "w1", ["--settings", "x"], {}, user)).toEqual([]);
     expect(slimProfileArgs(dir, "w1", [], {}, join(dir, "missing.json"))).toEqual([]);
+  });
+});
+
+describe("slimProfileArgs route pin", () => {
+  it("carries the route pin inside the file: Claude Code keeps only the last --settings", () => {
+    const dir = mkdtempSync(join(tmpdir(), "slim-"));
+    const user = join(dir, "settings.json");
+    writeFileSync(user, JSON.stringify({ ...USER, env: { KEEP: "1", ANTHROPIC_BASE_URL: "http://user-proxy" } }));
+    const pin = pinnedSettings({}, true);
+    const file = JSON.parse(readFileSync(slimProfileArgs(dir, "w2", [], {}, user, undefined, pin)[3]!, "utf8"));
+    expect(file.env.ANTHROPIC_BASE_URL).toBe(pin.env.ANTHROPIC_BASE_URL);
+    expect(file.env.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(file.env.KEEP).toBe("1");
+    expect(file.hooks.PreToolUse).toBeDefined();
   });
 });
 

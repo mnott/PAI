@@ -29,7 +29,7 @@ import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
 import { getProviderOrNative, readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
-import { buildRunEnv, claudeCommand, isLoopbackProvider, loopbackRouterChoice } from "./run-env.js";
+import { buildRunEnv, claudeCommand, claudeSettingsExtra, isLoopbackProvider, loopbackRouterChoice, pinnedSettings } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
 import { resolveLocalProvider } from "./local-provider.js";
@@ -500,7 +500,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // a slot is born like a bare headless worker: the default core grant,
     // narrowed schemas (headlessToolsFlag([]) names none) included
     cmd.push(...(headlessToolsFlag([]).length ? headlessToolsFlag([]) : ["--tools", DEFAULT_WORKER_TOOLS]));
-    const slim = slimProfileArgs(logDir, poolSlotSettingsId(providerName, model), [], env, undefined, provider);
+    const slim = slimProfileArgs(logDir, poolSlotSettingsId(providerName, model), [], env, undefined, provider, pinnedSettings(env, routerOn, claudeSettingsExtra(env)));
     cmd.push(...slim);
     cmd.push("--output-format", "stream-json", "--verbose", "--input-format", "stream-json");
     // stream-json input is a print-mode feature: without -p the CLI would

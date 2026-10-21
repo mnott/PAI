@@ -462,6 +462,27 @@ describe("pool slot route", () => {
     expect(h.argvs[0]!.join(" ")).not.toContain("example.invalid");
   });
 
+  it("SlotEffectiveSettingsKeepRouter — the LAST --settings (the only one Claude Code honours) still pins the router beside the slim profile", async () => {
+    const cfg = mkdtempSync(join(tmpdir(), "slot-cfg-"));
+    writeFileSync(join(cfg, "settings.json"), JSON.stringify({ env: { KEEP: "1" }, permissions: { allow: ["Bash"] } }));
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = cfg;
+    try {
+      const h = makeHost({}, undefined, { routerEnabled: true, prodBuilders: true });
+      liveHosts.push(h.host);
+      await h.host.runTask(task());
+      const argv = h.argvs[0]!;
+      const last = argv[argv.lastIndexOf("--settings") + 1]!;
+      const eff = JSON.parse(last.startsWith("{") ? last : readFileSync(last, "utf8"));
+      expect(argv.filter((a) => a === "--settings")).toHaveLength(2);
+      expect(eff.env.KEEP).toBe("1");
+      expect(eff.env.ANTHROPIC_BASE_URL).toBe(`http://127.0.0.1:${routerPort()}`);
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+      else process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+  });
+
   it("SlotEnvDirectWhenRouterOff — the provider route is pinned as before", async () => {
     const h = makeHost({}, undefined, { routerEnabled: false, prodBuilders: true });
     liveHosts.push(h.host);

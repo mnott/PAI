@@ -262,9 +262,12 @@ export function routerUrl(): string {
  * pinned to api.anthropic.com so a global route cannot pull it in either.
  */
 export function claudeCommand(env: NodeJS.ProcessEnv, routerEnabled?: boolean): string[] {
-  // set by buildRunEnv for a headless non-anthropic worker: no operator output style
-  const extra = env.CLAUDE_CODE_DISABLE_CLAUDE_MDS === "1" ? { outputStyle: "default" } : undefined;
-  return ["claude", ...pinnedSettingsArgs(env, routerEnabled, extra)];
+  return ["claude", ...pinnedSettingsArgs(env, routerEnabled, claudeSettingsExtra(env))];
+}
+
+/** Settings keys beyond the route that a spawn pins: set by buildRunEnv for a headless non-anthropic worker (no operator output style). */
+export function claudeSettingsExtra(env: NodeJS.ProcessEnv): Record<string, unknown> | undefined {
+  return env.CLAUDE_CODE_DISABLE_CLAUDE_MDS === "1" ? { outputStyle: "default" } : undefined;
 }
 
 const PINNED_KEYS = [
@@ -289,10 +292,24 @@ export function pinnedSettingsArgs(
   routerEnabled: boolean = loadConfig().router.enabled,
   extra?: Record<string, unknown>
 ): string[] {
+  return ["--settings", JSON.stringify(pinnedSettings(env, routerEnabled, extra))];
+}
+
+/**
+ * The settings object behind pinnedSettingsArgs. Claude Code keeps only the
+ * LAST `--settings` flag (measured 2026-10-21: a pin followed by the slim
+ * profile's file sent a native worker straight to api.anthropic.com), so the
+ * slim profile merges this object into its own file instead of trailing it.
+ */
+export function pinnedSettings(
+  env: NodeJS.ProcessEnv,
+  routerEnabled: boolean = loadConfig().router.enabled,
+  extra?: Record<string, unknown>
+): { env: Record<string, string> } & Record<string, unknown> {
   const native = routerEnabled ? routerUrl() : ANTHROPIC_FIRST_PARTY_URL;
   const pinned: Record<string, string> = { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL || native };
   if (env.ANTHROPIC_BASE_URL) for (const k of PINNED_KEYS) if (env[k]) pinned[k] = env[k] as string;
-  return ["--settings", JSON.stringify({ env: pinned, ...extra })];
+  return { env: pinned, ...extra };
 }
 
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {

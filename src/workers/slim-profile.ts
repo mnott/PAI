@@ -138,6 +138,7 @@ export function slimProfileArgs(
   env: NodeJS.ProcessEnv = process.env,
   userSettingsPath = join(claudeHomeDir(), "settings.json"),
   provider?: WorkerProvider,
+  pin?: { env: Record<string, string> } & Record<string, unknown>,
 ): string[] {
   if (env.PAI_WORKER_FULL_PROFILE === "1") return [];
   if (rest.some((a) => a === "--settings" || a.startsWith("--settings=") || a.startsWith("--setting-sources"))) return [];
@@ -150,7 +151,10 @@ export function slimProfileArgs(
   }
   mkdirSync(logDir, { recursive: true });
   const path = join(logDir, `${wid}.settings.json`);
-  writeFileSync(path, JSON.stringify(slimSettings(user, env, provider, noteHookCommand(logDir)), null, 2) + "\n", "utf8");
+  const slim = slimSettings(user, env, provider, noteHookCommand(logDir));
+  // Claude Code honours one --settings only (the last), so the route pin travels inside this file
+  if (pin) Object.assign(slim, { ...pin, env: { ...(slim.env as Record<string, unknown> | undefined), ...pin.env } });
+  writeFileSync(path, JSON.stringify(slim, null, 2) + "\n", "utf8");
   return ["--setting-sources", "project,local", "--settings", path];
 }
 
