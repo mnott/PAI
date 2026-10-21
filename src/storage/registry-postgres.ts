@@ -17,7 +17,7 @@
 import pg from "pg";
 import { MergeError } from "../registry/merge.js";
 import type { Pool, PoolClient } from "pg";
-import { postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
+import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
 import type {
   RegistryBackend,
   Project,
@@ -105,7 +105,7 @@ export class PostgresRegistryBackend implements RegistryBackend {
     this.pool = new PgPool({
       connectionString: connStr,
       max: config.maxConnections ?? 5,
-      connectionTimeoutMillis: config.connectionTimeoutMs ?? 5000,
+      connectionTimeoutMillis: config.connectionTimeoutMs ?? DEFAULT_PG_CONNECTION_TIMEOUT_MS,
       idleTimeoutMillis: 30_000,
       allowExitOnIdle: true,
     });

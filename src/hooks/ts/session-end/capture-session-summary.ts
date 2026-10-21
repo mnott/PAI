@@ -10,6 +10,7 @@
 import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
+import { paiSocketPath } from "../../../runtime-paths.js";
 
 interface SessionData {
   conversation_id: string;
@@ -214,7 +215,7 @@ async function storeStructuredSummary(
     const net = await import('net');
 
     await new Promise<void>((resolve, _reject) => {
-      const client = net.createConnection('/tmp/pai.sock', () => {
+      const client = net.createConnection(paiSocketPath(), () => {
         const msg = JSON.stringify({
           id: 1,
           method: 'session_summary_store',

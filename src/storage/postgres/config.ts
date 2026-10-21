@@ -14,6 +14,9 @@ export interface PostgresConfig {
   connectionTimeoutMs?: number;
 }
 
+/** Connection timeout used when neither the config nor the shipped defaults set one. */
+export const DEFAULT_PG_CONNECTION_TIMEOUT_MS = 5000;
+
 /** The one place the Postgres URL is built: connectionString wins, else the parts with PAI's defaults. */
 export function postgresConnectionString(config: PostgresConfig): string {
   return (

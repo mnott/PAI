@@ -22,7 +22,7 @@ import type {
   SkillTelemetryRow, RecordSkillInvocationInput, QuerySkillTelemetryOptions,
 } from "../interface.js";
 import type { SearchResult, SearchOptions } from "../../memory/search.js";
-import { postgresConnectionString, type PostgresConfig } from "./config.js";
+import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./config.js";
 import { LEGACY_EMBEDDING_BINDING } from "../../memory/embedding-binding.js";
 import { bufferToVector } from "./helpers.js";
 import { searchKeyword, searchSemantic } from "./search.js";
@@ -274,7 +274,7 @@ export class PostgresBackend implements StorageBackend {
     this.pool = new PgPool({
       connectionString: connStr,
       max: config.maxConnections ?? 5,
-      connectionTimeoutMillis: config.connectionTimeoutMs ?? 5000,
+      connectionTimeoutMillis: config.connectionTimeoutMs ?? DEFAULT_PG_CONNECTION_TIMEOUT_MS,
       idleTimeoutMillis: 30_000,
       // A live pg Pool otherwise keeps a ref'd socket even while idle,
       // blocking a CLI process from reaching Node's 'beforeExit' idle state

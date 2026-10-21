@@ -25,7 +25,7 @@ import { federationDbPath } from "./sqlite/federation-db.js";
 import { registryDbPath } from "./sqlite/registry-db.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { PaiClient } from "../daemon/ipc-client.js";
-import { postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
+import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
 
 const { Pool: PgPool } = pg;
 
@@ -725,7 +725,7 @@ export async function migrateToPostgres(opts: MigrateOptions = {}): Promise<Migr
   const pool = new PgPool({
     connectionString: resolvePgConnectionString(pgConfig),
     max: 4,
-    connectionTimeoutMillis: pgConfig.connectionTimeoutMs ?? 5000,
+    connectionTimeoutMillis: pgConfig.connectionTimeoutMs ?? DEFAULT_PG_CONNECTION_TIMEOUT_MS,
   });
 
   const tables: TableReport[] = [];

@@ -1,5 +1,6 @@
 /** Step 12: PAI daemon installation (launchd plist on macOS, systemd user unit on Linux). */
 
+import { LAUNCHD_LABEL } from "../../../../daemon/daemon-pid.js";
 import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ export async function stepDaemon(rl: Rl): Promise<boolean> {
 
   const plistPath = linux
     ? join(homedir(), ".config", "systemd", "user", "pai-daemon.service")
-    : join(homedir(), "Library", "LaunchAgents", "com.pai.pai-daemon.plist");
+    : join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
   const unit = linux ? "systemd user unit" : "launchd plist";
   const exists = existsSync(plistPath);
 

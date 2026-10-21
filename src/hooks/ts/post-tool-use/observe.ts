@@ -11,6 +11,7 @@ import { connect } from 'net';
 import { sha256 } from '../../../utils/hash.js';
 import { basename } from 'path';
 import { isProbeSession } from '../lib/project-utils.js';
+import { paiSocketPath } from "../../../runtime-paths.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,7 +58,7 @@ function sendToDaemon(method: string, params: Record<string, unknown>): Promise<
   return new Promise((resolve) => {
     const timeout = setTimeout(() => { resolve(); }, 5000);
     try {
-      const socket = connect('/tmp/pai.sock', () => {
+      const socket = connect(paiSocketPath(), () => {
         const req = JSON.stringify({ id: Date.now().toString(), method, params }) + '\n';
         socket.write(req);
         socket.on('data', () => { clearTimeout(timeout); socket.destroy(); resolve(); });

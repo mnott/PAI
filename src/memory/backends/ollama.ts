@@ -9,11 +9,15 @@
  * database are not touched.
  */
 
+import { defaults } from "../../daemon/config.js";
 import type { EmbeddingBackend } from "./types.js";
 
 export const OLLAMA_ID = "ollama-f16";
 export const OLLAMA_DEFAULT_MODEL = "arctic-embed-m-v1.5-f16";
-export const OLLAMA_DEFAULT_URL = "http://127.0.0.1:11434";
+/** The shipped default Ollama URL (embedding.ollama.baseUrl in defaults/config.yaml). */
+export function ollamaDefaultUrl(): string {
+  return defaults().embedding.ollama.baseUrl;
+}
 export const TOKENIZER_MODEL = "Snowflake/snowflake-arctic-embed-m-v1.5";
 
 const BATCH = 64;
@@ -83,7 +87,7 @@ export function createOllamaBackend(
   opts: { baseUrl?: string; model?: string } = {},
   deps: OllamaDeps = {},
 ): EmbeddingBackend {
-  const baseUrl = (opts.baseUrl ?? OLLAMA_DEFAULT_URL).replace(/\/+$/, "");
+  const baseUrl = (opts.baseUrl ?? ollamaDefaultUrl()).replace(/\/+$/, "");
   const model = opts.model ?? OLLAMA_DEFAULT_MODEL;
   const f = deps.fetch ?? fetch;
   const log = deps.log ?? ((m: string) => process.stderr.write(`${m}\n`));

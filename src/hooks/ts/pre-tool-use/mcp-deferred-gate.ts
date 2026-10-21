@@ -24,6 +24,7 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { connect } from "node:net";
 import { decideMcpGate, PASS_OUTPUT, type GateHookInput } from "../lib/mcp-deferred-gate.js";
 import { isProbeSession } from "../lib/project-utils.js";
+import { paiSocketPath } from "../../../runtime-paths.js";
 
 /** Enough transcript to see the whole recent tool history; transcripts can be huge. */
 const TRANSCRIPT_TAIL_BYTES = 512 * 1024;
@@ -59,7 +60,7 @@ function sendToDaemon(method: string, params: Record<string, unknown>): Promise<
       resolve();
     }, 5000);
     try {
-      const socket = connect("/tmp/pai.sock", () => {
+      const socket = connect(paiSocketPath(), () => {
         const req = JSON.stringify({ id: Date.now().toString(), method, params }) + "\n";
         socket.write(req);
         socket.on("data", () => {
