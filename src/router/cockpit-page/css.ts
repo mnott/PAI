@@ -2,6 +2,7 @@
 
 import type { CockpitLayout } from "../cockpit-layout.js";
 import type { Num, Str } from "./types.js";
+import { winSelectCss } from "./win/select.js";
 
 /** All CSS rules. */
 export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0}
@@ -206,4 +207,6 @@ main#win-root[hidden]{display:none}
 body.winon{display:flex;flex-direction:column}body.winon>main#win-root{order:1}body.winon>main:not(#win-root){order:2}
 .wm{position:relative;height:100%}.wm-s{margin-top:2px}.wm-u{color:var(--dim);margin-left:3px;font-size:12px}.wm-sp{position:absolute;right:8px;top:6px;width:40%;height:32px}
 .wc-svg{height:calc(100% - 22px);overflow:hidden}.wc-leg{height:22px;overflow:hidden;padding:0 10px}
+.wr{padding:6px 10px;min-width:0}.wr-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}.wr-sel{flex:none}.wr .rtcls{font-size:11px}.wr-sess{margin-top:4px}.wr-sess .rtsess{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;margin-left:12px}
+${winSelectCss()}
 `;

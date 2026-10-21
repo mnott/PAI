@@ -97,11 +97,11 @@ function Select(o){
   var o=opts[i];if(!o||o.disabled)return;
   val=o.value;paintBtn();
   // refresh the marks (the old selection loses it) without closing: pick fires onChange once
-  render();
+  paintPop();
   closeP(true);
   if(onChange)onChange(o.value);
  }
- function render(){
+ function paintPop(){
   pop.textContent="";
   var lastG=null;
   for(var i=0;i<opts.length;i++){
@@ -149,15 +149,15 @@ function Select(o){
  });
  var api=btn;
  function actValue(){var i=_wactIndex();return i>=0&&opts[i]?opts[i].value:null}
- // render() rebuilds the items and drops the active mark: re-find the active option by value
+ // paintPop() rebuilds the items and drops the active mark: re-find the active option by value
  function keepActive(was){
   var a=-1;
   for(var i=0;was!==null&&i<opts.length;i++)if(opts[i].value===was&&!opts[i].disabled){a=i;break}
   if(a<0)a=firstEnabled(0,1);
   setActive(a);
  }
- api.setOptions=function(o2){var was=open?actValue():null;opts=o2||[];render();if(open)keepActive(was)};
- api.setValue=function(v){var was=open?actValue():null;val=v;paintBtn();if(open){render();keepActive(was)}};
+ api.setOptions=function(o2){var was=open?actValue():null;opts=o2||[];paintPop();if(open)keepActive(was)};
+ api.setValue=function(v){var was=open?actValue():null;val=v;paintBtn();if(open){paintPop();keepActive(was)}};
  api.setDisabled=function(on,r){dis=!!on;reason=r||"";btn.disabled=dis;if(reason)btn.title=reason;else btn.removeAttribute("title");if(dis)closeP(false)};
  api.setOptions(o.options||[]);api.setValue(o.value==null?null:o.value);
  return btn;
