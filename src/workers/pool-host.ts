@@ -106,6 +106,7 @@ import {
   type SlotSpawner,
 } from "./pool.js";
 import { usageLogFile } from "../router/usage.js";
+import { LOOPBACK_HOST, loopbackUrl } from "../utils/loopback.js";
 
 // ---------------------------------------------------------------------------
 // Slot process (real spawn)
@@ -1247,7 +1248,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   const server: Server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const url = new URL(req.url ?? "/", loopbackUrl(0));
     if (req.method === "GET" && url.pathname === "/healthz") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("ok");
@@ -1366,7 +1367,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // the replacement is not up: take the port back and keep serving
     await new Promise<void>((resolve) => {
       server.once("error", () => resolve());
-      server.listen(port, "127.0.0.1", () => resolve());
+      server.listen(port, LOOPBACK_HOST, () => resolve());
     });
     appendLedger(ledger, "POOL-HOST-RELOAD-FAILED", { pid: process.pid, bundle: opts.bundlePath, note: why });
     reloading = false;

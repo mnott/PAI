@@ -17,6 +17,7 @@ import {
   writeWorkersSection,
   WorkersConfigError,
   defaultWorkersConfig,
+  nativeAnthropicModels,
 } from "./config.js";
 
 const GLM = {
@@ -432,5 +433,11 @@ describe("workers.proxy.port", () => {
     const base = { providers: { example: GLM } } as Record<string, unknown>;
     expect(parseWorkersConfig({ ...base, proxy: { port: 9100 } }).proxy.port).toBe(9100);
     expect(() => parseWorkersConfig({ ...base, proxy: { port: 70000 } })).toThrow(/proxy\.port/);
+  });
+});
+
+describe("built-in anthropic models table", () => {
+  it("carries the orchestrator model from the shipped defaults, so no code pins opus", () => {
+    expect(nativeAnthropicModels()).toMatchObject({ default: "sonnet", fast: "haiku", orchestrator: "opus" });
   });
 });

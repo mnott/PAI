@@ -135,6 +135,8 @@ export interface RouterConfig {
   port: number;
   /** Upstream for claude-* model ids. Default: https://api.anthropic.com. */
   claudeUpstream: string;
+  /** Milliseconds a stopping router waits for in-flight requests before force-closing. Default: 120000. */
+  drainMs: number;
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
   /**

@@ -234,3 +234,19 @@ describe("loop-stop trigger", () => {
     expect(st.escalatedTo).toBe("w2");
   });
 });
+
+describe("escalate.cloud", () => {
+  const bad = (p: string, m: string): never => {
+    throw new Error(`${p} ${m}`);
+  };
+  it("defaults to the shipped sonnet/anthropic target and parses overrides", () => {
+    expect(parseEscalate(undefined, bad).cloud).toEqual({ tier: "sonnet", provider: "anthropic", model: "sonnet" });
+    expect(parseEscalate({ cloud: { tier: "big", model: "m1" } }, bad).cloud).toEqual({ tier: "big", provider: "anthropic", model: "m1" });
+    expect(() => parseEscalate({ cloud: { tier: "" } }, bad)).toThrow();
+    expect(DEFAULT_ESCALATE.cloud.tier).toBe("sonnet");
+  });
+  it("the shipped workers.yaml carries the same values", () => {
+    const e = effectiveWorkersYamlRaw(join(tmpdir(), "no-such-workers.yaml")).escalate as { cloud: unknown };
+    expect(e.cloud).toEqual(DEFAULT_ESCALATE.cloud);
+  });
+});

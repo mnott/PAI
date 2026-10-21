@@ -22,11 +22,12 @@ import { paiHomePath } from "../config/pai-home.js";
 import { loadConfig } from "../daemon/config.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { dirname, join } from "node:path";
-import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
+import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
 import { serves } from "../workers/served-models.js";
 import type { UsageRow } from "./usage.js";
 import { writeRate, percentile } from "./speed.js";
+import { isLoopbackHostname } from "../utils/loopback.js";
 
 export interface LimitWindow {
   name: string;
@@ -392,11 +393,11 @@ async function fetchAnthropicUsage(): Promise<string> {
 export async function anthropicShared(now: number, o: AnthropicPollOpts = {}): Promise<ProviderLimits> {
   const gate = o.gate ?? sharedGate();
   const file = o.lastGoodFile ?? lastGoodPath();
-  const lg = readLastGood(file)["anthropic"];
-  const base = { provider: "anthropic", kind: "plan" as const, fetchedAt: now };
-  const wait = gate.remaining("anthropic", now);
+  const lg = readLastGood(file)[ANTHROPIC_NATIVE];
+  const base = { provider: ANTHROPIC_NATIVE, kind: "plan" as const, fetchedAt: now };
+  const wait = gate.remaining(ANTHROPIC_NATIVE, now);
   if (wait > 0) {
-    return staleReading("anthropic", lg, "http 429", now, undefined, wait) ?? {
+    return staleReading(ANTHROPIC_NATIVE, lg, "http 429", now, undefined, wait) ?? {
       ...base,
       windows: [],
       error: `provider asked us to slow down, next try in ${humanMinutes(wait)}`,
@@ -408,14 +409,14 @@ export async function anthropicShared(now: number, o: AnthropicPollOpts = {}): P
   try {
     const windows = parseAnthropicUsage(await (o.fetchUsage ?? fetchAnthropicUsage)());
     if (!windows.length) throw new Error("no usage windows in response");
-    gate.reset("anthropic");
+    gate.reset(ANTHROPIC_NATIVE);
     writeLastGood(file, { ...readLastGood(file), anthropic: { windows, fetchedAt: now } });
     return { ...base, windows };
   } catch (e) {
     const err = e as Error;
     const limited = err instanceof HttpError && err.status === 429;
-    const retry = limited ? gate.penalize("anthropic", now, (err as HttpError).retryAfterMs) : undefined;
-    const stale = staleReading("anthropic", lg, err.message, now, undefined, retry);
+    const retry = limited ? gate.penalize(ANTHROPIC_NATIVE, now, (err as HttpError).retryAfterMs) : undefined;
+    const stale = staleReading(ANTHROPIC_NATIVE, lg, err.message, now, undefined, retry);
     if (stale) return stale;
     if (o.advisorFile) {
       try {
@@ -651,8 +652,7 @@ export function decodeTokPerSec(rows: UsageRow[], provider: string, now: number)
 
 function isLocalUrl(u: string): boolean {
   try {
-    const h = new URL(u).hostname;
-    return h === "127.0.0.1" || h === "localhost";
+    return isLoopbackHostname(new URL(u).hostname);
   } catch {
     return false;
   }
@@ -783,7 +783,7 @@ export class LimitsCache {
       })
     );
     for (const [name, p] of Object.entries(providers)) {
-      if (p.native || name === "anthropic" || p.enabled === false || !p.baseUrl) continue;
+      if (p.native || name === ANTHROPIC_NATIVE || p.enabled === false || !p.baseUrl) continue;
       if (isLocalUrl(p.baseUrl)) {
         jobs.push(
           localLimits(name, p, rows, now, (pending) => {
@@ -804,7 +804,7 @@ export class LimitsCache {
     const store = readLastGood(lastGoodFile);
     let dirty = false;
     for (const r of results) {
-      if (r.provider === "anthropic") continue;
+      if (r.provider === ANTHROPIC_NATIVE) continue;
       if (r.error) {
         if (r.rateLimited) this.backoff.penalize(r.provider, now, r.retryAfterMs);
       } else {

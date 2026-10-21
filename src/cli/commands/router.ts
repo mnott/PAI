@@ -9,7 +9,7 @@ import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, routerPort } from "../../router/router.js";
-import { defaultV1Guard, displayHost, LOOPBACK, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
+import { defaultV1Guard, displayHost, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
 import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler } from "../../router/cockpit.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
@@ -27,6 +27,7 @@ import { loadConfig } from "../../daemon/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
 import { restartRouter } from "../../router/restart.js";
+import { LOOPBACK_HOST } from "../../utils/loopback.js";
 
 const out = (s: string) => void process.stdout.write(s + "\n");
 
@@ -40,7 +41,7 @@ const startCommand: CommandDef = {
     const pid = routerRunningPid();
     if (pid) return void out(ok(`router already running (pid ${pid})`));
     const started = spawnRouter(process.argv[1]!);
-    out(ok(`router starting on 127.0.0.1:${routerPort()} (pid ${started}), log ${routerLogFile()}`));
+    out(ok(`router starting on ${LOOPBACK_HOST}:${routerPort()} (pid ${started}), log ${routerLogFile()}`));
   },
 };
 
@@ -100,7 +101,7 @@ const runCommand: CommandDef = {
     if (!addr) {
       throw new CliError(`cannot resolve router.bind "${bindName}" — use "loopback", "tailscale", or an IPv4 (never 0.0.0.0)`, "pai daemon status");
     }
-    const remote = addr !== LOOPBACK;
+    const remote = addr !== LOOPBACK_HOST;
     const token = undefined as string | undefined; // no auth ceremony on the tailnet
     const rows = cachedRows(usageFile);
     let schedCache: { at: number; cfg: SchedConfig } | undefined;
@@ -183,7 +184,7 @@ const runCommand: CommandDef = {
       const server = http.createServer(handler);
       const tail = remote ? http.createServer(handler) : undefined;
       const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
-      listenRetry(server, port, "127.0.0.1", { waitMs: waitBindMs }).then(() => {
+      listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs }).then(() => {
         if (!managed) return;
         mkdirSync(dirname(routerPidFile()), { recursive: true });
         writeFileSync(routerPidFile(), String(process.pid));
@@ -200,7 +201,7 @@ const runCommand: CommandDef = {
         });
       }
       const bye = () => {
-        void drainServers(tail ? [server, tail] : [server], { timeoutMs: 120000 }).then(() => {
+        void drainServers(tail ? [server, tail] : [server], { timeoutMs: loadConfig().router.drainMs }).then(() => {
           if (managed) {
             try {
               if (readFileSync(routerPidFile(), "utf8").trim() === String(process.pid)) unlinkSync(routerPidFile());
@@ -262,7 +263,7 @@ const statsCommand: CommandDef = {
 export const routerCommand: CommandDef = {
   name: "router",
   summary: "Local model router: start, stop, restart, status, run, stats",
-  description: `A local router on 127.0.0.1:${routerPort()}: set ANTHROPIC_BASE_URL to it and /model picks the provider.`,
+  description: `A local router on ${LOOPBACK_HOST}:${routerPort()}: set ANTHROPIC_BASE_URL to it and /model picks the provider.`,
   examples: ["pai router status", "pai router stats --since 1d"],
   seeAlso: ["pai worker policy", "pai providers"],
   subcommands: [startCommand, stopCommand, restartCommand, statusCommand, runCommand, statsCommand],

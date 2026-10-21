@@ -18,6 +18,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
 export interface RuntimeCommands {
   /** shell command that starts the runtime (absent = no start button) */
@@ -121,7 +122,7 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
   },
   async getUrl(url) {
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+      const r = await fetch(url, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS) });
       return r.ok;
     } catch {
       return false;

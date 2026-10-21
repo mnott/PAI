@@ -6,7 +6,7 @@
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
-import { readWorkersSection, type WorkersConfig } from "../../workers/config.js";
+import { ANTHROPIC_NATIVE, readWorkersSection, type WorkersConfig } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { renderTable, makeStyle, colorEnabled, type Style } from "../help.js";
@@ -349,7 +349,7 @@ const openCommand: CommandDef = {
       if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {
         throw new CliError(
           (e as Error).message,
-          `pai open "${name}" --provider ${launchableProviderNames(workers).find((n) => n !== choice.provider) ?? "anthropic"}`
+          `pai open "${name}" --provider ${launchableProviderNames(workers).find((n) => n !== choice.provider) ?? ANTHROPIC_NATIVE}`
         );
       }
       throw e;

@@ -32,6 +32,7 @@ import {
   type PoolState,
 } from "./pool.js";
 import { request as httpRequest } from "node:http";
+import { LOOPBACK_HOST } from "../utils/loopback.js";
 
 /** Where the standalone host bundle lives (see standaloneProxyPath in proxy/server.ts). */
 export function standalonePoolHostPath(): string | null {
@@ -59,7 +60,7 @@ function setPoolEnabled(enabled: boolean): void {
 
 /** POST /shutdown, best effort: a dead host needs no shutdown. */
 function shutdownHost(port: number): void {
-  const req = httpRequest({ host: "127.0.0.1", port, path: "/shutdown", method: "POST", timeout: 1500 }, (res) => {
+  const req = httpRequest({ host: LOOPBACK_HOST, port, path: "/shutdown", method: "POST", timeout: 1500 }, (res) => {
     res.resume();
   });
   req.on("timeout", () => req.destroy());

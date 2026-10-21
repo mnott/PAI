@@ -11,6 +11,7 @@
 
 import { defaults } from "../../daemon/config.js";
 import type { EmbeddingBackend } from "./types.js";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../../utils/timeouts.js";
 
 export const OLLAMA_ID = "ollama-f16";
 export const OLLAMA_DEFAULT_MODEL = "arctic-embed-m-v1.5-f16";
@@ -71,7 +72,7 @@ export async function probeOllama(
 ): Promise<{ state: OllamaState; detail: string }> {
   let names: string[];
   try {
-    const r = await f(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    const r = await f(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS) });
     if (!r.ok) return { state: "server-down", detail: `${baseUrl} answered HTTP ${r.status}` };
     names = ((await r.json()) as { models?: Array<{ name: string }> }).models?.map((m) => m.name) ?? [];
   } catch {

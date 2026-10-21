@@ -22,6 +22,8 @@ import { bindingMatches, mismatchReason } from "../memory/embedding-binding.js";
 import { DASHBOARD_HTML } from "./dashboard-page.js";
 import type { DashboardConfig } from "./config.js";
 import { paiHomePath } from "../config/pai-home.js";
+import { LOOPBACK_HOST } from "../utils/loopback.js";
+import { LOCAL_PROBE_TIMEOUT_MS, TAILSCALE_STATUS_TIMEOUT_MS } from "../utils/timeouts.js";
 
 const TICK_MS = 30_000;
 const COUNTS_TTL_MS = 5 * 60_000;
@@ -55,7 +57,7 @@ export function hostAllowed(header: string | undefined, allowed: Iterable<string
 /** Tailnet DNS name and IPs of this machine from `tailscale status --json`; empty when unavailable. */
 export async function tailnetHosts(): Promise<string[]> {
   try {
-    const { stdout } = await promisify(execFile)("tailscale", ["status", "--json"], { timeout: 3000 });
+    const { stdout } = await promisify(execFile)("tailscale", ["status", "--json"], { timeout: TAILSCALE_STATUS_TIMEOUT_MS });
     const self = (JSON.parse(stdout) as { Self?: { DNSName?: string; TailscaleIPs?: string[] } }).Self;
     return [self?.DNSName?.replace(/\.$/, ""), ...(self?.TailscaleIPs ?? [])].filter((x): x is string => !!x);
   } catch {
@@ -394,7 +396,7 @@ export async function startDashboard(
 ): Promise<DashboardHandle> {
   const state = new DashboardState(src, Date.now, opts.historyPath);
   await state.loadHistory();
-  const allowed = [cfg.bind, "localhost", "127.0.0.1", "::1", ...(opts.extraHosts ?? (await tailnetHosts()))];
+  const allowed = [cfg.bind, "localhost", LOOPBACK_HOST, "::1", ...(opts.extraHosts ?? (await tailnetHosts()))];
 
   const server = createServer((req, res) => {
     const deny = (code: number, msg: string) => { res.writeHead(code, { "content-type": "text/plain" }); res.end(msg); };
@@ -432,7 +434,7 @@ export async function startDashboard(
 
 async function ollamaPs(baseUrl: string): Promise<LoadedModel[] | null> {
   try {
-    const r = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, { signal: AbortSignal.timeout(2000) });
+    const r = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS) });
     if (!r.ok) return null;
     const j = (await r.json()) as { models?: Array<{ name: string; size: number; size_vram: number }> };
     return (j.models ?? []).map((m) => ({ name: m.name, size: m.size, sizeVram: m.size_vram }));

@@ -33,6 +33,7 @@ import {
   writeWorkersYaml,
   type WorkersYamlData,
 } from "./workers-config.js";
+import { isLoopbackHostname } from "../utils/loopback.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -698,8 +699,7 @@ export class WorkersConfigError extends Error {}
 /** Does this provider's endpoint live on this machine? */
 export function isLocalProvider(baseUrl: string): boolean {
   try {
-    const h = new URL(baseUrl).hostname;
-    return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+    return isLoopbackHostname(new URL(baseUrl).hostname);
   } catch {
     return false;
   }
