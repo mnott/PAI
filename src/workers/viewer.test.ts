@@ -599,27 +599,48 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     await done;
   }, 8000);
 
-  for (const end of ["done", "failed"] as const) {
-    it(`exits once the status flips to ${end}, even with a live pid, and not before`, async () => {
-      const { dir, id } = chatFixture("running");
-      const sp = join(dir, `${id}.status`);
-      const st = JSON.parse(readFileSync(sp, "utf8"));
-      writeFileSync(sp, JSON.stringify({ ...st, pid: process.pid, started: nowStamp() }));
-      let finished = false;
-      const done = followWorkers(dir, id, false, 1, { FORCE_TTY: "1" }, false, {
-        stdin: new PassThrough(),
-        stdout: { write: () => true, rows: 24, columns: 80 },
-        spawnResume: () => ({ on: () => undefined }),
-      }).then(() => {
-        finished = true;
-      });
-      await sleep(1800);
-      expect(finished).toBe(false);
-      writeFileSync(sp, JSON.stringify({ ...st, pid: process.pid, started: nowStamp(), state: end }));
-      await Promise.race([done, sleep(4000)]);
-      expect(finished).toBe(true);
-    }, 12000);
-  }
+  const flipFixture = (): { dir: string; id: string; sp: string; st: Record<string, unknown>; isFinished: () => boolean; done: Promise<void> } => {
+    const { dir, id } = chatFixture("running");
+    const sp = join(dir, `${id}.status`);
+    const st = JSON.parse(readFileSync(sp, "utf8")) as Record<string, unknown>;
+    writeFileSync(sp, JSON.stringify({ ...st, pid: process.pid, started: nowStamp() }));
+    let finished = false;
+    const done = followWorkers(dir, id, false, 1, { FORCE_TTY: "1" }, false, {
+      stdin: new PassThrough(),
+      stdout: { write: () => true, rows: 24, columns: 80 },
+      spawnResume: () => ({ on: () => undefined }),
+    }).then(() => {
+      finished = true;
+    });
+    return { dir, id, sp, st, isFinished: () => finished, done };
+  };
+
+  it("a done status closes the pane only after the worker's process has exited, not while it lives", async () => {
+    const f = flipFixture();
+    await sleep(1200);
+    expect(f.isFinished()).toBe(false);
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: process.pid, started: nowStamp(), state: "done" }));
+    await sleep(3500);
+    expect(f.isFinished()).toBe(false); // done, but the process (this one) is still alive
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: 99999999, started: nowStamp(), state: "done" }));
+    await Promise.race([f.done, sleep(4000)]);
+    expect(f.isFinished()).toBe(true);
+  }, 15000);
+
+  it("a failed status keeps the pane open showing the failure", async () => {
+    const f = flipFixture();
+    await sleep(1200);
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: 99999999, started: nowStamp(), state: "failed", rc: 1 }));
+    await sleep(3500);
+    expect(f.isFinished()).toBe(false);
+    // a same-id restart (state running again) keeps following in the same pane
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: process.pid, started: nowStamp(), state: "running" }));
+    await sleep(1200);
+    expect(f.isFinished()).toBe(false);
+    writeFileSync(f.sp, JSON.stringify({ ...f.st, pid: 99999999, started: nowStamp(), state: "done" }));
+    await Promise.race([f.done, sleep(4000)]);
+    expect(f.isFinished()).toBe(true);
+  }, 20000);
 
   it("an empty prompt lets the countdown close the pane", async () => {
     const { dir, id } = chatFixture();

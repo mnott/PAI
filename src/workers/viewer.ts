@@ -33,7 +33,7 @@ import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
 import { localIdleLine, readLocalIdle } from "./local-idle.js";
 import { readSchedFile, schedLine } from "../router/scheduler.js";
-import { isChatPane, isLive, isTerminal, loadStatus, pidAlive, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { formatWorktreesStats, worktreesStats } from "./worktree.js";
 import { readInbox } from "./handoff.js";
@@ -1241,7 +1241,7 @@ export async function followWorkers(
           finished.delete(lingerOn);
           return { done: false };
         }
-        if (!now || now.state !== "done" || (typeof now.pid === "number" && now.pid > 0 && pidAlive(now.pid))) {
+        if (!now || now.state !== "done" || (typeof now.pid === "number" && now.pid > 0 && ownsPid(now))) {
           writeLiveness();
           await sleep(500);
           return { done: false };
@@ -1304,7 +1304,7 @@ function sleep(ms: number): Promise<void> {
  * The status bar's worker line for THIS session's pool: workers its claude
  * session (or, failing that, its terminal) spawned, plus their descendants
  * (ownership as supervision's ownershipKey / scope's workerInScope define it).
- * Other sessions' live workers show as a dim `(+M elsewhere)` suffix. With no
+ * Terminal first, Claude session second. Other terminals' live workers show as a dim `(+M elsewhere)` suffix. With no
  * session identity at all (no `term`, no `claudeSession`) the bar keeps the
  * machine-wide count.
  */
@@ -1320,8 +1320,11 @@ export function statusLineOutput(
   if (!term && !claudeSession) return renderStatusLine(statuses, now);
 
   const byId = new Map(statuses.map((s) => [s.id, s]));
+  // the host terminal first (a resume or fork changes the Claude session id, never the terminal the operator
+  // sits in); the Claude session id attributes only a worker that recorded no terminal of its own
   const ownsRoot = (s: WorkerStatus): boolean =>
-    (!!claudeSession && s.spawnerSession === claudeSession) || (!!term && workerInScope(s, term));
+    (!!term && workerInScope(s, term)) ||
+    (!!claudeSession && s.spawnerSession === claudeSession && !(term && (s.term || s.session?.id)));
   const isMine = (s: WorkerStatus): boolean => {
     const seen = new Set<string>();
     for (let w: WorkerStatus | undefined = s; w && !seen.has(w.id); w = w.parent ? byId.get(w.parent) : undefined) {

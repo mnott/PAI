@@ -123,12 +123,20 @@ describe("followPaneRun", () => {
     return { closed, listIterm: async () => [], closeIterm: async (id) => (closed.push(id), true), listTmux: () => [], closeTmux: () => true };
   };
 
-  it.each([[0], [2]])("closes its own pane after the linger whatever the exit code (exit %s)", async (code) => {
-    const o = opts([`echo out; exit ${code}`]);
+  it("closes its own pane after the linger on a clean end", async () => {
+    const o = opts(["echo out"]);
     await runInPane(o);
     const ops = closeOps();
-    await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, paneEnv, ops);
+    expect(await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, paneEnv, ops)).toBe(true);
     expect(ops.closed).toEqual(["D38D3E5D-19E8-4FE5-A78A-26E8E571FE27"]);
+  });
+
+  it("a failed run keeps its pane: nothing is closed, the caller is told to stay", async () => {
+    const o = opts(["echo out; exit 2"]);
+    await runInPane(o);
+    const ops = closeOps();
+    expect(await followPaneRun(dir, o.opened[0], () => undefined, 0, 10, paneEnv, ops)).toBe(false);
+    expect(ops.closed).toEqual([]);
   });
 
   it("lingers a few seconds before closing, so the last line stays visible", async () => {

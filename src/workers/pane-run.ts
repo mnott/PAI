@@ -102,7 +102,8 @@ export function paneRunRows(statuses: PaneRunStatus[], now = Date.now()): Array<
 
 /**
  * Show the log of a pane run live until it has ended, linger `linger` seconds so the last
- * line stays visible, then close the pane itself (in iTerm or tmux) and return.
+ * line stays visible, then close the pane itself (in iTerm or tmux) and return true. A run that did not end
+ * cleanly keeps its pane: returns false without closing.
  */
 export async function followPaneRun(
   logDir: string,
@@ -112,7 +113,7 @@ export async function followPaneRun(
   pollMs = panePolicy().runPollMs,
   env: NodeJS.ProcessEnv = process.env,
   ops: PaneOps = realPaneOps
-): Promise<void> {
+): Promise<boolean> {
   // the pane's purpose in the title bar before anything scrolls: a `pai pane
   // run` pane shows its label alone (no provider)
   writePaneTitle(paneTitle(loadPaneRunStatus(logDir, id)?.label ?? id), process.env);
@@ -132,10 +133,11 @@ export async function followPaneRun(
     if (st && st.state !== "running") {
       endedAt ||= Date.now();
       if (Date.now() - endedAt >= lingerSecs * 1000) {
-        // a clean end closes the pane; a failed or lost run keeps it open showing the failure until the operator closes it
-        if (st.state !== "done") await new Promise<void>(() => setInterval(() => undefined, 1 << 30));
+        // a clean end closes the pane; a failed or lost run keeps it open showing the failure until the operator
+        // closes it (false: the caller must keep the process, and so the pane, alive)
+        if (st.state !== "done") return false;
         await closeOwnPane(env, ops).catch(() => false);
-        return;
+        return true;
       }
     }
     await new Promise((r) => setTimeout(r, pollMs));

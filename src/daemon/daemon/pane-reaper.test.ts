@@ -17,7 +17,9 @@ describe("paneReapable", () => {
   it("waits out the 3 s grace after the end", () => {
     expect(paneReapable(st("done", "2026-10-16 09:59:58"), now)).toBe(false);
     expect(paneReapable(st("done", "2026-10-16 09:59:56"), now)).toBe(true);
-    expect(paneReapable(st("killed", "2026-10-16 09:58:00"), now)).toBe(true);
+    // a failed, killed or lost worker keeps its pane until the operator closes it
+    expect(paneReapable(st("killed", "2026-10-16 09:58:00"), now)).toBe(false);
+    expect(paneReapable(st("failed", "2026-10-16 09:58:00"), now)).toBe(false);
   });
   it("reapEndedPanesOnce does nothing without registered panes", async () => {
     const dir = mkdtempSync(join(tmpdir(), "reap-"));

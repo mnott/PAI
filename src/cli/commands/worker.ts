@@ -439,7 +439,7 @@ const followCommand: CommandDef = {
       const target = (ctx.args.ID as string | undefined) ?? null;
       if (target && isPaneRunId(target)) {
         if (!flag(ctx, "live") && !process.stdout.isTTY) out(readFileSync(loadPaneRunStatus(logDir(), target)?.log ?? "", "utf8").split("\n").slice(-(num(ctx.opts.tail) ?? 40)).join("\n"));
-        else await followPaneRun(logDir(), target, (t) => void process.stdout.write(t));
+        else if (!(await followPaneRun(logDir(), target, (t) => void process.stdout.write(t)))) await new Promise<void>(() => setInterval(() => undefined, 1 << 30)); // failed: the pane stays until the operator closes it
         return;
       }
       if (target?.startsWith("plan-")) {
