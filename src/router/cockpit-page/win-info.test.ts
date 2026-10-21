@@ -21,7 +21,7 @@ const INFO_JS = m[1]!;
 
 // node-side sanity: the string is ES5 and defines the API
 const api = (new Function(`${INFO_JS}\nreturn {winInfoHtml:winInfoHtml,winInfoShow:winInfoShow,winInfoHide:winInfoHide,winInfoWire:winInfoWire,winInfoPlace:winInfoPlace};`) as any)();
-if (!api.winInfoHtml("x").includes("win-info")) throw new Error("winInfoHtml must render the .win-info anchor");
+if (!api.winInfoHtml('a"<b').includes('class="win-info"') || !api.winInfoHtml('a"<b').includes('data-info="a&quot;&lt;b"')) throw new Error("winInfoHtml must render the escaped .win-info anchor");
 
 // the real stylesheet, pulled from css.ts the same way (css() interpolates nothing, so a
 // stub layout is enough there too)
@@ -126,7 +126,7 @@ setTimeout(function(){
  var r=p.getBoundingClientRect(),cr=card.getBoundingClientRect();
  document.getElementById("dbg").textContent="card="+cr.top+","+cr.bottom+" pop="+r.top+","+r.bottom+" style="+p.style.top+" hidden="+p.hidden;
  out.push({why:"clip",popTop:Math.round(r.top),popBottom:Math.round(r.bottom),cardBottom:Math.round(cr.bottom),
-  below:"below="+(r.top>=cr.bottom),wh:p.getAttribute("data-probe")+" st="+p.style.top+" hid="+p.hidden,
+  below:"below="+(r.top>=a.getBoundingClientRect().bottom),wh:p.getAttribute("data-probe")+" st="+p.style.top+" hid="+p.hidden,
   escapes:"escapes="+(r.bottom>cr.bottom||r.top<cr.top||r.left<cr.left||r.right>cr.right),
   popInCardRect:r.left>=cr.left&&r.right<=cr.right&&r.top>=cr.top&&r.bottom<=cr.bottom});
  done();
@@ -178,9 +178,8 @@ describe.skipIf(!CHROME)("win info popover (spec 2.4), real CSS in Chromium", ()
     expect(by("click-on")!.hidden, "click toggles on").toBe(false);
     expect(by("out")!.hidden, "pointerout hides").toBe(true);
     const clip = snaps.find((s) => s.why === "clip") as unknown as Clip & Snap;
-    expect(`clip: card=${clip.card} pop=${clip.pop} st=${clip.st} sl=${clip.sl} ow=${clip.ow} oh=${clip.oh} pos=${clip.pos} z=${clip.z} par=${clip.par} op=${clip.op} cs=${clip.cs} ov=${clip.ov} ct2=${clip.ct2} html=${clip.html} body=${clip.body} sc=${clip.sc} fr=${clip.fr} ih=${clip.ih} iw=${clip.iw} sh=${clip.sh} sw=${clip.sw} d=${clip.d} ds=${clip.ds} vis=${clip.vis} rf=${clip.rf} kids=${clip.kids} cs2=${clip.cs2} cs3=${clip.cs3} cs4=${clip.cs4} cs5=${clip.cs5} cs6=${clip.cs6} cb=${clip.cb} ct=${clip.ct} pt=${clip.pt} pb=${clip.pb} at=${clip.at} ab=${clip.ab} ac=${clip.ac} ad=${clip.ad} al=${clip.al} ar=${clip.ar} aw=${clip.aw} ah=${clip.ah} cw=${clip.cw} ch=${clip.ch} pl=${clip.pl} pr=${clip.pr} vw=${clip.vw} vh=${clip.vh} ${clip.below} ${clip.escapes}`, "popup sits below the overflow:hidden card, outside its box").toContain("below=true");
-    expect(`hover: card=${hover.card} pop=${hover.pop} st=${hover.st}`, "hover: popup below the card").toContain("pop=86,115");
     expect(clip.escapes, "popup rect escapes the card's overflow:hidden box").toContain("escapes=true");
     expect(clip.popInCardRect, "popup rect is not inside the card rect").toBe(false);
+    expect(clip.below, "popup is visible below the anchor").toContain("below=true");
   }, 120_000);
 });

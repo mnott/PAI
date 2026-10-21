@@ -13,7 +13,8 @@
  *  resize repositioning); call once at boot. */
 export const WIN_INFO_JS = String.raw`var WIN_INFO_ID="win-info-pop";
 function winInfoHtml(t){
- return'<span class="win-info" tabindex="0" role="button" aria-describedby="'+WIN_INFO_ID+'">ⓘ</span>';
+ var e=String(t==null?"":t).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+ return'<span class="win-info" tabindex="0" role="button" aria-describedby="'+WIN_INFO_ID+'" data-info="'+e+'">ⓘ</span>';
 }
 function winInfoPopup(doc){
  var p=doc.getElementById(WIN_INFO_ID);
@@ -55,14 +56,14 @@ function winInfoHide(doc,anchor){
  *  toggles, Esc hides and returns focus to the anchor. Scroll or resize moves the
  *  anchor: reposition while open. */
 function winInfoWire(doc,win){
- var open=null;
- function over(e){var a=e.target;var el=a&&a.closest?a.closest(".win-info"):null;if(el){winInfoShow(doc,win,el);open=el}}
+ var open=null,quiet=false;
+ function over(e){if(quiet)return;var a=e.target;var el=a&&a.closest?a.closest(".win-info"):null;if(el){winInfoShow(doc,win,el);open=el}}
  function out(e){var a=e.target;var el=a&&a.closest?a.closest(".win-info"):null;if(el&&el===open){winInfoHide(doc,el);open=null}}
  function key(e){
   var el=e.target&&e.target.closest?e.target.closest(".win-info"):null;
   if(e.key==="Escape"&&open&&(!el||el===open)){
    var a=open;winInfoHide(doc,a);open=null;
-   if(doc.activeElement!==a)a.focus();
+   if(doc.activeElement!==a){quiet=true;a.focus();quiet=false}
   }
  }
  // capture phase: a card's own keydown handler may stopPropagation; Esc must still close
@@ -77,7 +78,6 @@ function winInfoWire(doc,win){
   if(el===open){winInfoHide(doc,el);open=null}
   else{winInfoShow(doc,win,el);open=el}
  });
- doc.addEventListener("keydown",key);
  win.addEventListener("scroll",function(){if(open)winInfoPlace(winInfoPopup(doc),open.getBoundingClientRect(),win)});
  win.addEventListener("resize",function(){if(open)winInfoPlace(winInfoPopup(doc),open.getBoundingClientRect(),win)});
 }
