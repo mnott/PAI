@@ -388,6 +388,6 @@ describe("spare helpers and the client", () => {
       parsed: { headless: true, prompt: "hi", callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [], outputFormat: "json" },
     } as never;
     expect(await tryPoolRun(a)).toBeNull();
-    expect((a as { spareMiss?: string }).spareMiss).toBe("host-unreachable");
+    expect((a as { spareMiss?: string }).spareMiss).toBe("unreachable");
   });
 });

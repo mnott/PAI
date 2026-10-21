@@ -1361,6 +1361,7 @@ async function startShim(): Promise<void> {
               className: args.class,
               label: args.label,
               noPane: true, // the daemon has no terminal: not pane-gated
+              ...(args.no_pool ? { noPool: true } : {}),
               mcpFlag: args.mcp,
               specPath,
               brief: promptText,
@@ -1375,6 +1376,7 @@ async function startShim(): Promise<void> {
             capabilityFlag: args.capability,
             label: args.label,
             noPane: true, // the daemon has no terminal: not pane-gated
+            ...(args.no_pool ? { noPool: true } : {}),
             mcpFlag: args.mcp,
             specPath,
             claudeArgs,

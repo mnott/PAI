@@ -38,6 +38,7 @@ Runs the parts of a plan on the local provider, no model in the loop: up to N pa
 | `--provider NAME` | string | — | Run the parts on this provider instead of the plan's (the value local is resolved at run start) |
 | `--model MODEL` | string | — | Model the parts' workers get: default, fast or a model id (default: the provider's worker_model) |
 | `--now` | flag | — | The parts' workers go ahead of the runs waiting for a slot on the provider |
+| `--no-pool` | flag | — | The parts' workers start fresh, never using the worker pool |
 | `--detach` | flag | — | Hand the run to a detached process that outlives this session and reports its events back to it |
 | `--dry-run` | flag | — | Print the schedule that would run; start nothing |
 | `--allow-dirty` | flag | — | Run although the repo has uncommitted changes to files a part touches |

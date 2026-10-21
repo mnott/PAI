@@ -69,9 +69,9 @@ export async function dirtyPaths(repo: string): Promise<string[]> {
 }
 
 /** Args of the part worker: `--worktree` is explicit so the caller's own mode is never inherited. */
-export function workerArgs(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string): string[] {
+export function workerArgs(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority" | "noPool">, specFile: string, repo: string): string[] {
   const model = req.tier !== "local" ? escalationCloud().model : req.model;
-  return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(model ? ["--model", model] : []), ...(req.priority ? ["--now"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--output-format", "json"];
+  return ["worker", "run", "--provider", req.provider, "--class", "implement", ...(model ? ["--model", model] : []), ...(req.priority ? ["--now"] : []), ...(req.noPool ? ["--no-pool"] : []), "--label", req.label, "--spec", specFile, "--cwd", repo, "--worktree", "--output-format", "json"];
 }
 
 /** State of the plan checkout: HEAD and the dirty-path listing. */
@@ -128,7 +128,7 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
 }
 
 /** Run one worker as `pai worker run` and read its outcome: spawn refusal, plan-checkout and report checks included. */
-export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
+export async function launchWorker(req: Pick<StartRequest, "label" | "provider" | "tier" | "model" | "priority" | "noPool">, specFile: string, repo: string, logDir: string): Promise<WorkerOutcome> {
   const t0 = Date.now() - 1000;
   const before = await checkoutState(repo);
   const mark = { label: req.label, t0 };

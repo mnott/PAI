@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertPoolPolicy, PoolRefusedError, tryPoolRun } from "./run.js";
+import { runChain } from "./chain.js";
+import { rerunOnCloud } from "./run/escalate.js";
+import { workerArgs } from "./plan-deps.js";
+import { workerRunShape } from "../daemon-mcp/tools/worker-run-args.js";
+import { z } from "zod";
 import { skipReasonLine } from "./pool-cli.js";
 import { ledgerPath } from "./paths.js";
 
@@ -72,7 +77,7 @@ describe("every non-pooled path records exactly one skip line", () => {
     ["print-cmd", "print-cmd", (d) => args(d, { printCmd: true })],
     ["engine", "engine", (d) => args(d, { target: { providerName: "cx", provider: { models: {}, engine: "codex" } } })],
     ["worktree", "worktree", (d) => args(d, { worktreeFlag: true }, { continuation: true })],
-    ["host-unreachable", "host-unreachable", (d) => args(d)],
+    ["unreachable", "unreachable", (d) => args(d)],
   ];
   for (const [name, reason, make] of cases) {
     it(name, async () => {
@@ -107,6 +112,21 @@ describe("every non-pooled path records exactly one skip line", () => {
     expect(lines[0]).toContain("key=glm/m");
   });
 
+  it("claim error (connection cut after connect) is recorded as claim-error, not host-unreachable", async () => {
+    const d = dir();
+    const server = createServer((req) => {
+      req.resume();
+      req.socket.destroy();
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    expect(await tryPoolRun(args(d, {}, { port }))).toBeNull();
+    const lines = skipLines(d);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("reason=claim-error");
+  });
+
   it("stderr line is printed for a silent case too", async () => {
     const d = dir();
     const w = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -117,9 +137,9 @@ describe("every non-pooled path records exactly one skip line", () => {
   });
 });
 
-describe("pai worker run refuses caller-caused reasons unless --no-pool", () => {
+describe("every headless start refuses caller-caused reasons unless noPool", () => {
   const strict = (over: Record<string, unknown>, noPool = false) =>
-    args(dir(), { opts: { poolStrict: true, ...(noPool ? { noPool: true } : {}) }, ...over });
+    args(dir(), { opts: { ...(noPool ? { noPool: true } : {}) }, ...over });
   const caller: Array<[string, Record<string, unknown>]> = [
     ["tools", { parsed: parsedOf({ allowedTools: ["Read,Edit,Write,Bash,Grep,Glob,WebFetch"] }) }],
     ["mcp", { mcpFlag: "pai" }],
@@ -150,12 +170,52 @@ describe("pai worker run refuses caller-caused reasons unless --no-pool", () => 
   ];
   for (const [name, over, pool] of free) {
     it(`${name}: never refused`, () => {
-      expect(() => assertPoolPolicy(args(dir(), { opts: { poolStrict: true }, ...over }, pool ?? {}))).not.toThrow();
+      expect(() => assertPoolPolicy(args(dir(), { opts: {}, ...over }, pool ?? {}))).not.toThrow();
     });
   }
 
-  it("internal callers (no poolStrict) are never refused", () => {
-    expect(() => assertPoolPolicy(args(dir(), { mcpFlag: "pai" }))).not.toThrow();
+  it("a start that is not headless or only prints its command is never refused", () => {
+    const over = { mcpFlag: "pai" };
+    expect(() => assertPoolPolicy(args(dir(), { ...over, printCmd: true }))).not.toThrow();
+    expect(() => assertPoolPolicy(args(dir(), { ...over, parsed: parsedOf({ headless: false, prompt: null }) }))).not.toThrow();
+  });
+});
+
+describe("noPool is threaded through every entry point", () => {
+  const chainOpts = (extra: Record<string, unknown>) => ({ stages: ["implement"], brief: "b", claudeArgs: ["-p", "b"], ...extra }) as never;
+  const seen = async (extra: Record<string, unknown>) => {
+    const got: Array<boolean | undefined> = [];
+    await runChain(chainOpts(extra), { logDir: dir(), runStage: async (o) => (got.push(o.noPool), 0) });
+    return got;
+  };
+
+  it("chain stages carry noPool, and omit it by default", async () => {
+    expect(await seen({ noPool: true })).toEqual([true]);
+    expect(await seen({})).toEqual([undefined]);
+  });
+
+  it("MCP worker_run schema takes an optional no_pool boolean", () => {
+    const schema = z.object(workerRunShape);
+    expect(schema.parse({ label: "l", prompt: "p", no_pool: true }).no_pool).toBe(true);
+    expect(schema.parse({ label: "l", prompt: "p" }).no_pool).toBeUndefined();
+  });
+
+  it("plan and queue workers start with --no-pool when the run has it", () => {
+    const base = { label: "l", provider: "p", tier: "local" };
+    expect(workerArgs({ ...base, noPool: true } as never, "s", "r")).toContain("--no-pool");
+    expect(workerArgs(base as never, "s", "r")).not.toContain("--no-pool");
+  });
+
+  it("the cloud fall-through rerun inherits the original run's noPool", async () => {
+    for (const noPool of [true, undefined]) {
+      let got: boolean | undefined = false as boolean | undefined;
+      const a = {
+        logDir: dir(), noPane: true, label: "x", route: { policy: "p" }, opts: { noPool }, claudeArgs: ["-p", "x"],
+        target: { providerName: "glm" }, runner: async (o: { noPool?: boolean }) => ((got = o.noPool), 0),
+      };
+      await rerunOnCloud(a as never, "w1", "why", { fallThroughTo: undefined } as never);
+      expect(got).toBe(noPool);
+    }
   });
 });
 

@@ -46,6 +46,8 @@ export interface StartRequest {
   model?: string;
   /** "front": the worker goes ahead of the provider's waiting runs (`--now`). */
   priority?: "front";
+  /** The worker is started with --no-pool. */
+  noPool?: boolean;
 }
 
 export interface MergeOutcome {
@@ -146,6 +148,8 @@ export interface RunOptions {
   model?: string;
   /** "front": every worker of the run goes ahead of the provider's waiting runs. */
   priority?: "front";
+  /** Every worker of the run gets --no-pool. */
+  noPool?: boolean;
   /** Part ids already merged (from the log). */
   merged?: ReadonlySet<string>;
   /** Unit ids whose unit_check already passed. */
@@ -343,7 +347,7 @@ async function runPlanLocked(plan: Plan, opts: RunOptions, deps: RunnerDeps, act
       await granted;
       let out: WorkerOutcome;
       try {
-        out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}) });
+        out = await deps.startWorker({ part: p, label: label(p), spec: composeSpec(p, failure, plan.job, plan.repo), provider, tier, attempt: i + 1, ...(tier === "local" && opts.model ? { model: opts.model } : {}), ...(opts.priority ? { priority: opts.priority } : {}), ...(opts.noPool ? { noPool: true } : {}) });
       } finally {
         release(p, provider);
       }

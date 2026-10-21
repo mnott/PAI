@@ -60,8 +60,6 @@ export interface RunOptions {
   deadline?: string;
   /** --no-pool: run fresh, never ask the pool (recorded as WORKER-POOL-SKIP reason=opted-out). */
   noPool?: boolean;
-  /** `pai worker run` only: refuse the start (exit 2) when the caller's own flags keep the run out of the pool. */
-  poolStrict?: boolean;
   /** --browser / --no-browser: undefined follows workers.noBrowserByDefault. */
   browser?: boolean;
   /** --print-cmd: print the assembled claude argv as JSON and exit, no spawn. */

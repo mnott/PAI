@@ -48,7 +48,6 @@ import {
   poolSettings,
   SLOT_TOOLS,
   postTaskToPool,
-  type PoolTaskResponse,
 } from "../pool.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, paneHandles, spawnOwned } from "./pane-handles.js";
@@ -183,12 +182,12 @@ function poolPreReason(a: ExecuteArgs): { reason: string | null; claim: boolean;
 }
 
 /**
- * `pai worker run` only (opts.poolStrict): when the pool is on and the caller's own flags keep a headless run
- * out of it, refuse before anything starts — nothing is recorded, nothing spawns. Reasons the caller does not
+ * Every headless start (runWorker is the one call site: CLI, chains, MCP worker_run, planner, reruns): when the
+ * pool is on and the caller's own flags keep the run out of it, refuse before anything starts unless opts.noPool — nothing is recorded, nothing spawns. Reasons the caller does not
  * control (pool off, host down, no spare, dirty checkout, resume, worktree, interactive, native, engine) never refuse.
  */
 export function assertPoolPolicy(a: ExecuteArgs): void {
-  if (!a.opts?.poolStrict || a.opts.noPool || !a.parsed.headless || a.printCmd) return;
+  if (a.opts?.noPool || !a.parsed.headless || a.printCmd) return;
   const { reason } = poolPreReason(a);
   if (reason && CALLER_CAUSED.has(reason)) throw new PoolRefusedError(refusalText(reason, a));
 }
@@ -260,55 +259,43 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   const limitMinutes = a.limit && a.limit.minutes > 0 ? a.limit.minutes : null;
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
-  let resp: PoolTaskResponse | null;
-  let claimError = false;
   const postT0 = Date.now();
-  try {
-    resp = await postTaskToPool(
-      settings.port,
-      {
-        id: wid,
-        label: a.label,
-        prompt: a.parsed.prompt ?? "",
-        provider: a.target.providerName,
-        model: a.model,
-        cwd,
-        className: a.className,
-        capability: a.capability,
-        specPath: a.specPath,
-        parent: a.parent,
-        stage: a.stage,
-        clientPid: process.pid,
-        reportFormat: a.reportFormat,
-        outputFormat: a.parsed.outputFormat === "json" ? "json" : "text",
-        maxMinutes: limitMinutes,
-        trailer: promptTrailer(a.reportFormat),
-        worktree: a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
-        ...(claim ? { runStartedAt: a.runT0 ?? Date.now() } : {}),
-        ...(a.admissionMs !== undefined ? { admissionMs: a.admissionMs } : {}),
-      },
-      timeoutMs,
-      claim ? "/claim" : "/task"
-    );
-  } catch {
-    resp = null;
-    claimError = true;
-  }
+  const outcome = await postTaskToPool(
+    settings.port,
+    {
+      id: wid,
+      label: a.label,
+      prompt: a.parsed.prompt ?? "",
+      provider: a.target.providerName,
+      model: a.model,
+      cwd,
+      className: a.className,
+      capability: a.capability,
+      specPath: a.specPath,
+      parent: a.parent,
+      stage: a.stage,
+      clientPid: process.pid,
+      reportFormat: a.reportFormat,
+      outputFormat: a.parsed.outputFormat === "json" ? "json" : "text",
+      maxMinutes: limitMinutes,
+      trailer: promptTrailer(a.reportFormat),
+      worktree: a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
+      ...(claim ? { runStartedAt: a.runT0 ?? Date.now() } : {}),
+      ...(a.admissionMs !== undefined ? { admissionMs: a.admissionMs } : {}),
+    },
+    timeoutMs,
+    claim ? "/claim" : "/task"
+  );
   clearInterval(poll);
   const postMs = Date.now() - postT0;
-  if (resp === null) {
-    // postTaskToPool answers null when nothing listens; it throws on a refused connection mid-claim or a timeout
-    const why = claimError ? "claim-error" : "host-unreachable";
+  if (!("ok" in outcome)) {
+    // a claim miss is also on the ledger as WORKER-POOL-MISS (host side, spare counters); this is the run's skip line
+    const why = "miss" in outcome ? outcome.miss : outcome.error;
     a.spareMiss = why;
     recordPoolSkip(a, a.target.providerName, why, { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
     return null;
   }
-  if (!resp.pooled) {
-    a.spareMiss = resp.reason ?? "refused";
-    // a claim miss is also on the ledger as WORKER-POOL-MISS (host side, spare counters); this is the run's skip line
-    recordPoolSkip(a, a.target.providerName, resp.reason ?? "refused", { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
-    return null;
-  }
+  const resp = outcome.ok;
   await followInPane().catch(() => undefined); // a task that ended before the poll saw it still leaves its transcript in the pane
   a.onWorkerStart?.(wid);
   if (claim && a.setupPaneMs !== undefined) {

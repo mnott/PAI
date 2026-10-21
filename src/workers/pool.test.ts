@@ -377,7 +377,8 @@ describe("client transport", () => {
     const port = (server.address() as { port: number }).port;
     try {
       expect(await poolHostAlive(port)).toBe(true);
-      const resp = await postTaskToPool(port, task(), 5000);
+      const out = await postTaskToPool(port, task(), 5000);
+      const resp = "ok" in out ? out.ok : undefined;
       expect(resp?.pooled).toBe(true);
       expect(resp?.rc).toBe(0);
       expect(JSON.parse(body).id).toBe("w-pool-1");
@@ -387,7 +388,7 @@ describe("client transport", () => {
     }
   });
 
-  it("a malformed reply resolves null, not a throw", async () => {
+  it("a malformed reply resolves a claim-error outcome, not a throw", async () => {
     const server: Server = createServer((req, res) => {
       req.resume();
       res.writeHead(200, { "content-type": "application/json" });
@@ -396,15 +397,60 @@ describe("client transport", () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
     const port = (server.address() as { port: number }).port;
     try {
-      expect(await postTaskToPool(port, task(), 5000)).toBeNull();
+      expect(await postTaskToPool(port, task(), 5000)).toMatchObject({ error: "claim-error" });
     } finally {
       server.closeAllConnections?.();
       await new Promise<void>((r) => server.close(() => r()));
     }
   });
 
-  it("an unreachable host resolves null so the caller spawns fresh", async () => {
-    expect(await postTaskToPool(1, task(), 400)).toBeNull();
+  it("a host that refuses the task resolves a miss with its reason", async () => {
+    const server: Server = createServer((req, res) => {
+      req.resume();
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ pooled: false, reason: "busy" }));
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      expect(await postTaskToPool(port, task(), 5000)).toEqual({ miss: "busy" });
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("a connection cut after it was made is a claim-error", async () => {
+    const server: Server = createServer((req) => {
+      req.resume();
+      req.socket.destroy();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      expect(await postTaskToPool(port, task(), 5000)).toMatchObject({ error: "claim-error" });
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("a host that never answers is a timeout", async () => {
+    const server: Server = createServer((req) => {
+      req.resume();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      expect(await postTaskToPool(port, task(), 300)).toMatchObject({ error: "timeout" });
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+
+  it("an unreachable host resolves an unreachable outcome so the caller spawns fresh", async () => {
+    expect(await postTaskToPool(1, task(), 400)).toMatchObject({ error: "unreachable" });
     expect(await poolHostAlive(1, 200)).toBe(false);
   });
 
