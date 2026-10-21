@@ -120,7 +120,7 @@ export async function cmdGoto(
   // ---- 4. Build argv components ----
   const name = friendlyName ?? query;
   // /Name is re-sent unless THIS terminal already carries the name
-  const named = terminalHasName(name);
+  const named = terminalHasName(name, process.env.ITERM_SESSION_ID ?? "");
 
   // ---- 5. Dry-run mode ----
   if (opts.dryRun) {

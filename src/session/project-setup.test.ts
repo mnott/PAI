@@ -172,4 +172,20 @@ describe("projectChecks", () => {
     const out = await lines({ env: { TMUX: "1" }, host: async () => { throw new Error("must not be called"); } });
     expect(out).toContain("ok - worker panes open in tmux");
   });
+
+  it("ignores the process's own terminal ids when no env is passed", async () => {
+    repo();
+    const prev = { TMUX: process.env.TMUX, ITERM: process.env.ITERM_SESSION_ID };
+    process.env.TMUX = "/tmp/tmux-1/default,1,0";
+    process.env.ITERM_SESSION_ID = "w0t0p0:AMBIENT";
+    let hostCalled = false;
+    try {
+      const out = (await projectChecks(dir, { ...base, env: undefined, host: async () => { hostCalled = true; return { uid: "U1", term: "w0t0p0:U1", via: "tty" }; } })).map(formatCheck);
+      expect(out).not.toContain("ok - worker panes open in tmux");
+      expect(hostCalled).toBe(true);
+    } finally {
+      if (prev.TMUX === undefined) delete process.env.TMUX; else process.env.TMUX = prev.TMUX;
+      if (prev.ITERM === undefined) delete process.env.ITERM_SESSION_ID; else process.env.ITERM_SESSION_ID = prev.ITERM;
+    }
+  });
 });

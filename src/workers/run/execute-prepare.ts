@@ -155,7 +155,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   const sessionKey = await detectSessionName();
   // orchestrator Bash children have no terminal identity (see scope.ts) — the
   // session map supplies the claude session they were spawned by instead
-  const spawnerSession = resolveSpawnerSession(logDir, cwd);
+  const spawnerSession = resolveSpawnerSession(logDir, cwd, process.env);
 
   // One worktree per run whose tools can write (Edit/Write/Bash or no
   // restriction), in a git cwd; --worktree/--no-worktree override. A git refusal

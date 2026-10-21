@@ -44,7 +44,7 @@ export function tabKey(term: string): string {
 }
 
 /** Tab key of the iTerm tab this process runs in, "" if not inside iTerm2. */
-export function currentTabKey(env: NodeJS.ProcessEnv = process.env): string {
+export function currentTabKey(env: NodeJS.ProcessEnv): string {
   return tabKey(env.ITERM_SESSION_ID ?? "");
 }
 
@@ -103,7 +103,7 @@ export function scopeKey(term: string): string {
   const session = resolveSession(term);
   if (session) return session.id;
   // keyed by the term asked about, not the caller's env: siblings of one orchestrator share a scope
-  return tabKey(term) || currentTabKey() || itermUuid(term);
+  return tabKey(term) || itermUuid(term);
 }
 
 /** `[Name]` when the worker has an AIBroker session name, else "". */
@@ -227,7 +227,7 @@ export function recordSessionMapEntry(
 export function resolveSpawnerSession(
   logDir: string,
   cwd: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   now: number = Date.now()
 ): string | null {
   const parentId = currentWorkerId(env, logDir);
@@ -297,7 +297,7 @@ export function itermForClaudeSession(
  */
 export function terminalHasName(
   name: string,
-  term: string = process.env.ITERM_SESSION_ID ?? "",
+  term: string,
   registryPath: string = AIBROKER_REGISTRY
 ): boolean {
   const uuid = itermUuid(term);

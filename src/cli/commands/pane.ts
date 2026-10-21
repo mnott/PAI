@@ -62,7 +62,7 @@ const execCmd: CommandDef = {
       closePane: async () => {
         // registry entry and iTerm session by run id; the session by its own id when the registry has none
         const { workers } = readWorkersSection();
-        if (!(await closePaneForWorker(workersLogDir(workers), String(ctx.args.ID)))) await closeSelfPane();
+        if (!(await closePaneForWorker(workersLogDir(workers), String(ctx.args.ID)))) await closeSelfPane(process.env);
       },
     }),
 };

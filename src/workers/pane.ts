@@ -796,7 +796,7 @@ export async function closePaneForWorker(logDir: string, wid: string, ops: PaneO
  * when the runner died and even under a profile without Close Sessions On End.
  * No-op outside iTerm.
  */
-export async function closeOwnPane(env: NodeJS.ProcessEnv = process.env, ops: PaneOps = realPaneOps): Promise<boolean> {
+export async function closeOwnPane(env: NodeJS.ProcessEnv, ops: PaneOps = realPaneOps): Promise<boolean> {
   const uid = itermUuid(env.ITERM_SESSION_ID ?? "");
   if (!uid) return false;
   // never close the session itself while its follow still runs: that follow is
@@ -1233,7 +1233,7 @@ export type PaneBackend = "tmux" | "iterm" | "none";
 
 /** The one place that decides where a follow pane opens: tmux (any OS) > iTerm2 (macOS) > nowhere. */
 export function paneBackend(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   platform: string = process.platform,
   hostTerm: string = ""
 ): PaneBackend {
@@ -1249,8 +1249,8 @@ export function noPaneMessage(wid?: string): string {
 }
 
 /** Split the current tmux window horizontally (right-hand column) and run cmd in it, focus stays put. */
-function tmuxSplit(cmd: string): void {
-  const target = process.env.TMUX_PANE ? ["-t", process.env.TMUX_PANE] : [];
+function tmuxSplit(cmd: string, env: NodeJS.ProcessEnv): void {
+  const target = env.TMUX_PANE ? ["-t", env.TMUX_PANE] : [];
   try {
     execFileSync("tmux", ["split-window", "-h", "-d", "-l", "40%", ...target, cmd], { stdio: "pipe" });
   } catch (e) {
@@ -1336,14 +1336,15 @@ export async function openPaneForWorker(
   config: WorkersConfig,
   wid: string,
   term: string,
+  env: NodeJS.ProcessEnv,
   command?: string
 ): Promise<PaneOpenResult> {
   if (workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
-  const backend = paneBackend(process.env, process.platform, term);
+  const backend = paneBackend(env, process.platform, term);
   if (backend === "none") return { message: noPaneMessage(wid), session: null };
   if (backend === "tmux") {
     tmuxPaneTitle = workerPaneTitle(logDir, wid);
-    tmuxSplit(command ?? followCommand(wid));
+    tmuxSplit(command ?? followCommand(wid), env);
     return { message: `pane opened for ${wid}`, session: null };
   }
   const uid = itermUuid(term);
@@ -1425,7 +1426,7 @@ export async function checkPaneForWorker(
   wid: string,
   fontSize: number,
   term: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   platform: string = process.platform
 ): Promise<string> {
   const lines = [workerPaneOpen(wid) ? `pane for ${wid} open` : `no pane for ${wid}`];
@@ -1461,14 +1462,15 @@ export async function openFollowPane(
   logDir: string,
   _config: WorkersConfig,
   term: string,
-  checkOnly: boolean
+  checkOnly: boolean,
+  env: NodeJS.ProcessEnv
 ): Promise<string> {
   void logDir;
-  const backend = paneBackend(process.env, process.platform, term);
+  const backend = paneBackend(env, process.platform, term);
   if (backend === "none") return noPaneMessage();
   if (backend === "tmux") {
     if (checkOnly) return "no follow pane";
-    tmuxSplit(`${process.execPath} ${absoluteCliPath()} worker follow`);
+    tmuxSplit(`${process.execPath} ${absoluteCliPath()} worker follow`, env);
     return "follow pane opened";
   }
   const uid = itermUuid(term);
@@ -1678,14 +1680,14 @@ export async function openVerifiedPane(
   config: WorkersConfig,
   wid: string,
   term: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   ops: PaneOps = realPaneOps,
   seam: PaneSeam = {}
 ): Promise<string> {
   const split = seam.split ?? openPaneForWorker;
   const verify = seam.verify ?? verifyPane;
   if (env.TMUX) {
-    const r = await openPaneForWorker(logDir, config, wid, term, seam.command);
+    const r = await openPaneForWorker(logDir, config, wid, term, env, seam.command);
     if (!r.message.startsWith("pane opened")) throw new Error(`pane verification failed: ${r.message}`);
     return "tmux pane";
   }
@@ -1702,7 +1704,7 @@ export async function openVerifiedPane(
   // Every pane is a split of the host's own tab: never a window, never another tab. A host tab that is not
   // the selected one still gets its split (the operator finds it there); only the visibility proof is skipped.
   const hostShown = await (seam.hostSelected ?? hostTabSelected)(hostUid);
-  let r = await split(logDir, config, wid, term, seam.command);
+  let r = await split(logDir, config, wid, term, env, seam.command);
   if (!r.session) throw new Error(`pane verification failed: ${r.message}`);
   if (!hostShown) {
     placements.set(wid, "split");
@@ -1732,7 +1734,7 @@ export async function openVerifiedPane(
  * The `pane exec` wrapper closing its own iTerm session after it wrote its exit file, so the pane goes
  * with the process even under a profile without Close Sessions On End. tmux panes end with their command.
  */
-export async function closeSelfPane(env: NodeJS.ProcessEnv = process.env, ops: PaneOps = realPaneOps): Promise<boolean> {
+export async function closeSelfPane(env: NodeJS.ProcessEnv, ops: PaneOps = realPaneOps): Promise<boolean> {
   const uid = itermUuid(env.ITERM_SESSION_ID ?? "");
   return uid ? ops.closeIterm(uid).catch(() => false) : false;
 }

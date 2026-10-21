@@ -330,6 +330,6 @@ export async function cmdHealth(
   if (isGitProject(process.cwd())) {
     console.log();
     console.log(bold("  This project (worker setup):"));
-    for (const c of await projectChecks(process.cwd())) console.log("  " + formatCheck(c));
+    for (const c of await projectChecks(process.cwd(), { env: process.env })) console.log("  " + formatCheck(c));
   }
 }

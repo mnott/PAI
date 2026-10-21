@@ -50,7 +50,7 @@ export function paneTitle(label: string, providerOrModel?: string): string {
  */
 export function writePaneTitle(
   title: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   tmux: (args: string[]) => void = (args) => execFileSync("tmux", args, { stdio: "ignore" }),
   tty: boolean = process.stdout.isTTY === true
 ): void {
@@ -66,6 +66,8 @@ export function writePaneTitle(
   if (env.TMUX) {
     try {
       const target = env.TMUX_PANE ? ["-t", env.TMUX_PANE] : [];
+      // a stale pane id fails here (throws) instead of retitling whatever the id now names
+      if (env.TMUX_PANE) tmux(["display-message", "-p", ...target, "#{pane_id}"]);
       tmux(["select-pane", ...target, "-T", t]);
     } catch {
       /* tmux gone or the target is stale */

@@ -31,7 +31,7 @@ vi.mock("node:child_process", () => ({
   },
 }));
 
-import { closeRegisteredIterm, closeEndedPanes, closeOwnPane, workerEnded, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
+import { closeRegisteredIterm, closeEndedPanes, closeOwnPane, closeSelfPane, workerEnded, closePaneForWorker, loadRegistry, openPaneForWorker, realPaneOps, type PaneOps } from "./pane.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 import { writePaneRunStatus } from "./pane-run.js";
 import { scopeKey } from "./scope.js";
@@ -84,7 +84,7 @@ describe("closeRegisteredIterm", () => {
 describe("pane registry", () => {
   it("keeps all three entries when three workers open panes at once", async () => {
     const ids = ["20260929-203824-58109", "20260929-203825-59308", "20260929-203826-59992"];
-    await Promise.all(ids.map((id) => openPaneForWorker(dir, config, id, TERM)));
+    await Promise.all(ids.map((id) => openPaneForWorker(dir, config, id, TERM, {})));
     const reg = loadRegistry(dir);
     expect(reg.map((e) => e.worker).sort()).toEqual(ids);
     expect(new Set(reg.map((e) => e.session)).size).toBe(3);
@@ -205,7 +205,7 @@ describe("ended workers keep their pane until the next pane replaces it", () => 
     seed("20261010-100001-2", "S-RUN");
     status("20261010-100000-1", "done");
     status("20261010-100001-2", "running");
-    await openPaneForWorker(dir, config, "20261010-100002-3", TERM);
+    await openPaneForWorker(dir, config, "20261010-100002-3", TERM, {});
     expect(closed).toEqual(["S-DONE"]);
     // (the mocked split script reports no live sessions, so it forgets S-RUN itself; only S-DONE was closed)
     expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["20261010-100002-3"]);
@@ -256,5 +256,22 @@ describe("sibling replacement", () => {
   it("a ghost 'running' status whose pid is dead counts as ended", () => {
     put("w-ghost", { state: "running", pid: 2 ** 22 + 12345 });
     expect(workerEnded(dir, "w-ghost")).toBe(true);
+  });
+});
+
+describe("pane identity is explicit", () => {
+  it("closeSelfPane closes only the uuid of the env it is given", async () => {
+    const closed: string[] = [];
+    const ops = { ...realPaneOps, closeIterm: async (u: string) => { closed.push(u); return true; } } as PaneOps;
+    const prev = process.env.ITERM_SESSION_ID;
+    process.env.ITERM_SESSION_ID = "w0t0p0:AMBIENT-UUID";
+    try {
+      expect(await closeSelfPane({}, ops)).toBe(false);
+      expect(closed).toEqual([]);
+      expect(await closeSelfPane({ ITERM_SESSION_ID: "w0t0p0:GIVEN-UUID" }, ops)).toBe(true);
+      expect(closed).toEqual(["GIVEN-UUID"]);
+    } finally {
+      if (prev === undefined) delete process.env.ITERM_SESSION_ID; else process.env.ITERM_SESSION_ID = prev;
+    }
   });
 });

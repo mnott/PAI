@@ -11,7 +11,7 @@ export async function cmdInit(opts: InitOpts): Promise<void> {
     // a dry run writes nothing, so checking would only report the missing files again
     if (opts.dryRun) return;
     console.log();
-    for (const c of await projectChecks(r.root)) console.log(formatCheck(c));
+    for (const c of await projectChecks(r.root, { env: process.env })) console.log(formatCheck(c));
   } catch (e) {
     console.error(err("pai project init: ") + (e instanceof Error ? e.message : String(e)));
     process.exitCode = 1;

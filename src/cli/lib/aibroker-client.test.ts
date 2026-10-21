@@ -90,12 +90,29 @@ describe("sendToSession wire format", () => {
   it("keeps the caller's own id on the envelope, not in params", async () => {
     // This is the distinction that made the bug plausible: the envelope really
     // does have a sessionId, and it means "who is calling".
-    vi.stubEnv("TERM_SESSION_ID", "caller-abc");
     const { sendToSession } = await import("./aibroker-client.js");
-    await sendToSession("recipient-xyz", "pause session");
+    await sendToSession("recipient-xyz", "pause session", undefined, { caller: { sessionId: "caller-abc" } });
     const req = sentRequest();
     expect(req.sessionId).toBe("caller-abc");
     expect(req.params.target).toBe("recipient-xyz");
+  });
+
+  it("never stamps the ambient terminal ids on a request", async () => {
+    vi.stubEnv("TERM_SESSION_ID", "ambient-term");
+    vi.stubEnv("ITERM_SESSION_ID", "w0t0p0:AMBIENT");
+    const { sendToSession } = await import("./aibroker-client.js");
+    await sendToSession("recipient-xyz", "pause session");
+    const req = sentRequest() as { sessionId?: string; itermSessionId?: string };
+    expect(req.sessionId).toBe("pai-cli");
+    expect(req.itermSessionId).toBeUndefined();
+  });
+
+  it("switchToSession stamps the explicit caller and does not activate iTerm unless asked", async () => {
+    const { switchToSession } = await import("./aibroker-client.js");
+    expect((await switchToSession("uuid-1", { caller: { itermSessionId: "w0t0p0:ME" } })).ok).toBe(true);
+    const req = sentRequest() as { itermSessionId?: string; method: string };
+    expect(req.method).toBe("switch");
+    expect(req.itermSessionId).toBe("w0t0p0:ME");
   });
 
   it("does not append a newline — the transport adds Enter itself", async () => {

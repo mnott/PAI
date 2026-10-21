@@ -23,7 +23,7 @@ export const MANAGERS_PATH = join(homedir(), ".aibroker", "managers.json");
 
 /** The calling session's iTerm uuid: ITERM_SESSION_ID when set, else the pane host resolver (background-daemon sessions). */
 export async function callerItermId(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv,
   resolve: () => Promise<{ uid: string }> = () => resolveHostSession(env),
 ): Promise<string> {
   const fromEnv = itermUuid(env.ITERM_SESSION_ID ?? "");
@@ -55,6 +55,6 @@ export function supervisionBanner(itermId: string, managersPath: string = MANAGE
   }
 }
 
-export async function supervisionBannerForSession(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+export async function supervisionBannerForSession(env: NodeJS.ProcessEnv): Promise<string | null> {
   return supervisionBanner(await callerItermId(env));
 }

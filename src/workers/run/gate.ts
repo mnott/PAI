@@ -371,7 +371,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   a.id = wid;
   const sessionKey = await detectSessionName();
   // the owning session: what the local scheduler shares slots by
-  const spawner = resolveSpawnerSession(a.logDir, a.cwd ?? process.cwd());
+  const spawner = resolveSpawnerSession(a.logDir, a.cwd ?? process.cwd(), process.env);
   const status: WorkerStatus = {
     id: wid,
     pid: process.pid,
