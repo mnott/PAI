@@ -56,7 +56,7 @@ const runCmd: CommandDef = {
   args: planArg,
   options: [
     { name: "parallel", type: "number", value: "N", summary: "Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent)" },
-    { name: "escalate", type: "string", value: "TIER", summary: "After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision" },
+    { name: "escalate", type: "string", value: "TIER", summary: "After the local retry, run one worker on TIER (only workers.escalate.cloud.tier) instead of stopping at needs-decision" },
     { name: "force-local", type: "boolean", summary: "Keep every part on the local provider: no route classifier, no automatic cloud escalation after 2 failed local attempts" },
     { name: "provider", type: "string", value: "NAME", summary: "Run the parts on this provider instead of the plan's (the value local is resolved at run start)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model the parts' workers get: default, fast or a model id (default: the provider's worker_model)" },

@@ -185,7 +185,6 @@ describe("PAI_CONFIG_FILE pointing at a YAML file", () => {
     const dir = newDir();
     const p = join(dir, "copy-of-config.yaml");
     writeFileSync(p, "logLevel: from-yaml-copy\n", "utf-8");
-    expect(yamlSiblingPath(p)).toBe(p);
     expect(readDualFormatConfigRaw(p).logLevel).toBe("from-yaml-copy");
   });
 });

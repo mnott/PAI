@@ -18,6 +18,7 @@ import {
   WorkersConfigError,
   defaultWorkersConfig,
   nativeAnthropicModels,
+  nativeOrchestratorModel,
 } from "./config.js";
 
 const GLM = {
@@ -437,7 +438,8 @@ describe("workers.proxy.port", () => {
 });
 
 describe("built-in anthropic models table", () => {
-  it("carries the orchestrator model from the shipped defaults, so no code pins opus", () => {
-    expect(nativeAnthropicModels()).toMatchObject({ default: "sonnet", fast: "haiku", orchestrator: "opus" });
+  it("the orchestrator model alias comes from the shipped defaults, outside the worker table", () => {
+    expect(nativeOrchestratorModel()).toBe("opus");
+    expect(nativeAnthropicModels()).toEqual({ default: "sonnet", fast: "haiku" });
   });
 });

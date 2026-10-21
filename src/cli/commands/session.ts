@@ -6,7 +6,7 @@
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
-import { ANTHROPIC_NATIVE, readWorkersSection, type WorkersConfig } from "../../workers/config.js";
+import { ANTHROPIC_NATIVE, readWorkersSection, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { renderTable, makeStyle, colorEnabled, type Style } from "../help.js";
@@ -379,7 +379,7 @@ export function applyProfileChat(choice: { provider: string; model?: string }, n
 
 /** A profile's model alias ("opus") passes through on the native login; otherwise the provider's own table decides. */
 function chatModel(provider: Parameters<typeof modelFor>[0] & { native?: boolean }, wanted: string | undefined): string | undefined {
-  return modelFor(provider, wanted);
+  return provider.native && wanted === nativeOrchestratorModel() ? wanted : modelFor(provider, wanted);
 }
 
 // ---------------------------------------------------------------------------

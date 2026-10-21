@@ -21,6 +21,7 @@ import {
   type ModelCapability,
   type WorkerProvider,
   type WorkersConfig,
+  nativeOrchestratorModel,
 } from "./config.js";
 import { buildRunEnv, pinnedSettingsArgs, nativeRoutePreflight, type RouteProbe } from "./run-env.js";
 import { SESSION_PROVIDER_ENV } from "./session-provider.js";
@@ -155,6 +156,8 @@ export function resolveLaunchProvider(
  *  provider's configured model ids), else the provider's default. */
 export function resolveLaunchModel(provider: WorkerProvider, modelName?: string): string {
   if (!modelName) return provider.models.default;
+  // the login's own chat model alias; the worker table does not list it
+  if (provider.native && modelName === nativeOrchestratorModel()) return modelName;
   const valid = Object.values(provider.models);
   if (!valid.includes(modelName)) {
     throw new LaunchError(`model "${modelName}" is not configured for this provider. Configured: ${valid.join(", ")}`);

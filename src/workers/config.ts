@@ -207,8 +207,16 @@ export function nativeAnthropicModels(): WorkerProvider["models"] {
   const models = anthropic?.models as Record<string, unknown> | undefined;
   if (typeof models?.default !== "string") throw new WorkersConfigError("defaults workers.yaml providers.anthropic.models.default is missing");
   const out: WorkerProvider["models"] = { default: models.default };
-  for (const [k, v] of Object.entries(models)) if (typeof v === "string" && k !== "default") out[k] = v;
+  if (typeof models.fast === "string") out.fast = models.fast;
+  if (typeof models.image === "string") out.image = models.image;
   return out;
+}
+
+/** The chat model alias of the built-in login's own orchestrator (workers.yaml orchestratorModel). */
+export function nativeOrchestratorModel(): string {
+  const m = shippedWorkersDefaults().orchestratorModel;
+  if (typeof m !== "string") throw new WorkersConfigError("defaults workers.yaml orchestratorModel is missing");
+  return m;
 }
 
 /**

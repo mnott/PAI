@@ -22,8 +22,6 @@ export class MainConfigError extends Error {}
 
 /** The config.yaml sibling of a given config.json path (same directory). */
 export function yamlSiblingPath(jsonPath: string): string {
-  // PAI_CONFIG_FILE may point straight at a YAML file (any name)
-  if (/\.ya?ml$/i.test(jsonPath)) return jsonPath;
   return join(dirname(jsonPath), "config.yaml");
 }
 
@@ -57,6 +55,9 @@ export function readDualFormatConfigRaw(jsonPath: string, yamlPath: string = yam
     }
     return parsed as Record<string, unknown>;
   }
+  // PAI_CONFIG_FILE may name a YAML copy of the config (any *.yaml name): YAML
+  // is a superset of JSON, so one parse covers both contents
+  if (/\.ya?ml$/i.test(jsonPath) && existsSync(jsonPath)) return readDualFormatConfigRaw(jsonPath, jsonPath);
   return readJsonStrict(jsonPath, jsonPath);
 }
 

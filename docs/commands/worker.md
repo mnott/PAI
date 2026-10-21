@@ -411,8 +411,8 @@ Runs a bounded sub-worker (class implement, in place, 20 minutes at most) on a s
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--task TEXT` | string | — | The one-paragraph sub-task |
-| `--provider NAME` | string | — | Provider to ask (default anthropic) |
-| `--model NAME` | string | — | Model to ask (default sonnet) |
+| `--provider NAME` | string | — | Provider to ask (default: workers.escalate.cloud.provider) |
+| `--model NAME` | string | — | Model to ask (default: workers.escalate.cloud.model) |
 | `--files A,B` | string | — | Files the sub-task concerns, comma-separated |
 | `--report` | flag | — | List the recorded help calls instead of asking |
 | `--scope ID` | string | — | With --report: only this unit |

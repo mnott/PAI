@@ -104,7 +104,7 @@ const runCmd: CommandDef = {
     { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
     { name: "provider", type: "string", value: "NAME", summary: "Provider name (the detached runner passes what it resolved; the value local is resolved at run start)" },
     { name: "parallel", type: "number", value: "N", summary: "Items running at once (default: max_parallel of queue.yaml, else the provider's maxConcurrent)" },
-    { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only sonnet)" },
+    { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only workers.escalate.cloud.tier)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model the items' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The items' workers go ahead of the runs waiting for a slot on the provider" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },

@@ -183,8 +183,10 @@ providers:
       # aliases: the CLI resolves each to its newest model on every run.
       default: sonnet
       fast: haiku
-      # The chat model of the login's own orchestrator (not a worker model).
-      orchestrator: opus
+
+# Chat model alias of the built-in login's own orchestrator session. Not a
+# worker model: it passes through on the native provider only.
+orchestratorModel: opus
 
 # USD per million tokens by model family, matched on the model name (`pai audit
 # usage`, transcript cost). A user's prices merges over this per family.

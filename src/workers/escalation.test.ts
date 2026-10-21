@@ -246,7 +246,7 @@ describe("escalate.cloud", () => {
     expect(DEFAULT_ESCALATE.cloud.tier).toBe("sonnet");
   });
   it("the shipped workers.yaml carries the same values", () => {
-    const e = effectiveWorkersYamlRaw(join(tmpdir(), "no-such-workers.yaml")).escalate as { cloud: unknown };
+    const e = (effectiveWorkersYamlRaw(join(tmpdir(), "no-such-workers.yaml")).workers as { escalate: { cloud: unknown } }).escalate;
     expect(e.cloud).toEqual(DEFAULT_ESCALATE.cloud);
   });
 });

@@ -13,6 +13,7 @@ import {
   ANTHROPIC_NATIVE,
   getProviderOrNative,
   type WorkersConfig,
+  nativeOrchestratorModel,
 } from "../../workers/config.js";
 import { isLoopbackProvider } from "../../workers/run-env.js";
 import { probeServedModels, serves } from "../../workers/served-models.js";
@@ -31,7 +32,7 @@ export interface Setup {
 }
 
 /** The chat on the Anthropic plan runs the login's chat model (models.orchestrator of the built-in provider); worker models are a separate choice. */
-const nativeOrchestrator = (cfg: Cfg) => ({ provider: ANTHROPIC_NATIVE, model: getProviderOrNative(cfg, ANTHROPIC_NATIVE)?.models.orchestrator });
+const nativeOrchestrator = () => ({ provider: ANTHROPIC_NATIVE, model: nativeOrchestratorModel() });
 
 export const setupsPath =() => paiHomePath("setups.json");
 
@@ -142,24 +143,24 @@ export function builtinSetups(cfg: Cfg, down: ReadonlySet<string> = new Set(), r
   const enabled = (n: string) => n === ANTHROPIC_NATIVE || !!cfg.providers[n]?.enabled;
   const out: Setup[] = [
     // anthropic workers run the anthropic default (sonnet); the haiku row is the explicit cheap choice
-    { name: `${ANTHROPIC_NATIVE} only`, orchestrator: nativeOrchestrator(cfg), workers: ANTHROPIC_NATIVE, kind: "builtin" },
-    { name: `${ANTHROPIC_NATIVE} + ${getProviderOrNative(cfg, ANTHROPIC_NATIVE)?.models.fast ?? "fast"} workers`, orchestrator: nativeOrchestrator(cfg), workers: ANTHROPIC_NATIVE, workersModel: "fast", kind: "builtin" },
+    { name: `${ANTHROPIC_NATIVE} only`, orchestrator: nativeOrchestrator(), workers: ANTHROPIC_NATIVE, kind: "builtin" },
+    { name: `${ANTHROPIC_NATIVE} + ${getProviderOrNative(cfg, ANTHROPIC_NATIVE)?.models.fast ?? "fast"} workers`, orchestrator: nativeOrchestrator(), workers: ANTHROPIC_NATIVE, workersModel: "fast", kind: "builtin" },
   ];
   const names = [...PRIORITY, ...(cfg.active && cfg.active !== "auto" && !PRIORITY.includes(cfg.active) && cfg.active !== ANTHROPIC_NATIVE ? [cfg.active] : [])].filter(enabled);
   const remote = names.filter((n) => !isLoopbackProvider(cfg.providers[n]));
   for (const n of remote) {
-    out.push({ name: `anthropic + ${n} workers`, orchestrator: nativeOrchestrator(cfg), workers: n, kind: "builtin" });
+    out.push({ name: `anthropic + ${n} workers`, orchestrator: nativeOrchestrator(), workers: n, kind: "builtin" });
   }
   // Running local (loopback) providers: workers only. A local orchestrator is not a default.
   const up = Object.entries(cfg.providers).filter(([n, p]) => p.enabled && isLoopbackProvider(p) && !down.has(n));
   if (up.length) {
     const pick = up.find(([n]) => n === resolved) ?? up[0];
-    out.push({ name: "anthropic + local workers", orchestrator: nativeOrchestrator(cfg), workers: pick[0], kind: "builtin", local: true });
+    out.push({ name: "anthropic + local workers", orchestrator: nativeOrchestrator(), workers: pick[0], kind: "builtin", local: true });
     const urls = new Set([pick[1].baseUrl]);
     for (const [n, p] of up) {
       if (urls.has(p.baseUrl)) continue;
       urls.add(p.baseUrl);
-      out.push({ name: `anthropic + ${n} workers`, orchestrator: nativeOrchestrator(cfg), workers: n, kind: "builtin" });
+      out.push({ name: `anthropic + ${n} workers`, orchestrator: nativeOrchestrator(), workers: n, kind: "builtin" });
     }
   }
   for (const n of names) if (!isLoopbackProvider(cfg.providers[n])) out.push({ name: `${n} only`, orchestrator: { provider: n }, workers: n, kind: "builtin" });
