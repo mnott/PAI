@@ -324,14 +324,14 @@ describe("router 502 names the dead hop", () => {
     }
   });
 
-  it("provider upstream refused -> 502 body names the URL and the provider", async () => {
+  it("local provider upstream refused -> 503 (model down) body names the URL and the provider", async () => {
     const prov = parseWorkersConfig({ providers: { dead: { baseUrl: "http://127.0.0.1:1/x", models: { default: "dead-model-1" } } } }).providers;
     const r = createRouter(() => prov, "http://127.0.0.1:1", () => {});
     await new Promise<void>((ok) => r.listen(0, "127.0.0.1", ok));
     try {
       const res = await post((r.address() as { port: number }).port, { model: "dead-model-1", max_tokens: 1, messages: [] });
       const msg = JSON.parse(res.body).error.message as string;
-      expect(res.status).toBe(502);
+      expect(res.status).toBe(503);
       expect(msg).toContain("http://127.0.0.1:1");
       expect(msg).toContain("provider dead in workers.yaml");
     } finally {

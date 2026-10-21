@@ -343,6 +343,7 @@ export async function loopbackRouterChoice(
 
 /** The probe body, run in a child node so the sync launch path can wait on it. */
 const PROBE_SCRIPT = `
+const c = (e) => { const k = e && e.cause; return (k && (k.code || (k.errors && k.errors[0] && k.errors[0].code))) || (e && e.code) || (e && e.name) || "error"; };
 const [url, model, ms] = process.argv.slice(1);
 fetch(url + "/v1/messages", {
   method: "POST",
@@ -354,7 +355,7 @@ fetch(url + "/v1/messages", {
   let m = t.slice(0, 200);
   try { m = JSON.parse(t).error.message ?? m; } catch {}
   console.log(JSON.stringify({ status: r.status, message: m }));
-}, (e) => console.log(JSON.stringify({ code: (e.cause && e.cause.code) || e.name || "error" })));
+}, (e) => console.log(JSON.stringify({ code: c(e) })));
 `;
 
 const PROBE_TIMEOUT_MS = 3000;

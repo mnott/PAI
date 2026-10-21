@@ -629,7 +629,7 @@ export function routerHandler(
         if (target.kind === "provider" && isLocal(up.url) && e.code === "ECONNREFUSED") {
           return fail(
             503,
-            `local model down — start it with pai worker local <tier>`,
+            `local model down — ECONNREFUSED reaching ${up.url.origin} (provider ${target.name} in workers.yaml); start it with pai worker local <tier>`,
             target.model,
             prov
           );
