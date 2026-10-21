@@ -8,9 +8,10 @@
  */
 
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
-import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostAlive, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
+import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostProbe, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
 import type { PoolMetricRow, PoolSlotRecord, PoolState } from "../workers/pool.js";
 import { diskBundleMtime } from "../workers/pool-cli.js";
+import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { readWorkersSection } from "../workers/config.js";
 import { parseLedger, type LedgerLine } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
@@ -223,6 +224,38 @@ export function readLedgerTail(path: string, bytes = 6_000_000): LedgerLine[] {
   }
 }
 
+const hostState = new Map<number, { up: boolean; strikes: number }>();
+
+function pidAlive(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Whether the pool host is shown up. A probe that timed out says the router's own event loop (or the
+ * host) was busy, not that the host is gone: while its pid is alive that keeps the last known state,
+ * and only `strikesToDown` timeouts in a row show it down. A refused connection or a dead pid is down at once.
+ */
+export async function poolHostUp(port: number, hostPid: number | undefined, strikesToDown: number, probe = poolHostProbe): Promise<boolean> {
+  const r = await probe(port);
+  const prev = hostState.get(port) ?? { up: true, strikes: 0 };
+  let up: boolean;
+  if (r === "timeout" && pidAlive(hostPid)) {
+    const strikes = prev.strikes + 1;
+    up = prev.up && strikes < strikesToDown;
+    hostState.set(port, { up, strikes });
+  } else {
+    up = r === "up";
+    hostState.set(port, { up, strikes: 0 });
+  }
+  return up;
+}
+
 /** Panel data from the live workers config and logDir; cached 15 s. */
 export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
   let at = 0;
@@ -234,13 +267,14 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
       const { workers } = readWorkersSection();
       const logDir = workersLogDir(workers);
       const s = poolSettings(workers);
+      const state = readPoolState(logDir);
       cached = buildPoolPanel({
         enabled: s.enabled,
-        hostUp: await poolHostAlive(s.port),
+        hostUp: await poolHostUp(s.port, state?.hostPid, cockpitProbeSettings().timeoutStrikes),
         port: s.port,
         maxSlots: s.maxSlots,
         idleSecs: s.idleSecs,
-        state: readPoolState(logDir),
+        state,
         metrics: readPoolMetrics(poolMetricsPath(logDir)),
         ledger: readLedgerTail(ledgerPath(logDir)),
         nowMs: Date.now(),

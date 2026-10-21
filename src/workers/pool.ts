@@ -554,21 +554,28 @@ export function postTaskToPool(
   });
 }
 
-/** Cheap host probe for `pai worker pool status` and the on/off commands. */
-export function poolHostAlive(port: number, timeoutMs = 500): Promise<boolean> {
+/** Answer of one /healthz probe: `timeout` = connected or queued but no answer in time (a busy caller or host), `down` = refused, reset or not 200. */
+export type HostProbe = "up" | "down" | "timeout";
+
+export function poolHostProbe(port: number, timeoutMs = 500): Promise<HostProbe> {
   return new Promise((resolve) => {
     const req = httpRequest({ host: "127.0.0.1", port, path: "/healthz", method: "GET", timeout: timeoutMs }, (res) => {
       res.resume();
-      res.on("end", () => resolve(res.statusCode === 200));
-      res.on("error", () => resolve(false));
+      res.on("end", () => resolve(res.statusCode === 200 ? "up" : "down"));
+      res.on("error", () => resolve("down"));
     });
     req.on("timeout", () => {
       req.destroy();
-      resolve(false);
+      resolve("timeout");
     });
-    req.on("error", () => resolve(false));
+    req.on("error", () => resolve("down"));
     req.end();
   });
+}
+
+/** Cheap host probe for `pai worker pool status` and the on/off commands. */
+export async function poolHostAlive(port: number, timeoutMs = 500): Promise<boolean> {
+  return (await poolHostProbe(port, timeoutMs)) === "up";
 }
 
 // ---------------------------------------------------------------------------

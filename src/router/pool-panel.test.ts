@@ -3,7 +3,8 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 import { handleCockpit } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
-import { buildPoolPanel, type PoolPanelInput } from "./pool-panel.js";
+import { buildPoolPanel, poolHostUp, type PoolPanelInput } from "./pool-panel.js";
+import { poolHostProbe } from "../workers/pool.js";
 import { parseLedger } from "../workers/ledger.js";
 
 const NOW = new Date("2026-10-17T12:00:00").getTime();
@@ -202,5 +203,64 @@ describe("cockpit pool wiring", () => {
     expect(JSON.parse(body).last24h.topReason).toBe("worktree");
     expect(COCKPIT_HTML).toContain("Worker pool");
     expect(COCKPIT_HTML).toContain("loadPool()");
+  });
+});
+
+describe("poolHostUp: a busy router is not a dead host", () => {
+  const spawnHost = async () => {
+    const { spawn } = await import("node:child_process");
+    const child = spawn(
+      process.execPath,
+      ["-e", 'const s=require("http").createServer((q,r)=>r.end("ok")).listen(0,"127.0.0.1",()=>console.log(s.address().port))'],
+      { stdio: ["ignore", "pipe", "inherit"] }
+    );
+    const port = await new Promise<number>((r) => child.stdout!.once("data", (d) => r(Number(String(d).trim()))));
+    return { child, port };
+  };
+  const block = (ms: number) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end);
+  };
+
+  it("a blocked event loop makes the plain probe time out (the cause)", async () => {
+    const { child, port } = await spawnHost();
+    try {
+      const p = poolHostProbe(port);
+      block(700);
+      expect(await p).toBe("timeout");
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("keeps the host up while its pid is alive and the probe timed out, down after N strikes", async () => {
+    const port = 59001;
+    const timeout = async () => "timeout" as const;
+    const seen = [await poolHostUp(port, process.pid, 3, async () => "up")];
+    for (let i = 0; i < 3; i++) seen.push(await poolHostUp(port, process.pid, 3, timeout));
+    seen.push(await poolHostUp(port, process.pid, 3, async () => "up"));
+    expect(seen).toEqual([true, true, true, false, true]);
+    // the host's pid is gone: a timeout means nothing is there to be busy
+    expect(await poolHostUp(port, 2_147_000_000, 3, timeout)).toBe(false);
+  });
+
+  it("a real host with a blocked router loop stays up", async () => {
+    const { child, port } = await spawnHost();
+    try {
+      const p = poolHostUp(port, child.pid, 3);
+      block(700);
+      expect(await p).toBe(true);
+    } finally {
+      child.kill();
+    }
+  });
+
+  it("a refused port with a dead pid is down at once", async () => {
+    const srv = http.createServer();
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const port = (srv.address() as AddressInfo).port;
+    await new Promise((r) => srv.close(r));
+    expect(await poolHostUp(port, 2_147_000_000, 3)).toBe(false);
+    expect(await poolHostUp(port, process.pid, 3)).toBe(false); // refused is down even with a live pid
   });
 });
