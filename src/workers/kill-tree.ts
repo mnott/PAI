@@ -12,6 +12,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
+import { callerIdentity } from "./caller-identity.js";
+import { itermUuid } from "./scope.js";
 import { appendStopEvent, callerDescription, requestKill } from "./endreason.js";
 import {
   loadStatus,
@@ -52,7 +54,7 @@ const defaultDeps = (): KillTreeDeps => ({
 
 /** Identities under which a worker's owner session can appear: launching session name/key, spawner Claude session. */
 function ownerIdentities(s: WorkerStatus): string[] {
-  const ids = [s.session?.name, s.sessionKey, s.spawnerSession, s.spawnerSession ? `claude-session:${s.spawnerSession}` : undefined];
+  const ids = [s.session?.name, s.sessionKey, itermUuid(s.term ?? ""), s.spawnerSession, s.spawnerSession ? `claude-session:${s.spawnerSession}` : undefined];
   return ids.filter((x): x is string => !!x);
 }
 
@@ -153,6 +155,10 @@ export function isOwner(
 ): boolean {
   const owners = ownerIdentities(s);
   if (owners.includes(callerDescription(env))) return true;
+  // same resolver spawn uses to record sessionKey/term
+  const me = callerIdentity(env, { claudeDir: proc.home ? join(proc.home, ".claude") : undefined });
+  if (me.term && owners.includes(me.term)) return true;
+  if (me.jobName && owners.includes(me.jobName)) return true;
   if (env.CLAUDE_CODE_SESSION_ID && owners.includes(env.CLAUDE_CODE_SESSION_ID)) return true;
   // background-job sessions carry no env identity: match the spawning process
   // chain against what the status recorded at spawn (parentPid, spawnerSession).

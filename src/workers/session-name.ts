@@ -5,6 +5,7 @@
  * transcript's customTitle), else the project name of the cwd.
  */
 
+import { callerIdentity } from "./caller-identity.js";
 import { currentSessionName } from "./session-profile-store.js";
 import { AIBROKER_REGISTRY, resolveSession } from "./scope.js";
 
@@ -15,6 +16,7 @@ export interface SessionNameDeps {
   /** Project name for a directory (default: the registry `pai project list` reads). */
   projectName?: (cwd: string) => Promise<string | undefined>;
   cwd?: string;
+  claudeDir?: string;
 }
 
 async function registryProjectName(cwd: string): Promise<string | undefined> {
@@ -32,6 +34,8 @@ let cached: { key: string; name: string | undefined } | null = null;
 export async function detectSessionName(env: NodeJS.ProcessEnv = process.env, deps: SessionNameDeps = {}): Promise<string | undefined> {
   const fromEnv = currentSessionName(env);
   if (fromEnv) return fromEnv;
+  const job = callerIdentity(env, { claudeDir: deps.claudeDir }).jobName;
+  if (job) return job;
   const cwd = deps.cwd ?? process.cwd();
   const key = [env.ITERM_SESSION_ID, env.CLAUDE_CODE_SESSION_ID, cwd, deps.registryPath, deps.mapPath, deps.projectsDir].join("|");
   if (cached?.key === key) return cached.name;
