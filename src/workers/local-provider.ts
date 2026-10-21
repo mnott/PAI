@@ -41,7 +41,7 @@ import {
   writeLocalStatus,
   type LocalStatus,
 } from "./local-status.js";
-import { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck } from "../cli/lib/setups.js";
+import { PORT_TIMEOUT_MS, httpModelsCheck, providerModelIds, type PortCheck } from "../cli/lib/setups.js";
 
 export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
 
@@ -79,7 +79,7 @@ export async function probeLoopback(
   await Promise.all(
     local.map(async ([name, p]) => {
       const hp = providerHostPort(p);
-      out[name] = hp ? await check(hp.host, hp.port, LOCAL_PROBE_TIMEOUT_MS) : false;
+      out[name] = hp ? await check(hp.host, hp.port, LOCAL_PROBE_TIMEOUT_MS, providerModelIds(p)) : false;
     })
   );
   return out;
