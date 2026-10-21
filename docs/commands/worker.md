@@ -68,6 +68,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--no-worktree` | flag | — | Work in place, no worktree |
 | `--max-minutes N` | number | — | Stop after N minutes and keep the work (0 = no limit; default from the config, 60) |
 | `--deadline HH:MM` | string | — | Stop at this local time (tomorrow if already past); not with --max-minutes |
+| `--no-pool` | flag | — | Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) is refused with exit 2 |
 | `--browser` | flag | — | Allow browser tools |
 | `--no-browser` | flag | — | Remove every browser tool from this worker |
 | `--print-cmd` | flag | — | Print the claude command as JSON and exit without starting anything |

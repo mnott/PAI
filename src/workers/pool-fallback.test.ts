@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,10 +35,10 @@ describe("pool fallback to a fresh spawn", () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
-  it("pool off: null, nothing written", async () => {
+  it("pool off: null and one pool-off skip line", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-fb-"));
     expect(await tryPoolRun(args(d, false))).toBeNull();
-    expect(existsSync(ledgerPath(d))).toBe(false);
+    expect(readFileSync(ledgerPath(d), "utf8")).toMatch(/WORKER-POOL-SKIP id=w-fb provider=glm reason=pool-off/);
   });
 
   it("ineligible run: null and the reason lands in the ledger", async () => {

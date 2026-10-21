@@ -48,6 +48,8 @@ import {
   LocalProviderRefusedError,
   assertLocalProviderAlive,
   tryPoolRun,
+  assertPoolPolicy,
+  recordPoolSkip,
   gateStart,
 } from "./gate.js";
 import { executeImageRun, executeRun, executeCodexRun } from "./execute.js";
@@ -254,6 +256,11 @@ export async function runWorker(opts: RunOptions): Promise<number> {
 
   try {
     let rc: number;
+    // image and codex runs never go through the pool; the skip is recorded under the id they mint
+    const engineSkip = (wid: string) => {
+      recordPoolSkip({ logDir, quiet: opts.quiet }, target.providerName, "engine", { id: wid });
+      trackStart(wid);
+    };
     if (target.provider.engine === "image") {
       rc = await executeImageRun({
         config,
@@ -271,7 +278,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,
-        onWorkerStart: trackStart,
+        onWorkerStart: engineSkip,
         id: opts.id,
       });
     } else if (target.provider.engine === "codex") {
@@ -289,7 +296,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         parent: parent ?? undefined,
         stage: opts.stage,
         quiet: opts.quiet,
-        onWorkerStart: trackStart,
+        onWorkerStart: engineSkip,
         id: opts.id,
         worktreeFlag: opts.worktreeFlag,
         className: opts.className,
@@ -340,6 +347,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       };
       // the session pool (workers.pool) gets first crack: an eligible task
       // runs as one more turn of a warm claude instead of a fresh spawn
+      assertPoolPolicy(execArgs);
       await gateStart(execArgs);
       const pooledRc = await tryPoolRun(execArgs);
       if (pooledRc !== null) {
