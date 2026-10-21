@@ -579,7 +579,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
   const labels = actionLabels();
   const withLabels = {
     ...inv,
-    runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
+    runtimes: inv.runtimes.map((r) => ({ ...r, ...(r.tier || tierAtPort(r.port) === undefined ? {} : { tier: tierAtPort(r.port) }), label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
     instances: localInstanceRows(),
     running: (await localRunningInfo())[0] ?? null,
@@ -676,6 +676,16 @@ export function withStarting(ls: ProviderLimits[], views: LocalStartView | Local
     const v = l.up === false ? own[0] : own.find((x) => x.id && !x.id.endsWith("#1"));
     return v ? { ...l, starting: v } : l;
   });
+}
+
+/** The catalogue tier whose base port is this port (a cached inventory without tier info still gets its per-model controls). */
+function tierAtPort(port: number | undefined): string | undefined {
+  if (port === undefined) return undefined;
+  try {
+    return Object.values(readLocalConfig(workersYamlPath()).tiers).find((t) => t.port === port)?.tier;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The tiers (name, label, memory need, instance cap), for the cards' Start/Stop row. */
