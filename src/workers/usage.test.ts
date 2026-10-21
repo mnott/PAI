@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { priceTableText, renderUsage, sumRunUsage, sumUsage, transcriptUsage, usageJson, workerUsage } from "./usage.js";
+import { priceTable, priceTableText, renderUsage, sumRunUsage, sumUsage, transcriptUsage, usageJson, workerUsage } from "./usage.js";
 
 const dirs: string[] = [];
 const tmp = () => {
@@ -182,5 +182,12 @@ describe("sumRunUsage cache split", () => {
   it("no result event: per-turn sum", () => {
     const r = sumRunUsage(jl(asst("m1", "x", { input_tokens: 1, output_tokens: 7 })));
     expect(r.byModel.get("x")?.output).toBe(7);
+  });
+});
+
+describe("price table from workers.yaml", () => {
+  it("ships opus, sonnet and haiku families", () => {
+    expect(Object.keys(priceTable()).sort()).toEqual(["haiku", "opus", "sonnet"]);
+    expect(priceTable().sonnet).toEqual({ input: 3, output: 15 });
   });
 });

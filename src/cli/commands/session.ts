@@ -6,7 +6,7 @@
 import { realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { createInterface } from "node:readline";
-import { readWorkersSection, type WorkersConfig } from "../../workers/config.js";
+import { ANTHROPIC_NATIVE, readWorkersSection, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { CliError, OPT, type CommandDef, type RunContext } from "../define.js";
 import { renderTable, makeStyle, colorEnabled, type Style } from "../help.js";
@@ -349,7 +349,7 @@ const openCommand: CommandDef = {
       if (e instanceof LaunchError || (e as Error).name === "WorkersConfigError") {
         throw new CliError(
           (e as Error).message,
-          `pai open "${name}" --provider ${launchableProviderNames(workers).find((n) => n !== choice.provider) ?? "anthropic"}`
+          `pai open "${name}" --provider ${launchableProviderNames(workers).find((n) => n !== choice.provider) ?? ANTHROPIC_NATIVE}`
         );
       }
       throw e;
@@ -379,7 +379,7 @@ export function applyProfileChat(choice: { provider: string; model?: string }, n
 
 /** A profile's model alias ("opus") passes through on the native login; otherwise the provider's own table decides. */
 function chatModel(provider: Parameters<typeof modelFor>[0] & { native?: boolean }, wanted: string | undefined): string | undefined {
-  return provider.native && wanted === "opus" ? "opus" : modelFor(provider, wanted);
+  return provider.native && wanted === nativeOrchestratorModel() ? wanted : modelFor(provider, wanted);
 }
 
 // ---------------------------------------------------------------------------

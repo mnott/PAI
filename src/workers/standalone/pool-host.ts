@@ -15,6 +15,7 @@ import { workersLogDir } from "../paths.js";
 import { poolHostAlive, poolPidPath, poolSettings } from "../pool.js";
 import { createPoolHost } from "../pool-host.js";
 import { createBindHandler, installExitLogging, logHostExit, openHostLog } from "../pool-host-run.js";
+import { LOOPBACK_HOST, loopbackUrl } from "../../utils/loopback.js";
 
 const portFlag = process.argv.indexOf("--port");
 const fallbackPort = DEFAULT_POOL_PORT;
@@ -70,13 +71,13 @@ const host = createPoolHost({
 // every start (pai worker pool on, pai reload, self-reload) tolerates a port still held by its predecessor;
 // when a healthy host owns it the newcomer steps aside, so there is exactly one owner
 const listen = (): void => {
-  host.server.listen(port, "127.0.0.1", () => {
+  host.server.listen(port, LOOPBACK_HOST, () => {
     host.listening();
     if (logDir) {
       mkdirSync(logDir, { recursive: true });
       writeFileSync(poolPidPath(logDir), `${process.pid}\n`, "utf8");
     }
-    process.stderr.write(`pai worker pool host listening on http://127.0.0.1:${host.port} (cwd ${host.logDir})\n`);
+    process.stderr.write(`pai worker pool host listening on ${loopbackUrl(host.port)} (cwd ${host.logDir})\n`);
   });
 };
 host.server.on(

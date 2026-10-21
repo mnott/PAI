@@ -6,6 +6,7 @@
  */
 
 import { withRunLock, queueLockPath, type LockDeps } from "./run-lock.js";
+import { escalationCloud } from "./config.js";
 import { filesOverlap } from "./plan.js";
 import { tail, type MergeOutcome, type StartRequest, type WorkerOutcome } from "./plan-runner.js";
 import { classifySize, composeQueueSpec, move, type DiffInfo, type QueueItem, type QueueSettings, type QueueStore } from "./queue.js";
@@ -80,8 +81,8 @@ async function runQueueLocked(store: QueueStore, settings: QueueSettings, opts: 
     // `local` as the queue's provider means resolveLocalProvider() at run
     // start — the loopback server that answers, never a provider picked by name.
     const localName = await deps.resolveLocal(opts.provider);
-    const ladder: Array<{ tier: "local" | "sonnet"; provider: string }> = opts.escalate
-      ? [{ tier: "sonnet", provider: "anthropic" }]
+    const ladder: Array<{ tier: string; provider: string }> = opts.escalate
+      ? [{ tier: escalationCloud().tier, provider: escalationCloud().provider }]
       : Array.from({ length: LOCAL_ATTEMPTS }, () => ({ tier: "local" as const, provider: localName }));
     let failure: string | undefined;
     for (let i = 0; i < ladder.length; i++) {

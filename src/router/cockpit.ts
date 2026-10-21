@@ -15,7 +15,7 @@ import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, typ
 import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindows, loadWorkerWindowsSteps, runSliced, withJobNames, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
-import { readWorkersSection, type WorkersConfig } from "../workers/config.js";
+import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
@@ -123,7 +123,7 @@ export function modelOwners(providers: Record<string, { enabled?: boolean; model
  */
 export function foldProviders(rows: UsageRow[], providers: Record<string, { enabled?: boolean }>, owners: Map<string, string>): UsageRow[] {
   if (!owners.size) return rows;
-  const live = (name: string) => name === "anthropic" || providers[name]?.enabled !== false && name in providers;
+  const live = (name: string) => name === ANTHROPIC_NATIVE || providers[name]?.enabled !== false && name in providers;
   return rows.map((r) => {
     if (live(r.provider)) return r;
     const owner = owners.get(canonicalModel(r.model));

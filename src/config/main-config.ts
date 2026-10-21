@@ -55,6 +55,9 @@ export function readDualFormatConfigRaw(jsonPath: string, yamlPath: string = yam
     }
     return parsed as Record<string, unknown>;
   }
+  // PAI_CONFIG_FILE may name a YAML copy of the config (any *.yaml name): YAML
+  // is a superset of JSON, so one parse covers both contents
+  if (/\.ya?ml$/i.test(jsonPath) && existsSync(jsonPath)) return readDualFormatConfigRaw(jsonPath, jsonPath);
   return readJsonStrict(jsonPath, jsonPath);
 }
 

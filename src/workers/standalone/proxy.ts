@@ -17,6 +17,7 @@ import {
   listenProxy,
   proxyPidPath,
 } from "../proxy/server.js";
+import { loopbackUrl } from "../../utils/loopback.js";
 
 const portFlag = process.argv.indexOf("--port");
 const port = portFlag > 0 ? parseInt(process.argv[portFlag + 1], 10) || proxyPort() : proxyPort();
@@ -36,7 +37,7 @@ listenProxy(server, port)
       mkdirSync(logDir, { recursive: true });
       writeFileSync(proxyPidPath(logDir), `${process.pid}\n`, "utf8");
     }
-    process.stderr.write(`pai worker proxy listening on http://127.0.0.1:${bound}\n`);
+    process.stderr.write(`pai worker proxy listening on ${loopbackUrl(bound)}\n`);
   })
   .catch((e) => {
     process.stderr.write(`pai worker proxy: cannot listen on ${port}: ${String(e)}\n`);

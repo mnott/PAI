@@ -33,7 +33,8 @@ import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { sharedParker } from "./parking.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
-import { readWorkersSection, resolveProviderKey, type WorkerProvider } from "../workers/config.js";
+import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { isLoopbackUrl, isLoopbackHostname } from "../utils/loopback.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -55,7 +56,7 @@ export function stripContextSuffix(model: string): string {
 }
 
 function isClaudeId(model: string): boolean {
-  return /^claude-/.test(model) || ["sonnet", "opus", "haiku", "default", "opusplan"].includes(model);
+  return /^claude-/.test(model) || loadConfig().router.claudeModelAliases.includes(model);
 }
 
 /** model id (suffix-free) → provider name, from enabled non-native providers. */
@@ -196,14 +197,7 @@ export function foldSystemMessages(body: Record<string, unknown>): Record<string
   return { ...body, messages: out };
 }
 
-function isLoopback(baseUrl: string): boolean {
-  try {
-    const h = new URL(baseUrl).hostname;
-    return h === "127.0.0.1" || h === "localhost" || h === "[::1]" || h === "::1";
-  } catch {
-    return false;
-  }
-}
+const isLoopback = isLoopbackUrl;
 
 export interface Upstream {
   url: URL;
@@ -380,7 +374,7 @@ function defaultToolCaseFix(log: (line: string) => void): NonNullable<RouterOpti
 }
 
 function isLocal(u: URL): boolean {
-  return u.hostname === "127.0.0.1" || u.hostname === "localhost";
+  return isLoopbackHostname(u.hostname);
 }
 
 /** The forwarded body parsed once more for the prompt-token count; null when it somehow is not JSON. */
@@ -487,7 +481,7 @@ export function routerHandler(
           ures.pipe(res);
           ures.on("end", () => log(`${new Date().toISOString()} GET ${path.split("?")[0]} anthropic ${ures.statusCode} ${Date.now() - started}ms`));
         });
-        ureq.on("error", (e: NodeJS.ErrnoException) => fail(502, `upstream error: ${e.code ?? e.message} reaching ${claudeBase} (router.claudeUpstream in config.yaml)`, "GET models", "anthropic"));
+        ureq.on("error", (e: NodeJS.ErrnoException) => fail(502, `upstream error: ${e.code ?? e.message} reaching ${claudeBase} (router.claudeUpstream in config.yaml)`, "GET models", ANTHROPIC_NATIVE));
         res.on("close", () => ureq.destroy());
         ureq.end();
         return;
@@ -504,7 +498,7 @@ export function routerHandler(
       });
       if (!prep.ok) return fail(prep.status, prep.message);
       const { up, target, requested } = prep;
-      const prov = target.kind === "claude" ? "anthropic" : target.name;
+      const prov = target.kind === "claude" ? ANTHROPIC_NATIVE : target.name;
       const isCount = path.includes("/count_tokens");
       const session = sessionTag(req.headers["x-claude-code-session-id"]);
       const sessionId = headerValue(req.headers["x-claude-code-session-id"], 64);

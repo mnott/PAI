@@ -13,8 +13,10 @@ import { delimiter, join } from "node:path";
 
 import { loadConfig } from "../daemon/config.js";
 import { routerPort } from "../router/router.js";
-import { resolveModelCapability, resolveProviderKey, type WorkerProvider } from "./config.js";
+import { resolveModelCapability, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "./config.js";
 import { workersYamlPath } from "./workers-config.js";
+import { loopbackUrl } from "../utils/loopback.js";
+import { isLoopbackHostname } from "../utils/loopback.js";
 
 /**
  * Headless workers run their Bash tool under bash: the operator's zsh aborts a whole command on an
@@ -159,7 +161,7 @@ export function buildRunEnv(
     if (headless) {
       env.PAI_WORKER = "1";
       workerShell(env);
-      env.PAI_WORKER_PROVIDER = "anthropic";
+      env.PAI_WORKER_PROVIDER = ANTHROPIC_NATIVE;
     } else {
       env.ENABLE_TOOL_SEARCH = "true";
     }
@@ -246,7 +248,7 @@ export function addSchedulingHeaders(env: NodeJS.ProcessEnv, ids: { session?: st
 
 /** Loopback URL of the local model router — the route every accounted run takes. */
 export function routerUrl(): string {
-  return `http://127.0.0.1:${routerPort()}`;
+  return loopbackUrl(routerPort());
 }
 
 /**
@@ -303,8 +305,7 @@ export function isLoopbackProvider(p: WorkerProvider): boolean {
 
 function isLoopbackUrl(url: string): boolean {
   try {
-    const h = new URL(url).hostname;
-    return h === "127.0.0.1" || h === "localhost" || h === "[::1]" || h === "::1";
+    return isLoopbackHostname(new URL(url).hostname);
   } catch {
     return false;
   }

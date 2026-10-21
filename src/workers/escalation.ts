@@ -34,12 +34,20 @@ export interface EscalateConfig {
   failures: number;
   /** Which triggers are on. */
   triggers: TriggerKind[];
+  /** The cloud target of a plan/queue escalation and of `pai worker help`: tier label, provider name, model alias. */
+  cloud: CloudTarget;
+}
+
+export interface CloudTarget {
+  tier: string;
+  provider: string;
+  model: string;
 }
 
 const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop"];
 
 /** Fallbacks of the escalate block when workers.yaml omits a key; the shipped defaults file carries the policy values. */
-export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS };
+export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" } };
 
 /** Failed local attempts that escalate a task (the route classifier's rule, now this one). */
 export const ESCALATE_FAILURES = DEFAULT_ESCALATE.failures;
@@ -202,7 +210,7 @@ type Bad = (path: string, msg: string) => never;
 
 /** Parse workers.escalate; throws via `bad` on a wrong type. */
 export function parseEscalate(v: unknown, bad: Bad): EscalateConfig {
-  const out = { ...DEFAULT_ESCALATE };
+  const out = { ...DEFAULT_ESCALATE, cloud: { ...DEFAULT_ESCALATE.cloud } };
   if (v === undefined) return out;
   if (typeof v !== "object" || v === null || Array.isArray(v)) bad(".escalate", "must be an object");
   const t = v as Record<string, unknown>;
@@ -225,6 +233,15 @@ export function parseEscalate(v: unknown, bad: Bad): EscalateConfig {
       bad(".escalate.triggers", `must be a list of: ${ALL_TRIGGERS.join(", ")}`);
     }
     out.triggers = t.triggers as TriggerKind[];
+  }
+  if (t.cloud !== undefined) {
+    if (typeof t.cloud !== "object" || t.cloud === null || Array.isArray(t.cloud)) bad(".escalate.cloud", "must be an object");
+    const c = t.cloud as Record<string, unknown>;
+    for (const k of ["tier", "provider", "model"] as const) {
+      if (c[k] === undefined) continue;
+      if (typeof c[k] !== "string" || !(c[k] as string).trim()) bad(`.escalate.cloud.${k}`, "must be a non-empty string");
+      out.cloud[k] = (c[k] as string).trim();
+    }
   }
   return out;
 }

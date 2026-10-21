@@ -44,6 +44,11 @@ describe("router", () => {
     expect(r).toMatchObject({ kind: "claude", base: "http://c/w/claude" });
   });
 
+  it("bare Claude aliases come from router.claudeModelAliases", () => {
+    expect(resolveModel("opusplan", providers, "http://c/w/claude")).toMatchObject({ kind: "claude" });
+    expect(resolveModel("opusplan-not", providers, "http://c/w/claude")).toMatchObject({ kind: "unknown" });
+  });
+
   it("takes the claude upstream and port from config, default api.anthropic.com / 8790", () => {
     const saved = process.env.PAI_CONFIG_FILE;
     const cfgDir = mkdtempSync(join(tmpdir(), "router-cfg-"));

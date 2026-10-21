@@ -11,7 +11,7 @@ import { planLockPath, queueLockPath, readRunLock, sinceText } from "../../worke
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { stringify as yamlStringify } from "yaml";
-import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
+import { escalationCloud, getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { fmtElapsed, loadPlanStatus, planRunId } from "../../workers/plan-status.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { effectiveCap } from "../../workers/capacity.js";
@@ -268,7 +268,7 @@ export async function planRun(args: { project: string; name: string; escalate?: 
     const target = await resolveWhere(args, deps, (plan.maxParallel ?? 2) > 1);
     const par = parallelOf(plan, target?.provider ? deps.capOf(target.provider) : deps.provider(loadSettings(repo)).cap);
     const origin = await deps.origin();
-    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin });
+    deps.detach({ kind: "plan", label: plan.job, positional: [path], opts: { parallel: par, ...runTarget(target), ...(args.escalate ? { escalate: escalationCloud().tier } : {}) }, cwd: repo, origin });
     return text(withTarget(target, `Plan "${args.name}" started in the background${origin ? "" : " (no calling session found, events are not delivered)"}: ${total - merged.size} of ${total} parts to run, ${par} at a time${merged.size ? ` (${merged.size} already merged are skipped)` : ""}. Check progress with plan_status.`));
   } catch (e) {
     return error(e);
@@ -393,7 +393,7 @@ export async function queueRun(args: { project: string; escalate?: boolean } & W
     if (held) return fail(`A run of the queue is already in progress ${sinceText(held)}. Call queue_review for progress.`);
     const target = await resolveWhere(args, deps, true);
     const prov =target?.provider ? { name: target.provider, cap: deps.capOf(target.provider) } : deps.provider(settings);
-    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: "sonnet" } : {}) }, cwd: repo, origin: await deps.origin() });
+    deps.detach({ kind: "queue", label: basename(repo), positional: [], opts: { provider: prov.name, parallel: settings.maxParallel ?? prov.cap, ...runTarget(target, false), ...(args.escalate ? { escalate: escalationCloud().tier } : {}) }, cwd: repo, origin: await deps.origin() });
     return text(withTarget(target, `Started ${pending.length} item${pending.length === 1 ? "" : "s"} (${pending.map((i) => i.id).join(", ")}) in the background. Call queue_review in a few minutes.`));
   } catch (e) {
     return error(e);

@@ -56,7 +56,7 @@ describe('drainServers', () => {
 
     // Now drain the server
     const drainStart = Date.now();
-    await drainServers([server]);
+    await drainServers([server], { timeoutMs: 120000 });
     const drainEnd = Date.now();
 
     // Should have waited for the full response (allowing for some timing variance)
