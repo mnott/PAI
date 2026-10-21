@@ -1707,7 +1707,10 @@ function archiveSlotBranch(
  * `gc --foreign`: worktrees of `repo` that PAI did not create (not main, not under the
  * logDir's worktrees/slots, not owned by a worker status), whose branch is fully merged
  * into main, go through the same `archive` path as worker trees under
- * refs/pai-archive/<branch>. Unmerged or detached ones are reported as kept.
+ * refs/pai-archive/<branch>. Unmerged ones are reported as kept. A detached-HEAD tree whose
+ * commit is in main goes the same way under refs/pai-archive/detached-<dir>-<sha7>, with its
+ * uncommitted state committed into the archive. PAI's own slot trees are skipped above:
+ * they live in a directory named `slots` (isSlotWorktree) or under the logDir.
  */
 function gcForeign(
   logDir: string,
@@ -1736,10 +1739,16 @@ function gcForeign(
     if (owned.has(real) || real === pai || real.startsWith(pai + sep) || isSlotWorktree(real)) return;
     const ref = field("branch");
     const branch = ref?.replace(/^refs\/heads\//, "");
-    const id = branch ?? basename(real);
-    if (!branch) return void out.push({ id, skipped: "kept: detached HEAD" });
+    const sanitize = (v: string): string => v.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+    if (!branch) {
+      // detached HEAD: eligible when its commit is in main; the archive ref keeps commit + uncommitted state
+      const head = field("HEAD") ?? "";
+      const id = `detached-${sanitize(basename(real)) || "tree"}-${head.slice(0, 7)}`;
+      if (!head || !isAncestor(repo, head, main)) return void out.push({ id, skipped: "kept: not merged" });
+      return archive(id, real, `detached/${id}`, null);
+    }
     if (!isAncestor(repo, `refs/heads/${branch}`, main)) return void out.push({ id: branch, skipped: "kept: not merged" });
-    const safe = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "") || "branch";
+    const safe = sanitize(branch) || "branch";
     archive(safe, real, branch, null);
   });
 }
