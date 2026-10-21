@@ -18,11 +18,15 @@ All notable changes to PAI Knowledge OS are documented here.
 - **Worker panes are owned by the process:** `worker run`, `pane run` and `plan run` start their command inside the pane that owns it, so closing the pane ends the process. A process started inside a pane, or a worker's child worker, gets its own pane. The auditor is now a bug detector only: it writes to a ledger and kills orphan sides, and never reopens a pane.
 - **Providers test:** `pai worker providers test` checks what workers would really use, including the native Claude provider, which is probed by spawning like a worker and reading the reply.
 - **Install:** the repo is its own plugin marketplace, so installing takes two commands, and the setup skill was rewritten to install PAI on its own with sequential steps and correct counts.
-- **Documentation:** concept pages for tiers, routing policy, escalation, session profiles, workers, providers, panes, pool, router, local models, loop guard and notifications; install and first-workers pages; a cockpit page walking through each section with screenshots. The README and docs index lead with the install skill and orchestration. Stale worker and config docs were rewritten, and a test now requires documented keys and commands to exist.
+- **Documentation:** concept pages for tiers, routing policy, escalation, session profiles, workers, providers, panes, pool, router, local models, loop guard and notifications; install and first-workers pages; a cockpit page walking through each section with screenshots. The README and docs index lead with the install skill and orchestration, with one glossary and the PAI home defined once. Stale worker and config docs were rewritten, and a test now requires documented keys and commands to exist.
+- **Loop guard hands back output:** when the guard denies a repeated read, the denial carries that read's last output; a denied repeated test or build run carries the end of its last output (where failures are). Both are trimmed (`workers.loopGuard.echoLines`, `echoRunnerLines`, `echoChars`) and lines that look like secrets are masked.
+- **Session names in the cockpit:** sessions show their AIBroker name, and Claude Code background jobs their job name, ahead of the project slug; an escalated run shows "escalated → <run>" with its commits instead of "failed".
+- **Shared runtime stop:** stopping a runtime that other consumers use names them and needs a second click (`router.cockpit.layout.confirmMs`).
 
 ### Changed
 
-- **Config values out of code:** defaults for delegation, router, cockpit layout, panes, notices and runtimes live in shipped defaults files under the user config instead of in code. `pai config get --source` shows where a value comes from.
+- **Config values out of code:** defaults for delegation, router, cockpit layout and colour thresholds, panes, notices and runtimes live in shipped defaults files under the user config instead of in code. Runtime start/stop commands are no longer written into the user config on first use. `pai config get --source` shows where a value comes from.
+- **Cockpit page source** is split into modules by area; the page it serves is byte-identical.
 - **PAILot only for replies:** automatic notices never go to PAILot; a run end produces at most one notice, and the messenger is rate-limited.
 - **Workers:** a worker never runs in place while editing — an existing branch is reused or renamed. Run reports reach a background session's tab, and panes for a background session are found through the Claude daemon's control socket.
 
@@ -30,7 +34,8 @@ All notable changes to PAI Knowledge OS are documented here.
 
 - **Reload and daemon:** shipped defaults resolve from the daemon bundle, not the working directory; `pai reload` starts a stopped daemon or reports the failure. A pool host self-update always comes back and reload waits for it.
 - **Loop guard:** the guard fingerprints content, so touching a file no longer gets a repeated command past it.
-- **Killing workers:** the owning session may kill its worker when it runs as a background session.
+- **Killing workers:** spawn and kill resolve the owning session with one function, so a session may kill its own worker also when it runs as a Claude Code background job.
+- **Tests** no longer inherit the Claude Code session identity of the shell they run from.
 - **Context meter:** context fill is the largest turn, not the run's token total.
 - **Workers:** a missing or unseen pane never blocks a worker start; pooled runs end and fall through like fresh ones; a pooled worker is alive only while its slot process is; read files are not reported as changes; AG2 shape slips are repaired before validating; the follow view prints plain text and titles only to a terminal.
 - **Panes:** launcher panes show the live status and input lines; one rule decides pane or not, and resume no longer takes `--no-pane`; ended pane runs are not violations.
