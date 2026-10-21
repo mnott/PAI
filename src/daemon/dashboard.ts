@@ -18,8 +18,7 @@ import type { EmbeddingBinding, StorageBackend } from "../storage/interface.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 import { bindingMatches, mismatchReason } from "../memory/embedding-binding.js";
 import { paiHomePath } from "../config/pai-home.js";
-import { LOOPBACK_HOST } from "../utils/loopback.js";
-import { LOCAL_PROBE_TIMEOUT_MS, TAILSCALE_STATUS_TIMEOUT_MS } from "../utils/timeouts.js";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
 const TICK_MS = 30_000;
 const COUNTS_TTL_MS = 5 * 60_000;
