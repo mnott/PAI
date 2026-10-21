@@ -43,6 +43,23 @@ describe("resolveHostSession", () => {
     expect(h).toMatchObject({ uid: LIVE, via: "env" });
   });
 
+  it("script of a worker: no tty, no ITERM_SESSION_ID, live TERM_SESSION_ID -> the parent's pane", async () => {
+    const env = { TERM_SESSION_ID: `w1t0p0:${LIVE}` };
+    const h = await resolveHostSession(env, deps({ 500: [1, "??"] }, [{ id: LIVE, tty: "/dev/ttys009" }]), 500);
+    expect(h).toMatchObject({ uid: LIVE, term: env.TERM_SESSION_ID, via: "parent pane" });
+  });
+
+  it("no handles at all -> none (still refused)", async () => {
+    const h = await resolveHostSession({}, deps({ 500: [1, "??"] }, [{ id: LIVE, tty: "/dev/ttys009" }]), 500);
+    expect(h).toMatchObject({ uid: "", term: "", via: "none" });
+    expect(h.reason).toContain("TERM_SESSION_ID is unset");
+  });
+
+  it("a dead TERM_SESSION_ID is not a handle", async () => {
+    const h = await resolveHostSession({ TERM_SESSION_ID: `w1t0p0:${DEAD}` }, deps({ 500: [1, "??"] }, [{ id: LIVE, tty: "/dev/ttys009" }]), 500);
+    expect(h.via).toBe("none");
+  });
+
   it("nothing resolves -> loud reason", async () => {
     const h = await resolveHostSession(
       { ITERM_SESSION_ID: `w1t0p0:${DEAD}` },

@@ -5,7 +5,8 @@
  * then `pai worker wait-on $(cat /tmp/job.pid) --log /tmp/job.log` until exit 0.
  *
  * Exit codes: 0 pid gone, 3 still running at --max, 2 pid never existed or not ours,
- * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes).
+ * 4 killed by the ceiling (--max-minutes) or the stall rule (--stall-minutes); a silent tree that is busy
+ * (CPU time advancing, or an open loopback connection) is not stalled.
  * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
  */
 
@@ -52,6 +53,8 @@ export interface WaitOnDeps {
   logMtime?: (file: string) => number | null;
   /** SIGTERM the pid and its descendants, SIGKILL the survivors after 5 s. */
   killTree?: (pid: number) => Promise<void>;
+  /** Is the tree of pid doing work although silent: a descendant's CPU time advancing, or an open loopback TCP connection (a model/router request in flight)? */
+  busy?: (pid: number) => Promise<{ busy: boolean; why: string }>;
   /** Worker status of the awaited pid: queued behind the provider cap (capacity gate) or not, and when it left the queue (ms epoch); null = not a worker. */
   queue?: (pid: number) => { queued: boolean; started: number | null; id?: string } | null;
 }
@@ -105,6 +108,48 @@ export function processTree(pid: number): number[] {
   return out;
 }
 
+/** `ps -o time=` ("M:SS.cc" or "H:MM:SS.cc") in seconds; NaN when unreadable. */
+export function parseCpuTime(t: string): number {
+  const parts = t.trim().split(":").map(Number);
+  if (!parts.length || parts.some((n) => !Number.isFinite(n))) return NaN;
+  return parts.reduce((acc, n) => acc * 60 + n, 0);
+}
+
+function treeCpuSecs(tree: number[]): number {
+  try {
+    const rows = execFileSync("ps", ["-axo", "pid=,time="], { encoding: "utf8" }).split("\n");
+    let sum = 0;
+    for (const r of rows) {
+      const [pid, time] = r.trim().split(/\s+/);
+      if (tree.includes(Number(pid))) sum += parseCpuTime(time ?? "") || 0;
+    }
+    return sum;
+  } catch {
+    return 0;
+  }
+}
+
+/** An ESTABLISHED TCP connection from the tree to a loopback address (the local model server or router). */
+function treeLoopbackConn(tree: number[]): boolean {
+  try {
+    const out = execFileSync("lsof", ["-nP", "-a", "-p", tree.join(","), "-iTCP", "-sTCP:ESTABLISHED"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return out.split("\n").some((l) => /->(127\.0\.0\.1|\[::1\]|localhost):\d+/.test(l));
+  } catch {
+    return false; // lsof exits 1 with no match
+  }
+}
+
+/** Silent is not hung: CPU time of the tree advanced over a one-second sample, or it holds a loopback connection open. */
+export async function treeBusy(pid: number): Promise<{ busy: boolean; why: string }> {
+  const tree = processTree(pid);
+  const before = treeCpuSecs(tree);
+  await new Promise((r) => setTimeout(r, 1000));
+  const after = treeCpuSecs(processTree(pid));
+  if (after > before) return { busy: true, why: `cpu +${Math.round((after - before) * 100) / 100}s` };
+  if (treeLoopbackConn(tree)) return { busy: true, why: "open loopback connection" };
+  return { busy: false, why: "no cpu, no i/o" };
+}
+
 const running = (pid: number): boolean => pidAlive(pid) && !isZombie(pid);
 
 export async function killProcessTree(pid: number, graceMs = KILL_GRACE_MS): Promise<void> {
@@ -150,6 +195,7 @@ export const realDeps: WaitOnDeps = {
     }
   },
   killTree: killProcessTree,
+  busy: treeBusy,
 };
 
 const readLines = (file: string | undefined): string[] => {
@@ -209,6 +255,7 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
   d.mark?.({ pid: o.pid, cmd: p?.cmd ?? "", startedAt: p?.startedAt ?? null, log: o.log ?? null });
   try {
     let nextBeat = t0 + HEARTBEAT_MS;
+    let sayBusy = false;
     // The ceiling counts from the process start, so it holds across repeated wait-on calls.
     const born0 = ranSince ?? t0;
     // A `pai worker run` queued behind the provider cap is waiting, not hung: no stall kill, and the
@@ -244,7 +291,16 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
       }
       if (d.now() - born >= ceilMs) return await killed(`still running after ${fmtMinutes(ceilMs)}`);
       const m = o.log ? d.logMtime?.(o.log) : null;
-      if (m != null && d.now() - Math.max(m, born) >= stallMs) return await killed(`no output for ${fmtMinutes(stallMs)}`);
+      if (m != null && d.now() - Math.max(m, born) >= stallMs) {
+        const b = d.busy ? await d.busy(o.pid) : null;
+        if (!b?.busy) return await killed(`no output for ${fmtMinutes(stallMs)}`);
+        if (!sayBusy || d.now() >= nextBeat) {
+          sayBusy = true;
+          d.out(`running ${Math.round((d.now() - t0) / 1000)}s, silent but busy (${b.why}), not stalled`);
+          nextBeat += HEARTBEAT_MS;
+        }
+        continue;
+      }
       if (d.now() >= nextBeat) {
         d.out(`running ${Math.round((d.now() - t0) / 1000)}s, log +${readLines(o.log).length - baseLines} lines`);
         nextBeat += HEARTBEAT_MS;

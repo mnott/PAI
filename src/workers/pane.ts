@@ -1150,6 +1150,9 @@ function claudeIdOf(cmd: string): string | undefined {
  *  3. the tty of the nearest ancestor that has one
  *  4. ITERM_SESSION_ID, only when it names a live session — a reattached session
  *     keeps its old id in the process env for good
+ *  5. TERM_SESSION_ID (iTerm exports it to every pane shell; a worker's env keeps it while ITERM_SESSION_ID is
+ *     gone), only when live: a script started by a worker has no tty and no Claude ancestor, but still
+ *     carries its parent's pane — the child's pane opens next to it
  */
 export async function resolveHostSession(
   env: NodeJS.ProcessEnv = process.env,
@@ -1225,6 +1228,11 @@ export async function resolveHostSession(
 
   if (envUid && sessions.some((s) => s.id === envUid)) return { uid: envUid, term: envTerm, via: "env" };
   notes.push(`env: ITERM_SESSION_ID ${envTerm ? `${envTerm} is not live` : "is unset"}`);
+
+  const parentTerm = env.TERM_SESSION_ID ?? "";
+  const parentUid = itermUuid(parentTerm);
+  if (parentUid && sessions.some((s) => s.id === parentUid)) return { uid: parentUid, term: parentTerm, via: "parent pane" };
+  notes.push(`parent pane: TERM_SESSION_ID ${parentTerm ? `${parentTerm} is not live` : "is unset"}`);
 
   const why = sessions.length === 0 ? "iTerm2 not running or unreachable" : "no live iTerm2 session matched";
   return { uid: "", term: "", via: "none", reason: `${why}; ${notes.join("; ")}` };

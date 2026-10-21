@@ -124,8 +124,10 @@ describe("waitOn ceiling and stall kill", () => {
     expect(alive(c.pid!)).toBe(false);
   }, 20_000);
 
-  it("kills a child whose log stays silent (stall rule)", async () => {
-    const c = spin();
+  const idle = () => spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+
+  it("kills a child whose log stays silent with no CPU and no I/O (stall rule)", async () => {
+    const c = idle();
     const out: string[] = [];
     const log = join(dir, "stall.log");
     writeFileSync(log, "RUN v1\n");
@@ -135,6 +137,32 @@ describe("waitOn ceiling and stall kill", () => {
     await new Promise((r) => setTimeout(r, 200));
     expect(alive(c.pid!)).toBe(false);
   }, 20_000);
+
+  it("does not kill a silent child that is burning CPU: silent but busy", async () => {
+    const c = spin();
+    const out: string[] = [];
+    const log = join(dir, "busy.log");
+    writeFileSync(log, "RUN v1\n");
+    const rc = await waitOn({ pid: c.pid!, log, maxSecs: 8, maxMinutes: 100, stallMinutes: 0.02, tail: 0 }, { ...realDeps, out: (l) => out.push(l) });
+    expect(rc).toBe(3);
+    expect(out.some((l) => /silent but busy \(cpu \+/.test(l))).toBe(true);
+    expect(alive(c.pid!)).toBe(true);
+    c.kill("SIGKILL");
+  }, 30_000);
+
+  it("busy verdict spares the tree, idle verdict kills it (fake clock)", async () => {
+    for (const busy of [true, false]) {
+      const f = fake({});
+      const killed: number[] = [];
+      f.deps.logMtime = () => 1_000_000;
+      f.deps.killTree = async (p) => void killed.push(p);
+      f.deps.busy = async () => ({ busy, why: "open loopback connection" });
+      const rc = await waitOn({ pid: 42, log: join(dir, "f.log"), maxSecs: 590, stallMinutes: 0.2, maxMinutes: 100, tail: 0 }, f.deps);
+      expect(rc).toBe(busy ? 3 : 4);
+      expect(killed).toEqual(busy ? [] : [42]);
+      if (busy) expect(f.out.some((l) => l.includes("silent but busy (open loopback connection)"))).toBe(true);
+    }
+  });
 
   it("leaves a quick process alone", async () => {
     const c = spawn("sleep", ["1"], { stdio: "ignore" });
