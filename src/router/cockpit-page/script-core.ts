@@ -220,10 +220,21 @@ function cleanRows(rows,secs){
   for(var n=0;n<rows[k].length;n++){var name=rows[k][n];if(names[name]&&!seen[name]&&r.length<MAXROW){r.push(name);seen[name]=1}}
   if(r.length)out.push(r);
  }
- for(var j=0;j<secs.length;j++){var s=secs[j].getAttribute("data-section");if(!seen[s])out.push([s])}
+ // a missing section goes after the row of its default predecessor (the page order), else last
+ var def=defaultRows(secs).reduce(function(a,r){return a.concat(r)},[]);
+ for(var j=0;j<secs.length;j++){var s=secs[j].getAttribute("data-section");if(seen[s])continue;
+  var at=out.length,d=def.indexOf(s);
+  for(var p=d-1;p>=0;p--){var hit=-1;for(var q=0;q<out.length;q++)if(out[q].indexOf(def[p])>=0)hit=q;if(hit>=0){at=hit+1;break}}
+  out.splice(at,0,[s]);seen[s]=1}
  return out;
 }
-function layoutRows(secs){return cleanRows(savedRows()||defaultRows(secs),secs)}
+/** The rows to show: the saved ones (else the default) cleaned against the sections the page
+ *  carries; a saved layout that changed by the cleaning (a section added since) is saved again. */
+function layoutRows(secs){
+ var saved=savedRows(),rows=cleanRows(saved||defaultRows(secs),secs);
+ if(saved&&JSON.stringify(rows)!==JSON.stringify(saved))saveRows(rows);
+ return rows;
+}
 function saveRows(rows){try{localStorage.setItem(LKEY,JSON.stringify(rows))}catch(e){}}
 /** Apply the rows: DOM order = row order, each section spans 12/n columns.
  *  The section elements move, never get rebuilt: folds and listeners survive. */
