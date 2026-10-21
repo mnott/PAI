@@ -24,6 +24,7 @@ import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
+import { vllmLogCacheStats } from "./vllm-log-cache.js";
 import { serves } from "../workers/served-models.js";
 import { isLocalCandidate, tierProviderNames } from "../workers/local-provider.js";
 import type { UsageRow } from "./usage.js";
@@ -552,8 +553,8 @@ export async function localLimits(
       const tree = await processTreeRssMb(pid, (c, a) => sh(c, a).then((s) => s || null));
       if (tree > 0) rssMb = tree;
     }
-    if (background) background(prefixCacheStats(u, p));
-    else prefixCache = await prefixCacheStats(u, p);
+    if (background) background(prefixCacheStats(u, p, name));
+    else prefixCache = await prefixCacheStats(u, p, name);
   }
   return {
     provider: name,
@@ -634,7 +635,7 @@ export function parseStrataCacheStats(body: string): PrefixCacheStats | undefine
   }
 }
 
-async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCacheStats | undefined> {
+async function prefixCacheStats(base: URL, p: WorkerProvider, name: string): Promise<PrefixCacheStats | undefined> {
   let headers: Record<string, string> = {};
   try {
     headers = { authorization: `Bearer ${resolveProviderKey(p)}` };
@@ -648,10 +649,13 @@ async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCac
     /* not a vllm-mlx server: try Strata's metrics */
   }
   try {
-    return parseStrataCacheStats(await getJson(new URL("/metrics", base), headers, PREFIX_STATS_TIMEOUT_MS));
+    const strata = parseStrataCacheStats(await getJson(new URL("/metrics", base), headers, PREFIX_STATS_TIMEOUT_MS));
+    if (strata) return strata;
   } catch {
-    return undefined;
+    /* no metrics either */
   }
+  // vllm-mlx exposes no counters over HTTP: read the reuse from the server log PAI owns
+  return vllmLogCacheStats(name, Number(base.port) || 80);
 }
 
 /** Several providers share one port: up only when its model is served. Re-exported from the shared probe (workers/served-models.ts). */
