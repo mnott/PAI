@@ -147,6 +147,62 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     expect(COCKPIT_HTML).toMatch(/@media\(max-width:480px\)\{[^]*\.tw td>span\{min-width:0;overflow:hidden;text-overflow:ellipsis\}/);
   });
 
+  /** The page's CSS rules with their enclosing media range: {sel, decls, maxW}. */
+  const cssRules = (html: string): Array<{ sel: string; decls: string; maxW: number }> => {
+    const css = html.match(/<style>([\s\S]*?)<\/style>/)![1];
+    const rules: Array<{ sel: string; decls: string; maxW: number }> = [];
+    let at = 0;
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const head = m[1].trim();
+      const mm = head.match(/^@media\(max-width:(\d+)px\)\{(.+)$/);
+      if (mm) {
+        for (const part of mm[2].split("}")) {
+          const pm = part.match(/^\s*([^{]+)\{([^}]*)$/);
+          if (pm) rules.push({ sel: pm[1].trim(), decls: pm[2], maxW: +mm[1] });
+        }
+      } else {
+        rules.push({ sel: head, decls: m[2], maxW: Infinity });
+      }
+      at = m.index + m[0].length;
+    }
+    void at;
+    return rules;
+  };
+  /** The declarations a selector gets at a given viewport width, media queries resolved. */
+  const appliedDecls = (sel: string, width: number): string =>
+    cssRules(COCKPIT_HTML)
+      .filter((r) => r.maxW >= width && r.sel.split(",").map((s) => s.trim()).includes(sel))
+      .map((r) => r.decls)
+      .join(";");
+  /** The used width of an inline-block span: min(max-width, containing-block width),
+   *  the shrink-to-fit rule a browser applies at this width. */
+  const usedSpanWidth = (sel: string, width: number, containerWidth: number): number => {
+    const mw = appliedDecls(sel, width).match(/max-width:([^;]+)/)?.[1] ?? "";
+    const minm = mw.match(/^min\((\d+)px,100%\)$/);
+    const cap = minm ? Math.min(+minm[1], containerWidth) : mw.endsWith("px") ? +mw.slice(0, -2) : containerWidth;
+    return Math.min(cap, containerWidth);
+  };
+
+  it("a 90-char session name fits the card at a 375 px main width: the span caps at min(configured,100%) and the cell shrinks", () => {
+    const NAME90 = "escalation: loop stop with saved work escalates at once · cb1776b3 done · review pending n"; // 90 chars
+    expect(NAME90.length).toBe(90);
+    const html = renderSessions([{
+      name: NAME90, session: "20261021-015130-55831", models: [MODEL50], requests: 3,
+      input: 1000, cacheWrite: 100, cacheRead: 500, output: 200, hitRatio: 0.5, busts: 0, errors: 0,
+      lastTs: new Date().toISOString(), worker: "w1", verdict: "ok",
+    }]);
+    // the rendered markup: the name span is the first-column span carrying the title
+    expect(html).toContain('<td data-l="session"><span title="');
+    expect(html).toContain(NAME90);
+    // the harness: main 375 px, card inside it (card padding 10 px each side)
+    const cardW = 375 - 20;
+    // the span's used width at phone width: min(480px,100%) of the cell -> at most the card
+    expect(usedSpanWidth("#sessions td:first-child span[title]", 375, cardW)).toBeLessThanOrEqual(cardW);
+    // the cell can shrink in the stacked phone layout (min-width:0)
+    expect(appliedDecls("#sessions td:first-child", 375)).toContain("min-width:0");
+    expect(appliedDecls(".tw td", 375)).toContain("min-width:0");
+  });
+
   it("the pause and sessions panels render through table(), not a hand-rolled table", () => {
     // indexOf, not a regex: a `$` in a pattern misbehaves in this engine
     const lineOf = (needle: string) => {
@@ -1372,7 +1428,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
 
   it("sessionTitleMaxWidthPx moves the sessions title column cap", () => {
     write({ sessionTitleMaxWidthPx: 600 });
-    expect(cockpitHtml()).toContain("#sessions td:first-child span[title]{display:inline-block;max-width:600px");
+    expect(cockpitHtml()).toContain("#sessions td:first-child span[title]{display:inline-block;max-width:min(600px,100%)");
   });
 
   it("sparkHeightPx moves the sparkline height and viewBox", () => {
