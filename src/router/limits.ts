@@ -528,13 +528,11 @@ export async function localLimits(
   const served = probe.ids ?? (probe.alive || probe.timeout ? lastServed.get(endpoint) : undefined);
   let up: boolean;
   let downReason: DownReason | undefined;
-  // an accepted connection that gets no HTTP answer (reset, closed) is as transient as a timeout: one failed probe never flips up to down
-  const silent = probe.timeout === true || (tcp === "open" && !probe.alive);
-  if (silent) {
+  if (probe.timeout) {
     // connected (or slow to accept) but no answer: busy, not down (also with no known state: a fresh router), until it has stayed silent strikesToDown polls in a row
     const strikes = prev.strikes + 1;
     up = prev.up && strikes < strikesToDown;
-    if (!up) downReason = probe.timeout ? "probe timeout" : "no HTTP answer";
+    if (!up) downReason = "probe timeout";
     probeState.set(stateKey, { up, strikes });
   } else {
     up = probe.alive && serves(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));

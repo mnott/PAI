@@ -342,19 +342,9 @@ describe("local server up/down and prefix cache", () => {
       const r = await run("busy-d", stub("open", { alive: true, ids: ["other"] }));
       expect([r.up, r.downReason]).toEqual([false, "model not served"]);
     });
-    it("no HTTP answer on an accepted connection is a strike, down only after timeoutStrikes in a row: no HTTP answer", async () => {
-      const t = stub("open", { alive: false });
-      const r = [await run("busy-e", t), await run("busy-e", t), await run("busy-e", t)];
-      expect(r.map((x) => x.up)).toEqual([true, true, false]);
-      expect(r[2]!.downReason).toBe("no HTTP answer");
-    });
-    it("a good answer between no-answer polls resets the strikes", async () => {
-      const bad = stub("open", { alive: false });
-      await run("busy-e2", stub("open", { alive: true, ids: ["m-served"] }));
-      await run("busy-e2", bad);
-      await run("busy-e2", bad);
-      await run("busy-e2", stub("open", { alive: true, ids: ["m-served"] }));
-      expect((await run("busy-e2", bad)).up).toBe(true);
+    it("no HTTP answer on an accepted connection is down: no HTTP answer", async () => {
+      const r = await run("busy-e", stub("open", { alive: false }));
+      expect([r.up, r.downReason]).toEqual([false, "no HTTP answer"]);
     });
     it("fresh state: a first timeout is unknown, not down; timeoutStrikes timeouts from start are down", async () => {
       const t = stub("open", { alive: false, timeout: true });
