@@ -31,6 +31,36 @@ export interface RunState {
   jobId: string;
 }
 
+/** How a finished run ended. */
+export type RunOutcome = "done" | "budget" | "yielded" | "stopped" | "failed";
+
+/** The last finished run of a kind, kept until the next run of that kind starts. */
+export interface FinishedRun {
+  kind: RunKind;
+  by: RunStarter;
+  startedAt: string;
+  endedAt: string;
+  backlogStart: number | null;
+  done: number;
+  outcome: RunOutcome;
+  /** Why it did not finish cleanly (stopped / yielded / failed); "" otherwise. */
+  reason: string;
+}
+
+export function finishedRunFile(kind: RunKind, home?: string): string {
+  return home ? `${home}/state/memory-last-${kind}.json` : paiHomePath("state", `memory-last-${kind}.json`);
+}
+
+/** The last finished run of this kind, null when none or a newer run of the kind has started. */
+export function readFinishedRun(kind: RunKind, home?: string): FinishedRun | null {
+  try {
+    const r = JSON.parse(readFileSync(finishedRunFile(kind, home), "utf8")) as FinishedRun;
+    return r && r.kind === kind && typeof r.endedAt === "string" ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 export function runStateFile(home?: string): string {
   return home ? `${home}/state/memory-run.json` : paiHomePath("state", "memory-run.json");
 }
@@ -54,7 +84,7 @@ export function readRun(home?: string, isAlive: (pid: number) => boolean = alive
   }
 }
 
-function write(file: string, r: RunState): void {
+function write(file: string, r: RunState | FinishedRun): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(r) + "\n", "utf8");
@@ -72,8 +102,9 @@ export interface RunHandle {
   setBacklog(n: number): void;
   /** Record progress (throttled to one write per `minGapMs`). */
   progress(done: number): void;
-  /** Remove the marker (only if it is still this run's). */
-  release(): void;
+  /** Remove the marker (only if it is still this run's) and keep the run as the last finished one of its kind.
+   *  Without a result the run counts as failed (it ended without reporting one). */
+  release(result?: { outcome: RunOutcome; reason?: string }): void;
 }
 
 /** Take the marker for this process; null when another live run holds it. */
@@ -96,7 +127,9 @@ export function acquireRun(
     updatedAt: new Date(now()).toISOString(),
     jobId: o.jobId ?? starter.jobId,
   };
+  rmSync(finishedRunFile(kind, o.home), { force: true });
   write(file, state);
+  let latest = 0;
   let last = now();
   const gap = o.minGapMs ?? 2000;
   return {
@@ -105,6 +138,7 @@ export function acquireRun(
       try { write(file, state); } catch { /* best effort */ }
     },
     progress(done) {
+      latest = done;
       const t = now();
       if (t - last < gap) return;
       last = t;
@@ -112,10 +146,15 @@ export function acquireRun(
       state.updatedAt = new Date(t).toISOString();
       try { write(file, state); } catch { /* progress is best effort */ }
     },
-    release() {
+    release(result) {
       try {
         if (readRun(o.home)?.pid === process.pid) rmSync(file, { force: true });
       } catch { /* a stale marker is ignored by readRun */ }
+      try {
+        const r = result ?? { outcome: "failed" as RunOutcome, reason: "ended without a result" };
+        const fin: FinishedRun = { kind, by: state.by, startedAt: state.startedAt, endedAt: new Date(now()).toISOString(), backlogStart: state.backlogStart, done: Math.max(state.done, latest), outcome: r.outcome, reason: r.reason ?? "" };
+        write(finishedRunFile(kind, o.home), fin);
+      } catch { /* the record is informational */ }
     },
   };
 }

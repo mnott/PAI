@@ -7,7 +7,7 @@
 import { embedChunksWithBackend } from "../../../memory/indexer-backend.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { EMBED_PASS_BATCH_SIZE, DEFAULT_EMBED_MAX_LOAD, DEFAULT_EMBED_MAX_MINUTES, liveYieldCheck } from "../../../memory/embed-pass.js";
-import { acquireRun, readRun, type RunHandle, type RunKind } from "../../../memory/run-state.js";
+import { acquireRun, readRun, type RunHandle, type RunKind, type RunOutcome } from "../../../memory/run-state.js";
 import { reexecBackground, type PassName } from "../../../daemon/pass-priority.js";
 
 async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): Promise<unknown> {
@@ -19,10 +19,14 @@ async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): P
   if (held) throw new Error(`${held.kind} already running (started by ${held.by}, pid ${held.pid})`);
   const run = acquireRun(name as RunKind, { by: "daemon" });
   if (!run) throw new Error("another memory run just started");
+  let result: { outcome: RunOutcome; reason?: string } = { outcome: "failed", reason: "pass threw" };
   try {
-    return await runMemoryPass(name, embed, run);
+    const r = await runMemoryPass(name, embed, run);
+    const o = (r as { outcome?: string } | null)?.outcome;
+    result = o === "budget" || o === "yielded" ? { outcome: o, reason: (r as { reason?: string }).reason } : { outcome: "done" };
+    return r;
   } finally {
-    run.release();
+    run.release(result);
   }
 }
 

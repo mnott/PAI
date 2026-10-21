@@ -12,7 +12,7 @@ import type { DashboardState } from "../daemon/dashboard.js";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { loadConfig } from "../daemon/config.js";
 import { paiHomeDir } from "../config/pai-home.js";
-import { readRun, type RunState } from "../memory/run-state.js";
+import { readFinishedRun, readRun, type FinishedRun, type RunState } from "../memory/run-state.js";
 import { readEmbedPasses, type EmbedPassLogEntry } from "../memory/embed-pass.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { logTailSince, readCockpitJob, type LocalJobState } from "./cockpit-actions.js";
@@ -41,6 +41,8 @@ export interface MemoryDeps {
   now: () => number;
   /** The recorded embed passes (oldest first); defaults to the pass log under the PAI home. */
   embedPasses?: () => EmbedPassLogEntry[];
+  /** The last finished run of a kind (run-state); defaults to the marker kept under the PAI home. */
+  finished?: (kind: "embed" | "index") => FinishedRun | null;
 }
 
 /** The run's log file (the cockpit starts a run with its output here). */
@@ -169,6 +171,29 @@ export interface JobTile {
   /** chunks/s per sample interval over the kept window, oldest first */
   series: number[];
   by: string | null;
+  /** set on the kept tile of a finished run (until the next run of its kind starts) */
+  finished: { outcome: string; reason: string; endedAt: number; durationSec: number } | null;
+}
+
+/** An ollama-style tag-tolerant model name: "name" and "name:latest" are the same model. */
+export function sameModel(a: string, b: string): boolean {
+  const n = (x: string): string => x.trim().replace(/:latest$/, "");
+  return n(a) === n(b);
+}
+
+/** The last finished run as a tile: result, backlog done, duration, average rate. */
+function finishedTile(f: FinishedRun): JobTile {
+  const start = Date.parse(f.startedAt);
+  const end = Date.parse(f.endedAt);
+  const durationSec = Number.isNaN(start) || Number.isNaN(end) ? 0 : Math.max(0, Math.round((end - start) / 1000));
+  const total = f.kind === "embed" ? f.backlogStart : null;
+  return {
+    id: `last-${f.kind}`, kind: f.kind, name: `${f.kind} run`, phase: f.outcome, done: f.done, total,
+    pct: total && total > 0 ? Math.min(100, (100 * f.done) / total) : null,
+    rate: durationSec > 0 && f.done > 0 ? Math.round((f.done / durationSec) * 10) / 10 : null, etaSec: null, doneAt: null,
+    lastProgressAt: end, stalled: false, series: [], by: f.by,
+    finished: { outcome: f.outcome, reason: f.reason, endedAt: end, durationSec },
+  };
 }
 
 /** The running memory run as a job tile, with its server-side progress history. */
@@ -187,9 +212,11 @@ function runTile(r: RunProgress, run: RunState, now: number, stallMs: number, le
     id: `run-${run.kind}`, kind: run.kind, name: `${run.kind} run`, phase: run.kind, done: run.done, total,
     pct: total && total > 0 ? Math.min(100, (100 * run.done) / total) : null,
     rate: r.rate, etaSec: r.etaSec, doneAt: r.etaSec === null ? null : now + r.etaSec * 1000,
-    lastProgressAt: progressAt, stalled: now - progressAt >= stallMs, series: rateSeries(h, len), by: run.by,
+    lastProgressAt: progressAt, stalled: now - progressAt >= stallMs, series: rateSeries(h, len), by: run.by, finished: null,
   };
 }
+
+interface LastPass { at: number; chunks: number | null; result: string; by: string }
 
 type Pass = { name: string; running: boolean; lastEnd: number; nextAt: number | null; failure: { at: number; error: string; attempts: number; gaveUp: boolean; retryAt: number | null } | null };
 
@@ -215,18 +242,42 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
       pct: j.total > 0 ? Math.min(100, (100 * j.done) / j.total) : null,
       rate: j.rate, etaSec: j.etaSecs, doneAt: j.etaSecs === null ? null : now + j.etaSecs * 1000,
       lastProgressAt: j.lastProgressAt, stalled: j.phase !== "done" && pastProgress >= stallMs,
-      series: rateSeries(j.history ?? [], L.memoryHistoryLen), by: null,
+      series: rateSeries(j.history ?? [], L.memoryHistoryLen), by: null, finished: null,
     };
   });
-  if (run && progress) jobs.push(runTile(progress, run, now, stallMs, L.memoryHistoryLen));
+  if (run && progress) jobs.unshift(runTile(progress, run, now, stallMs, L.memoryHistoryLen));
   else runHistory.clear();
+  const starting = !run ? runningMemoryJob(deps.home, now, L.memoryStartGraceSecs * 1000) : null;
+  if (starting) {
+    jobs.unshift({ id: "run-starting", kind: starting.what ?? "embed", name: `${starting.what ?? "run"} run`, phase: "starting", done: 0, total: null, pct: null, rate: null, etaSec: null, doneAt: null, lastProgressAt: null, stalled: false, series: [], by: "cockpit", finished: null });
+  }
+  const readFin = deps.finished ?? ((k) => readFinishedRun(k, deps.home));
+  const fins: FinishedRun[] = [];
+  for (const k of ["embed", "index"] as const) {
+    const f = run?.kind === k ? null : readFin(k);
+    if (f) fins.push(f);
+  }
+  for (const f of fins) jobs.push(finishedTile(f));
   const embedLog = (deps.embedPasses ?? (() => []))();
   const lastLogged = embedLog.length ? embedLog[embedLog.length - 1]! : null;
-  const passes = ((s?.passes ?? []) as Pass[]).filter((p) => p.name !== "vault").map((p) => ({
-    name: p.name, state: p.failure ? "failed" : p.running ? "running" : "ok", lastEnd: p.lastEnd || null, nextAt: p.nextAt, failure: p.failure,
-    detail: p.name === "embed" && lastLogged ? { embedded: lastLogged.embedded, backlogLeft: lastLogged.backlogLeft, stopReason: lastLogged.stopReason, note: lastLogged.detail ?? null, at: lastLogged.end } : null,
-  }));
-  const loaded = s?.backend.loaded?.[0] ?? null;
+  const passes = ((s?.passes ?? []) as Pass[]).filter((p) => p.name !== "vault").map((p) => {
+    const kind = p.name === "embed" || p.name === "index" ? p.name : null;
+    // the newest of: the daemon's scheduled pass, the embed pass log, a run started from the cockpit or CLI
+    let last: LastPass | null = p.lastEnd ? { at: p.lastEnd, chunks: null, result: "ok", by: "nightly" } : null;
+    const dp = kind === "embed" ? d?.lastEmbedPass : kind === "index" ? d?.lastIndexPass : null;
+    if (dp && (!last || dp.at >= last.at)) last = { at: dp.at, chunks: kind === "embed" ? (dp as { embedded: number }).embedded : (dp as { chunks: number }).chunks, result: "outcome" in dp ? dp.outcome : "done", by: "nightly" };
+    if (kind === "embed" && lastLogged && (!last || lastLogged.end >= last.at)) last = { at: lastLogged.end, chunks: lastLogged.embedded, result: lastLogged.stopReason, by: "nightly" };
+    const f = fins.find((x) => x.kind === kind);
+    const fe = f ? Date.parse(f.endedAt) : NaN;
+    if (f && !Number.isNaN(fe) && (!last || fe >= last.at)) last = { at: fe, chunks: f.done, result: f.reason ? `${f.outcome}: ${f.reason}` : f.outcome, by: f.by === "daemon" ? "nightly" : f.by };
+    return {
+      name: p.name, state: p.failure ? "failed" : p.running ? "running" : "ok", lastEnd: last?.at ?? (p.lastEnd || null), nextAt: p.nextAt, failure: p.failure, last,
+      detail: p.name === "embed" && lastLogged ? { embedded: lastLogged.embedded, backlogLeft: lastLogged.backlogLeft, stopReason: lastLogged.stopReason, note: lastLogged.detail ?? null, at: lastLogged.end } : null,
+    };
+  });
+  const model = s?.backend.model ?? null;
+  const loadedAll = s?.backend.loaded ?? [];
+  const loaded = model ? loadedAll.find((m) => sameModel(m.name, model)) ?? null : null;
   const stalled = jobs.find((j) => j.stalled);
   const level: Level = s?.level ?? (d ? "amber" : "red");
   return {
@@ -247,6 +298,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     backend: s ? {
       id: s.backend.id, model: s.backend.model, dims: s.index.configured.dims, available: s.backend.available, reason: s.backend.reason, loaded: s.backend.loaded,
       loadedModel: loaded ? loaded.name : null, gpuShare: loaded ? loaded.gpuShare : null,
+      alsoLoaded: loadedAll.filter((m) => m !== loaded).map((m) => m.name),
     } : null,
     daemonInfo: s ? s.daemon : null,
     jobs,
@@ -258,7 +310,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     schedule: d ? { maintenanceHour: d.maintenanceHour, indexIntervalSecs: d.indexIntervalSecs, embedIntervalSecs: d.embedIntervalSecs } : null,
     run: progress,
     // the cockpit job that has not produced its run marker yet: the card is busy from the click
-    starting: !run && runningMemoryJob(deps.home, now, L.memoryStartGraceSecs * 1000) ? { jobId: runningMemoryJob(deps.home, now, L.memoryStartGraceSecs * 1000)!.id } : null,
+    starting: starting ? { jobId: starting.id } : null,
     lastRun: job && job.state !== "running" ? { op: job.what ?? "", ok: job.state === "done", message: job.message, at: job.at } : null,
   };
 }

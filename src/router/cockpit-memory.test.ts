@@ -6,7 +6,7 @@ import { cockpitMemoryPayload, memoryJobProgress, runProgress, type DaemonMemory
 import { defaultDeps, memoryRunRefusal, readCockpitJob, runCockpitAction, type ActionDeps } from "./cockpit-actions.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { cockpitLayout } from "./cockpit-layout.js";
-import { acquireRun, readRun, runStateFile, type RunState } from "../memory/run-state.js";
+import { acquireRun, readFinishedRun, readRun, runStateFile, type RunState } from "../memory/run-state.js";
 
 let home = "";
 beforeEach(() => {
@@ -212,10 +212,11 @@ function pageFns() {
   const metricTile = (o: any) => `<tile ${o.title}|${o.value}${o.unit ?? ""}|${o.sub}|${o.secondary?.value ?? ""}>${o.extra ?? ""}${o.fill ? o.fill.text : ""}</tile>`;
   const donut = (r: number) => `<ring ${r}>`;
   const emptyRing = () => "<ring>";
-  return new Function("esc", "fmt", "table", "metricTile", "donut", "emptyRing", `${src}; return {memHtml, memRunLine, memDur};`)(esc, fmt, table, metricTile, donut, emptyRing) as {
+  return new Function("esc", "fmt", "table", "metricTile", "donut", "emptyRing", `${src}; return {memHtml, memRunLine, memDur, memRunPill};`)(esc, fmt, table, metricTile, donut, emptyRing) as {
     memHtml: (m: unknown) => string;
     memRunLine: (r: unknown) => string;
     memDur: (s: number) => string;
+    memRunPill: (m: unknown) => string;
   };
 }
 
@@ -276,9 +277,9 @@ describe("memory payload: tiles data", () => {
   });
 
   it("derives the backend gpu share and loaded model", async () => {
-    const st = status({ backend: { level: "green", id: "b", model: "m", available: true, reason: "ready", loaded: [{ name: "m:1", size: 10, sizeVram: 8, gpuShare: 0.8 }] } });
+    const st = status({ backend: { level: "green", id: "b", model: "m", available: true, reason: "ready", loaded: [{ name: "other:1", size: 10, sizeVram: 10, gpuShare: 1 }, { name: "m:latest", size: 10, sizeVram: 8, gpuShare: 0.8 }] } });
     const p = (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: st }) }))) as any;
-    expect(p.backend).toMatchObject({ loadedModel: "m:1", gpuShare: 0.8, available: true });
+    expect(p.backend).toMatchObject({ loadedModel: "m:latest", gpuShare: 0.8, available: true });
   });
 
   it("job tile: pct, rate, ETA, done-at, per-interval rate series bounded by the layout", async () => {
@@ -332,5 +333,109 @@ describe("memory payload: tiles data", () => {
     expect(p.passes.map((x: any) => x.name)).toEqual(["index", "embed"]);
     expect(p.passes[0]).toMatchObject({ state: "ok", nextAt: NOW + 5000, detail: null });
     expect(p.passes[1]).toMatchObject({ state: "failed", failure: { error: "boom", retryAt: NOW + 60_000 }, detail: { embedded: 321, backlogLeft: 55, stopReason: "pass-budget" } });
+  });
+});
+
+describe("memory faults: backend tile, pass merge, kept finished run, empty backlog", () => {
+  const emb = (over: Record<string, unknown> = {}) => status({ backend: { level: "green", id: "rt", model: "embed-m", available: true, reason: "ready", loaded: [
+    { name: "chat-x:8b", size: 100, sizeVram: 100, gpuShare: 1 }, { name: "embed-m:latest", size: 10, sizeVram: 7, gpuShare: 0.7 }], ...over } });
+  const pay = async (st: DaemonMemory["status"], o: Partial<MemoryDeps> = {}) => (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: st }), ...o }))) as any;
+  const fin = (over: Record<string, unknown> = {}) => ({ kind: "embed" as const, by: "cockpit" as const, startedAt: new Date(NOW - 600_000).toISOString(), endedAt: new Date(NOW - 300_000).toISOString(), backlogStart: 600, done: 600, outcome: "done" as const, reason: "", ...over });
+
+  it("backend picks the loaded entry of the configured model (tag-tolerant), not the first; others are 'also loaded'", async () => {
+    const p = await pay(emb());
+    expect(p.backend).toMatchObject({ loadedModel: "embed-m:latest", gpuShare: 0.7, alsoLoaded: ["chat-x:8b"] });
+    const h = pageFns().memHtml(p);
+    expect(h).toContain("loaded: embed-m:latest");
+    expect(h).toContain("also loaded: chat-x:8b");
+    expect(h).not.toMatch(/(^|>)loaded: chat-x/);
+  });
+
+  it("backend says '<model> (not loaded)' when only other models are loaded", async () => {
+    const p = await pay(emb({ loaded: [{ name: "chat-x:8b", size: 1, sizeVram: 1, gpuShare: 1 }] }));
+    expect(p.backend).toMatchObject({ loadedModel: null, gpuShare: null, alsoLoaded: ["chat-x:8b"] });
+    const h = pageFns().memHtml(p);
+    expect(h).toContain("embed-m (not loaded)");
+    expect(h).toContain("also loaded: chat-x:8b");
+  });
+
+  it("a finished cockpit embed run counts as the last pass: newest wins over the daemon data, with who started it", async () => {
+    const st = status({ passes: [{ name: "embed", running: false, lastEnd: NOW - 86_400_000, nextAt: null, failure: null }, { name: "index", running: false, lastEnd: NOW - 3600_000, nextAt: null, failure: null }] });
+    const p = await pay(st, { finished: (k) => (k === "embed" ? fin({ done: 1234 }) : null) });
+    const e = p.passes.find((x: any) => x.name === "embed");
+    expect(e.last).toEqual({ at: NOW - 300_000, chunks: 1234, result: "done", by: "cockpit" });
+    expect(e.lastEnd).toBe(NOW - 300_000);
+    expect(p.passes.find((x: any) => x.name === "index").last).toMatchObject({ at: NOW - 3_600_000, by: "nightly" });
+    const h = pageFns().memHtml(p);
+    expect(h).toContain("1.2k chunks · done · by cockpit");
+    expect(h).not.toContain("none since start");
+  });
+
+  it("an older finished run does not displace a newer scheduled pass", async () => {
+    const st = status({ passes: [{ name: "embed", running: false, lastEnd: NOW - 1000, nextAt: null, failure: null }] });
+    const p = await pay(st, { finished: () => fin({ endedAt: new Date(NOW - 900_000).toISOString() }), embedPasses: () => [{ start: NOW - 5000, end: NOW - 1000, embedded: 77, backlogLeft: 0, stopReason: "done" }] });
+    expect(p.passes[0].last).toEqual({ at: NOW - 1000, chunks: 77, result: "done", by: "nightly" });
+  });
+
+  it("keeps the finished run as a job tile with result, rate, duration until a run of that kind starts", async () => {
+    const f = fin({ outcome: "stopped", reason: "stopped on request", done: 300 });
+    const p = await pay(status(), { finished: (k) => (k === "embed" ? f : null) });
+    const t = p.jobs.find((j: any) => j.id === "last-embed");
+    expect(t).toMatchObject({ done: 300, total: 600, rate: 1, by: "cockpit", finished: { outcome: "stopped", reason: "stopped on request", durationSec: 300 } });
+    const h = pageFns().memHtml(p);
+    for (const x of ["Last embed run", "stopped · stopped on request", "300 / 600 done", "took 5 m 00 s", "1.0 chunks/s average", "by cockpit"]) expect(h, x).toContain(x);
+    // a running run of the same kind replaces the kept tile
+    const q = await pay(status(), { run: () => run(), finished: (k) => (k === "embed" ? f : null) });
+    expect(q.jobs.map((j: any) => j.id)).toEqual(["run-embed"]);
+  });
+
+  it("run-state keeps the last finished run per kind and clears it when the next run of that kind starts", () => {
+    const h1 = acquireRun("embed", { home, by: "cli", backlogStart: 10, minGapMs: 100000 })!;
+    h1.progress(7);
+    h1.release({ outcome: "budget", reason: "time budget reached" });
+    const f = readFinishedRun("embed", home)!;
+    expect(f).toMatchObject({ kind: "embed", by: "cli", backlogStart: 10, done: 7, outcome: "budget" });
+    expect(readFinishedRun("index", home)).toBeNull();
+    const h2 = acquireRun("embed", { home })!;
+    expect(readFinishedRun("embed", home)).toBeNull();
+    h2.release();
+    expect(readFinishedRun("embed", home)).toMatchObject({ outcome: "failed" });
+  });
+
+  it("memory.embed with backlog 0 answers at once without a run; with a backlog it starts", async () => {
+    let called = 0;
+    const hooks = { runMemoryJob: async () => { called++; return { ok: true, message: "" }; } };
+    const r = await runCockpitAction({ action: "memory.embed" }, actDeps({ embedBacklog: async () => 0 }), hooks);
+    expect(r).toEqual({ ok: true, message: "nothing to embed (backlog 0)" });
+    await settle();
+    expect(called).toBe(0);
+    expect((await runCockpitAction({ action: "memory.embed" }, actDeps({ embedBacklog: async () => 5 }), hooks)).jobId).toBeDefined();
+    await settle();
+    expect(called).toBe(1);
+  });
+
+  it("embed button is disabled with the tooltip at backlog 0, enabled otherwise; index stays enabled", async () => {
+    const p = await pay(status(), { daemon: async () => daemon({ status: status(), embedBacklog: 0 }) });
+    const h = pageFns().memHtml(p);
+    expect(h).toMatch(/data-a="memory.embed" disabled title="nothing to embed \(backlog 0\)"/);
+    expect(h).toMatch(/data-a="memory.index" title="one index pass"/);
+  });
+
+  it("while a run is going: running pill text, front tile with stop and tail, busy marker; before the marker a starting tile", async () => {
+    const f = pageFns();
+    const p = await pay(status(), { run: () => run({ done: 61_000, backlogStart: 122_000 }), finished: () => fin() });
+    expect(p.jobs[0].id).toBe("run-embed");
+    const h = f.memHtml(p);
+    expect(h).toContain('data-part="busy"');
+    expect(h.indexOf('data-a="memory.stop"')).toBeLessThan(h.indexOf("Last embed run"));
+    expect(f.memRunPill(p)).toMatch(/embedding 50% · [\d.]+\/s · ETA/);
+    // starting gap
+    const at = new Date(NOW - 1000).toISOString();
+    mkdirSync(`${home}/cockpit-jobs`, { recursive: true });
+    writeFileSync(`${home}/cockpit-jobs/j1.json`, JSON.stringify({ id: "j1", kind: "memory", tier: "", what: "index", state: "running", message: "index now", at, startedAt: at }));
+    const s = await pay(status());
+    expect(s.jobs[0]).toMatchObject({ id: "run-starting", done: 0, phase: "starting" });
+    expect(f.memRunPill(s)).toContain("starting");
+    expect(f.memHtml(s)).toContain("starting…");
   });
 });

@@ -75,6 +75,7 @@ export async function memoryIndexCmd(
     process.exitCode = 1;
     return 1;
   }
+  let finished = false;
   try {
     if (projectSlug) {
       const registry = await getRegistryBackend();
@@ -118,8 +119,9 @@ export async function memoryIndexCmd(
       }
     }
 
+    finished = true;
   } finally {
-    run.release();
+    run.release(finished ? { outcome: "done" } : { outcome: "failed", reason: "index did not complete" });
   }
 
   return 0;

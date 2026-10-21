@@ -43,18 +43,36 @@ function memBackendTile(m){
  if(!b)return metricTile({title:"Backend",value:null,unit:"",sub:"not known",series:[]});
  var st=b.available===false?"unavailable":b.available?"available":"not probed",cl=b.available===false?"bad":b.available?"ok":"dim";
  var x='<div class="mt-sub" style="white-space:normal">'+memDot(b.available===false?"bad":b.available?"ok":"dim")+'<span class="'+cl+'">'+st+'</span>'+(b.reason?' · '+esc(b.reason):'')+'</div>'+
-  '<div class="mt-sub" title="'+esc(b.model||"")+'">'+(b.loadedModel?'loaded: '+esc(b.loadedModel):esc(b.model||"–")+' (not loaded)')+(b.dims?' · '+b.dims+' dims':'')+'</div>';
+  '<div class="mt-sub" title="'+esc(b.model||"")+'">'+(b.loadedModel?'loaded: '+esc(b.loadedModel):esc(b.model||"–")+' (not loaded)')+(b.dims?' · '+b.dims+' dims':'')+'</div>'+
+  (b.alsoLoaded&&b.alsoLoaded.length?'<div class="mt-sub dim" data-part="also-loaded" style="white-space:normal">also loaded: '+esc(b.alsoLoaded.join(", "))+'</div>':'');
  var gs=b.gpuShare;
  return metricTile({title:"Backend",value:b.id,unit:"",sub:st,extra:x,series:[],
   fill:gs==null?null:{pct:100*gs,text:"GPU share "+Math.round(100*gs)+"%",tone:gs<1?"warn":"ok"}});
 }
-function memJobTile(j){
+/** The kept tile of a finished run: result, done of backlog, duration, average rate, end time, who started it. */
+function memFinishedTile(j){
+ var f=j.finished,ok=f.outcome==="done",bad=f.outcome==="failed";
+ var ring=j.pct==null?emptyRing(${n(L.memoryRingPx)}):donut(j.pct/100,${n(L.memoryRingPx)},bad?"bad":ok?"ok":"warn");
+ var res=ok?"ok":bad?"failed":f.outcome==="stopped"?"stopped":f.outcome==="budget"?"time budget reached":f.outcome;
+ var lines=['<b data-part="result" class="'+(bad?"bad":ok?"ok":"warn")+'">'+esc(res)+(f.reason&&!ok?" · "+esc(f.reason):"")+'</b>',
+  '<span>'+fmt(j.done)+(j.total!=null?" / "+fmt(j.total):"")+' done</span>',
+  '<span>took '+memDur(f.durationSec)+' · '+(j.rate==null?"–":j.rate.toFixed(1))+' chunks/s average</span>',
+  '<span class="dim">ended '+memAt(f.endedAt)+(j.by?' · by '+esc(j.by):'')+'</span>'];
+ var x='<div data-part="finished" style="display:flex;gap:10px;align-items:center"><div>'+ring+'</div><div class="mt-sub" style="white-space:normal;display:flex;flex-direction:column;gap:2px">'+lines.join("")+'</div></div>';
+ return metricTile({title:"Last "+j.kind+" run",value:j.pct==null?null:j.pct.toFixed(1),unit:"%",sub:"finished",extra:x,series:[]});
+}
+function memJobTile(j,m){
+ if(j.finished)return memFinishedTile(j);
  var ring=j.pct==null?emptyRing(${n(L.memoryRingPx)}):donut(j.pct/100,${n(L.memoryRingPx)},j.stalled?"bad":"acc");
  var lines=[];
  lines.push('<span>'+(j.rate==null?"–":j.rate.toFixed(1))+' chunks/s</span>');
  lines.push('<span>'+fmt(j.done)+(j.total!=null?" / "+fmt(j.total):"")+' done</span>');
  lines.push('<span>ETA '+(j.etaSec==null?"–":memDur(j.etaSec))+(j.doneAt?' · done about '+memClock(j.doneAt):'')+'</span>');
  lines.push('<span class="dim">'+esc(j.phase)+(j.lastProgressAt?' · last progress '+memClock(j.lastProgressAt):'')+(j.by?' · by '+esc(j.by):'')+'</span>');
+ var run=m&&m.run&&j.id==="run-"+m.run.kind?m.run:null;
+ if(run&&run.tail)lines.push('<span class="dim" data-part="tail" title="last log line">'+esc(run.tail)+'</span>');
+ if(run&&run.stoppable)lines.push('<button data-a="memory.stop" title="stops cleanly; re-run to continue">stop</button>');
+ if(j.phase==="starting")lines.push('<span class="dim">starting…</span>');
  var x='<div data-part="job" style="display:flex;gap:10px;align-items:center"><div>'+ring+'</div><div class="mt-sub" style="white-space:normal;display:flex;flex-direction:column;gap:2px">'+lines.join("")+
   (j.stalled?'<b class="bad" data-part="stalled">STALLED: no progress for '+memDur(MEM_STALL)+'</b>':'')+'</div></div>';
  return metricTile({title:(j.kind==="reembed"?"Re-embed ":"")+j.name,value:j.pct==null?null:j.pct.toFixed(1),unit:"%",sub:"rate, last hour",extra:x,series:[{data:j.series||[]}]});
@@ -72,7 +90,7 @@ function memPassesTile(m){
  ps.forEach(function(p){
   var col=p.state==="failed"?"bad":p.state==="running"?"warn":"ok",d=p.detail;
   x+='<div data-part="pass" style="margin-top:4px"><div>'+memDot(col)+'<b>'+esc(p.name)+'</b> <span class="'+col+'">'+p.state+'</span></div>'+memTimeline(p,m.at)+
-   '<div class="mt-sub">last '+(p.lastEnd?memAt(p.lastEnd):"none since start")+(p.nextAt?' · next '+memAt(p.nextAt):'')+'</div>'+
+   '<div class="mt-sub" data-part="last-pass">last '+(p.last?memAt(p.last.at)+(p.last.chunks!=null?" · "+fmt(p.last.chunks)+" chunks":"")+" · "+esc(p.last.result)+" · by "+esc(p.last.by):p.lastEnd?memAt(p.lastEnd):"none since start")+(p.nextAt?' · next '+memAt(p.nextAt):'')+'</div>'+
    (p.name==="index"&&m.lastIndex?'<div class="mt-sub">'+fmt(m.lastIndex.files)+' files, '+fmt(m.lastIndex.chunks)+' chunks · took '+memDur(m.lastIndex.durationSec)+'</div>':'')+
    (d?'<div class="mt-sub" title="the last recorded embed pass">embedded '+fmt(d.embedded)+(d.backlogLeft!=null?' · '+fmt(d.backlogLeft)+' left':'')+' · '+esc(d.stopReason)+(d.note?' ('+esc(d.note)+')':'')+'</div>':'')+
    (p.failure?'<div class="mt-sub bad" style="white-space:normal">'+esc(p.failure.error)+' ('+(p.failure.gaveUp?"gave up until next scheduled run":p.failure.retryAt?"retry at "+memAt(p.failure.retryAt):"no retry scheduled")+')</div>':'')+'</div>';
@@ -88,28 +106,36 @@ function memDaemonTile(m){
  return metricTile({title:"Daemon",value:memDur(d.uptimeSecs),unit:"",sub:"uptime",extra:'<div class="mt-sub" data-part="daemon">pid '+esc(String(d.pid))+' · v'+esc(d.version)+' · storage '+esc(d.storage)+'</div>',series:[]});
 }
 function memActions(m){
- var busy=!!(m.run||m.starting),dis=busy||!m.daemon?" disabled":"";
+ var busy=!!(m.run||m.starting),dis=busy||!m.daemon?" disabled":"",empty=m.counts&&m.counts.backlog===0,disE=dis||empty?" disabled":"";
  var line=m.run?memRunLine(m.run):m.starting?"starting…":"";
  return'<div style="margin-top:8px" class="act" data-rt="memory">'+
-  '<button data-a="memory.embed"'+dis+' title="the same as pai memory embed --all --background">embed backlog</button>'+
-  '<button data-a="memory.index"'+dis+' title="one index pass">index now</button>'+
-  (m.run&&m.run.stoppable?'<button data-a="memory.stop" title="stops cleanly; re-run to continue">stop</button>':'')+
+  '<button data-a="memory.embed"'+disE+' title="'+(empty?"nothing to embed (backlog 0)":busy?"a run is in progress":"the same as pai memory embed --all --background")+'">embed backlog</button>'+
+  '<button data-a="memory.index"'+dis+' title="'+(busy?"a run is in progress":"one index pass")+'">index now</button>'+
+  (m.run&&m.run.stoppable?'<button data-a="memory.stop" title="stops cleanly; re-run to continue">stop</button>':'')+(busy?'<span class="dim" data-part="busy">busy</span> ':'')+
   '<span class="msg'+(m.run||m.starting||(!memMsg&&(!m.lastRun||m.lastRun.ok))?"":" bad")+'" title="'+esc(line||(m.lastRun&&m.lastRun.message)||"")+'">'+esc(line||(memMsg&&memMsg.text)||(m.lastRun?m.lastRun.op+": "+m.lastRun.message:""))+'</span></div>';
 }
 function memHtml(m){
  var pill=!m.daemon?"daemon down":m.level==="green"?"healthy":m.level==="amber"?"attention":"problem";
  MEM_STALL=m.stallSecs;
  var h=['<div style="margin-bottom:6px"><b data-part="pill" class="'+memLvl(m.level)+'">'+esc(pill)+'</b> <span class="dim">'+esc(m.reason||"")+'</span></div>'];
- h.push('<div class="rt-tiles" data-tkey="mem">'+memIndexTile(m)+memBackendTile(m)+(m.jobs||[]).map(memJobTile).join("")+memPassesTile(m)+memDaemonTile(m)+'</div>');
+ h.push('<div class="rt-tiles" data-tkey="mem">'+memIndexTile(m)+memBackendTile(m)+(m.jobs||[]).map(function(j){return memJobTile(j,m)}).join("")+memPassesTile(m)+memDaemonTile(m)+'</div>');
  h.push(memActions(m));
  return h.join("");
 }
+/** The running pill in the section title row: kind, percent, rate, ETA; empty when no run. */
+function memRunPill(m){
+ var r=m&&m.run;
+ if(!r)return m&&m.starting?'<b class="warn" data-part="runpill">starting…</b>':"";
+ var p=r.kind==="embed"&&r.backlogStart>0?" "+Math.round(100*r.done/r.backlogStart)+"%":"";
+ return'<b class="warn" data-part="runpill" title="'+esc(memRunLine(r))+'">'+(r.kind==="embed"?"embedding":"indexing")+p+(r.rate!=null?" · "+r.rate+"/s":"")+(r.etaSec!=null?" · ETA "+memDur(r.etaSec):"")+(r.kind==="index"||r.etaSec==null?" · "+memDur(r.elapsedSec):"")+'</b>';
+}
 function renderMemory(){
+ var pl=$("memrun");if(pl)setHtml(pl,memRunPill(mem));
  var el=$("memorypanel");
  if(!mem){if(!el.__html)setHtml(el,'<span class="dim">memory status unavailable</span>');return}
  if(!setHtml(el,memHtml(mem)))return;
  orderTiles(el);
- var bs=el.querySelectorAll(".act button");
+ var bs=el.querySelectorAll("button[data-a]");
  for(var i=0;i<bs.length;i++)(function(b){b.onclick=function(){
   for(var k=0;k<bs.length;k++)bs[k].disabled=true;
   postAction(b.getAttribute("data-a"),null,null,function(j){memMsg=j&&j.ok?null:{text:(j&&j.message)||"action failed",ok:false};loadMemory()});
