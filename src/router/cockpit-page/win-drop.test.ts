@@ -56,16 +56,17 @@ describe("win drop (spec 3.3)", () => {
     expect(api.ids(nt.ch[0])).toEqual(["a", "b"]);
     expect(nt.ch[0].sz).toEqual([0.5, 0.5]);
     expect(nt.sz[0]).toBe(400); // the band keeps T's px
-    expect(nt.sz[1]).toBe(200); // b's old band is gone (its leaf was removed)
+    expect(nt.sz.length).toBe(1); // b's old band is gone (its leaf was removed)
     // the input tree is untouched
     expect(api.ids(t)).toEqual(["a", "b"]);
     expect(t.ch[0].k).toBe("c");
   });
 
   it("drop top of a card inside a row makes a column in the row cell", () => {
-    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
+    // D comes from the same row, so its removal leaves [a,b] with b's weight renormalized
+    const row = split("r", [leaf("a"), leaf("b"), leaf("c")], [0.25, 0.5, 0.25]);
     const t = split("c", [row], [400]);
-    const nt = moveCard(t, "a", "b", "top", opts({}, {}, wide));
+    const nt = moveCard(t, "c", "b", "top", opts({}, {}, wide));
     expect(nt.d).toBe("c");
     const r = nt.ch[0];
     expect(r.d).toBe("r");
@@ -74,7 +75,7 @@ describe("win drop (spec 3.3)", () => {
     const col = r.ch[1];
     expect(col.k).toBe("s");
     expect(col.d).toBe("c");
-    expect(api.ids(col)).toEqual(["a", "b"]);
+    expect(api.ids(col)).toEqual(["c", "b"]);
     expect(col.sz).toEqual([0.5, 0.5]);
   });
 
@@ -106,9 +107,7 @@ describe("win drop (spec 3.3)", () => {
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const t = split("c", [row], [600]);
     const kids = { a: { type: "chart" }, b: { type: "chart" } };
-    const narrow = { w: 400, h: 1000 }; // cells (392)/2 = 196 < chart minW 300
-    expect(moveCard(t, "a", "b", "right", opts(kids, {}, narrow))).toBe(null);
-    expect(api.canDrop(t, kids, {}, cfg, "a", "b", "right", narrow)).toBe(false);
+    // (minW never refuses a row split: narrow mode stacks it, see the next test)
     // minH: bounded column 300 tall, drop top of b -> each (292)/2 = 146 < chart minH 150
     const col = split("c", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const t2 = split("c", [col], [600]);
@@ -143,16 +142,16 @@ describe("win drop (spec 3.3)", () => {
   });
 
   it("a stacking drop (top/bottom of a card in a row) works — the old code could not stack", () => {
-    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
+    const row = split("r", [leaf("a"), leaf("b"), leaf("c")], [0.25, 0.5, 0.25]);
     const t = split("c", [row], [400]);
     const nt = moveCard(t, "a", "b", "bottom", opts({}, {}, wide));
     expect(nt).not.toBe(null);
-    const col = nt.ch[0].ch[1];
+    const col = nt.ch[0].ch[0];
     expect(col.d).toBe("c");
-    expect(api.ids(col)).toEqual(["a", "b"]);
+    expect(api.ids(col)).toEqual(["b", "a"]);
     // layout: a sits above b inside the row cell
     const { rects } = api.layout(nt, {}, wide, {}, cfg);
-    expect(rects.a.y + rects.a.h).toBeLessThan(rects.b.y);
+    expect(rects.b.y + rects.b.h).toBeLessThan(rects.a.y);
     expect(rects.a.x).toBeCloseTo(rects.b.x);
   });
 
@@ -179,9 +178,9 @@ describe("win drop (spec 3.3)", () => {
       seed = (seed * 1103515245 + 12345) % 2147483648;
       return seed / 2147483648;
     };
-    const idPool = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    let nextId = 0; // every card id is unique within a tree
     const makeTree = (depth: number): any => {
-      if (depth <= 0 || rnd() < 0.4) return leaf(idPool[Math.floor(rnd() * idPool.length)]);
+      if (depth <= 0 || rnd() < 0.4) return leaf("n" + nextId++);
       const d = rnd() < 0.5 ? "r" : "c";
       const n = 2 + Math.floor(rnd() * 3);
       const ch = [];
@@ -195,6 +194,7 @@ describe("win drop (spec 3.3)", () => {
     const zones = ["left", "right", "top", "bottom"];
     let runs = 0, accepted = 0;
     for (let trial = 0; trial < 300; trial++) {
+      nextId = 0;
       const t = makeTree(3);
       const before = api.ids(t);
       const drag = before[Math.floor(rnd() * before.length)];
@@ -210,7 +210,7 @@ describe("win drop (spec 3.3)", () => {
       // invariants: no one-child split, no same-direction nesting, sz matches ch
       const check = (n: any) => {
         if (!n || n.k === "c") return;
-        expect(n.ch.length).toBeGreaterThanOrEqual(2);
+        expect(n.ch.length).toBeGreaterThanOrEqual(n === nt && n.d === "c" ? 1 : 2); // a root column may hold one band
         expect(n.sz.length).toBe(n.ch.length);
         for (const c of n.ch) {
           expect(c.k === "s" ? c.d !== n.d : true).toBe(true);

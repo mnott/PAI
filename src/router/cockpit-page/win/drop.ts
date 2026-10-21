@@ -289,65 +289,55 @@ function moveCard(tree,dragId,targetId,zone,opts){
  var box=opts.box||{w:10000,h:10000};
  if(!tree||dragId===targetId||zone==="none")return null;
  if(!findLeaf(tree,dragId)||!findLeaf(tree,targetId))return null;
- var t=winClone(tree);
- // 1. remove D, normalize (root band px kept; a band emptied by removal is gone)
- t=removeLeaf(t,dragId,true);
+ var rootCol=tree.k==="s"&&tree.d==="c";
+ // 1. remove D on a clone (root band px kept; an emptied band is gone)
+ var t=removeLeaf(winClone(tree),dragId,true);
  // 2. T's parent after removal
- var P=parentOf(t,targetId);
  var T=findLeaf(t,targetId);
  if(!T)return null;
- var dH=winDefH(cfg,winLeafType(kids,dragId));
- var px=winPx(st,dragId);
- var ins=function(arr,sz,i,node,w){arr.splice(i,0,node);sz.splice(i,0,w)};
- if(zone==="left"||zone==="right"){
-  var at=zone==="right"?1:0;
-  if(P&&P.d==="r"){
-   var i=P.ch.indexOf(T);
-   ins(P.ch,P.sz,i+at,leaf(dragId),(P.sz[i]||0)/2);
-   P.sz[i]=(P.sz[i]||0)/2;
-  }else{
-   // T is in a column or is the root leaf: a new row [D,T] or [T,D], 0.5/0.5
-   var row=split("r",[zone==="right"?leaf(targetId):leaf(dragId),zone==="right"?leaf(dragId):leaf(targetId)],[0.5,0.5]);
-   if(!P){t=row}
-   else{var j=P.ch.indexOf(T);P.ch[j]=row}
-  }
- }else{ // top | bottom
-  var at2=zone==="bottom"?1:0;
-  if(P&&P.d==="c"){
-   var k=P.ch.indexOf(T);
-   var w=P.sz[k]||0;
-   if(box.h===undefined){
-    // root: D gets a new band of its remembered px or its defaultH next to T's band;
-    // T's band keeps its px
-    ins(P.ch,P.sz,k+at2,leaf(dragId),px!==null?px:dH);
-   }else{
-    // bounded: halves T's weight
-    ins(P.ch,P.sz,k+at2,leaf(dragId),w/2);
-    P.sz[k]=w/2;
-   }
-  }else{
-   // T is in a row (or is the root leaf): a new column [D,T]/[T,D], 0.5/0.5 weights
-   var col=split("c",[zone==="bottom"?leaf(targetId):leaf(dragId),zone==="bottom"?leaf(dragId):leaf(targetId)],[0.5,0.5]);
-   if(!P){t=col}
-   else{var m=P.ch.indexOf(T);P.ch[m]=col}
-  }
+ var P=parentOf(t,targetId);
+ var horiz=zone==="left"||zone==="right";
+ var after=zone==="right"||zone==="bottom";
+ var dir=horiz?"r":"c";
+ var D=leaf(dragId);
+ if(P&&P.d===dir&&!(dir==="c"&&P===t&&box.h===undefined)){
+  // same direction as the parent: D becomes a sibling, T's weight halves
+  var i=P.ch.indexOf(T),w=P.sz[i]||0;
+  P.ch.splice(after?i+1:i,0,D);
+  P.sz.splice(after?i+1:i,0,w/2);
+  P.sz[i]=w/2;
+ }else if(P&&P===t&&P.d==="c"&&dir==="c"){
+  // root column, top/bottom: D gets its own band of remembered px or defaultH
+  var k=P.ch.indexOf(T),px=winPx(st,dragId);
+  var h=px!==null?px:winDefH(cfg,winLeafType(kids,dragId));
+  P.ch.splice(after?k+1:k,0,D);
+  P.sz.splice(after?k+1:k,0,h);
+ }else{
+  // other direction (or T is the root leaf): T becomes a split [D,T]/[T,D], 0.5/0.5
+  var ns=split(dir,after?[T,D]:[D,T],[0.5,0.5]);
+  if(!P)t=ns;
+  else P.ch[P.ch.indexOf(T)]=ns;
  }
- // 5. normalize
+ // 5. normalize; a root column keeps its band: T's band px, even when it collapsed to one card
  t=normalize(t,true);
+ if(rootCol&&!(t.k==="s"&&t.d==="c")){
+  var bi=0;
+  for(var q=0;q<tree.ch.length;q++)if(findLeaf(tree.ch[q],targetId))bi=q;
+  t=split("c",[t],[tree.sz[bi]]);
+ }
  // refusal: any resulting box below minW/minH (narrow-stacked rows are fine)
  if(!winFits(t,kids,st,cfg,box))return null;
  // no-op: the identical tree comes back unchanged
- var same=function(a,b){
-  if(a===b)return true;
-  if(!a||!b)return a===b;
-  if(a.k!==b.k)return false;
-  if(a.k==="c")return a.id===b.id;
-  if(a.d!==b.d||a.ch.length!==b.ch.length)return false;
-  for(var i=0;i<a.ch.length;i++)if(a.sz[i]!==b.sz[i]||!same(a.ch[i],b.ch[i]))return false;
-  return true;
- };
  if(same(tree,t))return tree;
  return t;
+}
+function same(a,b){
+ if(a===b)return true;
+ if(!a||!b||a.k!==b.k)return false;
+ if(a.k==="c")return a.id===b.id;
+ if(a.d!==b.d||a.ch.length!==b.ch.length)return false;
+ for(var i=0;i<a.ch.length;i++)if(a.sz[i]!==b.sz[i]||!same(a.ch[i],b.ch[i]))return false;
+ return true;
 }
 /** The id of the nearest visible card in direction dir ("left"|"right"|"up"|"down"),
  *  or null. Overlap on the perpendicular axis required; distance is the edge gap. */
