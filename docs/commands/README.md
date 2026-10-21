@@ -14,7 +14,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
 | [`pai config`](config.md) | PAI settings: show, read, change |
-| [`pai daemon`](daemon.md) | The background service: status, restart, logs |
+| [`pai daemon`](daemon.md) | The background service: status, start, stop, restart, logs |
 | [`pai db`](db.md) | Look into the PAI database (read only) |
 | [`pai doc`](doc.md) | Write the Markdown command reference |
 | [`pai end`](end.md) | Finish the current session |
@@ -101,7 +101,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai config set` | Change one setting |
 | `pai config unset` | Reset one setting to its default |
 | `pai config yaml` | Convert config.json to config.yaml |
-| `pai daemon` | The background service: status, restart, logs |
+| `pai daemon` | The background service: status, start, stop, restart, logs |
 | `pai daemon install` | Install the daemon as a login service |
 | `pai daemon keepalive` | Show session keepalive settings and recent activity |
 | `pai daemon logs` | Show the end of the daemon log |
@@ -109,7 +109,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai daemon quiet` | Pause background maintenance for benchmark or overnight runs |
 | `pai daemon restart` | Restart the daemon |
 | `pai daemon serve` | Run the daemon in the foreground |
+| `pai daemon start` | Start the daemon service |
 | `pai daemon status` | Show whether the daemon is running |
+| `pai daemon stop` | Stop the daemon service |
 | `pai daemon uninstall` | Remove the daemon service |
 | `pai db` | Look into the PAI database (read only) |
 | `pai db migrate-to-postgres` | One-time copy of the data from SQLite to PostgreSQL |

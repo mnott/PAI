@@ -538,6 +538,7 @@ Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktre
 |---|---|---|---|
 | `--older-than HOURS` | string | 24 | Minimum age of a finished worker, in hours |
 | `--all-finished` | flag | — | Any finished worker, regardless of age |
+| `--foreign` | flag | — | Also archive merged, clean worktrees of this repo that PAI did not create (refs/pai-archive/BRANCH); unmerged ones are kept |
 | `--dry-run` | flag | — | Print what would be archived and what each worktree carries, change nothing |
 
 ```sh

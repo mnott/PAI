@@ -4,9 +4,50 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { daemonServeCmd, daemonMigrateCmd, daemonStatusCmd, daemonRestartCmd, daemonInstallCmd, daemonUninstallCmd, daemonKeepaliveCmd, daemonLogsCmd, daemonQuietCmd } from "../impl/daemon.js";
+import { daemonServeCmd, daemonMigrateCmd, daemonStatusCmd, daemonStartCmd, daemonStopCmd, daemonRestartCmd, daemonInstallCmd, daemonUninstallCmd, daemonKeepaliveCmd, daemonLogsCmd, daemonQuietCmd } from "../impl/daemon.js";
 
 export const daemonSubcommands: CommandDef[] = [
+{
+  name: "status",
+  summary: "Show whether the daemon is running",
+  description: "Show whether the daemon is running.",
+  examples: ["pai daemon status","pai daemon logs"],
+  seeAlso: ["pai daemon restart","pai daemon migrate"],
+  run: () => daemonStatusCmd(),
+},
+{
+  name: "start",
+  summary: "Start the daemon service",
+  description: "Start the daemon service.\n\nStart the installed daemon service (launchd/systemd) and wait until it reports running. Does nothing if it is already running; run `pai daemon install` first if it is not installed.",
+  examples: ["pai daemon start","pai daemon status"],
+  seeAlso: ["pai daemon stop","pai daemon install"],
+  run: () => daemonStartCmd(),
+},
+{
+  name: "stop",
+  summary: "Stop the daemon service",
+  description: "Stop the daemon service.\n\nStop the running daemon without uninstalling it; launchd does not restart it. Start it again with `pai daemon start`. While stopped, the scheduler passes and router supervision do not run.",
+  examples: ["pai daemon stop","pai daemon status"],
+  seeAlso: ["pai daemon start","pai daemon uninstall"],
+  run: () => daemonStopCmd(),
+},
+{
+  name: "restart",
+  summary: "Restart the daemon",
+  description: "Restart the daemon.\n\nRestart the running daemon (launchd on macOS, systemd on Linux)",
+  examples: ["pai daemon restart","pai daemon status"],
+  seeAlso: ["pai daemon install","pai daemon status"],
+  run: () => daemonRestartCmd(),
+},
+{
+  name: "logs",
+  summary: "Show the end of the daemon log",
+  description: "Show the end of the daemon log.\n\nTail the daemon log (/tmp/pai-daemon.log)",
+  options: [{ name: "lines", short: "n", type: "string", value: "N", summary: "Number of lines to show" }, { name: "follow", short: "f", type: "boolean", summary: "Follow log output (like tail -f)" }],
+  examples: ["pai daemon logs","pai daemon logs --lines 200 --follow"],
+  seeAlso: ["pai daemon keepalive"],
+  run: (ctx) => daemonLogsCmd({ lines: ctx.opts.lines as string | undefined, follow: ctx.opts.follow === true }),
+},
 {
   name: "serve",
   summary: "Run the daemon in the foreground",
@@ -23,22 +64,6 @@ export const daemonSubcommands: CommandDef[] = [
   examples: ["pai daemon migrate --connection-string postgres://localhost/pai","pai daemon status"],
   seeAlso: ["pai daemon status","pai daemon serve"],
   run: (ctx) => daemonMigrateCmd({ connectionString: ctx.opts["connection-string"] as string | undefined }),
-},
-{
-  name: "status",
-  summary: "Show whether the daemon is running",
-  description: "Show whether the daemon is running.",
-  examples: ["pai daemon status","pai daemon logs"],
-  seeAlso: ["pai daemon restart","pai daemon migrate"],
-  run: () => daemonStatusCmd(),
-},
-{
-  name: "restart",
-  summary: "Restart the daemon",
-  description: "Restart the daemon.\n\nRestart the running daemon (launchd on macOS, systemd on Linux)",
-  examples: ["pai daemon restart","pai daemon status"],
-  seeAlso: ["pai daemon install","pai daemon status"],
-  run: () => daemonRestartCmd(),
 },
 {
   name: "install",
@@ -74,21 +99,12 @@ export const daemonSubcommands: CommandDef[] = [
   seeAlso: ["pai daemon status"],
   run: (ctx) => daemonQuietCmd(String(ctx.args.ACTION), { until: ctx.opts.until as string | undefined }),
 },
-{
-  name: "logs",
-  summary: "Show the end of the daemon log",
-  description: "Show the end of the daemon log.\n\nTail the daemon log (/tmp/pai-daemon.log)",
-  options: [{ name: "lines", short: "n", type: "string", value: "N", summary: "Number of lines to show" }, { name: "follow", short: "f", type: "boolean", summary: "Follow log output (like tail -f)" }],
-  examples: ["pai daemon logs","pai daemon logs --lines 200 --follow"],
-  seeAlso: ["pai daemon keepalive"],
-  run: (ctx) => daemonLogsCmd({ lines: ctx.opts.lines as string | undefined, follow: ctx.opts.follow === true }),
-},
 ];
 
 export const daemonCommand: CommandDef = {
   name: "daemon",
-  summary: "The background service: status, restart, logs",
-  description: "The background service: status, restart, logs.",
+  summary: "The background service: status, start, stop, restart, logs",
+  description: "The background service: status, start, stop, restart, logs.",
   examples: ["pai daemon status","pai daemon logs -n 50"],
   subcommands: daemonSubcommands,
 };

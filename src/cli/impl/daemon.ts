@@ -3,6 +3,8 @@
  *
  * serve      — Start the PAI daemon in the foreground
  * status     — Query daemon status via IPC
+ * start      — Start the installed service
+ * stop       — Stop the service without uninstalling it
  * restart    — Restart the running daemon (launchd on macOS, systemd on Linux)
  * install    — Install as a service (launchd plist / systemd user unit) + update ~/.claude.json to use the shim
  * uninstall  — Remove the service + revert ~/.claude.json to direct MCP
@@ -674,4 +676,114 @@ export function daemonKeepaliveCmd(): number {
 
 export function daemonLogsCmd(opts: { lines?: string; follow?: boolean }): number {
   return cmdLogs(opts);
+}
+
+// ---------------------------------------------------------------------------
+// start / stop (launchd bootstrap/bootout, systemd start/stop)
+// ---------------------------------------------------------------------------
+
+export interface ServiceControlDeps {
+  plat: NodeJS.Platform;
+  uid: number;
+  run: (cmd: string, args: string[]) => { status: number | null; stderr?: string };
+  installed: () => boolean;
+  pid: () => number | undefined;
+  sleep: (ms: number) => Promise<void>;
+  log: (s: string) => void;
+  error: (s: string) => void;
+  waitMs: number;
+}
+
+const realServiceControlDeps = (): ServiceControlDeps => ({
+  plat: process.platform,
+  uid: process.getuid?.() ?? userInfo().uid,
+  run: (cmd, args) => {
+    const r = spawnSync(cmd, args, { encoding: "utf8" });
+    return { status: r.status, stderr: r.stderr ?? "" };
+  },
+  installed: () => existsSync(process.platform === "linux" ? SYSTEMD_UNIT_PATH : PLIST_PATH),
+  pid: () => resolveDaemonPid(),
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  log: console.log,
+  error: console.error,
+  waitMs: 15_000,
+});
+
+async function waitFor(cond: () => boolean, d: ServiceControlDeps): Promise<boolean> {
+  for (let waited = 0; ; waited += 250) {
+    if (cond()) return true;
+    if (waited >= d.waitMs) return false;
+    await d.sleep(250);
+  }
+}
+
+/**
+ * start: loads the plist into launchd (bootstrap; RunAtLoad starts it) or kickstarts a job that is
+ * loaded but idle. stop: bootout unloads the job so KeepAlive cannot respawn it; the plist stays,
+ * so `start` and the next login bring it back (uninstall is what removes it).
+ */
+export async function daemonServiceControl(
+  action: "start" | "stop",
+  d: ServiceControlDeps = realServiceControlDeps(),
+): Promise<number> {
+  if (d.plat !== "darwin" && d.plat !== "linux") {
+    d.error(err(`Unsupported platform: ${d.plat}. Daemon ${action} supports macOS (launchd) and Linux (systemd user) only.`));
+    return 1;
+  }
+  if (!d.installed()) {
+    d.error(err("Daemon service is not installed. Run: pai daemon install"));
+    return 1;
+  }
+  const running = d.pid();
+  if (action === "start" && running) {
+    d.log(ok(`Daemon already running (pid ${running})`));
+    return 0;
+  }
+  if (action === "stop" && !running) {
+    d.log(dim("Daemon is not running"));
+    return 0;
+  }
+
+  const target = `gui/${d.uid}/${PLIST_LABEL}`;
+  let result: { status: number | null; stderr?: string };
+  if (d.plat === "linux") {
+    result = d.run("systemctl", ["--user", action, SYSTEMD_UNIT_NAME]);
+  } else if (action === "stop") {
+    result = d.run("launchctl", ["bootout", target]);
+  } else {
+    result = d.run("launchctl", ["bootstrap", `gui/${d.uid}`, PLIST_PATH]);
+    // Already loaded but idle: bootstrap refuses, kickstart runs the loaded job.
+    if (result.status !== 0) result = d.run("launchctl", ["kickstart", target]);
+  }
+  if (result.status !== 0) {
+    d.error(err(`${action} failed: ${(result.stderr ?? "").trim() || `exit ${result.status}`}`));
+    return 1;
+  }
+
+  const done = await waitFor(() => (action === "start" ? d.pid() !== undefined : d.pid() === undefined), d);
+  if (!done) {
+    d.error(
+      err(
+        action === "start"
+          ? `Daemon did not report running within ${d.waitMs / 1000}s. See ${DAEMON_LOG}`
+          : `Daemon still running after ${d.waitMs / 1000}s (pid ${d.pid() ?? "?"})`,
+      ),
+    );
+    return 1;
+  }
+  if (action === "start") {
+    d.log(ok(`Started daemon pid ${d.pid() ?? "?"}`));
+  } else {
+    d.log(ok(`Stopped daemon pid ${running ?? "?"}. It stays stopped until: pai daemon start`));
+    d.log(dim("  Not running while stopped: scheduler passes, router supervision (when router.enabled), IPC and MCP tools."));
+  }
+  return 0;
+}
+
+export function daemonStartCmd(): Promise<number> {
+  return daemonServiceControl("start");
+}
+
+export function daemonStopCmd(): Promise<number> {
+  return daemonServiceControl("stop");
 }

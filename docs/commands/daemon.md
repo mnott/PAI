@@ -2,18 +2,116 @@
 
 # pai daemon
 
-The background service: status, restart, logs
+The background service: status, start, stop, restart, logs
 
 ```
 pai daemon <command>
 ```
 
-The background service: status, restart, logs.
+The background service: status, start, stop, restart, logs.
 
 ```sh
 pai daemon status
 pai daemon logs -n 50
 ```
+
+### pai daemon status
+
+Show whether the daemon is running
+
+```
+pai daemon status
+```
+
+Show whether the daemon is running.
+
+```sh
+pai daemon status
+pai daemon logs
+```
+
+See also: `pai daemon restart`, `pai daemon migrate`
+
+### pai daemon start
+
+Start the daemon service
+
+```
+pai daemon start
+```
+
+Start the daemon service.
+
+Start the installed daemon service (launchd/systemd) and wait until it reports running. Does nothing if it is already running; run `pai daemon install` first if it is not installed.
+
+```sh
+pai daemon start
+pai daemon status
+```
+
+See also: `pai daemon stop`, `pai daemon install`
+
+### pai daemon stop
+
+Stop the daemon service
+
+```
+pai daemon stop
+```
+
+Stop the daemon service.
+
+Stop the running daemon without uninstalling it; launchd does not restart it. Start it again with `pai daemon start`. While stopped, the scheduler passes and router supervision do not run.
+
+```sh
+pai daemon stop
+pai daemon status
+```
+
+See also: `pai daemon start`, `pai daemon uninstall`
+
+### pai daemon restart
+
+Restart the daemon
+
+```
+pai daemon restart
+```
+
+Restart the daemon.
+
+Restart the running daemon (launchd on macOS, systemd on Linux)
+
+```sh
+pai daemon restart
+pai daemon status
+```
+
+See also: `pai daemon install`, `pai daemon status`
+
+### pai daemon logs
+
+Show the end of the daemon log
+
+```
+pai daemon logs [options]
+```
+
+Show the end of the daemon log.
+
+Tail the daemon log (/tmp/pai-daemon.log)
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `-n, --lines N` | string | — | Number of lines to show |
+| `-f, --follow` | flag | — | Follow log output (like tail -f) |
+
+```sh
+pai daemon logs
+pai daemon logs --lines 200 --follow
+```
+
+See also: `pai daemon keepalive`
 
 ### pai daemon serve
 
@@ -54,42 +152,6 @@ pai daemon status
 ```
 
 See also: `pai daemon status`, `pai daemon serve`
-
-### pai daemon status
-
-Show whether the daemon is running
-
-```
-pai daemon status
-```
-
-Show whether the daemon is running.
-
-```sh
-pai daemon status
-pai daemon logs
-```
-
-See also: `pai daemon restart`, `pai daemon migrate`
-
-### pai daemon restart
-
-Restart the daemon
-
-```
-pai daemon restart
-```
-
-Restart the daemon.
-
-Restart the running daemon (launchd on macOS, systemd on Linux)
-
-```sh
-pai daemon restart
-pai daemon status
-```
-
-See also: `pai daemon install`, `pai daemon status`
 
 ### pai daemon install
 
@@ -177,43 +239,21 @@ pai daemon quiet status
 
 See also: `pai daemon status`
 
-### pai daemon logs
-
-Show the end of the daemon log
-
-```
-pai daemon logs [options]
-```
-
-Show the end of the daemon log.
-
-Tail the daemon log (/tmp/pai-daemon.log)
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `-n, --lines N` | string | — | Number of lines to show |
-| `-f, --follow` | flag | — | Follow log output (like tail -f) |
-
-```sh
-pai daemon logs
-pai daemon logs --lines 200 --follow
-```
-
-See also: `pai daemon keepalive`
-
 ## Subcommands
 
 | Command | Description |
 |---|---|
+| `pai daemon status` | Show whether the daemon is running |
+| `pai daemon start` | Start the daemon service |
+| `pai daemon stop` | Stop the daemon service |
+| `pai daemon restart` | Restart the daemon |
+| `pai daemon logs` | Show the end of the daemon log |
 | `pai daemon serve` | Run the daemon in the foreground |
 | `pai daemon migrate` | Copy federation data from SQLite to PostgreSQL |
-| `pai daemon status` | Show whether the daemon is running |
-| `pai daemon restart` | Restart the daemon |
 | `pai daemon install` | Install the daemon as a login service |
 | `pai daemon uninstall` | Remove the daemon service |
 | `pai daemon keepalive` | Show session keepalive settings and recent activity |
 | `pai daemon quiet` | Pause background maintenance for benchmark or overnight runs |
-| `pai daemon logs` | Show the end of the daemon log |
 
 ## See also
 
