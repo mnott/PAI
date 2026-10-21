@@ -309,6 +309,46 @@ describe("local server up/down and prefix cache", () => {
     expect((await localLimits("gone", local(port), [], Date.now())).up).toBe(false);
   });
 
+  describe("busy is not down; down says why", () => {
+    const stub = (tcp: "open" | "refused" | "timeout", served: { alive: boolean; timeout?: boolean; ids?: string[] }) => ({ probes: { tcp: async () => tcp, served: async () => served } });
+    const run = (n: string, o: ReturnType<typeof stub>) => localLimits(n, local(9), [], Date.now(), undefined, o);
+
+    it("a slow answer after a known-up state stays up, no downReason", async () => {
+      expect((await run("busy-a", stub("open", { alive: true, ids: ["m-served"] }))).up).toBe(true);
+      const slow = await run("busy-a", stub("open", { alive: false, timeout: true }));
+      expect(slow.up).toBe(true);
+      expect(slow.downReason).toBeUndefined();
+      expect(slow.served).toEqual(["m-served"]);
+    });
+    it("a TCP connect timeout under load after a known-up state stays up", async () => {
+      await run("busy-b", stub("open", { alive: true, ids: ["m-served"] }));
+      expect((await run("busy-b", stub("timeout", { alive: false }))).up).toBe(true);
+    });
+    it("refused is down: not listening", async () => {
+      await run("busy-c", stub("open", { alive: true, ids: ["m-served"] }));
+      const r = await run("busy-c", stub("refused", { alive: false }));
+      expect([r.up, r.downReason]).toEqual([false, "not listening"]);
+    });
+    it("a list without the model is down: model not served", async () => {
+      const r = await run("busy-d", stub("open", { alive: true, ids: ["other"] }));
+      expect([r.up, r.downReason]).toEqual([false, "model not served"]);
+    });
+    it("no HTTP answer on an accepted connection is down: no HTTP answer", async () => {
+      const r = await run("busy-e", stub("open", { alive: false }));
+      expect([r.up, r.downReason]).toEqual([false, "no HTTP answer"]);
+    });
+    it("3 consecutive timeouts with no HTTP ever are down: probe timeout", async () => {
+      const t = stub("open", { alive: false, timeout: true });
+      const r = [await run("busy-f", t), await run("busy-f", t), await run("busy-f", t)];
+      expect(r.map((x) => x.up)).toEqual([false, false, false]);
+      expect(r[2]!.downReason).toBe("probe timeout");
+      await run("busy-g", stub("open", { alive: true, ids: ["m-served"] }));
+      const g = [await run("busy-g", { ...t }), await run("busy-g", t), await run("busy-g", t)];
+      expect(g.map((x) => x.up)).toEqual([true, true, false]);
+      expect(g[2]!.downReason).toBe("probe timeout");
+    });
+  });
+
   it("AcceptingButNotServingIsDown: a socket holder (launchd-style) that accepts and drops the connection is not a running server", async () => {
     const holder = net.createServer((sock) => sock.destroy());
     const port = await listen(holder);
