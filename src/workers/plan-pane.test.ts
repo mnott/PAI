@@ -59,13 +59,13 @@ describe("panes in the host tab", () => {
     expect(s.splits).toHaveLength(1);
   });
 
-  it("a plan worker that asks for no pane starts without one, not refused", async () => {
+  it("a plan worker that asks for no pane is no exception: with no terminal to open one in, the start is refused", async () => {
     vi.stubEnv("PAI_PLAN_PANE", "plan-job-a");
     vi.stubEnv("PAI_PLAN_PART", "p1");
     const t = new PlanTracker(dir, "job-a", 1, 0);
     t.hasPane = true;
     t.setRunning(["p1"]);
-    await expect(requireVisiblePane(dir, config as never, "w-1", TERM, true, false, join(dir, "ledger"))).resolves.toBe(false);
+    await expect(requireVisiblePane(dir, config as never, "w-1", "", true, false, join(dir, "ledger"))).rejects.toThrow(/^no pane: /);
   });
 
   it("the model process env carries no plan variables", () => {
