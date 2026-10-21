@@ -71,6 +71,8 @@ export interface ActionDeps {
   readRun?: () => RunState | null;
   /** Why the daemon's own index/embed pass blocks a start, else null; default asks the daemon over IPC. */
   daemonMemoryBusy?: () => Promise<string | null>;
+  /** Chunks without vectors (null = unknown); default asks the daemon. memory.embed answers at once when it is 0. */
+  embedBacklog?: () => Promise<number | null>;
   /** Signal a run's process (stop); default process.kill. */
   killRun?: (pid: number) => void;
 }
@@ -412,6 +414,7 @@ export async function runCockpitAction(
     const kind: RunKind = action === "memory.embed" ? "embed" : "index";
     const refused = await memoryRunRefusal(deps);
     if (refused) return fail(refused);
+    if (kind === "embed" && (await (deps.embedBacklog ?? daemonEmbedBacklog)()) === 0) return { ok: true, message: "nothing to embed (backlog 0)" };
     const id = randomBytes(6).toString("hex");
     const at = new Date().toISOString();
     writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: "running", message: kind === "embed" ? "embed backlog" : "index now", at, startedAt: at });
@@ -539,6 +542,12 @@ export async function memoryRunRefusal(deps: ActionDeps, nowMs = Date.now()): Pr
   if (starting) return `${starting.what ?? "run"} is already starting (job ${starting.id})`;
   const busy = await (deps.daemonMemoryBusy ?? daemonMemoryBusy)();
   return busy;
+}
+
+/** The daemon's count of chunks without vectors; null when it does not answer. */
+async function daemonEmbedBacklog(): Promise<number | null> {
+  const { fetchDaemonMemory } = await import("./cockpit-memory.js");
+  return (await fetchDaemonMemory())?.embedBacklog ?? null;
 }
 
 /** The daemon's in-process passes (no child, so no marker): its status says whether one runs. */

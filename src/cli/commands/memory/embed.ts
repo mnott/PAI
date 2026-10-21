@@ -7,7 +7,7 @@ import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
 import { DEFAULT_EMBED_MAX_MINUTES } from "../../../memory/embed-pass.js";
 import { CliError } from "../../define.js";
-import { acquireRun, readRun, type RunHandle } from "../../../memory/run-state.js";
+import { acquireRun, readRun, type RunHandle, type RunOutcome } from "../../../memory/run-state.js";
 
 // ---------------------------------------------------------------------------
 // Shared embed runner (used by both index --embed and embed sub-command)
@@ -33,7 +33,7 @@ export async function runEmbed(
   run?: RunHandle,
   /** Checked between batches; true ends the run cleanly (SIGTERM from the cockpit's stop). */
   shouldStop?: () => boolean,
-): Promise<{ done: number; budgetHit: boolean }> {
+): Promise<{ done: number; budgetHit: boolean; stopped: boolean }> {
   const label = projectSlug ? `project ${projectSlug}` : "all projects";
   console.log(dim(`Generating embeddings for ${label} (this may take a while on first run)...`));
 
@@ -44,7 +44,7 @@ export async function runEmbed(
   if (!gate.ok) {
     console.error(err(gate.reason));
     process.exitCode = 1;
-    return { done: 0, budgetHit: false };
+    return { done: 0, budgetHit: false, stopped: false };
   }
   const embedder = gate.backend;
 
@@ -100,7 +100,7 @@ export async function runEmbed(
   } else {
     console.log(ok(`Done.`) + `  ${bold(String(done))} chunks embedded`);
   }
-  return { done, budgetHit };
+  return { done, budgetHit, stopped };
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +129,10 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
     console.error(err("another memory run just started"));
     return 1;
   }
+  let result: { outcome: RunOutcome; reason?: string } | undefined;
+  const settle = (r: { done: number; budgetHit: boolean; stopped: boolean }): void => {
+    result = r.stopped ? { outcome: "stopped", reason: "stopped on request" } : r.budgetHit ? { outcome: "budget", reason: "time budget reached" } : process.exitCode === 1 ? { outcome: "failed", reason: "embedding backend not usable" } : { outcome: "done" };
+  };
   // the cockpit's stop sends SIGTERM: finish the batch in hand, then end like a spent budget
   let stop = false;
   const onTerm = (): void => { stop = true; };
@@ -143,13 +147,13 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
         return 1;
       }
 
-      await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop);
+      settle(await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop));
     } else {
-      await runEmbed(backend, undefined, undefined, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop);
+      settle(await runEmbed(backend, undefined, undefined, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop));
     }
   } finally {
     process.off("SIGTERM", onTerm);
-    run.release();
+    run.release(result);
   }
 
   return 0;

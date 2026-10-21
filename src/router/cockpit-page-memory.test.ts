@@ -18,7 +18,7 @@ const MEMORY = {
   counts: { files: 500, chunks: 2_000_000, embedded: 1_877_697, backlog: 122_303, coverage: 0.9388, coverageLevel: "amber", exact: false },
   segments: { fresh: 111_111, old: 1_766_586, missing: 122_303 }, reembedding: true,
   binding: { mismatch: true, hint: "re-embed to neutral-b in progress", error: null, bound: { backend: "neutral-a", model: "model-a" }, configured: { backend: "neutral-b", model: "model-b", dims: 8 } },
-  backend: { id: "neutral-b", model: "model-b", dims: 8, available: true, reason: "ready", loaded: [], loadedModel: "model-b:1", gpuShare: 0.75 },
+  backend: { id: "neutral-b", model: "model-b", dims: 8, available: true, reason: "ready", loaded: [], loadedModel: "model-b:1", gpuShare: 0.75, alsoLoaded: ["neutral-chat:9b"] },
   daemonInfo: { pid: 4321, uptimeSecs: 7300, version: "1.2.3", storage: "neutral-store" },
   jobs: [
     { id: "job-neutral-b-reembed", kind: "reembed", name: "neutral-b-reembed", phase: "embed", done: 111_111, total: 1_000_000, pct: 11.1, rate: 12.5, etaSec: 5000, doneAt: NOW + 5_000_000, lastProgressAt: NOW - 400_000, stalled: true, series: [1, 5, 9, 12, 12.5], by: null },
@@ -33,6 +33,9 @@ const MEMORY = {
   run: { kind: "embed", by: "cockpit", pid: 1, jobId: "", startedAt: new Date(NOW - 5000).toISOString(), elapsedSec: 5, done: 50, backlogStart: 100, rate: 2, etaSec: 25, tail: "", stoppable: true },
   starting: null, lastRun: null,
 };
+// the finished-run tile and the merged last pass the operator did not see before
+MEMORY.jobs.push({ id: "last-index", kind: "index", name: "index run", phase: "failed", done: 12, total: null, pct: null, rate: 0.5, etaSec: null, doneAt: null, lastProgressAt: NOW - 60_000, stalled: false, series: [], by: "cli", finished: { outcome: "failed", reason: "neutral reason", endedAt: NOW - 60_000, durationSec: 24 } } as never);
+(MEMORY.passes[1] as Record<string, unknown>).last = { at: NOW - 120_000, chunks: 4321, result: "done", by: "cockpit" };
 
 let server: Server;
 let base = "";
@@ -46,7 +49,7 @@ beforeAll(async () => {
     if (url.startsWith("/page")) {
       // seed the browser's storage before the page script runs
       const seed = `<script>try{localStorage.setItem("pai.cockpit.layout.v1",${JSON.stringify(JSON.stringify(OLD_LAYOUT))})}catch(e){}</script>`;
-      const probe = `<script>setTimeout(function(){var s=document.getElementById("sec-memory");document.body.setAttribute("data-probe",JSON.stringify({sec:!!s,panel:s?s.textContent:"",tiles:s?Array.prototype.map.call(s.querySelectorAll(".mt"),function(t){return t.getAttribute("data-tid")}):[],rings:s?s.querySelectorAll(".mt svg circle").length:0,gauges:s?s.querySelectorAll(".mt-bar").length:0,sparks:s?s.querySelectorAll(".mt-spark").length:0,grips:s?s.querySelectorAll(".mt [data-tgrip]").length:0,mins:s?s.querySelectorAll(".mt .tctl").length:0,segs:s?s.querySelectorAll("[data-part=segments] i").length:0,stalled:s?s.querySelectorAll("[data-part=stalled]").length:0,layout:localStorage.getItem("pai.cockpit.layout.v1")}))},1500)</script>`;
+      const probe = `<script>setTimeout(function(){var s=document.getElementById("sec-memory");document.body.setAttribute("data-probe",JSON.stringify({sec:!!s,panel:s?s.textContent:"",tiles:s?Array.prototype.map.call(s.querySelectorAll(".mt"),function(t){return t.getAttribute("data-tid")}):[],rings:s?s.querySelectorAll(".mt svg circle").length:0,gauges:s?s.querySelectorAll(".mt-bar").length:0,sparks:s?s.querySelectorAll(".mt-spark").length:0,grips:s?s.querySelectorAll(".mt [data-tgrip]").length:0,mins:s?s.querySelectorAll(".mt .tctl").length:0,segs:s?s.querySelectorAll("[data-part=segments] i").length:0,stalled:s?s.querySelectorAll("[data-part=stalled]").length:0,pill:document.getElementById("memrun").textContent,title:s?s.querySelector("h2").textContent:"",tileStop:s?s.querySelectorAll(".mt [data-a='memory.stop']").length:0,embedDis:s?s.querySelectorAll(".act button")[0].disabled:null,firstTile:s?s.querySelector(".mt").getAttribute("data-tid"):"",layout:localStorage.getItem("pai.cockpit.layout.v1")}))},1500)</script>`;
       res.setHeader("content-type", "text/html");
       return res.end(cockpitHtml().replace("<body>", "<body>" + seed).replace("</body>", probe + "</body>"));
     }
@@ -99,5 +102,12 @@ describe.skipIf(!CHROME)("cockpit Memory card in the real page", () => {
     expect(p.rings).toBeGreaterThanOrEqual(4);
     expect(p.sparks).toBe(p.tiles.length);
     expect(JSON.parse(p.layout).flat()).toContain("memory");
+    // fault 1-3: the embed model's own loaded line, the muted others, the merged last pass, the kept finished run
+    for (const x of ["also loaded: neutral-chat:9b", "4.3k chunks · done · by cockpit", "Last index run", "failed · neutral reason", "12 done", "by cli"]) expect(t, x).toContain(x);
+    // running state: pill in the title row, first tile is the stoppable run tile, buttons busy
+    expect(p.pill).toMatch(/embedding 50% · 2\/s · ETA 25 s/);
+    expect(p.title).toContain("embedding 50%");
+    expect(p.tileStop).toBeGreaterThanOrEqual(1);
+    expect(p.embedDis).toBe(true);
   }, 120_000);
 });
