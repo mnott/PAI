@@ -11,7 +11,7 @@ import { cooldownRemaining, type RoutingState } from "../../workers/routing.js";
 import { SESSION_WORKER_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { SESSION_NAME_ENV, getProfile, updateProfile, type SessionProfile } from "../../workers/session-profile-store.js";
 import { looksLikePath, prepareDir, type Register } from "../lib/new-dir.js";
-import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "../../workers/config.js";
+import { readWorkersSection, ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig, nativeOrchestratorModel } from "../../workers/config.js";
 import { launchableProviderNames, LaunchError } from "../../workers/launch.js";
 import { resolveLocalProvider } from "../../workers/local-provider.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -251,7 +251,7 @@ export async function startSession(a: StartArgs): Promise<number> {
     harness = await buildHarness(workers, {
       provider: setup.orchestrator.provider,
       // the native "opus" alias is not in the worker model table (sonnet/haiku), so it passes through
-      model: provider.native && setup.orchestrator.model === "opus" ? "opus" : modelFor(provider, setup.orchestrator.model),
+      model: provider.native && setup.orchestrator.model === nativeOrchestratorModel() ? setup.orchestrator.model : modelFor(provider, setup.orchestrator.model),
       cwd,
       resume: resume?.uuid,
       name,

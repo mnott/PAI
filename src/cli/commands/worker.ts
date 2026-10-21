@@ -9,7 +9,7 @@ import { currentWorkerId } from "../../workers/worker-id.js";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
+import { escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
@@ -681,8 +681,8 @@ const helpCommand: CommandDef = {
     "Every call is recorded in help-ledger.jsonl; --report lists them.",
   options: [
     { name: "task", type: "string", value: "TEXT", summary: "The one-paragraph sub-task" },
-    { name: "provider", type: "string", value: "NAME", summary: "Provider to ask (default anthropic)" },
-    { name: "model", type: "string", value: "NAME", summary: "Model to ask (default sonnet)" },
+    { name: "provider", type: "string", value: "NAME", summary: "Provider to ask (default: workers.escalate.cloud.provider)" },
+    { name: "model", type: "string", value: "NAME", summary: "Model to ask (default: workers.escalate.cloud.model)" },
     { name: "files", type: "string", value: "A,B", summary: "Files the sub-task concerns, comma-separated" },
     { name: "report", type: "boolean", summary: "List the recorded help calls instead of asking" },
     { name: "scope", type: "string", value: "ID", summary: "With --report: only this unit" },
@@ -704,8 +704,8 @@ const helpCommand: CommandDef = {
         logDir(),
         {
           task,
-          provider: str(ctx.opts.provider) ?? "anthropic",
-          model: str(ctx.opts.model) ?? "sonnet",
+          provider: str(ctx.opts.provider) ?? escalationCloud().provider,
+          model: str(ctx.opts.model) ?? escalationCloud().model,
           files: (str(ctx.opts.files) ?? "").split(",").map((f) => f.trim()).filter(Boolean),
           cwd: process.cwd(),
         },

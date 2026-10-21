@@ -24,8 +24,9 @@ import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { dirname } from "node:path";
 import type http from "node:http";
 import { paiHomePath } from "../config/pai-home.js";
+import { LOOPBACK_HOST } from "../utils/loopback.js";
+import { TAILSCALE_STATUS_TIMEOUT_MS } from "../utils/timeouts.js";
 
-export const LOOPBACK = "127.0.0.1";
 
 /** The /v1 remote rule: loopback (any 127/8, ::1, v4-mapped) or the tailnet. */
 export function defaultV1Guard(remoteAddress: string | undefined): boolean {
@@ -74,7 +75,7 @@ export function resolveBindAddress(
   interfaces: () => NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces
 ): string | null {
   const v = (bind ?? "").trim().toLowerCase();
-  if (!v || v === "loopback") return LOOPBACK;
+  if (!v || v === "loopback") return LOOPBACK_HOST;
   if (v === "tailscale") {
     let fallback: string | undefined;
     for (const [name, addrs] of Object.entries(interfaces() ?? {})) {
@@ -199,7 +200,7 @@ export async function displayHost(addr: string): Promise<string> {
   try {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
-    const { stdout } = await promisify(execFile)("tailscale", ["status", "--json"], { timeout: 3000 });
+    const { stdout } = await promisify(execFile)("tailscale", ["status", "--json"], { timeout: TAILSCALE_STATUS_TIMEOUT_MS });
     const self = (JSON.parse(stdout) as { Self?: { DNSName?: string; TailscaleIPs?: string[] } }).Self;
     if (self?.DNSName && self.TailscaleIPs?.includes(addr)) return self.DNSName.replace(/\.$/, "");
   } catch {

@@ -33,7 +33,7 @@ Runs the parts of a plan on the local provider, no model in the loop: up to N pa
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--parallel N` | number | — | Parts running at once (default: max_parallel of the plan, else the provider's maxConcurrent) |
-| `--escalate TIER` | string | — | After the local retry, run one worker on TIER (only sonnet) instead of stopping at needs-decision |
+| `--escalate TIER` | string | — | After the local retry, run one worker on TIER (only workers.escalate.cloud.tier) instead of stopping at needs-decision |
 | `--force-local` | flag | — | Keep every part on the local provider: no route classifier, no automatic cloud escalation after 2 failed local attempts |
 | `--provider NAME` | string | — | Run the parts on this provider instead of the plan's (the value local is resolved at run start) |
 | `--model MODEL` | string | — | Model the parts' workers get: default, fast or a model id (default: the provider's worker_model) |

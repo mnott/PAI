@@ -18,6 +18,7 @@ import type { EmbeddingBinding, StorageBackend } from "../storage/interface.js";
 import type { EmbeddingBackend } from "../memory/backends/types.js";
 import { bindingMatches, mismatchReason } from "../memory/embedding-binding.js";
 import { paiHomePath } from "../config/pai-home.js";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
 const TICK_MS = 30_000;
 const COUNTS_TTL_MS = 5 * 60_000;
@@ -361,7 +362,7 @@ export async function startDashboardState(src: DashboardSource, opts: { historyP
 
 async function ollamaPs(baseUrl: string): Promise<LoadedModel[] | null> {
   try {
-    const r = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, { signal: AbortSignal.timeout(2000) });
+    const r = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS) });
     if (!r.ok) return null;
     const j = (await r.json()) as { models?: Array<{ name: string; size: number; size_vram: number }> };
     return (j.models ?? []).map((m) => ({ name: m.name, size: m.size, sizeVram: m.size_vram }));

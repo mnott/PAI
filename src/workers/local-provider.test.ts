@@ -2,9 +2,9 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 import { nativeAnthropicModels, type WorkersConfig } from "./config.js";
 import {
-  LOCAL_PROBE_TIMEOUT_MS,
   probeLoopback,
   readLocalPreference,
   resolveLocalProvider,

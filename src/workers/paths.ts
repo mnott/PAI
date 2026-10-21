@@ -22,6 +22,9 @@ export function workersLogDir(config: Pick<WorkersConfig, "logDir">): string {
   // the shipped default is the sentinel: an explicit user logDir (whatever it
   // says) is honored verbatim; only the unset default resolves through PAI_HOME
   if (config.logDir !== defaultWorkersConfig().logDir) return expanded;
+  // the old ~/.claude/logs/workers belongs to the default home only: a
+  // PAI_HOME override (temp home, second install) never owns it, so no hint
+  if (process.env.PAI_HOME) return paiHomePath("logs", "workers");
   return resolvePaiFile(paiHomePath("logs", "workers"), [expanded], "pai config migrate --logs");
 }
 

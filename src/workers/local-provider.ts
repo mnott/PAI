@@ -42,11 +42,11 @@ import {
   type LocalStatus,
 } from "./local-status.js";
 import { PORT_TIMEOUT_MS, httpModelsCheck, providerModelIds, type PortCheck } from "../cli/lib/setups.js";
+import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
 export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck };
 
 /** A busy single-slot server answers /v1/models slowly; 500 ms read it as down. */
-export const LOCAL_PROBE_TIMEOUT_MS = 2000;
 
 /**
  * The one line every local-provider refusal and every provider listing

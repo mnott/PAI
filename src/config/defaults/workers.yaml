@@ -141,6 +141,13 @@ workers:
     # loop-stop (a loop-guard stop that left committed or salvaged work
     # escalates at once, without waiting for `failures`).
     triggers: [context, missing-tool, repeated-failure, loop-stop]
+    # Where an escalated plan/queue part runs (--escalate takes `tier`) and the
+    # default provider/model of `pai worker help`: tier label, provider name
+    # (a key of providers, or the built-in anthropic), model alias or id.
+    cloud:
+      tier: sonnet
+      provider: anthropic
+      model: sonnet
   # Loop guard: a denied repeat of a read-only call (Bash read, Read, Grep,
   # Glob) gets the call's last output back, trimmed to these sizes, so the
   # model stops asking for it again. Secret-looking lines are masked.
@@ -176,6 +183,17 @@ providers:
       # aliases: the CLI resolves each to its newest model on every run.
       default: sonnet
       fast: haiku
+
+# Chat model alias of the built-in login's own orchestrator session. Not a
+# worker model: it passes through on the native provider only.
+orchestratorModel: opus
+
+# USD per million tokens by model family, matched on the model name (`pai audit
+# usage`, transcript cost). A user's prices merges over this per family.
+prices:
+  opus: { input: 5, output: 25 }
+  sonnet: { input: 3, output: 15 }
+  haiku: { input: 1, output: 5 }
 
 # The default MCP sets every config starts from; a user's mcp_sets merges
 # over this, so `desktop: []` removes the set deliberately. `desktop` names

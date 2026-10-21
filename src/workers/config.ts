@@ -17,7 +17,7 @@
  * Code.
  */
 
-import { DEFAULT_ESCALATE, parseEscalate, type EscalateConfig } from "./escalation.js";
+import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig } from "./escalation.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +33,7 @@ import {
   writeWorkersYaml,
   type WorkersYamlData,
 } from "./workers-config.js";
+import { isLoopbackHostname } from "../utils/loopback.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -204,11 +205,18 @@ export function nativeAnthropicModels(): WorkerProvider["models"] {
   const providers = d.providers as Record<string, unknown> | undefined;
   const anthropic = providers?.anthropic as Record<string, unknown> | undefined;
   const models = anthropic?.models as Record<string, unknown> | undefined;
-  const def = typeof models?.default === "string" ? models.default : "sonnet";
-  const out: WorkerProvider["models"] = { default: def };
-  if (typeof models?.fast === "string") out.fast = models.fast;
-  if (typeof models?.image === "string") out.image = models.image;
+  if (typeof models?.default !== "string") throw new WorkersConfigError("defaults workers.yaml providers.anthropic.models.default is missing");
+  const out: WorkerProvider["models"] = { default: models.default };
+  if (typeof models.fast === "string") out.fast = models.fast;
+  if (typeof models.image === "string") out.image = models.image;
   return out;
+}
+
+/** The chat model alias of the built-in login's own orchestrator (workers.yaml orchestratorModel). */
+export function nativeOrchestratorModel(): string {
+  const m = shippedWorkersDefaults().orchestratorModel;
+  if (typeof m !== "string") throw new WorkersConfigError("defaults workers.yaml orchestratorModel is missing");
+  return m;
 }
 
 /**
@@ -699,8 +707,7 @@ export class WorkersConfigError extends Error {}
 /** Does this provider's endpoint live on this machine? */
 export function isLocalProvider(baseUrl: string): boolean {
   try {
-    const h = new URL(baseUrl).hostname;
-    return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+    return isLoopbackHostname(new URL(baseUrl).hostname);
   } catch {
     return false;
   }
@@ -1790,4 +1797,13 @@ export function providerContextWindow(p: WorkerProvider): number {
 /** Directory under which inline keys (MCP `key` field) are stored, 0600. */
 export function keysDir(): string {
   return paiHomePath("keys");
+}
+
+/** The cloud escalation target (workers.escalate.cloud) of the active config; the shipped default when the config cannot be read. */
+export function escalationCloud(): CloudTarget {
+  try {
+    return readWorkersSection().workers.escalate.cloud;
+  } catch {
+    return DEFAULT_ESCALATE.cloud;
+  }
 }

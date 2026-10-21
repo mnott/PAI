@@ -29,6 +29,7 @@ import { poolSettings, readPoolState, type PoolSettings, type PoolState } from "
 import type { WorkersConfig } from "../workers/config.js";
 import type { ModelInventory } from "../workers/model-inventory.js";
 import type { SchedSnapshot } from "./scheduler.js";
+import { LOOPBACK_HOST } from "../utils/loopback.js";
 
 /**
  * The fallback used when the config cannot be read. The policy values live in
@@ -332,7 +333,7 @@ export async function probeEngines(
         const engine = engineNameOf(rt, input.workers.providers);
         const p = input.workers.providers[engine];
         const host = p && isLoopbackProvider(p) ? providerHostPort(p)?.host : undefined;
-        const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || "127.0.0.1"}:${rt.port}/metrics`);
+        const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || LOOPBACK_HOST}:${rt.port}/metrics`);
         if (body != null && rt.kind !== "strata") dialects.set(rt.port!, isStrataMetrics(body));
         if (body != null && !isStrataMetrics(body)) return;
         out[engine] = strataEngineMetrics(body);
@@ -392,7 +393,7 @@ export async function freshEngineReadings(
         const engine = engineNameOf(rt, input.workers.providers);
         const p = input.workers.providers[engine];
         const host = p && isLoopbackProvider(p) ? providerHostPort(p)?.host : undefined;
-        const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || "127.0.0.1"}:${rt.port}/metrics`);
+        const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || LOOPBACK_HOST}:${rt.port}/metrics`);
         if (body != null && rt.kind !== "strata") dialects.set(rt.port!, isStrataMetrics(body));
         if (body != null && !isStrataMetrics(body)) return;
         out[engine] = strataEngineMetrics(body);

@@ -78,6 +78,7 @@ import { CliError, type CommandDef, type Io, type OptDef, type RunContext } from
 import { dim, err, ok, warn } from "../lib/utils.js";
 import { useCommand } from "./providers.js";
 import { psTable } from "../../workers/ps-table.js";
+import { loopbackUrl } from "../../utils/loopback.js";
 
 const out = (s = "") => void process.stdout.write(s + "\n");
 
@@ -870,7 +871,7 @@ export const workerLocalCommand: CommandDef = {
         for (const l of stopLines(cfg)) out(l);
         out("sleep 10");
         out(plan.line);
-        out(`until curl -s -m 3 http://127.0.0.1:${tier.port}/v1/models > /dev/null; do sleep 5; done`);
+        out(`until curl -s -m 3 ${loopbackUrl(tier.port, "/v1/models")} > /dev/null; do sleep 5; done`);
         return;
       }
       await startTier(cfg, target, tier, plan);

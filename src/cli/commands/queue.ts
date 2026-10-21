@@ -10,7 +10,7 @@ import { pai } from "../../workers/plan-deps.js";
 import { QueueReporter } from "../../workers/run-events.js";
 import { finishDetached, reportOriginWithHost, runMessenger, startDetached } from "../../workers/run-report-wiring.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
-import { getProviderOrNative, readWorkersSection } from "../../workers/config.js";
+import { escalationCloud, getProviderOrNative, readWorkersSection } from "../../workers/config.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { effectiveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
@@ -104,7 +104,7 @@ const runCmd: CommandDef = {
     { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
     { name: "provider", type: "string", value: "NAME", summary: "Provider name (the detached runner passes what it resolved; the value local is resolved at run start)" },
     { name: "parallel", type: "number", value: "N", summary: "Items running at once (default: max_parallel of queue.yaml, else the provider's maxConcurrent)" },
-    { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only sonnet)" },
+    { name: "escalate", type: "string", value: "TIER", summary: "Run the cloud items on TIER (only workers.escalate.cloud.tier)" },
     { name: "model", type: "string", value: "MODEL", summary: "Model the items' workers get: default, fast or a model id (default: the provider's worker_model)" },
     { name: "now", type: "boolean", summary: "The items' workers go ahead of the runs waiting for a slot on the provider" },
     { name: "detach", type: "boolean", summary: "Hand the run to a detached process that outlives this session and reports ready / needs-decision items back to it" },
@@ -113,7 +113,8 @@ const runCmd: CommandDef = {
   seeAlso: ["pai queue review", "pai queue accept", "pai plan run"],
   run: async (ctx) => {
     const esc = ctx.opts.escalate;
-    if (esc !== undefined && esc !== "sonnet") throw new CliError(`--escalate takes sonnet, not ${String(esc)}`, "pai queue run --escalate sonnet");
+    const cloudTier = escalationCloud().tier;
+    if (esc !== undefined && esc !== cloudTier) throw new CliError(`--escalate takes ${cloudTier}, not ${String(esc)}`, `pai queue run --escalate ${cloudTier}`);
     const { repo, store, settings } = await open(ctx);
     // --local: PAI resolves the running local server itself (local-provider.ts);
     // --provider names one (the detached runner passes what it already resolved)
@@ -134,7 +135,7 @@ const runCmd: CommandDef = {
     }
     const reporter = origin ? new QueueReporter(basename(repo), runMessenger(logDir), origin) : null;
     const onEvent = reporter ? (k: "ready" | "needs-decision", it: QueueItem) => (k === "ready" ? reporter.onReady(it) : reporter.onNeedsDecision(it)) : undefined;
-    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === "sonnet", ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), onEvent }, realQueueDeps(logDir, repo));
+    const s = await runQueue(store, settings, { provider: prov.name, parallel, escalate: esc === cloudTier, ...(typeof ctx.opts.model === "string" ? { model: ctx.opts.model } : {}), ...(ctx.opts.now === true ? { priority: "front" as const } : {}), onEvent }, realQueueDeps(logDir, repo));
     await reporter?.finish();
     finishDetached(logDir);
     out(`ready: ${s.ready.join(", ") || "none"}; too-big: ${s.tooBig.join(", ") || "none"}; needs-decision: ${s.needsDecision.join(", ") || "none"}`);

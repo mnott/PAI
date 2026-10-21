@@ -1,7 +1,8 @@
 import http from 'http';
 
-export function drainServers(servers: http.Server[], opts?: { timeoutMs?: number }): Promise<void> {
-  const timeoutMs = opts?.timeoutMs ?? 120000;
+/** Close the servers, force-closing what is still open after `timeoutMs` (router.drainMs in config.yaml). */
+export function drainServers(servers: http.Server[], opts: { timeoutMs: number }): Promise<void> {
+  const { timeoutMs } = opts;
 
   // Track servers that are already closed or not listening
   const closedServers = new Set<http.Server>();

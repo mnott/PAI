@@ -16,7 +16,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { randomBytes } from "node:crypto";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
-import { readWorkersSection } from "../workers/config.js";
+import { readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { readInventory } from "../workers/model-inventory.js";
 import { setClass } from "../workers/providers.js";
@@ -494,7 +494,7 @@ export async function runCockpitAction(
     if (!target) return fail("target (provider) required");
     if (role !== "worker" && role !== "orchestrator") return fail(`role must be worker or orchestrator, got "${role ?? ""}"`);
     const provider = target;
-    if (provider !== "anthropic" && !deps.workers.providers[provider]) {
+    if (provider !== ANTHROPIC_NATIVE && !deps.workers.providers[provider]) {
       return fail(`no provider named "${provider}"`);
     }
     try {

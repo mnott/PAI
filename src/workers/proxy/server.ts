@@ -27,12 +27,13 @@ import {
   OpenAiStreamTranslator,
   type AnthropicRequest,
 } from "./translate.js";
+import { LOOPBACK_HOST } from "../../utils/loopback.js";
 
 /** The configured proxy port (workers.proxy.port; shipped default in defaults/workers.yaml). */
 export function proxyPort(): number {
   return readWorkersSection().workers.proxy.port;
 }
-const HOST = "127.0.0.1";
+const HOST = LOOPBACK_HOST;
 
 /** How providers are looked up — swapped out by the tests. */
 export type ProviderResolver = () => Record<string, WorkerProvider>;

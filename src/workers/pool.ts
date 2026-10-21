@@ -48,6 +48,7 @@ import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js"
 import type { WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
 import { parseLedger } from "./ledger.js";
+import { LOOPBACK_HOST } from "../utils/loopback.js";
 
 // ---------------------------------------------------------------------------
 // Config-facing helpers
@@ -522,7 +523,7 @@ export function postTaskToPool(
     const body = JSON.stringify(task);
     const req = httpRequest(
       {
-        host: "127.0.0.1",
+        host: LOOPBACK_HOST,
         port,
         path,
         method: "POST",
@@ -559,7 +560,7 @@ export type HostProbe = "up" | "down" | "timeout";
 
 export function poolHostProbe(port: number, timeoutMs = 500): Promise<HostProbe> {
   return new Promise((resolve) => {
-    const req = httpRequest({ host: "127.0.0.1", port, path: "/healthz", method: "GET", timeout: timeoutMs }, (res) => {
+    const req = httpRequest({ host: LOOPBACK_HOST, port, path: "/healthz", method: "GET", timeout: timeoutMs }, (res) => {
       res.resume();
       res.on("end", () => resolve(res.statusCode === 200 ? "up" : "down"));
       res.on("error", () => resolve("down"));
