@@ -1,7 +1,8 @@
 // Router swap reading: node scripts/swap-reading.mjs <cli-entry> <old|new> <port> [swaps]
 // Hammers the router with keep-alive clients while it is swapped N times; prints failed requests (x000) per swap.
+// mode handover = old router gets SIGUSR2 and passes its listening socket to its successor (new pid found via lsof).
 // mode old = supervisor signals the old router at spawn (pre 42a28287); mode new = new router gets --replace PID.
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import http from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +33,8 @@ const require_net = net;
 
 let failures = 0;
 const errs = {};
-const bad = (c) => { failures++; errs[c] = (errs[c] || 0) + 1; };
+let swapT0 = 0;
+const bad = (c) => { if (process.env.SWAP_DEBUG) console.log("fail", c, Date.now() - swapT0); failures++; errs[c] = (errs[c] || 0) + 1; };
 let stop = false;
 function client() {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
@@ -56,14 +58,29 @@ await sleep(500);
 
 const counts = [];
 let dark = 0, darkStart = 0, maxDark = 0;
-(async () => { while (!stop) { const up = await once(); const t = Date.now(); if (!up && !darkStart) darkStart = t; if (up && darkStart) { maxDark = Math.max(maxDark, t - darkStart); darkStart = 0; } await sleep(1); } })();
+(async () => { while (!stop) { const up = await once(); const t = Date.now(); if (!up && !darkStart) darkStart = t; if (up && darkStart) { maxDark = Math.max(maxDark, t - darkStart); darkStart = 0; } await sleep(5); } })();
 for (let n = 0; n < swaps; n++) {
   const before = failures;
   const old = cur;
-  if (mode === "new") cur = start(["--wait-bind", "10", "--replace", String(old)]);
+  let handed = false;
+  if (mode === "handover") {
+    process.kill(old, "SIGUSR2");
+    handed = true;
+  } else if (mode === "new") cur = start(["--wait-bind", "10", "--replace", String(old)]);
   else { cur = start(["--wait-bind", "10"]); try { process.kill(old, "SIGTERM"); } catch { console.log("old gone", old); } }
   const t0 = Date.now();
+  swapT0 = t0;
+  if (handed) {
+    while (Date.now() - t0 < 15000) {
+      await sleep(20);
+      let pids = [];
+      pids = await new Promise((res) => execFile("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8" }, (_e, out) => res((out || "").split("\n").filter(Boolean).map(Number))));
+      const fresh = pids.find((p) => p !== old);
+      if (fresh && !alive(old)) { cur = fresh; break; }
+    }
+  }
   while ((alive(old) || !(await once())) && Date.now() - t0 < 15000) await sleep(10);
+  if (process.env.SWAP_DEBUG) console.log("swap done at", Date.now() - t0);
   await sleep(600);
   counts.push(failures - before);
 }
@@ -72,5 +89,5 @@ await sleep(100);
 try { process.kill(cur, "SIGTERM"); } catch {}
 await sleep(2500);
 try { process.kill(cur, "SIGKILL"); } catch {}
-console.log(JSON.stringify(errs), `longest dark port window ${maxDark} ms (1 ms probe)`);
+console.log(JSON.stringify(errs), `longest dark port window ${maxDark} ms (5 ms probe)`);
 console.log(`${mode} swaps=${swaps} x000 per swap: ${counts.join(" ")} total=${counts.reduce((a, b) => a + b, 0)}`);

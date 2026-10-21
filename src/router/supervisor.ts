@@ -16,6 +16,32 @@ import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 export const routerPidFile = (): string => paiHomePath("router.pid");
 export const routerLogFile = (): string => paiHomePath("logs", "router.log");
 
+/** Written by a router that can hand its listening socket to a successor on SIGUSR2; holds that router's pid. */
+export const routerHandoverFile = (): string => paiHomePath("router.handover");
+
+/**
+ * Gapless swap: ask the running router to spawn its successor with the listening socket.
+ * Returns null when `oldPid` predates handover (SIGUSR2 would kill it), else resolves with the successor's pid
+ * once it has taken over the pid file.
+ */
+export function startHandover(oldPid: number, timeoutMs = 30000): Promise<number | undefined> | null {
+  try {
+    if (readFileSync(routerHandoverFile(), "utf8").trim() !== String(oldPid)) return null;
+    process.kill(oldPid, "SIGUSR2");
+  } catch {
+    return null;
+  }
+  return (async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 20));
+      const pid = parseInt(existsSync(routerPidFile()) ? readFileSync(routerPidFile(), "utf8") : "", 10);
+      if (pid && pid !== oldPid) return pid;
+    }
+    throw new Error(`router ${oldPid} did not hand over within ${timeoutMs}ms`);
+  })();
+}
+
 export function routerRunningPid(): number | null {
   if (!existsSync(routerPidFile())) return null;
   const pid = parseInt(readFileSync(routerPidFile(), "utf8"), 10);

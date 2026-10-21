@@ -5,7 +5,8 @@
 
 import { parkConfigFrom, setParkConfigSource, sharedParker } from "../../router/parking.js";
 import http from "node:http";
-import { mkdirSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync, unlinkSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, routerPort } from "../../router/router.js";
@@ -21,7 +22,7 @@ import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
-import { routerSwapArgs, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { routerSwapArgs, startHandover, routerHandoverFile, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { loadConfig } from "../../daemon/config.js";
@@ -88,6 +89,7 @@ const runCommand: CommandDef = {
   options: [
     { name: "port", type: "string", value: "PORT", default: String(routerPort()), summary: "Port to listen on" },
     { name: "replace", type: "string", value: "PID", summary: "After warming up, stop this router (SIGTERM) and take over its port (used by `pai router restart`)" },
+    { name: "inherit-fds", type: "string", value: "FDS", summary: "Listen on already-open sockets (fd[,fd of the beyond-loopback listener]) handed over by a router that is being replaced; reports ready over IPC" },
     { name: "usage-file", type: "string", value: "PATH", summary: "Read the cockpit's accounting from this file and record nothing (second instances)" },
     { name: "wait-bind", type: "string", value: "SECONDS", summary: "Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`)" },
   ],
@@ -203,16 +205,28 @@ const runCommand: CommandDef = {
           /* already gone */
         }
       }
-      listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs, intervalMs: 1 }).then(() => {
+      const inheritFds = String(ctx.opts["inherit-fds"] ?? "").split(",").filter(Boolean).map(Number);
+      const claimPidFiles = () => {
         if (!managed) return;
         mkdirSync(dirname(routerPidFile()), { recursive: true });
         writeFileSync(routerPidFile(), String(process.pid));
+        writeFileSync(routerHandoverFile(), String(process.pid));
+      };
+      const bound = inheritFds.length
+        ? new Promise<void>((resolve) => server.listen({ fd: inheritFds[0]! }, resolve))
+        : listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs, intervalMs: 1 });
+      bound.then(() => {
+        claimPidFiles();
+        process.send?.({ ready: true });
       }, (e: unknown) => {
         process.stderr.write(`pai: router: ${(e as Error).message}\n`);
         process.exit(1);
       });
       if (tail) {
-        listenRetry(tail, port, addr, { waitMs: waitBindMs, intervalMs: 1 }).then(async () => {
+        const tailBound = inheritFds.length > 1
+          ? new Promise<void>((resolve) => tail.listen({ fd: inheritFds[1]! }, resolve))
+          : listenRetry(tail, port, addr, { waitMs: waitBindMs, intervalMs: 1 });
+        tailBound.then(async () => {
           out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
         }, (e: unknown) => {
           process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
@@ -232,6 +246,40 @@ const runCommand: CommandDef = {
           process.exit(0);
         });
       };
+      // SIGUSR2: spawn the successor on this router's listening sockets (inherited fds, so the accept queue is never closed), stop accepting once it is ready, drain, exit
+      let handing = false;
+      process.on("SIGUSR2", () => {
+        if (handing || draining) return;
+        const handles = [server, ...(tail ? [tail] : [])].map((s) => (s as unknown as { _handle?: { fd?: number } })._handle?.fd);
+        if (handles.some((fd) => typeof fd !== "number" || fd < 0)) {
+          process.stderr.write("pai: router: handover skipped, listening fd unavailable\n");
+          return;
+        }
+        handing = true;
+        mkdirSync(dirname(routerLogFile()), { recursive: true });
+        const log = openSync(routerLogFile(), "a");
+        const child = spawn(
+          process.execPath,
+          [process.argv[1]!, "router", "run", "--port", String(port), "--inherit-fds", handles.map((_, i) => 3 + i).join(","), ...(usageFile ? ["--usage-file", usageFile] : [])],
+          { detached: true, stdio: ["ignore", log, log, ...(handles as number[]), "ipc"] }
+        );
+        closeSync(log);
+        const giveUp = setTimeout(() => child.kill("SIGKILL"), 30_000);
+        child.once("exit", () => {
+          clearTimeout(giveUp);
+          if (handing) {
+            handing = false;
+            process.stderr.write("pai: router: successor exited before taking over, still serving\n");
+          }
+        });
+        child.once("message", () => {
+          clearTimeout(giveUp);
+          child.removeAllListeners("exit");
+          child.disconnect();
+          child.unref();
+          bye();
+        });
+      });
       process.on("SIGTERM", bye);
       process.on("SIGINT", bye);
     });
@@ -248,6 +296,7 @@ const restartCommand: CommandDef = {
     const result = await restartRouter({
       oldPid: routerRunningPid() ?? undefined,
       spawnNew: (old) => spawnRouter(process.argv[1]!, routerSwapArgs(old)),
+      handover: (old) => startHandover(old),
       isUp: () => probeRouter(routerPort(), 500)
     });
     out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms)`));

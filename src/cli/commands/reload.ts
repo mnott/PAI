@@ -14,7 +14,7 @@ import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { routerPort } from "../../router/router.js";
 import { restartRouter } from "../../router/restart.js";
-import { probeRouter, routerRunningPid, routerSwapArgs, spawnRouter } from "../../router/supervisor.js";
+import { probeRouter, routerRunningPid, routerSwapArgs, startHandover, spawnRouter } from "../../router/supervisor.js";
 import { poolReloadLive } from "../../workers/pool-cli.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
@@ -181,6 +181,7 @@ function liveDeps(): ReloadDeps {
         (await restartRouter({
           oldPid: routerRunningPid() ?? undefined,
           spawnNew: (old) => spawnRouter(entry, routerSwapArgs(old)),
+          handover: (old) => startHandover(old),
           isUp: () => probeRouter(routerPort(), 500),
         })).newPid,
     },

@@ -1,9 +1,9 @@
 import http from 'http';
+import net from 'net';
 
 /** Close the servers, force-closing what is still open after `timeoutMs` (router.drainMs in config.yaml). */
 export function drainServers(servers: http.Server[], opts: { timeoutMs: number; idleGraceMs?: number }): Promise<void> {
   const { timeoutMs, idleGraceMs = 0 } = opts;
-  const startedAt = Date.now();
 
   // Track servers that are already closed or not listening
   const closedServers = new Set<http.Server>();
@@ -17,9 +17,6 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
   // Create a timer to track timeout
   let timeoutId: NodeJS.Timeout | null = null;
 
-  // Create a timer to periodically call closeIdleConnections
-  let idleCloseTimer: NodeJS.Timeout | null = null;
-
   // Function to handle server close completion
   const handleServerClose = (server: http.Server) => {
     closedServers.add(server);
@@ -29,9 +26,6 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
     if (closedServers.size === servers.length) {
       if (timeoutId) {
         clearTimeout(timeoutId);
-      }
-      if (idleCloseTimer) {
-        clearInterval(idleCloseTimer);
       }
     }
   };
@@ -43,7 +37,8 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
 
       // Create a promise for this server's close operation
       const closePromise = new Promise<void>((resolve) => {
-        server.close((err) => {
+        // net's close: http.Server.close would reset every idle keep-alive socket at once, before its client's next request can be answered with Connection: close
+        net.Server.prototype.close.call(server, (err?: Error) => {
           // If server was already closed, err will be ERR_SERVER_NOT_RUNNING
           if (err && (err as any).code === 'ERR_SERVER_NOT_RUNNING') {
             handleServerClose(server);
@@ -68,14 +63,13 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
     return Promise.resolve();
   }
 
-  // Set up periodic idle connection cleanup
-  idleCloseTimer = setInterval(() => {
+  // Idle keep-alive sockets end through the server's own per-socket timer, counted from each socket's last response.
+  // A sweep closing every idle socket at once would reset those whose client is about to send its next request.
+  if (idleGraceMs > 0) {
     for (const server of servers) {
-      if (closingServers.has(server) && Date.now() - startedAt >= idleGraceMs) {
-        server.closeIdleConnections();
-      }
+      if (closingServers.has(server)) server.keepAliveTimeout = idleGraceMs;
     }
-  }, 200);
+  }
 
   // Create the main promise that resolves when all servers are closed
   const mainPromise = Promise.all(closePromises);
@@ -90,9 +84,6 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
         }
       }
 
-      if (idleCloseTimer) {
-        clearInterval(idleCloseTimer);
-      }
 
       resolve();
     }, timeoutMs);
@@ -103,9 +94,6 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
     // Cleanup
     if (timeoutId) {
       clearTimeout(timeoutId);
-    }
-    if (idleCloseTimer) {
-      clearInterval(idleCloseTimer);
     }
   });
 }

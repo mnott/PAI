@@ -26,6 +26,7 @@ describe('drainServers', () => {
 
   it('should drain servers and wait for in-flight responses to complete', async () => {
     // Start a client request
+    const requestStart = Date.now();
     const client = http.request({
       host: '127.0.0.1',
       port,
@@ -59,8 +60,9 @@ describe('drainServers', () => {
     await drainServers([server], { timeoutMs: 120000 });
     const drainEnd = Date.now();
 
-    // Should have waited for the full response (allowing for some timing variance)
-    expect(drainEnd - drainStart).toBeGreaterThanOrEqual(200);
+    // Should have waited for the rest of the response: it was due 300 ms after the request, 100 ms of which had passed
+    // when the drain began. Measured from the request (not the drain start) with the timer's 1 ms resolution allowed.
+    expect(drainEnd - requestStart).toBeGreaterThanOrEqual(300 - 1);
 
     // Try to connect after drain - should be refused
     const newClient = http.request({

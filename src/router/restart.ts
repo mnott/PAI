@@ -2,7 +2,8 @@ export interface RestartDeps {
   oldPid: number | undefined;                 // running router, if any
   spawnNew: (oldPid: number | undefined) => number | undefined; // starts the new router, returns its pid; it warms up, then stops oldPid itself and takes the port (see routerSwapArgs)
   isUp: () => Promise<boolean>;               // true when GET /cockpit/system answers on the router port
-  now?: () => number;                         // default Date.now
+  handover?: (oldPid: number) => Promise<number | undefined> | null; // gapless: old router passes its listening socket on; null = old router cannot, fall back to spawnNew
+  now?: () => number;                        // default Date.now
   pollMs?: number;                            // default 50
   timeoutMs?: number;                         // default 30000
   sleep?: (ms: number) => Promise<void>;      // default setTimeout based
@@ -22,7 +23,8 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
   const sleep = d.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
 
   // Start the new router first
-  const newPid = d.spawnNew(d.oldPid);
+  const handed = d.oldPid !== undefined ? d.handover?.(d.oldPid) ?? null : null;
+  const newPid = handed ? await handed : d.spawnNew(d.oldPid);
 
   let oldPid = d.oldPid;
   let signalTime: number | undefined = undefined;
