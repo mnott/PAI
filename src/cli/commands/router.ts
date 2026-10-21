@@ -169,7 +169,10 @@ const runCommand: CommandDef = {
         await startTier(cfg, tier, t);
       },
     });
-    const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, cachedSessionMap(), system, cachedWorkerWindows());
+    // built once: each holds its own TTL cache, so a new one per request would reread every status file on every poll
+    const sessionMap = cachedSessionMap();
+    const workerWindows = cachedWorkerWindows();
+    const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
     const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp });

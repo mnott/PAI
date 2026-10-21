@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { TOKEN_WEIGHTS, buildCockpitData, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
+import { TOKEN_WEIGHTS, buildCockpitData, cachedRows, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { clearJobNameCache } from "./sessions.js";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nowStamp, saveStatus, type WorkerStatus } from "../workers/status.js";
@@ -569,5 +569,21 @@ describe("enabledLocalLimits", () => {
     const out = enabledLocalLimits(ls, { "gyro-m": { enabled: true }, "gyro-m-b": { enabled: false }, glm: { enabled: true } });
     expect(out.map((l) => l.provider)).toEqual(["gyro-m", "glm"]);
     expect(enabledLocalLimits(ls, {})).toHaveLength(4);
+  });
+});
+
+describe("cachedRows", () => {
+  it("reads only the appended part of a grown log and waits for a torn line", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
+    const row = (n: number) => JSON.stringify({ ts: "2026-01-01T00:00:00Z", session_id: `s${n}` });
+    writeFileSync(f, row(1) + "\n");
+    const read = cachedRows(f);
+    expect(read().map((r) => r.session_id)).toEqual(["s1"]);
+    appendFileSync(f, row(2) + "\n" + row(3).slice(0, 10));
+    expect(read().map((r) => r.session_id)).toEqual(["s1", "s2"]);
+    appendFileSync(f, row(3).slice(10) + "\n");
+    expect(read().map((r) => r.session_id)).toEqual(["s1", "s2", "s3"]);
+    writeFileSync(f, row(9) + "\n");
+    expect(read().map((r) => r.session_id)).toEqual(["s9"]);
   });
 });

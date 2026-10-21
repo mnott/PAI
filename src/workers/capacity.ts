@@ -296,7 +296,7 @@ export interface QueueRow {
  * worker_queue list. Dead entries are dropped; a provider with no cap (or a
  * cap the config no longer names) still lists its waiters, cap undefined.
  */
-export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}, isAlive: (pid: number) => boolean = alive): QueueRow[] {
+export function queueRows(logDir: string, caps: Record<string, number | undefined> = {}, isAlive: (pid: number) => boolean = alive, statuses?: WorkerStatus[]): QueueRow[] {
   let providers: string[];
   try {
     providers = readdirSync(join(logDir, "queue")).sort();
@@ -305,7 +305,7 @@ export function queueRows(logDir: string, caps: Record<string, number | undefine
   }
   const rows: QueueRow[] = [];
   for (const prov of providers) {
-    const queue = fairEntries(logDir, prov, isAlive);
+    const queue = fairEntries(logDir, prov, isAlive, statuses);
     queue.forEach((e, i) => {
       rows.push({
         id: e.id,

@@ -308,6 +308,13 @@ describe("queue pull-forward", () => {
     expect(queueRows(join(logDir, "empty"), {})).toEqual([]);
   });
 
+  it("queueRows takes the caller's statuses instead of rereading every status file", () => {
+    const { logDir } = qharness();
+    const rows = queueRows(logDir, { p: 1 }, undefined, []);
+    expect(rows.map((r) => r.id).sort()).toEqual(["w-early", "w-late"]);
+    expect(rows.every((r) => r.status === undefined)).toBe(true);
+  });
+
   it("providerCap resolves maxConcurrent and the loopback default", () => {
     const config = {
       providers: {
