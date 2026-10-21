@@ -20,6 +20,7 @@ import { WIN_CLOUD_JS } from "./win/cards-cloud.js";
 import { WIN_WORKERS_JS } from "./win/cards-workers.js";
 import { WIN_MODELS_JS } from "./win/cards-models.js";
 import { WIN_REGISTRY_JS } from "./win/cards-registry.js";
+import { WIN_CACHE_JS } from "./win/cards-cache.js";
 import { WIN_ACTIONS_JS } from "./win/actions.js";
 import { WIN_CHARTS_JS } from "./win/cards-charts.js";
 import { WIN_SELECT_JS } from "./win/select.js";
@@ -60,6 +61,7 @@ ${WIN_CLOUD_JS}
 ${WIN_WORKERS_JS}
 ${WIN_MODELS_JS}
 ${WIN_REGISTRY_JS}
+${WIN_CACHE_JS}
  /** The sections' defaults as root bands: [[defaults, band px], ...] in page order. */
  function winCompose(parts){
   var leaves=[],px=[],cards=[],kids={},st={},i,k;
@@ -84,15 +86,17 @@ ${WIN_REGISTRY_JS}
   var oldMdl=document.querySelector('[data-section="models"]');if(oldMdl)oldMdl.style.display="none";
   var oldRt=document.querySelector('[data-section="routing"]');if(oldRt)oldRt.style.display="none";
   var oldCl=document.querySelector('[data-section="cloud"]');if(oldCl)oldCl.style.display="none";
+  var oldCa=document.querySelector('[data-section="cache"]');if(oldCa)oldCa.style.display="none";
   var oldWk=document.querySelector('[data-section="workers"]');if(oldWk)oldWk.style.display="none";
   var oldTk=document.querySelector('[data-section="tokens"]');if(oldTk)oldTk.style.display="none";
   var oldDy=document.querySelector('[data-section="daily"]');if(oldDy)oldDy.style.display="none";
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520]].concat(chartsDefaults().parts).concat([[registryDefaults(),460]])));
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[cacheDefaults(),620],[workersDefaults(),420],[modelsDefaults(),520]].concat(chartsDefaults().parts).concat([[registryDefaults(),460]])));
   wrgStart();
   // the limits poll already calls renderRouting: the routing cards ride on it
   var oldRender=renderRouting;renderRouting=function(){oldRender();if(lim){winFeedLimits(lim);limitsSync(lim)}};
   // the queue feed: the win cards first, so a throwing old panel cannot leave them empty
   var oldQueue=renderQueue;renderQueue=function(q){try{winFeedQueue(q)}finally{oldQueue(q)}};
+  var oldDonuts=renderDonuts;renderDonuts=function(){oldDonuts();winFeedCache()};
   var oldRenderM=renderModels;renderModels=function(){if(mdl)winFeedModels(mdl);oldRenderM()};
   window.winFeedModels=winFeedModels;window.winFeedSystem=winFeedSystem;window.winFeedMemory=winFeedMemory;window.winFeedLimits=winFeedLimits;
   WinT.anchorInit(document,window,root);
