@@ -45,6 +45,25 @@ describe("worker verdict: flagged report is not a failed run", () => {
   });
 });
 
+describe("worker verdict: an escalated run shows where it went", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sess-escal-"));
+  const base = { state: "failed", rc: 143, started: "2026-10-21 05:17:38" };
+  writeFileSync(join(dir, "esc.status"), JSON.stringify({ ...base, id: "w1", claudeSession: "c-1", escalated: "escalated t2→t1: loop-guard stop", escalatedTo: "20261021-051809-87842", commits: 2 }));
+  writeFileSync(join(dir, "esc0.status"), JSON.stringify({ ...base, id: "w2", claudeSession: "c-2", escalated: "escalated t1→t0: loop-guard stop" }));
+  writeFileSync(join(dir, "plain.status"), JSON.stringify({ ...base, id: "w3", claudeSession: "c-3" }));
+  const map = loadSessionMap({ workerDirs: [dir], agentSessionsFile: join(dir, "none.json") });
+
+  it("escalatedTo names the run it handed to, with commits when counted", () => {
+    expect(map.get("c-1")?.verdict).toBe("escalated → 20261021-051809-87842 · 2 commits");
+  });
+  it("a t1→t0 escalation with no escalatedTo reads handed to session", () => {
+    expect(map.get("c-2")?.verdict).toBe("handed to session");
+  });
+  it("a plain failure stays failed", () => {
+    expect(map.get("c-3")?.verdict).toBe("failed");
+  });
+});
+
 describe("session mapper: stagger warm-up wait", () => {
   it("shows a gated run as waiting (warm-up), a plain running one as running", () => {
     const dir = mkdtempSync(join(tmpdir(), "sess-"));

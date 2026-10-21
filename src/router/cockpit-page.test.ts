@@ -2954,6 +2954,8 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(vcls("ok · 2 commits")).toBe("ok");
     expect(vcls("done · report flagged · 1 commit")).toBe("warn");
     expect(vcls("failed")).toBe("bad");
+    expect(vcls("escalated → 20261021-051809-87842 · 2 commits")).toBe("warn");
+    expect(vcls("handed to session")).toBe("warn");
     expect(vcls("running")).toBe("dim");
     expect(vcls("waiting (warm-up) 7s/12s")).toBe("dim");
     expect(vcls(undefined)).toBe("dim");
