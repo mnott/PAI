@@ -209,7 +209,10 @@ function pageFns() {
   const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
   const fmt = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(Math.round(n)));
   const table = (head: string[], rows: unknown[][]) => `<table>${head.join("|")}${rows.map((r) => r.join("|")).join("\n")}</table>`;
-  return new Function("esc", "fmt", "table", `${src}; return {memHtml, memRunLine, memDur};`)(esc, fmt, table) as {
+  const metricTile = (o: any) => `<tile ${o.title}|${o.value}${o.unit ?? ""}|${o.sub}|${o.secondary?.value ?? ""}>${o.extra ?? ""}${o.fill ? o.fill.text : ""}</tile>`;
+  const donut = (r: number) => `<ring ${r}>`;
+  const emptyRing = () => "<ring>";
+  return new Function("esc", "fmt", "table", "metricTile", "donut", "emptyRing", `${src}; return {memHtml, memRunLine, memDur};`)(esc, fmt, table, metricTile, donut, emptyRing) as {
     memHtml: (m: unknown) => string;
     memRunLine: (r: unknown) => string;
     memDur: (s: number) => string;
@@ -229,7 +232,6 @@ describe("memory section page", () => {
     expect(h).toContain("122303");
     expect(h).toContain("ollama-f16");
     expect(h).toContain("arctic");
-    expect(h).toContain("40 files");
     expect(h).toContain("nightly maintenance at 03:00");
     expect(h).toContain("embed backlog");
     expect(h).not.toContain(" disabled");
@@ -250,5 +252,85 @@ describe("memory section page", () => {
     const d = f.memHtml(await cockpitMemoryPayload(deps({ run: () => run({ by: "daemon" }) })));
     expect(d).toContain("started by daemon");
     expect(d).not.toContain("memory.stop");
+  });
+});
+
+describe("memory payload: tiles data", () => {
+  const L = cockpitLayout();
+  const hist = (n: number, step: number, per: number) => Array.from({ length: n }, (_, i) => ({ t: NOW - (n - i) * step * 1000, done: i * per }));
+
+  it("carries segments, bound vs configured with the hint, and the daemon fields", async () => {
+    const st = status({
+      daemon: { pid: 77, uptimeSecs: 3700, version: "9.9.9", storage: "pg" },
+      index: {
+        ...status()!.index, segments: { fresh: 100, old: 800, missing: 100 },
+        binding: { backend: "backend-a", model: "model-a", dims: 4 }, configured: { backend: "backend-b", model: "model-b", dims: 8 }, mismatch: true, hint: "re-embed in progress", error: null,
+      },
+      jobs: [{ name: "backend-b-reembed", phase: "embed", done: 100, total: 1000, rate: 2, etaSecs: 450, lastProgressAt: NOW - 1000, stalled: false, level: "green", history: [] }],
+    });
+    const p = (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: st }) }))) as any;
+    expect(p.segments).toEqual({ fresh: 100, old: 800, missing: 100 });
+    expect(p.reembedding).toBe(true);
+    expect(p.binding).toMatchObject({ mismatch: true, hint: "re-embed in progress", bound: { backend: "backend-a", model: "model-a" }, configured: { backend: "backend-b", model: "model-b", dims: 8 } });
+    expect(p.daemonInfo).toEqual({ pid: 77, uptimeSecs: 3700, version: "9.9.9", storage: "pg" });
+  });
+
+  it("derives the backend gpu share and loaded model", async () => {
+    const st = status({ backend: { level: "green", id: "b", model: "m", available: true, reason: "ready", loaded: [{ name: "m:1", size: 10, sizeVram: 8, gpuShare: 0.8 }] } });
+    const p = (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: st }) }))) as any;
+    expect(p.backend).toMatchObject({ loadedModel: "m:1", gpuShare: 0.8, available: true });
+  });
+
+  it("job tile: pct, rate, ETA, done-at, per-interval rate series bounded by the layout", async () => {
+    const h = hist(L.memoryHistoryLen + 20, 30, 15);
+    const st = status({ jobs: [{ name: "x-reembed", phase: "embed", done: 500, total: 1000, rate: 0.5, etaSecs: 1000, lastProgressAt: NOW - 5000, stalled: false, level: "green", history: h }] });
+    const p = (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: st }) }))) as any;
+    const j = p.jobs[0];
+    expect(j).toMatchObject({ kind: "reembed", name: "x-reembed", pct: 50, rate: 0.5, etaSec: 1000, doneAt: NOW + 1_000_000, stalled: false });
+    expect(j.series).toHaveLength(L.memoryHistoryLen);
+    expect(j.series.every((v: number) => v === 0.5)).toBe(true);
+  });
+
+  it("stalls a job after the layout stall time, not the daemon's", async () => {
+    const mk = (age: number) => status({ jobs: [{ name: "x-reembed", phase: "embed", done: 5, total: 10, rate: null, etaSecs: null, lastProgressAt: NOW - age * 1000, stalled: false, level: "green", history: [] }] });
+    const at = async (age: number) => (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: mk(age) }) }))) as any;
+    expect((await at(L.memoryStallSecs - 1)).jobs[0].stalled).toBe(false);
+    const p = await at(L.memoryStallSecs + 1);
+    expect(p.jobs[0].stalled).toBe(true);
+    expect(p.level).toBe("red");
+    expect(p.reason).toContain("stalled");
+  });
+
+  it("a running embed run becomes a job tile with backlog total, history-based rate series and stall", async () => {
+    let t = NOW;
+    const d = deps({ run: () => run({ done: 0 }), now: () => t });
+    await cockpitMemoryPayload(d);
+    t += 10_000;
+    const d2 = deps({ run: () => run({ done: 100 }), now: () => t });
+    const p = (await cockpitMemoryPayload(d2)) as any;
+    const j = p.jobs.find((x: any) => x.kind === "embed");
+    expect(j).toMatchObject({ done: 100, total: 122_303, by: "cockpit", stalled: false });
+    expect(j.series).toEqual([10]);
+    expect(j.lastProgressAt).toBe(t);
+    t += (L.memoryStallSecs + 1) * 1000;
+    const p3 = (await cockpitMemoryPayload(deps({ run: () => run({ done: 100 }), now: () => t }))) as any;
+    expect(p3.jobs.find((x: any) => x.kind === "embed").stalled).toBe(true);
+  });
+
+  it("passes carry next run, failure with retry or gave-up, and the embed pass log detail; vault is left out", async () => {
+    const st = status({
+      passes: [
+        { name: "index", running: false, lastEnd: NOW - 1000, nextAt: NOW + 5000, failure: null, level: "green" },
+        { name: "embed", running: false, lastEnd: NOW - 2000, nextAt: NOW + 9000, failure: { at: NOW - 500, error: "boom", attempts: 2, gaveUp: false, retryAt: NOW + 60_000 }, level: "red" },
+        { name: "vault", running: false, lastEnd: 0, nextAt: null, failure: null, level: "green" },
+      ],
+    });
+    const p = (await cockpitMemoryPayload(deps({
+      daemon: async () => daemon({ status: st }),
+      embedPasses: () => [{ start: NOW - 9000, end: NOW - 2000, embedded: 321, backlogLeft: 55, stopReason: "pass-budget" }],
+    }))) as any;
+    expect(p.passes.map((x: any) => x.name)).toEqual(["index", "embed"]);
+    expect(p.passes[0]).toMatchObject({ state: "ok", nextAt: NOW + 5000, detail: null });
+    expect(p.passes[1]).toMatchObject({ state: "failed", failure: { error: "boom", retryAt: NOW + 60_000 }, detail: { embedded: 321, backlogLeft: 55, stopReason: "pass-budget" } });
   });
 });

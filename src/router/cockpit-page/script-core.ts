@@ -147,12 +147,12 @@ function metricSpark(series){
 function metricTile(o){
  var sec=o.secondary;
  function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value">'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
- function fill(v,u,sub){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
+ function fill(v,u,sub,tone){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%'+(tone?';background:var(--'+esc(tone)+')':'')+'"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
  // the tile's stable id: a slug of its title, so the drag can find and order it (the tile drag keys on data-tid)
  var tid=String(o.title||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"tile";
  return'<div class="mt" data-tid="'+esc(tid)+'" data-tname="'+esc(o.title)+'" data-tval="'+esc((o.value==null?"–":o.value)+(o.value!=null&&o.unit?" "+o.unit:""))+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
-  (o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub):"")+
+  (o.extra||"")+(o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub,o.fill.tone):"")+
   '<svg class="mt-spark" viewBox="0 0 ${L.sparkViewMaxPx} ${L.sparkHeightPx}" preserveAspectRatio="none" width="100%" height="${L.sparkHeightPx}">'+metricSpark(o.series||[])+'</svg></div>'
 }
 /** Baked policy values, declared before the helpers that use them so each extracted function stays self-contained. */

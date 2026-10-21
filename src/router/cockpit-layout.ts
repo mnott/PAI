@@ -158,6 +158,9 @@ const SHIPPED = {
   memoryCoverageWarn: 0.99,
   memoryCoverageBad: 0.5,
   memoryStartGraceSecs: 120,
+  memoryStallSecs: 300,
+  memoryHistoryLen: 120,
+  memoryRingPx: 76,
 } as const;
 
 /** The layout policy of the cockpit page, read at page-build time. */
@@ -267,6 +270,11 @@ export interface CockpitLayout {
   memoryCoverageWarn: number;
   memoryCoverageBad: number;
   memoryStartGraceSecs: number;
+  /** A job with no progress for this long (s) is STALLED; the rate sparkline keeps at most memoryHistoryLen samples. */
+  memoryStallSecs: number;
+  memoryHistoryLen: number;
+  /** Size (px) of the progress ring on a job tile. */
+  memoryRingPx: number;
 }
 
 /** The shipped probe fallbacks, kept only for when the defaults file is missing a key. */
@@ -368,5 +376,8 @@ export function cockpitLayout(): CockpitLayout {
     memoryCoverageWarn: num(s, "memoryCoverageWarn", SHIPPED.memoryCoverageWarn),
     memoryCoverageBad: num(s, "memoryCoverageBad", SHIPPED.memoryCoverageBad),
     memoryStartGraceSecs: num(s, "memoryStartGraceSecs", SHIPPED.memoryStartGraceSecs),
+    memoryStallSecs: num(s, "memoryStallSecs", SHIPPED.memoryStallSecs),
+    memoryHistoryLen: num(s, "memoryHistoryLen", SHIPPED.memoryHistoryLen),
+    memoryRingPx: num(s, "memoryRingPx", SHIPPED.memoryRingPx),
   };
 }
