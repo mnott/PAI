@@ -14,7 +14,7 @@
  * place; `--no-worktree` opts out, `--worktree` forces one on.
  */
 
-import { removeScratch } from "./scratch.js";
+import { removeScratch, scratchDir } from "./scratch.js";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -1945,6 +1945,54 @@ function gcForeign(
   });
 }
 
+function realpathOr(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * Worktrees a finished worker made by hand inside its scratch dir (<systmp>/pai-scratch/<id>/…):
+ * no status owns them and their branch can be named anything, so they are found through the
+ * repo's worktree list by path. Same archive path as any other tree (uncommitted state
+ * salvaged, branch deleted after archiving); a live worker's trees are never touched.
+ */
+function gcScratchTrees(
+  statuses: WorkerStatus[],
+  owned: Set<string>,
+  out: GcEntry[],
+  archive: (id: string, dir: string, branch: string, st: WorkerStatus | null) => void
+): void {
+  const done = new Set<string>();
+  for (const st of statuses) {
+    if (isLive(st) || !existsSync(st.cwd)) continue;
+    const scratch = realpathOr(scratchDir(st.id));
+    let raw: string;
+    try {
+      raw = git(st.cwd, ["worktree", "list", "--porcelain"]);
+    } catch {
+      continue;
+    }
+    for (const block of raw.split("\n\n").map((b) => b.trim()).filter(Boolean).slice(1)) {
+      const field = (k: string): string | undefined => block.split("\n").find((l) => l.startsWith(k + " "))?.slice(k.length + 1);
+      const dir = field("worktree");
+      if (!dir || !existsSync(dir) || block.includes("\nprunable")) continue;
+      const real = realpathOr(dir);
+      if (done.has(real) || owned.has(real) || !real.startsWith(scratch + sep)) continue;
+      done.add(real);
+      const branch = field("branch")?.replace(/^refs\/heads\//, "");
+      const id = `${st.id}-${basename(real).replace(/[^A-Za-z0-9._-]+/g, "-") || "tree"}`;
+      if (!branch) {
+        out.push({ id, skipped: "kept: detached HEAD in scratch tree" });
+        continue;
+      }
+      archive(id, real, branch, null);
+    }
+  }
+}
+
 /**
  * Archive worktrees of finished workers older than `olderThanHours` and
  * status-less orphan directories: uncommitted state is salvaged onto the
@@ -2054,6 +2102,7 @@ export function gcWorktrees(
       archive(ent.name, dir, worktreeBranch(ent.name), null);
     }
   }
+  gcScratchTrees(statuses, owned, out, archive);
   if (foreignRepo) gcForeign(logDir, foreignRepo, owned, dryRun, report, out, archive);
   // Orphan branches: no worktree, tip in main or already archived. Never a live worker's branch.
   const protect = new Set(statuses.filter((s) => isLive(s) && s.branch).map((s) => s.branch!));

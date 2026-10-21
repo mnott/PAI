@@ -13,10 +13,13 @@
 import { createServer, connect, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { loadStatus, isLive } from "./status.js";
 
 export function operatorSocketPath(logDir: string, id: string): string {
-  return join(logDir, `${id}.sock`);
+  const p = join(logDir, `${id}.sock`);
+  // sockaddr_un.sun_path is 104 bytes on macOS: a long logDir (worker TMPDIR) is hashed into a short tmp path
+  return p.length < 100 ? p : join("/tmp", `pai-op-${createHash("sha1").update(p).digest("hex").slice(0, 12)}.sock`);
 }
 
 /**

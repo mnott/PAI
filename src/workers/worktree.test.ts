@@ -29,6 +29,7 @@ import {
   worktreeSystemPrompt,
   inPlaceSystemPrompt,
 } from "./worktree.js";
+import { scratchDir } from "./scratch.js";
 import { statusPath } from "./paths.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
@@ -623,6 +624,24 @@ describe("gcWorktrees", () => {
     return wt.dir;
   }
   const refs = () => git(repo, ["for-each-ref", "--format=%(refname)"]);
+
+  it("archives a hand-made tree in a finished worker's scratch dir, any branch name", () => {
+    const id = "gc-scratch";
+    saveStatus(gcLog, { ...status(id), cwd: repo, worktreeDir: null, branch: null });
+    const tree = join(scratchDir(id), "pai-wt");
+    mkdirSync(scratchDir(id), { recursive: true });
+    git(repo, ["worktree", "add", "-q", "-b", "fix/by-hand", tree]);
+    try {
+      expect(gcWorktrees(gcLog, 24, true).map((r) => r.id)).toEqual([`${id}-pai-wt`]);
+      expect(existsSync(tree)).toBe(true);
+      const res = gcWorktrees(gcLog, 24);
+      expect(res).toEqual([{ id: `${id}-pai-wt`, archive: `refs/pai-archive/${id}-pai-wt` }]);
+      expect(existsSync(tree)).toBe(false);
+      expect(refs()).not.toContain("refs/heads/fix/by-hand");
+    } finally {
+      rmSync(scratchDir(id), { recursive: true, force: true });
+    }
+  });
 
   it("archives old finished, spares running and young, dry run changes nothing", () => {
     const old = mk("gc-old", {}, 3 * DAY);
