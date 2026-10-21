@@ -295,7 +295,7 @@ function tkeyOf(cont){return cont.__tkey||cont.getAttribute("data-tkey")}
  *  last in DOM order, ids that no longer exist drop out of it, minimized tiles become chips in a row after
  *  the container, and every tile carries its minimize button. */
 function applyTileOrder(el){
- var key=tkeyOf(el),st=tileOrder(),ord=st[key]||[],mins=st[key+"#min"]||[];
+ var key=tkeyOf(el),st=tileOrder(),ord=st[key]||[],mins=(el.getAttribute&&el.getAttribute("data-tnomin"))?[]:(st[key+"#min"]||[]);
  var kids=el.children,all=[],byId={},keep=[],i,k;
  // live children only: a tile moved here earlier still sits in a stale container's children array
  for(i=0;i<kids.length;i++){if(kids[i].parentNode!==el)continue;var id=kids[i].getAttribute("data-tid");if(!id){keep.push(kids[i]);continue}byId[id]=kids[i]}
@@ -322,6 +322,7 @@ function applyTileOrder(el){
   var tid=t.getAttribute("data-tid"),min=mins.indexOf(tid)>=0,nm=t.getAttribute("data-tname")||tid;
   t.classList.toggle("tmin",min);
   var b=t.__tmb;
+  if((el.getAttribute&&el.getAttribute("data-tnomin"))){t.__tcont=el;return}
   if(!b){
    b=t.__tmb=document.createElement("button");b.type="button";b.className="tctl";
    b.onclick=function(){

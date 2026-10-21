@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkersConfig } from "./config.js";
 import {
   computeInventory,
+  ProbeHold,
   inventoryRows,
   inventoryText,
   parseSizeMb,
@@ -279,5 +280,41 @@ describe("consumers by served model id", () => {
     expect(rt.notServed).toEqual(["worker:flashnext-iq3"]);
     const text = inventoryText(inv, (h, r) => [h, ...r].map((x) => x.join(" | ")).join("\n"));
     expect(text).toContain("worker:gyro-m, worker:flashnext-iq3 (not served)");
+  });
+});
+
+describe("probe hold", () => {
+  const strata = (rts: Awaited<ReturnType<typeof computeInventory>>) => rts.runtimes.find((r) => r.port === 8035)!;
+  const missing = (refused = false): InventoryDeps => ({ ...deps({ "http://127.0.0.1:8035/v1/models": null }), refused: () => refused });
+
+  it("one failed probe keeps a running runtime up, marked slow, with its last good models", async () => {
+    const hold = new ProbeHold();
+    const ok = strata(await computeInventory(input(), deps(), new Date(), hold));
+    expect(ok.status).toBe("running");
+    const held = strata(await computeInventory(input(), missing(), new Date(), hold));
+    expect(held.status).toBe("running");
+    expect(held.slow).toBe(true);
+    expect(held.models.map((m) => m.model)).toEqual(ok.models.map((m) => m.model));
+  });
+  it("three consecutive failed probes read down; a good probe in between resets the count", async () => {
+    const hold = new ProbeHold();
+    await computeInventory(input(), deps(), new Date(), hold);
+    expect(strata(await computeInventory(input(), missing(), new Date(), hold)).status).toBe("running");
+    expect(strata(await computeInventory(input(), missing(), new Date(), hold)).status).toBe("running");
+    expect(strata(await computeInventory(input(), missing(), new Date(), hold)).status).toBe("stopped");
+    await computeInventory(input(), deps(), new Date(), hold);
+    await computeInventory(input(), missing(), new Date(), hold);
+    const again = strata(await computeInventory(input(), missing(), new Date(), hold));
+    expect(again.status).toBe("running");
+    expect(again.slow).toBe(true);
+  });
+  it("a refused connection is down at once", async () => {
+    const hold = new ProbeHold();
+    await computeInventory(input(), deps(), new Date(), hold);
+    expect(strata(await computeInventory(input(), missing(true), new Date(), hold)).status).toBe("stopped");
+  });
+  it("a runtime never seen up is down on the first miss, and without a hold nothing is held", async () => {
+    expect(strata(await computeInventory(input(), missing(), new Date(), new ProbeHold())).status).toBe("stopped");
+    expect(strata(await computeInventory(input(), missing())).status).toBe("stopped");
   });
 });

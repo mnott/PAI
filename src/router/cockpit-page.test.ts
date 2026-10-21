@@ -640,6 +640,36 @@ describe("cockpit Models cards", () => {
     expect(card).not.toContain("badge bad");
     expect(h).toContain('data-rt="docker-model-runner"');
   });
+  it("a card carries a move grip, sits in an orderable grid, and its title has its own row apart from the chips", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["paperfull-chat"], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, label: "Paperfull chat model", usedBy: ["paperfull-chat"] }] }],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    expect(h).toContain('<div class="rt-grid" data-tkey="models cards" data-tnomin="1">');
+    const card = h.split('<div class="mcard')[1]!;
+    expect(card).toContain('data-tid="ollama / qwen3:8b"');
+    expect(card).toContain("data-tgrip");
+    const title = card.indexOf('<div class="mtitle">');
+    const chips = card.indexOf('<div class="mchips">');
+    expect(title).toBeGreaterThan(-1);
+    expect(chips).toBeGreaterThan(title);
+    expect(card.slice(title, chips)).toContain("Paperfull chat model");
+    expect(card.slice(title, chips)).not.toContain("badge");
+    expect(card.slice(chips)).toContain("badge");
+  });
+  it("a runtime whose last probe was slow reads amber 'slow', not down", () => {
+    const h = modelsHtml({
+      at: "x",
+      runtimes: [{ name: "strata", kind: "strata", status: "running", slow: true, port: 8035, users: ["gyro-m"], models: [{ model: "m", kind: "coding", loaded: true, usedBy: ["gyro-m"] }] }],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+    });
+    expect(h).toContain("rt-dot slow");
+    expect(h).toContain(">slow</span>");
+    expect(h).not.toContain("cannot work");
+  });
   it("a card is per consumer: a shared runtime's purpose line, used-by and USERS tile describe that consumer only", () => {
     const h = modelsHtml({
       at: "x",
@@ -2736,7 +2766,7 @@ describe("cockpit tile drag on the real rendered page (live bug: tiles had no da
     const cards = [...h.matchAll(/<div class="mcard[^"]*" data-tid="([^"]*)"/g)].map((m) => m[1]!);
     expect(cards).toEqual(["gyro-m / flash-next", "ollama / qwen3:8b"]);
     // a grip on every metric tile
-    expect((h.match(/data-tgrip/g) ?? []).length).toBe(tiles.length);
+    expect((h.match(/data-tgrip/g) ?? []).length).toBe(tiles.length + cards.length);
   });
 
   // the real listeners: tileGrips() wires pointerdown on the grip; sDrag adds pointermove/up on it

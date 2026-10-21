@@ -302,17 +302,19 @@ function modelsHtml(inv){
    var first=u.length?String(u[0]):"";
    return first?first.replace(/^worker:/,""):shortModel(m.model);
   }
-  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><span class="chev">▸</span><span class="rt-dot'+(down?" down":idle?" idle":"")+'"></span>'+
+  // two rows: the title on its own row beside the status dot (full name, wraps), the chips on the row below
+  var head='<div class="mhead" role="button" tabindex="0" aria-expanded="false"><div class="mtitle"><span class="chev">▸</span><span class="rt-dot'+(down?" down":r.slow?" slow":idle?" idle":"")+'"></span>'+
    '<b'+(hasModel?' title="'+esc(r.models[0].model)+'"':"")+'>'+esc(hasModel?titleOf(r.models[0]):r.name)+'</b>'+
    (hasModel?'<button class="lblbtn" data-alias="'+esc(r.models[0].label||"")+'" title="set an alias for this model" aria-label="edit alias">✎</button>':"")+
+   '</div><div class="mchips">'+
    (hasModel?'<span class="mid" title="'+esc(r.models[0].model)+'">'+esc(shortModel(r.models[0].model))+'</span>':"")+
    (r.kind===r.name||r.kind===r.name+(r.port==null?"":" :"+r.port)?"":'<span class="badge">'+esc(r.kind)+'</span>')+
    // the runtime chip carries the runtime's note (models.runtimes.<name>.note) as its title,
    // never a body line: a shared runtime's note belongs to the runtime, not to one consumer's card
    '<span class="badge"'+(cmds[r.name]&&cmds[r.name].note?' title="'+esc(cmds[r.name].note)+'"':"")+'>'+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span>'+
-   '<span class="badge'+(down?' bad':'')+'">'+state+'</span>'+
+   '<span class="badge'+(down?' bad':r.slow?' warn':'')+'"'+(r.slow?' title="the last probe was slow or failed; the last good reading is held"':'')+'>'+(r.slow&&!down?"slow":state)+'</span>'+
    (rtBtns(r,rt)?'<span class="act rt-act" data-rt="'+esc(r.name)+'">'+rtBtns(r,rt)+'<span class="msg"></span></span>':"")+
-   '<span class="num">'+esc(key)+'</span></div>';
+   '<span class="num">'+esc(key)+'</span></div></div>';
   var body="";
   if(down){
    body+='<div class="mdown">'+esc(r.name)+(r.port==null?"":" :"+r.port)+" down — "+(users.length?esc(purposeOf(users))+" cannot work":"no consumer")+'</div>';
@@ -345,10 +347,10 @@ function modelsHtml(inv){
   if(users.indexOf(sub)>=0)sub="";
   if(users.length)body+='<div class="rt-sub"'+(users.length?' title="'+esc(users.join(", "))+'"':"")+'>'+esc(sub)+(sub?" · ":"")+"used by "+esc(purposeOf(users))+'</div>';
   if(tierBtns&&r.name===localRt&&r.status!=="stopped")body+=actRow("rt-act",' data-rt="'+esc(r.name)+'"',tierBtns);
-  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'">'+head+'<div class="mbody">'+body+'</div></div>';
+  cards+='<div class="mcard'+(down?" down":"")+'" data-tid="'+esc(r.name+(hasModel?" / "+r.models[0].model:""))+'" data-rt="'+esc(r.name)+'" data-model="'+esc(hasModel?r.models[0].model:"")+'" data-def="'+(r.status==="running"&&coding?${q(L.foldDefaultKind)}:"other")+'" data-tname="'+esc(hasModel?titleOf(r.models[0]):r.name)+'"><span class="tgrip" data-tgrip tabindex="0" title="move card" aria-label="move card" aria-pressed="false" role="button">⠿</span>'+head+'<div class="mbody">'+body+'</div></div>';
   });
  });
- var h='<div class="rt-grid">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
+ var h='<div class="rt-grid" data-tkey="models cards" data-tnomin="1">'+(cards||'<span class="dim">no consumer runtime</span>')+'</div>';
  if(tierBtns&&!localRt)h+='<div class="rt-chips" style="margin-top:6px">'+actRow("rt-act","",tierBtns)+'</div>';
  // a duplicates hint only for the same model id on two runtimes (the inventory already filters that)
  (inv.duplicates||[]).forEach(function(d){h+='<div class="warn">duplicates: '+esc(d)+'</div>'});

@@ -25,6 +25,8 @@ import { providerHostPort } from "./local-provider.js";
 export const MODEL_INVENTORY_REFRESH_MS = 30_000;
 export const MODEL_INVENTORY_MAX_AGE_MS = 90_000;
 const PROBE_MS = 2000;
+/** Consecutive failed (not refused) probes before a runtime that was up reads "stopped". */
+export const DOWN_AFTER_MISSES = 3;
 
 export type ModelKind = "chat" | "coding" | "embedding";
 export type RuntimeKind = "ollama" | "docker-model-runner" | "strata" | "vllm-mlx" | "llama-server" | "openai-server" | "in-process";
@@ -49,6 +51,8 @@ export interface InventoryRuntime {
   kind: RuntimeKind;
   /** idle: runner up, models installed, none loaded — it loads on the first request, so it reads "available" */
   status: "running" | "idle" | "stopped";
+  /** the last probe failed or was slow: status and models are the last good reading, held until DOWN_AFTER_MISSES misses */
+  slow?: boolean;
   port?: number;
   /** false when a worker provider on this endpoint is disabled in workers.yaml: not listed anywhere */
   enabled?: boolean;
@@ -81,6 +85,8 @@ export interface DeclaredConsumer {
 /** Everything a detector needs from the outside; tests inject fakes. */
 export interface InventoryDeps {
   getJson: (url: string) => Promise<unknown | null>;
+  /** true when the last probe of this port was refused outright (nothing listens): down at once, no hold */
+  refused?: (port: number) => boolean;
   run: (cmd: string, args: string[]) => Promise<string | null>;
   /** memory of the process tree listening on a port (the engine child, not only the listener) */
   memory: (port: number) => Promise<{ footprintMb: number; mappedMb?: number } | undefined>;
@@ -102,15 +108,28 @@ const exec = (cmd: string, args: string[]): Promise<string | null> =>
     }
   });
 
+const refusedPorts = new Set<number>();
+
 export const liveDeps: InventoryDeps = {
   async getJson(url) {
+    let port = 0;
+    try {
+      port = urlPort(url);
+    } catch {
+      /* not a URL */
+    }
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(PROBE_MS) });
+      refusedPorts.delete(port);
       return r.ok ? await r.json() : null;
-    } catch {
+    } catch (e) {
+      const code = (e as { cause?: { code?: string } }).cause?.code;
+      if (code === "ECONNREFUSED") refusedPorts.add(port);
+      else refusedPorts.delete(port);
       return null;
     }
   },
+  refused: (port) => refusedPorts.has(port),
   run: exec,
   async memory(port) {
     const pid = ((await exec("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])) ?? "").split("\n")[0];
@@ -345,8 +364,33 @@ function duplicates(runtimes: InventoryRuntime[]): string[] {
     .map(([model, names]) => `${model} runs on ${names.length} runtimes: ${names.join(" + ")} — consider consolidating`);
 }
 
-/** Pure part: detectors + consumers → inventory. */
-export async function computeInventory(input: InventoryInput, deps: InventoryDeps = liveDeps, now = new Date()): Promise<ModelInventory> {
+/** What a long-lived refresher remembers per runtime: its last up reading and the failed probes since. */
+export class ProbeHold {
+  private good = new Map<string, InventoryRuntime>();
+  private misses = new Map<string, number>();
+
+  /** One failed or slow probe never flips a runtime that was up to down: it keeps its last good reading, marked slow,
+   *  until DOWN_AFTER_MISSES consecutive misses; a refused connection (nothing listens) is down at once. */
+  apply(rt: InventoryRuntime, refused: boolean): InventoryRuntime {
+    if (rt.status !== "stopped") {
+      this.good.set(rt.name, structuredClone(rt));
+      this.misses.delete(rt.name);
+      return rt;
+    }
+    const last = this.good.get(rt.name);
+    const n = (this.misses.get(rt.name) ?? 0) + 1;
+    if (!last || refused || n >= DOWN_AFTER_MISSES) {
+      this.good.delete(rt.name);
+      this.misses.delete(rt.name);
+      return rt;
+    }
+    this.misses.set(rt.name, n);
+    return { ...structuredClone(last), slow: true };
+  }
+}
+
+/** Pure part: detectors + consumers → inventory. `hold` (the daemon's refresher passes one) keeps a runtime up over a slow probe. */
+export async function computeInventory(input: InventoryInput, deps: InventoryDeps = liveDeps, now = new Date(), hold?: ProbeHold): Promise<ModelInventory> {
   const [ollama, docker, provs] = await Promise.all([detectOllama(input, deps), detectDocker(deps), detectProviders(input, deps)]);
   // a runtime whose every provider is disabled in workers.yaml is not listed at all
   const listed = provs.filter((r) => r.enabled !== false);
@@ -390,7 +434,8 @@ export async function computeInventory(input: InventoryInput, deps: InventoryDep
       for (const m of ms) m.label = c.label;
     }
   }
-  return { at: now.toISOString(), runtimes, duplicates: duplicates(runtimes) };
+  const held = hold ? runtimes.map((r) => hold.apply(r, r.port != null && !!deps.refused?.(r.port))) : runtimes;
+  return { at: now.toISOString(), runtimes: held, duplicates: duplicates(held) };
 }
 
 /** Read models.runtimes / models.consumers and the embedding backend from config.yaml, providers from workers.yaml. */
@@ -444,9 +489,10 @@ export async function currentInventory(): Promise<ModelInventory> {
 
 /** Daemon side: refresh now and every 30 s. Returns the stop function. */
 export function startInventoryRefresh(): () => void {
+  const hold = new ProbeHold();
   const refresh = async (): Promise<void> => {
     try {
-      writeInventory(workersLogDir(readWorkersSection().workers), await computeInventory(readInventoryInput()));
+      writeInventory(workersLogDir(readWorkersSection().workers), await computeInventory(readInventoryInput(), liveDeps, new Date(), hold));
     } catch (e) {
       process.stderr.write(`[pai-daemon] Model inventory refresh error: ${e instanceof Error ? e.message : String(e)}\n`);
     }

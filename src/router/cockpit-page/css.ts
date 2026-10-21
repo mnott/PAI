@@ -105,14 +105,15 @@ svg text{fill:var(--dim);font-size:10px}
 .rt-sub{color:var(--dim);font-size:11px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rt-dot{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
 .rt-dot.idle{background:transparent;box-shadow:inset 0 0 0 2px var(--ok)}
-.rt-dot.down{background:var(--bad)}
+.rt-dot.down{background:var(--bad)}.rt-dot.slow{background:var(--warn)}
 /* foldable model cards: the header line toggles the body; folded cards show header only */
-.mcard{container-type:inline-size;background:var(--card);border:1px solid var(--line);border-radius:8px;min-width:0;max-width:100%;overflow:hidden}
-.mhead{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:nowrap;width:100%;background:none;border:0;border-bottom:1px solid transparent;padding:7px 10px;color:var(--fg);cursor:pointer;font:inherit;text-align:left}
+.mcard{position:relative;container-type:inline-size;background:var(--card);border:1px solid var(--line);border-radius:8px;min-width:0;max-width:100%;overflow:hidden}
+.mhead{display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:0;width:100%;background:none;border:0;border-bottom:1px solid transparent;padding:7px 10px;color:var(--fg);cursor:pointer;font:inherit;text-align:left}
 .mhead:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 .mcard.open .mhead{border-bottom-color:var(--line)}
 .mhead:hover{color:var(--acc)}
-.mhead b{font-size:13px;font-weight:600;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mtitle{display:flex;align-items:center;gap:6px;min-width:0;padding-right:18px}.mchips{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}.mcard:hover .tgrip{opacity:.6}.mcard>.tgrip{z-index:1}
+.mhead b{font-size:13px;font-weight:600;min-width:0;flex:1 1 auto;overflow-wrap:anywhere;white-space:normal}
 .mhead .mid{flex:0 1 auto;min-width:0;color:var(--dim);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mhead .chev{flex:0 0 auto;width:12px;color:var(--dim)}
 .mhead .num{margin-left:auto;flex:0 0 auto;color:var(--dim);font-size:12px;white-space:nowrap}
@@ -124,7 +125,7 @@ svg text{fill:var(--dim);font-size:10px}
 /* start/stop sit right-aligned in the header; the memory/count text (.num) is a separate element */
 .mhead .act{flex:0 0 auto;margin-left:auto}
 .mhead .num{margin-left:8px}
-@container (max-width:480px){.mhead{flex-wrap:wrap;row-gap:3px}.mhead b{flex:0 1 auto;max-width:calc(100% - 76px)}.mhead .lblbtn{margin-right:auto}.mhead .mid{flex-basis:100%;order:1}.mhead .badge,.mhead .act,.mhead .num{order:2}}
+@container (max-width:480px){.mchips{row-gap:3px}.mhead .mid{flex-basis:100%;order:1}.mhead .badge,.mhead .act,.mhead .num{order:2}}
 .mhead .act button{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 8px;font:inherit;font-size:11px;cursor:pointer}
 .mhead .act button:hover{border-color:var(--acc);color:var(--acc)}
 .mhead .act button[disabled]{opacity:.5;cursor:default}
