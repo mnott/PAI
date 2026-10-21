@@ -316,5 +316,5 @@ function renderPool(p){
  setTip($("pooltip"),p.message+rs);
  setHtml(el,head+rows);
 }
-function loadPool(){fetch("/cockpit/pool",{cache:"no-store"}).then(function(r){return r.json()}).then(renderPool).catch(function(){})}
+function loadPool(){feed("pool","/cockpit/pool",["pool"],function(j){renderPool(j);if(Win){poolSwap(j);Win.update("pool",j)}})}
 `;
