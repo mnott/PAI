@@ -213,7 +213,8 @@ function update(feed,payload){
  var n=0;
  for(var i=0;i<W.order.length;i++){
   var c=W.cards[W.order[i]],f=c.spec.feeds||[],def=TYPES[c.type]||{};
-  if(!c.mounted||f.indexOf(feed)<0)continue;
+  if(f.indexOf(feed)<0)continue;
+  if(!c.mounted){if(kidsOf(c.id))paintActions(c);continue}
   if(def.update)def.update(c.ctx,payload);
   paintActions(c);n++;
  }

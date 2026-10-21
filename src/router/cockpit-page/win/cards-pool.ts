@@ -32,6 +32,7 @@ function poolOffText(p){return"Pool off Â· host not running"+(p.hostLastSeen?" Â
 Win.registerType("kv",{minW:150,minH:68,defaultH:90,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><b class="wm-v" data-k="v"></b><span class="wm-s" data-k="s"></span></div>'},
  update:function(ctx,p){
+  if(ctx.id.indexOf("memory.")===0){memKvUpdate(ctx,p);return}
   if(!p||poolOff(p))return;
   var m=poolKv(ctx.id.slice(5),p);
   ctx.html("v",m.v);ctx.html("s",m.s);ctx.attr("s","title",m.t);

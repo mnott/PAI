@@ -91,6 +91,7 @@ function sysServerCard(ctx){
 }
 /** The metric type's update for every card that is not a kpis.* one. */
 function sysMetricUpdate(ctx,d){
+ if(ctx.id.indexOf("memory.")===0){memMetricUpdate(ctx,d);return}
  if(ctx.id.indexOf("system.srv:")===0){sysServerCard(ctx);return}
  if(d&&d.current!==undefined)sysMetricCard(ctx,d,ctx.id.slice(7));
 }

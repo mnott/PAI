@@ -14,13 +14,15 @@ import { WIN_CARD_JS } from "./win/card.js";
 import { WIN_KPIS_JS } from "./win/cards-kpis.js";
 import { WIN_POOL_JS } from "./win/cards-pool.js";
 import { WIN_SYSTEM_JS } from "./win/cards-system.js";
+import { WIN_MEMORY_JS } from "./win/cards-memory.js";
+import { WIN_ACTIONS_JS } from "./win/actions.js";
 
 /** The runtime source: the pure parts plus the card runtime, returning {Win, leaf, split, anchorInit}. */
 export const WIN_RUNTIME_JS = [WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS, WIN_INFO_JS, WIN_ANCHOR_JS, WIN_CARD_JS].join("\n");
 
 export const scriptWin = (_L: CockpitLayout, _n: Num, _q: Str, _hex: Str): string => String.raw`/* win runtime (?win=1) */
 /*win-begin*/
-var WINON=/[?&]win=1(&|$)/.test(location.search),Win=null,WinT=null;
+var WINON=/[?&]win=1(&|$)/.test(location.search),Win=null,WinT=null,WinA=null,WIN_HOST=null;
 if(WINON){
  WinT=(function(){
 ${WIN_RUNTIME_JS}
@@ -29,9 +31,17 @@ ${WIN_RUNTIME_JS}
  Win=WinT.Win;window.Win=Win;
 }
 if(WINON){
+ WinA=(function(){
+${WIN_ACTIONS_JS}
+  return{runAction:runAction,winClick:winClick};
+ })();
+ WIN_HOST={fetch:function(u,o){return fetch(u,o)},setStatus:function(id,k,t){var c=Win.ctx(id);if(c)c.status(k,t)},setBusy:function(id,on,el){if(el)el.disabled=on},refresh:function(f){if(f.indexOf("memory")>=0&&typeof loadMemory==="function")loadMemory()},announce:function(t){Win.announce(t)}};
+}
+if(WINON){
 ${WIN_KPIS_JS}
 ${WIN_POOL_JS}
 ${WIN_SYSTEM_JS}
+${WIN_MEMORY_JS}
  /** The sections' defaults as root bands: [[defaults, band px], ...] in page order. */
  function winCompose(parts){
   var leaves=[],px=[],cards=[],kids={},st={},i,k;
@@ -52,8 +62,9 @@ ${WIN_SYSTEM_JS}
   if(old)old.style.display="none";
   var oldPool=document.querySelector('[data-section="pool"]');if(oldPool)oldPool.style.display="none";
   var oldSys=document.querySelector('[data-section="system"]');if(oldSys)oldSys.style.display="none";
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900]]));
-  window.winFeedSystem=winFeedSystem;
+  var oldMem=document.querySelector('[data-section="memory"]');if(oldMem)oldMem.style.display="none";
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300]]));
+  window.winFeedSystem=winFeedSystem;window.winFeedMemory=winFeedMemory;
   WinT.anchorInit(document,window,root);
  })();
 }

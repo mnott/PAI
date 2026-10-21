@@ -141,5 +141,5 @@ function renderMemory(){
   postAction(b.getAttribute("data-a"),null,null,function(j){memMsg=j&&j.ok?null:{text:(j&&j.message)||"action failed",ok:false};loadMemory()});
  }})(bs[i]);
 }
-function loadMemory(){feed("memory","/cockpit/memory",["memory"],function(j){mem=j;renderMemory()},function(){mem=null;setHtml($("memorypanel"),'<span class="dim">memory status unavailable</span>');renderMemory()})}
+function loadMemory(){feed("memory","/cockpit/memory",["memory"],function(j){mem=j;renderMemory();if(window.winFeedMemory)winFeedMemory(j)},function(){mem=null;setHtml($("memorypanel"),'<span class="dim">memory status unavailable</span>');renderMemory()})}
 `;
