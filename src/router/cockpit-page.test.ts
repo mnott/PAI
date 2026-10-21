@@ -3344,7 +3344,7 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
   const mount = (data: unknown, call: string, id: string, extra = "") => {
     const els: Record<string, { innerHTML: string; onclick?: unknown }> = {};
     const $ = (i: string) => (els[i] ??= { innerHTML: "" });
-    const src = `${tableSrc}\n${vcls}\n${RENDERERS}\n${fn("renderSpeed")}\n${extra}\nvar SESSION_ROWS=100,WORKER_ROWS=15;\nreturn function(){${call}};`;
+    const src = `${tableSrc}\n${vcls}\n${fn("vshort")}\n${RENDERERS}\n${fn("renderSpeed")}\n${extra}\nvar SESSION_ROWS=100,WORKER_ROWS=15;\nreturn function(){${call}};`;
     const run = new Function("data", "$", "setHtml", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "localStorage", "sys", "provHit", src)(
       data, $, (el: { innerHTML: string }, h: string) => { el.innerHTML = h; return true; },
       (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"),
@@ -3391,19 +3391,44 @@ describe("cockpit tables read at any width (sessions, worker runs, speed, provid
     expect(html).not.toContain("more sessions");
   });
 
-  it("worker runs: label, verdict, provider, tokens; the run id sits in the label title and as a dim suffix; no worker column", () => {
+  // CHANGED for the 3-column table: the heads (provider column dropped), the verdict cell (short word,
+  // full text in its title) and the dim suffix (now "provider · run id"). The rest is unchanged.
+  it("worker runs: label, verdict, tokens; the dim line is provider + run id; the verdict is a short word with the full text in its title", () => {
     const w = { worker: "20261021-063345-95575", name: "run.ts split step 1: provider test moved out of the router file", workerProvider: "glm", requests: 4, input: 70, cacheWrite: 0, cacheRead: 0, output: 5, verdict: "ok" };
     const m = mount({ workers: [w, { ...w, name: "", worker: "w-2", verdict: "failed: x" }] }, "renderWorkers(data)", "workers");
     m.run();
     const html = m.el().innerHTML;
     const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1]);
-    expect(heads).toEqual(["label", "verdict", "provider", "tokens"]);
+    expect(heads).toEqual(["label", "verdict", "tokens"]);
     expect(html).toContain('title="run.ts split step 1: provider test moved out of the router file · run 20261021-063345-95575"');
     expect(html).toContain("-webkit-line-clamp:2");
-    expect(html).toContain('<small class="dim">20261021-063345-95575</small>');
-    expect(html).toContain('<span class="ok">ok</span>');
-    expect(html).toContain('<span class="bad">failed: x</span>');
+    expect(html).toContain('<small class="dim">glm · 20261021-…</small>');
+    expect(html).toContain('<span class="ok" title="ok">ok</span>');
+    expect(html).toContain('<span class="bad" title="failed: x">failed</span>');
     expect(html).toContain('<td class="txt" data-l="label"'); // stacked label for phones; the label column wraps, numbers never do
+  });
+
+  it("worker runs: 3 header cells", () => {
+    const w = { worker: "w-1", name: "n", workerProvider: "glm", requests: 1, input: 1, cacheWrite: 0, cacheRead: 0, output: 0, verdict: "ok" };
+    const m = mount({ workers: [w] }, "renderWorkers(data)", "workers");
+    m.run();
+    expect((m.el().innerHTML.match(/<th[ >]/g) ?? []).length).toBe(3);
+  });
+
+  it("worker runs: verdicts become a short word + compact commit suffix, the colour class unchanged, the full verdict in the title", () => {
+    const w = { worker: "w-1", name: "n", workerProvider: "glm", requests: 1, input: 1, cacheWrite: 0, cacheRead: 0, output: 0 };
+    const cases: [string, string, string][] = [
+      ["escalated → 20261021-084726-26751 · 1 commit", "warn", "escalated ↗ · 1c"],
+      ["done · report flagged · 2 commits", "warn", "flagged · 2c"],
+      ["ok · 1 commit", "ok", "ok · 1c"],
+      ["handed to session", "warn", "handed"],
+      ["running", "dim", "running"],
+    ];
+    const m = mount({ workers: cases.map(([verdict], i) => ({ ...w, worker: `w-${i}`, verdict })) }, "renderWorkers(data)", "workers");
+    m.run();
+    const html = m.el().innerHTML;
+    for (const [verdict, cls, short] of cases) expect(html).toContain(`<span class="${cls}" title="${verdict}">${short}</span>`);
+    expect(html).not.toContain(">20261021-084726-26751<");
   });
 
   it("speed: one cell per 1h/24h pair, seven columns instead of eleven, header tooltips explain the pair", () => {
