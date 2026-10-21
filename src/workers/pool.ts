@@ -363,9 +363,11 @@ const SLOT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
  * A caller's --allowedTools is a deliberate restriction; a slot has the
  * default grant fixed at spawn. Only "no grant" or exactly the default set
  * gives the run what it asked for (MCP grants are screened by the mcp rule).
+ * ToolSearch is ignored: the spawn path adds it to --tools unconditionally
+ * (ensureToolSearch, the only such tool) and it grants nothing else.
  */
 export function toolGrantMatchesSlot(allowedTools: string[]): boolean {
-  const names = allowedTools.flatMap((e) => e.split(",")).map((x) => x.trim()).filter((x) => x && !x.startsWith("mcp__"));
+  const names = allowedTools.flatMap((e) => e.split(",")).map((x) => x.trim()).filter((x) => x && x !== "ToolSearch" && !x.startsWith("mcp__"));
   if (!names.length) return true;
   const set = new Set(names);
   return set.size === SLOT_TOOLS.length && SLOT_TOOLS.every((t) => set.has(t));
