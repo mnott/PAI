@@ -13,7 +13,7 @@ import { buildRunEnv, claudeCommand } from "../run-env.js";
 import { codexInstalled } from "../codex.js";
 import { ensureNoMcpConfig } from "../paths.js";
 import { DEFAULT_PROXY_PORT, ensureProxyRunning } from "../proxy/server.js";
-import { type StreamEvent } from "../run.js";
+import { type StreamEvent } from "./types.js";
 
 export interface ProviderTestResult {
   provider: string;
