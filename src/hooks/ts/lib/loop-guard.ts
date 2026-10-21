@@ -39,8 +39,8 @@ const WINDOW_CAP = 64;
 const LAST_CAP = 8;
 const LAST_CHARS = 8000;
 /** Shipped defaults of workers.loopGuard; the hook passes the configured values. */
-export const DEFAULT_ECHO = { echoLines: 40, echoChars: 3000 };
-export type EchoConfig = typeof DEFAULT_ECHO;
+export const DEFAULT_ECHO = { echoLines: 40, echoChars: 3000, echoRunnerLines: 40 };
+export type EchoConfig = { echoLines: number; echoChars: number; echoRunnerLines?: number };
 
 const SELF = "If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
 export const LOOP_DENY_REASON = `loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
@@ -65,6 +65,8 @@ export interface LoopState {
   outs?: Array<string | null>;
   /** Window key -> raw last result (secret lines masked) of a read-only call, handed back when a repeat is denied. */
   last?: Record<string, string>;
+  /** Action key -> tail of the last output (secret lines masked) of a runner command, handed back when a re-run is denied. */
+  runLast?: Record<string, string>;
   /** Denials per cluster head since the last edit. */
   denials?: Record<string, number>;
   /** Runner invocations per action key since the last edit (see actionKey). */
@@ -422,6 +424,18 @@ function trimEcho(text: string, cfg: EchoConfig): string {
   return cut ? `${out}\n[...trimmed]` : out;
 }
 
+/** Output trimmed to its last `lines` lines and `chars` characters (the end is where runners print failures), with a note when cut. */
+function trimTail(text: string, lines: number, chars: number): string {
+  const all = text.replace(/\n+$/, "").split("\n");
+  let out = all.slice(-lines).join("\n");
+  let cut = all.length > lines;
+  if (out.length > chars) {
+    out = out.slice(out.length - chars);
+    cut = true;
+  }
+  return cut ? `[trimmed...]\n${out}` : out;
+}
+
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
   if (EDIT_TOOLS.has(tool)) return emptyLoopState();
@@ -445,6 +459,13 @@ export function recordLoopResult(state: LoopState, tool: string, input: string |
   const outs = [...(state.outs ?? [])];
   while (outs.length < state.window.length) outs.push(null);
   outs[last] = resultSig(response);
+  const cmd = tool === "Bash" ? (typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command) : undefined;
+  const ak = typeof cmd === "string" ? actionKey(cmd) : null;
+  if (ak !== null) {
+    const keptRuns = Object.entries(state.runLast ?? {}).filter(([k]) => k !== ak).slice(-(LAST_CAP - 1));
+    const tail = maskSecrets(rawText(response)).slice(-LAST_CHARS);
+    return { ...state, outs, runLast: Object.fromEntries([...keptRuns, [ak, tail]]) };
+  }
   if (!echoable(tool, input)) return { ...state, outs };
   const kept = Object.entries(state.last ?? {}).filter(([k]) => k !== key).slice(-(LAST_CAP - 1));
   const text = maskSecrets(rawText(response)).slice(0, LAST_CHARS);
@@ -464,6 +485,12 @@ export interface LoopStep {
   reason?: string;
   /** True when this call is a nudge-prefixed repeat of a command the guard already blocked (LOOP-GUARD-EVASION). */
   evasion?: boolean;
+}
+
+function runnerEcho(prior: string | undefined, echo: EchoConfig): string {
+  const lines = echo.echoRunnerLines ?? DEFAULT_ECHO.echoRunnerLines;
+  if (!prior || lines <= 0 || echo.echoChars <= 0) return "";
+  return ` Its last output ended with:\n${trimTail(prior, lines, echo.echoChars)}\nRead the failure above and change code or the test before running it again.`;
 }
 
 function hangNote(state: LoopState, command: string): string {
@@ -552,7 +579,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
           stop: n >= RUN_STOP_AT,
           key: ak,
           count: n,
-          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker.${hangNote(state, cmd as string)} ${SELF}`,
+          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker.${hangNote(state, cmd as string)}${runnerEcho(state.runLast?.[ak], echo)} ${SELF}`,
         };
     }
   }

@@ -338,6 +338,8 @@ export interface LoopGuardConfig {
   echoLines: number;
   /** Characters of the last output echoed in the denial. */
   echoChars: number;
+  /** Lines from the end of a repeated runner command's last output echoed in the denial. */
+  echoRunnerLines: number;
 }
 
 /** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
@@ -676,7 +678,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       backoffMinutes: num(localIdle.backoffMinutes, 10),
     },
     escalate,
-    loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000) },
+    loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000), echoRunnerLines: num(loopGuard.echoRunnerLines, 40) },
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
     worktreesMaxGb: num(w.worktreesMaxGb, 20),
@@ -1351,7 +1353,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
   if (w.loopGuard !== undefined) {
     if (typeof w.loopGuard !== "object" || w.loopGuard === null || Array.isArray(w.loopGuard)) bad(".loopGuard", "must be an object");
     const t = w.loopGuard as Record<string, unknown>;
-    for (const k of ["echoLines", "echoChars"] as const) {
+    for (const k of ["echoLines", "echoChars", "echoRunnerLines"] as const) {
       if (t[k] === undefined) continue;
       if (typeof t[k] !== "number" || !Number.isInteger(t[k]) || (t[k] as number) < 0) bad(`.loopGuard.${k}`, "must be a non-negative integer");
       loopGuard[k] = t[k] as number;

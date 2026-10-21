@@ -23,6 +23,12 @@ progress, and waiting verbs and bounded sleeps are exempt.
   `workers.loopGuard.echoLines` lines (default 40) and
   `workers.loopGuard.echoChars` characters (default 3000), with lines that look
   like secrets masked, so the worker can go on without asking again.
+  When the denied repeat is a runner command (tests, builds; the "without
+  changing anything in the worktree" rule), the denial hands back the end of its
+  last output instead ("Its last output ended with:"): the last
+  `workers.loopGuard.echoRunnerLines` lines (default 40) within `echoChars`,
+  secrets masked, followed by "Read the failure above and change code or the
+  test before running it again."
 - **Content fingerprint.** For runner commands (tests, builds), editing files
   through Bash counts as progress: the guard compares a content-based
   fingerprint of the worktree (tracked diff plus non-empty untracked files).

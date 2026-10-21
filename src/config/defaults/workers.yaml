@@ -144,6 +144,9 @@ workers:
   loopGuard:
     echoLines: 40
     echoChars: 3000
+    # A denied re-run of a test/build command gets the last N lines of its
+    # previous output (within echoChars), where failures and summaries are.
+    echoRunnerLines: 40
   # Runs strip browser tools unless --browser is passed.
   noBrowserByDefault: false
   # Hourly gc archives finished workers' worktrees older than this many hours.
