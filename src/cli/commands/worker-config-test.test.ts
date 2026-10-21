@@ -178,6 +178,26 @@ describe("providers test anthropic probes the local claude CLI", () => {
     expect(r.result).toContain("claude");
     expect(r.result).toContain("log in");
   });
+
+  it("OK: a hook-prefixed reply still ends in pong", async () => {
+    const run = vi.fn(async (argv: string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) =>
+      argv[1] === "--version"
+        ? { rc: 0, stdout: "claude 9.9.9", stderr: "" }
+        : { rc: 0, stdout: '{"type":"result","result":"[2026-10-21 03:26] pong"}', stderr: "" }
+    );
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    expect(r.ok).toBe(true);
+    expect(r.result).toBe("[2026-10-21 03:26] pong");
+  });
+
+  it("probe failed: any other failure reports the CLI's own words, not a login claim", async () => {
+    const run = vi.fn(async (argv: string[], _env: NodeJS.ProcessEnv, _timeoutMs: number) =>
+      argv[1] === "--version" ? { rc: 0, stdout: "claude 9.9.9", stderr: "" } : { rc: 1, stdout: "", stderr: "network unreachable" }
+    );
+    const r = await testProvider("anthropic", native, "/tmp/pai-test-logdir", 5000, false, { run });
+    expect(r.ok).toBe(false);
+    expect(r.skipped).toBe("probe failed: network unreachable");
+  });
 });
 
 describe("providers test keeps the HTTP provider path", () => {

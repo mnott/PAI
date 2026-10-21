@@ -3256,21 +3256,30 @@ async function testNativeClaude(
       skipped: "claude CLI not installed",
     };
   }
+  const t0 = Date.now();
   const pong = await run(
     ["claude", "--model", model, "--strict-mcp-config", "--mcp-config", ensureNoMcpConfig(logDir), "-p", "Reply with exactly one word: pong", "--output-format", "json"],
     loginEnv,
     timeoutMs
   );
-  const reply = resultFromOutput(pong.stdout);
-  if (pong.rc === 0 && reply.trim().toLowerCase() === "pong") {
-    return { ...base, result: reply, ok: true };
+  const latencyMs = Date.now() - t0;
+  const reply = resultFromOutput(pong.stdout).trim();
+  // hooks may prefix the reply (e.g. a timestamp), so the last word decides
+  if (pong.rc === 0 && /(^|\s)pong[.!]?$/i.test(reply)) {
+    return { ...base, latencyMs, result: reply, ok: true };
   }
-  return {
-    ...base,
-    result: "run `claude` once and log in (its own OAuth/Max-plan login is what workers run on)",
-    ok: false,
-    skipped: "claude not logged in",
-  };
+  const out = `${pong.stderr}\n${reply || pong.stdout}`;
+  if (/not logged in|please run \/login|invalid api key|authentication|oauth|\b401\b/i.test(out)) {
+    return {
+      ...base,
+      latencyMs,
+      result: "run `claude` once and log in (its own OAuth/Max-plan login is what workers run on)",
+      ok: false,
+      skipped: "claude not logged in",
+    };
+  }
+  const detail = out.replace(/\s+/g, " ").trim().slice(0, 160) || `rc ${pong.rc}, no output`;
+  return { ...base, latencyMs, result: detail, ok: false, skipped: `probe failed: ${detail}` };
 }
 
 /**
