@@ -406,6 +406,13 @@ function renderModels(){
  for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
  tileGrips();
  setTip($("modelstip"),mdl&&mdl.at?"Models by what uses them: one foldable card per consumer runtime (the router samples each running runtime every 5 s; a value the runtime does not report shows –). Start/stop run the configured commands only (config models.runtimes.<name>). Inventory at "+mdl.at.slice(0,16).replace("T"," "):"Models");
+ // a runtime job the server reports as running (started before a page reload): busy card, watched unless already
+ var rj=(mdl&&mdl.runtimeJobs)||{};
+ for(var rjn in rj){
+  var rjb=rj[rjn];if(!rjb||!rjb.id)continue;
+  if(!actMsg[rjn]||!actMsg[rjn].busy)noteMsg(rjn,(rjb.op==="stop"?"stopping…":"starting…")+(rjb.elapsedSec!=null?" "+rjb.elapsedSec+" s":"")+(rjb.tail?" · "+rjb.tail:""),true,true);
+  if(!(watchJob.live&&watchJob.live[rjb.id]))watchJob(rjb.id);
+ }
  if(!changed)return;
  var acts=el.querySelectorAll(".act");
  for(var i=0;i<acts.length;i++)wireAct(acts[i],function(j){if(j&&j.jobId)watchJob(j.jobId);else loadModels()});
@@ -454,8 +461,11 @@ function renderModels(){
   };
  })(lbls[k]);
 }
-/** A local switch/off job: poll its state; the card refreshes from the inventory. */
+/** A local switch/off job: poll its state; the card refreshes from the inventory. Jobs being watched are kept in watchJob.live. */
 function watchJob(id){
+ var live=watchJob.live||(watchJob.live={});
+ if(live[id])return;
+ live[id]=1;
  var tries=0;
  function step(){
   fetch("/cockpit/job?id="+encodeURIComponent(id),{cache:"no-store"}).then(function(r){return r.json()}).then(function(j){
@@ -470,9 +480,9 @@ function watchJob(id){
     var msgs=el.querySelectorAll(".act .msg");
     for(var i=0;i<msgs.length;i++)msgs[i].textContent=(j&&j.message)||"";
    }
-   if(ended){loadModels();return}
-   if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL);
-  }).catch(function(){if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL)});
+   if(ended){delete live[id];loadModels();return}
+   if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL);else delete live[id];
+  }).catch(function(){if(++tries<JOB_TRIES)setTimeout(step,JOB_POLL);else delete live[id]});
  }
  setTimeout(step,JOB_FIRST);
 }

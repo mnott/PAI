@@ -2478,7 +2478,7 @@ function confirmHarness(cfText: string | null, confirmMs = 4000) {
 
 /** The page's renderModels wired against the miniDom of the real modelsHtml output:
  *  the real stop button, the real wireAct, a fake postAction that records posts. */
-function stopHarness(inv: unknown, confirmMs = 4000) {
+function stopHarness(inv: unknown, confirmMs = 4000, watched: string[] = []) {
   const renderBody = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
   const confirmSrc = COCKPIT_HTML.match(/var CONFIRM_MS=[^\n]*\n[\s\S]*?function wireAct[\s\S]*?\n\}\n/)![0];
   // the miniDom nodes are plain objects: an onclick assignment sticks
@@ -2494,7 +2494,7 @@ function stopHarness(inv: unknown, confirmMs = 4000) {
     (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%",
     dom.document,
     (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)({ ok: true }); },
-    () => {}, () => {},
+    () => {}, (id: string) => { watched.push(id); },
     (f: () => void, ms: number) => { timers.push({ fn: f, ms, live: true }); return timers.length - 1; },
     // clearTimeout takes the id setTimeout returned (the page stores the real id)
     (id: number) => { if (timers[id]) timers[id]!.live = false; },
@@ -3564,6 +3564,21 @@ describe("runtime start/stop progress on the card", () => {
     h.rerender();
     expect(h.state.card.msg.textContent).toContain("see /logs/local/ollama.log");
     expect(h.state.card.msg.className).toBe("msg bad");
+  });
+
+  it("a runtime job the server reports as running is watched on load (busy state comes from noteMsg, covered by the reapplyActs tests)", () => {
+    const watched: string[] = [];
+    const h = stopHarness({
+      at: "x",
+      runtimes: [{ name: "ollama", kind: "ollama", status: "running", port: 11434, users: ["c"], models: [{ model: "qwen3:8b", kind: "chat", loaded: true, memoryMb: 5000, usedBy: ["c"] }] }],
+      runtimeCommands: { ollama: { start: "ollama serve", stop: "kill" } },
+      consumers: [{ name: "c", runtime: "ollama", model: "qwen3:8b", label: "C" }],
+      duplicates: [],
+      live: { at: 1, runtimes: [] },
+      runtimeJobs: { ollama: { id: "j9", op: "stop", elapsedSec: 4, tail: "unloading" } },
+    }, 4000, watched);
+    expect(watched).toEqual(["j9"]);
+    expect(h.stopBtn("ollama")).toBeTruthy();
   });
 
   it("the runtime buttons sit in a header span that has its own .msg element (the action text has somewhere to land)", () => {
