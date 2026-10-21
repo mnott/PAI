@@ -89,6 +89,14 @@ describe("memory payload", () => {
     expect(down.counts.backlog).toBeNull();
   });
 
+  it("marks a payload transient when the daemon does not answer or the binding check failed, and only then", async () => {
+    expect(((await cockpitMemoryPayload(deps())) as any).transient).toBeUndefined();
+    const down = (await cockpitMemoryPayload(deps({ daemon: async () => null }))) as any;
+    expect(down.transient).toBe("daemon not answering");
+    const bad = (await cockpitMemoryPayload(deps({ daemon: async () => daemon({ status: status({ index: { ...status()!.index, error: "probe timed out" } }) }) }))) as any;
+    expect(bad.transient).toBe("binding check: probe timed out");
+  });
+
   it("reports the running run with progress and the last finished job's message", async () => {
     writeFileSync(join(home, "x"), "");
     mkdirSync(`${home}/cockpit-jobs`, { recursive: true });
@@ -442,39 +450,24 @@ describe("memory faults: backend tile, pass merge, kept finished run, empty back
   });
 });
 
-describe("stale vs red on a failing source", () => {
+describe("transient marker on a failing source", () => {
   const T = (n: number) => NOW + n * 1000;
-  it("keeps the last good data stale on a daemon blip and turns red after the count threshold", async () => {
+  it("serves last good data marked transient on a daemon blip and recovers on the next good answer", async () => {
     resetMemoryStale();
-    const L = cockpitLayout();
     await cockpitMemoryPayload(deps());
     let p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(5) }))) as Record<string, any>;
-    expect(p).toMatchObject({ stale: true, failures: 1, staleSince: T(5), level: "green", counts: { chunks: 2_000_000 } });
-    expect(p.reason).toMatch(/^stale since \d\d:\d\d:\d\d \(daemon not answering\)$/);
-    for (let i = 2; i < L.memoryFailRedCount; i++) p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(5 + i) }))) as Record<string, any>;
-    expect(p.stale).toBe(true);
-    p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(5 + L.memoryFailRedCount) }))) as Record<string, any>;
-    expect(p).toMatchObject({ stale: false, level: "red", reason: "daemon not answering", failures: L.memoryFailRedCount });
-  });
-
-  it("turns red by duration before the count is reached, and recovers on the next good answer", async () => {
-    resetMemoryStale();
-    const L = cockpitLayout();
-    await cockpitMemoryPayload(deps());
-    await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(1) }));
-    const p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(1 + L.memoryFailRedSecs) }))) as Record<string, any>;
-    expect(p).toMatchObject({ level: "red", failures: 2 });
+    expect(p).toMatchObject({ transient: "daemon not answering", failures: 1, staleSince: T(5), level: "red", counts: { chunks: 2_000_000 } });
+    p = (await cockpitMemoryPayload(deps({ daemon: async () => null, now: () => T(9) }))) as Record<string, any>;
+    expect(p).toMatchObject({ transient: "daemon not answering", failures: 2, staleSince: T(5) });
     const ok = (await cockpitMemoryPayload(deps())) as Record<string, any>;
-    expect(ok).toMatchObject({ stale: false, failures: 0, level: "green" });
+    expect(ok.transient).toBeUndefined();
+    expect(ok).toMatchObject({ failures: 0, staleSince: null, level: "green" });
   });
 
-  it("a failing binding check is stale first, red after its threshold", async () => {
+  it("a failing binding check is transient", async () => {
     resetMemoryStale();
     const bf = (failures: number, since: number) => daemon({ status: status({ index: { ...(status() as any).index, bindingFailure: { failures, since, reason: "connection timeout" } } }) });
-    let p = (await cockpitMemoryPayload(deps({ daemon: async () => bf(1, NOW) }))) as Record<string, any>;
-    expect(p).toMatchObject({ stale: true, level: "green", failures: 1 });
-    expect(p.reason).toMatch(/\(binding check failed: connection timeout\)/);
-    p = (await cockpitMemoryPayload(deps({ daemon: async () => bf(cockpitLayout().memoryFailRedCount, NOW) }))) as Record<string, any>;
-    expect(p).toMatchObject({ stale: false, level: "red", reason: "binding check failed: connection timeout" });
+    const p = (await cockpitMemoryPayload(deps({ daemon: async () => bf(1, NOW) }))) as Record<string, any>;
+    expect(p).toMatchObject({ transient: "binding check failed: connection timeout", failures: 1 });
   });
 });

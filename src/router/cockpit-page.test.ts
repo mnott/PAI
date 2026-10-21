@@ -390,7 +390,7 @@ describe("cockpit layout follow-up", () => {
   it("shows a loading state until the first limits poll arrives", () => {
     expect(COCKPIT_HTML).toContain('lim?"not reported":"loading: first limits poll pending"');
     expect(COCKPIT_HTML).toContain("lim?\"not reported\":'<span class=\"dim\" title=\"loading: first limits poll pending\">…</span>'");
-    expect(COCKPIT_HTML).toContain("lim=j;lastOk=Date.now();renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
+    expect(COCKPIT_HTML).toContain("lim=j;renderLimits();renderRouting();if(sys)renderSystem();renderDonuts()");
   });
 
   it("low-request models render as a chip line, not tiles", () => {
@@ -1596,6 +1596,11 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
     write({ stampStaleSecs: 30 });
     expect(cockpitHtml()).toContain("STALE_SEC=30");
     expect(cockpitHtml()).toContain("age>=STALE_SEC");
+  });
+
+  it("holdLastGoodSecs moves the hold time of the last good payload", () => {
+    write({ holdLastGoodSecs: 45 });
+    expect(cockpitHtml()).toContain("HOLD_SEC=45");
   });
 
   it("jobFirstDelayMs, jobPollMs and jobMaxTries move the job watcher", () => {
@@ -3112,10 +3117,12 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(run(Date.now() - 20_000)).toMatch(/^stale 20s · \d{1,2}:\d{2}:\d{2}/);
     expect(run(Date.now() - 2_000)).toMatch(/^live · \d{1,2}:\d{2}:\d{2}/);
     // every poll marks itself ok, so a limits/models success updates the stamp even with the usage sections hidden
-    expect(COCKPIT_HTML).toContain("lim=j;lastOk=Date.now();renderLimits()");
-    expect(COCKPIT_HTML).toContain("mdl=j;lastOk=Date.now();renderLimits()");
-    expect(COCKPIT_HTML).toContain("sys=j;lastOk=Date.now();renderSystem()");
-    expect(COCKPIT_HTML).toContain("lastOk=Date.now();renderQueue(j)");
+    // (a good payload goes through feed(), which sets lastOk; a held failure does not)
+    expect(COCKPIT_HTML).toContain('feed("limits"');
+    expect(COCKPIT_HTML).toContain('feed("models"');
+    expect(COCKPIT_HTML).toContain('feed("system"');
+    expect(COCKPIT_HTML).toContain('feed("queue"');
+    expect(COCKPIT_HTML).toContain("lastOk=F.at");
   });
 
   it("the system tiles carry their units next to the value", () => {

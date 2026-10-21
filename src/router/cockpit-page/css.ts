@@ -13,7 +13,7 @@ h1{font-size:15px;margin:0;font-weight:600}h2{font-size:12px;margin:0 0 6px;text
 .tabs button{background:var(--card);color:var(--fg);border:1px solid var(--line);padding:3px 12px;cursor:pointer;font:inherit}
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
-#stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
+h2 .stalemark{margin-left:8px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--warn)}h2 .stalemark.err{color:var(--bad)}#stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
 @media(max-width:480px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{display:none}#reset{flex:0 0 auto;margin-left:auto}#theme{flex:0 0 auto}}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}

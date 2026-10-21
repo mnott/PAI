@@ -553,7 +553,8 @@ export async function cockpitModelsPayload(): Promise<unknown> {
   };
   if (!runtimeSampler) return withLabels;
   const live = await runtimeSampler.payload();
-  if (!live) return withLabels;
+  // a sampler that is installed but does not answer: the live readings are missing for now
+  if (!live) return { ...withLabels, transient: "live sampler not answering" };
   return { ...withLabels, live };
 }
 
@@ -955,11 +956,12 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/system") {
     if (!system) return send(503, "application/json", '{"error":"system metrics not configured"}'), true;
+    let limitsFailed = false;
     Promise.all([
       system.snapshot(parseWindow(url.searchParams.get("window"))),
-      limits.get().catch((): ProviderLimits[] => []),
+      limits.get().catch((): ProviderLimits[] => ((limitsFailed = true), [])),
     ]).then(
-      ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls) })),
+      ([snap, ls]) => send(200, "application/json", JSON.stringify({ ...snap, servers: systemServers(ls), ...(limitsFailed ? { transient: "limits unavailable" } : {}) })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else if (url.pathname === "/cockpit/models") {
@@ -985,7 +987,11 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders())).then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
-      ([l, routing]) => send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing, activeLocal: configuredLocal() })),
+      ([l, routing]) => {
+        // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
+        const failed = l.find((x) => x.error);
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing, activeLocal: configuredLocal(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+      },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
   } else send(404, "text/plain", "not found");

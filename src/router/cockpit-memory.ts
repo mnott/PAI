@@ -251,8 +251,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   const d = fresh ?? lastGood.d;
   const bf = d?.status?.index.bindingFailure ?? null;
   if (!fail && bf) fail = { failures: bf.failures, since: bf.since ?? now, reason: `binding check failed: ${bf.reason}` };
-  const red = !!fail && (fail.failures >= L.memoryFailRedCount || now - fail.since >= L.memoryFailRedSecs * 1000);
-  const stale = !!fail && !red && d !== null;
+  if (!fail && d?.status?.index.error) fail = { failures: 1, since: now, reason: `binding check: ${d.status.index.error}` };
   const s = d?.status ?? null;
   const run = deps.run();
   const files = s?.index.files ?? null;
@@ -307,18 +306,18 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   const loadedAll = s?.backend.loaded ?? [];
   const loaded = model ? loadedAll.find((m) => sameModel(m.name, model)) ?? null : null;
   const stalled = jobs.find((j) => j.stalled);
-  const baseLevel: Level = s?.level ?? (d ? "amber" : "red");
-  const level: Level = red ? "red" : baseLevel;
+  // Degraded = serving last-good data over a failing source. The payload says so (transient) and reads red; the page's
+  // hold-last-good keeps its previous good payload on screen for holdLastGoodSecs and only then shows this one.
+  const level: Level = fail ? "red" : s?.level ?? (d ? "amber" : "red");
   return {
     at: now,
-    stale,
-    staleSince: stale && fail ? fail.since : null,
+    ...(fail ? { transient: fail.reason } : {}),
+    staleSince: fail ? fail.since : null,
     failures: fail?.failures ?? 0,
     title: L.memoryTitle,
     daemon: fresh !== null,
     level: stalled && level === "green" ? "red" : level,
-    reason: fail && red ? fail.reason
-      : stale && fail ? `stale since ${hhmmss(fail.since)} (${fail.reason})`
+    reason: fail ? (d === null ? fail.reason : `${fail.reason} since ${hhmmss(fail.since)}`)
       : stalled && level === "green" ? `job ${stalled.name} stalled` : s?.reason ?? (d ? "status not sampled yet" : "daemon not answering"),
     stallSecs: L.memoryStallSecs,
     counts: { files, chunks, embedded, backlog, coverage, coverageLevel, exact: s?.index.countsExact ?? false },
