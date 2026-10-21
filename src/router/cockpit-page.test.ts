@@ -2329,8 +2329,10 @@ describe("cockpit drag-and-drop layout", () => {
     const { a: A, main } = api(secs);
     store["pai.cockpit.layout.v1"] = JSON.stringify([["models"], ["cloud"]]);
     A.applyLayout(A.layoutRows(secs));
-    // the saved rows first; the sections the save does not know append as own rows
-    expect(main.children.slice(0, 2)).toEqual([secs[4], secs[0]]);
+    // the saved rows keep their order; a section the save does not know goes after its default predecessor
+    expect(main.children[0]).toBe(secs[4]);
+    expect(main.children.indexOf(secs[0] as any)).toBeGreaterThan(0);
+    expect(main.children[main.children.indexOf(secs[0] as any) + 1]).toBe(secs[1]);
     expect((secs[4] as any).style.gridColumn).toBe("span 12");
     expect(main.children.length).toBe(15);
     A.resetLayout();
