@@ -282,3 +282,18 @@ describe("worker-guard entry", () => {
     expect(run({ PAI_WORKER: "1" }, "git status")).toBe("");
   });
 });
+
+describe("worker Chrome", () => {
+  const CH = '"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"';
+  const go = (c: string) => decideWorkerGuard(bash(c), WORKER, () => wtCtx()).decision;
+  it("denies headless without the keychain flags", () => {
+    expect(go(`${CH} --headless=new --user-data-dir=/tmp/x about:blank`)).toBe("deny");
+    expect(go(`${CH} --headless=new --use-mock-keychain about:blank`)).toBe("deny");
+  });
+  it("allows headless with both flags", () => {
+    expect(go(`${CH} --headless=new --use-mock-keychain --password-store=basic --user-data-dir=/tmp/x about:blank`)).toBe("allow");
+  });
+  it("denies non-headless", () => {
+    expect(go(`${CH} --user-data-dir=/tmp/x about:blank`)).toBe("deny");
+  });
+});

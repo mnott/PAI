@@ -8,14 +8,17 @@
  * than 2 minutes, lives under the workers log dir (command line or cwd), is
  * not a pool slot's claude / a pai daemon or pool host, and was over 50% CPU in
  * two samples at least 30 s apart. SIGTERM, SIGKILL after 5 s (killProcessTree).
- * A deliberately detached job (`nohup sh -c 'CMD; echo $? > rc' &`) hangs off
+ * A headless Chrome left behind (ppid 1, older than the grace, user-data-dir or cwd under /tmp or the
+ * workers tree) is reaped without the CPU test: it holds a keychain-prompting profile open. The kill
+ * writes WORKER-ORPHAN-KILLED to the ledger. A deliberately detached job (`nohup sh -c 'CMD; echo $? > rc' &`) hangs off
  * a live `sh` until it is done, so it is not a ppid 1 candidate while it runs.
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { sep } from "node:path";
-import { slotCurrentPath } from "./paths.js";
+import { appendLedger } from "./ledger.js";
+import { ledgerPath, slotCurrentPath } from "./paths.js";
 import { slotsDir } from "./slots.js";
 import { loadStatus, saveStatus } from "./status.js";
 import { killProcessTree } from "./wait-on.js";
@@ -48,6 +51,8 @@ export interface ReaperDeps {
   owner: (logDir: string, path: string) => string | undefined;
   /** Append a line to the owning worker's status note. */
   annotate: (logDir: string, id: string, text: string) => void;
+  /** Append a ledger line (event, key/values). */
+  ledger?: (logDir: string, event: string, kv: Record<string, string | number | undefined>) => void;
 }
 
 /** Candidates seen busy: pid -> start (ms epoch) and first busy sample time. */
@@ -55,6 +60,17 @@ export type ReaperState = Map<number, { startMs: number; firstBusy: number }>;
 
 const PROTECTED = /(^|\/)claude(\s|$)|pai-daemon|pai(\s+\S+)*\s+(daemon|pool)\b|pool-host/;
 const START_SLACK_MS = 5000;
+
+const HEADLESS_CHROME = /(chrom(e|ium)|Google Chrome)\b.*--headless|--headless.*(chrom(e|ium)|Google Chrome)\b/i;
+const SCRATCH_DIRS = ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
+
+/** Headless Chrome whose profile or cwd is scratch space or inside the workers tree: only a worker starts those. */
+export function isWorkerChrome(row: ProcRow, logDir: string): boolean {
+  if (!HEADLESS_CHROME.test(row.command)) return false;
+  if (inWorkerTree(row, logDir)) return true;
+  const dir = /--user-data-dir=(\S+)/.exec(row.command)?.[1] ?? "";
+  return [dir, row.cwd].some((p) => p !== "" && SCRATCH_DIRS.some((r) => under(p, r)));
+}
 
 export function parseEtime(s: string): number {
   const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(s.trim());
@@ -135,6 +151,7 @@ export function realReaperDeps(log: (line: string) => void): ReaperDeps {
     log,
     owner: realOwner,
     annotate: realAnnotate,
+    ledger: (dir, event, kv) => appendLedger(ledgerPath(dir), event, kv),
   };
 }
 
@@ -144,6 +161,15 @@ export async function reapOrphansOnce(logDir: string, state: ReaperState, deps: 
   const killed: number[] = [];
   const seen = new Set<number>();
   for (const row of deps.snapshot()) {
+    if (row.ppid === 1 && row.ageSecs >= REAP_MIN_AGE_SECS && isWorkerChrome(row, logDir)) {
+      await deps.kill(row.pid);
+      killed.push(row.pid);
+      const id = deps.owner(logDir, row.cwd) ?? deps.owner(logDir, row.command);
+      const name = row.command.split(/\s--/)[0].split("/").pop() ?? "chrome";
+      deps.log(`Reaper: reaped orphan headless Chrome pid ${row.pid} (${Math.round(row.ageSecs / 60)} min old)${id ? ` [${id}]` : ""}`);
+      deps.ledger?.(logDir, "WORKER-ORPHAN-KILLED", { pid: row.pid, command: name, id });
+      continue;
+    }
     if (row.ppid !== 1 || row.ageSecs < REAP_MIN_AGE_SECS || row.cpu <= REAP_CPU_PCT) continue;
     if (PROTECTED.test(row.command) || !inWorkerTree(row, logDir)) continue;
     seen.add(row.pid);

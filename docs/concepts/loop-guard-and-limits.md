@@ -60,6 +60,10 @@ worker is stopped. A warned local worker is told to re-read the file or move on.
   command starts with `pai pane run` and friends (see [panes](panes.md)).
 - **Long foreground waits** are denied for workers; they run jobs detached and
   wait in slices with `pai worker wait-on` (see its `--help`).
+- **Headless Chrome.** A worker may start Chrome only with `--headless` plus
+  `--use-mock-keychain --password-store=basic` (else the macOS keychain prompts
+  on your desktop); non-headless starts are denied. A headless Chrome left
+  behind is killed by the daemon reaper (ledger `WORKER-ORPHAN-KILLED`).
 - **Time limit.** `workers.defaultMaxMinutes` (default 60; 0 = none) is the
   default limit of every run.
 - **Nesting.** `workers.tree.maxDepth` (2) and `workers.tree.maxChildren` (4)

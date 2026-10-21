@@ -26,6 +26,7 @@ import { WAIT_RECIPE } from "../../../workers/wait-on.js";
 import { forceAddReason, maskedProofReason, nodeOnTypeScriptReason, tscFileArgReason } from "./worker-bash-rules.js";
 import { dropHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
+import { chromeStartReason } from "./worker-chrome-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
 
 export interface WorkerGuardInput {
@@ -311,6 +312,9 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   if (PATTERN_KILL.has(cmd) || (seg.words.includes("xargs") && cmd === "kill") || (cmd === "kill" && /pgrep|pidof/.test(args.join(" ")))) {
     return deny(PATTERN_KILL_REASON);
   }
+
+  const chrome = chromeStartReason(cmd, args);
+  if (chrome) return deny(chrome);
 
   if (cmd === "cd") {
     const p = pos[0] ? abs(pos[0], st.cwd, ctx.home) : null;
