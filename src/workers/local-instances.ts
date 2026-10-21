@@ -204,3 +204,23 @@ export function pickInstance(
   rrCounters.set(model, n + 1);
   return tied[n % tied.length];
 }
+
+/**
+ * The endpoint registry: managed instances plus the enabled providers that
+ * declare `characteristics` (a url alone is a cloud or local provider, not a
+ * registered endpoint). A managed instance wins over a registered one of the
+ * same id.
+ */
+export function endpointRegistry(
+  managed: LocalInstance[],
+  providers: Record<string, { enabled?: boolean; baseUrl?: string; characteristics?: InstanceCharacteristics }>,
+  cfg: LocalConfig,
+): LocalInstance[] {
+  const declared: Record<string, RegisteredProvider> = {};
+  for (const [name, p] of Object.entries(providers)) {
+    if (p.enabled === false || !p.characteristics) continue;
+    declared[name] = { url: p.baseUrl, characteristics: p.characteristics };
+  }
+  const ids = new Set(managed.map((i) => i.id));
+  return [...managed, ...registeredInstances(declared, cfg).filter((i) => !ids.has(i.id))];
+}

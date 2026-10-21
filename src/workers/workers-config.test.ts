@@ -891,3 +891,27 @@ describe("worker_model", () => {
     expect(readWorkersSection(join(dir, "config.json")).workers.providers.glm.workerModel).toBe("fast");
   });
 });
+
+describe("provider characteristics (registered endpoints)", () => {
+  const load = (extra: string[]) => {
+    const dir = newDir();
+    const jsonPath = join(dir, "config.json");
+    const yamlPath = isolateYaml(dir);
+    writeFileSync(
+      yamlPath,
+      ["active: null", "providers:", "  box:", "    url: http://box.lan:8000", "    models:", "      default: m", ...extra, "classes: {}", "mcp_sets: {}", ""].join("\n"),
+      "utf8",
+    );
+    return readWorkersSection(jsonPath);
+  };
+
+  it("parses characteristics with context_tokens", () => {
+    const w = load(["    characteristics:", "      classes: [t1]", "      context_tokens: 32000", "      tags: [fast]"]);
+    expect(w.workers.providers.box.characteristics).toEqual({ classes: ["t1"], contextTokens: 32000, tags: ["fast"] });
+  });
+
+  it("rejects a bad context_tokens and an unknown key", () => {
+    expect(() => load(["    characteristics:", "      context_tokens: -1"])).toThrow(/context_tokens/);
+    expect(() => load(["    characteristics:", "      speed: 3"])).toThrow(/unknown key speed/);
+  });
+});

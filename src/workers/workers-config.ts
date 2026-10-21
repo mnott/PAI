@@ -146,6 +146,13 @@ function yamlProviderToRaw(y: Record<string, unknown>): Record<string, unknown> 
   if (y.conversationSlots !== undefined) raw.conversationSlots = y.conversationSlots;
   else if (y.conversation_slots !== undefined) raw.conversationSlots = y.conversation_slots;
   if (y.tags !== undefined) raw.tags = y.tags;
+  if (y.characteristics !== undefined) {
+    const c = y.characteristics;
+    if (typeof c === "object" && c !== null && !Array.isArray(c)) {
+      const { context_tokens, ...rest } = c as Record<string, unknown>;
+      raw.characteristics = context_tokens !== undefined ? { ...rest, contextTokens: context_tokens } : rest;
+    } else raw.characteristics = c;
+  }
   if (y.usage !== undefined) raw.usage = y.usage;
   if (y.model_tiers !== undefined) raw.modelTiers = y.model_tiers;
   return raw;
@@ -175,6 +182,10 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (p.maxConcurrent !== undefined) y.maxConcurrent = p.maxConcurrent;
   if (p.conversationSlots !== undefined) y.conversationSlots = p.conversationSlots;
   if (p.tags?.length) y.tags = [...p.tags];
+  if (p.characteristics) {
+    const { contextTokens, ...rest } = p.characteristics;
+    y.characteristics = contextTokens !== undefined ? { ...rest, context_tokens: contextTokens } : { ...rest };
+  }
   if (p.usage) y.usage = p.usage;
   if (p.modelTiers) y.model_tiers = { ...p.modelTiers };
   return y;

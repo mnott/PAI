@@ -165,6 +165,8 @@ export interface WorkerProvider {
   costTier?: number;
   /** Capability tags; classes filter auto-routing via requireTags. */
   tags?: ProviderTag[];
+  /** What a registered endpoint is good for (routing selectors class:/tag:); see local-instances.ts. */
+  characteristics?: { classes?: string[]; contextTokens?: number; tags?: string[] };
   /** Statusline plan-quota block; see ProviderUsage. Absent = "usage n/a". */
   usage?: ProviderUsage;
   /**
@@ -879,6 +881,33 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     tags = p.tags as ProviderTag[];
   }
 
+  let characteristics: WorkerProvider["characteristics"];
+  if (p.characteristics !== undefined) {
+    const c = p.characteristics as Record<string, unknown>;
+    const at = `.providers.${name}.characteristics`;
+    if (typeof c !== "object" || c === null || Array.isArray(c)) bad(at, "must be an object");
+    const strs = (k: string): string[] | undefined => {
+      if (c[k] === undefined) return undefined;
+      if (!Array.isArray(c[k]) || (c[k] as unknown[]).some((x) => typeof x !== "string" || !x)) {
+        bad(`${at}.${k}`, "must be an array of non-empty strings");
+      }
+      return c[k] as string[];
+    };
+    const classes = strs("classes");
+    const ctags = strs("tags");
+    const ctx = c.contextTokens;
+    if (ctx !== undefined && (typeof ctx !== "number" || !Number.isInteger(ctx) || ctx < 1)) {
+      bad(`${at}.context_tokens`, "must be a positive integer");
+    }
+    const unknown = Object.keys(c).filter((k) => !["classes", "tags", "contextTokens"].includes(k));
+    if (unknown.length) bad(at, `unknown key ${unknown.join(", ")} (allowed: classes, context_tokens, tags)`);
+    characteristics = {
+      ...(classes ? { classes } : {}),
+      ...(ctx !== undefined ? { contextTokens: ctx as number } : {}),
+      ...(ctags ? { tags: ctags } : {}),
+    };
+  }
+
   let usage: ProviderUsage | undefined;
   if (p.usage !== undefined) {
     if (typeof p.usage !== "object" || p.usage === null || Array.isArray(p.usage)) {
@@ -948,6 +977,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(p.conversationSlots !== undefined ? { conversationSlots: p.conversationSlots as number } : {}),
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
+    ...(characteristics ? { characteristics } : {}),
     ...(usage ? { usage } : {}),
   };
 }

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { engineKey, instancesFromProcesses, registeredInstances, readInstances, reconcileInstances, writeInstances, type LocalInstance } from "./local-instances.js";
+import { endpointRegistry, engineKey, instancesFromProcesses, registeredInstances, readInstances, reconcileInstances, writeInstances, type LocalInstance } from "./local-instances.js";
 import { parseLocalConfig } from "./local-tiers.js";
 
 const cfg = parseLocalConfig(
@@ -65,5 +65,22 @@ describe("state file and keys", () => {
   it("engine key keeps the bare provider for #1", () => {
     expect(engineKey("q", 1)).toBe("q");
     expect(engineKey("q", 2)).toBe("q#2");
+  });
+});
+
+describe("endpointRegistry", () => {
+  it("merges managed instances with enabled providers that declare characteristics", () => {
+    const managed = [row("qwen#1", 10, 8034)];
+    const out = endpointRegistry(
+      managed,
+      {
+        q: { baseUrl: "http://127.0.0.1:8034/v1", characteristics: { tags: ["x"] } },
+        box: { baseUrl: "http://box.lan:8000", characteristics: { classes: ["t1"] } },
+        off: { enabled: false, baseUrl: "http://off.lan:1", characteristics: {} },
+        cloud: { baseUrl: "https://api.example.com" },
+      },
+      cfg,
+    );
+    expect(out.map((i) => [i.id, i.origin])).toEqual([["qwen#1", "managed"], ["box", "registered"]]);
   });
 });
