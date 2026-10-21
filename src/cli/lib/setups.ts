@@ -15,6 +15,7 @@ import {
   type WorkersConfig,
 } from "../../workers/config.js";
 import { isLoopbackProvider } from "../../workers/run-env.js";
+import { probeServedModels, serves } from "../../workers/served-models.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 
 export interface Setup {
@@ -99,19 +100,12 @@ export function providerModelIds(p: { models: Record<string, unknown> }): string
 /**
  * A model server is running when GET /v1/models answers 2xx with a JSON body.
  * A bare TCP connect reported ports as running that no model server answered.
+ * Thin wrapper over the one probe (workers/served-models.ts) the cockpit shares.
  */
 export const httpModelsCheck: PortCheck = async (host, port, timeoutMs, models) => {
-  try {
-    const h = host.includes(":") ? `[${host}]` : host;
-    const res = await fetch(`http://${h}:${port}/v1/models`, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return false;
-    const body = (await res.json()) as { data?: Array<{ id?: unknown }> } | null;
-    const ids = (body?.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
-    // a server that lists no models cannot say what it serves: the endpoint decides
-    return !models?.length || !ids.length || models.some((m) => ids.includes(m));
-  } catch {
-    return false;
-  }
+  const probe = await probeServedModels(host, port, timeoutMs);
+  // a server that lists no models cannot say what it serves: the endpoint decides
+  return probe.alive && serves(probe.ids, models ?? []);
 };
 
 export const PORT_TIMEOUT_MS = 500;

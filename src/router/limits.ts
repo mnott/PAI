@@ -22,6 +22,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
+import { serves } from "../workers/served-models.js";
 import type { UsageRow } from "./usage.js";
 import { writeRate, percentile } from "./speed.js";
 
@@ -483,7 +484,7 @@ export async function localLimits(
   if (probe.ids) lastServed.set(endpoint, probe.ids);
   else if (!probe.alive) lastServed.delete(endpoint);
   const served = probe.ids ?? (probe.alive ? lastServed.get(endpoint) : undefined);
-  const up = probe.alive && modelServed(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
+  const up = probe.alive && serves(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
   let rssMb: number | undefined;
   let prefixCache: PrefixCacheStats | undefined;
   if (up) {
@@ -565,11 +566,8 @@ async function prefixCacheStats(base: URL, p: WorkerProvider): Promise<PrefixCac
   }
 }
 
-/** Several providers can share one port: the provider is up only if its model is the one served. Unknown list = port decides. */
-export function modelServed(served: string[] | undefined, wanted: string[]): boolean {
-  if (!served) return true;
-  return wanted.some((w) => served.includes(w));
-}
+/** Several providers share one port: up only when its model is served. Re-exported from the shared probe (workers/served-models.ts). */
+export { serves as modelServed } from "../workers/served-models.js";
 
 /** output tokens / generation seconds over the last hour (slow-path requests only). */
 export function tokensPerSec(rows: UsageRow[], provider: string, now: number): { tokensPerSec?: number } {
