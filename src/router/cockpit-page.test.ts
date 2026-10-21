@@ -3080,24 +3080,52 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
       hostSince: null, hostLastSeen: "2026-10-19 22:41:03", hostBuiltAt: "2026-10-19 21:00:00", hostStale: false,
       slots: [], totals: { tasksServed: 0, tokensCarried: 0, hitRatio: null, carriedTasks: 0 },
       last24h: { runs: 0, pooled: 0, notPooled: 0, reasons: [], topReason: null, unattributed: 0 },
-      message: "Pool is OFF",
+      spares: [], spareClaims: 0, spareMisses: [],
+      offReason: "host down",
+      message: "Pool is enabled but its host is DOWN (host down): every worker starts cold. Start it with `pai worker pool on`.",
     });
     const h = els.poolpanel.innerHTML;
     expect(h).toContain("Pool off · host not running");
     expect(h).toContain("last seen 2026-10-19 22:41:03");
     expect(h).toContain("last built 2026-10-19 21:00:00");
+    // provider-neutral: the pool pre-starts spares for every provider, never just claude
+    expect(h).not.toMatch(/claude/i);
+    expect(h).toContain("every worker starts cold");
+    // the reason it is off, from the panel's own fields
+    expect(h).toContain("why: host down");
     expect(h).not.toContain("<div class=\"kpis\">");
     expect(h).not.toContain("tasks served");
-    // enabled or running: the full view still renders
+    // config disabled says so instead of host down
+    renderPool({
+      enabled: false, hostUp: false, port: 8798, maxSlots: 3, idleKillSecs: 1800,
+      hostSince: null, hostLastSeen: null, hostBuiltAt: null, hostStale: false,
+      slots: [], totals: { tasksServed: 0, tokensCarried: 0, hitRatio: null, carriedTasks: 0 },
+      last24h: { runs: 0, pooled: 0, notPooled: 0, reasons: [], topReason: null, unattributed: 0 },
+      spares: [], spareClaims: 0, spareMisses: [],
+      offReason: "config disabled",
+      message: "Pool is OFF (config disabled): every worker starts cold. Turn on with `pai worker pool on`.",
+    });
+    expect(els.poolpanel.innerHTML).toContain("why: config disabled");
+    expect(els.poolpanel.innerHTML).not.toContain("why: host down");
+    // enabled or running: the full view still renders, spares and hit shown per provider
     renderPool({
       enabled: true, hostUp: true, port: 8798, maxSlots: 3, idleKillSecs: 1800,
       hostSince: "x", hostLastSeen: "y", hostBuiltAt: null, hostStale: false,
       slots: [], totals: { tasksServed: 2, tokensCarried: 100, hitRatio: 0.5, carriedTasks: 2 },
       last24h: { runs: 4, pooled: 2, notPooled: 2, reasons: [], topReason: null, unattributed: 0 },
+      spares: [{ provider: "anthropic", ready: 2, starting: 1 }, { provider: "glm", ready: 1, starting: 0 }],
+      spareClaims: 2,
+      spareMisses: [{ reason: "pane rule: a pane owns every run", misses: 3 }],
+      offReason: null,
       message: "up",
     });
     expect(els.poolpanel.innerHTML).toContain("<div class=\"kpis\">");
     expect(els.poolpanel.innerHTML).toContain("tasks served");
+    expect(els.poolpanel.innerHTML).toContain("spares");
+    expect(els.poolpanel.innerHTML).toContain("anthropic 2 ready");
+    expect(els.poolpanel.innerHTML).toContain("glm 1 ready");
+    expect(els.poolpanel.innerHTML).toContain("first-request hit");
+    expect(els.poolpanel.innerHTML).not.toMatch(/claude/i);
   });
 });
 

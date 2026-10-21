@@ -99,14 +99,56 @@ describe("buildPoolPanel", () => {
     expect(p.last24h.unattributed).toBe(1);
   });
 
-  it("says plainly when the pool is off, down, or never used", () => {
-    expect(buildPoolPanel(input({ enabled: false })).message).toMatch(/OFF/);
-    expect(buildPoolPanel(input({ hostUp: false })).message).toMatch(/DOWN/);
+  it("says plainly when the pool is off, down, or never used, and names the reason", () => {
+    // provider-neutral: the pool pre-starts spares for every provider, so no message names claude
+    const off = buildPoolPanel(input({ enabled: false }));
+    expect(off.message).toMatch(/OFF/);
+    expect(off.message).toContain("config disabled");
+    expect(off.message).not.toMatch(/claude/i);
+    const down = buildPoolPanel(input({ hostUp: false }));
+    expect(down.message).toMatch(/DOWN/);
+    expect(down.message).toContain("host down");
+    expect(down.message).not.toMatch(/claude/i);
     const idle = buildPoolPanel(input({ state: null, metrics: [], ledger: [] }));
     expect(idle.message).toMatch(/not served a task/);
     expect(idle.slots).toEqual([]);
     expect(idle.totals.hitRatio).toBeNull();
     expect(idle.last24h.topReason).toBeNull();
+  });
+
+  it("counts ready spares per provider and spare misses by reason from the host state", () => {
+    const p = buildPoolPanel(
+      input({
+        state: {
+          hostPid: 1,
+          port: 8798,
+          startedAt: "2026-10-17 07:35:52",
+          updatedAt: "2026-10-17 11:59:00",
+          tasksServed: 3,
+          tokensCarried: 30000,
+          slots: [],
+          spares: [
+            { id: "sp1", repo: "/repo", provider: "anthropic", model: "m", dir: "/wt/1", branch: "b1", base: "h", pid: 4, createdAt: "x", state: "ready" },
+            { id: "sp2", repo: "/repo", provider: "anthropic", model: "m", dir: "/wt/2", branch: "b2", base: "h", pid: 5, createdAt: "x", state: "ready" },
+            { id: "sp3", repo: "/repo", provider: "glm", model: "g", dir: "/wt/3", branch: "b3", base: "h", pid: 6, createdAt: "x", state: "starting" },
+          ],
+          spareClaims: 2,
+          spareMisses: { "pane rule: a pane owns every run": 3, "no-spare": 1 },
+        },
+      })
+    );
+    expect(p.spares).toEqual([
+      { provider: "anthropic", ready: 2, starting: 0 },
+      { provider: "glm", ready: 0, starting: 1 },
+    ]);
+    expect(p.spareClaims).toBe(2);
+    expect(p.spareMisses).toEqual([
+      { reason: "pane rule: a pane owns every run", misses: 3 },
+      { reason: "no-spare", misses: 1 },
+    ]);
+    // no spares in the state file (older hosts): empty, not invented
+    expect(buildPoolPanel(input()).spares).toEqual([]);
+    expect(buildPoolPanel(input()).spareMisses).toEqual([]);
   });
 });
 

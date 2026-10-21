@@ -47,6 +47,12 @@ export interface PoolPanelData {
   /** When the host last ran (its state file's update stamp), null when it never started. */
   hostLastSeen: string | null;
   slots: PoolPanelSlot[];
+  /** Ready/starting spares per provider, from the host state (empty when the host never reported spares). */
+  spares: Array<{ provider: string; ready: number; starting: number }>;
+  /** Claims served from a spare since the host started (0 when the state file predates spares). */
+  spareClaims: number;
+  /** Claims that found no usable spare, by reason, most frequent first. */
+  spareMisses: Array<{ reason: string; misses: number }>;
   totals: { tasksServed: number; tokensCarried: number; hitRatio: number | null; carriedTasks: number };
   last24h: {
     runs: number;
@@ -58,6 +64,8 @@ export interface PoolPanelData {
     /** Runs not pooled that predate reason logging, or ran while the pool was off. */
     unattributed: number;
   };
+  /** Why the pool is off, from the fields this panel already has; null when it is on. */
+  offReason: string | null;
   /** One plain sentence for the operator. */
   message: string;
 }
@@ -131,10 +139,30 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
     unattributed: Math.max(0, notPooled - skipped),
   };
 
+  // spares and spare misses come from the host state; a state file from before spares reports none
+  const spareGroups = new Map<string, { ready: number; starting: number }>();
+  for (const sp of i.state?.spares ?? []) {
+    const g = spareGroups.get(sp.provider) ?? { ready: 0, starting: 0 };
+    if (sp.state === "ready") g.ready += 1;
+    else g.starting += 1;
+    spareGroups.set(sp.provider, g);
+  }
+  const spares = [...spareGroups.entries()].map(([provider, g]) => ({ provider, ready: g.ready, starting: g.starting }));
+  const spareMisses = [...Object.entries(i.state?.spareMisses ?? {})].sort((a, b) => b[1] - a[1]).map(([reason, misses]) => ({ reason, misses }));
+
+  // provider-neutral: the pool pre-starts spares for every provider, so no message names one
+  let offReason: string | null = null;
   let message: string;
-  if (!i.enabled) message = "Pool is OFF (workers.pool.enabled is false): every worker spawns a fresh claude. Turn on with `pai worker pool on`.";
-  else if (!i.hostUp) message = "Pool is enabled but its host is DOWN: every worker spawns fresh. Start it with `pai worker pool on`.";
-  else if (!carry.tasks && !pooled) message = "Pool is up but has not served a task yet (no slot spawns before the first pooled task).";
+  if (!i.enabled) {
+    offReason = "config disabled";
+    message = "Pool is OFF (config disabled): every worker starts cold (no pre-started spare). Turn on with `pai worker pool on`.";
+  } else if (!i.hostUp) {
+    offReason = "host down";
+    message = "Pool is enabled but its host is DOWN (host down): every worker starts cold (no pre-started spare). Start it with `pai worker pool on`.";
+  } else if (i.state?.spares !== undefined && (i.state.spareMisses?.["pane rule: a pane owns every run"] ?? 0) > 0 && !(i.state.spareClaims ?? 0)) {
+    offReason = "claims disabled: a terminal pane is required";
+    message = "Pool host is up but spare claims are disabled (a terminal pane is required): every worker starts cold.";
+  } else if (!carry.tasks && !pooled) message = "Pool is up but has not served a task yet (no slot spawns before the first pooled task).";
   else message = `Pool served ${i.state?.tasksServed ?? carry.tasks} task(s) since the host started; ${pooled} of ${runs} runs in 24 h were pooled.`;
 
   return {
@@ -148,6 +176,9 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
     hostBuiltAt: i.state?.bundleMtimeMs !== undefined ? bundleBuildStamp(i.state.bundleMtimeMs) : null,
     hostStale: poolHostStale(i.state?.bundleMtimeMs, i.diskBundleMtimeMs ?? null),
     slots,
+    spares,
+    spareClaims: i.state?.spareClaims ?? 0,
+    spareMisses,
     totals: {
       tasksServed: i.state?.tasksServed ?? 0,
       tokensCarried: carry.tokensCarried,
@@ -155,6 +186,7 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
       carriedTasks: carry.tasks,
     },
     last24h,
+    offReason,
     message,
   };
 }
@@ -219,14 +251,15 @@ function renderPool(p){
  function dur(s){return s<90?s+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h"}
  // off and its host not running: one compact line, not a dashboard of zeros
  if(!p.enabled&&!p.hostUp){
-  setHtml(el,'<div class="dim">Pool off · host not running'+(p.hostLastSeen?' · last seen '+esc(p.hostLastSeen):"")+(p.hostBuiltAt?' · last built '+esc(p.hostBuiltAt):"")+' — every worker spawns a fresh claude. Turn on with <b>pai worker pool on</b>.</div>');
+  setHtml(el,'<div class="dim">Pool off · host not running'+(p.hostLastSeen?' · last seen '+esc(p.hostLastSeen):"")+(p.hostBuiltAt?' · last built '+esc(p.hostBuiltAt):"")+(p.offReason?' · why: '+esc(p.offReason):"")+' — every worker starts cold (no pre-started spare). Turn on with <b>pai worker pool on</b>.</div>');
   setTip($("pooltip"),p.message);
   return}
  var head='<div class="kpis">'+
   [["pool",p.enabled?'<span class="ok">enabled</span>':'<span class="bad">disabled</span>',"max "+p.maxSlots+" slots · idle kill "+(p.idleKillSecs?dur(p.idleKillSecs):"never")],
    ["host",p.hostUp?'<span class="ok">up</span>':'<span class="bad">down</span>',"port "+p.port+(p.hostSince?" · since "+esc(p.hostSince):"")+(p.hostBuiltAt?" · built "+esc(p.hostBuiltAt):"")+(p.hostStale?' · <span class="warn">stale (newer build on disk)</span>':"")],
    ["tasks served",p.totals.tasksServed,fmt(p.totals.tokensCarried)+" cache-read tokens carried"],
-   ["first-request hit",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s)"],
+   ["first-request hit",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s)"+(p.slots.length?" · "+p.slots.map(function(s){return esc(s.provider)+" "+(s.hitRatio==null?"n/a":pct(s.hitRatio))}).join(", "):"")],
+   ["spares",(p.spares||[]).length?(p.spares||[]).map(function(s){return esc(s.provider)+" "+s.ready+" ready"+(s.starting?" +"+s.starting+" starting":"")}).join(", "):"none",(p.spareClaims||0)+" claimed from a spare"+((p.spareMisses||[]).length?" · missed "+p.spareMisses.map(function(m){return esc(m.reason)+" x"+m.misses}).join(", "):"")],
    ["not pooled (24 h)",p.last24h.notPooled+" of "+p.last24h.runs,p.last24h.topReason?"top reason: "+esc(p.last24h.topReason):(p.last24h.notPooled?"reasons not logged yet":"")]
   ].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span><span style="display:block">'+k[2]+'</span></div>'}).join("")+'</div>';
  var rows=p.slots.length?table(["provider","model","cwd","state","task","branch","first req","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',s.task?esc(s.task):"-",s.branch?esc(s.branch):"-",s.firstRequest?'<span class="'+(s.firstRequest==="warm"?"ok":"warn")+'">'+s.firstRequest+'</span>':"-",dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<span class="dim" title="A slot spawns with the first pooled task.">no slots</span>';
