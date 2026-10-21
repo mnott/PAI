@@ -145,7 +145,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   }
   const wid = a.id ?? newWorkerId();
   // same follow pane as a fresh spawn, once per run: a decline falls back to executeRun, which reuses this.
-  // A spare claim starts the task first and opens the pane alongside it: the pane never delays the task.
+  // The pane is open (or verified) before the task is posted.
   const preparePane = async (): Promise<void> => {
     if (a.paneOpening) return a.paneOpening; // gateStart already started it, beside admission
     if (a.panePrepared) return;
@@ -164,7 +164,16 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       await announcePane(a.logDir, a.config, wid, term, a.noPane, ledger);
     }
   };
-  const panePending = preparePane(); // beside the claim / first turn: the pane never delays the task
+  const panePending = preparePane();
+  // no pane, no claim: a pooled task must never start unseen. A failed pane falls through to the fresh spawn,
+  // which re-attempts it and applies the pane-failure behaviour (the run is refused).
+  const paneFailed = await panePending.then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
+  if (paneFailed !== null) {
+    a.spareMiss = "pane failed";
+    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", { id: wid, provider: a.target.providerName, reason: "pane failed" });
+    if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (pane failed) — spawning fresh\n`);
+    return null;
+  }
   // the process lives in the pool host, so the pane that owns this run follows its transcript instead of
   // wrapping it. Started as soon as the host has bound the run (a miss keeps the pane for the fresh spawn).
   let following: Promise<void> | null = null;
@@ -217,7 +226,6 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   }
   clearInterval(poll);
   const postMs = Date.now() - postT0;
-  await panePending; // a miss falls back to executeRun, which reuses the prepared pane
   if (resp === null) {
     a.spareMiss = "host-unreachable";
     process.stderr.write(`[pai worker] pool: host unreachable on port ${settings.port} — spawning fresh\n`);
