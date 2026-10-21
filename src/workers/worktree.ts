@@ -1704,6 +1704,47 @@ function archiveSlotBranch(
 }
 
 /**
+ * `gc --foreign`: worktrees of `repo` that PAI did not create (not main, not under the
+ * logDir's worktrees/slots, not owned by a worker status), whose branch is fully merged
+ * into main, go through the same `archive` path as worker trees under
+ * refs/pai-archive/<branch>. Unmerged or detached ones are reported as kept.
+ */
+function gcForeign(
+  logDir: string,
+  repo: string,
+  owned: Set<string>,
+  dryRun: boolean,
+  report: boolean,
+  out: GcEntry[],
+  archive: (id: string, dir: string, branch: string, st: WorkerStatus | null) => void
+): void {
+  let raw: string;
+  let main: string;
+  try {
+    raw = git(repo, ["worktree", "list", "--porcelain"]);
+    main = mainRef(repo);
+  } catch {
+    return; // not a repo
+  }
+  const pai = resolve(logDir);
+  const blocks = raw.split("\n\n").map((b) => b.trim()).filter(Boolean);
+  blocks.slice(1).forEach((block) => {
+    const field = (k: string): string | undefined => block.split("\n").find((l) => l.startsWith(k + " "))?.slice(k.length + 1);
+    const dir = field("worktree");
+    if (!dir || !existsSync(dir) || block.includes("\nprunable")) return;
+    const real = resolve(dir);
+    if (owned.has(real) || real === pai || real.startsWith(pai + sep) || isSlotWorktree(real)) return;
+    const ref = field("branch");
+    const branch = ref?.replace(/^refs\/heads\//, "");
+    const id = branch ?? basename(real);
+    if (!branch) return void out.push({ id, skipped: "kept: detached HEAD" });
+    if (!isAncestor(repo, `refs/heads/${branch}`, main)) return void out.push({ id: branch, skipped: "kept: not merged" });
+    const safe = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "") || "branch";
+    archive(safe, real, branch, null);
+  });
+}
+
+/**
  * Archive worktrees of finished workers older than `olderThanHours` and
  * status-less orphan directories: uncommitted state is salvaged onto the
  * branch, the branch is x, the worktree is
@@ -1716,7 +1757,8 @@ export function gcWorktrees(
   dryRun = false,
   now = Date.now(),
   report = false,
-  maxGb?: number
+  maxGb?: number,
+  foreignRepo?: string
 ): GcEntry[] {
   const cutoff = now - olderThanHours * 3_600_000;
   const out: GcEntry[] = [];
@@ -1811,6 +1853,7 @@ export function gcWorktrees(
       archive(ent.name, dir, worktreeBranch(ent.name), null);
     }
   }
+  if (foreignRepo) gcForeign(logDir, foreignRepo, owned, dryRun, report, out, archive);
   if (!dryRun) {
     for (const repo of new Set(statuses.map((s) => s.cwd))) {
       try {
