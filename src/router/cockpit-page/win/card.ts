@@ -158,8 +158,16 @@ function paintMin(c){
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
-function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.fit=W.auto?W.fit:undefined;return W.cfg}
-/** Auto layout (no saved layout, no user move yet): a default card is as tall as its content. The content height of a card is
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
+/** The fit readings for layout(): a type that draws at the body size (it has resize) has none; it keeps the height of its first
+ *  placement, so its siblings still take their content height and nothing overflows. */
+function fitCfg(){
+ var f={},id,c;
+ for(id in W.fit)f[id]=W.fit[id];
+ for(id in W.cards){c=W.cards[id];if(f[id]===undefined&&c.base&&(TYPES[c.type]||{}).resize&&!kidsOf(id))f[id]=c.base}
+ return f;
+}
+/** Auto layout (no saved layout, no user move yet): a default card is as tall as its content when its content first renders (then fixed; it only grows when the content would overflow). The content height of a card is
  *  its lowest leaf element, measured here; layout() (cfg.fit) turns the readings into band and card heights. A type that
  *  draws at the body size (it has resize) or a group has no reading and keeps its default height. */
 function fitEligible(c){
@@ -182,8 +190,9 @@ function refit(){
  var changed=false,id,all=fitReadAll();
  for(id in W.cards){
   var v=all[id];
-  if(v===undefined||v===null){if(W.fit[id]!==undefined){delete W.fit[id];changed=true}continue}
-  if(W.fit[id]===undefined||Math.abs(W.fit[id]-v)>=2){W.fit[id]=v;changed=true}
+  if(v===undefined||v===null)continue;
+  // fitted once, when the card first has content; then only grown, so the content never needs an inner scroll
+  if(W.fit[id]===undefined||v>=W.fit[id]+2){W.fit[id]=v;changed=true}
  }
  if(changed)relayout();
 }
@@ -245,7 +254,7 @@ function relayout(){
   var c=W.cards[W.order[i]],rect=r.rects[c.id];
   if(!rect){c.el.style.display="none";continue}
   if(c.el.style.display==="none")c.el.style.display="";
-  place(c,rect);
+  place(c,rect);if(W.auto&&!c.base&&rect.h>0&&!isMin(c.id))c.base=rect.h;
   paintMin(c);
   var def=TYPES[c.type]||{};
   if(isMin(c.id))continue;
