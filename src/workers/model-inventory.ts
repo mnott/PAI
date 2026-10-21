@@ -389,6 +389,11 @@ export class ProbeHold {
   private good = new Map<string, InventoryRuntime>();
   private misses = new Map<string, number>();
 
+  /** A runtime with a good reading on record: a failed probe must not unlist it. */
+  has(name: string): boolean {
+    return this.good.has(name);
+  }
+
   /** One failed or slow probe never flips a runtime that was up to down: it keeps its last good reading, marked slow,
    *  until DOWN_AFTER_MISSES consecutive misses; a refused connection (nothing listens) is down at once. */
   apply(rt: InventoryRuntime, refused: boolean): InventoryRuntime {
@@ -413,8 +418,10 @@ export class ProbeHold {
 export async function computeInventory(input: InventoryInput, deps: InventoryDeps = liveDeps, now = new Date(), hold?: ProbeHold): Promise<ModelInventory> {
   const [ollama, docker, provs] = await Promise.all([detectOllama(input, deps), detectDocker(deps), detectProviders(input, deps)]);
   // a runtime whose every provider is disabled in workers.yaml is not listed at all
-  const listed = provs.filter((r) => r.enabled !== false);
-  const disabledPorts = new Set(provs.filter((r) => r.enabled === false).map((r) => r.port));
+  // (a tier-only runtime that was up and misses one probe stays: the hold below keeps its last good reading)
+  const keep = (r: InventoryRuntime): boolean => r.enabled !== false || (r.status === "stopped" && !!hold?.has(r.name));
+  const listed = provs.filter(keep);
+  const disabledPorts = new Set(provs.filter((r) => !keep(r)).map((r) => r.port));
   const runtimes: InventoryRuntime[] = [...listed, ollama, ...(docker ? [docker] : [])];
   for (const d of input.runtimes) {
     if (!d.url || ["ollama", "docker-model-runner"].includes(d.kind)) continue;
@@ -454,7 +461,8 @@ export async function computeInventory(input: InventoryInput, deps: InventoryDep
       for (const m of ms) m.label = c.label;
     }
   }
-  const held = hold ? runtimes.map((r) => hold.apply(r, r.port != null && !!deps.refused?.(r.port))) : runtimes;
+  // a refused connection drops the hold at once: a tier-only runtime kept for one slow probe then goes unlisted again
+  const held = (hold ? runtimes.map((r) => hold.apply(r, r.port != null && !!deps.refused?.(r.port))) : runtimes).filter((r) => r.enabled !== false);
   return { at: now.toISOString(), runtimes: held, duplicates: duplicates(held) };
 }
 

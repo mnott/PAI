@@ -348,6 +348,18 @@ describe("probe hold", () => {
     await computeInventory(input(), deps(), new Date(), hold);
     expect(strata(await computeInventory(input(), missing(true), new Date(), hold)).status).toBe("stopped");
   });
+  it("a tier-only runtime (provider disabled) that was up stays listed over one slow probe, and goes unlisted on a refused one", async () => {
+    const tiers = [{ provider: "coder", label: "Coder-Next 4bit" }];
+    const up = deps({ "http://127.0.0.1:8034/v1/models": { data: [{ id: "coder-next" }] }, "http://127.0.0.1:8035/v1/models": null });
+    const slow = { ...deps({ "http://127.0.0.1:8034/v1/models": null, "http://127.0.0.1:8035/v1/models": null }), refused: () => false };
+    const at = (inv: Awaited<ReturnType<typeof computeInventory>>) => inv.runtimes.find((r) => r.port === 8034);
+    const hold = new ProbeHold();
+    expect(at(await computeInventory(input({ tiers, runtimes: [] }), up, new Date(), hold))!.status).toBe("running");
+    const held = at(await computeInventory(input({ tiers, runtimes: [] }), slow, new Date(), hold))!;
+    expect(held).toMatchObject({ status: "running", slow: true });
+    expect(at(await computeInventory(input({ tiers, runtimes: [] }), { ...slow, refused: () => true }, new Date(), hold))).toBeUndefined();
+    expect(at(await computeInventory(input({ tiers, runtimes: [] }), slow))).toBeUndefined();
+  });
   it("a runtime never seen up is down on the first miss, and without a hold nothing is held", async () => {
     expect(strata(await computeInventory(input(), missing(), new Date(), new ProbeHold())).status).toBe("stopped");
     expect(strata(await computeInventory(input(), missing())).status).toBe("stopped");
