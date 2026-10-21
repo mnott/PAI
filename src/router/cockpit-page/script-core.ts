@@ -85,11 +85,15 @@ function setHtml(el,html){
  var ae=document.activeElement,fk=null,prev="";
  if(ae&&ae!==el&&el.contains&&el.contains(ae)&&ae.tagName)fk=dataKey(ae);
  var hold=el.style&&typeof el.offsetHeight==="number"&&el.offsetHeight>0;
- if(hold){prev=el.style.minHeight;el.style.minHeight=el.offsetHeight+"px"}
+ var held=0;
+ if(hold){prev=el.style.minHeight;held=el.offsetHeight;el.style.minHeight=held+"px"}
  el.innerHTML=html;el.__html=html;
  if(fk){var c=el.querySelectorAll(fk.split("|")[0]);for(i=0;i<c.length;i++)if(dataKey(c[i])===fk){c[i].focus({preventScroll:true});break}}
  if(anchor){var d=anchor.getBoundingClientRect().top-top;if(d)window.scrollBy(0,d)}
- if(hold)requestAnimationFrame(function(){el.style.minHeight=prev});
+ // the release runs even when the frame never fires (headless virtual time): a pending
+// rAF would leave the held min-height on the panel forever (the workers card's empty space)
+ function release(){if(held&&el.style.minHeight===held+"px")el.style.minHeight=prev;held=0}
+ if(hold){requestAnimationFrame(release);setTimeout(release,200)}
  return true;
 }
 function has(){for(var i=0;i<arguments.length;i++)if(document.querySelector('[data-section="'+arguments[i]+'"]'))return true;return false}
