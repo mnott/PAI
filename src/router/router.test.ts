@@ -43,6 +43,13 @@ describe("router", () => {
     expect(r).toMatchObject({ kind: "claude", base: "http://c/w/claude" });
   });
 
+  it("defaults the claude base to first-party Anthropic", () => {
+    const r = resolveModel("claude-haiku-4-5-20251001", providers);
+    expect(r).toMatchObject({ kind: "claude", base: "https://api.anthropic.com" });
+    const p = prepare("/v1/messages", hdr, body({ model: "claude-haiku-4-5-20251001", messages: [] }), providers);
+    expect(p.ok && p.up.url.href).toBe("https://api.anthropic.com/v1/messages");
+  });
+
   it("strips thinking only for non-anthropic targets", () => {
     const msgs = [{ role: "assistant", content: [{ type: "thinking", thinking: "x", signature: "s" }, { type: "redacted_thinking", data: "d" }, { type: "text", text: "hi" }] }];
     expect(stripThinking({ messages: msgs }).messages).toEqual([{ role: "assistant", content: [{ type: "text", text: "hi" }] }]);

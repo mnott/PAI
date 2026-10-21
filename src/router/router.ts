@@ -3,7 +3,7 @@
  * ANTHROPIC_BASE_URL here and /model picks the provider: each POST
  * /v1/messages (and count_tokens) is routed by the body's `model`.
  *
- *   claude ids  → caveman (CLAUDE_UPSTREAM), inbound auth passed through
+ *   claude ids  → api.anthropic.com (CLAUDE_UPSTREAM), inbound auth passed through
  *   other ids   → the workers.yaml provider that lists the model; inbound auth
  *                 dropped, the provider key injected as Authorization: Bearer
  *
@@ -38,7 +38,7 @@ export const ROUTER_PORT = 8790;
 
 /** Queued-stream ping interval (router.scheduling.pingMs); PAI_ROUTER_PING_MS shortens it for tests. */
 const pingMs = (): number => Number(process.env.PAI_ROUTER_PING_MS) || sharedScheduler().pingMs();
-export const CLAUDE_UPSTREAM = "http://127.0.0.1:8787/w/claude";
+export const CLAUDE_UPSTREAM = "https://api.anthropic.com";
 
 export type Target =
   | { kind: "claude"; model: string; base: string }
