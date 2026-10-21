@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-import { checkRows, tileFixtureHtml, type TileLayout, type TileMeasure } from "./cockpit-tile-rows-fit.js";
+import { checkRows, tileFixtureHtml, type TileLayout, type TileMeasure, type TileRow } from "./cockpit-tile-rows-fit.js";
 
 const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 
@@ -47,11 +47,20 @@ function fixtureData() {
 }
 const fixtureSystem = () => ({ current: {}, series: { series: [] }, servers: [{ provider: "gyro-m", up: true, rssMb: 36148, tokensPerSec: 58.5, prefixCache: { hitRate: 0.91, hits: 910, misses: 90, tokensSaved: 1e6, entries: 4, memoryMb: 2048 } }, { provider: "ollama-local-with-a-long-name", up: true, rssMb: 5100, tokensPerSec: 31.2, prefixCache: null }] });
 const fixtureQueue = () => ({ providers: [{ provider: "glm", cap: 2, running: [{ id: "w-20261021-063345", label: "run.ts split step 1: provider test moved out of the router file", ageSec: 120, now: "editing script-tables.ts", session: "PAI", model: "glm-5.3" }], waiting: [{ id: "w-2", label: "fix cockpit tables at any width", waitedSec: 30, position: 1, session: "PAI", model: "glm-5.3" }] }], panes: [], paneViolations: [], plans: [], build: { running: [], waiting: [] } });
+/** Three cloud providers: at 822 px the old auto-fill grid put the third tile alone on a half-width row. */
+const fixtureLimits = () => ({
+  activeLocal: null,
+  limits: ["anthropic", "glm", "gyro-m"].map((provider) => ({ provider, kind: "cloud", windows: [{ name: "5h", percent: 30, resetAt: Date.now() + 3600_000 }] })),
+});
 
 let server: Server;
 let base = "";
 let tmp = "";
 const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("section"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-section"):"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length,rowH:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){return r.getBoundingClientRect().height}),lh:parseFloat(getComputedStyle(w).lineHeight)||parseFloat(getComputedStyle(w).fontSize)*1.2,stacked:w.classList.contains("stacked"),thead:!!w.querySelector("thead")&&getComputedStyle(w.querySelector("thead")).display!=="none"})});var bef=[];document.querySelectorAll(".tw.stacked td").forEach(function(d){var cs=getComputedStyle(d,"::before"),sc=d.closest("section");bef.push({sec:sc?sc.getAttribute("data-section"):"?",label:d.getAttribute("data-l"),h:parseFloat(cs.height),fs:parseFloat(cs.fontSize)})});var ths=[];document.querySelectorAll(".tw th").forEach(function(h){var r=document.createRange();r.selectNodeContents(h);var tops={};Array.prototype.forEach.call(r.getClientRects(),function(q){if(q.width>0)tops[Math.round(q.top)]=1});var sc=h.closest("section");ths.push({sec:sc?sc.getAttribute("data-section"):"?",label:h.textContent,lines:Object.keys(tops).length,height:Math.round(h.getBoundingClientRect().height)})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out,ths:ths,befores:bef}),"*")},2500)</script>`;
+/** .pgrid rows: tiles grouped by y; every row must span the container width (the flex fix). */
+const PGRID_INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".pgrid").forEach(function(g){var gr=g.getBoundingClientRect(),rows={};g.querySelectorAll(":scope > *").forEach(function(t){var r=t.getBoundingClientRect();var y=Math.round(r.top);(rows[y]=rows[y]||[]).push({x:r.left-gr.left,w:r.width})});out.push({id:g.id,gridW:gr.width,rows:Object.keys(rows).sort(function(a,b){return a-b}).map(function(y){return{y:+y,rects:rows[y]}})})});parent.postMessage(JSON.stringify({pgrids:out}),"*")},2500)</script>`;
+/** The workers card: the gap between its last child's bottom and the card's content bottom (padding). */
+const WORKERS_INJECT = `<script>setTimeout(function(){var s=document.querySelector('section[data-section="workers"]'),kids=s.children,last=kids[kids.length-1],cs=getComputedStyle(s);parent.postMessage(JSON.stringify({workers:{gap:s.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom-parseFloat(cs.paddingBottom)}}),"*")},2500)</script>`;
 
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-fit-"));
@@ -61,16 +70,19 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/data")) return json(fixtureData());
     if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
     if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
+    if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
     if (url.startsWith("/frame")) {
       // the page runs in an iframe: its viewport is the iframe's width, whatever the minimum headless window is
       const w = /w=(\d+)/.exec(url)?.[1] ?? "822";
       const main = /main=(\d+)/.exec(url)?.[1];
+      const probe = /probe=(\w+)/.exec(url)?.[1];
       res.setHeader("content-type", "text/html");
-      return res.end(`<body style="margin:0"><iframe src="/page${main ? `?main=${main}` : ""}" style="width:${w}px;height:3200px;border:0"></iframe><script>onmessage=function(e){document.body.setAttribute("data-fit",e.data)}</script></body>`);
+      return res.end(`<body style="margin:0"><iframe src="/page${main ? `?main=${main}` : ""}${probe ? `?probe=${probe}` : ""}" style="width:${w}px;height:3200px;border:0"></iframe><script>onmessage=function(e){document.body.setAttribute("data-fit",e.data)}</script></body>`);
     }
     if (url.startsWith("/page")) {
       const main = /main=(\d+)/.exec(url)?.[1];
-      const html = cockpitHtml().replace("</body>", (main ? `<style>main{width:${main}px;max-width:${main}px;box-sizing:border-box}</style>` : "") + INJECT + "</body>");
+      const probe = /probe=(\w+)/.exec(url)?.[1];
+      const html = cockpitHtml().replace("</body>", (main ? `<style>main{width:${main}px;max-width:${main}px;box-sizing:border-box}</style>` : "") + (probe === "tiles" ? PGRID_INJECT : probe === "workers" ? WORKERS_INJECT : INJECT) + "</body>");
       res.setHeader("content-type", "text/html");
       return res.end(html);
     }
@@ -90,9 +102,17 @@ function run(bin: string, args: string[], opts: { encoding?: "utf8"; timeout: nu
     browsers.add(c);
   });
 }
-async function shoot(width: number, main: number | null, shot?: string): Promise<{ main: number; doc: number; vw: number; tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number; rowH: number[]; lh: number; stacked: boolean; thead: boolean }[]; befores: { sec: string; label: string; h: number; fs: number }[]; ths: { sec: string; label: string; lines: number; height: number }[] }> {
+interface ShootResult {
+  main: number; doc: number; vw: number;
+  tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number; rowH: number[]; lh: number; stacked: boolean; thead: boolean }[];
+  befores: { sec: string; label: string; h: number; fs: number }[];
+  pgrids?: { id: string; gridW: number; rows: TileRow[] }[];
+  workers?: { gap: number };
+  ths: { sec: string; label: string; lines: number; height: number }[];
+}
+async function shoot(width: number, main: number | null, shot?: string, probe?: string): Promise<ShootResult> {
   const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + width + "-" + (main ?? 0))}`, "--window-size=1000,3300", "--virtual-time-budget=6000"];
-  const url = `${base}/frame?w=${width}${main ? `&main=${main}` : ""}`;
+  const url = `${base}/frame?w=${width}${main ? `&main=${main}` : ""}${probe ? `&probe=${probe}` : ""}`;
   const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", url], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
   if (shot) await run(CHROME!, [...args, `--screenshot=${shot}`, url], { timeout: 60_000 });
   const m = /data-fit="([^"]*)"/.exec(dom);
@@ -141,6 +161,31 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
       if (width === 375) expect(r.tables.find((t) => t.sec === "sessions")!.stacked, "sessions does not fit at 375 px: stacked").toBe(true);
     }, 120_000);
   }
+});
+
+/** The real page at 822 px with fixture data: the provider .pgrid rows must fill the
+ *  container (three cloud providers: the old auto-fill grid left the third tile alone,
+ *  half width, empty space beside it), and the workers card must end after its content
+ *  (the held min-height of setHtml left ~100 px of empty space below the last table). */
+describe.skipIf(!CHROME)("provider tiles fill their row and the workers card ends after its content, real page at 822 px", () => {
+  it("3 cloud providers at 822 px: every .pgrid row's tiles span the container width", async () => {
+    const r = await shoot(822, null, undefined, "tiles");
+    expect(r.pgrids, "pgrid probe ran").toBeDefined();
+    const cloud = r.pgrids!.find((p) => p.id === "cloud")!;
+    expect(cloud.rows.length, "cloud tiles rendered").toBeGreaterThan(0);
+    expect(checkRows({ gridW: cloud.gridW, rows: cloud.rows }, "cloud/822")).toEqual([]);
+    // the live shape: 3 tiles, two on row 1, one on row 2 — the row the old grid left partial
+    expect(cloud.rows.length).toBe(2);
+    expect(cloud.rows[1].rects.length).toBe(1);
+    // the local grid renders too (the local fixture has no up server: the placeholder row)
+    expect(r.pgrids!.some((p) => p.id === "local")).toBe(true);
+  }, 120_000);
+
+  it("the workers card's bottom padding area is under 24 px below its last child", async () => {
+    const r = await shoot(822, null, undefined, "workers");
+    expect(r.workers, "workers probe ran").toBeDefined();
+    expect(r.workers!.gap, `gap below the last child: ${r.workers!.gap.toFixed(1)}px`).toBeLessThan(24);
+  }, 120_000);
 });
 
 /** The real page CSS, rendered in Chromium: a .rt-tiles grid must never leave a partial
