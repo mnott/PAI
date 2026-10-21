@@ -200,6 +200,7 @@ async function cmdStatus(): Promise<number> {
     console.log(dim(`    Uptime:      ${s["uptime"]}s`));
     console.log(dim(`    Socket:      ${s["socketPath"]}`));
     if (s["dashboard"]) console.log(dim(`    Dashboard:   ${s["dashboard"]}`));
+    console.log(dim(`    Log:         ${DAEMON_LOG}`));
     const quiet = readQuiet();
     if (quiet.on) console.log(warn(`    Quiet:       ${describeQuiet(quiet)}`));
 
@@ -244,6 +245,7 @@ async function cmdStatus(): Promise<number> {
     console.log(warn(`  Daemon not running: ${msg}`));
     console.log(dim("    Start with: pai daemon serve"));
     console.log(dim("    Or install as service: pai daemon install"));
+    console.log(dim(`    Log:         ${DAEMON_LOG}`));
     console.log();
     return 1;
   }
