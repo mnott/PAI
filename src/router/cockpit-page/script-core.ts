@@ -150,7 +150,7 @@ function metricTile(o){
  function fill(v,u,sub,tone){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%'+(tone?';background:var(--'+esc(tone)+')':'')+'"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
  // the tile's stable id: a slug of its title, so the drag can find and order it (the tile drag keys on data-tid)
  var tid=String(o.title||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"tile";
- return'<div class="mt" data-tid="'+esc(tid)+'" data-tname="'+esc(o.title)+'" data-tval="'+esc((o.value==null?"–":o.value)+(o.value!=null&&o.unit?" "+o.unit:""))+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
+ return'<div class="mt" data-tid="'+esc(tid)+'" data-tname="'+esc(o.title)+'" data-tval="'+esc((o.value==null?"–":o.value)+(o.value!=null&&o.unit?" "+o.unit:""))+'"><span class="tgrip" data-tgrip tabindex="0" title="move tile" aria-label="move '+esc(o.title)+'" aria-pressed="false" role="button">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
   (o.extra||"")+(o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub,o.fill.tone):"")+
   '<svg class="mt-spark" viewBox="0 0 ${L.sparkViewMaxPx} ${L.sparkHeightPx}" preserveAspectRatio="none" width="100%" height="${L.sparkHeightPx}">'+metricSpark(o.series||[])+'</svg></div>'
@@ -269,8 +269,9 @@ function moveSec(name,rows,target,mode){
  if(ri<0||t<0)return rows;
  var out=rows.map(function(x){return x.slice()});
  // beside: a full row refuses the drop, nothing moves
- if((mode==="left"||mode==="right")&&out[t].length>=MAXROW)return rows;
+ if((mode==="left"||mode==="right")&&t!==ri&&out[t].length>=MAXROW)return rows;
  out[ri].splice(si,1);
+ kk=out[t].indexOf(target);
  if(mode==="above")out.splice(t,0,[name]);
  else if(mode==="below")out.splice(t+1,0,[name]);
  else out[t].splice(mode==="left"?kk:kk+1,0,name);
@@ -340,43 +341,58 @@ function applyTileOrder(el){
 }
 /** Tile ids, chip name and chip value as attributes, and the move grip: the markup every orderable tile carries. */
 function tileAttrs(id,name,val){return' data-tid="'+esc(id)+'" data-tname="'+esc(name)+'" data-tval="'+esc(val)+'"'}
-function tileGrip(name){return'<span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(name)+'" role="img">⠿</span>'}
+function tileGrip(name){return'<span class="tgrip" data-tgrip tabindex="0" title="move tile" aria-label="move '+esc(name)+'" aria-pressed="false" role="button">⠿</span>'}
 /** Re-apply the saved order and minimized state to every tile container under root (run after each setHtml of a tile section). */
 function orderTiles(root){
  var tgs=root.querySelectorAll?root.querySelectorAll("[data-tkey]"):[];
  for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
  tileGrips();
 }
+var ARROWS={ArrowLeft:-1,ArrowUp:-1,ArrowRight:1,ArrowDown:1};
+/** Keyboard grab: Enter/Space on a grip toggles it; while grabbed the arrow keys move the item (Alt+arrow works without). */
+function grabToggle(g,on){
+ if(on===undefined)on=!g.__grab;
+ g.__grab=!!on;g.classList.toggle("grab",!!on);g.setAttribute("aria-pressed",on?"true":"false");
+}
+/** Move a tile one place in its container's saved order and re-apply it at once. */
+function moveTileBy(tile,delta){
+ var cont=tile.parentNode,ord=tids(cont),id=tile.getAttribute("data-tid"),p=ord.indexOf(id),np=p+delta;
+ if(p<0||np<0||np>=ord.length)return false;
+ ord.splice(p,1);ord.splice(np,0,id);
+ // __tkey is set by orderTiles; fall back to the container's own data-tkey
+ var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);applyTileOrder(cont);
+ return true;
+}
 function tileGrips(){
  var gs=document.querySelectorAll("[data-tgrip]");
  for(var i=0;i<gs.length;i++)(function(g){
   if(g.__wired)return;g.__wired=1;
   // a grip whose tile carries no data-tid cannot be ordered: the drag would find no tile and do nothing
-  g.addEventListener("pointerdown",function(e){if(g.parentNode.getAttribute("data-tid")&&!g.parentNode.classList.contains("tmin"))sDrag(e,g,"tile")});
+  var ok=function(){return g.parentNode.getAttribute("data-tid")&&!g.parentNode.classList.contains("tmin")};
+  g.addEventListener("pointerdown",function(e){if(ok())sDrag(e,g,"tile")});
   g.addEventListener("keydown",function(e){
-   if(!e.altKey)return;
-   if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
-    if(!g.parentNode.getAttribute("data-tid")||g.parentNode.classList.contains("tmin"))return;
-    e.preventDefault();
-    // the tile is the grip's ancestor carrying the id; its container holds the tiles
-    var tile=g.closest("[data-tid]"),cont=tile.parentNode,ord;
-    ord=tids(cont);
-    var id=tile.getAttribute("data-tid"),p=ord.indexOf(id);
-    var np=e.key==="ArrowLeft"?p-1:p+1;
-    if(p<0||np<0||np>=ord.length)return;
-    ord.splice(p,1);ord.splice(np,0,id);
-    // __tkey is set by renderModels; fall back to the container's own data-tkey
-    var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);applyTileOrder(cont);
-   }
+   if(!ok())return;
+   if(e.key==="Enter"||e.key===" "){e.preventDefault();grabToggle(g);return}
+   if(e.key==="Escape"&&g.__grab){grabToggle(g,false);return}
+   var dl=ARROWS[e.key];
+   if(!dl||(!e.altKey&&!g.__grab))return;
+   e.preventDefault();
+   // re-attaching the focused node blurs it: that must not end the grab
+   g.__moving=1;
+   if(moveTileBy(g.closest("[data-tid]"),dl)&&g.focus)g.focus({preventScroll:true});
+   g.__moving=0;
   });
+  g.addEventListener("blur",function(){if(!g.__moving)grabToggle(g,false)});
  })(gs[i]);
 }
-/** Drag state: a section grip or a tile grip; pointer events for mouse and touch. */
-var drag=null,ind=null;
-function showInd(rect,mode,bad){
+/** Drag, one mechanism for section grips and tile grips (pointer events: mouse at once, touch after a long press).
+ *  The listeners live on the window and the drag holds ids, never nodes: a poll re-render replaces the tile
+ *  nodes (the grip included) while the pointer is down, and a listener on the grip would be gone with it. */
+var drag=null,ind=null,DROP_PAD=40,BAR=4;
+function showBar(b,bad){
  if(!ind){ind=document.createElement("div");ind.className="dropind";document.body.appendChild(ind)}
- ind.style.left=rect.left+"px";ind.style.top=rect.top+"px";ind.style.width=rect.width+"px";ind.style.height=rect.height+"px";
- ind.dataset.mode=mode;ind.classList.toggle("bad",!!bad);
+ ind.style.left=b.x+"px";ind.style.top=b.y+"px";ind.style.width=b.w+"px";ind.style.height=b.h+"px";
+ ind.dataset.mode=b.mode;ind.classList.toggle("bad",!!bad);
 }
 function hideInd(){if(ind){ind.remove();ind=null}}
 function edgeScroll(y){
@@ -385,97 +401,123 @@ function edgeScroll(y){
 }
 function sDrag(e,g,kind){
  if(e.button||drag)return;
- drag={g:g,kind:kind,moved:false,timer:null};
- if(kind==="section"){
-  var sec=g.closest("section");drag.sec=sec;drag.title=(sec.querySelector("h2")||{}).textContent||sec.getAttribute("data-section");
- }else drag.tile=g.closest("[data-tid]");
- // a pointer the browser does not know (synthetic events) cannot be captured: the drag still runs on the grip
- try{g.setPointerCapture&&g.setPointerCapture(e.pointerId)}catch(x){}
- g.addEventListener("pointermove",mDrag);
- g.addEventListener("pointerup",uDrag);
- g.addEventListener("pointercancel",aDrag);
+ drag={kind:kind,moved:false,timer:null,drop:null,mark:null};
+ if(kind==="section"){var sec=g.closest("section");drag.sec=sec;drag.name=sec.getAttribute("data-section")}
+ else{var tl=g.closest("[data-tid]");drag.tid=tl.getAttribute("data-tid");drag.key=tkeyOf(tl.parentNode)}
+ window.addEventListener("pointermove",mDrag);
+ window.addEventListener("pointerup",uDrag);
+ window.addEventListener("pointercancel",aDrag);
  window.addEventListener("keydown",kDrag);
+ window.addEventListener("blur",aDrag);
  if(e.pointerType==="touch")drag.timer=setTimeout(function(){drag.timer=null;drag.armed=true},PRESS_MS);
  else drag.armed=true;
  e.preventDefault();
 }
-function zone(rect,x,y){
- var dx=x-rect.left,dy=y-rect.top;
- if(dy<rect.height/3)return"above";
- if(dy>rect.height*2/3)return"below";
- if(dx<rect.width/3)return"left";
- if(dx>rect.width*2/3)return"right";
- return"inside";
+/** The dragged tile and its container, found again by key and id in the live page. */
+function liveTile(d){
+ var cs=document.querySelectorAll("[data-tkey]");
+ for(var i=0;i<cs.length;i++){
+  if(tkeyOf(cs[i])!==d.key)continue;
+  var ch=cs[i].children;
+  for(var k=0;k<ch.length;k++)if(ch[k].parentNode===cs[i]&&ch[k].getAttribute("data-tid")===d.tid)return{cont:cs[i],tile:ch[k]};
+ }
+ return null;
 }
-/** The tile under the pointer in the dragged tile's own container, and whether a drop goes
- *  before it: by the horizontal midpoint within a row, by the vertical one across wrapped rows. */
+/** The point's squared distance to a rect (0 inside it). */
+function rectDist(r,x,y){var dx=Math.max(r.left-x,0,x-(r.left+r.width)),dy=Math.max(r.top-y,0,y-(r.top+r.height));return dx*dx+dy*dy}
+/** The gap a tile drop would go to: the open tile nearest the pointer (reading order breaks ties), before or
+ *  after it by which half of it the pointer is in — along x when the tile shares its row with another, else y.
+ *  Null outside the container (plus DROP_PAD) and when there is no other tile. */
 function tileDrop(d,x,y){
- var el=document.elementFromPoint(x,y),t=el&&el.closest?el.closest("[data-tid]"):null;
- if(!t||t===d.tile||t.parentNode!==d.tile.parentNode)return null;
- var r=t.getBoundingClientRect(),m=d.tile.getBoundingClientRect();
- var row=Math.abs(r.top-m.top)<m.height/2;
- return{t:t,r:r,before:row?x<r.left+r.width/2:y<r.top+r.height/2,row:row};
+ var lt=liveTile(d);if(!lt)return null;
+ var cr=lt.cont.getBoundingClientRect();
+ if(x<cr.left-DROP_PAD||x>cr.left+cr.width+DROP_PAD||y<cr.top-DROP_PAD||y>cr.top+cr.height+DROP_PAD)return null;
+ var vis=[],ch=lt.cont.children,i;
+ for(i=0;i<ch.length;i++)if(ch[i].parentNode===lt.cont&&ch[i].getAttribute("data-tid")&&!ch[i].classList.contains("tmin"))vis.push(ch[i]);
+ var best=null,bd=0,br=null;
+ for(i=0;i<vis.length;i++){
+  if(vis[i]===lt.tile)continue;
+  var r=vis[i].getBoundingClientRect(),dd=rectDist(r,x,y);
+  if(!best||dd<bd){best=vis[i];bd=dd;br=r}
+ }
+ if(!best)return null;
+ var horiz=false;
+ for(i=0;i<vis.length;i++)if(vis[i]!==best&&Math.abs(vis[i].getBoundingClientRect().top-br.top)<br.height/2)horiz=true;
+ var before=horiz?x<br.left+br.width/2:y<br.top+br.height/2,bar;
+ if(horiz)bar={x:before?br.left-BAR-1:br.left+br.width+1,y:br.top,w:BAR,h:br.height,mode:before?"left":"right"};
+ else bar={x:br.left,y:before?br.top-BAR-1:br.top+br.height+1,w:br.width,h:BAR,mode:before?"above":"below"};
+ return{ref:best.getAttribute("data-tid"),before:before,bar:bar,bad:false};
+}
+/** The section gap under the pointer: the section nearest it; its outer quarters (top, bottom) give a new row
+ *  above/below, else the left/right half puts the dragged one into the same row beside it. */
+function secDrop(d,x,y){
+ var secs=document.querySelectorAll("main section.card"),best=null,bd=0,br=null,i;
+ for(i=0;i<secs.length;i++){
+  if(secs[i].getAttribute("data-section")===d.name)continue;
+  var r=secs[i].getBoundingClientRect(),dd=rectDist(r,x,y);
+  if(!best||dd<bd){best=secs[i];bd=dd;br=r}
+ }
+ if(!best||bd>DROP_PAD*DROP_PAD)return null;
+ var name=best.getAttribute("data-section"),mode,bar;
+ if(y<br.top+br.height/4)mode="above";else if(y>br.top+br.height*3/4)mode="below";else mode=x<br.left+br.width/2?"left":"right";
+ if(mode==="above")bar={x:br.left,y:br.top-BAR-1,w:br.width,h:BAR};
+ else if(mode==="below")bar={x:br.left,y:br.top+br.height+1,w:br.width,h:BAR};
+ else bar={x:mode==="left"?br.left-BAR-1:br.left+br.width+1,y:br.top,w:BAR,h:br.height};
+ bar.mode=mode;
+ var rows=curRows(),ri=-1,ti=-1;
+ for(i=0;i<rows.length;i++){if(rows[i].indexOf(d.name)>=0)ri=i;if(rows[i].indexOf(name)>=0)ti=i}
+ return{ref:name,mode:mode,bar:bar,bad:(mode==="left"||mode==="right")&&ri!==ti&&ti>=0&&rows[ti].length>=MAXROW};
+}
+function dropAt(d,x,y){return d.kind==="tile"?tileDrop(d,x,y):secDrop(d,x,y)}
+/** The dragged item shown dimmed in place; re-marked each move because a re-render replaces the node. */
+function markDragged(d){
+ var el=d.kind==="tile"?(liveTile(d)||{}).tile:d.sec;
+ if(d.mark&&d.mark!==el)d.mark.classList.toggle("dragging",false);
+ if(el){el.classList.toggle("dragging",true);d.mark=el}
 }
 function mDrag(e){
  if(!drag)return;
- drag.moved=true;drag.x=e.clientX;drag.y=e.clientY;
+ drag.moved=true;
  if(!drag.armed)return;
  edgeScroll(e.clientY);
- if(drag.kind==="tile"){
-  var td=tileDrop(drag,e.clientX,e.clientY);
-  if(!td){hideInd();return}
-  showInd(td.r,td.row?(td.before?"left":"right"):(td.before?"above":"below"),false);
-  return;
- }
- var el=document.elementFromPoint(e.clientX,e.clientY);
- var sec=el&&el.closest?el.closest("section.card"):null;
- if(!sec||sec===drag.sec){hideInd();return}
- var rect=sec.getBoundingClientRect(),z=zone(rect,e.clientX,e.clientY);
- var rows=curRows(),ri=-1;
- for(var r0=0;r0<rows.length;r0++)if(rows[r0].indexOf(sec.getAttribute("data-section"))>=0)ri=r0;
- var full=ri>=0&&rows[ri].length>=MAXROW;
- showInd(rect,z,(z==="left"||z==="right")&&full);
+ markDragged(drag);
+ drag.drop=dropAt(drag,e.clientX,e.clientY);
+ if(drag.drop)showBar(drag.drop.bar,drag.drop.bad);else hideInd();
 }
 function uDrag(e){
  if(!drag)return;
- if(drag.timer){clearTimeout(drag.timer);drag.timer=null}
- var d=drag;drag=null;
- cleanup(d);
- if(!d.armed||!d.moved){hideInd();return}
+ var d=drag,drop=null;
+ if(d.armed&&d.moved)drop=dropAt(d,e.clientX,e.clientY);
+ endDrag();
+ if(!drop||drop.bad)return;
  if(d.kind==="tile"){
-  hideInd();
-  var cont=d.tile.parentNode,ord;
-  ord=tids(cont);
-  var id=d.tile.getAttribute("data-tid"),p=ord.indexOf(id);
-  var td=tileDrop(d,e.clientX,e.clientY);
-  if(td&&p>=0){
-   ord.splice(p,1);
-   var ti=ord.indexOf(td.t.getAttribute("data-tid"));
-   if(ti<0)return;
-   ord.splice(td.before?ti:ti+1,0,id);
-   // __tkey is set by renderModels; fall back to the container's own data-tkey
-   var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);applyTileOrder(cont);
-  }
+  var lt=liveTile(d);if(!lt)return;
+  var ord=tids(lt.cont),was=ord.join("\n"),p=ord.indexOf(d.tid);
+  if(p<0)return;
+  ord.splice(p,1);
+  var ti=ord.indexOf(drop.ref);
+  if(ti<0)return;
+  ord.splice(drop.before?ti:ti+1,0,d.tid);
+  if(ord.join("\n")===was)return; // dropped where it already was: nothing to save
+  var o=tileOrder();o[tkeyOf(lt.cont)]=ord;saveTileOrder(o);applyTileOrder(lt.cont);
   return;
  }
- var el=document.elementFromPoint(e.clientX,e.clientY);
- var sec=el&&el.closest?el.closest("section.card"):null;
- hideInd();
- if(!sec||sec===d.sec)return;
- var rect=sec.getBoundingClientRect(),z=zone(rect,e.clientX,e.clientY);
- if(z==="inside")return;
- var rows=curRows();
- var rows2=moveSec(d.sec.getAttribute("data-section"),rows,sec.getAttribute("data-section"),z);
+ var rows=curRows(),rows2=moveSec(d.name,rows,drop.ref,drop.mode);
  if(rows2===rows)return; // refused (a 4th beside)
  saveRows(rows2);applyLayout(rows2);
 }
-function aDrag(){if(!drag)return;if(drag.timer){clearTimeout(drag.timer);drag.timer=null}cleanup(drag);drag=null;hideInd()}
-function cleanup(d){
- d.g.removeEventListener("pointermove",mDrag);
- d.g.removeEventListener("pointerup",uDrag);
- d.g.removeEventListener("pointercancel",aDrag);
+/** Every drag trace gone: listeners, press timer, dimmed item, indicator. */
+function endDrag(){
+ var d=drag;drag=null;
+ window.removeEventListener("pointermove",mDrag);
+ window.removeEventListener("pointerup",uDrag);
+ window.removeEventListener("pointercancel",aDrag);
  window.removeEventListener("keydown",kDrag);
+ window.removeEventListener("blur",aDrag);
+ if(d){if(d.timer){clearTimeout(d.timer);d.timer=null}if(d.mark)d.mark.classList.toggle("dragging",false)}
+ hideInd();
 }
+function aDrag(){if(drag)endDrag()}
 function kDrag(e){if(e.key==="Escape")aDrag()}
 function curRows(){
  var main=document.querySelector("main");
@@ -492,8 +534,11 @@ function secGrips(){
    g.title="move section";g.setAttribute("aria-label","move "+(h.textContent||"").trim());
    h.insertBefore(g,h.firstChild);
    g.addEventListener("pointerdown",function(e){sDrag(e,g,"section")});
+   g.addEventListener("blur",function(){if(!g.__moving)grabToggle(g,false)});
    g.addEventListener("keydown",function(e){
-    if(!e.altKey)return;
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();grabToggle(g);return}
+    if(e.key==="Escape"&&g.__grab){grabToggle(g,false);return}
+    if(!e.altKey&&!g.__grab)return;
     var name=sec.getAttribute("data-section"),rows=curRows(),ri=-1,si=-1;
     for(var r=0;r<rows.length;r++){var k=rows[r].indexOf(name);if(k>=0){ri=r;si=k;break}}
     if(ri<0)return;
@@ -513,7 +558,10 @@ function secGrips(){
      }else if(si>0)row.splice(si,1),row.splice(si-1,0,name);
      else{rows[ri].splice(si,1);if(rows[ri].length===0)rows.splice(ri,1);rows.splice(ri-1<0?0:ri-1,0,[name])}
     }else return;
+    g.__moving=1;
     saveRows(rows);applyLayout(rows);
+    if(g.focus)g.focus({preventScroll:true});
+    g.__moving=0;
    });
   }
   var b=h.querySelector("button.fold");

@@ -2408,8 +2408,8 @@ describe("cockpit drag-and-drop layout", () => {
     const timers: Array<{ fn: () => void; ms: number }> = [];
     const setTimeoutStub = (fn: () => void, ms: number) => { timers.push({ fn, ms }); return timers.length; };
     const clearTimeoutStub = () => {};
-    const secEl = { querySelector: () => ({ textContent: "Cloud" }), getAttribute: () => "cloud" };
-    const mkGrip = () => ({ setPointerCapture() {}, addEventListener() {}, removeEventListener() {}, parentNode: null, closest: (sel: string) => (sel === "section" ? secEl : null) });
+    const secEl = { querySelector: () => ({ textContent: "Cloud" }), getAttribute: () => "cloud", parentNode: { __tkey: "k" } };
+    const mkGrip = () => ({ setPointerCapture() {}, addEventListener() {}, removeEventListener() {}, parentNode: null, closest: () => secEl });
     const document = { querySelector: () => null, createElement: () => ({ style: {}, dataset: {}, classList: { toggle() {} }, remove() {} }), body: { appendChild() {} } };
     const windowStub = { addEventListener() {}, removeEventListener() {}, scrollBy() {} };
     const fn = new Function("localStorage", "document", "window", "setTimeout", "clearTimeout", `${src}\nreturn {startDrag:sDrag,getDrag:function(){return drag},abortDrag:aDrag};`);
@@ -2433,7 +2433,8 @@ describe("cockpit drag-and-drop layout", () => {
 
   it("the keyboard Alt+ArrowUp moves a section one row (the wiring is in the page)", () => {
     expect(COCKPIT_HTML).toContain('g.addEventListener("keydown",function(e){');
-    expect(COCKPIT_HTML).toContain("if(!e.altKey)return;");
+    expect(COCKPIT_HTML).toContain("if(!e.altKey&&!g.__grab)return;");
+    expect(COCKPIT_HTML).toContain('if(e.key==="Enter"||e.key===" "){e.preventDefault();grabToggle(g);return}');
     expect(COCKPIT_HTML).toContain('if(e.key==="ArrowUp"||e.key==="ArrowDown")');
     expect(COCKPIT_HTML).toContain('if(e.key==="ArrowLeft"||e.key==="ArrowRight")');
     // the grip carries the aria-label and sits before the fold chevron
@@ -2446,7 +2447,8 @@ describe("cockpit drag-and-drop layout", () => {
     expect(COCKPIT_HTML).toContain('g.addEventListener("pointerdown",function(e){sDrag(e,g,"section")})');
     expect(COCKPIT_HTML).toContain("if(y<EDGE_PX)window.scrollBy(0,-8)");
     expect(COCKPIT_HTML).toContain('if(e.key==="Escape")aDrag()');
-    expect(COCKPIT_HTML).toContain('g.addEventListener("pointercancel",aDrag)');
+    expect(COCKPIT_HTML).toContain('window.addEventListener("pointercancel",aDrag)');
+    expect(COCKPIT_HTML).toContain('window.addEventListener("pointerup",uDrag)');
     // below the phone breakpoint the span classes go full width; the row stacking
     // itself is the .stacked class from the live main width, not this media query
     expect(COCKPIT_HTML).toContain("@media(max-width:1000px){.c8,.c6,.c4{grid-column:span 12}}");
@@ -2675,7 +2677,13 @@ function tileDragHarness(inv: unknown) {
   const renderBody = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
   const store: Record<string, string> = {};
   const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
-  const windowStub = { innerWidth: 1200, addEventListener() {}, removeEventListener() {}, scrollBy() {} };
+  // the drag listens on the window: record them so the test fires the real handlers
+  const winHandlers: Array<{ type: string; fn: (e: unknown) => void }> = [];
+  const windowStub = {
+    innerWidth: 1200, scrollBy() {},
+    addEventListener: (type: string, fn: (e: unknown) => void) => { winHandlers.push({ type, fn }); },
+    removeEventListener: (type: string, fn: unknown) => { const i = winHandlers.findIndex((w) => w.type === type && w.fn === fn); if (i >= 0) winHandlers.splice(i, 1); },
+  };
   const dom = miniDom(realModelsHtml(inv));
   // edgeScroll reads document.documentElement.clientHeight
   dom.document.documentElement = { clientHeight: 800 };
@@ -2688,7 +2696,7 @@ function tileDragHarness(inv: unknown) {
   const tilesOf = (cont: any) => cont.children.filter((c: any) => c.parentNode === cont && c.getAttribute("data-tid"));
   const keydownOf = (grip: any) => grip.handlers.find((h: { type: string }) => h.type === "keydown")?.fn as ((e: unknown) => void) | undefined;
   const loadedTiles = () => dom.document.querySelectorAll(".rt-tiles").find((c: any) => c.getAttribute("data-tkey") === "gyro-m / flash-next tiles");
-  return { api, dom, store, tilesOf, keydownOf, loadedTiles };
+  return { api, dom, store, tilesOf, keydownOf, loadedTiles, winHandlers };
 }
 
 describe("cockpit tile drag on the real rendered page (live bug: tiles had no data-tid)", () => {
@@ -2727,20 +2735,21 @@ describe("cockpit tile drag on the real rendered page (live bug: tiles had no da
   });
 
   // the real listeners: tileGrips() wires pointerdown on the grip; sDrag adds pointermove/up on it
-  const dragViaListeners = (h: ReturnType<typeof tileDragHarness>, from: number, to: number, pos: "left" | "right" | "top" | "bottom", opts: { captureThrows?: boolean; stacked?: boolean } = {}) => {
+  const dragViaListeners = (h: ReturnType<typeof tileDragHarness>, from: number, to: number, pos: "left" | "right" | "top" | "bottom", opts: { stacked?: boolean } = {}) => {
     const cont = h.loadedTiles();
     const tiles = h.tilesOf(cont);
     // 4 tiles of 100x40: one row, or stacked in one column
     tiles.forEach((t: any, i: number) => { t.getBoundingClientRect = () => (opts.stacked ? { left: 0, top: i * 50, width: 100, height: 40 } : { left: i * 110, top: 0, width: 100, height: 40 }); });
+    cont.getBoundingClientRect = () => (opts.stacked ? { left: 0, top: 0, width: 100, height: 200 } : { left: 0, top: 0, width: 440, height: 40 });
     const grip = tiles[from].querySelector("[data-tgrip]");
-    if (opts.captureThrows) grip.setPointerCapture = () => { throw new Error("NotFoundError"); };
     const box = tiles[to].getBoundingClientRect();
     const x = pos === "left" ? box.left + 10 : pos === "right" ? box.left + 90 : box.left + 50;
     const y = pos === "top" ? box.top + 5 : pos === "bottom" ? box.top + 35 : box.top + 20;
-    h.dom.document.elementFromPoint = (px: number, py: number) => tiles.find((t: any) => { const r = t.getBoundingClientRect(); return px >= r.left && px < r.left + r.width && py >= r.top && py < r.top + r.height; }) ?? null;
     const fire = (type: string, cx: number, cy: number) => {
       const e = { type, button: 0, pointerType: "mouse", pointerId: 7, clientX: cx, clientY: cy, preventDefault() {} };
-      for (const hd of grip.handlers.filter((hh: { type: string }) => hh.type === type)) hd.fn(e);
+      // pointerdown is wired on the grip, the rest on the window (sDrag adds them)
+      const hs = type === "pointerdown" ? grip.handlers : [...h.winHandlers];
+      for (const hd of hs.filter((hh: { type: string }) => hh.type === type)) hd.fn(e);
     };
     const gb = tiles[from].getBoundingClientRect();
     fire("pointerdown", gb.left + 5, gb.top + 5);
@@ -2782,12 +2791,17 @@ describe("cockpit tile drag on the real rendered page (live bug: tiles had no da
     expect(h.store["pai.cockpit.tiles.v1"]).toBeUndefined();
   });
 
-  it("a pointer the browser cannot capture (setPointerCapture throws) still drags: the root cause of the live no-op", () => {
+  it("the move/up listeners live on the window, not the grip: a poll that replaces the grip mid-drag cannot strand the drag (live no-op root cause)", () => {
     const h = tileDragHarness(inv);
     h.api.renderModels();
-    const after = dragViaListeners(h, 0, 2, "right", { captureThrows: true });
-    expect(after).toEqual(["memory", "workers", "speed", "conversation-cache"]);
-    expect(h.store["pai.cockpit.tiles.v1"]).toBeDefined();
+    const tiles = h.tilesOf(h.loadedTiles());
+    const grip = tiles[0].querySelector("[data-tgrip]");
+    for (const hd of grip.handlers.filter((hh: { type: string }) => hh.type === "pointerdown")) hd.fn({ button: 0, pointerType: "mouse", pointerId: 7, clientX: 5, clientY: 5, preventDefault() {} });
+    expect(grip.handlers.map((x: { type: string }) => x.type)).not.toContain("pointermove");
+    expect(h.winHandlers.map((x) => x.type)).toEqual(expect.arrayContaining(["pointermove", "pointerup", "pointercancel", "keydown"]));
+    // Escape clears them all
+    h.winHandlers.find((x) => x.type === "keydown")!.fn({ key: "Escape" });
+    expect(h.winHandlers.length).toBe(0);
   });
 
   it("the keyboard Alt+ArrowRight path reorders the real rendered tiles and persists", () => {
