@@ -257,6 +257,9 @@ var api={init:init,registerType:registerType,update:update,relayout:relayout,syn
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},
+ cfg:cfgOf,announce:announce,layState:layState,
+ /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
+ apply:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
  flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}saveWin(W.opts.storage,W.tree,W.kids,st)}}};
 return api;
 })();
