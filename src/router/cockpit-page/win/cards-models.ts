@@ -56,11 +56,20 @@ function wmdTitle(r,rt,consumers,users){
  if(!m.model)return r.name;
  return users.length?String(users[0]).replace(/^worker:/,""):shortModel(m.model);
 }
+/** A registry model has its own card (models.model:<name>); the runtime card of the same tier would show it twice. */
+function wmdCovered(inv,r){return!!r.tier&&(inv.registryModels||[]).some(function(m){return m.tier===r.tier})}
+/** The registry model by card id (models.model:<name>). */
+function wmdModel(id){
+ var list=(WMD&&WMD.inv&&WMD.inv.registryModels)||[],i;
+ for(i=0;i<list.length;i++)if("models.model:"+list[i].name===id)return list[i];
+ return null;
+}
 /** The card list of an inventory: [{id,title,r,rt,m,users,tier,state,stopped,down,idle,loaded,cmds,consumers}]. */
 function wmdCards(inv){
  var out=[],consumers=inv.consumers||[],cmds=inv.runtimeCommands||{};
  (inv.runtimes||[]).forEach(function(rt){
   wmdSplit(rt,consumers).forEach(function(r){
+   if(wmdCovered(inv,r))return;
    var m=r.models[0]||{model:""},users=wmdUsers(r,rt,consumers),tier=r.tier?wmdTier(inv,r):null;
    var loaded=r.models.filter(function(x){return x.loaded});
    var stopped=r.status==="stopped"&&!!tier&&!(tier.mine.length||tier.starting),down=r.status==="stopped"&&!stopped;
@@ -166,6 +175,41 @@ Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
   ctx.html("note",wmdNote(e));
   ctx.list("inst",e.tier?e.tier.mine:[],function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){var h=wmdInst(i);if(d.__h!==h){d.innerHTML=h;d.__h=h}});
  }});
+/** The header actions of a registry-model card: start, stop (confirm when requests are in flight), instance stepper -/+ (local.scale). */
+function wmdModelActs(id){
+ function runIt(act,verb,args){var b=Win.el(id).querySelector('[data-act="'+act+'"]');WinA.winClick(b,id,verb,args,winHost())}
+ function busy(m){return m.instances.reduce(function(a,x){return a+(x.inflight||0)},0)}
+ return[
+  {id:"start",label:"start",enabled:function(){var m=wmdModel(id);if(!m)return"no data yet";return m.maxInstances&&m.instances.length>=m.maxInstances?"at the maximum ("+m.maxInstances+")":true},
+   run:function(){var m=wmdModel(id);runIt("start","local.start",{target:m.tier})}},
+  {id:"stop",label:"stop",enabled:function(){var m=wmdModel(id);if(!m)return"no data yet";return m.instances.length?true:"nothing running"},
+   run:function(){var m=wmdModel(id);runIt("stop","local.stop",{target:m.tier,value:busy(m)?"confirm":undefined})}},
+  {id:"less",label:"-",title:"one instance fewer",enabled:function(){var m=wmdModel(id);return m&&m.instances.length?true:"no running instance"},
+   run:function(){var m=wmdModel(id);runIt("less","local.scale",{target:m.tier,count:Math.max(0,m.instances.length-1)})}},
+  {id:"more",label:"+",title:"one instance more",enabled:function(){var m=wmdModel(id);if(!m)return"no data yet";return m.maxInstances&&m.instances.length>=m.maxInstances?"at the maximum ("+m.maxInstances+")":true},
+   run:function(){var m=wmdModel(id);runIt("more","local.scale",{target:m.tier,count:m.instances.length+1})}}
+ ];
+}
+Win.registerType("model",{minW:300,minH:90,defaultH:120,
+ mount:function(ctx){
+  ctx.body.innerHTML='<div class="wmd"><div class="wmd-top" data-k="badges"></div><div class="dim wmd-n" data-k="note"></div><div class="wmd-i" data-k="inst"></div></div>';
+  ctx.body.addEventListener("click",function(ev){
+   var b=ev.target;
+   if(!b||!b.classList||!b.classList.contains("wmd-stop"))return;
+   WinA.winClick(b,ctx.id,"local.stop",{target:b.getAttribute("data-id"),value:b.getAttribute("data-busy")!=="0"?"confirm":undefined},winHost());
+  });
+ },
+ update:function(ctx){
+  var m=wmdModel(ctx.id);
+  if(!m){ctx.status("stale","no longer reported");return}
+  var n=m.instances.length;
+  ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> <span class="num" title="running instances (max '+m.maxInstances+')">'+n+" / "+m.maxInstances+"</span>");
+  ctx.html("note",'<span title="'+esc(m.file)+'">'+esc(String(m.file).replace(/^.*\//,""))+"</span> · :"+m.port);
+  ctx.list("inst",m.instances,function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){
+   var h='<span class="ok">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b wmd-stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'">stop</button>';
+   if(d.__h!==h){d.innerHTML=h;d.__h=h}
+  });
+ }});
 Win.registerType("eplist",{minW:260,minH:60,defaultH:90,
  mount:function(ctx){
   ctx.body.innerHTML='<div class="wmd-e" style="padding:6px 10px"><div data-k="rows"></div><div class="dim" data-k="none"></div></div>';
@@ -187,7 +231,14 @@ Win.registerType("eplist",{minW:260,minH:60,defaultH:90,
  }});
 /** The runtime cards, added by data (a structural change); a card already in the layout is only built. */
 function wmdSync(inv){
- var list=wmdCards(inv),specs=[],rows=[],i;
+ var list=wmdCards(inv),specs=[],rows=[],i,reg=inv.registryModels||[];
+ for(i=0;i<reg.length;i++){
+  var mid="models.model:"+reg[i].name;
+  if(WMD_SEEN[mid])continue;
+  WMD_SEEN[mid]=1;
+  specs.push({id:mid,type:"model",title:reg[i].name,feeds:["models"],actions:wmdModelActs(mid)});
+  rows.push([mid]);
+ }
  for(i=0;i<list.length;i++){
   if(WMD_SEEN[list[i].id])continue;
   WMD_SEEN[list[i].id]=1;

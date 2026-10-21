@@ -154,6 +154,10 @@ Win.registerType("editor",{minW:360,minH:220,defaultH:360,
   var ta=ctx.body.querySelector("textarea");
   if(ta&&ta.value!==S.text)ta.value=S.text;
  }});
+/** The backups card paints from WRG itself, so a card minimized at load fills the moment it mounts (restore). */
+Win.registerType("backups",{minW:200,minH:60,defaultH:120,
+ mount:function(ctx){ctx.body.innerHTML='<div class="wr" data-k="l"></div>';ctx.html("l",wrgBackupsHtml(WRG))},
+ update:function(ctx,S){ctx.html("l",wrgBackupsHtml(S))}});
 function wrgActs(){
  function io(){return wrgIo||(wrgIo=wrgIoMake())}
  return[
@@ -178,7 +182,7 @@ function wrgStart(){
 function registryDefaults(){
  var cards=[{id:"settings",type:"group",title:"Settings",info:WRG_INFO},
   {id:WRG_ID,type:"editor",title:"Model registry (workers.yaml)",feeds:["registry"],actions:wrgActs()},
-  {id:WRG_BK,type:"list",title:"Registry backups",feeds:["registry"]}];
+  {id:WRG_BK,type:"backups",title:"Registry backups",feeds:["registry"]}];
  return{tree:WinT.leaf("settings"),kids:{settings:WinT.split("c",[WinT.leaf(WRG_ID),WinT.leaf(WRG_BK)],[0.72,0.28])},stDefaults:{},cards:cards};
 }
 `;
