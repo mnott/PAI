@@ -40,6 +40,8 @@ export interface ProviderLimits {
   kind: "plan" | "estimated" | "local";
   windows: LimitWindow[];
   up?: boolean;
+  /** why `up` is false (local servers only) */
+  downReason?: DownReason;
   rssMb?: number;
   /** model ids the local server lists */
   served?: string[];
@@ -450,14 +452,41 @@ async function providerPlanLimits(name: string, p: WorkerProvider, now: number, 
   }
 }
 
-function probeTcp(port: number, host: string): Promise<boolean> {
+/** TCP connect: accepted, refused/reset, or no answer within the timeout (a server too busy to accept is slow, not gone). */
+export type TcpProbe = "open" | "refused" | "timeout";
+
+function probeTcp(port: number, host: string): Promise<TcpProbe> {
   return new Promise((resolve) => {
-    const s = net.connect({ port, host, timeout: 800 });
-    s.on("connect", () => (s.destroy(), resolve(true)));
-    s.on("timeout", () => (s.destroy(), resolve(false)));
-    s.on("error", () => resolve(false));
+    const s = net.connect({ port, host, timeout: TCP_TIMEOUT_MS });
+    s.on("connect", () => (s.destroy(), resolve("open")));
+    s.on("timeout", () => (s.destroy(), resolve("timeout")));
+    s.on("error", () => resolve("refused"));
   });
 }
+
+/** TCP connect timeout of the cockpit's local probe; the accept queue of a server at full load is slow. */
+export const TCP_TIMEOUT_MS = 3000;
+/** Consecutive probe timeouts after which a local server is shown down; fewer keep the last known state. */
+export const PROBE_TIMEOUT_STRIKES = 3;
+
+/** Why a local server is shown down. */
+export type DownReason = "not listening" | "no HTTP answer" | "model not served" | "probe timeout";
+
+/** The probes localLimits runs; replaced in tests. */
+export interface LocalProbes {
+  tcp: (port: number, host: string) => Promise<TcpProbe>;
+  served: (base: URL) => Promise<ServedAnswer>;
+}
+
+/** GET /v1/models: `alive` = answered HTTP (any status); `timeout` = connected but no answer in time; `ids` = the models it lists. */
+export interface ServedAnswer {
+  alive: boolean;
+  timeout?: boolean;
+  ids?: string[];
+}
+
+/** Per provider+endpoint: whether the last settled poll said up, and the run of consecutive timeouts since. */
+const probeState = new Map<string, { up: boolean; strikes: number }>();
 
 /** A server busy prefilling answers /v1/cache/stats slowly (7.6 s seen). */
 export const PREFIX_STATS_TIMEOUT_MS = 15_000;
@@ -471,20 +500,37 @@ export async function localLimits(
   p: WorkerProvider,
   rows: UsageRow[],
   now: number,
-  background?: (stats: Promise<PrefixCacheStats | undefined>) => void
+  background?: (stats: Promise<PrefixCacheStats | undefined>) => void,
+  opts: { probes?: LocalProbes; timeoutStrikes?: number } = {}
 ): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
-  const listening = await probeTcp(port, u.hostname);
+  const probes = opts.probes ?? { tcp: probeTcp, served: servedModels };
+  const strikesToDown = opts.timeoutStrikes ?? PROBE_TIMEOUT_STRIKES;
+  const endpoint = `${u.hostname}:${port}`;
+  const stateKey = `${name}@${endpoint}`;
+  const prev = probeState.get(stateKey) ?? { up: false, strikes: 0 };
+  const tcp = await probes.tcp(port, u.hostname);
   // An accepted TCP connection proves nothing: launchd (or any socket holder) accepts for a server
   // that is not running. Up means the server answers HTTP, and serves this provider's model.
-  const probe = listening ? await servedModels(u) : { alive: false };
+  const probe: ServedAnswer = tcp === "open" ? await probes.served(u) : tcp === "timeout" ? { alive: false, timeout: true } : { alive: false };
   // A busy server may time out without a list: keep the last list it gave, so providers sharing the endpoint do not both turn up
-  const endpoint = `${u.hostname}:${port}`;
   if (probe.ids) lastServed.set(endpoint, probe.ids);
-  else if (!probe.alive) lastServed.delete(endpoint);
-  const served = probe.ids ?? (probe.alive ? lastServed.get(endpoint) : undefined);
-  const up = probe.alive && serves(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
+  else if (!probe.alive && !probe.timeout) lastServed.delete(endpoint);
+  const served = probe.ids ?? (probe.alive || probe.timeout ? lastServed.get(endpoint) : undefined);
+  let up: boolean;
+  let downReason: DownReason | undefined;
+  if (probe.timeout) {
+    // connected (or slow to accept) but no answer: busy, not down, until it has stayed silent strikesToDown polls in a row
+    const strikes = prev.strikes + 1;
+    up = prev.up && strikes < strikesToDown;
+    if (!up) downReason = "probe timeout";
+    probeState.set(stateKey, { up, strikes });
+  } else {
+    up = probe.alive && serves(served, Object.values(p.models).filter((m): m is string => typeof m === "string"));
+    if (!up) downReason = tcp === "refused" ? "not listening" : !probe.alive ? "no HTTP answer" : "model not served";
+    probeState.set(stateKey, { up, strikes: 0 });
+  }
   let rssMb: number | undefined;
   let prefixCache: PrefixCacheStats | undefined;
   if (up) {
@@ -503,6 +549,7 @@ export async function localLimits(
     kind: "local",
     windows: [],
     up,
+    ...(downReason ? { downReason } : {}),
     ...(rssMb ? { rssMb } : {}),
     ...(served ? { served } : {}),
     ...(prefixCache ? { prefixCache } : {}),
@@ -516,14 +563,15 @@ export async function localLimits(
 const lastServed = new Map<string, string[]>();
 
 /** GET /v1/models: `alive` = the server answered HTTP at all (any status); `ids` = the models it lists, when it can say. */
-async function servedModels(base: URL): Promise<{ alive: boolean; ids?: string[] }> {
+async function servedModels(base: URL): Promise<ServedAnswer> {
   try {
     const body = JSON.parse(await getJson(new URL("/v1/models", base), {})) as { data?: Array<{ id?: unknown }> };
     const ids = (body.data ?? []).map((m) => m.id).filter((i): i is string => typeof i === "string");
     return ids.length ? { alive: true, ids } : { alive: true };
   } catch (e) {
     // a busy server may be slow to answer (timeout); one that resets or closes the connection is not serving
-    return { alive: e instanceof HttpError || (e as Error).message === "timeout" };
+    if ((e as Error).message === "timeout") return { alive: false, timeout: true };
+    return { alive: e instanceof HttpError };
   }
 }
 
