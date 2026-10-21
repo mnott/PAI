@@ -78,7 +78,7 @@ svg text{fill:var(--dim);font-size:10px}
 .tip:hover,.tip:focus{color:var(--acc);outline:none}
 .tip::after{content:attr(data-tip);display:none;position:absolute;z-index:5;top:18px;left:-6px;width:max-content;max-width:min(340px,72vw);padding:6px 9px;background:var(--fg);color:var(--bg);border-radius:6px;font-size:12px;font-weight:400;line-height:1.4;white-space:pre-line;text-align:left;text-transform:none;letter-spacing:0;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 .tip:hover::after,.tip:focus::after{display:block}
-/* win/info.ts popover (spec 2.4): the popup lives on <body>, so no card clips it */
+/* win/info.ts popover (spec 2.4): the popup lives on the body element, so no card clips it */
 .win-info{display:inline-block;margin-left:5px;width:14px;height:14px;line-height:14px;text-align:center;font:11px/14px inherit;font-style:normal;text-transform:none;letter-spacing:0;color:var(--dim);cursor:help;border-radius:50%;vertical-align:middle}
 .win-info:hover,.win-info:focus{color:var(--acc);outline:none}
 #win-info-pop{position:fixed;z-index:50;max-width:min(340px,72vw);padding:6px 9px;background:var(--fg);color:var(--bg);border-radius:6px;font-size:12px;font-weight:400;line-height:1.4;white-space:pre-line;text-align:left;text-transform:none;letter-spacing:0;box-shadow:0 2px 8px rgba(0,0,0,.3)}
