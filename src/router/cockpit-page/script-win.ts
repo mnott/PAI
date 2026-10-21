@@ -17,6 +17,7 @@ import { WIN_SYSTEM_JS } from "./win/cards-system.js";
 import { WIN_MEMORY_JS } from "./win/cards-memory.js";
 import { WIN_ROUTING_JS } from "./win/cards-routing.js";
 import { WIN_CLOUD_JS } from "./win/cards-cloud.js";
+import { WIN_WORKERS_JS } from "./win/cards-workers.js";
 import { WIN_ACTIONS_JS } from "./win/actions.js";
 import { WIN_SELECT_JS } from "./win/select.js";
 
@@ -52,6 +53,7 @@ ${WIN_SYSTEM_JS}
 ${WIN_MEMORY_JS}
 ${WIN_ROUTING_JS}
 ${WIN_CLOUD_JS}
+${WIN_WORKERS_JS}
  /** The sections' defaults as root bands: [[defaults, band px], ...] in page order. */
  function winCompose(parts){
   var leaves=[],px=[],cards=[],kids={},st={},i,k;
@@ -75,9 +77,12 @@ ${WIN_CLOUD_JS}
   var oldMem=document.querySelector('[data-section="memory"]');if(oldMem)oldMem.style.display="none";
   var oldRt=document.querySelector('[data-section="routing"]');if(oldRt)oldRt.style.display="none";
   var oldCl=document.querySelector('[data-section="cloud"]');if(oldCl)oldCl.style.display="none";
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240]]));
+  var oldWk=document.querySelector('[data-section="workers"]');if(oldWk)oldWk.style.display="none";
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420]]));
   // the limits poll already calls renderRouting: the routing cards ride on it
   var oldRender=renderRouting;renderRouting=function(){oldRender();if(lim){winFeedLimits(lim);limitsSync(lim)}};
+  // the queue feed: the win cards first, so a throwing old panel cannot leave them empty
+  var oldQueue=renderQueue;renderQueue=function(q){try{winFeedQueue(q)}finally{oldQueue(q)}};
   window.winFeedSystem=winFeedSystem;window.winFeedMemory=winFeedMemory;window.winFeedLimits=winFeedLimits;
   WinT.anchorInit(document,window,root);
  })();

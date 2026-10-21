@@ -41,10 +41,16 @@ Win.registerType("kv",{minW:150,minH:68,defaultH:90,
  }});
 Win.registerType("table",{minW:300,minH:80,defaultH:160,
  mount:function(ctx){ctx.body.innerHTML='<div class="tw" data-k="t"></div>'},
- update:function(ctx,p){if(poolOk(p)&&!poolOff(p))ctx.html("t",poolSlotsHtml(p))}});
+ update:function(ctx,p){
+  if(ctx.id.indexOf("workers.")===0){wkTableUpdate(ctx,p);return}
+  if(poolOk(p)&&!poolOff(p))ctx.html("t",poolSlotsHtml(p));
+ }});
 Win.registerType("note",{minW:150,minH:48,defaultH:60,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><span class="wm-s" data-k="n"></span></div>'},
- update:function(ctx,p){if(poolOk(p)&&poolOff(p))ctx.text("n",poolOffText(p))}});
+ update:function(ctx,p){
+  if(ctx.id.indexOf("workers.")===0){wkNoteUpdate(ctx,p);return}
+  if(poolOk(p)&&poolOff(p))ctx.text("n",poolOffText(p));
+ }});
 /** A copy of a kids tree without the leaf id; weights renormalize, a one-child split collapses. */
 function poolWithout(n,id){
  if(n.k==="c")return n.id===id?null:n;
