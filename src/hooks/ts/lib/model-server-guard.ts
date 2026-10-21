@@ -20,6 +20,8 @@ const SERVER_BINARIES = new Set(["vllm-mlx", "vllm", "mlx_lm.server", "llama-ser
 const PREFIXES = new Set(["nohup", "sudo", "exec", "env", "setsid", "time", "command", "caffeinate", "nice"]);
 const SHELLS = new Set(["sh", "bash", "zsh", "source", "."]);
 const LAUNCHER_SCRIPT = /(?:^|\/)(?:run|serve)-[^/\s]*\.sh$/;
+/** `pai worker local` verbs that start nothing; start, scale and the deprecated `<tier>` alias do. */
+const READ_ONLY_LOCAL = new Set(["status", "stop", "off", "help"]);
 const MODEL_AGENT = /mlx|vllm|llama|ollama|strata|flashnext|model|local\d/i;
 
 function isAssignment(w: string): boolean {
@@ -44,6 +46,10 @@ function startsServer(words: string[], depth: number): boolean {
     }
     const script = w.slice(1).find((a) => !a.startsWith("-"));
     if (script && LAUNCHER_SCRIPT.test(script)) return true;
+  }
+  if (bin === "pai" && w[1] === "worker" && w[2] === "local") {
+    const verb = w.slice(3).find((a) => !a.startsWith("-"));
+    return verb !== undefined && !READ_ONLY_LOCAL.has(verb);
   }
   if (bin === "launchctl" && /^(load|kickstart|bootstrap|start)$/.test(w[1] ?? "")) {
     return w.slice(2).some((a) => MODEL_AGENT.test(a));

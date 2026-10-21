@@ -300,7 +300,7 @@ export async function resolveSetup(workers: WorkersConfig, last: Setup | null, q
   if (setup) return setup;
   const hidden = findSetup(allSetups(workers, last, saved), query);
   if (hidden && d.has(hidden.workers)) {
-    throw new CliError(`local provider ${hidden.workers} is not running; start it with pai worker local`, "pai setups");
+    throw new CliError(`local provider ${hidden.workers} is not running; the operator starts it with pai worker local start <model>`, "pai setups");
   }
   throw unknownSetup(query, allSetups(workers, last, saved, d, ls.resolved));
 }

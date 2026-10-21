@@ -44,7 +44,7 @@ describe("local setups need a running server", () => {
 
   it("--with a down local setup says so; an up one resolves", async () => {
     const down = await downLocalProviders(cfg, check);
-    await expect(resolveSetup(cfg, null, "anthropic + dead workers", down)).rejects.toThrow(/local provider dead is not running; start it with/);
+    await expect(resolveSetup(cfg, null, "anthropic + dead workers", down)).rejects.toThrow(/local provider dead is not running; the operator starts it with pai worker local start/);
     await expect(resolveSetup(cfg, null, "anthropic + local workers", down)).resolves.toMatchObject({ workers: "up" });
   });
 });

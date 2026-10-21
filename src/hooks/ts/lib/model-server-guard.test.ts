@@ -19,6 +19,11 @@ describe("modelServerReason", () => {
     "sh -c 'vllm-mlx serve x'",
     "launchctl load ~/Library/LaunchAgents/com.example.mlx-server.plist",
     "launchctl kickstart -k gui/501/com.example.local30",
+    "pai worker local start big",
+    "pai worker local start big --count 2",
+    "pai worker local scale big 3",
+    "pai worker local big",
+    "sh -c 'pai worker local start big'",
   ])("denies the launcher %s", (cmd) => {
     const r = check(cmd);
     expect(r).toContain("started by the operator, not by sessions");
@@ -41,6 +46,10 @@ describe("modelServerReason", () => {
     "launchctl list",
     "launchctl load ~/Library/LaunchAgents/com.example.backup.plist",
     "pai worker run --local -p x",
+    "pai worker local",
+    "pai worker local status",
+    "pai worker local stop big#2",
+    "pai worker local off",
     "curl -s 127.0.0.1:3000; curl -s 127.0.0.1:3000",
   ])("allows %s", (cmd) => {
     expect(check(cmd)).toBeNull();
