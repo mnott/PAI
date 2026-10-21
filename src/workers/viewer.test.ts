@@ -33,8 +33,9 @@ const plain = makeColor(false);
 const color = makeColor(true);
 
 describe("workerEnded", () => {
-  it("ends once the result event was rendered, whatever the status says", () => {
-    expect(workerEnded(true, "running")).toBe(true);
+  it("a rendered result event does not end a worker whose status is still running (pool slot died mid-task, run restarted)", () => {
+    expect(workerEnded(true, "running")).toBe(false);
+    expect(workerEnded(true, "queued")).toBe(false);
     expect(workerEnded(true, undefined)).toBe(true);
     expect(workerEnded(true, "done")).toBe(true);
   });
@@ -776,6 +777,27 @@ describe("followWorkers chat pane (FORCE_TTY over pipes)", () => {
     expect(ledger).toContain(`id=${id}`);
     expect(ledger).toContain("reason=worker-ended");
   }, 8000);
+
+  it("does not close the pane on a result event while the status says running, then closes once it ends", async () => {
+    const { dir, id } = chatFixture("running");
+    appendFileSync(
+      join(dir, `${id}.jsonl`),
+      JSON.stringify({ type: "result", is_error: true, result: "pool slot died mid-task", _ts: "2026-09-17T15:00:01Z" }) + "\n"
+    );
+    const io: FollowIO = {
+      stdin: new PassThrough(),
+      stdout: { write: () => true, rows: 24, columns: 80 },
+      spawnResume: () => ({ on: () => undefined }),
+    };
+    let ended = false;
+    const done = followWorkers(dir, id, false, 1, { FORCE_TTY: "1" }, false, io).then(() => (ended = true));
+    await sleep(3500);
+    expect(ended).toBe(false);
+    const sp = join(dir, `${id}.status`);
+    writeFileSync(sp, JSON.stringify({ ...JSON.parse(readFileSync(sp, "utf8")), state: "done", rc: 0, secs: 2 }));
+    await done;
+    expect(readFileSync(ledgerPath(dir), "utf8")).toContain("reason=worker-ended");
+  }, 15000);
 
   it("stops on an ended status even when the recorded pid was reused by a live process, and prints the ended line", async () => {
     const { dir, id } = chatFixture("done");
