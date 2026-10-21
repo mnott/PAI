@@ -740,7 +740,8 @@ describe("cockpit Models cards", () => {
   it("the tile grip sits in the tile's top-right corner, never inline with the value", () => {
     const tile = new Function("esc", `${COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0]}\n${COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0]}; return metricTile;`)((s: unknown) => String(s ?? ""))({ title: "Speed", value: "58.5", unit: "t/s", sub: "", series: [] }) as string;
     expect(tile).not.toMatch(/<span class="mt-value"><span class="tgrip"/);
-    expect(tile).toMatch(/^<div class="mt"><span class="tgrip" data-tgrip/);
+    // the tile opens with its stable drag id, then the grip
+    expect(tile).toMatch(/^<div class="mt" data-tid="speed"><span class="tgrip" data-tgrip/);
     expect(COCKPIT_HTML).toMatch(/\.tgrip\{position:absolute;top:\d+px;right:\d+px;opacity:0/);
     expect(COCKPIT_HTML).toMatch(/@media\(hover:none\)\{\.tgrip\{opacity:\.5\}\}/);
     expect(COCKPIT_HTML).toMatch(/\.mt:hover \.tgrip/);
@@ -2302,12 +2303,13 @@ describe("cockpit drag-and-drop layout", () => {
   });
 
   it("tile order persists across a setHtml rebuild: applyTileOrder reorders by data-tid, new tiles go last", () => {
-    const mk = (id: string) => ({ style: {}, getAttribute: (k: string) => (k === "data-tid" ? id : null) });
-    const t1 = mk("Speed"), t2 = mk("Memory"), t3 = mk("Workers");
-    const kids = [t1, t2, t3];
+    // parentNode set by appendChild, like a real element: applyTileOrder orders live children only
+    const mk = (id: string, parent: any) => ({ style: {}, parentNode: parent, getAttribute: (k: string) => (k === "data-tid" ? id : null) });
     const el: any = { __tkey: "rt / m tiles", __html: "src" };
+    const t1 = mk("Speed", el), t2 = mk("Memory", el), t3 = mk("Workers", el);
+    const kids = [t1, t2, t3];
     Object.defineProperty(el, "children", { get: () => kids });
-    el.appendChild = (n: any) => { const i = kids.indexOf(n); if (i >= 0) kids.splice(i, 1); kids.push(n); };
+    el.appendChild = (n: any) => { const i = kids.indexOf(n); if (i >= 0) kids.splice(i, 1); n.parentNode = el; kids.push(n); };
     const { a: A } = api([]);
     A.applyTileOrder(el); // no saved order: untouched
     expect(el.children).toEqual([t1, t2, t3]);
@@ -2315,15 +2317,15 @@ describe("cockpit drag-and-drop layout", () => {
     o[el.__tkey] = ["Workers", "Memory"];
     A.saveTileOrder(o);
     // the poll rebuild: fresh elements, source order
-    const r1 = mk("Speed"), r2 = mk("Memory"), r3 = mk("Workers");
-    const kids2 = [r1, r2, r3];
     const el2: any = { __tkey: el.__tkey, __html: "src" };
+    const r1 = mk("Speed", el2), r2 = mk("Memory", el2), r3 = mk("Workers", el2);
+    const kids2 = [r1, r2, r3];
     Object.defineProperty(el2, "children", { get: () => kids2 });
-    el2.appendChild = (n: any) => { const i = kids2.indexOf(n); if (i >= 0) kids2.splice(i, 1); kids2.push(n); };
+    el2.appendChild = (n: any) => { const i = kids2.indexOf(n); if (i >= 0) kids2.splice(i, 1); n.parentNode = el2; kids2.push(n); };
     A.applyTileOrder(el2);
     expect(el2.children).toEqual([r3, r2, r1]);
     // a tile the order does not know goes last
-    const r4 = mk("Cache");
+    const r4 = mk("Cache", el2);
     kids2.push(r4);
     A.applyTileOrder(el2);
     expect(el2.children).toEqual([r3, r2, r1, r4]);
@@ -2379,6 +2381,193 @@ describe("cockpit drag-and-drop layout", () => {
     expect(COCKPIT_HTML).toContain("MAXROW=3");
     expect(COCKPIT_HTML).toContain("PRESS_MS=350");
     expect(COCKPIT_HTML).toContain("EDGE_PX=40");
+  });
+});
+
+/** The page's render helpers, extracted verbatim from the shipped page. */
+const TILE_RENDER_SRC = [
+  COCKPIT_HTML.match(/function metricSpark[\s\S]*?\n\}/)![0],
+  COCKPIT_HTML.match(/function metricTile[\s\S]*?\n\}/)![0],
+  COCKPIT_HTML.match(/function shortModel\([\s\S]*?\n\}/)![0],
+  COCKPIT_HTML.match(/function actRow[\s\S]*?\n\}/)![0],
+  COCKPIT_HTML.match(/function tierRow[\s\S]*?\n\}/)![0],
+  COCKPIT_HTML.match(/function gb\(b,d\)\{[^\n]*\}/)![0],
+  COCKPIT_HTML.match(/function gbm\(m\)\{[^\n]*\}/)![0],
+  COCKPIT_HTML.match(/function modelsHtml[\s\S]*?\n\}/)![0],
+].join("\n");
+const realModelsHtml = new Function("esc", "pct", `${TILE_RENDER_SRC}; return modelsHtml;`)(
+  (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%"
+) as (inv: unknown) => string;
+
+/** A minimal DOM that parses the rendered html: children, parentNode, getAttribute,
+ *  querySelector, appendChild, and addEventListener that records handlers, so the page's
+ *  own wiring runs against the real markup. No hand-made fixtures. */
+function miniDom(html: string) {
+  const roots: any[] = [];
+  const stack: any[] = [];
+  for (const m of html.matchAll(/<\/([a-zA-Z][a-zA-Z0-9]*)\s*>|<([a-zA-Z][a-zA-Z0-9]*)([^>]*)\/?>|([^<]+)/g)) {
+    if (m[4] !== undefined) continue;
+    const closing = m[1] !== undefined;
+    // a trailing "/" is inside the attribute values (a model id like "huggingface.co/…"),
+    // so only an XML-style "/>" is self-closing
+    const self = !closing && m[0].endsWith("/>");
+    const attrs: Record<string, string | null> = {};
+    // an attribute name starts at the tag's start or after a space: a "/" inside a value
+    // ("huggingface.co/…") must not split the value into a bogus attribute
+    for (const a of (m[3] ?? "").matchAll(/(^|\s)([a-zA-Z-]+)(?:="([^"]*)")?/g)) attrs[a[2]!] = a[3] ?? "";
+    const node: any = {
+      tag: closing ? m[1]! : m[2]!, attrs, classes: new Set<string>((attrs["class"] ?? "").split(/\s+/).filter(Boolean)),
+      children: [], parentNode: null, handlers: [] as Array<{ type: string; fn: (e: unknown) => void }>,
+      getAttribute: (k: string) => attrs[k] ?? null,
+      classList: { contains: (c: string) => node.classes.has(c) },
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 40 }),
+      addEventListener: (type: string, fn: (e: unknown) => void) => { node.handlers.push({ type, fn }); },
+      removeEventListener() {}, setPointerCapture() {},
+      closest: (sel: string) => {
+        // nearest self-or-ancestor matching the selector, like the real closest()
+        const match = (n: any) => (sel === "[data-tgrip]" ? n.attrs["data-tgrip"] !== undefined : sel === "[data-tid]" ? n.getAttribute("data-tid") !== null : false);
+        for (let n: any = node; n; n = n.parentNode) if (match(n)) return n;
+        return null;
+      },
+      querySelector: (sel: string) => {
+        let found: any = null;
+        const match = (n: any) => (sel === "[data-tgrip]" ? n.attrs["data-tgrip"] !== undefined : sel === "[data-tid]" ? n.getAttribute("data-tid") !== null : false);
+        const walk = (n: any) => { if (!found && match(n)) found = n; for (const c of liveKids(n)) walk(c); };
+        for (const c of liveKids(node)) walk(c); // a real querySelector matches descendants, not the element itself
+        return found;
+      },
+      appendChild(n: any) {
+        // a real appendChild moves the node: out of its old parent, into this one
+        const p = n.parentNode;
+        if (p) { const i = p.children.indexOf(n); if (i >= 0) p.children.splice(i, 1); }
+        n.parentNode = node; node.children.push(n);
+      },
+    };
+    if (closing) stack.pop();
+    else {
+      // the stack's top is the innermost open element (closing tags pop it): the new node's parent
+      const parent = stack.length ? stack[stack.length - 1] : null;
+      if (parent) { node.parentNode = parent; parent.children.push(node); } else roots.push(node);
+      if (!self) stack.push(node);
+    }
+  }
+  const all: any[] = [];
+  const walk = (n: any) => { all.push(n); for (const c of n.children) walk(c); };
+  for (const r of roots) walk(r);
+  // live children of a node: the parse order, minus the nodes appendChild moved away
+  const liveKids = (n: any) => n.children.filter((c: any) => c.parentNode === n);
+  const bySel = (sel: string) => all.filter((n) =>
+    sel === "[data-tgrip]" ? n.attrs["data-tgrip"] !== undefined
+      : sel === ".rt-tiles" ? n.classes.has("rt-tiles")
+      : sel === ".mcard" ? n.classes.has("mcard") : false);
+  const document: any = {
+    querySelectorAll: bySel,
+    querySelector: (sel: string) => all.find((n) => sel === "main" && n.tag === "main") ?? null,
+    createElement: () => ({ style: {}, dataset: {}, classList: { toggle() {} }, remove() {} }),
+    body: { appendChild() {} },
+  };
+  const panel: any = { innerHTML: html, __html: html, querySelectorAll: bySel };
+  return { roots, all, document, panel };
+}
+
+/** The page's tile-order/grip/drag code (the LKEY block) plus the real renderModels,
+ *  run against the real modelsHtml output for a live-shaped inventory. */
+function tileDragHarness(inv: unknown) {
+  const src = COCKPIT_HTML.match(/var LKEY[\s\S]*?\nfunction resetLayout[^\n]*\n/)![0];
+  const renderBody = COCKPIT_HTML.match(/function renderModels\(\)\{[\s\S]*?\n\}\n/)![0];
+  const store: Record<string, string> = {};
+  const ls = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; } };
+  const windowStub = { innerWidth: 1200, addEventListener() {}, removeEventListener() {}, scrollBy() {} };
+  const dom = miniDom(realModelsHtml(inv));
+  // edgeScroll reads document.documentElement.clientHeight
+  dom.document.documentElement = { clientHeight: 800 };
+  const fn = new Function(
+    "localStorage", "document", "window", "setTimeout", "clearTimeout", "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct",
+    `${src}\nfunction stackRows(){}\n${TILE_RENDER_SRC}\nfunction applyModelFold(){}\nfunction setTip(){}\nvar mEditing=false;\n${renderBody}\nreturn {renderModels:renderModels,tileOrder:tileOrder,saveTileOrder:saveTileOrder,applyTileOrder:applyTileOrder,startDrag:sDrag,moveDrag:mDrag,upDrag:uDrag,getDrag:function(){return drag}};`
+  );
+  const api = fn(ls, dom.document, windowStub, () => 0, () => {}, () => dom.panel, inv, () => true, () => {}, () => {},
+    (s: unknown) => String(s ?? ""), (x: number) => (x * 100).toFixed(1) + "%") as Record<string, (...args: unknown[]) => unknown>;
+  const tilesOf = (cont: any) => cont.children.filter((c: any) => c.parentNode === cont && c.getAttribute("data-tid"));
+  const keydownOf = (grip: any) => grip.handlers.find((h: { type: string }) => h.type === "keydown")?.fn as ((e: unknown) => void) | undefined;
+  const loadedTiles = () => dom.document.querySelectorAll(".rt-tiles").find((c: any) => c.getAttribute("data-tkey") === "gyro-m / flash-next tiles");
+  return { api, dom, store, tilesOf, keydownOf, loadedTiles };
+}
+
+describe("cockpit tile drag on the real rendered page (live bug: tiles had no data-tid)", () => {
+  // the live shape: a running coding runtime with the four metric tiles in .rt-tiles,
+  // an idle card with the two compact tiles, model cards in the grid
+  const inv = {
+    at: "2026-10-21T03:00:00.000Z",
+    runtimes: [
+      { name: "gyro-m", kind: "strata", status: "running", port: 8035, label: "Coding workers (gyro-m)", users: ["worker:flashnext-iq3"], models: [{ model: "flash-next", kind: "coding", loaded: true, memoryMb: 50000, usedBy: ["worker:flashnext-iq3"] }] },
+      { name: "ollama", kind: "ollama", status: "idle", port: 11434, users: ["pai-embedding"], models: [{ model: "qwen3:8b", kind: "chat", loaded: false, sizeMb: 4792, usedBy: ["pai-embedding"] }] },
+    ],
+    duplicates: [],
+    consumers: [],
+    live: {
+      at: 1,
+      runtimes: [
+        { name: "gyro-m", status: "running", live: { engine: { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90, lastDecode: 73.4, lastPrompt: 155000, lastReused: 150000, lastPromptMs: 5000, lastUsed: 155500, gpuMemUsed: 1530000000, gpuMemTotal: 115964116992, maxContext: 262144, liveUsed: null }, rssMb: 36148, workers: [], queued: 2, cap: 1, conversationSlots: 4, sparesReady: 1, sparesConfig: 1 }, history: { decode: [70, 73.4], prefill: [700, 715], memoryMb: [49000, 50000], queued: [0, 2], reusedPct: [88, 90], pressurePct: [60, 62] } },
+        { name: "ollama", status: "idle", live: null, history: null },
+      ],
+    },
+  };
+
+  it("the real render emits draggable tiles: every metric tile and model card carries a distinct data-tid", () => {
+    const h = realModelsHtml(inv);
+    const tiles = [...h.matchAll(/<div class="mt" data-tid="([^"]*)"/g)].map((m) => m[1]!);
+    expect(tiles.length).toBeGreaterThanOrEqual(6); // 4 loaded tiles + 2 idle-card tiles
+    expect(new Set(tiles).size).toBe(tiles.length);
+    for (const t of ["speed", "memory", "workers", "conversation-cache", "memory-size", "users"]) expect(tiles).toContain(t);
+    // no tile renders without an id
+    expect(h.match(/<div class="mt">/g) ?? []).toEqual([]);
+    // model cards carry the fold-state id (runtime / model)
+    const cards = [...h.matchAll(/<div class="mcard[^"]*" data-tid="([^"]*)"/g)].map((m) => m[1]!);
+    expect(cards).toEqual(["gyro-m / flash-next", "ollama / qwen3:8b"]);
+    // a grip on every metric tile
+    expect((h.match(/data-tgrip/g) ?? []).length).toBe(tiles.length);
+  });
+
+  it("a pointer drag of a real rendered tile reorders the tiles and persists under pai.cockpit.tiles.v1", () => {
+    const { api, store, tilesOf, loadedTiles } = tileDragHarness(inv);
+    api.renderModels();
+    const cont = loadedTiles();
+    expect(cont.getAttribute("data-tkey")).toBe("gyro-m / flash-next tiles");
+    expect(tilesOf(cont).map((t: any) => t.getAttribute("data-tid"))).toEqual(["speed", "memory", "workers", "conversation-cache"]);
+    const grip = cont.children[0].querySelector("[data-tgrip]"); // Speed tile
+    expect(grip).toBeTruthy();
+    api.startDrag({ button: 0, pointerType: "mouse", pointerId: 1, clientX: 10, clientY: 10, preventDefault() {} }, grip, "tile");
+    expect(api.getDrag()).toBeTruthy(); // the drag found the tile via closest("[data-tid]")
+    api.moveDrag({ clientX: 150, clientY: 10 });
+    api.upDrag({ clientX: 150, clientY: 10 }); // past the first tile's mid: move right
+    const after = tilesOf(cont).map((t: any) => t.getAttribute("data-tid"));
+    expect(after).toEqual(["memory", "speed", "workers", "conversation-cache"]);
+    expect(JSON.parse(store["pai.cockpit.tiles.v1"])).toEqual({ "gyro-m / flash-next tiles": after });
+  });
+
+  it("the keyboard Alt+ArrowRight path reorders the real rendered tiles and persists", () => {
+    const { api, store, tilesOf, keydownOf, loadedTiles } = tileDragHarness(inv);
+    api.renderModels();
+    const cont = loadedTiles();
+    const grip = tilesOf(cont)[1].querySelector("[data-tgrip]"); // Memory tile
+    const keydown = keydownOf(grip); // wired by tileGrips() inside renderModels
+    expect(typeof keydown).toBe("function");
+    keydown!({ altKey: true, key: "ArrowRight", preventDefault() {} });
+    const after = tilesOf(cont).map((t: any) => t.getAttribute("data-tid"));
+    expect(after).toEqual(["speed", "workers", "memory", "conversation-cache"]);
+    expect(JSON.parse(store["pai.cockpit.tiles.v1"])).toEqual({ "gyro-m / flash-next tiles": after });
+  });
+
+  it("after a setHtml re-render the saved order is re-applied to the fresh tiles", () => {
+    const { api, dom, store, tilesOf } = tileDragHarness(inv);
+    api.renderModels();
+    store["pai.cockpit.tiles.v1"] = JSON.stringify({ "gyro-m / flash-next tiles": ["conversation-cache", "workers", "memory", "speed"] });
+    // the poll rebuild: the same source html, fresh elements
+    const dom2 = miniDom(realModelsHtml(inv));
+    dom.panel.querySelectorAll = dom2.document.querySelectorAll;
+    api.renderModels();
+    const cont2 = dom2.document.querySelectorAll(".rt-tiles").find((c: any) => c.getAttribute("data-tkey") === "gyro-m / flash-next tiles");
+    expect(tilesOf(cont2).map((t: any) => t.getAttribute("data-tid"))).toEqual(["conversation-cache", "workers", "memory", "speed"]);
   });
 });
 

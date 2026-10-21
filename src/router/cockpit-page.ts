@@ -327,7 +327,9 @@ function metricTile(o){
  var sec=o.secondary;
  function col(v,u,sub,cls){return'<div'+(cls?' class="'+cls+'"':"")+'><span class="mt-value">'+(v==null?"–":esc(v))+(v!=null&&u?'<small>'+esc(u)+'</small>':"")+'</span><span class="mt-sub">'+esc(sub||"")+'</span></div>'}
  function fill(v,u,sub){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
- return'<div class="mt"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
+ // the tile's stable id: a slug of its title, so the drag can find and order it (the tile drag keys on data-tid)
+ var tid=String(o.title||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"tile";
+ return'<div class="mt" data-tid="'+esc(tid)+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
   (o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub):"")+
   '<svg class="mt-spark" viewBox="0 0 ${L.sparkViewMaxPx} ${L.sparkHeightPx}" preserveAspectRatio="none" width="100%" height="${L.sparkHeightPx}">'+metricSpark(o.series||[])+'</svg></div>'
@@ -442,11 +444,13 @@ function saveTileOrder(o){try{localStorage.setItem(TKEY,JSON.stringify(o))}catch
 function applyTileOrder(el){
  var kids=el.children;var ord=tileOrder()[el.__tkey];if(!ord||kids.length<2)return;
  var byId={},keep=[];
- for(var i=0;i<kids.length;i++){var id=kids[i].getAttribute("data-tid");if(!id){keep.push(kids[i]);continue}byId[id]=kids[i]}
+ // live children only: a tile moved here earlier still sits in a stale container's children
+ // array, and re-appending it from there would undo that move
+ for(var i=0;i<kids.length;i++){if(kids[i].parentNode!==el)continue;var id=kids[i].getAttribute("data-tid");if(!id){keep.push(kids[i]);continue}byId[id]=kids[i]}
  var moved=0;
  for(var k=0;k<ord.length;k++){var e=byId[ord[k]];if(e){el.appendChild(e);moved++}}
  // tiles the saved order does not know (new since the save) go last, in DOM order
- for(var j=0;j<kids.length;j++)if(ord.indexOf(kids[j].getAttribute("data-tid"))<0&&kids[j].getAttribute("data-tid"))keep.push(kids[j]);
+ for(var j=0;j<kids.length;j++)if(kids[j].parentNode===el&&ord.indexOf(kids[j].getAttribute("data-tid"))<0&&kids[j].getAttribute("data-tid"))keep.push(kids[j]);
  for(var m=0;m<keep.length;m++)el.appendChild(keep[m]);
  if(moved)el.__html=""; // the html no longer matches the source string: a later identical poll must re-apply
 }
@@ -454,18 +458,24 @@ function tileGrips(){
  var gs=document.querySelectorAll("[data-tgrip]");
  for(var i=0;i<gs.length;i++)(function(g){
   if(g.__wired)return;g.__wired=1;
-  g.addEventListener("pointerdown",function(e){sDrag(e,g,"tile")});
+  // a grip whose tile carries no data-tid cannot be ordered: the drag would find no tile and do nothing
+  g.addEventListener("pointerdown",function(e){if(g.parentNode.getAttribute("data-tid"))sDrag(e,g,"tile")});
   g.addEventListener("keydown",function(e){
    if(!e.altKey)return;
    if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
+    if(!g.parentNode.getAttribute("data-tid"))return;
     e.preventDefault();
-    var cont=g.parentNode,ord=[];
-    for(var k=0;k<cont.children.length;k++)if(cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
-    var id=g.parentNode.getAttribute("data-tid"),p=ord.indexOf(id);
+    // the tile is the grip's ancestor carrying the id; its container holds the tiles
+    var tile=g.closest("[data-tid]"),cont=tile.parentNode,ord=[];
+    // live children only: a tile moved by an earlier applyTileOrder still sits in the
+    // stale parent's children array, and ordering by it would undo that move
+    for(var k=0;k<cont.children.length;k++)if(cont.children[k].parentNode===cont&&cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
+    var id=tile.getAttribute("data-tid"),p=ord.indexOf(id);
     var np=e.key==="ArrowLeft"?p-1:p+1;
-    if(np<0||np>=ord.length)return;
+    if(p<0||np<0||np>=ord.length)return;
     ord.splice(p,1);ord.splice(np,0,id);
-    var o=tileOrder();o[cont.__tkey]=ord;saveTileOrder(o);applyTileOrder(cont);
+    // __tkey is set by renderModels; fall back to the container's own data-tkey
+    var o=tileOrder();o[cont.__tkey||cont.getAttribute("data-tkey")]=ord;saveTileOrder(o);applyTileOrder(cont);
    }
   });
  })(gs[i]);
@@ -533,13 +543,16 @@ function uDrag(e){
  if(d.kind==="tile"){
   hideInd();
   var cont=d.tile.parentNode,ord=[];
-  for(var k=0;k<cont.children.length;k++)if(cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
+  // live children only: a tile moved by an earlier applyTileOrder still sits in the
+  // stale parent's children array, and ordering by it would undo that move
+  for(var k=0;k<cont.children.length;k++)if(cont.children[k].parentNode===cont&&cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
   var id=d.tile.getAttribute("data-tid"),p=ord.indexOf(id);
-  var r=cont.querySelector("[data-tid]").getBoundingClientRect();
+  var r=(cont.querySelector("[data-tid]")||d.tile).getBoundingClientRect();
   var np=e.clientX<r.left+r.width/2?p-1:p+1;
-  if(np>=0&&np<ord.length&&np!==p){
+  if(p>=0&&np>=0&&np<ord.length&&np!==p){
    ord.splice(p,1);ord.splice(np,0,id);
-   var o=tileOrder();o[cont.__tkey]=ord;saveTileOrder(o);applyTileOrder(cont);
+   // __tkey is set by renderModels; fall back to the container's own data-tkey
+   var o=tileOrder();o[cont.__tkey||cont.getAttribute("data-tkey")]=ord;saveTileOrder(o);applyTileOrder(cont);
   }
   return;
  }
