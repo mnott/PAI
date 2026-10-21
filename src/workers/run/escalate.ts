@@ -4,7 +4,7 @@
  * existing import path keeps working.
  */
 
-import { readToolErrors } from "../tool-errors.js";
+import { readToolErrors, harnessToolErrorTexts } from "../tool-errors.js";
 import { parseRunnerArgs } from "../args.js";
 import { ANTHROPIC_NATIVE, getProviderOrNative } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
@@ -56,7 +56,7 @@ export async function tryEscalate(
     contextWindow: st.contextWindow,
     resultText,
     reportText: [report?.notes, report?.why].filter(Boolean).join("\n"),
-    toolErrors: readToolErrors(logDir).filter((r) => r.worker === wid).map((r) => r.raw),
+    toolErrors: harnessToolErrorTexts(readToolErrors(logDir).filter((r) => r.worker === wid)),
     failures: failed ? localFailures(ledgerPath(logDir), label, (p) => { const c = getProviderOrNative(config, p); return !!c && isLoopbackProvider(c); }) + (st.rc === 0 ? 1 : 0) : 0,
     loopStopped: st.loopStopped,
     reportValid: st.reportValid,

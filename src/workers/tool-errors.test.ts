@@ -6,7 +6,8 @@ import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
 import { recordToolError, clipRaw } from "./tool-errors.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
 import type { WorkerStatus } from "./status.js";
-import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord, isBenignBash } from "./tool-errors.js";
+import { classifyToolError, summarizeToolInput, toolErrorText, detectRunningWorkerErrors, detectToolErrors, groupToolErrors, normalizeError, RESEND_MS, toolErrorSigTag, type ToolErrorRecord, isBenignBash, harnessToolErrorTexts } from "./tool-errors.js";
+import { detectTrigger } from "./escalation.js";
 
 const rec = (worker: string, ts: number, raw: string, tool = "Read"): ToolErrorRecord => ({
   ts, worker, provider: "p", label: "l", tool, raw, signature: normalizeError(tool, raw),
@@ -188,6 +189,13 @@ describe("classification", () => {
     expect(classifyToolError(withGrant(["Read", "Write"])).cls).toBe("harness");
     expect(classifyToolError(withGrant()).cls).toBe("harness");
     expect(classifyToolError(withGrant([])).cls).toBe("harness");
+  });
+  it("a withheld Write never escalates; a granted Write reported missing does", () => {
+    const raw = "No such tool available: Write. Write is disabled for this session";
+    const withGrant = (granted: string[]) => [{ ...rec("w1", NOW, raw, "Write"), granted }];
+    const trigger = (granted: string[]) => detectTrigger({ toolErrors: harnessToolErrorTexts(withGrant(granted)), reportValid: true });
+    expect(trigger(["Read", "Bash", "Grep", "Glob"])).toBeNull();
+    expect(trigger(["Read", "Write"])).toMatchObject({ kind: "missing-tool" });
   });
   it("harness errors alert at the usual thresholds", () => {
     for (const raw of ["Working directory /a/b was deleted", "API Error: 401 Failed to authenticate", "No such tool available: Foo", "fetch http://localhost:9 returned 503"]) {
