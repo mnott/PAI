@@ -372,7 +372,7 @@ describe("spare helpers and the client", () => {
   it("client: an unreachable host is a recorded miss and a fresh spawn", async () => {
     const d = mkdtempSync(join(tmpdir(), "pai-spare-cl-"));
     const a = {
-      config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 1, spares: 1 } },
+      config: { panes: { required: false }, pool: { enabled: true, maxSlots: 1, idleSecs: 0, port: 1, spares: 1 } },
       logDir: d,
       quiet: true,
       id: "w-cl",

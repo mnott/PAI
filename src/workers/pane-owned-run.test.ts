@@ -67,11 +67,11 @@ describe("a worker's command runs inside the pane that owns it", () => {
     expect(events).toContain("pane-close");
   }, 15_000);
 
-  it("a pane that cannot open fails the run; --no-pane and the override run directly", async () => {
+  it("a pane that cannot open fails the run; only the config waiver or the override runs directly", async () => {
     vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new Error("split failed"));
-    await expect(requireVisiblePane(dir, cfg, "w-bad", "T", false, false, join(dir, "ledger.log"))).rejects.toThrow(/pane could not be opened: split failed/);
-    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/WORKER-NO-PANE/);
-    expect(await requireVisiblePane(dir, cfg, "w-np", "T", true, false, join(dir, "ledger.log"))).toBe(false);
+    await expect(requireVisiblePane(dir, cfg, "w-bad", "T", false, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: split failed/);
+    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-REFUSED/);
+    expect(await requireVisiblePane(dir, { ...cfg, panes: { required: false } }, "w-np", "T", true, false, join(dir, "ledger.log"))).toBe(false);
     vi.mocked(pane.headlessAllowed).mockReturnValue("override");
     expect(await requireVisiblePane(dir, cfg, "w-ov", "T", false, false, join(dir, "ledger.log"))).toBe(false);
     // no pane owns it: the command is a plain child of the caller
@@ -79,8 +79,8 @@ describe("a worker's command runs inside the pane that owns it", () => {
     expect(await new Promise((r) => proc.on("close", r))).toBe(4);
   }, 15_000);
 
-  it("no terminal at all: runs directly, recorded", async () => {
+  it("no terminal at all: refused unless waived", async () => {
     vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new pane.NoTerminalError("no terminal here"));
-    expect(await requireVisiblePane(dir, cfg, "w-nt", "", false, false, join(dir, "ledger.log"))).toBe(false);
+    await expect(requireVisiblePane(dir, cfg, "w-nt", "", false, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: no terminal/);
   });
 });

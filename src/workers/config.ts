@@ -536,6 +536,8 @@ export interface WorkersConfig {
    */
   capabilities: Record<string, string[]>;
   pane: WorkersPaneConfig;
+  /** workers.panes.required (default true): false waives the pane rule for a machine with no terminal; every start is then ledgered PANE-WAIVED. */
+  panes?: { required: boolean };
   logDir: string;
   routing: WorkersRoutingConfig;
     /** Sub-worker caps (workers.tree). */
@@ -1140,6 +1142,14 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     };
   }
 
+  let panes: { required: boolean } | undefined;
+  if (w.panes !== undefined) {
+    if (typeof w.panes !== "object" || w.panes === null) bad(".panes", "must be an object");
+    const pn = w.panes as Record<string, unknown>;
+    if (pn.required !== undefined && typeof pn.required !== "boolean") bad(".panes.required", "must be boolean");
+    panes = { required: pn.required !== false };
+  }
+
   let routing = { ...d.routing, order: [] as string[] };
   if (w.routing !== undefined) {
     if (typeof w.routing !== "object" || w.routing === null) bad(".routing", "must be an object");
@@ -1452,6 +1462,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     mcpSets,
     capabilities,
     pane,
+    ...(panes ? { panes } : {}),
     logDir: str(w.logDir) || d.logDir,
     routing,
     tree,
@@ -1585,6 +1596,7 @@ export function writeWorkersSection(
     ? {
         enabled: workers.enabled,
         pane: workers.pane,
+        ...(workers.panes ? { panes: workers.panes } : {}),
         logDir: workers.logDir,
         routing: workers.routing,
         tree: workers.tree,

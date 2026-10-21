@@ -169,6 +169,17 @@ describe("auditTick", () => {
     expect(ledger()).not.toMatch(/REOPEN/);
     expect(sent.length).toBe(0);
   });
+  it("a worker running without its pane is stopped through the normal end path, ledgered PANE-STOPPED, once", async () => {
+    const stopped: string[] = [];
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [], running: () => true, stop: async (id) => void stopped.push(id), ...noLaunches });
+    await tick(); // confirming check: nothing yet
+    expect(stopped).toEqual([]);
+    await tick();
+    expect(stopped).toEqual(["w-1"]);
+    expect(ledger()).toMatch(/PANE-STOPPED.*w-1/);
+    await tick();
+    expect(stopped).toEqual(["w-1"]);
+  });
   it("status turned done between the pane check and the report: no violation", async () => {
     let alive = true;
     const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [], running: () => alive, ...noLaunches });
@@ -249,12 +260,24 @@ describe("auditLaunches: the bug detector for the pane-owns-the-process rule", (
       { id: "w-bare", startedMs: old, exec: false, exempt: false },
       { id: "w-noterm", startedMs: old, exec: false, exempt: true },
       { id: "w-ok", startedMs: old, exec: true, exempt: false },
+      { id: "w-pooled", startedMs: old, exec: false, exempt: false },
       { id: "w-young", startedMs: NOW.getTime() - 1000, exec: false, exempt: false },
     ];
-    const f = await auditLaunches(dir, { ...r.deps, records: () => [], workers }, NOW);
+    const stopped: string[] = [];
+    const deps = { ...r.deps, records: () => [], workers, registered: (id: string) => id === "w-pooled", stop: async (id: string) => void stopped.push(id) };
+    const f = await auditLaunches(dir, deps, NOW);
     expect(f.map((x) => x.id)).toEqual(["w-bare"]);
     expect(ledger()).toMatch(/PANE-UNLAUNCHED.*w-bare/);
-    expect(await auditLaunches(dir, { ...r.deps, records: () => [], workers }, NOW)).toEqual([]); // told once
+    expect(stopped).toEqual(["w-bare"]); // it does not run on without a pane
+    expect(ledger()).toMatch(/PANE-STOPPED.*w-bare/);
+    expect(await auditLaunches(dir, deps, NOW)).toEqual([]); // told once
     expect(r.killed).toEqual([]);
+  });
+  it("a pool-served worker whose pane is registered is not unlaunched", async () => {
+    const r = rig([]);
+    const stopped: string[] = [];
+    const workers = () => [{ id: "w-pooled", startedMs: NOW.getTime() - 600_000, exec: false, exempt: false }];
+    expect(await auditLaunches(dir, { ...r.deps, records: () => [], workers, registered: () => true, stop: async (id) => void stopped.push(id) }, NOW)).toEqual([]);
+    expect(stopped).toEqual([]);
   });
 });

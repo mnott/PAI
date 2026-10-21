@@ -13,7 +13,7 @@ vi.mock("./pane.js", async (importOriginal) => {
 
 const args = (logDir: string, pool: boolean, over: Record<string, unknown> = {}) =>
   ({
-    config: { pool: { enabled: pool, maxSlots: 1, idleSecs: 0, port: 1, continuation: true } },
+    config: { panes: { required: false }, pool: { enabled: pool, maxSlots: 1, idleSecs: 0, port: 1, continuation: true } },
     logDir,
     quiet: true,
     id: "w-fb",

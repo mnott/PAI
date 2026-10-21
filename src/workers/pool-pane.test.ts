@@ -51,7 +51,7 @@ const listen = async (reply: object, onRequest?: () => void): Promise<number> =>
 
 const args = (logDir: string, port: number, noPane: boolean) =>
   ({
-    config: { pool: { enabled: true, maxSlots: 1, idleSecs: 0, port, continuation: true }, capacity: { enabled: true }, pane: { enabled: true } },
+    config: { ...(noPane ? { panes: { required: false } } : {}), pool: { enabled: true, maxSlots: 1, idleSecs: 0, port, continuation: true }, capacity: { enabled: true }, pane: { enabled: true } },
     logDir,
     quiet: true,
     id: "w-pane",
@@ -79,14 +79,25 @@ describe("pooled runs and the pane rule (the pane owns every process)", () => {
     expect(panes()).toBe(0);
   });
 
-  it("no terminal at all: the pooled run goes ahead without a pane (recorded, not a violation)", async () => {
+  it("no terminal at all: no pane, no claim -- the start is refused and ledgered PANE-REFUSED", async () => {
     vi.mocked(pane.resolveHostSession).mockReset().mockResolvedValue({ term: "" } as never);
     vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new pane.NoTerminalError("neither TMUX nor ITERM_SESSION_ID"));
     const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
-    const a = args(d, await listen({ pooled: true, rc: 0 }), false);
+    const a = args(d, await listen({ pooled: true, rc: 0 }), false) as { spareMiss?: string; paneError?: Error };
+    await gateStart(a as never);
+    expect(await tryPoolRun(a as never)).toBeNull();
+    expect(a.spareMiss).toBe("pane failed");
+    expect(readFileSync(join(d, "ledger.log"), "utf8")).toContain("PANE-REFUSED");
+  });
+
+  it("workers.panes.required=false: the pooled run goes ahead without a pane, ledgered PANE-WAIVED", async () => {
+    vi.mocked(pane.headlessAllowed).mockReturnValue(null);
+    const d = mkdtempSync(join(tmpdir(), "pai-ppane-"));
+    const a = args(d, await listen({ pooled: true, rc: 0 }), true);
     await gateStart(a);
     expect(await tryPoolRun(a)).toBe(0);
-    expect(loadStatus(d, "w-pane")?.pane?.opened).toBe(false);
+    expect(panes()).toBe(0);
+    expect(readFileSync(join(d, "ledger.log"), "utf8")).toContain("PANE-WAIVED");
   });
 
   it("records where the setup time went on the run's args", async () => {

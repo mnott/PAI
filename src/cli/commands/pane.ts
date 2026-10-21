@@ -4,9 +4,11 @@
  */
 
 import { readWorkersSection } from "../../workers/config.js";
-import { workersLogDir } from "../../workers/paths.js";
+import { ledgerPath, workersLogDir } from "../../workers/paths.js";
+import { appendLedger } from "../../workers/ledger.js";
+import { paneWaiver } from "../../workers/run/pane-handles.js";
 import { closePaneForWorker, closeSelfPane, inVisiblePane, resolveHostSession } from "../../workers/pane.js";
-import { launchPane } from "../../workers/pane-launch.js";
+import { launchPane, noTerminalReasons } from "../../workers/pane-launch.js";
 import { runPaneExec } from "../../workers/pane-exec.js";
 import { writePaneTitle } from "../../workers/pane-title.js";
 import { runInPane } from "../../workers/pane-run.js";
@@ -16,24 +18,39 @@ import { CliError, type CommandDef, type RunContext } from "../define.js";
 export function runCommandInPane(command: string[], label?: string, cwd?: string): Promise<number> {
   const { workers } = readWorkersSection();
   const logDir = workersLogDir(workers);
-  return runInPane({
-    command,
-    label,
-    cwd,
-    logDir,
-    launch: async (id) => {
-      if (inVisiblePane()) return null;
-      const term = (await resolveHostSession()).term;
-      return launchPane({ logDir, config: workers, id, kind: "pane", term });
-    },
-  });
+  return runInPane({ command, label, cwd, logDir, launch: paneLauncher(logDir, workers) });
+}
+
+/**
+ * The pane opener of `pai pane run`. Already inside a pane: null (the command runs as its child). Otherwise
+ * a pane is opened, or the run is refused (no pane: REASON, PANE-REFUSED) -- never run unseen -- unless the
+ * pane rule is waived (workers.panes.required=false, ledgered PANE-WAIVED).
+ */
+export function paneLauncher(logDir: string, workers: Parameters<typeof paneWaiver>[0] & Parameters<typeof launchPane>[0]["config"]) {
+  return async (id: string) => {
+    if (inVisiblePane()) return null;
+    const ledger = ledgerPath(logDir);
+    const waiver = paneWaiver(workers);
+    if (waiver) {
+      appendLedger(ledger, "PANE-WAIVED", { id, kind: "pane", why: waiver });
+      return null;
+    }
+    const term = (await resolveHostSession()).term;
+    const pane = await launchPane({ logDir, config: workers, id, kind: "pane", term });
+    if (!pane) {
+      const reason = noTerminalReasons.get(id) ?? "no terminal to open one in";
+      appendLedger(ledger, "PANE-REFUSED", { id, kind: "pane", reason });
+      throw new Error(`no pane: ${reason}`);
+    }
+    return pane;
+  };
 }
 
 const runCmd: CommandDef = {
   name: "run",
   summary: "Run a command in a visible pane and wait for it",
   description:
-    "Opens one pane (split of this window, never a new window) FIRST and runs the command in it as the child of `pai pane exec`, which shows the live output and its exit code, writes <PAI home>/state/pane-exec/<id>.exit and closes the pane when the command ends, whatever the exit code. The caller tees the output to <PAI home>/logs/panes/<id>.log and blocks until the command ends. With no terminal at all the command runs directly. Then it prints the last 40 lines and exits with the command's exit code, so a backgrounded call still reports back to the session. " +
+    "Opens one pane (split of this window, never a new window) FIRST and runs the command in it as the child of `pai pane exec`, which shows the live output and its exit code, writes <PAI home>/state/pane-exec/<id>.exit and closes the pane when the command ends, whatever the exit code. The caller tees the output to <PAI home>/logs/panes/<id>.log and blocks until the command ends. With no terminal at all the command is refused (no pane: REASON) unless workers.panes.required is false. Then it prints the last 40 lines and exits with the command's exit code, so a backgrounded call still reports back to the session. " +
     "SIGTERM/SIGINT/SIGHUP to this command kill the command's whole process group. Every background shell command of a session goes through here: the Bash guard denies a bare run_in_background command. Several words are exec'd as given; a single word is run by sh -c.",
   options: [
     { name: "label", type: "string", value: "TEXT", summary: "Name shown in `pai worker ps` and the cockpit (default: the command)" },
