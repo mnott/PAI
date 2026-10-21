@@ -130,6 +130,15 @@ const SHIPPED = {
   maxPerRow: 3,
   touchPressMs: 350,
   edgeScrollPx: 40,
+  // colour thresholds: at/above Bad colours red, at/above Warn amber, below Warn
+  // green. gaugeWarnPct/gaugeBadPct are percentages of a limits gauge; hitWarn/
+  // hitBad and errorWarn/errorBad are ratios (0..1) of a hit ratio / error rate.
+  gaugeWarnPct: 70,
+  gaugeBadPct: 90,
+  hitWarn: 0.8,
+  hitBad: 0.5,
+  errorWarn: 0.02,
+  errorBad: 0.1,
 } as const;
 
 /** The layout policy of the cockpit page, read at page-build time. */
@@ -212,6 +221,16 @@ export interface CockpitLayout {
   touchPressMs: number;
   /** during a drag the page auto-scrolls within this of the viewport edge (px). */
   edgeScrollPx: number;
+  /** colour thresholds: a limits gauge at/above gaugeBadPct reads red, at/above
+   *  gaugeWarnPct amber (percentages). */
+  gaugeWarnPct: number;
+  gaugeBadPct: number;
+  /** a cache hit ratio below hitWarn reads amber, below hitBad red (ratios 0..1). */
+  hitWarn: number;
+  hitBad: number;
+  /** an error rate at/above errorBad reads red, at/above errorWarn amber (ratios 0..1). */
+  errorWarn: number;
+  errorBad: number;
 }
 
 export function cockpitLayout(): CockpitLayout {
@@ -266,5 +285,11 @@ export function cockpitLayout(): CockpitLayout {
     maxPerRow: num(s, "maxPerRow", SHIPPED.maxPerRow),
     touchPressMs: num(s, "touchPressMs", SHIPPED.touchPressMs),
     edgeScrollPx: num(s, "edgeScrollPx", SHIPPED.edgeScrollPx),
+    gaugeWarnPct: num(s, "gaugeWarnPct", SHIPPED.gaugeWarnPct),
+    gaugeBadPct: num(s, "gaugeBadPct", SHIPPED.gaugeBadPct),
+    hitWarn: num(s, "hitWarn", SHIPPED.hitWarn),
+    hitBad: num(s, "hitBad", SHIPPED.hitBad),
+    errorWarn: num(s, "errorWarn", SHIPPED.errorWarn),
+    errorBad: num(s, "errorBad", SHIPPED.errorBad),
   };
 }

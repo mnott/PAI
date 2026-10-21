@@ -34,7 +34,7 @@ More on the commands: [config.md](config.md). Worker keys: [workers-config.md](w
 | Router scheduling | `router.scheduling.*` | One request per engine, fair across sessions: token weights, aging, session weights, warm and ping times. |
 | Router parking | `router.parking.enabled` (off), `parkAfterSec` 120 | Park an idle local conversation to disk. |
 | Router sampling | `router.samples.*` | Sample interval and history length for the cockpit's model cards. |
-| Cockpit layout | `router.cockpit.layout.*` | Grid breakpoints, chart sizes, row limits, polling intervals, drag-and-drop defaults (`rows`, `maxPerRow`). The arrangement you drag is kept per browser, not in config. |
+| Cockpit layout | `router.cockpit.layout.*` | Grid breakpoints, chart sizes, row limits, polling intervals, colour thresholds (`gaugeWarnPct`, `gaugeBadPct`, `hitWarn`, `hitBad`, `errorWarn`, `errorBad`), drag-and-drop defaults (`rows`, `maxPerRow`). The arrangement you drag is kept per browser, not in config. |
 | Local model consumers | `models.consumers`, `models.runtimes` | Who uses a runtime, and the start/stop/ready commands `pai models start|stop` run; the shipped defaults configure `ollama` and `docker-model-runner`, your entries win per key ([local models](concepts/local-models.md)). |
 | Workers (`config.yaml`) | `workers.*`, shipped in `workers.yaml` defaults | Pool, routing budget walls, supervision, capacity and stagger, gc ([worker.md](worker.md)). |
 | Delegation tiers (`workers.yaml`) | `tiers`, `providers.anthropic.models` | The shipped t0/t1/t2 table ([delegation tiers](concepts/delegation-tiers.md)). |

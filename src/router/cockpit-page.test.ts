@@ -79,13 +79,13 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     const body = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
     const els: Record<string, { innerHTML: string }> = { pause: { innerHTML: "" } };
     new Function(
-      "data", "$", "esc", "fmt", "pct", "tot", "cls", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
+      "data", "$", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
       `${SH}\n${tableSrc}\n${body}\nrender();`
     )(
       { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause, byProvider: [], bustParts: {}, bySession: [], workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
       (id: string) => els[id] ?? { innerHTML: "" },
       (s: unknown) => String(s ?? ""), (n: number) => String(n), (x: number) => (x * 100).toFixed(1) + "%",
-      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "1m",
+      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "", 0.02, 0.1, () => "1m",
       () => "", () => "", () => "", () => false, () => false, () => "", () => "", () => {}, () => {}, () => "", () => "#3b6fe0",
       [["input", "fresh input", "#3b6fe0"], ["cacheWrite", "cache write", "#e0703b"], ["cacheRead", "cache read", "#2e9e5b"], ["output", "output", "#b04fd0"]],
       { getItem: () => null, setItem: () => {} }, "", "weighted",
@@ -97,13 +97,13 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     const body = COCKPIT_HTML.match(/function render\(\)\{[\s\S]*?\n\}\n/)![0];
     const els: Record<string, { innerHTML: string }> = { sessions: { innerHTML: "" } };
     new Function(
-      "data", "$", "esc", "fmt", "pct", "tot", "cls", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
+      "data", "$", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
       `${SH}\n${tableSrc}\n${body}\nrender();`
     )(
       { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause: [], byProvider: [], bustParts: {}, bySession, workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
       (id: string) => els[id] ?? { innerHTML: "" },
       (s: unknown) => String(s ?? ""), (n: number) => String(n), (x: number) => (x * 100).toFixed(1) + "%",
-      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "1m",
+      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "", 0.02, 0.1, () => "1m",
       () => "", () => "", () => "", () => false, () => false, () => "", () => "", () => {}, () => {}, () => "", () => "#3b6fe0",
       [["input", "fresh input", "#3b6fe0"], ["cacheWrite", "cache write", "#e0703b"], ["cacheRead", "cache read", "#2e9e5b"], ["output", "output", "#b04fd0"]],
       { getItem: () => null, setItem: () => {} }, "", "weighted",
@@ -1624,6 +1624,77 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
     // the shipped default still opens a running coding card and folds the rest
     expect(COCKPIT_HTML).toContain('coding?"coding":"other"');
     expect(COCKPIT_HTML).toContain('open=d==="coding"');
+  });
+
+  // colour thresholds (router.cockpit.layout): the rendered colour class follows a
+  // temp-config override of each threshold; the shipped values stand in COCKPIT_HTML
+  const thresholdHtml = (layout: Record<string, unknown>) => {
+    // always write: an empty yaml file parses to null and blanks the whole layout,
+    // so the shipped check writes a key that cannot change the thresholds
+    write(Object.keys(layout).length ? layout : { gridBreakpointPx: 1000 });
+    const html = cockpitHtml();
+    // the cls/hitCls sources come from COCKPIT_HTML (the shipped page): the
+    // threshold NUMBERS are the ones baked into THIS html, injected below.
+    // one-line sources: a [\s\S]*? match would run past the helper to the next
+    // closing brace at line start and eval unrelated code
+    const clsSrc = COCKPIT_HTML.match(/function cls\([^\n]*\n/)![0];
+    const hitSrc = COCKPIT_HTML.match(/function hitCls\([^\n]*\n/)![0];
+    // the thresholds are the page's own var declarations, taken verbatim from THIS
+    // html and eval'd: no re-spelling, so the harness cannot drift from the page
+    const varLine = html.match(/var HIT_WARN=[^\n]*/)![0];
+    const api = new Function(
+      `${varLine}\n${clsSrc}\n${hitSrc}\nreturn {cls:function(v){return cls(v,ERROR_WARN,ERROR_BAD)},hitCls:hitCls};`
+    ) as () => { cls: (v: number) => string; hitCls: (r: number) => string };
+    return api();
+  };
+  // the same harness for the gauge thresholds, which the page bakes into sev() itself
+  const gaugeHtml = (layout: Record<string, unknown>) => {
+    write(Object.keys(layout).length ? layout : { gridBreakpointPx: 1000 });
+    const html = cockpitHtml();
+    const sevSrc = html.match(/function sev\([\s\S]*?\n\}\n/)![0];
+    return new Function(`${sevSrc}\nreturn sev;`)() as (p: number) => string;
+  };
+
+  it("hitWarn/hitBad move the hit-ratio colouring (sessions table, rings, pause table)", () => {
+    const t = thresholdHtml({ hitWarn: 0.6, hitBad: 0.3 });
+    expect(t.hitCls(0.5)).toBe("warn"); // 0.5 is warn now, ok at the shipped 0.8
+    expect(t.hitCls(0.25)).toBe("bad"); // 0.25 is bad now, warn at the shipped 0.5
+    expect(t.hitCls(0.7)).toBe("ok"); // ok at 0.7 (>= the override's 0.6), warn at the shipped 0.8
+    // the page wires the same helpers into the rendered tables
+    expect(cockpitHtml()).toContain('hitCls(s.hitRatio)');
+    expect(cockpitHtml()).toContain('hitCls(hr)');
+    expect(cockpitHtml()).toContain('hitCls(ratio)');
+    // the shipped defaults stand
+    expect(COCKPIT_HTML).toContain("HIT_WARN=0.8,HIT_BAD=0.5");
+    const shipped = thresholdHtml({});
+    expect(shipped.hitCls(0.9)).toBe("ok");
+    expect(shipped.hitCls(0.4)).toBe("bad"); // bad at the shipped .5, warn only under the override's .3
+    expect(shipped.hitCls(0.2)).toBe("bad");
+  });
+
+  it("errorWarn/errorBad move the error-rate colouring (totals strip, providers err%)", () => {
+    const t = thresholdHtml({ errorWarn: 0.05, errorBad: 0.2 });
+    expect(t.cls(0.06)).toBe("warn"); // warn at 0.06 now, bad at the shipped .1
+    expect(t.cls(0.15)).toBe("warn"); // still warn at 0.15 (>= 0.05), bad only at the shipped .1
+    expect(t.cls(0.25)).toBe("bad");
+    expect(cockpitHtml()).toContain("cls(t.errors/Math.max(1,t.requests),ERROR_WARN,ERROR_BAD)");
+    expect(cockpitHtml()).toContain("cls(e,ERROR_WARN,ERROR_BAD)");
+    expect(COCKPIT_HTML).toContain("ERROR_WARN=0.02,ERROR_BAD=0.1");
+    const shipped = thresholdHtml({});
+    expect(shipped.cls(0.06)).toBe("warn");
+    expect(shipped.cls(0.15)).toBe("bad"); // bad at the shipped .1, plain under the override's .2
+  });
+
+  it("gaugeWarnPct/gaugeBadPct move the limits-gauge arc colour", () => {
+    const sev = gaugeHtml({ gaugeWarnPct: 50, gaugeBadPct: 80 });
+    expect(sev(60)).toBe("var(--warn)"); // warn at 60 now, ok at the shipped 70
+    expect(sev(85)).toBe("var(--bad)"); // bad at 85 now, warn at the shipped 90
+    expect(sev(40)).toBe("var(--ok)");
+    expect(COCKPIT_HTML).toContain("p>=90");
+    expect(COCKPIT_HTML).toContain("p>=70");
+    const shipped = gaugeHtml({});
+    expect(shipped(75)).toBe("var(--warn)");
+    expect(shipped(95)).toBe("var(--bad)");
   });
 });
 

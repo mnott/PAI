@@ -174,5 +174,8 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `serverCounterStaleSecs` | 60 | A server prefix-cache counter older than this is marked |
 | `confirmMs` | 4000 | An inline confirm (a stop that also takes other consumers down) stays armed this long |
 | `foldDefaultKind` | `coding` | A Models card of this kind starts open, the rest folded |
+| `gaugeWarnPct`, `gaugeBadPct` | 70, 90 | A limits gauge at/above the bad percent colours red, at/above the warn percent amber |
+| `hitWarn`, `hitBad` | 0.8, 0.5 | A cache hit ratio below the warn ratio colours amber, below the bad ratio red (cache rings, pause verdicts, sessions and provider hit columns) |
+| `errorWarn`, `errorBad` | 0.02, 0.1 | An error rate at/above the bad ratio colours red, at/above the warn ratio amber (totals strip, provider err%) |
 
 The sampler behind the Models tiles is `router.samples` (`sampleMs`, `historyLen`, `engineStatusTimeoutMs`, `cardReadingMaxAgeMs`), also in the shipped defaults.
