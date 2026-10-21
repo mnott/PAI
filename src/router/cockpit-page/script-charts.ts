@@ -84,9 +84,7 @@ function renderSystem(){
   return S(s,"RSS",s.rssMb,gbm,"GB","resident memory")+S(s,"end-to-end",s.tokensPerSec,String,"tok/s","end to end")+S(s,"decode",dec(s.provider),fmt,"tok/s","decode")+S(s,"prefix cache",pc?pc.hitRate:null,function(v){return(v*100).toFixed(1)},"%",pc?pc.hits+"/"+tot:lim?"not reported":"loading: first limits poll pending")
  }).join("")+'</div>':'<span class="dim">'+(allSrv.length?"all local model servers down":"no local model servers configured")+'</span>');
  // the poll rebuild must not reset the tile order the user arranged
- var tgs=document.querySelectorAll("#sys .rt-tiles,#sysservers .rt-tiles");
- for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
- tileGrips();
+ orderTiles($("sys"));orderTiles($("sysservers"));
  renderDonuts();
 }
 function trimEmpty(labels,rows,totalOf){

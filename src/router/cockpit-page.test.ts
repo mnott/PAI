@@ -10,6 +10,8 @@ const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
 const RENDERERS = ["var SESS_MORE_KEY", "function sessMore", "function renderProviders", "function renderSessions", "function renderWorkers"].map((n) => COCKPIT_HTML.match(new RegExp(n + "[\\s\\S]*?\\n(?:\\}\\n|(?=function))"))![0]).join("\n");
 // renderLimits builds the local tile with localTile, which reads the model names through ringName/shortModel and gbm
 const LT = ["gbm", "shortModel", "ringName", "localTile"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
+/** The tile markup helpers (one-liners) and a no-op order pass, for the renderers extracted in isolation. */
+const TH = ["tileAttrs", "tileGrip"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}\\([^\\n]*\\n`))![0]).join("\n") + "\nfunction orderTiles(){}\n";
 
 const COLLAPSE_KEY_TEST = "pai.cockpit.collapsed";
 
@@ -50,7 +52,7 @@ describe("cockpit page compression", () => {
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
     const fn = new Function(
       "lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document",
-      `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`
+      `function keepDowns(){}\n${SH}\n${LT}\n${TH}\n${body}\nrenderLimits();`
     );
     const lim = {
       activeLocal: "dead17",
@@ -81,7 +83,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     const els: Record<string, { innerHTML: string }> = { pause: { innerHTML: "" } };
     new Function(
       "data", "$", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
-      `${SH}\n${tableSrc}\n${RENDERERS}\n${body}\nrender();`
+      `${SH}\n${TH}\n${tableSrc}\n${RENDERERS}\n${body}\nrender();`
     )(
       { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause, byProvider: [], bustParts: {}, bySession: [], workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
       (id: string) => els[id] ?? { innerHTML: "" },
@@ -99,7 +101,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     const els: Record<string, { innerHTML: string }> = { sessions: { innerHTML: "" } };
     new Function(
       "data", "$", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
-      `${SH}\n${tableSrc}\n${RENDERERS}\n${body}\nrender();`
+      `${SH}\n${TH}\n${tableSrc}\n${RENDERERS}\n${body}\nrender();`
     )(
       { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause: [], byProvider: [], bustParts: {}, bySession, workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
       (id: string) => els[id] ?? { innerHTML: "" },
@@ -282,7 +284,7 @@ describe("live-shaped payloads", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const run = (activeLocal: string | null) => {
       const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`);
+      const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", "modelsHtml", "document", `function keepDowns(){}\n${SH}\n${LT}\n${TH}\n${body}\nrenderLimits();`);
       const lim = { activeLocal, limits: [{ provider: "gyro-m", kind: "local", up: true, served: ["m"] }, { provider: "flashnext-iq3", kind: "local", up: false }] };
       fn(lim, (id: string) => els[id], (s: string) => s, () => "", () => "", () => "", null, () => "", { querySelectorAll: () => [] });
       return els.local!.innerHTML;
@@ -316,7 +318,7 @@ describe("cockpit layout follow-up", () => {
   it("the cloud section is status only: gauges per provider, local cards, no rank badges or controls", () => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string; textContent?: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`);
+    const fn = new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", `function keepDowns(){}\n${SH}\n${LT}\n${TH}\n${body}\nrenderLimits();`);
     const lim = {
       limits: [
         { provider: "anthropic", kind: "cloud", windows: [{ name: "5h", percent: 10 }] },
@@ -408,7 +410,7 @@ function renderSys(sys: any, o: { win?: string; data?: any; fresh?: boolean } = 
   const src = [one("esc"), one("gb"), one("gbm"), many("metricSpark"), many("metricTile"), one("staleAge"), one("ringPush"), many("renderSystem")].join("\n");
   const fn = new Function(
     "sys", "$", "win", "data", "lim", "fmt",
-    `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=60;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}var document={querySelectorAll:function(){return[]}};\n${src}\nrenderSystem();return SYSH;`
+    `${SH}\nvar LAST={},SYSH={},SYS_HIST_LEN=60;function renderDonuts(){}function applyTileOrder(){}function tileGrips(){}function orderTiles(){}var document={querySelectorAll:function(){return[]}};\n${src}\nrenderSystem();return SYSH;`
   );
   fn(sys, (id: string) => els[id], o.win ?? "1h", o.data ?? {}, null, (n: number) => String(n));
   return { sys: els.sys!.innerHTML, hid: els.syshid!.innerHTML, srv: els.sysservers!.innerHTML };
@@ -1888,7 +1890,7 @@ describe("cockpit model colours, axes and legends (issue APPS/PAI#8 items 3–5)
     expect(ringName("huggingface.co/org/other-model")).toBe("other-model");
     const ringTiles = new Function(
       "mdl", "$", "esc", "donut", "emptyRing", "lowChips", "assignColors", "ringName", "ageMark", "lim", "LOW_REQ", "SRV_STALE_SEC",
-      `function setHtml(el,h){el.innerHTML=h;return true}\n${src}\n${COCKPIT_HTML.match(/function ringTiles\([\s\S]*?\n\}\n/)![0]}\nreturn ringTiles;`
+      `function setHtml(el,h){el.innerHTML=h;return true}\n${src}\n${TH}\n${COCKPIT_HTML.match(/function ringTiles\([\s\S]*?\n\}\n/)![0]}\nreturn ringTiles;`
     )(
       { runtimes: [{ modelLabels: { "glm/glm-5.3": "Orch" } }], consumers: [] },
       () => ({ innerHTML: "" }),
@@ -2104,7 +2106,7 @@ describe("cockpit Models: one local switch, editable aliases", () => {
     const ct = (id: number) => { if (timers[id]) timers[id]!.live = false; };
     const fn = new Function(
       "$", "mdl", "setHtml", "applyModelFold", "setTip", "modelsHtml", "document", "postAction", "loadModels", "wireAct", "watchJob", "setTimeout", "clearTimeout", "S",
-      `${ACT_STATE_SRC}\nvar mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
+      `${ACT_STATE_SRC}\nvar mEditing=false,BLUR_CANCEL_MS=400;\nfunction tileGrips(){}function orderTiles(){}\nfunction applyTileOrder(){}\n${body}\nvar rm=renderModels;renderModels=function(){S.renders++;rm()};\nS.get=function(){return mEditing};\nrm();`
     );
     fn(() => el, { at: "x" }, () => true, () => {}, () => {}, () => "", doc,
       (...a: unknown[]) => { posts.push(a); (a[3] as (j: unknown) => void)(opts.reply ? opts.reply(a) : { ok: true }); },
@@ -2487,7 +2489,7 @@ function stopHarness(inv: unknown, confirmMs = 4000, watched: string[] = []) {
   const timers: Array<{ fn: () => void; ms: number; live: boolean }> = [];
   const fn = new Function(
     "$", "mdl", "setHtml", "applyModelFold", "setTip", "esc", "pct", "document", "postAction", "loadModels", "watchJob", "setTimeout", "clearTimeout", "CONFIRM_MS",
-    `var mEditing=false;\nfunction tileGrips(){}\nfunction applyTileOrder(){}\nfunction setTip(){}\n${confirmSrc}\n${TILE_RENDER_SRC}\n${renderBody}\nreturn renderModels;`
+    `var mEditing=false;\nfunction tileGrips(){}function orderTiles(){}\nfunction applyTileOrder(){}\nfunction setTip(){}\n${confirmSrc}\n${TILE_RENDER_SRC}\n${renderBody}\nreturn renderModels;`
   );
   const renderModels = fn(
     () => dom.panel, inv, () => true, () => {}, () => {},
@@ -2630,6 +2632,7 @@ function miniDom(html: string, init?: (node: any) => void) {
   const bySel = (sel: string) => all.filter((n) =>
     sel === "[data-tgrip]" ? n.attrs["data-tgrip"] !== undefined
       : sel === ".rt-tiles" ? n.classes.has("rt-tiles")
+      : sel === "[data-tkey]" ? n.attrs["data-tkey"] !== undefined
       : sel === ".mcard" ? n.classes.has("mcard") : false);
   const document: any = {
     querySelectorAll: bySel,
@@ -3187,7 +3190,7 @@ describe("local server tile and section title", () => {
   const render = (l: Record<string, unknown>, mdl: unknown = null) => {
     const body = COCKPIT_HTML.match(/function renderLimits[\s\S]*?\n\}/)![0];
     const els: Record<string, { innerHTML: string }> = { cloud: { innerHTML: "" }, local: { innerHTML: "" } };
-    new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", `function keepDowns(){}\n${SH}\n${LT}\n${body}\nrenderLimits();`)(
+    new Function("lim", "$", "esc", "gauge", "ago", "dur", "mdl", `function keepDowns(){}\n${SH}\n${LT}\n${TH}\n${body}\nrenderLimits();`)(
       { limits: [l] }, (id: string) => els[id], (s: unknown) => String(s ?? ""), () => "", () => "", () => "", mdl);
     return els.local!.innerHTML;
   };

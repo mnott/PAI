@@ -327,6 +327,15 @@ function applyTileOrder(el){
  });
  el.__html=""; // the html no longer matches the source string: a later identical poll must re-apply
 }
+/** Tile ids, chip name and chip value as attributes, and the move grip: the markup every orderable tile carries. */
+function tileAttrs(id,name,val){return' data-tid="'+esc(id)+'" data-tname="'+esc(name)+'" data-tval="'+esc(val)+'"'}
+function tileGrip(name){return'<span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(name)+'" role="img">⠿</span>'}
+/** Re-apply the saved order and minimized state to every tile container under root (run after each setHtml of a tile section). */
+function orderTiles(root){
+ var tgs=root.querySelectorAll?root.querySelectorAll("[data-tkey]"):[];
+ for(var ti=0;ti<tgs.length;ti++){tgs[ti].__tkey=tgs[ti].getAttribute("data-tkey");applyTileOrder(tgs[ti])}
+ tileGrips();
+}
 function tileGrips(){
  var gs=document.querySelectorAll("[data-tgrip]");
  for(var i=0;i<gs.length;i++)(function(g){
