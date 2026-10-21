@@ -100,6 +100,7 @@ A port other than the default never touches the pid file.
 |---|---|---|---|
 | `--port PORT` | string | 8790 | Port to listen on |
 | `--replace PID` | string | — | After warming up, stop this router (SIGTERM) and take over its port (used by `pai router restart`) |
+| `--inherit-fds FDS` | string | — | Listen on already-open sockets (fd[,fd of the beyond-loopback listener]) handed over by a router that is being replaced; reports ready over IPC |
 | `--usage-file PATH` | string | — | Read the cockpit's accounting from this file and record nothing (second instances) |
 | `--wait-bind SECONDS` | string | — | Retry binding the port for up to this many seconds while another router still holds it (used by `pai router restart`) |
 
