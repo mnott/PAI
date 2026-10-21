@@ -235,6 +235,10 @@ router:
       dailyDays: 14
       # table row limits: sessions by tokens, worker runs.
       sessionsRows: 20
+      # sessions beyond the top N by tokens collapse into one expandable row;
+      # the session-name column is capped at this percent of the table width.
+      sessionsTopRows: 10
+      sessionNameMaxPct: 35
       workerRows: 15
       # models under this many requests render as chips, not rings.
       lowRequestMin: 5

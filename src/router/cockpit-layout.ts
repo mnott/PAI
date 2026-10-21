@@ -116,6 +116,8 @@ const SHIPPED = {
   sysHistoryLen: 60,
   dailyDays: 14,
   sessionsRows: 20,
+  sessionsTopRows: 10,
+  sessionNameMaxPct: 35,
   workerRows: 15,
   lowRequestMin: 5,
   // saved model colours older than this (days, by their "@ts" stamp) are pruned
@@ -206,6 +208,8 @@ export interface CockpitLayout {
   dailyDays: number;
   /** table row limits. */
   sessionsRows: number;
+  sessionsTopRows: number;
+  sessionNameMaxPct: number;
   workerRows: number;
   /** models under this many requests are chips, not rings. */
   lowRequestMin: number;
@@ -288,6 +292,8 @@ export function cockpitLayout(): CockpitLayout {
     sysHistoryLen: num(s, "sysHistoryLen", SHIPPED.sysHistoryLen),
     dailyDays: num(s, "dailyDays", SHIPPED.dailyDays),
     sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
+    sessionsTopRows: num(s, "sessionsTopRows", SHIPPED.sessionsTopRows),
+    sessionNameMaxPct: num(s, "sessionNameMaxPct", SHIPPED.sessionNameMaxPct),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),
     lowRequestMin: num(s, "lowRequestMin", SHIPPED.lowRequestMin),
     colorPruneDays: num(s, "colorPruneDays", SHIPPED.colorPruneDays),

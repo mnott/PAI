@@ -65,13 +65,13 @@ function localDetail(prov,pc,tot,age){
  *  its TEXT is: tags stripped, &nbsp; a space, trimmed — "" or a placeholder the
  *  renderers emit for "no value" ("-", "…", "n/a"). Markup with no text at all
  *  (<span class="dim"></span>) counts as empty too. */
-function table(head,rows,tips){
+function table(head,rows,tips,tdStyle){
  var EMPTY_TEXT=["","-","…","n/a"];
  var cellText=function(c){return String(c==null?"":c).replace(/<[^>]*>/g,"").replace(/&nbsp;/gi," ").trim()};
  var keep=rows.length?head.map(function(h,i){return !rows.every(function(r){return EMPTY_TEXT.indexOf(cellText(r[i]))>=0})}):head.map(function(){return true});
  var head2=head.filter(function(h,i){return keep[i]});
  var row2=rows.map(function(r){var out=[];head.forEach(function(h,i){if(keep[i])out.push(r[i])});return out});
- return'<div class="tw"><table><thead><tr>'+head2.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+row2.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head2[i]||"")+'">'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'
+ return'<div class="tw"><table'+(head2.length>=7?' class="dense"':'')+'><thead><tr>'+head2.map(function(h){return'<th'+(tips&&tips[h]?' title="'+esc(tips[h])+'"':'')+'>'+h+'</th>'}).join("")+'</tr></thead><tbody>'+row2.map(function(r){return'<tr>'+r.map(function(c,i){return'<td data-l="'+esc(head2[i]||"")+'"'+(tdStyle&&tdStyle[head2[i]]?' style="'+tdStyle[head2[i]]+'"':'')+'>'+c+'</td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>'
 }
 /** Verdict colour by prefix: ok* green, failed red, "report flagged" and an escalated hand-off amber, the rest dim.
  *  A missing verdict is dim, never a crash. One helper for both verdict tables. */
@@ -80,8 +80,42 @@ function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v)
 function reuse(prov,pc){return reuseLine(pc,(data.promptByProvider||{})[prov],(data.promptSince||{})[prov])}
 function renderSpeed(){
  var sp=(data&&data.speed)||[];
- function c(st,k,u){return st[k]==null?'<span class="dim">-</span>':fmt(st[k])+u}
- setHtml($("speed"),sp.length?table(["provider","model","req 1h / 24h","TTFT p50 1h","p90 1h","TTFT p50 24h","p90 24h","read tok/s 1h","24h","write tok/s 1h","24h"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+" / "+r.h24.requests,c(r.h1,"ttftP50"," ms"),c(r.h1,"ttftP90"," ms"),c(r.h24,"ttftP50"," ms"),c(r.h24,"ttftP90"," ms"),c(r.h1,"readTps",""),c(r.h24,"readTps",""),c(r.h1,"writeTps",""),c(r.h24,"writeTps","")]}),{"TTFT p50 1h":"Median time from request sent to first content token, last hour.","TTFT p50 24h":"Median time from request sent to first content token, last 24 hours.","p90 1h":"90th percentile TTFT, last hour.","p90 24h":"90th percentile TTFT, last 24 hours.","read tok/s 1h":"Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads).","write tok/s 1h":"Output tokens / decode time, replies of 16+ tokens only."}):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>');
+ function c(st,k,u){return st[k]==null?"-":fmt(st[k])+u}
+ function pair(r,k,u){var a=c(r.h1,k,u),b=c(r.h24,k,u);return a==="-"&&b==="-"?'<span class="dim">-</span>':a+' <span class="dim">·</span> '+b}
+ var pr="1h · 24h: last hour, then last 24 hours.";
+ setHtml($("speed"),sp.length?table(["provider","model","req","TTFT p50","TTFT p90","read tok/s","write tok/s"],sp.map(function(r){return[esc(r.provider),esc(r.model),r.h1.requests+' <span class="dim">·</span> '+r.h24.requests,pair(r,"ttftP50"," ms"),pair(r,"ttftP90"," ms"),pair(r,"readTps",""),pair(r,"writeTps","")]}),{"req":"Requests. "+pr,"TTFT p50":"Median time from request sent to first content token. "+pr,"TTFT p90":"90th percentile TTFT. "+pr,"read tok/s":"Input tokens / TTFT (prefill incl. cached for local models; Anthropic input excludes cache reads). "+pr,"write tok/s":"Output tokens / decode time, replies of 16+ tokens only. "+pr}):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>');
+}
+/** Providers: provider, req, err%, hit% by default; retries, avg ms, ttft p50 and tokens ride in the provider cell's title (retries also as a badge). */
+function renderProviders(d){
+ setHtml($("providers"),table(["provider","req","err%","hit%"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);
+  var tt="retries "+p.retries+" · avg "+p.avgMs+" ms · ttft p50 "+(p.ttftP50!=null?fmt(p.ttftP50)+" ms":"-")+" · tokens "+fmt(tot(p));
+  return['<span title="'+esc(tt)+'">'+esc(p.provider)+(p.retries?' <span class="warn">↻'+p.retries+'</span>':'')+'</span>',p.requests,'<span class="'+cls(e,ERROR_WARN,ERROR_BAD)+'">'+pct(e)+'</span>',provHit(p,(sys&&sys.servers)||[])]}),{"err%":"Share of requests that failed.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
+  '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div><div class="dim">Hover a provider for retries, average ms, TTFT p50 and tokens.</div>');
+}
+/** Sessions by tokens: name column capped, models as first +N, rows past the top N folded into one expandable row (state in localStorage like folds). */
+var SESS_MORE_KEY="pai.cockpit.sessmore";
+function sessMore(){try{return localStorage.getItem(SESS_MORE_KEY)==="1"}catch(e){return false}}
+function renderSessions(d){
+ var el=$("sessions"),all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore();
+ function row(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';
+  var ms=s.models||[],mc=ms.length?esc(ms[0])+(ms.length>1?' <span class="dim">+'+(ms.length-1)+'</span>':''):'';
+  return['<span title="'+esc((s.name?s.name+" · ":"")+s.session)+'">'+nm+v+'</span>','<span title="'+esc(ms.join(", "))+'">'+mc+'</span>',s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+hitCls(s.hitRatio)+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}
+ var shown=open?all:all.slice(0,top),rest=all.slice(top),rows=shown.map(row);
+ if(rest.length){
+  var rt=rest.reduce(function(a,s){return a+tot(s)},0),blank=function(){return""};
+  rows.push(['<a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a>'].concat(row(all[0]).slice(1).map(blank)));
+ }
+ var cap="width:${n(L.sessionNameMaxPct)}%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+ setHtml(el,'<style>@media(max-width:480px){#sessions td{width:auto!important;max-width:none!important;white-space:normal!important}}</style>'+table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"}));
+ el.onclick=function(ev){var t=ev.target;while(t&&t!==el&&!(t.getAttribute&&t.getAttribute("data-sessmore")!=null))t=t.parentNode;
+  if(!t||t===el)return;ev.preventDefault();try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(e){}renderSessions(data)};
+}
+/** Worker runs: label (2 lines max, run id in the title and as a small dim suffix), verdict, provider, tokens. */
+function renderWorkers(d){
+ setHtml($("workers"),d.workers.length?table(["label","verdict","provider","tokens"],d.workers.slice(0,WORKER_ROWS).map(function(s){
+  var lab=esc(s.name||s.worker);
+  return['<span title="'+esc((s.name?s.name+" · ":"")+"run "+s.worker)+'" style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;text-align:left">'+lab+(s.name?' <small class="dim">'+esc(s.worker)+'</small>':'')+'</span>','<span class="'+vcls(s.verdict)+'">'+esc(s.verdict||"worker")+'</span>',esc(s.workerProvider||"-"),fmt(tot(s))]
+ }),{"tokens":"Total tokens of the run."},{"label":"white-space:normal"}):'<span class="dim">no worker sessions in this window</span>');
 }
 function renderDonuts(){ renderSpeed();
  if(!data)return;var d=data,t=d.totals,ms={};
@@ -127,10 +161,7 @@ function render(){
   return[esc(cm.model)].concat(cm.buckets.map(function(b){if(!b.n)return'<span class="dim">-</span>';var hr=b.hit/b.n;return'<span class="'+hitCls(hr)+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span>'}));
  });
  setHtml($("pause"),ph.length?table(["model (hit% n)"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>');
- setHtml($("providers"),table(["provider","req","err%","retries","avg ms","ttft p50","hit%","tokens"],d.byProvider.map(function(p){var e=p.errors/Math.max(1,p.requests);return[esc(p.provider),p.requests,'<span class="'+cls(e,ERROR_WARN,ERROR_BAD)+'">'+pct(e)+'</span>','<span class="'+(p.retries?"warn":"")+'">'+p.retries+'</span>',p.avgMs,p.ttftP50!=null?fmt(p.ttftP50)+' ms':'<span class="dim">-</span>',provHit(p,(sys&&sys.servers)||[]),fmt(tot(p))]}),{"avg ms":"Average end-to-end milliseconds incl. queueing and prefill.","ttft p50":"Median time from request sent to first token.","retries":"Retried upstream calls.","hit%":"cache_read / (read + write + fresh input); * = server counter."})+
-  '<div class="dim">Busts: '+(Object.keys(d.bustParts).length?Object.keys(d.bustParts).map(function(k){return esc(k)+" x"+d.bustParts[k]}).join(", "):"none")+'</div>');
- setHtml($("sessions"),table(["session","models","req","tokens","fresh in","out","hit%","busts","errors","last"],d.bySession.slice(0,SESSION_ROWS).map(function(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';return['<span title="'+esc(s.session)+'">'+nm+v+'</span>',esc(s.models.join(", ")),s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+hitCls(s.hitRatio)+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]})));
- setHtml($("workers"),d.workers.length?table(["worker","label","provider","req","tokens","verdict"],d.workers.slice(0,WORKER_ROWS).map(function(s){return[esc(s.worker),esc(s.name||"-"),esc(s.workerProvider||"-"),s.requests,fmt(tot(s)),'<span class="'+vcls(s.verdict)+'">'+esc(s.verdict||"worker")+'</span>']})):'<span class="dim">no worker sessions in this window</span>');
+ renderProviders(d);renderSessions(d);renderWorkers(d);
  var dm=Object.keys(d.daily.models),dd=d.daily.days.slice(-DAILY_DAYS),ds=dd.map(function(t,i){var o={};dm.forEach(function(m){o[m]=d.daily.models[m][d.daily.days.length-dd.length+i]});return o});
  // one assignment over the union of every model shown anywhere on the page (window, daily, rings, speed):
  // a chart with a smaller model set must not wipe the colours of the models another chart shows

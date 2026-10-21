@@ -1,0 +1,117 @@
+/**
+ * The cockpit tables never scroll sideways: the real page, served with live-shaped data,
+ * is loaded in headless Chromium at several widths and every .tw table wrapper must
+ * satisfy scrollWidth <= clientWidth. Skipped when no Chromium is installed.
+ * PAI_FIT_SHOTS=<dir> additionally writes a screenshot per width.
+ */
+
+import { execFile, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cockpitHtml } from "./cockpit-page.js";
+
+const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+
+const MODELS = ["claude-opus-5-5", "claude-haiku-5-5", "claude-sonnet-5-5", "glm-5.3-flash", "qwen3.8-flash-next-gyro-m"];
+const bucket = (n: number, hit: number) => ({ label: "x", n, hit });
+const stat = (r: number, t: number | null) => ({ requests: r, ttftP50: t, ttftP90: t == null ? null : t * 2.4, readTps: t == null ? null : 1234.5, writeTps: t == null ? null : 41.2 });
+
+function fixtureData() {
+  const long = "worktree-20261021-015130-55831-phone-fit-check-for-the-cockpit-sessions-table";
+  const sessions = Array.from({ length: 24 }, (_, i) => ({
+    session: `2026102${i % 3}-0${i}1530-5583${i}`,
+    name: i < 6 ? (i === 0 ? long : `PAI session ${i}`) : "",
+    models: i < 3 ? [MODELS[0], MODELS[1], MODELS[3]] : [MODELS[3]],
+    requests: 900 - i * 35, input: 2_000_000 - i * 70_000, cacheWrite: 300_000, cacheRead: 40_000_000 - i * 1_500_000, output: 120_000,
+    hitRatio: 0.93, busts: i % 4, errors: i % 5, lastTs: new Date(Date.now() - i * 600_000).toISOString(),
+    worker: i === 2 ? "20261021-063345-95575" : undefined, verdict: i === 2 ? "report flagged" : undefined,
+  }));
+  const workers = ["run.ts split step 1: provider test moved out of the router file", "cockpit tables: sessions, runs, speed and providers read at any width", "fix(cockpit): workers section empty markup counts as empty", "docs: cockpit chart resize keys and screenshots without empty columns", "", "x"].map((name, i) => ({
+    worker: `20261021-0${i}3345-9557${i}`, name, workerProvider: i % 2 ? "anthropic" : "glm", requests: 40 + i, input: 800_000, cacheWrite: 0, cacheRead: 5_000_000, output: 20_000,
+    verdict: ["ok", "ok", "failed: exit 1", "report flagged", "escalated to session", "handed to session"][i],
+  }));
+  return {
+    window: "1h", totals: { requests: 5000, input: 9e6, output: 4e5, cacheWrite: 1e6, cacheRead: 9e7, errors: 12, hitRatio: 0.9 },
+    byModel: MODELS.map((m, i) => ({ provider: i < 3 ? "anthropic" : "glm", model: m, requests: 1000 + i, input: 1e6, cacheWrite: 1e5, cacheRead: 1e7, output: 1e5 })),
+    series: [], weights: { input: 1, cacheWrite: 1.25, cacheRead: 0.1, output: 5 },
+    cachePause: MODELS.slice(0, 3).map((m) => ({ model: "anthropic/" + m + "-with-a-long-suffix-20261021", buckets: ["<5m", "5-30m", "30m-1h", "1-3h", ">3h"].map((l, j) => ({ ...bucket(40 + j, 30), label: l })) })),
+    byProvider: [{ provider: "anthropic", requests: 3000, errors: 4, retries: 6, avgMs: 4100, ttftP50: 900, input: 1e6, output: 1e5, cacheWrite: 1e5, cacheRead: 1e7, hitRatio: 0.94 }, { provider: "glm", requests: 1900, errors: 8, retries: 0, avgMs: 2100, ttftP50: 700, input: 1e6, output: 1e5, cacheWrite: 0, cacheRead: 0, hitRatio: 0 }, { provider: "gyro-m", requests: 100, errors: 0, retries: 0, avgMs: 8100, ttftP50: 2500, input: 1e6, output: 1e5, cacheWrite: 0, cacheRead: 0, hitRatio: 0 }],
+    bustParts: { tools: 3, system: 1 }, bySession: sessions, workers, daily: { models: {}, days: [] }, sessionSplit: null,
+    speed: MODELS.map((m, i) => ({ provider: i < 3 ? "anthropic" : "glm", model: m, h1: stat(30 + i, 900 + i), h24: stat(400 + i, i === 2 ? null : 1100) })),
+    promptByProvider: {}, promptSince: {},
+  };
+}
+const fixtureSystem = () => ({ current: {}, series: { series: [] }, servers: [{ provider: "gyro-m", up: true, rssMb: 36148, tokensPerSec: 58.5, prefixCache: { hitRate: 0.91, hits: 910, misses: 90, tokensSaved: 1e6, entries: 4, memoryMb: 2048 } }, { provider: "ollama-local-with-a-long-name", up: true, rssMb: 5100, tokensPerSec: 31.2, prefixCache: null }] });
+const fixtureQueue = () => ({ providers: [{ provider: "glm", cap: 2, running: [{ id: "w-20261021-063345", label: "run.ts split step 1: provider test moved out of the router file", ageSec: 120, now: "editing script-tables.ts", session: "PAI", model: "glm-5.3" }], waiting: [{ id: "w-2", label: "fix cockpit tables at any width", waitedSec: 30, position: 1, session: "PAI", model: "glm-5.3" }] }], panes: [], paneViolations: [], plans: [], build: { running: [], waiting: [] } });
+
+let server: Server;
+let base = "";
+let tmp = "";
+const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("section"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-section"):"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out}),"*")},2500)</script>`;
+
+beforeAll(async () => {
+  tmp = mkdtempSync(join(tmpdir(), "cockpit-fit-"));
+  server = createServer((req, res) => {
+    const url = req.url ?? "";
+    const json = (o: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
+    if (url.startsWith("/cockpit/data")) return json(fixtureData());
+    if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
+    if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
+    if (url.startsWith("/frame")) {
+      // the page runs in an iframe: its viewport is the iframe's width, whatever the minimum headless window is
+      const w = /w=(\d+)/.exec(url)?.[1] ?? "822";
+      const main = /main=(\d+)/.exec(url)?.[1];
+      res.setHeader("content-type", "text/html");
+      return res.end(`<body style="margin:0"><iframe src="/page${main ? `?main=${main}` : ""}" style="width:${w}px;height:3200px;border:0"></iframe><script>onmessage=function(e){document.body.setAttribute("data-fit",e.data)}</script></body>`);
+    }
+    if (url.startsWith("/page")) {
+      const main = /main=(\d+)/.exec(url)?.[1];
+      const html = cockpitHtml().replace("</body>", (main ? `<style>main{width:${main}px;max-width:${main}px;box-sizing:border-box}</style>` : "") + INJECT + "</body>");
+      res.setHeader("content-type", "text/html");
+      return res.end(html);
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+});
+afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+
+/** Every browser started here, so afterAll can kill what a failed test left behind. */
+const browsers = new Set<ChildProcess>();
+function run(bin: string, args: string[], opts: { encoding?: "utf8"; timeout: number; maxBuffer?: number }): Promise<{ stdout: string }> {
+  return new Promise((resolve, reject) => {
+    const c = execFile(bin, args, { ...opts, encoding: "utf8" }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve({ stdout }); });
+    browsers.add(c);
+  });
+}
+async function shoot(width: number, main: number | null, shot?: string): Promise<{ main: number; doc: number; vw: number; tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number }[] }> {
+  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + width + "-" + (main ?? 0))}`, "--window-size=1000,3300", "--virtual-time-budget=6000"];
+  const url = `${base}/frame?w=${width}${main ? `&main=${main}` : ""}`;
+  const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", url], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
+  if (shot) await run(CHROME!, [...args, `--screenshot=${shot}`, url], { timeout: 60_000 });
+  const m = /data-fit="([^"]*)"/.exec(dom);
+  if (!m) throw new Error("no fit result in dump");
+  return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+}
+
+describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), real layout in Chromium", () => {
+  const shots = process.env.PAI_FIT_SHOTS;
+  for (const [label, width, main] of [["822 px viewport", 822, null], ["385 px main width inside a wide viewport (half-width card)", 900, 385], ["375 px phone", 375, null]] as const) {
+    it(`${label}: every table wrapper has scrollWidth <= clientWidth`, async () => {
+      const r = await shoot(width, main, shots ? join(shots, `cockpit-${width}${main ? "-main" + main : ""}.png`) : undefined);
+      const secs = new Set(r.tables.map((t) => t.sec));
+      // sessions, runs, speed, pause, providers (cache), workers queue and the local-server table all rendered
+      for (const s of ["sessions", "runs", "speed", "pause", "cache", "workers", "system"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
+      for (const t of r.tables) {
+        expect(t.scrollWidth, `${t.sec}: wrapper ${t.clientWidth}px, content ${t.scrollWidth}px`).toBeLessThanOrEqual(t.clientWidth);
+        expect(t.tableW, `${t.sec}: table ${t.tableW}px in wrapper ${t.clientWidth}px`).toBeLessThanOrEqual(t.clientWidth);
+      }
+      expect(r.doc, "page itself must not scroll sideways").toBeLessThanOrEqual(r.vw);
+    }, 120_000);
+  }
+});

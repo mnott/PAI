@@ -7,6 +7,7 @@ import { POOL_PANEL_JS } from "./pool-panel.js";
 
 /** Stand-in for the page's setHtml in tests that run a render function against plain fake elements. */
 const SH = "function setHtml(el,h){el.innerHTML=h;return true}";
+const RENDERERS = ["var SESS_MORE_KEY", "function sessMore", "function renderProviders", "function renderSessions", "function renderWorkers"].map((n) => COCKPIT_HTML.match(new RegExp(n + "[\\s\\S]*?\\n(?:\\}\\n|(?=function))"))![0]).join("\n");
 // renderLimits builds the local tile with localTile, which reads the model names through ringName/shortModel and gbm
 const LT = ["gbm", "shortModel", "ringName", "localTile"].map((n) => COCKPIT_HTML.match(new RegExp(`function ${n}[\\s\\S]*?\\n\\}`))![0]).join("\n");
 
@@ -80,7 +81,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     const els: Record<string, { innerHTML: string }> = { pause: { innerHTML: "" } };
     new Function(
       "data", "$", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
-      `${SH}\n${tableSrc}\n${body}\nrender();`
+      `${SH}\n${tableSrc}\n${RENDERERS}\n${body}\nrender();`
     )(
       { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause, byProvider: [], bustParts: {}, bySession: [], workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
       (id: string) => els[id] ?? { innerHTML: "" },
@@ -98,7 +99,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     const els: Record<string, { innerHTML: string }> = { sessions: { innerHTML: "" } };
     new Function(
       "data", "$", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "table", "vcls", "assignColors", "stackedBars", "twoToneModelBars", "chartCap", "legend", "legendLine", "setTip", "renderDonuts", "colorOf", "KINDS", "localStorage", "msel", "mode", "document", "sel", "SESSION_ROWS", "WORKER_ROWS", "DAILY_DAYS",
-      `${SH}\n${tableSrc}\n${body}\nrender();`
+      `${SH}\n${tableSrc}\n${RENDERERS}\n${body}\nrender();`
     )(
       { totals: {requests:0,input:0,output:0,cacheWrite:0,cacheRead:0,errors:0}, byModel: [], series: [], weights: {}, cachePause: [], byProvider: [], bustParts: {}, bySession, workers: [], daily: { models: {}, days: [] }, sessionSplit: null },
       (id: string) => els[id] ?? { innerHTML: "" },
@@ -135,9 +136,9 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
     expect(html).toContain('<div class="tw">');
     expect(html).toContain("<thead>");
     expect(html).toContain("<tbody>");
-    expect(html).toContain('<td data-l="session">');
+    expect(html).toContain('<td data-l="session" style="width:35%;');
     expect(html).toContain(NAME60);
-    expect(html).toContain('<td data-l="models">' + MODEL50 + "</td>");
+    expect(html).toContain('<td data-l="models" style="white-space:nowrap"><span title="' + MODEL50 + '">' + MODEL50 + "</span></td>");
     expect(html).toContain('<td data-l="req">3</td>');
     expect(html).toContain('<td data-l="last">1m</td>');
   });
@@ -206,7 +207,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
       lastTs: new Date().toISOString(), worker: "w1", verdict: "ok",
     }]);
     // the rendered markup: the name span is the first-column span carrying the title
-    expect(html).toContain('<td data-l="session"><span title="');
+    expect(html).toContain('<td data-l="session" style="width:35%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span title="');
     expect(html).toContain(NAME90);
     // the harness: main 375 px, card inside it (card padding 10 px each side)
     const cardW = 375 - 20;
@@ -266,7 +267,7 @@ describe("phone width: every table stacks inside its card (issue: pause and sess
       return i < 0 ? "" : COCKPIT_HTML.slice(i, COCKPIT_HTML.indexOf("\n", i));
     };
     const pauseLine = lineOf('setHtml($("pause")');
-    const sessLine = lineOf('setHtml($("sessions")');
+    const sessLine = lineOf(" setHtml(el,'<style>");
     expect(pauseLine).not.toBe("");
     expect(sessLine).not.toBe("");
     expect(pauseLine).toContain("table(");
@@ -535,7 +536,7 @@ describe("cockpit page scripts", () => {
 });
 
 describe("cockpit workers panel", () => {
-  const table = COCKPIT_HTML.match(/function table\(head,rows,tips\)\{[\s\S]*?\n\}\n/)![0]; // the helper, whole
+  const table = COCKPIT_HTML.match(/function table\(head,rows,tips(?:,tdStyle)?\)\{[\s\S]*?\n\}\n/)![0]; // the helper, whole
   const vcls = COCKPIT_HTML.match(/function vcls\([\s\S]*?\n/)![0];
   const body = COCKPIT_HTML.match(/var qdrag[\s\S]*?\n\}/)![0];
   const render = (q: unknown) => {
@@ -2922,7 +2923,7 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
   const table = COCKPIT_HTML.match(/function table\([\s\S]*?\n\}\n/)![0];
   const vcls = new Function(`${COCKPIT_HTML.match(/function vcls\([\s\S]*?\n\}\n/)![0]}; return vcls;`)() as (v: unknown) => string;
 
-  it("table(): a scroll box with a thead, every cell carries its column label for the stacked-card view", () => {
+  it("table(): a .tw box with a thead, every cell carries its column label for the stacked-card view", () => {
     const t = new Function("esc", `${table}; return table;`)((s: unknown) => String(s ?? "")) as (h: string[], r: string[][]) => string;
     const html = t(["session", "req"], [["alpha", "3"]]);
     expect(html).toContain('<div class="tw">');
@@ -2930,9 +2931,12 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(html).toContain("<tbody>");
     expect(html).toContain('<td data-l="session">alpha</td>');
     expect(html).toContain('<td data-l="req">3</td>');
-    // the box scrolls inside itself with a theme-coloured thin scrollbar; the first column sticks
-    expect(COCKPIT_HTML).toMatch(/\.tw\{[^}]*max-width:100%[^}]*scrollbar-color:var\(--dim\) var\(--card\);scrollbar-width:thin\}/);
-    expect(COCKPIT_HTML).toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky;left:0;background:var\(--card\)\}/);
+    // the box never scrolls sideways: no overflow-x rule, no sticky column, cells wrap
+    expect(COCKPIT_HTML).toMatch(/\.tw\{max-width:100%\}/);
+    expect(COCKPIT_HTML).not.toMatch(/\.tw\{overflow-x:auto\}/);
+    expect(COCKPIT_HTML).not.toContain("scrollbar-color:var(--dim) var(--card)");
+    expect(COCKPIT_HTML).not.toMatch(/\.tw table th:first-child,\.tw table td:first-child\{position:sticky/);
+    expect(COCKPIT_HTML).toMatch(/th,td\{[^}]*white-space:normal;overflow-wrap:break-word\}/);
     // below the phone breakpoint a row is a stacked card: label: value pairs, no columns.
     // parse the media block and check declarations, so selector grouping and property
     // order don't matter — the behaviour is what counts, not the spelling.
@@ -2950,7 +2954,7 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
 
   /** table() with the page's esc: the helper (one line per statement) cut from the page source. */
   const tableFull = (esc: (s: unknown) => string) =>
-    new Function("esc", `${COCKPIT_HTML.match(/function table\(head,rows,tips\)\{[\s\S]*?\n\}\n/)![0]}; return table;`)(esc) as
+    new Function("esc", `${COCKPIT_HTML.match(/function table\(head,rows,tips(?:,tdStyle)?\)\{[\s\S]*?\n\}\n/)![0]}; return table;`)(esc) as
       (h: string[], r: string[][], tips?: Record<string, string>) => string;
 
   it("table(): a column empty in every row is not rendered — no header, no cells, no stacked label", () => {
@@ -3329,5 +3333,100 @@ describe("readable time axes, power chart under System, tokens chart at half wid
     expect(tok).not.toContain('id="power"');
     expect(tok).not.toContain("Power and GPU/CPU load");
     expect(tok).toContain('id="series"');
+  });
+});
+
+describe("cockpit tables read at any width (sessions, worker runs, speed, providers)", () => {
+  const tableSrc = COCKPIT_HTML.match(/function table\([\s\S]*?\n\}\n/)![0];
+  const fn = (n: string) => COCKPIT_HTML.match(new RegExp("function " + n + "\\([^]*?\\n\\}\\n"))![0];
+  const vcls = COCKPIT_HTML.match(/function vcls\([\s\S]*?\n/)![0];
+  const store: Record<string, string> = {};
+  const localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
+  const mount = (data: unknown, call: string, id: string, extra = "") => {
+    const els: Record<string, { innerHTML: string; onclick?: unknown }> = {};
+    const $ = (i: string) => (els[i] ??= { innerHTML: "" });
+    const src = `${tableSrc}\n${vcls}\n${RENDERERS}\n${fn("renderSpeed")}\n${extra}\nvar SESSION_ROWS=100,WORKER_ROWS=15;\nreturn function(){${call}};`;
+    const run = new Function("data", "$", "setHtml", "esc", "fmt", "pct", "tot", "cls", "hitCls", "ERROR_WARN", "ERROR_BAD", "ago", "localStorage", "sys", "provHit", src)(
+      data, $, (el: { innerHTML: string }, h: string) => { el.innerHTML = h; return true; },
+      (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;"),
+      (n: number) => String(n), (x: number) => Math.round(x * 100) + "%",
+      (t: any) => t.input + t.output + t.cacheWrite + t.cacheRead, () => "", () => "", 0.02, 0.1, () => "1m", localStorage, null,
+      (p: any) => String(Math.round(p.hitRatio * 100)) + "%"
+    ) as () => void;
+    return { run, el: () => els[id]!, els };
+  };
+  const sess = (i: number, tokens: number, over: Record<string, unknown> = {}) => ({
+    name: i < 3 ? `named-${i}` : "", session: `s${String(i).padStart(7, "0")}`, models: ["glm-5.3-flash"], requests: 1,
+    input: tokens, cacheWrite: 0, cacheRead: 0, output: 0, hitRatio: 0, busts: 0, errors: 0, lastTs: "2026-10-21T07:00:00Z", ...over,
+  });
+
+  it("sessions: top rows by tokens, the rest fold into one '+N more sessions (X tokens)' row that expands on click and stays expanded across refresh", () => {
+    delete store["pai.cockpit.sessmore"];
+    const rows = Array.from({ length: 25 }, (_, i) => sess(i, 1000 - i * 10));
+    const m = mount({ bySession: rows }, "renderSessions(data)", "sessions");
+    m.run();
+    let html = m.el().innerHTML;
+    expect((html.match(/<tr>/g) ?? []).length).toBe(10 + 1 + 1); // header row + 10 + the fold row
+    expect(html).toContain("+15 more sessions (");
+    expect(html).toContain("width:35%;max-width:0");
+    const rest = rows.slice(10).reduce((a, s) => a + s.input, 0);
+    expect(html).toContain(`(${rest} tokens)`);
+    // click: the delegated handler stores the state and redraws expanded
+    (m.el().onclick as (e: unknown) => void)({ target: { getAttribute: (a: string) => (a === "data-sessmore" ? "1" : null), parentNode: null }, preventDefault() {} });
+    html = m.el().innerHTML;
+    expect((html.match(/<tr>/g) ?? []).length).toBe(25 + 1 + 1);
+    expect(html).toContain("show fewer sessions");
+    // refresh keeps the state
+    m.run();
+    expect(m.el().innerHTML).toContain("show fewer sessions");
+    delete store["pai.cockpit.sessmore"];
+  });
+
+  it("sessions: the models cell shows the first model + N with the full list in its title; the name carries the full name in a title", () => {
+    delete store["pai.cockpit.sessmore"];
+    const m = mount({ bySession: [sess(0, 5, { models: ["claude-opus-5-5", "claude-haiku-5-5", "glm-5.3"], name: "a very long session name" })] }, "renderSessions(data)", "sessions");
+    m.run();
+    const html = m.el().innerHTML;
+    expect(html).toContain('<span title="claude-opus-5-5, claude-haiku-5-5, glm-5.3">claude-opus-5-5 <span class="dim">+2</span></span>');
+    expect(html).toContain('title="a very long session name · s0000000"');
+    expect(html).not.toContain("more sessions");
+  });
+
+  it("worker runs: label, verdict, provider, tokens; the run id sits in the label title and as a dim suffix; no worker column", () => {
+    const w = { worker: "20261021-063345-95575", name: "run.ts split step 1: provider test moved out of the router file", workerProvider: "glm", requests: 4, input: 70, cacheWrite: 0, cacheRead: 0, output: 5, verdict: "ok" };
+    const m = mount({ workers: [w, { ...w, name: "", worker: "w-2", verdict: "failed: x" }] }, "renderWorkers(data)", "workers");
+    m.run();
+    const html = m.el().innerHTML;
+    const heads = [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1]);
+    expect(heads).toEqual(["label", "verdict", "provider", "tokens"]);
+    expect(html).toContain('title="run.ts split step 1: provider test moved out of the router file · run 20261021-063345-95575"');
+    expect(html).toContain("-webkit-line-clamp:2");
+    expect(html).toContain('<small class="dim">20261021-063345-95575</small>');
+    expect(html).toContain('<span class="ok">ok</span>');
+    expect(html).toContain('<span class="bad">failed: x</span>');
+    expect(html).toContain('<td data-l="label"'); // stacked label for phones
+  });
+
+  it("speed: one cell per 1h/24h pair, seven columns instead of eleven, header tooltips explain the pair", () => {
+    const h = (r: number, t: number | null) => ({ requests: r, ttftP50: t, ttftP90: t == null ? null : t * 2, readTps: t == null ? null : 100, writeTps: t == null ? null : 40 });
+    const m = mount({ speed: [{ provider: "glm", model: "glm-5.3", h1: h(3, 400), h24: h(30, 500) }, { provider: "anthropic", model: "opus", h1: h(0, null), h24: h(2, 900) }] }, "renderSpeed()", "speed");
+    m.run();
+    const html = m.el().innerHTML;
+    expect([...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1])).toEqual(["provider", "model", "req", "TTFT p50", "TTFT p90", "read tok/s", "write tok/s"]);
+    expect(html).toContain('<td data-l="req">3 <span class="dim">·</span> 30</td>');
+    expect(html).toContain('400 ms <span class="dim">·</span> 500 ms');
+    expect(html).toContain('<span class="dim">-</span> <span class="dim">·</span> 900 ms'.replace('<span class="dim">-</span>', "-"));
+    expect(html).toMatch(/<th title="[^"]*1h · 24h: last hour, then last 24 hours\.">TTFT p50<\/th>/);
+  });
+
+  it("providers: provider, req, err%, hit% by default; retries, avg ms, ttft p50 and tokens in the provider cell's title", () => {
+    const p = { provider: "glm", requests: 10, errors: 1, retries: 2, avgMs: 1200, ttftP50: 300, input: 5, output: 1, cacheWrite: 0, cacheRead: 4, hitRatio: 0.8 };
+    const m = mount({ byProvider: [p], bustParts: {} }, "renderProviders(data)", "providers");
+    m.run();
+    const html = m.el().innerHTML;
+    expect([...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((x) => x[1])).toEqual(["provider", "req", "err%", "hit%"]);
+    expect(html).toContain('title="retries 2 · avg 1200 ms · ttft p50 300 ms · tokens 10"');
+    expect(html).toContain('<span class="warn">↻2</span>');
+    expect(html).not.toContain("<th>avg ms</th>");
   });
 });
