@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jobSessionName, loadSessionMap, resolveSessionName, withJobNames, loadWorkerWindows, sessionDisplayName, withWorkerAttribution, type SessionInfo, type WorkerWindow } from "./sessions.js";
+
+const execGit = (cwd: string, args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 
 describe("session mapper", () => {
   const dir = mkdtempSync(join(tmpdir(), "sess-"));
@@ -61,6 +64,38 @@ describe("worker verdict: an escalated run shows where it went", () => {
   });
   it("a plain failure stays failed", () => {
     expect(map.get("c-3")?.verdict).toBe("failed");
+  });
+});
+
+describe("worker verdict: an escalated run counts the commits its status never recorded", () => {
+  // a killed run ends before the record path writes `commits`; its work lives
+  // on the branch (which outlives `pai worker merge`) or under refs/pai-archive
+  const repo = mkdtempSync(join(tmpdir(), "sess-esc-repo-"));
+  execGit(repo, ["init", "-q"]);
+  execGit(repo, ["config", "user.email", "t@example.invalid"]);
+  execGit(repo, ["config", "user.name", "test"]);
+  writeFileSync(join(repo, "seed.txt"), "seed");
+  execGit(repo, ["add", "seed.txt"]);
+  execGit(repo, ["commit", "-q", "-m", "seed"]);
+  const base = execGit(repo, ["rev-parse", "HEAD"]);
+  execGit(repo, ["checkout", "-q", "-b", "worker/w1", base]);
+  writeFileSync(join(repo, "a.txt"), "a");
+  execGit(repo, ["add", "a.txt"]);
+  execGit(repo, ["commit", "-q", "-m", "escalated work"]);
+  execGit(repo, ["update-ref", "refs/pai-archive/w1-branch", execGit(repo, ["rev-parse", "worker/w1"])]);
+  execGit(repo, ["checkout", "-q", "--detach", base]);
+  execGit(repo, ["branch", "-D", "worker/w1"]);
+  const dir = mkdtempSync(join(tmpdir(), "sess-esc-status-"));
+  const killed = { state: "failed", rc: 143, started: "2026-10-21 05:17:38", cwd: repo, worktreeBase: base, escalated: "escalated t2→t1: loop-guard stop", escalatedTo: "w2" };
+  writeFileSync(join(dir, "esc.status"), JSON.stringify({ ...killed, id: "w1", claudeSession: "c-1" }));
+  writeFileSync(join(dir, "esc0.status"), JSON.stringify({ ...killed, id: "w0", claudeSession: "c-2" }));
+  const map = loadSessionMap({ workerDirs: [dir], agentSessionsFile: join(dir, "none.json") });
+
+  it("commits 1 from the archive ref the branch left behind", () => {
+    expect(map.get("c-1")?.verdict).toBe("escalated → w2 · 1 commit");
+  });
+  it("no commits to count reads no suffix", () => {
+    expect(map.get("c-2")?.verdict).toBe("escalated → w2");
   });
 });
 
