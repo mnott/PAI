@@ -22,6 +22,7 @@ import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerSta
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { invalidatePendingCache } from "./pending.js";
+import { readPoolState } from "./pool.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1363,6 +1364,11 @@ export function stubScan(cwd: string, oldHead: string): string {
 
 /** `pai worker discard <id>`: drop worktree and branch after salvaging what they carry. */
 export function discardWorker(logDir: string, id: string): string {
+  const cur = loadStatus(logDir, id);
+  if (!cur || !ownedTree(cur)) {
+    const msg = discardBranchOnly(logDir, id);
+    if (msg) return msg;
+  }
   const st = mustHaveBranch(logDir, id);
   if (isSlotWorktree(st.worktreeDir!)) {
     // For slot worktrees, we don't remove the worktree, just detach if needed and delete the branch
@@ -1454,10 +1460,160 @@ export function inPlaceSystemPrompt(): string {
   ].join("\n");
 }
 
+/** Does one of the refs (missing ones are ignored) keep `branchRef`'s tip reachable? */
+function branchArchived(repo: string, branchRef: string, refs: string[]): boolean {
+  return refs.some((r) => {
+    try {
+      git(repo, ["rev-parse", "--verify", "-q", r]);
+      return isAncestor(repo, branchRef, r);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Branch prefixes PAI creates; gc and discard may clean up branches under them. */
+const OWNED_PREFIXES = ["worker/", "spare/"];
+
+function commonDir(dir: string): string | null {
+  try {
+    const raw = git(dir, ["rev-parse", "--git-common-dir"]);
+    return isAbsolute(raw) ? raw : resolve(dir, raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Branches checked out in some worktree of the repo (`repo` must be a checkout, not the bare .git dir). */
+function checkedOutBranches(repo: string): Set<string> {
+  const out = new Set<string>();
+  try {
+    for (const l of git(repo, ["worktree", "list", "--porcelain"]).split("\n")) {
+      if (l.startsWith("branch refs/heads/")) out.add(l.slice("branch refs/heads/".length));
+    }
+  } catch {
+    // repo unreadable
+  }
+  return out;
+}
+
+/** Existing refs/pai-archive/* ref whose commit is `sha`, if any. */
+function archiveRefAt(repo: string, sha: string): string | null {
+  try {
+    for (const l of git(repo, ["for-each-ref", "--format=%(objectname) %(refname)", "refs/pai-archive/"]).split("\n")) {
+      const [obj, ref] = l.split(" ");
+      if (obj === sha && ref) return ref;
+    }
+  } catch {
+    // none
+  }
+  return null;
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as { code?: string }).code === "EPERM";
+  }
+}
+
+/**
+ * Archive (when its tip is not yet preserved) and delete one branch that has no
+ * worktree. Returns the archive ref, or the reason it was kept. `dryRun` only reports.
+ */
+function archiveOrphanBranch(repo: string, branch: string, dryRun: boolean): { archive: string } | { kept: string } {
+  const ref = `refs/heads/${branch}`;
+  let tip: string;
+  try {
+    tip = git(repo, ["rev-parse", "--verify", "-q", ref]);
+  } catch {
+    return { kept: "branch is gone" };
+  }
+  let archive = archiveRefAt(repo, tip);
+  if (!archive) {
+    let inMain = false;
+    try {
+      inMain = isAncestor(repo, ref, mainRef(repo));
+    } catch {
+      // no comparable main
+    }
+    if (!inMain) return { kept: "kept: unarchived commits" };
+    archive = `refs/pai-archive/branch-${branch.replace(/\//g, "-")}`;
+    if (!dryRun) git(repo, ["update-ref", archive, tip]);
+  }
+  if (!dryRun) {
+    if (!branchArchived(repo, ref, [archive])) return { kept: "archive does not keep the branch tip" };
+    git(repo, ["branch", "-D", branch]);
+  }
+  return { archive };
+}
+
+/** gc: archive and delete branches under worker/ and spare/ that no worktree has checked out. */
+function gcOrphanBranches(logDir: string, repos: Iterable<string>, protect: Set<string>, dryRun: boolean, out: GcEntry[]): void {
+  const pool = readPoolState(logDir);
+  const hostUp = !!pool && pidAlive(pool.hostPid);
+  const spares = new Set((pool?.spares ?? []).map((sp) => sp.branch));
+  const seen = new Set<string>();
+  for (const r of repos) {
+    const repo = commonDir(r);
+    if (!repo || seen.has(repo)) continue;
+    seen.add(repo);
+    const live = checkedOutBranches(r);
+    let names: string[];
+    try {
+      names = git(repo, ["for-each-ref", "--format=%(refname:short)", ...OWNED_PREFIXES.map((x) => `refs/heads/${x}`)]).split("\n").filter(Boolean);
+    } catch {
+      continue;
+    }
+    for (const branch of names) {
+      if (live.has(branch) || protect.has(branch) || (hostUp && spares.has(branch))) continue;
+      try {
+        const res = archiveOrphanBranch(repo, branch, dryRun);
+        if ("kept" in res) out.push({ id: branch, branch: true, skipped: res.kept });
+        else out.push({ id: branch, branch: true, archive: res.archive });
+      } catch (e) {
+        out.push({ id: branch, branch: true, skipped: (e as Error).message.split("\n")[0] });
+      }
+    }
+  }
+}
+
+/** discard with only a branch left (status gone or already archived): archive if needed, delete it. */
+function discardBranchOnly(logDir: string, id: string): string | null {
+  const st = loadStatus(logDir, id);
+  if (st?.resumedBy) throw new Error(`worker ${id} is superseded by ${st.resumedBy}, use that id`);
+  for (const repoDir of new Set([st?.cwd, process.cwd()].filter((d): d is string => !!d))) {
+    const repo = commonDir(repoDir);
+    if (!repo) continue;
+    for (const prefix of OWNED_PREFIXES) {
+      const branch = `${prefix}${id}`;
+      try {
+        git(repo, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]);
+      } catch {
+        continue;
+      }
+      if (checkedOutBranches(repoDir).has(branch)) throw new Error(`branch ${branch} is checked out in a worktree`);
+      const target = `refs/pai-archive/${id}`;
+      const tip = git(repo, ["rev-parse", `refs/heads/${branch}`]);
+      const archive = archiveRefAt(repo, tip) ?? (git(repo, ["update-ref", target, tip]), target);
+      if (!branchArchived(repo, `refs/heads/${branch}`, [archive])) throw new Error(`archive ${archive} does not keep ${branch}`);
+      git(repo, ["branch", "-D", branch]);
+      if (st) saveStatus(logDir, { ...st, branch: null, worktreeDir: null, archived: archive });
+      invalidatePendingCache(logDir, repo);
+      return `discarded worker ${id}: only branch ${branch} was left, deleted, state kept in ${archive}`;
+    }
+  }
+  return null;
+}
+
 export interface GcEntry {
   id: string;
   /** archive ref, or the reason the worktree was skipped. */
   archive?: string;
+  /** an orphan branch (no worktree): id is the branch name */
+  branch?: boolean;
   skipped?: string;
   knowledge?: Knowledge;
   /** one line per file copied into the main checkout */
@@ -1521,6 +1677,9 @@ export function archiveWorktree(logDir: string, id: string, dir: string, branch:
   }
   for (const m of knowledge.missing) notes.push(`written but missing: ${m} (worker ${id}; see its transcript)`);
   for (const l of notes) console.log(l);
+  if (hasBranch && !branchArchived(repo, `refs/heads/${branch}`, [target, `${target}-branch`])) {
+    throw new Error(`archive ${target} does not keep ${branch}`);
+  }
   git(repo, ["worktree", "remove", "--force", dir]);
   if (hasBranch) git(repo, ["branch", "-D", branch]);
   return { archive: target, knowledge, salvaged: salvage.lines };
@@ -1863,6 +2022,11 @@ export function gcWorktrees(
     }
   }
   if (foreignRepo) gcForeign(logDir, foreignRepo, owned, dryRun, report, out, archive);
+  // Orphan branches: no worktree, tip in main or already archived. Never a live worker's branch.
+  const protect = new Set(statuses.filter((s) => isLive(s) && s.branch).map((s) => s.branch!));
+  const repos = new Set(statuses.map((s) => s.cwd).filter((c) => existsSync(c)));
+  if (foreignRepo) repos.add(foreignRepo);
+  gcOrphanBranches(logDir, repos, protect, dryRun, out);
   if (!dryRun) {
     for (const repo of new Set(statuses.map((s) => s.cwd))) {
       try {
