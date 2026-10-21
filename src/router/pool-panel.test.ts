@@ -99,6 +99,36 @@ describe("buildPoolPanel", () => {
     expect(p.last24h.unattributed).toBe(1);
   });
 
+  it("a run served by a spare counts as pooled in the 24 h stats", () => {
+    const p = buildPoolPanel(input({ ledger: ledger([
+      "2026-10-17 10:00:00 WORKER-POOL-SPARE spare=s1 provider=glm",
+      "2026-10-17 10:05:00 WORKER-START id=a provider=glm mode=headless spare=hit",
+      "2026-10-17 10:05:01 WORKER-POOL-SPARE-END spare=s1 provider=glm note=served_a",
+      "2026-10-17 10:06:00 WORKER-START id=b provider=glm mode=headless",
+      "2026-10-17 10:06:01 WORKER-POOL-SKIP id=b provider=glm reason=tools",
+    ]) }));
+    expect(p.last24h.runs).toBe(2);
+    expect(p.last24h.pooled).toBe(1);
+    expect(p.last24h.notPooled).toBe(1);
+    expect(p.last24h.topReason).toBe("tools");
+  });
+
+  it("runs from before the pool showed any activity, or while it is disabled, are not 'not pooled because of X'", () => {
+    const lines = [
+      "2026-10-17 06:00:00 WORKER-START id=o1 provider=glm mode=headless",
+      "2026-10-17 07:00:00 WORKER-START id=o2 provider=glm mode=headless",
+      "2026-10-17 10:00:00 WORKER-POOL-SKIP id=x provider=glm reason=tools",
+      "2026-10-17 10:00:01 WORKER-START id=x provider=glm mode=headless",
+    ];
+    const on = buildPoolPanel(input({ ledger: ledger(lines) }));
+    expect(on.last24h.poolOff).toBe(2);
+    expect(on.last24h.reasons).toEqual([{ reason: "tools", runs: 1 }]);
+    expect(on.last24h.unattributed).toBe(0);
+    const off = buildPoolPanel(input({ enabled: false, ledger: ledger(lines) }));
+    expect(off.last24h.poolOff).toBe(3);
+    expect(off.last24h.unattributed).toBe(0);
+  });
+
   it("says plainly when the pool is off, down, or never used, and names the reason", () => {
     // provider-neutral: the pool pre-starts spares for every provider, so no message names claude
     const off = buildPoolPanel(input({ enabled: false }));

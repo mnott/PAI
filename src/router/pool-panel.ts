@@ -61,8 +61,10 @@ export interface PoolPanelData {
     /** Reasons the pool gate or host gave, most frequent first. */
     reasons: Array<{ reason: string; runs: number }>;
     topReason: string | null;
-    /** Runs not pooled that predate reason logging, or ran while the pool was off. */
+    /** Runs not pooled that predate reason logging (no skip line, pool was on). */
     unattributed: number;
+    /** Runs started before the pool showed any activity in the window, or while it is disabled: not "not pooled because of X". */
+    poolOff: number;
   };
   /** Why the pool is off, from the fields this panel already has; null when it is on. */
   offReason: string | null;
@@ -117,11 +119,23 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
   let pooled = 0;
   const reasons = new Map<string, number>();
   let skipped = 0;
+  // the ledger has no on/off marker: the pool counts as on from its first trace in the window
+  // (any WORKER-POOL-* line, a pooled run or a spare claim), and as off for the whole window when disabled
+  const isPooledStart = (l: LedgerLine): boolean => l.event === "WORKER-START" && (l.fields.mode === "pooled" || l.fields.spare === "hit");
+  let onSince = Infinity;
+  for (const l of i.ledger) {
+    const t = stampMs(l.stamp);
+    if (t < since || t >= onSince) continue;
+    if (l.event.startsWith("WORKER-POOL-") || isPooledStart(l)) onSince = t;
+  }
+  if (!i.enabled) onSince = Infinity;
+  let poolOff = 0;
   for (const l of i.ledger) {
     if (stampMs(l.stamp) < since) continue;
     if (l.event === "WORKER-START") {
       runs++;
-      if (l.fields.mode === "pooled") pooled++;
+      if (isPooledStart(l)) pooled++;
+      else if (stampMs(l.stamp) < onSince) poolOff++;
     } else if (l.event === "WORKER-POOL-SKIP") {
       skipped++;
       const r = l.fields.reason ?? "unknown";
@@ -136,7 +150,8 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
     notPooled,
     reasons: sorted,
     topReason: sorted[0]?.reason ?? null,
-    unattributed: Math.max(0, notPooled - skipped),
+    unattributed: Math.max(0, notPooled - skipped - poolOff),
+    poolOff,
   };
 
   // spares and spare misses come from the host state; a state file from before spares reports none
@@ -254,16 +269,16 @@ function renderPool(p){
   setHtml(el,'<div class="dim">Pool off · host not running'+(p.hostLastSeen?' · last seen '+esc(p.hostLastSeen):"")+(p.hostBuiltAt?' · last built '+esc(p.hostBuiltAt):"")+(p.offReason?' · why: '+esc(p.offReason):"")+' — every worker starts cold (no pre-started spare). Turn on with <b>pai worker pool on</b>.</div>');
   setTip($("pooltip"),p.message);
   return}
- var head='<div class="kpis">'+
+ var head='<div class="rt-tiles" data-tkey="pool">'+
   [["pool",p.enabled?'<span class="ok">enabled</span>':'<span class="bad">disabled</span>',"max "+p.maxSlots+" slots · idle kill "+(p.idleKillSecs?dur(p.idleKillSecs):"never")],
    ["host",p.hostUp?'<span class="ok">up</span>':'<span class="bad">down</span>',"port "+p.port+(p.hostSince?" · since "+esc(p.hostSince):"")+(p.hostBuiltAt?" · built "+esc(p.hostBuiltAt):"")+(p.hostStale?' · <span class="warn">stale (newer build on disk)</span>':"")],
-   ["tasks served",p.totals.tasksServed,fmt(p.totals.tokensCarried)+" cache-read tokens carried"],
-   ["first-request hit",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s)"+(p.slots.length?" · "+p.slots.map(function(s){return esc(s.provider)+" "+(s.hitRatio==null?"n/a":pct(s.hitRatio))}).join(", "):"")],
-   ["spares",(p.spares||[]).length?(p.spares||[]).map(function(s){return esc(s.provider)+" "+s.ready+" ready"+(s.starting?" +"+s.starting+" starting":"")}).join(", "):"none",(p.spareClaims||0)+" claimed from a spare"+((p.spareMisses||[]).length?" · missed "+p.spareMisses.map(function(m){return esc(m.reason)+" x"+m.misses}).join(", "):"")],
-   ["not pooled (24 h)",p.last24h.notPooled+" of "+p.last24h.runs,p.last24h.topReason?"top reason: "+esc(p.last24h.topReason):(p.last24h.notPooled?"reasons not logged yet":"")]
-  ].map(function(k){return'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span><span style="display:block">'+k[2]+'</span></div>'}).join("")+'</div>';
+   ["tasks served · since host start",p.totals.tasksServed,fmt(p.totals.tokensCarried)+" cache-read tokens carried (lifetime)"],
+   ["first-request hit · lifetime",p.totals.hitRatio==null?"n/a":pct(p.totals.hitRatio),p.totals.carriedTasks+" pooled task(s) in the metrics file"+(p.slots.length?" · "+p.slots.map(function(s){return esc(s.provider)+" "+(s.hitRatio==null?"n/a":pct(s.hitRatio))}).join(", "):"")],
+   ["spares · now",(p.spares||[]).reduce(function(n,s){return n+s.ready},0)+" ready",((p.spares||[]).length?(p.spares||[]).map(function(s){return esc(s.provider)+" "+s.ready+" ready"+(s.starting?" +"+s.starting+" starting":"")}).join(", ")+" · ":"none · ")+(p.spareClaims||0)+" claimed since host start"+((p.spareMisses||[]).length?" · missed "+p.spareMisses.map(function(m){return esc(m.reason)+" x"+m.misses}).join(", "):"")],
+   ["not pooled · 24 h",p.last24h.notPooled+" of "+p.last24h.runs,(p.last24h.pooled+" pooled")+(p.last24h.topReason?" · top reason: "+esc(p.last24h.topReason):(p.last24h.notPooled&&!p.last24h.poolOff?" · reasons not logged yet":""))+(p.last24h.poolOff?" · "+p.last24h.poolOff+" while pool off":"")]
+  ].map(function(k){return'<div class="mt"><div class="mt-label">'+k[0]+'</div><div class="mt-value">'+k[1]+'</div><div class="mt-sub" title="'+String(k[2]).replace(/<[^>]*>/g,"").replace(/"/g,"&quot;")+'">'+k[2]+'</div></div>'}).join("")+'</div>';
  var rows=p.slots.length?table(["provider .txt","model .txt","cwd .txt","state .txt","task .txt","branch .txt","first","age","idle","tasks","carried","hit%"],p.slots.map(function(s){return[esc(s.provider),esc(s.model),'<span title="'+esc(s.cwd)+'">'+esc(s.cwd.split("/").slice(-2).join("/"))+'</span>','<span class="'+(s.state==="busy"?"warn":"ok")+'">'+s.state+'</span>',s.task?esc(s.task):"-",s.branch?esc(s.branch):"-",s.firstRequest?'<span class="'+(s.firstRequest==="warm"?"ok":"warn")+'">'+s.firstRequest+'</span>':"-",dur(s.ageSecs),dur(s.idleSecs),s.tasks,fmt(s.tokensCarried),s.hitRatio==null?"-":pct(s.hitRatio)]})):'<span class="dim" title="A slot spawns with the first pooled task.">no slots</span>';
- var rs=p.last24h.reasons.length?"\nRejections (24 h): "+p.last24h.reasons.map(function(r){return r.reason+" x"+r.runs}).join(", ")+(p.last24h.unattributed?" · "+p.last24h.unattributed+" without a logged reason":""):"";
+ var rs=p.last24h.reasons.length?"\nRejections (24 h): "+p.last24h.reasons.map(function(r){return r.reason+" x"+r.runs}).join(", ")+(p.last24h.unattributed?" · "+p.last24h.unattributed+" without a logged reason":"")+(p.last24h.poolOff?" · "+p.last24h.poolOff+" while the pool was off":""):"";
  setTip($("pooltip"),p.message+rs);
  setHtml(el,head+rows);
 }

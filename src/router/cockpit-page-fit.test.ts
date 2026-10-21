@@ -53,12 +53,23 @@ const fixtureLimits = () => ({
   limits: ["anthropic", "glm", "gyro-m"].map((provider) => ({ provider, kind: "cloud", windows: [{ name: "5h", percent: 30, resetAt: Date.now() + 3600_000 }] })),
 });
 
+function fixturePool() {
+  return {
+    enabled: true, hostUp: true, port: 8798, maxSlots: 3, idleKillSecs: 1800,
+    hostSince: "2026-10-21 09:10:00", hostLastSeen: "2026-10-21 09:23:00", hostBuiltAt: "2026-10-21 09:00:00", hostStale: false,
+    slots: [], totals: { tasksServed: 1, tokensCarried: 1_200_000, hitRatio: 0.272, carriedTasks: 128 },
+    last24h: { runs: 262, pooled: 2, notPooled: 260, reasons: [{ reason: "tools", runs: 120 }], topReason: "tools", unattributed: 4, poolOff: 100 },
+    spares: [{ provider: "anthropic", ready: 2, starting: 0 }], spareClaims: 2, spareMisses: [],
+    offReason: null, message: "up",
+  };
+}
+
 let server: Server;
 let base = "";
 let tmp = "";
 const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("section"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-section"):"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length,rowH:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){return r.getBoundingClientRect().height}),lh:parseFloat(getComputedStyle(w).lineHeight)||parseFloat(getComputedStyle(w).fontSize)*1.2,stacked:w.classList.contains("stacked"),firstW:(w.querySelector("tbody td")||{getBoundingClientRect:function(){return{width:0}}}).getBoundingClientRect().width,subs:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){var c=r.querySelector("td"),d=c&&c.querySelector(".dim"),cr=c&&c.getBoundingClientRect(),dr=d&&d.getBoundingClientRect();return{lines:c&&c.querySelectorAll(".dim").length,inside:!!dr&&dr.width>0&&dr.top>=cr.top-0.5&&dr.bottom<=cr.bottom+0.5&&dr.left>=cr.left-0.5&&dr.right<=cr.right+0.5}}),thead:!!w.querySelector("thead")&&getComputedStyle(w.querySelector("thead")).display!=="none"})});var bef=[];document.querySelectorAll(".tw.stacked td").forEach(function(d){var cs=getComputedStyle(d,"::before"),sc=d.closest("section");bef.push({sec:sc?sc.getAttribute("data-section"):"?",label:d.getAttribute("data-l"),h:parseFloat(cs.height),fs:parseFloat(cs.fontSize)})});var ths=[];document.querySelectorAll(".tw th").forEach(function(h){var r=document.createRange();r.selectNodeContents(h);var tops={};Array.prototype.forEach.call(r.getClientRects(),function(q){if(q.width>0)tops[Math.round(q.top)]=1});var sc=h.closest("section");ths.push({sec:sc?sc.getAttribute("data-section"):"?",label:h.textContent,lines:Object.keys(tops).length,height:Math.round(h.getBoundingClientRect().height)})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out,ths:ths,befores:bef}),"*")},2500)</script>`;
 /** .pgrid rows: tiles grouped by y; every row must span the container width (the flex fix). */
-const PGRID_INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".pgrid").forEach(function(g){var gr=g.getBoundingClientRect(),rows={};g.querySelectorAll(":scope > *").forEach(function(t){var r=t.getBoundingClientRect();var y=Math.round(r.top);(rows[y]=rows[y]||[]).push({x:r.left-gr.left,w:r.width})});out.push({id:g.id,gridW:gr.width,rows:Object.keys(rows).sort(function(a,b){return a-b}).map(function(y){return{y:+y,rects:rows[y]}})})});parent.postMessage(JSON.stringify({pgrids:out}),"*")},2500)</script>`;
+const PGRID_INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".pgrid,#poolpanel .rt-tiles").forEach(function(g){var gr=g.getBoundingClientRect(),rows={};g.querySelectorAll(":scope > *").forEach(function(t){var r=t.getBoundingClientRect();var y=Math.round(r.top);(rows[y]=rows[y]||[]).push({x:r.left-gr.left,w:r.width})});out.push({id:g.id||g.getAttribute("data-tkey"),gridW:gr.width,rows:Object.keys(rows).sort(function(a,b){return a-b}).map(function(y){return{y:+y,rects:rows[y]}})})});parent.postMessage(JSON.stringify({pgrids:out}),"*")},2500)</script>`;
 /** The workers card: the gap between its last child's bottom and the card's content bottom (padding). */
 const WORKERS_INJECT = `<script>setTimeout(function(){var s=document.querySelector('section[data-section="workers"]'),kids=s.children,last=kids[kids.length-1],cs=getComputedStyle(s);parent.postMessage(JSON.stringify({workers:{gap:s.getBoundingClientRect().bottom-last.getBoundingClientRect().bottom-parseFloat(cs.paddingBottom)}}),"*")},2500)</script>`;
 
@@ -71,6 +82,7 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
     if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
     if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
+    if (url.startsWith("/cockpit/pool")) return json(fixturePool());
     if (url.startsWith("/frame")) {
       // the page runs in an iframe: its viewport is the iframe's width, whatever the minimum headless window is
       const w = /w=(\d+)/.exec(url)?.[1] ?? "822";
@@ -179,6 +191,11 @@ describe.skipIf(!CHROME)("provider tiles fill their row and the workers card end
     // the live shape: 3 tiles, two on row 1, one on row 2 — the row the old grid left partial
     expect(cloud.rows.length).toBe(2);
     expect(cloud.rows[1].rects.length).toBe(1);
+    // the pool panel's stat tiles are the shared .rt-tiles grid: every row fills its width
+    const pool = r.pgrids!.find((p) => p.id === "pool")!;
+    expect(pool, "pool tiles rendered").toBeDefined();
+    expect(pool.rows.length, "pool tile rows").toBeGreaterThan(0);
+    expect(checkRows({ gridW: pool.gridW, rows: pool.rows }, "pool/822")).toEqual([]);
     // the local grid renders too (the local fixture has no up server: the placeholder row)
     expect(r.pgrids!.some((p) => p.id === "local")).toBe(true);
   }, 120_000);
