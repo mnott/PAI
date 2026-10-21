@@ -10,7 +10,7 @@ Escalation is work moving up a level when a lower one cannot finish it.
    `workers.defaultMaxMinutes` 60, or `--deadline`) is stopped. See
    [loop guard and limits](loop-guard-and-limits.md).
 2. On exit its uncommitted edits are **salvaged**: committed on the worker's
-   branch and logged as `WORKER-SALVAGE`. The report ends `~` (stopped, not
+   branch and logged as `WORKER-SALVAGE` (the ledger is PAI's log of worker events; `pai worker ps` shows the run). The report ends `~` (stopped, not
    failed outright).
 3. After two failed local attempts on the same `--label`, the next
    `pai worker run` goes to the cloud (`route: cloud (escalated: 2 failed local
@@ -18,7 +18,7 @@ Escalation is work moving up a level when a lower one cannot finish it.
 4. Under policy `prefer-local` or `auto`, a local run with a bad report is
    repeated once on the cloud ([routing policy](routing-policy.md)).
 
-**Automatic, per plan or queue**
+**Automatic, per plan or queue** (only if you use [`pai plan run`](../plan-runner.md) or [`pai queue run`](../queue.md); skip otherwise)
 
 `pai plan run` gives a failed part one local retry with the failure tail
 appended. In a plan that runs on a local provider the third attempt is one
@@ -66,10 +66,10 @@ The keys sit under `workers.escalate` in workers.yaml (shipped defaults shown):
 
 To move a job up yourself, or when escalation is off:
 
-1. `pai worker pending` lists finished workers whose branch holds unmerged work,
+1. `pai worker pending` (see [workers](workers.md#lifecycle)) lists finished workers whose branch holds unmerged work,
    including salvaged branches.
 2. Start the next worker on the stronger route, pointing it at that branch: say so
-   in the spec. `pai worker resume ID "<instruction>"` continues a finished
+   in the spec, for example: "Merge branch worker/ID first, then finish the failing test." `pai worker resume ID "<instruction>"` continues a finished
    worker's conversation, but on the same provider and model, so it does not move up.
 3. For one job, pick the route yourself: `--cloud`, `--provider NAME`, or
    `--model`. For a session, `pai worker route set --session self t2

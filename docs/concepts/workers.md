@@ -1,25 +1,30 @@
 # Workers
 
-A worker is a headless Claude Code process that does one task on a provider you
-chose, in its own git worktree and its own [pane](panes.md), while you keep
+A worker is a headless Claude Code process (a run without a terminal UI) that does one task on a provider you
+chose, in its own git worktree (a separate checkout of your repository, so your files stay untouched) and its own [pane](panes.md), while you keep
 working. Code workers (class `implement`, `complex`, in a git repo) get a
 worktree on branch `worker/ID`; `--no-worktree` works in place.
 
 ## Lifecycle
 
+The usual sequence is 1. `run`, 2. `ps`, 3. `merge`; the rest are optional.
+
 ```
+# 1. start
 pai worker run --class implement --label 'fix the retry loop' -p 'Fix the retry loop in src/net.ts'
+# 2. check
 pai worker ps                 # this session's workers, running and finished
 pai worker follow ID          # watch one live (no ID: all running)
 pai worker pane ID            # open the follow pane
 pai worker pending            # finished workers whose work is not merged yet
+# 3. merge
 pai worker merge ID --verify "<command>"   # merge worker/ID, drop worktree and branch
 pai worker gc                 # archive old worktrees under refs/pai-archive/ID
 ```
 
 - **Salvage.** When a run ends on a kill, time limit or loop stop, uncommitted
   edits in the worktree are committed on the branch (ledger line
-  `WORKER-SALVAGE`) so nothing is lost. See [escalation](escalation.md).
+  `WORKER-SALVAGE`; the ledger is PAI's log of worker events) so nothing is lost. See [escalation](escalation.md).
 - **Merge.** `merge` runs the `--verify` command (or `merge.verify` from
   `workers.yaml`) on the merged tree; non-zero exit reverts the merge and keeps
   the branch. A stub scan always runs. `discard` throws a branch away.
@@ -30,11 +35,23 @@ pai worker gc                 # archive old worktrees under refs/pai-archive/ID
 
 ## The report
 
-A headless worker ends with ONE message in AG2 form (`--report json` selects
-JSON). The keys the contract uses: `i` id, `r` result, `t` tests, `c` files
+A headless worker ends with ONE message in AG2, a compact key=value report format (`--report json` selects
+JSON). Example:
+
+```
+R
+i=fix-retry-loop
+r=+
+t=Retry+
+c=src/net.ts retry loop backs off
+p=npx vitest run src/net.test.ts
+z=retry capped at 5
+```
+
+The keys: `i` id, `r` result, `t` tests, `c` files
 changed, `p` proof, `z` one-line note, `x` what is left, `y` why when the result
 is not `+`. Result `+` is done and verified; `-` failed; `~` stopped or partial
-(work continues or was salvaged); `?` unknown; `!` is the remaining outcome code. A malformed report
+(work continues or was salvaged); `?` unknown; `!` is an error outcome, handled like `-` (the run falls through to the next route). A malformed report
 gets one re-ask unless `--no-report-retry`. `follow` and `replay` render it as a
 compact block.
 
@@ -74,5 +91,5 @@ in [../commands/worker.md](../commands/worker.md).
 
 ## Reference
 
-[../worker.md](../worker.md) stays as the long reference (supervision, config,
-chains, sub-workers, MCP, status line); this page is the overview.
+[../worker.md](../worker.md) is the long reference (supervision, config,
+chains, sub-workers, MCP, status line); this page is the overview. First run: [First workers](../install/first-workers.md).

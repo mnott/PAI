@@ -31,7 +31,7 @@ npm i -g @tekmidian/pai          # install
 npm i -g @tekmidian/pai@latest   # upgrade
 ```
 
-Verify: `pai --version` prints a version and `pai more` lists commands. If `pai` is not found, put the npm global bin directory (`npm prefix -g`, then `/bin`) on PATH and open a new shell.
+Verify: `pai --version` prints a version and `pai more` lists commands. If `pai` is not found, add `$(npm prefix -g)/bin` to PATH in the shell profile and open a new shell.
 
 ## 3. Run setup
 
@@ -40,13 +40,13 @@ pai setup            # interactive
 pai setup --yes --storage sqlite
 ```
 
-Setup covers storage, search embeddings, Claude Code hooks and settings, the background daemon and the first index. It is safe to run again. `--yes` takes every default; without `--storage` it picks sqlite unless a local Postgres answers.
+Tell the user that setup also installs the background daemon as a login service (launchd on macOS, a systemd user unit on Linux), and ask before running it. Setup covers storage, search embeddings, Claude Code hooks and settings, the background daemon and the first index. It is safe to run again. `--yes` takes every default; without `--storage` it picks sqlite unless a local Postgres answers.
 
 Storage choice, ask the user:
 - **sqlite**: keyword search, no extra software. Right for most people and for small machines.
 - **postgres**: keyword plus semantic search. Needs Docker; setup starts a `pai-pgvector` container itself. On a small machine export `PAI_PG_SHARED_BUFFERS=256MB` first.
 
-Verify: setup ends without an error and `pai memory search "test"` runs (it finds results once the first index is done). If it stops, fix the named cause and run `pai setup` again.
+Verify: setup ends without an error and `pai memory search "test"` runs (it prints hits or no results, but no error; results appear once the first index is done). If it stops, fix the named cause and run `pai setup` again.
 
 ## 4. Daemon
 
@@ -65,7 +65,7 @@ On Linux without systemd (containers) run `pai daemon serve` in a terminal or pr
 
 Workers are Claude Code runs on a provider you choose. Setup turns them on with the built-in `anthropic` provider.
 
-Check: `pai worker providers` lists at least one provider.
+Check: `pai worker providers` lists `anthropic [built-in]`. It uses the user's own Claude Code login, so there is no key to add.
 
 To add a second provider (cheaper or faster), ask the user for its Anthropic-compatible base URL, model id and a key file. Put the key in a file the user creates, do not paste it into the command line history if avoidable:
 
@@ -81,21 +81,23 @@ Verify: `pai worker providers test` (no name: it tests what routing would use fo
 
 ## 6. Delegation table
 
+The user normally leaves this table alone; check only that it shows models they can use.
+
 ```
 pai worker route
 ```
 
 One row per tier, each an ordered list of models: the first available one serves, the rest is the fallback order.
 - **t0 Session**: the interactive session itself. **t1 Orchestrator**: splits a job, plans, reviews. **t2 Worker**: implements the parts and runs quick checks.
-- A local model appears as an entry like any other and is skipped when its server is not running. Change a row with `pai worker route set t2 anthropic/sonnet,glm/MODEL`.
+- A local model appears as an entry like any other and is skipped when its server is not running. `route set` replaces the whole row and the shipped t2 row starts with `local`, so keep it first: `pai worker route set t2 local,anthropic/sonnet`.
 
 `pai worker policy` shows (and sets) whether work prefers local or cloud models: `cloud-only`, `local-only`, `prefer-local`, `prefer-cloud`, `auto`, `clear`.
 
 Verify: the table shows a model you have access to on every row. If a row names a provider you do not use, fix it with `route set`.
 
-## 7. Router and cockpit
+## 7. Optional: router and cockpit
 
-The router is off by default. It gives usage accounting, the local-model scheduler and the cockpit page.
+Skip unless the user wants the cockpit. The router is off by default. It gives usage accounting, the local-model scheduler and the cockpit page.
 
 ```
 pai config set router.enabled true
@@ -109,7 +111,7 @@ Verify: `pai router status` says running and the page loads. If not, `pai router
 
 ## 8. Optional: a local model
 
-Only if the user has a local engine and a model (Apple silicon with vllm-mlx, llama-server, ollama, Strata). Local models are declared under `local_tiers:` in the file `pai worker config path` prints; the shape is in `docs/concepts/local-models.md`.
+Only if the user has a local engine and a model (Apple silicon with vllm-mlx, llama-server, ollama, or Strata, a third-party local model server; see `docs/concepts/local-models.md`). Local models are declared under `local_tiers:` in the file `pai worker config path` prints (`workers.yaml` in the PAI home, `~/.pai` or `~/.claude/pai` on older installs).
 
 ```
 pai models                      # what runs on this machine
@@ -133,14 +135,14 @@ pai reload
 
 Report each line as pass or fail with the command output:
 
-1. `node --version` is 20 or newer; `claude --version` works
-2. `pai --version` works
-3. `pai daemon status` says running
-4. `pai memory search "test"` runs without error
-5. `pai worker providers test` answers: without a name it tests the provider routing would use now, and `pai worker providers test anthropic` probes the local `claude` CLI (installed, logged in — no API key involved)
+1. `node --version` prints v20 or newer; `claude --version` prints a version
+2. `pai --version` prints a version
+3. `pai daemon status` prints `Daemon running`
+4. `pai memory search "test"` ends without error
+5. `pai worker providers test` prints a reply and a time (`pai worker providers test anthropic` probes the local `claude` CLI; no key involved)
 6. `pai worker config check` exits 0
 7. `pai worker route` shows a model on every tier
-8. `pai router status` running and the cockpit page loads (if phase 7 was done)
+8. Only if phase 7 was done: `pai router status` says running and the cockpit page loads
 9. `pai` opens the session picker (Esc quits)
 
 Details: `docs/install/index.md`, `docs/install/first-workers.md`.

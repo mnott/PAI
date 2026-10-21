@@ -6,13 +6,15 @@ The cockpit is one web page served by the [router](concepts/router.md). It answe
 
 ## Open it
 
-Enable the router (`router.enabled: true`, off by default). The daemon then keeps it running, and the page is at:
+Enable the router, which is off by default: `pai config set router.enabled true && pai reload`. The daemon then keeps it running, and the page is at:
 
 ```
 http://127.0.0.1:8790/cockpit
 ```
 
-`router.bind` is `loopback` by default, so only the machine itself can reach the page and no token is asked for. The commands that matter:
+If the Limits section shows your Anthropic gauge and the Routing section shows one row per tier, it works. An empty Totals section only means no workers have run yet.
+
+`router.bind` is `loopback` by default, so only the machine itself can reach the page and no token is asked for. Normally you run nothing: the daemon keeps the router up. Use `pai router status` to check; the others are for when it is not:
 
 ```
 pai router status      # is it up
@@ -87,7 +89,7 @@ Answers: how fast is each model. Per provider and model, for the last hour and t
 
 ### Cache verdict by pause (`pause`)
 
-Answers: did the cache expire between turns. Per model, hits grouped by the pause since the previous request of the same session. A drop after five minutes means the cache expired and a [keepalive](cache-keepalive.md) under five minutes would have kept it.
+Answers: did the cache expire between turns. Per model, hits grouped by the pause since the previous request of the same session. A drop after five minutes means the cache expired (Anthropic's prompt cache expires after five idle minutes) and a [keepalive](cache-keepalive.md) under five minutes would have kept it.
 
 ### Sessions by tokens (`sessions`)
 
