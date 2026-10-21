@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { nativeAnthropicModels, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { buildLaunchPlan } from "../../workers/launch.js";
-import { buildHarness, execLine, nameArgs } from "./harness.js";
+import { buildHarness, dryRunText, execLine, nameArgs } from "./harness.js";
 
 const provider = (o: Partial<WorkerProvider>): WorkerProvider => ({
   enabled: true,
@@ -62,5 +62,13 @@ describe("execLine (dry-run)", () => {
     expect(line).not.toContain("beta-key-abcdefghij");
     expect(line).toContain("****ghij");
     expect(line.startsWith('cd "/tmp/x y" && claude ')).toBe(true);
+  });
+});
+
+describe("dryRunText route verdict", () => {
+  it("leads with the preflight verdict when the plan was probed", async () => {
+    const h = await buildHarness(workers, { provider: "alpha", cwd: "/tmp/x", name: "demo" });
+    expect(dryRunText({ ...h, route: { live: true } }).split("\n")[0]).toBe("route live");
+    expect(dryRunText({ ...h, route: undefined })).not.toContain("route live");
   });
 });

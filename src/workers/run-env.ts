@@ -414,11 +414,37 @@ export function probeRouteSync(route: string, model: string = PROBE_MODEL): Rout
   return interpretProbe(route, r.stdout ?? "");
 }
 
+export interface NativePreflight {
+  /** Whether the session may be pinned to the router. */
+  routerEnabled: boolean;
+  /** The probe verdict; absent when nothing was probed (router off, or a provider route). */
+  probe?: RouteProbe;
+}
+
 /**
- * `--settings` argv for a native interactive launch. Router enabled and the
- * route dead (router down, or its upstream failing) = one stderr line naming
- * the hop and the fix, and the session is pinned to api.anthropic.com instead.
- * Otherwise the usual pin; a provider route (ANTHROPIC_BASE_URL set) is never probed.
+ * The one preflight for every interactive native launch that would pin the
+ * router: router enabled, no provider route in `env`, and the route dead
+ * (router down, or its upstream failing) = one stderr line naming the hop and
+ * the fix, and the session is pinned to api.anthropic.com instead. A provider
+ * route (ANTHROPIC_BASE_URL set) is never probed. Headless worker spawns do not
+ * call this: they are accounted through the router by design.
+ */
+export function nativeRoutePreflight(
+  env: NodeJS.ProcessEnv,
+  model?: string,
+  probe: (route: string, model?: string) => RouteProbe = probeRouteSync,
+  routerEnabled: boolean = loadConfig().router.enabled
+): NativePreflight {
+  if (!routerEnabled || env.ANTHROPIC_BASE_URL) return { routerEnabled };
+  const p = probe(routerUrl(), model);
+  if (p.live) return { routerEnabled: true, probe: p };
+  process.stderr.write(`pai: ${p.reason} — launching direct to ${ANTHROPIC_FIRST_PARTY_URL}; ${p.fix}\n`);
+  return { routerEnabled: false, probe: p };
+}
+
+/**
+ * `--settings` argv for a native interactive launch: [] when the route is
+ * live (or router off), else the first-party pin from nativeRoutePreflight.
  */
 export function nativeLaunchSettingsArgs(
   env: NodeJS.ProcessEnv,
@@ -426,9 +452,12 @@ export function nativeLaunchSettingsArgs(
   probe: (route: string, model?: string) => RouteProbe = probeRouteSync,
   routerEnabled: boolean = loadConfig().router.enabled
 ): string[] {
-  if (!routerEnabled || env.ANTHROPIC_BASE_URL) return [];
-  const p = probe(routerUrl(), model);
-  if (p.live) return [];
-  process.stderr.write(`pai: ${p.reason} — launching direct to ${ANTHROPIC_FIRST_PARTY_URL}; ${p.fix}\n`);
-  return pinnedSettingsArgs(env, false);
+  const pf = nativeRoutePreflight(env, model, probe, routerEnabled);
+  return pf.probe && !pf.probe.live ? pinnedSettingsArgs(env, false) : [];
+}
+
+/** The dry-run line for a preflight verdict; null when nothing was probed. */
+export function routeVerdictLine(probe: RouteProbe | undefined): string | null {
+  if (!probe) return null;
+  return probe.live ? "route live" : `route broken: ${probe.reason} — falls back to ${ANTHROPIC_FIRST_PARTY_URL}; ${probe.fix}`;
 }
