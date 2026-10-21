@@ -6,18 +6,17 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
 import { initializeSchema, runMigrations } from "./registry-schema.js";
-import { paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
+import { defaultPaiHomeDir, paiHomePath, resolvePaiFile } from "../../config/pai-home.js";
 
 export type { Database };
 
 /** Old registry path, inside the ~/.pai/ directory (pre-2026-09-19). */
 export function oldRegistryPath(): string {
-  return join(homedir(), ".pai", "registry.db");
+  return join(defaultPaiHomeDir(), "registry.db");
 }
 
 /** Registry path: PAI_HOME/registry.db if present, else the old

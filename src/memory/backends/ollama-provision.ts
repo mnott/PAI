@@ -10,7 +10,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync, w
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { homedir } from "node:os";
+import { paiHomePath } from "../../config/pai-home.js";
 import { probeOllama } from "./ollama.js";
 
 export const GGUF_URL =
@@ -34,7 +34,7 @@ async function sha256File(path: string): Promise<string> {
 export async function provisionOllama(opts: {
   baseUrl: string;
   model: string;
-  /** Scratch dir for the download; default ~/.cache/pai/ollama. */
+  /** Scratch dir for the download; default PAI_HOME/cache/ollama. */
   workDir?: string;
   log?: (m: string) => void;
 }): Promise<{ created: boolean }> {
@@ -49,7 +49,7 @@ export async function provisionOllama(opts: {
   }
   if (probe.state === "server-down") throw new Error(`${probe.detail}; start it with \`ollama serve\``);
 
-  const dir = opts.workDir ?? join(homedir(), ".cache", "pai", "ollama");
+  const dir = opts.workDir ?? paiHomePath("cache", "ollama");
   mkdirSync(dir, { recursive: true });
   const gguf = join(dir, "snowflake-arctic-embed-m-v1.5-F16.gguf");
 

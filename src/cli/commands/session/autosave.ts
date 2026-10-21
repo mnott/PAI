@@ -16,8 +16,8 @@
  */
 
 import { join } from "node:path";
-import { existsSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { paiHomePath } from "../../../config/pai-home.js";
 import { applyContinue } from "../../../session/checkpoint-block.js";
 import {
   buildAutosaveBody,
@@ -51,7 +51,7 @@ const DEFAULT_MIN_GAP = 240;
  */
 function sentinelPath(rootPath: string): string {
   const key = rootPath.replace(/[^a-zA-Z0-9]/g, "-").slice(-80);
-  return join(tmpdir(), `pai-autosave-${key}`);
+  return paiHomePath("state", `autosave-${key}`);
 }
 
 function tooRecent(rootPath: string, minGapSeconds: number): boolean {
@@ -66,6 +66,7 @@ function tooRecent(rootPath: string, minGapSeconds: number): boolean {
 
 function touchSentinel(rootPath: string): void {
   try {
+    mkdirSync(paiHomePath("state"), { recursive: true });
     writeFileSync(sentinelPath(rootPath), String(Date.now()), "utf8");
   } catch {
     // Best-effort — a missing sentinel only costs an extra write.

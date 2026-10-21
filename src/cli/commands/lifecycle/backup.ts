@@ -20,12 +20,11 @@ import {
   closeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../../daemon/config.js";
 import { backupStorageFiles } from "../../../storage/backup.js";
-import { paiHomePath, resolvePaiFile } from "../../../config/pai-home.js";
+import { defaultPaiHomeDir, paiHomePath, resolvePaiFile } from "../../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -35,7 +34,7 @@ const CONFIG_FILE = paiConfigFilePath();
 
 /** Old backups dir, inside ~/.pai/ (pre-2026-09-19). */
 export function oldBackupsDir(): string {
-  return join(homedir(), ".pai", "backups");
+  return join(defaultPaiHomeDir(), "backups");
 }
 
 /** Backups dir: PAI_HOME/backups if present, else the old ~/.pai/backups

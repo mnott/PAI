@@ -3,9 +3,10 @@
  * session note. Designed for use in hooks; fast, silent, rate-limited.
  */
 
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
+import { paiHomePath } from "../../../config/pai-home.js";
 
 function findNotesDirForCwd(): string | null {
   const cwd = process.cwd();
@@ -78,7 +79,7 @@ function findLatestNoteFile(notesDir: string): string | null {
 
 function checkpointTooRecent(notesDir: string, minGapSeconds: number): boolean {
   const safeKey = notesDir.replace(/[^a-zA-Z0-9]/g, "-").slice(-80);
-  const tmpFile = join(tmpdir(), `pai-checkpoint-${safeKey}`);
+  const tmpFile = paiHomePath("state", `checkpoint-${safeKey}`);
   if (!existsSync(tmpFile)) return false;
   try {
     const { mtimeMs } = statSync(tmpFile);
@@ -90,8 +91,9 @@ function checkpointTooRecent(notesDir: string, minGapSeconds: number): boolean {
 
 function touchCheckpointSentinel(notesDir: string): void {
   const safeKey = notesDir.replace(/[^a-zA-Z0-9]/g, "-").slice(-80);
-  const tmpFile = join(tmpdir(), `pai-checkpoint-${safeKey}`);
+  const tmpFile = paiHomePath("state", `checkpoint-${safeKey}`);
   try {
+    mkdirSync(paiHomePath("state"), { recursive: true });
     writeFileSync(tmpFile, String(Date.now()), "utf8");
   } catch {
     // Non-fatal — rate limiting is best-effort

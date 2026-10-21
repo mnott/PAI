@@ -341,7 +341,6 @@ export function defaults(): PaiDaemonConfig {
 /** Config template — generated at runtime so the DB name is per-user */
 function configTemplate(): string {
   return `{
-  "socketPath": "/tmp/pai.sock",
   "indexIntervalSecs": 300,
   "embedIntervalSecs": 600,
   "storageBackend": "sqlite",
