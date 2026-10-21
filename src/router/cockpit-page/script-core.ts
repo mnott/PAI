@@ -150,7 +150,7 @@ function metricTile(o){
  function fill(v,u,sub){return'<div class="mt-fill"><div class="mt-bar"><i style="width:'+Math.max(0,Math.min(100,v==null?0:v)).toFixed(1)+'%"></i></div><span class="mt-sub">'+esc(u||"")+(sub?" · "+esc(sub):"")+'</span></div>'}
  // the tile's stable id: a slug of its title, so the drag can find and order it (the tile drag keys on data-tid)
  var tid=String(o.title||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")||"tile";
- return'<div class="mt" data-tid="'+esc(tid)+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
+ return'<div class="mt" data-tid="'+esc(tid)+'" data-tname="'+esc(o.title)+'" data-tval="'+esc((o.value==null?"–":o.value)+(o.value!=null&&o.unit?" "+o.unit:""))+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(o.title)+'" role="img">⠿</span><span class="mt-label">'+(o.icon?'<span class="mt-icon">'+esc(o.icon)+'</span>':"")+esc(o.title)+'</span>'+
   '<div class="mt-values">'+col(o.value,o.unit,o.sub)+(sec?col(sec.value,sec.unit,sec.sub,"mt-sec"):"")+'</div>'+
   (o.fill?fill(o.fill.pct,o.fill.text,o.fill.sub):"")+
   '<svg class="mt-spark" viewBox="0 0 ${L.sparkViewMaxPx} ${L.sparkHeightPx}" preserveAspectRatio="none" width="100%" height="${L.sparkHeightPx}">'+metricSpark(o.series||[])+'</svg></div>'
@@ -270,41 +270,83 @@ function moveSec(name,rows,target,mode){
  *  saved per container key (section name + card id); applied after every rebuild. */
 function tileOrder(){try{var r=localStorage.getItem(TKEY);if(!r)return {};var o=JSON.parse(r);return o&&typeof o==="object"?o:{}}catch(e){return{}}}
 function saveTileOrder(o){try{localStorage.setItem(TKEY,JSON.stringify(o))}catch(e){}}
+/** The tile ids of a container, in order: its own tiles, then the minimized chips row after it. */
+function tids(cont){
+ var ids=[],k,c=cont.children;
+ for(k=0;k<c.length;k++)if(c[k].parentNode===cont&&c[k].getAttribute("data-tid"))ids.push(c[k].getAttribute("data-tid"));
+ if(cont.__chips)for(k=0;k<cont.__chips.children.length;k++)ids.push(cont.__chips.children[k].getAttribute("data-tid"));
+ return ids;
+}
+function tkeyOf(cont){return cont.__tkey||cont.getAttribute("data-tkey")}
+/** Order and minimized state of one tile container, from the saved state (key = the container's tkey; the
+ *  minimized ids live under tkey+"#min"). Run after every rebuild: tiles the saved state does not know go
+ *  last in DOM order, ids that no longer exist drop out of it, minimized tiles become chips in a row after
+ *  the container, and every tile carries its minimize button. */
 function applyTileOrder(el){
- var kids=el.children;var ord=tileOrder()[el.__tkey];if(!ord||kids.length<2)return;
- var byId={},keep=[];
- // live children only: a tile moved here earlier still sits in a stale container's children
- // array, and re-appending it from there would undo that move
- for(var i=0;i<kids.length;i++){if(kids[i].parentNode!==el)continue;var id=kids[i].getAttribute("data-tid");if(!id){keep.push(kids[i]);continue}byId[id]=kids[i]}
- var moved=0;
- for(var k=0;k<ord.length;k++){var e=byId[ord[k]];if(e){el.appendChild(e);moved++}}
- // tiles the saved order does not know (new since the save) go last, in DOM order
- for(var j=0;j<kids.length;j++)if(kids[j].parentNode===el&&ord.indexOf(kids[j].getAttribute("data-tid"))<0&&kids[j].getAttribute("data-tid"))keep.push(kids[j]);
- for(var m=0;m<keep.length;m++)el.appendChild(keep[m]);
- if(moved)el.__html=""; // the html no longer matches the source string: a later identical poll must re-apply
+ var key=tkeyOf(el),st=tileOrder(),ord=st[key]||[],mins=st[key+"#min"]||[];
+ var kids=el.children,all=[],byId={},keep=[],i,k;
+ // live children only: a tile moved here earlier still sits in a stale container's children array
+ for(i=0;i<kids.length;i++){if(kids[i].parentNode!==el)continue;var id=kids[i].getAttribute("data-tid");if(!id){keep.push(kids[i]);continue}byId[id]=kids[i]}
+ if(el.__chips)for(i=0;i<el.__chips.children.length;i++){var cc=el.__chips.children[i];byId[cc.getAttribute("data-tid")]=cc}
+ var known=0;
+ for(k=0;k<ord.length;k++)if(byId[ord[k]]){all.push(byId[ord[k]]);known++}
+ var seen={};ord.forEach(function(x){seen[x]=1});
+ for(var id2 in byId)if(!seen[id2])all.push(byId[id2]);
+ // a state naming ids the container no longer has is pruned, but never from an empty container (not rendered yet)
+ if(all.length){
+  var po=ord.filter(function(x){return byId[x]}),pm=mins.filter(function(x){return byId[x]});
+  if(po.length!==ord.length||pm.length!==mins.length){var o2=tileOrder();if(po.length)o2[key]=po;else delete o2[key];if(pm.length)o2[key+"#min"]=pm;else delete o2[key+"#min"];saveTileOrder(o2)}
+  ord=po;mins=pm;
+ }
+ var open=[],chips=[];
+ all.forEach(function(t){(mins.indexOf(t.getAttribute("data-tid"))>=0?chips:open).push(t)});
+ open.forEach(function(t){el.appendChild(t)});
+ keep.forEach(function(t){el.appendChild(t)});
+ if(chips.length){
+  if(!el.__chips||el.__chips.parentNode!==el.parentNode){el.__chips=document.createElement("div");el.__chips.className="tchips";el.parentNode.insertBefore(el.__chips,el.nextSibling)}
+  chips.forEach(function(t){el.__chips.appendChild(t)});
+ }else if(el.__chips){el.__chips.parentNode&&el.__chips.parentNode.removeChild(el.__chips);el.__chips=null}
+ all.forEach(function(t){
+  var tid=t.getAttribute("data-tid"),min=mins.indexOf(tid)>=0,nm=t.getAttribute("data-tname")||tid;
+  t.classList.toggle("tmin",min);
+  var b=t.__tmb;
+  if(!b){
+   b=t.__tmb=document.createElement("button");b.type="button";b.className="tctl";
+   b.onclick=function(){
+    var s2=tileOrder(),c2=t.__tcont,kk=tkeyOf(c2)+"#min",m2=(s2[kk]||[]).slice(),ix=m2.indexOf(t.getAttribute("data-tid"));
+    if(ix>=0)m2.splice(ix,1);else m2.push(t.getAttribute("data-tid"));
+    if(m2.length)s2[kk]=m2;else delete s2[kk];
+    saveTileOrder(s2);applyTileOrder(c2);if(b.focus)b.focus({preventScroll:true});
+   };
+   t.appendChild(b);
+  }
+  t.__tcont=el;
+  b.setAttribute("aria-pressed",min?"true":"false");
+  b.setAttribute("aria-label",(min?"restore ":"minimize ")+nm);b.title=min?"restore":"minimize";
+  b.textContent=min?"+":"–";
+ });
+ el.__html=""; // the html no longer matches the source string: a later identical poll must re-apply
 }
 function tileGrips(){
  var gs=document.querySelectorAll("[data-tgrip]");
  for(var i=0;i<gs.length;i++)(function(g){
   if(g.__wired)return;g.__wired=1;
   // a grip whose tile carries no data-tid cannot be ordered: the drag would find no tile and do nothing
-  g.addEventListener("pointerdown",function(e){if(g.parentNode.getAttribute("data-tid"))sDrag(e,g,"tile")});
+  g.addEventListener("pointerdown",function(e){if(g.parentNode.getAttribute("data-tid")&&!g.parentNode.classList.contains("tmin"))sDrag(e,g,"tile")});
   g.addEventListener("keydown",function(e){
    if(!e.altKey)return;
    if(e.key==="ArrowLeft"||e.key==="ArrowRight"){
-    if(!g.parentNode.getAttribute("data-tid"))return;
+    if(!g.parentNode.getAttribute("data-tid")||g.parentNode.classList.contains("tmin"))return;
     e.preventDefault();
     // the tile is the grip's ancestor carrying the id; its container holds the tiles
-    var tile=g.closest("[data-tid]"),cont=tile.parentNode,ord=[];
-    // live children only: a tile moved by an earlier applyTileOrder still sits in the
-    // stale parent's children array, and ordering by it would undo that move
-    for(var k=0;k<cont.children.length;k++)if(cont.children[k].parentNode===cont&&cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
+    var tile=g.closest("[data-tid]"),cont=tile.parentNode,ord;
+    ord=tids(cont);
     var id=tile.getAttribute("data-tid"),p=ord.indexOf(id);
     var np=e.key==="ArrowLeft"?p-1:p+1;
     if(p<0||np<0||np>=ord.length)return;
     ord.splice(p,1);ord.splice(np,0,id);
     // __tkey is set by renderModels; fall back to the container's own data-tkey
-    var o=tileOrder();o[cont.__tkey||cont.getAttribute("data-tkey")]=ord;saveTileOrder(o);applyTileOrder(cont);
+    var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);applyTileOrder(cont);
    }
   });
  })(gs[i]);
@@ -382,10 +424,8 @@ function uDrag(e){
  if(!d.armed||!d.moved){hideInd();return}
  if(d.kind==="tile"){
   hideInd();
-  var cont=d.tile.parentNode,ord=[];
-  // live children only: a tile moved by an earlier applyTileOrder still sits in the
-  // stale parent's children array, and ordering by it would undo that move
-  for(var k=0;k<cont.children.length;k++)if(cont.children[k].parentNode===cont&&cont.children[k].getAttribute("data-tid"))ord.push(cont.children[k].getAttribute("data-tid"));
+  var cont=d.tile.parentNode,ord;
+  ord=tids(cont);
   var id=d.tile.getAttribute("data-tid"),p=ord.indexOf(id);
   var td=tileDrop(d,e.clientX,e.clientY);
   if(td&&p>=0){
@@ -394,7 +434,7 @@ function uDrag(e){
    if(ti<0)return;
    ord.splice(td.before?ti:ti+1,0,id);
    // __tkey is set by renderModels; fall back to the container's own data-tkey
-   var o=tileOrder();o[cont.__tkey||cont.getAttribute("data-tkey")]=ord;saveTileOrder(o);applyTileOrder(cont);
+   var o=tileOrder();o[tkeyOf(cont)]=ord;saveTileOrder(o);applyTileOrder(cont);
   }
   return;
  }

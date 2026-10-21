@@ -101,10 +101,14 @@ function renderLimits(){
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';
   else if(l.error)h+='<div class="gauge dim" title="'+esc(l.error)+'"><div class="s">'+esc(l.provider)+': '+esc(l.error)+'</div></div>';
-  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
+  var w0=l.windows[0];
+  c+='<div class="pgroup" data-prov="'+esc(l.provider)+'" data-tid="'+esc(l.provider)+'" data-tname="'+esc(l.provider)+'" data-tval="'+(w0?Math.round(w0.percent)+'%':"–")+'"><span class="tgrip" data-tgrip title="move tile" aria-label="move '+esc(l.provider)+'" role="img">⠿</span><div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
  if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
- setHtml($("cloud"),c||'<span class="dim">no cloud limit sources</span>');
+ setHtml($("cloud"),c?'<div class="tgroup" data-tkey="cloud">'+c+'</div>':'<span class="dim">no cloud limit sources</span>');
+ // the poll rebuild must not reset the order and minimized tiles the user arranged
+ var cg=$("cloud").querySelector?$("cloud").querySelector(".tgroup"):null;
+ if(cg){cg.__tkey="cloud";applyTileOrder(cg);tileGrips()}
  if(dn.length)lo+='<details class="downs" data-kind="dn"><summary>'+dn.length+' local model'+(dn.length===1?'':'s')+' down</summary>'+dn.map(function(n){return'<span class="chip bad">'+esc(n)+'</span>'}).join(" ")+'</details>';
  setHtml($("local"),lo||'<span class="dim">no local providers</span>');
  keepDowns($("local"));
