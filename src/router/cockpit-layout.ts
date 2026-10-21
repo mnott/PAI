@@ -111,6 +111,9 @@ const SHIPPED = {
   // chart redraw on resize: a width change at or below the slack is ignored; the redraw is debounced
   chartResizeSlackPx: 8,
   chartResizeDebounceMs: 150,
+  minLabelGapPx: 48,
+  minBarPx: 3,
+  sysHistoryLen: 60,
   dailyDays: 14,
   sessionsRows: 20,
   workerRows: 15,
@@ -196,6 +199,9 @@ export interface CockpitLayout {
    *  redraw is debounced by this many ms. */
   chartResizeSlackPx: number;
   chartResizeDebounceMs: number;
+  minLabelGapPx: number;
+  minBarPx: number;
+  sysHistoryLen: number;
   /** sample/history windows. */
   dailyDays: number;
   /** table row limits. */
@@ -277,6 +283,9 @@ export function cockpitLayout(): CockpitLayout {
     dailyChartHeightPx: num(s, "dailyChartHeightPx", SHIPPED.dailyChartHeightPx),
     chartResizeSlackPx: num(s, "chartResizeSlackPx", SHIPPED.chartResizeSlackPx),
     chartResizeDebounceMs: num(s, "chartResizeDebounceMs", SHIPPED.chartResizeDebounceMs),
+    minLabelGapPx: num(s, "minLabelGapPx", SHIPPED.minLabelGapPx),
+    minBarPx: num(s, "minBarPx", SHIPPED.minBarPx),
+    sysHistoryLen: num(s, "sysHistoryLen", SHIPPED.sysHistoryLen),
     dailyDays: num(s, "dailyDays", SHIPPED.dailyDays),
     sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),

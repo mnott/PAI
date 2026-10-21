@@ -185,7 +185,7 @@ describe("cockpit http", () => {
     expect(page.body).toContain("trimEmpty");
     expect(page.body).toContain("emptyChart");
     expect(page.body).toContain("no data in this window");
-    expect(page.body).toContain("staleCell"); // stale system readings keep their number
+    expect(page.body).toContain("staleAge"); // stale system readings keep their number
     expect(page.body).toContain('["0","33","66","100"]'); // fixed percent axis tick labels
     const data = JSON.parse((await get("/cockpit/data?window=24h")).body);
     expect(data.window).toBe("24h");
@@ -345,23 +345,15 @@ describe("cockpit http", () => {
   });
 });
 
-describe("cockpit page stale cell", () => {
-  const cell = new Function(
-    `return (${COCKPIT_HTML.match(/function staleCell[\s\S]*?\n\}/)![0]})`
-  )() as (m: { v: number; at: number }, now: number, fmt: (n: number) => string, tip?: string) => string;
+describe("cockpit page stale age", () => {
+  const age = new Function(
+    `return (${COCKPIT_HTML.match(/function staleAge[^\n]*\n/)![0]})`
+  )() as (m: { v: number; at: number }, now: number) => string;
 
-  it("keeps the last value visible, dimmed, with a ~age marker", () => {
-    const out = cell({ v: 14.4, at: NOW - 3 * 60_000 }, NOW, (n) => n.toFixed(1));
-    expect(out).toContain("14.4");
-    expect(out).toContain("~3m");
-    expect(out).toContain('class="dim"');
-    expect(out).toContain('class="warn"');
-  });
-
-  it("formats short ages in seconds and carries the source tooltip", () => {
-    const out = cell({ v: 38, at: NOW - 10_000 }, NOW, (n) => `${Math.round(n)}%`, "mactop probe stale");
-    expect(out).toContain("~10s");
-    expect(out).toContain('title="mactop probe stale"');
+  it("gives the age of a remembered reading in s, m or h", () => {
+    expect(age({ v: 14.4, at: NOW - 3 * 60_000 }, NOW)).toBe("3m");
+    expect(age({ v: 38, at: NOW - 10_000 }, NOW)).toBe("10s");
+    expect(age({ v: 38, at: NOW - 2 * 3_600_000 }, NOW)).toBe("2h");
   });
 });
 

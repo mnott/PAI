@@ -174,6 +174,8 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `serverCounterStaleSecs` | 60 | A server prefix-cache counter older than this is marked |
 | `confirmMs` | 4000 | An inline confirm (a stop that also takes other consumers down) stays armed this long |
 | `chartResizeSlackPx`, `chartResizeDebounceMs` | 8, 150 | Charts draw at their real pixel width, so text keeps its size; a width change above the slack redraws them, debounced |
+| `minLabelGapPx`, `minBarPx` | 48, 3 | Time-axis labels are thinned to a label every k buckets so neighbours keep this many px; bar charts merge buckets (caption names the bucket size) so a bar stays at least this wide |
+| `sysHistoryLen` | 60 | System tiles are metric tiles with a sparkline; a metric without a server series keeps this many recent polls in the page |
 | `foldDefaultKind` | `coding` | A Models card of this kind starts open, the rest folded |
 | `gaugeWarnPct`, `gaugeBadPct` | 70, 90 | A limits gauge at/above the bad percent colours red, at/above the warn percent amber |
 | `hitWarn`, `hitBad` | 0.8, 0.5 | A cache hit ratio below the warn ratio colours amber, below the bad ratio red (cache rings, pause verdicts, sessions and provider hit columns) |

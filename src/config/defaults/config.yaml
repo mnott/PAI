@@ -225,6 +225,12 @@ router:
       # the redraw is debounced by this many ms.
       chartResizeSlackPx: 8
       chartResizeDebounceMs: 150
+      # time-axis labels keep at least this many px between neighbours (every k-th bucket
+      # is labelled); bar charts keep bars at least minBarPx wide by merging buckets.
+      minLabelGapPx: 48
+      minBarPx: 3
+      # System tiles: polls kept per metric for the sparkline when the server keeps no series of it.
+      sysHistoryLen: 60
       # history window of the "Tokens per day per model" chart, in days.
       dailyDays: 14
       # table row limits: sessions by tokens, worker runs.
