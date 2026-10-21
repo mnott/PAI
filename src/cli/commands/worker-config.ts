@@ -17,6 +17,7 @@ import {
   WorkersConfigError,
   expandHome,
   getProviderOrNative,
+  isLocalProvider,
   nativeAnthropicProvider,
   readWorkersSection,
   type ClassTarget,
@@ -55,6 +56,7 @@ import {
   unsetClass,
   updateProvider,
 } from "../../workers/providers.js";
+import { clearLocalStart, failLocalStart, writeLocalStart } from "../../workers/local-start.js";
 import { activeTier, fetchServedModels, fmtRss, LocalTierError, parseServers, planStart, readLocalConfig, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
 import { PROMPTS, aggregate, planArms, readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
 import {
@@ -746,7 +748,28 @@ function scriptListeners(cfg: LocalConfig): Record<number, number[]> {
 
 export function listServers(cfg: LocalConfig): RunningServer[] {
   const o = psTable("pid=,rss=,command=");
-  return parseServers(o, cfg, process.pid, scriptListeners(cfg));
+  return parseServers(o, cfg, process.pid, scriptListeners(cfg), providerPorts());
+}
+
+/** Loopback port → provider name for every workers.yaml provider with a url (names a server that runs no tier). */
+function providerPorts(): Record<number, string> {
+  const out: Record<number, string> = {};
+  try {
+    for (const [name, p] of Object.entries(readWorkersSection().workers.providers ?? {})) {
+      const port = p.baseUrl ? Number(new URL(p.baseUrl).port) : 0;
+      if (port && isLocalProvider(p.baseUrl)) out[port] ??= name;
+    }
+  } catch {
+    /* no config: servers stay unnamed */
+  }
+  return out;
+}
+
+/** One `pai worker local status` line for a server: tier (or provider name), provider, port, pid, rss. */
+export function serverLine(s: RunningServer): string {
+  const unknown = s.tier === null && s.provider === null;
+  const name = s.tier ?? (unknown ? "unknown process on a local-model port" : "no tier");
+  return `${name}  provider=${s.provider ?? "?"}  port=${s.port ?? "?"}  pid=${s.pid}  rss=${fmtRss(s.rssKb)}`;
 }
 
 /** Stop every local server PAI knows, then wait until their ports are free. */
@@ -780,6 +803,8 @@ export interface StartDeps {
   /** Start the server; returns its exit code while it has exited, null while it runs. */
   launch?: (plan: StartPlan) => () => number | null;
   pollMs?: number;
+  /** Where the start-in-flight record goes (default: the workers log dir). */
+  startDir?: string;
 }
 
 function launchDetached(plan: StartPlan): () => number | null {
@@ -804,7 +829,9 @@ export async function startTier(
   deps: StartDeps = {},
 ): Promise<void> {
   const from = await (deps.current ?? currentTier)(cfg).catch(() => null);
+  const startDir = deps.startDir ?? logDir();
   await (deps.stop ?? stopAll)(cfg);
+  writeLocalStart(startDir, { tier: tier.tier, provider: tier.provider, port: tier.port, startedAt: Date.now(), readyMs: plan.readyMs, log: plan.logPath });
   const exited = (deps.launch ?? launchDetached)(plan);
   out(dim(`starting ${tier.label} (${tier.provider}) on :${tier.port}, log ${plan.logPath}`));
   const up = deps.up ?? isUp;
@@ -812,10 +839,17 @@ export async function startTier(
   while (!(await up(tier.port))) {
     const code = exited();
     // a script may hand off to a background server and exit 0
-    if (code !== null && !(tier.engine === "script" && code === 0)) throw new LocalTierError(`server exited (${code}); see ${plan.logPath}`);
-    if (Date.now() > deadline) throw new LocalTierError(`not ready after ${Math.round(plan.readyMs / 60000)} min; see ${plan.logPath}`);
+    if (code !== null && !(tier.engine === "script" && code === 0)) {
+      failLocalStart(startDir, `server exited (${code})`);
+      throw new LocalTierError(`server exited (${code}); see ${plan.logPath}`);
+    }
+    if (Date.now() > deadline) {
+      failLocalStart(startDir, "not ready in time");
+      throw new LocalTierError(`not ready after ${Math.round(plan.readyMs / 60000)} min; see ${plan.logPath}`);
+    }
     await sleep(deps.pollMs ?? 5000);
   }
+  clearLocalStart(startDir);
   const yamlPath = deps.yamlPath ?? workersYamlPath();
   setLocalPreference(yamlPath, tier.provider);
   appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-SWITCH", {
@@ -832,7 +866,7 @@ async function printLocalStatus(cfg: LocalConfig): Promise<void> {
   const active = await currentTier(cfg);
   if (servers.length === 0) out(dim("no local model server running"));
   for (const s of servers) {
-    out(`${s.tier ?? "?"}  provider=${s.provider ?? "?"}  port=${s.port ?? "?"}  pid=${s.pid}  rss=${fmtRss(s.rssKb)}`);
+    out(serverLine(s));
   }
   out(active ? `active: ${active.tier} (${active.label})` : dim("active: none"));
   out(dim(`tiers: ${Object.keys(cfg.tiers).join(", ") || "(none configured)"}`));

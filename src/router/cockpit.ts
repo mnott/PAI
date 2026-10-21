@@ -21,6 +21,7 @@ import { buildSlots, testSlots } from "../builds/config.js";
 import { workersLogDir } from "../workers/paths.js";import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
+import { localStartView, readLocalStart, type LocalStartView } from "../workers/local-start.js";
 import { activeTier, fetchServedModels, readLocalConfig, tierButtons } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
@@ -549,6 +550,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     runtimes: inv.runtimes.map((r) => ({ ...r, label: labels?.[r.name] ?? "", modelLabels: labels?.[`${r.name}.`] ?? {} })),
     tiers: localTierNames(),
     running: await localRunningInfo(),
+    starting: currentStart(),
     // the configured start/stop commands per runtime (models.runtimes) and what PAI itself uses
     runtimeCommands: runtimeCommandsFor(),
     consumers: consumersFor(),
@@ -608,6 +610,21 @@ function consumersFor(): Array<{ name: string; runtime: string; purpose: string;
     /* no config: the page shows only the inventory's users */
   }
   return out;
+}
+
+/** The local start in flight (loading) or failed, from the record startTier keeps; null when none. */
+function currentStart(): LocalStartView | null {
+  try {
+    return localStartView(readLocalStart(workersLogDir(readWorkersSection().workers)));
+  } catch {
+    return null;
+  }
+}
+
+/** A local limit whose server is not up yet but whose tier is starting carries the start (loading / failed). */
+export function withStarting(ls: ProviderLimits[], view: LocalStartView | null = currentStart()): Array<ProviderLimits & { starting?: LocalStartView }> {
+  if (!view) return ls;
+  return ls.map((l) => (l.kind === "local" && l.up === false && l.provider === view.provider ? { ...l, starting: view } : l));
 }
 
 /** The tiers (name, label, memory need), for the cards' Start/Stop row. */
@@ -995,7 +1012,7 @@ export function handleCockpit(
       ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: l, routing, activeLocal: configuredLocal(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withStarting(l), routing, activeLocal: configuredLocal(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

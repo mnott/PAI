@@ -65,6 +65,17 @@ describe("local tiers", () => {
   });
 });
 
+describe("parseServers: a server without a tier", () => {
+  const cfg = parseLocalConfig({ local_tiers: {} }, {});
+  const ps = "201 367104 python serve_patched_512_cap.py serve /m --served-model-name qwen3-coder-30b --host 127.0.0.1 --port 8011";
+  it("is named from the provider whose url holds its port", () => {
+    expect(parseServers(ps, cfg, 1, {}, { 8011: "local30" })[0]).toMatchObject({ pid: 201, tier: null, provider: "local30", port: 8011 });
+  });
+  it("stays unnamed when no provider claims the port", () => {
+    expect(parseServers(ps, cfg, 1)[0]).toMatchObject({ pid: 201, tier: null, provider: null, port: 8011 });
+  });
+});
+
 describe("findModelPath", () => {
   const dirs = [
     { name: "Qwen3-Coder-30B-A3B-Instruct-MLX-4bit", path: "/a" },

@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { parseLocalConfig, planStart } from "../../workers/local-tiers.js";
-import { startTier } from "./worker-config.js";
+import { localStartView, readLocalStart } from "../../workers/local-start.js";
+import { serverLine, startTier } from "./worker-config.js";
 
 describe("startTier", () => {
   it("stops first, then points workers.yaml local: at the tier and writes LOCAL-SWITCH", async () => {
@@ -32,6 +33,30 @@ describe("startTier", () => {
     expect(text).toContain("# keep me");
     expect((parse(text) as { local: string }).local).toBe("flashnext-iq3");
     expect(readFileSync(ledger, "utf8")).toMatch(/LOCAL-SWITCH from=gyro to=iq3s provider=flashnext-iq3/);
+  });
+
+  it("records the start while loading, clears it when up, marks it failed when the server exits", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pai-switch-"));
+    const yaml = join(d, "workers.yaml");
+    writeFileSync(yaml, "local: old\n");
+    const cfg = parseLocalConfig({ local_tiers: { s: { engine: "script", provider: "p", start: "/x.sh", port: 8035 } } }, { p: { model: "m" } });
+    const seen: unknown[] = [];
+    let polls = 0;
+    await startTier(cfg, "s", cfg.tiers.s, planStart(cfg, cfg.tiers.s), {
+      yamlPath: yaml, ledger: join(d, "l"), startDir: d, pollMs: 1, current: async () => null, stop: async () => {}, launch: () => () => null,
+      up: async () => (seen.push(localStartView(readLocalStart(d))), ++polls > 2),
+    });
+    expect(seen[0]).toMatchObject({ tier: "s", provider: "p", state: "loading" });
+    expect(readLocalStart(d)).toBeNull();
+    await expect(
+      startTier(cfg, "s", cfg.tiers.s, planStart(cfg, cfg.tiers.s), { yamlPath: yaml, ledger: join(d, "l"), startDir: d, pollMs: 1, current: async () => null, stop: async () => {}, launch: () => () => 3, up: async () => false }),
+    ).rejects.toThrow();
+    expect(localStartView(readLocalStart(d))).toMatchObject({ state: "failed", message: expect.stringContaining("failed to start, see ") });
+  });
+
+  it("labels a server that no tier or provider claims", () => {
+    expect(serverLine({ pid: 5, rssKb: 1024, port: 8011, tier: null, provider: null })).toContain("unknown process on a local-model port");
+    expect(serverLine({ pid: 5, rssKb: 1024, port: 8011, tier: null, provider: "local30" })).toContain("provider=local30");
   });
 
   it("does not touch local: when the server exits before it answers", async () => {

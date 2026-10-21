@@ -90,11 +90,17 @@ function localTile(l){
  var rows=(l.rssMb?r("memory",esc(gbm(l.rssMb))+" GB"):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+' tok/s'):"")+(m?r("model",esc(shortModel(m)),m):"");
  return'<div class="pgroup ltile" data-prov="'+esc(l.provider)+'"'+tileAttrs(l.provider,al||l.provider,l.tokensPerSec?Math.round(l.tokensPerSec)+" tok/s":"up")+'>'+tileGrip(al||l.provider)+'<div class="phead"><span class="lname" title="'+esc(l.provider)+'">'+esc(al||l.provider)+'</span><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"")+'</div>';
 }
+/** A local model whose tier start is in flight: amber "loading <n> s", or red once it timed out / exited. */
+function startChip(l){
+ var s=l.starting,failed=s.state==="failed";
+ return'<span class="chip '+(failed?'bad':'warn')+'" data-prov="'+esc(l.provider)+'" title="'+esc(s.log)+'">'+esc(l.provider)+' · '+(failed?esc(s.message):'loading '+s.sinceSec+' s')+'</span>';
+}
 function renderLimits(){
- if(!lim)return;var c="",lo="",lt="",dn=[],nl=[];
+ if(!lim)return;var c="",lo="",lt="",dn=[],nl=[],st=[];
  lim.limits.forEach(function(l){
   var h="",age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"";
   if(l.kind==="local"){
+   if(!l.up&&l.starting){st.push(l);return}
    if(!l.up){(l.provider===lim.activeLocal?dn:nl).push(l.provider);return}
    lt+=localTile(l);
    return}
@@ -104,6 +110,7 @@ function renderLimits(){
   var w0=l.windows[0];
   c+='<div class="pgroup" data-prov="'+esc(l.provider)+'"'+tileAttrs(l.provider,l.provider,w0?Math.round(w0.percent)+'%':"–")+'>'+tileGrip(l.provider)+'<div class="phead">'+esc(l.provider)+'</div><div class="gauges">'+h+'</div></div>';
  });
+ if(st.length)lo+=st.map(startChip).join(" ");
  if(lt)lo='<div class="tgroup" data-tkey="local">'+lt+'</div>'+lo;
  if(nl.length)lo+='<details class="downs" data-kind="nl"><summary>'+nl.length+' local model'+(nl.length===1?'':'s')+' not loaded (switch in Models)</summary>'+nl.map(function(n){return'<span class="chip">'+esc(n)+'</span>'}).join(" ")+'</details>';
  setHtml($("cloud"),c?'<div class="tgroup" data-tkey="cloud">'+c+'</div>':'<span class="dim">no cloud limit sources</span>');
@@ -139,13 +146,14 @@ function ringName(m){
 }
 /** Local-model buttons: caption, one button per tier (label, memory need), the active one highlighted and
  * disabled, an inline confirm that names what the switch stops, and off. */
-function tierRow(tiers,running){
+function tierRow(tiers,running,starting){
  var btns=tiers.map(function(t){
   var name=typeof t==="string"?t:t.tier,label=(typeof t==="string"?"":t.label)||name,gb=typeof t==="string"?null:t.memoryGb;
   var cur=!!(running&&running.tier===name);
   var cf=running&&!cur?' data-confirm="stops '+esc(running.label||running.model)+' first, needs ~'+(gb?esc(gb):"?")+' GB. Click again to confirm."':"";
   return'<button data-a="local.switch" data-t="'+esc(name)+'" class="tier'+(cur?' cur':'')+'"'+(cur?' disabled':'')+cf+'>'+esc(label)+(gb?' · '+esc(gb)+' GB':'')+'</button>'}).join("");
- return'<span class="tiercap">Local model:</span> '+btns+'<button data-a="local.off">off</button>';
+ var sc=starting?' <span class="'+(starting.state==="failed"?'bad':'warn')+'" title="'+esc(starting.log)+'">'+esc(starting.tier)+' · '+(starting.state==="failed"?esc(starting.message):'loading '+starting.sinceSec+' s')+'</span>':"";
+ return'<span class="tiercap">Local model:</span> '+btns+'<button data-a="local.off">off</button>'+sc;
 }
 /** Models section: one foldable card per consumer runtime — the runtime PAI's embedding runs on, the worker
  * providers' local models (tiers) and the declared consumers (models.consumers) — grouped under their runtime.
@@ -159,7 +167,7 @@ function modelsHtml(inv){
  var running=(inv.running&&inv.running.model)?inv.running:null;
  var cmds=inv.runtimeCommands||{};
  var consumers=inv.consumers||[];
- var tierBtns=tiers.length?tierRow(tiers,running):"";
+ var tierBtns=tiers.length?tierRow(tiers,running,inv.starting):"";
  /* the local model switch shows once: in the card of the engine runtime the workers use (a running runtime
   * that is neither ollama nor docker model runner, hosting the running model, else one with a worker user);
   * with no such card it sits at the section bottom */

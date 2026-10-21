@@ -350,6 +350,8 @@ export function parseServers(
   cfg: LocalConfig,
   selfPid = process.pid,
   listeners: Record<number, number[]> = {},
+  /** port → provider name from workers.yaml `providers:` urls, for servers that run no configured tier. */
+  providerByPort: Record<number, string> = {},
 ): RunningServer[] {
   const out: RunningServer[] = [];
   const rssOf = new Map<number, number>();
@@ -366,7 +368,7 @@ export function parseServers(
     const pm = /--port\s+(\d+)/.exec(cmd);
     const port = pm ? Number(pm[1]) : null;
     const add = (t: LocalTier | undefined, p: number | null): void => {
-      out.push({ pid, rssKb: Number(m[2]), port: p, tier: t?.tier ?? null, provider: t?.provider ?? null });
+      out.push({ pid, rssKb: Number(m[2]), port: p, tier: t?.tier ?? null, provider: t?.provider ?? (p !== null ? providerByPort[p] : undefined) ?? null });
     };
     // vllm-mlx; skip the CLI / shells that merely mention the match string
     if (cmd.includes(cfg.launcher.processMatch) && /\bserve\b/.test(cmd) && cmd.includes("--port")) {

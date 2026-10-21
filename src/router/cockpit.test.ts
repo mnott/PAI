@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { TOKEN_WEIGHTS, buildCockpitData, cachedRows, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens } from "./cockpit.js";
+import { TOKEN_WEIGHTS, buildCockpitData, cachedRows, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens, withStarting } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { clearJobNameCache } from "./sessions.js";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -586,4 +586,19 @@ describe("cachedRows", () => {
     writeFileSync(f, row(9) + "\n");
     expect(read().map((r) => r.session_id)).toEqual(["s9"]);
   });
+});
+
+describe("withStarting", () => {
+  const view = { tier: "t", provider: "coder-next", port: 8034, state: "loading" as const, sinceSec: 30, log: "/l" };
+  const ls = [
+    { provider: "coder-next", kind: "local" as const, windows: [], up: false, fetchedAt: 0 },
+    { provider: "other", kind: "local" as const, windows: [], up: false, fetchedAt: 0 },
+    { provider: "coder-next-up", kind: "local" as const, windows: [], up: true, fetchedAt: 0 },
+  ];
+  it("tags only the down local limit of the starting provider", () => {
+    const out = withStarting(ls, view) as Array<{ provider: string; starting?: unknown }>;
+    expect(out.find((l) => l.provider === "coder-next")?.starting).toEqual(view);
+    expect(out.find((l) => l.provider === "other")?.starting).toBeUndefined();
+  });
+  it("leaves the limits alone when nothing is starting", () => expect(withStarting(ls, null)).toBe(ls));
 });
