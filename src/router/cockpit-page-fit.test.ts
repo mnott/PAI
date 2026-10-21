@@ -51,7 +51,7 @@ const fixtureQueue = () => ({ providers: [{ provider: "glm", cap: 2, running: [{
 let server: Server;
 let base = "";
 let tmp = "";
-const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("section"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-section"):"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out}),"*")},2500)</script>`;
+const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("section"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-section"):"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length})});var ths=[];document.querySelectorAll(".tw th").forEach(function(h){var r=document.createRange();r.selectNodeContents(h);var tops={};Array.prototype.forEach.call(r.getClientRects(),function(q){if(q.width>0)tops[Math.round(q.top)]=1});var sc=h.closest("section");ths.push({sec:sc?sc.getAttribute("data-section"):"?",label:h.textContent,lines:Object.keys(tops).length,height:Math.round(h.getBoundingClientRect().height)})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out,ths:ths}),"*")},2500)</script>`;
 
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-fit-"));
@@ -90,7 +90,7 @@ function run(bin: string, args: string[], opts: { encoding?: "utf8"; timeout: nu
     browsers.add(c);
   });
 }
-async function shoot(width: number, main: number | null, shot?: string): Promise<{ main: number; doc: number; vw: number; tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number }[] }> {
+async function shoot(width: number, main: number | null, shot?: string): Promise<{ main: number; doc: number; vw: number; tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number }[]; ths: { sec: string; label: string; lines: number; height: number }[] }> {
   const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + width + "-" + (main ?? 0))}`, "--window-size=1000,3300", "--virtual-time-budget=6000"];
   const url = `${base}/frame?w=${width}${main ? `&main=${main}` : ""}`;
   const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", url], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
@@ -124,6 +124,9 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
         expect(t.scrollWidth, `${t.sec}: wrapper ${t.clientWidth}px, content ${t.scrollWidth}px`).toBeLessThanOrEqual(t.clientWidth);
         expect(t.tableW, `${t.sec}: table ${t.tableW}px in wrapper ${t.clientWidth}px`).toBeLessThanOrEqual(t.clientWidth);
       }
+      // no header wraps: the text inside every th sits on one line (range rects share one top)
+      expect(r.ths.length, "headers measured").toBeGreaterThan(0);
+      for (const h of r.ths) expect(h.lines, `${h.sec} th "${h.label}": ${h.lines} lines (height ${h.height}px)`).toBeLessThanOrEqual(1);
       expect(r.doc, "page itself must not scroll sideways").toBeLessThanOrEqual(r.vw);
     }, 120_000);
   }

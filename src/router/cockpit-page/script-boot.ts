@@ -34,7 +34,7 @@ function renderQueue(q){
   if(p.cap===1){
    var rows=p.running.map(function(r){return mk(r,p,false,true)}).concat(p.waiting.map(function(w){return mk(w,p,true,true)}));
    var mods={};p.running.concat(p.waiting).forEach(function(x){if(x.model)mods[x.model]=1});
-   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (slots '+p.running.length+'/1'+(p.conversationSlots?', conversation slots '+p.conversationSlots:'')+')',["pos","worker","session","state","age / waited","now","move"],rows));
+   out.push(block(esc(p.provider)+(Object.keys(mods).length?': '+esc(Object.keys(mods).join(", ")):'')+' (slots '+p.running.length+'/1'+(p.conversationSlots?', conversation slots '+p.conversationSlots:'')+')',["pos","worker .txt","session .txt","state","waited","now","move"],rows));
    if(!p.waiting.length)out.push('<div class="dim" style="text-align:left">nothing waiting</div>');
    return}
   p.running.forEach(function(r){(sess[r.session||"other"]=sess[r.session||"other"]||[]).push({k:p.provider+"/"+(r.model||"?"),h:mk(r,p,false,false)})});
@@ -42,21 +42,21 @@ function renderQueue(q){
  });
  Object.keys(sess).sort(function(a,b){return a==="other"?1:b==="other"?-1:a<b?-1:a>b?1:0}).forEach(function(s){
   var it=sess[s].sort(function(a,b){return a.k<b.k?-1:a.k>b.k?1:0}),cnt={};it.forEach(function(x){cnt[x.k]=(cnt[x.k]||0)+1});
-  out.push(block(esc(s)+((q.sessionMax||{})[s]?' <span class="dim">max '+q.sessionMax[s]+' at a time</span> ':'')+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker","model","state","age / waited","now","move"],it.map(function(x){return x.h})))
+  out.push(block(esc(s)+((q.sessionMax||{})[s]?' <span class="dim">max '+q.sessionMax[s]+' at a time</span> ':'')+' <span class="dim">'+Object.keys(cnt).map(function(k){return esc(k)+" ×"+cnt[k]}).join(", ")+'</span>',["pos","worker .txt","model .txt","state","waited","now","move"],it.map(function(x){return x.h})))
  });
  if(bhas){
   [["test","tests",bq.testSlots],["build","builds",bq.slots]].forEach(function(P){
    var run=bq.running.filter(function(b){return b.kind===P[0]}),wt=bq.waiting.filter(function(b){return b.kind===P[0]});
    if(!run.length&&!wt.length)return;
    var brow=run.map(function(b){return["",' <span title="'+esc(b.session)+'">'+esc(b.label)+(b.mode==="full"?' [full]':'')+(b.key?' ['+esc(b.key)+']':'')+'</span>',' <span title="'+esc(b.session)+'">'+esc(b.session)+'</span>','running',qdur(b.ageSec)]}).concat(wt.map(function(b,i){return[String(i+1),' <span title="'+esc(b.session)+'">'+esc(b.label)+(b.mode==="full"?' [full]':'')+(b.key?' ['+esc(b.key)+']':'')+'</span>',' <span title="'+esc(b.session)+'">'+esc(b.session)+'</span>','waiting'+(b.why?' ('+esc(b.why)+')':''),qdur(b.waitedSec)]}));
-   out.unshift(block(P[1]+' ('+P[2]+' slot'+(P[2]===1?'':'s')+')',["pos","build","session","state","age / waited"],brow));
+   out.unshift(block(P[1]+' ('+P[2]+' slot'+(P[2]===1?'':'s')+')',["pos","build .txt","session .txt","state","waited"],brow));
   });
  }
- if(pl.length)out.unshift(block("plans",["plan","parts","phase","in phase","running","workers"],pl.map(function(p){return[' <span title="'+esc(p.job)+'">'+esc(p.job)+'</span>',p.merged+'/'+p.total,' <span title="'+esc(p.phase)+'">'+esc(p.phase)+'</span>',qdur(p.phaseSec),qdur(p.ageSec),' <span title="'+esc((p.running||[]).join(", "))+'">'+esc((p.running||[]).join(", "))+'</span>']})));
+ if(pl.length)out.unshift(block("plans",["plan .txt","parts","phase .txt","in phase","running .txt","workers .txt"],pl.map(function(p){return[' <span title="'+esc(p.job)+'">'+esc(p.job)+'</span>',p.merged+'/'+p.total,' <span title="'+esc(p.phase)+'">'+esc(p.phase)+'</span>',qdur(p.phaseSec),qdur(p.ageSec),' <span title="'+esc((p.running||[]).join(", "))+'">'+esc((p.running||[]).join(", "))+'</span>']})));
  var pv=q.paneViolations||[];
- if(pv.length)out.unshift(block("pane violations",["process","mark","why"],pv.map(function(p){return[' <span title="'+esc(p.id)+'">'+esc(p.id)+'</span>',' <span title="'+esc(p.mark)+'">'+esc(p.mark)+'</span>',' <span title="'+esc(p.why||"")+'">'+esc(p.why||"")+'</span>']})));
+ if(pv.length)out.unshift(block("pane violations",["process .txt","mark .txt","why .txt"],pv.map(function(p){return[' <span title="'+esc(p.id)+'">'+esc(p.id)+'</span>',' <span title="'+esc(p.mark)+'">'+esc(p.mark)+'</span>',' <span title="'+esc(p.why||"")+'">'+esc(p.why||"")+'</span>']})));
  var pn=q.panes||[];
- if(pn.length)out.unshift(block("panes",["label","cwd","running","log"],pn.map(function(p){return[' <span title="'+esc(p.label)+'">'+esc(p.label)+'</span>',' <span title="'+esc(p.cwd)+'">'+esc(p.cwd)+'</span>',qdur(p.ageSec),' <span title="'+esc(p.log)+'">'+esc(p.log)+'</span>']})));
+ if(pn.length)out.unshift(block("panes",["label .txt","cwd .txt","running","log .txt"],pn.map(function(p){return[' <span title="'+esc(p.label)+'">'+esc(p.label)+'</span>',' <span title="'+esc(p.cwd)+'">'+esc(p.cwd)+'</span>',qdur(p.ageSec),' <span title="'+esc(p.log)+'">'+esc(p.log)+'</span>']})));
  if(q.localModel)out.unshift('<div class="dim" style="margin:4px 0"'+(q.localModelTitle?' title="'+esc(q.localModelTitle)+'"':"")+'>'+esc(q.localModel)+"</div>");
  setHtml(el,out.join("")+wt);
  function post(verb,body){
