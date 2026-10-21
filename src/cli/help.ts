@@ -187,6 +187,23 @@ const DAILY_EXAMPLES = [
   ['pai webseiten --with "glm only"', "scripting: start it that way, no questions"],
 ];
 
+const SERVICES: Record<string, string[]> = {
+  daemon: ["status", "start", "stop", "restart"],
+  router: ["status", "start", "stop", "restart"],
+};
+
+/** Service controls for the overview; summaries come from the subcommands themselves. */
+function serviceRows(groups: GroupDef[], st: Style): string[][] {
+  const all = groups.flatMap((g) => g.commands);
+  return Object.entries(SERVICES).flatMap(([name, subs]) => {
+    const parent = all.find((c) => c.name === name);
+    return subs.flatMap((sub) => {
+      const s = parent?.subcommands?.find((c) => c.name === sub);
+      return s ? [[st.cyan(`pai ${name} ${sub}`), s.summary]] : [];
+    });
+  });
+}
+
 /** `pai --help`: only the daily things, then a pointer to `pai more`. */
 export function renderOverview(groups: GroupDef[], root: CommandDef, version: string, st: Style): string {
   const daily = groups.flatMap((g) => g.commands).filter((c) => c.daily);
@@ -205,6 +222,8 @@ export function renderOverview(groups: GroupDef[], root: CommandDef, version: st
     ),
     ""
   );
+  const services = serviceRows(groups, st);
+  if (services.length) out.push(st.head("Services"), renderList(services, st), "");
   out.push(st.head("Examples"));
   for (const [cmd, why] of DAILY_EXAMPLES) out.push(`  ${st.green("$")} ${cmd.padEnd(34)} ${st.dim(why)}`);
   out.push("");

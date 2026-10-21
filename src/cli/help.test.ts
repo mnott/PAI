@@ -101,6 +101,20 @@ describe("overview and reference", () => {
     expect(text).not.toContain("pai worker");
     expect(text).toContain("more commands: pai more");
   });
+  it("lists service controls with the subcommands' own summaries", () => {
+    const sub = (name: string, summary: string): CommandDef => ({ ...rename, name, summary, args: [] });
+    const svc = (name: string): CommandDef => ({
+      ...rename,
+      name,
+      args: [],
+      subcommands: ["status", "start", "stop", "restart"].map((n) => sub(n, `${n} the ${name}`)),
+    });
+    const text = renderOverview([{ ...groups[0], commands: [open, svc("daemon"), svc("router")] }], open, "1.2.3", plain);
+    expect(text).toContain("Services");
+    for (const n of ["daemon", "router"]) {
+      for (const v of ["status", "start", "stop", "restart"]) expect(text).toMatch(new RegExp(`pai ${n} ${v}\\s+${v} the ${n}`));
+    }
+  });
   it("help more lists the rest", () => {
     expect(renderMore(groups, plain)).toContain("worker");
   });
