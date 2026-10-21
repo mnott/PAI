@@ -103,3 +103,43 @@ describe("realSnapshot", () => {
     expect(calls[1].at(-1)).toBe("300");
   });
 });
+
+describe("reaper headless Chrome", () => {
+  const chrome = (o: Partial<ProcRow> = {}): ProcRow =>
+    row({
+      pid: 200,
+      cpu: 0,
+      command: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --headless=new --remote-debugging-port=9333 --user-data-dir=/tmp/tdrag/prof',
+      cwd: "/",
+      ...o,
+    });
+  it("kills a leftover headless Chrome at once and writes the ledger line", async () => {
+    const killed: number[] = [];
+    const ledger: string[] = [];
+    const deps: ReaperDeps = {
+      snapshot: () => [chrome(), chrome({ pid: 201, command: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", cwd: "/" })],
+      now: () => 1,
+      kill: async (pid) => void killed.push(pid),
+      log: () => undefined,
+      owner: () => undefined,
+      annotate: () => undefined,
+      ledger: (_d, ev, kv) => void ledger.push(`${ev} ${kv.command}`),
+    };
+    await reapOrphansOnce(LOG, new Map(), deps);
+    expect(killed).toEqual([200]);
+    expect(ledger).toEqual(["WORKER-ORPHAN-KILLED Google Chrome"]);
+  });
+  it("keeps one younger than the grace", async () => {
+    const killed: number[] = [];
+    const deps: ReaperDeps = {
+      snapshot: () => [chrome({ ageSecs: 30 })],
+      now: () => 1,
+      kill: async (pid) => void killed.push(pid),
+      log: () => undefined,
+      owner: () => undefined,
+      annotate: () => undefined,
+    };
+    await reapOrphansOnce(LOG, new Map(), deps);
+    expect(killed).toEqual([]);
+  });
+});
