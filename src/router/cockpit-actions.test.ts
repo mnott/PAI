@@ -448,6 +448,34 @@ describe("runtime duplicate guard, progress and fresh inventory", () => {
     expect(r.message).toContain("already running");
   });
 
+  it("a start whose command merely contains 'model' is refused when ready answers; docker-model-runner is decided by kind, not command", async () => {
+    const { runtimeOpRefusal } = await import("./cockpit-actions.js");
+    const tmp = newDir();
+    const up = ops({ getUrl: async () => true }) as never;
+    const cmds = {
+      custom: { start: "serve --model qwen", ready: "http://127.0.0.1:1/ok" },
+      "docker-model-runner": { start: "docker model run", ready: "http://127.0.0.1:2/ok" },
+    };
+    expect(await runtimeOpRefusal("custom", "start", cmds, tmp, up, "", "llama-server")).toContain("already running");
+    expect(await runtimeOpRefusal("docker-model-runner", "start", cmds, tmp, up, "", "docker-model-runner")).toBeNull();
+    // the same command under another kind is refused
+    expect(await runtimeOpRefusal("docker-model-runner", "start", cmds, tmp, up, "", "llama-server")).toContain("already running");
+  });
+
+  it("runningRuntimeJobs lists each running runtime job with its progress; finished ones are absent", async () => {
+    const { runningRuntimeJobs } = await import("./cockpit-actions.js");
+    const tmp = newDir();
+    const deps = withOps(tmp, emptyCalls(), {});
+    const r = await runCockpitAction({ action: "runtime", target: "ollama", value: "start" }, deps, { runRuntimeJob: () => new Promise<never>(() => {}) });
+    const jobs = runningRuntimeJobs(tmp);
+    expect(Object.keys(jobs)).toEqual(["ollama"]);
+    expect(jobs.ollama).toMatchObject({ id: r.jobId, op: "start" });
+    const done = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, withOps(newDir(), emptyCalls(), {}), { runRuntimeJob: async () => ({ ok: true, message: "x" }) });
+    await sleep50();
+    expect(done.ok).toBe(true);
+    expect(runningRuntimeJobs(newDir())).toEqual({});
+  });
+
   it("a second start while a start job runs is refused with the job id; a second stop with 'already stopping'", async () => {
     const tmp = newDir();
     const calls = emptyCalls();

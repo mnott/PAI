@@ -41,7 +41,7 @@ import { readProfiles } from "../workers/session-profile-store.js";
 import { flowText, routeRows, type RouteRow } from "../workers/route-table.js";
 import type { BudgetMap } from "../workers/budget.js";
 import { paiHomeDir } from "../config/pai-home.js";
-import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
+import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -540,11 +540,18 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     // the configured start/stop commands per runtime (models.runtimes) and what PAI itself uses
     runtimeCommands: runtimeCommandsFor(),
     consumers: consumersFor(),
+    // running start/stop jobs per runtime: a reloaded page shows the card busy and resumes watching
+    runtimeJobs: runtimeJobsFor(),
   };
   if (!runtimeSampler) return withLabels;
   const live = await runtimeSampler.payload();
   if (!live) return withLabels;
   return { ...withLabels, live };
+}
+
+function runtimeJobsFor(): ReturnType<typeof runningRuntimeJobs> {
+  const home = actionDepsOverride?.home ?? paiHomeDir();
+  return home ? runningRuntimeJobs(home) : {};
 }
 
 /** The configured runtime commands (models.runtimes); {} when nothing is configured. */

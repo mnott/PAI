@@ -17,6 +17,7 @@ import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 import { readWorkersSection } from "../workers/config.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { readInventory } from "../workers/model-inventory.js";
 import { setClass } from "../workers/providers.js";
 import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.js";
 import { readLocalConfig } from "../workers/local-tiers.js";
@@ -58,6 +59,8 @@ export interface ActionDeps {
   runtimeCommands?: Record<string, RuntimeCommands>;
   /** The runtime start/stop runner (dry-run seam for tests); default the live shell run. */
   runtimeOps?: RuntimeOpDeps;
+  /** Runtime name → inventory kind (docker-model-runner needs no ready check); default read from the inventory cache. */
+  runtimeKinds?: Record<string, string>;
   /** Fresh model-inventory probe written over the 30 s cache; called when a runtime job ends. Default: compute + write. */
   refreshInventory?: (runtime: string) => Promise<void>;
 }
@@ -162,21 +165,49 @@ export function runningRuntimeJob(home: string, runtime: string, op: "start" | "
   return null;
 }
 
+/** Every running runtime job by runtime (stale ones ignored), with its progress: what the page needs to show a busy card after a reload. */
+export function runningRuntimeJobs(home: string, nowMs = Date.now()): Record<string, { id: string; op: "start" | "stop" } & JobProgress> {
+  const out: Record<string, { id: string; op: "start" | "stop" } & JobProgress> = {};
+  let files: string[] = [];
+  try {
+    files = readdirSync(`${home}/cockpit-jobs`);
+  } catch {
+    return out;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    const j = readCockpitJob(home, f.slice(0, -5));
+    if (!j || j.kind !== "runtime" || j.state !== "running" || !j.runtime || (j.op !== "start" && j.op !== "stop")) continue;
+    if (nowMs - Date.parse(j.at) > RUNTIME_READY_TIMEOUT_MS + 60_000) continue;
+    const p = runtimeJobProgress(home, j, nowMs);
+    if (p) out[j.runtime] = { id: j.id, op: j.op, ...p };
+  }
+  return out;
+}
+
+/** The inventory kind of each runtime (cached inventory); {} when there is none. */
+function inventoryKinds(logDir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of readInventory(logDir)?.runtimes ?? []) out[r.name] = r.kind;
+  return out;
+}
+
 /** The one duplicate guard, used by the cockpit action and `pai models start|stop`: why this op must not run now, else null.
- *  start: refused when the runtime's `ready` answers (not for a loader such as `docker model run`, whose ready only
- *  says the runner is up) or a start job runs; stop: refused while a stop job runs. */
+ *  start: refused when the runtime's `ready` answers (not for docker-model-runner, whose ready only says the runner
+ *  is up, not that the model is loaded) or a start job runs; stop: refused while a stop job runs. */
 export async function runtimeOpRefusal(
   runtime: string,
   op: "start" | "stop",
   commands: Record<string, RuntimeCommands>,
   home: string,
   ops: RuntimeOpDeps = liveRuntimeOpDeps,
-  exceptJobId = ""
+  exceptJobId = "",
+  kind = ""
 ): Promise<string | null> {
   const running = runningRuntimeJob(home, runtime, op, exceptJobId);
   if (running) return op === "start" ? `${runtime} is already starting (job ${running.id})` : `${runtime} is already stopping (job ${running.id})`;
   const c = commands[runtime];
-  if (op === "start" && c?.ready && !/(^|\s)model(\s|$)/.test(c.start ?? "")) {
+  if (op === "start" && c?.ready && kind !== "docker-model-runner") {
     const up = readyIsUrl(c.ready) ? await ops.getUrl(c.ready) : (await ops.runCmd(c.ready)) === 0;
     if (up) return `${runtime} is already running (${c.ready})`;
   }
@@ -290,6 +321,7 @@ export function defaultDeps(): ActionDeps {
     workers,
     localStatus: readLocalStatus(logDir),
     runtimeCommands: readRuntimeCommands(),
+    runtimeKinds: inventoryKinds(logDir),
   };
 }
 
@@ -302,7 +334,7 @@ export async function runtimeStartStop(
   opts: { model?: string; jobId?: string } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
-  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId);
+  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime]);
   if (refused) return { ok: false, message: refused };
   const r = await runRuntimeOp(runtime, op, commands, deps.runtimeOps ?? liveRuntimeOpDeps, deps.home, opts);
   appendLedger(deps.ledger, op === "start" ? RUNTIME_START_EVENT : RUNTIME_STOP_EVENT, {
@@ -347,7 +379,7 @@ export async function runCockpitAction(
     if (op !== "start" && op !== "stop") return fail(`op must be start or stop, got "${value ?? ""}"`);
     const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
     if (!commands[runtime]?.[op]) return fail(`no ${op} command configured for ${runtime} (models.runtimes.${runtime}.${op})`);
-    const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps);
+    const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, "", deps.runtimeKinds?.[runtime]);
     if (refused) return fail(refused);
     const id = randomBytes(6).toString("hex");
     let logOffset = 0;
