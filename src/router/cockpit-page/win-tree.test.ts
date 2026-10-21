@@ -92,6 +92,32 @@ describe("win tree (spec 3.1)", () => {
     expect(normalize(w).sz).toEqual([0.3, 0.7]);
   });
 
+  it("removeLeaf on a group-body column renormalizes weights (isRoot=false)", () => {
+    const body = split("c", [leaf("a"), leaf("b"), leaf("c")], [0.2, 0.3, 0.5]);
+    const n = removeLeaf(body, "b", false);
+    expect(ids(n)).toEqual(["a", "c"]);
+    expect(n.sz[0]).toBeCloseTo(0.2 / 0.7);
+    expect(n.sz[1]).toBeCloseTo(0.5 / 0.7);
+  });
+
+  it("removeLeaf on a root column keeps band px", () => {
+    const t = split("c", [leaf("a"), leaf("b"), leaf("c")], [300, 400, 200]);
+    const n = removeLeaf(t, "b");
+    expect(n.sz).toEqual([300, 200]);
+  });
+
+  it("a root column merge of px bands keeps px and multiplies nested weights", () => {
+    const inner = split("c", [leaf("b"), leaf("c")], [0.25, 0.75]);
+    const t = split("c", [leaf("a"), inner], [300, 400]);
+    const n = normalize(t, true);
+    // the nested column merges into the root column: px band sizes multiply the weights
+    expect(n.d).toBe("c");
+    expect(ids(n)).toEqual(["a", "b", "c"]);
+    expect(n.sz).toEqual([300, 100, 300]);
+    // px bands are not renormalized to weights
+    expect(n.sz.reduce((a: number, b: number) => a + b, 0)).toBe(700);
+  });
+
   it("normalize is idempotent", () => {
     const t = split("r", [split("r", [leaf("a"), leaf("b")], [1, 3]), leaf("c")], [0.5, 0.5]);
     const once = normalize(t);

@@ -8,7 +8,13 @@ export type WinNode = WinLeaf | WinSplit;
 /** Tree helpers, testable with new Function. Invariants after normalize (spec 3.1):
  *  a Split has at least 2 children (a one-child split is replaced by the child);
  *  a Split never has a direct Split child of the same d (merged, weights multiplied);
- *  sz.length === ch.length; all weights > 0; weights of a split sum to 1. */
+ *  sz.length === ch.length; all weights > 0; weights of a split sum to 1.
+ *  normalize(node,isRoot): isRoot marks the top node of the page tree — a root column
+ *  holds band px and renorm leaves it alone; every other split (a group body's column
+ *  included) holds weights and renorm rescales sz to sum 1.
+ *  removeLeaf(tree,id,isRoot): removal always re-normalizes; pass isRoot=false for a
+ *  group-body column so its weights renormalize after a leaf is removed (default true
+ *  is the page root). */
 export const WIN_TREE_JS = String.raw`function leaf(id){return{k:"c",id:String(id)}}
 function split(d,ch,sz){return{k:"s",d:d==="c"?"c":"r",ch:ch||[],sz:sz||[]}}
 function isSplit(n){return!!n&&n.k==="s"}
@@ -70,15 +76,17 @@ function ids(tree){
  return out;
 }
 /** Remove the leaf (mutates in place), then normalize the result. Returns the new tree
- *  (null when the last child of the root was removed — the band is gone). */
-function removeLeaf(tree,id){
+ *  (null when the last child was removed — the band or group body is gone).
+ *  isRoot passes through to normalize: true (default) for the page root, whose column
+ *  holds band px; false for a group-body column, whose weights renormalize after removal. */
+function removeLeaf(tree,id,isRoot){
  if(!tree)return null;
  if(tree.k==="c")return tree.id===id?null:tree;
  for(var i=0;i<tree.ch.length;i++){
   var c=tree.ch[i];
   if(c.k==="c"){if(c.id===id){tree.ch.splice(i,1);tree.sz.splice(i,1);break}}
-  else if(findLeaf(c,id)){tree.ch[i]=removeLeaf(c,id);break}
+  else if(findLeaf(c,id)){tree.ch[i]=removeLeaf(c,id,false);break}
  }
- return normalize(tree,true);
+ return normalize(tree,isRoot===undefined?true:isRoot);
 }
 `;
