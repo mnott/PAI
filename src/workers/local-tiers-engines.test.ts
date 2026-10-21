@@ -44,9 +44,44 @@ describe("tier engines", () => {
   it("dry-run lines per engine", () => {
     const g = planStart(cfg, cfg.tiers["gyro-m"]).line;
     expect(g).toMatch(new RegExp(`^cd ${dir} && nohup ${homedir()}/strata/.venv/bin/python serve/server.py --engine strata --config ${dir}/gyro.json --port 8035 > .*/logs/local/gyro-m.log 2>&1 < /dev/null &$`));
-    expect(planStart(cfg, cfg.tiers["coder-next"]).line).toMatch(/^nohup \/bin\/bash \/srv\/serve-8034.sh > .*\/logs\/local\/coder-next.log 2>&1 < \/dev\/null &$/);
+    expect(planStart(cfg, cfg.tiers["coder-next"]).line).toMatch(/^PORT=8034 nohup \/bin\/bash \/srv\/serve-8034.sh --port 8034 > .*\/logs\/local\/codernext4.log 2>&1 < \/dev\/null &$/);
     expect(planStart(cfg, cfg.tiers.old).line).toContain("serve_patched_fold_text.py serve /models/coder");
     expect(planStart(cfg, cfg.tiers["gyro-m"]).readyMs).toBe(5 * 60 * 1000);
+  });
+
+  it("plans instance n on its own port and log; script gets PORT and --port", () => {
+    const g = planStart(cfg, cfg.tiers["gyro-m"], 8036, 2);
+    expect(g.argv.slice(-2)).toEqual(["--port", "8036"]);
+    expect(g.logPath).toMatch(/logs\/local\/gyro-m-2\.log$/);
+    const c = planStart(cfg, cfg.tiers["coder-next"], 8037, 3);
+    expect(c.env).toEqual({ PORT: "8037" });
+    expect(c.argv).toEqual(["/bin/bash", "/srv/serve-8034.sh", "--port", "8037"]);
+    expect(c.logPath).toMatch(/codernext4-3\.log$/);
+    const v = planStart(cfg, cfg.tiers.old, 8011, 2);
+    expect(v.argv[v.argv.indexOf("--port") + 1]).toBe("8011");
+    expect(v.logPath).toMatch(/local-2\.log$/);
+  });
+
+  it("maxInstances: 4 default, script 1 unless set, validated", () => {
+    expect(cfg.tiers["gyro-m"].maxInstances).toBe(4);
+    expect(cfg.tiers["coder-next"].maxInstances).toBe(1);
+    const c2 = parseLocalConfig({ local_tiers: { x: { engine: "script", provider: "p", start: "/s.sh", port: 1, maxInstances: 2 } } }, {});
+    expect(c2.tiers.x.maxInstances).toBe(2);
+    expect(() => parseLocalConfig({ local_tiers: { x: { provider: "p", model: "/m", served: "a", port: 1, maxInstances: 0 } } }, {})).toThrow(/maxInstances/);
+  });
+
+  it("reserve_gb defaults to 4 and is configurable", () => {
+    expect(cfg.launcher.reserveGb).toBe(4);
+    expect(parseLocalConfig({ local_launcher: { reserve_gb: 8 } }, {}).launcher.reserveGb).toBe(8);
+  });
+
+  it("a second copy on another port resolves to its model and instance number", () => {
+    const ps = [
+      "21 100 python serve_patched_fold_text.py serve /models/coder --served-model-name coder --port 8010",
+      "22 100 python serve_patched_fold_text.py serve /models/coder --served-model-name coder --port 8012",
+    ].join("\n");
+    const s = parseServers(ps, cfg, 1);
+    expect(s.map((x) => [x.pid, x.tier, x.instance])).toEqual([[21, "old", 1], [22, "old", 3]]);
   });
 
   it("stop lines cover vllm-mlx, Strata and script ports", () => {

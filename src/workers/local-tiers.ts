@@ -30,7 +30,12 @@ export interface LocalLauncher {
   env: Record<string, string>;
   /** Process-name fragment that identifies a running server. */
   processMatch: string;
+  /** Memory kept free when starting an instance, GB. */
+  reserveGb: number;
 }
+
+export const DEFAULT_MAX_INSTANCES = 4;
+export const DEFAULT_RESERVE_GB = 4;
 
 export type LocalEngine = "vllm-mlx" | "strata" | "script";
 
@@ -46,8 +51,11 @@ export interface LocalTier {
   model: string;
   /** Model name the server answers with; "" when neither the tier nor its provider names one. */
   served: string;
+  /** Base port: instance 1 prefers it, later copies get the next free port. */
   port: number;
   flags: string[];
+  /** Most simultaneous copies. Default 4; a script engine defaults to 1 (the script may hardcode its port) unless the config says otherwise. */
+  maxInstances: number;
   /** strata: Strata server JSON. */
   config?: string;
   /** strata: python that runs serve/server.py. */
@@ -85,6 +93,7 @@ export function defaultLauncher(): LocalLauncher {
     templateKwargs: '{"enable_thinking": false}',
     env: { PF_FORCE_TEXT: "1" },
     processMatch: "serve_patched",
+    reserveGb: DEFAULT_RESERVE_GB,
   };
 }
 
@@ -123,6 +132,11 @@ export function parseLocalConfig(
     if (tk) launcher.templateKwargs = tk;
     const pm = str(l.process_match, "local_launcher.process_match");
     if (pm) launcher.processMatch = pm;
+    if (l.reserve_gb !== undefined) {
+      const r = Number(l.reserve_gb);
+      if (!(r >= 0)) throw new LocalTierError("local_launcher.reserve_gb: must be a non-negative number");
+      launcher.reserveGb = r;
+    }
     if (l.env && typeof l.env === "object") {
       launcher.env = Object.fromEntries(Object.entries(l.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
     }
@@ -159,6 +173,9 @@ export function parseLocalConfig(
       }
       const mem = t.memoryGb === undefined ? undefined : Number(t.memoryGb);
       if (mem !== undefined && !(mem > 0)) throw new LocalTierError(`${where}.memoryGb: must be a positive number`);
+      const maxRaw = t.maxInstances ?? t.max_instances;
+      const maxInstances = maxRaw === undefined ? (engine === "script" ? 1 : DEFAULT_MAX_INSTANCES) : Number(maxRaw);
+      if (!Number.isInteger(maxInstances) || maxInstances < 1) throw new LocalTierError(`${where}.maxInstances: must be a positive integer`);
       const tier: LocalTier = {
         tier: name,
         engine,
@@ -169,6 +186,7 @@ export function parseLocalConfig(
         served: served ?? "",
         port,
         flags: flagList(t.flags, `${where}.flags`),
+        maxInstances,
       };
       if (engine === "strata") {
         const config = str(t.config, `${where}.config`);
@@ -274,35 +292,40 @@ export interface StartPlan {
   line: string;
 }
 
-export function logPathFor(provider: string): string {
-  return paiHomePath("logs", "local", `${provider}.log`);
+/** Log of instance n of a provider; n=1 keeps the bare `<provider>.log`. */
+export function logPathFor(provider: string, n = 1): string {
+  return paiHomePath("logs", "local", n <= 1 ? `${provider}.log` : `${provider}-${n}.log`);
 }
 
 const VLLM_READY_MS = 10 * 60 * 1000;
 const STRATA_READY_MS = 5 * 60 * 1000;
 
-export function planStart(cfg: LocalConfig, tier: LocalTier): StartPlan {
+/**
+ * Start plan of instance `n` of a model on `port` (default: the base port).
+ * The port goes to every engine: `--port` for vllm-mlx and Strata, `PORT` env
+ * plus a trailing `--port` for a script. Log is `<provider>-<n>.log` (n>=2).
+ */
+export function planStart(cfg: LocalConfig, tier: LocalTier, port = tier.port, n = 1): StartPlan {
+  const logPath = logPathFor(tier.provider, n);
   if (tier.engine === "strata") {
-    const argv = [tier.python!, "serve/server.py", "--engine", "strata", "--config", tier.config!, "--port", String(tier.port)];
-    const logPath = paiHomePath("logs", "local", `${tier.tier}.log`);
+    const argv = [tier.python!, "serve/server.py", "--engine", "strata", "--config", tier.config!, "--port", String(port)];
     const line = `cd ${shq(tier.strataDir!)} && nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
     return { env: {}, argv, cwd: tier.strataDir, logPath, readyMs: STRATA_READY_MS, line };
   }
   if (tier.engine === "script") {
-    const argv = ["/bin/bash", tier.start!];
-    const logPath = paiHomePath("logs", "local", `${tier.tier}.log`);
-    const line = `nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
-    return { env: {}, argv, logPath, readyMs: STRATA_READY_MS, line };
+    const argv = ["/bin/bash", tier.start!, "--port", String(port)];
+    const env = { PORT: String(port) };
+    const line = `PORT=${port} nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
+    return { env, argv, logPath, readyMs: STRATA_READY_MS, line };
   }
   const l = cfg.launcher;
   const argv = [
     l.python, l.script, "serve", resolveModelPath(tier.model),
     "--served-model-name", tier.served,
-    "--port", String(tier.port),
+    "--port", String(port),
     ...l.flags, ...tier.flags,
     "--default-chat-template-kwargs", l.templateKwargs,
   ];
-  const logPath = logPathFor(tier.provider);
   const envPart = Object.entries(l.env).map(([k, v]) => `${k}=${shq(v)}`).join(" ");
   const line = `${envPart ? envPart + " " : ""}nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
   return { env: l.env, argv, logPath, readyMs: VLLM_READY_MS, line };
@@ -335,9 +358,19 @@ export interface RunningServer {
   port: number | null;
   tier: string | null;
   provider: string | null;
+  /** 1 on the model's base port, 1+k on basePort+k (the order allocatePort hands out); null when unknown. */
+  instance?: number | null;
 }
 
 const STRATA_SERVER_MATCH = "serve/server.py --engine strata";
+
+const MAX_PORT_SPREAD = 50;
+
+function instanceOf(t: LocalTier | undefined, port: number | null): number | null {
+  if (!t || port === null) return null;
+  const k = port - t.port;
+  return k >= 0 && k <= MAX_PORT_SPREAD ? k + 1 : null;
+}
 
 /**
  * Parse `ps -axo pid=,rss=,command=` output for every local model server PAI
@@ -368,11 +401,17 @@ export function parseServers(
     const pm = /--port\s+(\d+)/.exec(cmd);
     const port = pm ? Number(pm[1]) : null;
     const add = (t: LocalTier | undefined, p: number | null): void => {
-      out.push({ pid, rssKb: Number(m[2]), port: p, tier: t?.tier ?? null, provider: t?.provider ?? (p !== null ? providerByPort[p] : undefined) ?? null });
+      out.push({ pid, rssKb: Number(m[2]), port: p, tier: t?.tier ?? null, provider: t?.provider ?? (p !== null ? providerByPort[p] : undefined) ?? null, instance: instanceOf(t, p) });
     };
     // vllm-mlx; skip the CLI / shells that merely mention the match string
     if (cmd.includes(cfg.launcher.processMatch) && /\bserve\b/.test(cmd) && cmd.includes("--port")) {
-      add(tiers.find((t) => t.port === port && t.engine === "vllm-mlx") ?? tiers.find((t) => t.port === port), port);
+      // a tier is found by its model path first (a second copy runs on another port), then by base port
+      const served = /\bserve\s+(\S+)/.exec(cmd)?.[1];
+      add(
+        tiers.find((t) => t.engine === "vllm-mlx" && served !== undefined && resolveModelPath(t.model) === served) ??
+          tiers.find((t) => t.port === port && t.engine === "vllm-mlx") ?? tiers.find((t) => t.port === port),
+        port,
+      );
       continue;
     }
     // Strata server.py (python <venv>/python serve/server.py --engine strata ...)
@@ -391,7 +430,7 @@ export function parseServers(
     for (const pid of listeners[t.port] ?? []) {
       if (pid === selfPid || seen.has(pid)) continue;
       seen.add(pid);
-      out.push({ pid, rssKb: rssOf.get(pid) ?? 0, port: t.port, tier: t.tier, provider: t.provider });
+      out.push({ pid, rssKb: rssOf.get(pid) ?? 0, port: t.port, tier: t.tier, provider: t.provider, instance: 1 });
     }
   }
   return out;
