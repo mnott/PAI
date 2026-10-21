@@ -46,6 +46,7 @@ import { ownerOf } from "../local-idle.js";
 import {
   poolIneligibleReason,
   poolSettings,
+  SLOT_TOOLS,
   postTaskToPool,
   type PoolTaskResponse,
 } from "../pool.js";
@@ -100,22 +101,67 @@ export async function assertLocalProviderAlive(
   );
 }
 
-/**
- * The worker session pool attempt (src/workers/pool.ts), behind
- * workers.pool.enabled: an eligible headless task is shipped to the pool
- * host and runs as the next user turn of a warm claude slot, so the
- * provider prompt cache carries over. Returns the exit code when the task
- * ran pooled; null sends the caller down the normal fresh-spawn path (host
- * unreachable, or the task needs a setup a slot cannot provide — worktree on a non-loopback provider,
- * own system prompt, MCP, another cwd, native Anthropic).
- */
-export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
+/** A run that does not use the pool: the one place that writes its WORKER-POOL-SKIP line and the stderr line. */
+export interface PoolSkipCtx {
+  logDir: string;
+  quiet?: boolean;
+  id?: string;
+  spareMiss?: string;
+}
+
+export function recordPoolSkip(
+  a: PoolSkipCtx,
+  providerName: string,
+  reason: string,
+  extra: { key?: string; grant?: string; id?: string } = {}
+): void {
+  appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
+    id: extra.id ?? a.id ?? "-",
+    provider: providerName,
+    reason,
+    ...(extra.key ? { key: extra.key } : {}),
+    ...(extra.grant ? { grant: extra.grant } : {}),
+  });
+  if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
+}
+
+/** The caller's own flags keep the run out of the pool; `pai worker run` refuses these unless --no-pool. */
+const CALLER_CAUSED: ReadonlySet<string> = new Set(["tools", "mcp", "system-prompt", "stream-json", "browser"]);
+
+/** A `pai worker run` start refused because its flags keep it out of the pool (exit 2). */
+export class PoolRefusedError extends Error {}
+
+const grantText = (allowedTools: string[]): string =>
+  allowedTools.flatMap((e) => e.split(",")).map((x) => x.trim()).filter((x) => x && x !== "ToolSearch" && !x.startsWith("mcp__")).join(",");
+
+function refusalText(reason: string, a: ExecuteArgs): string {
+  const fix = "or pass --no-pool";
+  if (reason === "tools") {
+    const names = grantText(a.parsed.allowedTools).split(",").filter(Boolean);
+    const adds = names.filter((n) => !SLOT_TOOLS.includes(n));
+    const lacks = SLOT_TOOLS.filter((n) => !names.includes(n));
+    const detail = [adds.length ? `grant adds ${adds.join(",")}` : "", lacks.length ? `grant lacks ${lacks.join(",")}` : ""].filter(Boolean).join("; ");
+    return `pai worker: not pooled (tools: ${detail}); use the slot set ${SLOT_TOOLS.join(",")} ${fix}`;
+  }
+  const how: Record<string, string> = {
+    mcp: "MCP servers or an MCP config; drop --mcp / mcp__ grants",
+    "system-prompt": "a caller system prompt; drop --system-prompt / --append-system-prompt",
+    "stream-json": "stream-json output; use --output-format json or text",
+    browser: "a browser grant; add --no-browser",
+  };
+  return `pai worker: not pooled (${reason}: ${how[reason] ?? reason}); change that ${fix}`;
+}
+
+/** Why this run is not pooled before any host is asked, or null when the pool may take it. */
+function poolPreReason(a: ExecuteArgs): { reason: string | null; claim: boolean; cwd: string } {
   const settings = poolSettings(a.config);
-  if (!settings.enabled || a.orchestrate) return null; // an orchestrator needs its own env and contract, not a warm slot
   const cwd = a.cwd ?? process.cwd();
-  // spares are the pool's default use; the multi-task continuation path only runs behind workers.pool.continuation
   const claim = !settings.continuation;
-  if (claim && settings.spares <= 0) return null;
+  if (a.opts?.noPool) return { reason: "opted-out", claim, cwd };
+  if (!settings.enabled) return { reason: "pool-off", claim, cwd };
+  if (a.orchestrate) return { reason: "orchestrate", claim, cwd }; // an orchestrator needs its own env and contract, not a warm slot
+  // spares are the pool's default use; the multi-task continuation path only runs behind workers.pool.continuation
+  if (claim && settings.spares <= 0) return { reason: "spares-off", claim, cwd };
   const reason = poolIneligibleReason({
     headless: a.parsed.headless,
     prompt: a.parsed.prompt,
@@ -133,14 +179,37 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     outputFormat: a.parsed.outputFormat,
     cwd,
   });
+  return { reason, claim, cwd };
+}
+
+/**
+ * `pai worker run` only (opts.poolStrict): when the pool is on and the caller's own flags keep a headless run
+ * out of it, refuse before anything starts — nothing is recorded, nothing spawns. Reasons the caller does not
+ * control (pool off, host down, no spare, dirty checkout, resume, worktree, interactive, native, engine) never refuse.
+ */
+export function assertPoolPolicy(a: ExecuteArgs): void {
+  if (!a.opts?.poolStrict || a.opts.noPool || !a.parsed.headless || a.printCmd) return;
+  const { reason } = poolPreReason(a);
+  if (reason && CALLER_CAUSED.has(reason)) throw new PoolRefusedError(refusalText(reason, a));
+}
+
+/**
+ * The worker session pool attempt (src/workers/pool.ts), behind
+ * workers.pool.enabled: an eligible headless task is shipped to the pool
+ * host and runs as the next user turn of a warm claude slot, so the
+ * provider prompt cache carries over. Returns the exit code when the task
+ * ran pooled; null sends the caller down the normal fresh-spawn path (host
+ * unreachable, or the task needs a setup a slot cannot provide — worktree on a non-loopback provider,
+ * own system prompt, MCP, another cwd, native Anthropic).
+ */
+export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
+  const settings = poolSettings(a.config);
+  const { reason, claim, cwd } = poolPreReason(a);
   if (reason) {
     if (claim) a.spareMiss = reason;
-    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
-      id: a.id ?? "-",
-      provider: a.target.providerName,
-      reason,
+    recordPoolSkip(a, a.target.providerName, reason, {
+      ...(reason === "tools" ? { grant: grantText(a.parsed.allowedTools) } : {}),
     });
-    if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
     return null;
   }
   const wid = a.id ?? newWorkerId();
@@ -170,8 +239,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   const paneFailed = await panePending.then(() => null, (e: unknown) => (e instanceof Error ? e.message : String(e)));
   if (paneFailed !== null) {
     a.spareMiss = "pane failed";
-    appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", { id: wid, provider: a.target.providerName, reason: "pane failed" });
-    if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (pane failed) — spawning fresh\n`);
+    recordPoolSkip(a, a.target.providerName, "pane failed", { id: wid });
     return null;
   }
   // the process lives in the pool host, so the pane that owns this run follows its transcript instead of
@@ -193,6 +261,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
   let resp: PoolTaskResponse | null;
+  let claimError = false;
   const postT0 = Date.now();
   try {
     resp = await postTaskToPool(
@@ -223,25 +292,21 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     );
   } catch {
     resp = null;
+    claimError = true;
   }
   clearInterval(poll);
   const postMs = Date.now() - postT0;
   if (resp === null) {
-    a.spareMiss = "host-unreachable";
-    process.stderr.write(`[pai worker] pool: host unreachable on port ${settings.port} — spawning fresh\n`);
+    // postTaskToPool answers null when nothing listens; it throws on a refused connection mid-claim or a timeout
+    const why = claimError ? "claim-error" : "host-unreachable";
+    a.spareMiss = why;
+    recordPoolSkip(a, a.target.providerName, why, { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
     return null;
   }
   if (!resp.pooled) {
     a.spareMiss = resp.reason ?? "refused";
-    // a claim miss is already on the ledger as WORKER-POOL-MISS (host side)
-    if (!claim) {
-      appendLedger(ledgerPath(a.logDir), "WORKER-POOL-SKIP", {
-        id: a.id ?? "-",
-        provider: a.target.providerName,
-        reason: resp.reason ?? "refused",
-      });
-    }
-    if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${resp.reason ?? "refused"}) — spawning fresh\n`);
+    // a claim miss is also on the ledger as WORKER-POOL-MISS (host side, spare counters); this is the run's skip line
+    recordPoolSkip(a, a.target.providerName, resp.reason ?? "refused", { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
     return null;
   }
   await followInPane().catch(() => undefined); // a task that ended before the poll saw it still leaves its transcript in the pane

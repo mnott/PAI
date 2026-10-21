@@ -357,7 +357,7 @@ export type PoolIneligibleReason =
 export type SpareMissReason = "spares-off" | "no-worktree" | "not-git" | "no-spare" | "starting" | "stale" | "dirty-checkout" | "spare-dead" | "rename-failed";
 
 /** The tool grant every slot is born with (== DEFAULT_WORKER_TOOLS in run.ts). */
-const SLOT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
+export const SLOT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"];
 
 /**
  * A caller's --allowedTools is a deliberate restriction; a slot has the

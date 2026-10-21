@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkersSection, writeWorkersSection } from "./config.js";
 import { ledgerPath } from "./paths.js";
+import { parseLedger } from "./ledger.js";
 import { openHostLog } from "./pool-host-run.js";
 import { fmtTokens } from "./status.js";
 import {
@@ -217,6 +218,20 @@ export function hostBuildText(state: PoolState, diskMtimeMs: number | null): str
   return poolHostStale(state.bundleMtimeMs, diskMtimeMs) ? `${built}, stale (newer build on disk)` : built;
 }
 
+/** Why runs were not pooled: WORKER-POOL-SKIP reasons in the window, most frequent first ("" when none). */
+export function skipReasonLine(ledgerText: string, nowMs: number, windowMs = 24 * 3600_000): string {
+  const counts = new Map<string, number>();
+  for (const l of parseLedger(ledgerText)) {
+    if (l.event !== "WORKER-POOL-SKIP") continue;
+    if (nowMs - new Date(l.stamp.replace(" ", "T")).getTime() > windowMs) continue;
+    const r = l.fields.reason ?? "unknown";
+    counts.set(r, (counts.get(r) ?? 0) + 1);
+  }
+  if (!counts.size) return "";
+  const parts = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([r, n]) => `${r} ${n}`);
+  return `not pooled · ${Math.round(windowMs / 3600_000)} h: ${parts.join(", ")}`;
+}
+
 /** The `pai worker pool status` text: config, host, slots, carry. */
 export async function poolStatusText(logDir: string): Promise<string> {
   const { workers } = readWorkersSection();
@@ -229,6 +244,12 @@ export async function poolStatusText(logDir: string): Promise<string> {
       `spares ${settings.spares}/key${settings.spares === 0 ? " = off" : ""}, retired after ${settings.idleKillSec}s idle` +
       `${settings.continuation ? `; continuation on: max ${settings.maxSlots} slots, idle kill ${settings.idleSecs}s` : ""})`
   );
+  try {
+    const skips = skipReasonLine(readFileSync(ledgerPath(logDir), "utf8"), Date.now());
+    if (skips) lines.push(skips);
+  } catch {
+    /* no ledger yet */
+  }
   const state = readPoolState(logDir);
   if (!state) {
     lines.push(alive ? `host: alive on port ${port} (no state file yet)` : `host: not running`);
