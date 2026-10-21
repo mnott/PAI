@@ -14,7 +14,7 @@
  * place; `--no-worktree` opts out, `--worktree` forces one on.
  */
 
-import { removeScratch, scratchDir } from "./scratch.js";
+import { removeScratch } from "./scratch.js";
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -1962,25 +1962,33 @@ function realpathOr(p: string): string {
 function gcScratchTrees(
   statuses: WorkerStatus[],
   owned: Set<string>,
+  extraRepos: (string | undefined)[],
   out: GcEntry[],
   archive: (id: string, dir: string, branch: string, st: WorkerStatus | null) => void
 ): void {
+  const finished = new Map(statuses.filter((st) => !isLive(st)).map((st) => [st.id, st]));
   const done = new Set<string>();
-  for (const st of statuses) {
-    if (isLive(st) || !existsSync(st.cwd)) continue;
-    const scratch = realpathOr(scratchDir(st.id));
+  const seenRepo = new Set<string>();
+  // a worker's own cwd may be another repo than the one it built a tree in: look in every repo gc knows
+  for (const cwd of [...statuses.map((st) => st.cwd), ...extraRepos]) {
+    if (!cwd || !existsSync(cwd)) continue;
     let raw: string;
     try {
-      raw = git(st.cwd, ["worktree", "list", "--porcelain"]);
+      raw = git(cwd, ["worktree", "list", "--porcelain"]);
     } catch {
       continue;
     }
+    const first = raw.split("\n\n")[0] ?? "";
+    if (seenRepo.has(first)) continue;
+    seenRepo.add(first);
     for (const block of raw.split("\n\n").map((b) => b.trim()).filter(Boolean).slice(1)) {
       const field = (k: string): string | undefined => block.split("\n").find((l) => l.startsWith(k + " "))?.slice(k.length + 1);
       const dir = field("worktree");
       if (!dir || !existsSync(dir) || block.includes("\nprunable")) continue;
       const real = realpathOr(dir);
-      if (done.has(real) || owned.has(real) || !real.startsWith(scratch + sep)) continue;
+      const wid = /^.*\/pai-scratch\/([^/]+)\/(.+)/.exec(real);
+      const st = wid && finished.get(wid[1]!);
+      if (!st || done.has(real) || owned.has(real)) continue;
       done.add(real);
       const branch = field("branch")?.replace(/^refs\/heads\//, "");
       const id = `${st.id}-${basename(real).replace(/[^A-Za-z0-9._-]+/g, "-") || "tree"}`;
@@ -2102,7 +2110,7 @@ export function gcWorktrees(
       archive(ent.name, dir, worktreeBranch(ent.name), null);
     }
   }
-  gcScratchTrees(statuses, owned, out, archive);
+  gcScratchTrees(statuses, owned, [foreignRepo, process.cwd()], out, archive);
   if (foreignRepo) gcForeign(logDir, foreignRepo, owned, dryRun, report, out, archive);
   // Orphan branches: no worktree, tip in main or already archived. Never a live worker's branch.
   const protect = new Set(statuses.filter((s) => isLive(s) && s.branch).map((s) => s.branch!));
