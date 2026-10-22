@@ -4,6 +4,17 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.5] - 2026-10-22
+
+### Fixed
+
+- **Settings saved in `workers.yaml` that the runtime never reads.** Every `workers.*` setting (pool, pane, routing, tree, …) is read from `config.yaml`; a copy in `workers.yaml` was silently ignored, and the cockpit's config editor saved there. `pai config validate` (new) and the editor's validate now name each shadowed or unused key and where its effective value lives; the editor refuses to save such a key and gives the `pai config set` command; the daemon logs one warning per shadowed key at start.
+- **DNS rebinding on the loopback listener:** the `Host`/`Origin` check now also guards the local cockpit, not only a tailnet bind.
+
+### Added
+
+- **Concurrency takes effect live and can be changed in the cockpit.** A waiting run re-reads its provider's cap on every poll, so a raised cap admits it at once; a lowered cap never stops running workers. The pool host picks up `workers.pool` changes within 5 s. Model cards show `parallel N` (and the local server's slots) with − / + buttons, bounded by `router.cockpit.layout.concurrencyMin/Max`.
+
 ## [1.0.4] - 2026-10-22
 
 ### Fixed
