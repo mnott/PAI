@@ -10,7 +10,7 @@ import {
   readlinkSync,
   rmdirSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 import type { SyncStats } from "./types.js";
 import { worktreeReason } from "../../registry/registrable.js";
@@ -74,7 +74,7 @@ export function cleanBrokenSymlinks(dir: string): number {
       const stat = lstatSync(full);
       if (stat.isSymbolicLink()) {
         const target = readlinkSync(full);
-        if (!existsSync(target)) {
+        if (!existsSync(resolve(dir, target))) {
           unlinkSync(full);
           removed++;
         }
