@@ -15,11 +15,8 @@ import { buildPgTsQuery } from "./helpers.js";
  * and a genuine miss were BYTE-IDENTICAL at the call site — `memory_search`
  * reported "No results found for query: …" either way.
  *
- * That cost a real wrong answer on 2026-08-04. `pai-pgvector` exited at 13:39Z and
- * the index lived inside it; for the next two hours every memory_search returned
- * cleanly empty. A sibling session searched for an open DMARC point, got nothing,
- * and told the owner nothing was recorded. The search had run against a dead
- * backend and was worthless — and nothing in the reply could have revealed that.
+ * A stopped backend therefore made every search look like a genuine miss, and
+ * a caller could conclude "nothing recorded" from a search that never ran.
  *
  * So: throw. The MCP shim already turns a thrown error into a visible message, and
  * an error the user can act on beats an empty result they cannot distinguish from
@@ -75,6 +72,7 @@ export async function searchKeyword(
 
   const sql = `
     SELECT
+      id,
       project_id,
       path,
       start_line,
@@ -82,6 +80,8 @@ export async function searchKeyword(
       text AS snippet,
       tier,
       source,
+      updated_at,
+      last_accessed_at,
       ts_rank(fts_vector, to_tsquery('simple', $1)) AS rank_score
     FROM pai_chunks
     WHERE ${conditions.join(" AND ")}
@@ -91,6 +91,9 @@ export async function searchKeyword(
 
   try {
     const result = await pool.query<{
+      id: string;
+      updated_at: string | number;
+      last_accessed_at: string | number | null;
       project_id: number;
       path: string;
       start_line: number;
@@ -101,7 +104,9 @@ export async function searchKeyword(
       rank_score: number;
     }>(sql, params);
 
+    const minScore = opts?.minScore ?? 0.0;
     return result.rows.map((row) => ({
+      chunkId: row.id,
       projectId: row.project_id,
       path: row.path,
       startLine: row.start_line,
@@ -110,7 +115,9 @@ export async function searchKeyword(
       score: row.rank_score,
       tier: row.tier,
       source: row.source,
-    }));
+      updatedAt: Number(row.updated_at),
+      lastAccessedAt: row.last_accessed_at != null ? Number(row.last_accessed_at) : undefined,
+    })).filter((r) => r.score >= minScore);
   } catch (e) {
     process.stderr.write(`[pai-postgres] searchKeyword error: ${e}\n`);
     throw searchFailure("keyword", e);

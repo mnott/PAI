@@ -414,6 +414,7 @@ export class PostgresBackend implements StorageBackend {
     if (chunks.length === 0) return;
 
     const client = await this.pool.connect();
+    let releaseErr: Error | undefined;
     try {
       await client.query("BEGIN");
 
@@ -446,10 +447,16 @@ export class PostgresBackend implements StorageBackend {
 
       await client.query("COMMIT");
     } catch (e) {
-      await client.query("ROLLBACK");
+      // A dead connection makes ROLLBACK throw too; that must not mask `e`, and
+      // the broken client must be destroyed rather than returned to the pool.
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackErr) {
+        releaseErr = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr));
+      }
       throw e;
     } finally {
-      client.release();
+      client.release(releaseErr);
     }
   }
 

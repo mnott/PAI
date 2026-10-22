@@ -109,9 +109,7 @@ export function searchMemory(
     // Everything else is a failure of the store: a missing table, a corrupt
     // index, a locked database. Those used to return [] as well, which made an
     // unusable index byte-identical to a genuine miss. The Postgres path had the
-    // same defect and it cost a real wrong answer on 2026-08-04 — the backend was
-    // down for two hours, every search reported "No results found", and a sibling
-    // session told the owner a DMARC note did not exist. See
+    // same defect: a down backend looked like a genuine miss. See
     // storage/postgres/search.ts.
     if (!isQuerySyntaxError(e)) {
       throw new Error(

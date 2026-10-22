@@ -5,11 +5,9 @@ import { searchKeyword, searchSemantic } from "./search.js";
 /**
  * A failed search must not be indistinguishable from an empty one.
  *
- * Both functions used to catch, log to the daemon's stderr, and return []. On
- * 2026-08-04 `pai-pgvector` exited at 13:39Z with the index inside it, and for two
- * hours every memory_search returned cleanly empty. A sibling session searched for
- * an open DMARC point, got nothing, and told the owner nothing was recorded — a
- * wrong answer that nothing in the response could have exposed.
+ * Both functions used to catch, log to the daemon's stderr, and return [], so a
+ * stopped backend looked like a genuine miss and a caller could wrongly conclude
+ * that nothing was recorded.
  */
 
 afterEach(() => vi.restoreAllMocks());
@@ -38,7 +36,7 @@ describe("an unreachable backend throws", () => {
 
   it("says it is NOT an empty result set, and how to fix it", async () => {
     // The message is the whole point: whoever reads it must not conclude "nothing
-    // is recorded", which is exactly the wrong conclusion drawn on 2026-08-04.
+    // is recorded".
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     let message = "";
     try {

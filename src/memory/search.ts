@@ -47,24 +47,6 @@ export interface SearchOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Convert a free-text query into an FTS5 query string.
- *
- * Strategy:
- *  1. Tokenise by whitespace and punctuation
- *  2. Remove stop words and tokens shorter than 2 characters
- *  3. Double-quote each remaining token (exact word form)
- *  4. Join with OR so that any matching token returns a result
- *
- * Using OR instead of AND is critical for multi-word queries: the words rarely
- * all appear in the same chunk, so AND would return zero results.  FTS5 BM25
- * scoring naturally ranks chunks where more terms match higher, so the most
- * relevant chunks still surface at the top.
- *
- * Example: "Synchrotech interview follow-up Gilles"
- *   → `"synchrotech" OR "interview" OR "follow" OR "gilles"`
- *   → chunks matching any term, ranked by how many terms match
- */
-/**
  * Did SQLite reject the QUERY, or fail at the STORE?
  *
  * Only the first justifies an empty result. FTS5 reports a bad MATCH expression
@@ -79,6 +61,24 @@ export function isQuerySyntaxError(e: unknown): boolean {
   return /fts5|malformed MATCH|syntax error|unterminated string|no such column/i.test(msg);
 }
 
+/**
+ * Convert a free-text query into an FTS5 query string.
+ *
+ * Strategy:
+ *  1. Tokenise by whitespace and punctuation
+ *  2. Remove stop words and tokens shorter than 2 characters
+ *  3. Double-quote each remaining token (exact word form)
+ *  4. Join with OR so that any matching token returns a result
+ *
+ * Using OR instead of AND is critical for multi-word queries: the words rarely
+ * all appear in the same chunk, so AND would return zero results.  FTS5 BM25
+ * scoring naturally ranks chunks where more terms match higher, so the most
+ * relevant chunks still surface at the top.
+ *
+ * Example: "Acme interview follow-up Alice"
+ *   → `"acme" OR "interview" OR "follow" OR "alice"`
+ *   → chunks matching any term, ranked by how many terms match
+ */
 export function buildFtsQuery(query: string): string {
   const tokens = query
     .toLowerCase()
