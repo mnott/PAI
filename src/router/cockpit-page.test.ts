@@ -255,7 +255,7 @@ describe("cockpit layout values from config (router.cockpit.layout)", () => {
     expect(t.hitCls(0.25)).toBe("bad"); // 0.25 is bad now, warn at the shipped 0.5
     expect(t.hitCls(0.7)).toBe("ok"); // ok at 0.7 (>= the override's 0.6), warn at the shipped 0.8
     // the page wires the same helpers into the rendered tables
-    expect(cockpitHtml()).toContain('hitCls(s.hitRatio)');
+    expect(cockpitHtml()).toContain('hitCls(o.hit)');
     expect(cockpitHtml()).toContain('hitCls(hr)');
     expect(cockpitHtml()).toContain('hitCls(ratio)');
     // the shipped defaults stand
