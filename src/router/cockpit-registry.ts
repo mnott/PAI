@@ -22,8 +22,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { basename, dirname, join } from "node:path";
 import { LineCounter, parseDocument, isMap, isScalar, type Document } from "yaml";
 import { parseLocalConfig, resolveModelPath, LocalTierError } from "../workers/local-tiers.js";
-import { parseProvider, WorkersConfigError } from "../workers/config.js";
-import { yamlProviderToRaw } from "../workers/workers-config.js";
+import { parseProvider, WorkersConfigError, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { yamlProviderToRaw, parseBuiltinAnthropic } from "../workers/workers-config.js";
 import { readInstances, type LocalInstance } from "../workers/local-instances.js";
 import { appendLedger } from "../workers/ledger.js";
 import { COCKPIT_ACTION_EVENT } from "./cockpit-actions.js";
@@ -118,6 +118,11 @@ export function validateRegistry(yamlText: string, ctx: RegistryCtx, current = "
     else {
       for (const [name, raw] of Object.entries(provRaw as Record<string, unknown>)) {
         try {
+          // same split as the loader: the builtin anthropic block is not a provider
+          if (name === ANTHROPIC_NATIVE) {
+            parseBuiltinAnthropic(raw, `providers.${name}`);
+            continue;
+          }
           parseProvider(name, yamlProviderToRaw((raw ?? {}) as Record<string, unknown>));
         } catch (e) {
           const { path, text } = pathFromMessage((e as Error).message);
@@ -149,11 +154,13 @@ export function validateRegistry(yamlText: string, ctx: RegistryCtx, current = "
   } catch {
     before = {};
   }
-  const byPort = new Map<number, string>();
+  // one server may back several tiers (only one runs at a time): Strata tiers share the Strata server whatever their config; script tiers the same script; vllm-mlx the same model
+  const target = (t: (typeof tiers)[string]) => `${t.engine}|${t.engine === "strata" ? "" : t.engine === "script" ? t.start : t.model}`;
+  const byPort = new Map<number, (typeof tiers)[string]>();
   for (const t of Object.values(tiers)) {
     const clash = byPort.get(t.port);
-    if (clash) add(["local_tiers", t.tier, "port"], `port ${t.port} is also used by "${clash}"`);
-    else byPort.set(t.port, t.tier);
+    if (clash && target(clash) !== target(t)) add(["local_tiers", t.tier, "port"], `port ${t.port} is also used by "${clash.tier}"`);
+    else if (!clash) byPort.set(t.port, t);
     if (before[t.tier]?.port !== t.port && !free(t.port)) add(["local_tiers", t.tier, "port"], `port ${t.port} is in use by another process`);
     if (t.engine === "vllm-mlx" && t.model && !exists(resolveModelPath(t.model))) add(["local_tiers", t.tier, "model"], `model file not found: ${t.model}`);
   }

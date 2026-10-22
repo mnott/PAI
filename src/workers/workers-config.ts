@@ -192,7 +192,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
 }
 
 /** The builtin `anthropic` block only ever carries `builtin: true` + `models`. */
-function parseBuiltinAnthropic(raw: unknown, pathPrefix: string): WorkerProvider["models"] {
+export function parseBuiltinAnthropic(raw: unknown, pathPrefix: string): WorkerProvider["models"] {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new WorkersConfigError(`${pathPrefix}: must be an object`);
   }

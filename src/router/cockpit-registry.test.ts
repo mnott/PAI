@@ -92,6 +92,54 @@ describe("validateRegistry", () => {
     expect(e.some((x) => /duplicate name "qwen"/.test(x.message))).toBe(true);
   });
 
+  it("builtin anthropic block and a shared-engine port are accepted (live-file shape)", () => {
+    const yaml = `providers:
+  anthropic:
+    builtin: true
+    models:
+      default: placeholder-model
+  local:
+    url: http://127.0.0.1:8035/v1
+    models:
+      default: served
+local_tiers:
+  tier-a:
+    provider: local
+    engine: strata
+    config: /opt/placeholder/a.json
+    port: 8035
+  tier-b:
+    provider: local
+    engine: strata
+    config: /opt/placeholder/b.json
+    port: 8035
+`;
+    expect(errs(yaml)).toEqual([]);
+  });
+
+  it("different engines on one port are refused", () => {
+    const yaml = `providers:
+  local:
+    url: http://127.0.0.1:8035/v1
+    models:
+      default: served
+local_tiers:
+  tier-a:
+    provider: local
+    engine: script
+    start: /opt/placeholder/serve.sh
+    port: 8035
+  tier-b:
+    provider: local
+    engine: strata
+    config: /opt/placeholder/b.json
+    port: 8035
+`;
+    const e = errs(yaml);
+    expect(e).toHaveLength(1);
+    expect(e[0]!.message).toMatch(/port 8035 is also used by "tier-a"/);
+  });
+
   it("duplicate port is refused", () => {
     const e = errs(edit("port: 8002", "port: 8001"));
     expect(e).toHaveLength(1);
