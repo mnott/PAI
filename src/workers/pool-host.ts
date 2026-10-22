@@ -29,6 +29,7 @@ import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFile
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
+import { stripContextSuffix } from "../router/router.js";
 import { getProviderOrNative, readWorkersSection, workersConfigStamp, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { buildRunEnv, claudeCommand, claudeSettingsExtra, isLoopbackProvider, loopbackRouterChoice, pinnedSettings } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
@@ -775,6 +776,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     return !(p.native && !settings.native);
   };
 
+  /** Whether the provider's model table (what the router resolves from) offers this model; native also takes any claude-* id. */
+  const offersModel = (providerName: string, model: string): boolean => {
+    const p = getProviderOrNative(config, providerName);
+    if (!p) return false;
+    const bare = stripContextSuffix(model);
+    if (p.native && /^claude-/.test(bare)) return true;
+    return Object.values(p.models).some((id) => !!id && stripContextSuffix(id) === bare);
+  };
+
   /** Bring a key up to workers.pool.spares in the background (nothing stops a key that has none yet). */
   const topUp = (repo: string, providerName: string, model: string): void => {
     if (settings.spares <= 0 || !spareCapable(providerName)) return;
@@ -1483,6 +1493,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         keys = [];
       }
     }
+    // a ledger pair the provider does not offer (e.g. left by an old escalation bug) is not warmed
+    keys = keys.filter((k) => offersModel(k.provider, k.model));
     for (const k of keys) {
       const repo = repoRootOf(k.cwd);
       if (repo) topUp(repo, k.provider, k.model);

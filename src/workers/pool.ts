@@ -810,8 +810,12 @@ export interface SpareStats {
   /** Starts that asked the pool and got a fresh spawn. */
   misses: number;
   missReasons: Record<string, number>;
+  /** Setup net of the admission gates (slot granted -> task fed), so queue wait does not count on either side. */
   meanHitSetupMs: number | null;
   meanMissSetupMs: number | null;
+  /** Mean time in the capacity + stagger gates, shown separately. */
+  meanHitQueueMs: number | null;
+  meanMissQueueMs: number | null;
   /** Mean fresh setup minus mean hit setup (null until both sides have data). */
   meanSavedMs: number | null;
 }
@@ -820,6 +824,8 @@ export interface SpareStats {
 export function spareStats(ledgerText: string): SpareStats {
   const hit: number[] = [];
   const miss: number[] = [];
+  const hitQ: number[] = [];
+  const missQ: number[] = [];
   const reasons: Record<string, number> = {};
   let hits = 0;
   let misses = 0;
@@ -831,18 +837,26 @@ export function spareStats(ledgerText: string): SpareStats {
       continue;
     }
     if (l.event !== "WORKER-END") continue;
-    const ms = Number(l.fields.setupMs);
+    // setupMs runs from run start, so it holds the queue wait (admissionMs) on hits and fresh spawns alike: count from slot granted
+    const raw = Number(l.fields.setupMs);
+    const q = Number(l.fields.admissionMs);
+    const queue = Number.isFinite(q) ? q : 0;
+    const ms = Math.max(0, raw - queue);
     if (l.fields.spare === "hit") {
       hits += 1;
-      if (Number.isFinite(ms)) hit.push(ms);
-    } else if (l.fields.spare === "miss" && Number.isFinite(ms)) {
+      if (Number.isFinite(raw)) {
+        hit.push(ms);
+        hitQ.push(queue);
+      }
+    } else if (l.fields.spare === "miss" && Number.isFinite(raw)) {
       miss.push(ms);
+      missQ.push(queue);
     }
   }
   const mean = (a: number[]): number | null => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
   const h = mean(hit);
   const m = mean(miss);
-  return { hits, misses, missReasons: reasons, meanHitSetupMs: h, meanMissSetupMs: m, meanSavedMs: h !== null && m !== null ? m - h : null };
+  return { hits, misses, missReasons: reasons, meanHitSetupMs: h, meanMissSetupMs: m, meanHitQueueMs: mean(hitQ), meanMissQueueMs: mean(missQ), meanSavedMs: h !== null && m !== null ? m - h : null };
 }
 
 /** Whether a spare idled long enough to be retired (idleKillSec 0 = never). */
