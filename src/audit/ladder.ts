@@ -92,11 +92,18 @@ export interface LadderReport {
   readings: LadderReading[];
 }
 
+/** Child env: not a worker, and no API key (same as run-env / daemon-llm). */
+export function ladderChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...base };
+  delete env.PAI_WORKER;
+  delete env.ANTHROPIC_API_KEY;
+  return env;
+}
+
 /** Spawn one rung of `claude -p ...` and read its usage-derived first-turn context. */
 function runRung(rung: LadderRung, cwd: string): Promise<{ firstTurnContext: number | null; timedOut: boolean; error?: string }> {
   return new Promise((resolvePromise) => {
-    const env = { ...process.env };
-    delete env.PAI_WORKER;
+    const env = ladderChildEnv(process.env);
 
     const proc = spawn("claude", rung.args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";

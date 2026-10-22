@@ -76,3 +76,13 @@ describe("newestMcpConfig", () => {
     expect(newestMcpConfig(dir)).toBeNull();
   });
 });
+
+describe("ladderChildEnv", () => {
+  it("drops ANTHROPIC_API_KEY and PAI_WORKER, keeps the rest", async () => {
+    const { ladderChildEnv } = await import("./ladder.js");
+    const env = ladderChildEnv({ ANTHROPIC_API_KEY: "k", PAI_WORKER: "1", HOME: "/h" });
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(env.PAI_WORKER).toBeUndefined();
+    expect(env.HOME).toBe("/h");
+  });
+});
