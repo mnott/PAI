@@ -9,7 +9,8 @@
 import { sha256 } from "../utils/hash.js";
 
 /** Bump whenever chunk text or boundaries change; forces one re-chunk of every file. */
-export const CHUNKER_VERSION = 3;
+// Bumping this re-chunks and re-embeds every indexed file.
+export const CHUNKER_VERSION = 2;
 
 /** File-level change-detection hash: content plus chunker version. */
 export function fileContentHash(content: string, version: number = CHUNKER_VERSION): string {
