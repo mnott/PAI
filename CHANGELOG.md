@@ -8,6 +8,18 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Added
 
+- **Cockpit as a responsive card grid:** the cockpit is rewritten as a grid of cards in sections. Sections and cards drag to reorder; a corner handle sets a card's width from a quarter to the full row and its height; a card minimizes to a per-section dock, and lock mode hides the minimized ones. Layouts are kept per device, can be saved as the default for all devices, and exported for installers. Nothing positional is stored, so a layout survives a different window size.
+- **Cockpit usage content:** tokens, cache hits, prompt and output speed per model, sessions, worker runs and local servers per instance, each with its own stop and a stop-all when several run; low-request models show as small dimmed rings; newer-build and newer-default notices sit in a bar below the header.
+- **Cockpit model lifecycle:** the Models section shows each model's lifecycle (loading, running, stopped) and why a tile is empty or a server is down; a busy local server is no longer reported as down.
+- **Registry editor in the cockpit:** the model registry opens in an editor with syntax highlighting and folding, and every backup can be diffed against the current file, named or deleted.
+- **Models:** `pai models add` registers a model, whose lifecycle (start, stop, runtime) is owned by its registry entry.
+- **Local servers:** several instances of one local model can run side by side; `pai worker local start|stop|status|off` manage them, the router spreads requests over the running instances, a start checks free memory first, and registered (remote) endpoints are health-probed and selectable in routing. One rule picks the local model: the first running one in the routing tier order.
+- **Router:** the router swaps to a new build without a gap by handing its listening socket to the successor; it logs event-loop stalls with the request in flight, reads prompt reuse from a vllm-mlx server log, and shows speed per model as bars.
+- **Launch preflight:** an interactive native launch checks the router route first, and a dead hop is named in the error; `--dry-run` prints the verdict.
+- **Daemon commands:** `pai daemon start` and `stop`, with daemon and router service controls in `pai --help`.
+- **Worker cleanup:** `pai worker gc` reclaims worktrees whose work already landed on main, archives merged foreign worktrees (`--foreign`), removes leftover pool trees (`--pool`) and ends orphan processes (`--kill-orphans`); discard and gc archive a branch before deleting it.
+- **Private worker scratch:** each worker gets its own scratch directory under the system temp dir, outside any repository, and fixed `/tmp` scratch paths are refused.
+- **Home-relative paths:** `workers.yaml` is written with `~/` paths, and `pai worker config normalize-paths` converts an existing file.
 - **Cockpit Memory section:** the memory status page moved from the separate `127.0.0.1:8770` server (config key `dashboard`, now removed) into the cockpit's Memory section, with `embed backlog` / `stop` / `index now` actions that show progress, rate and ETA and refuse a second run.
 - **Cockpit layout:** the cockpit is arranged in sections by purpose, and sections and tiles can be rearranged by drag and drop; tiles drop where the pointer is. `router.cockpit.sections` limits the page to the listed sections. Cards fold, and folds and open lists survive a refresh and a redraw. A refresh no longer moves the page, and the page fits its viewport at any zoom and font size.
 - **Cockpit models:** the Models section shows one card per consumer, titled by purpose (including the PAI embedding card and on-demand models), with live tiles, a metric tile with sparkline, a single local-model switch, and a start/stop action configured per runtime. Models carry editable aliases (pencil next to the headline, working on touch with save, cancel and reset). Numbers use binary GB and match the engine's own monitor; disabled providers and unloaded tiers no longer appear as down.
@@ -24,15 +36,36 @@ All notable changes to PAI Knowledge OS are documented here.
 - **Session names in the cockpit:** sessions show their AIBroker name, and Claude Code background jobs their job name, ahead of the project slug; an escalated run shows "escalated → <run>" with its commits instead of "failed".
 - **Shared runtime stop:** stopping a runtime that other consumers use names them and needs a second click (`router.cockpit.layout.confirmMs`).
 
+### Security
+
+- **Loopback HTTP servers** refuse cross-origin and DNS-rebinding requests.
+- **Worker guard:** a worktree worker's git write aimed at a directory outside its worktree is blocked; worker Chrome never touches the keychain and leftover browsers are reaped; the orphan sweep acts only on a verified process identity.
+
 ### Changed
 
+- **Paths:** logs, caches, sockets, builds, hooks and config files resolve through one PAI-home and runtime-path resolver instead of fixed locations; endpoints, ports and URLs for the router, pool, Ollama and Postgres come from config.
+- **Workers:** a pooled task ends the processes it started, finished and failed panes close on their own, a worker's status line shows only its own session's workers, and a worker with no pane does not start.
+- **Memory:** the nightly embed cycle repeats passes until the backlog clears and records each pass.
+- **Package size:** the build prunes stale dist chunks and keeps only those reachable from the current entries.
 - **Config values out of code:** defaults for delegation, router, cockpit layout and colour thresholds, panes, notices and runtimes live in shipped defaults files under the user config instead of in code. Runtime start/stop commands are no longer written into the user config on first use. `pai config get --source` shows where a value comes from.
 - **Cockpit page source** is split into modules by area; the page it serves is byte-identical.
 - **PAILot only for replies:** automatic notices never go to PAILot; a run end produces at most one notice, and the messenger is rate-limited.
 - **Workers:** a worker never runs in place while editing — an existing branch is reused or renamed. Run reports reach a background session's tab, and panes for a background session are found through the Claude daemon's control socket.
 
+### Removed
+
+- **Caveman mode** is gone; the router sends `claude-*` models straight to the Anthropic API with an upstream and port taken from config.
+- **Separate memory dashboard server** (config key `dashboard`); see the cockpit Memory section.
+
 ### Fixed
 
+- **Data safety:** writes of the global config, `CLAUDE.md` and the scan config are atomic and keep a timestamped backup, refuse to overwrite a file that does not parse, and a `CLAUDE.md` refresh never overwrites user edits. `pai audit hooks` lists hooks and runs them only with `--run`.
+- **Prefill and output speed:** prompt speed counts cached tokens, output speed comes from real decode time and ignores rows without generation time, and servers that report no speed get an end-to-end figure.
+- **Power readings:** implausible power readings are dropped when probed and when history is read.
+- **Router and pool:** a pool host reload never leaves the pool without a host and a rebuilt host survives losing a port race; the router follows a new build and no longer throws on the normal request path; a restart counts readiness from before the spawn; vllm log totals restart when the log is replaced; a local model a tier launched is routed.
+- **Local servers:** stop really stops a script tier, one name per server, and a provider counts as up only when its endpoint serves its model.
+- **Merge gate:** workers merge only after the gate scans, a gate-reverted merge can be merged again, and `cd`/`export` command chains are gated whole.
+- **Cockpit charts and layout:** the token chart scales to its bars, a wrapped card takes the full row when its share no longer fits, range buttons are centred, and the header version yields only when space is short.
 - **Reload and daemon:** shipped defaults resolve from the daemon bundle, not the working directory; `pai reload` starts a stopped daemon or reports the failure. A pool host self-update always comes back and reload waits for it.
 - **Loop guard:** the guard fingerprints content, so touching a file no longer gets a repeated command past it.
 - **Killing workers:** spawn and kill resolve the owning session with one function, so a session may kill its own worker also when it runs as a Claude Code background job.
