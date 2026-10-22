@@ -9,7 +9,7 @@
 import { sha256 } from "../utils/hash.js";
 
 /** Bump whenever chunk text or boundaries change; forces one re-chunk of every file. */
-export const CHUNKER_VERSION = 2;
+export const CHUNKER_VERSION = 3;
 
 /** File-level change-detection hash: content plus chunker version. */
 export function fileContentHash(content: string, version: number = CHUNKER_VERSION): string {
@@ -112,8 +112,19 @@ export function buildOutline(content: string): OutlineNode[] {
   const roots: OutlineNode[] = [];
   const stack: OutlineNode[] = [];
 
+  // Section end = line before the next heading of the same or higher level.
+  // One reverse pass with a stack finds that heading for every heading.
+  const nextSame: Array<Heading | undefined> = new Array(headings.length);
+  const pending: Heading[] = [];
+  for (let i = headings.length - 1; i >= 0; i--) {
+    const h = headings[i]!;
+    while (pending.length > 0 && pending[pending.length - 1]!.level > h.level) pending.pop();
+    nextSame[i] = pending[pending.length - 1];
+    pending.push(h);
+  }
+
   headings.forEach((h, i) => {
-    const next = headings.slice(i + 1).find((n) => n.level <= h.level);
+    const next = nextSame[i];
     const endLine = Math.max(h.line, next ? next.line - 1 : last);
     const node: OutlineNode = {
       level: h.level,
@@ -160,7 +171,7 @@ function splitBySections(
 
   const flush = () => {
     const text = current.map((l) => l.text).join("\n");
-    sections.push({ lines: current, tokens: estimateTokens(text), headingPath: currentPath });
+    sections.push({ lines: current, tokens: sizeOf(text), headingPath: currentPath });
     current = [];
   };
 
@@ -188,7 +199,7 @@ function splitByParagraphs(block: LineBlock): LineBlock[] {
     if (line.text.trim() === "" && current.length > 0) {
       // Empty line — potential paragraph boundary
       const text = current.map((l) => l.text).join("\n");
-      paragraphs.push({ lines: [...current], tokens: estimateTokens(text), headingPath: block.headingPath });
+      paragraphs.push({ lines: [...current], tokens: sizeOf(text), headingPath: block.headingPath });
       current = [];
     } else {
       current.push(line);
@@ -197,57 +208,89 @@ function splitByParagraphs(block: LineBlock): LineBlock[] {
 
   if (current.length > 0) {
     const text = current.map((l) => l.text).join("\n");
-    paragraphs.push({ lines: current, tokens: estimateTokens(text), headingPath: block.headingPath });
+    paragraphs.push({ lines: current, tokens: sizeOf(text), headingPath: block.headingPath });
   }
 
   return paragraphs.length > 0 ? paragraphs : [block];
 }
 
-/**
- * Split a LineBlock by sentence boundaries (. ! ?) when even paragraphs are
- * too large.  Works character-by-character within joined lines.
- */
-function splitBySentences(block: LineBlock, maxTokens: number): LineBlock[] {
-  const fullText = block.lines.map((l) => l.text).join(" ");
-  // Very rough sentence split — split on '. ', '! ', '? ' followed by uppercase
-  const sentenceRe = /(?<=[.!?])\s+(?=[A-Z"'])/g;
-  const sentences = fullText.split(sentenceRe);
+/** Characters per budget token above which a block counts as oversized (guards CJK / unbroken text). */
+const MAX_CHARS_PER_TOKEN = 6;
 
-  const result: LineBlock[] = [];
-  let accText = "";
-  // We can't recover exact line numbers inside a single oversized paragraph,
-  // so we approximate using the block's start/end lines distributed evenly.
-  const startLine = block.lines[0]?.lineNo ?? 1;
-  const endLine = block.lines[block.lines.length - 1]?.lineNo ?? startLine;
-  const totalLines = endLine - startLine + 1;
-  const linesPerSentence = Math.max(1, Math.floor(totalLines / Math.max(1, sentences.length)));
+/** Chunk size measure: word-based token estimate, floored by a character-length estimate. */
+function sizeOf(text: string): number {
+  return Math.max(estimateTokens(text), Math.ceil(text.length / MAX_CHARS_PER_TOKEN));
+}
 
-  let sentenceIdx = 0;
-  let approxLine = startLine;
+/** A piece of one source line; `join` is what separates it from the previous piece of the same line. */
+interface Piece {
+  text: string;
+  lineNo: number;
+  join: string;
+}
 
-  const flush = () => {
-    if (!accText.trim()) return;
-    const endApprox = Math.min(approxLine + linesPerSentence - 1, endLine);
-    result.push({
-      lines: [{ text: accText.trim(), lineNo: approxLine }],
-      tokens: estimateTokens(accText),
-      headingPath: block.headingPath,
-    });
-    approxLine = endApprox + 1;
-    accText = "";
+/** Split one over-budget line at sentence ends, then whitespace, then hard by characters. */
+function splitLine(text: string, lineNo: number, budget: number): Piece[] {
+  if (sizeOf(text) <= budget) return [{ text, lineNo, join: "" }];
+  const maxChars = budget * MAX_CHARS_PER_TOKEN;
+  const pieces: Piece[] = [];
+  const push = (t: string, join: string) => { if (t) pieces.push({ text: t, lineNo, join }); };
+
+  let acc = "";
+  const emit = () => { push(acc, pieces.length > 0 ? " " : ""); acc = ""; };
+  const addWord = (word: string) => {
+    if (acc && sizeOf(acc + " " + word) > budget) emit();
+    if (sizeOf(word) > budget) {
+      // No whitespace to break on (CJK, base64, long URLs): hard split.
+      if (acc) emit();
+      for (let i = 0; i < word.length; i += maxChars) {
+        push(word.slice(i, i + maxChars), i === 0 ? (pieces.length > 0 ? " " : "") : "");
+      }
+      return;
+    }
+    acc = acc ? acc + " " + word : word;
   };
 
-  for (const sentence of sentences) {
-    sentenceIdx++;
-    const candidateText = accText ? accText + " " + sentence : sentence;
-    if (estimateTokens(candidateText) > maxTokens && accText) {
-      flush();
-      accText = sentence;
+  for (const sentence of text.split(/(?<=[.!?])\s+(?=[A-Z"'])/)) {
+    if (acc && sizeOf(acc + " " + sentence) > budget) emit();
+    if (sizeOf(sentence) <= budget) {
+      acc = acc ? acc + " " + sentence : sentence;
     } else {
-      accText = candidateText;
+      for (const word of sentence.split(/\s+/).filter(Boolean)) addWord(word);
     }
   }
-  void sentenceIdx; // used only for iteration count
+  emit();
+  return pieces;
+}
+
+/**
+ * Split an oversized LineBlock at line boundaries; lines that are themselves
+ * too large are split by sentence, whitespace, then characters. Original line
+ * breaks and real line numbers are kept.
+ */
+function splitOversized(block: LineBlock, budget: number): LineBlock[] {
+  const result: LineBlock[] = [];
+  let cur: Array<{ text: string; lineNo: number }> = [];
+  let curText = "";
+
+  const flush = () => {
+    if (cur.length > 0) result.push({ lines: cur, tokens: sizeOf(curText), headingPath: block.headingPath });
+    cur = [];
+    curText = "";
+  };
+  const add = (piece: Piece, sep: string) => {
+    const last = cur[cur.length - 1];
+    if (last && piece.join && last.lineNo === piece.lineNo) last.text += piece.join + piece.text;
+    else cur.push({ text: piece.text, lineNo: piece.lineNo });
+    curText += (curText ? sep : "") + piece.text;
+  };
+
+  for (const line of block.lines) {
+    for (const piece of splitLine(line.text, line.lineNo, budget)) {
+      if (cur.length > 0 && sizeOf(curText + "\n" + piece.text) > budget) flush();
+      add(piece, piece.join ? piece.join : "\n");
+    }
+  }
   flush();
 
   return result.length > 0 ? result : [block];
@@ -300,9 +343,15 @@ function buildOverlapPrefix(
 /**
  * Strip `<private>...</private>` blocks from content before indexing.
  * Content within these tags is excluded from memory — never stored or searched.
+ * Newlines are preserved so line numbers still match the file; an unclosed
+ * tag hides everything after it.
  */
 export function stripPrivateTags(content: string): string {
-  return content.replace(/<private>[\s\S]*?<\/private>/gi, "");
+  const blank = (m: string) => m.replace(/[^\n]/g, "");
+  return content
+    .replace(/<private>[\s\S]*?<\/private>/gi, blank)
+    // Unclosed tag: fail private, hide through end of file.
+    .replace(/<private>[\s\S]*$/i, blank);
 }
 
 /** One breadcrumb line ("[A > B]\n") for a non-empty heading path, else "". */
@@ -332,7 +381,7 @@ export function chunkMarkdown(content: string, opts?: ChunkOptions): Chunk[] {
   // prepended to every chunk, so it counts against the token budget.
   const finalBlocks: LineBlock[] = [];
   for (const section of sections) {
-    const budget = Math.max(1, maxTokens - estimateTokens(breadcrumb(section.headingPath)));
+    const budget = Math.max(1, maxTokens - sizeOf(breadcrumb(section.headingPath)));
     if (section.tokens <= budget) {
       finalBlocks.push(section);
       continue;
@@ -344,9 +393,8 @@ export function chunkMarkdown(content: string, opts?: ChunkOptions): Chunk[] {
         finalBlocks.push(para);
         continue;
       }
-      // Still too big — split by sentences
-      const sentences = splitBySentences(para, budget);
-      finalBlocks.push(...sentences);
+      // Still too big — split at lines, then sentences/words/characters
+      finalBlocks.push(...splitOversized(para, budget));
     }
   }
 
