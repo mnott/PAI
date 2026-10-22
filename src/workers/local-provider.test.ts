@@ -83,11 +83,12 @@ describe("resolveLocalProvider", () => {
     expect(r.why).toBe("most recently started/used");
   });
 
-  it("pickLocal: a running local: beats the tier order", () => {
+  it("pickLocal: the tier order beats a running local:, which beats recency", () => {
     const dir = tmp();
-    writeFileSync(join(dir, "workers.yaml"), "local: b\n");
-    expect(pickLocal(["a", "b"], dir, join(dir, "workers.yaml"), ["a", "b"])).toEqual({ name: "b", why: "workers.yaml local:" });
-    expect(pickLocal(["a", "c"], dir, join(dir, "workers.yaml"), ["a", "c"]).name).toBe("a");
+    const y = join(dir, "workers.yaml");
+    writeFileSync(y, "local: b\n");
+    expect(pickLocal(["a", "b"], dir, y, ["a", "b"]).name).toBe("a");
+    expect(pickLocal(["a", "b"], dir, y, ["c"])).toEqual({ name: "b", why: "workers.yaml local:" });
   });
 
   it("none up: an error naming that no local model server is running", async () => {

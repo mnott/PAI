@@ -192,8 +192,8 @@ providers:
 orchestratorModel: opus
 
 # Optional top-level `local: <provider>` (not set here): the preferred local
-# model when several local servers answer (`--local`, `local`). It is used when
-# running, else --local follows the routing tier order (tiers above).
+# model when several local servers answer (`--local`, `local`). It is the
+# fallback when no model of the routing tier order (tiers above) is running.
 
 # USD per million tokens by model family, matched on the model name (`pai audit
 # usage`, transcript cost). A user's prices merges over this per family.

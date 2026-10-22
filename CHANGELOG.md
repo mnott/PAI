@@ -4,6 +4,23 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.8] - 2026-10-23
+
+### Fixed
+
+- **Security guard hardened after a second review:** `sh -c "rm -rf /"` and `bash -c 'rm -rf /'` are blocked (the closing quote ended the match); prefix wrappers and absolute paths (`\rm`, `/bin/rm`, `env`, `command`, `exec`, `nohup`, `sudo env`, `VAR=1 cmd`) and other shell sinks (`| /bin/sh`, `| dash`, `| env sh`) no longer bypass the rules; more `find … -delete`, `rm ./`, `rm ..`, base64 (`-D`, `--decode`, process substitution) and sudoers shapes are caught; `git push -vf` asks for confirmation.
+- **The guard has a time bound:** each rule sees at most 64 KB (segments 4 KB), so a 1 MB command is checked in under 60 ms instead of timing the hook out; rule files from a project directory are refused when they contain nested quantifiers or over-long patterns and run under a 50 ms limit that counts a timeout as a hit.
+- **Fewer false positives:** commit messages, `grep`/`rg` patterns, `echo` and heredocs that mention a prompt-injection phrase or `/dev/tcp` are no longer blocked (instruction override asks instead of blocking); `chmod 000 file` on a single file is allowed.
+- **Redaction:** camelCase keys (`clientSecret`, `accessToken`), `pwd=`/`pass=`/`key=`, signed-URL parameters, Azure `AccountKey=`, `--*-token`/`--*-secret` flags, `Bearer …` on its own and more token prefixes are redacted; file paths, type annotations and code like `const token = getToken()` are left alone.
+- **The end-of-worker scan runs in a worker thread** and is stopped at its budget; oversized transcript lines are scanned in parts instead of skipped.
+- **A `local:` preference in `workers.yaml` that is not running no longer fails** `--local` (it is the fallback after the tier order, as before); a user's `orchestratorModel` is read; `pai config validate` no longer calls these keys unused.
+- **Pool statistics** measure setup net of the queue wait (a pool hit was shown as slower than a fresh start); spares are never seeded for a provider/model pair the provider does not offer.
+- **`workers.merge.union`** default lives in the shipped config.
+
+### Added
+
+- **Docs:** a "Safety and audit" section in the feature map and concept pages for security rules, lessons and session handoff.
+
 ## [1.0.7] - 2026-10-23
 
 ### Fixed

@@ -261,7 +261,7 @@ const runCommand: CommandDef = {
     { name: "batch", type: "boolean", summary: "This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min" },
     { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
     { name: "force-local", type: "boolean", summary: "With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts)" },
-    { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "Run on the local model PAI resolves: the workers.yaml `local:` preference when running, else the first running one in the class's routing tier order, else the most recently used running model; --local NAME picks a specific running model" },
+    { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "Run on the local model PAI resolves: the first running one in the class's routing tier order, else the workers.yaml `local:` preference when running (a `local:` that is not running is ignored), else the most recently used running model; --local NAME picks a specific running model" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
     { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label shown in ps, follow and the status line" },

@@ -148,8 +148,8 @@ export interface ResolveLocalOpts {
 
 /**
  * The one local provider to run on. Throws NoLocalServerError when no local
- * model server answers, or when `local:` names a provider that is not a
- * running local one.
+ * model server answers. A `local:` naming a model that is not running is
+ * ignored (fallback), not an error.
  */
 export async function resolveLocalProvider(
   cfg: Pick<WorkersConfig, "providers"> & { tiers?: TierDef[] },
@@ -189,7 +189,7 @@ function noServerMessage(): string {
   );
 }
 
-/** Which of the running local providers `--local` runs on. `local:` wins when it is running, else the routing tier order, else the most recently used. */
+/** Which of the running local providers `--local` runs on. The first running model in the routing tier order, else a running `local:` preference, else the most recently used. */
 export function pickLocal(
   up: string[],
   logDir: string,
@@ -197,10 +197,10 @@ export function pickLocal(
   tierOrder: string[] = []
 ): LocalResolution {
   if (up.length === 1) return { name: up[0], why: "only local server up" };
-  const pref = readLocalPreference(yamlPath);
-  if (pref !== undefined && up.includes(pref)) return { name: pref, why: "workers.yaml local:" };
   const byTier = tierOrder.find((n) => up.includes(n));
   if (byTier !== undefined) return { name: byTier, why: "first running in the routing tier order" };
+  const pref = readLocalPreference(yamlPath);
+  if (pref !== undefined && up.includes(pref)) return { name: pref, why: "workers.yaml local:" };
   const best = up
     .map((name) => ({ name, at: lastActivity(logDir, name) }))
     .sort((a, b) => b.at.localeCompare(a.at))[0];
