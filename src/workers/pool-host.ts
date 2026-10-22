@@ -23,9 +23,9 @@
 import { refuseUnlessLoopback } from "../utils/loopback-guard.js";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
-import { basename, dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync, existsSync } from "node:fs";
+import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
@@ -40,6 +40,7 @@ import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./path
 import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
 import { loadContractAddendum } from "./contract-addendum.js";
 import { poolSlotSettingsId, slimProfileArgs, WORKER_BRIEF } from "./slim-profile.js";
+import { removePinFilesOfProcess } from "./settings-file.js";
 import {
   adoptInitModel,
   bumpContextTokens,
@@ -467,6 +468,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (!s) return;
     slots.delete(key);
     if (!s.dead) s.kill();
+    // the settings file carried the provider token: removed once no live slot of that provider/model remains
+    if (![...slots.values()].some((o) => o.record.provider === s.record.provider && o.record.model === s.record.model)) {
+      rmSync(join(logDir, `${poolSlotSettingsId(s.record.provider, s.record.model)}.settings.json`), { force: true });
+    }
+    if (!slots.size) removePinFilesOfProcess();
     persist();
     appendLedger(ledger, "WORKER-POOL-SLOT-END", { key: key.replaceAll("\u0000", "/"), pid: s.pid, note: why });
   };

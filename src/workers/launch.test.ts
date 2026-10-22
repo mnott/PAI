@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 /**
  * Tests for launch.ts — the `pai launch` provider/model table, resolution
  * and env-plan builder. Fixture is a plain WorkersConfig-shaped object
@@ -52,6 +53,8 @@ const fixture: Pick<WorkersConfig, "active" | "providers" | "nativeModels"> = {
     }),
   },
 };
+
+const settingsArg = (v: string) => JSON.parse(v.startsWith("{") ? v : readFileSync(v, "utf8")); // a pinned token travels in a 0600 file
 
 describe("buildLaunchRows", () => {
   it("lists exactly the enabled providers/models and nothing else", () => {
@@ -239,7 +242,7 @@ describe("buildLaunchPlan — argv and env per provider shape", () => {
     );
     expect(plan.argv.slice(2)).toEqual(["--model", "glm-5.3-flash", "--resume", "abc"]);
     // settings env outranks process env: route and token are pinned in --settings
-    const pinned = JSON.parse(plan.argv[1]).env;
+    const pinned = settingsArg(plan.argv[1]).env;
     expect(pinned.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
     expect(pinned.ANTHROPIC_AUTH_TOKEN).toBe("test-key-0000");
     expect(plan.env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");

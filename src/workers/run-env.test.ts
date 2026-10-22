@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import http from "node:http";
-import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs, probeRoute, routeLoopbackViaRouter, routeVerdictLine, nativeRoutePreflight } from "./run-env.js";
@@ -41,6 +41,8 @@ const SESSION_IDENTITY = [
   "CLAUDE_PID",
   "CLAUDECODE",
 ];
+
+const settingsArg = (v: string) => JSON.parse(v.startsWith("{") ? v : readFileSync(v, "utf8")); // a pinned token travels in a 0600 file
 
 describe("buildRunEnv session identity", () => {
   it("strips the spawner's session identity from a headless run", () => {
@@ -157,7 +159,7 @@ describe("claudeCommand", () => {
 
   it("keeps a provider route and token when the router is enabled", () => {
     const env: NodeJS.ProcessEnv = { ANTHROPIC_BASE_URL: "https://api.z.ai/api/anthropic", ANTHROPIC_AUTH_TOKEN: "tok" };
-    const parsed = JSON.parse(claudeCommand(env, true)[2]);
+    const parsed = settingsArg(claudeCommand(env, true)[2]);
     expect(parsed.env.ANTHROPIC_BASE_URL).toBe("https://api.z.ai/api/anthropic");
     expect(parsed.env.ANTHROPIC_AUTH_TOKEN).toBe("tok");
   });
@@ -206,13 +208,13 @@ describe("local-provider worker prompt overhead", () => {
     const env = buildRunEnv(provider, true, undefined, "local30");
     expect(env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBe("1");
     expect(env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
-    expect(JSON.parse(claudeCommand(env, false)[2]).outputStyle).toBe("default");
+    expect(settingsArg(claudeCommand(env, false)[2]).outputStyle).toBe("default");
   });
 
   it("anthropic worker and interactive runs are untouched", () => {
     for (const env of [buildRunEnv(nativeAnthropicProvider(), true), buildRunEnv(nativeAnthropicProvider(), false), buildRunEnv(provider, false, undefined, "local30")]) {
       expect(env.CLAUDE_CODE_DISABLE_CLAUDE_MDS).toBeUndefined();
-      expect(JSON.parse(claudeCommand(env, false)[2])).not.toHaveProperty("outputStyle");
+      expect(settingsArg(claudeCommand(env, false)[2])).not.toHaveProperty("outputStyle");
     }
     // every headless worker has auto-memory off (main), interactive runs keep it
     expect(buildRunEnv(nativeAnthropicProvider(), true).CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");

@@ -35,6 +35,7 @@ import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
 import { endProcesses, findWorktreeOrphans } from "../../workers/reap.js";
+import { gcSettingsFiles } from "../../workers/settings-file.js";
 import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
@@ -842,6 +843,7 @@ const gcCommand: CommandDef = {
       if (orphans.length && flag(ctx, "kill-orphans") && !ctx.dryRun) await endProcesses(orphans, out);
       const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true, undefined, flag(ctx, "foreign") ? process.cwd() : undefined);
       if (flag(ctx, "pool") || flag(ctx, "all-finished")) res.push(...gcPoolWorktrees(logDir(), ctx.dryRun));
+      for (const f of gcSettingsFiles(logDir(), ctx.dryRun)) out(`${ctx.dryRun ? "would remove" : "removed"} settings file ${f}`);
       const verb = ctx.dryRun ? "would archive" : "archived";
       for (const r of res) {
         out(

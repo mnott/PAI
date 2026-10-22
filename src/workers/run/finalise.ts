@@ -23,6 +23,7 @@ import {
 } from "../worktree.js";
 import { AG2_REASK_TEXT, type WorkerReport } from "../report.js";
 import { killTree } from "../kill-tree.js";
+import { removeRunSettings } from "../settings-file.js";
 import { type RunLimit } from "../deadline.js";
 import { reapWorkerProcesses } from "../reap.js";
 import { blockedMsOf } from "../active-time.js";
@@ -124,6 +125,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
   const wid = status.id;
+  // the settings files carried the provider token: gone with the run
+  removeRunSettings(logDir, wid);
   // nothing the worker started outlives it: descendants and detached processes parked in its worktree
   await reapWorkerProcesses({ rootPid: process.pid, dir: f.worktree?.dir });
   // first, whatever the outcome (rc 143 included): uncommitted edits in the

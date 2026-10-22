@@ -14,13 +14,14 @@
  * --settings/--setting-sources.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { WorkerProvider } from "./config.js";
 import { claudeHomeDir } from "../config/pai-home.js";
+import { writePrivateFile } from "./settings-file.js";
 
 /** Hook commands kept for a worker; everything else is context or bookkeeping. */
 const GUARD_HOOKS = [
@@ -154,7 +155,7 @@ export function slimProfileArgs(
   const slim = slimSettings(user, env, provider, noteHookCommand(logDir));
   // Claude Code honours one --settings only (the last), so the route pin travels inside this file
   if (pin) Object.assign(slim, { ...pin, env: { ...(slim.env as Record<string, unknown> | undefined), ...pin.env } });
-  writeFileSync(path, JSON.stringify(slim, null, 2) + "\n", "utf8");
+  writePrivateFile(path, JSON.stringify(slim, null, 2) + "\n");
   return ["--setting-sources", "project,local", "--settings", path];
 }
 

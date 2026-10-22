@@ -449,7 +449,8 @@ describe("pooled task lifecycle", () => {
 // ---------------------------------------------------------------------------
 
 describe("pool slot route", () => {
-  const pinned = (argv: string[]): { env: Record<string, string> } => JSON.parse(argv[2]!);
+  const settingsArg = (v: string) => JSON.parse(v.startsWith("{") ? v : readFileSync(v, "utf8")); // a pinned token travels in a 0600 file
+  const pinned = (argv: string[]): { env: Record<string, string> } => settingsArg(argv[2]!);
 
   it("SlotEnvUsesRouterWhenEnabled — slot env and --settings pin carry the router, never the provider", async () => {
     const h = makeHost({}, undefined, { routerEnabled: true, prodBuilders: true });

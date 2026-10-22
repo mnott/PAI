@@ -15,6 +15,7 @@ import { loadConfig } from "../daemon/config.js";
 import { routerPort } from "../router/router.js";
 import { resolveModelCapability, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "./config.js";
 import { workersYamlPath } from "./workers-config.js";
+import { writePinFile } from "./settings-file.js";
 import { loopbackUrl } from "../utils/loopback.js";
 import { isLoopbackHostname } from "../utils/loopback.js";
 
@@ -292,7 +293,10 @@ export function pinnedSettingsArgs(
   routerEnabled: boolean = loadConfig().router.enabled,
   extra?: Record<string, unknown>
 ): string[] {
-  return ["--settings", JSON.stringify(pinnedSettings(env, routerEnabled, extra))];
+  const pin = pinnedSettings(env, routerEnabled, extra);
+  // a token never travels in argv (visible to every local user via ps): it goes in a 0600 file
+  if (pin.env.ANTHROPIC_AUTH_TOKEN) return ["--settings", writePinFile(pin)];
+  return ["--settings", JSON.stringify(pin)];
 }
 
 /**
