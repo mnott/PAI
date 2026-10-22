@@ -65,6 +65,9 @@ export interface LaunchRecord {
   child?: number;
   /** The iTerm session the wrapper runs in (its ITERM_SESSION_ID): vouches that PAI opened this pane. */
   session?: string;
+  /** When the pane opened and its wrapper said hello; the wrapper process starts here, however long the run then queues before `startedMs`. */
+  openedMs?: number;
+  /** When the command was started in the pane (after any slot-queue wait). */
   startedMs: number;
 }
 
@@ -531,7 +534,8 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   let pidWaiter: { ok: (p: OwnedProc) => void; bad: (e: Error) => void } | null = null;
   let ended = false;
   let startedAt = 0;
-  const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, session, startedMs: startedAt || Date.now(), ...extra } satisfies LaunchRecord);
+  const openedAt = Date.now();
+  const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, session, openedMs: openedAt, startedMs: startedAt || openedAt, ...extra } satisfies LaunchRecord);
   const settle = (code: number, signal?: string): void => {
     if (ended) return;
     ended = true;

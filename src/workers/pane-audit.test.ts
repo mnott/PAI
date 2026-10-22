@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { closeFinishedPanes, auditLaunches, auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
+import { decideEndReason } from "./endreason.js";
+import { launchPidFresh, closeFinishedPanes, auditLaunches, auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
 import type { LaunchRecord } from "./pane-exec.js";
 import { loadRegistry, saveEntry, type PaneEntry } from "./pane.js";
 import type { Messenger } from "./run-events.js";
@@ -356,5 +357,39 @@ describe("closeFinishedPanes", () => {
     const r = rig([], ["w-c"]);
     expect((await closeFinishedPanes(dir, r.deps(exitOf(0, 99_000)), NOW, true)).closed).toEqual(["w-c"]);
     expect(r.closed).toEqual([]);
+  });
+});
+
+describe("launch ownership across a slot-queue wait", () => {
+  const T = 1_700_000_000_000;
+  // pane opened at T, the run queued 10 min for a provider slot, the command started at T+10min
+  const queued = { openedMs: T, startedMs: T + 600_000 };
+
+  it("the wrapper is measured against the pane open time, not the command start", () => {
+    expect(launchPidFresh(T + 1000, queued, "wrapper")).toBe(true);
+  });
+  it("the child is measured against the command start", () => {
+    expect(launchPidFresh(T + 600_000 + 1000, queued, "child")).toBe(true);
+  });
+  it("a record without openedMs (older launcher) keeps the single stamp", () => {
+    expect(launchPidFresh(T + 1000, { startedMs: T }, "wrapper")).toBe(true);
+    expect(launchPidFresh(T + 600_000, { startedMs: T }, "wrapper")).toBe(false);
+  });
+  it("a pid started long before the pane opened is still a reused pid", () => {
+    expect(launchPidFresh(T - 600_000, queued, "wrapper")).toBe(false);
+  });
+  it("orphan-child kill leaves a marker, a stop event and the ledger line naming the pane audit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-auditq-"));
+    try {
+      const killed: string[] = [];
+      const r: LaunchRecord = { id: "w-q", kind: "worker", caller: 1, wrapper: 100, child: 200, startedMs: T, openedMs: T - 600_000 };
+      await auditLaunches(dir, { alive: (p?: number) => p === 200, kill: (pid, sig) => void killed.push(`${pid}:${sig}`), closePane: async () => undefined, workers: () => [], records: () => [r], exit: () => null }, new Date(T));
+      expect(killed).toEqual(["200:SIGKILL"]);
+      expect(JSON.parse(readFileSync(join(dir, "w-q.kill"), "utf8")).reason).toMatch(/pane audit: wrapper \(the pane\) is gone/);
+      expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/PANE-ORPHAN.*side=child/);
+      expect(decideEndReason({ logDir: dir, id: "w-q" })).toMatchObject({ reason: "pai-worker-kill", by: "pane audit" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

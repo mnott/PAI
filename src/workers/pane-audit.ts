@@ -20,6 +20,7 @@ import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
+import { appendStopEvent, requestKill } from "./endreason.js";
 import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
@@ -289,12 +290,24 @@ export interface LaunchAuditDeps {
   sessionHeld?: (r: LaunchRecord, all: LaunchRecord[]) => boolean;
 }
 
-/** A pid is the launch's own only when it started within two minutes of the record and, for the wrapper, runs `pane exec <id>`. */
+export const LAUNCH_PID_SLACK_MS = 120_000;
+
+/**
+ * Whether a process started at `startMs` fits the launch. The wrapper starts when the pane opens (`openedMs`), the child when
+ * the command starts (`startedMs`); a run that queued for a provider slot between the two has them minutes apart, so each side
+ * is measured against its own stamp.
+ */
+export function launchPidFresh(startMs: number, r: Pick<LaunchRecord, "openedMs" | "startedMs">, side: "wrapper" | "child"): boolean {
+  const at = side === "wrapper" ? (r.openedMs ?? r.startedMs) : r.startedMs;
+  return Math.abs(startMs - at) <= LAUNCH_PID_SLACK_MS;
+}
+
+/** A pid is the launch's own only when it started within two minutes of its side's launch and, for the wrapper, runs `pane exec <id>`. */
 function ownsLaunchPid(pid: number, r: LaunchRecord, side: "wrapper" | "child"): boolean {
   try {
     const env = { ...process.env, LC_ALL: "C" };
     const start = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env }).trim());
-    if (Number.isNaN(start) || Math.abs(start - r.startedMs) > 120_000) return false;
+    if (Number.isNaN(start) || !launchPidFresh(start, r, side)) return false;
     if (side === "wrapper") return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", env }).includes(r.id);
     return true;
   } catch {
@@ -353,6 +366,10 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child gone without an exit file" }, now);
       out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
     } else if (!ex && r.wrapper && !wrapperUp && childUp) {
+      // the runner reads this marker at the end: its report names the pane audit, not a bare rc 137
+      const why = "pane audit: wrapper (the pane) is gone, child killed";
+      requestKill(logDir, ledger, r.id, "pane audit", true, why);
+      appendStopEvent(logDir, r.id, { killed_by: "pane audit", forced: true, reason: why });
       kill(r.child!, "SIGKILL", true);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "child", why: "wrapper (the pane) is gone" }, now);
       out.push({ id: r.id, kind: "orphan-child", action: "child killed" });
