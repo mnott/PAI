@@ -74,8 +74,17 @@ function run(bin: string, args: string[], stdin: string, killAfterMs: number): P
         resolve(stdout);
       },
     );
+    // A child that dies before reading (missing binary, early exit) turns the
+    // stdin write into an EPIPE. Unhandled, that is an uncaught exception that
+    // kills the poller; the exec callback already reports the real failure.
+    child.stdin?.on("error", (e) => reject(e));
     child.stdin?.end(stdin);
   });
+}
+
+/** A leading dash would be parsed by the CLI as an option, not a project. */
+function validProject(project: string): boolean {
+  return project.length > 0 && !project.startsWith("-");
 }
 
 export class AiBrokerTransport implements Transport {
@@ -89,6 +98,9 @@ export class AiBrokerTransport implements Transport {
     message: string,
     opts: { spawnIfAbsent: boolean },
   ): Promise<TransportResult> {
+    if (!validProject(project)) {
+      return { outcome: "unlaunchable", session: project, reason: `invalid project name: ${project}` };
+    }
     const args = ["dispatch", project, "--stdin", "--json", "--timeout", String(this.timeoutSecs)];
     if (!opts.spawnIfAbsent) args.push("--no-spawn");
 
@@ -146,6 +158,7 @@ export class AiBrokerProber {
   ) {}
 
   async ask(project: string, question: string): Promise<ProbeAnswer> {
+    if (!validProject(project)) return { state: "silent", reason: `invalid project name: ${project}` };
     let stdout: string;
     try {
       stdout = await run(
