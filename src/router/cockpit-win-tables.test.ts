@@ -32,7 +32,11 @@ var ids=["speed","pause","sessions","runs"],o={err:window.__err||null,boxes:ids.
 ids.forEach(function(i){o[i]=info(i)});
 function xs(id){return Array.prototype.map.call(q(id).querySelectorAll(".wr-n"),function(e){return Math.round(e.getBoundingClientRect().left*10)/10})}
 function hd(id){var h=q(id).querySelector(".wr-hd");return{n:h?h.children.length:0,vis:h?Array.prototype.map.call(h.querySelectorAll(".wr-h"),function(e){return e.innerText}).join("|"):"",tips:h?Array.prototype.every.call(h.querySelectorAll(".wr-h"),function(e){return !!e.title}):false}}
-o.nx={sessions:xs("sessions"),runs:xs("runs")};o.hd={sessions:hd("sessions"),runs:hd("runs")};
+function al(id){var t=q(id).querySelector(".wr-tbl"),k=Array.prototype.slice.call(t.children),hd=t.querySelector(".wr-hd"),hi=k.indexOf(hd),gi=k.map(function(e){return e.classList.contains("wr-group")?1:0}),g0=t.querySelector(".wr-group"),first=g0.firstElementChild,row=t.querySelector(".wr-row"),hc=Array.prototype.slice.call(hd.children),rc=Array.prototype.slice.call(row.children),d=[],ov=false;
+ hc.forEach(function(h,i){if(i===2)return;var a=h.getBoundingClientRect(),b=rc[i].getBoundingClientRect();d.push(Math.max(Math.abs(a.left-b.left),Math.abs(a.right-b.right)));if(i>0&&i<hc.length-1&&hc[i-1].getBoundingClientRect().right>a.left+0.5&&hc[i-1].getBoundingClientRect().width>0&&i>3)ov=true});
+ var hr=hc.map(function(h){return h.getBoundingClientRect()});for(var j=4;j<hr.length-1;j++)if(hr[j].right>hr[j+1].left+0.5)ov=true;
+ return{headInGroup:!!(hd.parentElement&&hd.parentElement.classList.contains("wr-group")),prevIsHead:!!(hd.previousElementSibling&&hd.previousElementSibling.hasAttribute("data-wrfold")),firstIsHead:first.hasAttribute("data-wrfold"),hdFirstInTbl:hi===0,maxDelta:Math.max.apply(null,d),ov:ov}}
+o.al={runs:al("runs")};o.nx={sessions:xs("sessions"),runs:xs("runs")};o.hd={sessions:hd("sessions"),runs:hd("runs")};
 q("runs").querySelector("[data-wrfold]").click();o.afterFold=info("runs");o.foldSaved=localStorage.getItem("pai.cockpit.wrfold");
 q("sessions").querySelector("[data-sessmore]").click();o.afterMore=info("sessions");o.moreSaved=localStorage.getItem("pai.cockpit.sessmore");
 window.Win.update("data",window.WINPAY);o.boxes2=ids.map(box).join("|");o.speed2=info("speed");
@@ -108,6 +112,18 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
       expect(r.hd[id].vis).toContain("S|M|T|");
       expect(r.hd[id].tips).toBe(true);
       expect(Math.max(...r.nx[id]) - Math.min(...r.nx[id])).toBeLessThanOrEqual(1);
+    }
+  }, 120_000);
+
+  it("worker runs: the header sits under the first project row and every header cell lies on its data column", async () => {
+    for (const w of [1400, 520]) {
+      const r = await open("", w);
+      expect(r.err).toBeNull();
+      expect(r.al.runs.firstIsHead).toBe(true); // project row first in the table
+      expect(r.al.runs.prevIsHead).toBe(true); // header right under it
+      expect(r.al.runs.hdFirstInTbl).toBe(false);
+      expect(r.al.runs.maxDelta).toBeLessThanOrEqual(1);
+      expect(r.al.runs.ov).toBe(false); // H and ! never collide
     }
   }, 120_000);
 });
