@@ -255,6 +255,16 @@ export interface PaiDaemonConfig {
 
   /** Model router supervised by the daemon (src/router/supervisor.ts). */
   router: RouterConfig;
+
+  /** Worker settings; `merge` drives conflict auto-resolution in `pai worker merge`. */
+  workers?: {
+    merge?: {
+      /** Globs of generated paths: a conflict only in these is resolved by regenerating. */
+      generated?: string[];
+      /** Shell command that regenerates them. */
+      regenerate?: string;
+    };
+  };
 }
 
 /**
