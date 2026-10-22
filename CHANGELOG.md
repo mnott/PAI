@@ -11,11 +11,14 @@ All notable changes to PAI Knowledge OS are documented here.
 - **macOS notifications:** notification text is passed to `osascript` as arguments instead of being written into the AppleScript, so a message containing quotes can no longer run commands. Present since 0.60.0.
 - **Ideas into notes:** `idea_materialize` stays inside the vault and refuses to overwrite an existing note.
 - **Own-address check:** a recipient entry holding several addresses is checked address by address, so an outside address after one's own is no longer let through.
+- **Observability captures:** raw tool output and hook events are written with secrets masked, into owner-only files capped at 10 MB; session start no longer sends the project name to ntfy.
 - **Audit ladder** no longer passes `ANTHROPIC_API_KEY` to the `claude` processes it starts; the forge sink escapes values in its curl configuration.
 
 ### Fixed
 
 - **Notification settings:** `pai notifications set` refuses to write when the main config cannot be read, instead of replacing it with only the notifications section; ntfy titles with emoji or non-Latin text are delivered.
+- **TODO.md:** syncing the todo list keeps every other section byte for byte — a `## Continue` checkpoint at the top of the file is no longer deleted — and writes atomically.
+- **Session notes:** text containing `$&` or similar no longer corrupts a note; renaming never overwrites another note; session summaries list only their own session and show the time as HH:MM:SS; session start no longer waits forever on a hung `pai` call, and a new TODO.md uses the same English structure everywhere.
 - **Task poller:** one failing task no longer aborts the whole check or loses the state of tasks already handled; only an explicit "Authorised" status counts as an active Todoist webhook, so "Not authorized" no longer suppresses completion detection.
 - **Registry migration:** the old JSON registry is read with one parser, so list-format files are imported and no bogus `projects` or `version` project is created; a folder name without ASCII letters still gets a slug.
 - **Skills audit** follows symlinked commands and plugins; **zettel conversations** cap their link depth and breadth; **communities** are deterministic and numbered by size.
