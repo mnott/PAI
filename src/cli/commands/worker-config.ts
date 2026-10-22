@@ -9,7 +9,9 @@ import { duplicateModelIds } from "../../router/router.js";
 import { execFileSync, spawn } from "node:child_process";
 import { connect } from "node:net";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { normalizeRegistryPaths } from "../../router/cockpit-registry.js";
 import { parseDocument } from "yaml";
 import { CONFIG_FILE } from "../../daemon/config.js";
 import {
@@ -719,13 +721,36 @@ const configInlineKeysCommand: CommandDef = {
   },
 };
 
+const configNormalizePathsCommand: CommandDef = {
+  name: "normalize-paths",
+  summary: "Rewrite absolute home paths in workers.yaml as ~/…",
+  description: "Path values (key_file, config, python, script, start, location, model) that start with your home directory become ~/… . Dry run unless --write; --write backs up to workers-backups/ first. Comments and layout are kept.",
+  options: [{ name: "write", type: "boolean", summary: "Apply the changes (default: only list them)" }],
+  examples: ["pai worker config normalize-paths", "pai worker config normalize-paths --write"],
+  seeAlso: ["pai worker config check"],
+  run(ctx) {
+    try {
+      const yamlPath = workersYamlPath();
+      const write = ctx.opts.write === true;
+      const r = normalizeRegistryPaths(yamlPath, { write });
+      if (!r.changes.length) return void out(dim("no absolute home paths — nothing to do"));
+      const mask = (s: string): string => s.split(homedir()).join("~HOME~");
+      for (const c of r.changes) out(`  line ${c.line} ${c.field}: ${mask(c.old)} -> ${mask(c.new)}`);
+      if (!write) return void out(dim(`  dry run — ${r.changes.length} change(s), nothing written (use --write)`));
+      out(ok(`wrote ${yamlPath} (${r.changes.length} change(s)); backup workers-backups/${r.backup}`));
+    } catch (e) {
+      fail(e, CONFIG_HINT);
+    }
+  },
+};
+
 export const workerConfigCommand: CommandDef = {
   name: "config",
-  summary: "The workers.yaml file itself: path, init, migrate, check, inline-keys",
+  summary: "The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths",
   description: "`pai worker providers` and `classes` change what is inside workers.yaml; these commands deal with the file.",
   examples: ["pai worker config path", "pai worker config check"],
   seeAlso: ["pai worker providers", "pai worker classes"],
-  subcommands: [configPathCommand, configInitCommand, configMigrateCommand, configCheckCommand, configInlineKeysCommand],
+  subcommands: [configPathCommand, configInitCommand, configMigrateCommand, configCheckCommand, configInlineKeysCommand, configNormalizePathsCommand],
 };
 
 // ---------------------------------------------------------------------------

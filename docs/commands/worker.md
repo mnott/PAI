@@ -1208,7 +1208,7 @@ See also: `pai worker classes set`
 
 ### pai worker config
 
-The workers.yaml file itself: path, init, migrate, check, inline-keys
+The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths
 
 ```
 pai worker config <command>
@@ -1319,6 +1319,27 @@ For each provider that uses a key file, writes the key into workers.yaml. The ke
 ```sh
 pai worker config inline-keys --dry-run
 pai worker config inline-keys
+```
+
+See also: `pai worker config check`
+
+#### pai worker config normalize-paths
+
+Rewrite absolute home paths in workers.yaml as ~/…
+
+```
+pai worker config normalize-paths [options]
+```
+
+Path values (key_file, config, python, script, start, location, model) that start with your home directory become ~/… . Dry run unless --write; --write backs up to workers-backups/ first. Comments and layout are kept.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--write` | flag | — | Apply the changes (default: only list them) |
+
+```sh
+pai worker config normalize-paths
+pai worker config normalize-paths --write
 ```
 
 See also: `pai worker config check`
@@ -1657,7 +1678,7 @@ See also: `pai worker providers`
 | `pai worker providers` | Providers workers can run on: list, add, remove, use, enable, disable, test |
 | `pai worker classes` | Which provider serves draft, implement, review, … |
 | `pai worker roles` | Old name of `classes` |
-| `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
+| `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
 | `pai worker route` | Print the routing table: per delegation tier the ordered models |
 | `pai worker local` | Which local models run; the operator starts and stops them |

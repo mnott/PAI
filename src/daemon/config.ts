@@ -375,6 +375,13 @@ export function expandHome(p: string): string {
   return p;
 }
 
+/** Inverse of expandHome: a path under the home directory is written as `~/…` so config never hardcodes the user's home. */
+export function homeRel(p: string): string {
+  const home = homedir();
+  if (p === home) return "~";
+  return p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
+}
+
 /** Canonical location since 2026-09-19: under the PAI_HOME namespace dir,
  *  so nothing PAI writes can collide with a file Claude Code itself owns. */
 const NEW_CONFIG_FILE = paiHomePath("config.json");

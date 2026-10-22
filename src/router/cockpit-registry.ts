@@ -27,6 +27,7 @@ import { LineCounter, parseDocument, isMap, isScalar, type Document } from "yaml
 import { parseLocalConfig, resolveModelPath, LocalTierError } from "../workers/local-tiers.js";
 import { parseProvider, WorkersConfigError, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { yamlProviderToRaw, parseBuiltinAnthropic } from "../workers/workers-config.js";
+import { normalizePathsText, type PathChange } from "../workers/normalize-paths.js";
 import { readLiveInstances, type LocalInstance } from "../workers/local-instances.js";
 import { appendLedger } from "../workers/ledger.js";
 import { COCKPIT_ACTION_EVENT } from "./cockpit-actions.js";
@@ -267,13 +268,36 @@ function stamp(d: Date): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-function backupName(ctx: RegistryCtx): string {
+export function backupName(ctx: RegistryCtx): string {
   const d = new Date((ctx.now?.() ?? new Date()).getTime());
   for (;;) {
     const name = `workers.yaml.${stamp(d)}.bak`;
     if (!existsSync(join(ctx.backupDir, name))) return name;
     d.setSeconds(d.getSeconds() + 1);
   }
+}
+
+/** `pai worker config normalize-paths`: home-prefixed path values become `~/…`. Write mode backs up (editor naming) and swaps atomically. */
+export function normalizeRegistryPaths(
+  yamlPath: string,
+  opts: { write?: boolean; home?: string; now?: () => Date } = {},
+): { changes: PathChange[]; backup?: string } {
+  const cur = readFileSync(yamlPath, "utf8");
+  const { text, changes } = normalizePathsText(cur, opts.home);
+  if (!opts.write || !changes.length) return { changes };
+  const backupDir = join(dirname(yamlPath), "workers-backups");
+  mkdirSync(backupDir, { recursive: true });
+  const backup = backupName({ yamlPath, backupDir, now: opts.now } as RegistryCtx);
+  copyFileSync(yamlPath, join(backupDir, backup));
+  const tmp = `${yamlPath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, text, { mode: statSync(yamlPath).mode & 0o777 });
+    renameSync(tmp, yamlPath);
+  } catch (e) {
+    if (existsSync(tmp)) unlinkSync(tmp);
+    throw e;
+  }
+  return { changes, backup };
 }
 
 export type SaveResult = { ok: true; backup: string } | { ok: false; error: string };
@@ -292,6 +316,7 @@ export function saveRegistry(yamlText: string, baseHash: string, ctx: RegistryCt
     if (errors.length) return { ok: false, error: errors.map((e) => `line ${e.line}: ${e.message}`).join("; ") };
     if (ctx.explicitEnabled) yamlText = withExplicitEnabled(yamlText);
     if (ctx.explicitLifecycle) yamlText = withExplicitLifecycle(yamlText);
+    yamlText = normalizePathsText(yamlText).text;
     step(3);
     mkdirSync(ctx.backupDir, { recursive: true });
     const name = backupName(ctx);

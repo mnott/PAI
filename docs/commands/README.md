@@ -368,11 +368,12 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker classes list` | List classes and where each one runs |
 | `pai worker classes set` | Send a class to a provider, or give it routing limits |
 | `pai worker classes unset` | Remove a class (runs then use the active provider) |
-| `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys |
+| `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths |
 | `pai worker config check` | Check workers.yaml for mistakes |
 | `pai worker config init` | Write a commented starter workers.yaml |
 | `pai worker config inline-keys` | Move key files' contents into workers.yaml |
 | `pai worker config migrate` | Move or build workers.yaml from an older setup |
+| `pai worker config normalize-paths` | Rewrite absolute home paths in workers.yaml as ~/… |
 | `pai worker config path` | Print where workers.yaml is |
 | `pai worker controls` | Hand the desktop controls to a worker, or take them back |
 | `pai worker discard` | Throw away a worker's branch and worktree |

@@ -22,6 +22,7 @@ import {
   PROVIDER_TAGS,
   WorkersConfigError,
   expandHome,
+  homeRel,
   getProviderOrNative,
   isModelCapability,
   keysDir,
@@ -102,7 +103,7 @@ export function addProvider(input: AddProviderInput): WorkersConfig {
     enabled: true,
     protocol: input.protocol ?? "anthropic",
     baseUrl: input.baseUrl,
-    keyFile,
+    keyFile: keyFile ? homeRel(keyFile) : keyFile,
     ...(input.inlineKey ? { key: input.inlineKey } : {}),
     models: input.fastModel
       ? { default: input.model, fast: input.fastModel }

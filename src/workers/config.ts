@@ -21,7 +21,7 @@ import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CONFIG_FILE, expandHome, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { CONFIG_FILE, expandHome, homeRel, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults } from "../config/shipped-defaults.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
@@ -1656,7 +1656,7 @@ export function writeWorkersSection(
 }
 
 /** Expand a leading ~ (config values are written with `~` to stay portable). */
-export { expandHome };
+export { expandHome, homeRel };
 
 // ---------------------------------------------------------------------------
 // Runnability checks (proxy / codex providers included)
