@@ -1,11 +1,13 @@
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseLocalConfig, type RunningServer } from "../../workers/local-tiers.js";
 import { localStartView, readLocalStart, readLocalStarts } from "../../workers/local-start.js";
 import { readInstances } from "../../workers/local-instances.js";
-import { serverLine, startInstance, stopInstance, type StartDeps } from "./worker-config.js";
+import { sharedScheduler } from "../../router/scheduler.js";
+import { instanceEngineKey } from "../../workers/local-instances.js";
+import { cliInflight, serverLine, startInstance, stopInstance, type StartDeps } from "./worker-config.js";
 
 const mk = () => {
   const d = mkdtempSync(join(tmpdir(), "pai-inst-"));
@@ -108,6 +110,47 @@ describe("startInstance / stopInstance", () => {
     await expect(startInstance(cfg, "big", deps({ launch: () => () => 3, servers: () => [], up: async () => false }))).rejects.toThrow(/exited \(3\)/);
     expect(localStartView(readLocalStart(d))).toMatchObject({ state: "failed", message: expect.stringContaining("failed to start, see ") });
     expect(readInstances(d).find((r) => r.id === "big#1")).toMatchObject({ state: "failed", error: "server exited (3)" });
+  });
+
+  it("two concurrent starts of a one-instance model: one is refused, one port launched", async () => {
+    const { cfg, launched, deps } = mk();
+    const r = await Promise.allSettled([startInstance(cfg, "one", deps()), startInstance(cfg, "one", deps())]);
+    expect(r.map((x) => x.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(launched).toEqual([8050]);
+  });
+
+  it("two concurrent starts of a three-instance model get distinct ids and ports", async () => {
+    const { cfg, launched, deps } = mk();
+    const r = await Promise.all([startInstance(cfg, "big", deps()), startInstance(cfg, "big", deps())]);
+    expect(r.map((x) => x.id).sort()).toEqual(["big#1", "big#2"]);
+    expect(new Set(launched).size).toBe(2);
+  });
+
+  it("a server not ready in time is killed, not left running", async () => {
+    const { cfg, deps } = mk();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const real = Date.now();
+    let calls = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => real + (calls++ > 40 ? 3 * 3_600_000 : 0));
+    try {
+      const launch = () => Object.assign(() => null, { pid: 4242 });
+      await expect(startInstance(cfg, "one", deps({ launch, up: async () => false }))).rejects.toThrow(/not ready/);
+      expect(kill).toHaveBeenCalledWith(-4242, "SIGTERM");
+    } finally {
+      now.mockRestore();
+      kill.mockRestore();
+    }
+  });
+
+  it("stop from the CLI sees the requests in flight and refuses; confirm overrides", async () => {
+    const { cfg, deps } = mk();
+    const inst = await startInstance(cfg, "one", deps());
+    void sharedScheduler().acquire(instanceEngineKey(inst), "s1", "w1");
+    const inflight = await cliInflight(cfg, deps());
+    expect(inflight(inst.id)).toBe(1);
+    const kill = async () => {};
+    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight, kill })).rejects.toThrow(/1 request\(s\) in flight.*--yes/);
+    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight, kill, confirm: true })).resolves.toHaveLength(1);
   });
 
   it("labels a server that no tier or provider claims", () => {

@@ -50,7 +50,7 @@ describe("value rules keep the old messages", () => {
   it("an unknown tag names the valid ones", () => expect(() => collectTags(["cheap"])).toThrow(/"cheap" is not a tag \(from: code/));
   it("cost tier is 1..5", () => {
     expect(parseCostTier("3")).toBe(3);
-    for (const bad of ["0", "6", "x"]) expect(() => parseCostTier(bad)).toThrow(/cost tier must be an integer 1/);
+    for (const bad of ["0", "6", "x", "2abc", "3.9", ""]) expect(() => parseCostTier(bad)).toThrow(/cost tier must be an integer 1/);
   });
 });
 

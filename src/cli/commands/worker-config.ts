@@ -8,7 +8,8 @@
 import { duplicateModelIds } from "../../router/router.js";
 import { execFileSync, spawn } from "node:child_process";
 import { connect } from "node:net";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmdirSync, statSync } from "node:fs";
+import { breakStaleMutex } from "../../builds/queue.js";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { normalizeRegistryPaths } from "../../router/cockpit-registry.js";
@@ -62,7 +63,7 @@ import { clearLocalStart, failLocalStart, readLocalStarts, writeLocalStart } fro
 import { instanceNumber, instancesFromProcesses, readInstances, reconcileInstances, writeInstances, type LocalInstance } from "../../workers/local-instances.js";
 import { allocatePort, checkStart, freeMemoryGb, neededGb, sizeOnDiskGb } from "../../workers/local-memory.js";
 import { fetchServedModels, fmtRss, healthUrl, listensOnPort, LocalTierError, stopCommandFor, parseServers, planStart, readLocalConfig, resolveModelPath, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
-import { PROMPTS, aggregate, planArms, readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
+import { PROMPTS, aggregate, planArms, positiveNumber,readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
 import {
   POLICY_MODES,
   clearPolicy,
@@ -111,7 +112,7 @@ export function collectEnv(pairs: string[] | undefined): Record<string, string> 
 }
 
 export function parseCostTier(v: string): number {
-  const n = parseInt(v, 10);
+  const n = /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
   if (!Number.isInteger(n) || n < 1 || n > 5) {
     throw new WorkersConfigError(`cost tier must be an integer 1 (cheapest) … 5 (most expensive), got "${v}"`);
   }
@@ -218,7 +219,7 @@ const providersAddCommand: CommandDef = {
     { name: "base-url", type: "string", value: "URL", summary: "Anthropic-compatible API base URL (required unless --protocol openai)" },
     { name: "url", type: "string", value: "URL", summary: "Same as --base-url" },
     { name: "model", type: "string", value: "ID", summary: "Default model id for this provider (required)" },
-    { name: "key", type: "string", value: "TOKEN", summary: "API token, written into workers.yaml; use instead of --key-file" },
+    { name: "key", type: "string", value: "TOKEN", summary: "API token, written into workers.yaml; visible in ps and shell history, prefer --key-file" },
     { name: "key-file", type: "string", value: "PATH", summary: "File holding the API token (kept private); leave out for a local server" },
     { name: "fast-model", type: "string", value: "ID", summary: "Cheaper model for quick checks and routing" },
     { name: "env", type: "string", value: "NAME=VALUE", repeatable: true, summary: "Extra environment variable for runs (repeat for several)" },
@@ -254,6 +255,7 @@ const providersAddCommand: CommandDef = {
         throw new WorkersConfigError("--base-url (or --url) is required (only --protocol openai goes without it)");
       }
       if (o.key && o["key-file"]) throw new WorkersConfigError("--key and --key-file are alternatives — pass one, not both");
+      if (o.key) out(warn("--key puts the token in the process list and shell history; prefer --key-file"));
       const costTier = o["cost-tier"] !== undefined ? parseCostTier(String(o["cost-tier"])) : undefined;
       const tags = collectTags(ctx.multi?.tags);
       addProvider({
@@ -827,7 +829,7 @@ export interface StartDeps {
   ledger?: string;
   up?: (port: number) => Promise<boolean>;
   /** Start the server; returns its exit code while it has exited, null while it runs. */
-  launch?: (plan: StartPlan) => () => number | null;
+  launch?: (plan: StartPlan) => Launched;
   pollMs?: number;
   /** Where the state files go (default: the workers log dir). */
   startDir?: string;
@@ -856,6 +858,15 @@ export function launchDetached(plan: StartPlan): Launched {
   return Object.assign(() => child.exitCode, child.pid !== undefined ? { pid: child.pid } : {});
 }
 
+/** SIGTERM a launched server's process group (it is a group leader), else the pid. */
+function killGroup(pid: number): void {
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+  }
+}
+
 /** Live servers of catalogue models, one per (model, port). */
 function liveServers(cfg: LocalConfig): RunningServer[] {
   return instancesFromProcesses(psTable("pid=,rss=,command="), cfg, scriptListeners(cfg));
@@ -874,6 +885,38 @@ export function currentInstances(cfg: LocalConfig, deps: Pick<StartDeps, "startD
  * instances keep running; a short memory or a full model (maxInstances) refuses.
  */
 export async function startInstance(cfg: LocalConfig, model: string, deps: StartDeps = {}): Promise<LocalInstance> {
+  return withStartLock(deps.startDir ?? logDir(), model, (release) => startInstanceLocked(cfg, model, deps, release));
+}
+
+/** One start per model at a time: the lock covers read-check-allocate-write and is released once the row is written. */
+async function withStartLock<T>(dir: string, model: string, fn: (release: () => void) => Promise<T>): Promise<T> {
+  mkdirSync(dir, { recursive: true });
+  const m = join(dir, `start-${model.replace(/[^\w.-]/g, "_")}.lock`);
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(m);
+      break;
+    } catch {
+      breakStaleMutex(m, 60_000);
+      if (Date.now() - t0 > 120_000) throw new LocalTierError(`${model}: another start is in progress`);
+      await sleep(10 + Math.random() * 20);
+    }
+  }
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    try { rmdirSync(m); } catch { /* gone */ }
+  };
+  try {
+    return await fn(release);
+  } finally {
+    release();
+  }
+}
+
+async function startInstanceLocked(cfg: LocalConfig, model: string, deps: StartDeps, release: () => void): Promise<LocalInstance> {
   const tier = cfg.tiers[model];
   if (!tier) throw new LocalTierError(`no model "${model}" (configured: ${Object.keys(cfg.tiers).join(", ") || "none"})`);
   const dir = deps.startDir ?? logDir();
@@ -897,10 +940,12 @@ export async function startInstance(cfg: LocalConfig, model: string, deps: Start
   writeLocalStart(dir, { id, tier: model, provider: tier.provider, port, startedAt: instance.startedAt, readyMs: plan.readyMs, log: plan.logPath, needGb });
   writeInstances(dir, [...rows.filter((r) => r.id !== id), instance]);
   const exited = (deps.launch ?? launchDetached)(plan);
+  release();
   out(dim(`starting ${tier.label} #${n} (${tier.provider}) on :${port}, log ${plan.logPath}`));
   const up = deps.up ?? ((p: number) => healthOk(tier, p));
   const deadline = Date.now() + plan.readyMs;
   const failWith = (error: string, msg: string): never => {
+    if (exited.pid !== undefined && exited() === null) killGroup(exited.pid);
     failLocalStart(dir, error, id);
     writeInstances(dir, readInstances(dir).map((r) => (r.id === id ? { ...r, state: "failed" as const, error } : r)));
     throw new LocalTierError(msg);
@@ -1036,6 +1081,17 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
   return picked;
 }
 
+/** Requests in flight per instance id, read from the scheduler the cockpit path reads (this process's). */
+export async function cliInflight(cfg: LocalConfig, deps: Pick<StartDeps, "startDir" | "servers"> = {}): Promise<(id: string) => number> {
+  const [{ engineInflight }, { sharedScheduler }, { instanceEngineKey }] = await Promise.all([
+    import("../../router/cockpit-actions.js"),
+    import("../../router/scheduler.js"),
+    import("../../workers/local-instances.js"),
+  ]);
+  const keys = new Map(currentInstances(cfg, deps).map((r) => [r.id, instanceEngineKey(r)]));
+  return (id) => engineInflight(sharedScheduler().snapshot(), keys.get(id) ?? id);
+}
+
 /** Stop every local server PAI knows (the instances, then anything left on a catalogue port), then wait until the ports are free. */
 export async function stopAll(cfg: LocalConfig): Promise<void> {
   for (const m of new Set(currentInstances(cfg).map((r) => r.model))) await stopInstance(cfg, m, { all: true }, { confirm: true });
@@ -1112,7 +1168,7 @@ export const workerLocalCommand: CommandDef = {
       const count = ctx.opts.count !== undefined ? Math.max(1, Math.floor(Number(ctx.opts.count)) || 1) : 1;
       if (verb === "stop") {
         if (ctx.dryRun) return void out(`would stop ${ctx.opts.all ? "all instances" : `${count} instance(s)`} of ${name}`);
-        const done = await stopInstance(cfg, name, { count, all: !!ctx.opts.all }, { confirm: !!ctx.opts.yes });
+        const done = await stopInstance(cfg, name, { count, all: !!ctx.opts.all }, { confirm: !!ctx.opts.yes, inflight: await cliInflight(cfg) });
         return void out(ok(`stopped ${done.map((d) => d.id).join(", ")}`));
       }
       const tier = cfg.tiers[name];
@@ -1172,13 +1228,15 @@ export const workerBenchCommand: CommandDef = {
       const tasks = o.tasks ? String(o.tasks).split(",") : all;
       const unknown = tasks.filter((t) => !all.includes(t));
       if (unknown.length) throw new Error(`unknown task(s): ${unknown.join(", ")}`);
+      const maxParallel = positiveNumber("--max-parallel", o["max-parallel"]);
+      const maxLoad = positiveNumber("--max-load", o["max-load"]);
       const arms = planArms(tasks, String(o.providers).split(","), prompt as Prompt, Math.max(1, Number(o.repeat) || 1));
       out(`${arms.length} arm(s), prompt ${prompt}, max ${o["max-parallel"]} parallel, load gate ${o["max-load"]}`);
       if (ctx.dryRun) {
         for (const a of arms) out(`${a.task}\t${a.provider}\t${a.prompt}\t#${a.repeat}`);
         return;
       }
-      const rows = await runBench({ suite, arms, maxParallel: Number(o["max-parallel"]), maxLoad: Number(o["max-load"]), log: (s) => out(s) });
+      const rows = await runBench({ suite, arms, maxParallel, maxLoad, log: (s) => out(s) });
       out(aggregate(rows));
       out(writeResults(suite, rows));
     } catch (e) {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { aggregate, gateDecision, parseRow, parseRows, planArms } from "./bench.js";
+import { aggregate, gateDecision, parseRow, parseRows, planArms, positiveNumber } from "./bench.js";
 
 const fixture = readFileSync(new URL("./fixtures/bench-rows.tsv", import.meta.url), "utf-8");
 
@@ -45,5 +45,13 @@ describe("aggregate", () => {
     const table = aggregate(parseRows(fixture));
     expect(table).toMatch(/\| anthropic \| task \| \d+\/\d+ \|/);
     expect(table).not.toContain("fix");
+  });
+});
+
+describe("positiveNumber", () => {
+  it("accepts positive numbers and refuses NaN, zero, negatives and blanks", () => {
+    expect(positiveNumber("--max-parallel", "3")).toBe(3);
+    expect(positiveNumber("--max-load", 2.5)).toBe(2.5);
+    for (const bad of ["abc", "0", "-1", "", undefined, "Infinity"]) expect(() => positiveNumber("--max-parallel", bad)).toThrow(/--max-parallel must be a positive number/);
   });
 });
