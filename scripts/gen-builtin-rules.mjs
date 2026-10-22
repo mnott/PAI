@@ -27,9 +27,22 @@ for (const name of names) {
       process.exit(1);
     }
     // A bare YAML regex node serialises as /src/flags; split it like load.ts does.
+    const splitRegex = (v) => {
+      const s = typeof v === "string" ? v : "";
+      const node = s.length > 2 && s.startsWith("/") && /\/[a-z]*$/.test(s);
+      return node ? { source: s.slice(1, s.lastIndexOf("/")), tail: s.slice(s.lastIndexOf("/") + 1) } : { source: s, tail: "" };
+    };
     const m = typeof item.match === "string" ? item.match : "";
     const regexNode = m.length > 2 && m.startsWith("/") && /\/[a-z]*$/.test(m);
     const flags = typeof item.flags === "string" ? item.flags : regexNode ? m.slice(m.lastIndexOf("/") + 1) : "";
+    // Sequence steps carry their own regex nodes; split them the same way.
+    if (item.sequence && Array.isArray(item.sequence.steps)) {
+      item.sequence.steps = item.sequence.steps.map((step) => {
+        if (!step || typeof step !== "object") return step;
+        const sp = splitRegex(step.match);
+        return { ...step, match: sp.source, flags: typeof step.flags === "string" ? step.flags : sp.tail || undefined };
+      });
+    }
     // NEW-SPLIT-MARKER
     // A YAML scalar containing a colon parses as a mapping, not a string:
     // re-quote it so fixtures stay strings.
@@ -44,6 +57,8 @@ for (const name of names) {
       flags: flags || undefined,
       source: `builtin/${name}`,
     });
+    // a sequence rule carries no top-level match
+    if (item.sequence) delete rules[rules.length - 1].match;
   }
 }
 

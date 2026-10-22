@@ -22,6 +22,7 @@ import {
   recordWorktree,
 } from "../worktree.js";
 import { AG2_REASK_TEXT, type WorkerReport } from "../report.js";
+import { scanWorkerRun } from "../scan.js";
 import { killTree } from "../kill-tree.js";
 import { removeRunSettings } from "../settings-file.js";
 import { type RunLimit } from "../deadline.js";
@@ -171,6 +172,10 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end) });
 
   if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
+
+  // the after-the-fact rule scan over the run's transcript; counts land on
+  // the status for ps/replay. Best effort: a scan never fails the run.
+  await scanWorkerRun(logDir, status).catch(() => undefined);
 
   const reviewed = f.worktree ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
   if (reviewed) {

@@ -15,9 +15,69 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
-import type { LoadedRule, Rule, RuleSeverity } from "./types.js";
+import type { LoadedRule, Rule, RuleSequence, RuleSequenceStep, RuleSeverity } from "./types.js";
 
 const SEVERITIES: RuleSeverity[] = ["block", "confirm", "warn", "off"];
+
+/** A YAML regex node (`/foo/i`) split into source and flags; a plain string is the source. */
+function splitRegex(value: string): { source: string; flags: string } {
+  const isRegexNode = value.length > 2 && value.startsWith("/") && /\/[a-z]*$/.test(value);
+  return isRegexNode
+    ? { source: value.slice(1, value.lastIndexOf("/")), flags: value.slice(value.lastIndexOf("/") + 1) }
+    : { source: value, flags: "" };
+}
+
+/** A sequence mapping, validated (steps, window, order, every step regex compiles), or null with an error pushed. */
+function asSequence(raw: Record<string, unknown>, id: string, source: string, errors: string[]): RuleSequence | null {
+  const seq = raw.sequence;
+  if (typeof seq !== "object" || seq === null || Array.isArray(seq)) {
+    errors.push(`${source} (${id}): sequence must be a mapping`);
+    return null;
+  }
+  const s = seq as Record<string, unknown>;
+  const rawSteps = Array.isArray(s.steps) ? s.steps : [];
+  const steps: RuleSequenceStep[] = [];
+  for (const item of rawSteps) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      errors.push(`${source} (${id}): sequence step must be a mapping`);
+      return null;
+    }
+    const step = item as Record<string, unknown>;
+    const match = typeof step.match === "string" ? step.match : "";
+    if (!match) {
+      errors.push(`${source} (${id}): sequence step missing match`);
+      return null;
+    }
+    const split = splitRegex(match);
+    const flags = typeof step.flags === "string" ? step.flags : split.flags;
+    try {
+      new RegExp(split.source, flags);
+    } catch (e) {
+      errors.push(`${source} (${id}): sequence step invalid regex: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+    steps.push({
+      tool: typeof step.tool === "string" ? step.tool : undefined,
+      match: split.source,
+      flags: flags || undefined,
+    });
+  }
+  if (!steps.length) {
+    errors.push(`${source} (${id}): sequence has no steps`);
+    return null;
+  }
+  const window = Number(s.window_seconds);
+  if (!Number.isFinite(window) || window <= 0) {
+    errors.push(`${source} (${id}): sequence needs a positive window_seconds`);
+    return null;
+  }
+  const order = s.order === "any" ? "any" : s.order === "strict" ? "strict" : null;
+  if (!order) {
+    errors.push(`${source} (${id}): sequence order must be strict or any`);
+    return null;
+  }
+  return { steps, window_seconds: window, order };
+}
 
 /**
  * The user rule directories: PAI_HOME/rules and .pai/rules under the cwd.
@@ -42,7 +102,6 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
   const raw = value as Record<string, unknown>;
   const id = typeof raw.id === "string" ? raw.id : "";
   const severity = raw.severity as RuleSeverity;
-  const match = typeof raw.match === "string" ? raw.match : "";
   const reason = typeof raw.reason === "string" ? raw.reason : "";
   if (!id) {
     errors.push(`${source}: missing id`);
@@ -58,28 +117,28 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
   }
   // `severity: off` disables the id; it needs no match.
   if (severity === "off") return { id, severity, reason };
+  const match = typeof raw.match === "string" ? raw.match : "";
+  // A sequence rule carries its patterns in `sequence.steps` instead of `match`.
+  if (raw.sequence !== undefined) {
+    const sequence = asSequence(raw, id, source, errors);
+    if (!sequence) return null;
+    return { id, severity, sequence, category: typeof raw.category === "string" ? raw.category : undefined, reason, tests: asTests(raw) };
+  }
   if (!match) {
     errors.push(`${source} (${id}): missing match`);
     return null;
   }
   // YAML accepts a bare regex node (`match: /foo/i`); a plain string is the
   // regex source with flags in `flags`.
-  const isRegexNode = match.length > 2 && match.startsWith("/") && /\/[a-z]*$/.test(match);
-  const flags = typeof raw.flags === "string" ? raw.flags : isRegexNode ? match.slice(match.lastIndexOf("/") + 1) : "";
-  const source2 = isRegexNode ? match.slice(1, match.lastIndexOf("/")) : match;
+  const split = splitRegex(match);
+  const flags = typeof raw.flags === "string" ? raw.flags : split.flags;
+  const source2 = split.source;
   try {
     new RegExp(source2, flags);
   } catch (e) {
     errors.push(`${source} (${id}): invalid regex: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
-  const tests =
-    typeof raw.tests === "object" && raw.tests !== null && !Array.isArray(raw.tests)
-      ? {
-          match: Array.isArray((raw.tests as Record<string, unknown>).match) ? ((raw.tests as Record<string, unknown>).match as unknown[]).map(String) : undefined,
-          no_match: Array.isArray((raw.tests as Record<string, unknown>).no_match) ? ((raw.tests as Record<string, unknown>).no_match as unknown[]).map(String) : undefined,
-        }
-      : undefined;
   return {
     id,
     severity,
@@ -89,8 +148,19 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     flags: flags || undefined,
     quoted: raw.quoted === true ? true : undefined,
     reason,
-    tests,
+    tests: asTests(raw),
   };
+}
+
+/** Fixtures: plain strings for a single-step rule, lists of step contents for a sequence rule. */
+function asTests(raw: Record<string, unknown>): Rule["tests"] {
+  if (typeof raw.tests !== "object" || raw.tests === null || Array.isArray(raw.tests)) return undefined;
+  const t = raw.tests as Record<string, unknown>;
+  const list = (v: unknown): string[] | string[][] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    return v.every((x) => Array.isArray(x)) ? (v as unknown[][]).map((x) => x.map(String)) : v.map(String);
+  };
+  return { match: list(t.match), no_match: list(t.no_match) };
 }
 
 /** Rules from one directory's `*.rule.yaml` files, in filename order. */

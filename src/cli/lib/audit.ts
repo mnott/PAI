@@ -51,13 +51,17 @@ import { auditDaemon, type DaemonReport } from "../../audit/daemon.js";
 import { auditEnv, type EnvReport } from "../../audit/env.js";
 import { auditSchedule, cacheTtlSeconds } from "../../audit/schedule.js";
 import { buildFindings, type Finding, type Severity } from "../../audit/severity.js";
+import { scanTranscript, type Finding as ScanFinding } from "../../audit/scan.js";
+import { loadRules, userRuleDirs } from "../../hooks/ts/lib/rules/load.js";
+import { loadStatus } from "../../workers/status.js";
+import { claudeSessionTranscript } from "../../workers/scan.js";
 import { auditSkills, topByTokens, type SkillsReport } from "../../audit/skills.js";
 import { auditLadder, type LadderReport } from "../../audit/ladder.js";
 import { auditSubagents, type SubagentsReport } from "../../audit/subagents.js";
 import { auditMcp, type McpReport } from "../../audit/mcp.js";
 import { shortenPath } from "./utils.js";
 import { readWorkersSection } from "../../workers/config.js";
-import { workersLogDir } from "../../workers/paths.js";
+import { workersLogDir, eventsPath } from "../../workers/paths.js";
 
 function severityColor(sev: Severity, text: string): string {
   if (sev === "RED") return err(text);
@@ -695,6 +699,69 @@ async function cmdCombined(opts: { json?: boolean; record?: string }): Promise<v
   if (opts.record) {
     recordCombinedReport(opts.record, data);
   }
+}
+
+// ---------------------------------------------------------------------------
+// scan
+// ---------------------------------------------------------------------------
+
+const SCAN_SEVERITIES = ["block", "confirm", "warn"] as const;
+
+/**
+ * `pai audit scan`: run the rule set over a transcript after the fact —
+ * single-step rules per tool call, sequence rules correlated across the run.
+ * Exit 0 when nothing hit, 1 when any block-severity finding did.
+ */
+export async function auditScanCmd(
+  opts: { json?: boolean; session?: string; worker?: string; path?: string }
+): Promise<number> {
+  let target: string | null = null;
+  if (opts.worker) {
+    const { workers } = readWorkersSection();
+    const logDir = workersLogDir(workers);
+    const st = loadStatus(logDir, opts.worker);
+    if (!st) {
+      console.error(err(`  No worker named ${opts.worker}.`));
+      return 1;
+    }
+    target = st.claudeSession ? claudeSessionTranscript(st.claudeSession, st.cwd) : eventsPath(logDir, opts.worker);
+    if (target && !existsSync(target)) target = null;
+  } else if (opts.session) {
+    target = newestSessionLog(opts.session);
+  } else if (opts.path) {
+    target = existsSync(opts.path) ? opts.path : null;
+  } else {
+    target = newestSessionLog();
+  }
+  if (!target) {
+    console.error(err("  No transcript found."));
+    return 1;
+  }
+  const { rules, errors } = loadRules(userRuleDirs(process.cwd()));
+  for (const e of errors) console.error(dim(`rule: ${e}`));
+  const findings = await scanTranscript(target, rules);
+  if (opts.json) {
+    printJson({ path: target, findings });
+    return findings.some((f) => f.severity === "block") ? 1 : 0;
+  }
+  console.log(header(`Security scan: ${target}`));
+  console.log(dim(`${rules.length} rules, ${findings.length} findings`));
+  for (const sev of SCAN_SEVERITIES) {
+    const hits = findings.filter((f) => f.severity === sev);
+    if (!hits.length) continue;
+    console.log(header(sev));
+    const rows = hits.map((f) => [
+      severityColor(sev === "block" ? "RED" : "AMBER", sev),
+      f.ruleId,
+      f.tool,
+      String(f.line),
+      f.ts ? f.ts.slice(11, 19) : "",
+      f.evidence.replace(/\s+/g, " ").slice(0, 100),
+    ]);
+    console.log(renderTable(["severity", "rule", "tool", "line", "time", "evidence"], rows));
+  }
+  if (!findings.length) console.log(ok("no findings"));
+  return findings.some((f) => f.severity === "block") ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -325,11 +325,40 @@ pai audit tokens ladder --live --model haiku
 
 See also: `pai audit tokens`
 
+### pai audit scan
+
+After-the-fact security scan of a session or worker transcript
+
+```
+pai audit scan [PATH] [options]
+```
+
+Runs the rule set (the same rules the PreToolUse hook enforces, plus two-step sequence rules that only make sense after the fact) over a transcript: single-step rules against every tool call, sequence rules correlated across the run — credential read followed by an outbound call, download followed by execute, injected text followed by a shell call. Findings are grouped by severity; evidence is masked. Exit 1 when a block-severity finding hit.
+
+| Argument | Required | Description |
+|---|---|---|
+| `PATH` | no | Transcript .jsonl (default: newest session under ~/.claude/projects) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--session ID` | string | — | Scan this Claude Code session's transcript |
+| `--worker ID` | string | — | Scan a worker's transcript (its Claude session, else its event log) |
+| `--json` | flag | — | Print JSON instead of a table |
+
+```sh
+pai audit scan
+pai audit scan --worker w-20260101-abc
+pai audit scan ./session.jsonl --json
+```
+
+See also: `pai rules list`, `pai audit tokens session`
+
 ## Subcommands
 
 | Command | Description |
 |---|---|
 | `pai audit tokens` | Token-waste report (all checks, or pick one below) |
+| `pai audit scan` | After-the-fact security scan of a session or worker transcript |
 
 ## See also
 

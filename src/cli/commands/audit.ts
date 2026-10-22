@@ -1,7 +1,7 @@
 /** `pai audit ...`: where tokens (and money) go. */
 
 import { OPT, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
-import { auditFilesCmd, auditHooksCmd, auditSessionCmd, auditSpawnCmd, auditDaemonCmd, auditEnvCmd, auditScheduleCmd, auditSkillsCmd, auditSubagentsCmd, auditMcpCmd, auditLadderCmd, auditTokensCmd } from "../lib/audit.js";
+import { auditFilesCmd, auditHooksCmd, auditSessionCmd, auditSpawnCmd, auditDaemonCmd, auditEnvCmd, auditScheduleCmd, auditSkillsCmd, auditSubagentsCmd, auditMcpCmd, auditLadderCmd, auditTokensCmd, auditScanCmd } from "../lib/audit.js";
 import { priceTableText, renderUsage, transcriptUsage, usageJson } from "../../workers/usage.js";
 
 const json: OptDef = { ...OPT.json, summary: "Print JSON instead of a table" };
@@ -108,5 +108,25 @@ export const auditCommand: CommandDef = {
         }),
       ],
     },
+    a({
+      name: "scan",
+      summary: "After-the-fact security scan of a session or worker transcript",
+      description:
+        "Runs the rule set (the same rules the PreToolUse hook enforces, plus two-step sequence rules that only make sense after the fact) over a transcript: single-step rules against every tool call, sequence rules correlated across the run — credential read followed by an outbound call, download followed by execute, injected text followed by a shell call. Findings are grouped by severity; evidence is masked. Exit 1 when a block-severity finding hit.",
+      args: [{ name: "PATH", summary: "Transcript .jsonl (default: newest session under ~/.claude/projects)" }],
+      options: [
+        { name: "session", type: "string", value: "ID", summary: "Scan this Claude Code session's transcript" },
+        { name: "worker", type: "string", value: "ID", summary: "Scan a worker's transcript (its Claude session, else its event log)" },
+      ],
+      examples: ["pai audit scan", "pai audit scan --worker w-20260101-abc", "pai audit scan ./session.jsonl --json"],
+      seeAlso: ["pai rules list", "pai audit tokens session"],
+    }, (ctx) =>
+      auditScanCmd({
+        json: ctx.opts.json === true,
+        session: ctx.opts.session as string | undefined,
+        worker: ctx.opts.worker as string | undefined,
+        path: ctx.args.PATH as string | undefined,
+      })
+    ),
   ],
 };
