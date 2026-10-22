@@ -62,7 +62,7 @@ function poolDefaults(){
   cards.push({id:"pool."+POOL_KV[i],type:"kv",title:POOL_TITLES[POOL_KV[i]],feeds:["pool"],view:poolKvView});
   ch.push(WinT.leaf("pool."+POOL_KV[i]));
  }
- cards.push({id:"pool.slots",type:"table",title:"slots",feeds:["pool"],view:poolSlotsView});
+ cards.push({id:"pool.slots",type:"table",minW:120,title:"slots",feeds:["pool"],view:poolSlotsView});
  cards.push({id:"pool.off",type:"note",title:"Pool off",feeds:["pool"],view:poolOffView});
  var row=WinT.split("r",ch,ch.map(function(){return 1/ch.length}));
  return{tree:WinT.leaf("pool"),kids:{pool:WinT.split("c",[row,WinT.leaf("pool.slots"),WinT.leaf("pool.off")],[0.3,0.6,0.1])},stDefaults:{},cards:cards};

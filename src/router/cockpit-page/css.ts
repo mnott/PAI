@@ -27,7 +27,7 @@ h1{font-size:15px;margin:0;font-weight:600}
 #ask .aq{display:inline}header.asking #stamp{margin-left:0}header.asking #ask{margin-left:auto}
 #toast{position:fixed;top:48px;right:14px;z-index:5;background:var(--card,var(--bg));border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--ok)}#toast[hidden]{display:none}
 #savedef.ok{color:var(--ok)}
-html.locked .cgrip,html.locked .cmin,html.locked #reset{display:none}
+html.locked .cgrip,html.locked .cmin,html.locked #reset,html.locked main.win .cdock{display:none}html.locked main.win .card.min:not([data-depth]),html.locked main.win .card:not([data-depth]):has(>.cbody.cgroup:not(:has(>.card))){display:none}
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}
@@ -42,10 +42,12 @@ html.locked .cgrip,html.locked .cmin,html.locked #reset{display:none}
 .phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 /* provider card: the gauge row wraps on WIDTH only; a short card scales the dials down (never an inner scrollbar, whose width would force the wrap) */
-/* a card with no user height is as tall as its gauges; a card the user sized (data-uh) scales the dials to the body height the handle stored (--uh), not to a size container: no layout feedback from the dials into the card's own size */
-.gauges.fit{align-content:center}.gauges.fit .gauge svg{height:70px}
-.card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden}.card[data-uh]>.cbody>.gauges.fit .gauge svg{height:clamp(24px,calc(var(--uh) - 46px),70px)}
-.card[data-uh][data-short]>.cbody>.gauges.fit .gauge .s{display:none}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge svg{height:clamp(24px,calc(var(--uh) - 22px),70px)}
+/* a card with no user height is as tall as its gauges; a card the user sized (data-uh) scales the dials to the body height the handle stored (--uh), not to a size container: no layout feedback from the dials into the card's own size.
+ * Width: a dial is as wide as its share of the row (down to 56 px), so the card's least width is two small dials, not two full ones; the row is centred; the "resets in" line drops, then the labels shrink (inline-size container: width only) */
+.gauges.fit{align-content:center;justify-content:center;container-type:inline-size}.gauges.fit .gauge{flex:1 1 56px}.gauges.fit .gauge svg{height:auto;max-height:70px}
+@container (max-width:230px){.gauges.fit .gauge .s{display:none}}@container (max-width:150px){.gauges.fit .gauge .n{font-size:11px}}
+.card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden}.card[data-uh]>.cbody>.gauges.fit .gauge svg{max-height:clamp(24px,calc(var(--uh) - 46px),70px)}
+.card[data-uh][data-short]>.cbody>.gauges.fit .gauge .s{display:none}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge svg{max-height:clamp(24px,calc(var(--uh) - 22px),70px)}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 .tw{max-width:100%}
 /* auto layout: a column is never squeezed under its min-content (a nowrap header or
@@ -246,7 +248,7 @@ main.win .card.min>.chandle,html.locked .chandle{display:none}main.win .card[dat
 main.win .linst .b{align-self:flex-start;padding:1px 8px;font-size:11px}
 .wm{padding:6px 10px;min-width:0}.wm-v{display:inline;font-size:20px;font-weight:600}.wm-s{display:block;color:var(--dim);font-size:12px}
 .wm{position:relative;height:100%}.wm-s{margin-top:2px}.wm-u{color:var(--dim);margin-left:3px;font-size:12px}.wm-sp{position:absolute;right:8px;top:6px;width:40%;height:32px}
-main.win .wm-sp{top:auto;bottom:6px;left:0;right:0;width:auto;height:36px}main.win .wm-sp svg{width:100%;height:100%}
+main.win .card[data-type=metric] .wm-s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}main.win .wm-v{white-space:nowrap}main.win .wm-sp{top:auto;bottom:6px;left:0;right:0;width:auto;height:36px}main.win .wm-sp svg{width:100%;height:100%}
 .wt-svg{height:calc(100% - 62px);overflow:hidden}.wt-cap{height:16px;overflow:hidden;padding:0 10px}.wt-leg{height:46px;overflow:auto;padding:0 10px}
 .wt-leg{height:auto;overflow:visible}.wt-svg{height:auto}
 .wt-svg.wt-auto{overflow:visible}.wt-svg svg{display:block}

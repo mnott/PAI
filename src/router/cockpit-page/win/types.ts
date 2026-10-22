@@ -46,7 +46,7 @@ Win.registerType("list",{minW:200,minH:60,defaultH:90,viewed:true,
   else ctx.html("l",d.html);
   winDrawCommon(ctx,{status:d.status,after:d.after});
  }});
-var WIN_METRIC={minW:110,minH:76,defaultH:96,viewed:true,
+var WIN_METRIC={minW:100,minH:76,defaultH:96,viewed:true,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm"><div class="wm-sp" data-k="spark"></div><b class="wm-v" data-k="v"></b><small class="wm-u" data-k="u"></small><span class="wm-s" data-k="s"></span><div class="wm-x" data-k="x" style="font-size:11px;overflow:auto"></div></div>';winSpecMount(ctx)},
  update:function(ctx,d){
   if("v" in d)ctx.text("v",d.v);

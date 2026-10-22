@@ -276,7 +276,7 @@ describe.skipIf(!CHROME)("CSS grid invariants", () => {
     expect(h).toBeGreaterThan(0);
   }, 120_000);
 
-  for (const [w, steps] of [[900, [4, 3]], [530, [4]]] as [number, number[]][]) {
+  for (const [w, steps] of [[900, [4, 3]], [530, [4, 3]]] as [number, number[]][]) {
     it(`operator layout, ${w} px: the handle of Compressed narrows it step by step (${steps.join(" -> ")} units)`, async () => {
       const b = await open(w, LAYOUT);
       const sel = '#win-root [data-card="system.compressed"]';

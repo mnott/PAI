@@ -16,7 +16,7 @@ export type WinCtx = {
   unstale(): void;
 };
 export type WinCardAction = { id: string; label: string; icon?: string; title?: string; enabled?: (ctx: WinCtx) => boolean | string; run?: (ctx: WinCtx) => void; pressed?: (ctx: WinCtx) => boolean; make?: (ctx: WinCtx) => HTMLElement };
-export type WinCardSpec = { id: string; type: string; title: string; info?: string; actions?: WinCardAction[]; feeds?: string[] };
+export type WinCardSpec = { id: string; type: string; title: string; minW?: number; info?: string; actions?: WinCardAction[]; feeds?: string[] };
 export type WinTypeDef = {
   accepts?: string[];
   minW?: number;
@@ -147,7 +147,7 @@ function isMin(id){var s=W.st[id];return!!s&&s.min===1}
 function kidsOf(id){return!!(W.kids&&W.kids[id]&&W.kids[id].k)}
 /** The least-width bucket (px) of a card's type: the CSS promotes a card to a wider step when its container is narrower than its span needs at this width. */
 function mwOf(c){
- var m=(TYPES[c.type]||{}).minW||220,b=[120,160,200,240,300,360],i;
+ var m=c.spec.minW||(TYPES[c.type]||{}).minW||220,b=[100,120,160,200,240,300,360],i;
  if(kidsOf(c.id)&&m<220)m=220;
  for(i=0;i<b.length;i++)if(m<=b[i])return b[i];
  return b[b.length-1];
