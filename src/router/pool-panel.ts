@@ -9,7 +9,7 @@
 
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostProbe, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
-import type { PoolMetricRow, PoolSlotRecord, PoolState } from "../workers/pool.js";
+import type { PoolMetricRow, PoolSlotRecord, PoolState, SpareMissReason } from "../workers/pool.js";
 import { diskBundleMtime, ensurePoolHost } from "../workers/pool-cli.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { readWorkersSection } from "../workers/config.js";
@@ -155,6 +155,8 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
     poolOff,
   };
 
+  // the reason the host records when settings.spares is 0 (pool-host claimSpare)
+  const SPARES_OFF: SpareMissReason = "spares-off";
   // spares and spare misses come from the host state; a state file from before spares reports none
   const spareGroups = new Map<string, { ready: number; starting: number }>();
   for (const sp of i.state?.spares ?? []) {
@@ -175,9 +177,9 @@ export function buildPoolPanel(i: PoolPanelInput): PoolPanelData {
   } else if (!i.hostUp) {
     offReason = "host down";
     message = "Pool is enabled but its host is DOWN (host down): every worker starts cold (no pre-started spare). Start it with `pai worker pool on`.";
-  } else if (i.state?.spares !== undefined && (i.state.spareMisses?.["pane rule: a pane owns every run"] ?? 0) > 0 && !(i.state.spareClaims ?? 0)) {
-    offReason = "claims disabled: a terminal pane is required";
-    message = "Pool host is up but spare claims are disabled (a terminal pane is required): every worker starts cold.";
+  } else if (i.state?.spares !== undefined && (i.state.spareMisses?.[SPARES_OFF] ?? 0) > 0 && !(i.state.spareClaims ?? 0)) {
+    offReason = "claims disabled: spares are off";
+    message = "Pool host is up but spare claims are disabled (pool.spares is 0): every worker starts cold.";
   } else if (!carry.tasks && !pooled) message = "Pool is up but has not served a task yet (no slot spawns before the first pooled task).";
   else message = `Pool served ${i.state?.tasksServed ?? carry.tasks} task(s) since the host started; ${pooled} of ${runs} runs in 24 h were pooled.`;
 

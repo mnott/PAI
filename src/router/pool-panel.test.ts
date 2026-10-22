@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { handleCockpit } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { buildPoolPanel, poolHostUp, type PoolPanelInput } from "./pool-panel.js";
-import { poolHostProbe } from "../workers/pool.js";
+import { poolHostProbe, type SpareMissReason } from "../workers/pool.js";
 import { parseLedger } from "../workers/ledger.js";
 
 const NOW = new Date("2026-10-17T12:00:00").getTime();
@@ -164,7 +164,7 @@ describe("buildPoolPanel", () => {
             { id: "sp3", repo: "/repo", provider: "glm", model: "g", dir: "/wt/3", branch: "b3", base: "h", pid: 6, createdAt: "x", state: "starting" },
           ],
           spareClaims: 2,
-          spareMisses: { "pane rule: a pane owns every run": 3, "no-spare": 1 },
+          spareMisses: { ["spares-off" satisfies SpareMissReason]: 3, ["no-spare" satisfies SpareMissReason]: 1 },
         },
       })
     );
@@ -174,9 +174,12 @@ describe("buildPoolPanel", () => {
     ]);
     expect(p.spareClaims).toBe(2);
     expect(p.spareMisses).toEqual([
-      { reason: "pane rule: a pane owns every run", misses: 3 },
+      { reason: "spares-off", misses: 3 },
       { reason: "no-spare", misses: 1 },
     ]);
+    // the host's real "spares-off" miss with no claims yields the claims-disabled message
+    const off = buildPoolPanel(input({ state: { hostPid: 1, port: 8798, startedAt: "x", updatedAt: "y", tasksServed: 0, tokensCarried: 0, slots: [], spares: [], spareClaims: 0, spareMisses: { ["spares-off" satisfies SpareMissReason]: 2 } } }));
+    expect(off.offReason).toBe("claims disabled: spares are off");
     // no spares in the state file (older hosts): empty, not invented
     expect(buildPoolPanel(input()).spares).toEqual([]);
     expect(buildPoolPanel(input()).spareMisses).toEqual([]);
