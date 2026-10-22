@@ -16,7 +16,10 @@ describe("cockpit header version", () => {
   it("shows v<package.json version> from the server, with a tooltip carrying version and build", () => {
     const v = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string }).version;
     const html = page();
-    expect(html).toMatch(new RegExp(`<span id="ver" title="PAI ${v.replace(/\./g, "\\.")} · build [0-9a-f]{12}">v${v.replace(/\./g, "\\.")}</span>`));
+    const m = html.match(/<span id="ver" title="([^"]*)">(.*?)<\/span><\/div>/);
+    expect(m).not.toBeNull();
+    expect(m![1]).toMatch(new RegExp(`^PAI ${v.replace(/\./g, "\\.")} · build [0-9a-f]{12}$`));
+    expect(m![2].replace(/<[^>]+>/g, "")).toBe(`v${v}`);
     expect(html).not.toContain("__COCKPIT_VERSION__");
   });
 });
