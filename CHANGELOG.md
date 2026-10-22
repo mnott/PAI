@@ -4,7 +4,9 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
-## [Unreleased]
+## [1.0.1] - 2026-10-22
+
+A review release: every area of the code was reviewed after 1.0.0, and the findings are fixed here — notably a command injection through macOS notifications, guards that could be bypassed, and several paths that could lose data.
 
 ### Changed
 
@@ -15,6 +17,8 @@ All notable changes to PAI Knowledge OS are documented here.
 - **macOS notifications:** notification text is passed to `osascript` as arguments instead of being written into the AppleScript, so a message containing quotes can no longer run commands. Present since 0.60.0.
 - **Ideas into notes:** `idea_materialize` stays inside the vault and refuses to overwrite an existing note.
 - **Security validator:** git and delete patterns are matched against the command itself, not text in quotes, so a commit message mentioning a forced push passes while a quoted root or home deletion is blocked; a push with a `+` refspec counts as forced; unreadable hook input is refused instead of allowed; the security log masks secrets and is owner-only. `ztk-auto` no longer approves every command when ztk is missing; the stop hook checks the session id; the session hooks work without GNU `timeout`.
+- **Native launches** (`pai`, `pai launch`, resume) no longer pass `ANTHROPIC_API_KEY` to Claude Code, so a key in the shell does not switch a session to API billing.
+- **Worker cleanup:** `pai worker gc` only archives real worker worktrees; a leftover folder inside another repository is reported and that repository is never touched.
 - **Own-address check:** a recipient entry holding several addresses is checked address by address, so an outside address after one's own is no longer let through.
 - **Observability captures:** raw tool output and hook events are written with secrets masked, into owner-only files capped at 10 MB; session start no longer sends the project name to ntfy.
 - **Audit ladder** no longer passes `ANTHROPIC_API_KEY` to the `claude` processes it starts; the forge sink escapes values in its curl configuration.
