@@ -323,7 +323,7 @@ function placedAnywhere(tree,kids,id){
  return false;
 }
 /** Reconcile a parsed saved layout with the defaults: prune ghosts, insert missing static
- *  cards, merge default min flags under the saved state. Returns { tree, kids, st }. */
+ *  cards (a card the user moved to another container is not inserted again into its default one), merge default min flags under the saved state. Returns { tree, kids, st }. */
 function reconcileSaved(saved,defaults,knownIds,now){
  now=typeof now==="number"?now:Date.now();
  knownIds=knownIds||[];
@@ -337,7 +337,7 @@ function reconcileSaved(saved,defaults,knownIds,now){
  tree=insertMissing(tree,missingIn(defaults.tree,tree,knownIds),prevOf,knownIds,true,defaults.tree);
  for(var g in kids){
   var defKid=(defaults.kids||{})[g];
-  if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds).filter(function(m){return !NEST_INTO[m]||!placedAnywhere(tree,kids,m)}),prevOf,knownIds,false,defKid);
+  if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds).filter(function(m){return !placedAnywhere(tree,kids,m)}),prevOf,knownIds,false,defKid);
  }
  var sd=defaults.stDefaults||{};
  for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);

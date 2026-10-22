@@ -54,6 +54,14 @@ setTimeout(function(){
  Win.apply("sys-metrics",{k:"s",d:"c",ch:[sm,{k:"c",id:"speed"}],sz:[0.8,0.2]});
 },5000);
 </script>`;
+const OP = `<script>
+setTimeout(function(){
+ if(location.search.indexOf("op=1")<0)return;
+ Win.toggleMin("memory");Win.toggleMin("system.swap");Win.toggleMin("system.cpu-w");
+ var st=Win.state().st;(st["system.compressed"]=st["system.compressed"]||{}).sp=2;
+ Win.relayout();
+},5000);
+</script>`;
 const PROBE = `<script>
 setTimeout(function(){
  var cards=Array.prototype.slice.call(document.querySelectorAll("#win-root .card")).filter(function(c){return c.style.display!=="none"});
@@ -81,7 +89,7 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/")) return res.end("{}");
     if (url.startsWith("/page")) {
       res.setHeader("content-type", "text/html");
-      return res.end(cockpitHtml().replace("</head>", '<script>window.onerror=function(m,s,l,c){window.__err=String(m)+" @"+l+":"+c}</script></head>').replace("</body>", MOVE + PROBE + "</body>"));
+      return res.end(cockpitHtml().replace("</head>", '<script>window.onerror=function(m,s,l,c){window.__err=String(m)+" @"+l+":"+c}</script></head>').replace("</body>", MOVE + OP + PROBE + "</body>"));
     }
     res.statusCode = 404;
     res.end();
@@ -110,12 +118,29 @@ function overlaps(rows: Row[]) {
   return bad;
 }
 
+/** Slack per group: its bottom minus the lowest kid bottom (px). */
+function slack(rows: Row[]) {
+  const o: Record<string, number> = {};
+  for (const g of rows) {
+    const k = rows.filter((r) => r.p === g.id);
+    if (k.length) o[g.id] = Math.round(g.y + g.h - Math.max(...k.map((r) => r.y + r.h)));
+  }
+  return o;
+}
+
 describe.skipIf(!CHROME)("root grid readings", () => {
   it("a card moved between groups is drawn inside its new group (540 px)", async () => {
     const rows = await read(540, "?mv=1");
     const sp = rows.find((r) => r.id === "speed");
     expect(sp?.p).toBe("sys-metrics");
     expect(overlaps(rows)).toEqual([]);
+  }, 120_000);
+  it("operator-like layout (540 px): minimized top-level group is a header, no group has slack", async () => {
+    const rows = await read(540, "?op=1");
+    if (process.env.PAI_GRID) console.log(rows.filter((r) => !r.p || r.id.startsWith("memory")).map((r) => `${r.id} ${r.x},${r.y} ${r.w}x${r.h}`).join("\n"), JSON.stringify(slack(rows)));
+    expect(overlaps(rows)).toEqual([]);
+    expect(rows.find((r) => r.id === "memory")!.h).toBeLessThanOrEqual(40);
+    for (const [g, v] of Object.entries(slack(rows))) expect([g, v <= 16 + 8]).toEqual([g, true]);
   }, 120_000);
   for (const width of [540, 1100]) {
     it(`${width} px`, async () => {

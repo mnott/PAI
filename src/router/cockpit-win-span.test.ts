@@ -57,11 +57,13 @@ describe.skipIf(!CHROME)("card width share (CDP)", () => {
     const arrange = async (ids: string[]) => {
       await load();
       await sleep(800);
-      await b.ev(`(function(){var k="pai.cockpit.win.v2",o=JSON.parse(localStorage.getItem(k)),ids=${JSON.stringify(ids)};var t=o.tree,i,at=-1;
-        for(i=t.ch.length-1;i>=0;i--){var n=t.ch[i];if(n.k==="c"&&ids.indexOf(n.id)>=0){if(at>=0){t.ch.splice(at+1,0);}}}
-        var rowCh=[];for(i=0;i<t.ch.length;i++){var m=t.ch[i];if(m.k==="c"&&ids.indexOf(m.id)>=0){if(at<0)at=i;rowCh.push(m)}}
-        var keep=[],ks=[];for(i=0;i<t.ch.length;i++){var q=t.ch[i];if(q.k==="c"&&ids.indexOf(q.id)>=0){if(i===at){keep.push({k:"s",d:"r",ch:rowCh,sz:rowCh.map(function(){return 1/rowCh.length})});ks.push(t.sz[i])}}else{keep.push(q);ks.push(t.sz[i])}}
-        t.ch=keep;t.sz=ks;localStorage.setItem(k,JSON.stringify(o))})()`);
+      // the cards live in groups: take them out of every tree (root and group kids), then lay them side by side in one row at the end of the root column
+      await b.ev(`(function(){var k="pai.cockpit.win.v2",o=JSON.parse(localStorage.getItem(k)),ids=${JSON.stringify(ids)},row=[];
+        function strip(n){if(n.k!=="s")return;var ch=[],sz=[],i;for(i=0;i<n.ch.length;i++){var q=n.ch[i];if(q.k==="c"&&ids.indexOf(q.id)>=0){row.push(q);continue}strip(q);ch.push(q);sz.push(n.sz[i])}n.ch=ch;n.sz=sz}
+        strip(o.tree);for(var g in o.kids)strip(o.kids[g]);
+        row.sort(function(x,y){return ids.indexOf(x.id)-ids.indexOf(y.id)});
+        o.tree.ch.push({k:"s",d:"r",ch:row,sz:row.map(function(){return 1/row.length})});o.tree.sz.push(0.1);
+        localStorage.setItem(k,JSON.stringify(o))})()`);
       await load();
     };
     return { b, load, box, slack, rowOf, drag, arrange };
