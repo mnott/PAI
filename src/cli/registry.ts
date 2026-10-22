@@ -26,6 +26,7 @@ import { gitCommand } from "./commands/git.js";
 import { lessonsCommand } from "./commands/lessons.js";
 import { harnessCommand } from "./commands/harness.js";
 import { rulesCommand } from "./commands/rules.js";
+import { handoffCommand } from "./commands/handoff.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
@@ -58,7 +59,7 @@ const BATCH_B_EXTRA: Partial<Record<string, CommandDef[]>> = {
 };
 
 export const GROUPS: GroupDef[] = [
-  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, pauseTop, endTop, resumeTop, clearNamesCmd, sessionsCommand] },
+  { id: "sessions", title: "Sessions", daily: true, commands: [lsCommand, setupsCommand, openTop, newTop, renameTop, sessionGroup, pauseTop, endTop, resumeTop, clearNamesCmd, sessionsCommand, handoffCommand] },
   { id: "providers", title: "Providers", daily: true, commands: [providersTop] },
   { id: "help", title: "Help", daily: true, commands: [moreCommand, helpCommand, docCommand] },
   ...(["workers", "memory", "daemon"] as const).map((id) => ({

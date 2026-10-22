@@ -21,6 +21,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
 | [`pai git`](git.md) | Link commits to the session that wrote them |
+| [`pai handoff`](handoff.md) | Carry a session's work to a new one |
 | [`pai harness`](harness.md) | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
 | [`pai help`](help.md) | Explain a command (same as `pai <command> --help`) |
 | [`pai home`](home.md) | Where PAI keeps its files; move them out of ~/.claude |
@@ -136,6 +137,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai git notes` | Show the PAI note of a commit |
 | `pai git remove` | Remove the hook and restore the previous one |
 | `pai git setup` | Install the post-commit hook in the current repository |
+| `pai handoff` | Carry a session's work to a new one |
+| `pai handoff export` | Write the brief for a session (default: newest here) |
+| `pai handoff show` | Print a handoff brief |
 | `pai harness` | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
 | `pai harness list` | Each adapter: detected, enabled, session count |
 | `pai harness sessions` | List sessions, newest first |

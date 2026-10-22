@@ -21,6 +21,7 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/cleanup-session-files.mjs" },
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/update-tab-titles.mjs" },
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/local-model-hint.mjs" },
+    { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/handoff-link.mjs" },
     { hookType: "UserPromptSubmit", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type UserPromptSubmit" },
     // Rolling checkpoint. The model is not invoked on /exit and never on
     // Ctrl+C, so a handover written at exit time is impossible — it has to
