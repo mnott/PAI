@@ -56,10 +56,19 @@ function cacheNoteHtml(d){
  if(d.pool&&d.pool.tasks)n+=cacheChip("pool",d.pool.tasks+" task(s) · "+fmt(d.pool.tokensCarried),d.pool.tasks+" task(s), "+fmt(d.pool.tokensCarried)+" tokens carried");
  return n;
 }
-/** One line per up local server with a prefix cache. */
+/** One row per up local server with a prefix cache: hit-ratio bar (hits/(hits+misses), "–" with no requests), tokens saved as a bar of the router's prompt tokens, entries and size dim. */
+function cachePrefixRow(s,tot){
+ var pc=s.prefixCache,n=pc.hits+pc.misses,r=n?pc.hits/n:0,tone=hitCls(r)==="bad"?"bad":hitCls(r)==="warn"?"warn":"ok";
+ var sv=tot?Math.min(1,pc.tokensSaved/tot):0,gb=pc.memoryMb!=null?(pc.memoryMb>=1024?(pc.memoryMb/1024).toFixed(1)+" GB":Math.round(pc.memoryMb)+" MB"):"";
+ var mem=(pc.entries!=null?pc.entries+" entries":"")+(pc.entries!=null&&gb?" / ":"")+gb;
+ return'<div class="pcrow"><b class="pcn">'+(esc(s.provider)+ageMark(s))+'</b>'+
+  '<span class="pcc" title="Prefix-cache hit ratio (server counter since server start)">'+(n?'<span class="pct"><i class="bar" style="width:'+Math.round(r*100)+'%;background:var(--'+tone+')"></i></span> <span class="'+tone+'">'+pct(r)+'</span>':'<span class="dim">–</span>')+' <span class="dim">'+pc.hits+' hit / '+pc.misses+' miss</span></span>'+
+  '<span class="pcc" title="Tokens the server served from its prefix cache (since server start) against the prompt tokens in the router log (since restart)">'+(tot?'<span class="pct"><i class="bar" style="width:'+Math.round(sv*100)+'%;background:var(--acc)"></i></span> ':'')+'<span class="dim">'+fmt(pc.tokensSaved)+' saved'+(tot?' / '+fmt(tot)+' prompt':'')+'</span></span>'+
+  (mem?'<span class="pcm dim">'+mem+'</span>':'')+'</div>';
+}
 function cacheLocalHtml(d,sys0){
  var lh="";
- ((sys0&&sys0.servers)||[]).filter(function(s){return s.up!==false}).forEach(function(s){if(s.prefixCache)lh+=localDetail(s.provider,s.prefixCache,(d.promptByProvider||{})[s.provider],ageMark(s))});
+ ((sys0&&sys0.servers)||[]).filter(function(s){return s.up!==false}).forEach(function(s){if(s.prefixCache)lh+=cachePrefixRow(s,(d.promptByProvider||{})[s.provider])});
  return lh;
 }
 function cacheProvidersHtml(d,sys0){
