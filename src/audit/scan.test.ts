@@ -6,6 +6,10 @@ import { scanTranscript } from "./scan.js";
 import { lintRules } from "../hooks/ts/lib/rules/lint.js";
 import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
+import { fakeAnthropic } from "../utils/fake-secret.js";
+
+// Fake token-shaped fixture assembled at runtime so no scanner flags a literal.
+const FAKE_KEY = fakeAnthropic("abcdefghijklmnopqrstuvwxyz123456");
 
 const T0 = Date.parse("2026-01-01T10:00:00Z");
 const at = (sec: number): string => new Date(T0 + sec * 1000).toISOString();
@@ -79,10 +83,10 @@ describe("scanTranscript single-step rules", () => {
   });
 
   it("masks secrets in evidence and caps it at 300 chars", async () => {
-    const path = writeTranscript([bash("cat ~/.ssh/id_rsa && echo API_TOKEN=sk-ant-abcdefghijklmnopqrstuvwxyz123456", at(1))]);
+    const path = writeTranscript([bash(`cat ~/.ssh/id_rsa && echo API_TOKEN=${FAKE_KEY}`, at(1))]);
     const findings = await scanTranscript(path, [credRule]);
     expect(findings[0].evidence).toContain("[REDACTED]");
-    expect(findings[0].evidence).not.toContain("sk-ant-abcdefghijklmnopqrstuvwxyz123456");
+    expect(findings[0].evidence).not.toContain(FAKE_KEY);
     const long = writeTranscript([bash("cat ~/.ssh/id_rsa " + "x".repeat(400), at(1))]);
     const longFindings = await scanTranscript(long, [credRule]);
     expect(longFindings[0].evidence.length).toBeLessThanOrEqual(300);
