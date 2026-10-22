@@ -16,10 +16,11 @@
  * on the next check. Running workers are never interrupted — only the order
  * of the waiting ones changes.
  */
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, type CapacityConfig } from "./config.js";
+import { fmtElapsed } from "./waiting.js";
 import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig };
@@ -353,6 +354,63 @@ export function queuedText(q: { provider: string; position: number; queued: numb
   return `queued on ${q.provider}: position ${q.position} of ${q.queued}${q.behind ? `, behind ${q.behind}` : ""} — waiting since ${hhmm}`;
 }
 
+/** What a pane shows while its run waits for a provider slot (the `<id>.queued` file beside the launch record). */
+export interface QueuedFile {
+  provider: string;
+  /** 1 = next in line. */
+  position: number;
+  /** Waiting runs on this provider. */
+  queued: number;
+  /** Seconds waiting so far. */
+  elapsedSec: number;
+  /** Label of the run holding a slot ahead of this one, when known. */
+  behind?: string;
+  /** The run's own label, shown last. */
+  label?: string;
+}
+
+/** The pane's queue line, refreshed in place: "queued on gyro-m · position 2 of 5 · waiting 2m10s · <label>". */
+export function queuedPaneLine(q: QueuedFile): string {
+  const parts = [`queued on ${q.provider}`, `position ${q.position} of ${q.queued}`, `waiting ${fmtElapsed(q.elapsedSec)}`];
+  if (q.behind) parts.push(`behind ${q.behind}`);
+  if (q.label) parts.push(q.label);
+  return parts.join(" · ");
+}
+
+/**
+ * The pane's queue file: <pane-exec dir>/<id>.queued, written while the run
+ * waits for a slot and removed when the command starts, so a pane opened
+ * before the queue shows its place in line instead of sitting empty. The
+ * wrapper (`pai pane exec`) prints it in place until the start frame arrives;
+ * a missing or malformed file is simply no queue line.
+ */
+export function queuedFilePath(dir: string, id: string): string {
+  return join(dir, `${id}.queued`);
+}
+
+export function readQueued(dir: string, id: string): QueuedFile | null {
+  try {
+    const q = JSON.parse(readFileSync(queuedFilePath(dir, id), "utf8")) as QueuedFile;
+    if (typeof q.provider !== "string" || !Number.isInteger(q.position) || !Number.isInteger(q.queued) || !Number.isInteger(q.elapsedSec)) return null;
+    return q;
+  } catch {
+    return null;
+  }
+}
+
+/** Write atomically (rename), so the wrapper's poll never reads a half-written file. */
+export function writeQueued(dir: string, id: string, q: QueuedFile): void {
+  mkdirSync(dir, { recursive: true });
+  const path = queuedFilePath(dir, id);
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(q), "utf8");
+  renameSync(tmp, path);
+}
+
+export function removeQueued(dir: string, id: string): void {
+  rmSync(queuedFilePath(dir, id), { force: true });
+}
+
 export interface CapacityOpts {
   logDir: string;
   self: { id: string; provider: string; pid?: number };
@@ -376,6 +434,8 @@ export interface CapacityOpts {
   onAlarm?: (info: CapacityInfo) => void;
   /** Called at the start and after every poll while queued; null once the slot is granted (the caller flips queued -> running then). */
   onWait?: (info: CapacityInfo | null) => void;
+  /** Called at the start and after every poll with the pane's queue fields; null once the slot is granted (the pane's queue file). */
+  onQueued?: (q: QueuedFile | null) => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   load?: (logDir: string) => WorkerStatus[];
@@ -441,8 +501,17 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   o.log?.(info().line);
   let lastBeat = t0;
   let alarmed = false;
+  // the pane opened before the wait shows its place in line until the slot is granted
+  const paneQueued = (i: CapacityInfo): QueuedFile => ({
+    provider: i.provider,
+    position: i.position,
+    queued: i.queued,
+    elapsedSec: i.elapsedSec,
+    ...(c.behind ? { behind: c.behind } : {}),
+  });
   try {
     o.onWait?.(info());
+    o.onQueued?.(paneQueued(info()));
     for (let n = 0; ; n++) {
       await sleep(backoffMs(n));
       const fresh = o.capOf?.();
@@ -450,6 +519,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       c = check();
       if (c.position === 1 && c.holding < cap) break;
       o.onWait?.(info());
+      o.onQueued?.(paneQueued(info()));
       if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? cfg.maxTotalWaitMs)) {
         alarmed = true;
         o.onAlarm(info());
@@ -467,6 +537,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // The slot is ours: the caller flips the status back to "running" (and
   // rewrites `started`) before we report the release.
   o.onWait?.(null);
+  o.onQueued?.(null);
   o.log?.(`waited ${waitedSec}s for a ${label} slot`);
   return { waitedSec, cap };
 }

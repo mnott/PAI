@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
+import { queuedPaneLine, queuedFilePath, readQueued, removeQueued, writeQueued, type QueuedFile } from "./capacity.js";
 import { startPaneBar, type PaneBar, type PaneBarDeps, type StatusLineSpec } from "./pane-bar.js";
 import { panePolicy } from "./pane-policy.js";
 
@@ -36,6 +37,8 @@ export const PANE_EXEC_PID_ENV = "PAI_PANE_EXEC_PID";
 export const paneExecDir = (): string => paiHomePath("state", "pane-exec");
 export const exitFilePath = (id: string): string => join(paneExecDir(), `${id}.exit`);
 export const recordPath = (id: string): string => join(paneExecDir(), `${id}.json`);
+/** The caller's queue file beside the launch record: what the pane shows while the run waits for a provider slot. */
+export const queuedPath = (id: string): string => queuedFilePath(paneExecDir(), id);
 /** Unix socket path; the home path is hashed into /tmp when it would exceed the sockaddr limit. */
 export function sockPath(id: string): string {
   const p = join(paneExecDir(), `${id}.sock`);
@@ -92,6 +95,11 @@ export function readRecord(id: string): LaunchRecord | null {
   } catch {
     return null;
   }
+}
+
+/** The caller's queue file (capacity.ts): the run's place in line while it waits for a slot; null when missing or malformed. */
+export function readQueuedFile(id: string): QueuedFile | null {
+  return readQueued(paneExecDir(), id);
 }
 
 export function listRecords(): LaunchRecord[] {
@@ -178,6 +186,10 @@ export interface ExecDeps {
   /** Pane bar overrides (tests); a bar is drawn only when `tty` (default: stdout is a terminal). */
   tty?: boolean;
   bar?: Partial<PaneBarDeps>;
+  /** Queue-file dir (tests); default the pane-exec dir beside the launch record. */
+  queuedDir?: string;
+  /** How often the wrapper re-reads the queue file while it waits for the start frame. */
+  queuedPollMs?: number;
 }
 
 /** Longest the wrapper waits for its pane to be closed before it ends anyway. */
@@ -203,8 +215,30 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
     return rec.code;
   };
 
+  // the pane is opened before the caller's slot-queue wait: show the queue line
+  // in place (one line, refreshed) until the start frame arrives or the wrapper ends
+  const qdir = d.queuedDir ?? paneExecDir();
+  let qShown: string | null = null;
+  const drawQueued = (clear = false): void => {
+    const q = readQueued(qdir, id);
+    const line = q ? queuedPaneLine(q) : null;
+    if (clear) {
+      if (qShown === null) return; // nothing was ever shown: nothing to clear
+      err("\r\x1b[K");
+      return;
+    }
+    if (line === qShown) return; // an idle pane stays silent, like the follow ticker
+    qShown = line;
+    err(line ? `\r\x1b[K${line}` : "\r\x1b[K");
+  };
+  const queuedWatch = setInterval(() => drawQueued(), d.queuedPollMs ?? 2000);
+  queuedWatch.unref();
+  drawQueued();
+
   const sock = await connect(sockPath(id), d.connectMs ?? panePolicy().connectMs);
   if (!sock) {
+    clearInterval(queuedWatch);
+    drawQueued(true); // the pane waited on a queue that will never start: clear the line
     err(`pai pane exec: no caller listens for ${id}; nothing to run\n`);
     return finish({ code: 1, reason: "no caller" });
   }
@@ -274,11 +308,14 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   const cleanup = (): void => sigs.forEach((s, i) => proc.off(s, handlers[i]));
 
   await started;
+  clearInterval(queuedWatch);
   if (cancelled || callerGone || !spec) {
     cleanup();
     sock.destroy();
+    drawQueued(true); // the pane waited on a queue that will never start: clear the line
     return finish({ code: cancelled ? 0 : 143, cancelled, reason: cancelled ? "cancelled" : "caller gone" });
   }
+  drawQueued(true); // the command starts: the queue line is cleared
   const sp: StartSpec = spec;
   if (sp.title) d.setTitle?.(sp.title);
   let bar: PaneBar | null = null;
@@ -469,6 +506,11 @@ export interface OwnedPane {
   start(spec: StartSpec): Promise<OwnedProc>;
   /** The command will not run: the wrapper exits and the pane closes. */
   cancel(): void;
+  /**
+   * Show or clear the pane's queue line (the run waits for a provider slot);
+   * null clears it. The wrapper prints it in place until the command starts.
+   */
+  setQueued(q: QueuedFile | null): void;
   /** Description from the pane opener. */
   where: string;
 }
@@ -494,7 +536,8 @@ let exitHooked = false;
  */
 export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   mkdirSync(paneExecDir(), { recursive: true });
-  for (const f of [exitFilePath(o.id), sockPath(o.id)]) rmQuiet(f);
+  for (const f of [exitFilePath(o.id), queuedPath(o.id), sockPath(o.id)]) rmQuiet(f);
+  removeQueued(paneExecDir(), o.id); // a queue line of an earlier launch of this id is gone
   let wrapper = 0;
   let session: string | undefined;
   let sock: Socket | null = null;
@@ -541,6 +584,7 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
     ended = true;
     live.delete(pane);
     clearInterval(watch);
+    removeQueued(paneExecDir(), o.id);
     if (proc) {
       proc.exitCode = code;
       proc.stdout.end();
@@ -606,7 +650,13 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
       ended = true;
       live.delete(pane);
       clearInterval(watch);
+      removeQueued(paneExecDir(), o.id);
       s.end();
+    },
+    setQueued: (q) => {
+      if (ended) return;
+      if (q === null) removeQueued(paneExecDir(), o.id);
+      else writeQueued(paneExecDir(), o.id, q);
     },
   };
   live.add(pane);

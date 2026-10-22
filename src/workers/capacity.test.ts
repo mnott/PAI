@@ -17,7 +17,7 @@ vi.mock("node:fs", async (importOriginal) => {
     },
   };
 });
-import { capacityGate, effectiveCap, fairOrder, liveQueue, moveUp, providerCap, queueRows, queuedText, reorderQueue, reorderQueueTo, resolveCap, setFront, type CapacityConfig, type CapacityInfo } from "./capacity.js";
+import { capacityGate, effectiveCap, fairOrder, liveQueue, moveUp, providerCap, queueRows, queuedPaneLine, queuedText, readQueued, removeQueued, reorderQueue, reorderQueueTo, resolveCap, setFront, writeQueued, type CapacityConfig, type CapacityInfo, type QueuedFile } from "./capacity.js";
 import { defaultWorkersConfig, readWorkersSection } from "./config.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
@@ -234,6 +234,51 @@ describe("capacityGate", () => {
     const h = harness(() => [st("a"), st("b"), st("c", { state: "queued" })], "d");
     expect(await capacityGate(h.base)).toBeNull();
     expect(h.elapsed()).toBe(0);
+  });
+
+  it("onQueued carries the pane's queue fields while waiting and null once granted", async () => {
+    const h = harness((ms) => [st("a"), st("b"), st("c", { state: ms >= 1000 ? "done" : "running" })], "d");
+    const qs: (QueuedFile | null)[] = [];
+    await capacityGate({ ...h.base, onQueued: (q) => qs.push(q) });
+    expect(queuedPaneLine(qs[0]!)).toBe("queued on p · position 1 of 1 · waiting 0m00s");
+    expect(qs.at(-1)).toBeNull();
+  });
+});
+
+describe("queuedPaneLine / the queued file", () => {
+  it("formats the pane's queue line: provider, position, wait, label", () => {
+    expect(queuedPaneLine({ provider: "gyro-m", position: 2, queued: 5, elapsedSec: 130, label: "fix nav" })).toBe(
+      "queued on gyro-m · position 2 of 5 · waiting 2m10s · fix nav"
+    );
+    expect(queuedPaneLine({ provider: "gyro-m", position: 1, queued: 1, elapsedSec: 8 })).toBe(
+      "queued on gyro-m · position 1 of 1 · waiting 0m08s"
+    );
+    expect(queuedPaneLine({ provider: "gyro-m", position: 2, queued: 3, elapsedSec: 65, behind: "the holder" })).toBe(
+      "queued on gyro-m · position 2 of 3 · waiting 1m05s · behind the holder"
+    );
+  });
+
+  it("writeQueued / readQueued round-trip; removeQueued clears the line", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cap-queued-"));
+    dirs.push(dir);
+    const q = { provider: "gyro-m", position: 2, queued: 5, elapsedSec: 130, behind: "h", label: "fix nav" };
+    writeQueued(dir, "w-1", q);
+    expect(readQueued(dir, "w-1")).toEqual(q);
+    expect(readFileSync(join(dir, "w-1.queued"), "utf8")).toContain("gyro-m");
+    removeQueued(dir, "w-1");
+    expect(readQueued(dir, "w-1")).toBeNull();
+  });
+
+  it("readQueued is null for a missing or malformed file, never a throw", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cap-queued-bad-"));
+    dirs.push(dir);
+    expect(readQueued(dir, "gone")).toBeNull();
+    writeFileSync(join(dir, "w-bad.queued"), "not json");
+    expect(readQueued(dir, "w-bad")).toBeNull();
+    writeFileSync(join(dir, "w-half.queued"), JSON.stringify({ provider: "p", position: 1 })); // no elapsedSec
+    expect(readQueued(dir, "w-half")).toBeNull();
+    mkdirSync(join(dir, "w-dir.queued"));
+    expect(readQueued(dir, "w-dir")).toBeNull();
   });
 });
 

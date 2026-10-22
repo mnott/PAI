@@ -77,7 +77,7 @@ vi.mock("./pane-exec.js", async (importOriginal) => {
     ...actual,
     openOwnedPane: vi.fn(async (o: { id: string; open: (command: string) => Promise<string> }) => {
       const where = await o.open("pai pane exec (stub)");
-      return { id: o.id, where, start: vi.fn(), cancel: vi.fn() };
+      return { id: o.id, where, start: vi.fn(), cancel: vi.fn(), setQueued: vi.fn() };
     }),
   };
 });

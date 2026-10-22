@@ -17,7 +17,7 @@ describe("docs/commands is in sync with the command definitions", () => {
     const files = [...drift, ...stale];
     expect(
       files,
-      `docs/commands out of date (${files.join(", ")}). Run \`npm run build\` or \`node scripts/build-docs.mjs\` and commit the regenerated docs with your change.`,
+      `docs/commands out of date (${files.join(", ")}). Run \`npm run build\` and commit the regenerated docs with your change.`,
     ).toEqual([]);
   });
 });

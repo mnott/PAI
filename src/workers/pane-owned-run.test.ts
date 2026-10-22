@@ -1,12 +1,13 @@
 /** `worker run` through the launcher: pane first, claude as the wrapper's child, exit code and cancel. */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as pane from "./pane.js";
-import { exitFilePath, runPaneExec } from "./pane-exec.js";
+import { exitFilePath, queuedPath, runPaneExec } from "./pane-exec.js";
 import { defaultWorkersConfig } from "./config.js";
+import { paneHandles } from "./run/pane-handles.js";
 import { releasePane, requireVisiblePane, spawnOwned } from "./run.js";
 
 vi.mock("./pane.js", async (importOriginal) => {
@@ -83,4 +84,56 @@ describe("a worker's command runs inside the pane that owns it", () => {
     vi.mocked(pane.openVerifiedPane).mockReset().mockRejectedValue(new pane.NoTerminalError("no terminal here"));
     await expect(requireVisiblePane(dir, cfg, "w-nt", "", undefined, false, join(dir, "ledger.log"))).rejects.toThrow(/^no pane: no terminal/);
   });
+});
+
+describe("a pane that waits for a provider slot shows it is queued", () => {
+  const queuedJson = { provider: "gyro-m", position: 2, queued: 5, elapsedSec: 130, label: "fix nav" };
+
+  /** The wrapper of a pane that opened but has not received its start frame yet. */
+  const waitingWrapper = (id: string, lines: string[], queuedDir: string) =>
+    runPaneExec(id, {
+      out: () => undefined,
+      err: (s) => lines.push(s.toString()),
+      closePane: async () => undefined,
+      proc: new EventEmitter() as NodeJS.Process,
+      linger: 0,
+      tty: false,
+      connectMs: 300,
+      queuedDir,
+      queuedPollMs: 50,
+    });
+
+  it("the wrapper prints the queue line in place and clears it when the command starts", async () => {
+    const qdir = join(dir, "queued");
+    mkdirSync(qdir, { recursive: true });
+    writeFileSync(join(qdir, "w-q.queued"), JSON.stringify(queuedJson));
+    const lines: string[] = [];
+    const wrapper = waitingWrapper("w-q", lines, qdir);
+    await vi.waitFor(() => expect(lines.some((l) => l.includes("queued on gyro-m · position 2 of 5 · waiting 2m10s · fix nav"))).toBe(true));
+    expect(await wrapper).toBe(1); // no caller listens: the wrapper ends, the pane closes
+    expect(lines.some((l) => l.startsWith("\r\x1b[K") && !l.includes("queued on"))).toBe(true); // the queue line is cleared as the wrapper ends
+  }, 15_000);
+
+  it("a malformed queue file shows nothing and never crashes the wrapper", async () => {
+    const qdir = join(dir, "queued-bad");
+    mkdirSync(qdir, { recursive: true });
+    writeFileSync(join(qdir, "w-qbad.queued"), "not json");
+    const lines: string[] = [];
+    const wrapper = waitingWrapper("w-qbad", lines, qdir);
+    expect(await wrapper).toBe(1); // the wrapper ends on its own: the bad file drew nothing and crashed nothing
+    expect(lines).toEqual(["pai pane exec: no caller listens for w-qbad; nothing to run\n"]);
+  }, 15_000);
+
+  it("the caller's setQueued writes the file beside the launch record; start and cancel clear it", async () => {
+    await requireVisiblePane(dir, cfg, "w-caller", "T", undefined, false, join(dir, "ledger.log"));
+    paneHandles.get("w-caller")!.setQueued(queuedJson);
+    expect(JSON.parse(readFileSync(queuedPath("w-caller"), "utf8"))).toEqual(queuedJson);
+    const proc = await spawnOwned("w-caller", sh("true"), { env: process.env, cwd: dir, stdio: ["pipe", "pipe", "pipe"], title: "t" });
+    expect(await new Promise((r) => proc.on("close", r))).toBe(0);
+    expect(existsSync(queuedPath("w-caller"))).toBe(false); // the command started: the queue file is gone
+    await requireVisiblePane(dir, cfg, "w-cancel2", "T", undefined, false, join(dir, "ledger.log"));
+    paneHandles.get("w-cancel2")!.setQueued(queuedJson);
+    releasePane("w-cancel2");
+    expect(existsSync(queuedPath("w-cancel2"))).toBe(false); // a run that never starts leaves no queue file
+  }, 15_000);
 });

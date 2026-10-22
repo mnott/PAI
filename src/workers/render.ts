@@ -11,7 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
-import { queuedText } from "./capacity.js";
+import { queuedPaneLine, queuedText, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
@@ -766,8 +766,13 @@ export function goalOf(s: Pick<WorkerStatus, "label">, max = 40): string {
 export function paneStatusRow(
   s: Pick<WorkerStatus, "label" | "model" | "started" | "contextUsed" | "contextWindow" | "waitingOn" | "denials" | "denialCount" | "warmup" | "capacity">,
   now: Date = new Date(),
-  columns: number | null = null
+  columns: number | null = null,
+  /** The pane's queue line while the run waits for a slot (the `<id>.queued` file), before any status exists. */
+  queued: QueuedFile | null = null
 ): string {
+  // the pane opened before the queue: while the run waits for a slot the line
+  // is the queue itself, refreshed in place (no goal/model tail yet — nothing has started)
+  if (queued) return queuedPaneLine(queued);
   const model = [shortModel(s.model), contextFooter(s)].filter(Boolean).join(" · ");
   const started = String(s.started ?? "").slice(11, 16);
   const elapsed = elapsedOf(s.started, now);

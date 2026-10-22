@@ -27,6 +27,7 @@ import {
   selfProcStart,
 } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
+import { paneHandles } from "./pane-handles.js";
 import { committedFallThrough, fallThroughReason } from "../policy.js";
 import {
   admitCap,
@@ -35,6 +36,7 @@ import {
   queuedText,
   sessionScopeKey,
   type CapacityOpts,
+  type QueuedFile,
 } from "../capacity.js";
 import { staggerGate } from "../stagger.js";
 import { detectSessionName } from "../session-name.js";
@@ -54,7 +56,7 @@ import {
 } from "../pool.js";
 import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
-import { requireVisiblePane, announcePane, paneHandles, spawnOwned } from "./pane-handles.js";
+import { requireVisiblePane, announcePane, spawnOwned } from "./pane-handles.js";
 import { printResult } from "./finalise.js";
 import { tryEscalate, rerunOnCloud } from "./escalate.js";
 
@@ -345,6 +347,11 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   return rc;
 }
 
+/** The pane's queue file content from a gate poll: the run's place in line, its label last. */
+function queuedOf(q: QueuedFile, label: string | undefined): QueuedFile {
+  return label ? { ...q, label } : q;
+}
+
 /**
  * Capacity gate, then stagger gate, for one headless run — the single place
  * both the pooled and the fresh-spawn path pass through. `status` is the
@@ -403,6 +410,8 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
       }
       saveStatus(logDir, status);
     },
+    // the pane opened before the wait shows its place in line (pane-exec reads the file)
+    onQueued: (line) => paneHandles.get(wid)?.setQueued(line === null ? null : queuedOf(line, a.label)),
   };
   // the session's own limit ("one after the other"): same gate, counted per session across providers
   const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
