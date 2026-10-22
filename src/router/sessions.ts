@@ -141,13 +141,31 @@ function readJson(file: string): Record<string, unknown> | undefined {
  * behind. Counted from the repo's object store, so a removed worktree still
  * counts. null when nothing can be counted.
  */
-function branchCommits(s: Record<string, unknown>): number | null {
+const BRANCH_COMMITS_TTL_MS = 30_000;
+const branchCommitsCache = new Map<string, { at: number; n: number | null }>();
+
+/** Drop the memoised branch counts (tests). */
+export function clearBranchCommitsCache(): void {
+  branchCommitsCache.clear();
+}
+
+export function branchCommits(s: Record<string, unknown>, now: number = Date.now()): number | null {
   const cwd = typeof s.cwd === "string" ? s.cwd : undefined;
   const id = typeof s.id === "string" ? s.id : undefined;
   const base = typeof s.worktreeBase === "string" ? s.worktreeBase : undefined;
   if (!cwd || !id || !base) return null;
+  // the status files are re-read every poll on the router loop: git runs once per (repo, run, branch) per TTL
+  const key = `${cwd}\0${id}\0${base}\0${typeof s.branch === "string" ? s.branch : ""}`;
+  const hit = branchCommitsCache.get(key);
+  if (hit && now - hit.at < BRANCH_COMMITS_TTL_MS) return hit.n;
+  const n = countBranchCommits(cwd, id, base, typeof s.branch === "string" ? s.branch : "");
+  branchCommitsCache.set(key, { at: now, n });
+  return n;
+}
+
+function countBranchCommits(cwd: string, id: string, base: string, branch: string): number | null {
   const refs: string[] = [];
-  if (typeof s.branch === "string" && s.branch) refs.push(`refs/heads/${s.branch}`);
+  if (branch) refs.push(`refs/heads/${branch}`);
   refs.push(`refs/pai-archive/${id}-branch`, `refs/pai-archive/${id}`);
   for (const ref of refs) {
     try {

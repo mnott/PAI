@@ -21,7 +21,7 @@ import https from "node:https";
 import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
 import { loadConfig } from "../daemon/config.js";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
 import { vllmLogCacheStats } from "./vllm-log-cache.js";

@@ -373,3 +373,26 @@ describe("sliced loaders give the same result as the one-shot ones and hand the 
     expect(ticks).toBeGreaterThan(0);
   });
 });
+
+describe("branchCommits", () => {
+  it("counts the branch's commits and memoises per run for the TTL", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { branchCommits, clearBranchCommitsCache } = await import("./sessions.js");
+    const repo = mkdtempSync(join(tmpdir(), "pai-bc-"));
+    const git = (...a: string[]) => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git("commit", "-q", "--allow-empty", "-m", "base");
+    git("switch", "-q", "-c", "w");
+    git("commit", "-q", "--allow-empty", "-m", "one");
+    const base = execFileSync("git", ["-C", repo, "rev-parse", "main"], { encoding: "utf8" }).trim();
+    const s = { cwd: repo, id: "r1", worktreeBase: base, branch: "w" };
+    clearBranchCommitsCache();
+    expect(branchCommits(s, 1000)).toBe(1);
+    git("commit", "-q", "--allow-empty", "-m", "two");
+    expect(branchCommits(s, 2000)).toBe(1);
+    expect(branchCommits(s, 1000 + 31_000)).toBe(2);
+    expect(branchCommits({ ...s, id: "none", branch: "" }, 1000)).toBeNull();
+  });
+});
