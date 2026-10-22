@@ -153,14 +153,17 @@ function buildCard(spec){
 /** Width share in the row: auto, 1/4, 1/3, 1/2, the whole row. st.sp holds the divisor (absent = auto). */
 var SPAN_CYCLE=[0,4,3,2,1],SPAN_MARK={0:"\u2194",4:"\u00bc",3:"\u2153",2:"\u00bd",1:"1"},SPAN_NAME={0:"auto",4:"1/4",3:"1/3",2:"1/2",1:"full"};
 function spanOf(id){var s=W.st&&W.st[id];return s&&s.sp>0?s.sp:0}
+/** A share the handle set (k of N columns) has no preset name: its percentage. */
+function spanName(v){return SPAN_NAME[v]||Math.round(100/v)+"%"}
 function paintSpan(c){
  if(!c.span)return;
  var v=spanOf(c.id);
- if(c.span.getAttribute("data-span")===SPAN_NAME[v])return;
- c.span.textContent=SPAN_MARK[v]||SPAN_MARK[0];
- c.span.title="width in the row: "+SPAN_NAME[v]+" \u00b7 click for "+SPAN_NAME[SPAN_CYCLE[(SPAN_CYCLE.indexOf(v)+1)%SPAN_CYCLE.length]];
- c.span.setAttribute("aria-label","width of "+(c.titleText||c.id)+": "+SPAN_NAME[v]);
- c.span.setAttribute("data-span",SPAN_NAME[v]);
+ if(c.span.getAttribute("data-span")===spanName(v))return;
+ var nm=spanName(v);
+ c.span.textContent=SPAN_MARK[v]||nm;
+ c.span.title="width in the row: "+nm+" \u00b7 click for "+SPAN_NAME[SPAN_CYCLE[(SPAN_CYCLE.indexOf(v)+1)%SPAN_CYCLE.length]];
+ c.span.setAttribute("aria-label","width of "+(c.titleText||c.id)+": "+nm);
+ c.span.setAttribute("data-span",nm);
 }
 function cycleSpan(id){
  var c=W.cards[id];if(!c||winLocked())return;
@@ -406,9 +409,15 @@ function heightWire(){
   var hd=c.handle;
   if(hd.setPointerCapture&&e.pointerId!==undefined)hd.setPointerCapture(e.pointerId);
   e.preventDefault();
-  cur={c:c,y:e.clientY,h:r.h,st:JSON.stringify(W.st)};
+  cur={c:c,x:e.clientX,y:e.clientY,w:r.w,h:r.h,st:JSON.stringify(W.st)};
  });
- document.addEventListener("pointermove",function(e){if(cur)setHeight(cur.c.id,cur.h+e.clientY-cur.y,true)});
+ document.addEventListener("pointermove",function(e){
+  if(!cur)return;
+  // the handle also sets the width: snapped to whole column units of the row's container; the share control writes the same st.sp
+  var dx=e.clientX-cur.x,p=cur.c.el.parentNode;
+  if(Math.abs(dx)>=8&&p&&p.clientWidth>0){var sp=winColSpan(p.clientWidth,W.cfg.GAP,W.cfg.minW,cur.w+dx);(W.st[cur.c.id]=W.st[cur.c.id]||{}).sp=sp}
+  setHeight(cur.c.id,cur.h+e.clientY-cur.y,true);
+ });
  function end(commit){
   if(!cur)return;
   var d=cur;cur=null;

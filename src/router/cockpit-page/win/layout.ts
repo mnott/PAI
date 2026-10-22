@@ -53,6 +53,13 @@ function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if
 function winCardMinW(cfg,kids,id){var m=winMinW(cfg,winLeafType(kids,id,cfg)),t=cfg.titleW&&cfg.titleW[id];return t&&t>m?Math.min(t,Math.round(m*1.6)):m}
 /** A card's width share inside its row: st[id].sp is the divisor (4 = 1/4, 3 = 1/3, 2 = 1/2, 1 = the whole row), absent = auto (its weight). */
 function winSp(st,id){var s=st&&st[id];return s&&s.sp>0?s.sp:0}
+/** The width share (st.sp divisor) a card gets when the user drags its handle to targetW: the container holds N column units
+ *  (N from its least tile width), the card spans k of them (1..N); k = N is the whole row (1), else the divisor N/k. */
+function winColSpan(contW,gap,minW,targetW){
+ var n=Math.max(1,Math.floor((contW+gap)/(minW+gap))),cw=(contW-(n-1)*gap)/n,k=Math.round((targetW+gap)/(cw+gap));
+ k=Math.max(1,Math.min(n,k));
+ return k>=n?1:n/k;
+}
 /** Row flow: when a visible child of the row has a width share, the children are laid in lines of the row width: a share
  *  card takes that fraction (1 = its own line), an auto card its weight share of what its line has left. A card whose width
  *  falls under its least width goes on its own line. Returns null without any share, else {lines:[[{i,x,w}]]} (i = index in node.ch). */

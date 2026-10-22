@@ -10,7 +10,7 @@ const laySrc = readFileSync(fileURLToPath(new URL("./win/layout.ts", import.meta
 const lm = laySrc.match(/export const WIN_LAYOUT_JS = String\.raw`([\s\S]*?)`;/);
 if (!lm) throw new Error("WIN_LAYOUT_JS not found in win/layout.ts");
 const api = (new Function(
-  `${tm[1]}\n${lm[1]}\nreturn {leaf:leaf,split:split,layout:layout};`,
+  `${tm[1]}\n${lm[1]}\nreturn {leaf:leaf,split:split,layout:layout,winColSpan:winColSpan};`,
 ) as any)();
 const leaf = (id: string) => api.leaf(id);
 const split = (d: string, ch: any[], sz: number[]) => api.split(d, ch, sz);
@@ -248,5 +248,21 @@ describe("win layout: dock and line invariants", () => {
         for (let j = i + 1; j < all.length; j++) expect(rectsHit(all[i], all[j])).toBe(false);
       }
     }
+  });
+});
+
+describe("win layout: width steps of the handle", () => {
+  const span = api.winColSpan as (c: number, g: number, m: number, t: number) => number;
+  it("snaps to whole column units of the container (N from the least tile width) and lays out at exactly k columns", () => {
+    // 1008 wide, minW 220, gap 8: N = 4 columns of 246
+    expect(span(1008, 8, 220, 100)).toBe(4); // 1 column = 1/4
+    expect(span(1008, 8, 220, 500)).toBe(2); // 2 of 4
+    expect(span(1008, 8, 220, 760)).toBeCloseTo(4 / 3); // 3 of 4
+    expect(span(1008, 8, 220, 5000)).toBe(1); // whole row
+    expect(span(300, 8, 220, 100)).toBe(1); // one column fits: always the whole row
+    const row = split("r", [leaf("a"), leaf("b")], [1, 1]);
+    const { rects } = layout(row, {}, root(1008), { a: { sp: span(1008, 8, 220, 760) }, b: { sp: 4 } }, fit({ a: 80, b: 80 }));
+    expect(rects.a.w).toBeCloseTo(3 * 246 + 2 * 8); // three whole columns
+    expect(rects.b.x).toBeCloseTo(rects.a.w + 8);
   });
 });
