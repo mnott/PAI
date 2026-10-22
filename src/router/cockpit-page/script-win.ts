@@ -9,6 +9,8 @@ import { WIN_MORPH_JS } from "./win/morph.js";
 import { WIN_STORE_JS } from "./win/store.js";
 import { WIN_INFO_JS } from "./win/info.js";
 import { WIN_ANCHOR_JS } from "./win/anchor.js";
+import { WIN_DROP_JS } from "./win/drop.js";
+import { WIN_DRAGDROP_JS } from "./win/dragdrop.js";
 import { WIN_CARD_JS } from "./win/card.js";
 import { WIN_TYPES_JS } from "./win/types.js";
 import { WIN_KPIS_JS } from "./win/cards-kpis.js";
@@ -27,7 +29,7 @@ import { WIN_TABLES_JS } from "./win/cards-tables.js";
 import { WIN_SELECT_JS } from "./win/select.js";
 
 /** The runtime source: the pure parts plus the card runtime, returning {Win, leaf, split, anchorInit}. */
-export const WIN_RUNTIME_JS = [WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS, WIN_INFO_JS, WIN_ANCHOR_JS, WIN_CARD_JS].join("\n");
+export const WIN_RUNTIME_JS = [WIN_TREE_JS, WIN_DROP_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS, WIN_INFO_JS, WIN_CARD_JS, WIN_ANCHOR_JS, WIN_DRAGDROP_JS].join("\n");
 
 export const scriptWin = (_L: CockpitLayout, _n: Num, _q: Str, _hex: Str): string => String.raw`/* win runtime */
 /*win-begin*/
@@ -35,7 +37,7 @@ var Win=null,WinT=null,WinA=null,WIN_HOST=null;
 {
  WinT=(function(){
 ${WIN_RUNTIME_JS}
-  return{Win:Win,leaf:leaf,split:split,anchorInit:anchorInit};
+  return{Win:Win,leaf:leaf,split:split,anchorInit:anchorInit,dragInit:winDragInit};
  })();
  Win=WinT.Win;window.Win=Win;
 }
@@ -82,6 +84,7 @@ ${WIN_CACHE_JS}
   wrgStart();
   window.winFeedModels=winFeedModels;window.winFeedSystem=winFeedSystem;window.winFeedMemory=winFeedMemory;window.winFeedLimits=winFeedLimits;
   WinT.anchorInit(document,window,root);
+  WinT.dragInit(document,window);
  })();
 /*win-end*/
 `;
