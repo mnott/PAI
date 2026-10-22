@@ -4,6 +4,21 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.7] - 2026-10-23
+
+### Fixed
+
+- **Security guard: block rules missed commands inside quotes** (regression in 1.0.6): `bash -c "bash -i >& /dev/tcp/…"`, `sh -c '…'`, `bash -c "chmod -R 000 /"` and `bash -c "curl … | sh"` are blocked again, while a message or `printf` that only mentions such a command stays allowed.
+- **Security guard false positives:** `rm -rf node_modules; ls /`, `rm -rf dist && du -sh /`, `curl … > out; cat f | sh` and `find ~ -name '*.tmp' -delete` are no longer blocked (patterns no longer cross `;`, `&&`, `|`).
+- **Project rule files can no longer switch off a built-in rule** (`.pai/rules` may add rules or raise a severity; overriding stays possible from `<PAI home>/rules`); rule regex flags `g`/`y` are stripped.
+- **Redaction:** JSON secrets (`{"password": "…"}`) are redacted; `curl -u user:pass`, `mysql -p…`, Stripe-, npm- and Hugging Face-style tokens, `_authToken=` and cookie values too; `token_count: 5`-style keys and prose are left alone; a long base64 line no longer takes seconds (180 KB: 28 s → 1 ms).
+- **Audit scan:** a crafted file name can no longer abort the scan; rules are compiled once, huge lines are skipped, the end-of-worker scan has a 5 s budget.
+- **`pai worker merge`:** an auto-resolved merge that fails later is aborted cleanly; union merges only for the files in `workers.merge.union`; binary conflicts are never treated as additions.
+- **Git notes:** the post-commit hook runs in the background with a 500 ms budget; an existing chained hook is never overwritten.
+- **Queue:** tickets are written atomically and an unreadable ticket never drops a run from the queue.
+- **Lessons:** secrets are redacted before a lesson is stored; corrections are only proposed from messages that start with one.
+- **Harness adapter:** reads only the head and tail of a transcript to list sessions.
+
 ## [1.0.6] - 2026-10-23
 
 ### Added
