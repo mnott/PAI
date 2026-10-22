@@ -222,6 +222,8 @@ Section types draw the page's own parts: `group`, `chart`, `ring`, `chips`, `ser
 
 **Persistence.** The arrangement, sizes, minimized cards and group contents are saved in the browser's local storage under `pai.cockpit.win.v2`. The saved state wins over the defaults; a card that is new in a later version is added to the default place, and a saved card that no longer exists is dropped. The older `pai.cockpit.layout.v1`, `pai.cockpit.tiles.v1` and `pai.cockpit.collapsed` entries are removed on first load. A change made just before you close the tab or switch away is saved too. A saved layout you never changed, whose only difference from the default is the order of the top-level groups, is put back in the default order. The ⟲ button clears the saved state. Nothing is sent to the server.
 
+**Several tabs and new versions.** With the cockpit open in more than one tab, a change made in one tab appears in the others within about a second, and an older tab never writes its stale layout back over a newer one. When the router starts serving a newer cockpit page, open tabs show "newer cockpit available — reload" in the header; reloading loads the new page and keeps the saved layout.
+
 **Controls.** Every button, chip close, stop and similar control on a card is a registered action with a title (tooltip and accessible name).
 
 **Registry editor.** The Registry card edits the model registry (`workers.yaml`) in the page:
