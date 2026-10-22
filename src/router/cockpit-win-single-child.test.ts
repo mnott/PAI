@@ -59,7 +59,7 @@ describe.skipIf(!CHROME)("a group with one visible child group draws no duplicat
     // one visible child: header gone, cards still there
     expect(r.solo.inner.hh).toBe(0);
     expect(r.solo.outer.hh).toBeGreaterThan(0);
-    expect(r.solo.heads).toBe(r.before.heads - 3);
+    expect(r.solo.heads).toBe(r.before.heads - 2); // was - 3: sys-servers moved to Models
     expect(r.solo.cs.length).toBeGreaterThan(0);
     // two visible children again: header back
     expect(r.two.inner.hh).toBeGreaterThan(0);

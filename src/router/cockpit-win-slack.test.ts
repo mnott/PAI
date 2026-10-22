@@ -55,7 +55,7 @@ setTimeout(function(){
  var out=[],i;
  function r(c){var b=c.getBoundingClientRect();return{t:b.top+window.scrollY,b:b.bottom+window.scrollY,l:b.left,r:b.right}}
  for(i=0;i<cards.length;i++){
-  var c=cards[i],id=c.getAttribute("data-card"),g=c.querySelector(":scope>.cbody.cgroup"),b=r(c),o={id:id,h:Math.round(b.b-b.t),kind:g?"group":"leaf",chart:c.getAttribute("data-type")==="chart"||c.getAttribute("data-type")==="editor",chip:c.classList.contains("chip")};
+  var c=cards[i],id=c.getAttribute("data-card"),g=c.querySelector(":scope>.cbody.cgroup"),b=r(c),o={id:id,h:Math.round(b.b-b.t),kind:g?"group":"leaf",chart:c.getAttribute("data-type")==="chart"||c.getAttribute("data-type")==="editor",chip:c.classList.contains("chip"),line:(c.parentElement.closest(".card")||{getAttribute:function(){return""}}).getAttribute("data-card")+"@"+Math.round(b.t)};
   if(c.classList.contains("chip")){out.push(o);continue}
   if(g){
    var kids=Array.prototype.slice.call(g.children).filter(function(k){return k.style.display!=="none"}),m=0,dk=1e9;
@@ -97,7 +97,7 @@ beforeAll(async () => {
 });
 afterAll(() => { killChromes(); server?.close(); });
 
-type Row = { chart?: boolean; id: string; h: number; kind: string; chip: boolean; content?: number; dock: number | null; user: boolean };
+type Row = { line?: string; chart?: boolean; id: string; h: number; kind: string; chip: boolean; content?: number; dock: number | null; user: boolean };
 async function read(width: number) {
   const dom = await dumpDom(`${base}/page`, { width, height: 900, budgetMs: 15000 });
   const m = /data-r="([^"]*)"/.exec(dom);
@@ -110,7 +110,7 @@ describe.skipIf(!CHROME)("content-driven heights: no empty space at the bottom o
     it(`${width} px: box height minus content height is at most 16 px; the dock is below the last line`, async () => {
       const rows = (await read(width)).filter((r) => !r.chip && r.content !== undefined && !r.user && !r.chart);
       expect(rows.length).toBeGreaterThan(15);
-      const slack = rows.map((r) => ({ id: r.id, kind: r.kind, h: r.h, content: r.content!, slack: r.h - r.content! })).sort((a, b) => b.slack - a.slack);
+      const slack = rows.map((r) => ({ id: r.id, kind: r.kind, h: r.h, content: r.content!, slack: r.h - Math.max(...rows.filter((q) => q.line === r.line).map((q) => q.content!)) })) // cards of a line share its height: slack is against the tallest content on the line.sort((a, b) => b.slack - a.slack);
       if (process.env.PAI_SLACK) console.log(`${width} px: ${rows.length} cards\n` + slack.slice(0, 5).map((s) => `${s.id}\t${s.kind}\th ${s.h}\tcontent ${s.content}\tslack ${s.slack}`).join("\n"));
       expect(slack.filter((s) => s.slack > 16).map((s) => `${s.id} ${s.slack}`)).toEqual([]);
       for (const r of rows) if (r.dock != null) expect(r.dock, `${r.id} dock top vs last line bottom`).toBeGreaterThanOrEqual(0);

@@ -30,7 +30,7 @@ export type WinLayout = (
  *  - box {w}: the container width (the height of the box is ignored). The result height is the bottom of the last rect.
  *  - lines: a column puts each child on its own line; a row is laid by winFlow (width shares), else in one line by weight,
  *    else (a child under its least width) in a grid. GAP px between siblings (the gutter handle is drawn in the gap).
- *    A line is as tall as its tallest card; its other cards keep their own height (aligned to the top).
+ *    A line is as tall as its tallest card; every card on it (but a minimized one) takes that height.
  *  - minimized leaf: HEAD_H tall. cfg.dock = {group id: [minimized ids]}: chips ({chip:1}, cfg.CHIP_H tall) in rows right
  *    after the group's last line.
  *  - ghosts (state[id].seen set) take no space: skipped, no rect.
@@ -177,16 +177,18 @@ function winH(node,w,st,cfg,kids){
  for(i=0;i<lines.length;i++){var lm=0;for(j=0;j<lines[i].length;j++)lm=Math.max(lm,winH(node.ch[lines[i][j].i],lines[i][j].w,st,cfg,kids));sum+=lm}
  return sum+Math.max(0,lines.length-1)*cfg.GAP;
 }
-/** Lay out one split into pieces {n,x,y,w,h}: the lines top to bottom, each card at its own content height. */
+/** Lay out one split into pieces {n,x,y,w,h}: the lines top to bottom, every card of a line at the line height. */
 function winSplit(node,box,st,cfg,kids){
  var lines=winLines(node,box.w,st,cfg,kids),out=[],y=0,i,j;
  for(i=0;i<lines.length;i++){
-  var lh=0;
+  var lh=0,from=out.length;
   for(j=0;j<lines[i].length;j++){
    var it=lines[i][j],c=node.ch[it.i],h=winH(c,it.w,st,cfg,kids);
    out.push({n:c,x:it.x,y:y,w:it.w,h:h});
    lh=Math.max(lh,h);
   }
+  // cards on one line share its height (the tallest content); a minimized card stays a header
+  for(j=from;j<out.length;j++)if(!(out[j].n.k==="c"&&winMin(st,out[j].n.id)))out[j].h=lh;
   y+=lh+cfg.GAP;
  }
  return out;

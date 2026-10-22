@@ -40,13 +40,14 @@ const fit = (o: Record<string, number>) => ({ ...cfg, fit: o });
 // tallest card, the next line starts below it. Tests that pinned band px, weights of a bounded height, narrow defaultH
 // stacking or the stretch of a row to its band were removed or rewritten: heights are now content-driven.
 describe("win layout: content-driven heights", () => {
-  it("two-up row: widths by weight with the gap between; each card its own content height", () => {
+  it("two-up row: widths by weight with the gap between; every card the line height", () => {
     const t = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const { rects } = layout(t, {}, root(1008), {}, fit({ a: 100, b: 180 }));
-    expect(rects.a).toEqual({ x: 0, y: 0, w: 500, h: 100, body: { w: 500, h: 72 } });
+    expect(rects.a).toEqual({ x: 0, y: 0, w: 500, h: 180, body: { w: 500, h: 152 } }); // was h 100, body 72
     expect(rects.b.x).toBe(508);
     expect(rects.b.w).toBe(500);
-    expect(rects.b.h).toBe(180); // no stretch: the shorter card keeps its height
+    expect(rects.a.h).toBe(180); // the line height is the tallest card's
+    expect(rects.b.h).toBe(180);
     expect(rects.b.x - (rects.a.x + rects.a.w)).toBe(cfg.GAP);
   });
 
@@ -121,7 +122,7 @@ describe("win layout: content-driven heights", () => {
     expect(rects.grp).toEqual({ x: 0, y: 0, w: 1008, h: 28 + 100, body: { w: 1008, h: 100 } });
     expect(rects.k1).toEqual({ x: 0, y: 0, w: 500, h: 100, body: { w: 500, h: 72 } });
     expect(rects.k2.x).toBe(508);
-    expect(rects.k2.h).toBe(60);
+    expect(rects.k2.h).toBe(100); // was 60: the line height
     expect(height).toBe(128);
   });
 
@@ -132,13 +133,13 @@ describe("win layout: content-driven heights", () => {
     expect(rects.k1).toBeUndefined();
   });
 
-  it("a user height (st.h) is the card's height, floored at the header plus 40; siblings keep theirs", () => {
+  it("a user height (st.h) is the card's height, floored at the header plus 40; siblings on its line take the line height", () => {
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const c = fit({ a: 100, b: 100 });
     const r = layout(row, {}, root(1000), { a: { h: 260 } }, c).rects;
     expect(r.a.h).toBe(260);
-    expect(r.b.h).toBe(100);
-    expect(layout(row, {}, root(1000), { a: { h: 10 } }, c).rects.a.h).toBe(cfg.HEAD_H + 40);
+    expect(r.b.h).toBe(260);
+    expect(layout(row, {}, root(1000), { a: { h: 10 } }, c).rects.a.h).toBe(100); // floored at HEAD_H+40 = 68, then the line height (was 68);
   });
 
   it("same input twice gives identical rects", () => {
