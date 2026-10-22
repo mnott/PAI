@@ -886,11 +886,11 @@ function mergeSnapshotWorker(
   assertNoNodeModules(st.cwd, snapshot, branch, id);
   assertNoSnapshotDrift(st.cwd, snapshot, changedPaths, id);
   const diff = execFileSync("git", ["-C", st.cwd, "diff", "--binary", snapshot, branch], {
-    encoding: "utf8",
+    encoding: "buffer",
     timeout: 30_000,
     maxBuffer: 64 * 1024 * 1024,
   });
-  if (diff.trim()) {
+  if (diff.length > 0) {
     try {
       execFileSync("git", ["-C", st.cwd, "apply", "--binary"], {
         input: diff,
