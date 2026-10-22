@@ -4,7 +4,7 @@
  * spelling is the one PAI already uses everywhere (encodeDir, src/cli/lib/utils.ts).
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
 import { encodeDir } from "../cli/lib/utils.js";
@@ -85,31 +85,62 @@ function sessionFiles(dir: string): string[] {
   }
 }
 
-function toSession(harness: string, file: string, dir: string): HarnessSession {
+const CHUNK = 64 * 1024;
+
+/** Parsed lines of `text`; the first and last may be cut by the chunk edge, so `partialFirst`/`partialLast` drop them. */
+function parseLines(text: string, partialFirst: boolean, partialLast: boolean): Line[] {
+  const lines = text.split("\n");
+  if (partialFirst) lines.shift();
+  if (partialLast) lines.pop();
+  const out: Line[] = [];
+  for (const raw of lines) {
+    if (!raw.trim()) continue;
+    try {
+      out.push(JSON.parse(raw) as Line);
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
+}
+
+/** The session of one transcript, reading only its first and last 64 KB; null when the file vanished. */
+function toSession(harness: string, file: string, dir: string): HarnessSession | null {
   const id = file.slice(0, -".jsonl".length);
+  const path = join(dir, file);
   let startedAt: string | undefined;
   let updatedAt: string | undefined;
   let cwd: string | undefined;
+  let mtime: string;
   try {
-    for (const raw of readFileSync(join(dir, file), "utf8").split("\n")) {
-      if (!raw.trim()) continue;
-      let obj: Line;
+    const size = statSync(path).size;
+    mtime = new Date(statSync(path).mtimeMs).toISOString();
+    try {
+      const fd = openSync(path, "r");
       try {
-        obj = JSON.parse(raw) as Line;
-      } catch {
-        continue;
+        const read = (pos: number, len: number): string => {
+          const buf = Buffer.alloc(len);
+          return buf.toString("utf8", 0, readSync(fd, buf, 0, len, pos));
+        };
+        const head = parseLines(read(0, Math.min(size, CHUNK)), false, size > CHUNK);
+        for (const obj of head) {
+          if (typeof obj.cwd === "string" && obj.cwd) cwd ??= obj.cwd;
+          if (typeof obj.timestamp === "string" && obj.timestamp) startedAt ??= obj.timestamp;
+          if (cwd && startedAt) break;
+        }
+        const from = Math.max(0, size - CHUNK);
+        const tail = parseLines(read(from, size - from), from > 0, false);
+        for (const obj of tail) if (typeof obj.timestamp === "string" && obj.timestamp) updatedAt = obj.timestamp;
+      } finally {
+        closeSync(fd);
       }
-      if (typeof obj.cwd === "string" && obj.cwd) cwd ??= obj.cwd;
-      if (typeof obj.timestamp === "string" && obj.timestamp) {
-        startedAt ??= obj.timestamp;
-        updatedAt = obj.timestamp;
-      }
+    } catch {
+      // unreadable file: mtime still lists it
     }
   } catch {
-    // unreadable file: mtime below still lists it
+    return null; // vanished between listing and stat
   }
-  const mtime = new Date(statSync(join(dir, file)).mtimeMs).toISOString();
-  return { harness, id, cwd, path: join(dir, file), startedAt, updatedAt: updatedAt ?? mtime };
+  return { harness, id, cwd, path, startedAt, updatedAt: updatedAt ?? mtime };
 }
 
 export const claudeCodeAdapter: HarnessAdapter = {
@@ -125,7 +156,10 @@ export const claudeCodeAdapter: HarnessAdapter = {
     for (const d of dirs) {
       const dir = join(projectsDir, d);
       if (!existsSync(dir)) continue;
-      for (const f of sessionFiles(dir)) out.push(toSession(this.name, f, dir));
+      for (const f of sessionFiles(dir)) {
+        const sess = toSession(this.name, f, dir);
+        if (sess) out.push(sess);
+      }
     }
     const since = opts.sinceMs !== undefined ? Date.now() - opts.sinceMs : undefined;
     return out
