@@ -26,7 +26,11 @@ export class NtfyProvider implements NotificationProvider {
       };
 
       if (payload.title) {
-        headers["Title"] = payload.title;
+        // HTTP header values must be Latin-1; RFC 2047 carries the rest (ntfy decodes it).
+        // eslint-disable-next-line no-control-regex
+        headers["Title"] = /^[\x20-\x7e]*$/.test(payload.title)
+          ? payload.title
+          : `=?UTF-8?B?${Buffer.from(payload.title, "utf8").toString("base64")}?=`;
       }
 
       if (cfg.priority && cfg.priority !== "default") {
