@@ -187,8 +187,13 @@ providers:
       fast: haiku
 
 # Chat model alias of the built-in login's own orchestrator session. Not a
-# worker model: it passes through on the native provider only.
+# worker model: it passes through on the native provider only. A value in the
+# user's workers.yaml wins over this one.
 orchestratorModel: opus
+
+# Optional top-level `local: <provider>` (not set here): the preferred local
+# model when several local servers answer (`--local`, `local`). It is used when
+# running, else --local follows the routing tier order (tiers above).
 
 # USD per million tokens by model family, matched on the model name (`pai audit
 # usage`, transcript cost). A user's prices merges over this per family.
