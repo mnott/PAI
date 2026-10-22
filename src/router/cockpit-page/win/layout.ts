@@ -85,8 +85,19 @@ function winFlow(node,w,st,cfg,kids){
   if(x<1&&(sp?x*(w+gap)-gap:x*(w-(vis.length-1)*gap))<winCardMinW(cfg,kids,id))x=1;
   f.push(x);
  }
+ // the widths a line would get: a share card its fraction, the autos the rest by weight; every one must hold its least width
+ var fits=function(c){
+  var u=0,a=0,k,q,r;
+  for(k=0;k<c.length;k++){q=c[k];if(winSp(st,node.ch[vis[q]].id)||f[q]>=1)u+=f[q]>=1?w:f[q]*(w+gap)-gap;else a+=node.sz[vis[q]]||0}
+  r=w-u-(c.length-1)*gap;
+  for(k=0;k<c.length;k++){
+   q=c[k];if(f[q]>=1||winSp(st,node.ch[vis[q]].id))continue;
+   if(a>0&&r*(node.sz[vis[q]]||0)/a<winCardMinW(cfg,kids,node.ch[vis[q]].id))return false;
+  }
+  return true;
+ };
  for(j=0;j<vis.length;j++){
-  if(cur.length&&fr+f[j]>1.0001){lines.push(cur);cur=[];fr=0}
+  if(cur.length&&(fr+f[j]>1.0001||!fits(cur.concat([j])))){lines.push(cur);cur=[];fr=0}
   cur.push(j);fr+=f[j];
   if(f[j]>=1){lines.push(cur);cur=[];fr=0}
  }
