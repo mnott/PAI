@@ -106,7 +106,7 @@ function insertMissing(node,missing,prevOf,knownIds,isRoot,defaultsNode){
  /** Insert id right after anchor, mirroring the default layout: if the default holds both
  *  in a row, the card joins that row (a band that collapsed to a single leaf regains its
  *  row); otherwise it goes after the anchor in the anchor's parent, else as a new band. */
-function place(n,id){
+function placeLeaf(n,id){
   var nxt=anchorOf(n,id);
   if(nxt){
    // the default row rule: if the default layout holds the anchor and id side by side in a
@@ -156,7 +156,7 @@ function place(n,id){
   n.ch.push(leaf(id));n.sz.push(isRoot?400:0.5);
   return n;
  }
- for(i=0;i<missing.length;i++)node=place(node,missing[i]);
+ for(i=0;i<missing.length;i++)node=placeLeaf(node,missing[i]);
  return normalize(node,isRoot!==false);
 }
 /** The ids this container's own default subtree has but its saved tree lacks, in default

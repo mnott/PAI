@@ -121,6 +121,8 @@ main.win .card.min .cbody{display:none}
 .wgutter:hover,.wgutter:focus-visible{background:var(--acc);opacity:.45;outline:none}
 .cgrip{background:none;border:0;padding:0 2px;color:var(--dim);cursor:grab;font:inherit;line-height:1;touch-action:none}
 .cgrip:hover,.cgrip:focus-visible{color:var(--acc);outline:none}
+.dropind{position:fixed;z-index:50;pointer-events:none;background:var(--acc);border-radius:2px}
+.dropind.bad{background:none;outline:2px dashed var(--bad);outline-offset:1px}
 .ctitle{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
 .cstatus{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--dim)}
 .cstatus:empty{display:none}

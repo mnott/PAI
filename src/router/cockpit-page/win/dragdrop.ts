@@ -53,7 +53,7 @@ function ddState(id){
  return st;
 }
 function ddMove(c,dragId,targetId,zone){
- return moveCard(c.tree,dragId,targetId,zone,{kids:Win.state().kids,state:ddState(dragId),cfg:Win.cfg(),box:ddBox(c.key)});
+ return dropTry(c.tree,dragId,targetId,zone,{kids:Win.state().kids,state:ddState(dragId),cfg:Win.cfg(),box:ddBox(c.key)});
 }
 function ddApply(key,tree){
  if(typeof anchorKeep==="function")anchorKeep(function(){Win.apply(key,tree)});
@@ -71,12 +71,13 @@ function winDragInit(doc,win,opts){
  opts=opts||{};
  var PRESS=opts.pressMs===undefined?400:opts.pressMs;
  var D=null,ind=null,K=null;
- function showInd(R,zone,bad){
+ function showInd(R,zone,bad,why){
   if(!ind){ind=doc.createElement("div");ind.className="dropind";doc.body.appendChild(ind)}
   var b=ddBar(R,zone),s=ind.style;
   s.left=b.x+"px";s.top=b.y+"px";s.width=b.w+"px";s.height=b.h+"px";
   ind.setAttribute("data-zone",zone);
   ind.classList.toggle("bad",!!bad);
+  if(bad&&why)ind.setAttribute("title",why);else ind.removeAttribute("title");
  }
  function hideInd(){if(ind){ind.remove();ind=null}}
  function status(id,kind,s){var c=Win.ctx(id);if(c)c.status(kind,s)}
@@ -97,10 +98,10 @@ function winDragInit(doc,win,opts){
  function feedback(h){
   D.drop=null;
   if(!h){hideInd();status(D.id,"","");return}
-  var t=ddMove(h.c,D.id,h.tid,h.zone);
+  var r=ddMove(h.c,D.id,h.tid,h.zone),t=r.tree;
   var bad=t===null;
-  showInd(h.R,h.zone,bad);
-  if(bad){status(D.id,"err","target too small to split")}
+  showInd(h.R,h.zone,bad,r.why);
+  if(bad){status(D.id,"err",r.why||"target too small to split")}
   else{status(D.id,"","");D.drop={c:h.c,tree:t}}
  }
  function endPointer(){
@@ -163,8 +164,8 @@ function winDragInit(doc,win,opts){
   if(!c)return false;
   var nb=neighbor(ddRects(c.tree),id,dir);
   if(!nb)return false;
-  var t=ddMove(c,id,nb,DD_ZONE[dir]);
-  if(!t||t===c.tree)return false;
+  var r=ddMove(c,id,nb,DD_ZONE[dir]),t=r.tree;
+  if(!t||t===c.tree){if(r.why)Win.announce(r.why);return false}
   ddApply(c.key,t);
   Win.announce("moved "+ddTitle(id)+" "+(dir==="up"?"above":dir==="down"?"below":dir+" of")+" "+ddTitle(nb));
   refocus(id);

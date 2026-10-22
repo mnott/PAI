@@ -19,12 +19,16 @@ export const WIN_TREE_JS = String.raw`function leaf(id){return{k:"c",id:String(i
 function split(d,ch,sz){return{k:"s",d:d==="c"?"c":"r",ch:ch||[],sz:sz||[]}}
 function isSplit(n){return!!n&&n.k==="s"}
 /** Bottom-up normalize: children first, then this node. isRoot marks the top node:
- *  a root column holds band px (left alone); every other split holds weights. */
+ *  a root column holds band px (left alone); every other split holds weights. The
+ *  children of a root column stay root-aware, so a column merged up into the root keeps
+ *  its px; a band split that collapses to a bare leaf keeps its band px because layout
+ *  reads the band's own sz slot, not the leaf's node. */
 function normalize(node,isRoot){
  if(!isSplit(node))return node;
  var ch=[],sz=[],i;
+ var childRoot=isRoot===true&&node.d==="c"; // children of the root column are root-aware
  for(i=0;i<node.ch.length;i++){
-  var c=normalize(node.ch[i],false);
+  var c=normalize(node.ch[i],childRoot);
   if(isSplit(c)&&c.d===node.d){
    // merge same-direction nesting: the child's weights are relative to the child, so multiply
    var w=node.sz[i]||0;
@@ -85,8 +89,10 @@ function removeLeaf(tree,id,isRoot){
  for(var i=0;i<tree.ch.length;i++){
   var c=tree.ch[i];
   if(c.k==="c"){if(c.id===id){tree.ch.splice(i,1);tree.sz.splice(i,1);break}}
-  else if(findLeaf(c,id)){tree.ch[i]=removeLeaf(c,id,false);break}
+  else if(findLeaf(c,id)){tree.ch[i]=removeLeaf(c,id,isRoot===true&&tree.d==="c");break}
  }
+ // a collapsed band keeps its px slot: return the split holding the leaf, not the leaf
+ if(tree.ch.length===1&&tree.sz.length===1&&tree.ch[0].k==="c"&&isRoot===true&&tree.d==="c")return tree;
  return normalize(tree,isRoot===undefined?true:isRoot);
 }
 `;

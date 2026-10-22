@@ -6,8 +6,14 @@ import { fileURLToPath } from "node:url";
 const src = readFileSync(fileURLToPath(new URL("./win/drop.ts", import.meta.url)), "utf8");
 const m = src.match(/export const WIN_DROP_JS = String\.raw`([\s\S]*?)`;/);
 if (!m) throw new Error("WIN_DROP_JS not found in win/drop.ts");
+const read = (f: string, name: string) => {
+  const mm = readFileSync(fileURLToPath(new URL(`./win/${f}.ts`, import.meta.url)), "utf8").match(new RegExp(`export const ${name} = String\\.raw\`([\\s\\S]*?)\`;`));
+  if (!mm) throw new Error(`${name} not found`);
+  return mm[1];
+};
+// drop.ts owns only the drop ops; the tree and layout helpers come from their own modules
 const api = (new Function(
-  `${m[1]}\nreturn {leaf:leaf,split:split,ids:ids,zoneAt:zoneAt,moveCard:moveCard,neighbor:neighbor,canDrop:canDrop,layout:layout};`,
+  `${read("tree", "WIN_TREE_JS")}\n${read("layout", "WIN_LAYOUT_JS")}\n${m[1]}\nreturn {leaf:leaf,split:split,ids:ids,zoneAt:zoneAt,moveCard:moveCard,dropTry:dropTry,neighbor:neighbor,canDrop:canDrop,layout:layout};`,
 ) as any)();
 const leaf = (id: string) => api.leaf(id);
 const split = (d: string, ch: any[], sz: number[]) => api.split(d, ch, sz);
@@ -221,5 +227,20 @@ describe("win drop (spec 3.3)", () => {
     }
     expect(runs).toBe(300);
     expect(accepted).toBeGreaterThan(50); // most random drops are accepted
+  });
+});
+
+describe("win drop: refuse a drop that leaves a card without room", () => {
+  it("a drop that newly makes a row stack is refused with the reason; the same row already stacked stays allowed", () => {
+    const t = split("c", [split("r", [leaf("a"), leaf("b")], [0.5, 0.5]), leaf("c")], [300, 200]);
+    const kids = { a: { type: "chart" }, b: { type: "chart" }, c: { type: "chart" } };
+    const box = { w: 700, h: 1000 }; // a,b are 346 px each (>= 300); a third card in the row would be 225 < 300
+    const r = api.dropTry(t, "c", "b", "right", opts(kids, {}, box));
+    expect(r.tree).toBe(null);
+    expect(r.why).toMatch(/^no room: \w+ would be \d+ px, needs 300$/);
+    expect(moveCard(t, "c", "b", "right", opts(kids, {}, box))).toBe(null);
+    expect(api.canDrop(t, kids, {}, cfg, "c", "b", "right", box)).toBe(false);
+    // a roomy box takes the same drop
+    expect(moveCard(t, "c", "b", "right", opts(kids, {}, { w: 1400, h: 1000 }))).not.toBe(null);
   });
 });

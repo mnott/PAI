@@ -84,3 +84,35 @@ describe("C1 guards: layout knobs", () => {
     expect(b.bar).toBeGreaterThan(a.bar);
   });
 });
+
+// ---- one owner: the modules of the win runtime share one scope; a function declared by two of them silently replaces the earlier one ----
+import { WIN_TREE_JS } from "./cockpit-page/win/tree.js";
+import { WIN_DROP_JS } from "./cockpit-page/win/drop.js";
+import { WIN_LAYOUT_JS } from "./cockpit-page/win/layout.js";
+import { WIN_MORPH_JS } from "./cockpit-page/win/morph.js";
+import { WIN_STORE_JS } from "./cockpit-page/win/store.js";
+import { WIN_INFO_JS } from "./cockpit-page/win/info.js";
+import { WIN_CARD_JS } from "./cockpit-page/win/card.js";
+import { WIN_ANCHOR_JS } from "./cockpit-page/win/anchor.js";
+import { WIN_DRAGDROP_JS } from "./cockpit-page/win/dragdrop.js";
+
+describe("win runtime modules: one owner per function", () => {
+  const mods: Record<string, string> = {
+    tree: WIN_TREE_JS, drop: WIN_DROP_JS, layout: WIN_LAYOUT_JS, morph: WIN_MORPH_JS, store: WIN_STORE_JS,
+    info: WIN_INFO_JS, card: WIN_CARD_JS, anchor: WIN_ANCHOR_JS, dragdrop: WIN_DRAGDROP_JS,
+  };
+  it("the runtime is exactly these modules", () => {
+    expect(WIN_RUNTIME_JS).toBe(Object.values(mods).join("\n"));
+  });
+  it("no function is declared by two modules", () => {
+    const owners = new Map<string, string[]>();
+    for (const [mod, src] of Object.entries(mods)) {
+      for (const line of src.split("\n")) {
+        const m = /^function\s+(\w+)/.exec(line);
+        if (m) owners.set(m[1], [...(owners.get(m[1]) ?? []), mod]);
+      }
+    }
+    expect(owners.get("moveCard")).toEqual(["drop"]);
+    expect([...owners].filter(([, v]) => new Set(v).size > 1).map(([k, v]) => `${k}: ${v.join(",")}`)).toEqual([]);
+  });
+});
