@@ -239,8 +239,57 @@ type WholeLog = { days: number[]; daily: Record<string, number[]>; promptByProvi
 const WHOLE_LOG_TTL_MS = 30_000;
 const wholeLogMemo = new WeakMap<UsageRow[], { n: number; at: number; sig: string; out: WholeLog }>();
 
+/** Whole-log figures, folded row by row as the log is read so the rows themselves can be dropped once they are older than any window. */
+class LogAgg {
+  /** per provider+model: requests, prompt tokens, first ts (a fold by model owner is applied on top at read time) */
+  readonly pairs = new Map<string, { provider: string; model: string; n: number; prompt: number; since: string }>();
+  /** tokens per UTC day per model, with the sequence number of the model's first row that day (keeps the model order of a row scan) */
+  readonly daily = new Map<number, Map<string, { sum: number; seq: number }>>();
+  private seq = 0;
+
+  add(r: UsageRow): void {
+    const model = typeof r.model === "string" ? canonicalModel(r.model) : "";
+    const k = `${r.provider}\u0000${model}`;
+    const p = this.pairs.get(k) ?? { provider: r.provider, model, n: 0, prompt: 0, since: r.ts };
+    p.n++;
+    p.prompt += (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
+    if (r.ts < p.since) p.since = r.ts;
+    this.pairs.set(k, p);
+    const day = bucketStart(Date.parse(r.ts), DAY);
+    const d = this.daily.get(day) ?? new Map<string, { sum: number; seq: number }>();
+    const e = d.get(model) ?? { sum: 0, seq: this.seq };
+    e.sum += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
+    d.set(model, e);
+    this.daily.set(day, d);
+    this.seq++;
+  }
+
+  /** Forget the day buckets before `cut`: no window looks back further than the 14 days the daily chart shows. */
+  pruneDaily(cut: number): void {
+    for (const day of this.daily.keys()) if (day < cut) this.daily.delete(day);
+  }
+
+  /** The pairs as the fold of the providers would have rewritten their rows. */
+  folded(providers: Record<string, { enabled?: boolean }>): Array<{ provider: string; model: string; n: number; prompt: number; since: string }> {
+    const owners = modelOwners(providers as Parameters<typeof modelOwners>[0]);
+    const all = [...this.pairs.values()];
+    return owners.size ? (foldProviders(all as unknown as UsageRow[], providers, owners) as unknown as typeof all) : all;
+  }
+}
+
+const aggs = new WeakMap<UsageRow[], LogAgg>();
+
+/** The aggregates a cached log carries; a plain array (tests, callers that bring their own rows) is scanned. */
+function aggOf(rows: UsageRow[]): LogAgg {
+  const have = aggs.get(rows);
+  if (have) return have;
+  const a = new LogAgg();
+  for (const r of rows) a.add(r);
+  return a;
+}
+
 /** The parts of the cockpit payload that read the whole log whatever the window is. Costly on a big log, so they are kept per log array until it grows or 30 s pass (the speed table moves with the clock). */
-function wholeLog(allRows: UsageRow[], now: number, providers: Record<string, { baseUrl?: string }>): WholeLog {
+function wholeLog(allRows: UsageRow[], agg: LogAgg, now: number, providers: Record<string, { enabled?: boolean; baseUrl?: string }>): WholeLog {
   const sig = JSON.stringify(Object.entries(providers).map(([k, v]) => [k, v.baseUrl]));
   const m = wholeLogMemo.get(allRows);
   if (m && m.n === allRows.length && m.sig === sig && Math.abs(now - m.at) < WHOLE_LOG_TTL_MS) return m.out;
@@ -249,11 +298,15 @@ function wholeLog(allRows: UsageRow[], now: number, providers: Record<string, { 
   const days: number[] = [];
   for (let t = dayFrom; t <= now; t += DAY) days.push(t);
   const daily = dict<number[]>();
-  for (const r of allRows) {
-    const t = Date.parse(r.ts);
-    if (t < dayFrom) continue;
-    const arr = (daily[canonicalModel(r.model)] ??= days.map(() => 0));
-    arr[Math.floor((bucketStart(t, DAY) - dayFrom) / DAY)]! += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
+  const inRange: Array<{ day: number; model: string; sum: number; seq: number }> = [];
+  for (const [day, ms] of agg.daily) {
+    if (day < dayFrom) continue;
+    for (const [model, e] of ms) inRange.push({ day, model, ...e });
+  }
+  inRange.sort((a, b) => a.seq - b.seq);
+  for (const e of inRange) {
+    const arr = (daily[e.model] ??= days.map(() => 0));
+    arr[Math.floor((e.day - dayFrom) / DAY)]! += e.sum;
   }
 
   // prompt tokens per provider over the whole log: denominator for the local
@@ -261,9 +314,9 @@ function wholeLog(allRows: UsageRow[], now: number, providers: Record<string, { 
   const promptByProvider = dict<number>();
   // first row per provider: the log (router restart) is younger than a server's own counters
   const promptSince = dict<string>();
-  for (const r of allRows) {
-    if (!promptSince[r.provider] || r.ts < promptSince[r.provider]!) promptSince[r.provider] = r.ts;
-    promptByProvider[r.provider] = (promptByProvider[r.provider] ?? 0) + (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
+  for (const p of agg.folded(providers)) {
+    if (!promptSince[p.provider] || p.since < promptSince[p.provider]!) promptSince[p.provider] = p.since;
+    promptByProvider[p.provider] = (promptByProvider[p.provider] ?? 0) + p.prompt;
   }
 
   const out = { days, daily, promptByProvider, promptSince, speed: buildSpeed(allRows, now, canonicalModel, (p) => isLoopbackUrl(providers[p]?.baseUrl ?? "")) };
@@ -310,18 +363,18 @@ export function buildCockpitData(
 ) {
   const { span, bucket } = WINDOWS[win];
   const from = bucketStart(now - span, bucket);
+  const agg = aggOf(allRows);
   allRows = foldedRows(allRows, providers);
   const rows = windowRows(allRows, from);
   const retries = retryRows(rows);
 
   // ecosystem per model: that of the provider serving most of its requests over the whole log
   const ecoCount = new Map<string, Map<string, number>>();
-  for (const r of allRows) {
-    const m = canonicalModel(r.model);
-    const c = ecoCount.get(m) ?? new Map<string, number>();
+  for (const r of agg.folded(providers)) {
+    const c = ecoCount.get(r.model) ?? new Map<string, number>();
     const e = providerEcosystem(r.provider, providers);
-    c.set(e, (c.get(e) ?? 0) + 1);
-    ecoCount.set(m, c);
+    c.set(e, (c.get(e) ?? 0) + r.n);
+    ecoCount.set(r.model, c);
   }
   const ecosystems = dict<string>();
   for (const [m, c] of ecoCount) ecosystems[m] = [...c.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]![0];
@@ -429,7 +482,7 @@ export function buildCockpitData(
     })
     .sort((a, b) => b.input + b.output + b.cacheWrite + b.cacheRead - (a.input + a.output + a.cacheWrite + a.cacheRead));
 
-  const { daily, days, promptByProvider, promptSince, speed } = wholeLog(allRows, now, providers);
+  const { daily, days, promptByProvider, promptSince, speed } = wholeLog(allRows, agg, now, providers);
 
   const withRatio = <T extends Tok>(x: T) => ({ ...x, hitRatio: hitRatio(x) });
   const sessionSplit: SessionKindSplit = splitBySessionKind(rows);
@@ -474,11 +527,18 @@ const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T
  * The usage log as rows, kept in memory: a log that only grew is read from where the last read
  * stopped (the router appends a row per request, so a full reread of tens of MB on every append
  * would block the event loop); one that shrank or was replaced is read again from the start.
- * Rows are kept for the router's lifetime because wholeLog aggregates the whole log (14 days of
- * tokens per day, promptByProvider/promptSince); bounding them needs incremental aggregates.
+ * The whole-log figures (prompt tokens and first ts per provider, requests per provider+model,
+ * tokens per day) are folded into running aggregates as rows are read; the rows themselves are
+ * kept for ROWS_KEPT_MS only (the 7 d window reaches back 8 d at most, one day of slack on top)
+ * and dropped once a day, so memory follows the window, not the log.
  */
-export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
+const ROWS_KEPT_MS = 9 * DAY;
+const DAILY_KEPT_MS = 15 * DAY;
+
+export function cachedRows(file: string = usageLogFile(), clock: () => number = Date.now): () => UsageRow[] {
   let rows: UsageRow[] = [];
+  let agg = new LogAgg();
+  let lastTrim = 0;
   let ordered = true;
   let offset = 0;
   let mtimeMs = 0;
@@ -488,9 +548,12 @@ export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
   const fresh = (kept: UsageRow[]) => {
     rows = kept;
     if (ordered) markTimeOrdered(rows);
+    aggs.set(rows, agg);
   };
   const reset = () => {
     ordered = true;
+    agg = new LogAgg();
+    lastTrim = clock();
     fresh([]);
     offset = 0;
     ino = -1;
@@ -521,7 +584,9 @@ export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
         for (const l of chunk.toString("utf8").split("\n")) {
           if (!l) continue;
           try {
-            rows.push(JSON.parse(l) as UsageRow);
+            const r = JSON.parse(l) as UsageRow;
+            agg.add(r);
+            rows.push(r);
           } catch {
             /* skip torn line */
           }
@@ -532,6 +597,13 @@ export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
           else if (t >= 0) lastMs = t;
         }
         if (!ordered) fresh([...rows]); // a new, unmarked array: the order-dependent scans fall back to a filter
+        const at = clock();
+        if (at - lastTrim >= DAY) {
+          // a new array: the memos keyed by the old one rebuild once a day
+          lastTrim = at;
+          agg.pruneDaily(bucketStart(at, DAY) - DAILY_KEPT_MS);
+          fresh(rows.filter((r) => !(Date.parse(r.ts) < at - ROWS_KEPT_MS)));
+        }
         offset += chunk.length;
         ino = st.ino;
         if (head.length < USAGE_HEAD_BYTES) head = nowHead.slice(0, Math.min(offset, USAGE_HEAD_BYTES));
