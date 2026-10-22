@@ -111,10 +111,14 @@ describe.skipIf(!CHROME)("cockpit drag and drop with real pointer events (CDP)",
     const fit2 = await b.ev<string[]>(`(function(){var bad=[];document.querySelectorAll('#win-root [data-card^="limits"]').forEach(function(e){if(e.style.display==="none")return;var body=e.querySelector(".cbody");if(body&&body.scrollHeight>body.clientHeight+1)bad.push(e.dataset.card+" inner scroll")});return bad})()`);
     expect(fit2, "E2c the limits cards do not scroll inside").toEqual([]);
 
-    // E3: a target in another container is a drop target now (the card changes its parent); the dropped card stays inside the new group
+    // E3: a card reorders only inside its own section; a target in another section is refused: no indicator, nothing moves
+    const s3 = await snap();
     const e3 = await drag("kpis.requests", "pool.host", 0.95, 0.5);
-    expect(e3.ind?.cls, "E3 shows the indicator").toBe("dropind");
-    expect(await b.ev<string>(`Win.el("kpis.requests").parentElement.closest(".card").dataset.card`), "E3 reparented").toBe("pool");
+    const s3b = await snap();
+    expect(e3.ind, "E3 shows no indicator").toBeNull();
+    expect(await b.ev<string>(`Win.el("kpis.requests").parentElement.closest(".card").dataset.card`), "E3 stays in kpis").toBe("kpis");
+    expect(s3b.tree, "E3 kpis.requests keeps its index in kpis").toBe(s3.tree);
+    expect(s3b.pool, "E3 pool unchanged").toBe(s3.pool);
   }, 120_000);
   it("E4 a top-level section dragged over an inner card of another section drops beside/below that section", async () => {
     const b = await launchDrag(1500, 1000);
