@@ -27,7 +27,7 @@ import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runt
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { registryModels, type RegistryModel } from "./cockpit-registry-models.js";
 import { readLocalConfig, tierButtons, type LocalTier } from "../workers/local-tiers.js";
-import { instanceEngineKey, readInstances } from "../workers/local-instances.js";
+import { instanceEngineKey, readLiveInstances } from "../workers/local-instances.js";
 import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-health.js";
 import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpoints.js";
 import { workersYamlPath } from "../workers/workers-config.js";
@@ -835,7 +835,7 @@ function localInstanceRows(): Array<{ id: string; model: string; port: number; p
   try {
     const logDir = workersLogDir(readWorkersSection().workers);
     const engines = sharedScheduler().snapshot().engines;
-    return readInstances(logDir).map((i) => {
+    return readLiveInstances(logDir).map((i) => {
       const e = engines[instanceEngineKey(i)];
       return { id: i.id, model: i.model, port: i.port, ...(i.pid !== undefined ? { pid: i.pid } : {}), state: i.state, ...(i.error ? { error: i.error } : {}), inflight: e ? (e.inflight ? 1 : 0) + Object.values(e.queued).reduce((a, n) => a + n, 0) : 0 };
     });
@@ -895,9 +895,10 @@ async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[];
     }
     const running = async (name: string) => ls.some((l) => l.kind === "local" && l.provider === name && l.up === true);
     const rows = await routeRows(workers, { logDir: workersLogDir(workers), budgets, running, profiles: readProfiles() });
-    const managed = readInstances(workersLogDir(workers)).filter((i) => i.state === "ready");
+    const managed = readLiveInstances(workersLogDir(workers)).filter((i) => i.state === "ready");
     const registered = Object.entries(workers.providers).filter(([, p]) => p.characteristics && p.enabled !== false).map(([name, p]) => ({ id: name, model: name, provider: name, url: p.baseUrl, origin: "registered" as const, port: 0, state: "ready" as const, startedAt: 0, log: "", characteristics: p.characteristics }));
     await cockpitEndpointHealth.refresh(registered);
+    await cockpitEndpointHealth.refreshManaged(managed);
     const endpoints = endpointRows(workers, managed, (i) => cockpitEndpointHealth.isHealthy(i));
     return { rows, flow: flowText(rows), choices: selectorChoices(workers, endpoints), endpoints };
   } catch {

@@ -27,7 +27,7 @@ import { LineCounter, parseDocument, isMap, isScalar, type Document } from "yaml
 import { parseLocalConfig, resolveModelPath, LocalTierError } from "../workers/local-tiers.js";
 import { parseProvider, WorkersConfigError, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { yamlProviderToRaw, parseBuiltinAnthropic } from "../workers/workers-config.js";
-import { readInstances, type LocalInstance } from "../workers/local-instances.js";
+import { readLiveInstances, type LocalInstance } from "../workers/local-instances.js";
 import { appendLedger } from "../workers/ledger.js";
 import { COCKPIT_ACTION_EVENT } from "./cockpit-actions.js";
 
@@ -419,7 +419,7 @@ export function defaultRegistryCtx(yamlPath: string, ledger?: string, logDir?: s
     backupDir: join(dirname(yamlPath), "workers-backups"),
     explicitEnabled: true,
     ledger,
-    ...(logDir ? { running: () => readInstances(logDir) } : {}),
+    ...(logDir ? { running: () => readLiveInstances(logDir) } : {}),
   };
 }
 

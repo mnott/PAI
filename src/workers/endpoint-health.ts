@@ -7,13 +7,15 @@
  * synchronously, so the resolver can take it as a predicate. An endpoint that
  * has not been probed yet counts as healthy (optimistic, like its `ready`
  * state); a down one is excluded until a later probe sees it answer again.
- * Managed instances are healthy when their state is `ready`.
+ * Managed instances are healthy when their state is `ready` and, once `refreshManaged` has probed
+ * them, their port answered within the last two intervals (a process killed outside the pool must
+ * not stay "healthy" on a recorded flag).
  */
 
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 import type { LocalInstance } from "./local-instances.js";
 
-export const ENDPOINT_PROBE_INTERVAL_MS = 15_000;
+export const ENDPOINT_PROBE_INTERVAL_MS = 10_000;
 
 /** True when the endpoint at `url` answers GET /v1/models with 2xx. */
 export async function probeEndpointUrl(url: string, timeoutMs = LOCAL_PROBE_TIMEOUT_MS): Promise<boolean> {
@@ -29,6 +31,8 @@ export async function probeEndpointUrl(url: string, timeoutMs = LOCAL_PROBE_TIME
 export interface EndpointHealth {
   /** probe every registered endpoint whose cached answer is older than the interval; resolves when done */
   refresh(instances: LocalInstance[]): Promise<void>;
+  /** same probe for managed instances (their pid may be alive while the port is silent); resolves when done */
+  refreshManaged(instances: LocalInstance[]): Promise<void>;
   /** sync predicate for the resolver */
   isHealthy(i: LocalInstance): boolean;
 }
@@ -61,8 +65,14 @@ export function createEndpointHealth(deps: {
     async refresh(instances) {
       await Promise.all(instances.filter((i) => i.origin === "registered").map(refreshOne));
     },
+    async refreshManaged(instances) {
+      await Promise.all(instances.filter((i) => i.origin === "managed" && i.state === "ready").map(refreshOne));
+    },
     isHealthy(i) {
-      if (i.origin === "managed") return i.state === "ready";
+      if (i.origin === "managed") {
+        const hit = cache.get(i.id);
+        return i.state === "ready" && (hit === undefined || (hit.ok && now() - hit.at < interval * 2));
+      }
       return cache.get(i.id)?.ok ?? true;
     },
   };

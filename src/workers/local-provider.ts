@@ -38,7 +38,7 @@ import { loadStatuses } from "./status.js";
 import { workersYamlPath } from "./workers-config.js";
 import { workersLogDir } from "./paths.js";
 import { effectiveCap } from "./capacity.js";
-import { readInstances, type LocalInstance } from "./local-instances.js";
+import { readLiveInstances, type LocalInstance } from "./local-instances.js";
 import {
   LOCAL_STATUS_REFRESH_MS,
   readLocalStatus,
@@ -224,7 +224,7 @@ export function resolveLocalInstances(
   logDir: string,
   provider: string
 ): LocalInstance[] {
-  const rows = readInstances(logDir).filter((i) => i.provider === provider && i.state === "ready");
+  const rows = readLiveInstances(logDir).filter((i) => i.provider === provider && i.state === "ready");
   if (rows.length) return rows;
   const p = cfg.providers[provider];
   const hp = p ? providerHostPort(p) : null;

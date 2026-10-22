@@ -44,6 +44,16 @@ export interface LocalInstance {
 
 export const localInstancesPath = (logDir: string): string => join(logDir, "local-instances.json");
 
+/** Is the process alive (signal 0; EPERM means it exists under another user). */
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export function readInstances(logDir: string): LocalInstance[] {
   const path = localInstancesPath(logDir);
   if (!existsSync(path)) return [];
@@ -53,6 +63,11 @@ export function readInstances(logDir: string): LocalInstance[] {
   } catch {
     return [];
   }
+}
+
+/** The recorded rows minus managed ones whose process is gone (killed outside PAI); failed rows stay until dismissed. Readers that report or route use this; writers read the raw file. */
+export function readLiveInstances(logDir: string): LocalInstance[] {
+  return readInstances(logDir).filter((r) => !(r.origin === "managed" && r.state !== "failed" && r.pid && !pidAlive(r.pid)));
 }
 
 /** Atomic write (tmp + rename). */

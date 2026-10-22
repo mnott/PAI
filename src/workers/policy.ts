@@ -26,7 +26,7 @@ import {
 import { budgetCache } from "./budget.js";
 import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
 import { classRoute, entryProvider } from "./route-lists.js";
-import { endpointRegistry, readInstances, type LocalInstance } from "./local-instances.js";
+import { endpointRegistry, readLiveInstances, type LocalInstance } from "./local-instances.js";
 import type { LocalConfig } from "./local-tiers.js";
 import { parseSelector, resolveSelector } from "./route-table.js";
 import { cooldownRemaining, exclusionReason, quotaExceeded, readRoutingState } from "./routing.js";
@@ -185,7 +185,7 @@ export interface RouteFlags {
  */
 function expandSelectors(config: WorkersConfig, logDir: string, list: string[], instances?: () => LocalInstance[]): string[] {
   if (!list.some((e) => parseSelector(e))) return list.map(entryProvider);
-  const managed = instances ? instances() : readInstances(logDir);
+  const managed = instances ? instances() : readLiveInstances(logDir);
   const launched = { tiers: Object.fromEntries(tierProviderNames().map((p) => [p, { provider: p }])) } as unknown as LocalConfig;
   const registry = endpointRegistry(managed, config.providers, launched);
   const out: string[] = [];

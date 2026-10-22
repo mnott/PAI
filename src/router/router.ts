@@ -559,7 +559,7 @@ export function routerHandler(
       if (target.kind === "provider") {
         // every row resolves against the registry (managed + registered), then the least busy endpoint serves
         const registry = endpointRegistry(instancesOf(), providers, launched());
-        if (health) void health.refresh(registry);
+        if (health) void Promise.all([health.refresh(registry), health.refreshManaged(registry)]);
         const picked = pickInstance(prov, resolveSelector(target.name, registry).filter(healthy), (k) => held.get(k) ?? 0);
         if (picked) {
           const u = new URL(picked.url);
