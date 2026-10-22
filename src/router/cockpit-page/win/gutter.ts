@@ -33,10 +33,6 @@ export type WinResize = (
  *  resizeSplit(tree, splitPath, index, deltaPx, rects, state, cfg, kids) -> new tree | null.
  *  The tree is cloned; only the two neighbours' sz entries change.
  *  - row: weights; the weight moved is deltaPx / (the px the weights share) x (weight sum).
- *  - root column (splitPath [] and not cfg.bounded): sz are band px; the two bands trade
- *    deltaPx, other bands keep their px.
- *  - bounded column (path non-empty or cfg.bounded): weights of the height the non-minimized
- *    siblings share.
  *  Sizes are read from the laid-out rects (a split neighbour spans its leaves).
  *  Refused (null): bad path or index, a minimized or ghost neighbour, a row in narrow mode
  *  (stacked), no rects, or a neighbour below its minW/minH (a type's own value wins). */
@@ -119,38 +115,33 @@ function winGNarrowRow(s,rects,state,cfg){
 function winGInfo(tree,splitPath,index,rects,state,cfg){
  if(!tree||!splitPath)return null;
  var s=winGAt(tree,splitPath);
- if(!s||index<0||index+1>=s.ch.length)return null;
+ // heights are content-driven: only the gutters between the cards of a row (widths) exist
+ if(!s||s.d!=="r"||index<0||index+1>=s.ch.length)return null;
  var a=s.ch[index],b=s.ch[index+1];
  if(winGAll(a,state,winGGhost)||winGAll(b,state,winGGhost))return null;
  var ea=winGExt(a,rects),eb=winGExt(b,rects);
  if(!ea||!eb)return null;
- var band=s.d==="c"&&splitPath.length===0&&!cfg.bounded;
- var ax=s.d==="r"?"x":"y";
- if(ax==="x"&&eb.x0<=ea.x0)return null; // narrow mode: the row is stacked
- if(ax==="x"&&winGNarrowRow(s,rects,state,cfg))return null; // narrow mode: the row wraps into a grid of equal widths
+ var ax="x";
+ if(eb.x0<=ea.x0)return null; // narrow mode: the row is stacked
+ if(winGNarrowRow(s,rects,state,cfg))return null; // narrow mode: the row wraps into a grid of equal widths
  if(winGAll(a,state,winGMin)||winGAll(b,state,winGMin))return null;
  var cell=0,i;
- if(!band){
-  for(i=0;i<s.ch.length;i++){
-   if(winGAll(s.ch[i],state,winGGhost))continue;
-   if(ax==="y"&&winGAll(s.ch[i],state,winGMin))continue;
-   var e=winGExt(s.ch[i],rects);
-   if(e)cell+=ax==="x"?e.x1-e.x0:e.y1-e.y0;
-  }
-  if(!(cell>0))return null;
+ for(i=0;i<s.ch.length;i++){
+  if(winGAll(s.ch[i],state,winGGhost))continue;
+  var e=winGExt(s.ch[i],rects);
+  if(e)cell+=e.x1-e.x0;
  }
- return{s:s,mode:band?"band":(ax==="x"?"row":"col"),ea:ea,eb:eb,ia:index,ib:index+1,ax:ax,a:a,b:b,cell:cell};
+ if(!(cell>0))return null;
+ return{s:s,mode:"row",ea:ea,eb:eb,ia:index,ib:index+1,ax:ax,a:a,b:b,cell:cell};
 }
 /** Weight/px arithmetic on a clone. Returns the new tree or null (below a minimum). */
 function resizeSplit(tree,splitPath,index,deltaPx,rects,state,cfg,kids){
  var g=winGInfo(tree,splitPath,index,rects,state,cfg);
  if(!g||!deltaPx&&deltaPx!==0)return null;
- var sa=g.ax==="x"?g.ea.x1-g.ea.x0:g.ea.y1-g.ea.y0;
- var sb=g.ax==="x"?g.eb.x1-g.eb.x0:g.eb.y1-g.eb.y0;
+ var sa=g.ea.x1-g.ea.x0,sb=g.eb.x1-g.eb.x0;
  var na=sa+deltaPx,nb=sb-deltaPx;
  if(na<winGMinOf(cfg,kids,g.a,g.ax)||nb<winGMinOf(cfg,kids,g.b,g.ax))return null;
  var out=winGClone(tree),ns=winGAt(out,splitPath);
- if(g.mode==="band"){ns.sz[g.ia]=na;ns.sz[g.ib]=nb;return out}
  // weights: the pair keeps its combined weight, split in proportion to the new px
  var pair=ns.sz[g.ia]+ns.sz[g.ib];
  ns.sz[g.ia]=pair*na/(na+nb);
@@ -161,9 +152,7 @@ function resizeSplit(tree,splitPath,index,deltaPx,rects,state,cfg,kids){
 function gutterAt(tree,splitPath,index,state,rects,cfg){
  var g=winGInfo(tree,splitPath,index,rects,state,cfg);
  if(!g)return null;
- var cell=g.cell;
- if(g.mode==="band")cell=Math.max(g.ea.x1,g.eb.x1)-Math.min(g.ea.x0,g.eb.x0);
- else if(g.mode==="row")cell=cell+(winGVisible(g.s,state)-1)*cfg.GAP;
+ var cell=g.cell+(winGVisible(g.s,state)-1)*cfg.GAP;
  return{path:splitPath.slice(),index:index,a:g.a.id||"",b:g.b.id||"",cell:cell};
 }
 function winGVisible(s,st){

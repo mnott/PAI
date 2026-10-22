@@ -34,104 +34,95 @@ const cfg = {
   },
 };
 const root = (w: number) => ({ w });
-const bounded = (w: number, h: number) => ({ w, h });
+const fit = (o: Record<string, number>) => ({ ...cfg, fit: o });
 
-describe("win layout (spec 3.2)", () => {
-  it("two-up row 50/50 with the gutter between", () => {
+// Heights are content-driven: a card is as tall as its reading (cfg.fit) or its type's defaultH, a line as tall as its
+// tallest card, the next line starts below it. Tests that pinned band px, weights of a bounded height, narrow defaultH
+// stacking or the stretch of a row to its band were removed or rewritten: heights are now content-driven.
+describe("win layout: content-driven heights", () => {
+  it("two-up row: widths by weight with the gap between; each card its own content height", () => {
     const t = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
-    const { rects } = layout(t, {}, bounded(1008, 400), {}, cfg);
-    expect(rects.a).toEqual({ x: 0, y: 0, w: 500, h: 400, body: { w: 500, h: 372 } });
+    const { rects } = layout(t, {}, root(1008), {}, fit({ a: 100, b: 180 }));
+    expect(rects.a).toEqual({ x: 0, y: 0, w: 500, h: 100, body: { w: 500, h: 72 } });
     expect(rects.b.x).toBe(508);
     expect(rects.b.w).toBe(500);
-    // the gutter is exactly GAP between the two boxes
+    expect(rects.b.h).toBe(180); // no stretch: the shorter card keeps its height
     expect(rects.b.x - (rects.a.x + rects.a.w)).toBe(cfg.GAP);
   });
 
-  it("root bands in px; height is the sum of bands plus gutters", () => {
+  it("a column stacks its cards at their readings; height is the sum plus gaps", () => {
     const t = split("c", [leaf("a"), leaf("b")], [300, 200]);
-    const { rects, height } = layout(t, {}, root(1000), {}, cfg);
-    expect(rects.a).toEqual({ x: 0, y: 0, w: 1000, h: 300, body: { w: 1000, h: 272 } });
-    expect(rects.b.y).toBe(308);
-    expect(rects.b.h).toBe(200);
-    expect(height).toBe(300 + 8 + 200);
+    const { rects, height } = layout(t, {}, root(1000), {}, fit({ a: 90, b: 140 }));
+    expect(rects.a).toEqual({ x: 0, y: 0, w: 1000, h: 90, body: { w: 1000, h: 62 } });
+    expect(rects.b.y).toBe(98);
+    expect(rects.b.h).toBe(140);
+    expect(height).toBe(90 + 8 + 140);
   });
 
-  it("a minimized leaf in a bounded column gives its space to the siblings by weight", () => {
-    const t = split("c", [leaf("a"), leaf("b"), leaf("c")], [0.2, 0.3, 0.5]);
-    const { rects } = layout(t, {}, bounded(600, 500), { b: { min: 1 } }, cfg);
-    expect(rects.b.h).toBe(cfg.HEAD_H);
-    const avail = 500 - 2 * cfg.GAP - cfg.HEAD_H;
-    expect(rects.a.h).toBeCloseTo((0.2 / 0.7) * avail);
-    expect(rects.c.h).toBeCloseTo((0.5 / 0.7) * avail);
-    expect(rects.c.y).toBeCloseTo(rects.a.h + cfg.GAP + cfg.HEAD_H + cfg.GAP);
+  it("the sz of a column are ignored (no band px, no weight of a height)", () => {
+    const a = layout(split("c", [leaf("a"), leaf("b")], [1, 1]), {}, root(600), {}, fit({ a: 60, b: 70 }));
+    const b = layout(split("c", [leaf("a"), leaf("b")], [900, 5]), {}, root(600), {}, fit({ a: 60, b: 70 }));
+    expect(b).toEqual(a);
   });
 
-  it("a minimized leaf in a root band shrinks only itself; the band keeps its px", () => {
+  it("a card without a reading takes its type's defaultH", () => {
+    const { rects } = layout(split("c", [leaf("a"), leaf("b")], [1, 1]), { a: { type: "metric" } }, root(600), {}, cfg);
+    expect(rects.a.h).toBe(120);
+    expect(rects.b.h).toBe(cfg.defaultH);
+  });
+
+  it("a minimized card is HEAD_H tall and its line is as tall as the rest of the line", () => {
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const t = split("c", [row, leaf("below")], [400, 200]);
-    const { rects, height } = layout(t, {}, root(1000), { a: { min: 1 } }, cfg);
+    const { rects, height } = layout(t, {}, root(1000), { a: { min: 1 } }, fit({ b: 150, below: 60 }));
     expect(rects.a.h).toBe(cfg.HEAD_H);
-    expect(rects.a.y).toBe(0); // aligned to the top
-    expect(rects.b.h).toBe(400); // the band keeps its size
-    expect(rects.below.y).toBe(408);
-    expect(height).toBe(400 + 8 + 200);
+    expect(rects.a.y).toBe(0);
+    expect(rects.b.h).toBe(150);
+    expect(rects.below.y).toBe(158);
+    expect(height).toBe(158 + 60);
   });
 
-  it("an all-minimized root band shrinks to HEAD_H", () => {
+  it("an all-minimized line is HEAD_H tall", () => {
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const t = split("c", [row, leaf("below")], [400, 200]);
-    const { rects, height } = layout(t, {}, root(1000), { a: { min: 1 }, b: { min: 1 } }, cfg);
-    expect(rects.a.h).toBe(cfg.HEAD_H);
-    expect(rects.b.h).toBe(cfg.HEAD_H);
+    const { rects, height } = layout(t, {}, root(1000), { a: { min: 1 }, b: { min: 1 } }, fit({ below: 60 }));
     expect(rects.below.y).toBe(cfg.HEAD_H + cfg.GAP);
-    expect(height).toBe(cfg.HEAD_H + cfg.GAP + 200);
+    expect(height).toBe(cfg.HEAD_H + cfg.GAP + 60);
   });
 
-  it("only min===1 collapses a card; a truthy min of another type takes its full space", () => {
+  it("only min===1 collapses a card; a truthy min of another type takes its full height", () => {
     const t = split("c", [leaf("a"), leaf("b")], [0.5, 0.5]);
-    const strict = layout(t, {}, bounded(600, 500), { a: { min: 1 } }, cfg);
-    expect(strict.rects.a.h).toBe(cfg.HEAD_H);
-    // winMin is the strict test: min true / "1" / 2 are not minimized (the store normalises them on load)
-    for (const bad of [true, "1", 2]) {
-      const { rects } = layout(t, {}, bounded(600, 500), { a: { min: bad } }, cfg);
-      expect(rects.a.h).toBeCloseTo((500 - cfg.GAP) / 2);
-      expect(rects.b.h).toBeCloseTo((500 - cfg.GAP) / 2);
-    }
+    expect(layout(t, {}, root(600), { a: { min: 1 } }, fit({ a: 90, b: 90 })).rects.a.h).toBe(cfg.HEAD_H);
+    for (const bad of [true, "1", 2]) expect(layout(t, {}, root(600), { a: { min: bad } }, fit({ a: 90, b: 90 })).rects.a.h).toBe(90);
   });
 
-  it("narrow width stacks a row using defaultH (root) and an equal share (bounded)", () => {
-    // bounded: each child would be 196 < chart minW 300 -> stacked, equal share of (500-8)/2
+  it("a row under its least width wraps into a grid; a line is as tall as its tallest card", () => {
+    // width 200: each of the two charts (minW 300) is under its least width -> one per line
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
-    const { rects: r2 } = layout(row, {}, bounded(400, 500), {}, cfg);
-    expect(r2.a.y).toBe(0);
-    expect(r2.a.h).toBe((500 - 8) / 2);
-    expect(r2.b.y).toBe((500 - 8) / 2 + 8);
-    expect(r2.a.w).toBe(400);
-    // root: a band row at width 200 stacks; each child gets its own defaultH (cfg 300)
-    const { rects: r3 } = layout(split("c", [row], [600]), {}, root(200), {}, cfg);
-    expect(r3.a.h).toBe(300);
-    expect(r3.b.y).toBe(308);
-    expect(r3.b.h).toBe(300);
-    // the band shrinks to the stacked content, not its px size
-    expect(r3.b.y + r3.b.h).toBe(608);
+    const kids = { a: { type: "chart" }, b: { type: "chart" } };
+    const { rects } = layout(split("c", [row], [600]), kids, root(200), {}, fit({ a: 80, b: 110 }));
+    expect(rects.a.h).toBe(80);
+    expect(rects.b.y).toBe(88);
+    expect(rects.b.h).toBe(110);
+    expect(rects.a.w).toBe(200);
   });
 
   it("ghosts are skipped and take no space", () => {
     const t = split("c", [leaf("a"), leaf("g"), leaf("b")], [300, 300, 200]);
-    const { rects, height } = layout(t, {}, root(1000), { g: { seen: 123 } }, cfg);
+    const { rects, height } = layout(t, {}, root(1000), { g: { seen: 123 } }, fit({ a: 100, b: 100 }));
     expect(rects.g).toBeUndefined();
-    expect(rects.b.y).toBe(308);
-    expect(height).toBe(300 + 8 + 200);
+    expect(rects.b.y).toBe(108);
+    expect(height).toBe(208);
   });
 
-  it("a group lays its kids in its body box; kid rects are relative to the body", () => {
+  it("a group is HEAD_H plus its kids; kid rects are relative to the body", () => {
     const kids = { grp: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]) };
-    const t = split("c", [leaf("grp")], [400]);
-    const { rects } = layout(t, kids, root(1008), {}, cfg);
-    expect(rects.grp).toEqual({ x: 0, y: 0, w: 1008, h: 400, body: { w: 1008, h: 372 } });
-    // body 1008 x 372; two children share 1008 - 8 = 1000
-    expect(rects.k1).toEqual({ x: 0, y: 0, w: 500, h: 372, body: { w: 500, h: 344 } });
+    const { rects, height } = layout(split("c", [leaf("grp")], [400]), kids, root(1008), {}, fit({ k1: 100, k2: 60 }));
+    expect(rects.grp).toEqual({ x: 0, y: 0, w: 1008, h: 28 + 100, body: { w: 1008, h: 100 } });
+    expect(rects.k1).toEqual({ x: 0, y: 0, w: 500, h: 100, body: { w: 500, h: 72 } });
     expect(rects.k2.x).toBe(508);
+    expect(rects.k2.h).toBe(60);
+    expect(height).toBe(128);
   });
 
   it("a minimized group does not lay its kids", () => {
@@ -141,162 +132,87 @@ describe("win layout (spec 3.2)", () => {
     expect(rects.k1).toBeUndefined();
   });
 
+  it("a user height (st.h) is the card's height, floored at the header plus 40; siblings keep theirs", () => {
+    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
+    const c = fit({ a: 100, b: 100 });
+    const r = layout(row, {}, root(1000), { a: { h: 260 } }, c).rects;
+    expect(r.a.h).toBe(260);
+    expect(r.b.h).toBe(100);
+    expect(layout(row, {}, root(1000), { a: { h: 10 } }, c).rects.a.h).toBe(cfg.HEAD_H + 40);
+  });
+
   it("same input twice gives identical rects", () => {
     const kids = { g: split("c", [leaf("x"), leaf("y")], [0.5, 0.5]) };
     const t = split("c", [split("r", [leaf("a"), leaf("g")], [0.6, 0.4]), leaf("b")], [400, 200]);
-    const st = { a: { min: 1 }, b: { px: 250 } };
+    const st = { a: { min: 1 }, b: { h: 250 } };
     const r1 = layout(t, kids, root(1200), st, cfg);
-    const r2 = layout(t, kids, root(1200), st, cfg);
-    expect(r2).toEqual(r1);
-    // remembered px overrides the band size for a leaf
+    expect(layout(t, kids, root(1200), st, cfg)).toEqual(r1);
     expect(r1.rects.b.h).toBe(250);
   });
 
-  it("no overlap, all inside the container, area accounted (round trip)", () => {
+  it("no overlap, all inside the container, height is the bottom of the last card", () => {
     const kids = { g: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]) };
-    // types with minW 0 so the 1000-wide row never falls into narrow mode
     const t = split("c", [split("r", [leaf("a"), leaf("g")], [0.6, 0.4]), leaf("b")], [400, 200]);
-    const cfg2 = { ...cfg, types: { ...cfg.types, leaf: { minW: 0 }, group: { minW: 0 } } };
+    const cfg2 = { ...fit({ a: 90, k1: 70, k2: 50, b: 120 }), types: { ...cfg.types, leaf: { minW: 0 }, group: { minW: 0 } } };
     const { rects, height } = layout(t, kids, root(1000), {}, cfg2);
-    for (const r of Object.values(rects)) {
-      expect(r.w).toBeGreaterThan(0);
-      expect(r.h).toBeGreaterThanOrEqual(cfg.HEAD_H);
-    }
-    // group kids sit inside the group body (kid rects are body-relative)
-    for (const id of ["k1", "k2"]) {
-      expect(rects[id].x + rects[id].w).toBeLessThanOrEqual(rects.g.body.w);
-      expect(rects[id].y + rects[id].h).toBeLessThanOrEqual(rects.g.body.h);
-    }
-    // no two rects of the same container overlap (kids are body-relative)
     const top = ["a", "g", "b"].map((id) => rects[id]);
     for (let i = 0; i < top.length; i++)
       for (let j = i + 1; j < top.length; j++) {
         const a = top[i], b = top[j];
-        const over = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-        expect(over).toBe(false);
+        expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(false);
       }
-    // every card inside the container width; height accounted
     for (const r of Object.values(rects)) expect(r.x + r.w).toBeLessThanOrEqual(1000);
+    for (const id of ["k1", "k2"]) expect(rects[id].y + rects[id].h).toBeLessThanOrEqual(rects.g.body.h);
     expect(rects.b.y + rects.b.h).toBe(height);
-    // the band row fills the band px; the group body is the band minus HEAD_H
-    expect(rects.a.h).toBe(400);
-    expect(rects.g.h).toBe(400);
-    expect(rects.g.body.h).toBe(400 - cfg.HEAD_H);
-    // area accounted per container: band = width x band px minus its row gutter;
-    // group body = body box minus its row gutter (kids fill the body)
-    expect(rects.a.w + rects.g.w + cfg.GAP).toBe(1000);
-    expect(rects.k1.h).toBe(rects.g.body.h);
-    expect(rects.k1.w + rects.k2.w + cfg.GAP).toBe(rects.g.body.w);
-    let area = 0;
-    for (const r of Object.values(rects)) area += r.w * r.h;
-    expect(area).toBeCloseTo(
-      rects.a.w * 400 +
-        rects.g.w * 400 + // band 1: cards fill the band px
-        rects.k1.w * rects.k1.h + rects.k2.w * rects.k2.h + // group body: kids fill it
-        rects.b.w * rects.b.h, // band 2
-    );
+    // the group is its header plus the taller kid, no empty band below it
+    expect(rects.g.h).toBe(cfg.HEAD_H + 70);
+    expect(rects.b.y).toBe(Math.max(rects.a.h, rects.g.h) + cfg.GAP);
   });
 
-  it("D1: a narrow-stacked root band grows past its px and the next band starts below it", () => {
-    // band row at width 200 stacks; each child gets defaultH 300 -> the band is 608, not 400
-    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
-    const t = split("c", [row, leaf("below")], [400, 200]);
-    const { rects, height } = layout(t, {}, root(200), {}, cfg);
-    expect(rects.a.h).toBe(300);
-    expect(rects.b.y).toBe(308);
-    expect(rects.b.y + rects.b.h).toBe(608);
-    // the band must not clip to its px: below starts after the stacked content, no overlap
-    expect(rects.below.y).toBe(616);
-    expect(rects.below.h).toBe(200);
-    expect(rects.below.y).toBeGreaterThanOrEqual(rects.b.y + rects.b.h + cfg.GAP);
-    expect(height).toBe(616 + 200);
-  });
-
-  it("D2: a column nested under a row inside a root band lays its sz as weights, not px", () => {
-    // root band (400 px) > row > column [a,b] weights 0.25/0.75 -> heights 98 / 294 of the
-    // band's 400, not 0.25/0.75 px
-    const col = split("c", [leaf("a"), leaf("b")], [0.25, 0.75]);
-    const t = split("c", [split("r", [col, leaf("side")], [0.5, 0.5])], [400]);
-    const { rects } = layout(t, {}, root(1000), {}, cfg);
-    const avail = 400 - cfg.GAP;
-    expect(rects.a.h).toBeCloseTo(0.25 * avail);
-    expect(rects.b.h).toBeCloseTo(0.75 * avail);
-    expect(rects.b.y).toBeCloseTo(rects.a.h + cfg.GAP);
-    expect(rects.a.h).toBeGreaterThan(cfg.HEAD_H);
-  });
-
-  it("D3: a bare root row gives its children defaultH, not the empty box height", () => {
-    const { rects } = layout(split("r", [leaf("a"), leaf("b")], [0.5, 0.5]), {}, root(1000), {}, cfg);
-    expect(rects.a.h).toBe(cfg.defaultH);
-    expect(rects.b.h).toBe(cfg.defaultH);
-    expect(rects.a.h).toBeGreaterThan(0);
-  });
-
-  it("D4: row weights renormalize over the visible children; ghosts take no space", () => {
-    // a and b visible (0.3 + 0.7 = 1), g a ghost: the two share the whole width, not 30/70%
+  it("row weights renormalize over the visible children; ghosts take no space", () => {
     const t = split("r", [leaf("a"), leaf("g"), leaf("b")], [0.3, 0.2, 0.7]);
-    const { rects } = layout(t, {}, bounded(1008, 400), { g: { seen: 123 } }, cfg);
+    const { rects } = layout(t, {}, root(1008), { g: { seen: 123 } }, cfg);
     expect(rects.g).toBeUndefined();
     expect(rects.a.w).toBeCloseTo(0.3 * 1000);
     expect(rects.b.w).toBeCloseTo(0.7 * 1000);
     expect(rects.b.x - (rects.a.x + rects.a.w)).toBe(cfg.GAP);
   });
 
-  it("D5: a card's type drives minW and defaultH (fallback to the cfg defaults)", () => {
+  it("a card's type drives minW and defaultH (fallback to the cfg defaults)", () => {
     const kids = { a: { type: "chart" }, b: { type: "metric" } };
-    // row at width 400: chart minW 300 -> narrow mode; metric defaultH 120, chart 260
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const { rects } = layout(row, kids, root(400), {}, cfg);
-    expect(rects.a.h).toBe(260); // chart defaultH, not cfg.defaultH 300
-    expect(rects.b.h).toBe(120); // metric defaultH
+    expect(rects.a.h).toBe(260);
+    expect(rects.b.h).toBe(120);
     expect(rects.b.y).toBe(268);
-    // minW from the type: width 250 < chart minW 300 stacks; width 620 >= 300 stays a row
     const wide = layout(row, kids, root(620), {}, cfg);
     expect(wide.rects.a.y).toBe(0);
     expect(wide.rects.b.y).toBe(0);
     expect(wide.rects.b.x).toBeGreaterThan(0);
-    // a type with no entries falls back to cfg minW/defaultH
-    const plain = layout(row, { a: { type: "unknown" }, b: { type: "unknown" } }, root(400), {}, cfg);
-    expect(plain.rects.a.h).toBe(cfg.defaultH);
+    expect(layout(row, { a: { type: "unknown" }, b: { type: "unknown" } }, root(400), {}, cfg).rects.a.h).toBe(cfg.defaultH);
   });
 
-  it("E1: a root band whose cards are all ghosts takes no space", () => {
-    // the band's only child is a ghost -> no visible card -> no HEAD_H+GAP for the band
+  it("a line whose cards are all ghosts takes no space", () => {
     const t = split("c", [split("r", [leaf("g"), leaf("h")], [0.5, 0.5]), leaf("below")], [400, 200]);
-    const { rects, height } = layout(t, {}, root(1000), { g: { seen: 1 }, h: { seen: 2 } }, cfg);
-    expect(rects.g).toBeUndefined();
-    expect(rects.h).toBeUndefined();
+    const { rects, height } = layout(t, {}, root(1000), { g: { seen: 1 }, h: { seen: 2 } }, fit({ below: 70 }));
     expect(rects.below.y).toBe(0);
-    expect(height).toBe(200);
+    expect(height).toBe(70);
   });
 
-  it("E2: a bare root leaf as the whole tree gets its type's defaultH, not 0", () => {
+  it("a bare root leaf gets its type's defaultH", () => {
     const { rects, height } = layout(leaf("a"), { a: { type: "metric" } }, root(1000), {}, cfg);
-    expect(rects.a.h).toBe(120); // metric defaultH
+    expect(rects.a.h).toBe(120);
     expect(rects.a.body.h).toBe(120 - cfg.HEAD_H);
     expect(height).toBe(120);
-    // no type entry -> cfg defaultH
-    const r2 = layout(leaf("b"), {}, root(1000), {}, cfg);
-    expect(r2.rects.b.h).toBe(cfg.defaultH);
+    expect(layout(leaf("b"), {}, root(1000), {}, cfg).rects.b.h).toBe(cfg.defaultH);
   });
 
-  it("D6: extra content fields on kids cannot change the rects", () => {
+  it("extra content fields on kids cannot change the rects", () => {
     const tree = split("c", [split("r", [leaf("a"), leaf("g")], [0.6, 0.4]), leaf("b")], [400, 200]);
     const kids = { g: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]) };
-    const box = root(1200);
-    const st = {};
-    const r1 = layout(tree, kids, box, st, cfg);
-    const r2 = layout(tree, kids, box, st, cfg);
-    expect(r2).toEqual(r1);
-    // the same tree and kids, but the kid entries carry content fields
-    const loaded = {
-      g: split("r", [leaf("k1"), leaf("k2")], [0.5, 0.5]),
-      a: { type: "metric", value: 42, rows: [1, 2, 3], title: "cpu load" },
-      b: { type: "chart", series: [9, 9], html: "<div>long content</div>" },
-      k1: { value: 7 },
-      k2: { value: 8 },
-    };
-    const r3 = layout(tree, loaded, box, st, cfg);
-    expect(r3).toEqual(r1);
+    const r1 = layout(tree, kids, root(1200), {}, cfg);
+    const loaded = { ...kids, a: { type: "metric", value: 42, rows: [1, 2, 3] }, b: { type: "chart", series: [9] }, k1: { value: 7 } };
+    expect(layout(tree, loaded, root(1200), {}, cfg).rects.g).toEqual(r1.rects.g);
+    expect(layout(tree, kids, root(1200), {}, cfg)).toEqual(r1);
   });
 });

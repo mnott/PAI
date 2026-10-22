@@ -44,16 +44,8 @@ function ddRects(tree,skip){
  return o;
 }
 function ddTitle(id){var e=Win.el(id);var t=e&&e.querySelector(".ctt");return t?t.textContent:id}
-/** moveCard cannot see card types (leaves carry only an id), so the dragged card brings its band
- *  height: its type's defaultH, else its current box height. */
-function ddState(id){
- var st=Win.layState(),cfg=Win.cfg(),e=Win.el(id),t=cfg.types&&cfg.types[e.getAttribute("data-type")];
- var s=st[id]=st[id]||{};
- if(s.px===undefined)s.px=(t&&t.defaultH)||Math.round(e.getBoundingClientRect().height);
- return st;
-}
 function ddMove(c,dragId,targetId,zone){
- return dropTry(c.tree,dragId,targetId,zone,{kids:Win.state().kids,state:ddState(dragId),cfg:Win.cfg(),box:ddBox(c.key)});
+ return dropTry(c.tree,dragId,targetId,zone,{kids:Win.state().kids,state:Win.layState(),cfg:Win.cfg(),box:ddBox(c.key)});
 }
 function ddApply(key,tree){
  if(typeof anchorKeep==="function")anchorKeep(function(){Win.applyFit(key,tree)});
