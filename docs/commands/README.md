@@ -28,6 +28,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai issue`](issue.md) | Claim and release forge issues for this project |
 | [`pai kg`](kg.md) | Facts extracted from your notes, with the time they were true |
 | [`pai launch`](launch.md) | Start Claude Code on a chosen provider (for scripts) |
+| [`pai lessons`](lessons.md) | Review-gated lessons for agents |
 | [`pai list`](list.md) | List the markdown session notes |
 | [`pai ls`](ls.md) | List sessions, newest first |
 | [`pai mcp`](mcp.md) | Install the PAI tools for Claude Code |
@@ -75,7 +76,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai audit tokens daemon` | What the background service spent |
 | `pai audit tokens env` | Model and endpoint overrides on running sessions |
 | `pai audit tokens files` | Token count per memory file |
-| `pai audit tokens hooks` | Token cost of every start-up and prompt hook |
+| `pai audit tokens hooks` | Token cost and observed state of every start-up and prompt hook |
 | `pai audit tokens ladder` | LIVE: first-turn context per configuration step |
 | `pai audit tokens mcp` | MCP servers: configured, pinned, loaded, used |
 | `pai audit tokens schedule` | Scheduled jobs that beat the cache lifetime |
@@ -86,7 +87,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai audit tokens usage` | Exact token totals per model for one session transcript |
 | `pai backup` | Back up the registry, config and Postgres database |
 | `pai build` | One machine-wide build queue: run, lock, queue, next, doctor |
-| `pai build doctor` | Check the project's registered build doors |
+| `pai build doctor` | Check the project's registered build doors and hook events |
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
 | `pai build next` | Give a waiting build the next free slot |
 | `pai build queue` | Show the running and waiting builds and tests |
@@ -150,6 +151,14 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai kg query` | Look up facts by subject, predicate, object or date |
 | `pai kg stats` | How many facts and contradictions the graph holds |
 | `pai launch` | Start Claude Code on a chosen provider (for scripts) |
+| `pai lessons` | Review-gated lessons for agents |
+| `pai lessons add` | Add a candidate lesson |
+| `pai lessons approve` | Approve a candidate |
+| `pai lessons list` | List lessons |
+| `pai lessons propose` | Add candidates from a transcript |
+| `pai lessons reject` | Reject a candidate |
+| `pai lessons show` | Show one lesson |
+| `pai lessons supersede` | Replace an approved lesson by another approved one |
 | `pai list` | List the markdown session notes |
 | `pai ls` | List sessions, newest first |
 | `pai mcp` | Install the PAI tools for Claude Code |
