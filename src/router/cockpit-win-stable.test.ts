@@ -62,7 +62,7 @@ function snap(){var o={};Array.prototype.forEach.call(document.querySelectorAll(
 var R={};
 function phaseTo(p){fetch("/test/phase?p="+p)}
 function tab(w){var b=document.querySelector('#tabs button[data-w="'+w+'"]');if(b)b.click()}
-setTimeout(function(){window.scrollTo(0,1400);window.dispatchEvent(new Event("scroll"));R.A=snap();R.a0=window.scrollY;R.fitA=JSON.stringify(Win.fit())},3000);
+setTimeout(function(){window.scrollTo(0,1400);window.dispatchEvent(new Event("scroll"));R.A=snap();R.a0=window.scrollY},3000);
 setTimeout(function(){phaseTo("B")},3500);
 function hh(id){return document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().height}
 function ty(id){return document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().top+window.scrollY}
@@ -80,7 +80,7 @@ setTimeout(function(){if(!/swing=1/.test(location.search))return;SW.id="kpis.req
 setTimeout(function(){if(!SW.id)return;SW.h1=hh(SW.id);SW.y1=window.scrollY;SW.box.remove()},3300);
 setTimeout(function(){if(!SW.id)return;SW.h2=hh(SW.id);SW.t2=ty(SW.id);delete SW.box;R.SW=SW},3400);
 setTimeout(function(){tab("week")},5500);
-setTimeout(function(){R.B=snap();R.fitB=JSON.stringify(Win.fit())},8000);
+setTimeout(function(){R.B=snap()},8000);
 setTimeout(function(){phaseTo("C")},8500);
 setTimeout(function(){R.C=snap();document.body.setAttribute("data-r",JSON.stringify({err:window.__err||null,R:R}))},13000);
 </script>`;
@@ -161,7 +161,7 @@ describe.skipIf(!CHROME)("box stability", () => {
       const r = await open(q);
       expect(r.err).toBeNull();
       const { A, B } = r.R;
-      if (process.env.PAI_STABLE_TABLE) console.log("auto", (r.R as any).auto, "fitA", (r.R as any).fitA, "\nfitB", (r.R as any).fitB);
+      if (process.env.PAI_STABLE_TABLE) console.log("auto", (r.R as any).auto);
       expect(Object.keys(A.cards).length).toBeGreaterThan(15);
       expect(A.y).toBeGreaterThan(500); // the page scrolled, so the keeper has something to keep
       table(`B ${q}`, A, B);

@@ -1,7 +1,7 @@
 /**
  * Group levels: every group card carries data-depth (0 = a top-level band, a nested group one deeper);
  * a top-level header has its own tint (--grp-h1..h8 by DOM position), a 13px title, a 2px bottom border, a
- * 3px left edge in its own --sec colour and a 4px inset body; a nested header keeps the 12px title and has no
+ * 3px left edge in its own --sec colour and a 6px inset body; a nested header keeps the 12px title and has no
  * left edge; a leaf card has no data-depth
  * and its body keeps the old padding. Headless Chromium, skipped when none is installed.
  */
@@ -100,18 +100,18 @@ describe("group levels on the page", () => {
     expect(byId.kpis.depth).toBe("0");
     expect(byId.cache.depth).toBe("0");
     expect(byId["cache-rings"].depth).toBe("1");
-    // top-level: tinted header, 13px title, 2px bottom border, 4px inset body
+    // top-level: tinted header, 13px title, 2px bottom border, 6px inset body
     const cardBg = r.leaves.find((l: any) => l.id === "system.memory").headBg;
     expect(byId.system.headBg).not.toBe(cardBg); // tinted, not the plain card background
     expect(byId.system.titleSize).toBe("13px");
     expect(byId.system.borderBottom).toBe("2px");
-    expect(byId.system.bodyPad).toBe("4px");
+    expect(byId.system.bodyPad).toBe("6px");
     // top-level: the header is a solid section-colour bar, no left edge (4cdfd8de)
     expect(byId.system.borderLeft).toBe("0px");
     // nested: no left edge, normal title size, inset body
     expect(byId["sys-metrics"].borderLeft).toBe("0px");
     expect(byId["sys-metrics"].titleSize).toBe("12px");
-    expect(byId["sys-metrics"].bodyPad).toBe("4px");
+    expect(byId["sys-metrics"].bodyPad).toBe("6px");
     // a nested header's tint differs from the top-level one and from the plain card
     expect(byId["sys-metrics"].headBg).not.toBe(byId.system.headBg);
     // leaf cards: no depth marker, plain header, no inset

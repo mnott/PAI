@@ -1,6 +1,6 @@
 /**
  * Density: a card's default height is its content's height (within the type's minimum), so the page has no large empty card areas.
- * Pure: layout() with cfg.fit shrinks default bands, saved px and no-fit layouts are unchanged.
+ * (The pure layout() cases were removed: positions are CSS grid now.)
  * Headless Chromium on the real page (, no saved layout): every measured card is at most SLACK px taller than its content.
  * PAI_DENSITY_SHOT=<png> writes a 1300x5000 screenshot; PAI_DENSITY_TABLE=1 prints the table.
  */
@@ -11,26 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-import { WIN_LAYOUT_JS } from "./cockpit-page/win/layout.js";
-import { WIN_TREE_JS } from "./cockpit-page/win/tree.js";
 import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
 const SLACK = 24;
-
-type Lay = (t: unknown, k: unknown, box: { w: number; h?: number }, st: unknown, cfg: unknown) => { rects: Record<string, { y: number; h: number }>; height: number };
-const api = new Function(`${WIN_TREE_JS}\n${WIN_LAYOUT_JS}\nreturn {leaf:leaf,split:split,layout:layout};`)() as { leaf: (id: string) => unknown; split: (d: string, ch: unknown[], sz: number[]) => unknown; layout: Lay };
-const cfgBase = { HEAD_H: 28, GAP: 8, GUTTER: 8, minW: 100, types: { note: { minH: 48, defaultH: 60 } } };
-const tree = () => api.split("c", [api.leaf("a"), api.leaf("b")], [300, 200]);
-
-describe("layout with cfg.fit (pure)", () => {
-  it("a group of stacked cards is as tall as its head plus its kids", () => {
-    const kids = { g: api.split("c", [api.leaf("a"), api.leaf("b")], [1, 1]) };
-    const t = api.split("c", [api.leaf("g")], [500]);
-    const r = api.layout(t, kids, { w: 600 }, {}, { ...cfgBase, fit: { a: 60, b: 90 } });
-    expect(r.rects.g!.h).toBe(28 + 60 + 8 + 90);
-    expect([r.rects.a!.h, r.rects.b!.h]).toEqual([60, 90]);
-  });
-});
 
 const data = () => ({
   window: "1h", totals: { requests: 5000, input: 9e6, output: 4e5, cacheWrite: 1e6, cacheRead: 9e7, errors: 0, hitRatio: 0.9 },
@@ -48,7 +31,7 @@ const limits = () => ({ activeLocal: null, limits: [{ provider: "glm", kind: "cl
 const PROBE = `<script>setTimeout(function(){
 var out={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .card"),function(c){
  if(c.style.display==="none"||c.classList.contains("min"))return;
- var ty=c.getAttribute("data-type"),def=(Win.cfg().types||{})[ty]||{};
+ var ty=c.getAttribute("data-type");
  if(ty==="chart"||c.querySelector(".card,svg,canvas"))return; // a chart draws at its size; every other card, tables and lists included, is fitted by content
  var b=c.querySelector(".cbody").getBoundingClientRect(),max=0;
  Array.prototype.forEach.call(c.querySelectorAll(".cbody *"),function(e){if(e.children.length||!e.getClientRects().length)return;var r=e.getBoundingClientRect();if(r.height>0&&r.bottom-b.top>max)max=r.bottom-b.top});
@@ -59,7 +42,7 @@ var bands={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .
  var r=c.getBoundingClientRect(),low=r.top+28,kc=c.querySelectorAll(".card"),vis=0,i;
  for(i=0;i<kc.length;i++)if(kc[i].style.display!=="none")vis++;
  if(kc.length&&!vis)return; // a band holding only its hidden placeholder
- if(!kc.length&&((Win.cfg().types||{})[c.getAttribute("data-type")]||{}).resize)return; // a card that draws at the body size has no content height
+ if(!kc.length&&["chart","editor"].indexOf(c.getAttribute("data-type"))>=0)return; // a card that draws at the body size has no content height
  Array.prototype.forEach.call(c.querySelectorAll(".card"),function(k){if(k.style.display==="none")return;var b=k.getBoundingClientRect();if(b.height>0&&b.bottom>low)low=b.bottom});
  if(!c.querySelector(".card")){var bd=c.querySelector(".cbody");if(bd)Array.prototype.forEach.call(bd.querySelectorAll("*"),function(e){if(e.children.length||!e.getClientRects().length)return;var b=e.getBoundingClientRect();if(b.height>0&&b.bottom>low)low=b.bottom})}
  bands[c.getAttribute("data-card")]={h:Math.round(r.height),empty:Math.round(r.bottom-low)};

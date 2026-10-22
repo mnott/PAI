@@ -95,7 +95,8 @@ describe.skipIf(!CHROME)("win controls follow the theme", () => {
     expect(r.rows.some((x) => x.name.includes("wmd-stop"))).toBe(true);
     const bad = r.rows.filter((x) => !(x.bg < 0.2)).map((x) => `${x.name} bg=${x.bg}`);
     expect(bad, `white controls:\n${bad.join("\n")}`).toEqual([]);
-    expect(r.rows.filter((x) => !(x.fg > 0.2)).map((x) => `${x.name} fg=${x.fg}`)).toEqual([]);
+    // the editor textarea is transparent by design (its highlight layer shows the text)
+    expect(r.rows.filter((x) => !(x.fg > 0.2) && !x.name.startsWith("textarea.wrg-ta")).map((x) => `${x.name} fg=${x.fg}`)).toEqual([]);
     expect(r.scheme).toBe("dark");
   }, 120_000);
 

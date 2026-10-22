@@ -54,7 +54,7 @@ function normMin(st){
 /** The stored per-card state is exactly {min, h, w, seen}: min 1/0 minimized, h the user's height of the card body, w its width in
  *  12ths of its group (3 4 6 8 9 12), seen the last-seen ms. Every other field of older saves (px, ub, sp, fits, positions) goes;
  *  an old width divisor sp becomes w. */
-var WIN_UNITS=[3,4,6,8,9,12];
+var WIN_UNITS=[2,3,4,6,8,9,12];
 function unitsOf(f){
  var x=f*12,best=12,bd=1e9,i,d;
  for(i=0;i<WIN_UNITS.length;i++){d=Math.abs(WIN_UNITS[i]-x);if(d<bd){bd=d;best=WIN_UNITS[i]}}
@@ -175,7 +175,7 @@ function placeLeaf(n,id){
   n.ch.push(leaf(id));n.sz.push(isRoot?400:0.5);
   return n;
  }
- for(i=0;i<missing.length;i++)node=placeLeaf(node,missing[i]);
+ for(i=0;i<missing.length;i++){node=placeLeaf(node,missing[i]);present[missing[i]]=1}
  return normalize(node,isRoot!==false);
 }
 /** The ids this container's own default subtree has but its saved tree lacks, in default
@@ -243,7 +243,7 @@ function loadWin(storage,defaults,knownIds,now){
  var obj=own||sv;
  if(!obj)return defaultsOf(defaults);
  var r=reconcileSaved(obj,defaults,knownIds,now);
- if(obj.auto===1)r.tree=repairOrder(r.tree,defaults.tree);
+ if(obj.auto===1)r.tree=repairOrder(r.tree,flatDefaults(defaults).tree);
  return r;
 }
 /** A layout saved by a page that composed before the default tree was complete can hold the root bands in a

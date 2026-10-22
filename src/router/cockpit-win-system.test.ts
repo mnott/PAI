@@ -159,7 +159,7 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     const kids = JSON.parse(r.kids);
     expect(kids.d).toBe("c");
     expect(kids.ch[0]).toEqual({ k: "c", id: "system.srv:none" });
-    expect(kids.ch[1].ch.map((c: { id: string }) => c.id)).toEqual(["rss", "e2e", "decode", "prefix"].map((w) => `system.srv:gyro-m/${w}`));
+    expect(kids.ch.slice(1).map((c: { id: string }) => c.id)).toEqual(["rss", "e2e", "decode", "prefix"].map((w) => `system.srv:gyro-m/${w}`));
     // a server that was up and goes down: its cards stay and read "–" / "down"
     expect(r.srv3).toContain("system.srv:gyro-m/rss=–/down");
     expect(r.srv3).toContain("system.srv:gyro-m/decode=–/down");

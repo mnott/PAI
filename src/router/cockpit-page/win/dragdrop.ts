@@ -36,9 +36,9 @@ function ddRects(tree,skip){
  return o;
 }
 function ddTitle(id){var e=Win.el(id);var t=e&&e.querySelector(".ctt");return t?t.textContent:id}
-function ddApply(tree,kids){
- if(typeof anchorKeep==="function")anchorKeep(function(){Win.applyAll(tree,kids)});
- else Win.applyAll(tree,kids);
+function ddApply(tree,kids,sizes,st){
+ if(typeof anchorKeep==="function")anchorKeep(function(){Win.applyAll(tree,kids,sizes,st)});
+ else Win.applyAll(tree,kids,sizes,st);
 }
 /** The edge bar for a zone on rect R (viewport px, position:fixed). */
 function ddBar(R,zone){
@@ -61,28 +61,31 @@ function winDragInit(doc,win,opts){
  function hideInd(){if(ind){ind.remove();ind=null}}
  function status(id,kind,s){var c=Win.ctx(id);if(c)c.status(kind,s)}
  function refocus(id){var e=Win.el(id);var g=e&&e.querySelector(".cgrip");if(g)g.focus()}
-  /** The innermost drawn card under the pointer (not the dragged card or anything inside it), with its zone: the edges put the card before/after it
-   *  in its container, the header of a group puts it first in that group. */
+  /** The card under the pointer that the pointer is at the edge of (not the dragged card or anything inside it), with its zone: the edges put the card
+   *  before/after it in its container, the header of a group puts it first in that group. Innermost cards first: a pointer in the middle of a card
+   *  falls through to the group around it. */
   function hit(x,y){
-   var de=Win.el(D.id),els=Win.main().querySelectorAll(".card"),best=null,i,e,r,a;
+   var de=Win.el(D.id),els=Win.main().querySelectorAll(".card"),all=[],i,e,r;
    for(i=0;i<els.length;i++){
     e=els[i];
     if(e===de||(de&&de.contains(e))||e.style.display==="none")continue;
     r=e.getBoundingClientRect();
     if(x<r.left||x>=r.right||y<r.top||y>=r.bottom)continue;
-    a=r.width*r.height;
-    if(!best||a<best.a)best={e:e,r:r,a:a};
+    all.push({e:e,r:r,a:r.width*r.height});
    }
-   if(!best)return null;
-   var R={x:best.r.left,y:best.r.top,w:best.r.width,h:best.r.height},tid=best.e.getAttribute("data-card"),z=zoneAt(R,{x:x,y:y});
-   if(z==="none"){
-    var hd=best.e.querySelector(".chead");
-    if(hd&&Win.isGroup(tid)&&y<hd.getBoundingClientRect().bottom)z="into";
-    else return null;
+   all.sort(function(p,q){return p.a-q.a});
+   for(i=0;i<all.length;i++){
+    var R={x:all[i].r.left,y:all[i].r.top,w:all[i].r.width,h:all[i].r.height},tid=all[i].e.getAttribute("data-card"),z=zoneAt(R,{x:x,y:y});
+    if(z==="none"){
+     var hd=all[i].e.querySelector(".chead");
+     if(hd&&Win.isGroup(tid)&&y<hd.getBoundingClientRect().bottom)z="into";
+     else continue;
+    }
+    return{tid:tid,zone:z,R:R};
    }
-   return{tid:tid,zone:z,R:R};
+   return null;
   }
-  function feedback(h){
+ function feedback(h){
    D.drop=null;
    if(!h){hideInd();status(D.id,"","");return}
    var t=Win.tryMove(D.id,h.tid,h.zone);
@@ -126,7 +129,7 @@ function winDragInit(doc,win,opts){
   drop=D.drop;
   endPointer();
   if(drop&&moved){
-   ddApply(drop.tree,drop.kids);
+   ddApply(drop.tree,drop.kids,drop.sizes);
    Win.announce("moved "+ddTitle(id));
   }
  }
@@ -158,7 +161,7 @@ function winDragInit(doc,win,opts){
   if(!nb)return false;
   var t=Win.tryMove(id,nb,DD_ZONE[dir]);
   if(!t)return false;
-  ddApply(t.tree,t.kids);
+  ddApply(t.tree,t.kids,t.sizes);
   Win.announce("moved "+ddTitle(id)+" "+(dir==="up"?"above":dir==="down"?"below":dir+" of")+" "+ddTitle(nb));
   refocus(id);
   return true;
@@ -173,7 +176,7 @@ function winDragInit(doc,win,opts){
  function restore(){
   if(!K)return;
   var id=K.id,g=grip(id);
-  if(K.moved)ddApply(K.before.tree,K.before.kids);
+  if(K.moved)ddApply(K.before.tree,K.before.kids,null,K.before.st);
   if(g)g.setAttribute("aria-pressed","false");
   K=null;
   Win.announce("move cancelled");
@@ -191,7 +194,7 @@ function winDragInit(doc,win,opts){
    if(K){drop();return}
    var c=ddContainer(id);
    if(!c)return;
-   K={id:id,key:c.key,before:ddClone({tree:Win.state().tree,kids:Win.state().kids}),moved:false};
+   K={id:id,key:c.key,before:ddClone({tree:Win.state().tree,kids:Win.state().kids,st:Win.stJson()}),moved:false};
    g.setAttribute("aria-pressed","true");
    Win.announce("grabbed "+ddTitle(id)+", use arrow keys to move, Enter to drop, Escape to cancel");
    return;

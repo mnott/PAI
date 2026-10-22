@@ -39,7 +39,7 @@ function al(id){var t=q(id).querySelector(".wr-tbl"),k=Array.prototype.slice.cal
 o.al={runs:al("runs")};o.nx={sessions:xs("sessions"),runs:xs("runs")};o.hd={sessions:hd("sessions"),runs:hd("runs")};
 q("runs").querySelector("[data-wrfold]").click();o.afterFold=info("runs");o.foldSaved=localStorage.getItem("pai.cockpit.wrfold");
 q("sessions").querySelector("[data-sessmore]").click();o.afterMore=info("sessions");o.moreSaved=localStorage.getItem("pai.cockpit.sessmore");
-window.Win.update("data",window.WINPAY);o.boxes2=ids.map(box).join("|");o.speed2=info("speed");
+o.boxes1=ids.map(box).join("|");window.Win.update("data",window.WINPAY);o.boxes2=ids.map(box).join("|");o.speed2=info("speed");
 document.body.setAttribute("data-r",JSON.stringify(o));
 }catch(e){document.body.setAttribute("data-r",JSON.stringify({err:String(e.stack)}))}},1500)</script>`;
 
@@ -94,7 +94,8 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
     expect(r.afterMore.wrows).toBe(12 + 1);
     expect(r.moreSaved).toBe("1");
     // a value-only payload moves no box
-    expect(r.boxes2).toBe(r.boxes);
+    // (a fold and "more" change the content, so the heights follow it: compared after them)
+    expect(r.boxes2).toBe(r.boxes1);
     // one grid per card: every tokens cell starts at the same x despite long and short model names
     for (const id of ["sessions", "runs"] as const) {
       expect(r.nx[id].length).toBeGreaterThan(2);

@@ -30,7 +30,7 @@ export type WinTypeDef = {
 
 /** Win.init(main, defaults, opts) builds one absolutely placed .card per spec in defaults.cards
  *  (ids the loaded tree or group kids hold; the rest are ghosts or not drawn), from layout() rects:
- *    .card[data-card,data-type] > .chead (grip, title(+ⓘ), status, actions, minimize) + .cbody (contain:strict)
+ *    .card[data-card,data-type] > .chead (grip, title(+ⓘ), status, actions, minimize) + .cbody
  *  defaults = { tree, kids, stDefaults, cards:[{id,type,title,info?,actions?,feeds?}] }.
  *  opts = { storage (default localStorage), now, cfg (partial: HEAD_H, GAP, minW) }.
  *  - Win.registerType(name, def) per 2.1; "group" is built in (accepts everything, no content).
@@ -171,7 +171,7 @@ function inOrder(host,cs){
 }
 /** The DOM follows the tree: every card sits in the grid of the group whose kids hold it, in tree order; a minimized card of a group sits in the group's dock
  *  (the last item of its grid). Nothing is positioned: this only moves elements. d is the nesting depth of host (0 = the page). */
-function reparent(host,tree,d){
+function reparent(host,tree,d,dead){
  var list=tree?ids(tree):[],cards=[],chips=[],i,c,dock=host.__dock||null;
  for(i=0;i<list.length;i++){
   c=W.cards[list[i]];
@@ -186,14 +186,17 @@ function reparent(host,tree,d){
  inOrder(host,cards);
  if(dock)inOrder(dock,chips);
  var all=cards.concat(chips);
+ // a group whose one visible card is itself an open group draws no header for that child: its cards fill the parent body
+ var vis=cards.filter(function(x){return!(W.hide&&W.hide[x.id])});
+ for(i=0;i<all.length;i++)all[i].el.classList.toggle("nohd",vis.length===1&&vis[0]===all[i]&&d>0&&kidsOf(all[i].id)&&!isMin(all[i].id));
  for(i=0;i<all.length;i++){
   c=all[i];
   if(kidsOf(c.id)){
    c.el.setAttribute("data-depth",String(d));
    if(!c.body.classList.contains("cgroup"))c.body.classList.add("cgroup");
-   reparent(c.body,W.kids[c.id],d+1);
+   reparent(c.body,W.kids[c.id],d+1,dead||isMin(c.id));
   }else if(c.el.hasAttribute("data-depth"))c.el.removeAttribute("data-depth");
-  c.chip=chips.indexOf(c)>=0;
+  c.chip=chips.indexOf(c)>=0;c.dead=!!dead;
  }
 }
 function paintMin(c){
@@ -217,7 +220,7 @@ function paintSize(c){
 function syncBodies(){
  for(var i=0;i<W.order.length;i++){
   var c=W.cards[W.order[i]];
-  if(!c||!c.mounted||isMin(c.id)||c.el.style.display==="none")continue;
+  if(!c||!c.mounted||c.dead||isMin(c.id)||c.el.style.display==="none")continue;
   var w=c.body.clientWidth,h=c.body.clientHeight,def=TYPES[c.type]||{};
   if(w>0&&(c.bw!==w||c.bh!==h)){c.bw=w;c.bh=h;if(def.resize)def.resize(c.ctx,w,h)}
  }
@@ -226,17 +229,24 @@ function syncBodies(){
 function relayout(){
  W.n++;
  W.order=[];
- reparent(W.main,W.tree,0);
+ var fa=document.activeElement;
+ reparent(W.main,W.tree,0,false);
+ // moving an element in the DOM drops its focus: give it back
+ if(fa&&fa!==document.body&&fa!==document.activeElement&&document.contains(fa)&&fa.focus)fa.focus({preventScroll:true});
  var i,c,hid;
  for(i=0;i<W.order.length;i++){
   c=W.cards[W.order[i]];
   hid=!!(W.hide&&W.hide[c.id]);
   if(hid!==(c.el.style.display==="none"))c.el.style.display=hid?"none":"";
   paintSize(c);paintMin(c);
-  if(hid||isMin(c.id)||kidsOf(c.id)||c.mounted)continue;
+  if(hid||c.dead||isMin(c.id)||kidsOf(c.id)||c.mounted)continue;
   mountCard(c);
   if(W.bro)W.bro.observe(c.body);
  }
+ // a card no tree holds (a group's kids were replaced) takes no space
+ var placed={};
+ for(i=0;i<W.order.length;i++)placed[W.order[i]]=1;
+ for(var id in W.cards)if(!placed[id]&&W.cards[id].el.style.display!=="none")W.cards[id].el.style.display="none";
  syncBodies();
 }
 /** A card's user height (the card's saved st.h; h null clears it back to its content height). Content taller than h scrolls inside the card. */
@@ -435,15 +445,30 @@ function removeCards(group,idl){
 }
 /** Win.hide(id,on): a hidden card takes no space, its place in the tree is kept. */
 function hide(id,on){W.hide=W.hide||{};if(!!W.hide[id]===!!on)return;W.hide[id]=on?1:0;if(W.main)relayout()}
-/** Put a whole tree + kids (a drop, an undo) in place: relayout once and save. */
-function applyAll(tree,kids){W.tree=tree;W.kids=kids;relayout();save()}
-/** The result of dropping dragId at zone of targetId ({tree,kids}), without applying it; null when the drop changes nothing. */
-function tryMove(dragId,targetId,zone){return moveCard(W.tree,W.kids,dragId,targetId,zone)}
+/** Put a whole tree + kids (a drop, an undo) in place, with the widths a drop sets ({id: units}) or the whole card state of an undo: relayout once and save. */
+function applyAll(tree,kids,sizes,st){
+ W.tree=tree;W.kids=kids;
+ if(st)W.st=JSON.parse(st);
+ for(var id in sizes||{})(W.st[id]=W.st[id]||{}).w=sizes[id];
+ relayout();save();
+}
+/** The result of dropping dragId at zone of targetId ({tree,kids,sizes}), without applying it; null when the drop changes nothing.
+ *  The widths follow the gesture: above/below a card is a line of its own (full width); beside a full-width card both take half, beside a narrower one the dropped card takes its width. */
+function tryMove(dragId,targetId,zone){
+ var r=moveCard(W.tree,W.kids,dragId,targetId,zone);
+ if(!r)return null;
+ var tw=(W.st[targetId]&&W.st[targetId].w)||12,sizes={};
+ if(zone==="top"||zone==="bottom"||zone==="into")sizes[dragId]=12;
+ else if(tw===12){sizes[dragId]=6;sizes[targetId]=6}
+ else sizes[dragId]=tw;
+ r.sizes=sizes;
+ return r;
+}
 var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:syncBodies,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  main:function(){return W.main},isGroup:kidsOf,
- state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},
+ state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},stJson:function(){return JSON.stringify(W.st)},
  announce:announce,tryMove:tryMove,applyAll:applyAll,
  /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
  apply:function(key,tree){tree=flatTree(tree,W.st);if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},

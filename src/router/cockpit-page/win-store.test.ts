@@ -11,11 +11,13 @@ const treeSrc = readFileSync(fileURLToPath(new URL("./win/tree.ts", import.meta.
 const tm = treeSrc.match(/export const WIN_TREE_JS = String\.raw`([\s\S]*?)`;/);
 if (!tm) throw new Error("WIN_TREE_JS not found in win/tree.ts");
 const api = (new Function(
-  `${tm[1]}\n${sm[1]}\nreturn {leaf:leaf,split:split,ids:ids,findLeaf:findLeaf,parentOf:parentOf,loadWin:loadWin,reconcileSaved:reconcileSaved,saveWin:saveWin,resetWin:resetWin};`,
+  `${tm[1]}\n${sm[1]}\nreturn {leaf:leaf,split:split,ids:ids,findLeaf:findLeaf,parentOf:parentOf,loadWin:loadWin,reconcileSaved:reconcileSaved,saveWin:saveWin,resetWin:resetWin,flatDefaults:flatDefaults,flatTree:flatTree,unitsOf:unitsOf,migrateState:migrateState};`,
 ) as any)();
 const leaf = (id: string) => api.leaf(id);
 const split = (d: string, ch: any[], sz: number[]) => api.split(d, ch, sz);
-const { ids, findLeaf, parentOf, loadWin, reconcileSaved, saveWin, resetWin } = api;
+const { ids, findLeaf, parentOf, loadWin, reconcileSaved, saveWin, resetWin, flatDefaults } = api;
+// win-store.test.ts was updated for the CSS grid: positions are CSS grid now, a container is a flat ordered list and a row becomes width units (st.w)
+const flatTree = () => flatDefaults(defaults()).tree;
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = 1_760_000_000_000;
@@ -60,14 +62,14 @@ describe("win store (spec 6)", () => {
     const s = new MemStorage();
     s.setItem("pai.cockpit.win.v2", "{not json");
     const r = loadWin(s, defaults(), KNOWN, NOW);
-    expect(r.tree).toEqual(defaults().tree);
+    expect(r.tree).toEqual(flatTree());
     expect(r.kids).toEqual(defaults().kids);
-    expect(r.st).toEqual({ a: { min: 1 } });
+    expect(r.st).toEqual({ a: { min: 1 }, b: { w: 6 }, c: { w: 6 } }); // the row of the default is two 6-unit cards
   });
 
   it("no stored value -> defaults", () => {
     const r = loadWin(new MemStorage(), defaults(), KNOWN, NOW);
-    expect(r.tree).toEqual(defaults().tree);
+    expect(r.tree).toEqual(flatTree());
   });
 
   it("v1 -> defaults and the old keys are removed", () => {
@@ -77,7 +79,7 @@ describe("win store (spec 6)", () => {
     s.setItem("pai.cockpit.collapsed", '["system"]');
     s.setItem("pai.cockpit.win.v2", saved({ v: 1, tree: leaf("x"), kids: {}, st: {} }));
     const r = loadWin(s, defaults(), KNOWN, NOW);
-    expect(r.tree).toEqual(defaults().tree);
+    expect(r.tree).toEqual(flatTree());
     expect(s.map.has("pai.cockpit.layout.v1")).toBe(false);
     expect(s.map.has("pai.cockpit.tiles.v1")).toBe(false);
     expect(s.map.has("pai.cockpit.collapsed")).toBe(false);
@@ -86,7 +88,7 @@ describe("win store (spec 6)", () => {
   it("missing or non-number v -> defaults", () => {
     const s = new MemStorage();
     s.setItem("pai.cockpit.win.v2", saved({ tree: leaf("a"), kids: {}, st: {} }));
-    expect(loadWin(s, defaults(), KNOWN, NOW).tree).toEqual(defaults().tree);
+    expect(loadWin(s, defaults(), KNOWN, NOW).tree).toEqual(flatTree());
   });
 
   it("unknown ids are kept as ghosts; a 31-day-old ghost is pruned", () => {
@@ -101,7 +103,7 @@ describe("win store (spec 6)", () => {
       }),
     );
     const r = loadWin(s, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
-    expect(ids(r.tree)).toEqual(["a", "ghost-new", "b", "c"]); // b,c re-inserted: static cards never disappear
+    expect(ids(r.tree)).toEqual(["a", "b", "c", "ghost-new"]); // b,c re-inserted after a: static cards never disappear
     expect(r.st["ghost-old"]).toBeUndefined();
     expect(r.st["ghost-new"]).toEqual({ seen: NOW - DAY });
   });
@@ -110,7 +112,7 @@ describe("win store (spec 6)", () => {
     const s = new MemStorage();
     s.setItem("pai.cockpit.win.v2", saved({ v: 2, tree: split("c", [leaf("a"), leaf("ghost")], [300, 200]), kids: {}, st: {} }));
     const r = loadWin(s, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
-    expect(ids(r.tree)).toEqual(["a", "ghost", "b", "c"]);
+    expect(ids(r.tree)).toEqual(["a", "b", "c", "ghost"]);
   });
 
   it("a new static id is inserted next to its default neighbour", () => {
@@ -121,26 +123,20 @@ describe("win store (spec 6)", () => {
       saved({ v: 2, tree: split("c", [leaf("a"), split("r", [leaf("b"), leaf("zz")], [0.5, 0.5])], [300, 400]), kids: {}, st: { zz: { seen: NOW } } }),
     );
     const r = loadWin(s, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
-    expect(ids(r.tree)).toEqual(["a", "b", "zz", "c"]); // zz is a fresh ghost (no seen stamp)
-    // c sits right after its default neighbour b; the unknown ghost zz stays where it was
+    expect(ids(r.tree)).toEqual(["a", "b", "c", "zz"]); // zz is a fresh ghost (no seen stamp)
+    // c sits right after its default neighbour b
     expect(findLeaf(r.tree, "c")).toBeTruthy();
-    const p = parentOf(r.tree, "c");
-    expect(p.k).toBe("s");
-    expect(p.d).toBe("r");
-    expect(ids(p)).toEqual(["b", "zz", "c"]);
+    expect(parentOf(r.tree, "c").d).toBe("c");
   });
 
-  it("a new static id with no known neighbour becomes a new band at the end", () => {
+  it("a new static id follows its default neighbour; the ghost keeps its place after them", () => {
     const s = new MemStorage();
     // saved tree lacks "b"; default neighbour c is also gone -> no known neighbour
     s.setItem("pai.cockpit.win.v2", saved({ v: 2, tree: split("c", [leaf("a"), leaf("zz")], [300, 200]), kids: {}, st: { zz: { seen: NOW } } }));
     const r = loadWin(s, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
-    expect(ids(r.tree)).toEqual(["a", "zz", "b", "c"]);
+    expect(ids(r.tree)).toEqual(["a", "b", "c", "zz"]);
     expect(r.tree.d).toBe("c");
-    expect(r.tree.ch[2].k).toBe("c");
-    expect(r.tree.ch[2].id).toBe("b");
-    expect(r.tree.ch[3].k).toBe("c");
-    expect(r.tree.ch[3].id).toBe("c");
+    expect(r.tree.ch.map((c: any) => c.id)).toEqual(["a", "b", "c", "zz"]);
   });
 
   it("reconcileSaved inserts a missing static id after its default predecessor", () => {
@@ -175,8 +171,8 @@ describe("win store (spec 6)", () => {
     );
     const r = loadWin(s, defaults(), KNOWN, NOW);
     expect(r.st.a).toEqual({ min: 0 }); // explicit restore beats default min:1
-    expect(r.st.b).toEqual({ min: 1 });
-    expect(r.st.c).toBeUndefined();
+    expect(r.st.b).toEqual({ min: 1, w: 6 }); // the default width fills in
+    expect(r.st.c).toEqual({ w: 6 });
   });
 
   it("a stored min is normalised to 1 when truthy, else to 0", () => {
@@ -187,8 +183,8 @@ describe("win store (spec 6)", () => {
     );
     const r = loadWin(s, defaults(), KNOWN, NOW);
     expect(r.st.a).toEqual({ min: 1 });
-    expect(r.st.b).toEqual({ min: 1 });
-    expect(r.st.c).toEqual({ min: 1 });
+    expect(r.st.b).toEqual({ min: 1, w: 6 });
+    expect(r.st.c).toEqual({ min: 1, w: 6 });
     expect(r.st.g1).toEqual({ min: 0 }); // an explicit restore stays 0
   });
 
@@ -215,9 +211,9 @@ describe("win store (spec 6)", () => {
 
   it("resetWin returns fresh defaults with reset state", () => {
     const r = resetWin(defaults());
-    expect(r.tree).toEqual(defaults().tree);
+    expect(r.tree).toEqual(flatTree());
     expect(r.kids).toEqual(defaults().kids);
-    expect(r.st).toEqual({ a: { min: 1 } });
+    expect(r.st).toEqual({ a: { min: 1 }, b: { w: 6 }, c: { w: 6 } }); // the row of the default is two 6-unit cards
     // defaults() was not mutated
     expect(defaults().tree).toEqual(defaults().tree);
   });
@@ -276,13 +272,11 @@ describe("tokens group migration", () => {
     expect(ids(d.tree)).toContain("tokens-group");
     expect(ids(d.kids["tokens-group"])).toEqual(["tokens", "daily"]);
   });
-  it("wraps both root-level cards into the group at the first one's place, keeping heights", () => {
+  it("wraps both root-level cards into the group at the first one's place", () => {
     const saved = { v: 2, tree: split("c", [leaf("a"), leaf("tokens"), leaf("daily")], [300, 200, 400]), kids: {}, st: {} };
     const r = reconcileSaved(saved, tokDefaults(), K, NOW);
     expect(ids(r.tree)).toEqual(["a", "tokens-group"]);
-    expect(r.tree.sz).toEqual([300, 600]);
     expect(ids(r.kids["tokens-group"])).toEqual(["tokens", "daily"]);
-    expect(r.kids["tokens-group"].sz[0]).toBeCloseTo(1 / 3);
   });
   it("leaves an already grouped tree alone", () => {
     const kids = { "tokens-group": split("c", [leaf("daily"), leaf("tokens")], [0.3, 0.7]) };
@@ -290,7 +284,6 @@ describe("tokens group migration", () => {
     const r = reconcileSaved(saved, tokDefaults(), K, NOW);
     expect(ids(r.tree)).toEqual(["tokens-group", "a"]);
     expect(ids(r.kids["tokens-group"])).toEqual(["daily", "tokens"]);
-    expect(r.kids["tokens-group"].sz).toEqual([0.3, 0.7]);
   });
   it("does not insert the group over cards the user placed inside another group", () => {
     const saved = { v: 2, tree: split("c", [leaf("x"), leaf("a")], [200, 300]), kids: { x: split("c", [leaf("tokens"), leaf("daily")], [0.5, 0.5]) }, st: {} };
@@ -303,7 +296,6 @@ describe("tokens group migration", () => {
     const saved = { v: 2, tree: split("c", [leaf("tokens"), leaf("a")], [200, 300]), kids: { x: leaf("daily") }, st: {} };
     const r = reconcileSaved(saved, tokDefaults(), K, NOW);
     expect(ids(r.tree)).toEqual(["tokens-group", "a"]);
-    expect(r.tree.sz).toEqual([200, 300]);
   });
 });
 
@@ -311,8 +303,8 @@ describe("every mapped root card migrates into its group", () => {
   const defs = () => ({
     tree: split("c", [leaf("a"), leaf("tokens-group"), leaf("perf-group")], [100, 800, 700]),
     kids: {
-      "tokens-group": split("c", [leaf("tokens"), leaf("daily"), leaf("speed")], [0.4, 0.3, 0.3]),
-      "perf-group": split("c", [leaf("runs"), leaf("sessions"), leaf("pause")], [0.4, 0.3, 0.3]),
+      "tokens-group": split("c", [leaf("tokens"), leaf("daily")], [0.5, 0.5]),
+      "perf-group": split("c", [leaf("speed"), leaf("runs"), leaf("sessions"), leaf("pause")], [0.25, 0.25, 0.25, 0.25]),
     },
     stDefaults: {},
   });
@@ -322,24 +314,22 @@ describe("every mapped root card migrates into its group", () => {
     expect(d.tree.ch.filter((c: any) => c.k === "c" && !(d.kids as any)[c.id] && c.id !== "a")).toEqual([]);
   });
   it.each([
-    ["speed", "tokens-group"],
+    ["speed", "perf-group"],
     ["runs", "perf-group"],
     ["sessions", "perf-group"],
     ["pause", "perf-group"],
-  ])("%s at root moves into %s keeping its height", (card, grp) => {
+  ])("%s at root moves into %s", (card, grp) => {
     const saved = { v: 2, tree: split("c", [leaf("a"), leaf(card)], [100, 250]), kids: {}, st: {} };
     const r = reconcileSaved(saved, defs(), K2, NOW);
     expect(ids(r.tree)).toContain(grp);
     expect(ids(r.tree)).not.toContain(card);
     expect(ids(r.kids[grp])).toContain(card);
-    expect(r.tree.sz[ids(r.tree).indexOf(grp)]).toBe(250);
   });
   it("performance cards at root become one group at the first one's place", () => {
     const saved = { v: 2, tree: split("c", [leaf("pause"), leaf("a"), leaf("runs"), leaf("sessions")], [100, 50, 300, 200]), kids: {}, st: {} };
     const r = reconcileSaved(saved, defs(), K2, NOW);
     expect(ids(r.tree).filter((i: string) => i !== "tokens-group")).toEqual(["perf-group", "a"]);
-    expect(r.tree.sz.slice(0, 2)).toEqual([600, 50]);
-    expect(ids(r.kids["perf-group"])).toEqual(["pause", "runs", "sessions"]);
+    expect(ids(r.kids["perf-group"])).toEqual(["pause", "runs", "sessions", "speed"]);
   });
   it("a mapped card inside a user group stays there", () => {
     const saved = { v: 2, tree: split("c", [leaf("a"), leaf("mine")], [100, 250]), kids: { mine: split("c", [leaf("pause"), leaf("runs")], [0.5, 0.5]) }, st: {} };

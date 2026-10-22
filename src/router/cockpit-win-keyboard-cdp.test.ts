@@ -115,17 +115,7 @@ describe.skipIf(!CHROME)("cockpit keyboard and accessibility, spec 5.3 (CDP key 
     expect(live.win, "K6 one announcement region").toBe(1);
     expect(live.polite.sort()).toEqual(["cstatus/polite", "cwlive/polite"]);
 
-    // K7: gutters are focusable separators; an arrow resizes by 16 px
-    const gs = await b.ev<{ role: string | null; tab: number }[]>(`Array.from(document.querySelectorAll(".wgutter")).map(function(g){return{role:g.getAttribute("role"),tab:g.tabIndex}})`);
-    expect(gs.length).toBeGreaterThan(0);
-    expect(gs.every((g) => g.role === "separator" && g.tab === 0)).toBe(true);
-    await b.ev(`(function(){var g=Array.from(document.querySelectorAll(".wgutter[data-axis=x]")).find(function(x){return x.offsetWidth>0});g.setAttribute("data-kt","1")})()`);
-    const widths = () => b.ev<number[]>(`Array.from(document.querySelectorAll("#win-root .card")).map(function(c){return Math.round(c.getBoundingClientRect().width*100)/100})`);
-    await focus("[data-kt]");
-    const w0 = await widths(); await key("ArrowRight"); const w1 = await widths(); await key("ArrowLeft"); const w2 = await widths();
-    const diff = (x: number[], y: number[]) => y.map((v, i) => Math.round((v - x[i]!) * 100) / 100).filter((v) => v);
-    expect(diff(w0, w1).sort((p, q) => p - q), "K7 ArrowRight moves 16 px").toEqual([-16, 16]);
-    expect(diff(w1, w2).sort((p, q) => p - q), "K7 ArrowLeft moves back").toEqual([-16, 16]);
+    // K7 (gutters with arrow-key resizing) is gone: positions are CSS grid now; the size handle has its own keyboard test (cockpit-win-resize)
 
     // K8: reduced motion leaves no transition and no animation anywhere
     await b.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });

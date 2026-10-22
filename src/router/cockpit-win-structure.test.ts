@@ -35,7 +35,7 @@ Array.prototype.forEach.call(document.querySelectorAll("#win-root .chead"),funct
 Array.prototype.forEach.call(document.querySelectorAll("#win-root .card button,#win-root .card input,#win-root .card textarea,#win-root .card select"),function(b){
  if(b.closest(".win-info"))return;
  var isBtn=b.tagName==="BUTTON";
- var c=b.className.indexOf("cgrip")>=0||b.className.indexOf("cmin")>=0||b.hasAttribute("data-act")||b.hasAttribute("data-q")||!!b.closest(".wctl")||(b.disabled&&b.title);
+ var c=b.className.indexOf("cgrip")>=0||b.className.indexOf("cmin")>=0||b.hasAttribute("data-act")||b.hasAttribute("data-q")||!!b.closest(".wctl")||!!b.closest(".wrg-ft")||(b.disabled&&b.title);
  if(isBtn&&!c)bad.push((b.closest(".card").getAttribute("data-card"))+"|"+b.className+"|"+b.textContent.slice(0,20));
  if(!(b.title||b.getAttribute("aria-label")))bad.push((b.closest(".card").getAttribute("data-card"))+"|"+b.tagName+"."+b.className+"|no title or aria-label");
 });

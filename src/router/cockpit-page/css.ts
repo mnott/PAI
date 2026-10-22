@@ -135,8 +135,8 @@ svg text{fill:var(--dim);font-size:10px}
 /* win cards (A5): scoped under main.win, old rules untouched until W-cut */
 /* the grid: the page and every group body are 12 columns; a card spans its width units, is as tall as its content, and the cards of a grid row share its height */
 main.win,main.win .cbody.cgroup{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:6px;align-content:start;container-type:inline-size}
-main.win{margin:10px 14px}
-main.win .card[data-w="3"]{grid-column:span 3}main.win .card[data-w="4"]{grid-column:span 4}main.win .card[data-w="6"]{grid-column:span 6}main.win .card[data-w="8"]{grid-column:span 8}main.win .card[data-w="9"]{grid-column:span 9}
+main.win{margin:10px 14px;overflow-anchor:none}/* the anchor keeper (win/anchor.ts) is the one owner of scroll compensation: the browser must not add its own */
+main.win .card[data-w="2"]{grid-column:span 2}main.win .card[data-w="3"]{grid-column:span 3}main.win .card[data-w="4"]{grid-column:span 4}main.win .card[data-w="6"]{grid-column:span 6}main.win .card[data-w="8"]{grid-column:span 8}main.win .card[data-w="9"]{grid-column:span 9}
 main.win .cdock{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;min-width:0}main.win .cdock:empty{display:none}main.win .cdock>.card{flex:1 1 150px;max-width:100%}
 main.win .card{position:relative;display:flex;flex-direction:column;grid-column:span 12;padding:0;border:0;outline:1px solid var(--line);outline-offset:-1px;overflow:hidden;min-width:0}
 main.win .chead{position:relative;flex:none;height:28px;display:flex;align-items:center;gap:6px;padding:0 6px;border-bottom:1px solid var(--line);min-width:0}
@@ -214,7 +214,7 @@ main.win .card[data-depth="15"]>.chead{background:var(--grp-h8)}
 main.win .card[data-depth="15"]>.chead .ctitle{color:var(--fg)}
 main.win .card[data-depth="15"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .tw>.dim{display:block;padding:6px 10px}
-main.win .card.min .cbody{display:none}main.win .card.min{align-self:start}
+main.win .card.min .cbody{display:none}main.win .card.min{align-self:start}main.win .card.nohd>.chead{display:none}
 /* header actions never wrap: the title gives way (.ctitle already ellipsises) */
 main.win .chead>button,main.win .chead>.cbtn,main.win .chead>.wctl{white-space:nowrap;flex:none}
 main.win .card.chip .chead{height:22px;border-bottom:0}main.win .card.chip .chead>:not(.ctitle):not(.cmin){display:none}main.win .card.chip .cmin{margin-left:auto}
