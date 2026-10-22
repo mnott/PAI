@@ -49,7 +49,14 @@ fi
 
 CLAUDE_SESSION_UUID=""
 if [ ! -t 0 ]; then
-  HOOK_INPUT=$(timeout 2 cat 2>/dev/null || true)
+  if command -v timeout &>/dev/null; then
+    HOOK_INPUT=$(timeout 2 cat 2>/dev/null || true)
+  elif command -v perl &>/dev/null; then
+    # stock macOS has no GNU timeout
+    HOOK_INPUT=$(perl -e 'alarm 2; exec "cat"' 2>/dev/null || true)
+  else
+    HOOK_INPUT=$(cat 2>/dev/null || true)
+  fi
   if [ -n "$HOOK_INPUT" ]; then
     if command -v jq &>/dev/null; then
       CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)

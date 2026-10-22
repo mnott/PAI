@@ -17,11 +17,16 @@ if [ -n "$command" ]; then
   fi
 fi
 
+if ! command -v ztk &>/dev/null; then
+  # no ztk: no decision, the normal permission flow applies
+  exit 0
+fi
+
 result=$(printf '%s' "$stdin" | ztk rewrite 2>/dev/null)
 
 if [ -z "$result" ]; then
-  # ztk returned nothing - allow the command as-is
-  echo '{"permissionDecision":"allow"}'
+  # ztk printed nothing: no decision, the normal permission flow applies
+  exit 0
 else
   # ztk returned something - change ask to allow
   echo "$result" | sed 's/"permissionDecision":"ask"/"permissionDecision":"allow"/'
