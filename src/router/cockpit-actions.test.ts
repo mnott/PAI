@@ -361,6 +361,25 @@ describe("cockpit actions", () => {
     expect(badOp.ok).toBe(false);
   });
 
+  it("a double-clicked runtime stop starts once: the second call is refused while the first is in setup", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const real = {
+      ...(testDeps(tmp, calls) as Record<string, unknown>),
+      runtimeOps: { runShell: async (cmd: string) => { calls.runtime!.push(cmd); return { code: 0 }; }, spawnDetached: () => ({ exit: new Promise<{ code: number | null }>(() => {}) }), getUrl: async () => true, runCmd: async () => 0, now: () => 0, sleep: async () => undefined },
+    } as never;
+    const [a, b] = await Promise.all([
+      runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, real),
+      runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, real),
+    ]);
+    expect([a.ok, b.ok].sort()).toEqual([false, true]);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.runtime).toEqual(["kill"]);
+    // the claim is released: a later call is judged by the usual checks again
+    const later = await runCockpitAction({ action: "runtime", target: "ollama", value: "stop" }, real);
+    expect(later.message).not.toContain("already being set up");
+  });
+
   it("unknown actions refuse", async () => {
     const tmp = newDir();
     const r = await runCockpitAction({ action: "wat" }, testDeps(tmp, emptyCalls()));

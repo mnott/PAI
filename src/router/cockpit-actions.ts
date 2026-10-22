@@ -414,6 +414,14 @@ export async function runtimeStartStop(
  * Validate and run one action. Returns {ok, message}; local.switch / local.off
  * answer at once with a jobId and run through hooks.runLocalJob.
  */
+/** Actions between their refusal check and the job write: a second call for the same key is refused, not started twice. */
+const inFlightActions = new Set<string>();
+function claimAction(key: string): boolean {
+  if (inFlightActions.has(key)) return false;
+  inFlightActions.add(key);
+  return true;
+}
+
 export async function runCockpitAction(
   body: { action?: unknown; target?: unknown; value?: unknown; count?: unknown; all?: unknown; class?: unknown; models?: unknown; session?: unknown; clear?: unknown },
   deps: ActionDeps,
@@ -464,29 +472,42 @@ export async function runCockpitAction(
     if (op !== "start" && op !== "stop") return fail(`op must be start or stop, got "${value ?? ""}"`);
     const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
     if (!commands[runtime]?.[op]) return fail(`no ${op} command configured for ${runtime} (models.runtimes.${runtime}.${op})`);
-    const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, "", deps.runtimeKinds?.[runtime]);
-    if (refused) return fail(refused);
-    const id = randomBytes(6).toString("hex");
+    const claim = `runtime:${runtime}`;
+    if (!claimAction(claim)) return fail(`a ${runtime} start/stop is already being set up`);
+    let id: string;
     let logOffset = 0;
     try {
-      logOffset = statSync(runtimeLogFile(deps.home, runtime)).size;
-    } catch {
-      /* no log yet */
+      const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, "", deps.runtimeKinds?.[runtime]);
+      if (refused) return fail(refused);
+      id = randomBytes(6).toString("hex");
+      try {
+        logOffset = statSync(runtimeLogFile(deps.home, runtime)).size;
+      } catch {
+        /* no log yet */
+      }
+      const at = new Date().toISOString();
+      writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at, startedAt: at, logOffset });
+    } finally {
+      inFlightActions.delete(claim);
     }
-    const at = new Date().toISOString();
-    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at, startedAt: at, logOffset });
     writeLedgerLine(deps, action, `${runtime}:${op}`, `job ${id}: started`);
     void finishRuntimeJob(deps, hooks, id, runtime, op);
     return { ok: true, message: `${op === "start" ? "starting" : "stopping"} ${runtime}`, jobId: id };
   }
   if (action === "memory.embed" || action === "memory.index") {
     const kind: RunKind = action === "memory.embed" ? "embed" : "index";
-    const refused = await memoryRunRefusal(deps);
-    if (refused) return fail(refused);
-    if (kind === "embed" && (await (deps.embedBacklog ?? daemonEmbedBacklog)()) === 0) return { ok: true, message: "nothing to embed (backlog 0)" };
-    const id = randomBytes(6).toString("hex");
-    const at = new Date().toISOString();
-    writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: "running", message: kind === "embed" ? "embed backlog" : "index now", at, startedAt: at });
+    if (!claimAction("memory")) return fail("a memory run is already being set up");
+    let id: string;
+    try {
+      const refused = await memoryRunRefusal(deps);
+      if (refused) return fail(refused);
+      if (kind === "embed" && (await (deps.embedBacklog ?? daemonEmbedBacklog)()) === 0) return { ok: true, message: "nothing to embed (backlog 0)" };
+      id = randomBytes(6).toString("hex");
+      const at = new Date().toISOString();
+      writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: "running", message: kind === "embed" ? "embed backlog" : "index now", at, startedAt: at });
+    } finally {
+      inFlightActions.delete("memory");
+    }
     writeLedgerLine(deps, action, kind, `job ${id}: started`);
     void finishMemoryJob(deps, hooks, id, kind);
     return { ok: true, message: kind === "embed" ? "embedding the backlog" : "indexing", jobId: id };
