@@ -39,7 +39,19 @@ describe("stepAibroker", () => {
     };
     r.calls.length = 0;
     expect(stepAibroker(fn, {})).toBe("installed");
-    expect(r.calls).toEqual(["aibroker doctor", "npm install -g aibroker", "aibroker setup", "aibroker doctor"]);
+    expect(r.calls).toEqual(["aibroker doctor", "npm install -g aibroker@^0.62.4", "aibroker setup", "aibroker doctor"]);
+  });
+
+  it("installed but unhealthy (doctor fails for another reason): no npm install, setup and doctor only", () => {
+    const calls: string[] = [];
+    let n = 0;
+    const fn: CmdRunner = (cmd, args) => {
+      const s = [cmd, ...args].join(" ");
+      calls.push(s);
+      return s === "aibroker doctor" && n++ === 0 ? { status: 1, output: "not paired" } : { status: 0, output: "" };
+    };
+    expect(stepAibroker(fn, {})).toBe("installed");
+    expect(calls).toEqual(["aibroker doctor", "aibroker setup", "aibroker doctor"]);
   });
 
   it("install fails: failed, output and retry command shown, later commands not run", () => {
@@ -47,13 +59,13 @@ describe("stepAibroker", () => {
     const fn: CmdRunner = (cmd, args) => {
       const s = [cmd, ...args].join(" ");
       calls.push(s);
-      return s === "npm install -g aibroker" ? { status: 1, output: "EACCES" } : { status: 1, output: "" };
+      return s === "npm install -g aibroker@^0.62.4" ? { status: 1, output: "EACCES" } : { status: 127, output: "" };
     };
     expect(stepAibroker(fn, {})).toBe("failed");
-    expect(calls).toEqual(["aibroker doctor", "npm install -g aibroker"]);
+    expect(calls).toEqual(["aibroker doctor", "npm install -g aibroker@^0.62.4"]);
     const text = out.join("\n");
     expect(text).toContain("EACCES");
-    expect(text).toContain("Retry with: npm install -g aibroker && aibroker setup && aibroker doctor");
+    expect(text).toContain("Retry with: npm install -g aibroker@^0.62.4 && aibroker setup && aibroker doctor");
   });
 
   it("--no-aibroker: skipped, nothing run", () => {
@@ -67,7 +79,7 @@ describe("stepAibroker", () => {
     stepAibroker(r.fn, { dryRun: true });
     expect(r.calls).toEqual([]);
     const text = out.join("\n");
-    for (const s of ["npm install -g aibroker", "aibroker setup", "aibroker doctor"]) expect(text).toContain(s);
+    for (const s of ["npm install -g aibroker@^0.62.4", "aibroker setup", "aibroker doctor"]) expect(text).toContain(s);
   });
 
   it("summary lists a failed step", () => {

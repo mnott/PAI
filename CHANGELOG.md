@@ -4,6 +4,21 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Setup router step:** a busy router port no longer aborts setup after the other steps ran; it is listed in the summary with the retry command and every other answer is still written. The router's own port is recognised by the running router (pid file), not by `router.enabled` in the config. `--yes` keeps a saved router bind (tailscale or an explicit address); only `--router-bind` changes it. A non-loopback bind is probed on its own address. Bad `--router-port` / `--router-bind` values are rejected before anything runs, also with `--dry-run`.
+- **Setup AIBroker step:** commands time out after five minutes, `aibroker setup` gets the terminal when interactive, `npm install -g` runs only when `aibroker` is missing (a failing `doctor` just re-runs `setup`), and the package is pinned to `aibroker@^0.62.4`.
+- **Setup embedding step:** `--embedding` on a machine that already has a model, and `--embedding ollama` without Ollama, now say so instead of doing nothing silently.
+- **`pai setup --questions`:** follows the wizard order and carries `note` fields where the effective default differs (storage under `--yes`, router default).
+
+### Notes
+
+- Setup enables the router when `router.enabled` is absent (the daemon's own default for the key is off); `--no-router` turns it off.
+
+---
+
 ## [1.0.1] - 2026-10-22
 
 A review release: every area of the code was reviewed after 1.0.0, and the findings are fixed here — notably a command injection through macOS notifications, guards that could be bypassed, and several paths that could lose data.

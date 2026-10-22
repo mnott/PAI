@@ -80,6 +80,9 @@ export interface SetupOptions {
 }
 export const setupOptions: SetupOptions = { yes: false, answers: {} };
 
+/** Non-fatal step failures (e.g. a busy router port); setup finishes and the summary lists them. */
+export const setupFailures: string[] = [];
+
 /**
  * The one place every wizard question passes through. Under --yes it answers
  * `defaultValue` without touching stdin; a question with no default cannot be

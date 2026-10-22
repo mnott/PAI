@@ -86,7 +86,7 @@ On Linux without systemd (containers) run `pai daemon serve` in a terminal or pr
 Check: `aibroker doctor` exits 0. AIBroker is a separate package and PAI's messaging layer (messages between sessions, worker reports, terminal tab names, WhatsApp, Telegram, PAILot). `pai setup` installs it automatically (unless run with `--no-aibroker`); this phase only confirms it. If `aibroker` is not on the PATH or doctor fails:
 
 ```
-npm install -g aibroker
+npm install -g aibroker@^0.62.4
 aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor
 ```
