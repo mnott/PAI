@@ -39,7 +39,7 @@ Shortcut for `pai setup`.
 | `--registry-scan` | flag | — | Do: Run `pai registry scan` after setup? |
 | `--task-bus` | flag | — | Do: Enable the task bus (needs a Todoist account)? |
 | `--no-workers` | flag | — | Skip: Turn workers on with the built-in anthropic provider? |
-| `--dry-run` | flag | — | Print the AIBroker install commands and change nothing |
+| `--dry-run` | flag | — | Validate the flags, print the AIBroker install commands and change nothing (other steps are not previewed) |
 
 ```sh
 pai setup

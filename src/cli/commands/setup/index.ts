@@ -6,7 +6,7 @@
 import chalk from "chalk";
 import { existsSync } from "node:fs";
 import { CONFIG_FILE, loadConfig } from "../../../daemon/config.js";
-import { createRl, prompt, promptYesNo, line, mergeConfig, setupOptions } from "./utils.js";
+import { createRl, prompt, promptYesNo, line, mergeConfig, setupFailures, setupOptions } from "./utils.js";
 import {
   stepWelcome,
   stepStorage,
@@ -40,6 +40,7 @@ async function step<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
 }
 
 export async function runSetup(): Promise<void> {
+  setupFailures.length = 0;
   if (setupOptions.dryRun) {
     stepAibroker();
     return;
@@ -148,6 +149,7 @@ export async function runSetup(): Promise<void> {
       mcpRegistered,
       process.platform,
       aibroker,
+      setupFailures,
     );
 
   } finally {

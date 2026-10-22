@@ -4,6 +4,7 @@ import chalk from "chalk";
 import type { CommandDef, OptDef } from "../define.js";
 import { legacy } from "../lib/legacy.js";
 import { runSetup } from "./setup/index.js";
+import { validBind, validPort } from "./setup/steps/19-router.js";
 import { setupOptions } from "./setup/utils.js";
 import { COMPONENTS, componentFlag, renderQuestions, setupQuestions } from "./setup/questions.js";
 
@@ -35,7 +36,7 @@ export const setupCommand: CommandDef = {
     { name: "router-bind", type: "string", value: "SCOPE", summary: "Who reaches the cockpit: loopback (default), tailscale or an IPv4 address" },
     { name: "no-aibroker", type: "boolean", default: false, summary: "Do not install AIBroker (the messaging layer)" },
     ...componentOptions,
-    { name: "dry-run", type: "boolean", default: false, summary: "Print the AIBroker install commands and change nothing" },
+    { name: "dry-run", type: "boolean", default: false, summary: "Validate the flags, print the AIBroker install commands and change nothing (other steps are not previewed)" },
   ],
   examples: [
     "pai setup",
@@ -69,6 +70,12 @@ export function applySetupFlags(opts: Record<string, unknown>): void {
   const embedding = opts.embedding as string | undefined;
   if (embedding && !["snowflake", "bge", "nomic", "ollama", "none"].includes(embedding)) {
     throw new Error(`--embedding must be snowflake, bge, nomic, ollama or none, got "${embedding}"`);
+  }
+  const port = opts["router-port"];
+  if (port !== undefined && validPort(port) === null) throw new Error(`--router-port must be a number from 1024 to 65535, got "${port}"`);
+  const bind = opts["router-bind"];
+  if (bind !== undefined && validBind(String(bind)) === null) {
+    throw new Error(`--router-bind must be loopback, tailscale or an IPv4 address (not 0.0.0.0), got "${bind}"`);
   }
   if (opts.router === true && opts["no-router"] === true) throw new Error("--router and --no-router contradict each other");
   const answers: Record<string, boolean> = {};

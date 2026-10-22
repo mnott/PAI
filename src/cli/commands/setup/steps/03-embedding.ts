@@ -13,6 +13,9 @@ async function stepBackend(rl: Rl, fresh: boolean): Promise<Record<string, unkno
   const { results, recommended } = await detectBackends();
   line();
   for (const r of results) console.log(`  ${r.ok ? c.ok(r.id) : c.dim(r.id)}: ${r.reason}`);
+  if (fresh && setupOptions.embedding === "ollama" && recommended !== OLLAMA_ID) {
+    console.log(c.warn("  --embedding ollama: Ollama was not detected, so the local Arctic model is used. Start Ollama and run `pai memory backend use ollama`."));
+  }
   if (!recommended) return {};
   if (!fresh) {
     console.log(c.dim(`  Recommended: ${recommended}. Switch with \`pai memory backend use ${recommended}\` + \`pai memory reembed\`.`));
@@ -33,6 +36,9 @@ export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
   const existing = readConfigRaw();
   if (existing.embeddingModel) {
     console.log(c.ok(`Embedding model: ${existing.embeddingModel}. Skipping.`));
+    if (setupOptions.embedding !== undefined) {
+      console.log(c.warn(`  --embedding ${setupOptions.embedding} ignored: a model is already set. Change it with \`pai memory backend use\` or by editing embeddingModel in ${CONFIG_FILE}.`));
+    }
     return { embeddingModel: existing.embeddingModel, ...(await stepBackend(rl, false)) };
   }
 

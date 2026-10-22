@@ -18,6 +18,8 @@ export interface SetupQuestion {
   allowed?: string[];
   /** Value already in place on this machine; the wizard skips (or keeps) it. */
   current?: string | number | boolean;
+  /** Where the effective default differs from `default`, or no current value can be shown. */
+  note?: string;
 }
 
 /** yes/no components: key = setupOptions.answers key, flag form depends on the default. */
@@ -36,6 +38,12 @@ export const COMPONENTS: ReadonlyArray<{ key: string; step: string; question: st
   { key: "workers", step: "Workers", question: "Turn workers on with the built-in anthropic provider?", default: true },
 ];
 
+/** Components whose answer is not a plain default. */
+const COMPONENT_NOTES: Record<string, string> = {
+  "registry-scan": "Off by default: scanning walks your project directories.",
+  "task-bus": "Off by default. Needs a Todoist token in the config; with --yes the token cannot be asked, so set it first.",
+};
+
 export const componentFlag = (key: string, def: boolean): string => (def ? `--no-${key}` : `--${key}`);
 
 export function setupQuestions(): SetupQuestion[] {
@@ -48,6 +56,7 @@ export function setupQuestions(): SetupQuestion[] {
   q.push({
     id: "storage", step: "Storage", question: "Where should PAI store its data?", type: "choice",
     flag: "--storage", default: "sqlite", allowed: ["sqlite", "postgres"], ...cur(raw.storageBackend as string | undefined),
+    note: "With --yes and no --storage: postgres when a local PostgreSQL answers, else sqlite.",
   });
   q.push({
     id: "pg-url", step: "Storage", question: "PostgreSQL connection string (only when storage is postgres; default: the PAI Docker container)", type: "string",
@@ -57,23 +66,33 @@ export function setupQuestions(): SetupQuestion[] {
     id: "embedding", step: "Embedding", question: "Which embedding model for semantic search?", type: "choice",
     flag: "--embedding", default: "snowflake", allowed: ["snowflake", "bge", "nomic", "ollama", "none"], ...cur(raw.embeddingModel as string | undefined),
   });
+  const component = (comp: (typeof COMPONENTS)[number]) => {
+    const note = COMPONENT_NOTES[comp.key];
+    q.push({ id: comp.key, step: comp.step, question: comp.question, type: "bool", flag: componentFlag(comp.key, comp.default), default: comp.default, ...(note ? { note } : {}) });
+  };
+  const routerQuestions = () => {
+    q.push({
+      id: "router", step: "Router and cockpit", question: "Enable the router and cockpit?", type: "bool",
+      flag: "--router / --no-router", default: true, ...cur(typeof rawRouter.enabled === "boolean" ? rawRouter.enabled : undefined),
+      note: "Setup defaults to on; the daemon's own default (key absent) is off. A re-run with router.enabled absent turns it on unless --no-router is given.",
+    });
+    q.push({
+      id: "router-port", step: "Router and cockpit", question: "Port for the cockpit?", type: "port",
+      flag: "--router-port", default: router.port, ...cur(rawRouter.port as number | undefined),
+    });
+    q.push({
+      id: "router-bind", step: "Router and cockpit", question: "Who can reach the cockpit? Beyond loopback it is reachable from other devices.", type: "choice",
+      flag: "--router-bind", default: "loopback", allowed: ["loopback", "tailscale", "<ipv4 address>"], ...cur(rawRouter.bind as string | undefined),
+    });
+  };
+  const daName = () => q.push({ id: "da-name", step: "Settings", question: "What should your assistant be called?", type: "string", flag: "--da-name", default: "PAI" });
+  const aibroker = () => q.push({ id: "aibroker", step: "AIBroker", question: "Install AIBroker (messaging)?", type: "bool", flag: "--no-aibroker", default: true });
+  // Wizard order: the name precedes settings; router and AIBroker sit between the daemon and MCP.
   for (const comp of COMPONENTS) {
-    q.push({ id: comp.key, step: comp.step, question: comp.question, type: "bool", flag: componentFlag(comp.key, comp.default), default: comp.default });
+    if (comp.key === "settings") daName();
+    component(comp);
+    if (comp.key === "daemon") { routerQuestions(); aibroker(); }
   }
-  q.push({ id: "da-name", step: "Settings", question: "What should your assistant be called?", type: "string", flag: "--da-name", default: "PAI" });
-  q.push({
-    id: "router", step: "Router and cockpit", question: "Enable the router and cockpit?", type: "bool",
-    flag: "--router / --no-router", default: true, ...cur(typeof rawRouter.enabled === "boolean" ? rawRouter.enabled : undefined),
-  });
-  q.push({
-    id: "router-port", step: "Router and cockpit", question: "Port for the cockpit?", type: "port",
-    flag: "--router-port", default: router.port, ...cur(rawRouter.port as number | undefined),
-  });
-  q.push({
-    id: "router-bind", step: "Router and cockpit", question: "Who can reach the cockpit? Beyond loopback it is reachable from other devices.", type: "choice",
-    flag: "--router-bind", default: "loopback", allowed: ["loopback", "tailscale", "<ipv4 address>"], ...cur(rawRouter.bind as string | undefined),
-  });
-  q.push({ id: "aibroker", step: "AIBroker", question: "Install AIBroker (messaging)?", type: "bool", flag: "--no-aibroker", default: true });
   return q;
 }
 
@@ -83,6 +102,7 @@ export function renderQuestions(qs: SetupQuestion[]): string {
       const parts = [`${i + 1}. [${x.step}] ${x.question}`, `   flag: ${x.flag}  default: ${x.default ?? "(none)"}`];
       if (x.allowed) parts.push(`   allowed: ${x.allowed.join(" | ")}`);
       if (x.current !== undefined) parts.push(`   current: ${x.current} (already set)`);
+      if (x.note) parts.push(`   note: ${x.note}`);
       return parts.join("\n");
     })
     .join("\n");

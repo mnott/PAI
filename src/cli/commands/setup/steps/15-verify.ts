@@ -20,6 +20,7 @@ export function stepSummary(
   mcpRegistered: boolean,
   plat: NodeJS.Platform = process.platform,
   aibroker?: AibrokerStatus,
+  failures: readonly string[] = [],
 ): void {
   section("Setup Complete");
   line();
@@ -44,9 +45,10 @@ export function stepSummary(
   console.log(chalk.dim("  Daemon:           ") + chalk.cyan(daemonInstalled ? `${daemonServiceName(plat)} (installed)` : "(not installed by setup)"));
   console.log(chalk.dim("  MCP:              ") + chalk.cyan(mcpRegistered ? "registered in ~/.claude.json" : "(unchanged)"));
   if (aibroker) {
-    const label = { ok: "installed and healthy", installed: "installed", skipped: "skipped", failed: "FAILED — retry: npm install -g aibroker && aibroker setup && aibroker doctor" }[aibroker];
+    const label = { ok: "installed and healthy", installed: "installed", skipped: "skipped", failed: "FAILED — retry: npm install -g aibroker@^0.62.4 && aibroker setup && aibroker doctor" }[aibroker];
     console.log(chalk.dim("  AIBroker:         ") + (aibroker === "failed" ? chalk.red(label) : chalk.cyan(label)));
   }
+  for (const f of failures) console.log(chalk.red(`  ${f}`));
   line();
   console.log(chalk.bold.yellow("  → RESTART Claude Code to activate all changes."));
   line();

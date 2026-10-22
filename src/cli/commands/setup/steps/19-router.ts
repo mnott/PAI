@@ -3,15 +3,17 @@
 import { createServer } from "node:net";
 import { spawnSync } from "node:child_process";
 import chalk from "chalk";
+import { routerRunningPid } from "../../../../router/supervisor.js";
 import { loadConfig } from "../../../../daemon/config.js";
 import { resolveBindAddress } from "../../../../router/cockpit-auth.js";
-import { c, line, section, type Rl, prompt, promptMenu, promptYesNo, readConfigRaw, setupOptions } from "../utils.js";
+import { c, line, section, type Rl, prompt, promptMenu, promptYesNo, readConfigRaw, setupFailures, setupOptions } from "../utils.js";
 
 export interface PortProbe { free: boolean; holder?: string }
-export type PortProbeFn = (port: number) => Promise<PortProbe>;
+/** `host` is the address the listener will bind (default loopback). */
+export type PortProbeFn = (port: number, host?: string) => Promise<PortProbe>;
 
-/** Tries to listen on loopback; when taken, asks lsof who holds it. */
-export const defaultPortProbe: PortProbeFn = (port) =>
+/** Tries to listen on `host` (loopback by default); when taken, asks lsof who holds it. */
+export const defaultPortProbe: PortProbeFn = (port, host = "127.0.0.1") =>
   new Promise((resolve) => {
     const srv = createServer();
     srv.once("error", () => {
@@ -19,7 +21,7 @@ export const defaultPortProbe: PortProbeFn = (port) =>
       const holder = (r.stdout ?? "").split("\n")[1]?.trim().split(/\s+/).slice(0, 2).join(" pid ") || undefined;
       resolve({ free: false, holder });
     });
-    srv.listen(port, "127.0.0.1", () => srv.close(() => resolve({ free: true })));
+    srv.listen(port, host, () => srv.close(() => resolve({ free: true })));
   });
 
 export function validPort(v: unknown): number | null {
@@ -33,7 +35,7 @@ export function validBind(v: string): string | null {
   return resolveBindAddress(b) === null && b !== "tailscale" ? null : b || "loopback";
 }
 
-export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe): Promise<Record<string, unknown>> {
+export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe, runningPid: () => number | null = routerRunningPid): Promise<Record<string, unknown>> {
   section("Step 19: Router and Cockpit (Optional)");
   line();
   line("  The router accounts model usage, schedules local models and serves the cockpit page.");
@@ -50,19 +52,25 @@ export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe):
     return { router: { ...raw, enabled: false } };
   }
 
-  // Port: the config default (router.port) unless the user picks another; the router's own port is not "taken".
-  const ownPort = raw.enabled === true ? cfg.port : undefined;
-  const check = async (port: number): Promise<string | null> => {
-    if (port === ownPort) return null;
-    const p = await probe(port);
+  // A port the router itself holds is not "taken": judged by the live router (its pid file), not by a config flag.
+  const routerUp = runningPid() !== null;
+  const check = async (port: number, host?: string): Promise<string | null> => {
+    if (routerUp && port === cfg.port) return null;
+    const p = await probe(port, host);
     return p.free ? null : `Port ${port} is in use${p.holder ? ` by ${p.holder}` : ""}.`;
+  };
+  // A busy port must not abort setup after the other steps ran: it is listed in the summary and the router config stays as it was.
+  const unavailable = (why: string): Record<string, unknown> => {
+    console.log(c.warn(`  ${why}`));
+    setupFailures.push(`Router not configured: ${why} Retry: pai setup --router-port <free port>`);
+    return {};
   };
   let port: number;
   if (flags.port !== undefined) {
     const v = validPort(flags.port);
     if (v === null) throw new Error(`--router-port must be a number from 1024 to 65535, got "${flags.port}"`);
     const taken = await check(v);
-    if (taken) throw new Error(`${taken} Choose another with --router-port.`);
+    if (taken) return unavailable(taken);
     port = v;
   } else {
     port = cfg.port;
@@ -72,12 +80,12 @@ export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe):
       if (v === null) { console.log(c.warn("Enter a port from 1024 to 65535.")); continue; }
       const taken = await check(v);
       if (!taken) { port = v; break; }
+      if (setupOptions.yes) return unavailable(taken);
       console.log(c.warn(taken));
-      if (setupOptions.yes) throw new Error(`${taken} Choose another with --router-port.`);
     }
   }
 
-  // Reach
+  // Reach: --yes keeps what is saved; only --router-bind changes it.
   let bind: string;
   if (flags.bind !== undefined) {
     const v = validBind(flags.bind);
@@ -85,6 +93,7 @@ export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe):
     bind = v;
   } else {
     const current = String(raw.bind ?? "loopback");
+    const explicit = current !== "loopback" && current !== "tailscale" && validBind(current) !== null ? current : undefined;
     line();
     line("  Who can reach the cockpit? Beyond loopback it is reachable from other devices (behind a token).");
     line();
@@ -92,15 +101,21 @@ export async function stepRouter(rl: Rl, probe: PortProbeFn = defaultPortProbe):
       { label: "loopback", description: "This machine only (127.0.0.1)." },
       { label: "tailscale", description: "Your other Tailscale devices." },
       { label: "explicit address", description: "A specific IPv4 address of this machine." },
-    ], current === "tailscale" ? 1 : 0);
+    ], current === "tailscale" ? 1 : explicit ? 2 : 0);
     bind = idx === 0 ? "loopback" : "tailscale";
     if (idx === 2) {
       for (;;) {
-        const a = validBind(await prompt(rl, chalk.bold("  IPv4 address: "), ""));
+        const a = validBind(await prompt(rl, chalk.bold(`  IPv4 address${explicit ? ` [${explicit}]` : ""}: `), explicit ?? ""));
         if (a && a !== "tailscale") { bind = a; break; }
         console.log(c.warn("Enter a dotted IPv4 address (not 0.0.0.0)."));
       }
     }
+  }
+  // The listener also binds the reach address: probe it there too.
+  const host = bind === "loopback" ? undefined : resolveBindAddress(bind) ?? undefined;
+  if (host && !(routerUp && port === cfg.port)) {
+    const taken = await check(port, host);
+    if (taken) return unavailable(`${taken.slice(0, -1)} on ${host}.`);
   }
   if (bind !== "loopback") console.log(c.warn(`  The cockpit will be reachable from other devices via ${bind}; it asks for the token in ~/.pai/router-cockpit.token.`));
   if (bind === "tailscale" && resolveBindAddress("tailscale") === null) console.log(c.warn("  Tailscale is not up here; the extra listener starts once it is."));

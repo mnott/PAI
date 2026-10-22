@@ -57,14 +57,14 @@ pai daemon serve       # foreground, where there is no service manager
 [AIBroker](https://github.com/mnott/AIBroker) is a separate project and PAI's messaging layer: messages between sessions, worker reports to the session that started them, terminal tab names, and WhatsApp, Telegram and PAILot. PAI runs without it, but none of these work until it is installed:
 
 ```bash
-npm install -g aibroker
+npm install -g aibroker@^0.62.4
 aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor     # every check green, or it says exactly what to fix
 ```
 
 ### Setup questions and flags
 
-`pai setup` asks the questions below in this order. Every one has a flag, so `pai setup --yes <flags>` answers any of them without a terminal; a question without a flag takes its default. `pai setup --questions` (add `--json` for machines) prints this list for the current machine, with the value already in place where there is one. The setup skill uses it: it runs `pai setup --questions --json`, asks you in chat, then runs `pai setup --yes` with the matching flags.
+`pai setup` asks the questions below in this order. Every one has a flag, so `pai setup --yes <flags>` answers any of them without a terminal; a question takes its default when the flag is absent, except one that has no default (for example the Todoist token with `--task-bus`), which needs the value as a flag or in the config. `pai setup --questions` (add `--json` for machines) prints this list for the current machine, with the value already in place where there is one. The setup skill uses it: it runs `pai setup --questions --json`, asks you in chat, then runs `pai setup --yes` with the matching flags.
 
 | Question | Flag | Default | Allowed |
 |---|---|---|---|
