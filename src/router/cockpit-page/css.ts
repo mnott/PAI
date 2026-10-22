@@ -21,7 +21,7 @@ h1{font-size:15px;margin:0;font-weight:600}
 /* layout lock: the lock button is themed like #theme; locked hides every layout edit control */
 #lock{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:13px;line-height:1;border-radius:6px}#lock:hover,#lock[aria-pressed=true]{color:var(--acc)}
 #savedef{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;border-radius:6px;white-space:nowrap;flex:0 0 auto}@media(min-width:481px){#reset,#lock,#savedef,#theme{margin-left:-8px}}#savedef:hover,#savedef.ok{color:var(--acc)}#savedef.bad{color:var(--bad,#c33)}
-html.locked .cgrip,html.locked .cmin,html.locked .wgutter,html.locked #reset{display:none}
+html.locked .cgrip,html.locked .cmin,html.locked .cspan,html.locked .wgutter,html.locked #reset{display:none}
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}
@@ -220,7 +220,7 @@ main.win .card[data-depth]>.chandle,main.win .card.min>.chandle,html.locked .cha
 .cbtn{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:0 7px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
 .cbtn:hover:not([disabled]){border-color:var(--acc)}.cbtn:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .cbtn[disabled]{opacity:.5;cursor:default}
-.cmin{flex:none;padding:0 6px}
+.cmin{flex:none;padding:0 6px}.cspan{margin-left:6px;padding:0 6px;white-space:nowrap;text-transform:none;letter-spacing:0;font-weight:400}
 .cwlive{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 /* win controls: one rule set so no native-white widget shows in the dark theme; color-scheme darkens native scrollbars and popups */
 :root[data-theme=dark] main.win{color-scheme:dark}:root:not([data-theme=dark]) main.win{color-scheme:light}

@@ -67,6 +67,42 @@ function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
 /** A card's least width in a grid: its type's minW, or its title's text width plus header controls (cfg.titleW, measured by the runtime) when that is wider, capped at 1.6 x minW (a longer title keeps its ellipsis). */
 function winCardMinW(cfg,kids,id){var m=winMinW(cfg,winLeafType(kids,id,cfg)),t=cfg.titleW&&cfg.titleW[id];return t&&t>m?Math.min(t,Math.round(m*1.6)):m}
+/** A card's width share inside its row: st[id].sp is the divisor (4 = 1/4, 3 = 1/3, 2 = 1/2, 1 = the whole row), absent = auto (its weight). */
+function winSp(st,id){var s=st&&st[id];return s&&s.sp>0?s.sp:0}
+/** Row flow: when a visible child of the row has a width share, the children are laid in lines of the row width: a share
+ *  card takes that fraction (1 = its own line), an auto card its weight share of what its line has left. A card whose width
+ *  falls under its least width goes on its own line. Returns null without any share, else {lines:[[{i,x,w}]]} (i = index in node.ch). */
+function winFlow(node,w,st,cfg,kids){
+ var i,vis=[],any=false,t=0,gap=cfg.GAP,lines=[],cur=[],fr=0,ln,j;
+ for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)){vis.push(i);t+=node.sz[i]||0;if(winSp(st,node.ch[i].id))any=true}
+ if(!any)return null;
+ if(t<=0)t=1;
+ var f=[];
+ for(j=0;j<vis.length;j++){
+  var id=node.ch[vis[j]].id,sp=winSp(st,id),x=sp?1/sp:(node.sz[vis[j]]||0)/t;
+  if(x<1&&(sp?x*(w+gap)-gap:x*(w-(vis.length-1)*gap))<winCardMinW(cfg,kids,id))x=1;
+  f.push(x);
+ }
+ for(j=0;j<vis.length;j++){
+  if(cur.length&&fr+f[j]>1.0001){lines.push(cur);cur=[];fr=0}
+  cur.push(j);fr+=f[j];
+  if(f[j]>=1){lines.push(cur);cur=[];fr=0}
+ }
+ if(cur.length)lines.push(cur);
+ var out=[];
+ for(i=0;i<lines.length;i++){
+  ln=lines[i];var used=0,aw=0,m=ln.length,res=[],x0=0;
+  for(j=0;j<m;j++){var q=ln[j],qid=node.ch[vis[q]].id;if(winSp(st,qid)||f[q]>=1)used+=f[q]>=1?w:f[q]*(w+gap)-gap;else aw+=node.sz[vis[q]]||0}
+  var rest=w-used-(m-1)*gap;
+  for(j=0;j<m;j++){
+   var p=ln[j],pid=node.ch[vis[p]].id,pw;
+   if(f[p]>=1)pw=w;else if(winSp(st,pid))pw=f[p]*(w+gap)-gap;else pw=aw>0?rest*(node.sz[vis[p]]||0)/aw:0;
+   res.push({i:vis[p],x:x0,w:pw});x0+=pw+gap;
+  }
+  out.push(res);
+ }
+ return{lines:out};
+}
 /** Narrow row: children per line and their equal width. At most as many as fit at the largest least width; the lines are balanced:
  *  lines = ceil(n / kMax), per line = ceil(n / lines), so earlier lines are never shorter than later ones. */
 function winGridK(node,w,st,cfg,kids){
@@ -111,6 +147,11 @@ function winNeed(node,w,st,cfg,kids,flat){
  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id))t+=node.sz[i]||0;
  if(t<=0)t=1;
  if(node.d==="r"){
+  var fl=winFlow(node,w,st,cfg,kids);
+  if(fl){
+   for(var li=0;li<fl.lines.length;li++){var lm=0;for(var lj=0;lj<fl.lines[li].length;lj++){var it=fl.lines[li][lj];lm=Math.max(lm,winNeed(node.ch[it.i],it.w,st,cfg,kids,flat))}sum+=lm+gap}
+   return Math.max(0,sum-gap);
+  }
   var wide=true,g=null,ln=0,lc=0;
   for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&(node.sz[i]||0)/t*total<winCardMinW(cfg,kids,node.ch[i].id))wide=false;
   if(!wide)g=winGridK(node,w,st,cfg,kids);
@@ -153,6 +194,19 @@ function winFit(node,w,st,cfg,kids){
  for(i=0;i<vis.length;i++)t+=node.sz[vis[i]]||0;
  if(t<=0)t=1;
  var wide=node.d==="r",g=null;
+ var fl=node.d==="r"?winFlow(node,w,st,cfg,kids):null;
+ if(fl){
+  for(var li=0;li<fl.lines.length;li++){
+   var lm=0,lun=0;
+   for(var lj=0;lj<fl.lines[li].length;lj++){
+    var it=fl.lines[li][lj];k=winFit(node.ch[it.i],it.w,st,cfg,kids);
+    if(k===null)return null;
+    lm=Math.max(lm,k);var iu=winUH(node.ch[it.i],st,cfg,kids);if(iu!==null)lun=Math.max(lun,iu);
+   }
+   sum+=(lun>0?lun:lm)+gap;
+  }
+  return Math.max(0,sum-gap);
+ }
  if(wide)for(i=0;i<vis.length;i++)if((node.sz[vis[i]]||0)/t*total<winCardMinW(cfg,kids,node.ch[vis[i]].id))wide=false;
  if(node.d==="r"&&!wide)g=winGridK(node,w,st,cfg,kids);
  // a row line with a card the user gave a height is that tall: its siblings take the line height
@@ -181,24 +235,31 @@ function winSplit(node,box,bounded,st,cfg,kids){
   }
   var wide=true;
   for(i=0;i<vis.length;i++)if(ws[vis[i]]<winCardMinW(cfg,kids,node.ch[vis[i]].id))wide=false;
-  if(!wide){
+  var fl=winFlow(node,box.w,st,cfg,kids);
+  if(fl||!wide){
    // narrow mode: stack; root gives each child its defaultH, bounded an equal share
    // a grid: as many children per line as fit at their minW, equal widths, lines stacked
-   var gr=winGridK(node,box.w,st,cfg,kids),nl=Math.ceil(vis.length/gr.k);
+   var lines=[];
+   if(fl)lines=fl.lines;
+   else{
+    var gr=winGridK(node,box.w,st,cfg,kids);
+    for(var l0=0;l0<vis.length;l0+=gr.k){var ln0=[];for(i=l0;i<Math.min(vis.length,l0+gr.k);i++)ln0.push({i:vis[i],x:(i-l0)*(gr.cw+gap),w:gr.cw});lines.push(ln0)}
+   }
+   var nl=lines.length;
    var h0=bounded?Math.max(0,(box.h-(nl-1)*gap)/nl):0;
    var y=0;
-   for(var l0=0;l0<vis.length;l0+=gr.k){
+   for(var li=0;li<nl;li++){
     var lh=0,lo=out.length,lu2=0;
-    for(i=l0;i<Math.min(vis.length,l0+gr.k);i++){
-     var c=node.ch[vis[i]];
-     var nf=cfg.fit&&!winMin(st,c.id)?winFit(c,gr.cw,st,cfg,kids):null;
-     var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,gr.cw,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
-     out.push({n:c,x:(i-l0)*(gr.cw+gap),y:y,w:gr.cw,h:hh});
+    for(var lj=0;lj<lines[li].length;lj++){
+     var it=lines[li][lj],c=node.ch[it.i];
+     var nf=cfg.fit&&!winMin(st,c.id)?winFit(c,it.w,st,cfg,kids):null;
+     var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,it.w,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
+     out.push({n:c,x:it.x,y:y,w:it.w,h:hh});
      lh=Math.max(lh,hh);
      var u2=winUH(c,st,cfg,kids);if(u2!==null)lu2=Math.max(lu2,u2);
     }
     if(lu2>0)lh=lu2;
-    // a line is as tall as its tallest card; a minimized card keeps its header height
+   // a line is as tall as its tallest card; a minimized card keeps its header height
     for(i=lo;i<out.length;i++)if(!winMin(st,out[i].n.id))out[i].h=lh;
     y+=lh+gap;
    }

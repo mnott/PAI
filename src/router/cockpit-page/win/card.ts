@@ -133,7 +133,13 @@ function buildCard(spec){
  var min=el("button","cbtn cmin");min.type="button";min.textContent="–";min.setAttribute("aria-expanded","true");
  min.addEventListener("click",function(){toggleMin(c.id)});
  status.addEventListener("click",function(){if(status.getAttribute("data-kind")==="err")setStatus(c,"","")});
- head.appendChild(min);c.min=min;
+ // the page turns the width control on (opts.span); it sits in the title so the header children stay grip, title, status, actions, minimize; a pointer control, not a tab stop (tabindex -1)
+ if(W.opts&&W.opts.span){
+  var sp=el("button","cbtn cspan");sp.type="button";sp.setAttribute("data-act","span");sp.tabIndex=-1;
+  sp.addEventListener("click",function(){cycleSpan(c.id)});
+  title.appendChild(sp);c.span=sp;
+ }
+ head.appendChild(min);c.min=min;if(c.span)paintSpan(c);
  e.appendChild(head);e.appendChild(body);
  // height handle (bottom-right "//"): drag, arrows or double-click change this card's height only; hidden on groups and when locked by CSS
  var hd=el("div","chandle");hd.tabIndex=0;hd.setAttribute("role","separator");hd.setAttribute("aria-orientation","horizontal");
@@ -143,6 +149,27 @@ function buildCard(spec){
  paintActions(c);
  min.title="minimize "+c.titleText;min.setAttribute("aria-label",min.title);
  return c;
+}
+/** Width share in the row: auto, 1/4, 1/3, 1/2, the whole row. st.sp holds the divisor (absent = auto). */
+var SPAN_CYCLE=[0,4,3,2,1],SPAN_MARK={0:"\u2194",4:"\u00bc",3:"\u2153",2:"\u00bd",1:"1"},SPAN_NAME={0:"auto",4:"1/4",3:"1/3",2:"1/2",1:"full"};
+function spanOf(id){var s=W.st&&W.st[id];return s&&s.sp>0?s.sp:0}
+function paintSpan(c){
+ if(!c.span)return;
+ var v=spanOf(c.id);
+ if(c.span.getAttribute("data-span")===SPAN_NAME[v])return;
+ c.span.textContent=SPAN_MARK[v]||SPAN_MARK[0];
+ c.span.title="width in the row: "+SPAN_NAME[v]+" \u00b7 click for "+SPAN_NAME[SPAN_CYCLE[(SPAN_CYCLE.indexOf(v)+1)%SPAN_CYCLE.length]];
+ c.span.setAttribute("aria-label","width of "+(c.titleText||c.id)+": "+SPAN_NAME[v]);
+ c.span.setAttribute("data-span",SPAN_NAME[v]);
+}
+function cycleSpan(id){
+ var c=W.cards[id];if(!c||winLocked())return;
+ var nx=SPAN_CYCLE[(SPAN_CYCLE.indexOf(spanOf(id))+1)%SPAN_CYCLE.length];
+ W.st[id]=W.st[id]||{};
+ if(nx)W.st[id].sp=nx;else delete W.st[id].sp;
+ paintSpan(c);
+ anchorKeep(relayout);save();
+ announce(c.titleText+" width "+SPAN_NAME[nx]);
 }
 function isMin(id){var s=W.st[id];return!!s&&s.min===1}
 /** layout state: unknown ids are ghosts (no space), known minimized cards carry min. */
@@ -155,7 +182,7 @@ function layState(){
   if(W.hide&&W.hide[id])o[id]={seen:1};
   else if(!W.cards[id]){o[id]={seen:(W.st[id]&&W.st[id].seen)||1}}
   else if(isMin(id))o[id]={min:1};
-  else if(W.st[id]&&W.st[id].h)o[id]={h:W.st[id].h};
+  else if(W.st[id]&&(W.st[id].h||W.st[id].sp)){o[id]={};if(W.st[id].h)o[id].h=W.st[id].h;if(W.st[id].sp)o[id].sp=W.st[id].sp}
  }
  // a minimized card inside a group leaves its place (a ghost); it shows as a chip in the group's dock
  var dk=dockOf();for(var d in dk)for(i=0;i<dk[d].length;i++)o[dk[d][i]]={seen:1};
@@ -187,7 +214,7 @@ function paintMin(c){
 function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
 /** Each card's title text width plus header controls, measured once the card is placed (c.tw; the status slot may truncate, so it is not counted); a new reading re-lays out once. */
 /** The title element is stretched by flex, so its natural width is where its last child (text or info icon) ends. */
-function titleText(c){return c.title.lastChild.getBoundingClientRect().right-c.title.getBoundingClientRect().left}
+function titleText(c){return(c.span?c.span.previousSibling:c.title.lastChild).getBoundingClientRect().right-c.title.getBoundingClientRect().left}
 function measureTitles(){
  var id,c,n=0;
  for(id in W.cards){
@@ -303,7 +330,7 @@ function relayout(){
   var c=W.cards[W.order[i]],rect=r.rects[c.id];
   if(!rect){c.el.style.display="none";continue}
   if(c.el.style.display==="none")c.el.style.display="";
-  place(c,rect);if(W.auto&&!c.base&&rect.h>0&&!isMin(c.id))c.base=rect.h;
+  place(c,rect);paintSpan(c);if(W.auto&&!c.base&&rect.h>0&&!isMin(c.id))c.base=rect.h;
   paintMin(c);
   var def=TYPES[c.type]||{};
   if(isMin(c.id))continue;
@@ -533,7 +560,7 @@ function attach(parent,node,d){
 }
 function init(main,defaults,opts){
  opts=opts||{};
- W.opts={storage:opts.storage||window.localStorage,now:opts.now};
+ W.opts={storage:opts.storage||window.localStorage,now:opts.now,span:!!opts.span};
  W.defaults=defaults;W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
  W.cfg={HEAD_H:HEAD_H,CHIP_H:22,GAP:8,GUTTER:8,minW:220,narrowW:480};
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];

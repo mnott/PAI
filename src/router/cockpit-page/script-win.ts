@@ -87,7 +87,7 @@ ${WIN_CACHE_JS}
  }
  (function(){
   var root=document.getElementById("win-root");
-  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520],[cacheDefaults(),620]].concat(chartsDefaults().parts).concat(tablesDefaults().parts).concat([[registryDefaults(),460]])));
+  Win.init(root,winCompose([[kpiDefaults(),118],[poolDefaults(),340],[sysDefaults(),900],[memDefaults(),300],[routingDefaults(),330],[limLocalDefaults(),220],[limCloudDefaults(),240],[workersDefaults(),420],[modelsDefaults(),520],[cacheDefaults(),620]].concat(chartsDefaults().parts).concat(tablesDefaults().parts).concat([[registryDefaults(),460]])),{span:1});
   wrgStart();
   window.winFeedModels=winFeedModels;window.winFeedSystem=winFeedSystem;window.winFeedMemory=winFeedMemory;window.winFeedLimits=winFeedLimits;
   WinT.anchorInit(document,window,root);
