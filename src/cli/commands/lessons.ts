@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { OPT, CliError, type ArgDef, type CommandDef, type OptDef } from "../define.js";
 import { claudeProjectsDir } from "../../config/pai-home.js";
 import {
-  LESSON_KINDS, LESSON_STATES, addLesson, getLesson, listLessons, proposeFromTranscript, setState,
+  LESSON_KINDS, LESSON_STATES, addLesson, getLesson, listLessons, promoteLesson, proposeFromTranscript, setState,
   type Lesson, type LessonKind, type LessonState,
 } from "../../memory/lessons.js";
 
@@ -119,6 +119,27 @@ export const lessonsCommand: CommandDef = {
     },
     transition("approve", "approved", "Approve a candidate"),
     transition("reject", "rejected", "Reject a candidate"),
+    {
+      name: "promote",
+      summary: "Promote an approved lesson to a project skill",
+      description: "Writes the lesson as a SKILL.md under <project>/.claude/skills/<slug>/ (and with --agents also <project>/.agents/skills/<slug>/). Refuses to overwrite an existing skill unless --force.",
+      args: [ID],
+      options: [
+        { name: "project", type: "string", value: "DIR", summary: "Project directory (default: this directory)" },
+        { name: "force", type: "boolean", summary: "Overwrite an existing SKILL.md" },
+        { name: "agents", type: "boolean", summary: "Also write under .agents/skills" },
+      ],
+      examples: ["pai lessons promote my-lesson --project ~/code/app --agents"],
+      run: (ctx) => {
+        const paths = wrap(() => promoteLesson(ctx.args.ID as string, {
+          projectDir: (ctx.opts.project as string | undefined) ?? process.cwd(),
+          force: ctx.opts.force === true,
+          agentsDir: ctx.opts.agents === true,
+        }));
+        for (const p of paths) console.log(`promoted ${p}`);
+        return 0;
+      },
+    },
     {
       name: "supersede",
       summary: "Replace an approved lesson by another approved one",

@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
 
@@ -28,6 +28,7 @@ export interface Lesson {
   created: string;
   updated: string;
   superseded_by?: string;
+  promoted_to?: string[];
   body: string;
 }
 
@@ -66,6 +67,7 @@ export function serializeLesson(l: Lesson): string {
   const { body, ...front } = l;
   const data: Record<string, unknown> = { ...front };
   if (data.superseded_by === undefined) delete data.superseded_by;
+  if (data.promoted_to === undefined) delete data.promoted_to;
   return `---\n${stringify(data)}---\n\n${body.trim()}\n`;
 }
 
@@ -87,6 +89,7 @@ export function parseLesson(text: string, fallbackId = ""): Lesson {
     body: m[2]!.trim(),
   };
   if (f.superseded_by) lesson.superseded_by = str(f.superseded_by);
+  if (Array.isArray(f.promoted_to)) lesson.promoted_to = f.promoted_to.map(String);
   if (!LESSON_STATES.includes(lesson.state)) throw new Error(`invalid lesson state "${lesson.state}"`);
   return lesson;
 }
@@ -166,6 +169,44 @@ export function setState(id: string, state: LessonState, opts: { supersededBy?: 
   lesson.updated = new Date().toISOString();
   writeLesson(lesson);
   return lesson;
+}
+
+/** Skill descriptions are capped at 1024 chars. */
+const DESCRIPTION_MAX = 1024;
+
+/**
+ * Promote an approved lesson to a project skill: `<projectDir>/.claude/skills/<slug>/SKILL.md`
+ * (and with `agentsDir` also `<projectDir>/.agents/skills/<slug>/SKILL.md`).
+ * Refuses to overwrite an existing SKILL.md unless `force`. Records the written
+ * paths in the lesson's `promoted_to` and returns them.
+ */
+export function promoteLesson(id: string, opts: { projectDir: string; force?: boolean; agentsDir?: boolean }): string[] {
+  const lesson = getLesson(id);
+  if (!lesson) throw new Error(`lesson not found: ${id}`);
+  if (lesson.state !== "approved") throw new Error(`only approved lessons can be promoted (this one is ${lesson.state})`);
+  const slug = slugify(lesson.title);
+  const description = `${lesson.title}. USE WHEN ${lesson.applies_when}.`.slice(0, DESCRIPTION_MAX);
+  const provenance: Record<string, unknown> = {
+    lesson: lesson.id,
+    evidence: lesson.evidence,
+    promoted: new Date().toISOString(),
+  };
+  const frontmatter = `---\n${stringify({ name: slug, description, provenance })}---\n\n${lesson.body.trim()}\n\nSource: lesson ${lesson.id}\n`;
+  const dirs = [join(opts.projectDir, ".claude", "skills", slug)];
+  if (opts.agentsDir) dirs.push(join(opts.projectDir, ".agents", "skills", slug));
+  const paths = dirs.map((d) => join(d, "SKILL.md"));
+  if (!opts.force) {
+    const existing = paths.filter((p) => existsSync(p));
+    if (existing.length > 0) throw new Error(`skill already exists: ${existing.join(", ")} (use force to overwrite)`);
+  }
+  for (const p of paths) {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, frontmatter);
+  }
+  lesson.promoted_to = paths;
+  lesson.updated = new Date().toISOString();
+  writeLesson(lesson);
+  return paths;
 }
 
 const CORRECTION = [
