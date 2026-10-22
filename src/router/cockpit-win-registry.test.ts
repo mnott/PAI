@@ -209,9 +209,9 @@ describe.skipIf(!CHROME)("B8b-client settings group on the win runtime", () => {
     const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
     expect(r.err).toBeNull();
     expect(r.ta).toBe(A);
-    expect(r.acts).toEqual(["validate:on", "diff:on", "save:off", "duplicate:on"]);
+    expect(r.acts).toEqual(["validate:on", "save:off", "duplicate:on"]);
     expect(r.saveTitle).toBe("no changes to save");
-    expect(r.heads).toBe("cgrip,ctitle,cstatus,cbtn,cbtn,cbtn,cbtn,cbtn");
+    expect(r.heads).toBe("cgrip,ctitle,cstatus,cbtn,cbtn,cbtn,cbtn");
     expect(r.status).toContain("valid");
     expect(r.bk).toContain("20260101-000000");
     expect(r.bk).toContain("restore");

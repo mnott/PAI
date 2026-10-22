@@ -10,7 +10,11 @@ import { join } from "node:path";
 import http from "node:http";
 import { parse } from "yaml";
 import {
+  deleteBackup,
+  diffBackup,
   diffLines,
+  labelBackup,
+  withExplicitEnabled,
   duplicateEntry,
   handleRegistryRoute,
   hashText,
@@ -326,5 +330,103 @@ describe("routes", () => {
     expect(cross.status).toBe(403);
     expect((await call("PUT", "/cockpit/registry/save", {})).status).toBe(405);
     expect((await call("GET", "/cockpit/registry/backups")).json.backups).toHaveLength(1);
+  });
+});
+
+describe("backup delete, name and diff", () => {
+  const three = () => {
+    let cur = BASE;
+    for (const port of ["8009", "8010", "8011"]) {
+      const next = cur.replace(/port: 80(02|09|10)/, `port: ${port}`);
+      expect(saveRegistry(next, hashText(cur), ctx).ok).toBe(true);
+      cur = next;
+    }
+    return listBackups(ctx);
+  };
+
+  it("delete removes only that backup (and its name), refuses bad names", () => {
+    const before = three();
+    expect(before).toHaveLength(3);
+    labelBackup(before[0]!.name, "keep me", ctx);
+    labelBackup(before[1]!.name, "drop me", ctx);
+    expect(deleteBackup(before[1]!.name, ctx)).toEqual({ ok: true });
+    expect(listBackups(ctx).map((b) => b.name)).toEqual([before[0]!.name, before[2]!.name]);
+    expect(existsSync(join(ctx.backupDir, `${before[1]!.name}.label`))).toBe(false);
+    expect(listBackups(ctx)[0]!.label).toBe("keep me");
+    expect(deleteBackup(before[1]!.name, ctx).ok).toBe(false);
+    expect(deleteBackup("../workers.yaml", ctx).ok).toBe(false);
+    expect(existsSync(ctx.yamlPath)).toBe(true);
+  });
+
+  it("a name survives a reload of the list, is trimmed, and an empty one clears it", () => {
+    const [b] = three();
+    expect(labelBackup(b!.name, "  before  the\nport change  ", ctx)).toEqual({ ok: true, label: "before the port change" });
+    expect(listBackups(ctx)[0]!.label).toBe("before the port change");
+    expect(labelBackup(b!.name, "", ctx)).toEqual({ ok: true, label: "" });
+    expect(listBackups(ctx)[0]!.label).toBe("");
+    expect(labelBackup("workers.yaml.20200101-000000.bak", "x", ctx).ok).toBe(false);
+  });
+
+  it("diff of one backup is against the current file", () => {
+    const l = three();
+    const d = diffBackup(l[2]!.name, ctx);
+    expect(d.ok && d.diff).toEqual(["-     port: 8011", "+     port: 8002"]);
+  });
+
+  it("routes: delete and label are POST-only with a name", async () => {
+    const [b] = three();
+    expect(b).toBeDefined();
+    expect(labelBackup(b!.name, "x", ctx).ok).toBe(true);
+    expect(deleteBackup(b!.name, ctx).ok).toBe(true);
+    expect(listBackups(ctx)).toHaveLength(2);
+  });
+});
+
+describe("explicit enabled", () => {
+  const save = (text: string) => {
+    const c = { ...ctx, explicitEnabled: true };
+    expect(saveRegistry(text, hashText(onDisk()), c).ok).toBe(true);
+    return onDisk();
+  };
+
+  it("save writes enabled: true on every provider that lacks it, keeps enabled: false, touches nothing else", () => {
+    const text = BASE.replace("  gemma:\n", "  gemma:\n    enabled: false\n");
+    const out = save(text);
+    const p = parse(out).providers;
+    expect(p.qwen.enabled).toBe(true);
+    expect(p.gemma.enabled).toBe(false);
+    expect(out.split("\n").filter((l) => l.includes("enabled")).length).toBe(2);
+    expect(out.replace("    enabled: true\n", "")).toBe(text);
+  });
+
+  it("is idempotent and leaves the builtin anthropic block alone", () => {
+    const text = "providers:\n  anthropic:\n    builtin: true\n    models:\n      default: opus\n" + BASE.replace("providers:\n", "");
+    const once = withExplicitEnabled(text);
+    expect(once).not.toContain("anthropic:\n    enabled");
+    expect(withExplicitEnabled(once)).toBe(once);
+    expect(parse(once).providers.qwen.enabled).toBe(true);
+  });
+
+  it("loading a file without it still defaults to enabled", () => {
+    expect(parse(BASE).providers.qwen.enabled).toBeUndefined();
+    expect(validateRegistry(BASE, ctx, BASE).errors).toEqual([]);
+  });
+
+  it("validate shows the enabled lines the save will add", () => {
+    const r = validateRequest(BASE, hashText(BASE), { ...ctx, explicitEnabled: true });
+    expect(r.diff).toEqual(["+     enabled: true", "+     enabled: true"]);
+  });
+});
+
+describe("validate cost", () => {
+  it("a 750-line registry validates and diffs well under 100 ms (no probe, no reload)", () => {
+    const big = BASE + Array.from({ length: 700 }, (_, i) => `# filler ${i}\n`).join("");
+    writeFileSync(ctx.yamlPath, big);
+    validateRequest(big, hashText(big), ctx); // warm
+    const t0 = performance.now();
+    const r = validateRequest(big + "# x\n", hashText(big), ctx);
+    const ms = performance.now() - t0;
+    expect(r.ok).toBe(true);
+    expect(ms).toBeLessThan(100);
   });
 });

@@ -6,6 +6,9 @@
  * POST /cockpit/registry/validate  {yaml, baseHash} -> {ok, errors[{path,line,message}], diff}
  * POST /cockpit/registry/save      {yaml, baseHash} -> {ok, backup} | {ok:false, error}
  * POST /cockpit/registry/restore   {name, baseHash} -> as save
+ * POST /cockpit/registry/backup-diff   {name} -> {ok, diff}  (backup vs the current file)
+ * POST /cockpit/registry/backup-delete {name} -> {ok}
+ * POST /cockpit/registry/backup-label  {name, label} -> {ok, label}  (empty label clears it)
  * POST /cockpit/registry/duplicate {yaml, name, newName?, port?} -> {yaml, name, port}
  *
  * Validation reuses the config loader's own parsers (parseLocalConfig for
@@ -49,6 +52,8 @@ export interface RegistryCtx {
   ledger?: string;
   /** clock for backup names */
   now?: () => Date;
+  /** write every providers entry with an explicit `enabled:` (default registry ctx: on) */
+  explicitEnabled?: boolean;
   /** test seam: called before each save step (1..6); throwing fails that step */
   failAt?: (step: number) => void;
 }
@@ -178,6 +183,36 @@ export function validateRegistry(yamlText: string, ctx: RegistryCtx, current = "
   return { errors };
 }
 
+/**
+ * Every providers.<name> entry carries an explicit `enabled:` so a search for `enabled: true` finds
+ * the live ones too. A missing key is inserted as `enabled: true` (what the loader assumes) on the
+ * line after the entry's name, indented like its other keys; the rest of the text is untouched.
+ * The builtin anthropic block and flow-style entries are left alone.
+ */
+export function withExplicitEnabled(yamlText: string): string {
+  const doc = parseDocument(yamlText, { uniqueKeys: false });
+  if (doc.errors.length) return yamlText;
+  const providers = doc.get("providers", true);
+  if (!isMap(providers)) return yamlText;
+  const inserts: { at: number; text: string }[] = [];
+  for (const pair of providers.items) {
+    const name = isScalar(pair.key) ? String(pair.key.value) : "";
+    const v = pair.value;
+    if (name === ANTHROPIC_NATIVE || !isMap(v) || v.flow || v.has("enabled") || !v.items.length || !isScalar(pair.key) || !pair.key.range) continue;
+    const first = v.items[0]!.key as { range?: [number, number, number] } | null;
+    if (!first?.range) continue;
+    const lineStart = yamlText.lastIndexOf("\n", first.range[0] - 1) + 1;
+    const indent = yamlText.slice(lineStart, first.range[0]);
+    if (!/^[ ]+$/.test(indent)) continue; // first key not on a line of its own
+    const nl = yamlText.indexOf("\n", pair.key.range[1]);
+    if (nl < 0) continue;
+    inserts.push({ at: nl + 1, text: `${indent}enabled: true\n` });
+  }
+  let out = yamlText;
+  for (const { at, text } of inserts.sort((a, b) => b.at - a.at)) out = out.slice(0, at) + text + out.slice(at);
+  return out;
+}
+
 /** Line diff, `+ `/`- ` prefixed changed lines only (LCS). */
 export function diffLines(a: string, b: string): string[] {
   const x = a === "" ? [] : a.split("\n");
@@ -217,7 +252,7 @@ export function validateRequest(yamlText: string, baseHash: string, ctx: Registr
   const cur = readCurrent(ctx);
   if (baseHash !== hashText(cur)) return { ok: false, stale: true, errors: [{ path: "", line: 1, message: "changed on disk - reload" }], diff: [] };
   const { errors } = validateRegistry(yamlText, ctx, cur);
-  return { ok: errors.length === 0, errors, diff: diffLines(cur, yamlText) };
+  return { ok: errors.length === 0, errors, diff: diffLines(cur, errors.length || !ctx.explicitEnabled ? yamlText : withExplicitEnabled(yamlText)) };
 }
 
 function stamp(d: Date): string {
@@ -248,6 +283,7 @@ export function saveRegistry(yamlText: string, baseHash: string, ctx: RegistryCt
     step(2);
     const { errors } = validateRegistry(yamlText, ctx, cur);
     if (errors.length) return { ok: false, error: errors.map((e) => `line ${e.line}: ${e.message}`).join("; ") };
+    if (ctx.explicitEnabled) yamlText = withExplicitEnabled(yamlText);
     step(3);
     mkdirSync(ctx.backupDir, { recursive: true });
     const name = backupName(ctx);
@@ -275,7 +311,19 @@ export interface BackupInfo {
   size: number;
   mtime: number;
   summary: string;
+  /** optional operator-given name, kept in a sidecar next to the backup */
+  label: string;
 }
+
+const LABEL_MAX = 80;
+const labelPath = (ctx: RegistryCtx, name: string): string => join(ctx.backupDir, `${name}.label`);
+const readLabel = (ctx: RegistryCtx, name: string): string => {
+  try {
+    return readFileSync(labelPath(ctx, name), "utf8").trim();
+  } catch {
+    return "";
+  }
+};
 
 /** Backups newest first (by the stamp in the name), each with a diff summary against the current file. */
 export function listBackups(ctx: RegistryCtx): BackupInfo[] {
@@ -288,8 +336,39 @@ export function listBackups(ctx: RegistryCtx): BackupInfo[] {
     .map((name) => {
       const p = join(ctx.backupDir, name);
       const st = statSync(p);
-      return { name, size: st.size, mtime: st.mtimeMs, summary: diffSummary(cur, readFileSync(p, "utf8")) };
+      return { name, size: st.size, mtime: st.mtimeMs, summary: diffSummary(cur, readFileSync(p, "utf8")), label: readLabel(ctx, name) };
     });
+}
+
+function backupFile(name: string, ctx: RegistryCtx): { ok: true; path: string } | { ok: false; error: string } {
+  if (!BACKUP_RE.test(name) || basename(name) !== name) return { ok: false, error: `not a backup name: ${name}` };
+  const path = join(ctx.backupDir, name);
+  return existsSync(path) ? { ok: true, path } : { ok: false, error: `no such backup: ${name}` };
+}
+
+/** Diff of one backup against the current file: `-` lines are in the file now, `+` lines are what restoring brings back. */
+export function diffBackup(name: string, ctx: RegistryCtx): { ok: true; diff: string[] } | { ok: false; error: string } {
+  const f = backupFile(name, ctx);
+  return f.ok ? { ok: true, diff: diffLines(readCurrent(ctx), readFileSync(f.path, "utf8")) } : f;
+}
+
+/** Delete one backup (and its name). Nothing else in the directory is touched. */
+export function deleteBackup(name: string, ctx: RegistryCtx): { ok: true } | { ok: false; error: string } {
+  const f = backupFile(name, ctx);
+  if (!f.ok) return f;
+  unlinkSync(f.path);
+  if (existsSync(labelPath(ctx, name))) unlinkSync(labelPath(ctx, name));
+  return { ok: true };
+}
+
+/** Name a backup; an empty label removes the name. */
+export function labelBackup(name: string, label: string, ctx: RegistryCtx): { ok: true; label: string } | { ok: false; error: string } {
+  const f = backupFile(name, ctx);
+  if (!f.ok) return f;
+  const clean = label.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX);
+  if (clean) writeFileSync(labelPath(ctx, name), clean + "\n");
+  else if (existsSync(labelPath(ctx, name))) unlinkSync(labelPath(ctx, name));
+  return { ok: true, label: clean };
 }
 
 /** Restore a backup through the same validate + atomic path; the replaced file is backed up by saveRegistry. */
@@ -338,6 +417,7 @@ export function defaultRegistryCtx(yamlPath: string, ledger?: string, logDir?: s
   return {
     yamlPath,
     backupDir: join(dirname(yamlPath), "workers-backups"),
+    explicitEnabled: true,
     ledger,
     ...(logDir ? { running: () => readInstances(logDir) } : {}),
   };
@@ -379,7 +459,7 @@ export function handleRegistryRoute(
   }
   if (!io.sameOrigin(req)) return send(403, { ok: false, message: "cross-origin action refused" }), true;
   io.readBody(req)
-    .then((raw) => JSON.parse(raw || "{}") as { yaml?: unknown; baseHash?: unknown; name?: unknown; newName?: unknown; port?: unknown })
+    .then((raw) => JSON.parse(raw || "{}") as { yaml?: unknown; baseHash?: unknown; name?: unknown; newName?: unknown; port?: unknown; label?: unknown })
     .catch(() => ({}) as Record<string, unknown>)
     .then((b) => {
       const yaml = typeof b.yaml === "string" ? b.yaml : "";
@@ -396,6 +476,16 @@ export function handleRegistryRoute(
         } else if (path === "/cockpit/registry/restore" && typeof b.name === "string") {
           const r = restoreBackup(b.name, baseHash, ctx);
           ledgerLine(ctx, "registry.restore", b.name, r.ok ? `ok ${r.backup}` : `failed ${r.error}`);
+          send(200, r);
+        } else if (path === "/cockpit/registry/backup-diff" && typeof b.name === "string") {
+          send(200, diffBackup(b.name, ctx));
+        } else if (path === "/cockpit/registry/backup-delete" && typeof b.name === "string") {
+          const r = deleteBackup(b.name, ctx);
+          ledgerLine(ctx, "registry.backup-delete", b.name, r.ok ? "ok" : `refused ${r.error}`);
+          send(200, r);
+        } else if (path === "/cockpit/registry/backup-label" && typeof b.name === "string" && typeof b.label === "string") {
+          const r = labelBackup(b.name, b.label, ctx);
+          ledgerLine(ctx, "registry.backup-label", b.name, r.ok ? "ok" : `refused ${r.error}`);
           send(200, r);
         } else if (path === "/cockpit/registry/duplicate" && typeof b.yaml === "string" && typeof b.name === "string") {
           const r = duplicateEntry(yaml, b.name, {

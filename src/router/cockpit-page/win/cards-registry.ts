@@ -1,8 +1,8 @@
 /** cockpit-page/win — B8b-client `settings`: the registry editor on the win runtime (spec 7/B8b).
  *  Page-scope ES5 (after scriptCore: esc in scope), needs `Win`, `WinT` and `WIN_HOST` ({fetch}). Group `settings`:
  *  the `editor` card `settings.registry-edit` (a monospace textarea holding the whole workers.yaml text from
- *  GET /cockpit/registry; header actions Validate, Diff, Save, Duplicate) and the `list` card `settings.registry-backups`
- *  (GET /cockpit/registry/backups, newest first, Restore with a two-click confirm). Save stays disabled until Validate has
+ *  GET /cockpit/registry; header actions Validate, Save, Duplicate) and the `list` card `settings.registry-backups`
+ *  (GET /cockpit/registry/backups, newest first; per row diff against the file, name, Restore and delete, each destructive one with a two-click confirm). Save stays disabled until Validate has
  *  passed on exactly the text in the editor; validate/save/restore/duplicate results show in the editor card's status slot,
  *  the error list or the diff in its `diff` slot. The routes are the POST-only ones of src/router/cockpit-registry.ts.
  *  The state `WRG` and the logic take an io {get, post, status, paint} so a test drives them with a fake fetch; the
@@ -10,7 +10,7 @@
 
 export const WIN_REGISTRY_JS = String.raw`var WRG_ID="settings.registry-edit",WRG_BK="settings.registry-backups",WRG_ARM_MS=4000;
 var WRG_INFO="The model registry (local_tiers and providers of workers.yaml). Validate checks the text; Save writes it atomically and keeps a timestamped backup; Save is only enabled after Validate passed on exactly this text.";
-var WRG={hash:"",saved:"",text:"",passed:null,backups:[],diff:"",arm:null,dup:false,busy:false,loaded:false};
+var WRG={hash:"",saved:"",text:"",passed:null,backups:[],diff:"",arm:null,delArm:null,editing:null,dup:false,busy:false,loaded:false};
 function wrgDirty(S){return S.text!==S.saved}
 /** Save: true, or the reason it is disabled. */
 function wrgCanSave(S){
@@ -76,6 +76,35 @@ function wrgRestore(S,io,name,now){
  S.arm=null;S.busy=true;io.status("pending","restoring…");io.paint();
  return io.post("/cockpit/registry/restore",{name:name,baseHash:S.hash}).then(function(r){return wrgAfterWrite(S,io,r,"restored")}).catch(function(e){S.busy=false;wrgFail(io,e)});
 }
+/** Diff of one backup against the current file, shown in the editor's diff slot. */
+function wrgBackupDiff(S,io,name){
+ io.status("pending","diffing "+name+"…");
+ return io.post("/cockpit/registry/backup-diff",{name:name}).then(function(r){
+  if(!r.ok){io.status("err",r.error||"diff refused");io.paint();return r}
+  S.diff=(r.diff||[]).join("\n");
+  io.status("ok","diff of "+name+" · "+((r.diff||[]).length?(r.diff||[]).length+" changed lines (- now, + in the backup)":"identical to the file"));
+  io.paint();
+  return r;
+ }).catch(function(e){wrgFail(io,e)});
+}
+/** Delete a backup: the first call arms the row, a second within WRG_ARM_MS posts. */
+function wrgDelete(S,io,name,now){
+ if(S.delArm!==name||now-S.delAt>WRG_ARM_MS){S.delArm=name;S.delAt=now;S.arm=null;io.paint();return Promise.resolve(null)}
+ S.delArm=null;
+ return io.post("/cockpit/registry/backup-delete",{name:name}).then(function(r){
+  if(!r.ok){io.status("err",r.error||"delete refused");io.paint();return r}
+  io.status("ok","deleted "+name);
+  return wrgBackups(S,io).then(function(){return r});
+ }).catch(function(e){wrgFail(io,e)});
+}
+/** Name a backup (empty clears the name). */
+function wrgLabel(S,io,name,label){
+ S.editing=null;
+ return io.post("/cockpit/registry/backup-label",{name:name,label:label}).then(function(r){
+  if(!r.ok){io.status("err",r.error||"rename refused");io.paint();return r}
+  return wrgBackups(S,io).then(function(){return r});
+ }).catch(function(e){wrgFail(io,e)});
+}
 /** The local_tiers entry names in the text (the first one prefills the duplicate form). */
 function wrgTierNames(text){
  var out=[],inT=false,lines=String(text).split("\n"),i,m;
@@ -106,9 +135,17 @@ function wrgDuplicate(S,io,f){
 }
 function wrgBackupsHtml(S){
  if(!S.backups.length)return'<span class="dim">no backups yet</span>';
+ var dis=S.busy?' disabled title="working"':"";
  return S.backups.map(function(b){
-  var armed=S.arm===b.name;
-  return'<div class="wrg-b" style="display:flex;gap:8px;align-items:center;padding:2px 0"><span class="mid" title="'+esc(b.name)+'">'+esc(b.name.replace(/^workers\.yaml\./,"").replace(/\.bak$/,""))+'</span><span class="dim">'+Math.round(b.size/102.4)/10+' kB · '+esc(b.summary)+'</span><button type="button" class="cbtn wrg-rs" data-n="'+esc(b.name)+'"'+(S.busy?' disabled title="working"':"")+' style="margin-left:auto">'+(armed?"confirm restore":"restore")+"</button></div>";
+  var armed=S.arm===b.name,delArmed=S.delArm===b.name,n=esc(b.name);
+  var label=S.editing===b.name
+   ?'<input class="wrg-bl" data-n="'+n+'" value="'+esc(b.label||"")+'" placeholder="name this backup" maxlength="80" size="22" aria-label="backup name">'
+   :(b.label?'<b class="wrg-lb">'+esc(b.label)+"</b>":"");
+  return'<div class="wrg-b" style="display:flex;gap:8px;align-items:center;padding:2px 0"><span class="mid" title="'+n+'">'+esc(b.name.replace(/^workers\.yaml\./,"").replace(/\.bak$/,""))+"</span>"+label+'<span class="dim">'+Math.round(b.size/102.4)/10+' kB · '+esc(b.summary)+'</span>'
+   +'<span style="margin-left:auto;display:flex;gap:4px"><button type="button" class="cbtn wrg-bd" data-n="'+n+'" title="show the changes between the file now and this backup">diff</button>'
+   +'<button type="button" class="cbtn wrg-bn" data-n="'+n+'" title="give this backup a name">name</button>'
+   +'<button type="button" class="cbtn wrg-rs" data-n="'+n+'"'+dis+'>'+(armed?"confirm restore":"restore")+"</button>"
+   +'<button type="button" class="cbtn wrg-del" data-n="'+n+'" title="delete this backup">'+(delArmed?"confirm delete":"delete")+"</button></span></div>";
  }).join("");
 }
 var wrgIo=null;
@@ -165,21 +202,30 @@ function wrgActs(){
  function io(){return wrgIo||(wrgIo=wrgIoMake())}
  return[
   {id:"validate",label:"Validate",title:"check this text against the registry rules",enabled:function(){return wrgCanCheck(WRG)},run:function(){wrgValidate(WRG,io())}},
-  {id:"diff",label:"Diff",title:"show the changes against the file on disk",enabled:function(){return wrgCanCheck(WRG)},run:function(){wrgValidate(WRG,io())}},
   {id:"save",label:"Save",title:"write the text to workers.yaml (a backup of the old file is kept)",enabled:function(){return wrgCanSave(WRG)},run:function(){wrgSave(WRG,io())}},
   {id:"duplicate",label:"Duplicate",title:"copy a local_tiers entry under a new name and port into the text",enabled:function(){return wrgCanCheck(WRG)},run:function(){WRG.dup=!WRG.dup;wrgPaint()}}
  ];
 }
 function wrgBackupClick(ev){
+ var t=ev.target,io,n;
+ if(!t||!t.classList)return;
+ io=wrgIo||(wrgIo=wrgIoMake());n=t.getAttribute("data-n");
+ if(t.classList.contains("wrg-rs"))wrgRestore(WRG,io,n,Date.now());
+ else if(t.classList.contains("wrg-del"))wrgDelete(WRG,io,n,Date.now());
+ else if(t.classList.contains("wrg-bd"))wrgBackupDiff(WRG,io,n);
+ else if(t.classList.contains("wrg-bn")){WRG.editing=n;wrgPaint();var i=Win.el(WRG_BK).querySelector(".wrg-bl");if(i)i.focus()}
+}
+function wrgBackupKey(ev){
  var t=ev.target;
- if(!t||!t.classList||!t.classList.contains("wrg-rs"))return;
- wrgRestore(WRG,wrgIo||(wrgIo=wrgIoMake()),t.getAttribute("data-n"),Date.now());
+ if(!t||!t.classList||!t.classList.contains("wrg-bl"))return;
+ if(ev.key==="Enter")wrgLabel(WRG,wrgIo||(wrgIo=wrgIoMake()),t.getAttribute("data-n"),t.value);
+ else if(ev.key==="Escape"){WRG.editing=null;wrgPaint()}
 }
 /** Start the registry cards: the click handler on the backups card, then the first load. */
 function wrgStart(){
  wrgIo=wrgIoMake();
  var b=Win.el(WRG_BK);
- if(b)b.addEventListener("click",wrgBackupClick);
+ if(b){b.addEventListener("click",wrgBackupClick);b.addEventListener("keydown",wrgBackupKey)}
  return wrgLoad(WRG,wrgIo,false);
 }
 function registryDefaults(){

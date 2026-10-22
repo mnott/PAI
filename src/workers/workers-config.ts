@@ -161,7 +161,7 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
 /** Internal WorkerProvider → the friendly on-disk plain object for writing. */
 function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   const y: Record<string, unknown> = {};
-  if (!p.enabled) y.enabled = false;
+  y.enabled = p.enabled;
   if (p.baseUrl) y.url = p.baseUrl;
   if (p.keyFile) y.key_file = p.keyFile;
   if (p.key) y.key = p.key;

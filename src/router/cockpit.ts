@@ -10,7 +10,7 @@ import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
-import { expandHome, loadConfig, readMainConfigRaw } from "../daemon/config.js";
+import { expandHome, loadConfig, paiConfigFilePath, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindows, loadWorkerWindowsSteps, runSliced, withJobNames, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
@@ -544,8 +544,24 @@ export function setRegistryCtxForTest(ctx: RegistryCtx | null): void {
 }
 function registryCtx(): RegistryCtx {
   if (registryCtxOverride) return registryCtxOverride;
-  const logDir = workersLogDir(readWorkersSection().workers);
-  return defaultRegistryCtx(workersYamlPath(), ledgerPath(logDir), logDir);
+  const yamlPath = workersYamlPath();
+  const logDir = registryLogDir(yamlPath);
+  return defaultRegistryCtx(yamlPath, ledgerPath(logDir), logDir);
+}
+/** The log dir comes from the merged config (~30 ms to read): remembered until one of the files it is read from changes. */
+let registryLogDirMemo: { key: string; dir: string } | null = null;
+function registryLogDir(yamlPath: string): string {
+  const mt = (p: string): number => {
+    try {
+      return statSync(p).mtimeMs;
+    } catch {
+      return 0;
+    }
+  };
+  const cfg = paiConfigFilePath();
+  const key = `${cfg}:${mt(cfg)}:${yamlPath}:${mt(yamlPath)}`;
+  if (registryLogDirMemo?.key !== key) registryLogDirMemo = { key, dir: workersLogDir(readWorkersSection().workers) };
+  return registryLogDirMemo.dir;
 }
 
 export function setActionHooks(hooks: ActionHooks, deps?: Partial<ActionDeps>): void {
