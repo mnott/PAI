@@ -10,11 +10,13 @@ export const setupCommand: CommandDef = {
   name: "setup",
   summary: "First-time setup: storage, search, hooks, daemon",
   description:
-    "Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon and the first index.\n" +
+    "Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, AIBroker (messaging; installed automatically) and the first index.\n" +
     "Safe to run again. With --yes it takes every default and asks nothing.",
   options: [
     { name: "yes", short: "y", type: "boolean", default: false, summary: "Take every default and read no input" },
     { name: "storage", type: "string", value: "BACKEND", summary: "Where to store data: sqlite or postgres (with --yes: sqlite unless a local Postgres answers)" },
+    { name: "no-aibroker", type: "boolean", default: false, summary: "Do not install AIBroker (the messaging layer)" },
+    { name: "dry-run", type: "boolean", default: false, summary: "Print the AIBroker install commands and change nothing" },
   ],
   examples: ["pai setup", "pai setup --yes --storage sqlite"],
   seeAlso: ["pai update", "pai daemon status"],
@@ -27,6 +29,8 @@ export const setupCommand: CommandDef = {
         return;
       }
       setupOptions.yes = c.opts.yes === true;
+      setupOptions.noAibroker = c.opts["no-aibroker"] === true;
+      setupOptions.dryRun = c.opts["dry-run"] === true;
       setupOptions.storage = storage as "sqlite" | "postgres" | undefined;
       try {
         await runSetup();

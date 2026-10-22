@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
 import { daemonServiceName } from "../../../impl/daemon.js";
 import { line, section } from "../utils.js";
+import type { AibrokerStatus } from "./18-aibroker.js";
 
 export function stepSummary(
   configUpdates: Record<string, unknown>,
@@ -18,6 +19,7 @@ export function stepSummary(
   daemonInstalled: boolean,
   mcpRegistered: boolean,
   plat: NodeJS.Platform = process.platform,
+  aibroker?: AibrokerStatus,
 ): void {
   section("Setup Complete");
   line();
@@ -41,6 +43,10 @@ export function stepSummary(
   console.log(chalk.dim("  Settings:         ") + chalk.cyan(settingsPatched ? "env vars, hooks, permissions, flags (patched)" : "(unchanged)"));
   console.log(chalk.dim("  Daemon:           ") + chalk.cyan(daemonInstalled ? `${daemonServiceName(plat)} (installed)` : "(not installed by setup)"));
   console.log(chalk.dim("  MCP:              ") + chalk.cyan(mcpRegistered ? "registered in ~/.claude.json" : "(unchanged)"));
+  if (aibroker) {
+    const label = { ok: "installed and healthy", installed: "installed", skipped: "skipped", failed: "FAILED — retry: npm install -g aibroker && aibroker setup && aibroker doctor" }[aibroker];
+    console.log(chalk.dim("  AIBroker:         ") + (aibroker === "failed" ? chalk.red(label) : chalk.cyan(label)));
+  }
   line();
   console.log(chalk.bold.yellow("  → RESTART Claude Code to activate all changes."));
   line();

@@ -8,7 +8,7 @@ First-time setup: storage, search, hooks, daemon
 pai install [options]
 ```
 
-Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon and the first index.
+Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, AIBroker (messaging; installed automatically) and the first index.
 Safe to run again. With --yes it takes every default and asks nothing.
 
 Shortcut for `pai setup`.
@@ -17,6 +17,8 @@ Shortcut for `pai setup`.
 |---|---|---|---|
 | `-y, --yes` | flag | — | Take every default and read no input |
 | `--storage BACKEND` | string | — | Where to store data: sqlite or postgres (with --yes: sqlite unless a local Postgres answers) |
+| `--no-aibroker` | flag | — | Do not install AIBroker (the messaging layer) |
+| `--dry-run` | flag | — | Print the AIBroker install commands and change nothing |
 
 ```sh
 pai setup

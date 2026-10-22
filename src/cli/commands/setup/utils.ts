@@ -65,7 +65,7 @@ export function createRl() {
 export type Rl = ReturnType<typeof createRl>;
 
 /** Unattended-mode switches (`pai setup --yes --storage …`), set once by the command. */
-export const setupOptions: { yes: boolean; storage?: "sqlite" | "postgres" } = { yes: false };
+export const setupOptions: { yes: boolean; storage?: "sqlite" | "postgres"; noAibroker?: boolean; dryRun?: boolean } = { yes: false };
 
 /**
  * The one place every wizard question passes through. Under --yes it answers
