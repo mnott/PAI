@@ -11,13 +11,13 @@
 import {
   existsSync,
   readFileSync,
-  writeFileSync,
   mkdirSync,
   readdirSync,
   statSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { worktreeReason } from "./registrable.js";
 
 // ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ export function ensurePaiMarker(
     if (isContainerDirectory(projectRoot)) return;
 
     mkdirSync(notesDir, { recursive: true });
-    writeFileSync(markerPath, renderTemplate(slug, name), "utf8");
+    writeFileAtomic(markerPath, renderTemplate(slug, name));
     return;
   }
 
@@ -262,7 +262,7 @@ export function ensurePaiMarker(
     // No YAML frontmatter — prepend a fresh one, treat the whole file as body.
     const paiBlock = buildPaiBlock(slug, isoDate(), null, "active");
     const newContent = `---\n${paiBlock}---\n\n${raw}`;
-    writeFileSync(markerPath, newContent, "utf8");
+    writeFileAtomic(markerPath, newContent);
     return;
   }
 
@@ -299,7 +299,7 @@ export function ensurePaiMarker(
 
   // Reconstruct the full file.  Preserve whatever separator the body has.
   const newContent = `---\n${fmWithNewline}---\n${body}`;
-  writeFileSync(markerPath, newContent, "utf8");
+  writeFileAtomic(markerPath, newContent);
 }
 
 /**
