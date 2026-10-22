@@ -21,19 +21,40 @@ function cacheSolo(ms){
  var mk=Object.keys(ms);
  return mk.length===1&&ms[mk[0]].cacheRead+ms[mk[0]].cacheWrite>0?ms[mk[0]]:null;
 }
-/** Models with at least LOW_REQ requests, most requests first (the others ride in the low chip). */
-function cacheRingList(ms){
+/** Models with at least LOW_REQ requests (the others ride in the low chip), in the default order: provider (routing order, then alphabetical), most requests first. */
+function cacheRingList(ms,d){
  var list=Object.keys(ms).map(function(k){return ms[k]}).filter(function(m){return m.requests>=LOW_REQ});
- list.sort(function(a,b){return b.requests-a.requests});
+ var ch=(lim&&lim.routing&&lim.routing.choices)||[],rank={};
+ ch.forEach(function(c,i){if(rank[c.entry]===undefined)rank[c.entry]=i});
+ function r(p){return rank[p]===undefined?1e9:rank[p]}
+ list.sort(function(a,b){return r(a.provider)-r(b.provider)||(a.provider<b.provider?-1:a.provider>b.provider?1:0)||b.requests-a.requests||(a.model<b.model?-1:1)});
  return list;
 }
 function cacheRingId(m){return"cache.ring:"+m.provider+"/"+m.model}
+var CACHE_ORDER_KEY="cockpitRingOrder",CACHE_APPLIED=null;
+/** The user's stored ring order (ids), or null while they never dragged a ring. */
+function cacheUserOrder(){try{var o=JSON.parse(localStorage.getItem(CACHE_ORDER_KEY)||"null");return o&&o.length?o:null}catch(e){return null}}
+function cacheSetUserOrder(o){try{if(o)localStorage.setItem(CACHE_ORDER_KEY,JSON.stringify(o));else localStorage.removeItem(CACHE_ORDER_KEY)}catch(e){}}
+/** The ring ids in the order the rings group shows them now (tree order), only ring cards. */
+function cacheTreeIds(t){return!t?[]:t.k==="c"?[t.id]:t.ch.reduce(function(a,c){return a.concat(cacheTreeIds(c))},[])}
+/** The stored order wins; ids it does not know sit at their default slot (after the nearest default predecessor already placed). */
+function cacheMerge(def,user){
+ if(!user)return def;
+ var out=user.filter(function(id){return def.indexOf(id)>=0}),i,j,at;
+ for(i=0;i<def.length;i++){
+  if(out.indexOf(def[i])>=0)continue;
+  at=0;
+  for(j=i-1;j>=0;j--){var q=out.indexOf(def[j]);if(q>=0){at=q+1;break}}
+  out.splice(at,0,def[i]);
+ }
+ return out;
+}
 /** The card ids the rings group should hold for this data: the solo card, a ring per model, or the empty note. */
 function cacheRingIds(d){
  var ms=cacheModels(d);
  if(cacheSolo(ms))return["cache.solo"];
- var l=cacheRingList(ms);
- return l.length?l.map(cacheRingId):["cache.none"];
+ var l=cacheRingList(ms,d);
+ return l.length?cacheMerge(l.map(cacheRingId),cacheUserOrder()):["cache.none"];
 }
 /** The ring and caption of one model: its own cache fields, else the local server's prefix-cache counter, else an empty ring. */
 function cacheRingHtml(m,servers,lim0){
@@ -111,15 +132,30 @@ function cacheRingTree(ids){
  var rows=cacheRows(ids).map(function(r){return r.length===1?WinT.leaf(r[0]):WinT.split("r",r.map(WinT.leaf),r.map(function(){return 1/r.length}))});
  return rows.length===1?rows[0]:WinT.split("c",rows,rows.map(function(){return 1/rows.length}));
 }
-/** A structural change: when the set of ring cards differs, build the missing ones and swap the group's kids. */
+/** A drag in the rings group (its tree order differs from the one applied last) becomes the user's stored order. */
+function cacheNoteDrag(){
+ var t=Win.state().kids["cache-rings"],cur=cacheTreeIds(t).filter(function(id){return id.indexOf("cache.ring:")===0});
+ if(CACHE_APPLIED&&cur.length===CACHE_APPLIED.length&&cur.join("\n")!==CACHE_APPLIED.join("\n"))cacheSetUserOrder(cur);
+}
+/** Double-click on the group's header drops the stored order: the default order is back. */
+function cacheWireReset(){
+ var el=Win.el("cache-rings"),h=el&&el.querySelector(".chead");
+ if(!h||h.__cacheReset)return;
+ h.__cacheReset=1;h.title="double-click: default order";
+ h.addEventListener("dblclick",function(){cacheSetUserOrder(null);CACHE_IDS=null;winFeedCache()});
+}
+/** A structural change: when the set or order of ring cards differs, build the missing ones and swap the group's kids. */
 function cacheSync(p){
  if(!p||!p.data||!p.data.byModel)return;
+ cacheNoteDrag();
+ cacheWireReset();
  var ids=cacheRingIds(p.data),key=ids.join("\n");
  if(key===CACHE_IDS)return;
  var specs=ids.map(function(id){return{id:id,type:"ring",title:id==="cache.none"||id==="cache.solo"?"Cache hit ratio":id.slice(11).split("/").slice(1).join("/"),feeds:["cache"]}});
  Win.addCards("cache-rings",specs,cacheRows(ids));
- Win.apply("cache-rings",cacheRingTree(ids));
- CACHE_IDS=key;
+ // the tree already lays the rings out in this order (the user's drag): keep its rows
+ if(cacheTreeIds(Win.state().kids["cache-rings"]).join("\n")!==key)Win.apply("cache-rings",cacheRingTree(ids));
+ CACHE_IDS=key;CACHE_APPLIED=ids.filter(function(id){return id.indexOf("cache.ring:")===0});
 }
 /** The page's readings as the cache feed; called after every renderDonuts. */
 function winFeedCache(){
