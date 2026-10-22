@@ -74,15 +74,16 @@ Token cost of every start-up and prompt hook
 pai audit tokens hooks [options]
 ```
 
-Measures what each SessionStart and UserPromptSubmit hook adds to the context.
+Lists each SessionStart and UserPromptSubmit hook. With --run it executes them and measures what each adds to the context; without it nothing is executed.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--run` | flag | — | Execute the hooks to measure their output (runs the repository's own hook commands; trusted repositories only) |
 | `--json` | flag | — | Print JSON instead of a table |
 
 ```sh
 pai audit tokens hooks
-pai audit tokens hooks --json
+pai audit tokens hooks --run
 ```
 
 See also: `pai audit tokens`
