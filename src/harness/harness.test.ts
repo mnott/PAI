@@ -50,6 +50,27 @@ afterAll(() => {
   }
 });
 
+describe("claude-code toSession", () => {
+  it("skips a transcript deleted between listing and stat", async () => {
+    const { toSession } = await import("./claude-code.js");
+    expect(toSession("claude-code", "gone.jsonl", newDir())).toBeNull();
+  });
+
+  it("reads cwd from the head and the last timestamp from the tail of a large file", async () => {
+    const { toSession } = await import("./claude-code.js");
+    const dir = newDir();
+    const filler = JSON.stringify({ type: "x", timestamp: "2026-10-22T10:00:01.000Z", pad: "y".repeat(1000) });
+    const lines = [JSON.stringify({ type: "user", timestamp: "2026-10-22T10:00:00.000Z", cwd: CWD })];
+    for (let i = 0; i < 400; i++) lines.push(filler);
+    lines.push(JSON.stringify({ type: "x", timestamp: "2026-10-22T11:00:00.000Z" }));
+    writeFileSync(join(dir, "big.jsonl"), lines.join("\n") + "\n");
+    const s = toSession("claude-code", "big.jsonl", dir)!;
+    expect(s.cwd).toBe(CWD);
+    expect(s.startedAt).toBe("2026-10-22T10:00:00.000Z");
+    expect(s.updatedAt).toBe("2026-10-22T11:00:00.000Z");
+  });
+});
+
 describe("claude-code adapter", () => {
   it("lists sessions and replays events in order, skipping malformed lines", async () => {
     const dir = join(home, ".claude", "projects", ENCODED);

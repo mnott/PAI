@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import { historyDir } from "../../hooks/ts/lib/pai-paths.js";
-import { postCommitHook, removeGitNotes, setupGitNotes, showNote } from "../../session/git-notes.js";
+import { GitNotesError, postCommitHook, removeGitNotes, setupGitNotes, showNote } from "../../session/git-notes.js";
 import { CliError, type CommandDef } from "../define.js";
 
 const repoOrFail = (): string => process.cwd();
@@ -24,7 +24,8 @@ export const gitCommand: CommandDef = {
           const r = setupGitNotes(repoOrFail());
           process.stdout.write(`Installed ${r.hook}${r.chained ? " (existing hook chained)" : ""}\n`);
           return 0;
-        } catch {
+        } catch (e) {
+          if (e instanceof GitNotesError) throw new CliError(e.message, "Fix it and re-run pai git setup");
           throw new CliError("Not a git repository", "Run it inside a repository");
         }
       },

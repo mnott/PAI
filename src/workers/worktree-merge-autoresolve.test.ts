@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git, mergeWorker, type MergeSettings } from "./worktree.js";
@@ -7,6 +7,7 @@ import { saveStatus, type WorkerStatus } from "./status.js";
 
 const settings: MergeSettings = {
   generated: ["gen/**"],
+  union: ["reg.ts"],
   regenerate: `node -e "require('fs').writeFileSync('gen/index.md', 'see: ' + require('fs').readdirSync('gen').filter(f => f !== 'index.md').sort().join(',') + '\\n')"`,
 };
 
@@ -85,6 +86,40 @@ describe("merge auto-resolution", () => {
     expect(() => mergeWorker(logDir, "r1", { merge: settings })).toThrow(/git refused the merge of worker\/r1 — conflict in reg\.ts/);
     expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(repo, ["status", "--porcelain"])).toBe("");
+    expect(existsSync(join(repo, ".git", "MERGE_HEAD"))).toBe(false);
+  });
+
+  it("refuses an add-only clash in a file outside workers.merge.union", () => {
+    const { repo, logDir } = setup("n1", { "other.ts": "a\nb\n" }, { "other.ts": "a\nW\nb\n" }, { "other.ts": "a\nM\nb\n" });
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    expect(() => mergeWorker(logDir, "n1", { merge: settings })).toThrow(/conflict in other\.ts/);
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
+    expect(existsSync(join(repo, ".git", "MERGE_HEAD"))).toBe(false);
+  });
+
+  it("names the auto-resolved files in the merge commit message", () => {
+    const { repo, logDir } = setup("m1", { "reg.ts": "a\nb\n" }, { "reg.ts": "a\nW\nb\n" }, { "reg.ts": "a\nM\nb\n" });
+    mergeWorker(logDir, "m1", { merge: settings });
+    expect(git(repo, ["log", "-1", "--format=%s"])).toMatch(/auto-resolved: union-merged reg\.ts/);
+  });
+
+  it("leaves the checkout clean when the auto-resolved commit fails its pre-commit hook", () => {
+    const { repo, logDir } = setup("h1", { "reg.ts": "a\nb\n" }, { "reg.ts": "a\nW\nb\n" }, { "reg.ts": "a\nM\nb\n" });
+    const hook = join(repo, ".git", "hooks", "pre-commit");
+    mkdirSync(join(repo, ".git", "hooks"), { recursive: true });
+    writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+    chmodSync(hook, 0o755);
+    const head = git(repo, ["rev-parse", "HEAD"]);
+    expect(() => mergeWorker(logDir, "h1", { merge: settings })).toThrow(/conflict in reg\.ts/);
+    expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
+    expect(git(repo, ["status", "--porcelain", "--untracked-files=no"])).toBe("");
+    expect(existsSync(join(repo, ".git", "MERGE_HEAD"))).toBe(false);
+  });
+
+  it("does not treat binary changes as pure additions", () => {
+    const bin = (b: number[]) => Buffer.from(b).toString("latin1");
+    const { repo, logDir } = setup("b1", { "reg.ts": bin([0, 1, 2]) }, { "reg.ts": bin([0, 1, 2, 3]) }, { "reg.ts": bin([0, 1, 2, 4]) });
+    expect(() => mergeWorker(logDir, "b1", { merge: settings })).toThrow(/conflict in reg\.ts/);
     expect(existsSync(join(repo, ".git", "MERGE_HEAD"))).toBe(false);
   });
 });

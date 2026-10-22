@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { postCommitHook, removeGitNotes, setupGitNotes, showNote } from "./git-notes.js";
+import { GitNotesError, postCommitHook, removeGitNotes, setupGitNotes, showNote } from "./git-notes.js";
 
 const g = (repo: string, ...a: string[]) => execFileSync("git", a, { cwd: repo, encoding: "utf8" }).trim();
 let repo: string;
@@ -55,6 +55,46 @@ describe("git notes", () => {
     expect(postCommitHook(repo, cap, {})).toBe(false);
     capture("a.txt", "sess-3");
     expect(postCommitHook(repo, cap, { GIT_REFLOG_ACTION: "rebase (pick)" })).toBe(false);
+    expect(showNote(repo)).toBeUndefined();
+  });
+
+  it("installs a backgrounded hook", () => {
+    const { hook } = setupGitNotes(repo);
+    expect(readFileSync(hook, "utf8")).toContain("( pai git hook post-commit >/dev/null 2>&1 & )");
+  });
+
+  it("refuses to overwrite an existing post-commit.pre-pai", () => {
+    const hook = join(repo, ".git", "hooks", "post-commit");
+    writeFileSync(hook, "#!/bin/sh\necho foreign\n");
+    writeFileSync(`${hook}.pre-pai`, "#!/bin/sh\necho older\n");
+    expect(() => setupGitNotes(repo)).toThrow(GitNotesError);
+    expect(readFileSync(hook, "utf8")).toContain("foreign");
+    expect(readFileSync(`${hook}.pre-pai`, "utf8")).toContain("older");
+  });
+
+  it("refuses a core.hooksPath outside .git and writes inside one", () => {
+    const outside = mkdtempSync(join(tmpdir(), "gitnotes-hooks-"));
+    g(repo, "config", "core.hooksPath", outside);
+    expect(() => setupGitNotes(repo)).toThrow(/core\.hooksPath/);
+    expect(existsSync(join(outside, "post-commit"))).toBe(false);
+    const inside = join(repo, ".git", "myhooks");
+    mkdirSync(inside);
+    g(repo, "config", "core.hooksPath", inside);
+    expect(setupGitNotes(repo).hook).toBe(join(inside, "post-commit"));
+  });
+
+  it("skips capture files over 8 MB", () => {
+    commit("a.txt", "one");
+    capture("a.txt", "sess-big");
+    writeFileSync(join(cap, "c.jsonl"), " ".repeat(8 * 1024 * 1024 + 1) + "\n", { flag: "a" });
+    expect(postCommitHook(repo, cap, {})).toBe(false);
+    expect(showNote(repo)).toBeUndefined();
+  });
+
+  it("gives up once the 500 ms budget is spent", () => {
+    commit("a.txt", "one");
+    capture("a.txt", "sess-late");
+    expect(postCommitHook(repo, cap, {}, Date.now() - 10_000)).toBe(false);
     expect(showNote(repo)).toBeUndefined();
   });
 });
