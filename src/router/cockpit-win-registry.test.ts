@@ -64,6 +64,16 @@ function fake() {
 }
 
 describe("registry editor logic (fake fetch)", () => {
+  it("a successful Save refreshes the models and limits feeds so the cards show the new values", async () => {
+    const L = lib(), f = fake(), S = L.WRG, fed: string[][] = [];
+    (f.io as any).refresh = (feeds: string[]) => void fed.push(feeds);
+    await L.wrgLoad(S, f.io, false);
+    S.text = A + "# edit\n";
+    await L.wrgValidate(S, f.io);
+    await L.wrgSave(S, f.io);
+    expect(fed).toEqual([["models", "limits"]]);
+  });
+
   it("Save is disabled until Validate passed on exactly this text, and again after any edit", async () => {
     const L = lib(), f = fake(), S = L.WRG;
     await L.wrgLoad(S, f.io, false);

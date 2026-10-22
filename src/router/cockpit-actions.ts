@@ -273,6 +273,16 @@ export function runningLocalModel(st: ReturnType<typeof readLocalStatus>): strin
   return r ? `${r.provider} (${r.model})` : null;
 }
 
+/** The catalogue model a name stands for: a model name as is, a provider name (the Local servers card) resolved to the model that serves it. */
+export function resolveTierName(name: string, models: string[], yamlPath: string): string {
+  if (models.includes(name)) return name;
+  try {
+    return Object.values(readLocalConfig(yamlPath).tiers).find((t) => t.provider === name)?.tier ?? name;
+  } catch {
+    return name;
+  }
+}
+
 /** The tier names in workers.yaml (same reader `pai worker local` uses). */
 export function tierNames(yamlPath: string): string[] {
   try {
@@ -410,7 +420,7 @@ export async function runCockpitAction(
   hooks: ActionHooks = {}
 ): Promise<ActionResult> {
   const action = typeof body.action === "string" ? body.action : "";
-  const target = typeof body.target === "string" ? body.target : "";
+  let target = typeof body.target === "string" ? body.target : "";
   const value = typeof body.value === "string" ? body.value : undefined;
   const fail = (message: string): ActionResult => {
     writeLedgerLine(deps, action || "?", target, `error: ${message}`);
@@ -429,6 +439,7 @@ export async function runCockpitAction(
   if (action === "local.start" || action === "local.stop" || action === "local.scale") {
     const kind = action === "local.start" ? "start" : action === "local.stop" ? "stop" : "scale";
     const models = deps.tiers ?? tierNames(deps.workersYaml);
+    target = target && resolveTierName(target, models, deps.workersYaml);
     if (!target) return fail(kind === "stop" ? "target (model or instance id) required" : "target (model) required");
     if (kind !== "stop" && !models.includes(target)) return fail(`no model "${target}" (configured: ${models.join(", ") || "none"})`);
     let count = 0;

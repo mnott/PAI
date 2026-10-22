@@ -7,6 +7,7 @@
 
 import { duplicateModelIds } from "../../router/router.js";
 import { execFileSync, spawn } from "node:child_process";
+import { connect } from "node:net";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
@@ -886,34 +887,72 @@ export interface StopDeps extends Pick<StartDeps, "ledger" | "startDir" | "serve
   inflight?: (id: string) => number;
   /** Stop although requests are in flight. */
   confirm?: boolean;
-  /** Stop one server: SIGTERM its pid and the engine children below it; resolves when the port is free. */
+  /** Stop one server: SIGTERM its pid, the port's listener and their children; resolves when the port is closed. */
   kill?: (inst: LocalInstance) => Promise<void>;
 }
 
-/** pid and every descendant (the engine child of a Strata server.py). */
-function pidTree(root: number): number[] {
-  const kids = new Map<number, number[]>();
-  for (const l of psTable("pid=,ppid=").split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)/.exec(l);
-    if (m) kids.set(Number(m[2]), [...(kids.get(Number(m[2])) ?? []), Number(m[1])]);
+/** Pids listening on a loopback TCP port (empty when none or lsof is missing). */
+function portListeners(port: number): number[] {
+  try {
+    return execFileSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\s+/).filter(Boolean).map(Number);
+  } catch {
+    return [];
   }
-  const all = [root];
-  for (let i = 0; i < all.length; i++) all.push(...(kids.get(all[i]) ?? []));
-  return all;
 }
 
-async function killInstance(inst: LocalInstance, up: (port: number) => Promise<boolean>): Promise<void> {
-  if (inst.pid === undefined) return;
-  const tree = pidTree(inst.pid);
-  const signal = (sig: NodeJS.Signals) => tree.forEach((p) => { try { process.kill(p, sig); } catch { /* already gone */ } });
-  signal("SIGTERM");
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline && (await up(inst.port))) await sleep(1000);
-  if (await up(inst.port)) signal("SIGKILL");
+/** Whether something accepts a TCP connection on the loopback port (a hung server that no longer answers HTTP still counts). */
+export function portOpen(port: number): Promise<boolean> {
+  return new Promise((res) => {
+    const s = connect({ port, host: "127.0.0.1" });
+    s.once("connect", () => (s.destroy(), res(true)));
+    s.once("error", () => res(false));
+    s.setTimeout(2000, () => (s.destroy(), res(false)));
+  });
+}
+
+/** The roots and every descendant (the engine child of a Strata server.py), plus the members of any process group a tree member leads (a script's detached child). */
+function pidTree(roots: number[]): { pids: number[]; groups: number[] } {
+  const kids = new Map<number, number[]>();
+  const groupOf = new Map<number, number>();
+  for (const l of psTable("pid=,ppid=,pgid=").split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)/.exec(l);
+    if (!m) continue;
+    kids.set(Number(m[2]), [...(kids.get(Number(m[2])) ?? []), Number(m[1])]);
+    groupOf.set(Number(m[1]), Number(m[3]));
+  }
+  const all = [...new Set(roots)];
+  for (let i = 0; i < all.length; i++) for (const k of kids.get(all[i]) ?? []) if (!all.includes(k)) all.push(k);
+  const groups = all.filter((p) => groupOf.get(p) === p && p !== process.pid);
+  return { pids: all, groups };
 }
 
 /**
- * Stop instances: `target` is an instance id (`gyro#2`) or a model name (its
+ * SIGTERM the instance's pid, the pid listening on its port (a script hands off to a detached server),
+ * their descendants and led process groups; after a grace period SIGKILL. Resolves only when nothing
+ * accepts connections on the port any more, else throws (the stop is not reported as done).
+ */
+export async function killInstance(inst: LocalInstance, open: (port: number) => Promise<boolean> = portOpen, graceMs = 15_000): Promise<void> {
+  const signal = (sig: NodeJS.Signals) => {
+    const { pids, groups } = pidTree([...(inst.pid !== undefined ? [inst.pid] : []), ...portListeners(inst.port)]);
+    for (const g of groups) try { process.kill(-g, sig); } catch { /* group gone */ }
+    for (const p of pids) if (p !== process.pid) try { process.kill(p, sig); } catch { /* already gone */ }
+  };
+  const drained = async (ms: number): Promise<boolean> => {
+    const deadline = Date.now() + ms;
+    while (await open(inst.port)) {
+      if (Date.now() > deadline) return false;
+      await sleep(Math.min(250, graceMs));
+    }
+    return true;
+  };
+  signal("SIGTERM");
+  if (await drained(graceMs)) return;
+  signal("SIGKILL");
+  if (!(await drained(10_000))) throw new LocalTierError(`${inst.id}: port ${inst.port} still accepts connections after SIGKILL (pid ${inst.pid ?? "?"})`);
+}
+
+/**
+ * Stop instances: `target` is an instance id (`gyro#2`), a model name or its provider name (its
  * highest-numbered instances first; `count` of them, default one, `all` for
  * every one). Only those pids and their children are signalled, the other
  * copies keep running. Requests in flight refuse the stop unless `confirm`.
@@ -922,7 +961,7 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
   const dir = deps.startDir ?? logDir();
   const rows = currentInstances(cfg, deps);
   const byId = rows.find((r) => r.id === target);
-  const mine = rows.filter((r) => r.model === target).sort((a, b) => instanceNumber(b.id) - instanceNumber(a.id));
+  const mine = rows.filter((r) => r.model === target || r.provider === target).sort((a, b) => instanceNumber(b.id) - instanceNumber(a.id));
   const picked = byId ? [byId] : opts.all ? mine : mine.slice(0, opts.count ?? 1);
   if (picked.length === 0) throw new LocalTierError(`no running instance "${target}" (running: ${rows.map((r) => r.id).join(", ") || "none"})`);
   if (!deps.confirm) {
@@ -930,7 +969,7 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
     if (busy.length) throw new LocalTierError(`${busy.map(([i, c]) => `${i} has ${c} request(s) in flight`).join(", ")}; confirm to stop anyway (--yes)`);
   }
   for (const p of picked) {
-    await (deps.kill ?? ((i) => killInstance(i, deps.up ?? isUp)))(p);
+    await (deps.kill ?? ((i) => killInstance(i, deps.up ?? portOpen)))(p);
     writeInstances(dir, readInstances(dir).filter((r) => r.id !== p.id));
     clearLocalStart(dir, p.id);
     appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-STOP", { model: p.model, id: p.id, port: p.port, pid: p.pid ?? "?" });

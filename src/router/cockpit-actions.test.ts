@@ -169,6 +169,17 @@ describe("cockpit actions", () => {
     expect(calls.stop).toEqual(['big#2:{"confirm":false}','big:{"confirm":true}']);
   });
 
+  it("a provider name from the Local servers card resolves to its model for stop, start and scale", async () => {
+    const tmp = newDir();
+    writeFileSync(join(tmp, "workers.yaml"), "providers:\n  pbig:\n    url: http://127.0.0.1:8035\nlocal_tiers:\n  big:\n    engine: script\n    provider: pbig\n    start: /x.sh\n    port: 8035\n");
+    const calls = instCalls();
+    await runCockpitAction({ action: "local.stop", target: "pbig" }, instDeps(tmp, calls, 1));
+    await runCockpitAction({ action: "local.start", target: "pbig" }, instDeps(tmp, calls, 0));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.stop).toEqual(['big:{"confirm":false}']);
+    expect(calls.start).toEqual(["big"]);
+  });
+
   it("local.scale starts the missing instances or stops the extras", async () => {
     const tmp = newDir();
     const up = instCalls();

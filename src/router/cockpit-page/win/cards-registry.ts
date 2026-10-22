@@ -62,6 +62,7 @@ function wrgAfterWrite(S,io,r,verb){
  if(!r.ok){io.status("err",r.error||r.message||verb+" refused");io.paint();return r}
  S.passed=null;S.diff="";
  io.status("ok",verb+" · backup "+r.backup);
+ if(io.refresh)io.refresh(["models","limits"]);
  return wrgLoad(S,io,true).then(function(){return r});
 }
 function wrgSave(S,io){
@@ -171,7 +172,7 @@ function wrgDupPaint(c){
  f.innerHTML='<input class="wrg-dn" aria-label="entry to copy" placeholder="entry" value="'+esc(names[0]||"")+'" size="14"> <input class="wrg-dm" aria-label="new name" placeholder="new name (default: name-2)" size="22"> <input class="wrg-dp" aria-label="port" placeholder="port (default: next free)" size="20"> <button type="button" class="cbtn wrg-go">duplicate</button> <button type="button" class="cbtn wrg-no">cancel</button>';
 }
 function wrgIoMake(){
- return{get:wrgGet,post:wrgPost,status:function(k,t){var c=Win.ctx(WRG_ID);if(c)c.status(k,t)},paint:wrgPaint};
+ return{get:wrgGet,post:wrgPost,refresh:function(f){if(WIN_HOST.refresh)WIN_HOST.refresh(f)},status:function(k,t){var c=Win.ctx(WRG_ID);if(c)c.status(k,t)},paint:wrgPaint};
 }
 Win.registerType("editor",{minW:360,minH:220,defaultH:360,
  mount:function(ctx){
