@@ -8,7 +8,7 @@ import type { Num, Str } from "./types.js";
 export const shellHead = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PAI router cockpit</title>
+<title>PAI Cockpit</title>
 <link rel="icon" type="image/svg+xml" href="${COCKPIT_FAVICON_DATA_URI}">
 <meta name="theme-color" content="#3b6fe0">
 <meta name="cockpit-build" content="__COCKPIT_BUILD__">
@@ -24,7 +24,7 @@ try{if(localStorage.getItem("pai.cockpit.lock")==="1")document.documentElement.c
 export const shellBody = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`</style><style>
 #legend>.lgline{gap:2px 8px;font-size:11px}#legend>.lgline span{white-space:nowrap}
 </style></head><body>
-<header><h1>PAI router cockpit</h1>
+<header><h1>PAI Cockpit</h1>
 <div class="tabs" id="tabs"><button data-w="1h">1 hour</button><button data-w="24h">Today</button><button data-w="7d">Week</button></div>
 <a id="newer" href="#" hidden title="The router now serves a newer cockpit build than this open page; reload to get it.">newer cockpit available — reload</a><span id="stamp">loading...</span><button id="reset" type="button" title="reset layout" aria-label="reset layout">⟲</button><button id="lock" type="button" title="lock layout" aria-label="lock layout" aria-pressed="false">🔓</button><button id="theme" type="button" title="Dark mode" aria-label="Dark mode"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path class="ic-moon" d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/><g class="ic-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></g></svg></button></header>
 <main id="win-root"></main>

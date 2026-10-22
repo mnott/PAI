@@ -33,7 +33,7 @@ describe("cockpit favicon and dark mode", () => {
     expect(svg).toBe(COCKPIT_FAVICON_SVG);
     // no raw characters that would break the URI in Safari/Chrome/Firefox
     for (const ch of ['"', "<", ">", "#", " ", "'"]) expect(link).not.toContain(ch);
-    expect(COCKPIT_HTML).toMatch(/<title>PAI router cockpit<\/title>\n<link rel="icon"/);
+    expect(COCKPIT_HTML).toMatch(/<title>PAI Cockpit<\/title>\n<link rel="icon"/);
     expect(COCKPIT_HTML).toContain('<meta name="theme-color" content="#3b6fe0">');
   });
 

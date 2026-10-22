@@ -109,7 +109,7 @@ pai worker pending            # finished branches not merged yet
 The router serves a cockpit page at `http://127.0.0.1:8790/cockpit`. It reads the router's usage log and the worker status
 files and shows, for a chosen window:
 
-![The PAI router cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](images/cockpit-limits-routing.jpg)
+![The PAI Cockpit: cloud limits, local model status, system load and power, worker pool, tokens and cache hit ratio per provider, speed per model](images/cockpit-limits-routing.jpg)
 
 
 - **Cloud** and **Local** totals, **Providers**, **Speed per model**;
