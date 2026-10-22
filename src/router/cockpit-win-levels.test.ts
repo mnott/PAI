@@ -106,9 +106,8 @@ describe("group levels on the page", () => {
     expect(byId.system.titleSize).toBe("13px");
     expect(byId.system.borderBottom).toBe("2px");
     expect(byId.system.bodyPad).toBe("4px");
-    // top-level: 3px left edge in the section's own colour (the header tint, i.e. --sec)
-    expect(byId.system.borderLeft).toBe("3px");
-    expect(byId.system.borderLeftColor).toBe(byId.system.headBg);
+    // top-level: the header is a solid section-colour bar, no left edge (4cdfd8de)
+    expect(byId.system.borderLeft).toBe("0px");
     // nested: no left edge, normal title size, inset body
     expect(byId["sys-metrics"].borderLeft).toBe("0px");
     expect(byId["sys-metrics"].titleSize).toBe("12px");

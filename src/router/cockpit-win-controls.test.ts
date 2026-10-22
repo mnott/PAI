@@ -36,6 +36,8 @@ function eff(e){for(;e;e=e.parentElement){var c=getComputedStyle(e).backgroundCo
 var o={err:window.__err||null,theme:document.documentElement.dataset.theme,n:0,rows:[]};
 Array.prototype.forEach.call(document.querySelectorAll("#win-root button,#win-root input,#win-root textarea,#win-root select"),function(e){
  var card=e.closest("[data-card]");
+ var hd=e.closest(".chead");
+ if(hd&&hd.parentElement&&hd.parentElement.getAttribute("data-depth")==="0"){o.topBar=(o.topBar||0)+1;return}
  o.n++;o.rows.push({name:e.tagName.toLowerCase()+"."+(e.className||"")+"["+(e.textContent||e.getAttribute("aria-label")||"").slice(0,24)+"]@"+(card?card.getAttribute("data-card"):"?"),bg:Math.round(eff(e)*1000)/1000,fg:Math.round(lum(getComputedStyle(e).color).l*1000)/1000})});
 var s=document.querySelector('#win-root [data-card="models.rt:ollama/arctic"] [data-act="stop"]');o.smallStop=s?{dis:s.disabled,title:s.title}:null;
 o.cards=Array.prototype.map.call(document.querySelectorAll("#win-root [data-card]"),function(c){return c.getAttribute("data-card")});
@@ -79,7 +81,7 @@ async function open(theme: string) {
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as {
-    err: string | null; theme: string; n: number; rows: { name: string; bg: number; fg: number }[]; smallStop: { dis: boolean; title: string } | null; cards: string[]; scheme: string;
+    err: string | null; theme: string; n: number; rows: { name: string; bg: number; fg: number }[]; topBar?: number; smallStop: { dis: boolean; title: string } | null; cards: string[]; scheme: string;
   };
 }
 
