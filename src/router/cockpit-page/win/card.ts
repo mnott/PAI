@@ -421,8 +421,27 @@ function init(main,defaults,opts){
  }else window.addEventListener("resize",sync);
  return api;
 }
+/** A structural change inside a group keeps what is on screen: the group column's weights become the px its children have now
+ *  (px = {leaf id or child index: height}, new children their need), and the group's root band grows by delta (a removal: shrinks). Auto layout (no user move yet) is not touched: its fit readings size the band and the cards,
+ *  so no sibling changes size and only the group and the cards below it move. Nothing to keep before the first layout. */
+function groupPx(group,ch){
+ var r=W.rects&&W.rects[group],px=[],i,e;
+ if(W.auto||!r)return null;
+ for(i=0;i<ch.length;i++){e=winGExt(ch[i],W.rects);if(!e)return null;px.push(e.y1-e.y0)}
+ return px;
+}
+function growBand(group,delta){
+ var t=W.tree,r=W.rects&&W.rects[group],i,e;
+ if(!r||!t||t.k!=="s"||t.d!=="c")return;
+ for(i=0;i<t.ch.length;i++)if(findLeaf(t.ch[i],group)){
+  e=winGExt(t.ch[i],W.rects);
+  if(e)t.sz[i]=Math.max(HEAD_H,e.y1-e.y0+delta);
+  return;
+ }
+}
 /** Add cards by data (a structural change, spec 3.4): rows = [[id,...],...], one row split per entry, appended to
- *  the group's column. A row whose ids the group's tree already holds (a saved layout) only gets its cards built. */
+ *  the group's column. A row whose ids the group's tree already holds (a saved layout) only gets its cards built.
+ *  The cards already in the group keep their size; the group grows by the new cards' need. */
 function addCards(group,specs,rows){
  var g=W.cards[group],i,j,fresh=[];
  if(!g)return 0;
@@ -436,18 +455,44 @@ function addCards(group,specs,rows){
   else for(j=0;j<row.length;j++)add.push(row[j]);
  }
  if(add.length){
-  var ch=cur?(cur.d==="c"?cur.ch.slice():[cur]):[];
+  var ch=cur?(cur.d==="c"?cur.ch.slice():[cur]):[],n0=ch.length,px=n0?groupPx(group,ch):null,sz=ch.map(function(){return 1});
   for(i=0;i<add.length;i++)ch.push(add[i]);
-  W.kids[group]=normalize(split("c",ch,ch.map(function(){return 1/ch.length})),false);
+  if(px){
+   var bw=W.rects&&W.rects[group]?W.rects[group].w:0,st=layState(),cfg=cfgOf(),gap=W.cfg.GAP,delta=0;
+   sz=px.slice();
+   for(i=0;i<add.length;i++){var nd=Math.max(1,winNeed(add[i],bw,st,cfg,W.kids));sz.push(nd);delta+=nd+gap}
+   growBand(group,delta);
+  }else sz=ch.map(function(){return 1/ch.length});
+  W.kids[group]=normalize(split("c",ch,sz),false);
  }
  g.body.style.overflow="hidden";g.body.classList.add("cgroup");
  for(i=0;i<fresh.length;i++){g.body.appendChild(W.cards[fresh[i]].el);W.order.push(fresh[i])}
  relayout();save();
  return fresh.length;
 }
+/** Remove cards from a group by data: the group shrinks by their share (and the gap), the remaining cards keep their size. */
+function removeCards(group,idl){
+ var tree=W.kids[group],i,n=0;
+ if(!W.cards[group]||!tree||!tree.k)return 0;
+ var gone=idl.filter(function(id){return!!W.cards[id]&&ids(tree).indexOf(id)>=0});
+ if(!gone.length)return 0;
+ var top=tree.d==="c"?tree.ch:[tree],keep=[],drop=[];
+ for(i=0;i<top.length;i++)(ids(top[i]).every(function(id){return gone.indexOf(id)>=0})?drop:keep).push(top[i]);
+ var kpx=groupPx(group,keep),dpx=groupPx(group,drop),delta=0;
+ for(i=0;i<gone.length;i++){var c=W.cards[gone[i]];if(c.el.parentNode)c.el.parentNode.removeChild(c.el);delete W.cards[gone[i]];W.order.splice(W.order.indexOf(gone[i]),1);n++}
+ for(i=0;i<gone.length;i++)tree=removeLeaf(tree,gone[i],false);
+ if(kpx&&dpx){
+  for(i=0;i<dpx.length;i++)delta-=dpx[i]+W.cfg.GAP;
+  if(tree&&tree.k==="s"&&tree.ch.length===kpx.length)tree.sz=kpx.slice();
+  growBand(group,delta);
+ }
+ if(tree)W.kids[group]=tree.k==="s"?normalize(tree,false):tree;
+ relayout();save();
+ return n;
+}
 /** Win.hide(id,on): a hidden card takes no space (a ghost to the layout), its place in the tree is kept. */
 function hide(id,on){W.hide=W.hide||{};if(!!W.hide[id]===!!on)return;W.hide[id]=on?1:0;if(W.main)relayout()}
-var api={init:init,addCards:addCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
+var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},fit:function(){return W.fit},auto:function(){return W.auto},

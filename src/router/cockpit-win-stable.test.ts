@@ -203,6 +203,9 @@ describe.skipIf(!CHROME)("box stability", () => {
       for (const id of added) expect(id).toMatch(/models/);
       const ms = moves(B, C);
       expect(ms.filter((m) => m.h1 < m.h0 - 0.5).map((m) => `${m.id} ${m.h0}->${m.h1}`)).toEqual([]);
+      // a card added to a group changes only the group (it grows) and the cards below it: every other existing card keeps its height exactly
+      const groups = (id: string) => added.some((a) => a.startsWith(id + ".") || a.startsWith(id + ":"));
+      expect(ms.filter((m) => !groups(m.id) && Math.abs(m.h1 - m.h0) > 0.5).map((m) => `${m.id} ${m.h0}->${m.h1}`)).toEqual([]);
       if (q === "") {
         const vis = ms.filter((m) => m.t0 >= B.y).sort((x, y) => x.t0 - y.t0)[0]!;
         expect(Math.abs(vis.t1 - C.y - (vis.t0 - B.y))).toBeLessThanOrEqual(1);
