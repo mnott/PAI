@@ -195,7 +195,7 @@ function measureTitles(){
  var id,c,n=0;
  for(id in W.cards){
   c=W.cards[id];
-  if(c.cw===undefined&&c.mounted&&c.el.classList.contains("chip")&&c.title.clientWidth>0){c.cw=Math.ceil(titleText(c)+c.head.clientWidth-c.title.clientWidth)+2;n++}
+  if(c.cw===undefined&&c.el.classList.contains("chip")&&c.title.clientWidth>0){c.cw=Math.ceil(titleText(c)+c.head.clientWidth-c.title.clientWidth)+2;n++}
   if(c.tw===undefined&&c.mounted&&c.head.clientWidth>0&&c.title.clientWidth>0){c.tw=Math.ceil(titleText(c)+c.head.clientWidth-c.title.clientWidth-(c.status.offsetWidth?c.status.offsetWidth+6:0));n++}
  }
  return n;
