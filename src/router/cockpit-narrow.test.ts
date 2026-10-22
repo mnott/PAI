@@ -16,7 +16,7 @@ import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const HEAD = 28;
 
-const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll("[data-card]").forEach(function(c){var b=c.querySelector(".cbody"),h=c.getBoundingClientRect();if(!h.height)return;var kids=b?Array.prototype.slice.call(b.children):[],low=0,top=b?b.getBoundingClientRect().top:0;kids.forEach(function(k){var r=k.getBoundingClientRect();if(r.height>0)low=Math.max(low,r.bottom-top)});out.push({id:c.getAttribute("data-card"),type:c.getAttribute("data-type"),x:Math.round(h.left),y:Math.round(h.top),w:Math.round(h.width),h:Math.round(h.height),head:b?Math.round(b.getBoundingClientRect().top-h.top):0,content:Math.round(low),sh:b?b.scrollHeight:0,tr:(function(t){return t&&t.scrollWidth>t.clientWidth?1:0})(c.querySelector(".ctitle"))})});parent.postMessage(JSON.stringify({vw:innerWidth,cards:out}),"*")},3500)</script>`;
+const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll("[data-card]").forEach(function(c){var b=c.querySelector(".cbody"),h=c.getBoundingClientRect();if(!h.height)return;var kids=b?Array.prototype.slice.call(b.children):[],low=0,top=b?b.getBoundingClientRect().top:0;kids.forEach(function(k){var r=k.getBoundingClientRect();if(r.height>0)low=Math.max(low,r.bottom-top)});out.push({id:c.getAttribute("data-card"),type:c.getAttribute("data-type"),x:Math.round(h.left),y:Math.round(h.top),w:Math.round(h.width),h:Math.round(h.height),head:b?Math.round(b.getBoundingClientRect().top-h.top):0,content:Math.round(low),sh:b?b.scrollHeight:0,tr:(function(t){return t&&t.scrollWidth>t.clientWidth?1:0})(c.querySelector(".ctitle")),ti:(function(t){return t&&t.getAttribute("title")||""})(c.querySelector(".ctitle"))})});parent.postMessage(JSON.stringify({vw:innerWidth,cards:out}),"*")},3500)</script>`;
 
 let server: Server;
 let base = "";
@@ -49,7 +49,7 @@ beforeAll(async () => {
 });
 afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-interface Card { id: string; type: string; x: number; y: number; w: number; h: number; head: number; content: number; sh: number; tr: number }
+interface Card { id: string; type: string; x: number; y: number; w: number; h: number; head: number; content: number; sh: number; tr: number; ti: string }
 async function measure(width: number): Promise<Card[]> {
   const o = { width: 1000, height: 5200, budgetMs: 8000 };
   const dom = await dumpDom(`${base}/frame?w=${width}`, o);
@@ -70,15 +70,15 @@ const WIDE_822 = [
   "kpis.cache-read:83",
   "kpis.cache-write:83",
   "kpis.errors:83",
-  "pool:424",
-  "pool.pool:96",
-  "pool.host:96",
-  "pool.tasks:96",
-  "pool.hit:96",
-  "pool.spares:96",
-  "pool.not-pooled:96",
+  "pool:344",
+  "pool.pool:108",
+  "pool.host:108",
+  "pool.tasks:108",
+  "pool.hit:108",
+  "pool.spares:108",
+  "pool.not-pooled:108",
   "pool.slots:84",
-  "system:1197",
+  "system:823",
   "sys-metrics:314",
   "system.memory:90",
   "system.swap:90",
@@ -96,15 +96,15 @@ const WIDE_822 = [
   "system.energy:90",
   "sys-power:231",
   "system.power-chart:203",
-  "sys-servers:608",
+  "sys-servers:234",
   "system.srv:gyro-m/rss:90",
   "system.srv:gyro-m/e2e:90",
   "system.srv:gyro-m/decode:90",
   "system.srv:gyro-m/prefix:90",
-  "system.srv:ollama-local-with-a-long-name/rss:90",
-  "system.srv:ollama-local-with-a-long-name/e2e:90",
-  "system.srv:ollama-local-with-a-long-name/decode:90",
-  "system.srv:ollama-local-with-a-long-name/prefix:90",
+  "system.srv:ollama-local-with-a-long-name/rss:108",
+  "system.srv:ollama-local-with-a-long-name/e2e:108",
+  "system.srv:ollama-local-with-a-long-name/decode:108",
+  "system.srv:ollama-local-with-a-long-name/prefix:108",
   "memory:206",
   "memory.kv:80",
   "memory.index:90",
@@ -125,8 +125,8 @@ const WIDE_822 = [
   "workers.sess:PAI:125",
   "models:76",
   "models.endpoints:48",
-  "cache:909",
-  "cache-rings:542",
+  "cache:735",
+  "cache-rings:368",
   "cache.ring:glm/qwen3.8-flash-next-gyro-m:166",
   "cache.ring:glm/glm-5.3-flash:166",
   "cache.ring:anthropic/claude-sonnet-5-5:166",
@@ -173,7 +173,7 @@ describe.skipIf(!CHROME)("cockpit narrow mode card heights, real layout in Chrom
       const cards = await measure(width);
       const totals = perLine(cards, "kpis.", "metric"), pool = perLine(cards, "pool.", "kv");
       expect(Math.max(...totals), `${width}px totals per line ${totals}`).toBeGreaterThanOrEqual(2);
-      expect(Math.max(...pool), `pool kv per line ${pool}`).toBeGreaterThanOrEqual(1);
+      expect(Math.max(...pool), `pool kv per line ${pool}`).toBeGreaterThanOrEqual(width === 620 ? 2 : 1);
       for (const c of cards) {
         const min = MIN_W[c.type as keyof typeof MIN_W];
         if (min && c.w > 0 && /^(kpis|pool)\./.test(c.id)) expect(c.w, `${c.id} ${c.w}px at ${width}`).toBeGreaterThanOrEqual(min - 1);
@@ -190,7 +190,11 @@ describe.skipIf(!CHROME)("cockpit narrow mode card heights, real layout in Chrom
     const cards = await measure(620);
     const totals = perLine(cards, "kpis.", "metric");
     expect(totals, `totals per line ${totals}`).toEqual([3, 3]);
-    for (const c of cards) if (c.type === "metric" && c.w > 0) expect(c.tr, `${c.id} title cut at ${c.w}px`).toBe(0);
+    for (const c of cards) if (c.type === "metric" && c.w > 0 && c.id.startsWith("kpis.")) expect(c.tr, `${c.id} title cut at ${c.w}px`).toBe(0);
+    // a long title is capped at 1.6 x the type minW: the pool keeps 2+ cards per line, a cut title carries its full text
+    const pool = perLine(cards, "pool.", "kv");
+    expect(Math.min(...pool), `pool kv per line ${pool}`).toBeGreaterThanOrEqual(2);
+    for (const c of cards) if (c.tr && c.w > 0) expect(c.ti.length, `${c.id} cut title has a title attribute`).toBeGreaterThan(0);
     const slots = cards.find((c) => c.id === "pool.slots")!;
     expect(slots.h - slots.head - slots.content, `slots ${slots.h}px, content ${slots.content}px`).toBeLessThanOrEqual(24);
   }, 120_000);

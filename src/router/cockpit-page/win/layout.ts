@@ -50,8 +50,8 @@ function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
 function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 /** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
 function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
-/** A card's least width in a grid: its type's minW, or its title's text width plus header controls (cfg.titleW, measured by the runtime) when that is wider. */
-function winCardMinW(cfg,kids,id){var m=winMinW(cfg,winLeafType(kids,id,cfg)),t=cfg.titleW&&cfg.titleW[id];return t&&t>m?t:m}
+/** A card's least width in a grid: its type's minW, or its title's text width plus header controls (cfg.titleW, measured by the runtime) when that is wider, capped at 1.6 x minW (a longer title keeps its ellipsis). */
+function winCardMinW(cfg,kids,id){var m=winMinW(cfg,winLeafType(kids,id,cfg)),t=cfg.titleW&&cfg.titleW[id];return t&&t>m?Math.min(t,Math.round(m*1.6)):m}
 /** Narrow row: children per line and their equal width. At most as many as fit at the largest least width; the lines are balanced:
  *  lines = ceil(n / kMax), per line = ceil(n / lines), so earlier lines are never shorter than later ones. */
 function winGridK(node,w,st,cfg,kids){
