@@ -96,7 +96,8 @@ function sessionsHtml(d){
  var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore();
  function row(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';
   var ms=s.models||[],mc=ms.length?esc(ms[0])+(ms.length>1?' <span class="dim">+'+(ms.length-1)+'</span>':''):'';
-  return['<span title="'+esc((s.name?s.name+" · ":"")+s.session)+'">'+nm+v+'</span>','<span title="'+esc(ms.join(", "))+'">'+mc+'</span>',s.requests,fmt(tot(s)),fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+hitCls(s.hitRatio)+'">'+pct(s.hitRatio)+'</span>','<span class="'+(s.busts?"warn":"")+'">'+s.busts+'</span>',s.errors,ago(s.lastTs)]}
+  var max=all.length?tot(all[0]):0,t=tot(s),pc=max>0?Math.max(t>0?2:0,Math.round(t/max*100)):0;
+  return['<span title="'+esc((s.name?s.name+" · ":"")+s.session)+'">'+nm+v+'</span>','<span title="'+esc(ms.join(", "))+'">'+mc+'</span>',s.requests,'<span class="st-tok"><b>'+fmt(t)+'</b><i class="st-bar" title="tokens relative to the largest session"><u style="width:'+pc+'%"></u></i></span>',fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+hitCls(s.hitRatio)+'">'+pct(s.hitRatio)+'</span>',s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'',s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'',ago(s.lastTs)]}
  var shown=open?all:all.slice(0,top),rest=all.slice(top),rows=shown.map(row);
  if(rest.length){
   var rt=rest.reduce(function(a,s){return a+tot(s)},0),blank=function(){return""};

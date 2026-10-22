@@ -130,3 +130,18 @@ describe("C1 guards: sessions fold", () => {
     }
   });
 });
+
+describe("sessions by tokens compact rows", () => {
+  const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "table", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
+  const lib = new Function("localStorage", `var SESSION_ROWS=50;\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${fns}\nreturn sessionsHtml;`);
+  const html = lib({ getItem: () => null }) as (d: unknown) => string;
+  const s = (i: number, input: number, errors: number, busts: number) => ({ session: `s${i}abcdefgh`, name: `n${i}`, models: ["m-a"], requests: 2, input, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts, errors, lastTs: new Date().toISOString() });
+  it("one row per session, chips only above zero, the largest tokens bar at 100 percent", () => {
+    const out = html({ bySession: [s(0, 1000, 0, 0), s(1, 500, 2, 1), s(2, 10, 0, 0)] });
+    expect((out.match(/<tr>/g) ?? []).length - 1).toBe(3);
+    expect((out.match(/chip warn/g) ?? []).length).toBe(1);
+    expect((out.match(/chip bad/g) ?? []).length).toBe(1);
+    expect(out.match(/<u style="width:(\d+)%/)?.[1]).toBe("100");
+    expect(html({ bySession: [s(0, 1000, 0, 0)] })).not.toContain("busts");
+  });
+});
