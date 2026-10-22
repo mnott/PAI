@@ -27,6 +27,7 @@ import {
   type MigrateDirResult,
 } from "../../config/pai-home.js";
 import { paiConfigFilePath, paiConfigYamlFilePath, migrateConfigFile } from "../../daemon/config.js";
+import { liveWorkersConfigShadows } from "../../workers/config-shadow.js";
 import { migrateMainConfigToYaml, MainConfigError } from "../../config/main-config.js";
 import { voicesJsonPath, voicesYamlPath, migrateVoicesToYaml } from "../../config/voices-config.js";
 import {
@@ -225,6 +226,17 @@ export function configYamlCmd(opts: { dryRun?: boolean; force?: boolean }): numb
 export function configListCmd(opts: { all?: boolean; json?: boolean }): number {
   const r = listConfigOp({ all: opts.all });
   console.log(opts.json ? JSON.stringify(r.data, null, 2) : r.yaml.trimEnd());
+  return 0;
+}
+
+/** `pai config validate`: shadowed and unused workers keys across config.yaml and workers.yaml (warnings; exit 0). */
+export function configValidateCmd(): number {
+  const shadows = liveWorkersConfigShadows();
+  if (!shadows.length) {
+    console.log(ok("config.yaml and workers.yaml: no shadowed or unused keys"));
+    return 0;
+  }
+  for (const s of shadows) console.log(`warning: ${s.message}`);
   return 0;
 }
 

@@ -104,6 +104,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai config path` | Print where PAI keeps its settings |
 | `pai config set` | Change one setting |
 | `pai config unset` | Reset one setting to its default |
+| `pai config validate` | Warn about workers settings that are shadowed or unused |
 | `pai config yaml` | Convert config.json to config.yaml |
 | `pai daemon` | The background service: status, start, stop, restart, logs |
 | `pai daemon install` | Install the daemon as a login service |

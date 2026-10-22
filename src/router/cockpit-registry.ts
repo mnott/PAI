@@ -33,6 +33,9 @@ import { readLiveInstances, type LocalInstance } from "../workers/local-instance
 import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { appendLedger } from "../workers/ledger.js";
 import { COCKPIT_ACTION_EVENT } from "./cockpit-actions.js";
+import { workersConfigShadows } from "../workers/config-shadow.js";
+import { readDualFormatConfigRaw } from "../config/main-config.js";
+import { paiConfigFilePath } from "../daemon/config.js";
 
 export interface RegistryError {
   path: string;
@@ -43,6 +46,8 @@ export interface RegistryError {
 export interface RegistryCtx {
   /** the registry file (workers.yaml) */
   yamlPath: string;
+  /** main config path (config.yaml/json) the shadow check reads; default the live one */
+  mainConfigPath?: string;
   /** where timestamped backups go */
   backupDir: string;
   /** model-file existence; default fs.existsSync */
@@ -85,6 +90,31 @@ function pathFromMessage(msg: string): { path: (string | number)[]; text: string
 
 export interface ValidateResult {
   errors: RegistryError[];
+  /** keys that are written here but not effective (shadowed by config.yaml, or unused) */
+  warnings?: RegistryError[];
+}
+
+/** Shadowed/unused keys of `text` against config.yaml: unchanged ones warn, a new or changed one is refused (the effective value lives elsewhere). */
+function shadowFindings(text: string, current: string, ctx: RegistryCtx, at: (path: (string | number)[]) => number): { errors: RegistryError[]; warnings: RegistryError[] } {
+  const out = { errors: [] as RegistryError[], warnings: [] as RegistryError[] };
+  const parse = (t: string): Record<string, unknown> => {
+    const v = (parseDocument(t, { uniqueKeys: false }).toJS() ?? {}) as unknown;
+    return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  };
+  let main: Record<string, unknown> = {};
+  try {
+    main = readDualFormatConfigRaw(ctx.mainConfigPath ?? paiConfigFilePath());
+  } catch {
+    /* damaged main config is reported by its own loader */
+  }
+  const before = new Map(workersConfigShadows(main, parse(current)).filter((s) => s.file === "workers.yaml").map((s) => [s.key, JSON.stringify(s.value)]));
+  for (const s of workersConfigShadows(main, parse(text))) {
+    if (s.file !== "workers.yaml") continue; // config.yaml's own keys are not editable here
+    const path = s.key.split(".");
+    if (before.get(s.key) === JSON.stringify(s.value)) out.warnings.push({ path: s.key, line: at(path), message: s.message });
+    else out.errors.push({ path: s.key, line: at(path), message: `${s.message}; not saved here` });
+  }
+  return out;
 }
 
 /**
@@ -175,6 +205,9 @@ export function validateRegistry(yamlText: string, ctx: RegistryCtx, current = "
     if (t.engine === "vllm-mlx" && t.model && !exists(resolveModelPath(t.model))) add(["local_tiers", t.tier, "model"], `model file not found: ${t.model}`);
   }
 
+  const shadow = shadowFindings(yamlText, current, ctx, at);
+  errors.push(...shadow.errors);
+
   const running = (ctx.running?.() ?? []).filter((i) => i.state === "starting" || i.state === "ready");
   for (const name of Object.keys(before)) {
     if (tiers[name]) continue;
@@ -185,7 +218,7 @@ export function validateRegistry(yamlText: string, ctx: RegistryCtx, current = "
   for (const inst of running) {
     if (inst.origin === "registered" && !provNames.has(inst.provider)) add(["providers"], `cannot remove provider "${inst.provider}": instance ${inst.id} is running`);
   }
-  return { errors };
+  return { errors, warnings: shadow.warnings };
 }
 
 /**
@@ -253,16 +286,16 @@ export function readRegistry(ctx: RegistryCtx): { yaml: string; mtime: number; h
   return { yaml, mtime: existsSync(ctx.yamlPath) ? statSync(ctx.yamlPath).mtimeMs : 0, hash: hashText(yaml) };
 }
 
-export function validateRequest(yamlText: string, baseHash: string, ctx: RegistryCtx): { ok: boolean; errors: RegistryError[]; diff: string[]; stale?: boolean } {
+export function validateRequest(yamlText: string, baseHash: string, ctx: RegistryCtx): { ok: boolean; errors: RegistryError[]; warnings?: RegistryError[]; diff: string[]; stale?: boolean } {
   const cur = readCurrent(ctx);
   if (baseHash !== hashText(cur)) return { ok: false, stale: true, errors: [{ path: "", line: 1, message: "changed on disk - reload" }], diff: [] };
-  const { errors } = validateRegistry(yamlText, ctx, cur);
+  const { errors, warnings } = validateRegistry(yamlText, ctx, cur);
   let shown = yamlText;
   if (!errors.length) {
     if (ctx.explicitEnabled) shown = withExplicitEnabled(shown);
     if (ctx.explicitLifecycle) shown = withExplicitLifecycle(shown);
   }
-  return { ok: errors.length === 0, errors, diff: diffLines(cur, shown) };
+  return { ok: errors.length === 0, errors, warnings, diff: diffLines(cur, shown) };
 }
 
 function stamp(d: Date): string {
