@@ -28,10 +28,10 @@ function wtWire(ctx){
 }
 function wtView(build){return function(d){return d&&d.bySession?{html:build(d),after:wtFit}:null}}
 function tablesDefaults(){
- var f=["data"],cards=[{id:"speed",type:"chart",title:"Speed per model",info:WT_INFO.speed,feeds:["data","system","limits"]},
-  {id:"pause",type:"table",title:"Cache verdict by pause",info:WT_INFO.pause,feeds:f,view:function(d){return d&&d.bySession?{html:pauseHtml(d),after:pauseFit}:null},resize:pauseFit},
+ var f=["data"],cards=[{id:"perf-group",type:"group",title:"Performance details",info:"per-pause cache verdicts, sessions and worker runs"},
+  {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,view:wtView(workersHtml),mount:wtWire,resize:wtFit},
   {id:"sessions",type:"table",title:"Sessions by tokens",feeds:f,view:wtView(sessionsHtml),mount:wtWire,resize:wtFit},
-  {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,view:wtView(workersHtml),mount:wtWire,resize:wtFit}];
- return{parts:cards.map(function(c){return[{tree:WinT.leaf(c.id),kids:{},stDefaults:{},cards:[c]},c.id==="speed"?230:c.id==="sessions"||c.id==="runs"?300:160]})};
+  {id:"pause",type:"table",title:"Cache verdict by pause",info:WT_INFO.pause,feeds:f,view:function(d){return d&&d.bySession?{html:pauseHtml(d),after:pauseFit}:null},resize:pauseFit}];
+ return{parts:[[{tree:WinT.leaf("perf-group"),kids:{"perf-group":WinT.split("c",[WinT.leaf("runs"),WinT.leaf("sessions"),WinT.leaf("pause")],[0.38,0.38,0.24])},stDefaults:{},cards:cards},760]]};
 }
 `;

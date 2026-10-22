@@ -239,35 +239,42 @@ function repairOrder(tree,def){
  var fixed={k:"s",d:"c",ch:ch,sz:sz};
  return JSON.stringify(fixed)===JSON.stringify(def)?fixed:tree;
 }
-/** The default "Tokens" group arrived after layouts were saved. A stored tree that has tokens and
- *  daily as two root bands is wrapped into the group at the first one's place, their px heights
- *  kept as the body weights. A stored tree without the group and without that shape is the user's:
- *  it is reconciled against defaults minus the group, so the group is not inserted over its cards.
+/** Cards that live in a default top-level group, {cardId: groupId}. A layout saved before a group existed holds
+ *  its cards as root bands. */
+var GROUP_OF={tokens:"tokens-group",daily:"tokens-group",speed:"tokens-group",runs:"perf-group",sessions:"perf-group",pause:"perf-group"};
+/** A stored tree whose root holds mapped cards as bands, for a group that is not stored yet: the group is created at
+ *  the first of them, they move in with their px heights as the body weights. A card the user put inside some group
+ *  stays there; a group whose cards sit only elsewhere is dropped from the defaults so it is not inserted over them.
  *  Returns { tree, defaults }. */
-function groupTokens(tree,kids,defaults){
- var G="tokens-group",A="tokens",B="daily";
- if(!defaults||!defaults.kids||!defaults.kids[G]||kids[G]||findLeaf(tree,G))return{tree:tree,defaults:defaults};
- var ia=-1,ib=-1,i;
- if(tree&&tree.k==="s"&&tree.d==="c"){
-  for(i=0;i<tree.ch.length;i++){
-   if(tree.ch[i].k!=="c")continue;
-   if(tree.ch[i].id===A)ia=i;
-   if(tree.ch[i].id===B)ib=i;
+function groupRoots(tree,kids,defaults){
+ if(!defaults||!defaults.kids)return{tree:tree,defaults:defaults};
+ var d=defaults,gs=[],c,g,i;
+ for(c in GROUP_OF)if(gs.indexOf(GROUP_OF[c])<0)gs.push(GROUP_OF[c]);
+ for(var n=0;n<gs.length;n++){
+  g=gs[n];
+  if(!defaults.kids[g]||kids[g]||findLeaf(tree,g))continue;
+  var at=[];
+  if(tree&&tree.k==="s"&&tree.d==="c")for(i=0;i<tree.ch.length;i++)if(tree.ch[i].k==="c"&&GROUP_OF[tree.ch[i].id]===g)at.push(i);
+  if(at.length){
+   var ch=[],sum=0,j;
+   for(j=0;j<at.length;j++){ch.push(tree.ch[at[j]]);sum+=tree.sz[at[j]]}
+   var w=at.map(function(k){return sum>0?tree.sz[k]/sum:1/at.length});
+   kids[g]=split("c",ch,w);
+   tree.ch[at[0]]=leaf(g);tree.sz[at[0]]=sum;
+   for(j=at.length-1;j>0;j--){tree.ch.splice(at[j],1);tree.sz.splice(at[j],1)}
+   continue;
+  }
+  var hit=false;
+  for(c in GROUP_OF)if(GROUP_OF[c]===g){
+   if(ids(tree).indexOf(c)>=0)hit=true;
+   for(var k in kids)if(ids(kids[k]).indexOf(c)>=0)hit=true;
+  }
+  if(hit){
+   if(d===defaults)d=clone(defaults);
+   d.tree=removeLeaf(d.tree,g,true);
+   delete d.kids[g];
   }
  }
- if(ia>=0&&ib>=0){
-  var lo=Math.min(ia,ib),hi=Math.max(ia,ib),slo=tree.sz[lo],shi=tree.sz[hi];
-  kids[G]=split("c",[tree.ch[lo],tree.ch[hi]],[slo/(slo+shi),shi/(slo+shi)]);
-  tree.ch[lo]=leaf(G);tree.sz[lo]=slo+shi;
-  tree.ch.splice(hi,1);tree.sz.splice(hi,1);
-  return{tree:tree,defaults:defaults};
- }
- var hit=ids(tree).indexOf(A)>=0||ids(tree).indexOf(B)>=0;
- for(var g in kids)if(ids(kids[g]).indexOf(A)>=0||ids(kids[g]).indexOf(B)>=0)hit=true;
- if(!hit)return{tree:tree,defaults:defaults};
- var d=clone(defaults);
- d.tree=removeLeaf(d.tree,G,true);
- delete d.kids[G];
  return{tree:tree,defaults:d};
 }
 /** Reconcile a parsed saved layout with the defaults: prune ghosts, insert missing static
@@ -276,7 +283,7 @@ function reconcileSaved(saved,defaults,knownIds,now){
  now=typeof now==="number"?now:Date.now();
  knownIds=knownIds||[];
  var tree=saved.tree,kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
- var mig=groupTokens(tree,kids,defaults);
+ var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;
  var st=saved.st&&typeof saved.st==="object"?saved.st:{};
  tree=pruneGhosts(tree,kids,st,knownIds,now);

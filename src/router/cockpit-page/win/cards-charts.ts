@@ -89,8 +89,9 @@ function wchSelAct(){
 }
 function chartsDefaults(){
  var cards=[{id:"tokens",type:"chart",title:"Tokens per bucket by kind",info:WCH_INFO.tokens,feeds:["data"],actions:[wchModeAct("weighted","weighted"),wchModeAct("raw","raw"),wchSelAct()]},
-  {id:"daily",type:"chart",title:"Tokens per day per model ("+DAILY_DAYS+" d)",info:WCH_INFO.daily,feeds:["data"]}];
- cards.unshift({id:"tokens-group",type:"group",title:"Tokens",info:"token volume by bucket and per day"});
- return{parts:[[{tree:WinT.leaf("tokens-group"),kids:{"tokens-group":WinT.split("c",[WinT.leaf("tokens"),WinT.leaf("daily")],[0.5,0.5])},stDefaults:{},cards:cards},600]]};
+  {id:"daily",type:"chart",title:"Tokens per day per model ("+DAILY_DAYS+" d)",info:WCH_INFO.daily,feeds:["data"]},
+  {id:"speed",type:"chart",title:"Speed per model",info:WT_INFO.speed,feeds:["data","system","limits"]}];
+ cards.unshift({id:"tokens-group",type:"group",title:"Tokens",info:"token volume by bucket and per day, speed per model"});
+ return{parts:[[{tree:WinT.leaf("tokens-group"),kids:{"tokens-group":WinT.split("c",[WinT.leaf("tokens"),WinT.leaf("daily"),WinT.leaf("speed")],[0.36,0.36,0.28])},stDefaults:{},cards:cards},830]]};
 }
 `;

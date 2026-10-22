@@ -292,10 +292,59 @@ describe("tokens group migration", () => {
     expect(ids(r.kids["tokens-group"])).toEqual(["daily", "tokens"]);
     expect(r.kids["tokens-group"].sz).toEqual([0.3, 0.7]);
   });
-  it("does not insert the group over cards the user placed elsewhere", () => {
+  it("does not insert the group over cards the user placed inside another group", () => {
+    const saved = { v: 2, tree: split("c", [leaf("x"), leaf("a")], [200, 300]), kids: { x: split("c", [leaf("tokens"), leaf("daily")], [0.5, 0.5]) }, st: {} };
+    const r = reconcileSaved(saved, tokDefaults(), K, NOW);
+    expect(ids(r.tree)).toEqual(["x", "a"]);
+    expect(r.kids["tokens-group"]).toBeUndefined();
+    expect(ids(r.kids.x)).toEqual(["tokens", "daily"]);
+  });
+  it("a lone root card (old: left at root) moves into the group", () => {
     const saved = { v: 2, tree: split("c", [leaf("tokens"), leaf("a")], [200, 300]), kids: { x: leaf("daily") }, st: {} };
     const r = reconcileSaved(saved, tokDefaults(), K, NOW);
-    expect(ids(r.tree)).toEqual(["tokens", "a"]);
-    expect(r.kids["tokens-group"]).toBeUndefined();
+    expect(ids(r.tree)).toEqual(["tokens-group", "a"]);
+    expect(r.tree.sz).toEqual([200, 300]);
+  });
+});
+
+describe("every mapped root card migrates into its group", () => {
+  const defs = () => ({
+    tree: split("c", [leaf("a"), leaf("tokens-group"), leaf("perf-group")], [100, 800, 700]),
+    kids: {
+      "tokens-group": split("c", [leaf("tokens"), leaf("daily"), leaf("speed")], [0.4, 0.3, 0.3]),
+      "perf-group": split("c", [leaf("runs"), leaf("sessions"), leaf("pause")], [0.4, 0.3, 0.3]),
+    },
+    stDefaults: {},
+  });
+  const K2 = ["a", "tokens-group", "tokens", "daily", "speed", "perf-group", "runs", "sessions", "pause"];
+  it("default tree has no root-level leaf card, only groups", () => {
+    const d = defs();
+    expect(d.tree.ch.filter((c: any) => c.k === "c" && !(d.kids as any)[c.id] && c.id !== "a")).toEqual([]);
+  });
+  it.each([
+    ["speed", "tokens-group"],
+    ["runs", "perf-group"],
+    ["sessions", "perf-group"],
+    ["pause", "perf-group"],
+  ])("%s at root moves into %s keeping its height", (card, grp) => {
+    const saved = { v: 2, tree: split("c", [leaf("a"), leaf(card)], [100, 250]), kids: {}, st: {} };
+    const r = reconcileSaved(saved, defs(), K2, NOW);
+    expect(ids(r.tree)).toContain(grp);
+    expect(ids(r.tree)).not.toContain(card);
+    expect(ids(r.kids[grp])).toContain(card);
+    expect(r.tree.sz[ids(r.tree).indexOf(grp)]).toBe(250);
+  });
+  it("performance cards at root become one group at the first one's place", () => {
+    const saved = { v: 2, tree: split("c", [leaf("pause"), leaf("a"), leaf("runs"), leaf("sessions")], [100, 50, 300, 200]), kids: {}, st: {} };
+    const r = reconcileSaved(saved, defs(), K2, NOW);
+    expect(ids(r.tree).filter((i: string) => i !== "tokens-group")).toEqual(["perf-group", "a"]);
+    expect(r.tree.sz.slice(0, 2)).toEqual([600, 50]);
+    expect(ids(r.kids["perf-group"])).toEqual(["pause", "runs", "sessions"]);
+  });
+  it("a mapped card inside a user group stays there", () => {
+    const saved = { v: 2, tree: split("c", [leaf("a"), leaf("mine")], [100, 250]), kids: { mine: split("c", [leaf("pause"), leaf("runs")], [0.5, 0.5]) }, st: {} };
+    const r = reconcileSaved(saved, defs(), K2, NOW);
+    expect(ids(r.kids.mine)).toEqual(["pause", "runs"]);
+    expect(ids(r.tree)).not.toContain("perf-group");
   });
 });
