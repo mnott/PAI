@@ -87,6 +87,34 @@ const ticketsDir = (dir: string): string => join(dir, "tickets");
 const ticketFile = (dir: string, id: string): string => join(ticketsDir(dir), `${id}.json`);
 export const buildLogPath = (dir: string, id: string): string => join(dir, `${id}.log`);
 
+/** Remove `m` when its holder died inside the critical section (older than `staleMs`).
+ *  Breakers serialize on `m.break` and re-check the age under it, so a waiter that saw the old mutex
+ *  cannot remove the fresh one a faster waiter took after the break. */
+export function breakStaleMutex(m: string, staleMs = 5000): void {
+  const guard = `${m}.break`;
+  try {
+    mkdirSync(guard);
+  } catch {
+    try {
+      if (Date.now() - statSync(guard).mtimeMs > staleMs) rmdirSync(guard); // a breaker died holding the guard
+    } catch {
+      /* raced */
+    }
+    return;
+  }
+  try {
+    if (Date.now() - statSync(m).mtimeMs > staleMs) rmdirSync(m);
+  } catch {
+    /* gone or raced */
+  } finally {
+    try {
+      rmdirSync(guard);
+    } catch {
+      /* gone */
+    }
+  }
+}
+
 async function withMutex<T>(dir: string, fn: () => T): Promise<T> {
   mkdirSync(dir, { recursive: true });
   const m = join(dir, "mutex");
@@ -96,11 +124,7 @@ async function withMutex<T>(dir: string, fn: () => T): Promise<T> {
       mkdirSync(m);
       break;
     } catch {
-      try {
-        if (Date.now() - statSync(m).mtimeMs > 5000) rmdirSync(m); // holder died inside the critical section
-      } catch {
-        /* raced */
-      }
+      breakStaleMutex(m);
       if (Date.now() - t0 > 15000) throw new Error("build queue mutex busy");
       await new Promise((r) => setTimeout(r, 10 + Math.random() * 20));
     }
