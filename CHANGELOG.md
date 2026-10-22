@@ -47,7 +47,8 @@ All notable changes to PAI Knowledge OS are documented here.
 - **Task bus:** a failing `aibroker` child no longer crashes the poller with an uncaught write error; a tracker project name starting with `-` is refused; the scheduler plist escapes its values and uses the running node.
 - **Request bodies:** multi-byte characters split across network packets are no longer corrupted when saving a layout or the registry; a layout threshold of 0 is honoured.
 - **Stopping a local server:** `pai worker local stop` reads the router's requests in flight and refuses to stop a busy server unless `--yes` is given; when the router's state cannot be read it refuses too, saying so.
-- **Provider keys:** `pai worker providers add --key` warns that the key is visible to other users and points to `--key-file`.
+- **Provider keys:** `pai worker providers add --key` warns that the key shows up in the process list and shell history, and points to `--key-file`.
+- **Session list:** the row limit is passed to SQLite as a parameter instead of being written into the query.
 
 ## [1.0.0] - 2026-10-22
 
