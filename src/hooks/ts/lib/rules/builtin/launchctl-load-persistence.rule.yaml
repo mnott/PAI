@@ -1,0 +1,10 @@
+# Loading a launchd agent persists a background job.
+id: launchctl-load-persistence
+severity: confirm
+match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?launchctl\s+(?:load|bootstrap)\b/
+reason: loading a launchd agent persists a background job
+tests:
+  match:
+    - launchctl load ~/Library/LaunchAgents/com.example.agent.plist
+  no_match:
+    - launchctl list

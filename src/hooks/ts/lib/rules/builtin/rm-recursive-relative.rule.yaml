@@ -1,0 +1,11 @@
+# Recursive deletion of the current or parent directory.
+id: rm-recursive-relative
+severity: block
+category: catastrophic_deletion
+match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\/\s*$/m
+reason: recursive rm of ./ deletes the current directory
+tests:
+  match:
+    - rm -rf ./
+  no_match:
+    - rm -rf ./build

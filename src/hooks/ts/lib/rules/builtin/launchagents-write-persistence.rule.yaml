@@ -1,0 +1,12 @@
+# Writing a plist into LaunchAgents registers a startup item.
+id: launchagents-write-persistence
+severity: confirm
+match: /(?:>>?|(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?(?:tee|cp|mv)\b[^|;&]*)\s*(?:~\/Library\/LaunchAgents\/|\$HOME\/Library\/LaunchAgents\/|\/Library\/LaunchAgents\/)/m
+reason: writing into a LaunchAgents directory registers a startup item
+tests:
+  match:
+    - cp agent.plist $HOME/Library/LaunchAgents/
+    - cp agent.plist ~/Library/LaunchAgents/
+    - tee -a /Library/LaunchAgents/com.example.agent.plist
+  no_match:
+    - ls ~/Library/LaunchAgents

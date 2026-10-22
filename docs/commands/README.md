@@ -20,6 +20,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai doc`](doc.md) | Write the Markdown command reference |
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
+| [`pai git`](git.md) | Link commits to the session that wrote them |
 | [`pai harness`](harness.md) | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
 | [`pai help`](help.md) | Explain a command (same as `pai <command> --help`) |
 | [`pai home`](home.md) | Where PAI keeps its files; move them out of ~/.claude |
@@ -55,6 +56,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai restore`](restore.md) | Restore PAI data from a backup |
 | [`pai resume`](resume.md) | Open a session by name or id (same as `pai open`) |
 | [`pai router`](router.md) | Local model router: start, stop, restart, status, run, stats |
+| [`pai rules`](rules.md) | Security rules: list them, lint their fixtures |
 | [`pai session`](session.md) | Work with sessions: list, open, new, rename |
 | [`pai sessions`](sessions.md) | Old plural session commands (use `ls` and `session`) |
 | [`pai setup`](setup.md) | First-time setup: storage, search, hooks, daemon, router |
@@ -128,6 +130,12 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai doc` | Write the Markdown command reference |
 | `pai end` | Finish the current session |
 | `pai find` | Search your prompt history for sessions |
+| `pai git` | Link commits to the session that wrote them |
+| `pai git hook` | Git hook entry points (called by git) |
+| `pai git hook post-commit` | Record the sessions that edited the last commit's files |
+| `pai git notes` | Show the PAI note of a commit |
+| `pai git remove` | Remove the hook and restore the previous one |
+| `pai git setup` | Install the post-commit hook in the current repository |
 | `pai harness` | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
 | `pai harness list` | Each adapter: detected, enabled, session count |
 | `pai harness sessions` | List sessions, newest first |
@@ -305,6 +313,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai router stats` | Token and cache totals per provider and model |
 | `pai router status` | Show whether the router is running |
 | `pai router stop` | Stop the router |
+| `pai rules` | Security rules: list them, lint their fixtures |
+| `pai rules lint` | Run every rule's fixtures; exit 1 on a failure or load error |
+| `pai rules list` | Every rule with severity, source and enabled state |
 | `pai session` | Work with sessions: list, open, new, rename |
 | `pai session active` | Sessions that were active in the last hour |
 | `pai session auto-route` | Find out which project the current directory belongs to |
