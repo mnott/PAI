@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { endProcesses, findWorktreeOrphans, isLiveRouter, reapWorkerProcesses } from "./reap.js";
+import { endProcesses, findWorktreeOrphans, isLiveRouter, reapNewSince, reapWorkerProcesses, snapshotWorkerPids } from "./reap.js";
 
 const kids: ChildProcess[] = [];
 const dirs: string[] = [];
@@ -80,5 +80,29 @@ describe("reap", () => {
     await endProcesses(found, () => undefined, 500);
     expect(await gone(pid)).toBe(true);
     expect(findWorktreeOrphans(logDir)).toEqual([]);
+  });
+});
+
+describe("reapNewSince (pooled task end)", () => {
+  it("ends only what appeared after the snapshot; the root and earlier processes survive", async () => {
+    const dir = tmp();
+    const root = sleeper(dir);
+    const early = sleeper(dir);
+    const before = snapshotWorkerPids({ rootPid: root, dir });
+    expect(before.has(early)).toBe(true);
+    const late = sleeper(dir);
+    const ended = await reapNewSince({ rootPid: root, dir }, before, () => {}, 200);
+    expect(ended.map((p) => p.pid)).toEqual([late]);
+    expect(await gone(late)).toBe(true);
+    expect(alive(early)).toBe(true);
+    expect(alive(root)).toBe(true);
+  });
+
+  it("never ends the root pid even when it was not in the snapshot", async () => {
+    const dir = tmp();
+    const root = sleeper(dir);
+    const ended = await reapNewSince({ rootPid: root, dir }, new Set(), () => {}, 200);
+    expect(ended.some((p) => p.pid === root)).toBe(false);
+    expect(alive(root)).toBe(true);
   });
 });

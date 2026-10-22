@@ -108,6 +108,7 @@ import {
   type SlotSpawner,
 } from "./pool.js";
 import { usageLogFile } from "../router/usage.js";
+import { reapNewSince, snapshotWorkerPids } from "./reap.js";
 import { LOOPBACK_HOST, loopbackUrl } from "../utils/loopback.js";
 
 // ---------------------------------------------------------------------------
@@ -1084,10 +1085,14 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const text = spareEntry
       ? `${pooledUnitPrompt(unitSpec, wtNote)}${task.trailer}`
       : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer);
+    // the slot process and its earlier children outlive the task; whatever the task started does not
+    const reapOpts = { rootPid: session.pid, ...(prep ? { dir: prep.dir } : {}) };
+    const beforeTask = snapshotWorkerPids(reapOpts);
     const feeding = session.feed(text, onEvent);
     // the replacement starts once the task is on its way, not when it ends: back-to-back tasks find the next spare ready
     if (spareEntry) topUp(spareEntry.rec.repo, task.provider, task.model);
     let resultEvent = await feeding;
+    await reapNewSince(reapOpts, beforeTask, (l) => writeEvent({ type: "reap", note: l }));
     if (deadTimer) clearTimeout(deadTimer);
     clientGone?.removeEventListener("abort", onClientGone);
 

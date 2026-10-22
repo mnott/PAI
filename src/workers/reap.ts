@@ -118,6 +118,26 @@ export async function reapWorkerProcesses(opts: { rootPid?: number; dir?: string
   }
 }
 
+/** Pids of a long-lived worker's leftovers right now (descendants of `rootPid`, cwd inside `dir`); the baseline for reapNewSince. */
+export function snapshotWorkerPids(opts: { rootPid?: number; dir?: string }): Set<number> {
+  try {
+    return new Set(findOrphans(opts).map((p) => p.pid));
+  } catch {
+    return new Set();
+  }
+}
+
+/** End what a pooled task left: pids in the worker's set now that were not in `before`. `rootPid` itself and the live router are never touched. */
+export async function reapNewSince(opts: { rootPid?: number; dir?: string }, before: Set<number>, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
+  try {
+    const procs = findOrphans(opts).filter((p) => !before.has(p.pid) && p.pid !== opts.rootPid);
+    if (procs.length) await endProcesses(procs, log, graceMs);
+    return procs;
+  } catch {
+    return [];
+  }
+}
+
 /** Processes parked in the worktree of a worker that is no longer live (or has no status), with the worktree they sit in. */
 export function findWorktreeOrphans(logDir: string): (OrphanProc & { dir: string })[] {
   const root = worktreesDir(logDir);
