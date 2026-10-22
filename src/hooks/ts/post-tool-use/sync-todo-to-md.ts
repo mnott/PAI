@@ -11,8 +11,9 @@
  */
 
 import { isWorkerSession } from "../lib/worker-session.js";
-import { writeFileSync, existsSync, readFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
+import { buildTodoContent, fixMalformedHeadings, writeFileAtomic, type TodoItem } from '../lib/todo-sync.js';
 import {
   findTodoPath,
   findNotesDir,
@@ -21,12 +22,6 @@ import {
   type WorkItem
 } from '../lib/project-utils.js';
 
-interface TodoItem {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-  activeForm: string;
-}
-
 interface HookInput {
   session_id: string;
   cwd: string;
@@ -34,101 +29,6 @@ interface HookInput {
   tool_input: {
     todos: TodoItem[];
   };
-}
-
-/**
- * Format current session todos as markdown
- */
-function formatSessionTodos(todos: TodoItem[]): string {
-  const inProgress = todos.filter(t => t.status === 'in_progress');
-  const pending = todos.filter(t => t.status === 'pending');
-  const completed = todos.filter(t => t.status === 'completed');
-
-  let content = '';
-
-  if (inProgress.length > 0) {
-    content += `### In Progress\n\n`;
-    for (const todo of inProgress) {
-      content += `- [ ] **${todo.content}** _(${todo.activeForm})_\n`;
-    }
-    content += '\n';
-  }
-
-  if (pending.length > 0) {
-    content += `### Pending\n\n`;
-    for (const todo of pending) {
-      content += `- [ ] ${todo.content}\n`;
-    }
-    content += '\n';
-  }
-
-  if (completed.length > 0) {
-    content += `### Completed\n\n`;
-    for (const todo of completed) {
-      content += `- [x] ${todo.content}\n`;
-    }
-    content += '\n';
-  }
-
-  if (todos.length === 0) {
-    content += `_(No active session tasks)_\n\n`;
-  }
-
-  return content;
-}
-
-/**
- * Extract all sections from TODO.md EXCEPT "Current Session"
- * These are user-managed sections that should be preserved.
- */
-function extractPreservedSections(content: string): string {
-  let preserved = '';
-
-  // Match all ## sections that are NOT "Current Session"
-  const sectionRegex = /\n(## (?!Current Session)[^\n]+[\s\S]*?)(?=\n## |\n---\n+\*Last updated|$)/g;
-  const matches = content.matchAll(sectionRegex);
-
-  for (const match of matches) {
-    preserved += match[1];
-  }
-
-  return preserved;
-}
-
-/**
- * Fix malformed headings: Remove --- prefix from headings (---# → #)
- * Claude sometimes incorrectly merges horizontal rules with headings.
- */
-function fixMalformedHeadings(content: string): string {
-  return content.replace(/^---#/gm, '#');
-}
-
-/**
- * Build new TODO.md preserving user sections
- */
-function buildTodoContent(todos: TodoItem[], existingContent: string): string {
-  const now = new Date().toISOString();
-
-  // Get all preserved sections (everything except Current Session)
-  const preserved = extractPreservedSections(existingContent);
-
-  // Build new content
-  let content = `# TODO
-
-## Current Session
-
-${formatSessionTodos(todos)}`;
-
-  // Add preserved sections
-  if (preserved.trim()) {
-    content += preserved;
-  }
-
-  // Ensure we end with exactly one timestamp
-  content = content.replace(/(\n---\s*)*(\n\*Last updated:.*\*\s*)*$/, '');
-  content += `\n---\n\n*Last updated: ${now}*\n`;
-
-  return content;
 }
 
 async function main() {
@@ -165,7 +65,7 @@ async function main() {
 
     // Create TODO.md if it doesn't exist
     if (!existsSync(todoPath)) {
-      const parentDir = todoPath.replace(/\/[^/]+$/, '');
+      const parentDir = dirname(todoPath);
       mkdirSync(parentDir, { recursive: true });
       console.error(`Creating TODO.md at ${todoPath}`);
     }
@@ -181,7 +81,7 @@ async function main() {
     // Build and write new content (with heading fix)
     let newContent = buildTodoContent(todos, existingContent);
     newContent = fixMalformedHeadings(newContent);
-    writeFileSync(todoPath, newContent);
+    writeFileAtomic(todoPath, newContent);
 
     const stats = {
       inProgress: todos.filter(t => t.status === 'in_progress').length,
