@@ -123,6 +123,7 @@ describe("vault index switches", () => {
     vi.doMock("../../obsidian/enabled.js", () => ({
       obsidianEnabled: () => sw.obsidian,
       vaultIndexEnabled: () => sw.vault,
+      lessonsIndexEnabled: () => false,
     }));
     const { runVaultIndex } = await import("./scheduler.js");
     const state = await import("./state.js");

@@ -140,6 +140,9 @@ obsidian:
 # obsidian.enabled.
 vaultIndex:
   enabled: true
+# Index <PAI home>/lessons (review-gated lessons) for memory search.
+lessonsIndex:
+  enabled: true
 # Keep `pai router` (127.0.0.1:8790) running under the daemon.
 router:
   enabled: false

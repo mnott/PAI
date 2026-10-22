@@ -15,6 +15,7 @@ import {
   toolProjectTodo,
   toolSessionRoute,
   toolMemoryWakeup,
+  toolMemoryLessons,
   toolMemoryTaxonomy,
   toolMemoryFeedback,
   toolMemoryKgSearch,
@@ -76,6 +77,9 @@ export async function dispatchTool(
 
     case "memory_wakeup":
       return toolMemoryWakeup(registryBackend, p as Parameters<typeof toolMemoryWakeup>[1]);
+
+    case "memory_lessons":
+      return toolMemoryLessons(p as Parameters<typeof toolMemoryLessons>[0]);
 
     case "memory_taxonomy":
       return toolMemoryTaxonomy(registryBackend, storageBackend, p as Parameters<typeof toolMemoryTaxonomy>[2]);

@@ -128,6 +128,7 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   logLevel: "Daemon log level: debug, info, warn, or error.",
   obsidian: "Obsidian sync into the PAI-generated vault: { enabled } (default false). Gates only writing; vault indexing is vaultIndex.",
   vaultIndex: "Read-only indexing of vaultPath for memory search: { enabled } (default true). Independent of obsidian.enabled.",
+  lessonsIndex: "Indexing of <PAI home>/lessons (review-gated lessons) for memory search: { enabled } (default true).",
   vaultPath: "Obsidian vault root path for zettelkasten indexing, if any.",
   vaultProjectId: "Registry project_id used for vault chunks in memory_chunks. Default: auto-detected.",
   notifications: "Notification subsystem configuration.",
