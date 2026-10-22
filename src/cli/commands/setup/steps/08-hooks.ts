@@ -22,7 +22,7 @@ export async function stepHooks(rl: Rl): Promise<boolean> {
   }
   line();
 
-  const install = await promptYesNo(rl, "Install PAI lifecycle hooks (session stop, pre-compact, statusline)?", true);
+  const install = await promptYesNo(rl, "Install PAI lifecycle hooks (session stop, pre-compact, statusline)?", true, "hooks");
   if (!install) {
     console.log(c.dim("  Skipping hook installation."));
     return false;

@@ -26,13 +26,13 @@ export async function stepDaemon(rl: Rl): Promise<boolean> {
     console.log(c.dim(`  PAI daemon ${unit} already installed.`));
     line();
 
-    const reinstall = await promptYesNo(rl, `Reinstall the PAI daemon ${unit}?`, false);
+    const reinstall = await promptYesNo(rl, `Reinstall the PAI daemon ${unit}?`, false, "daemon");
     if (!reinstall) {
       console.log(c.dim("  Keeping existing daemon installation."));
       return false;
     }
   } else {
-    const install = await promptYesNo(rl, "Install the PAI daemon to run automatically at login?", true);
+    const install = await promptYesNo(rl, "Install the PAI daemon to run automatically at login?", true, "daemon");
     if (!install) {
       console.log(c.dim("  Skipping daemon install. Run manually: pai daemon install"));
       return false;

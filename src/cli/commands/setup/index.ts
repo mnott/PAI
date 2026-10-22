@@ -20,6 +20,7 @@ import {
   stepDaName,
   stepSettings,
   stepDaemon,
+  stepRouter,
   stepAibroker,
   stepMcp,
   stepDirectories,
@@ -104,6 +105,9 @@ export async function runSetup(): Promise<void> {
     // Step 9: Daemon
     const daemonInstalled = await step("stepDaemon", () => stepDaemon(rl));
 
+    // Step 9a: Router and cockpit (answers are written with the rest of the config)
+    const routerConfig = await step("stepRouter", () => stepRouter(rl));
+
     // Step 9b: AIBroker (a failure is listed in the summary; setup continues)
     const aibroker = await step("stepAibroker", () => stepAibroker());
 
@@ -120,7 +124,7 @@ export async function runSetup(): Promise<void> {
     const workersConfig = await step("stepWorkers", () => stepWorkers(rl));
 
     // Write config after gathering all choices
-    const allUpdates = { ...storageConfig, ...embeddingConfig, ...taskConfig, ...workersConfig };
+    const allUpdates = { ...storageConfig, ...embeddingConfig, ...taskConfig, ...workersConfig, ...routerConfig };
     mergeConfig(allUpdates);
 
     line();

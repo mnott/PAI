@@ -32,7 +32,7 @@ export async function stepMcp(rl: Rl): Promise<boolean> {
     }
   }
 
-  const register = await promptYesNo(rl, "Register the PAI MCP server (pai) in ~/.claude.json?", true);
+  const register = await promptYesNo(rl, "Register the PAI MCP server (pai) in ~/.claude.json?", true, "mcp");
   if (!register) {
     console.log(c.dim("  Skipping MCP registration. Run manually: pai mcp install"));
     return false;

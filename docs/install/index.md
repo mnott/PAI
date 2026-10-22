@@ -62,6 +62,25 @@ aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor     # every check green, or it says exactly what to fix
 ```
 
+### Setup questions and flags
+
+`pai setup` asks the questions below in this order. Every one has a flag, so `pai setup --yes <flags>` answers any of them without a terminal; a question without a flag takes its default. `pai setup --questions` (add `--json` for machines) prints this list for the current machine, with the value already in place where there is one. The setup skill uses it: it runs `pai setup --questions --json`, asks you in chat, then runs `pai setup --yes` with the matching flags.
+
+| Question | Flag | Default | Allowed |
+|---|---|---|---|
+| Where to store data | `--storage` | `sqlite` (`postgres` if a local one answers) | `sqlite`, `postgres` |
+| PostgreSQL connection string | `--pg-url` | the PAI Docker container | a `postgresql://` URL (implies `--storage postgres`) |
+| Embedding model | `--embedding` | `snowflake` (Ollama is used when it is faster) | `snowflake`, `bge`, `nomic`, `ollama`, `none` |
+| CLAUDE.md, PAI skill, steering rules, skill stubs, hooks, TypeScript hooks, settings.json, daemon, MCP, workers | `--no-claude-md`, `--no-skill`, `--no-steering-rules`, `--no-skill-stubs`, `--no-hooks`, `--no-ts-hooks`, `--no-settings`, `--no-daemon`, `--no-mcp`, `--no-workers` | yes | |
+| Registry scan after setup, task bus (Todoist) | `--registry-scan`, `--task-bus` | no | |
+| Assistant name | `--da-name` | `PAI` | any text |
+| Router and cockpit | `--router` / `--no-router` | enabled | |
+| Cockpit port | `--router-port` | `router.port` (8790); a port that is in use is refused and its holder shown | 1024 to 65535 |
+| Who can reach the cockpit | `--router-bind` | `loopback` | `loopback`, `tailscale`, an IPv4 address (never 0.0.0.0) |
+| AIBroker | `--no-aibroker` | installed | |
+
+The router answers land in `config.yaml` as `router.enabled`, `router.port` and `router.bind` (see [config](../config.md)). Beyond `loopback` the cockpit is reachable from other devices, behind the token in `~/.pai/router-cockpit.token`.
+
 ### Updating
 
 ```bash

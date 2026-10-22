@@ -37,7 +37,7 @@ export async function stepClaudeMd(rl: Rl): Promise<boolean> {
     }
     line();
 
-    const overwrite = await promptYesNo(rl, "Update ~/.claude/CLAUDE.md with the latest PAI template?", isGenerated);
+    const overwrite = await promptYesNo(rl, "Update ~/.claude/CLAUDE.md with the latest PAI template?", isGenerated, "claude-md");
     if (!overwrite) {
       console.log(c.dim("  Keeping existing CLAUDE.md unchanged."));
       return false;

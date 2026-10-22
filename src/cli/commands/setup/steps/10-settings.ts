@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { mergeSettings, type HookEntry } from "../../../lib/settings-manager.js";
-import { c, line, section, type Rl, prompt, promptYesNo } from "../utils.js";
+import { c, line, section, type Rl, prompt, promptYesNo, setupOptions } from "../utils.js";
 
 const WORKER_GUARD_OLD_MATCHERS = [
   "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
@@ -60,7 +60,7 @@ export async function stepDaName(rl: Rl): Promise<string> {
   line("  and session notes when hooks are active.");
   line();
 
-  const answer = await prompt(rl, chalk.bold("  Assistant name [PAI]: "), "");
+  const answer = setupOptions.daName ?? (await prompt(rl, chalk.bold("  Assistant name [PAI]: "), ""));
   const daName = answer || "PAI";
   line();
   console.log(c.ok(`Assistant name set to: ${daName}`));
@@ -74,7 +74,7 @@ export async function stepSettings(rl: Rl, daName: string): Promise<boolean> {
   line("  to ~/.claude/settings.json. Existing values are never overwritten.");
   line();
 
-  const patch = await promptYesNo(rl, "Patch ~/.claude/settings.json with PAI hooks, env vars, and settings?", true);
+  const patch = await promptYesNo(rl, "Patch ~/.claude/settings.json with PAI hooks, env vars, and settings?", true, "settings");
   if (!patch) {
     console.log(c.dim("  Skipping settings patch."));
     return false;

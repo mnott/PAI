@@ -2,25 +2,48 @@
 
 # pai setup
 
-First-time setup: storage, search, hooks, daemon
+First-time setup: storage, search, hooks, daemon, router
 
 ```
 pai setup [options]
 ```
 
-Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, AIBroker (messaging; installed automatically) and the first index.
-Safe to run again. With --yes it takes every default and asks nothing.
+Walks through everything PAI needs: where data is stored, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit (port, reach), AIBroker (messaging; installed automatically) and the first index.
+Safe to run again. With --yes it takes every default and asks nothing; every question has a flag, so `pai setup --yes <flags>` can express any answer. `pai setup --questions [--json]` lists the questions with their flags, defaults and current values (for callers without a terminal).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `-y, --yes` | flag | — | Take every default and read no input |
+| `-y, --yes` | flag | — | Take every default (or the flag given) and read no input |
+| `--questions` | flag | — | Print every question with its flag, default and allowed values; change nothing |
+| `--json` | flag | — | With --questions: machine-readable JSON |
 | `--storage BACKEND` | string | — | Where to store data: sqlite or postgres (with --yes: sqlite unless a local Postgres answers) |
+| `--pg-url URL` | string | — | PostgreSQL connection string (implies --storage postgres) |
+| `--embedding MODEL` | string | — | Embeddings: snowflake, bge, nomic, ollama (Arctic on Ollama) or none |
+| `--da-name NAME` | string | — | What the assistant is called (default PAI) |
+| `--router` | flag | — | Enable the router and cockpit (default) |
+| `--no-router` | flag | — | Do not enable the router and cockpit |
+| `--router-port PORT` | number | — | Cockpit port (default: config router.port, 8790) |
+| `--router-bind SCOPE` | string | — | Who reaches the cockpit: loopback (default), tailscale or an IPv4 address |
 | `--no-aibroker` | flag | — | Do not install AIBroker (the messaging layer) |
+| `--no-claude-md` | flag | — | Skip: Write ~/.claude/CLAUDE.md from the PAI template? |
+| `--no-skill` | flag | — | Skip: Install the PAI skill? |
+| `--no-steering-rules` | flag | — | Skip: Install the AI steering rules? |
+| `--no-skill-stubs` | flag | — | Skip: Symlink the PAI skill stubs into ~/.claude/skills/? |
+| `--no-hooks` | flag | — | Skip: Install the lifecycle hooks (session stop, pre-compact, statusline)? |
+| `--no-ts-hooks` | flag | — | Skip: Install the TypeScript hooks to ~/.claude/Hooks/? |
+| `--no-settings` | flag | — | Skip: Patch ~/.claude/settings.json with PAI hooks, env vars and settings? |
+| `--no-daemon` | flag | — | Skip: Install the daemon as a login service? |
+| `--no-mcp` | flag | — | Skip: Register the PAI MCP server in ~/.claude.json? |
+| `--registry-scan` | flag | — | Do: Run `pai registry scan` after setup? |
+| `--task-bus` | flag | — | Do: Enable the task bus (needs a Todoist account)? |
+| `--no-workers` | flag | — | Skip: Turn workers on with the built-in anthropic provider? |
 | `--dry-run` | flag | — | Print the AIBroker install commands and change nothing |
 
 ```sh
 pai setup
 pai setup --yes --storage sqlite
+pai setup --questions --json
+pai setup --yes --storage sqlite --embedding none --router-port 9000 --router-bind tailscale --no-hooks
 ```
 
 See also: `pai update`, `pai daemon status`

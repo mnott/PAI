@@ -28,7 +28,7 @@ export async function stepDirectories(rl: Rl): Promise<void> {
     line();
   }
 
-  const runScan = await promptYesNo(rl, "Run `pai registry scan` to auto-detect projects after setup?", false);
+  const runScan = await promptYesNo(rl, "Run `pai registry scan` to auto-detect projects after setup?", false, "registry-scan");
 
   if (runScan) {
     line();

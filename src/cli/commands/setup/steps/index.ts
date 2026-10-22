@@ -19,3 +19,4 @@ export { stepTaskBus } from "./16-task-bus.js";
 export { stepWorkers } from "./17-workers.js";
 export { stepAibroker } from "./18-aibroker.js";
 export type { AibrokerStatus } from "./18-aibroker.js";
+export { stepRouter } from "./19-router.js";
