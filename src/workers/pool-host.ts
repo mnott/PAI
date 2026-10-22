@@ -29,7 +29,7 @@ import { openSync, closeSync, writeSync, mkdirSync, statSync, readSync, readFile
 import { loadConfig } from "../daemon/config.js";
 import { appendSystemPromptArgs } from "./args.js";
 import { repairAndValidateAg2, validateAg2 } from "./agentish.js";
-import { getProviderOrNative, readWorkersSection, type WorkerProvider, type WorkersConfig } from "./config.js";
+import { getProviderOrNative, readWorkersSection, workersConfigStamp, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { buildRunEnv, claudeCommand, claudeSettingsExtra, isLoopbackProvider, loopbackRouterChoice, pinnedSettings } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
@@ -91,6 +91,7 @@ import {
   spareKey,
   spareShouldRetire,
   poolSettings,
+  type PoolSettings,
   readPoolMetrics,
   slotKey,
   slotShouldReap,
@@ -337,6 +338,9 @@ export interface PoolHostOptions {
    * /healthz. Called with this host's listener already closed; false/reject = the replacement did not come up.
    */
   reexec?: () => Promise<boolean>;
+  /** Config re-read hooks (tests): a stamp that changes when the config was saved, and the loader. Default: the config files' mtimes and readWorkersSection. */
+  configStamp?: () => string;
+  readConfig?: () => WorkersConfig;
   /** The bundle must have kept the same mtime this long before a reload starts (a build still rewriting it defers). Default 5000. */
   bundleStableMs?: number;
   /** Called after the replacement answered; production exits the process. */
@@ -355,6 +359,10 @@ export interface PoolHost {
   /** Kill every slot, write final state, close the server. */
   shutdown(): Promise<void>;
   reapSlots(): number;
+  /** The pool settings in force now (re-read when the config file changes). */
+  settings(): PoolSettings;
+  /** Re-read the pool settings when the config files changed since the last read; true when they did. Checked at most every 5 s unless `force`. */
+  reloadSettings(force?: boolean): boolean;
   /** Retire spares idle past workers.pool.idleKillSec. */
   reapSpares(): number;
   /** Move idle spares whose repo HEAD moved onto the new HEAD (git reset in their worktree, no new process). */
@@ -414,7 +422,28 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const { workers: config } = opts.config ? { workers: opts.config } : readWorkersSection();
   const logDir = opts.logDir ?? workersLogDir(config);
-  const settings = poolSettings(config);
+  let settings = poolSettings(config);
+  // opts.config pins the settings (tests, embedding); otherwise a saved config reaches the running host
+  const configStamp = opts.configStamp ?? (opts.config ? null : () => workersConfigStamp());
+  const readConfig = opts.readConfig ?? (() => readWorkersSection(undefined, () => {}).workers);
+  let seenStamp = configStamp ? configStamp() : "";
+  let lastStampCheck = 0;
+  const reloadSettings = (force = false): boolean => {
+    if (!configStamp) return false;
+    const t = now().getTime();
+    if (!force && t - lastStampCheck < 5000) return false;
+    lastStampCheck = t;
+    const stamp = configStamp();
+    if (stamp === seenStamp) return false;
+    seenStamp = stamp;
+    try {
+      // running slots are never touched: a lower maxSlots only stops new spawns (pickSlot evicts idle ones when a task needs room)
+      settings = poolSettings(readConfig());
+      return true;
+    } catch {
+      return false; // a half-written file: keep the settings in force, retry on the next change
+    }
+  };
   const port = opts.port ?? poolPort(config);
   const spawner = opts.spawner ?? realSpawner;
   // one router decision for both builders: the env carries the router route,
@@ -607,6 +636,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     shared?: string | null
   ): Promise<PoolSlotSession | null> => {
     const key = slotKey(providerName, model, cwd);
+    reloadSettings();
     reapSlots();
     const pick = pickSlot(
       [...slots.values()].map((s) => s.record),
@@ -644,6 +674,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     wid: string,
     shared?: string | null
   ): Promise<{ session: PoolSlotSession; n: number; dir: string } | null> => {
+    reloadSettings();
     for (let n = 1; n <= settings.maxSlots; n++) {
       if (!slotServesRepo(logDir, providerName, n, repo)) continue;
       const dir = slotPath(logDir, providerName, n);
@@ -1326,6 +1357,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   const reapSlots = (): number => {
+    reloadSettings();
     let n = 0;
     for (const [k, s] of slots) {
       if (slotShouldReap(s.record, now().getTime(), settings.idleSecs)) {
@@ -1407,11 +1439,16 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const timer = setInterval(() => void checkReload(), 30_000);
     timer.unref?.();
   }
-  if (!opts.noReaper && settings.idleSecs > 0) {
+  if (!opts.noReaper) {
+    const timer = setInterval(() => reloadSettings(), 5_000);
+    timer.unref?.();
+  }
+  // the reaper timers run always: the idle settings can be raised from 0 in the config later (the reapers return at 0)
+  if (!opts.noReaper) {
     const timer = setInterval(reapSlots, 30_000);
     timer.unref?.();
   }
-  if (!opts.noReaper && settings.idleKillSec > 0) {
+  if (!opts.noReaper) {
     const timer = setInterval(() => {
       reapSpares();
       refreshSpares();
@@ -1478,6 +1515,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     runTask,
     shutdown,
     reapSlots,
+    settings: () => settings,
+    reloadSettings,
     reapSpares,
     refreshSpares,
     checkReload,

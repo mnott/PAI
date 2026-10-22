@@ -18,7 +18,7 @@
  */
 
 import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig } from "./escalation.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_FILE, expandHome, homeRel, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
@@ -1604,6 +1604,32 @@ export function readWorkersSection(
   if (folded.length || moved.length)
     onWarn(`legacy routing migrated into the tier lists: ${[...folded, ...moved].join(", ")} (pai worker route)`);
   return { raw, workers };
+}
+
+let cachedWorkers: { key: string; workers: WorkersConfig } | null = null;
+
+function mtimeOf(path: string): number {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/** Signature of the files the workers config reads: changes whenever either is saved. */
+export function workersConfigStamp(path: string = paiConfigFilePath()): string {
+  return `${path}:${mtimeOf(path)}:${mtimeOf(workersYamlPath())}`;
+}
+
+/**
+ * readWorkersSection for pollers (the capacity gate re-reads the cap on every
+ * poll): the parsed config is reused until the config file or workers.yaml
+ * changes mtime, so a saved change applies without a restart and a poll costs two stats.
+ */
+export function readWorkersCached(path: string = paiConfigFilePath()): WorkersConfig {
+  const key = workersConfigStamp(path);
+  if (cachedWorkers?.key !== key) cachedWorkers = { key, workers: readWorkersSection(path, () => {}).workers };
+  return cachedWorkers.workers;
 }
 
 /**

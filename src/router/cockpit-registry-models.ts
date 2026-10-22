@@ -20,6 +20,13 @@ export interface RegistryModel {
   maxInstances: number;
   /** The tier's provider's maxConcurrent: requests in flight at once; absent = no cap. */
   maxConcurrent?: number;
+  /** The tier's provider (the key of the concurrency endpoint). */
+  provider?: string;
+  /** The provider's conversationSlots: the server's real slot count, when configured. */
+  slots?: number;
+  /** Stepper bounds (router.cockpit.layout). */
+  capMin?: number;
+  capMax?: number;
   /** Weight size on disk, bytes (the model's full size; the resident memory of a mapped model can be far less). */
   weightsBytes?: number;
 }

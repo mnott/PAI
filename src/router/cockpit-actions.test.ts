@@ -483,6 +483,52 @@ describe("cockpit action endpoint", () => {
     }
   });
 
+  it("POST /cockpit/providers/<name>/concurrency steps maxConcurrent by one inside the layout bounds and refuses cross-origin", async () => {
+    const tmp = newDir();
+    const srv = serve(tmp, emptyCalls());
+    try {
+      const { writeWorkersYamlText, starterWorkersYamlText } = await import("../workers/workers-config.js");
+      const { addProvider, setProviderCap } = await import("../workers/providers.js");
+      const { readWorkersSection } = await import("../workers/config.js");
+      writeWorkersYamlText(process.env.PAI_WORKERS_YAML!, starterWorkersYamlText());
+      addProvider({ name: "capped", baseUrl: "http://127.0.0.1:8123", model: "m" });
+      addProvider({ name: "uncapped", baseUrl: "https://uncapped.example.com", model: "m" });
+      setProviderCap("capped", 2);
+      const post = (name: string, body: unknown, headers: Record<string, string> = {}) => ask(srv, `/cockpit/providers/${name}/concurrency`, "POST", JSON.stringify(body), headers);
+      const cap = () => readWorkersSection().workers.providers.capped!.maxConcurrent;
+
+      const up = await post("capped", { delta: 1 });
+      expect(up.status).toBe(200);
+      expect(JSON.parse(up.body)).toMatchObject({ ok: true, provider: "capped", maxConcurrent: 3, min: 1, max: 16 });
+      expect(cap()).toBe(3);
+      expect(JSON.parse((await post("capped", { delta: -1 })).body).maxConcurrent).toBe(2);
+      expect(cap()).toBe(2);
+
+      // bounds: 1 stays 1, 16 stays 16
+      setProviderCap("capped", 1);
+      expect(JSON.parse((await post("capped", { delta: -1 })).body)).toMatchObject({ maxConcurrent: 1, clamped: true });
+      expect(cap()).toBe(1);
+      setProviderCap("capped", 16);
+      expect(JSON.parse((await post("capped", { delta: 1 })).body)).toMatchObject({ maxConcurrent: 16, clamped: true });
+      expect(cap()).toBe(16);
+      setProviderCap("capped", 2);
+
+      // bad input, unknown / uncapped provider
+      expect((await post("capped", { delta: 5 })).status).toBe(400);
+      expect((await post("capped", {})).status).toBe(400);
+      expect((await post("nope", { delta: 1 })).status).toBe(404);
+      expect((await post("uncapped", { delta: 1 })).status).toBe(404);
+
+      // cross-origin and rebinding: refused, nothing written
+      expect((await post("capped", { delta: 1 }, { origin: "https://evil.example" })).status).toBe(403);
+      expect((await post("capped", { delta: 1 }, { host: "evil.example:1", origin: "http://evil.example:1" })).status).toBe(403);
+      expect(cap()).toBe(2);
+    } finally {
+      srv.close();
+      setActionHooks({});
+    }
+  });
+
   it("sameOriginAction: no Origin passes (curl), matching Origin passes, mismatch refuses", () => {
     const h = (o: Record<string, string>) => ({ headers: o, method: "POST" }) as never;
     expect(sameOriginAction(h({ host: "127.0.0.1:8790" }))).toBe(true);

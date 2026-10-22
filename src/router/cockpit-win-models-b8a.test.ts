@@ -257,3 +257,33 @@ describe("C1 guards: runtime cards", () => {
     expect(gb(1.53e9)).toBe("1.4");
   });
 });
+
+describe("parallel stepper on a capped provider's model card", () => {
+  const capped = (over: Record<string, unknown> = {}) => ({ ...reg("gyro-m", "/s/gyro.json", ["gyro-m#1"]), maxConcurrent: 3, provider: "local", capMin: 1, capMax: 16, ...over });
+
+  it("renders `parallel N` with minus and plus buttons keyed by the provider", () => {
+    const m = models();
+    const b = render(m, inv([capped()]), "gyro-m").slots.badges;
+    expect(b).toContain("parallel 3");
+    expect(b).toContain('data-p="local" data-d="-1"');
+    expect(b).toContain('data-p="local" data-d="1"');
+    expect(b).not.toContain("disabled");
+    expect(b).not.toContain("extra runs queue");
+  });
+
+  it("shows the server's slots and warns when the cap is above them; disables at the bounds", () => {
+    const m = models();
+    const above = render(m, inv([capped({ slots: 2 })]), "gyro-m").slots.badges;
+    expect(above).toContain("3 / 2 slots");
+    expect(above).toContain("above the server");
+    expect(above).toContain("2 slots: extra runs queue at the server");
+    expect(render(m, inv([capped({ slots: 4 })]), "gyro-m").slots.badges).not.toContain("extra runs queue");
+    expect(render(m, inv([capped({ maxConcurrent: 1 })]), "gyro-m").slots.badges).toMatch(/data-d="-1" disabled/);
+    expect(render(m, inv([capped({ maxConcurrent: 16 })]), "gyro-m").slots.badges).toMatch(/data-d="1" disabled/);
+  });
+
+  it("an uncapped model has no buttons", () => {
+    const m = models();
+    expect(render(m, inv([reg("gyro-m", "/s/gyro.json", ["gyro-m#1"])]), "gyro-m").slots.badges).not.toContain("parallel");
+  });
+});

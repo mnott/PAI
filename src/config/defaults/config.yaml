@@ -243,6 +243,9 @@ router:
       jobFirstDelayMs: 2000
       jobPollMs: 5000
       jobMaxTries: 120
+      # bounds of the parallel-runs +/- stepper on a provider card in the Models section.
+      concurrencyMin: 1
+      concurrencyMax: 16
       # a server prefix-cache counter older than this (seconds) is marked.
       serverCounterStaleSecs: 60
       # colour thresholds, stated per pair: for a limits gauge and an error
