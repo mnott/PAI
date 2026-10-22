@@ -21,8 +21,7 @@ import https from "node:https";
 import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
 import { loadConfig } from "../daemon/config.js";
-import { cockpitProbeSettings } from "./cockpit-layout.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
 import { vllmLogCacheStats } from "./vllm-log-cache.js";
@@ -381,10 +380,16 @@ export function sharedGate(): Backoff {
   return (liveGate ??= new Backoff(ANTHROPIC_POLL_MS, BACKOFF_MAX, gateFile()));
 }
 
-async function fetchAnthropicUsage(): Promise<string> {
-  const token = await anthropicToken();
-  if (!token) throw new Error("no OAuth token in keychain");
-  return getJson(anthropicUsageUrl(), { authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" });
+/** The OAuth token goes only to Anthropic's own hosts, never to a custom router.claudeUpstream. */
+export function isAnthropicHost(url: URL): boolean {
+  return url.hostname === "anthropic.com" || url.hostname.endsWith(".anthropic.com");
+}
+
+export async function fetchAnthropicUsage(url: URL = anthropicUsageUrl(), token: () => Promise<string | undefined> = anthropicToken): Promise<string> {
+  if (!isAnthropicHost(url)) throw new Error("usage unavailable for custom upstream");
+  const t = await token();
+  if (!t) throw new Error("no OAuth token in keychain");
+  return getJson(url, { authorization: `Bearer ${t}`, "anthropic-beta": "oauth-2025-04-20" });
 }
 
 /**
@@ -412,7 +417,7 @@ export async function anthropicShared(now: number, o: AnthropicPollOpts = {}): P
   }
   if (lg && lg.windows.length && now - lg.fetchedAt < ANTHROPIC_POLL_MS) return { ...base, windows: lg.windows, fetchedAt: lg.fetchedAt };
   try {
-    const windows = parseAnthropicUsage(await (o.fetchUsage ?? fetchAnthropicUsage)());
+    const windows = parseAnthropicUsage(await (o.fetchUsage ?? (() => fetchAnthropicUsage()))());
     if (!windows.length) throw new Error("no usage windows in response");
     gate.reset(ANTHROPIC_NATIVE);
     writeLastGood(file, { ...readLastGood(file), anthropic: { windows, fetchedAt: now } });

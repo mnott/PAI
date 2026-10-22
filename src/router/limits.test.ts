@@ -25,6 +25,8 @@ import {
   staleText,
   decodeTokPerSec,
   tokensPerSec,
+  fetchAnthropicUsage,
+  isAnthropicHost,
 } from "./limits.js";
 import type { WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
@@ -567,5 +569,19 @@ describe("decodeTokPerSec", () => {
       row({ ts: new Date(NOW - 3_600_000 - 1).toISOString(), decodeMs: 2000, output_tokens: 100 }), // Older than 1 hour
     ];
     expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({});
+  });
+});
+
+describe("fetchAnthropicUsage token scope", () => {
+  it("never reads or sends the token for a custom upstream", async () => {
+    const token = vi.fn(async () => "secret");
+    await expect(fetchAnthropicUsage(new URL("http://127.0.0.1:1/api/oauth/usage"), token)).rejects.toThrow("usage unavailable for custom upstream");
+    await expect(fetchAnthropicUsage(new URL("https://evilanthropic.com/api/oauth/usage"), token)).rejects.toThrow("custom upstream");
+    expect(token).not.toHaveBeenCalled();
+  });
+  it("recognises anthropic hosts", () => {
+    expect(isAnthropicHost(new URL("https://api.anthropic.com/x"))).toBe(true);
+    expect(isAnthropicHost(new URL("https://anthropic.com/x"))).toBe(true);
+    expect(isAnthropicHost(new URL("https://anthropic.com.evil.io/x"))).toBe(false);
   });
 });
