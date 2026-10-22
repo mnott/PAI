@@ -59,11 +59,16 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
  * unstacked layout (fitTables) and sets .stacked on the .tw; a row is then label: value pairs */
 .tw.stacked table{display:block}
 .tw.stacked thead,.tw.stacked tbody{display:block;width:auto;max-width:100%;min-width:0}
-.tw.stacked tr{display:block;width:auto;max-width:100%;min-width:0;border-bottom:1px solid var(--line);padding:4px 0}
+.tw.stacked tr{width:auto;max-width:100%;min-width:0;border-bottom:1px solid var(--line);padding:5px 0}
 .tw.stacked thead{display:none}
-.tw.stacked th,.tw.stacked td{display:flex;justify-content:space-between;gap:10px;border-bottom:0;text-align:left;white-space:normal;position:static;width:auto;max-width:100%;min-width:0}
-.tw.stacked td::before{content:attr(data-l);color:var(--dim);font-weight:500;white-space:nowrap;flex:none;align-self:flex-start}
-/* inline column caps (width, max-width, nowrap) give way to the card */
+.tw.stacked tr{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:2px 10px;align-items:start}
+.tw.stacked th,.tw.stacked td{display:flex;flex-direction:column;gap:0;border-bottom:0;text-align:left;white-space:normal;position:static;width:auto;max-width:100%;min-width:0;padding:0}
+.tw.stacked td::before{content:attr(data-l);color:var(--dim);font-size:10px;line-height:12px;font-weight:500;white-space:nowrap}
+/* the row's name is the block title; a text column (class on the cell) and the title span the full width */
+.tw.stacked td:first-child{grid-column:1/-1;flex-direction:row;font-weight:600}.tw.stacked td:first-child::before{display:none}
+.tw.stacked td[class]{grid-column:1/-1;flex-direction:row;gap:8px}.tw.stacked td[class]::before{flex:none;align-self:flex-start}
+.tw.stacked td:empty{display:none}.tw.stacked td[data-z]{opacity:.45}
+/* inline column caps (width, max-width, nowrap) give way to the block */
 .tw.stacked td{width:auto!important;max-width:100%!important;white-space:normal!important}
 .tw.stacked td>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .bar{display:inline-block;height:8px;border-radius:3px;background:var(--ok);vertical-align:middle}

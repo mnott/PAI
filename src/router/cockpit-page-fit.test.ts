@@ -87,7 +87,7 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
       for (const h of r.ths) expect(h.lines, `${h.sec} th "${h.label}": ${h.lines} lines (height ${h.height}px)`).toBeLessThanOrEqual(1);
       expect(r.doc, "page itself must not scroll sideways").toBeLessThanOrEqual(r.vw);
       // a stacked label (td::before) never wraps: one line box, whatever the card width
-      for (const b of r.befores) expect(b.h, `${b.sec} label "${b.label}": ${b.h}px high at ${b.fs}px font`).toBeLessThanOrEqual(b.fs * 1.6);
+      for (const b of r.befores.filter((x) => x.h != null)) expect(b.h, `${b.sec} label "${b.label}": ${b.h}px high at ${b.fs}px font`).toBeLessThanOrEqual(b.fs * 1.6);
       if (width === 375) expect(r.tables.find((t) => t.sec === "sessions")!.stacked, "sessions does not fit at 375 px: stacked").toBe(true);
     }, 120_000);
   }

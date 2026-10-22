@@ -452,6 +452,9 @@ describe("cockpit readability pass (issue APPS/PAI#8)", () => {
     expect(decl("tbody").some((m) => /display:\s*block/.test(m))).toBe(true);
     expect(decl("thead").some((m) => /display:\s*none/.test(m))).toBe(true);
     expect(COCKPIT_HTML).toMatch(/\.tw\.stacked td::before\{content:attr\(data-l\)/);
+    // a stacked row is a compact grid: the name is a full-width title, the other fields flow as label/value pairs
+    expect(decl("tr").some((m) => /display:\s*grid/.test(m) && /repeat\(auto-fill,minmax\(120px,1fr\)\)/.test(m))).toBe(true);
+    expect(decl("td:first-child").some((m) => /grid-column:\s*1\/-1/.test(m))).toBe(true);
   });
 
   /** table() with the page's esc: the helper (one line per statement) cut from the page source. */
