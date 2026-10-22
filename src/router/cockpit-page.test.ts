@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { COCKPIT_FAVICON_SVG, COCKPIT_HTML, cockpitHtml } from "./cockpit-page.js";
+import { handleCockpit } from "./cockpit.js";
 import { POOL_PANEL_JS } from "./pool-panel.js";
 
 const stripTags = (html: string) => html.replace(/<script[\s\S]*?<\/script>/g, "").replace(/<style[\s\S]*?<\/style>/g, "");
@@ -17,6 +18,30 @@ describe("cockpit page compression", () => {
     expect(script).not.toContain("<p ");
   });
 
+});
+
+describe("cockpit header title links to the project homepage", () => {
+  const served = () => {
+    const sent = { body: "" };
+    const fake = { setHeader: () => undefined, writeHead: () => undefined, end: (b: string) => void (sent.body = b) } as never;
+    handleCockpit({ url: "/cockpit", method: "GET" } as never, fake, { get: async () => [] } as never, () => [], () => new Map(), undefined, () => []);
+    return sent.body;
+  };
+
+  it("the served html wraps the h1 content in a link to the package.json homepage", () => {
+    const homepage = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { homepage?: string }).homepage;
+    expect(homepage).toBeTruthy();
+    const html = served();
+    expect(html).toContain(`<h1><a class="home" href="${homepage}" target="_blank" rel="noopener">PAI<span class="hc"> Cockpit</span></a></h1>`);
+  });
+
+  it("no unreplaced __COCKPIT_HOMEPAGE__ remains in the served html", () => {
+    expect(served()).not.toContain("__COCKPIT_HOMEPAGE__");
+  });
+
+  it("the link inherits the title colour and shows an underline only on hover or focus-visible", () => {
+    expect(COCKPIT_HTML).toContain("h1 .home{color:inherit;text-decoration:none}h1 .home:hover,h1 .home:focus-visible{text-decoration:underline}");
+  });
 });
 
 describe("cockpit favicon and dark mode", () => {

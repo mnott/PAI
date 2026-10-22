@@ -13,6 +13,7 @@ export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => Strin
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
 header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
 h1{font-size:15px;margin:0;font-weight:600}
+h1 .home{color:inherit;text-decoration:none}h1 .home:hover,h1 .home:focus-visible{text-decoration:underline}
 .hl{display:flex;align-items:baseline;min-width:0}.hr{display:flex;align-items:center;justify-content:flex-end;gap:16px;min-width:0}
 #ver{display:flex;flex:0 100 auto;min-width:0;overflow:hidden;font-size:11px;color:var(--dim,#888);opacity:.7;margin-left:6px;white-space:nowrap;cursor:default}
 .tabs button{background:var(--card);color:var(--fg);border:1px solid var(--line);padding:3px 12px;cursor:pointer;font:inherit}
