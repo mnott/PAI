@@ -265,6 +265,10 @@ export interface PaiDaemonConfig {
       regenerate?: string;
       /** Globs of files where two add-only clashes are union-merged (shipped defaults: docs, markdown, CHANGELOG, CLI registry). */
       union?: string[];
+      /** Related-tests command run after a merge; `{files}` = changed source files. Empty = off. */
+      verify?: string;
+      /** Seconds before the related-tests command is stopped. */
+      verifyTimeoutSec?: number;
     };
   };
 }

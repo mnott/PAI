@@ -9,6 +9,8 @@ import { shippedMainDefaults } from "../config/shipped-defaults.js";
 const settings: MergeSettings = {
   generated: ["gen/**"],
   union: ["reg.ts"],
+  verify: "",
+  verifyTimeoutSec: 600,
   regenerate: `node -e "require('fs').writeFileSync('gen/index.md', 'see: ' + require('fs').readdirSync('gen').filter(f => f !== 'index.md').sort().join(',') + '\\n')"`,
 };
 

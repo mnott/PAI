@@ -148,6 +148,11 @@ workers:
       - "*.md"
       - "CHANGELOG.md"
       - "src/cli/registry.ts"
+    # Related tests, run in the checkout after a successful `pai worker merge`
+    # ({files} = the changed source files, shell-quoted). A failure keeps the
+    # merge and exits 3. Empty string = off; `--no-verify-tests` skips one merge.
+    verify: "npx vitest related --run {files}"
+    verifyTimeoutSec: 600
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:

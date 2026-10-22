@@ -25,6 +25,7 @@ import { ledgerPath, statusPath } from "./paths.js";
 import { invalidatePendingCache } from "./pending.js";
 import { readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
+import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1102,11 +1103,13 @@ export interface MergeSettings {
   generated: string[];
   regenerate: string;
   union: string[];
+  verify: string;
+  verifyTimeoutSec: number;
 }
 
 function mergeSettings(): MergeSettings {
   const m = loadConfig().workers?.merge;
-  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [] };
+  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [], verify: m?.verify ?? DEFAULT_VERIFY, verifyTimeoutSec: m?.verifyTimeoutSec ?? DEFAULT_VERIFY_TIMEOUT_SEC };
 }
 
 /** Glob to RegExp: `**` crosses directories, `*` and `?` stay inside one. */
@@ -1203,7 +1206,7 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
 export function mergeWorker(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings } = {}
+  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean } = {}
 ): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
@@ -1280,6 +1283,14 @@ export function mergeWorker(
     () => revertMerge(st.cwd, oldHead),
     () => null
   );
+  let related: RelatedResult | null = null;
+  let mergeCommit = "";
+  if (opts.verifyTests !== false) {
+    const cfg = opts.merge ?? mergeSettings();
+    mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
+    related = runRelatedTests(st.cwd, oldHead, cfg, git);
+    appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", { id, status: related.status, result: related.line.replace(/\s+/g, " ").slice(0, 300) });
+  }
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
   // outside-pointing symlink (if anything) remains uncommitted
@@ -1317,8 +1328,14 @@ export function mergeWorker(
   }
   if (autoNote) notes.unshift(`auto-resolved conflicts: ${autoNote}`);
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
-  return withGate(verifyLine, merged);
+  const text = withGate(verifyLine, merged);
+  if (!related) return text;
+  if (related.status === "failed") throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
+  return `${text}\n${related.line}`;
 }
+
+/** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
+export class RelatedTestsFailedError extends Error {}
 
 /** Stub and test-loss scans over `from..to`; throws before any merge exists, so the advised re-run works. */
 function assertStaticScans(cwd: string, from: string, to: string): void {
