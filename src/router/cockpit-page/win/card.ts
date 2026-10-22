@@ -185,6 +185,8 @@ function paintMin(c){
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
+/** The width share for a card dragged to targetW px: the 12-unit step of its container (a group body less its padding), at least the card's own least width; 0 without a container. */
+function spanFor(id,targetW){var c=W.cards[id],p=c&&c.el.parentNode;if(!p||!(p.clientWidth>0))return 0;return winColSpan(p.clientWidth-(p.classList.contains("cgroup")?2*W.cfg.PAD:0),W.cfg.GAP,winCardMinW(W.cfg,W.kids,id),targetW)}
 function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=fitCfg();return W.cfg}
 /** Each card's title text width plus header controls, measured once the card is placed (c.tw; the status slot may truncate, so it is not counted); a new reading re-lays out once. */
 /** The title element is stretched by flex, so its natural width is where its last child (text or info icon) ends. */
@@ -388,7 +390,7 @@ function heightWire(){
   if(!cur)return;
   // the handle also sets the width: snapped to whole column units of the row's container
   var dx=e.clientX-cur.x,p=cur.c.el.parentNode;
-  if(Math.abs(dx)>=8&&p&&p.clientWidth>0){var sp=winColSpan(p.clientWidth,W.cfg.GAP,W.cfg.minW,cur.w+dx);(W.st[cur.c.id]=W.st[cur.c.id]||{}).sp=sp}
+  if(Math.abs(dx)>=8&&p&&p.clientWidth>0){var sp=spanFor(cur.c.id,cur.w+dx);if(sp)(W.st[cur.c.id]=W.st[cur.c.id]||{}).sp=sp}
   setHeight(cur.c.id,cur.h+e.clientY-cur.y,true);
  });
  function end(commit){
@@ -586,7 +588,7 @@ function removeCards(group,idl){
 }
 /** Win.hide(id,on): a hidden card takes no space (a ghost to the layout), its place in the tree is kept. */
 function hide(id,on){W.hide=W.hide||{};if(!!W.hide[id]===!!on)return;W.hide[id]=on?1:0;if(W.main)relayout()}
-var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
+var api={span:spanFor,init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerType:registerType,update:update,relayout:relayout,sync:sync,layouts:function(){return W.n},toggleMin:toggleMin,
  ctx:function(id){return W.cards[id]?W.cards[id].ctx:null},
  el:function(id){return W.cards[id]?W.cards[id].el:null},
  state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},fit:function(){return W.fit},

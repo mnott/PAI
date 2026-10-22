@@ -260,7 +260,13 @@ describe("win layout: width steps of the handle", () => {
     expect(span(1008, 8, 220, 500)).toBe(2); // 2 of 4
     expect(span(1008, 8, 220, 760)).toBeCloseTo(4 / 3); // 3 of 4
     expect(span(1008, 8, 220, 5000)).toBe(1); // whole row
-    expect(span(300, 8, 220, 100)).toBe(1); // one column fits: always the whole row
+    expect(span(300, 8, 220, 100)).toBeCloseTo(4 / 3); // was 1 (N columns): now the nearest 12-unit step holding minW, 9 units = 223
+    // 12-unit grid: steps 3,4,6,8,9,12 units; the nearest step at least minW, both ways
+    expect(span(1008, 8, 100, 300)).toBe(3); // 4 units (331) is nearer to 300 than 3 units (246)
+    expect(span(1008, 8, 100, 240)).toBe(4); // 3 units
+    expect(span(1008, 8, 100, 330)).toBe(3);
+    expect(span(1008, 8, 100, 700)).toBeCloseTo(1.5); // 8 units = 2/3
+    expect(span(1008, 8, 300, 200)).toBe(3); // 3 units (246) is under minW 300: 4 units (331)
     const row = split("r", [leaf("a"), leaf("b")], [1, 1]);
     const { rects } = layout(row, {}, root(1008), { a: { sp: span(1008, 8, 220, 760) }, b: { sp: 4 } }, fit({ a: 80, b: 80 }));
     expect(rects.a.w).toBeCloseTo(3 * 246 + 2 * 8); // three whole columns
