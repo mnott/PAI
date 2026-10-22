@@ -91,6 +91,23 @@ function winGAll(n,st,pred){
  for(var i=0;i<l.length;i++)if(!pred(st,l[i]))return false;
  return l.length>0;
 }
+/** The layout's narrow test over a drawn row: some child's weight share is under its minW. */
+function winGNarrowRow(s,rects,state,cfg){
+ var i,e,x0=1e9,x1=-1e9,t=0,vis=[];
+ for(i=0;i<s.ch.length;i++){
+  if(winGAll(s.ch[i],state,winGGhost))continue;
+  e=winGExt(s.ch[i],rects);
+  if(!e)continue;
+  vis.push(i);t+=s.sz[i]||0;x0=Math.min(x0,e.x0);x1=Math.max(x1,e.x1);
+ }
+ if(t<=0)return false;
+ var total=x1-x0-(vis.length-1)*cfg.GAP;
+ for(i=0;i<vis.length;i++){
+  var n=s.ch[vis[i]];
+  if((s.sz[vis[i]]||0)/t*total<winMinW(cfg,winLeafType(cfg.kids,n.id,cfg)))return true;
+ }
+ return false;
+}
 /** Where the gutter is and what it can do, or null:
  *  {s, mode:"band"|"row"|"col", ea, eb, ia, ib, ax, a, b, cell}.
  *  cell = the px the split's weights share (rows: widths; columns:
@@ -106,6 +123,7 @@ function winGInfo(tree,splitPath,index,rects,state,cfg){
  var band=s.d==="c"&&splitPath.length===0&&!cfg.bounded;
  var ax=s.d==="r"?"x":"y";
  if(ax==="x"&&eb.x0<=ea.x0)return null; // narrow mode: the row is stacked
+ if(ax==="x"&&winGNarrowRow(s,rects,state,cfg))return null; // narrow mode: the row wraps into a grid of equal widths
  if(winGAll(a,state,winGMin)||winGAll(b,state,winGMin))return null;
  var cell=0,i;
  if(!band){

@@ -281,7 +281,7 @@ function gutterBox(ea,eb,ax,gap){
  return{l:Math.min(ea.x0,eb.x0),t:ea.y1,w:Math.max(ea.x1,eb.x1)-Math.min(ea.x0,eb.x0),h:gap};
 }
 function gutterWalk(key,parent,tree,bounded,seen,state){
- var cfg=Object.create(cfgOf());cfg.bounded=bounded;
+ var cfg=Object.create(cfgOf());cfg.bounded=bounded;cfg.kids=W.kids;
  (function walk(n,path){
   if(n.k!=="s")return;
   var i,j;

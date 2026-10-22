@@ -50,6 +50,13 @@ function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
 function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 /** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
 function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
+/** Narrow row: children per line (as many as fit at the largest minW, at least 1) and their equal width. */
+function winGridK(node,w,st,cfg,kids){
+ var i,n=0,m=0,gap=cfg.GAP,k;
+ for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)){n++;m=Math.max(m,winMinW(cfg,winLeafType(kids,node.ch[i].id,cfg)))}
+ k=Math.max(1,Math.min(n,Math.floor((w+gap)/(m+gap))));
+ return{k:k,cw:(w-(k-1)*gap)/k};
+}
 /** The least height a node needs at width w (flat: a fitted band, whose cards take their content height, not a weight share; a column needs only the sum of its cards): a card its type's minH (a group HEAD_H plus its kids), a row the tallest
  *  child (the sum when narrow mode stacks it), a column enough that every child's weight share holds its need. */
 function winNeed(node,w,st,cfg,kids,flat){
@@ -65,13 +72,16 @@ function winNeed(node,w,st,cfg,kids,flat){
  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id))t+=node.sz[i]||0;
  if(t<=0)t=1;
  if(node.d==="r"){
-  var wide=true;
+  var wide=true,g=null,ln=0,lc=0;
   for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&(node.sz[i]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[i].id,cfg)))wide=false;
+  if(!wide)g=winGridK(node,w,st,cfg,kids);
   for(i=0;i<node.ch.length;i++){
    if(winGhost(st,node.ch[i].id))continue;
-   k=winNeed(node.ch[i],wide?(node.sz[i]||0)/t*total:w,st,cfg,kids,flat);
-   if(wide)need=Math.max(need,k);else sum+=k+gap;
+   k=winNeed(node.ch[i],wide?(node.sz[i]||0)/t*total:g.cw,st,cfg,kids,flat);
+   if(wide)need=Math.max(need,k);
+   else{ln=Math.max(ln,k);if(++lc===g.k){sum+=ln+gap;ln=0;lc=0}}
   }
+  if(!wide&&lc>0)sum+=ln+gap;
   return wide?need:Math.max(0,sum-gap);
  }
  for(i=0;i<node.ch.length;i++){
@@ -98,16 +108,19 @@ function winFit(node,w,st,cfg,kids){
   if(nar&&v===undefined)return winNeed(node,w,st,cfg,kids);
   return v===undefined?null:Math.max(v,winNeed(node,w,st,cfg,kids));
  }
- var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,r=0,sum=0;
+ var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,r=0,sum=0,ln=0,lc=0;
  for(i=0;i<vis.length;i++)t+=node.sz[vis[i]]||0;
  if(t<=0)t=1;
- var wide=node.d==="r";
+ var wide=node.d==="r",g=null;
  if(wide)for(i=0;i<vis.length;i++)if((node.sz[vis[i]]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
+ if(node.d==="r"&&!wide)g=winGridK(node,w,st,cfg,kids);
  for(i=0;i<vis.length;i++){
-  k=winFit(node.ch[vis[i]],node.d==="r"&&wide?(node.sz[vis[i]]||0)/t*total:w,st,cfg,kids);
+  k=winFit(node.ch[vis[i]],node.d==="r"?(wide?(node.sz[vis[i]]||0)/t*total:g.cw):w,st,cfg,kids);
   if(k===null)return null;
-  r=Math.max(r,k);sum+=k;
+  r=Math.max(r,k);
+  if(g){ln=Math.max(ln,k);if(++lc===g.k){sum+=ln+gap;ln=0;lc=0}}else sum+=k;
  }
+ if(g){if(lc>0)sum+=ln+gap;return Math.max(0,sum-gap)}
  return node.d==="r"&&wide?r:sum+(vis.length-1)*gap;
 }
 /** Lay out one split into pieces {n,x,y,w,h}. bounded: the container has a fixed h. */
@@ -126,14 +139,22 @@ function winSplit(node,box,bounded,st,cfg,kids){
   for(i=0;i<vis.length;i++)if(ws[vis[i]]<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
   if(!wide){
    // narrow mode: stack; root gives each child its defaultH, bounded an equal share
-   var h0=bounded?Math.max(0,(box.h-(vis.length-1)*gap)/vis.length):0;
+   // a grid: as many children per line as fit at their minW, equal widths, lines stacked
+   var gr=winGridK(node,box.w,st,cfg,kids),nl=Math.ceil(vis.length/gr.k);
+   var h0=bounded?Math.max(0,(box.h-(nl-1)*gap)/nl):0;
    var y=0;
-   for(i=0;i<vis.length;i++){
-    var c=node.ch[vis[i]];
-    var nf=winNar(cfg,box.w)&&!winMin(st,c.id)?winFit(c,box.w,st,cfg,kids):null;
-    var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,box.w,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
-    out.push({n:c,x:0,y:y,w:box.w,h:hh});
-    y+=hh+gap;
+   for(var l0=0;l0<vis.length;l0+=gr.k){
+    var lh=0,lo=out.length;
+    for(i=l0;i<Math.min(vis.length,l0+gr.k);i++){
+     var c=node.ch[vis[i]];
+     var nf=winNar(cfg,box.w)&&!winMin(st,c.id)?winFit(c,gr.cw,st,cfg,kids):null;
+     var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,gr.cw,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
+     out.push({n:c,x:(i-l0)*(gr.cw+gap),y:y,w:gr.cw,h:hh});
+     lh=Math.max(lh,hh);
+    }
+    // a line is as tall as its tallest card; a minimized card keeps its header height
+    for(i=lo;i<out.length;i++)if(!winMin(st,out[i].n.id))out[i].h=lh;
+    y+=lh+gap;
    }
    return out;
   }
