@@ -27,9 +27,61 @@ export function postgresConnectionString(config: PostgresConfig): string {
 
 /** Database and role the storage backend connects to, read from the same URL it uses. */
 export function postgresTarget(config: PostgresConfig): { database: string; user: string } {
-  const url = new URL(postgresConnectionString(config));
+  const { database, user } = postgresFullTarget(config);
+  return { database, user };
+}
+
+/** Where a backup or restore connects: the names plus the server the connection string names. */
+export interface PgTarget {
+  database: string;
+  user: string;
+  host?: string;
+  port?: number;
+  password?: string;
+  /** The URL the storage backend connects with. */
+  connectionString?: string;
+}
+
+/** Postgres truncates identifiers beyond this many bytes. */
+export const PG_IDENT_MAX_BYTES = 63;
+
+/** Throws unless `name` is usable as a database or role name: non-empty, no NUL, not option-like, at most `maxBytes`. */
+export function assertPgName(name: string, kind: string, maxBytes = PG_IDENT_MAX_BYTES): void {
+  if (name === "" || name.includes("\0") || name.startsWith("-")) {
+    throw new Error(`invalid Postgres ${kind} name ${JSON.stringify(name)}`);
+  }
+  if (Buffer.byteLength(name) > maxBytes) {
+    throw new Error(`Postgres ${kind} name "${name}" is longer than ${maxBytes} bytes`);
+  }
+}
+
+/** Double-quoted SQL identifier; keeps case and neutralises any character. */
+export function quoteIdent(name: string): string {
+  if (name === "" || name.includes("\0")) throw new Error(`invalid Postgres identifier ${JSON.stringify(name)}`);
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** Full target (names and server) read from the URL the storage backend uses. */
+export function postgresFullTarget(config: PostgresConfig): PgTarget & { connectionString: string } {
+  const connectionString = postgresConnectionString(config);
+  const url = new URL(connectionString);
+  const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
+  const user = decodeURIComponent(url.username);
+  assertPgName(database, "database");
+  assertPgName(user, "user");
   return {
-    database: decodeURIComponent(url.pathname.replace(/^\//, "")),
-    user: decodeURIComponent(url.username),
+    database,
+    user,
+    host: url.hostname.replace(/^\[|\]$/g, "") || "localhost",
+    port: url.port ? Number(url.port) : 5432,
+    password: url.password ? decodeURIComponent(url.password) : undefined,
+    connectionString,
   };
+}
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+/** True when the target is the local server PAI's `pai-pgvector` container publishes; anything else is an external server reached directly. */
+export function isContainerTarget(t: { host?: string }): boolean {
+  return t.host === undefined || LOCAL_HOSTS.has(t.host.toLowerCase());
 }

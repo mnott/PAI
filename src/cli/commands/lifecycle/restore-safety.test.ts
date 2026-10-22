@@ -69,7 +69,7 @@ describe("restorePostgres", () => {
     const all = sqlOf(calls).join("\n");
     expect(all).not.toMatch(/DROP DATABASE IF EXISTS pai;/);
     expect(all).not.toMatch(/RENAME/);
-    expect(all).toMatch(/DROP DATABASE IF EXISTS pai_restore_/);
+    expect(all).toMatch(/DROP DATABASE IF EXISTS "pai_restore_/);
     expect(readdirSync(d).some((f) => f.startsWith("postgres-pai.pre-restore-"))).toBe(true);
   });
 
@@ -89,15 +89,15 @@ describe("restorePostgres", () => {
     expect(r.ok).toBe(true);
     expect(r.oldDb).toMatch(/^pai_prerestore_/);
     const all = sqlOf(calls).join("\n");
-    expect(all).toMatch(/RENAME TO pai_prerestore_/);
-    expect(all).toMatch(/pai_restore_\w+ RENAME TO pai;/);
+    expect(all).toMatch(/RENAME TO "pai_prerestore_/);
+    expect(all).toMatch(/"pai_restore_\w+" RENAME TO "pai";/);
     expect(all).not.toMatch(/DROP DATABASE IF EXISTS pai;/);
   });
 
   it("leaves the live db when the rename is refused", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
-    const { run } = stub((a) => (a.join(" ").includes("RENAME TO pai_prerestore_") ? { status: 1, stderr: "being accessed by other users" } : undefined));
+    const { run } = stub((a) => (a.join(" ").includes('RENAME TO "pai_prerestore_') ? { status: 1, stderr: "being accessed by other users" } : undefined));
     const r = restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     expect(r.message).toMatch(/live database untouched/);

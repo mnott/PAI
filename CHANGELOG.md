@@ -4,6 +4,16 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Backup:** the Postgres dump is verified against row counts read in the same snapshot (`pg_dump --snapshot`), so a running daemon can no longer fail a correct backup; empty tables (a fresh install) verify; a failed backup removes its dump instead of leaving it for `pai restore`.
+- **Backup and restore** use the server named by `postgres.connectionString`; the `pai-pgvector` container is only used when that is the local server. An external server is dumped and restored with the host's `pg_dump`/`psql`.
+- **Restore:** database names are quoted and validated (no SQL injection or case folding through `--into` or config); `pai restore` warns when the backup's `config.json` names another database than the one restored into; the refusal for backups without a recorded database names `--into pai`.
+
+---
+
 ## [1.0.1] - 2026-10-22
 
 A review release: every area of the code was reviewed after 1.0.0, and the findings are fixed here — notably a command injection through macOS notifications, guards that could be bypassed, and several paths that could lose data.
