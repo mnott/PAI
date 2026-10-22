@@ -296,6 +296,32 @@ function groupRoots(tree,kids,defaults){
  }
  return{tree:tree,defaults:d};
 }
+/** Default groups that moved into another existing group, {groupId: parentGroupId}. A layout saved before holds the
+ *  group as a root band. */
+var NEST_INTO={"sys-servers":"models"};
+/** A stored root band for a nested default group moves in as the first child of its parent's body (40% of it). Only
+ *  a band at root moves; one the user put elsewhere stays. */
+function nestRoots(tree,kids){
+ if(!tree||tree.k!=="s"||tree.d!=="c")return;
+ for(var g in NEST_INTO){
+  var p=NEST_INTO[g],body=kids[p],i;
+  if(!body||!kids[g])continue;
+  for(i=0;i<tree.ch.length;i++)if(tree.ch[i].k==="c"&&tree.ch[i].id===g)break;
+  if(i>=tree.ch.length)continue;
+  tree.ch.splice(i,1);tree.sz.splice(i,1);
+  if(body.k==="s"&&body.d==="c"){
+   var t=0,j;
+   for(j=0;j<body.sz.length;j++)t+=body.sz[j];
+   body.ch.unshift(leaf(g));body.sz=[0.4].concat(body.sz.map(function(v){return t>0?v/t*0.6:0.6/body.sz.length}));
+  }else kids[p]=split("c",[leaf(g),body],[0.4,0.6]);
+ }
+}
+/** True when card id sits in the tree or in any group body. */
+function placedAnywhere(tree,kids,id){
+ if(ids(tree).indexOf(id)>=0)return true;
+ for(var k in kids)if(ids(kids[k]).indexOf(id)>=0)return true;
+ return false;
+}
 /** Reconcile a parsed saved layout with the defaults: prune ghosts, insert missing static
  *  cards, merge default min flags under the saved state. Returns { tree, kids, st }. */
 function reconcileSaved(saved,defaults,knownIds,now){
@@ -304,13 +330,14 @@ function reconcileSaved(saved,defaults,knownIds,now){
  var tree=saved.tree,kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
  var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;
+ nestRoots(tree,kids);
  var st=saved.st&&typeof saved.st==="object"?saved.st:{};
  tree=pruneGhosts(tree,kids,st,knownIds,now);
  var prevOf=prevOfDefault(defaults);
  tree=insertMissing(tree,missingIn(defaults.tree,tree,knownIds),prevOf,knownIds,true,defaults.tree);
  for(var g in kids){
   var defKid=(defaults.kids||{})[g];
-  if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds),prevOf,knownIds,false,defKid);
+  if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds).filter(function(m){return !NEST_INTO[m]||!placedAnywhere(tree,kids,m)}),prevOf,knownIds,false,defKid);
  }
  var sd=defaults.stDefaults||{};
  for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);

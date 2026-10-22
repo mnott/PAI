@@ -348,3 +348,43 @@ describe("every mapped root card migrates into its group", () => {
     expect(ids(r.tree)).not.toContain("perf-group");
   });
 });
+
+describe("local model servers inside the Models section", () => {
+  const defs = () => ({
+    tree: split("c", [leaf("a"), leaf("models")], [100, 500]),
+    kids: {
+      models: split("c", [leaf("sys-servers"), leaf("models.endpoints")], [0.4, 0.6]),
+      "sys-servers": leaf("srv"),
+    },
+    stDefaults: {},
+  });
+  const K3 = ["a", "models", "sys-servers", "models.endpoints", "srv"];
+  it("default tree has the group first inside Models, not at root", () => {
+    const d = defs();
+    expect(ids(d.tree)).not.toContain("sys-servers");
+    expect(ids(d.kids.models)).toEqual(["sys-servers", "models.endpoints"]);
+  });
+  it("a stored group at root moves into Models as first child", () => {
+    const saved = {
+      v: 2,
+      tree: split("c", [leaf("a"), leaf("sys-servers"), leaf("models")], [100, 300, 500]),
+      kids: { models: leaf("models.endpoints"), "sys-servers": leaf("srv") },
+      st: {},
+    };
+    const r = reconcileSaved(saved, defs(), K3, NOW);
+    expect(ids(r.tree)).toEqual(["a", "models"]);
+    expect(ids(r.kids.models)).toEqual(["sys-servers", "models.endpoints"]);
+    expect(r.kids["sys-servers"]).toBeDefined();
+  });
+  it("a group the user put elsewhere stays and is not duplicated into Models", () => {
+    const saved = {
+      v: 2,
+      tree: split("c", [leaf("a"), leaf("mine"), leaf("models")], [100, 300, 500]),
+      kids: { mine: leaf("sys-servers"), models: leaf("models.endpoints"), "sys-servers": leaf("srv") },
+      st: {},
+    };
+    const r = reconcileSaved(saved, defs(), K3, NOW);
+    expect(ids(r.kids.mine)).toEqual(["sys-servers"]);
+    expect(ids(r.kids.models)).toEqual(["models.endpoints"]);
+  });
+});

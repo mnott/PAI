@@ -155,7 +155,7 @@ function sysDefaults(){
  cards.push({id:"system.power-chart",type:"chart",title:"Power and GPU/CPU load",info:"Same buckets as the window selected above. W on the left axis, load % on the fixed 0-100 right axis.",feeds:["system"]});
  var eq=function(n){var a=[],k;for(k=0;k<n;k++)a.push(1/n);return a};
  return{tree:WinT.leaf("system"),stDefaults:st,cards:cards,kids:{
-  "system":WinT.split("c",[WinT.leaf("sys-metrics"),WinT.leaf("sys-power"),WinT.leaf("sys-servers")],[0.4,0.27,0.33]),
+  "system":WinT.split("c",[WinT.leaf("sys-metrics"),WinT.leaf("sys-power")],[0.6,0.4]),
   "sys-metrics":WinT.split("c",[WinT.split("r",r1,eq(5)),WinT.split("r",r2,eq(5)),WinT.split("r",r3,eq(4))],[1/3,1/3,1/3]),
   "sys-power":WinT.leaf("system.power-chart"),
   "sys-servers":WinT.leaf("system.srv:none")}};

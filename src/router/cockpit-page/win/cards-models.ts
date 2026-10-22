@@ -278,6 +278,6 @@ function wmdOff(){WinA.winClick(Win.el("models").querySelector('[data-act="off"]
 function modelsDefaults(){
  var cards=[{id:"models",type:"group",title:"Models",info:WMD_INFO,feeds:["models"],actions:[{id:"off",label:"stop all local",title:"stop every local model server (asks to confirm)",run:wmdOff}]},
   {id:"models.endpoints",type:"eplist",title:"Endpoints",feeds:["limits"]}];
- return{tree:WinT.leaf("models"),kids:{models:WinT.leaf("models.endpoints")},stDefaults:{},cards:cards};
+ return{tree:WinT.leaf("models"),kids:{models:WinT.split("c",[WinT.leaf("sys-servers"),WinT.leaf("models.endpoints")],[0.4,0.6])},stDefaults:{},cards:cards};
 }
 `;
