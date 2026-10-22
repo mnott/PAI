@@ -4,7 +4,7 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { configPathCmd, configYamlCmd, configListCmd, configGetCmd, configSetCmd, configUnsetCmd, configMigrateCmd } from "../impl/config.js";
+import { configPathCmd, configYamlCmd, configListCmd, configGetCmd, configSetCmd, configUnsetCmd, configMigrateCmd, configValidateCmd } from "../impl/config.js";
 
 export const configSubcommands: CommandDef[] = [
 {
@@ -61,6 +61,14 @@ export const configSubcommands: CommandDef[] = [
   examples: ["pai config unset search.recencyBoostDays","pai config list"],
   seeAlso: ["pai config migrate","pai config set"],
   run: (ctx) => configUnsetCmd(String(ctx.args.PATH)),
+},
+{
+  name: "validate",
+  summary: "Warn about workers settings that are shadowed or unused",
+  description: "Warn about workers settings that are shadowed or unused.\n\nThe non-provider workers.* settings (pool, pane, routing, …) are read from config.yaml only; the routing tables (providers, tiers, classes, mcp_sets, …) from workers.yaml only. Names every key written in the file that does not win, and every top-level workers.yaml block nothing reads.",
+  examples: ["pai config validate","pai config get workers.pool.maxSlots --source"],
+  seeAlso: ["pai config get","pai config set"],
+  run: () => configValidateCmd(),
 },
 {
   name: "migrate",

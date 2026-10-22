@@ -168,6 +168,25 @@ pai config list
 
 See also: `pai config migrate`, `pai config set`
 
+### pai config validate
+
+Warn about workers settings that are shadowed or unused
+
+```
+pai config validate
+```
+
+Warn about workers settings that are shadowed or unused.
+
+The non-provider workers.* settings (pool, pane, routing, …) are read from config.yaml only; the routing tables (providers, tiers, classes, mcp_sets, …) from workers.yaml only. Names every key written in the file that does not win, and every top-level workers.yaml block nothing reads.
+
+```sh
+pai config validate
+pai config get workers.pool.maxSlots --source
+```
+
+See also: `pai config get`, `pai config set`
+
 ### pai config migrate
 
 Move old settings files into the current layout
@@ -218,6 +237,7 @@ See also: `pai config unset`
 | `pai config get` | Print one setting |
 | `pai config set` | Change one setting |
 | `pai config unset` | Reset one setting to its default |
+| `pai config validate` | Warn about workers settings that are shadowed or unused |
 | `pai config migrate` | Move old settings files into the current layout |
 
 ## See also

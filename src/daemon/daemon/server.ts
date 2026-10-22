@@ -10,6 +10,7 @@ import { createStorageBackend, createRegistryBackend } from "../../storage/facto
 import { configureEmbeddingModel } from "../../memory/embeddings.js";
 import { loadNotificationConfig } from "../../notifications/config.js";
 import { writeDaemonPidfile, removeDaemonPidfile } from "../daemon-pid.js";
+import { logWorkersConfigShadowsOnce } from "../../workers/config-shadow.js";
 import type { PaiDaemonConfig } from "../config.js";
 import type { IpcRequest } from "./types.js";
 import {
@@ -149,6 +150,8 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   process.stderr.write(
     `[pai-daemon] Notification mode: ${notificationConfig.mode}\n`
   );
+
+  logWorkersConfigShadowsOnce();
 
   // Lower scheduling priority so the daemon yields CPU to interactive sessions
   try { setPriority(process.pid, 10); } catch { /* non-fatal */ }
