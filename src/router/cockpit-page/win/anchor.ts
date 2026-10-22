@@ -11,12 +11,14 @@
  *  keeper that the global anchorKeep(fn) uses. */
 export const WIN_ANCHOR_JS = String.raw`var _ANCHOR=null;
 function anchorFlag(win,k,v){return new RegExp("[?&]"+k+"="+v+"(&|$)").test(win.location.search)}
-/** Topmost card with top >= 0 (else the last card above the viewport): {el,id,offset}. */
+/** Topmost card with top >= 0 (else the last card above the viewport): {el,id,offset}. Cards without a box (display:none, hidden) never anchor. */
 function anchorPick(main){
  var cs=main.querySelectorAll(".card"),best=null,last=null,i,r;
  for(i=0;i<cs.length;i++){
   if(cs[i].hidden)continue;
-  r=cs[i].getBoundingClientRect();last=cs[i];
+  r=cs[i].getBoundingClientRect();
+  if(!r.width&&!r.height)continue;
+  last=cs[i];
   if(r.top>=0&&(!best||r.top<best.top))best={el:cs[i],top:r.top};
  }
  var el=best?best.el:last;

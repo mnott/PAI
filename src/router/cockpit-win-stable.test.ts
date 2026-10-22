@@ -65,11 +65,19 @@ function snap(){var o={};Array.prototype.forEach.call(document.querySelectorAll(
 var R={};
 function phaseTo(p){fetch("/test/phase?p="+p)}
 function tab(w){var b=document.querySelector('#tabs button[data-w="'+w+'"]');if(b)b.click()}
-setTimeout(function(){window.scrollTo(0,1400);R.A=snap();R.a0=window.scrollY;R.auto=Win.auto();R.fitA=JSON.stringify(Win.fit())},3000);
+setTimeout(function(){window.scrollTo(0,1400);window.dispatchEvent(new Event("scroll"));R.A=snap();R.a0=window.scrollY;R.auto=Win.auto();R.fitA=JSON.stringify(Win.fit())},3000);
 setTimeout(function(){phaseTo("B")},3500);
 function hh(id){return document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().height}
 function ty(id){return document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().top+window.scrollY}
-var SW={};
+var SW={},GR={};
+// grow=1: scroll a lower card to the viewport top, then overflow the upper card kpis.requests: the lower card must not move on screen
+function cardEl(id){return document.querySelector('#win-root [data-card="'+id+'"]')}
+setTimeout(function(){if(!/grow=1/.test(location.search))return;GR.id="memory";GR.up="kpis.requests";
+ window.scrollTo(0,ty(GR.id)-5);window.dispatchEvent(new Event("scroll"))},3600);
+setTimeout(function(){if(!GR.id)return;GR.upTop=ty(GR.up);GR.upH0=hh(GR.up);GR.y0=window.scrollY;GR.t0=cardEl(GR.id).getBoundingClientRect().top;
+ GR.box=document.createElement("div");GR.box.style.height="300px";cardEl(GR.up).querySelector(".cbody").appendChild(GR.box)},3800);
+setTimeout(function(){if(!GR.id)return;GR.t1=cardEl(GR.id).getBoundingClientRect().top;GR.y1=window.scrollY;GR.upH1=hh(GR.up);
+ delete GR.box;R.GR=GR},4600);
 setTimeout(function(){if(!/swing=1/.test(location.search))return;SW.id="kpis.requests";SW.h0=hh(SW.id);SW.t0=ty("kpis.requests");var y0=window.scrollY;
  SW.box=document.createElement("div");SW.box.style.height="200px";document.querySelector('#win-root [data-card="'+SW.id+'"] .cbody').appendChild(SW.box);SW.y0=y0},3200);
 setTimeout(function(){if(!SW.id)return;SW.h1=hh(SW.id);SW.y1=window.scrollY;SW.box.remove()},3300);
@@ -146,6 +154,19 @@ describe.skipIf(!CHROME)("box stability", () => {
   }, 120_000);
 
   for (const q of ["", "?anchor=off"]) {
+    it(`a card above the viewport grows by overflow: the card at the viewport top stays put on screen (${q})`, async () => {
+      const r = await open("?grow=1" + q.replace("?", "&"));
+      expect(r.err).toBeNull();
+      const g = (r.R as any).GR as Record<string, number | string>;
+      if (process.env.PAI_STABLE_TABLE) console.log("grow", q, JSON.stringify(g));
+      expect(g.upTop as number, "grown card is above the viewport").toBeLessThan(g.y0 as number);
+      expect(g.upH1 as number, "the upper card grew").toBeGreaterThan((g.upH0 as number) + 100);
+      const moved = (g.t1 as number) - (g.t0 as number);
+      // anchor on: the keeper scrolls the growth away; off: the card is pushed down by what the upper card grew
+      if (q === "") expect(Math.abs(moved)).toBeLessThanOrEqual(1);
+      else expect(moved).toBeGreaterThan(100);
+    }, 120_000);
+
     it(`data-only change B: no card shrinks or moves up, only overflow grows (${q})`, async () => {
       const r = await open(q);
       expect(r.err).toBeNull();
