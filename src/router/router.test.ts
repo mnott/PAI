@@ -217,6 +217,48 @@ describe("router http", () => {
   });
 });
 
+describe("router host/origin perimeter", () => {
+  const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+  const post = (port: number, headers: http.OutgoingHttpHeaders) =>
+    new Promise<{ status: number; body: string }>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers }, (r) => {
+        let b = "";
+        r.on("data", (c) => (b += c));
+        r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
+      });
+      q.end(JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 1, messages: [] }));
+    });
+
+  it("POST with Host evil.example is 403; the same POST with Host 127.0.0.1:<port> passes", async () => {
+    const up = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ usage: { input_tokens: 1, output_tokens: 1 } }));
+    });
+    const upPort = await listen(up);
+    const r = createRouter(() => ({}), `http://127.0.0.1:${upPort}`, () => {}, undefined, undefined, {
+      hosts: { bind: "loopback", extraHosts: [] },
+    });
+    const port = await listen(r);
+    try {
+      const evil = await post(port, { host: "evil.example:8790", "content-type": "application/json" });
+      expect(evil.status).toBe(403);
+      expect(JSON.parse(evil.body)).toEqual({ error: "host not allowed" });
+
+      // the Claude Code proxy path: Host 127.0.0.1:<port>, no Origin — passes
+      const ok = await post(port, { host: `127.0.0.1:${port}`, "content-type": "application/json" });
+      expect(ok.status).toBe(200);
+
+      // a browser cross-site POST: Host is loopback but the Origin is the attacker's page
+      const xss = await post(port, { host: `127.0.0.1:${port}`, origin: "http://evil.example:8790", "content-type": "application/json" });
+      expect(xss.status).toBe(403);
+      expect(JSON.parse(xss.body)).toEqual({ error: "origin not allowed" });
+    } finally {
+      r.close();
+      up.close();
+    }
+  });
+});
+
 describe("duplicate model ids", () => {
   const dup = parseWorkersConfig({
     providers: {

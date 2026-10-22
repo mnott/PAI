@@ -180,6 +180,33 @@ export function withCockpitToken(token: string, inner: CockpitHandler): CockpitH
 }
 
 /**
+ * DNS-rebinding check on the Host header. Allowed: `127.0.0.1[:port]`,
+ * `localhost[:port]`, `[::1][:port]`, the bind address itself (loopback when
+ * `bind` is empty/"loopback"), and any entry of `extraHosts` (tailnet names;
+ * router.allowedHosts in config.yaml). A missing or unparsable Host is
+ * rejected — non-browser clients always send one, so accepting its absence
+ * would hand an attacker the whole check.
+ */
+export function hostAllowed(hostHeader: string | undefined, bind: string, extraHosts: string[]): boolean {
+  if (!hostHeader || !URL.canParse(`http://${hostHeader}`)) return false;
+  const hostname = new URL(`http://${hostHeader}`).hostname.replace(/^\[|\]$/g, "");
+  if (hostname === LOOPBACK_HOST || hostname === "localhost" || hostname === "::1") return true;
+  const bindAddr = resolveBindAddress(bind);
+  if (bindAddr && hostname === bindAddr) return true;
+  return extraHosts.some((h) => h.trim().toLowerCase() === hostname);
+}
+
+/**
+ * Cross-site check on the Origin header: no Origin passes (curl, the Claude
+ * client); an Origin present must carry the same host:port as the Host header.
+ */
+export function originAllowed(originHeader: string | undefined, hostHeader: string | undefined): boolean {
+  if (!originHeader) return true;
+  if (!hostHeader || !URL.canParse(`http://${hostHeader}`) || !URL.canParse(originHeader)) return false;
+  return new URL(originHeader).host === new URL(`http://${hostHeader}`).host;
+}
+
+/**
  * The address to show a human for a bind address: the tailnet hostname
  * (MagicDNS name, from `tailscale status --json`) when the address is the
  * machine's own Tailscale IP, else the address itself.

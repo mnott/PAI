@@ -10,7 +10,7 @@ import { closeSync, mkdirSync, openSync, unlinkSync, writeFileSync, readFileSync
 import { dirname } from "node:path";
 import { startStallMonitor } from "../../router/stall.js";
 import { routerHandler, routerPort } from "../../router/router.js";
-import { defaultV1Guard, displayHost, resolveBindAddress, withCockpitToken, type CockpitHandler } from "../../router/cockpit-auth.js";
+import { defaultV1Guard, displayHost, resolveBindAddress, withCockpitToken, hostAllowed, type CockpitHandler } from "../../router/cockpit-auth.js";
 import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setActionHooks, warmCockpit, setRuntimeSampler, setEndpointHealth } from "../../router/cockpit.js";
 import { createEndpointHealth } from "../../workers/endpoint-health.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
@@ -107,6 +107,14 @@ const runCommand: CommandDef = {
       throw new CliError(`cannot resolve router.bind "${bindName}" — use "loopback", "tailscale", or an IPv4 (never 0.0.0.0)`, "pai daemon status");
     }
     const remote = addr !== LOOPBACK_HOST;
+    // Host-header perimeter (router.allowedHosts): a tailnet listener must
+    // refuse a rebinding client whose Host is an attacker's domain. The
+    // loopback listener keeps the existing POST-only guard (refuseUnlessLoopback).
+    const extraHosts = (loadConfig().router.allowedHosts ?? []).filter((h) => h.trim());
+    const hosts = remote ? { bind: addr, extraHosts } : undefined;
+    if (remote && !extraHosts.some((h) => hostAllowed(`${h}:${port}`, addr, extraHosts))) {
+      process.stderr.write(`pai: router: router.allowedHosts has no entry matching the bind ${addr} — cockpit requests by hostname will be refused (403)\n`);
+    }
     const token = undefined as string | undefined; // no auth ceremony on the tailnet
     const rows = cachedRows(usageFile);
     let schedCache: { at: number; cfg: SchedConfig } | undefined;
@@ -184,7 +192,7 @@ const runCommand: CommandDef = {
     const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
     const cockpit = token ? withCockpitToken(token, serve) : serve;
     const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
-    const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp, health: endpointHealth });
+    const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { ...(remote ? { remoteAllowed: defaultV1Guard, hosts } : {}), isUp: limits.isUp, health: endpointHealth });
     const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
     const handler = stalls.wrap(inner);
     return new Promise<number>(() => {

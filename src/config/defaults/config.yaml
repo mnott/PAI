@@ -150,6 +150,10 @@ router:
   # Bare aliases (besides ids starting with claude-) that also go to claudeUpstream.
   claudeModelAliases: [sonnet, opus, haiku, default, opusplan]
   bind: loopback
+  # Extra Host headers the router accepts beyond loopback and the bind address
+  # (tailnet/MagicDNS names the cockpit is opened by). Empty by default; a
+  # request whose Host matches none of these is refused with 403.
+  allowedHosts: []
   # Milliseconds a stopping router waits for in-flight requests before force-closing.
   drainMs: 120000
   # Cockpit page layout policy (src/router/cockpit-layout.ts): tile min/max
