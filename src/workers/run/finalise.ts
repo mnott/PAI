@@ -24,6 +24,7 @@ import {
 import { AG2_REASK_TEXT, type WorkerReport } from "../report.js";
 import { killTree } from "../kill-tree.js";
 import { type RunLimit } from "../deadline.js";
+import { reapWorkerProcesses } from "../reap.js";
 import { blockedMsOf } from "../active-time.js";
 import { resultFromOutput } from "./provider-test.js";
 import {
@@ -123,6 +124,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
   const wid = status.id;
+  // nothing the worker started outlives it: descendants and detached processes parked in its worktree
+  await reapWorkerProcesses({ rootPid: process.pid, dir: f.worktree?.dir });
   // first, whatever the outcome (rc 143 included): uncommitted edits in the
   // worktree must reach the branch before anything can drop the worktree
   const salvaged = f.worktree

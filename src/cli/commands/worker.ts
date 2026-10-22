@@ -34,6 +34,7 @@ import { setMuted } from "../../workers/local-idle.js";
 import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
+import { endProcesses, findWorktreeOrphans } from "../../workers/reap.js";
 import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
@@ -825,15 +826,19 @@ const gcCommand: CommandDef = {
     { name: "all-finished", type: "boolean", summary: "Any finished worker, regardless of age" },
     { name: "pool", type: "boolean", summary: "Also remove leftover pool reserve worktrees (spare-*, slots/*) no worker owns and no process sits in (implied by --all-finished)" },
     { name: "foreign", type: "boolean", summary: "Also archive merged, clean worktrees of this repo that PAI did not create (refs/pai-archive/BRANCH); unmerged ones are kept" },
+    { name: "kill-orphans", type: "boolean", summary: "End processes (pid + command listed) whose cwd sits inside a finished worker's worktree: SIGTERM, 3 s, SIGKILL" },
     { ...OPT.dryRun, summary: "Print what would be archived and what each worktree carries, change nothing" },
   ],
   examples: ["pai worker gc --dry-run", "pai worker gc --older-than 72", "pai worker gc --all-finished", "pai worker gc --pool --dry-run"],
   seeAlso: ["pai worker discard", "pai worker pending"],
   run: (ctx) =>
-    guard("pai worker gc --dry-run", () => {
+    guard("pai worker gc --dry-run", async () => {
       const raw = str(ctx.opts["older-than"]) ?? "24";
       const hours = Number(raw);
       if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
+      const orphans = findWorktreeOrphans(logDir());
+      for (const o of orphans) out(`orphan pid ${o.pid} in ${o.dir}: ${o.cmd.slice(0, 200)}`);
+      if (orphans.length && flag(ctx, "kill-orphans") && !ctx.dryRun) await endProcesses(orphans, out);
       const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true, undefined, flag(ctx, "foreign") ? process.cwd() : undefined);
       if (flag(ctx, "pool") || flag(ctx, "all-finished")) res.push(...gcPoolWorktrees(logDir(), ctx.dryRun));
       const verb = ctx.dryRun ? "would archive" : "archived";
