@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS pai_observations (
   files_modified JSONB DEFAULT '[]'::jsonb,
   concepts JSONB DEFAULT '[]'::jsonb,
   content_hash TEXT,
+  source TEXT,
+  fidelity TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -78,7 +80,26 @@ let _tablesEnsured = false;
 async function ensureObservationTables(pool: Pool): Promise<void> {
   if (_tablesEnsured) return;
   await pool.query(SCHEMA_SQL);
+  // Migration: add source/fidelity columns to pre-existing tables (the DDL
+  // above only covers fresh databases). Guarded by a column check so re-running
+  // is a no-op.
+  const colCheck = await pool.query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_name = 'pai_observations' AND column_name IN ('source', 'fidelity')`
+  );
+  const existing = new Set(colCheck.rows.map((r: { column_name: string }) => r.column_name));
+  if (!existing.has("source")) {
+    await pool.query("ALTER TABLE pai_observations ADD COLUMN IF NOT EXISTS source TEXT");
+  }
+  if (!existing.has("fidelity")) {
+    await pool.query("ALTER TABLE pai_observations ADD COLUMN IF NOT EXISTS fidelity TEXT");
+  }
   _tablesEnsured = true;
+}
+
+/** Test-only: reset the ensure flag so the migration path can be re-run. */
+export function __resetTablesEnsured(): void {
+  _tablesEnsured = false;
 }
 
 const SKILL_TELEMETRY_SCHEMA_SQL = `
@@ -153,8 +174,9 @@ export async function storeObservation(
   const result = await pool.query<{ id: number }>(
     `INSERT INTO pai_observations
        (session_id, project_id, project_slug, type, title, narrative,
-        tool_name, tool_input_summary, files_read, files_modified, concepts, content_hash)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12)
+        tool_name, tool_input_summary, files_read, files_modified, concepts, content_hash,
+        source, fidelity)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13, $14)
      RETURNING id`,
     [
       obs.session_id,
@@ -169,6 +191,8 @@ export async function storeObservation(
       JSON.stringify(obs.files_modified),
       JSON.stringify(obs.concepts),
       hash,
+      obs.source ?? null,
+      obs.fidelity ?? null,
     ]
   );
 
@@ -234,7 +258,7 @@ export async function queryObservations(
     `SELECT id, session_id, project_id, project_slug, type, title, narrative,
             tool_name, tool_input_summary,
             files_read, files_modified, concepts,
-            content_hash, created_at
+            content_hash, source, fidelity, created_at
      FROM pai_observations
      ${where}
      ORDER BY created_at DESC
@@ -256,7 +280,7 @@ export async function queryRecentObservations(
     `SELECT id, session_id, project_id, project_slug, type, title, narrative,
             tool_name, tool_input_summary,
             files_read, files_modified, concepts,
-            content_hash, created_at
+            content_hash, source, fidelity, created_at
      FROM pai_observations
      WHERE project_id = $1
      ORDER BY created_at DESC
@@ -277,7 +301,7 @@ export async function querySessionObservations(
     `SELECT id, session_id, project_id, project_slug, type, title, narrative,
             tool_name, tool_input_summary,
             files_read, files_modified, concepts,
-            content_hash, created_at
+            content_hash, source, fidelity, created_at
      FROM pai_observations
      WHERE session_id = $1
      ORDER BY created_at ASC`,

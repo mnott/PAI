@@ -5,8 +5,15 @@
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync } from 'fs';
 import { maskSecrets } from './loop-guard.js';
+import { sha256 } from '../../../utils/hash.js';
 
 export const RAW_CAPTURE_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Deterministic 16-hex id for a captured event: sha256 of the joined parts. */
+export function captureEventId(parts: { sessionId?: string; toolUseId?: string; event?: string; ts?: string }): string {
+  const joined = `${parts.sessionId ?? ""}|${parts.toolUseId ?? ""}|${parts.event ?? ""}|${parts.ts ?? ""}`;
+  return sha256(joined).slice(0, 16);
+}
 
 /** Deep copy with every string value passed through the loop guard's secret-line masking. */
 export function redactDeep<T>(value: T): T {

@@ -130,6 +130,8 @@ export interface ObservationRow {
   files_modified: string[];
   concepts: string[];
   content_hash: string | null;
+  source?: string | null;
+  fidelity?: string | null;
   created_at: Date;
 }
 
@@ -152,6 +154,8 @@ export interface StoreObservationInput extends Omit<ClassifiedObservation, "narr
   project_id?: number | null;
   project_slug?: string | null;
   narrative?: string | null;
+  source?: string | null;
+  fidelity?: string | null;
 }
 
 /** StoreObservationInput plus the cwd used to attribute it to a registered project. */

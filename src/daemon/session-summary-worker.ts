@@ -1104,6 +1104,29 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
   // -------------------------------------------------------------------------
   const effectiveSlug = projectSlug ?? basename(cwd);
   const projectId = projectSlug ? await lookupProjectId(projectSlug) : null;
+
+  // Record the reconstructed summary as an inferred observation (Postgres
+  // only, best-effort — never fails the summary).
+  if (storageBackend?.supportsPostgresFeatures) {
+    try {
+      await storageBackend.storeObservation({
+        session_id: sessionId ?? cwd,
+        project_id: projectId,
+        project_slug: effectiveSlug,
+        type: 'discovery',
+        title: `session summary (${selectedModel})`,
+        narrative: summaryText.slice(0, 2000),
+        tool_name: 'session-summary',
+        files_read: [],
+        files_modified: extracted.filesModified,
+        concepts: [],
+        source: 'daemon',
+        fidelity: 'inferred',
+      });
+    } catch (err) {
+      process.stderr.write(`[session-summary] Summary observation failed: ${err}\n`);
+    }
+  }
   await extractAndStoreTriples({
     summaryText,
     projectSlug: effectiveSlug,

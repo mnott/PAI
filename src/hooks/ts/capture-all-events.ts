@@ -11,7 +11,7 @@ import { join } from 'path';
 import { historyDir, agentSessionsPath } from './lib/pai-paths.js';
 import { enrichEventWithAgentMetadata, isAgentSpawningCall } from './lib/metadata-extraction.js';
 import { isProbeSession } from './lib/project-utils.js';
-import { appendRawCapture, redactDeep } from './lib/raw-capture.js';
+import { appendRawCapture, captureEventId, redactDeep } from './lib/raw-capture.js';
 import { writeJsonAtomic } from '../../config/json-store.js';
 
 interface HookEvent {
@@ -21,6 +21,9 @@ interface HookEvent {
   payload: Record<string, any>;
   timestamp: number;
   timestamp_local: string;
+  source: string;
+  fidelity: string;
+  eventId: string;
 }
 
 // Get local timestamp using system timezone
@@ -154,13 +157,22 @@ async function main() {
     }
 
     // Create base event object
+    const timestamp = Date.now();
     let event: HookEvent = {
       source_app: agentName,
       session_id: hookData.session_id || 'main',
       hook_event_type: eventType,
       payload: redactDeep(hookData),
-      timestamp: Date.now(),
-      timestamp_local: getLocalTimestamp()
+      timestamp,
+      timestamp_local: getLocalTimestamp(),
+      source: 'hook',
+      fidelity: 'observed',
+      eventId: captureEventId({
+        sessionId: hookData.session_id,
+        toolUseId: hookData.tool_use_id,
+        event: eventType,
+        ts: String(timestamp)
+      })
     };
 
     // Enrich with agent instance metadata if this is a Task tool call

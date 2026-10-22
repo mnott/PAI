@@ -245,6 +245,8 @@ export async function handleRequest(
         files_modified: p.files_modified ?? [],
         concepts: p.concepts ?? [],
         cwd: p.cwd,
+        source: 'hook',
+        fidelity: 'observed',
       });
 
       sendResponse(socket, { id, ok: true, result: { ok: true, id: insertedId } });
