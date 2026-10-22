@@ -52,6 +52,16 @@ pai daemon logs
 pai daemon serve       # foreground, where there is no service manager
 ```
 
+### AIBroker (messaging)
+
+[AIBroker](https://github.com/mnott/AIBroker) is a separate project and PAI's messaging layer: messages between sessions, worker reports to the session that started them, terminal tab names, and WhatsApp, Telegram and PAILot. PAI runs without it, but none of these work until it is installed:
+
+```bash
+npm install -g aibroker
+aibroker setup      # service, MCP registration, Claude Code hooks
+aibroker doctor     # every check green, or it says exactly what to fix
+```
+
 ### Updating
 
 ```bash
