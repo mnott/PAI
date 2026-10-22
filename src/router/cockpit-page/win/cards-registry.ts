@@ -267,8 +267,8 @@ function wrgBackupsHtml(S){
   var label=S.editing===b.name
    ?'<input class="wrg-bl" data-n="'+n+'" value="'+esc(b.label||"")+'" placeholder="name this backup" maxlength="80" size="22" aria-label="backup name">'
    :(b.label?'<b class="wrg-lb">'+esc(b.label)+"</b>":"");
-  return'<div class="wrg-b" style="display:flex;gap:8px;align-items:center;padding:2px 0"><span class="mid" title="'+n+'">'+esc(b.name.replace(/^workers\.yaml\./,"").replace(/\.bak$/,""))+"</span>"+label+'<span class="dim">'+Math.round(b.size/102.4)/10+' kB · '+esc(b.summary)+'</span>'
-   +'<span style="margin-left:auto;display:flex;gap:4px"><button type="button" class="cbtn wrg-bd" data-n="'+n+'" title="show the changes between the file now and this backup">diff</button>'
+  return'<div class="wrg-row"><span class="wrg-inf"><span class="mid" title="'+n+'">'+esc(b.name.replace(/^workers\.yaml\./,"").replace(/\.bak$/,""))+"</span>"+label+'<span class="dim">'+Math.round(b.size/102.4)/10+' kB</span><span class="dim">'+esc(b.summary)+'</span></span>'
+   +'<span class="wrg-acts"><button type="button" class="cbtn wrg-bd" data-n="'+n+'" title="show the changes between the file now and this backup">diff</button>'
    +'<button type="button" class="cbtn wrg-bn" data-n="'+n+'" title="give this backup a name">name</button>'
    +'<button type="button" class="cbtn wrg-rs" data-n="'+n+'"'+dis+'>'+(armed?"confirm restore":"restore")+"</button>"
    +'<button type="button" class="cbtn wrg-del" data-n="'+n+'" title="delete this backup">'+(delArmed?"confirm delete":"delete")+"</button></span></div>";
