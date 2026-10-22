@@ -25,14 +25,16 @@ export class MacOsProvider implements NotificationProvider {
 
     try {
       const title = payload.title ?? "PAI";
-      // Escape single quotes in title and message for AppleScript
-      const safeTitle = title.replace(/'/g, "\\'");
-      const safeMessage = payload.message.replace(/'/g, "\\'");
-
-      const script = `display notification "${safeMessage}" with title "${safeTitle}"`;
+      // The script is constant; text reaches AppleScript only as argv items.
+      const args = [
+        "-e", "on run argv",
+        "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+        "-e", "end run",
+        "--", payload.message, title,
+      ];
 
       return new Promise((resolve) => {
-        const child = spawn("osascript", ["-e", script], {
+        const child = spawn("osascript", args, {
           detached: true,
           stdio: "ignore",
         });

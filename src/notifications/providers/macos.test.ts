@@ -46,3 +46,29 @@ describe("MacOsProvider.send off macOS", () => {
     expect(spawnSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("MacOsProvider.send script construction", () => {
+  afterEach(() => {
+    setPlatform(REAL_PLATFORM);
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("passes message and title only as separate argv items; the script is constant", async () => {
+    setPlatform("darwin");
+    const spawnSpy = vi.fn(() => ({ unref() {}, on() {} }));
+    vi.doMock("node:child_process", () => ({ spawn: spawnSpy }));
+    const { MacOsProvider } = await import("./macos.js");
+    const evil = 'x" & (do shell script "touch /tmp/pwn") & "';
+    const evilTitle = 'T" & (do shell script "id") & "';
+    await new MacOsProvider().send({ event: "info", message: evil, title: evilTitle }, config);
+
+    const [bin, args] = spawnSpy.mock.calls[0] as unknown as [string, string[]];
+    expect(bin).toBe("osascript");
+    const sep = args.indexOf("--");
+    expect(args.slice(sep + 1)).toEqual([evil, evilTitle]);
+    const script = args.slice(0, sep).join("\n");
+    expect(script).not.toContain("shell script");
+    expect(script).toContain("item 1 of argv");
+  });
+});
