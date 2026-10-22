@@ -843,14 +843,17 @@ export interface StartDeps {
   force?: boolean;
 }
 
-export function launchDetached(plan: StartPlan): () => number | null {
+/** Exit-code probe of a launched server; `pid` (also its process group) is set by launchDetached. */
+export type Launched = (() => number | null) & { pid?: number };
+
+export function launchDetached(plan: StartPlan): Launched {
   mkdirSync(dirname(plan.logPath), { recursive: true });
   const fd = openSync(plan.logPath, "w");
   const [cmd, ...args] = plan.argv;
   const child = spawn(cmd, args, { cwd: plan.cwd, env: { ...process.env, ...plan.env }, detached: true, stdio: ["ignore", fd, fd] });
   child.unref();
   closeSync(fd);
-  return () => child.exitCode;
+  return Object.assign(() => child.exitCode, child.pid !== undefined ? { pid: child.pid } : {});
 }
 
 /** Live servers of catalogue models, one per (model, port). */
@@ -1036,10 +1039,10 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
 /** Stop every local server PAI knows (the instances, then anything left on a catalogue port), then wait until the ports are free. */
 export async function stopAll(cfg: LocalConfig): Promise<void> {
   for (const m of new Set(currentInstances(cfg).map((r) => r.model))) await stopInstance(cfg, m, { all: true }, { confirm: true });
-  for (const s of listServers(cfg)) process.kill(s.pid, "SIGTERM");
+  for (const s of listServers(cfg)) try { process.kill(s.pid, "SIGTERM"); } catch { /* already gone */ }
   const deadline = Date.now() + 60_000;
   while (listServers(cfg).length > 0 && Date.now() < deadline) await sleep(1000);
-  for (const s of listServers(cfg)) process.kill(s.pid, "SIGKILL");
+  for (const s of listServers(cfg)) try { process.kill(s.pid, "SIGKILL"); } catch { /* already gone */ }
   const ports = [...new Set(Object.values(cfg.tiers).map((t) => t.port))];
   const freeBy = Date.now() + 30_000;
   while (Date.now() < freeBy && (await Promise.all(ports.map(isUp))).some(Boolean)) await sleep(1000);

@@ -8,7 +8,7 @@ import { parse } from "yaml";
 import { parseLocalConfig, planStart, lifecycleOf, stopCommandFor } from "../../workers/local-tiers.js";
 import { withExplicitLifecycle } from "../../router/cockpit-registry.js";
 import { addModel, smokeTest } from "./models-add.js";
-import { killInstance, portOpen } from "./worker-config.js";
+import { killInstance, launchDetached, portOpen } from "./worker-config.js";
 
 const freePort = (): Promise<number> =>
   new Promise((res) => {
@@ -207,5 +207,21 @@ describe("pai models add", () => {
     const r = await smokeTest(cfg, "z", { launch: () => () => null, health: async () => true, complete: async () => { throw new Error("boom"); }, kill: async () => void (killed = true) });
     expect(r).toMatchObject({ ok: false, message: "boom" });
     expect(killed).toBe(true);
+  });
+
+  it("smokeTest kills a server that is still loading (no listener yet) by its launched pid", async () => {
+    const port = await freePort();
+    const cfg = parseLocalConfig({ local_tiers: { z: { engine: "command", provider: "p", start_command: "/bin/true --port {port}", port } } }, providers);
+    let pid = 0;
+    const launch: typeof launchDetached = (plan) => {
+      const h = launchDetached({ ...plan, argv: [process.execPath, "-e", "setTimeout(() => {}, 60000)"], logPath: join(mkdtempSync(join(tmpdir(), "smoke-")), "s.log") });
+      pid = h.pid!;
+      return h;
+    };
+    const r = await smokeTest(cfg, "z", { launch, health: async () => false, readyMs: 300, pollMs: 50 });
+    expect(r.ok).toBe(false);
+    expect(pid).toBeGreaterThan(0);
+    for (let i = 0; i < 40 && alive(pid); i++) await new Promise((x) => setTimeout(x, 100));
+    expect(alive(pid)).toBe(false);
   });
 });

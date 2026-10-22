@@ -248,7 +248,7 @@ export async function smokeTest(cfg: LocalConfig, name: string, d: SmokeDeps = {
   const health = d.health ?? ((url: string) => healthOk({ health: url }, tier.port));
   const exited = launch(plan);
   const stop = async (): Promise<void> => {
-    const pid = portListeners(tier.port)[0];
+    const pid = exited.pid ?? portListeners(tier.port)[0];
     await (d.kill ?? ((port, p, cmd) => killInstance({ id: `${name}#1`, model: name, provider: tier.provider, url: "", origin: "managed", port, ...(p !== undefined ? { pid: p } : {}), state: "ready", startedAt: 0, log: "" }, undefined, undefined, cmd)))(tier.port, pid, tier.stopCommand);
   };
   const url = tier.health.replaceAll("{port}", String(tier.port));
