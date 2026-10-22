@@ -54,7 +54,7 @@ function gapLayout(totals,w,padL){
 function gapMark(x,top,bot){return'<line x1="'+x.toFixed(1)+'" x2="'+x.toFixed(1)+'" y1="'+top+'" y2="'+bot+'" stroke="var(--line)" stroke-dasharray="2 3"/>'}
 /** Stacked bars at an explicit pixel width cw: {html, cap, agg}. ref only names the chart for aggCap ({id:"daily"}). */
 function stackedBarsSvg(ref,cw,labels,series,keys,h,head){
- var padB=18,padT=6,max=1,agg=mergeFactor(series.length,cw-44-6,1);
+ var padB=18,padT=10,max=1,agg=mergeFactor(series.length,cw-44-6,1);
  if(agg>1){labels=mergeLabels(labels,agg);series=mergeSeries(series,keys,agg)}
  var sums=series.map(function(s){var t=0;keys.forEach(function(k){t+=s[k]||0});return t});sums.forEach(function(v){if(v>max)max=v});
  var padL=padFor([fmtAxis(max)]),H=h-padB-padT;
@@ -76,7 +76,7 @@ function stackedBarsSvg(ref,cw,labels,series,keys,h,head){
 function barCap(el,compressed,agg){var t=[];if(compressed)t.push("idle hours compressed: the x axis is not time-linear");if(agg>1)t.push(aggCap(el,agg));return t.length?t.join(" · "):false}
 /** Two-tone per-model bars at an explicit pixel width cw: {html, cap, agg}. */
 function twoToneSvg(ref,cw,labels,buckets,models,h,head){
- var padB=18,padT=6,mc=models.length,max=1,agg=mergeFactor(buckets.length,cw-44-6,Math.max(1,mc));
+ var padB=18,padT=10,mc=models.length,max=1,agg=mergeFactor(buckets.length,cw-44-6,Math.max(1,mc));
  if(agg>1){labels=mergeLabels(labels,agg);buckets=mergeModelBuckets(buckets,agg)}
  models.forEach(function(m){colorOf(m)});
  var totals=buckets.map(function(arr){var t=0;arr.forEach(function(s){t+=s.total});return t});totals.forEach(function(v){if(v>max)max=v});

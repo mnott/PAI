@@ -99,7 +99,7 @@ function sysChartSvg(d,w,h){
  var tr=trimEmpty(ss.map(function(b){return label(b.t,d.window)}),ss,function(s){var t=0;keys.forEach(function(k){t+=s[k[0]]||0});return t});
  var svg='<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'">';
  if(!tr)return svg+'<text x="'+w/2+'" y="'+h/2+'" text-anchor="middle">no data in this window</text></svg>';
- var labels=tr.labels,rows=tr.rows,padR=34,padB=18,padT=6,n=labels.length,leftMax=1,hasR=false;
+ var labels=tr.labels,rows=tr.rows,padR=padFor(["100%"])+2,padB=18,padT=10,n=labels.length,leftMax=1,hasR=false;
  keys.forEach(function(k){if(k[3])hasR=true;else rows.forEach(function(s){if((s[k[0]]||0)>leftMax)leftMax=s[k[0]]})});
  var padL=padFor([fmtAxis(leftMax)+" W"]),W=w-padL-padR,H=h-padB-padT,bw=W/n,PCT=["0","33","66","100"],g,yy;
  for(g=0;g<=3;g++){yy=padT+H-H*g/3;svg+='<line x1="'+padL+'" x2="'+(w-padR)+'" y1="'+yy+'" y2="'+yy+'" stroke="var(--line)"/><text x="'+(padL-4)+'" y="'+(yy+3)+'" text-anchor="end">'+fmtAxis(leftMax*g/3)+' W</text>'+(hasR?'<text x="'+(w-2)+'" y="'+(yy+3)+'" text-anchor="end">'+PCT[g]+'%</text>':'')}
@@ -114,10 +114,12 @@ function sysChartSvg(d,w,h){
 }
 function sysChartDraw(ctx){
  var s=WCH[ctx.id];if(!s||!s.d||s.w<=0)return;
- ctx.html("svg",sysChartSvg(s.d,s.w,Math.max(40,s.h-22)));
  ctx.html("legend",PKEYS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+esc(k[1])+'</span>'}).join(""));
+ // the tile sets the height: the legend wraps first (its measured height is taken off), the plot takes the rest, min 80
+ var lg=ctx.body&&ctx.body.querySelector('[data-k="legend"]'),lh=lg?lg.offsetHeight+6:22;
+ ctx.html("svg",sysChartSvg(s.d,s.w,Math.max(80,s.h-lh)));
 }
-Win.registerType("chart",{minW:260,minH:150,defaultH:220,
+Win.registerType("chart",{minW:260,minH:150,defaultH:270,
  mount:function(ctx){if(WCHX[ctx.id]){WCHX[ctx.id].mount(ctx);return}ctx.body.innerHTML='<div class="wc-svg" data-k="svg"></div><div class="legend wc-leg" data-k="legend"></div>'},
  update:function(ctx,d){if(WCHX[ctx.id]){WCHX[ctx.id].update(ctx,d);return}if(!d||!d.series)return;var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.d=d;sysChartDraw(ctx)},
  resize:function(ctx,w,h){if(WCHX[ctx.id]){WCHX[ctx.id].resize(ctx,w,h);return}var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.w=w;s.h=h;sysChartDraw(ctx)}});
