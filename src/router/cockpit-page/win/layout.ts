@@ -43,7 +43,7 @@ export type WinLayout = (
 export const WIN_LAYOUT_JS = String.raw`function winType(cfg,type){return(cfg.types&&cfg.types[type])||{}}
 function winMinW(cfg,type){var t=winType(cfg,type);return t.minW!==undefined?t.minW:cfg.minW}
 function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined?t.defaultH:(cfg.defaultH||0)}
-function winMin(st,id){var s=st&&st[id];return!!s&&!!s.min}
+function winMin(st,id){var s=st&&st[id];return!!s&&s.min===1}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
 /** Stacked mode of the auto layout: the box is under cfg.narrowW wide, so heights follow content, not weights or band px. */

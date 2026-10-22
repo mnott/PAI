@@ -39,6 +39,16 @@ function parseWin(raw){
  if(!obj.tree||typeof obj.tree!=="object")return null;
  return obj;
 }
+/** Normalise every st[id].min to 1 when truthy, else to 0: older saves and cross-tab adoption
+ *  can carry true, "1" or 2, and the one rule (isMin, winMin, winGMin) is min===1. A stored 0
+ *  is an explicit restore and stays; a state object with no min gets none. */
+function normMin(st){
+ for(var id in st){
+  var s=st[id];
+  if(!s||typeof s!=="object"||s.min===undefined)continue;
+  st[id].min=s.min?1:0;
+ }
+}
 /** Delete the pre-v2 keys (their models do not map onto the tree). */
 function deleteOldKeys(storage){
  for(var i=0;i<OLD_KEYS.length;i++){try{storage.removeItem(OLD_KEYS[i])}catch(e){}}
@@ -238,6 +248,7 @@ function reconcileSaved(saved,defaults,knownIds,now){
  }
  var sd=defaults.stDefaults||{};
  for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);
+ normMin(st);
  return{tree:tree,kids:kids,st:st};
 }
 /** One write, whole object, debounced by the caller (spec 6). t is the save time: another tab compares it to know which layout is newer. Returns t. */

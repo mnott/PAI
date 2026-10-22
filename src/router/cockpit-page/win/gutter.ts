@@ -50,7 +50,7 @@ export const WIN_GUTTER_JS = String.raw`function winGMinOf(cfg,kids,node,axis){
  if(axis==="x")return t.minW!==undefined?t.minW:cfg.minW;
  return t.minH!==undefined?t.minH:(cfg.minH||0);
 }
-function winGMin(st,id){var s=st&&st[id];return!!s&&!!s.min}
+function winGMin(st,id){var s=st&&st[id];return!!s&&s.min===1}
 function winGGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winGClone(n){
  if(n.k==="c")return{k:"c",id:n.id};

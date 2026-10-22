@@ -87,6 +87,18 @@ describe("win layout (spec 3.2)", () => {
     expect(height).toBe(cfg.HEAD_H + cfg.GAP + 200);
   });
 
+  it("only min===1 collapses a card; a truthy min of another type takes its full space", () => {
+    const t = split("c", [leaf("a"), leaf("b")], [0.5, 0.5]);
+    const strict = layout(t, {}, bounded(600, 500), { a: { min: 1 } }, cfg);
+    expect(strict.rects.a.h).toBe(cfg.HEAD_H);
+    // winMin is the strict test: min true / "1" / 2 are not minimized (the store normalises them on load)
+    for (const bad of [true, "1", 2]) {
+      const { rects } = layout(t, {}, bounded(600, 500), { a: { min: bad } }, cfg);
+      expect(rects.a.h).toBeCloseTo((500 - cfg.GAP) / 2);
+      expect(rects.b.h).toBeCloseTo((500 - cfg.GAP) / 2);
+    }
+  });
+
   it("narrow width stacks a row using defaultH (root) and an equal share (bounded)", () => {
     // bounded: each child would be 196 < chart minW 300 -> stacked, equal share of (500-8)/2
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);

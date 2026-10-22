@@ -179,6 +179,19 @@ describe("win store (spec 6)", () => {
     expect(r.st.c).toBeUndefined();
   });
 
+  it("a stored min is normalised to 1 when truthy, else to 0", () => {
+    const s = new MemStorage();
+    s.setItem(
+      "pai.cockpit.win.v2",
+      saved({ v: 2, tree: split("c", [leaf("a")], [300]), kids: {}, st: { a: { min: true }, b: { min: "1" }, c: { min: 2 }, g1: { min: 0 } } }),
+    );
+    const r = loadWin(s, defaults(), KNOWN, NOW);
+    expect(r.st.a).toEqual({ min: 1 });
+    expect(r.st.b).toEqual({ min: 1 });
+    expect(r.st.c).toEqual({ min: 1 });
+    expect(r.st.g1).toEqual({ min: 0 }); // an explicit restore stays 0
+  });
+
   it("saveWin writes the whole object in a single setItem", () => {
     const s = new MemStorage();
     saveWin(s, leaf("a"), { g: leaf("g1") }, { a: { min: 1 } });
