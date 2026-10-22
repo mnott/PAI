@@ -202,11 +202,12 @@ export const restoreTop: CommandDef = {
     { name: "no-postgres", type: "boolean", default: false, summary: "Do not restore the Postgres database" },
     { name: "yes", type: "boolean", default: false, summary: "Do not ask for confirmation" },
     { name: "into", type: "string", value: "DB", summary: "Restore into this Postgres database instead of the daemon's (required when the backup came from another database)" },
+    { name: "no-safety-dump", type: "boolean", default: false, summary: "Do not dump the live database before replacing it (a failed safety dump otherwise aborts the restore)" },
     { ...OPT.dryRun, summary: "Print the target and source databases, change nothing" },
   ],
   examples: ["pai restore", "pai restore --dry-run", "pai restore ~/.pai/backups/20260101-120000 --no-postgres --yes"],
   seeAlso: ["pai backup"],
-  run: (c) => legacy(() => runRestore(c.args.BACKUP as string | undefined, { postgres: c.opts["no-postgres"] !== true, yes: c.opts.yes === true, dryRun: c.dryRun, into: c.opts.into as string | undefined })),
+  run: (c) => legacy(() => runRestore(c.args.BACKUP as string | undefined, { postgres: c.opts["no-postgres"] !== true, yes: c.opts.yes === true, dryRun: c.dryRun, into: c.opts.into as string | undefined, noSafetyDump: c.opts["no-safety-dump"] === true })),
 };
 
 export const updateTop: CommandDef = {
