@@ -43,6 +43,7 @@ table{border-collapse:collapse;width:100%}
 th,td{text-align:right;padding:2px 4px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tw td button{padding:0 3px;font-size:11px;margin:1px 0}
 td.txt,th.txt{min-width:10ch;width:0}
+td.nm,th.nm{text-align:left;white-space:nowrap;overflow:visible}
 td.txt{white-space:normal;overflow-wrap:anywhere}
 /* the non-.txt columns shrink to their content, so the first .txt column takes the free width */
 th:not(.txt),td:not(.txt){width:1%}
@@ -216,6 +217,9 @@ main.win .linst .b{align-self:flex-start;padding:1px 8px;font-size:11px}
 .wm{padding:6px 10px;min-width:0}.wm-v{display:inline;font-size:20px;font-weight:600}.wm-s{display:block;color:var(--dim);font-size:12px}
 .wm{position:relative;height:100%}.wm-s{margin-top:2px}.wm-u{color:var(--dim);margin-left:3px;font-size:12px}.wm-sp{position:absolute;right:8px;top:6px;width:40%;height:32px}
 .wt-svg{height:calc(100% - 62px);overflow:hidden}.wt-cap{height:16px;overflow:hidden;padding:0 10px}.wt-leg{height:46px;overflow:auto;padding:0 10px}
+.wt-leg{height:auto;overflow:visible}.wt-svg{height:auto}
+.wt-svg.wt-auto{overflow:visible}.wt-svg svg{display:block}
+main.win .cbody>.tw{padding:6px 10px}.wt-auto>.sp{padding:6px 10px}
 .wc-svg{height:calc(100% - 22px);overflow:hidden}.wc-leg{height:22px;overflow:hidden;padding:0 10px}
 .wr{padding:6px 10px;min-width:0}.wr-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}.wr-sel{flex:none}.wr .rtcls{font-size:11px}.wr-sess{margin-top:4px}.wr-sess .rtsess{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;margin-left:12px}
 .wmd{padding:6px 10px;min-width:0}.wmd-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.wmd-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 10px;margin-top:6px}.wmdt{font-size:11px;color:var(--dim)}.wmdv{font-size:18px}.wmds{font-size:11px}.wmd-n{margin-top:4px}.wmd-i .linst{margin-top:3px}.wmd-in{font:inherit;min-width:120px}.wmd-e .eprow{padding:2px 0}

@@ -10,7 +10,7 @@ export const WIN_TABLES_JS = String.raw`var WT_INFO={speed:"TTFT = request sent 
  pause:"Per model. Pause = time since the previous request of the same session. A drop in hits after 5m means the cache expired between turns: a keepalive under 5m would have kept it."};
 /** speed: the bars are the page's speedHtml, which reads the data/sys/lim globals, so every feed repaints them. */
 WCHX.speed={
- mount:function(ctx){ctx.body.innerHTML='<div class="wt-svg" style="overflow:auto" data-k="svg"></div>'},
+ mount:function(ctx){ctx.body.innerHTML='<div class="wt-svg wt-auto" data-k="svg"></div>'},
  update:function(ctx){if(typeof data!=="undefined"&&data&&data.speed)ctx.html("svg",speedHtml())},
  resize:function(){}
 };

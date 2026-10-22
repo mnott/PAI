@@ -78,9 +78,9 @@ function $(id){return document.getElementById(id)||document.createElement("div")
  *  stack the ones whose table is wider than the box. Measuring unstacked first keeps it from oscillating. */
 function fitTables(root){
  root=root||document;if(!root.querySelectorAll)return;
- var ws=root.querySelectorAll(".tw"),i,w,t;
+ var ws=root.querySelectorAll(".tw"),i,w,t,cs,cw;
  for(i=0;i<ws.length;i++)ws[i].classList.remove("stacked");
- for(i=0;i<ws.length;i++){w=ws[i];t=w.querySelector("table");if(t&&(t.scrollWidth>w.clientWidth||w.scrollWidth>w.clientWidth))w.classList.add("stacked")}
+ for(i=0;i<ws.length;i++){w=ws[i];t=w.querySelector("table");cs=getComputedStyle(w);cw=w.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);if(t&&(t.scrollWidth>cw||w.scrollWidth>w.clientWidth))w.classList.add("stacked")}
 }
 function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
 function fmt(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(2)+"G";if(n>=1e6)return(n/1e6).toFixed(2)+"M";if(n>=1e3)return(n/1e3).toFixed(1)+"k";return String(Math.round(n))}

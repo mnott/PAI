@@ -47,13 +47,16 @@ function wchCap(c){return c?'<div class="cap dim">'+(typeof c==="string"?c:"idle
 /** Redraw one of the two cards from its stored payload and box. */
 function wchDraw(ctx){
  var s=WCH[ctx.id];if(!s||!s.d||s.w<=0)return;
- var h=Math.max(40,s.h-WCH_BAND),o;
+ var h=Math.max(40,s.h-WCH_BAND),o,lg=ctx.body&&ctx.body.querySelector('[data-k="legend"]');
  if(ctx.id==="tokens"){
   var models=wchModels(s.d);o=wchTokens(s.d,models,s.w,h);
   var sel=WCHT.sel;
   if(sel){sel.setOptions([{value:"",label:"all models"}].concat(models.map(function(m){return{value:m,label:m}})));sel.setValue(msel)}
  }else{wchModels(s.d);o=wchDaily(s.d,s.w,h)}
- ctx.html("svg",o.html);ctx.html("cap",wchCap(o.cap));ctx.html("legend",o.legend);
+ ctx.html("legend",o.legend);ctx.html("cap",wchCap(o.cap));
+ // the legend is never scrolled: the svg takes the height left under the whole legend and the caption
+ if(lg&&lg.offsetHeight>0){var h2=Math.max(40,s.h-16-lg.offsetHeight-12);if(h2!==h){h=h2;o=ctx.id==="tokens"?wchTokens(s.d,wchModels(s.d),s.w,h):wchDaily(s.d,s.w,h)}}
+ ctx.html("svg",o.html);
 }
 var WCHX_MOUNT='<div class="wt-svg" data-k="svg"></div><div class="wt-cap" data-k="cap"></div><div class="legend wt-leg" data-k="legend"></div>';
 WCHX.tokens=WCHX.daily={

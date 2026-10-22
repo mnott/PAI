@@ -47,7 +47,7 @@ export type WinTypeDef = {
  *  - minimize: Win.toggleMin(id) / the – + button; the card shows only its header (HEAD_H), the body
  *    is display:none but its state is kept; saved (debounced 150 ms, one write) with the layout. */
 const WIN_CARD_BODY_JS = String.raw`var Win=(function(){
-var HEAD_H=28,SAVE_MS=150,FIT_MAX=360;
+var HEAD_H=28,SAVE_MS=150,FIT_MAX=360,FIT_TBL_MAX=1200;
 var TYPES={group:{accepts:["*"],minW:220,minH:HEAD_H+40,defaultH:300}};
 var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null,auto:false,fit:{},fitT:0,defRoot:[],tm:0};
 function registerType(name,def){TYPES[name]=def||{}}
@@ -206,7 +206,7 @@ function fitCfg(){
 /** A stacked (narrow) card that is not a chart is measured by its content like any other, though its type has a resize hook: its first placement is no reading. */
 function fitNarrow(c){return c.type!=="chart"&&c.body.clientWidth>0&&c.body.clientWidth<W.cfg.narrowW}
 /** A table or list card is measured by its content when it draws no table (a note, plain html, chips) or its spec's resize only re-flows the table to the width (fitTables): neither has anything to size to the body. */
-function fitPlain(c){return c.mounted&&(c.type==="table"||c.type==="list")&&(!c.body.querySelector("table")||!!c.spec.resize||(c.type==="table"&&c.body.querySelectorAll("tbody tr").length<=1))}
+function fitPlain(c){return c.mounted&&(c.type==="table"||c.type==="list"||c.id==="speed")&&(!c.body.querySelector("table")||!!c.spec.resize||(c.type==="table"&&c.body.querySelectorAll("tbody tr").length<=1))}
 function fitEligible(c){
  return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&(!(TYPES[c.type]||{}).resize||fitNarrow(c)||fitPlain(c))&&c.el.style.display!=="none"&&c.body.clientWidth>0;
 }
@@ -217,7 +217,7 @@ function fitReadAll(){
  for(i=0;i<W.order.length;i++){c=W.cards[W.order[i]];if(c&&fitEligible(c))list.push(c)}
  var h=[],t=[];
  for(i=0;i<list.length;i++){h.push(list[i].el.style.height);t.push(list[i].body.scrollTop);list[i].el.style.height=HEAD_H+"px"}
- for(i=0;i<list.length;i++)out[list[i].id]=list[i].body.scrollHeight>0?Math.min(FIT_MAX,Math.ceil(list[i].body.scrollHeight)+8+HEAD_H):null;
+ for(i=0;i<list.length;i++)out[list[i].id]=list[i].body.scrollHeight>0?Math.min(list[i].type==="chart"&&list[i].id!=="speed"?FIT_MAX:FIT_TBL_MAX,Math.ceil(list[i].body.scrollHeight)+8+HEAD_H):null;
  for(i=0;i<list.length;i++){list[i].el.style.height=h[i];list[i].body.scrollTop=t[i]}
  return out;
 }
