@@ -707,7 +707,8 @@ export async function cockpitModelsPayload(): Promise<unknown> {
 /** Every registry model with its live instances, stopped ones included (the model cards). */
 function registryModelsNow(): RegistryModel[] {
   try {
-    return registryModels(readLocalConfig(workersYamlPath()), localInstanceRows(), weightsBytes);
+    const providers = readWorkersSection().workers.providers;
+    return registryModels(readLocalConfig(workersYamlPath()), localInstanceRows(), weightsBytes, (t) => providers[t.provider]?.maxConcurrent);
   } catch {
     return [];
   }

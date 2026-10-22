@@ -187,7 +187,7 @@ Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
   var r=e.r;
   ctx.html("badges",(e.m.model?'<span class="mid" title="'+esc(e.m.model)+'">'+esc(shortModel(e.m.model))+"</span> ":"")+
    (r.kind===r.name?"":'<span class="badge">'+esc(r.kind)+"</span> ")+'<span class="badge"'+(e.cmds.note?' title="'+esc(e.cmds.note)+'"':"")+">"+esc(r.name)+(r.port==null?"":" :"+r.port)+'</span> <span class="badge mstate'+(e.down?" bad":r.slow?" warn":"")+'">'+esc(r.slow&&!e.down?"slow":e.state)+"</span>"+
-   (e.tier?' <span class="num" title="running instances'+(e.tier.max?" (max "+e.tier.max+")":"")+'">'+e.tier.live.length+(e.tier.max?" / "+e.tier.max:"")+"</span>":"")+
+   (e.tier?' <span class="num" title="running instances'+(e.tier.max?" (max "+e.tier.max+")":"")+'">instances '+e.tier.live.length+(e.tier.max?" / "+e.tier.max:"")+"</span>":"")+
    (e.tier&&e.tier.starting?' <span class="'+(e.tier.starting.state==="failed"?"bad":"warn")+'">'+(e.tier.starting.state==="failed"?esc(e.tier.starting.message):"loading "+e.tier.starting.sinceSec+" s")+"</span>":""));
   ctx.html("cells",wmdCells(e,inv));
   ctx.html("ctx",wmdCtx(e,inv));
@@ -223,7 +223,7 @@ Win.registerType("model",{minW:300,minH:90,defaultH:120,
   var m=wmdModel(ctx.id);
   if(!m){ctx.status("stale","no longer reported");return}
   var n=m.instances.length;
-  ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> '+(WMD&&WMD.inv&&WMD.inv.localDefaultTier===m.tier?'<span class="badge ok" title="the running model local work goes to (pai worker run --local)">local default</span> ':"")+'<span class="num" title="running instances (max '+m.maxInstances+')">'+n+" / "+m.maxInstances+"</span>");
+  ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> '+(WMD&&WMD.inv&&WMD.inv.localDefaultTier===m.tier?'<span class="badge ok" title="the running model local work goes to (pai worker run --local)">local default</span> ':"")+'<span class="num" title="running instances / max instances">instances '+n+" / "+m.maxInstances+'</span> <span class="num" title="requests in flight / the provider maxConcurrent (none = no cap)">requests '+m.instances.reduce(function(a,x){return a+(x.inflight||0)},0)+(m.maxConcurrent?" / "+m.maxConcurrent:"")+"</span>");
   ctx.html("note",(m.weightsBytes?'<span class="num" title="weight size on disk">'+gbm(m.weightsBytes/1048576)+" GB</span> · ":"")+'<span title="'+esc(m.file)+'">'+esc(String(m.file).replace(/^.*\//,""))+"</span> · :"+m.port);
   ctx.list("inst",m.instances,function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){
    var h='<span class="ok">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b wmd-stop" data-act="local.stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+' (asks to confirm when requests are in flight)">stop</button>';

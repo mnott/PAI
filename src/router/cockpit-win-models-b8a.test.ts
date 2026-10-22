@@ -57,6 +57,15 @@ describe("B8a model cards", () => {
     expect((acts.find((a) => a.id === "stop")!.enabled as () => unknown)()).toBe("nothing running");
   });
 
+  it("the tier card labels instances and requests (in flight / provider maxConcurrent)", () => {
+    const m = models();
+    const r = { ...reg("gyro-m", "/s/gyro.json", ["gyro-m#1"]), maxConcurrent: 5 };
+    const b = render(m, inv([r]), "gyro-m").slots.badges;
+    expect(b).toContain("instances 1 / 4");
+    expect(b).toContain("requests 0 / 5");
+    expect(render(m, inv([reg("gyro-m", "/s/gyro.json", ["gyro-m#1"])]), "gyro-m").slots.badges).toContain("requests 0<");
+  });
+
   it("two instances of different files mark one card each, n / max from the entry's own instances", () => {
     const m = models();
     const i = inv([reg("gyro-m", "/s/gyro.json", ["gyro-m#1", "gyro-m#2"]), reg("iq3s", "/s/iq3.json", ["iq3s#1"]), reg("coder-next", "/s/c.sh", [], 1)]);
