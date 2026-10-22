@@ -169,6 +169,7 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `dailyDays` | 14 | Days in Tokens per day per model |
 | `sessionsRows` | 20 | Rows in Sessions by tokens |
 | `sessionsTopRows` | 10 | Sessions shown before the rest collapse into one "+N more sessions" row |
+| `sessionDetailTurns` | 200 | Turns kept in the per-session drill-down (click a session row) |
 | `sessionNameMaxPct` | 35 | Session-name column cap, percent of the table width |
 | `workerRows` | 15 | Rows in Worker runs |
 | `lowRequestMin` | 5 | Models under this many requests become chips, not rings |

@@ -181,7 +181,7 @@ describe("sessions by tokens compact rows", () => {
     expect((out.match(/chip warn/g) ?? []).length).toBe(1);
     expect((out.match(/chip bad/g) ?? []).length).toBe(1);
     expect(out.match(/<span class="wr-bar"[^>]*><i style="width:(\d+)%/)?.[1]).toBe("100");
-    expect(out).toMatch(/class="wr-row" title="[^"]*s0abcdef[^"]*2 req[^"]*out 5/s);
+    expect(out).toMatch(/class="wr-row"( data-sess="[^"]*")? title="[^"]*s0abcdef[^"]*2 req[^"]*out 5/s);
     expect(html({ bySession: [s(0, 1000, 0, 0)] })).not.toContain("chip");
   });
 });
