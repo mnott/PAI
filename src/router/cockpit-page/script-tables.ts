@@ -91,9 +91,13 @@ function speedHtml(){
 }
 /** One row for both Worker runs and Sessions by tokens (one owner): status dot, label, model chip, token bar relative to o.max, number, right-hand cell (duration or age), hit%, optional extra markup; full detail in the row's title.
  *  o: {st dot state, lab, full tooltip, dot title, model, models, w tokens, max, du, hit ratio|null, extra markup}. */
+function runHead(timeLab){
+ function h(full,ab,cls,tip){return'<span class="wr-h '+cls+'" title="'+esc(tip||full)+'"><span class="wr-hf">'+esc(full)+'</span><span class="wr-ha">'+ab+'</span></span>'}
+ return'<div class="wr-hd"><i></i>'+h("session/run","S","","session / run")+h("model","M","","model")+'<span></span>'+h("tokens","T","wr-r","tokens (weighted)")+h(timeLab,"A","wr-r",timeLab==="age"?"age since last request":"run duration")+h("hit","H","wr-r","cache hit")+h("!","!","","cache busts / errors")+'</div>'
+}
 function runRow(o){
  var pc=o.w>0?Math.max(2,Math.round(o.w/o.max*100)):0;
- return'<div class="wr-row" title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="'+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span>'+(o.extra||"")+'</div>'
+ return'<div class="wr-row" title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+'</span></div>'
 }
 /** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds). */
 var SESS_MORE_KEY="pai.cockpit.sessmore";
@@ -111,9 +115,9 @@ function sessionsHtml(d){
  var shown=open?all:all.slice(0,top),rest=all.slice(top),h=shown.map(row).join("");
  if(rest.length){
   var rt=rest.reduce(function(a,s){return a+tot(s)},0);
-  h+='<div class="wr-row"><a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a></div>';
+  h+='<div class="wr-row wr-span"><a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a></div>';
  }
- return'<div class="wr-group">'+h+'</div>';
+ return'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
 }
 /** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
 function workerGroups(ws,W){
@@ -130,14 +134,14 @@ function wrFolded(){try{return JSON.parse(localStorage.getItem(WR_FOLD_KEY)||"{}
 function workersHtml(d){
  if(!d.workers.length)return'<span class="dim">no worker sessions in this window</span>';
  var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},g=workerGroups(d.workers.slice(0,WORKER_ROWS),W),fold=wrFolded(),now=Date.now();
- return g.groups.map(function(grp){
+ return'<div class="wr-cq"><div class="wr-tbl">'+runHead("time")+g.groups.map(function(grp){
   var shut=!!fold[grp.name],head='<a href="#" class="wr-head" data-wrfold="'+esc(grp.name)+'" title="'+esc(grp.name+" · "+grp.runs.length+(grp.runs.length===1?" run":" runs")+" · "+fmt(grp.total)+" weighted tokens")+'"><span class="wr-car">'+(shut?"▸":"▾")+'</span><b>'+esc(grp.name)+'</b><span class="dim">'+grp.runs.length+(grp.runs.length===1?" run · ":" runs · ")+fmt(grp.total)+'</span></a>';
   if(shut)return'<div class="wr-group">'+head+'</div>';
   return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
    var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
    return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null});
-  }).join("")+'</div>'}).join("");
+  }).join("")+'</div>'}).join("")+'</div></div>';
 }
 /** Cache verdict by pause: one matrix, a row per model with data, a column per pause bucket, cell "hit% (n)" coloured by hitCls, an empty bucket a dim dot.
  *  Narrow card (pauseFit adds .pm-narrow): the n leaves the cell and stays in its tooltip. */

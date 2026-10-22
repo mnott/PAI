@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
 
 const sp = (req: number) => ({ requests: req, ttftP50: 800, ttftP90: 2000, writeTps: 40, readTps: 900 });
-const sess = (i: number) => ({ session: "sess" + i + "-abcdefgh", name: "name" + i, models: ["claude-opus", "gyro-m"], requests: 10 + i, input: 1000 * i, output: 500, cacheRead: 9000, cacheWrite: 100, errors: 0, busts: i % 2, hitRatio: 0.9, lastTs: Date.now() - i * 60_000, worker: null, verdict: null });
+const sess = (i: number) => ({ session: "sess" + i + "-abcdefgh", name: "name" + i, models: [i % 2 ? "claude-opus-4-long-model-name" : "m", "gyro-m"], requests: 10 + i, input: 1000 * i, output: 500, cacheRead: 9000, cacheWrite: 100, errors: 0, busts: i % 2, hitRatio: 0.9, lastTs: Date.now() - i * 60_000, worker: null, verdict: null });
 const wrk = (i: number, parent: string) => ({ ...sess(i), worker: "w" + i, workerParent: parent, workerStart: Date.now() - (i + 1) * 600_000, workerEnd: Date.now() - i * 600_000, workerProvider: "anthropic", verdict: i % 2 ? "ok" : "failed: x" });
 const data = (k = 1) => ({
   window: "1h", totals: { requests: 5000 * k, input: 9e6, output: 4e5, cacheWrite: 1e6, cacheRead: 9e7, errors: 10, hitRatio: 0.9 },
@@ -30,6 +30,9 @@ function info(id){var c=q(id);return{rows:c.querySelectorAll("tbody tr").length,
  cols:c.querySelectorAll("thead th").length,groups:c.querySelectorAll(".wr-group").length,wrows:c.querySelectorAll(".wr-row").length,folds:c.querySelectorAll("[data-wrfold]").length,more:c.querySelectorAll("[data-sessmore]").length,text:c.querySelector(".cbody").textContent.length}}
 var ids=["speed","pause","sessions","runs"],o={err:window.__err||null,boxes:ids.map(box).join("|")};
 ids.forEach(function(i){o[i]=info(i)});
+function xs(id){return Array.prototype.map.call(q(id).querySelectorAll(".wr-n"),function(e){return Math.round(e.getBoundingClientRect().left*10)/10})}
+function hd(id){var h=q(id).querySelector(".wr-hd");return{n:h?h.children.length:0,vis:h?Array.prototype.map.call(h.querySelectorAll(".wr-h"),function(e){return e.innerText}).join("|"):"",tips:h?Array.prototype.every.call(h.querySelectorAll(".wr-h"),function(e){return !!e.title}):false}}
+o.nx={sessions:xs("sessions"),runs:xs("runs")};o.hd={sessions:hd("sessions"),runs:hd("runs")};
 q("runs").querySelector("[data-wrfold]").click();o.afterFold=info("runs");o.foldSaved=localStorage.getItem("pai.cockpit.wrfold");
 q("sessions").querySelector("[data-sessmore]").click();o.afterMore=info("sessions");o.moreSaved=localStorage.getItem("pai.cockpit.sessmore");
 window.Win.update("data",window.WINPAY);o.boxes2=ids.map(box).join("|");o.speed2=info("speed");
@@ -88,6 +91,24 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
     expect(r.moreSaved).toBe("1");
     // a value-only payload moves no box
     expect(r.boxes2).toBe(r.boxes);
+    // one grid per card: every tokens cell starts at the same x despite long and short model names
+    for (const id of ["sessions", "runs"] as const) {
+      expect(r.nx[id].length).toBeGreaterThan(2);
+      expect(Math.max(...r.nx[id]) - Math.min(...r.nx[id])).toBeLessThanOrEqual(1);
+      expect(r.hd[id].n).toBe(8);
+      expect(r.hd[id].tips).toBe(true);
+    }
+    expect(r.hd.sessions.vis).toContain("session/run"); // wide card: full names
+  }, 120_000);
+
+  it("a narrow card abbreviates the header to one letter and keeps the columns aligned", async () => {
+    const r = await open("", 520);
+    expect(r.err).toBeNull();
+    for (const id of ["sessions", "runs"] as const) {
+      expect(r.hd[id].vis).toContain("S|M|T|");
+      expect(r.hd[id].tips).toBe(true);
+      expect(Math.max(...r.nx[id]) - Math.min(...r.nx[id])).toBeLessThanOrEqual(1);
+    }
   }, 120_000);
 });
 
@@ -103,12 +124,12 @@ describe("C1 guards: sessions fold", () => {
     const store: Record<string, string> = {};
     const localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
     const updates: string[] = [];
-    const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runRow", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
+    const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
     const lib = new Function("localStorage", `var U=arguments[1],SESSION_ROWS=50,wrFolded=function(){return{}},WR_FOLD_KEY="k",WCHX={},Win={update:function(){U.push("data")}},data={},fitTables=function(){};\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${fns}\n${WIN_TABLES_JS}\nreturn{html:sessionsHtml,wire:wtWire};`);
     const api = lib(localStorage, updates) as { html: (d: unknown) => string; wire: (c: unknown) => void };
     const sess = (i: number) => ({ session: `s${String(i).padStart(7, "0")}x`, name: `n${i}`, models: i === 0 ? ["m-a", "m-b", "m-c"] : ["m-a"], requests: 1, input: 10, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts: 0, errors: 0, lastTs: new Date().toISOString() });
     const d = { bySession: Array.from({ length: 12 }, (_, i) => sess(i)) };
-    const rows = (h: string) => (h.match(/class="wr-row"/g) ?? []).length;
+    const rows = (h: string) => (h.match(/class="wr-row[ "]/g) ?? []).length;
 
     const folded = api.html(d);
     expect(rows(folded)).toBe(11); // 10 sessions + the fold row
@@ -131,13 +152,13 @@ describe("C1 guards: sessions fold", () => {
 });
 
 describe("sessions by tokens compact rows", () => {
-  const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runRow", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
+  const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
   const lib = new Function("localStorage", `var SESSION_ROWS=50;\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${fns}\nreturn sessionsHtml;`);
   const html = lib({ getItem: () => null }) as (d: unknown) => string;
   const s = (i: number, input: number, errors: number, busts: number) => ({ session: `s${i}abcdefgh`, name: `n${i}`, models: ["m-a"], requests: 2, input, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts, errors, lastTs: new Date().toISOString() });
   it("one wr-row per session like a worker run: one line, detail in the title, chips only above zero, the largest bar at 100 percent", () => {
     const out = html({ bySession: [s(0, 1000, 0, 0), s(1, 500, 2, 1), s(2, 10, 0, 0)] });
-    expect((out.match(/class="wr-row"/g) ?? []).length).toBe(3);
+    expect((out.match(/class="wr-row[ "]/g) ?? []).length).toBe(3);
     expect(out).not.toContain("<table");
     for (const c of ["wr-dot", "wr-lab", "badge", "wr-bar", "wr-n", "wr-du"]) expect(out).toContain(`class="${c}`);
     expect((out.match(/chip warn/g) ?? []).length).toBe(1);
