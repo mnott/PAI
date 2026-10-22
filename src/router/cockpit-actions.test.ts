@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -686,5 +686,37 @@ describe("local.stop in-flight count from the scheduler", () => {
     expect(engineInflight(snap, "gyro-m")).toBe(4);
     expect(engineInflight(snap, "gyro-m#2")).toBe(0);
     expect(engineInflight(snap, "other")).toBe(0);
+  });
+});
+
+describe("memory run safety", () => {
+  it("spawnMemoryRun closes the log fd when spawn throws synchronously", async () => {
+    const { spawnMemoryRun } = await import("./cockpit-actions.js");
+    const home = mkdtempSync(join(tmpdir(), "mem-spawn-"));
+    const closed: number[] = [];
+    const io = {
+      spawn: (() => { throw new Error("spawn EAGAIN"); }) as never,
+      openSync: (() => 77) as never,
+      closeSync: ((fd: number) => { closed.push(fd); }) as never,
+    };
+    await expect(spawnMemoryRun("embed", "j1", home, io)).rejects.toThrow("spawn EAGAIN");
+    expect(closed).toEqual([77]);
+    rmSync(home, { recursive: true });
+  });
+
+  it("memory.stop does not signal a live pid that is not the recorded run (reused pid)", async () => {
+    const { runCockpitAction } = await import("./cockpit-actions.js");
+    const home = mkdtempSync(join(tmpdir(), "mem-stop-"));
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(
+      join(home, "state", "memory-run.json"),
+      JSON.stringify({ kind: "embed", pid: process.pid, by: "cockpit", startedAt: "", backlogStart: null, done: 0, updatedAt: "", jobId: "", pidStart: 1000 }),
+    );
+    const killed: number[] = [];
+    const r = await runCockpitAction({ action: "memory.stop" }, { home, ledger: join(home, "ledger.log"), killRun: (pid: number) => killed.push(pid) } as never);
+    expect(r.ok).toBe(false);
+    expect(r.message).toBe("nothing running");
+    expect(killed).toEqual([]);
+    rmSync(home, { recursive: true });
   });
 });
