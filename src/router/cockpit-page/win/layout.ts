@@ -12,7 +12,8 @@ export const WIN_GAP = 6;
 export const WIN_HEAD = 28;
 
 /** The container-query rules that promote a card to the next wider step when its container is too narrow for its span:
- *  a card of N units and least width m needs container width >= (m + gap) * 12 / N - gap; below that it takes the next step up, and so on to the full width.
+ *  a card of N units and least width m needs container width >= (m + gap) * 12 / N - gap; below that it takes the next step up, and so on to the full width
+ *  (2 units go straight to 4: six cards in a row become two lines of three).
  *  Pure CSS: no script measures anything. */
 export function winGridCss(gap: number = WIN_GAP): string {
   const need = (m: number, n: number): number => Math.ceil(((m + gap) * 12) / n - gap);
@@ -23,6 +24,7 @@ export function winGridCss(gap: number = WIN_GAP): string {
       let prev = n;
       for (let j = i + 1; j < WIN_STEPS.length; j++) {
         const s = WIN_STEPS[j];
+        if (n === 2 && s === 3) continue; // six cards of 2 units go 6, 3, 2 per line (balanced), not 6, 4, 3
         out.push(`@container (width<${need(m, prev)}px){main.win .card[data-w="${n}"][data-mw="${m}"]{grid-column:span ${s}}}`);
         prev = s;
       }
