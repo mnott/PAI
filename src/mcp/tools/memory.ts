@@ -2,8 +2,8 @@
  * MCP tool handlers: memory_search, memory_get, memory_outline
  */
 
-import { readFileSync, existsSync, statSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
+import { readFileSync, existsSync, statSync, realpathSync } from "node:fs";
+import { join, resolve, isAbsolute, sep } from "node:path";
 import { populateSlugs } from "../../memory/search.js";
 import { buildOutline, type OutlineNode } from "../../memory/chunker.js";
 import type { StorageBackend } from "../../storage/interface.js";
@@ -258,7 +258,7 @@ async function resolveProjectFile(
   const project = await registry.getProjectById(projectId);
   if (!project) return fail(`Project not found: ${projectSlug}`);
 
-  if (requestedPath.includes("..") || isAbsolute(requestedPath)) {
+  if (requestedPath.split(/[\\/]/).includes("..") || isAbsolute(requestedPath)) {
     return fail(
       `Invalid path: ${requestedPath} (must be a relative path within the project root, no ../ allowed)`,
     );
@@ -274,6 +274,13 @@ async function resolveProjectFile(
 
   if (!existsSync(fullPath)) {
     return fail(`File not found: ${requestedPath} (project: ${projectSlug})`);
+  }
+
+  // Symlinks can point outside the root: require containment of the real paths.
+  const realFull = realpathSync(fullPath);
+  const realRoot = realpathSync(project.root_path);
+  if (realFull !== realRoot && !realFull.startsWith(realRoot + sep)) {
+    return fail(`Path traversal blocked: ${requestedPath}`);
   }
 
   const stat = statSync(fullPath);
