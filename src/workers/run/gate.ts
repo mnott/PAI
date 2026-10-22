@@ -5,7 +5,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { isLocalProvider, type WorkerProvider, type WorkersConfig } from "../config.js";
+import { isLocalProvider, readWorkersCached, type WorkerProvider, type WorkersConfig } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
 import {
   httpModelsCheck,
@@ -30,6 +30,7 @@ import { committedFallThrough, fallThroughReason } from "../policy.js";
 import {
   admitCap,
   capacityGate,
+  capacityOf,
   queuedText,
   sessionScopeKey,
   type CapacityOpts,
@@ -355,6 +356,15 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
     logDir,
     self: { id: wid, provider: target.providerName },
     cap: admitCap(target.provider.maxConcurrent, target.provider.conversationSlots, isLocalProvider(target.provider.baseUrl)),
+    // a saved config change reaches a run that is already waiting
+    capOf: () => {
+      try {
+        const p = readWorkersCached().providers[target.providerName] ?? target.provider;
+        return admitCap(p.maxConcurrent, p.conversationSlots, isLocalProvider(p.baseUrl), capacityOf(config.capacity));
+      } catch {
+        return undefined;
+      }
+    },
     config: config.capacity,
     disabled: a.noQueue,
     priority: a.priority,

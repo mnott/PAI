@@ -211,11 +211,25 @@ function wmdModelActs(id){
    run:function(){var m=wmdModel(id);runIt("more","local.scale",{target:m.tier,count:m.instances.length+1})}}
  ];
 }
+/** "parallel N" with -/+ for a provider that has a concurrency cap; over the server's slot count a warning tooltip. */
+function wmdParallel(m){
+ if(!m.maxConcurrent||!m.provider)return"";
+ var over=m.slots&&m.maxConcurrent>m.slots,min=m.capMin||1,max=m.capMax||16;
+ return' <span class="num wmd-par'+(over?" warn":"")+'"'+(over?' title="above the server\'s '+m.slots+' slots: extra runs queue at the server"':' title="runs the provider admits in parallel"')+'>parallel '+m.maxConcurrent+(m.slots?" / "+m.slots+" slots":"")+
+  ' <button type="button" class="b wmd-par-b" data-p="'+esc(m.provider)+'" data-d="-1"'+(m.maxConcurrent<=min?" disabled":"")+' title="one parallel run fewer">\u2212</button>'+
+  '<button type="button" class="b wmd-par-b" data-p="'+esc(m.provider)+'" data-d="1"'+(m.maxConcurrent>=max?" disabled":"")+' title="one parallel run more">+</button></span>';
+}
 Win.registerType("model",{minW:300,minH:90,defaultH:120,
  mount:function(ctx){
   ctx.body.innerHTML='<div class="wmd"><div class="wmd-top" data-k="badges"></div><div class="dim wmd-n" data-k="note"></div><div class="wmd-i" data-k="inst"></div></div>';
   ctx.body.addEventListener("click",function(ev){
    var b=ev.target;
+   if(b&&b.classList&&b.classList.contains("wmd-par-b")){
+    b.disabled=true;
+    winHost().fetch("/cockpit/providers/"+encodeURIComponent(b.getAttribute("data-p"))+"/concurrency",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({delta:Number(b.getAttribute("data-d"))}),cache:"no-store"})
+     .then(function(){if(typeof loadModels==="function")loadModels()},function(){b.disabled=false});
+    return;
+   }
    if(!b||!b.classList||!b.classList.contains("wmd-stop"))return;
    WinA.winClick(b,ctx.id,"local.stop",{target:b.getAttribute("data-id"),value:b.getAttribute("data-busy")!=="0"?"confirm":undefined},winHost());
   });
@@ -224,7 +238,7 @@ Win.registerType("model",{minW:300,minH:90,defaultH:120,
   var m=wmdModel(ctx.id);
   if(!m){ctx.status("stale","no longer reported");return}
   var n=m.instances.length;
-  ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> '+(WMD&&WMD.inv&&WMD.inv.localDefaultTier===m.tier?'<span class="badge ok" title="the running model local work goes to (pai worker run --local)">local default</span> ':"")+'<span class="num" title="running instances / max instances">instances '+n+" / "+m.maxInstances+'</span> <span class="num" title="requests in flight / the provider maxConcurrent (none = no cap)">requests '+m.instances.reduce(function(a,x){return a+(x.inflight||0)},0)+(m.maxConcurrent?" / "+m.maxConcurrent:"")+"</span>");
+  ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> '+(WMD&&WMD.inv&&WMD.inv.localDefaultTier===m.tier?'<span class="badge ok" title="the running model local work goes to (pai worker run --local)">local default</span> ':"")+'<span class="num" title="running instances / max instances">instances '+n+" / "+m.maxInstances+'</span> <span class="num" title="requests in flight / the provider maxConcurrent (none = no cap)">requests '+m.instances.reduce(function(a,x){return a+(x.inflight||0)},0)+(m.maxConcurrent?" / "+m.maxConcurrent:"")+"</span>"+wmdParallel(m));
   ctx.html("note",(m.weightsBytes?'<span class="num" title="weight size on disk">'+gbm(m.weightsBytes/1048576)+" GB</span> · ":"")+'<span title="'+esc(m.file)+'">'+esc(String(m.file).replace(/^.*\//,""))+"</span> · :"+m.port);
   ctx.list("inst",m.instances,function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){
    var h='<span class="ok">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b wmd-stop" data-act="local.stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+' (asks to confirm when requests are in flight)">stop</button>';

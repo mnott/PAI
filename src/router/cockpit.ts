@@ -18,6 +18,8 @@ import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSt
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { weightsBytes } from "./cockpit-weights.js";
+import { setProviderCap } from "../workers/providers.js";
+import { cockpitLayout } from "./cockpit-layout.js";
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
@@ -812,7 +814,14 @@ export async function cockpitModelsPayload(): Promise<unknown> {
 function registryModelsNow(): RegistryModel[] {
   try {
     const providers = readWorkersSection().workers.providers;
-    return registryModels(readLocalConfig(workersYamlPath()), localInstanceRows(), weightsBytes, (t) => providers[t.provider]?.maxConcurrent);
+    const { concurrencyMin, concurrencyMax } = cockpitLayout();
+    const cfg = readLocalConfig(workersYamlPath());
+    return registryModels(cfg, localInstanceRows(), weightsBytes, (t) => providers[t.provider]?.maxConcurrent).map((m) => {
+      const provider = cfg.tiers[m.tier]?.provider;
+      const p = provider ? providers[provider] : undefined;
+      if (m.maxConcurrent === undefined || !provider || !p) return m;
+      return { ...m, provider, ...(p.conversationSlots !== undefined ? { slots: p.conversationSlots } : {}), capMin: concurrencyMin, capMax: concurrencyMax };
+    });
   } catch {
     return [];
   }
@@ -1344,6 +1353,26 @@ export function handleCockpit(
         send(409, "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message }));
       }
     }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message })));
+    return true;
+  }
+  const concurrency = req.method === "POST" ? /^\/cockpit\/providers\/([^/]+)\/concurrency$/.exec(url.pathname) : null;
+  if (concurrency) {
+    if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
+    const name = decodeURIComponent(concurrency[1]!);
+    readJsonObject(readBody, req).then((b) => {
+      const { delta } = b as { delta?: unknown };
+      if (delta !== 1 && delta !== -1) return send(400, "application/json", JSON.stringify({ ok: false, message: "delta must be +1 or -1" }));
+      try {
+        const cur = readWorkersSection().workers.providers[name]?.maxConcurrent;
+        if (cur === undefined) return send(404, "application/json", JSON.stringify({ ok: false, message: `provider "${name}" has no concurrency cap` }));
+        const { concurrencyMin, concurrencyMax } = cockpitLayout();
+        const next = Math.min(concurrencyMax, Math.max(concurrencyMin, cur + delta));
+        if (next !== cur) setProviderCap(name, next);
+        send(200, "application/json", JSON.stringify({ ok: true, provider: name, maxConcurrent: next, min: concurrencyMin, max: concurrencyMax, clamped: next !== cur + delta }));
+      } catch (e) {
+        send(409, "application/json", JSON.stringify({ ok: false, message: (e as Error).message }));
+      }
+    }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message })));
     return true;
   }
   if (req.method === "POST" && url.pathname === "/cockpit/action") {

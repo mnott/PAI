@@ -127,6 +127,8 @@ const SHIPPED = {
   jobPollMs: 5000,
   jobFirstDelayMs: 2000,
   jobMaxTries: 120,
+  concurrencyMin: 1,
+  concurrencyMax: 16,
   serverCounterStaleSecs: 60,
   // colour thresholds: at/above Bad colours red, at/above Warn amber, below Warn
   // green. gaugeWarnPct/gaugeBadPct are percentages of a limits gauge; hitWarn/
@@ -199,6 +201,9 @@ export interface CockpitLayout {
   jobPollMs: number;
   jobFirstDelayMs: number;
   jobMaxTries: number;
+  /** bounds of the parallel-runs stepper on a provider card (1..16). */
+  concurrencyMin: number;
+  concurrencyMax: number;
   /** a server prefix-cache counter older than this is marked. */
   serverCounterStaleSecs: number;
   /** colour thresholds: a limits gauge at/above gaugeBadPct reads red, at/above
@@ -290,6 +295,8 @@ export function cockpitLayout(): CockpitLayout {
     jobPollMs: num(s, "jobPollMs", SHIPPED.jobPollMs),
     jobFirstDelayMs: numZ(s, "jobFirstDelayMs", SHIPPED.jobFirstDelayMs),
     jobMaxTries: num(s, "jobMaxTries", SHIPPED.jobMaxTries),
+    concurrencyMin: num(s, "concurrencyMin", SHIPPED.concurrencyMin),
+    concurrencyMax: num(s, "concurrencyMax", SHIPPED.concurrencyMax),
     serverCounterStaleSecs: num(s, "serverCounterStaleSecs", SHIPPED.serverCounterStaleSecs),
     gaugeWarnPct: numZ(s, "gaugeWarnPct", SHIPPED.gaugeWarnPct),
     gaugeBadPct: numZ(s, "gaugeBadPct", SHIPPED.gaugeBadPct),

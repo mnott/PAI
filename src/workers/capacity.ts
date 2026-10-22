@@ -356,6 +356,8 @@ export interface CapacityOpts {
   scope?: { key: string; label: string; holds: (s: WorkerStatus) => boolean };
   /** Resolved cap; undefined = unlimited. */
   cap: number | undefined;
+  /** Re-read on every poll: a cap raised (or lowered) in the config while the run waits applies at once. Lowering never evicts a holder. */
+  capOf?: () => number | undefined;
   config: Partial<CapacityConfig>;
   disabled?: boolean;
   /** "front": wait ahead of the provider's other queued runs (--now). */
@@ -381,7 +383,8 @@ export interface CapacityResult {
 export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | null> {
   const cfg = capacityOf(o.config);
   if (o.disabled || !cfg.enabled || o.cap === undefined || o.cap <= 0) return null;
-  const { logDir, self, cap } = o;
+  const { logDir, self } = o;
+  let cap: number = o.cap;
   const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0), loadStatuses(dir)));
   const now = o.now ?? Date.now;
   const isAlive = o.isAlive ?? alive;
@@ -434,6 +437,8 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     o.onWait?.(info());
     for (let n = 0; ; n++) {
       await sleep(backoffMs(n));
+      const fresh = o.capOf?.();
+      if (fresh !== undefined && fresh > 0) cap = fresh;
       c = check();
       if (c.position === 1 && c.holding < cap) break;
       o.onWait?.(info());
