@@ -158,3 +158,30 @@ describe.skipIf(!CHROME)("header version", () => {
     }, 40000);
   }
 });
+
+const CENTERPROBE = `<script>setTimeout(function(){var h=document.querySelector("header"),hr=h.getBoundingClientRect(),t=document.getElementById("tabs").getBoundingClientRect(),v=document.getElementById("ver").getBoundingClientRect(),h1=document.querySelector("h1").getBoundingClientRect(),
+l=document.querySelector(".hl").getBoundingClientRect(),r=document.querySelector(".hr").getBoundingClientRect();
+document.body.setAttribute("data-r",JSON.stringify({off:Math.round(Math.abs((t.left+t.right)/2-(hr.left+hr.right)/2)),fits:l.width>=0&&r.width>=0,vgap:Math.round(v.left-h1.right),tabsGap:Math.round(t.left-l.right)}))},2000)</script>`;
+
+describe.skipIf(!CHROME)("range buttons are centred in the header", () => {
+  for (const width of [540, 1100]) {
+    it(`${width} px: range group centre within 12 px of the header centre; version clear of the title`, async () => {
+      pollBuild = "A";
+      const orig = server.listeners("request")[0] as (...a: unknown[]) => void;
+      server.removeAllListeners("request");
+      server.on("request", (req, res) => {
+        const w = res.end.bind(res);
+        res.end = ((b: string) => w(typeof b === "string" ? b.replace("</body>", CENTERPROBE + "</body>") : b)) as never;
+        orig(req, res);
+      });
+      const dom = await dumpDom(`${base}/page`, { width, height: 800, budgetMs: 6000 });
+      server.removeAllListeners("request");
+      server.on("request", orig);
+      const m = /data-r="([^"]*)"/.exec(dom);
+      if (!m) throw new Error("no probe result in dump");
+      const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+      expect(r.off).toBeLessThanOrEqual(12);
+      expect(r.vgap).toBeGreaterThanOrEqual(4);
+    }, 40000);
+  }
+});
