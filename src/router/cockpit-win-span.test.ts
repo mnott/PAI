@@ -85,7 +85,6 @@ describe.skipIf(!CHROME)("card width share (CDP)", () => {
     await setSp(b, load, "kpis.requests", 6);
     const W = await rootW(b);
     const w1 = await wOf(b, "kpis.requests");
-    console.log("READING " + JSON.stringify({ rootW: W, auto: w0, half: w1, row: await rowOf("kpis.requests") }));
     expect(Math.abs(w1 / W - 0.5)).toBeLessThan(0.03);
     await setSp(b, load, "kpis.requests", 12);
     expect(await rowOf("kpis.requests"), "full is alone in its row").toEqual(["kpis.requests"]);

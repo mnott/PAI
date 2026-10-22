@@ -42,7 +42,6 @@ describe.skipIf(!CHROME)("gauge card whitespace before dial shrink (CDP)", () =>
       await sleep(200);
       rows.push(await b.ev(`(function(){var c=document.querySelector('${sel}'),bd=c.querySelector(".cbody").getBoundingClientRect(),s=c.querySelector(".gauge svg").getBoundingClientRect(),r=c.querySelector(".gauge .s");return{h:${h},dial:Math.round(s.height),gap:Math.round(s.top-bd.top),resets:!!r&&getComputedStyle(r).display!=="none"}})()`));
     }
-    console.log("body-h | dial px | gap above | resets line\n" + rows.map((r) => `${r.h} | ${r.dial} | ${r.gap} | ${r.resets}`).join("\n"));
     for (const r of rows) expect(r.gap, `gap above dial at ${r.h}`).toBeLessThanOrEqual(6);
     for (let i = 1; i < rows.length; i++) expect(rows[i]!.dial).toBeLessThanOrEqual(rows[i - 1]!.dial);
     expect(rows[0]!.dial).toBeGreaterThanOrEqual(rows[1]!.dial);
@@ -61,7 +60,6 @@ describe.skipIf(!CHROME)("gauge card whitespace before dial shrink (CDP)", () =>
       await sleep(150);
       rows.push(await b.ev(`(function(){var c=document.querySelector('${sel}'),bd=c.querySelector(".cbody").getBoundingClientRect(),g=c.querySelector(".gauge"),s=g.querySelector("svg").getBoundingClientRect(),bot=s.bottom;Array.prototype.forEach.call(g.children,function(e){if(e.tagName!=="svg"&&getComputedStyle(e).display!=="none")bot=Math.max(bot,e.getBoundingClientRect().bottom)});return{h:${h},dial:Math.round(s.height),below:Math.round(bd.bottom-bot),resets:!!g.querySelector(".s")&&getComputedStyle(g.querySelector(".s")).display!=="none"}})()`));
     }
-    console.log(`natural ${Math.round(natural)}\nbody-h | dial px | empty below labels | resets\n` + rows.map((r) => `${r.h} | ${r.dial} | ${r.below} | ${r.resets}`).join("\n"));
     for (const r of rows) { expect(r.below, `empty below labels at ${r.h}`).toBeLessThanOrEqual(6); expect(r.resets, `resets line at ${r.h}`).toBe(true); }
   }, 120_000);
 
@@ -77,7 +75,6 @@ describe.skipIf(!CHROME)("gauge card whitespace before dial shrink (CDP)", () =>
       await sleep(200);
       rows.push(await b.ev(`(function(){var l=Array.prototype.slice.call(document.querySelectorAll('${sel} .gauge .s'));return{w:${w},h:${h},n:l.length,shown:l.filter(function(e){return e.offsetHeight>0}).length}})()`));
     }
-    console.log("card w | body h | .s count | visible\n" + rows.map((r) => `${r.w} | ${r.h} | ${r.n} | ${r.shown}`).join("\n"));
     for (const r of rows) { expect(r.n).toBeGreaterThan(0); expect(r.shown, `resets lines visible at ${r.w}x${r.h}`).toBe(r.n); }
   }, 120_000);
 });

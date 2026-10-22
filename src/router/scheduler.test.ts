@@ -406,7 +406,6 @@ describe("router scheduling", () => {
     await new Promise((r) => setTimeout(r, 10));
     reqs.push(t.call("short-B1", "sessB", "wb1"), t.call("short-B2", "sessB", "wb2"));
     await Promise.all(reqs);
-    console.log("service order:", t.served.join(" -> "));
     expect(t.maxActive()).toBe(1);
     // A1 runs first (arrived alone); its 9000-token prefill pushes A behind B
     expect(t.served).toEqual(["long-A1", "short-B1", "short-B2", "long-A2", "long-A3"]);

@@ -116,10 +116,8 @@ describe.skipIf(!CHROME)("cockpit touch, spec 4 (CDP touch events)", () => {
 
       // T5: tap on minimize toggles
       await top(); await sleep(300);
-      const mn = await rect('[data-card="kpis.input"] .cmin');
       await b.ev(`window.scrollTo(0,0)`);
       const m = await rect('[data-card="kpis.input"] .cmin');
-      void mn;
       const exp = () => b.ev<string>(`document.querySelector('[data-card="kpis.input"] .cmin').getAttribute("aria-expanded")`);
       expect(await exp()).toBe("true");
       await tch("touchStart", m.x, m.y); await sleep(60); await tch("touchEnd"); await sleep(500);

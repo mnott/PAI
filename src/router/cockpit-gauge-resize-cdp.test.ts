@@ -85,7 +85,6 @@ describe.skipIf(!CHROME)("gauge card handle drag (CDP)", () => {
           const t1 = Date.now();
           const alive = await Promise.race([b.ev<number>("1").then(() => true), sleep(1000).then(() => false)]);
           const m = await metrics();
-          console.log(JSON.stringify({ h: await b.ev<number>(`document.querySelector('${sel}').getBoundingClientRect().height`), w: await b.ev<number>(`document.querySelector('${sel}').getBoundingClientRect().width`), t: Math.round((lastPrint - t0) / 1000), n, ...m, ro: await b.ev<number>("window.__ro"), mv: await b.ev<number>("window.__mv"), ls: await b.ev<number>("window.__ls"), alive, pingMs: Date.now() - t1 }));
         }
       }
     } else {
@@ -95,7 +94,6 @@ describe.skipIf(!CHROME)("gauge card handle drag (CDP)", () => {
     await mouse("mouseReleased", x, y);
     readings.push(after);
     const ro = await b.ev<number>("window.__ro"), mv = await b.ev<number>("window.__mv"), ls = await b.ev<number>("window.__ls");
-    console.log(JSON.stringify({ cardH: await b.ev<number>(`document.querySelector('${sel}').getBoundingClientRect().height`), cardW: await b.ev<number>(`document.querySelector('${sel}').getBoundingClientRect().width`), steps: n, base: base0, after, ro, mv, ls, saves, layoutsPerStep: (after.layouts - base0.layouts) / n }));
     const t1 = Date.now();
     expect(await b.ev<number>("1+1")).toBe(2);
     expect(Date.now() - t1).toBeLessThan(1000);
