@@ -133,6 +133,7 @@ function buildCard(spec){
  e.appendChild(head);e.appendChild(body);
  setTitle(c,spec.title);
  paintActions(c);
+ min.title="minimize "+c.titleText;min.setAttribute("aria-label",min.title);
  return c;
 }
 function isMin(id){var s=W.st[id];return!!s&&s.min===1}

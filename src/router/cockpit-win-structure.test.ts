@@ -34,9 +34,12 @@ const queue = () => ({
 const PROBE = `<script>setTimeout(function(){
 var cards=document.querySelectorAll("#win-root .card"),heads=[],bad=[],text=[];
 Array.prototype.forEach.call(document.querySelectorAll("#win-root .chead"),function(h){heads.push(Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]+(k.className.indexOf("cact")>=0?":act":k.className.indexOf("cmin")>=0?":min":"")}).join(","))});
-Array.prototype.forEach.call(document.querySelectorAll("#win-root .card button"),function(b){
+Array.prototype.forEach.call(document.querySelectorAll("#win-root .card button,#win-root .card input,#win-root .card textarea,#win-root .card select"),function(b){
+ if(b.closest(".win-info"))return;
+ var isBtn=b.tagName==="BUTTON";
  var c=b.className.indexOf("cgrip")>=0||b.className.indexOf("cmin")>=0||b.hasAttribute("data-act")||b.hasAttribute("data-q")||!!b.closest(".wctl")||(b.disabled&&b.title);
- if(!c)bad.push((b.closest(".card").getAttribute("data-card"))+"|"+b.className+"|"+b.textContent.slice(0,20));
+ if(isBtn&&!c)bad.push((b.closest(".card").getAttribute("data-card"))+"|"+b.className+"|"+b.textContent.slice(0,20));
+ if(!(b.title||b.getAttribute("aria-label")))bad.push((b.closest(".card").getAttribute("data-card"))+"|"+b.tagName+"."+b.className+"|no title or aria-label");
 });
 var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null);
 for(var n;n=w.nextNode();){

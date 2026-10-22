@@ -8,7 +8,7 @@
 
 export const WIN_ROUTING_JS = String.raw`var RT_INFO="Per delegation tier (workers.yaml tiers) the models in the order they serve: the first available one, then the fallback order. A local model that is not running is skipped, not started. Pick a selector per tier; it is written to workers.yaml like pai worker route set.";
 var RT_NONE="a tier needs at least one entry";
-function rtChips(cs,rm){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+(rm?'<button type="button" class="rtrm" data-entry="'+esc(c.entry)+'" title="Remove this entry from the tier" aria-label="remove '+esc(c.label)+'">×</button>':"")+'</span>'}).join("")}
+function rtChips(cs,rm){return cs.map(function(c,i){return(i?'<span class="rtarrow">→</span>':"")+'<span class="rtchip '+esc(c.state)+'" title="'+esc(c.why||c.state)+'">'+esc(c.label)+(rm?'<button type="button" class="rtrm" data-act="route.set" data-entry="'+esc(c.entry)+'" title="remove '+esc(c.label)+' from this tier" aria-label="remove '+esc(c.label)+' from this tier">×</button>':"")+'</span>'}).join("")}
 function rtTip(row){return[row.description,row.note].filter(Boolean).join(" — ")}
 function rtRowOf(d,tier){var rs=(d&&d.routing&&d.routing.rows)||[],i;for(i=0;i<rs.length;i++)if(rs[i].id===tier)return rs[i];return null}
 /** route.set for one tier with the given entry list; the result lands in the row card's status. */

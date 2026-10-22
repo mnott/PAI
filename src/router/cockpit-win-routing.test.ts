@@ -47,12 +47,15 @@ var o={err:window.__err||null,flow:txt("routing.flow"),impl:txt("routing.impleme
 if(!card("routing.review")){document.body.setAttribute("data-r",JSON.stringify(o));return}
 var rm=card("routing.review").querySelector(".rtrm");if(rm)rm.click();
 o.refused=st("routing.review");
+var rmi=card("routing.implement").querySelector(".rtrm");o.rmAct=rmi.getAttribute("data-act");o.rmTitle=rmi.title;rmi.click();
+setTimeout(function(){o.rmAfter=st("routing.implement");
 var b=card("routing.implement").querySelector("button.wsel-btn");
 b.click();
 var pop=document.querySelector(".wpop");o.popBg=pop?getComputedStyle(pop).backgroundColor:null;
 var opts=pop?pop.querySelectorAll(".wopt"):[];o.opts=Array.prototype.map.call(opts,function(x){return x.textContent});
 if(opts[2])opts[2].dispatchEvent(new MouseEvent("click",{bubbles:true}));
 setTimeout(function(){o.after=st("routing.implement");document.body.setAttribute("data-r",JSON.stringify(o))},800);
+},400);
 },1500)</script>`;
 
 let server: Server;
@@ -122,9 +125,18 @@ describe.skipIf(!CHROME)("B6 routing on the win runtime", () => {
     const r = await open("", 1400);
     expect(r.refused).toBe("a tier needs at least one entry");
     expect(posts.filter((p) => p.target === "review")).toEqual([]);
-    const p = posts.find((x) => x.action === "route.set" && x.target === "implement");
+    const p = posts.find((x) => x.action === "route.set" && x.target === "implement" && (x.models as string[]).length > 1);
     expect(p).toEqual({ action: "route.set", target: "implement", models: ["tag:fast", "local", "glm"] });
     expect(r.after).toBe("route set");
+  }, 120_000);
+
+  it("the x on a chip is a registered action: data-act route.set, a title, and a click posts the tier minus that entry and shows the status", async () => {
+    posts.length = 0;
+    const r = await open("", 1400);
+    expect(r.rmAct).toBe("route.set");
+    expect(r.rmTitle).toBe("remove local from this tier");
+    expect(posts.find((x) => x.action === "route.set" && x.target === "implement" && (x.models as string[]).length === 1)).toEqual({ action: "route.set", target: "implement", models: ["glm"] });
+    expect(r.rmAfter).toBe("route set");
   }, 120_000);
 
 });

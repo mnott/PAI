@@ -123,7 +123,7 @@ function wmdNote(e){
  return e.users.length?esc(sub)+(sub?" · ":"")+"used by "+esc(wmdPurpose(e.users,e.consumers)):esc(sub);
 }
 function wmdInst(i){
- var h='<span class="'+(i.state==="failed"?"bad":i.state==="ready"?"ok":"warn")+'">'+esc(i.id)+'</span> <span class="dim">'+esc(i.state)+" · :"+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+" in flight"+(i.error?" · "+esc(i.error):"")+'</span> <button type="button" class="b wmd-stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'">stop</button>';
+ var h='<span class="'+(i.state==="failed"?"bad":i.state==="ready"?"ok":"warn")+'">'+esc(i.id)+'</span> <span class="dim">'+esc(i.state)+" · :"+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+" in flight"+(i.error?" · "+esc(i.error):"")+'</span> <button type="button" class="b wmd-stop" data-act="local.stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+' (asks to confirm when requests are in flight)">stop</button>';
  return h;
 }
 /** The header actions of a runtime card: [id, label, title, enabled(e) -> true | reason, run(e, el)]. */
@@ -219,7 +219,7 @@ Win.registerType("model",{minW:300,minH:90,defaultH:120,
   ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> <span class="num" title="running instances (max '+m.maxInstances+')">'+n+" / "+m.maxInstances+"</span>");
   ctx.html("note",'<span title="'+esc(m.file)+'">'+esc(String(m.file).replace(/^.*\//,""))+"</span> · :"+m.port);
   ctx.list("inst",m.instances,function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){
-   var h='<span class="ok">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b wmd-stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'">stop</button>';
+   var h='<span class="ok">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b wmd-stop" data-act="local.stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+' (asks to confirm when requests are in flight)">stop</button>';
    if(d.__h!==h){d.innerHTML=h;d.__h=h}
   });
  }});

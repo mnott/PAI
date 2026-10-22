@@ -50,6 +50,7 @@ var o={err:window.__err||null,ids:ids,ep:txt("models.endpoints"),run:txt("models
 if(!ids.length){document.body.setAttribute("data-r",JSON.stringify(o));return}
 var sa=card("models.rt:strata2/iq3s.gguf").querySelector('[data-act="start"]');o.startDisabled=sa.disabled;
 card("models.rt:strata/gyro-m.gguf").querySelector('[data-act="more"]').click();
+var sb=card("models.rt:strata/gyro-m.gguf").querySelector(".wmd-stop");o.stopAct=sb.getAttribute("data-act");o.stopTitle=sb.title;sb.click();o.stopArmed=sb.textContent;sb.click();
 var en=card("models.endpoints").querySelector(".wmd-en");if(en)en.click();
 setTimeout(function(){o.after=st("models.rt:strata/gyro-m.gguf");document.body.setAttribute("data-r",JSON.stringify(o))},800);
 },1500)</script>`;
@@ -126,6 +127,15 @@ describe.skipIf(!CHROME)("B8 models on the win runtime", () => {
     expect(posts.find((p) => p.action === "local.scale")).toEqual({ action: "local.scale", target: "gyro-m", count: 2 });
     expect(posts.find((p) => p.action === "endpoint.enable")).toEqual({ action: "endpoint.enable", target: "ep1", value: "off" });
     expect(r.after).toBe("done");
+  }, 120_000);
+
+  it("the instance stop is a registered action: data-act local.stop, a title with the id, the first click arms, the second posts local.stop for the instance", async () => {
+    posts.length = 0;
+    const r = await open("", 1400);
+    expect(r.stopAct).toBe("local.stop");
+    expect(r.stopTitle).toBe("stop instance gyro-m-1 (asks to confirm when requests are in flight)");
+    expect(r.stopArmed).toBe("stop - click again");
+    expect(posts.find((p) => p.action === "local.stop")).toEqual({ action: "local.stop", target: "gyro-m-1" });
   }, 120_000);
 
 });
