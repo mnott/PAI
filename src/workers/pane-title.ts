@@ -15,8 +15,6 @@
 import { execFileSync } from "node:child_process";
 import { panePolicy } from "./pane-policy.js";
 
-/** Titles cap at this many characters (the title bar cannot show more). */
-
 /**
  * Title text safe for the terminal: control characters (including ESC and BEL,
  * which would break out of an OSC sequence) and the double quote are removed,
