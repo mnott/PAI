@@ -20,7 +20,8 @@
  *  - Always preserves existing frontmatter key order
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { basename, dirname, join } from "node:path";
 import type { StorageBackend } from "../storage/interface.js";
 
@@ -380,14 +381,14 @@ function addFrontmatterLink(
     const updated = addToYamlKey(yamlBlock, key, wikilinkText);
     if (updated === yamlBlock) return false; // idempotent — nothing changed
     const newContent = reconstructFile(updated, body);
-    writeFileSync(absPath, newContent, "utf8");
+    writeFileAtomic(absPath, newContent);
     return true;
   }
 
   // No frontmatter — add a new one
   const newYaml = `${key}:\n  - "${wikilinkText}"`;
   const newContent = reconstructFile(newYaml, content);
-  writeFileSync(absPath, newContent, "utf8");
+  writeFileAtomic(absPath, newContent);
   return true;
 }
 
@@ -413,7 +414,7 @@ function replaceFrontmatterText(
 
   const updatedYaml = yamlBlock.split(oldText).join(newText);
   const newContent = reconstructFile(updatedYaml, body);
-  writeFileSync(absPath, newContent, "utf8");
+  writeFileAtomic(absPath, newContent);
   return true;
 }
 
