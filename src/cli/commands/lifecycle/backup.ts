@@ -24,7 +24,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../../daemon/config.js";
 import { backupStorageFiles } from "../../../storage/backup.js";
-import { backupPostgres, resolveBackupTarget, type PgRunner } from "./backup-postgres.js";
+import { backupPostgres, resolveBackupTarget, writeBackupMeta, type PgRunner } from "./backup-postgres.js";
 import { defaultPaiHomeDir, paiHomePath, resolvePaiFile } from "../../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
     try {
       const target = resolveBackupTarget(config.postgres);
       console.log(dim(`  Database: ${target.database}`));
-      backupPostgres(target, sqlDest, dockerRunner);
+      writeBackupMeta(backupDir, backupPostgres(target, sqlDest, dockerRunner));
       results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok (verified)") });
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
