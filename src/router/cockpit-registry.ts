@@ -21,6 +21,7 @@
 
 import type http from "node:http";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { LineCounter, parseDocument, isMap, isScalar, type Document } from "yaml";
@@ -325,7 +326,7 @@ export function saveRegistry(yamlText: string, baseHash: string, ctx: RegistryCt
     if (existsSync(ctx.yamlPath)) copyFileSync(ctx.yamlPath, backupPath);
     else writeFileSync(backupPath, "");
     step(4);
-    writeFileSync(tmp, yamlText);
+    writeFileSync(tmp, yamlText, existsSync(ctx.yamlPath) ? { mode: statSync(ctx.yamlPath).mode & 0o777 } : {});
     step(5);
     const back = readFileSync(tmp, "utf8");
     const again = validateRegistry(back, ctx, cur).errors;
@@ -492,12 +493,22 @@ export function withExplicitLifecycle(yamlText: string): string {
   return out;
 }
 
+/** True when no process listens on the loopback TCP port (lsof; free when lsof is missing). */
+export function lsofPortFree(port: number): boolean {
+  try {
+    return execFileSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "";
+  } catch {
+    return true; // lsof exits 1 when nothing listens
+  }
+}
+
 export function defaultRegistryCtx(yamlPath: string, ledger?: string, logDir?: string): RegistryCtx {
   return {
     yamlPath,
     backupDir: join(dirname(yamlPath), "workers-backups"),
     explicitEnabled: true,
     explicitLifecycle: true,
+    portFree: lsofPortFree,
     ledger,
     ...(logDir ? { running: () => readLiveInstances(logDir) } : {}),
   };

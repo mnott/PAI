@@ -4,16 +4,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, statSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
+import net from "node:net";
 import { parse } from "yaml";
 import {
   deleteBackup,
   diffBackup,
   diffLines,
   labelBackup,
+  defaultRegistryCtx,
+  lsofPortFree,
   withExplicitEnabled,
   duplicateEntry,
   handleRegistryRoute,
@@ -201,6 +204,12 @@ describe("diff", () => {
 
 describe("saveRegistry", () => {
   const next = () => edit("port: 8002", "port: 8009");
+
+  it("keeps the registry file mode (0600 stays 0600)", () => {
+    chmodSync(ctx.yamlPath, 0o600);
+    expect(saveRegistry(next(), hashText(BASE), ctx).ok).toBe(true);
+    expect(statSync(ctx.yamlPath).mode & 0o777).toBe(0o600);
+  });
 
   it("replaces the file and creates exactly one backup holding the old bytes", () => {
     const r = saveRegistry(next(), hashText(BASE), ctx);
@@ -447,5 +456,20 @@ describe("validate cost", () => {
     const ms = performance.now() - t0;
     expect(r.ok).toBe(true);
     expect(ms).toBeLessThan(100);
+  });
+});
+
+describe("production port probe", () => {
+  it("defaultRegistryCtx wires lsofPortFree, which sees a listening port", async () => {
+    expect(defaultRegistryCtx("/x/workers.yaml").portFree).toBe(lsofPortFree);
+    const srv = net.createServer();
+    await new Promise<void>((ok) => srv.listen(0, "127.0.0.1", ok));
+    const port = (srv.address() as net.AddressInfo).port;
+    try {
+      expect(lsofPortFree(port)).toBe(false);
+    } finally {
+      await new Promise((ok) => srv.close(ok));
+    }
+    expect(lsofPortFree(port)).toBe(true);
   });
 });
