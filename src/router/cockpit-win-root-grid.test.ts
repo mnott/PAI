@@ -70,7 +70,7 @@ setTimeout(function(){
   var b=c.getBoundingClientRect(),p=c.parentElement&&c.parentElement.closest(".card"),pb=p?p.getBoundingClientRect():null,id=c.getAttribute("data-card");
   out.push({id:id,p:p?p.getAttribute("data-card"):null,x:Math.round(b.left),y:Math.round(b.top+scrollY),w:Math.round(b.width),h:Math.round(b.height),chip:c.classList.contains("chip"),
    pr:pb?{x:Math.round(pb.left),y:Math.round(pb.top+scrollY),w:Math.round(pb.width),h:Math.round(pb.height)}:null,tr:getComputedStyle(c).transform,
-   trunc:c.classList.contains("chip")?(function(){var t=c.querySelector("*")||c;return c.scrollWidth>c.clientWidth+1})():false});
+   trunc:c.classList.contains("chip")?(function(){var t=c.querySelector(".ctitle");return c.scrollWidth>c.clientWidth+1||(!!t&&t.scrollWidth>t.clientWidth+1)})():false});
  });
  document.body.setAttribute("data-r",JSON.stringify(out));
  document.body.setAttribute("data-e",String(window.__err)+" "+location.search+" "+JSON.stringify(Win.state().kids["tokens-group"]).slice(0,300));
@@ -147,6 +147,12 @@ describe.skipIf(!CHROME)("root grid readings", () => {
       const rows = await read(width);
       if (process.env.PAI_GRID) console.log(`${width} px\n` + rows.map((r) => `${r.id}\tp=${r.p}\t${r.x},${r.y} ${r.w}x${r.h}\ttr=${r.tr}${r.chip ? "\tchip trunc=" + r.trunc : ""}`).join("\n"));
       expect(overlaps(rows)).toEqual([]);
+    }, 120_000);
+    it(`${width} px: dock chips show their full title when the dock has room`, async () => {
+      const rows = await read(width, "?op=1");
+      const chips = rows.filter((r) => r.chip && r.pr && r.w < r.pr.w - 24);
+      expect(chips.length).toBeGreaterThan(0);
+      expect(chips.filter((r) => r.trunc).map((r) => r.id)).toEqual([]);
     }, 120_000);
     it(`${width} px: a group has >= 6 px padding around its lines and dock; cards of one line share its height`, async () => {
       const rows = await read(width);

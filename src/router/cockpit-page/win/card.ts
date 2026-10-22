@@ -74,7 +74,7 @@ function mkCtx(c){
 }
 function setTitle(c,s){
  s=String(s==null?"":s);
- if(c.titleText===s)return;c.tw=undefined;
+ if(c.titleText===s)return;c.tw=undefined;c.cw=undefined;
  c.titleText=s;
  c.tt.textContent=s;c.title.setAttribute("title",s);
  c.el.setAttribute("aria-label",s);
@@ -171,12 +171,13 @@ function dockOf(){
  }
  return o;
 }
-/** A chip's least width: its title plus the restore button. */
-function chipWs(){var o={},id;for(id in W.cards)if(isMin(id))o[id]=Math.min(240,Math.ceil((W.cards[id].titleText||"").length*6.6)+52);return o}
+/** A chip's natural width: its measured title plus the restore button (c.cw), until measured an estimate. The layout caps it at the dock width. */
+function chipWs(){var o={},id,c;for(id in W.cards)if(isMin(id)){c=W.cards[id];o[id]=c.cw!==undefined?c.cw:Math.ceil((c.titleText||"").length*7.5)+52}return o}
 function paintMin(c){
  var m=isMin(c.id),r=W.rects&&W.rects[c.id];
  c.el.classList.toggle("min",m);
  c.el.classList.toggle("chip",m&&!!r&&!!r.chip);
+ if(!(m&&r&&r.chip))c.cw=undefined;
  c.el.classList.toggle("nohd",!!r&&!!r.nohd);
  c.min.textContent=m?"+":"–";
  c.min.setAttribute("aria-expanded",m?"false":"true");
@@ -192,6 +193,7 @@ function measureTitles(){
  var id,c,n=0;
  for(id in W.cards){
   c=W.cards[id];
+  if(c.cw===undefined&&c.mounted&&c.el.classList.contains("chip")&&c.title.clientWidth>0){c.cw=Math.ceil(titleText(c)+c.head.clientWidth-c.title.clientWidth)+2;n++}
   if(c.tw===undefined&&c.mounted&&c.head.clientWidth>0&&c.title.clientWidth>0){c.tw=Math.ceil(titleText(c)+c.head.clientWidth-c.title.clientWidth-(c.status.offsetWidth?c.status.offsetWidth+6:0));n++}
  }
  return n;
