@@ -88,17 +88,45 @@ export function writeRate(r: UsageRow, local = true): number | null {
   return r.output_tokens! / (ms / 1000);
 }
 
+/** Generation windows shorter than this are bursts (whole reply in one chunk), not decode time. */
+export const MIN_GEN_MS = 50;
+/** Fewer output tokens than this are excluded from the aggregate output rate. */
+export const MIN_OUTPUT_TOKENS = 8;
+/** Output rates above these are measurement artefacts and dropped (env PAI_MAX_LOCAL_OUTPUT_TPS / PAI_MAX_CLOUD_OUTPUT_TPS override). */
+export const MAX_PLAUSIBLE_LOCAL_OUTPUT_TPS = 2000;
+export const MAX_PLAUSIBLE_CLOUD_OUTPUT_TPS = 1000;
+let outCapLogged = false;
+
+/** Output tok/s: median per-row rate over rows with a real generation window (existing median semantics kept). */
+export function outputRate(rows: UsageRow[], local = true): number | null {
+  const max = (Number(process.env[local ? "PAI_MAX_LOCAL_OUTPUT_TPS" : "PAI_MAX_CLOUD_OUTPUT_TPS"]) || (local ? MAX_PLAUSIBLE_LOCAL_OUTPUT_TPS : MAX_PLAUSIBLE_CLOUD_OUTPUT_TPS));
+  const rates: number[] = [];
+  for (const r of rows) {
+    const g = local ? r.decodeMs : r.ttftMs === undefined ? undefined : r.ms;
+    const n = r.output_tokens ?? 0;
+    if (g === undefined || g < MIN_GEN_MS || n < MIN_OUTPUT_TOKENS) continue;
+    if (n / (g / 1000) > max) {
+      if (!outCapLogged) {
+        outCapLogged = true;
+        console.warn(`[speed] dropping output rows above ${max} tok/s (implausible)`);
+      }
+      continue;
+    }
+    rates.push(n / (g / 1000));
+  }
+  return percentile(rates, 0.5);
+}
+
 const round = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
 
 function stats(rows: UsageRow[], local: boolean): SpeedStats {
   const ttft = rows.map((r) => r.ttftMs!);
-  const writes = rows.map((r) => writeRate(r, local)).filter((v): v is number => v !== null);
   return {
     requests: rows.length,
     ttftP50: round(percentile(ttft, 0.5)),
     ttftP90: round(percentile(ttft, 0.9)),
     readTps: round(prefillRate(rows, local)),
-    writeTps: round(percentile(writes, 0.5)),
+    writeTps: round(outputRate(rows, local)),
   };
 }
 

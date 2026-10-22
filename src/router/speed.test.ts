@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSpeed, percentile, prefillRate, writeRate } from "./speed.js";
+import { buildSpeed, percentile, outputRate, prefillRate, writeRate } from "./speed.js";
 import { UsageSniffer, type UsageRow } from "./usage.js";
 
 const NOW = Date.parse("2026-10-17T12:00:00Z");
@@ -62,6 +62,18 @@ describe("speed", () => {
     const out = buildSpeed(rows, NOW, (m) => m, (p) => p === "loc");
     expect(out.find((r) => r.provider === "loc")).toMatchObject({ local: true, h24: { writeTps: 100 } });
     expect(out.find((r) => r.provider === "cl")).toMatchObject({ local: false, h24: { writeTps: 25 } });
+  });
+  it("output rate is the median of real-window rows, excluding ~0 ms and tiny rows, dropping implausible ones", () => {
+    const burst = row({ ttftMs: 100, output_tokens: 138, decodeMs: 1, ms: 101 });
+    const tiny = row({ ttftMs: 100, output_tokens: 4, decodeMs: 500, ms: 600 });
+    const a = row({ ttftMs: 100, output_tokens: 100, decodeMs: 1000, ms: 1100 });
+    const b = row({ ttftMs: 100, output_tokens: 300, decodeMs: 2000, ms: 2100 });
+    expect(outputRate([burst, tiny])).toBeNull();
+    expect(outputRate([burst, tiny, a, b])).toBe(150);
+    const fast = row({ ttftMs: 100, output_tokens: 3000, decodeMs: 1000, ms: 1100 });
+    expect(outputRate([fast, a])).toBe(100);
+    expect(outputRate([fast], false)).toBeNull();
+    expect(buildSpeed([burst, a, b], NOW, (m) => m, () => true)[0]!.h24.writeTps).toBe(150);
   });
   it("sniffer stamps the first content delta, not message_start", () => {
     const sn = new UsageSniffer("text/event-stream");
