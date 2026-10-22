@@ -93,8 +93,14 @@ describe("evaluateRules", () => {
     expect(evaluateRules(rules, "Bash", "echo x")?.rule.id).toBe("w");
   });
 
-  it("tests content with quote marks removed", () => {
+  it("drops quoted strings unless the rule is quoted: true", () => {
     const rules = [rule({ id: "b", match: "rm -rf /" })];
+    expect(evaluateRules(rules, "Bash", 'echo "rm -rf /"')).toBeNull();
+    expect(evaluateRules(rules, "Bash", 'rm -rf "/"')).toBeNull();
+  });
+
+  it("tests a quoted: true rule with quote marks removed", () => {
+    const rules = [rule({ id: "b", match: "rm -rf /", quoted: true })];
     expect(evaluateRules(rules, "Bash", 'rm -rf "/"')?.rule.id).toBe("b");
   });
 

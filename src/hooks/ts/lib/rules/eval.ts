@@ -2,8 +2,9 @@
  * eval.ts — run rules against a tool call.
  *
  * Order is fixed: the first block hit wins, else the first confirm hit, else
- * the first warn hit. Text inside quotes is not a command, so every rule also
- * tests the content with quote marks removed (as detectAttack did before);
+ * the first warn hit. Text inside quotes is not a command, so rules test the
+ * content with quoted strings removed; rules marked `quoted: true` also test
+ * it with only the quote marks removed (as detectAttack did before);
  * confirm rules additionally test per-segment, so a quoted `git push -f` in a
  * commit message stays inert while a quoted `+main` refspec still counts.
  */
@@ -55,6 +56,7 @@ function toolMatches(rule: Rule, toolName: string): boolean {
 /** First block hit, else first confirm hit, else first warn hit; null when none. */
 export function evaluateRules(rules: Rule[], toolName: string, content: string): RuleHit | null {
   const unquoted = content.replace(/["']/g, "");
+  const bare = dropQuoted(content);
   const segments = splitSegments(content);
   for (const severity of ["block", "confirm", "warn"] as const) {
     for (const rule of rules) {
@@ -64,7 +66,7 @@ export function evaluateRules(rules: Rule[], toolName: string, content: string):
       const hit =
         severity === "confirm"
           ? segments.some((seg) => gitPatternHit(re, seg))
-          : re.test(content) || re.test(unquoted);
+          : re.test(bare) || (rule.quoted === true && (re.test(content) || re.test(unquoted)));
       if (hit) return { rule };
     }
   }
