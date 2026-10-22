@@ -156,17 +156,6 @@ export function isCockpitPath(path: string): boolean {
 }
 
 /**
- * The cockpit write actions (POST): the queue pull-forward endpoints. They
- * carry the same token auth as the GET routes — the wrapper below checks
- * every /cockpit/* path whatever the method.
- */
-export const COCKPIT_WRITE_PATHS = ["/cockpit/queue/next", "/cockpit/queue/front", "/cockpit/queue/up", "/cockpit/queue/move"] as const;
-
-export function isCockpitWrite(path: string): boolean {
-  return (COCKPIT_WRITE_PATHS as readonly string[]).includes(path);
-}
-
-/**
  * Wrap the cockpit handler with the token check for non-loopback binds. The
  * first token-authenticated response sets an HttpOnly cookie so the page's
  * relative fetches (/cockpit/data, ...) authenticate without carrying the
@@ -192,7 +181,7 @@ export function withCockpitToken(token: string, inner: CockpitHandler): CockpitH
 
 /**
  * The address to show a human for a bind address: the tailnet hostname
- * (macbook-mn style, from `tailscale status --json`) when the address is the
+ * (MagicDNS name, from `tailscale status --json`) when the address is the
  * machine's own Tailscale IP, else the address itself.
  */
 export async function displayHost(addr: string): Promise<string> {

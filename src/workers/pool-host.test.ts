@@ -623,3 +623,40 @@ describe("pool host HTTP", () => {
     expect(existsSync(statusPath(h.host.logDir, "w-file"))).toBe(true);
   });
 });
+
+describe("pool host HTTP guard", () => {
+  function raw(port: number, path: string, headers: Record<string, string>, body = "{}"): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const req = httpRequest({ host: "127.0.0.1", port, path, method: "POST", headers: { "content-length": Buffer.byteLength(body), ...headers } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      });
+      req.on("error", reject);
+      req.end(body);
+    });
+  }
+
+  it("refuses cross-origin, rebound-Host and text/plain POSTs; /task and /shutdown stay unreached", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    await new Promise<void>((resolve) => h.host.server.listen(0, "127.0.0.1", resolve));
+    const port = (h.host.server.address() as { port: number }).port;
+    const body = JSON.stringify(task({ id: "w-evil", prompt: "attacker prompt" }));
+    const json = { "content-type": "application/json" };
+    for (const path of ["/task", "/claim", "/shutdown"]) {
+      expect([path, await raw(port, path, { ...json, origin: "https://evil.example" }, body)]).toEqual([path, 403]);
+      expect([path, await raw(port, path, { ...json, host: `evil.example:${port}`, origin: `http://evil.example:${port}` }, body)]).toEqual([path, 403]);
+      expect([path, await raw(port, path, { ...json, host: `evil.example:${port}` }, body)]).toEqual([path, 403]);
+    }
+    expect(await raw(port, "/task", { "content-type": "text/plain" }, body)).toBe(415);
+    expect(await raw(port, "/claim", {}, body)).toBe(415);
+    expect(h.slots.length).toBe(0);
+    expect(h.host.server.listening).toBe(true);
+    // loopback, no Origin, JSON: served
+    const out = await postTaskToPool(port, task({ id: "w-good" }), 10_000);
+    expect("ok" in out && out.ok.pooled).toBe(true);
+    // same-origin Origin passes the guard too
+    expect(await raw(port, "/task", { ...json, origin: `http://127.0.0.1:${port}` }, "not json")).toBe(400);
+    expect(await raw(port, "/shutdown", {})).toBe(200);
+  });
+});

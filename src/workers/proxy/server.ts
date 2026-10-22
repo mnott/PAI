@@ -13,6 +13,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { refuseUnlessLoopback } from "../../utils/loopback-guard.js";
 import { createServer, type Server } from "node:http";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { connect } from "node:net";
@@ -64,6 +65,7 @@ export function createProxyServer(opts: ProxyServerOptions = {}): Server {
   const resolveProvider = opts.resolveProvider ?? configProviders;
   return createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://${HOST}`);
+    if (refuseUnlessLoopback(req, res, { requireJson: true })) return;
     if (req.method === "GET" && url.pathname === "/healthz") {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("ok");

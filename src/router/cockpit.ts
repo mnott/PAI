@@ -28,6 +28,7 @@ import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runt
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { registryModels, type RegistryModel } from "./cockpit-registry-models.js";
 import { readLocalConfig, tierButtons, type LocalTier } from "../workers/local-tiers.js";
+import { loopbackRefusal, isTailnetOrLocalName } from "../utils/loopback-guard.js";
 import { instanceEngineKey, readLiveInstances } from "../workers/local-instances.js";
 import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-health.js";
 import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpoints.js";
@@ -650,11 +651,7 @@ export function setActionHooks(hooks: ActionHooks, deps?: Partial<ActionDeps>): 
  * A mismatch is refused — the cockpit is reachable over Tailscale.
  */
 export function sameOriginAction(req: http.IncomingMessage): boolean {
-  const sfs = req.headers["sec-fetch-site"];
-  if (typeof sfs === "string" && sfs !== "same-origin" && sfs !== "none") return false;
-  const origin = req.headers.origin;
-  if (typeof origin !== "string" || !origin) return true;
-  return URL.canParse(origin) && new URL(origin).host === (req.headers.host ?? "");
+  return loopbackRefusal(req, { allowHost: isTailnetOrLocalName }) === null;
 }
 
 /** Memory section sources (daemon status, run marker); tests install fakes. */
@@ -1205,6 +1202,7 @@ export function handleCockpit(
     res.end(body);
   };
   if (req.method === "POST" && (url.pathname === "/cockpit/queue/next" || url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
+    if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
     const body = readBody(req)
       .then((raw) => JSON.parse(raw || "{}") as { id?: string; position?: number })
       .catch(() => ({} as { id?: string; position?: number }));

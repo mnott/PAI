@@ -40,6 +40,7 @@ import type { EndpointHealth } from "../workers/endpoint-health.js";
 import { endpointRegistry, instanceEngineKey, instanceNumber, pickInstance, readInstances, type LocalInstance } from "../workers/local-instances.js";
 import type { LocalConfig } from "../workers/local-tiers.js";
 import { resolveSelector } from "../workers/route-table.js";
+import { refuseUnlessLoopback, isTailnetOrLocalName } from "../utils/loopback-guard.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -489,6 +490,7 @@ export function routerHandler(
       log(`${new Date().toISOString()} ${req.method ?? "-"} ${(req.url ?? "/").split("?")[0]} 403 remote-not-allowed`);
       return;
     }
+    if (req.method === "POST" && refuseUnlessLoopback(req, res, { allowHost: isTailnetOrLocalName })) return;
     const started = Date.now();
     const path = req.url ?? "/";
     const chunks: Buffer[] = [];

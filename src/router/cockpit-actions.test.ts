@@ -422,13 +422,40 @@ describe("cockpit action endpoint", () => {
     }
   });
 
+  it("DNS rebinding (Host and Origin both the attacker name) is refused on every cockpit POST", async () => {
+    const tmp = newDir();
+    const calls = emptyCalls();
+    const srv = serve(tmp, calls);
+    try {
+      await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+      const port = (srv.address() as AddressInfo).port;
+      const rebound = { host: `evil.example:${port}`, origin: `http://evil.example:${port}` };
+      for (const path of ["/cockpit/action", "/cockpit/registry/save", "/cockpit/queue/next", "/cockpit/layout-default"]) {
+        const r = await ask(srv, path, "POST", JSON.stringify({ action: "local.off", id: "x" }), rebound);
+        expect([path, r.status]).toEqual([path, 403]);
+        // right name, wrong port
+        const p = await ask(srv, path, "POST", "{}", { host: "127.0.0.1:1" });
+        expect([path, p.status]).toEqual([path, 403]);
+        // cross-origin against the loopback host
+        const o = await ask(srv, path, "POST", "{}", { origin: "https://evil.example" });
+        expect([path, o.status]).toEqual([path, 403]);
+      }
+      expect(calls.stopAll).toEqual([]);
+      const ok = await ask(srv, "/cockpit/action", "POST", JSON.stringify({ action: "local.off" }), { origin: `http://127.0.0.1:${port}` });
+      expect(ok.status).toBe(200);
+    } finally {
+      srv.close();
+      setActionHooks({});
+    }
+  });
+
   it("sameOriginAction: no Origin passes (curl), matching Origin passes, mismatch refuses", () => {
     const h = (o: Record<string, string>) => ({ headers: o, method: "POST" }) as never;
     expect(sameOriginAction(h({ host: "127.0.0.1:8790" }))).toBe(true);
     expect(sameOriginAction(h({ host: "127.0.0.1:8790", origin: "http://127.0.0.1:8790" }))).toBe(true);
     expect(sameOriginAction(h({ host: "127.0.0.1:8790", origin: "http://evil.example" }))).toBe(false);
-    expect(sameOriginAction(h({ host: "h", "sec-fetch-site": "cross-site" }))).toBe(false);
-    expect(sameOriginAction(h({ host: "h", "sec-fetch-site": "same-origin" }))).toBe(true);
+    expect(sameOriginAction(h({ host: "127.0.0.1:8790", "sec-fetch-site": "cross-site" }))).toBe(false);
+    expect(sameOriginAction(h({ host: "127.0.0.1:8790", "sec-fetch-site": "same-origin" }))).toBe(true);
   });
 
   it("the token gate covers /cockpit/action (wrapper 401s before the handler)", async () => {

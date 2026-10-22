@@ -20,6 +20,7 @@
  * screens for.
  */
 
+import { refuseUnlessLoopback } from "../utils/loopback-guard.js";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
 import { basename, dirname } from "node:path";
@@ -1266,6 +1267,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", loopbackUrl(0));
+    if (refuseUnlessLoopback(req, res, { requireJson: url.pathname !== "/shutdown" })) return;
     if (req.method === "GET" && url.pathname === "/healthz") {
       res.writeHead(200, { "content-type": "text/plain", "x-pool-host-pid": String(process.pid) });
       res.end("ok");
