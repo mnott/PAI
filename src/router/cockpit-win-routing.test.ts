@@ -111,13 +111,13 @@ describe.skipIf(!CHROME)("B6 routing on the win runtime", () => {
     expect(r.popBg).not.toBe("rgba(0, 0, 0, 0)");
   }, 120_000);
 
-  it("x on the last entry is refused in the status; a Select pick posts route.set with the pick first", async () => {
+  it("x on the last entry is refused in the status; a Select pick posts route.set with the pick last", async () => {
     posts.length = 0;
     const r = await open("", 1400);
     expect(r.refused).toBe("a tier needs at least one entry");
     expect(posts.filter((p) => p.target === "review")).toEqual([]);
     const p = posts.find((x) => x.action === "route.set" && x.target === "implement" && (x.models as string[]).length > 1);
-    expect(p).toEqual({ action: "route.set", target: "implement", models: ["tag:fast", "local", "glm"] });
+    expect(p).toEqual({ action: "route.set", target: "implement", models: ["local", "glm", "tag:fast"] });
     expect(r.after).toBe("route set");
   }, 120_000);
 
