@@ -10,7 +10,7 @@ PAI is what came out of that, and I am giving it to the community. A MacBook can
 
 You burn your premium tokens on work a local model could do. You hit the weekly limit on a Tuesday. Every new session starts from zero. PAI fixes all three:
 
-- **Not bound to one vendor's models.** Claude Code is only the front end you type into. Behind it, PAI's router serves whichever model you choose: Anthropic, GLM, Kimi or any other provider you add, and the models running on your own machine. Switch between them on the fly with `/model`, in the middle of a session, without losing your place.
+- **Not bound to Anthropic.** Claude Code is only the front end you type into; the model behind it is your choice. Run a whole session on GLM, Kimi, any other provider you add, or a model on your own machine, with no Anthropic model involved at all. Or mix them: switch on the fly with `/model`, in the middle of a session, without losing your place.
 - **Model routing, cloud and local.** When one provider's budget runs out, the next one takes over by itself, and every request is accounted per provider and per session.
 - **A hierarchy that spends tokens where they matter.** Three tiers: `t0` the session you talk to, `t1` the orchestrator that plans and reviews, `t2` the workers that implement. Workers go local first, because local tokens are free. Cloud comes first only where it earns its price: wide context and real reasoning. Every worker runs in its own visible pane and git worktree; you review the diff, PAI merges it.
 - **A live cockpit.** One page shows your token budget per provider, cache hits, every model and local server with start and stop buttons, running workers, routing per tier, and memory and embedding progress. Drag the cards into the layout you want.
