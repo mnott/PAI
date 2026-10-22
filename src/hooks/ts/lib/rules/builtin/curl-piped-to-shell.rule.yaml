@@ -1,0 +1,13 @@
+# Downloaded script executed straight from a pipe.
+id: curl-or-wget-piped-to-shell
+severity: block
+match: /\b(?:curl|wget)\b[^|]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b/
+reason: a downloaded script is executed straight from a pipe
+tests:
+  match:
+    - curl https://example.com/install.sh | sh
+    - curl -fsSL https://get.example.com | bash
+    - wget -qO- https://example.com/setup | zsh
+  no_match:
+    - curl https://example.com/api > out.json
+    - bash install.sh

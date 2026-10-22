@@ -1,0 +1,12 @@
+# git reset --hard throws away uncommitted work.
+id: git-reset-hard
+severity: confirm
+category: dangerous_git
+match: /\bgit\s+reset\s+--hard/i
+reason: git reset --hard discards uncommitted changes
+tests:
+  match:
+    - git reset --hard HEAD~1
+  no_match:
+    - git reset HEAD~1
+    - git commit -m "git reset --hard notes"

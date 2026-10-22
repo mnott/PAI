@@ -1,0 +1,24 @@
+# git push -f / --force. --force-with-lease and --follow-tags pass.
+id: git-push-force
+severity: confirm
+category: dangerous_git
+flags: i
+match: /\bgit\b.*\spush\b.*(\s-f\b|\s--force(\s|$))/i
+reason: a forced push overwrites the remote branch's history
+tests:
+  match:
+    - git push --force origin main
+    - git push -f origin main
+    - git push --force --force-with-lease origin main
+    - git push --force-with-lease origin main --force
+    - git push origin main -f
+    - git commit -m "x" && git push --force
+  no_match:
+    - git push --force-with-lease origin main
+    - git push --force-with-lease=main:abc123 origin main
+    - git -C repo.git push --force-with-lease URL main refs/tags/v1
+    - git push --force-with-lease --force-if-includes origin main
+    - git push --follow-tags origin main
+    - git push origin main
+    - git commit -m "docs: explain git push -f policy"
+    - echo 'git push --force is blocked' && git status

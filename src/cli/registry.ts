@@ -24,6 +24,7 @@ import { reloadCommand } from "./commands/reload.js";
 import { auditCommand } from "./commands/audit.js";
 import { gitCommand } from "./commands/git.js";
 import { lessonsCommand } from "./commands/lessons.js";
+import { rulesCommand } from "./commands/rules.js";
 
 const sessionGroup: CommandDef = {
   ...sessionCommand,
@@ -70,5 +71,5 @@ export const GROUPS: GroupDef[] = [
 // Memory, knowledge and audit commands (one file per group in ./commands).
 GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand, lessonsCommand);
 GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand);
+GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, reloadCommand, rulesCommand);
 GROUPS.find((g) => g.id === "memory")!.commands.push(gitCommand);
-GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, reloadCommand);

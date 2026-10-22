@@ -1,0 +1,13 @@
+# Writing NOPASSWD into sudoers grants passwordless root.
+id: sudoers-nopasswd
+severity: block
+match: /NOPASSWD(?![\w-])[^;&]*?(?:>>?\s*|\btee\b[^;&]*\s)\/etc\/sudo(?:ers|\.d\/)/
+reason: a command writes a NOPASSWD entry into sudoers (passwordless root)
+tests:
+  match:
+    - "echo 'user ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers"
+    - "echo 'user ALL=(ALL) NOPASSWD: ALL' > /etc/sudo.d/99-user"
+    - "echo 'user ALL=(ALL) NOPASSWD: ALL' | tee -a /etc/sudoers"
+  no_match:
+    - grep NOPASSWD /etc/sudoers
+    - "echo 'user ALL=(ALL) ALL' >> /etc/sudoers"

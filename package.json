@@ -58,7 +58,7 @@
     "pai-daemon-mcp": "dist/daemon-mcp/index.mjs"
   },
   "scripts": {
-    "build": "node scripts/sync-versions.mjs && tsdown && node scripts/prune-dist.mjs && node scripts/copy-defaults.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
+    "build": "node scripts/sync-versions.mjs && node scripts/gen-builtin-rules.mjs && tsdown && node scripts/prune-dist.mjs && node scripts/copy-defaults.mjs && node scripts/build-hooks.mjs --sync && node scripts/build-skill-stubs.mjs --sync && node scripts/build-docs.mjs",
     "version": "node scripts/sync-versions.mjs && git add .claude-plugin pai-plugin.json gemini-extension.json .cursor plugins",
     "dev": "tsdown --watch",
     "test": "vitest",
