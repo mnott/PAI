@@ -50,6 +50,7 @@ import {
   postTaskToPool,
   reloadInProgress,
 } from "../pool.js";
+import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, paneHandles, spawnOwned } from "./pane-handles.js";
 import { printResult } from "./finalise.js";
@@ -301,6 +302,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     // a claim miss is also on the ledger as WORKER-POOL-MISS (host side, spare counters); this is the run's skip line
     const why = "miss" in outcome ? outcome.miss : outcome.error;
     a.spareMiss = why;
+    if (!("miss" in outcome) && outcome.error === "unreachable") void ensurePoolHost(a.logDir).catch(() => undefined);
     recordPoolSkip(a, a.target.providerName, why, { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
     return null;
   }

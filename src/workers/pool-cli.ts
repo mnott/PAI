@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkersSection, writeWorkersSection } from "./config.js";
 import { ledgerPath } from "./paths.js";
-import { parseLedger } from "./ledger.js";
+import { appendLedger, parseLedger } from "./ledger.js";
 import { openHostLog } from "./pool-host-run.js";
 import { fmtTokens } from "./status.js";
 import {
@@ -21,7 +21,9 @@ import {
   poolCarry,
   poolDir,
   poolHostAlive,
+  poolHostProbe,
   poolHostStale,
+  reloadInProgress,
   bundleBuildStamp,
   poolPort,
   poolSettings,
@@ -108,11 +110,50 @@ async function startPoolHost(logDir: string, port: number, waitMs: number): Prom
   child.unref();
   closeSync(logFd);
   writeFileSync(poolPidPath(logDir), `${child.pid}\n`, "utf8");
+  appendLedger(ledgerPath(logDir), "POOL-HOST-START", { pid: child.pid ?? 0, port, note: "spawned by a client" });
   for (let i = 0; i < waitMs / 250; i++) {
     if (await poolHostAlive(port)) return { pid: child.pid, up: true };
     await new Promise((r) => setTimeout(r, 250));
   }
   return { pid: child.pid, up: false };
+}
+
+export interface EnsureDeps {
+  probe?: (port: number) => Promise<"up" | "down" | "timeout">;
+  start?: (logDir: string, port: number, waitMs: number) => Promise<{ pid: number | undefined; up: boolean }>;
+  now?: () => number;
+  /** { enabled, port } override; default reads the workers config. */
+  settings?: { enabled: boolean; port: number };
+}
+
+let lastHeal = 0;
+/** Minimum gap between two heal attempts of one process: a host that dies at boot is retried, not spun on. */
+export const POOL_HEAL_GAP_MS = 60_000;
+
+/**
+ * A lost host heals: with the pool enabled and nothing answering (refused, no reload under way) the host is started
+ * again — at most once per POOL_HEAL_GAP_MS per process, logged as POOL-HOST-START. True when a start was attempted.
+ */
+export async function ensurePoolHost(logDir: string, deps: EnsureDeps = {}): Promise<boolean> {
+  const settings = deps.settings ?? poolSettings(readWorkersSection().workers);
+  if (!settings.enabled) return false;
+  const now = (deps.now ?? Date.now)();
+  if (now - lastHeal < POOL_HEAL_GAP_MS) return false;
+  if ((await (deps.probe ?? poolHostProbe)(settings.port)) !== "down") return false;
+  if (reloadInProgress(logDir)) return false;
+  lastHeal = now;
+  appendLedger(ledgerPath(logDir), "POOL-HOST-HEAL", { port: settings.port, note: "enabled, nothing answers: starting the host" });
+  try {
+    await (deps.start ?? startPoolHost)(logDir, settings.port, 5_000);
+  } catch {
+    // build missing: the status line already says down
+  }
+  return true;
+}
+
+/** Test seam: forget the last heal attempt. */
+export function resetPoolHeal(): void {
+  lastHeal = 0;
 }
 
 export interface PoolReloadDeps {

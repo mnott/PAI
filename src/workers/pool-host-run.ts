@@ -81,3 +81,22 @@ export function createBindHandler(d: BindDeps): (e: NodeJS.ErrnoException) => vo
     });
   };
 }
+
+export interface SuccessorDeps {
+  childPid: number | undefined;
+  /** True once the spawned child has exited. */
+  exited: () => boolean;
+  /** Pid answering /healthz on the port, null when nothing does. */
+  answeringPid: () => Promise<number | null>;
+  sleep: (ms: number) => Promise<void>;
+  tries?: number;
+}
+
+/** A handover counts only when the spawned child itself answers: another host's answer (or this one's dying socket) is not a successor. */
+export async function waitForSuccessor(d: SuccessorDeps): Promise<boolean> {
+  for (let i = 0; i < (d.tries ?? 60) && !d.exited(); i++) {
+    if (d.childPid !== undefined && (await d.answeringPid()) === d.childPid) return true;
+    await d.sleep(250);
+  }
+  return false;
+}

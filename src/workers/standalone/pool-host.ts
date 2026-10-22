@@ -12,9 +12,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { DEFAULT_POOL_PORT, readWorkersSection } from "../config.js";
 import { workersLogDir } from "../paths.js";
-import { poolHostAlive, poolPidPath, poolSettings } from "../pool.js";
+import { poolHostAlive, poolHostPid, poolPidPath, poolSettings } from "../pool.js";
 import { createPoolHost } from "../pool-host.js";
-import { createBindHandler, installExitLogging, logHostExit, openHostLog } from "../pool-host-run.js";
+import { createBindHandler, waitForSuccessor, installExitLogging, logHostExit, openHostLog } from "../pool-host-run.js";
 import { LOOPBACK_HOST, loopbackUrl } from "../../utils/loopback.js";
 
 const portFlag = process.argv.indexOf("--port");
@@ -54,10 +54,8 @@ const host = createPoolHost({
     let exited = false;
     child.once("exit", () => (exited = true));
     child.unref();
-    for (let i = 0; i < 60 && !exited; i++) {
-      if (await poolHostAlive(port)) return true;
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    // only the successor's own answer counts: any other answer (a stale host, this one's dying socket) is no handover
+    if (await waitForSuccessor({ childPid: child.pid, exited: () => exited, answeringPid: () => poolHostPid(port), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) })) return true;
     if (!exited) child.kill("SIGTERM");
     return false;
   },

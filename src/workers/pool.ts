@@ -629,6 +629,24 @@ export function poolHostProbe(port: number, timeoutMs = 500): Promise<HostProbe>
   });
 }
 
+/** Pid of the host answering /healthz (its x-pool-host-pid header), null when nothing answers; the successor check of a reload. */
+export function poolHostPid(port: number, timeoutMs = 500): Promise<number | null> {
+  return new Promise((resolve) => {
+    const req = httpRequest({ host: LOOPBACK_HOST, port, path: "/healthz", method: "GET", timeout: timeoutMs }, (res) => {
+      res.resume();
+      const pid = parseInt(String(res.headers["x-pool-host-pid"] ?? ""), 10);
+      res.on("end", () => resolve(res.statusCode === 200 ? (Number.isFinite(pid) ? pid : 0) : null));
+      res.on("error", () => resolve(null));
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.on("error", () => resolve(null));
+    req.end();
+  });
+}
+
 /** Cheap host probe for `pai worker pool status` and the on/off commands. */
 export async function poolHostAlive(port: number, timeoutMs = 500): Promise<boolean> {
   return (await poolHostProbe(port, timeoutMs)) === "up";

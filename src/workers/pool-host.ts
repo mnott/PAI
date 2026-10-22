@@ -1267,7 +1267,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", loopbackUrl(0));
     if (req.method === "GET" && url.pathname === "/healthz") {
-      res.writeHead(200, { "content-type": "text/plain" });
+      res.writeHead(200, { "content-type": "text/plain", "x-pool-host-pid": String(process.pid) });
       res.end("ok");
       return;
     }

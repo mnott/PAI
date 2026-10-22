@@ -10,7 +10,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostProbe, poolMetricsPath, poolSettings, readPoolMetrics, readPoolState } from "../workers/pool.js";
 import type { PoolMetricRow, PoolSlotRecord, PoolState } from "../workers/pool.js";
-import { diskBundleMtime } from "../workers/pool-cli.js";
+import { diskBundleMtime, ensurePoolHost } from "../workers/pool-cli.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
 import { readWorkersSection } from "../workers/config.js";
 import { parseLedger, type LedgerLine } from "../workers/ledger.js";
@@ -267,6 +267,7 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
       const { workers } = readWorkersSection();
       const logDir = workersLogDir(workers);
       const s = poolSettings(workers);
+      void ensurePoolHost(logDir).catch(() => undefined); // a lost host heals itself (bounded, logged)
       const state = readPoolState(logDir);
       cached = buildPoolPanel({
         enabled: s.enabled,
