@@ -60,3 +60,6 @@ audits/
 # worker scratch space, never committed
 tmp/
 .tmp-*/
+
+# One-off local debug harness
+/tmp/
