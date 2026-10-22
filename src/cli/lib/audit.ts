@@ -52,7 +52,7 @@ import { auditEnv, type EnvReport } from "../../audit/env.js";
 import { auditSchedule, cacheTtlSeconds } from "../../audit/schedule.js";
 import { buildFindings, type Finding, type Severity } from "../../audit/severity.js";
 import { scanTranscript, type Finding as ScanFinding } from "../../audit/scan.js";
-import { loadRules, userRuleDirs } from "../../hooks/ts/lib/rules/load.js";
+import { loadRules, projectRuleDirs, userRuleDirs } from "../../hooks/ts/lib/rules/load.js";
 import { loadStatus } from "../../workers/status.js";
 import { claudeSessionTranscript } from "../../workers/scan.js";
 import { auditSkills, topByTokens, type SkillsReport } from "../../audit/skills.js";
@@ -737,7 +737,7 @@ export async function auditScanCmd(
     console.error(err("  No transcript found."));
     return 1;
   }
-  const { rules, errors } = loadRules(userRuleDirs(process.cwd()));
+  const { rules, errors } = loadRules(userRuleDirs(process.cwd()), { projectDirs: projectRuleDirs(process.cwd()) });
   for (const e of errors) console.error(dim(`rule: ${e}`));
   const findings = await scanTranscript(target, rules);
   if (opts.json) {

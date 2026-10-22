@@ -7,17 +7,25 @@
  *
  * Directories are read in order; a later rule with the same id replaces an
  * earlier one (user rules override built-ins), and `severity: off` disables
- * that id entirely.
+ * that id entirely. Project directories (`<cwd>/.pai/rules`, shipped by
+ * whatever repo is checked out) are less trusted: they may only add rules or
+ * raise the severity of an existing id (the existing pattern stays); an
+ * `off` or a downgrade is ignored and reported in `ignored`.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
 import type { LoadedRule, Rule, RuleSequence, RuleSequenceStep, RuleSeverity } from "./types.js";
 
 const SEVERITIES: RuleSeverity[] = ["block", "confirm", "warn", "off"];
+
+/** `g` and `y` make RegExp.test stateful (alternating hit/miss on a cached regex); rules never need them. */
+function statelessFlags(flags: string): string {
+  return flags.replace(/[gy]/g, "");
+}
 
 /** A YAML regex node (`/foo/i`) split into source and flags; a plain string is the source. */
 function splitRegex(value: string): { source: string; flags: string } {
@@ -49,7 +57,7 @@ function asSequence(raw: Record<string, unknown>, id: string, source: string, er
       return null;
     }
     const split = splitRegex(match);
-    const flags = typeof step.flags === "string" ? step.flags : split.flags;
+    const flags = statelessFlags(typeof step.flags === "string" ? step.flags : split.flags);
     try {
       new RegExp(split.source, flags);
     } catch (e) {
@@ -91,7 +99,12 @@ export function userRuleDirs(cwd: string = process.cwd()): string[] {
     : !existsSync(join(defaultPaiHomeDir(), "config.yaml")) && existsSync(join(legacyPaiHomeDir(), "config.yaml"))
       ? legacyPaiHomeDir()
       : defaultPaiHomeDir();
-  return [join(home, "rules"), join(cwd, ".pai", "rules")];
+  return [join(home, "rules"), ...projectRuleDirs(cwd)];
+}
+
+/** The repo-local rule directories under cwd: the less trusted ones (see the file header). */
+export function projectRuleDirs(cwd: string = process.cwd()): string[] {
+  return [join(cwd, ".pai", "rules")];
 }
 
 function asRule(value: unknown, source: string, errors: string[]): Rule | null {
@@ -131,7 +144,7 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
   // YAML accepts a bare regex node (`match: /foo/i`); a plain string is the
   // regex source with flags in `flags`.
   const split = splitRegex(match);
-  const flags = typeof raw.flags === "string" ? raw.flags : split.flags;
+  const flags = statelessFlags(typeof raw.flags === "string" ? raw.flags : split.flags);
   const source2 = split.source;
   try {
     new RegExp(source2, flags);
@@ -147,6 +160,7 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     match: source2,
     flags: flags || undefined,
     quoted: raw.quoted === true ? true : undefined,
+    results: raw.results === true ? true : undefined,
     reason,
     tests: asTests(raw),
   };
@@ -197,33 +211,54 @@ function loadDir(dir: string, errors: string[]): LoadedRule[] {
   return out;
 }
 
+const SEVERITY_RANK: Record<RuleSeverity, number> = { off: 0, warn: 1, confirm: 2, block: 3 };
+
+export interface LoadOptions {
+  /** Directories among `dirs` whose rules may only add or raise (see the file header). */
+  projectDirs?: string[];
+}
+
+/** Built-ins, then each directory in order, with the project-directory restriction applied. */
+function mergeRules(dirs: string[], opts: LoadOptions): { byId: Map<string, LoadedRule>; errors: string[]; ignored: string[] } {
+  const errors: string[] = [];
+  const ignored: string[] = [];
+  const project = new Set((opts.projectDirs ?? []).map((d) => resolve(d)));
+  const byId = new Map<string, LoadedRule>();
+  for (const rule of BUILTIN_RULES) byId.set(rule.id, rule);
+  for (const dir of dirs) {
+    const isProject = project.has(resolve(dir));
+    for (const rule of loadDir(dir, errors)) {
+      const existing = byId.get(rule.id);
+      if (!isProject || !existing) {
+        byId.set(rule.id, rule);
+      } else if (SEVERITY_RANK[rule.severity] > SEVERITY_RANK[existing.severity]) {
+        // a raise keeps the existing pattern: a project file may not swap it for a weaker one
+        byId.set(rule.id, existing.severity === "off" ? rule : { ...existing, severity: rule.severity, source: rule.source });
+      } else {
+        ignored.push(`${rule.source} (${rule.id}): project rules may only add rules or raise severity; ${rule.severity} ignored`);
+      }
+    }
+  }
+  return { byId, errors, ignored };
+}
+
 /**
  * Built-in rules first, then each directory in order; a later rule with the
  * same id replaces the earlier one, and `severity: off` removes the id.
  */
-export function loadRules(dirs: string[]): { rules: Rule[]; errors: string[] } {
-  const errors: string[] = [];
-  const byId = new Map<string, LoadedRule>();
-  for (const rule of BUILTIN_RULES) byId.set(rule.id, rule);
-  for (const dir of dirs) {
-    for (const rule of loadDir(dir, errors)) byId.set(rule.id, rule);
-  }
+export function loadRules(dirs: string[], opts: LoadOptions = {}): { rules: Rule[]; errors: string[]; ignored: string[] } {
+  const { byId, errors, ignored } = mergeRules(dirs, opts);
   const rules: Rule[] = [];
   for (const rule of byId.values()) {
     if (rule.severity === "off") continue;
     const { source: _source, ...rest } = rule;
     rules.push(rest);
   }
-  return { rules, errors };
+  return { rules, errors, ignored };
 }
 
 /** Every rule with its source and enabled state, for `pai rules list`. */
-export function listRules(dirs: string[]): { rules: LoadedRule[]; errors: string[] } {
-  const errors: string[] = [];
-  const byId = new Map<string, LoadedRule>();
-  for (const rule of BUILTIN_RULES) byId.set(rule.id, rule);
-  for (const dir of dirs) {
-    for (const rule of loadDir(dir, errors)) byId.set(rule.id, rule);
-  }
-  return { rules: [...byId.values()], errors };
+export function listRules(dirs: string[], opts: LoadOptions = {}): { rules: LoadedRule[]; errors: string[]; ignored: string[] } {
+  const { byId, errors, ignored } = mergeRules(dirs, opts);
+  return { rules: [...byId.values()], errors, ignored };
 }

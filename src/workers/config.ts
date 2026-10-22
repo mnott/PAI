@@ -560,6 +560,8 @@ export interface WorkersConfig {
   defaultMaxMinutes: number;
   /** Minutes a run may queue for a slot before the owner is told (workers.waitAlarmMinutes); default 120. */
   waitAlarmMinutes: number;
+  /** Milliseconds the end-of-run rule scan may take before it is skipped (workers.scanBudgetMs); default 5000. */
+  scanBudgetMs?: number;
   /** Start gate for same-provider runs (workers.stagger); see stagger.ts. */
   stagger: StaggerConfig;
   /** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
@@ -668,6 +670,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
     defaultMaxMinutes: num(w.defaultMaxMinutes, 60),
     waitAlarmMinutes: num(w.waitAlarmMinutes, 120),
+    scanBudgetMs: num(w.scanBudgetMs, 5000),
     stagger: {
       enabled: bool(stagger.enabled, true),
       localDefaultSec: num(stagger.localDefaultSec, 20),
@@ -1361,6 +1364,13 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     waitAlarmMinutes = w.waitAlarmMinutes;
   }
+  let scanBudgetMs = d.scanBudgetMs ?? 5000;
+  if (w.scanBudgetMs !== undefined) {
+    if (typeof w.scanBudgetMs !== "number" || !Number.isInteger(w.scanBudgetMs) || w.scanBudgetMs < 1) {
+      bad(".scanBudgetMs", "must be a positive integer (milliseconds)");
+    }
+    scanBudgetMs = w.scanBudgetMs;
+  }
   const stagger = { ...d.stagger };
   if (w.stagger !== undefined) {
     if (typeof w.stagger !== "object" || w.stagger === null || Array.isArray(w.stagger)) {
@@ -1502,6 +1512,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     cacheKeepaliveSecs,
     defaultMaxMinutes,
     waitAlarmMinutes,
+    scanBudgetMs,
     stagger,
     capacity,
     localIdle,
@@ -1662,6 +1673,7 @@ export function writeWorkersSection(
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
         waitAlarmMinutes: workers.waitAlarmMinutes,
+        scanBudgetMs: workers.scanBudgetMs,
         stagger: workers.stagger,
         capacity: workers.capacity,
         localIdle: workers.localIdle,

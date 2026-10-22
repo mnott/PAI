@@ -1,8 +1,9 @@
 # rm with a trailing ~/ argument deletes the home directory.
 id: rm-trailing-tilde
 severity: block
+quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\S+\s+~\/?(?:\s|$)/m
+match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*[^\s;&|]+\s+~\/?(?:\s|["']|$)/m
 reason: rm with a trailing ~/ argument deletes the home directory
 tests:
   match:

@@ -53,7 +53,13 @@ function sequenceHit(rule: Rule, steps: FixtureStep[]): boolean {
     // capture substituted in — the raw `\1` can never match text
     if (step.match.includes("\\1") && prior.length) {
       const cap = prior[0][1];
-      if (!cap || !new RegExp(step.match.replace(/\\1/g, cap), step.flags ?? "").test(content)) return false;
+      if (!cap) return false;
+      const lit = cap.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      try {
+        if (!new RegExp(step.match.replace(/\\1/g, () => lit), step.flags ?? "").test(content)) return false;
+      } catch {
+        return false;
+      }
       continue;
     }
     const re = stepRegex(step);

@@ -4,9 +4,11 @@
  * Order is fixed: the first block hit wins, else the first confirm hit, else
  * the first warn hit. Text inside quotes is not a command, so rules test the
  * content with quoted strings removed; rules marked `quoted: true` also test
- * it with only the quote marks removed (as detectAttack did before);
- * confirm rules additionally test per-segment, so a quoted `git push -f` in a
- * commit message stays inert while a quoted `+main` refspec still counts.
+ * it as written and with only the quote marks removed — every builtin block
+ * rule whose payload can sit inside `bash -c "..."` is marked, and anchors on
+ * command position so a message that merely mentions the payload stays
+ * allowed. Confirm rules test per-segment, so a quoted `git push -f` in a commit
+ * message stays inert while a quoted `+main` refspec still counts.
  */
 
 import { splitSegments } from "../worker-git-guard.js";
@@ -36,7 +38,7 @@ function ruleRegex(rule: Rule): RegExp | null {
   const cached = regexCache.get(key);
   if (cached) return cached;
   try {
-    const re = new RegExp(rule.match, rule.flags ?? "");
+    const re = new RegExp(rule.match, (rule.flags ?? "").replace(/[gy]/g, "")); // g/y would make .test stateful
     regexCache.set(key, re);
     return re;
   } catch {

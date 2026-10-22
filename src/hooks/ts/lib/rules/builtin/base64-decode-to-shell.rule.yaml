@@ -1,10 +1,12 @@
 # Obfuscated payload decoded straight into a shell.
 id: base64-decode-to-shell
 severity: block
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?base64\s+(?:-d|--decode)\b[^|]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b/
+quoted: true
+match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?base64\s+(?:-d|--decode)\b[^|;&\n]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b/
 reason: a base64-decoded payload is executed straight in a shell
 tests:
   match:
+    - bash -c "base64 -d f | sh"
     - echo aGVsbG8= | base64 -d | sh
     - base64 --decode payload.b64 | bash
   no_match:

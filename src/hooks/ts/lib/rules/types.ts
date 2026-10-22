@@ -40,6 +40,8 @@ export interface Rule {
   sequence?: RuleSequence;
   /** Also test the text with only the quote marks removed (default: quoted strings are dropped). */
   quoted?: boolean;
+  /** Single-step rule for the after-the-fact scan: also test tool results (default: tool calls only). */
+  results?: boolean;
   /** Legacy group name shown in deny messages and security events; defaults to the id. */
   category?: string;
   reason: string;
