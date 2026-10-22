@@ -1,0 +1,10 @@
+# Recursive deletion of the parent directory.
+id: rm-recursive-parent
+severity: block
+match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\.\/\s*$/m
+reason: recursive rm of ../ deletes the parent directory
+tests:
+  match:
+    - rm -rf ../
+  no_match:
+    - rm -rf ../build

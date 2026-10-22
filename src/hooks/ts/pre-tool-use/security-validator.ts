@@ -23,75 +23,22 @@ import { dirname, resolve } from 'path';
 import { securityEventsPath } from '../lib/pai-paths.js';
 import { isSharedCheckout } from '../lib/shared-checkout.js';
 import { maskSecrets } from '../lib/loop-guard.js';
-import { decideWorkerGitGuard, splitSegments, workerGitGuardMessage } from '../lib/worker-git-guard.js';
+import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
 import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
+import { loadRules, userRuleDirs } from '../lib/rules/load.js';
+import { evaluateRules } from '../lib/rules/eval.js';
 import { readWorkersSection } from '../../../workers/config.js';
 import { workersLogDir } from '../../../workers/paths.js';
 import { worktreesDir } from '../../../workers/worktree.js';
 
 // ============================================================================
-// ATTACK PATTERNS - CUSTOMIZE THESE FOR YOUR ENVIRONMENT
+// ATTACK RULES
 // ============================================================================
+// Patterns live in *.rule.yaml files: built-ins under lib/rules/builtin/
+// (embedded at build time), user rules under PAI_HOME/rules and .pai/rules.
+// Loaded once per hook process; a broken rule file is skipped, never fatal.
 
-// Example: Reverse Shell Patterns (BLOCK - rarely legitimate)
-const REVERSE_SHELL_PATTERNS: RegExp[] = [
-  /\/dev\/(tcp|udp)\/[0-9]/,                    // Bash TCP/UDP device
-  /bash\s+-i\s+>&?\s*\/dev\//,                  // Interactive bash redirect
-  // Add your own reverse shell patterns here
-];
-
-// Example: Instruction Override (BLOCK - prompt injection)
-const INSTRUCTION_OVERRIDE_PATTERNS: RegExp[] = [
-  /ignore\s+(all\s+)?previous\s+instructions?/i,
-  /disregard\s+(all\s+)?(prior|previous)\s+(instructions?|rules?)/i,
-  // Add your own prompt injection patterns here
-];
-
-// Example: Catastrophic Deletion Patterns (BLOCK - filesystem destruction)
-const CATASTROPHIC_DELETION_PATTERNS: RegExp[] = [
-  // The destructive verb must sit in command position (line start, after
-  // ; & | ( ` $( or sudo), so `~`, `/` and `-` inside awk programs or python
-  // strings never match on their own.
-  // Recursive rm of /, ~, $HOME or a system directory
-  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-\S+\s+)*(?:-\w*[rR]\w*|--recursive)\s+(?:-\S+\s+)*(?:\S+\s+)*(?:\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\/?\*?)(?=\s|;|&|\||$)/m,
-  // find / -delete
-  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?find\s+(?:\/|~|\$\{?HOME\}?)\/?\s+(?:\S+\s+)*?-delete\b/m,
-
-  // Trailing tilde bypass
-  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\S+\s+~\/?(?:\s|$)/m, // rm something ~/
-
-  // Relative path recursive deletion
-  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\/\s*$/m,     // rm -rf ./
-  /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\.\/\s*$/m,   // rm -rf ../
-
-  // Add your own dangerous deletion patterns here
-];
-
-// Example: Dangerous File Operations (BLOCK - data destruction)
-const DANGEROUS_FILE_OPS_PATTERNS: RegExp[] = [
-  /\bchmod\s+(-R\s+)?0{3,}/,                        // chmod 000
-  // Add your own dangerous file operation patterns here
-];
-
-// OPTIONAL: Operations that require confirmation instead of blocking
-const DANGEROUS_GIT_PATTERNS: RegExp[] = [
-  /\bgit\b.*\spush\b.*(\s-f\b|\s--force(\s|$))/i,  // git push -f / --force; --force-with-lease and --follow-tags pass
-  /\bgit\b.*\spush\b.*\s\+\S/i,                  // a plus-prefixed refspec forces the update without -f
-  /\bgit\s+reset\s+--hard/i,                        // git reset --hard
-  // Add your own git safety patterns here
-];
-
-// Combined patterns for fast iteration
-const ALL_BLOCK_PATTERNS: { category: string; patterns: RegExp[] }[] = [
-  { category: 'reverse_shell', patterns: REVERSE_SHELL_PATTERNS },
-  { category: 'instruction_override', patterns: INSTRUCTION_OVERRIDE_PATTERNS },
-  { category: 'catastrophic_deletion', patterns: CATASTROPHIC_DELETION_PATTERNS },
-  { category: 'dangerous_file_ops', patterns: DANGEROUS_FILE_OPS_PATTERNS },
-];
-
-const CONFIRM_PATTERNS: { category: string; patterns: RegExp[] }[] = [
-  { category: 'dangerous_git', patterns: DANGEROUS_GIT_PATTERNS },
-];
+const RULES = loadRules(userRuleDirs(process.cwd())).rules;
 
 // ============================================================================
 // TYPES
@@ -147,45 +94,18 @@ function deny(reason: string): never {
 interface DetectionResult {
   blocked: boolean;
   requiresConfirmation?: boolean;
+  warned?: boolean;
   category?: string;
   pattern?: string;
 }
 
-/** Quoted strings removed: text inside a commit message or echo is not a command. */
-function dropQuoted(segment: string): string {
-  return segment.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, '""');
-}
-
-/** A quoted +refspec is still a forced push, so push segments also test with only the quote marks removed. */
-function gitPatternHit(pattern: RegExp, segment: string): boolean {
-  const bare = dropQuoted(segment);
-  if (pattern.test(bare)) return true;
-  return /\bgit\b.*\spush\b/.test(bare) && pattern.test(segment.replace(/["']/g, ''));
-}
-
+/** First block hit, else first confirm hit, else first warn hit (category = rule id). */
 function detectAttack(content: string): DetectionResult {
-  // A quoted target is the same target: test the text with quote marks removed too.
-  const unquoted = content.replace(/["']/g, '');
-  // First check for hard blocks
-  for (const { category, patterns } of ALL_BLOCK_PATTERNS) {
-    for (const pattern of patterns) {
-      if (pattern.test(content) || pattern.test(unquoted)) {
-        return { blocked: true, category, pattern: pattern.source };
-      }
-    }
-  }
-
-  // Then check for confirmation-required patterns
-  const segments = splitSegments(content);
-  for (const { category, patterns } of CONFIRM_PATTERNS) {
-    for (const pattern of patterns) {
-      if (segments.some((seg) => gitPatternHit(pattern, seg))) {
-        return { blocked: false, requiresConfirmation: true, category, pattern: pattern.source };
-      }
-    }
-  }
-
-  return { blocked: false };
+  const hit = evaluateRules(RULES, 'Bash', content);
+  if (!hit) return { blocked: false };
+  if (hit.rule.severity === 'block') return { blocked: true, category: hit.rule.id, pattern: hit.rule.match };
+  if (hit.rule.severity === 'confirm') return { blocked: false, requiresConfirmation: true, category: hit.rule.id, pattern: hit.rule.match };
+  return { blocked: false, warned: true, category: hit.rule.id, pattern: hit.rule.match };
 }
 
 // ============================================================================
@@ -334,7 +254,18 @@ async function main(): Promise<void> {
     deny(`This is a dangerous operation (${command.slice(0, 50)}...). This can cause data loss. If you're sure, explicitly confirm this command.`);
   }
 
-  // Allow - no logging, immediate exit
+  if (result.warned) {
+    // Log the security event but allow the command.
+    logSecurityEvent({
+      type: 'security_warning',
+      category: result.category,
+      pattern: result.pattern,
+      command: command.slice(0, 200),
+      session_id: input.session_id,
+    });
+  }
+
+  // Allow - no further logging, immediate exit
   console.log(JSON.stringify({ permissionDecision: 'allow' }));
 }
 
