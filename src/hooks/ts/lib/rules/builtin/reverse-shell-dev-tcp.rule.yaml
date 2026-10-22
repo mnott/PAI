@@ -1,6 +1,7 @@
 # Reverse shell via the bash /dev/tcp or /dev/udp device file.
 id: reverse-shell-dev-tcp
 severity: block
+category: reverse_shell
 match: /\/dev\/(tcp|udp)\/[0-9]/
 reason: opens a reverse shell through a bash /dev/tcp or /dev/udp device file
 tests:

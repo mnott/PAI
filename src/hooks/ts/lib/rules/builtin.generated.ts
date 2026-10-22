@@ -42,6 +42,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "chmod-zero",
     "severity": "block",
+    "category": "dangerous_file_ops",
     "match": "\\bchmod\\s+(-R\\s+)?0{3,}",
     "reason": "chmod with an all-zero mode removes every permission from the files",
     "tests": {
@@ -57,7 +58,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "credential-file-read",
     "severity": "warn",
-    "match": "\\b(?:cat|less|more|head|tail|cp|copy|scp)\\b[^|;&]*\\/(?:\\.ssh\\/id_|\\.aws\\/credentials|\\.netrc)\\b",
+    "match": "\\b(?:cat|less|more|head|tail|cp|copy|scp)\\b[^|;&]*\\/(?:\\.ssh\\/id_\\w*|\\.aws\\/credentials|\\.netrc)\\b",
     "reason": "a credential file is being read or copied",
     "tests": {
       "match": [
@@ -80,7 +81,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
     "reason": "installing a crontab file persists a scheduled command",
     "tests": {
       "match": [
-        "crontab ./cronfile"
+        "crontab cronfile.txt"
       ],
       "no_match": [
         "crontab -l"
@@ -110,6 +111,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "find-root-delete",
     "severity": "block",
+    "category": "catastrophic_deletion",
     "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?find\\s+(?:\\/|~|\\$\\{?HOME\\}?)\\/?\\s+(?:\\S+\\s+)*?-delete\\b",
     "reason": "find over / or the home directory with -delete removes everything it matches",
     "tests": {
@@ -126,6 +128,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "git-push-force",
     "severity": "confirm",
+    "category": "dangerous_git",
     "flags": "i",
     "match": "\\bgit\\b.*\\spush\\b.*(\\s-f\\b|\\s--force(\\s|$))",
     "reason": "a forced push overwrites the remote branch's history",
@@ -154,6 +157,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "git-push-plus-refspec",
     "severity": "confirm",
+    "category": "dangerous_git",
     "match": "\\bgit\\b.*\\spush\\b.*\\s\\+\\S",
     "reason": "a plus-prefixed refspec forces the remote update without -f",
     "tests": {
@@ -171,6 +175,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "git-reset-hard",
     "severity": "confirm",
+    "category": "dangerous_git",
     "match": "\\bgit\\s+reset\\s+--hard",
     "reason": "git reset --hard discards uncommitted changes",
     "tests": {
@@ -188,6 +193,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "instruction-override-disregard",
     "severity": "block",
+    "category": "instruction_override",
     "flags": "i",
     "match": "disregard\\s+(all\\s+)?(prior|previous)\\s+(instructions?|rules?)",
     "reason": "text trying to override the model's instructions (prompt injection)",
@@ -204,6 +210,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "instruction-override-ignore",
     "severity": "block",
+    "category": "instruction_override",
     "flags": "i",
     "match": "ignore\\s+(all\\s+)?previous\\s+instructions?",
     "reason": "text trying to override the model's instructions (prompt injection)",
@@ -224,7 +231,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
     "reason": "writing into a LaunchAgents directory registers a startup item",
     "tests": {
       "match": [
-        "echo '<plist/> > ~/Library/LaunchAgents/com.example.agent.plist'",
+        "cp agent.plist $HOME/Library/LaunchAgents/",
         "cp agent.plist ~/Library/LaunchAgents/",
         "tee -a /Library/LaunchAgents/com.example.agent.plist"
       ],
@@ -253,6 +260,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "reverse-shell-dev-tcp",
     "severity": "block",
+    "category": "reverse_shell",
     "match": "\\/dev\\/(tcp|udp)\\/[0-9]",
     "reason": "opens a reverse shell through a bash /dev/tcp or /dev/udp device file",
     "tests": {
@@ -268,6 +276,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "reverse-shell-interactive-bash",
     "severity": "block",
+    "category": "reverse_shell",
     "match": "bash\\s+-i\\s+>&?\\s*\\/dev\\/",
     "reason": "interactive bash redirected to a device file looks like a reverse shell",
     "tests": {
@@ -283,6 +292,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "rm-recursive-parent",
     "severity": "block",
+    "category": "catastrophic_deletion",
     "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?rm\\s+(?:-[rfivd]+\\s+)*\\.\\.\\/\\s*$",
     "reason": "recursive rm of ../ deletes the parent directory",
     "tests": {
@@ -299,6 +309,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "rm-recursive-relative",
     "severity": "block",
+    "category": "catastrophic_deletion",
     "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?rm\\s+(?:-[rfivd]+\\s+)*\\.\\/\\s*$",
     "reason": "recursive rm of ./ deletes the current directory",
     "tests": {
@@ -315,6 +326,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "rm-recursive-root",
     "severity": "block",
+    "category": "catastrophic_deletion",
     "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?rm\\s+(?:-\\S+\\s+)*(?:-\\w*[rR]\\w*|--recursive)\\s+(?:-\\S+\\s+)*(?:\\S+\\s+)*(?:\\/\\*?|~\\/?\\*?|\\$\\{?HOME\\}?\\/?\\*?|\\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\\/?\\*?)(?=\\s|;|&|\\||$)",
     "reason": "recursive rm aimed at /, the home directory or a system directory",
     "tests": {
@@ -340,6 +352,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "rm-trailing-tilde",
     "severity": "block",
+    "category": "catastrophic_deletion",
     "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?rm\\s+(?:-[rfivd]+\\s+)*\\S+\\s+~\\/?(?:\\s|$)",
     "reason": "rm with a trailing ~/ argument deletes the home directory",
     "tests": {
@@ -355,8 +368,8 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "sudoers-nopasswd",
-    "severity": "confirm",
-    "match": "NOPASSWD(?![\\w-])[^|;&]*\\s*(?:>>?|\\btee\\b[^|;&]*)\\s*(?:\\/etc\\/sudoers|\\/etc\\/sudo\\.d\\/)",
+    "severity": "block",
+    "match": "NOPASSWD(?![\\w-])[^;&]*?(?:>>?\\s*|\\btee\\b[^;&]*\\s)\\/etc\\/sudo(?:ers|\\.d\\/)",
     "reason": "a command writes a NOPASSWD entry into sudoers (passwordless root)",
     "tests": {
       "match": [

@@ -84,6 +84,7 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     id,
     severity,
     tool: typeof raw.tool === "string" ? raw.tool : undefined,
+    category: typeof raw.category === "string" ? raw.category : undefined,
     match: source2,
     flags: flags || undefined,
     reason,

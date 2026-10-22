@@ -99,13 +99,13 @@ interface DetectionResult {
   pattern?: string;
 }
 
-/** First block hit, else first confirm hit, else first warn hit (category = rule id). */
+/** First block hit, else first confirm hit, else first warn hit (category = the rule's group, else its id). */
 function detectAttack(content: string): DetectionResult {
   const hit = evaluateRules(RULES, 'Bash', content);
   if (!hit) return { blocked: false };
-  if (hit.rule.severity === 'block') return { blocked: true, category: hit.rule.id, pattern: hit.rule.match };
-  if (hit.rule.severity === 'confirm') return { blocked: false, requiresConfirmation: true, category: hit.rule.id, pattern: hit.rule.match };
-  return { blocked: false, warned: true, category: hit.rule.id, pattern: hit.rule.match };
+  if (hit.rule.severity === 'block') return { blocked: true, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match };
+  if (hit.rule.severity === 'confirm') return { blocked: false, requiresConfirmation: true, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match };
+  return { blocked: false, warned: true, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match };
 }
 
 // ============================================================================

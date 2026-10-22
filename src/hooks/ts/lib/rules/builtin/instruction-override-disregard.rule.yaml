@@ -1,6 +1,7 @@
 # Prompt injection: tell the model to disregard prior rules.
 id: instruction-override-disregard
 severity: block
+category: instruction_override
 flags: i
 match: /disregard\s+(all\s+)?(prior|previous)\s+(instructions?|rules?)/i
 reason: text trying to override the model's instructions (prompt injection)

@@ -5,6 +5,6 @@ match: /\bcrontab\s+(?:-\S+\s+)*[^\s|;&]+\.\w+(?:\s|$)/m
 reason: installing a crontab file persists a scheduled command
 tests:
   match:
-    - crontab ./cronfile
+    - crontab cronfile.txt
   no_match:
     - crontab -l

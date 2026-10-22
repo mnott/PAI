@@ -5,7 +5,7 @@ match: /(?:>>?|\btee\b[^|;&]*|\b(?:cp|mv)\b[^|;&]*)\s*(?:~\/Library\/LaunchAgent
 reason: writing into a LaunchAgents directory registers a startup item
 tests:
   match:
-    - echo '<plist/> > ~/Library/LaunchAgents/com.example.agent.plist'
+    - cp agent.plist $HOME/Library/LaunchAgents/
     - cp agent.plist ~/Library/LaunchAgents/
     - tee -a /Library/LaunchAgents/com.example.agent.plist
   no_match:

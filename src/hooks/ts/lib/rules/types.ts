@@ -15,6 +15,8 @@ export interface Rule {
   /** Regex source; flags come from `flags`. Required unless severity is "off". */
   match?: string;
   flags?: string;
+  /** Legacy group name shown in deny messages and security events; defaults to the id. */
+  category?: string;
   reason: string;
   /** Built-in fixtures: every `match` string must hit, every `no_match` must not. */
   tests?: { match?: string[]; no_match?: string[] };

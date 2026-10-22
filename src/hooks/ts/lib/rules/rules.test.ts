@@ -8,6 +8,9 @@ import { lintRules } from "./lint.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
 import type { Rule } from "./types.js";
 
+const builtinIds = new Set(BUILTIN_RULES.map((r) => r.id));
+const userOnly = (rules: Rule[]) => rules.filter((r) => !builtinIds.has(r.id));
+
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "pai-rules-"));
 }
@@ -26,9 +29,9 @@ const rule = (over: Partial<Rule> & { id: string; match: string }): Rule => ({
 
 describe("loadRules", () => {
   it("reports a bad regex as an error and skips the rule, never throws", () => {
-    const dir = writeRule(tempDir(), "bad.rule.yaml", "id: bad\nseverity: block\nmatch: '(unclosed\nreason: r\n");
+    const dir = writeRule(tempDir(), "bad.rule.yaml", "id: bad\nseverity: block\nmatch: '(unclosed'\nreason: r\n");
     const { rules, errors } = loadRules([dir]);
-    expect(rules).toEqual([]);
+    expect(userOnly(rules)).toEqual([]);
     expect(errors.length).toBe(1);
     expect(errors[0]).toContain("bad");
     expect(errors[0]).toContain("invalid regex");
@@ -37,7 +40,7 @@ describe("loadRules", () => {
   it("skips a rule missing fields and reports it", () => {
     const dir = writeRule(tempDir(), "nofields.rule.yaml", "id: x\nseverity: block\n");
     const { rules, errors } = loadRules([dir]);
-    expect(rules).toEqual([]);
+    expect(userOnly(rules)).toEqual([]);
     expect(errors[0]).toContain("missing");
   });
 
@@ -45,14 +48,14 @@ describe("loadRules", () => {
     const dir = writeRule(tempDir(), "two.rule.yaml", "- id: a\n  severity: block\n  match: foo\n  reason: r\n- id: b\n  severity: warn\n  match: bar\n  reason: r\n");
     const { rules, errors } = loadRules([dir]);
     expect(errors).toEqual([]);
-    expect(rules.map((r) => r.id)).toEqual(["a", "b"]);
+    expect(userOnly(rules).map((r) => r.id)).toEqual(["a", "b"]);
   });
 
   it("accepts a bare YAML regex node and takes its flags", () => {
     const dir = writeRule(tempDir(), "regex.rule.yaml", "id: inj\nseverity: block\nmatch: /ignore/i\nreason: r\n");
     const { rules } = loadRules([dir]);
-    expect(rules[0].match).toBe("ignore");
-    expect(rules[0].flags).toBe("i");
+    expect(rules.find((r) => r.id === "inj")?.match).toBe("ignore");
+    expect(rules.find((r) => r.id === "inj")?.flags).toBe("i");
   });
 
   it("a later rule with the same id replaces the builtin, severity off disables it", () => {
