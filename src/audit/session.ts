@@ -14,8 +14,8 @@ import { loadConfig } from "../daemon/config.js";
 import { deriveSessionTrigger, type WindowSource, type SessionTriggerSource } from "./context-trigger.js";
 import { claudeProjectsDir } from "../config/pai-home.js";
 
-/** Newest *.jsonl under ~/.claude/projects, excluding subagents/. */
-export function newestSessionLog(): string | null {
+/** Newest *.jsonl under ~/.claude/projects, excluding subagents/. With a session id, that session's file instead. */
+export function newestSessionLog(sessionId?: string): string | null {
   const projectsDir = claudeProjectsDir();
   let best: { path: string; mtime: number } | null = null;
   let projectDirs: string[];
@@ -34,6 +34,7 @@ export function newestSessionLog(): string | null {
     }
     for (const entry of entries) {
       if (!entry.endsWith(".jsonl")) continue;
+      if (sessionId && entry !== `${sessionId}.jsonl`) continue;
       const filePath = join(dirPath, entry);
       let mtime: number;
       try {

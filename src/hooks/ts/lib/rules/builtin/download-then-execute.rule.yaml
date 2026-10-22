@@ -1,0 +1,30 @@
+# Two-step, strict order: a file is downloaded, then the same file is made
+# executable or run. Downloading is fine; running what was just fetched is not.
+id: download-then-execute
+severity: block
+reason: a downloaded file is made executable or run straight afterwards
+sequence:
+  window_seconds: 600
+  order: strict
+  steps:
+    - tool: Bash
+      match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?(?:curl|wget)\b[^|;&]*(?:-o|--output)\s+(\S+)/mi
+      flags: mi
+    - tool: Bash
+      match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?(?:chmod\s+(?:-R\s+)?(?:\+x|a\+x|7\d\d|5\d\d)\s+\1|(?:sh|bash|zsh)\s+\1)/m
+      flags: m
+tests:
+  match:
+    -
+      - curl -o tool.sh https://example.com/tool.sh
+      - chmod +x tool.sh
+    -
+      - wget -O run.sh https://example.com/run.sh
+      - sh run.sh
+  no_match:
+    -
+      - curl -o tool.sh https://example.com/tool.sh
+      - chmod +x other.sh
+    -
+      - chmod +x tool.sh
+      - curl -o tool.sh https://example.com/tool.sh

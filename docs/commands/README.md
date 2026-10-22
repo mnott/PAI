@@ -76,6 +76,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | Command | Description |
 |---|---|
 | `pai audit` | Find out where tokens are being spent |
+| `pai audit scan` | After-the-fact security scan of a session or worker transcript |
 | `pai audit tokens` | Token-waste report (all checks, or pick one below) |
 | `pai audit tokens daemon` | What the background service spent |
 | `pai audit tokens env` | Model and endpoint overrides on running sessions |

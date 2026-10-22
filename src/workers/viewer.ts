@@ -76,6 +76,7 @@ import {
 } from "./render.js";
 import { parseWaitOn, waitingLine } from "./waiting.js";
 import { denialLines } from "./denials.js";
+import { scanLine } from "./scan.js";
 import { lastCommand } from "./tool-errors.js";
 import { isWaitPollCommand } from "./wait.js";
 import { psTable } from "./ps-table.js";
@@ -389,6 +390,8 @@ export function replayOutput(
     ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
   const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : FALLBACK_COLUMNS;
   const out: string[] = [headerLine(c, st), ...denialLines(st)];
+  const scan = scanLine(st.findings);
+  if (scan) out.push(c(st.findings?.block ? "red" : "yellow", `  ${scan}`));
   const raw = readFileSync(path, "utf8");
   const lines = tailLines !== undefined ? raw.trimEnd().split("\n").slice(-tailLines) : raw.split("\n");
   // the worker's inbox handoffs join the transcript where they happened (_ts)

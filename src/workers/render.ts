@@ -24,6 +24,7 @@ import { workerDepth } from "./tree.js";
 import { sessionTag } from "./scope.js";
 import { endLabel } from "./endreason.js";
 import { parseWorkerReport, renderReport } from "./report.js";
+import { scanLine } from "./scan.js";
 
 export type ColorEnabled = boolean;
 
@@ -573,6 +574,11 @@ export function renderTable(
     const m = denialMark(s);
     return m ? "  " + c("red", m) : "";
   };
+  // "scan: 1 block, 2 warn" from the end-of-run transcript scan; only when non-zero
+  const scanMark = (s: WorkerStatus): string => {
+    const m = scanLine(s.findings);
+    return m ? "  " + c(s.findings?.block ? "red" : "yellow", m) : "";
+  };
   const timeMark = (s: WorkerStatus): string => {
     const l = deadlineLabel(s, now.getTime());
     const a = s.state === "running" ? activeText(s, now.getTime()) : null;
@@ -673,7 +679,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${c(col, (s.state === "lost" ? "? lost" : s.state).padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
+        `${chain ? "  " : rowPrefix(depth, subLast)}${s.id}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${c(col, (s.state === "lost" ? "? lost" : s.state).padEnd(6))} rc=${s.rc}  ${String(s.secs ?? "?").padStart(4)}s  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${scanMark(s)}${reportMark(s)}${endLabel(s) ? "  " + c("dim", `[${endLabel(s)}]`) : ""}  ${s.label}`,
         chain,
         last
       )
