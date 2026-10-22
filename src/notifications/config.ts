@@ -9,7 +9,7 @@
  * so it can be used standalone (e.g. from CLI commands).
  */
 
-import { expandHome, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { expandHome, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { shippedMainDefaults } from "../config/shipped-defaults.js";
 import type {
   NotificationConfig,
@@ -95,17 +95,15 @@ export function loadNotificationConfig(): NotificationConfig {
  * CONFIG_FILE. Creates the file if it does not exist.
  */
 export function saveNotificationConfig(config: NotificationConfig): void {
-  let full: Record<string, unknown> = {};
-  try {
-    full = readMainConfigRaw();
-  } catch {
-    // Start fresh if the file is unreadable
-  }
+  const configPath = paiConfigFilePath();
+  // Throws, naming the file and the parse error, when the config exists but is unreadable:
+  // writing {notifications} alone would replace the user's whole config.
+  const full = readMainConfigRaw(configPath);
 
   // Replace the notifications section
   full["notifications"] = config;
 
-  writeMainConfigRaw(full);
+  writeMainConfigRaw(full, configPath);
 }
 
 // ---------------------------------------------------------------------------
