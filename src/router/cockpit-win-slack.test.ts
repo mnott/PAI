@@ -55,7 +55,7 @@ setTimeout(function(){
  var out=[],i;
  function r(c){var b=c.getBoundingClientRect();return{t:b.top+window.scrollY,b:b.bottom+window.scrollY,l:b.left,r:b.right}}
  for(i=0;i<cards.length;i++){
-  var c=cards[i],id=c.getAttribute("data-card"),g=c.querySelector(":scope>.cbody.cgroup"),b=r(c),o={id:id,h:Math.round(b.b-b.t),kind:g?"group":"leaf",chart:c.getAttribute("data-type")==="chart",chip:c.classList.contains("chip")};
+  var c=cards[i],id=c.getAttribute("data-card"),g=c.querySelector(":scope>.cbody.cgroup"),b=r(c),o={id:id,h:Math.round(b.b-b.t),kind:g?"group":"leaf",chart:c.getAttribute("data-type")==="chart"||c.getAttribute("data-type")==="editor",chip:c.classList.contains("chip")};
   if(c.classList.contains("chip")){out.push(o);continue}
   if(g){
    var kids=Array.prototype.slice.call(g.children).filter(function(k){return k.style.display!=="none"}),m=0,dk=1e9;
