@@ -151,7 +151,7 @@ export interface RuntimeSamplerInput {
   engine: Record<string, RuntimeLive["engine"]>;
   /** the process tree's RSS MB on each engine's port (the Memory tile's RAM number) */
   rss?: Record<string, number | null>;
-  /** the machine's total GPU memory bytes, when the engine's reading carries none (Metal recommended working set) */
+  /** the machine's total memory bytes, when the engine's reading carries none (unified with the GPU on Apple Silicon) */
   gpuMemTotalFallback?: number | null;
   /** the machine's memory pressure % (0-100) from the system monitor, for the Memory tile */
   pressurePct?: number | null;
@@ -353,9 +353,21 @@ export interface SamplerDeps {
   getJson: (url: string) => Promise<unknown | null>;
   /** the process tree's RSS MB on a port (0 = not found) */
   rssMb: (port: number) => Promise<number>;
-  /** the machine's total GPU memory bytes (Metal recommended working set), null when unknown */
+  /** the machine's total memory bytes (unified with the GPU on Apple Silicon), null when unknown */
   gpuTotalBytes: () => Promise<number | null>;
   now: () => number;
+}
+
+/**
+ * The machine's total memory bytes (`sysctl hw.memsize`). Apple Silicon's GPU
+ * shares it; the Metal recommended working set (a fraction of it) is not
+ * readable from node, so this is the ceiling, not that figure. One `sysctl`
+ * read; null when it cannot be answered.
+ */
+export async function totalMemory(exec: (cmd: string, args: string[]) => Promise<string | null>): Promise<number | null> {
+  const out = await exec("sysctl", ["-n", "hw.memsize"]);
+  const n = out ? Number(out.trim()) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /**
@@ -364,44 +376,6 @@ export interface SamplerDeps {
  * module-level singleton — a test importing this module must not touch the
  * router's scheduler.
  */
-/**
- * The machine's total GPU memory bytes — the Metal recommended working set, the
- * same figure Strata's monitor shows as the VRAM total. One `sysctl` read; null
- * when it cannot be answered.
- */
-export async function metalRecommendedWorkingSet(exec: (cmd: string, args: string[]) => Promise<string | null>): Promise<number | null> {
-  const out = await exec("sysctl", ["-n", "hw.memsize"]);
-  const n = out ? Number(out.trim()) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-/**
- * The engine status probes a fresh card reading needs: every running port is
- * asked for `/metrics` with a 1 s timeout, in parallel. A port remembered as
- * non-Strata is skipped; a failed probe is a null entry (never cached).
- */
-export async function freshEngineReadings(
-  input: { inventory: ModelInventory; workers: WorkersConfig },
-  getJson: (url: string) => Promise<unknown | null>,
-  dialects: EngineDialects = new Map()
-): Promise<Record<string, RuntimeLive["engine"]>> {
-  const out: Record<string, RuntimeLive["engine"]> = {};
-  await Promise.all(
-    input.inventory.runtimes
-      .filter((rt) => rt.status === "running" && rt.port != null && rt.kind !== "ollama" && rt.kind !== "docker-model-runner" && dialects.get(rt.port) !== false)
-      .map(async (rt) => {
-        const engine = engineNameOf(rt, input.workers.providers);
-        const p = input.workers.providers[engine];
-        const host = p && isLoopbackProvider(p) ? providerHostPort(p)?.host : undefined;
-        const body = await getJson(`http://${host && host.includes(":") ? `[${host}]` : host || LOOPBACK_HOST}:${rt.port}/metrics`);
-        if (body != null && rt.kind !== "strata") dialects.set(rt.port!, isStrataMetrics(body));
-        if (body != null && !isStrataMetrics(body)) return;
-        out[engine] = strataEngineMetrics(body);
-      })
-  );
-  return out;
-}
-
 export function routerSamplerDeps(sched: () => SchedSnapshot | null, engineStatusTimeoutMs: () => number = () => DEFAULT_RUNTIME_SAMPLES.engineStatusTimeoutMs): SamplerDeps {
   const exec = (cmd: string, args: string[]): Promise<string | null> =>
     new Promise((resolve) => {
@@ -433,24 +407,18 @@ export function routerSamplerDeps(sched: () => SchedSnapshot | null, engineStatu
       if (!pid) return 0;
       return processTreeRssMb(pid, exec);
     },
-    gpuTotalBytes: () => metalRecommendedWorkingSet(exec),
+    gpuTotalBytes: () => totalMemory(exec),
     now: () => Date.now(),
   };
 }
 
-/** The fresh engine reading behind the card's current values (probes + RSS + the GPU total). */
+/** The fresh engine reading behind the card's current values (probes + RSS + the total memory). */
 export interface CardReading {
   engine: Record<string, RuntimeLive["engine"]>;
   rss: Record<string, number | null>;
   gpuTotalBytes: number | null;
   at: number;
 }
-
-/**
- * The router-side sampler: a 5 s tick that never blocks requests (disk reads
- * are cached, engine probes are 1 s and fire-and-forget). Returns the stop
- * function; the payload builder reads the ring it fills.
- */
 
 export interface RuntimeSampler {
   tick: () => Promise<void>;
@@ -460,6 +428,11 @@ export interface RuntimeSampler {
   start: (ms?: number) => () => void;
 }
 
+/**
+ * The router-side sampler: a 5 s tick that never blocks requests (disk reads
+ * are cached, engine probes are 1 s and fire-and-forget). Returns the stop
+ * function; the payload builder reads the ring it fills.
+ */
 export function createRuntimeSampler(
   deps: SamplerDeps,
   readConfig: () => WorkersConfig,
@@ -490,7 +463,7 @@ export function createRuntimeSampler(
         const inventory = await deps.inventory();
         if (!inventory) return card;
         const workers = readConfig();
-        const engine = await freshEngineReadings({ inventory, workers }, deps.getJson, dialects);
+        const engine = await probeEngines({ inventory, workers }, deps.getJson, dialects);
         const rss: Record<string, number | null> = {};
         await Promise.all(
           inventory.runtimes
@@ -581,9 +554,4 @@ export function createRuntimeSampler(
       return () => clearInterval(timer);
     },
   };
-}
-
-/** The scheduler source of the live sampler: the router's own scheduler in production. */
-export function schedSourceFrom(get: () => SchedSnapshot | null): () => SchedSnapshot | null {
-  return get;
 }
