@@ -131,11 +131,14 @@ describe.skipIf(!CHROME)("win cards (A5, spec 2.2/2.3/4.1) in Chromium", () => {
     expect(r.cardPos).toBe("absolute");
     // 2.3 contain on every cbody
     for (const c of r.contain) expect(c).toBe("strict/strict");
-    // 3.2: explicit px; root bands 200 + GAP + 150
-    expect(r.mainH).toBe("358px");
-    expect(r.rects0).toBe("0,0,482,200|490,0,482,200|0,208,972,150");
+    // 3.2: explicit px; heights are content-driven: a line is as tall as its tallest card, the next starts GAP below
+    const q = (r.rects0 as string).split("|").map((s: string) => s.split(",").map(Number));
+    expect(q[0]!.slice(0, 3)).toEqual([0, 0, 482]);
+    expect(q[1]!.slice(0, 3)).toEqual([490, 0, 482]);
+    expect(q[2]!.slice(0, 3)).toEqual([0, Math.max(q[0]![3]!, q[1]![3]!) + 8, 972]);
+    expect(r.mainH).toBe(`${q[2]![1]! + q[2]![3]!}px`);
     expect(r.mountsAtInit, "mount ran once per card").toBe(3);
-    expect(r.size0, "resize(ctx,w,h) got the body box").toBe("482x172");
+    expect(r.size0, "resize(ctx,w,h) got the body box").toBe(`482x${q[0]![3]! - 28}`);
     // 4.1 ctx
     expect(r.updated, "update(feed) reaches only the subscribed cards").toBe(2);
     expect(r.vtext).toBe("1");
@@ -152,7 +155,7 @@ describe.skipIf(!CHROME)("win cards (A5, spec 2.2/2.3/4.1) in Chromium", () => {
     expect(r.minRects.split("|")[0]).toBe("0,0,482,28");
     expect(r.minExpanded).toBe("false");
     expect(r.minBodyDisplay).toBe("none");
-    expect(r.minMain, "root band keeps its size").toBe("358px");
+    expect(r.minMain, "the line keeps its height (b is as tall as before)").toBe(r.mainH);
     expect(r.mountsAfterMin).toBe(3);
     expect(r.restRects, "restore returns the same rects").toBe(r.before);
     expect(r.mountsAfterRestore, "no remount on restore").toBe(3);
@@ -163,7 +166,7 @@ describe.skipIf(!CHROME)("win cards (A5, spec 2.2/2.3/4.1) in Chromium", () => {
     expect(saved.v).toBe(2);
     expect(saved.st.a.min).toBe(1);
     // width change relayouts: two-up halves of 600 - GAP
-    expect(r.narrowRects.split("|")[1], "b at half of 600 - GAP").toBe("304,0,296,200");
+    expect(r.narrowRects.split("|")[1]!.split(",").slice(0, 3).join(","), "b at half of 600 - GAP").toBe("304,0,296");
     expect(Number(r.narrowRects.split("|")[2]!.split(",")[2]), "c spans the new width").toBe(600);
     expect(r.resizes, "resize called again for the new width").toBeGreaterThan(3);
     expect(r.hasRO, "main is observed by a ResizeObserver").toBe(true);

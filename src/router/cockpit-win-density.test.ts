@@ -23,22 +23,6 @@ const cfgBase = { HEAD_H: 28, GAP: 8, GUTTER: 8, minW: 100, types: { note: { min
 const tree = () => api.split("c", [api.leaf("a"), api.leaf("b")], [300, 200]);
 
 describe("layout with cfg.fit (pure)", () => {
-  it("a default band is as tall as its measured content (above its px too), never below the type minimum", () => {
-    const cfg = { ...cfgBase, leafTypes: { a: "note", b: "note" }, fit: { a: 70, b: 20 } };
-    const r = api.layout(tree(), {}, { w: 600 }, {}, cfg);
-    expect(r.rects.a!.h).toBe(70);
-    expect(r.rects.b!.h).toBe(48);
-    const big = api.layout(tree(), {}, { w: 600 }, {}, { ...cfg, fit: { a: 900, b: 20 } });
-    expect(big.rects.a!.h).toBe(900);
-  });
-  it("without cfg.fit, without a reading, or with a saved px the sizes are the saved ones", () => {
-    const base = api.layout(tree(), {}, { w: 600 }, {}, cfgBase);
-    expect([base.rects.a!.h, base.rects.b!.h]).toEqual([300, 200]);
-    const none = api.layout(tree(), {}, { w: 600 }, {}, { ...cfgBase, fit: {} });
-    expect([none.rects.a!.h, none.rects.b!.h]).toEqual([300, 200]);
-    const px = api.layout(tree(), {}, { w: 600 }, { a: { px: 250 } }, { ...cfgBase, fit: { a: 70, b: 70 } });
-    expect([px.rects.a!.h, px.rects.b!.h]).toEqual([250, 70]);
-  });
   it("a group of stacked cards is as tall as its head plus its kids", () => {
     const kids = { g: api.split("c", [api.leaf("a"), api.leaf("b")], [1, 1]) };
     const t = api.split("c", [api.leaf("g")], [500]);

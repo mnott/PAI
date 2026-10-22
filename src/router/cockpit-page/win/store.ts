@@ -50,6 +50,10 @@ function normMin(st){
   st[id].min=s.min?1:0;
  }
 }
+/** Heights are content-driven: the only stored height is st[id].h, set by a card's height handle. Band px (px) and band marks (ub) of older saves go. */
+function dropBandHeights(st){
+ for(var id in st){var s=st[id];if(s&&typeof s==="object"){delete s.px;delete s.ub}}
+}
 /** Delete the pre-v2 keys (their models do not map onto the tree). */
 function deleteOldKeys(storage){
  for(var i=0;i<OLD_KEYS.length;i++){try{storage.removeItem(OLD_KEYS[i])}catch(e){}}
@@ -296,6 +300,7 @@ function reconcileSaved(saved,defaults,knownIds,now){
  var sd=defaults.stDefaults||{};
  for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);
  normMin(st);
+ dropBandHeights(st);
  return{tree:tree,kids:kids,st:st};
 }
 /** One write, whole object, debounced by the caller (spec 6). t is the save time: another tab compares it to know which layout is newer. Returns t. */

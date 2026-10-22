@@ -85,16 +85,11 @@ describe("win drop (spec 3.3)", () => {
     expect(col.sz).toEqual([0.5, 0.5]);
   });
 
-  it("drop bottom of a root card makes a new band with the dragged card's px", () => {
+  it("drop bottom of a root card makes a new band (heights are content-driven: the weight is unused)", () => {
     const t = split("c", [leaf("a"), leaf("b")], [400, 200]);
-    // remembered px wins
-    const nt = moveCard(t, "b", "a", "bottom", opts({}, { b: { px: 250 } }, { w: 1000 }));
+    const nt = moveCard(t, "b", "a", "bottom", opts({}, {}, { w: 1000 }));
     expect(nt.d).toBe("c");
     expect(api.ids(nt)).toEqual(["a", "b"]);
-    expect(nt.sz).toEqual([400, 250]);
-    // no remembered px: the type's defaultH
-    const nt2 = moveCard(t, "b", "a", "bottom", opts({ b: { type: "metric" } }, {}, { w: 1000 }));
-    expect(nt2.sz).toEqual([400, 120]);
   });
 
   it("removal collapses the old split", () => {

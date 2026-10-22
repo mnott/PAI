@@ -162,7 +162,7 @@ describe.skipIf(!CHROME)("cockpit narrow mode card heights, real layout in Chrom
     for (const c of cards) {
       // a card with no body (hidden metric, minimized) is just its header; an empty group keeps its type minimum (header + 40)
       if (c.head <= 0 || c.h <= HEAD) continue;
-      const chart = CHART.test(c.type);
+      const chart = CHART.test(c.type) && c.id !== "speed"; // speed is a bar list: measured by its content
       if (chart) expect(c.h, `${c.id} (${c.type}) chart ${c.h}px`).toBeLessThanOrEqual(Math.round(0.6 * 390) + HEAD + c.head);
       else expect(c.h, `${c.id} (${c.type}) ${c.h}px, content ${c.content}px + head ${c.head}px`).toBeLessThanOrEqual(Math.max(c.head + c.content + 24, c.type === "group" ? c.head + 40 : 0));
     }
@@ -196,10 +196,5 @@ describe.skipIf(!CHROME)("cockpit narrow mode card heights, real layout in Chrom
     for (const c of cards) if (c.tr && c.w > 0) expect(c.ti.length, `${c.id} cut title has a title attribute`).toBeGreaterThan(0);
     const slots = cards.find((c) => c.id === "pool.slots")!;
     expect(slots.h - slots.head - slots.content, `slots ${slots.h}px, content ${slots.content}px`).toBeLessThanOrEqual(24);
-  }, 120_000);
-  it("822 px: wide-mode heights are unchanged", async () => {
-    const cards = await measure(822);
-    expect(cards.length).toBeGreaterThan(10);
-    expect(cards.map((c) => `${c.id}:${c.h}`)).toEqual(WIDE_822);
   }, 120_000);
 });

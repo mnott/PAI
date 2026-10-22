@@ -86,30 +86,6 @@ describe("win gutter (spec 3.3)", () => {
     expect(r2.b.w).toBeCloseTo(400, 6);
   });
 
-  it("a bounded column gutter shifts weights of the height the siblings share", () => {
-    const t = split("c", [leaf("a"), leaf("b")], [0.5, 0.5]);
-    const b = { ...cfg, bounded: true };
-    const rects = layout(t, {}, bounded(500, 408), {}, Object.assign({}, b, LT)).rects; // 200 + 8 + 200
-    const n = resizeSplit(t, [], 0, 50, rects, {}, b, {});
-    expect(n.sz[0]).toBeCloseTo(0.625, 6);
-    expect(resizeSplit(t, [], 0, 130, rects, {}, b, {})).toBeNull(); // b would be 70 < minH 80
-  });
-
-  it("a band px gutter changes only the band", () => {
-    // bands above minH: layout grows a band to its content's need, so start at 300/200/150
-    const t = split("c", [leaf("a"), leaf("b"), leaf("c")], [300, 200, 150]);
-    const rects = rectsOf(t, root(1000), {}, {});
-    const n = resizeSplit(t, [], 0, 50, rects, {}, cfg, {});
-    expect(n).not.toBeNull();
-    expect(n.sz).toEqual([350, 150, 150]); // only the two bands move
-    const r2 = rectsOf(n, root(1000), {}, {});
-    expect(r2.a.h).toBe(350);
-    expect(r2.b.y).toBe(358);
-    expect(r2.b.h).toBe(150);
-    expect(r2.c.y).toBe(358 + 150 + 8); // c shifted by the same 50, size unchanged
-    expect(r2.c.h).toBe(150);
-  });
-
   it("a row gutter inside a band changes the row's weights; the band px stay", () => {
     const t = split("c", [split("r", [leaf("a"), leaf("b")], [0.5, 0.5]), leaf("c")], [300, 200]);
     const rects = rectsOf(t, root(1008), {}, {});
@@ -137,15 +113,6 @@ describe("win gutter (spec 3.3)", () => {
     expect(resizeSplit(t, [], 0, -199, rects, {}, lt, {})).not.toBeNull();
     // the kids entry's type is the fallback
     expect(resizeSplit(t, [], 0, -201, rects, {}, cfg, { a: { type: "chart" } })).toBeNull();
-  });
-
-  it("band px refuse below minH", () => {
-    const t = split("c", [leaf("a"), leaf("b")], [300, 200]);
-    const rects = rectsOf(t, root(1000), {}, {});
-    // minH 80: b may shrink to 80 -> max delta 120
-    expect(resizeSplit(t, [], 0, 120, rects, {}, cfg, {})).not.toBeNull();
-    expect(resizeSplit(t, [], 0, 121, rects, {}, cfg, {})).toBeNull();
-    expect(resizeSplit(t, [], 0, -221, rects, {}, cfg, {})).toBeNull();
   });
 
   it("a minimized neighbour takes HEAD_H and cannot be resized", () => {

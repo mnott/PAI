@@ -74,11 +74,10 @@ function dropTry(tree,dragId,targetId,zone,opts){
   P.sz.splice(after?i+1:i,0,w/2);
   P.sz[i]=w/2;
  }else if(P&&P===t&&P.d==="c"&&dir==="c"){
-  // root column, top/bottom: D gets its own band of remembered px or defaultH
-  var k=P.ch.indexOf(T),px=winPx(st,dragId);
-  var h=px!==null?px:winDefH(cfg,winLeafType(kids,dragId,cfg));
+  // root column, top/bottom: D gets its own band (heights are content-driven; the weight is unused)
+  var k=P.ch.indexOf(T);
   P.ch.splice(after?k+1:k,0,D);
-  P.sz.splice(after?k+1:k,0,h);
+  P.sz.splice(after?k+1:k,0,1);
  }else{
   // other direction (or T is the root leaf): T becomes a split [D,T]/[T,D], 0.5/0.5
   var ns=split(dir,after?[T,D]:[D,T],[0.5,0.5]);
