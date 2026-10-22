@@ -4,6 +4,18 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.4] - 2026-10-22
+
+### Fixed
+
+- **Workers that waited in a provider queue for more than two minutes were killed at start (rc 137).** The pane audit measured the pane wrapper's start against the run's start time, which moves to the end of the queue wait, so the live wrapper looked like a reused process and its child was killed. The wrapper is now checked against the time its pane opened, and every kill PAI makes names its cause in the worker's report.
+- **Router and cockpit refuse a foreign `Host` or a mismatched `Origin` (DNS rebinding)** on cockpit paths and on state-changing requests when bound to the tailnet; extra accepted host names go in `router.allowedHosts`.
+
+### Added
+
+- **Cockpit: per-session drill-down.** Clicking a session row opens its timeline, changed files, skills, MCP calls (with failures) and hook denials, from `/api/session/<id>/detail`.
+- **Provenance on captured events:** raw captures carry `source`, `fidelity` and a deterministic `eventId`; observations get `source` and `fidelity` columns (migrated in place).
+
 ## [1.0.3] - 2026-10-22
 
 ### Fixed
