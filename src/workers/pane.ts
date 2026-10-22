@@ -901,10 +901,17 @@ export function workerPaneTitle(logDir: string, wid: string): string {
  * No --auto-exit: a finished worker's pane stays until the operator closes it
  * (exit the follow) or the next pane opened in the same scope replaces it.
  * Absolute node on the CLI entry file also sidesteps the panes' bare launchd
- * PATH (no pai, no node) and the `#!/usr/bin/env node` shebang.
+ * PATH (no pai, no node) and the `#!/usr/bin/env node` shebang. A path with a
+ * space or quote is single-quoted, which both iTerm's command parser and sh honour.
  */
-export function followCommand(wid: string): string {
-  return `${process.execPath} ${absoluteCliPath()} worker follow ${wid}`;
+export function followCommand(wid?: string): string {
+  const args = [process.execPath, absoluteCliPath(), "worker", "follow", ...(wid ? [wid] : [])];
+  return args.map(quoteArg).join(" ");
+}
+
+/** One command-line argument, single-quoted only when it holds characters outside the safe set. */
+export function quoteArg(s: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Absolute path of the running pai CLI; falls back to PATH lookup at spawn. */
@@ -1505,7 +1512,7 @@ export async function openFollowPane(
   if (backend === "none") return noPaneMessage();
   if (backend === "tmux") {
     if (checkOnly) return "no follow pane";
-    tmuxSplit(`${process.execPath} ${absoluteCliPath()} worker follow`, env);
+    tmuxSplit(followCommand(), env);
     return "follow pane opened";
   }
   const uid = itermUuid(term);
@@ -1519,7 +1526,7 @@ export async function openFollowPane(
   if (overlap.length > 0) return "follow pane already open";
   if (checkOnly) return "no follow pane";
   // one exec-able line, no shell syntax — see followCommand()
-  const cmd = `${process.execPath} ${absoluteCliPath()} worker follow`;
+  const cmd = followCommand();
   const s = await osascript(SPLIT_SCRIPT, [uid, cmd, "worker follow"]);
   const sout = s.stdout.trim();
   if (sout === "opened") return "follow pane opened";
