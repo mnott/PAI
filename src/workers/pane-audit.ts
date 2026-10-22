@@ -11,6 +11,7 @@
  * `ps` and the cockpit.
  */
 
+import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { closePaneForWorker, loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
@@ -282,6 +283,23 @@ export interface LaunchAuditDeps {
   registered?: (id: string) => boolean;
   /** Stops an unlaunched worker (default: kill-tree). */
   stop?: (wid: string, why: string) => Promise<unknown>;
+  /** Whether the live process `pid` is still the one this launch started (start time and, for the wrapper, its command). */
+  owns?: (pid: number, r: LaunchRecord, side: "wrapper" | "child") => boolean;
+  /** Whether the record's iTerm session now belongs to another launch or registered worker. */
+  sessionHeld?: (r: LaunchRecord, all: LaunchRecord[]) => boolean;
+}
+
+/** A pid is the launch's own only when it started within two minutes of the record and, for the wrapper, runs `pane exec <id>`. */
+function ownsLaunchPid(pid: number, r: LaunchRecord, side: "wrapper" | "child"): boolean {
+  try {
+    const env = { ...process.env, LC_ALL: "C" };
+    const start = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env }).trim());
+    if (Number.isNaN(start) || Math.abs(start - r.startedMs) > 120_000) return false;
+    if (side === "wrapper") return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", env }).includes(r.id);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const killReal = (pid: number, sig: NodeJS.Signals, group: boolean): void => {
@@ -305,10 +323,22 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
   const ledger = ledgerPath(logDir);
   const exitOf = d.exit ?? readExit;
   const nowMs = now.getTime();
-  for (const r of (d.records ?? listRecords)()) {
+  // an injected liveness is a fake world: identity is then taken as given
+  const owns = d.owns ?? (d.alive ? () => true : ownsLaunchPid);
+  const all = (d.records ?? listRecords)();
+  const held =
+    d.sessionHeld ??
+    ((r: LaunchRecord, recs: LaunchRecord[]) =>
+      !!r.session &&
+      (recs.some((o) => o.id !== r.id && o.session === r.session && o.startedMs >= r.startedMs) ||
+        (!d.records && loadRegistry(logDir).some((e) => e.worker !== r.id && e.session === itermUuid(r.session!)))));
+  for (const r of all) {
     const ex = exitOf(r.id);
-    const wrapperUp = alive(r.wrapper);
-    const childUp = alive(r.child);
+    // a pid is acted on only while it is verifiably this launch's process: a reused pid is someone else's
+    const wrapperUp = alive(r.wrapper) && owns(r.wrapper!, r, "wrapper");
+    const childUp = alive(r.child) && owns(r.child!, r, "child");
+    // the pane's session now carries another worker: the old record is dropped, nothing is signalled or closed
+    if ((wrapperUp || childUp) && held(r, all)) continue;
     if (ex && !wrapperUp && !childUp) continue;
     // the wrapper writes its exit file the moment the child ends; a grace covers the closing itself
     // the wrapper lingers on its own before it closes the pane: only one past that is an orphan

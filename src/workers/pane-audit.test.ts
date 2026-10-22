@@ -254,6 +254,22 @@ describe("auditLaunches: the bug detector for the pane-owns-the-process rule", (
     const r = rig([100]);
     expect(await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 0, endedMs: NOW.getTime() - 2000 }) }, NOW)).toEqual([]);
   });
+  it("pid reuse: a live pid that is no longer the launch's own process is never signalled", async () => {
+    const r = rig([100, 200]);
+    const f = await auditLaunches(dir, { ...r.deps, owns: () => false, records: () => [rec()], exit: () => null }, NOW);
+    expect(f).toEqual([]);
+    expect(r.killed).toEqual([]);
+    expect(r.closed).toEqual([]);
+  });
+  it("session reuse: an old orphan whose iTerm session now carries a newer launch is dropped, not acted on", async () => {
+    const r = rig([100, 300, 400]);
+    const old = rec({ session: "w0t0p0:AAAA" });
+    const fresh = rec({ id: "w-2", wrapper: 300, child: 400, session: "w0t0p0:AAAA", startedMs: NOW.getTime() - 5000 });
+    const f = await auditLaunches(dir, { ...r.deps, records: () => [old, fresh], exit: () => null }, NOW);
+    expect(f).toEqual([]);
+    expect(r.killed).toEqual([]);
+    expect(r.closed).toEqual([]);
+  });
   it("wrapper (the pane) gone while the child runs: the child's group is killed", async () => {
     const r = rig([200]);
     const f = await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => null }, NOW);
