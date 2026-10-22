@@ -22,6 +22,7 @@ import { obsidianCommand } from "./commands/obsidian.js";
 import { skillCommand } from "./commands/skill.js";
 import { reloadCommand } from "./commands/reload.js";
 import { auditCommand } from "./commands/audit.js";
+import { gitCommand } from "./commands/git.js";
 import { lessonsCommand } from "./commands/lessons.js";
 import { rulesCommand } from "./commands/rules.js";
 
@@ -71,3 +72,4 @@ export const GROUPS: GroupDef[] = [
 GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand, lessonsCommand);
 GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand);
 GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, reloadCommand, rulesCommand);
+GROUPS.find((g) => g.id === "memory")!.commands.push(gitCommand);

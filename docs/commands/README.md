@@ -20,6 +20,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai doc`](doc.md) | Write the Markdown command reference |
 | [`pai end`](end.md) | Finish the current session |
 | [`pai find`](find.md) | Search your prompt history for sessions |
+| [`pai git`](git.md) | Link commits to the session that wrote them |
 | [`pai help`](help.md) | Explain a command (same as `pai <command> --help`) |
 | [`pai home`](home.md) | Where PAI keeps its files; move them out of ~/.claude |
 | [`pai hooks-db`](hooks-db.md) | Registry updates for the stop and pre-compact hooks |
@@ -128,6 +129,12 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai doc` | Write the Markdown command reference |
 | `pai end` | Finish the current session |
 | `pai find` | Search your prompt history for sessions |
+| `pai git` | Link commits to the session that wrote them |
+| `pai git hook` | Git hook entry points (called by git) |
+| `pai git hook post-commit` | Record the sessions that edited the last commit's files |
+| `pai git notes` | Show the PAI note of a commit |
+| `pai git remove` | Remove the hook and restore the previous one |
+| `pai git setup` | Install the post-commit hook in the current repository |
 | `pai help` | Explain a command (same as `pai <command> --help`) |
 | `pai home` | Where PAI keeps its files; move them out of ~/.claude |
 | `pai home migrate` | Move PAI's home from ~/.claude/pai to ~/.pai |
