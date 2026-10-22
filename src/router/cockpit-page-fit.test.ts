@@ -1,7 +1,8 @@
 /**
  * The cockpit tables never scroll sideways: the real page, served with live-shaped data,
  * is loaded in headless Chromium at several widths and every .tw table wrapper must
- * satisfy scrollWidth <= clientWidth. Skipped when no Chromium is installed.
+ * satisfy scrollWidth <= clientWidth. Sessions and worker runs are div grids (.wr-tbl, rows are
+ * display:contents): the grid must fit its card and no row cell may stick out past it. Skipped when no Chromium is installed.
  * PAI_FIT_SHOTS=<dir> additionally writes a screenshot per width.
  */
 
@@ -17,7 +18,7 @@ import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 let server: Server;
 let base = "";
 let tmp = "";
-const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("[data-card]"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-card").split(/[.:]/)[0]:"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length,rowH:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){return r.getBoundingClientRect().height}),lh:parseFloat(getComputedStyle(w).lineHeight)||parseFloat(getComputedStyle(w).fontSize)*1.2,stacked:w.classList.contains("stacked"),firstW:(w.querySelector("tbody td")||{getBoundingClientRect:function(){return{width:0}}}).getBoundingClientRect().width,subs:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){var c=r.querySelector("td"),d=c&&c.querySelector(".dim"),cr=c&&c.getBoundingClientRect(),dr=d&&d.getBoundingClientRect();return{lines:c&&c.querySelectorAll(".dim").length,inside:!!dr&&dr.width>0&&dr.top>=cr.top-0.5&&dr.bottom<=cr.bottom+0.5&&dr.left>=cr.left-0.5&&dr.right<=cr.right+0.5}}),thead:!!w.querySelector("thead")&&getComputedStyle(w.querySelector("thead")).display!=="none"})});var bef=[];document.querySelectorAll(".tw.stacked td").forEach(function(d){var cs=getComputedStyle(d,"::before"),sc=d.closest("[data-card]");bef.push({sec:sc?sc.getAttribute("data-card").split(/[.:]/)[0]:"?",label:d.getAttribute("data-l"),h:parseFloat(cs.height),fs:parseFloat(cs.fontSize)})});var ths=[];document.querySelectorAll(".tw th").forEach(function(h){var r=document.createRange();r.selectNodeContents(h);var tops={};Array.prototype.forEach.call(r.getClientRects(),function(q){if(q.width>0)tops[Math.round(q.top)]=1});var sc=h.closest("[data-card]");ths.push({sec:sc?sc.getAttribute("data-card").split(/[.:]/)[0]:"?",label:h.textContent,lines:Object.keys(tops).length,height:Math.round(h.getBoundingClientRect().height)})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out,ths:ths,befores:bef}),"*")},2500)</script>`;
+const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll(".tw").forEach(function(w){var s=w.closest("[data-card]"),t=w.querySelector("table");out.push({sec:s?s.getAttribute("data-card").split(/[.:]/)[0]:"?",scrollWidth:w.scrollWidth,clientWidth:w.clientWidth,tableW:t?t.scrollWidth:0,rows:w.querySelectorAll("tbody tr").length,rowH:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){return r.getBoundingClientRect().height}),lh:parseFloat(getComputedStyle(w).lineHeight)||parseFloat(getComputedStyle(w).fontSize)*1.2,stacked:w.classList.contains("stacked"),firstW:(w.querySelector("tbody td")||{getBoundingClientRect:function(){return{width:0}}}).getBoundingClientRect().width,subs:Array.prototype.map.call(w.querySelectorAll("tbody tr"),function(r){var c=r.querySelector("td"),d=c&&c.querySelector(".dim"),cr=c&&c.getBoundingClientRect(),dr=d&&d.getBoundingClientRect();return{lines:c&&c.querySelectorAll(".dim").length,inside:!!dr&&dr.width>0&&dr.top>=cr.top-0.5&&dr.bottom<=cr.bottom+0.5&&dr.left>=cr.left-0.5&&dr.right<=cr.right+0.5}}),thead:!!w.querySelector("thead")&&getComputedStyle(w.querySelector("thead")).display!=="none"})});var bef=[];document.querySelectorAll(".tw.stacked td").forEach(function(d){var cs=getComputedStyle(d,"::before"),sc=d.closest("[data-card]");bef.push({sec:sc?sc.getAttribute("data-card").split(/[.:]/)[0]:"?",label:d.getAttribute("data-l"),h:parseFloat(cs.height),fs:parseFloat(cs.fontSize)})});var ths=[];document.querySelectorAll(".tw th").forEach(function(h){var r=document.createRange();r.selectNodeContents(h);var tops={};Array.prototype.forEach.call(r.getClientRects(),function(q){if(q.width>0)tops[Math.round(q.top)]=1});var sc=h.closest("[data-card]");ths.push({sec:sc?sc.getAttribute("data-card").split(/[.:]/)[0]:"?",label:h.textContent,lines:Object.keys(tops).length,height:Math.round(h.getBoundingClientRect().height)})});var grids=[];document.querySelectorAll(".wr-tbl").forEach(function(g){var sc=g.closest("[data-card]"),gr=g.getBoundingClientRect(),cl=g.closest(".wr-cq"),over=0;g.querySelectorAll(".wr-row>*").forEach(function(c){var r=c.getBoundingClientRect();if(r.width>0&&r.right-gr.right>over)over=r.right-gr.right});grids.push({sec:sc?sc.getAttribute("data-card").split(/[.:]/)[0]:"?",scrollWidth:g.scrollWidth,clientWidth:g.clientWidth,boxW:cl?cl.clientWidth:0,rows:g.querySelectorAll(".wr-row").length,over:over})});var m=document.querySelector("main");parent.postMessage(JSON.stringify({main:m.clientWidth,doc:document.documentElement.scrollWidth,vw:innerWidth,tables:out,ths:ths,befores:bef,grids:grids}),"*")},2500)</script>`;
 
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-fit-"));
@@ -56,6 +57,7 @@ afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursiv
 interface ShootResult {
   main: number; doc: number; vw: number;
   tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number; rowH: number[]; lh: number; stacked: boolean; firstW: number; subs: { lines: number; inside: boolean }[]; thead: boolean }[];
+  grids: { sec: string; scrollWidth: number; clientWidth: number; boxW: number; rows: number; over: number }[];
   befores: { sec: string; label: string; h: number; fs: number }[];
   ths: { sec: string; label: string; lines: number; height: number }[];
 }
@@ -75,9 +77,16 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
     it(`${label}: every table wrapper has scrollWidth <= clientWidth`, async () => {
       const r = await shoot(width, main, shots ? join(shots, `cockpit-${width}${main ? "-main" + main : ""}.png`) : undefined);
       const secs = new Set(r.tables.map((t) => t.sec));
-      // sessions, pause, providers (cache) and the workers queue table all rendered
+      // pause, providers (cache) and the workers queue table rendered; sessions is a div grid (checked below)
       // (System renders metric tiles now, not a table)
-      for (const s of ["sessions", "pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
+      for (const s of ["pause", "cache", "workers"]) expect(secs.has(s), `${s} table present (${[...secs].join(",")})`).toBe(true);
+      const sg = r.grids.filter((g) => g.sec === "sessions");
+      expect(sg.length, "sessions grid present").toBe(1);
+      expect(sg[0]!.rows, "sessions rows rendered").toBeGreaterThan(0);
+      for (const g of r.grids) {
+        expect(g.scrollWidth, `${g.sec} grid: box ${g.clientWidth}px, content ${g.scrollWidth}px`).toBeLessThanOrEqual(g.clientWidth);
+        expect(g.over, `${g.sec} grid: a row cell sticks out ${g.over}px past the grid`).toBeLessThanOrEqual(0.5);
+      }
       for (const t of r.tables) {
         expect(t.scrollWidth, `${t.sec}: wrapper ${t.clientWidth}px, content ${t.scrollWidth}px`).toBeLessThanOrEqual(t.clientWidth);
         expect(t.tableW, `${t.sec}: table ${t.tableW}px in wrapper ${t.clientWidth}px`).toBeLessThanOrEqual(t.clientWidth);
@@ -88,7 +97,6 @@ describe.skipIf(!CHROME)("cockpit tables fit their card (no horizontal scroll), 
       expect(r.doc, "page itself must not scroll sideways").toBeLessThanOrEqual(r.vw);
       // a stacked label (td::before) never wraps: one line box, whatever the card width
       for (const b of r.befores.filter((x) => x.h != null)) expect(b.h, `${b.sec} label "${b.label}": ${b.h}px high at ${b.fs}px font`).toBeLessThanOrEqual(b.fs * 1.6);
-      if (width === 375) expect(r.tables.find((t) => t.sec === "sessions")!.stacked, "sessions does not fit at 375 px: stacked").toBe(true);
     }, 120_000);
   }
 });
