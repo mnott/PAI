@@ -214,7 +214,7 @@ function paintSize(c){
  var m=mwOf(c);
  if(c.mw!==m){c.mw=m;c.el.setAttribute("data-mw",String(m))}
  if(c.wu!==w){c.wu=w;if(w)c.el.setAttribute("data-w",w);else c.el.removeAttribute("data-w")}
- if(c.uh!==h){c.uh=h;c.body.style.height=h?h+"px":"";if(h){c.body.style.setProperty("--uh",h+"px");c.el.setAttribute("data-uh","1");c.el.toggleAttribute("data-short",h<110)}else{c.body.style.removeProperty("--uh");c.el.removeAttribute("data-uh");c.el.removeAttribute("data-short")}}
+ if(c.uh!==h){c.uh=h;c.body.style.height=h?h+"px":"";if(h){c.body.style.setProperty("--uh",h+"px");c.el.setAttribute("data-uh","1");c.el.toggleAttribute("data-short",h<92)}else{c.body.style.removeProperty("--uh");c.el.removeAttribute("data-uh");c.el.removeAttribute("data-short")}}
 }
 /** The body box of every mounted card handed to its type's resize(ctx,w,h) when it changed. */
 function syncBodies(){

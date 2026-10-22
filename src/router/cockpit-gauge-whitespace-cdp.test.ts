@@ -47,4 +47,21 @@ describe.skipIf(!CHROME)("gauge card whitespace before dial shrink (CDP)", () =>
     for (let i = 1; i < rows.length; i++) expect(rows[i]!.dial).toBeLessThanOrEqual(rows[i - 1]!.dial);
     expect(rows[0]!.dial).toBeGreaterThanOrEqual(rows[1]!.dial);
   }, 120_000);
+
+  it("dragging the handle down in 10 px steps: empty space below the labels stays <= 6 px at every step", async () => {
+    const b = await launch(1500, 1000);
+    await b.send("Page.navigate", { url: `${base}/page` });
+    const sel = `[data-card="limits.cloud:glm"]`;
+    for (let i = 0; i < 60; i++) { await sleep(250); if (await b.ev<boolean>(`!!document.querySelector('${sel} .gauge svg')`)) break; }
+    await sleep(500);
+    const natural = await b.ev<number>(`document.querySelector('${sel} .cbody').getBoundingClientRect().height`);
+    const rows: { h: number; dial: number; below: number }[] = [];
+    for (let h = Math.floor(natural / 10) * 10; h >= 78; h -= 10) {
+      await b.ev(`(function(){var c=document.querySelector('${sel}'),bd=c.querySelector(".cbody");bd.style.height=${h}+"px";bd.style.setProperty("--uh",${h}+"px");c.setAttribute("data-uh","1");c.toggleAttribute("data-short",${h}<92)})()`);
+      await sleep(150);
+      rows.push(await b.ev(`(function(){var c=document.querySelector('${sel}'),bd=c.querySelector(".cbody").getBoundingClientRect(),g=c.querySelector(".gauge"),s=g.querySelector("svg").getBoundingClientRect(),bot=s.bottom;Array.prototype.forEach.call(g.children,function(e){if(e.tagName!=="svg"&&getComputedStyle(e).display!=="none")bot=Math.max(bot,e.getBoundingClientRect().bottom)});return{h:${h},dial:Math.round(s.height),below:Math.round(bd.bottom-bot)}})()`));
+    }
+    console.log(`natural ${Math.round(natural)}\nbody-h | dial px | empty below labels\n` + rows.map((r) => `${r.h} | ${r.dial} | ${r.below}`).join("\n"));
+    for (const r of rows) expect(r.below, `empty below labels at ${r.h}`).toBeLessThanOrEqual(6);
+  }, 120_000);
 });

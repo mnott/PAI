@@ -48,8 +48,8 @@ html.locked .cgrip,html.locked .cmin,html.locked #reset,html.locked main.win .cd
  * Width: a dial is as wide as its share of the row (down to 56 px), so the card's least width is two small dials, not two full ones; the row is centred; the "resets in" line drops, then the labels shrink (inline-size container: width only) */
 .gauges.fit{align-content:start;justify-content:center;container-type:inline-size}.gauges.fit .gauge{flex:1 1 56px}.gauges.fit .gauge svg{height:auto;max-height:70px}
 @container (max-width:230px){.gauges.fit .gauge .s{display:none}}@container (max-width:150px){.gauges.fit .gauge .n{font-size:11px}}
-.card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden}.card[data-uh]>.cbody>.gauges.fit .gauge svg{max-height:clamp(24px,calc(var(--uh) - 46px),70px)}
-.card[data-uh][data-short]>.cbody>.gauges.fit .gauge .s{display:none}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge svg{max-height:clamp(24px,calc(var(--uh) - 22px),70px)}
+.card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden}.card[data-uh]>.cbody>.gauges.fit .gauge svg{max-height:clamp(56px,calc(var(--uh) - 36px),70px)}
+.card[data-uh][data-short]>.cbody>.gauges.fit .gauge .s{display:none}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge svg{max-height:clamp(56px,calc(var(--uh) - 22px),70px)}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 .tw{max-width:100%}
 /* auto layout: a column is never squeezed under its min-content (a nowrap header or
