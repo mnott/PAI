@@ -8,6 +8,7 @@
 
 import { existsSync, renameSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import BetterSqlite3 from "better-sqlite3";
 import {
   paiHomePath,
   migratePaiFile,
@@ -54,48 +55,61 @@ export function migrateFederationDbOrphan(dryRun: boolean): MigrateFileResult {
   return migrateOrphanFederationDb({ dryRun });
 }
 
-function checkpointAndVerify(oldPath: string, newPath: string, label: string): void {
-  let hasSqlite3 = true;
+/**
+ * Flush the old DB's WAL into its main file (before the byte copy, so the copy
+ * holds every committed row) and set the emptied sidecars aside. A non-empty
+ * WAL is never moved away without a successful checkpoint.
+ */
+export function checkpointWal(oldPath: string, label: string): void {
+  // Checkpoint through the node driver — never depend on the sqlite3 CLI.
+  let checkpointed = false;
   try {
-    execFileSync("which", ["sqlite3"], { stdio: "pipe" });
-  } catch {
-    hasSqlite3 = false;
-  }
-  if (hasSqlite3) {
+    const db = new BetterSqlite3(oldPath, { timeout: 500 });
     try {
-      execFileSync("sqlite3", [oldPath, "PRAGMA wal_checkpoint(TRUNCATE);"], { stdio: "pipe" });
-    } catch {
-      // Best-effort — the sidecar move below still catches an un-checkpointed WAL.
+      const [row] = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+      checkpointed = row?.busy === 0;
+    } finally {
+      db.close();
     }
+  } catch {
+    // Handled below: a non-empty WAL is never moved away without a checkpoint.
   }
 
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   for (const suffix of ["-wal", "-shm"]) {
     const sidecar = `${oldPath}${suffix}`;
-    if (existsSync(sidecar)) {
-      try {
-        renameSync(sidecar, `${sidecar}.migrated-${stamp}`);
-      } catch {
-        // Non-fatal — surfaced by the integrity check below if it actually mattered.
-      }
+    if (!existsSync(sidecar)) continue;
+    if (!checkpointed && statSync(sidecar).size > 0) {
+      throw new PaiFileMigrationError(
+        `${label}: could not checkpoint ${sidecar} (non-empty WAL, committed rows may live only there) — left in place`
+      );
+    }
+    try {
+      renameSync(sidecar, `${sidecar}.migrated-${stamp}`);
+    } catch {
+      // Non-fatal — surfaced by the integrity check below if it actually mattered.
     }
   }
 
-  if (hasSqlite3) {
+}
+
+/** PRAGMA integrity_check on the migrated copy, through the node driver. */
+export function verifyIntegrity(newPath: string): void {
+  let check: string;
+  try {
+    const db = new BetterSqlite3(newPath, { readonly: true });
     try {
-      const check = execFileSync("sqlite3", [newPath, "PRAGMA integrity_check;"], { stdio: "pipe" })
-        .toString()
-        .trim();
-      if (check !== "ok") {
-        throw new PaiFileMigrationError(
-          `${newPath}: PRAGMA integrity_check reported "${check}" — investigate before trusting this copy`
-        );
-      }
-    } catch (e) {
-      if (e instanceof PaiFileMigrationError) throw e;
-      // sqlite3 CLI failed for an unrelated reason (not installed, etc.) — the
-      // byte-identical copy migratePaiFile already verified is still trustworthy.
+      check = String(db.pragma("integrity_check", { simple: true }));
+    } finally {
+      db.close();
     }
+  } catch (e) {
+    throw new PaiFileMigrationError(`${newPath}: integrity_check could not run (${String(e)})`);
+  }
+  if (check !== "ok") {
+    throw new PaiFileMigrationError(
+      `${newPath}: PRAGMA integrity_check reported "${check}" — investigate before trusting this copy`
+    );
   }
 }
 
@@ -131,8 +145,9 @@ export function migrateRegistryDbFile(dryRun: boolean): MigrateFileResult {
     execFileSync("sleep", ["2"]);
   }
 
+  checkpointWal(oldPath, "registry database");
   const result = migratePaiFile(newPath, [oldPath], { dryRun: false });
-  if (result.fromPath) checkpointAndVerify(oldPath, newPath, "registry database");
+  if (result.fromPath) verifyIntegrity(newPath);
   return result;
 }
 
@@ -172,7 +187,8 @@ export function migrateFederationDbFile(dryRun: boolean): MigrateFileResult {
     execFileSync("sleep", ["2"]);
   }
 
+  checkpointWal(oldPath, "federation database");
   const result = migratePaiFile(newPath, [oldPath], { dryRun: false });
-  if (result.fromPath) checkpointAndVerify(oldPath, newPath, "federation database");
+  if (result.fromPath) verifyIntegrity(newPath);
   return result;
 }
