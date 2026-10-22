@@ -41,6 +41,7 @@ import { endpointRegistry, instanceEngineKey, instanceNumber, pickInstance, read
 import type { LocalConfig } from "../workers/local-tiers.js";
 import { resolveSelector } from "../workers/route-table.js";
 import { refuseUnlessLoopback, isTailnetOrLocalName } from "../utils/loopback-guard.js";
+import { hostAllowed, originAllowed, isCockpitPath } from "./cockpit-auth.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
@@ -233,6 +234,15 @@ export interface RouterOptions {
   healthy?: (i: LocalInstance) => boolean;
   /** the process-wide endpoint probe cache: the router refreshes it (fire and forget) and reads it, the cockpit reads the same instance. Takes precedence over `healthy`. */
   health?: EndpointHealth;
+  /**
+   * DNS-rebinding perimeter: the bind value (router.bind) and the extra Host
+   * names (router.allowedHosts). When set, cockpit paths and state-changing
+   * methods (POST/PUT/PATCH/DELETE) on any path are checked against them
+   * before any handler runs (hostAllowed/originAllowed in cockpit-auth.ts):
+   * a Host outside the allowed set or an Origin that does not match the Host
+   * is answered 403. Proxy traffic (Host 127.0.0.1:<port>, no Origin) passes.
+   */
+  hosts?: { bind: string; extraHosts: string[] };
 }
 
 /** Catalogue shape endpointRegistry needs: which providers a managed model launches (cached 2 s). */
@@ -477,6 +487,22 @@ export function routerHandler(
     log(`${new Date().toISOString()} warning: model id ${model} is declared by several providers (${cands.join(", ")}); preferring one that is up`);
   };
   return (req, res) => {
+    // DNS rebinding / cross-site: cockpit paths and state-changing methods are
+    // checked before anything else (extra handlers included).
+    const hosts = options?.hosts;
+    if (hosts) {
+      const path = (req.url ?? "/").split("?")[0]!;
+      const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes((req.method ?? "GET").toUpperCase());
+      if (isCockpitPath(path) || mutating) {
+        const refuse = (error: string): void => {
+          res.writeHead(403, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error }));
+          log(`${new Date().toISOString()} ${req.method ?? "-"} ${path} 403 ${error}`);
+        };
+        if (!hostAllowed(req.headers.host, hosts.bind, hosts.extraHosts)) return refuse("host not allowed");
+        if (!originAllowed(req.headers.origin, req.headers.host)) return refuse("origin not allowed");
+      }
+    }
     if (extra?.(req, res)) return;
     const guard = options?.remoteAllowed;
     if (guard && !guard(req.socket.remoteAddress ?? undefined)) {

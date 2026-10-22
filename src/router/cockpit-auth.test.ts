@@ -15,8 +15,10 @@ import {
   cockpitTokenFile,
   cockpitTokenOk,
   defaultV1Guard,
+  hostAllowed,
   inTailscaleRange,
   isLoopbackAddress,
+  originAllowed,
   readOrCreateCockpitToken,
   resolveBindAddress,
   withCockpitToken,
@@ -92,6 +94,52 @@ describe("the /v1 remote rule", () => {
     expect(defaultV1Guard("192.168.1.50")).toBe(false);
     expect(defaultV1Guard("10.0.0.7")).toBe(false);
     expect(defaultV1Guard(undefined)).toBe(false);
+  });
+});
+
+describe("hostAllowed", () => {
+  it("accepts loopback spellings with and without a port", () => {
+    for (const h of ["127.0.0.1:8790", "127.0.0.1", "localhost:8790", "localhost", "[::1]:8790", "[::1]"]) {
+      expect(hostAllowed(h, "loopback", []), h).toBe(true);
+    }
+  });
+
+  it("accepts the bind address itself and refuses anything else", () => {
+    expect(hostAllowed("100.64.121.56:8790", "100.64.121.56", [])).toBe(true);
+    expect(hostAllowed("100.64.121.56", "100.64.121.56", [])).toBe(true);
+    expect(hostAllowed("evil.example:8790", "100.64.121.56", [])).toBe(false);
+    expect(hostAllowed("evil.example:8790", "loopback", [])).toBe(false);
+    expect(hostAllowed("192.168.1.50:8790", "100.64.121.56", [])).toBe(false);
+  });
+
+  it("accepts extraHosts (tailnet names), case-insensitively", () => {
+    const extra = ["box-1.ts.net", "Mac-Studio.local"];
+    expect(hostAllowed("box-1.ts.net:8790", "100.64.121.56", extra)).toBe(true);
+    expect(hostAllowed("mac-studio.local:8790", "100.64.121.56", extra)).toBe(true);
+    expect(hostAllowed("evil.example:8790", "100.64.121.56", extra)).toBe(false);
+  });
+
+  it("rejects a missing or unparsable Host — non-browser clients always send one", () => {
+    expect(hostAllowed(undefined, "loopback", [])).toBe(false);
+    expect(hostAllowed("", "loopback", [])).toBe(false);
+    expect(hostAllowed("bad host]value", "loopback", [])).toBe(false);
+  });
+});
+
+describe("originAllowed", () => {
+  it("passes when there is no Origin (curl, the Claude client)", () => {
+    expect(originAllowed(undefined, "evil.example:8790")).toBe(true);
+    expect(originAllowed("", "127.0.0.1:8790")).toBe(true);
+  });
+
+  it("requires the Origin host:port to equal the Host header", () => {
+    expect(originAllowed("http://127.0.0.1:8790", "127.0.0.1:8790")).toBe(true);
+    expect(originAllowed("http://localhost:8790", "localhost:8790")).toBe(true);
+    expect(originAllowed("http://evil.example:8790", "127.0.0.1:8790")).toBe(false);
+    expect(originAllowed("http://127.0.0.1:9999", "127.0.0.1:8790")).toBe(false);
+    expect(originAllowed("http://evil.example", "evil.example:8790")).toBe(false);
+    expect(originAllowed("http://evil.example:8790", undefined)).toBe(false);
+    expect(originAllowed("not a url", "127.0.0.1:8790")).toBe(false);
   });
 });
 

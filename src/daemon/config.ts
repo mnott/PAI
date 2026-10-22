@@ -142,6 +142,13 @@ export interface RouterConfig {
    */
   bind: string;
   /**
+   * Extra Host headers the router accepts beyond loopback and the bind
+   * address — the tailnet names (MagicDNS) the cockpit is opened by. Default:
+   * empty. Requests whose Host matches none of these are refused (403) before
+   * any handler runs; see hostAllowed in src/router/cockpit-auth.ts.
+   */
+  allowedHosts?: string[];
+  /**
    * Request scheduling for local engines (src/router/scheduler.ts): one request in
    * flight per engine, fair across the workers' owning sessions. Defaults:
    * enabled true, wTokIn 1, wTokOut 2, agingSec 120, sessionWeights {},
