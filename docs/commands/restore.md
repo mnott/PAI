@@ -18,7 +18,7 @@ Overwrites the current registry, config and (unless skipped) the Postgres databa
 |---|---|---|---|
 | `--no-postgres` | flag | — | Do not restore the Postgres database |
 | `--yes` | flag | — | Do not ask for confirmation |
-| `--into DB` | string | — | Restore into this Postgres database instead of the daemon's (required when the backup came from another database) |
+| `--into DB` | string | — | Restore into this Postgres database instead of the daemon's (required when the backup came from another database, and for backups made before 1.0.2, which do not record their database: use `--into <your database>`, usually `--into pai`) |
 | `--dry-run` | flag | — | Print the target and source databases, change nothing |
 
 ```sh

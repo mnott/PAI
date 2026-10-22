@@ -29,7 +29,14 @@ import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../../daemon/config.js";
 import { inspectStorageBackup, restoreStorageFiles } from "../../../storage/backup.js";
 import { backupsDirPath } from "./backup.js";
-import { BACKUP_TABLES, countDumpRows, planPostgresRestore, readBackupMeta, type BackupMeta } from "./backup-postgres.js";
+import { countSql } from "../../../storage/postgres/snapshot.js";
+import { assertPgName, isContainerTarget, quoteIdent, type PgTarget } from "../../../storage/postgres/config.js";
+import {
+  BACKUP_TABLES, RESTORE_DB_MAX_BYTES, configDatabaseMismatch, countDumpRows, planPostgresRestore, readBackupMeta, validatePgDump,
+  type BackupMeta,
+} from "./backup-postgres.js";
+
+export { validatePgDump };
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -63,26 +70,30 @@ export function restoreConfigWithSafety(src: string, dest: string): string | nul
 }
 
 export interface PgRunResult { status: number | null; stdout: string; stderr: string }
-/** Runs `psql`/`pg_dump` inside the container; args are those after `docker exec [-i] <container>`. */
+/** Runs `psql`/`pg_dump`; args are the program and its arguments (connection options excluded). */
 export type PgRunner = (args: string[], input?: string) => PgRunResult;
 
-const defaultPgRunner: PgRunner = (args, input) => {
-  const r = spawnSync("docker", ["exec", ...(input !== undefined ? ["-i"] : []), DOCKER_CONTAINER, ...args], {
-    input,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
-    maxBuffer: 1024 * 1024 * 1024,
-  });
-  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-};
-
-/** A plain pg_dump ends with this marker; a truncated dump does not. */
-export function validatePgDump(dump: string): string | null {
-  if (dump.trim().length === 0) return "dump is empty";
-  if (!dump.slice(-2048).includes("PostgreSQL database dump complete")) {
-    return "dump is truncated (no pg_dump completion marker)";
-  }
-  return null;
+/**
+ * Runner for a target: inside the PAI container when the target is the local PAI server,
+ * otherwise the host's psql/pg_dump pointed at the server the connection string names.
+ */
+export function makePgRunner(target: PgTarget): PgRunner {
+  return (args, input) => {
+    const inContainer = isContainerTarget(target);
+    const [prog, ...rest] = args;
+    const cmd = inContainer ? "docker" : prog!;
+    const argv = inContainer
+      ? ["exec", ...(input !== undefined ? ["-i"] : []), DOCKER_CONTAINER, ...args]
+      : [...(target.host ? ["-h", target.host] : []), ...(target.port ? ["-p", String(target.port)] : []), ...rest];
+    const r = spawnSync(cmd, argv, {
+      input,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      maxBuffer: 1024 * 1024 * 1024,
+      env: target.password !== undefined ? { ...process.env, PGPASSWORD: target.password } : process.env,
+    });
+    return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  };
 }
 
 export interface PgRestoreResult { ok: boolean; message: string; safetyDump?: string; oldDb?: string; counts?: Record<string, { expected: number; actual: number | null }> }
@@ -95,12 +106,18 @@ export interface PgRestoreResult { ok: boolean; message: string; safetyDump?: st
 export function restorePostgres(
   dumpFile: string,
   safetyDir: string,
-  target: { database: string; user: string },
-  run: PgRunner = defaultPgRunner,
+  target: PgTarget,
+  run: PgRunner = makePgRunner(target),
   recordedCounts?: Record<string, number>,
 ): PgRestoreResult {
   const PG_DATABASE = target.database;
   const PG_USER = target.user;
+  try {
+    assertPgName(PG_DATABASE, "database", RESTORE_DB_MAX_BYTES);
+    assertPgName(PG_USER, "user");
+  } catch (e) {
+    return { ok: false, message: `${e instanceof Error ? e.message : String(e)}; live database untouched` };
+  }
   const dump = readFileSync(dumpFile, "utf8");
   const invalid = validatePgDump(dump);
   if (invalid) return { ok: false, message: `${invalid}; live database untouched` };
@@ -108,6 +125,10 @@ export function restorePostgres(
   const stamp = stampNow().replace(/[^0-9A-Za-z]/g, "").toLowerCase();
   const newDb = `${PG_DATABASE}_restore_${stamp}`;
   const oldDb = `${PG_DATABASE}_prerestore_${stamp}`;
+  const qNew = quoteIdent(newDb);
+  const qOld = quoteIdent(oldDb);
+  const qLive = quoteIdent(PG_DATABASE);
+  const qUser = quoteIdent(PG_USER);
   const firstLine = (r: PgRunResult) => r.stderr.split("\n")[0] || "unknown error";
 
   // Pre-restore dump of the live DB (must succeed and be complete, else abort).
@@ -123,8 +144,8 @@ export function restorePostgres(
     return { ok: false, message: `pre-restore dump failed: ${firstLine(live)}; live database untouched` };
   }
 
-  const cleanup = () => run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `DROP DATABASE IF EXISTS ${newDb};`]);
-  const created = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `CREATE DATABASE ${newDb} OWNER ${PG_USER};`]);
+  const cleanup = () => run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `DROP DATABASE IF EXISTS ${qNew};`]);
+  const created = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `CREATE DATABASE ${qNew} OWNER ${qUser};`]);
   if (created.status !== 0) {
     return { ok: false, message: `could not create staging database: ${firstLine(created)}; live database untouched`, safetyDump };
   }
@@ -136,15 +157,15 @@ export function restorePostgres(
   }
 
   // Swap: live -> old, staging -> live. Old is kept as an extra way back.
-  const swap1 = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${PG_DATABASE} RENAME TO ${oldDb};`]);
+  const swap1 = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${qLive} RENAME TO ${qOld};`]);
   const liveExisted = swap1.status === 0;
   if (!liveExisted && !/does not exist/.test(swap1.stderr)) {
     cleanup();
     return { ok: false, message: `could not rename live database (active connections? stop the daemon): ${firstLine(swap1)}; live database untouched`, safetyDump };
   }
-  const swap2 = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${newDb} RENAME TO ${PG_DATABASE};`]);
+  const swap2 = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${qNew} RENAME TO ${qLive};`]);
   if (swap2.status !== 0) {
-    if (liveExisted) run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${oldDb} RENAME TO ${PG_DATABASE};`]);
+    if (liveExisted) run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${qOld} RENAME TO ${qLive};`]);
     cleanup();
     return { ok: false, message: `swap failed: ${firstLine(swap2)}; live database restored`, safetyDump };
   }
@@ -156,7 +177,7 @@ export function restorePostgres(
   const bad: string[] = [];
   for (const table of BACKUP_TABLES) {
     if (!(table in expected)) continue;
-    const r = run(["psql", "-U", PG_USER, "-d", PG_DATABASE, "-tAc", `SELECT count(*) FROM ${table}`]);
+    const r = run(["psql", "-U", PG_USER, "-d", PG_DATABASE, "-tAc", countSql(table)]);
     const actual = r.status === 0 ? Number(r.stdout.trim()) : null;
     counts[table] = { expected: expected[table]!, actual };
     if (actual !== expected[table]) bad.push(`${table}: expected ${expected[table]}, got ${actual ?? "n/a"}`);
@@ -325,6 +346,10 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
       const safety = restoreConfigWithSafety(join(resolvedDir, "config.json"), CONFIG_FILE);
       if (safety) console.log(dim(`  Previous config.json saved to ${safety}`));
       results.push({ label: "Config", status: ok("restored") });
+      if (hasSql && opts.postgres) {
+        const mismatch = configDatabaseMismatch(join(resolvedDir, "config.json"), plan.target);
+        if (mismatch) console.log(warn(`  ${mismatch}`));
+      }
     } catch (e) {
       results.push({ label: "Config", status: err(`failed: ${e}`) });
     }
@@ -339,10 +364,11 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
   if (hasSql && opts.postgres) {
     console.log(dim("  Restoring Postgres database (this may take a while)..."));
     try {
-      // Verify container is running
-      execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], {
-        stdio: "pipe",
-      });
+      if (isContainerTarget(plan.target)) {
+        execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], {
+          stdio: "pipe",
+        });
+      }
 
       const pg = restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE), plan.target, undefined, meta?.counts);
       if (pg.safetyDump) console.log(dim(`  Pre-restore dump of live database: ${pg.safetyDump}`));
@@ -354,7 +380,7 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       results.push({ label: "Postgres DB", status: err(`failed: ${msg}`) });
-      console.log(warn(`  Is Docker running with container '${DOCKER_CONTAINER}'?`));
+      if (isContainerTarget(plan.target)) console.log(warn(`  Is Docker running with container '${DOCKER_CONTAINER}'?`));
     }
   } else if (!hasSql || !opts.postgres) {
     const reason = !hasSql ? "no SQL dump in backup" : "--no-postgres";

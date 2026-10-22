@@ -25,15 +25,19 @@ const pgCfg = { connectionString: "postgresql://paiuser:x@localhost:5432/paidata
 describe("planPostgresRestore", () => {
   it("targets the daemon database and accepts a matching source", () => {
     const p = planPostgresRestore(pgCfg, { database: "paidata", counts: {} });
-    expect(p.target).toEqual(daemonPg);
+    expect(p.target).toMatchObject(daemonPg);
     expect(p.refusal).toBeUndefined();
   });
   it("refuses a mismatching source", () => {
     const p = planPostgresRestore(pgCfg, { database: "pai", counts: {} });
     expect(p.refusal).toMatch(/"pai".*"paidata"/);
   });
-  it("refuses an unknown source", () => {
-    expect(planPostgresRestore(pgCfg, null).refusal).toMatch(/--into/);
+  it("refuses an unknown source and names the common fix", () => {
+    expect(planPostgresRestore(pgCfg, null).refusal).toMatch(/--into paidata/);
+  });
+  it("rejects --into names that are option-like or too long", () => {
+    expect(planPostgresRestore(pgCfg, null, "-x").refusal).toMatch(/invalid/);
+    expect(planPostgresRestore(pgCfg, null, "a".repeat(40)).refusal).toMatch(/longer/);
   });
   it("honours --into over a mismatch", () => {
     const p = planPostgresRestore(pgCfg, { database: "pai", counts: {} }, "scratch");
@@ -54,7 +58,7 @@ function runner(countFor: (table: string) => string) {
     calls.push(args);
     if (args[0] === "pg_dump") return { status: 0, stdout: DUMP, stderr: "" };
     const q = args[args.indexOf("-tAc") + 1];
-    if (q) return { status: 0, stdout: countFor(q.replace("SELECT count(*) FROM ", "")), stderr: "" };
+    if (q) return { status: 0, stdout: countFor(q.replace('SELECT count(*) FROM ', "").replace(/"/g, "")), stderr: "" };
     return { status: 0, stdout: "", stderr: "" };
   };
   return { calls, run };
@@ -69,7 +73,7 @@ describe("restorePostgres target and verification", () => {
     expect(r.ok).toBe(true);
     const all = calls.map((c) => c.join(" ")).join("\n");
     expect(all).toMatch(/pg_dump -U paiuser paidata/);
-    expect(all).toMatch(/RENAME TO paidata;/);
+    expect(all).toMatch(/RENAME TO "paidata";/);
     expect(all).not.toMatch(/ pai;| pai$/m);
     expect(r.counts).toEqual({ pai_files: { expected: 2, actual: 2 }, sessions: { expected: 1, actual: 1 } });
   });
@@ -78,7 +82,7 @@ describe("restorePostgres target and verification", () => {
     writeFileSync(join(d, "dump.sql"), DUMP);
     const { calls, run } = runner(() => "2");
     restorePostgres(join(d, "dump.sql"), d, { database: "scratch", user: "paiuser" }, run, { pai_files: 2 });
-    expect(calls.map((c) => c.join(" ")).join("\n")).toMatch(/RENAME TO scratch;/);
+    expect(calls.map((c) => c.join(" ")).join("\n")).toMatch(/RENAME TO "scratch";/);
   });
   it("reports a post-restore count mismatch as failure", () => {
     const d = tmpDir();
@@ -87,6 +91,35 @@ describe("restorePostgres target and verification", () => {
     const r = restorePostgres(join(d, "dump.sql"), d, daemonPg, run);
     expect(r.ok).toBe(false);
     expect(r.message).toMatch(/pai_files: expected 2, got 0/);
+  });
+});
+
+describe("restorePostgres identifier safety", () => {
+  const evil = "a\"; DROP DATABASE pai;--";
+  it("quotes names so --into cannot inject SQL or fold case", () => {
+    const d = tmpDir();
+    writeFileSync(join(d, "dump.sql"), DUMP);
+    const { calls, run } = runner(() => "2");
+    restorePostgres(join(d, "dump.sql"), d, { database: evil, user: "paiuser" }, run, { pai_files: 2 });
+    const sql = calls.filter((c) => c.includes("-c")).map((c) => c[c.indexOf("-c") + 1]!);
+    expect(sql.length).toBeGreaterThan(0);
+    for (const q of sql) expect(q.replace(/"(?:[^"]|"")*"/g, "")).not.toMatch(/DROP DATABASE pai/);
+    expect(sql.join("\n")).toContain('"a""; DROP DATABASE pai;--"');
+  });
+  it("keeps a mixed-case name as written", () => {
+    const d = tmpDir();
+    writeFileSync(join(d, "dump.sql"), DUMP);
+    const { calls, run } = runner(() => "2");
+    restorePostgres(join(d, "dump.sql"), d, { database: "PAI", user: "paiuser" }, run, { pai_files: 2 });
+    expect(calls.map((c) => c.join(" ")).join("\n")).toContain('ALTER DATABASE "PAI" RENAME TO');
+  });
+  it("refuses an option-like or over-long name before touching anything", () => {
+    const d = tmpDir();
+    writeFileSync(join(d, "dump.sql"), DUMP);
+    const { calls, run } = runner(() => "2");
+    expect(restorePostgres(join(d, "dump.sql"), d, { database: "-x", user: "paiuser" }, run).ok).toBe(false);
+    expect(restorePostgres(join(d, "dump.sql"), d, { database: "a".repeat(40), user: "paiuser" }, run).ok).toBe(false);
+    expect(calls).toEqual([]);
   });
 });
 

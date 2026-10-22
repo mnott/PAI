@@ -12,6 +12,9 @@ All notable changes to PAI Knowledge OS are documented here.
 - **Setup AIBroker step:** commands time out after five minutes, `aibroker setup` gets the terminal when interactive, `npm install -g` runs only when `aibroker` is missing (a failing `doctor` just re-runs `setup`), and the package is pinned to `aibroker@^0.62.4`.
 - **Setup embedding step:** `--embedding` on a machine that already has a model, and `--embedding ollama` without Ollama, now say so instead of doing nothing silently.
 - **`pai setup --questions`:** follows the wizard order and carries `note` fields where the effective default differs (storage under `--yes`, router default).
+- **Backup:** the Postgres dump is verified against row counts read in the same snapshot (`pg_dump --snapshot`), so a running daemon can no longer fail a correct backup; empty tables (a fresh install) verify; a failed backup removes its dump instead of leaving it for `pai restore`.
+- **Backup and restore** use the server named by `postgres.connectionString`; the `pai-pgvector` container is only used when that is the local server. An external server is dumped and restored with the host's `pg_dump`/`psql`.
+- **Restore:** database names are quoted and validated (no SQL injection or case folding through `--into` or config); `pai restore` warns when the backup's `config.json` names another database than the one restored into; the refusal for backups without a recorded database names `--into pai`.
 
 ### Notes
 

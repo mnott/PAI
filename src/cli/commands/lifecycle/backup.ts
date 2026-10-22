@@ -24,7 +24,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../../daemon/config.js";
 import { backupStorageFiles } from "../../../storage/backup.js";
-import { backupPostgres, resolveBackupTarget, writeBackupMeta, type PgRunner } from "./backup-postgres.js";
+import { countInExportedSnapshot } from "../../../storage/postgres/snapshot.js";
+import { postgresConnectionString, isContainerTarget } from "../../../storage/postgres/config.js";
+import { BACKUP_TABLES, backupPostgres, resolveBackupTarget, writeBackupMeta, type PgRunner } from "./backup-postgres.js";
 import { defaultPaiHomeDir, paiHomePath, resolvePaiFile } from "../../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
@@ -76,35 +78,43 @@ function fileSize(path: string): string {
   }
 }
 
-const dockerRunner: PgRunner = {
-  dump(database, user, destPath) {
-    execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], { stdio: "pipe" });
-    const sqlFd = openSync(destPath, "w");
-    try {
-      const dump = spawnSync("docker", ["exec", DOCKER_CONTAINER, "pg_dump", "-U", user, database], {
-        stdio: ["pipe", sqlFd, "pipe"],
-      });
-      if (dump.status !== 0) {
-        throw new Error(dump.stderr?.toString().trim() || `pg_dump exited with code ${dump.status}`);
-      }
-    } finally {
-      closeSync(sqlFd);
+/**
+ * Dumps the server the connection string names (the PAI container when that is the local server,
+ * else the host's pg_dump against the external server). Counts are read in the REPEATABLE READ
+ * transaction whose exported snapshot pg_dump then uses, so they match the dump exactly.
+ */
+const snapshotRunner: PgRunner = {
+  async dump(target, destPath) {
+    const container = isContainerTarget(target);
+    if (container) {
+      execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], { stdio: "pipe" });
     }
-  },
-  count(database, user, table) {
-    const r = spawnSync(
-      "docker",
-      ["exec", DOCKER_CONTAINER, "psql", "-U", user, "-d", database, "-tAc", `SELECT count(*) FROM ${table}`],
-      { stdio: "pipe" },
-    );
-    return r.status === 0 ? Number(r.stdout.toString().trim()) : null;
+    const url = target.connectionString ?? postgresConnectionString(loadConfig().postgres ?? {});
+    return countInExportedSnapshot(url, BACKUP_TABLES, (snap) => {
+      const sqlFd = openSync(destPath, "w");
+      try {
+        const common = [`--snapshot=${snap}`, "-U", target.user];
+        const dump = container
+          ? spawnSync("docker", ["exec", DOCKER_CONTAINER, "pg_dump", ...common, target.database], { stdio: ["pipe", sqlFd, "pipe"] })
+          : spawnSync("pg_dump", ["-h", target.host!, "-p", String(target.port), ...common, "-d", target.database], {
+              stdio: ["pipe", sqlFd, "pipe"],
+              env: target.password !== undefined ? { ...process.env, PGPASSWORD: target.password } : process.env,
+            });
+        if (dump.error) throw dump.error;
+        if (dump.status !== 0) {
+          throw new Error(dump.stderr?.toString().trim() || `pg_dump exited with code ${dump.status}`);
+        }
+      } finally {
+        closeSync(sqlFd);
+      }
+    });
   },
 };
 
 export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): Promise<void> {
   if (opts.dryRun) {
     const t = resolveBackupTarget(loadConfig().postgres);
-    console.log(`Would dump Postgres database "${t.database}" (user ${t.user}) from container ${DOCKER_CONTAINER}`);
+    console.log(`Would dump Postgres database "${t.database}" (user ${t.user}) from ${isContainerTarget(t) ? `container ${DOCKER_CONTAINER}` : `${t.host}:${t.port}`}`);
     return;
   }
   const ts = timestamp();
@@ -153,16 +163,16 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
 
   if (opts.postgres) {
     const sqlDest = join(backupDir, "postgres-pai.sql");
-    console.log(dim(`  Running pg_dump on ${DOCKER_CONTAINER} (this may take a moment)...`));
+    console.log(dim("  Running pg_dump (this may take a moment)..."));
     try {
       const target = resolveBackupTarget(config.postgres);
       console.log(dim(`  Database: ${target.database}`));
-      writeBackupMeta(backupDir, backupPostgres(target, sqlDest, dockerRunner));
+      writeBackupMeta(backupDir, await backupPostgres(target, sqlDest, snapshotRunner));
       results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok (verified)") });
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       results.push({ label: "Postgres DB", path: sqlDest, size: "-", status: err(`failed: ${msg}`) });
-      console.log(warn(`  Postgres backup failed. Is Docker running with container '${DOCKER_CONTAINER}'?`));
+      console.log(warn(`  Postgres backup failed; no dump was kept. Is the server reachable (Docker container '${DOCKER_CONTAINER}' for a local database, pg_dump on PATH for an external one)?`));
     }
   } else {
     results.push({ label: "Postgres DB", path: "-", size: "-", status: dim("skipped (--no-postgres)") });
