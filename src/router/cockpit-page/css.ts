@@ -16,11 +16,16 @@ h1{font-size:15px;margin:0;font-weight:600}
 .tabs button:first-child{border-radius:6px 0 0 6px}.tabs button:last-child{border-radius:0 6px 6px 0}
 .tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
 #newer{margin-left:auto;color:var(--warn);font-size:12px;text-decoration:underline;cursor:pointer}#newer[hidden]{display:none}#newer:hover{color:var(--acc)}#newer:not([hidden])+#stamp{margin-left:0}#stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
-@media(max-width:480px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{display:none}#reset{flex:0 0 auto;margin-left:auto}#theme{flex:0 0 auto}#lock{flex:0 0 auto}}
+@media(max-width:600px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{font-size:0;white-space:nowrap;margin-left:auto}#stamp::after{content:attr(data-s);font-size:12px}#reset{flex:0 0 auto}header.asking #stamp{display:none}#theme{flex:0 0 auto}#lock{flex:0 0 auto}}
+@media(max-width:430px){h1 .hc{display:none}}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 /* layout lock: the lock button is themed like #theme; locked hides every layout edit control */
 #lock{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:13px;line-height:1;border-radius:6px}#lock:hover,#lock[aria-pressed=true]{color:var(--acc)}
-#savedef{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;border-radius:6px;white-space:nowrap;flex:0 0 auto}@media(min-width:481px){#reset,#lock,#savedef,#theme{margin-left:-8px}}#savedef:hover,#savedef.ok{color:var(--acc)}#savedef.bad{color:var(--bad,#c33)}
+#savedef{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;border-radius:6px;white-space:nowrap;flex:0 0 auto}@media(min-width:601px){#reset,#lock,#savedef,#theme{margin-left:-8px}}#savedef:hover,#savedef.ok{color:var(--acc)}#savedef.bad{color:var(--bad,#c33)}
+#ask{display:inline-flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;color:var(--dim);flex:0 0 auto}#ask[hidden]{display:none}#ask button{background:none;border:1px solid var(--line);border-radius:6px;color:var(--fg);cursor:pointer;padding:1px 7px;font-size:12px}#ask #askyes:hover{color:var(--ok)}#ask #askno:hover{color:var(--bad)}
+#ask .aq{display:inline}header.asking #stamp{margin-left:0}header.asking #ask{margin-left:auto}
+#toast{position:fixed;top:48px;right:14px;z-index:5;background:var(--card,var(--bg));border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--ok)}#toast[hidden]{display:none}
+#savedef.ok{color:var(--ok)}
 html.locked .cgrip,html.locked .cmin,html.locked .cspan,html.locked .wgutter,html.locked #reset{display:none}
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}

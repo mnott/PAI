@@ -53,3 +53,39 @@ describe.skipIf(!CHROME)("header right group at 1500 px", () => {
     expect(r.gap).toBeLessThan(120);
   }, 30000);
 });
+
+const WRAP = `<script>setTimeout(function(){var h=document.querySelector("header"),t=[];[].forEach.call(h.children,function(c){if(c.offsetParent!==null)t.push(Math.round((c.getBoundingClientRect().top+c.getBoundingClientRect().bottom)/2))});
+var posts=0,of=window.fetch;window.fetch=function(u,o){if(o&&o.method==="POST"&&/layout-default/.test(u))posts++;return Promise.resolve({ok:true,json:function(){return {}}})};
+var r={spread:Math.max.apply(null,t)-Math.min.apply(null,t)};
+document.getElementById("savedef").click();r.askShown=!document.getElementById("ask").hidden;r.starHidden=document.getElementById("savedef").hidden;
+document.getElementById("askno").click();r.noPost=posts===0&&document.getElementById("ask").hidden;
+document.getElementById("savedef").click();document.getElementById("askyes").click();
+setTimeout(function(){r.posts=posts;r.toast=!document.getElementById("toast").hidden;
+document.getElementById("savedef").click();setTimeout(function(){r.auto=document.getElementById("ask").hidden&&posts===1;
+document.body.setAttribute("data-r",JSON.stringify(r))},4300)},300)},2000)</script>`;
+
+describe.skipIf(!CHROME)("header stays on one line and the star confirms", () => {
+  for (const width of [360, 550, 1100]) {
+    it(`${width} px: one line; star asks first, ✕/4 s cancel, ✓ POSTs once`, async () => {
+      pollBuild = "A";
+      const orig = server.listeners("request")[0] as (...a: unknown[]) => void;
+      server.removeAllListeners("request");
+      server.on("request", (req, res) => {
+        const w = res.end.bind(res);
+        res.end = ((b: string) => w(typeof b === "string" ? b.replace("</body>", WRAP + "</body>") : b)) as never;
+        orig(req, res);
+      });
+      const dom = await dumpDom(`${base}/page`, { width, height: 800, budgetMs: 9000 });
+      server.removeAllListeners("request");
+      server.on("request", orig);
+      const m = /data-r="([^"]*)"/.exec(dom);
+      if (!m) throw new Error("no probe result in dump");
+      const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+      expect(r.spread).toBeLessThanOrEqual(4);
+      expect(r.askShown && r.starHidden && r.noPost).toBe(true);
+      expect(r.posts).toBe(1);
+      expect(r.toast).toBe(true);
+      expect(r.auto).toBe(true);
+    }, 40000);
+  }
+});

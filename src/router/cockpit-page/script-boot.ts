@@ -61,12 +61,18 @@ $("lock").onclick=function(){var on=!document.documentElement.classList.contains
 window.addEventListener("storage",function(e){if(e.key==="pai.cockpit.lock"&&e.storageArea===window.localStorage)setLock(e.newValue==="1")});
 setLock(document.documentElement.classList.contains("locked"));
 /** Save as default: this layout becomes what a device with none of its own starts from. Allowed while locked (the lock only stops edits). */
-$("savedef").onclick=function(){var b=this,snap=Win.snapshot();b.classList.remove("ok","bad");
- fetch("/cockpit/layout-default",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(snap)}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);b.classList.add("ok");b.title="saved as the default layout"},function(){b.classList.add("bad");b.title="could not save the default layout"}).catch(function(){b.classList.add("bad")});
- setTimeout(function(){b.classList.remove("ok","bad");b.title="save this layout as the default for all devices"},2500)};
+var askT=0;
+function askEnd(){clearTimeout(askT);$("ask").hidden=true;$("savedef").hidden=false;$("reset").hidden=false;document.querySelector("header").classList.remove("asking")}
+/** Inline confirm in the header (no browser dialog): label with the long and short wording, auto-cancel after 4 s. */
+function ask(long,short,go){askEnd();var q=document.querySelector("#ask .aq"),nar=matchMedia("(max-width:600px)").matches;q.textContent=nar?short:long;$("ask").hidden=false;$("savedef").hidden=true;$("reset").hidden=true;document.querySelector("header").classList.add("asking");
+ $("askyes").onclick=function(){askEnd();go()};$("askno").onclick=askEnd;askT=setTimeout(askEnd,4000)}
+function toast(t){var e=$("toast");e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){e.hidden=true},2000)}
+$("savedef").onclick=function(){ask("Save as default?","Save?",function(){var b=$("savedef"),snap=Win.snapshot();b.classList.remove("ok","bad");
+ fetch("/cockpit/layout-default",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(snap)}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);b.classList.add("ok");b.textContent="\u2605";b.title="saved as the default layout";toast("Layout saved as default")},function(){b.classList.add("bad");b.title="could not save the default layout";toast("Could not save the default layout")}).catch(function(){b.classList.add("bad")});
+ setTimeout(function(){b.classList.remove("ok","bad");b.textContent="☆";b.title="save this layout as the default for all devices"},2500)})};
 tabs();
 /** The reset button drops this device's layout; the reload starts again from the default (the saved one, else the built-in). */
-$("reset").onclick=function(){try{localStorage.removeItem(${JSON.stringify(WIN_KEY)})}catch(e){}location.reload()};
+$("reset").onclick=function(){ask("Reset layout?","Reset?",function(){try{localStorage.removeItem(${JSON.stringify(WIN_KEY)})}catch(e){}location.reload()})};
 load();loadSystem();loadLimits();loadModels();loadPool();loadQueue();loadMemory();
 setInterval(function(){load();loadSystem()},${L.pollMs});setInterval(loadLimits,${L.limitsPollMs});setInterval(loadModels,${L.pollMs});setInterval(loadPool,${L.poolPollMs});setInterval(loadQueue,${L.pollMs});setInterval(loadMemory,${L.memoryPollMs});setInterval(tick,${L.clockTickMs});setInterval(feedTick,${L.clockTickMs});
 })();
