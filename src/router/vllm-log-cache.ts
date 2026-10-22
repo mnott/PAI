@@ -38,6 +38,8 @@ export function parseCacheFetchLine(line: string): { hit: boolean; promptTokens:
 /** Incremental reader of one log: totals since the tail began (or the log last restarted). */
 export class CacheLogTail {
   private offset = -1;
+  private ino = -1;
+  private birth = -1;
   private partial = "";
   private totals: CacheLogTotals = { hits: 0, misses: 0, promptTokens: 0, cachedTokens: 0 };
 
@@ -53,12 +55,16 @@ export class CacheLogTail {
       return null;
     }
     try {
-      const size = fstatSync(fd).size;
-      if (this.offset < 0 || size < this.offset) {
-        // first look, or the log was truncated / replaced by a restart: totals start over
+      const st = fstatSync(fd);
+      const size = st.size;
+      const replaced = this.offset >= 0 && (st.ino !== this.ino || st.birthtimeMs !== this.birth);
+      if (this.offset < 0 || size < this.offset || replaced) {
+        // first look, or the log was truncated, or replaced by a restart (new inode / birthtime, however large): totals start over
         if (this.offset >= 0) this.totals = { hits: 0, misses: 0, promptTokens: 0, cachedTokens: 0 };
         this.offset = 0;
         this.partial = "";
+        this.ino = st.ino;
+        this.birth = st.birthtimeMs;
       }
       let start = this.offset;
       if (size - start > this.maxBytes) {

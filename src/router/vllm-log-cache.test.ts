@@ -52,6 +52,15 @@ describe("CacheLogTail", () => {
     expect(t.poll()).toEqual({ hits: 0, misses: 1, promptTokens: 1000, cachedTokens: 0 });
   });
 
+  it("starts over when the log is replaced by a larger file", () => {
+    writeFileSync(log, HIT);
+    const t = new CacheLogTail(log);
+    expect(t.poll()).toMatchObject({ hits: 1, misses: 0 });
+    rmSync(log);
+    writeFileSync(log, MISS.repeat(3) + NOISE.repeat(3));
+    expect(t.poll()).toEqual({ hits: 0, misses: 3, promptTokens: 3000, cachedTokens: 0 });
+  });
+
   it("reads only the last chunk of a log far behind, dropping the cut line", () => {
     writeFileSync(log, HIT.repeat(100));
     const t = new CacheLogTail(log, HIT.length * 10 + 5);
