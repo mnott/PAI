@@ -66,7 +66,7 @@ const PROBE = `<script>setTimeout(function(){
 var out={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .card"),function(c){
  if(c.style.display==="none"||c.classList.contains("min"))return;
  var ty=c.getAttribute("data-type"),def=(Win.cfg().types||{})[ty]||{};
- if((def.resize&&c.getAttribute("data-card")!=="pool.slots")||c.querySelector(".card"))return; // the slots table with only its note is fitted by content
+ if(ty==="chart"||c.querySelector(".card,svg,canvas"))return; // a chart draws at its size; every other card, tables and lists included, is fitted by content
  var b=c.querySelector(".cbody").getBoundingClientRect(),max=0;
  Array.prototype.forEach.call(c.querySelectorAll(".cbody *"),function(e){if(e.children.length||!e.getClientRects().length)return;var r=e.getBoundingClientRect();if(r.height>0&&r.bottom-b.top>max)max=r.bottom-b.top});
  out[c.getAttribute("data-card")]={y:Math.round(c.getBoundingClientRect().top),type:ty,h:Math.round(c.getBoundingClientRect().height),content:Math.round(28+max)};
@@ -128,8 +128,8 @@ async function probe(size: string, shot?: string): Promise<Probe> {
 }
 
 describe.skipIf(!CHROME)("every default card is as tall as its content", () => {
-  it(`no card is more than ${SLACK} px taller than its content`, async () => {
-    const r = await probe("1300,5000", process.env.PAI_DENSITY_SHOT);
+  for (const w of [1500, 1300]) it(`${w} px: no card (tables and lists included) is more than ${SLACK} px taller than its content`, async () => {
+    const r = await probe(`${w},5000`, w === 1300 ? process.env.PAI_DENSITY_SHOT : undefined);
     expect(r.err).toBeNull();
     const ids = Object.keys(r.cards).filter((i) => i !== "cache.none"); // the empty-data placeholder rides the ring type (min 130)
     expect(ids.length).toBeGreaterThan(15);

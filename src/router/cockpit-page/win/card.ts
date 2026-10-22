@@ -177,8 +177,8 @@ function fitCfg(){
  *  draws at the body size (it has resize) or a group has no reading and keeps its default height. */
 /** A stacked (narrow) card that is not a chart is measured by its content like any other, though its type has a resize hook: its first placement is no reading. */
 function fitNarrow(c){return c.type!=="chart"&&c.body.clientWidth>0&&c.body.clientWidth<W.cfg.narrowW}
-/** A table card that draws no table (its note, e.g. "no slots") is measured by its content: it has nothing to size to the body. */
-function fitPlain(c){return c.type==="table"&&c.mounted&&!c.body.querySelector("table")}
+/** A table or list card is measured by its content when it draws no table (a note, plain html, chips) or its spec's resize only re-flows the table to the width (fitTables): neither has anything to size to the body. */
+function fitPlain(c){return c.mounted&&(c.type==="table"||c.type==="list")&&(!c.body.querySelector("table")||!!c.spec.resize)}
 function fitEligible(c){
  return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&(!(TYPES[c.type]||{}).resize||fitNarrow(c)||fitPlain(c))&&c.el.style.display!=="none"&&c.body.clientWidth>0;
 }

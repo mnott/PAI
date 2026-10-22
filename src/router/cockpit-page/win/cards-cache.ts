@@ -93,7 +93,9 @@ function cacheLocalView(p){
  if(!p||!p.data)return null;
  return{html:cacheLocalHtml(p.data,p.sys)||'<span class="dim">no local server reports a prefix cache</span>'};
 }
-function cacheProvidersView(p){return p&&p.data?{html:cacheProvidersHtml(p.data,p.sys)}:null}
+/** Like the other tables: stacked rows when the table overflows its width; the spec's resize runs it again on a width change. */
+function cacheProvidersFit(ctx){fitTables(ctx.body)}
+function cacheProvidersView(p){return p&&p.data?{html:cacheProvidersHtml(p.data,p.sys),after:cacheProvidersFit}:null}
 function cacheRows(ids){var rows=[],i;for(i=0;i<ids.length;i+=CACHE_RING_ROW)rows.push(ids.slice(i,i+CACHE_RING_ROW));return rows}
 /** The rings group's kids: rows of at most CACHE_RING_ROW rings. */
 function cacheRingTree(ids){
@@ -121,7 +123,7 @@ function cacheDefaults(){
   {id:"cache.none",type:"ring",title:"Cache hit ratio",feeds:["cache"]},
   {id:"cache.low",type:"chips",title:"low-request models",feeds:["cache"]},{id:"cache.note",type:"chips",title:"totals",feeds:["cache"]},
   {id:"cache.local",type:"list",cls:"wm",title:"Local prefix cache",info:CACHE_LOCAL_INFO,feeds:["cache"],view:cacheLocalView},
-  {id:"cache.providers",type:"table",title:"Providers",info:CACHE_PROV_INFO,feeds:["cache"],view:cacheProvidersView}];
+  {id:"cache.providers",type:"table",title:"Providers",info:CACHE_PROV_INFO,feeds:["cache"],view:cacheProvidersView,resize:cacheProvidersFit}];
  var chips=WinT.split("r",[WinT.leaf("cache.low"),WinT.leaf("cache.note")],[0.5,0.5]);
  return{tree:WinT.leaf("cache"),kids:{cache:WinT.split("c",[WinT.leaf("cache-rings"),chips,WinT.leaf("cache.local"),WinT.leaf("cache.providers")],[0.32,0.12,0.16,0.4]),"cache-rings":WinT.leaf("cache.none")},stDefaults:{},cards:cards};
 }
