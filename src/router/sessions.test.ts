@@ -410,3 +410,31 @@ describe("branchCommits", () => {
     clearBranchCommitsCache();
   });
 });
+
+describe("post-release fixes", () => {
+  it("attribution of one session id with 200k rows does not overflow the stack", () => {
+    const t0 = Date.parse("2026-10-20T10:00:00Z");
+    const rows = Array.from({ length: 200_000 }, () => ({ ts: new Date(t0 + 1000).toISOString(), session_id: "big" }));
+    const w: WorkerWindow = { worker: "w1", label: "run", startMs: t0, endMs: t0 + 60_000, state: "done" } as WorkerWindow;
+    expect(withWorkerAttribution(new Map(), rows, [w], t0 + 120_000).get("big")?.name).toBe("run");
+  });
+
+  it("an unreadable worker dir or projects dir (a file) does not throw", () => {
+    const d = mkdtempSync(join(tmpdir(), "sess-file-"));
+    const f = join(d, "afile");
+    writeFileSync(f, "x");
+    expect(() => loadSessionMap({ workerDirs: [f], agentSessionsFile: join(d, "none.json"), projectsDir: f })).not.toThrow();
+  });
+
+  it("job name cache evicts expired entries", () => {
+    const d = mkdtempSync(join(tmpdir(), "sess-jobs-"));
+    for (const id of ["aaaaaaaa", "bbbbbbbb"]) {
+      mkdirSync(join(d, id));
+      writeFileSync(join(d, id, "state.json"), JSON.stringify({ name: id }));
+    }
+    expect(jobSessionName("aaaaaaaa", d, 0)).toBe("aaaaaaaa");
+    writeFileSync(join(d, "aaaaaaaa", "state.json"), JSON.stringify({ name: "new" }));
+    expect(jobSessionName("bbbbbbbb", d, 100_000)).toBe("bbbbbbbb");
+    expect(jobSessionName("aaaaaaaa", d, 100_001)).toBe("new");
+  });
+});

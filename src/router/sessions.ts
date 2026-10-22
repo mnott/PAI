@@ -9,7 +9,6 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
@@ -51,7 +50,6 @@ export interface SessionSources {
 }
 
 export function defaultSources(): SessionSources {
-  const home = homedir();
   return {
     workerDirs: [paiHomePath("logs", "workers"), join(claudeHomeDir(), "logs", "workers")],
     agentSessionsFile: paiHomePath("agent-sessions.json"),
@@ -85,6 +83,12 @@ export function jobSessionName(id: string | undefined, jobsDir: string | undefin
   if (hit && now - hit.at < JOB_TTL_MS) return hit.name;
   const raw = readJson(join(jobsDir, id8, "state.json"))?.name;
   const name = typeof raw === "string" && raw ? raw : null;
+  // entries are re-inserted on refresh, so the Map is ordered by age: drop expired ones from the front
+  jobCache.delete(key);
+  for (const [k, v] of jobCache) {
+    if (now - v.at < JOB_TTL_MS) break;
+    jobCache.delete(k);
+  }
   jobCache.set(key, { at: now, name });
   return name;
 }
@@ -251,7 +255,13 @@ export function* loadSessionMapSteps(src: SessionSources = defaultSources()): Ge
   const map = new Map<string, SessionInfo>();
   // The project directory of the transcript: today's fallback for ids nothing else lists.
   if (src.projectsDir && existsSync(src.projectsDir)) {
-    for (const d of readdirSync(src.projectsDir)) {
+    let projectDirs: string[] = [];
+    try {
+      projectDirs = readdirSync(src.projectsDir);
+    } catch {
+      // unreadable or replaced since existsSync: no transcript fallback
+    }
+    for (const d of projectDirs) {
       const name = d.split("-").filter(Boolean).pop();
       if (!name) continue;
       let files: string[] = [];
@@ -298,7 +308,13 @@ export function* loadSessionMapSteps(src: SessionSources = defaultSources()): Ge
   // The worker run label tops the order.
   for (const dir of src.workerDirs) {
     if (!existsSync(dir)) continue;
-    for (const f of readdirSync(dir)) {
+    let dirFiles: string[] = [];
+    try {
+      dirFiles = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const f of dirFiles) {
       if (!f.endsWith(".status")) continue;
       yield;
       const s = readJson(join(dir, f));
@@ -451,7 +467,7 @@ export function* withWorkerAttributionSteps(
     }
     if (!hits.size) continue;
     // containment is required for every request; among the covering runs the freshest start wins
-    const first = Math.min(...reqs.map((r) => r.t));
+    const first = reqs.reduce((m, r) => Math.min(m, r.t), Infinity);
     const best = [...hits.values()].sort((a, b) => b.startMs - a.startMs)[0]!;
     if (best.startMs > first) continue;
     out.set(id, { name: best.label, worker: best.worker, state: best.state, verdict: best.verdict, provider: best.provider });
