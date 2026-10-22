@@ -9,7 +9,9 @@ description: >
 
 # PAI setup
 
-Work through the phases in order. Run the check of a phase first; if it already passes, say so and move on. Prefer `pai` commands over editing files by hand; `pai <command> --help` is the reference. Ask the user before anything that installs a service, needs an API key, or starts a large download. Never print API keys back.
+Work through the phases in order. Run the check of a phase first; if it already passes, say so and move on.
+
+**One install route, however the user started.** Whether they said "clone https://github.com/mnott/PAI and set it up for me", installed the plugin, or asked from scratch, install the same way: the released npm package (phase 2), the `pai` plugin from the marketplace (phase 2a), then `pai setup` (phase 3), which also installs AIBroker. A clone of the repository is only where these instructions came from: do not build, link or run PAI from it (that would run unreleased code). Tell the user they can delete the clone afterwards, or keep it if they want to work on PAI itself. Prefer `pai` commands over editing files by hand; `pai <command> --help` is the reference. Ask the user before anything that installs a service, needs an API key, or starts a large download — except AIBroker, which setup installs without asking because PAI's messaging depends on it. Never print API keys back.
 
 ## 1. Prerequisites
 
@@ -32,6 +34,17 @@ npm i -g @tekmidian/pai@latest   # upgrade
 ```
 
 Verify: `pai --version` prints a version and `pai more` lists commands. If `pai` is not found, add `$(npm prefix -g)/bin` to PATH in the shell profile and open a new shell.
+
+## 2a. Install the plugin
+
+Check: `claude plugin list` shows `pai`.
+
+```
+claude plugin marketplace add mnott/PAI
+claude plugin install pai@pai
+```
+
+The plugin brings PAI's skills (this one included) and keeps them current with `claude plugin update pai`. Tell the user the plugin is active from the next Claude Code session on.
 
 ## 3. Run setup
 
@@ -63,7 +76,7 @@ On Linux without systemd (containers) run `pai daemon serve` in a terminal or pr
 
 ## 4a. AIBroker (messaging)
 
-Check: `aibroker doctor` exits 0. AIBroker is a separate package and PAI's messaging layer (messages between sessions, worker reports, terminal tab names, WhatsApp, Telegram, PAILot). PAI runs without it, but those features do not. If `aibroker` is not on the PATH or doctor fails:
+Check: `aibroker doctor` exits 0. AIBroker is a separate package and PAI's messaging layer (messages between sessions, worker reports, terminal tab names, WhatsApp, Telegram, PAILot). `pai setup` installs it automatically (unless run with `--no-aibroker`); this phase only confirms it. If `aibroker` is not on the PATH or doctor fails:
 
 ```
 npm install -g aibroker
@@ -146,7 +159,7 @@ pai reload
 Report each line as pass or fail with the command output:
 
 1. `node --version` prints v20 or newer; `claude --version` prints a version
-2. `pai --version` prints a version
+2. `pai --version` prints a version; `claude plugin list` shows `pai`
 3. `pai daemon status` prints `Daemon running`
 4. `pai memory search "test"` ends without error
 5. `pai worker providers test` prints a reply and a time (`pai worker providers test anthropic` probes the local `claude` CLI; no key involved)
