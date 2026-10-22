@@ -4,6 +4,14 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.9] - 2026-10-23
+
+### Fixed
+
+- **"One after the other" held again:** with a session's `max_parallel` set, a waiting run was admitted on the provider's cap after the first poll since live concurrency (1.0.5); the session limit is kept.
+- **The router could be crashed by one local request** with a malformed percent-escape in the cockpit concurrency URL; it answers 400, a throwing handler answers 500 instead of ending the process, and an uncaught exception is logged.
+- **Lessons:** an `id:` in a lesson file's frontmatter can no longer write outside the lessons folder; the `memory_lessons` tool returns only approved lessons unless a state is asked for.
+
 ## [1.0.8] - 2026-10-23
 
 ### Fixed
