@@ -320,7 +320,10 @@ function parseLines(text: string, into: UsageRow[]): void {
 }
 
 /** Parsed log per file: rows up to byte `end` (a line boundary), the file identity they came from. */
-const usageCache = new Map<string, { ino: number; end: number; rows: UsageRow[]; lastMs: number }>();
+const usageCache = new Map<string, { ino: number; end: number; rows: UsageRow[]; lastMs: number; head: string }>();
+/** The longest range the cockpit shows; older rows are dropped from the cache. */
+const USAGE_CACHE_WINDOW_MS = 7 * 86_400_000;
+const USAGE_HEAD_BYTES = 4096;
 /** Row arrays known to hold their rows in time order (the cached log, while every appended row is not older than the one before). */
 const timeOrdered = new WeakSet<UsageRow[]>();
 export const isTimeOrdered = (rows: UsageRow[]): boolean => timeOrdered.has(rows);
@@ -329,9 +332,11 @@ export const markTimeOrdered = (rows: UsageRow[]): void => void timeOrdered.add(
 /**
  * readUsage for the cockpit's polls and range clicks: the log is append-only, so the rows parsed
  * last time stay and only the bytes after them are read. A truncated or replaced file is re-read
- * whole. The returned array is shared — callers must not mutate it.
+ * whole; replacement is detected by inode, shrinking, or a changed first 4 KB (an in-place rewrite
+ * that grows). Rows older than the 7 d range window are dropped. The returned array is shared —
+ * callers must not mutate it.
  */
-export function readUsageCached(file: string = usageLogFile()): UsageRow[] {
+export function readUsageCached(file: string = usageLogFile(), now: number = Date.now()): UsageRow[] {
   if (!existsSync(file)) {
     usageCache.delete(file);
     return [];
@@ -340,9 +345,14 @@ export function readUsageCached(file: string = usageLogFile()): UsageRow[] {
   try {
     const st = fstatSync(fd);
     let c = usageCache.get(file);
-    if (c && (c.ino !== st.ino || st.size < c.end)) c = undefined;
+    const headLen = Math.min(USAGE_HEAD_BYTES, st.size);
+    const headBuf = Buffer.alloc(headLen);
+    readSync(fd, headBuf, 0, headLen, 0);
+    const head = headBuf.toString("latin1");
+    // the head the cache saw is a prefix of what is there now (the cached head may be shorter than 4 KB)
+    if (c && (c.ino !== st.ino || st.size < c.end || !head.startsWith(c.head))) c = undefined;
     if (!c) {
-      c = { ino: st.ino, end: 0, rows: [], lastMs: 0 };
+      c = { ino: st.ino, end: 0, rows: [], lastMs: 0, head: "" };
       timeOrdered.add(c.rows);
     }
     if (st.size > c.end) {
@@ -360,6 +370,14 @@ export function readUsageCached(file: string = usageLogFile()): UsageRow[] {
         else if (t >= 0) c.lastMs = t;
       }
       c.end += chunk.length;
+      if (c.head.length < USAGE_HEAD_BYTES) c.head = head.slice(0, Math.min(c.end, USAGE_HEAD_BYTES));
+      const cutoff = now - USAGE_CACHE_WINDOW_MS;
+      // slack of a day so the O(n) trim runs at most once a day, not on every append
+      if (c.rows.length && Date.parse(c.rows[0]!.ts) < cutoff - 86_400_000) {
+        const kept = c.rows.filter((r) => !(Date.parse(r.ts) < cutoff));
+        c.rows.length = 0;
+        for (const r of kept) c.rows.push(r);
+      }
     }
     usageCache.set(file, c);
     return c.rows;
