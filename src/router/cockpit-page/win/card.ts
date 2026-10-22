@@ -504,7 +504,7 @@ function init(main,defaults,opts){
  opts=opts||{};
  W.opts={storage:opts.storage||window.localStorage,now:opts.now};
  W.defaults=defaults;W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
- W.cfg={HEAD_H:HEAD_H,CHIP_H:22,GAP:8,GUTTER:8,minW:220,narrowW:480};
+ W.cfg={HEAD_H:HEAD_H,CHIP_H:22,GAP:8,PAD:6,GUTTER:8,minW:220,narrowW:480};
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];
  var specs=defaults.cards||[],known=[],i;
  for(i=0;i<specs.length;i++){W.cards[specs[i].id]=buildCard(specs[i]);known.push(specs[i].id)}

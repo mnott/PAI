@@ -148,5 +148,14 @@ describe.skipIf(!CHROME)("root grid readings", () => {
       if (process.env.PAI_GRID) console.log(`${width} px\n` + rows.map((r) => `${r.id}\tp=${r.p}\t${r.x},${r.y} ${r.w}x${r.h}\ttr=${r.tr}${r.chip ? "\tchip trunc=" + r.trunc : ""}`).join("\n"));
       expect(overlaps(rows)).toEqual([]);
     }, 120_000);
+    it(`${width} px: a group has >= 6 px padding around its lines and dock; cards of one line share its height`, async () => {
+      const rows = await read(width);
+      const bad: string[] = [];
+      for (const r of rows) if (r.pr && (r.x - r.pr.x < 6 || r.pr.x + r.pr.w - (r.x + r.w) < 6 || r.pr.y + r.pr.h - (r.y + r.h) < 6 - 1)) bad.push(`${r.id} in ${r.p}`);
+      expect(bad).toEqual([]);
+      const lines = new Map<string, Row[]>();
+      for (const r of rows) if (!r.chip && r.h > 40) lines.set(`${r.p}@${r.y}`, [...(lines.get(`${r.p}@${r.y}`) ?? []), r]);
+      for (const [k, v] of lines) if (v.length > 1) expect([k, new Set(v.map((r) => r.h)).size]).toEqual([k, 1]);
+    }, 120_000);
   }
 });

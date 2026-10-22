@@ -8,6 +8,7 @@ export type WinState = { min?: number; h?: number; sp?: number; seen?: number };
 export type WinCfg = {
   HEAD_H: number;
   GAP: number;
+  PAD?: number;
   GUTTER: number;
   minW: number;
   minH?: number;
@@ -129,6 +130,8 @@ function winDock(cfg,gid,w){
  }
  return{r:r,h:y+ch};
 }
+/** Padding of a group body (cfg.PAD px) on every side: kids and dock sit inside it. */
+function winPad(cfg){return cfg.PAD||0}
 /** Room a group's dock takes below its kids (the dock and the gap above it), 0 without chips. */
 function winDockH(cfg,gid,w){var h=winDock(cfg,gid,w).h;return h?h+cfg.GAP:0}
 /** The one visible child of a group's kid tree when it is itself an unminimized group (leaf id), else null: that child's header is not drawn (its cards fill the parent body). */
@@ -167,7 +170,7 @@ function winH(node,w,st,cfg,kids){
   if(winGhost(st,node.id))return 0;
   if(winMin(st,node.id))return cfg.HEAD_H;
   var kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
-  if(kt)return cfg.HEAD_H+winH(kt,w,st,cfg,kids)-(winSolo(kt,st,kids)?cfg.HEAD_H:0)+winDockH(cfg,node.id,w);
+  if(kt){var pd=winPad(cfg),wi=w-2*pd;return cfg.HEAD_H+2*pd+winH(kt,wi,st,cfg,kids)-(winSolo(kt,st,kids)?cfg.HEAD_H:0)+winDockH(cfg,node.id,wi)}
   var u=winUH(node,st,cfg,kids);
   if(u!==null)return u;
   var f=cfg.fit&&cfg.fit[node.id];
@@ -201,18 +204,18 @@ function winCard(rects,id,x,y,w,ih,kids,state,cfg,nohd){
  if(nohd)rects[id].nohd=1;
  var kt=kids&&kids[id]&&kids[id].k?kids[id]:null;
  if(kt&&!min){
-  var dk=winDock(cfg,id,w),bh=Math.max(0,h-hh),kh=Math.max(0,bh-(dk.h?dk.h+cfg.GAP:0));
+  var pd=winPad(cfg),wi=w-2*pd,dk=winDock(cfg,id,wi),bh=Math.max(0,h-hh-2*pd),kh=Math.max(0,bh-(dk.h?dk.h+cfg.GAP:0));
   var so=winSolo(kt,state,kids);
-  if(so)winCard(rects,so,0,0,w,kh,kids,state,cfg,true);
-  else{var r=layout(kt,kids,{w:w},state,cfg);for(var g in r.rects)rects[g]=r.rects[g]}
+  if(so)winCard(rects,so,pd,pd,wi,kh,kids,state,cfg,true);
+  else{var r=layout(kt,kids,{w:wi},state,cfg,pd,pd);for(var g in r.rects)rects[g]=r.rects[g]}
   // minimized cards of this group: title chips in a flow row right after the last line
-  for(var q=0;q<dk.r.length;q++){var cr=dk.r[q];rects[cr.id]={x:cr.x,y:kh+(kh?cfg.GAP:0)+cr.y,w:cr.w,h:cr.h,chip:1,body:{w:cr.w,h:0}}}
+  for(var q=0;q<dk.r.length;q++){var cr=dk.r[q];rects[cr.id]={x:pd+cr.x,y:pd+kh+(kh?cfg.GAP:0)+cr.y,w:cr.w,h:cr.h,chip:1,body:{w:cr.w,h:0}}}
  }
 }
-function layout(tree,kids,box,state,cfg){
+function layout(tree,kids,box,state,cfg,ox,oy){
  var rects={},height=0;
  if(!tree||box.w<=0)return{rects:rects,height:0};
- var out=[{n:tree,x:0,y:0,w:box.w,h:tree.k==="c"?winH(tree,box.w,state,cfg,kids):0}];
+ var out=[{n:tree,x:ox||0,y:oy||0,w:box.w,h:tree.k==="c"?winH(tree,box.w,state,cfg,kids):0}];
  var guard=0;
  while(out.length){
   var it=out.pop(),n=it.n;
