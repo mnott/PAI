@@ -49,7 +49,19 @@ export interface SkillsReport {
 }
 
 /** Recursively collect every file under `dir` whose basename satisfies `matches`. */
-function findFilesRecursive(dir: string, matches: (name: string) => boolean): string[] {
+function findFilesRecursive(
+  dir: string,
+  matches: (name: string) => boolean,
+  seen: Set<string> = new Set()
+): string[] {
+  // Symlinked directories can form cycles; visit each real directory once.
+  try {
+    const real = realpathSync(dir);
+    if (seen.has(real)) return [];
+    seen.add(real);
+  } catch {
+    return [];
+  }
   let entries: import("node:fs").Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -59,9 +71,21 @@ function findFilesRecursive(dir: string, matches: (name: string) => boolean): st
   const found: string[] = [];
   for (const entry of entries) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      found.push(...findFilesRecursive(full, matches));
-    } else if (entry.isFile() && matches(entry.name)) {
+    // Dirent reports a symlink as neither file nor directory; resolve the target.
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (entry.isSymbolicLink()) {
+      try {
+        const st = statSync(full);
+        isDir = st.isDirectory();
+        isFile = st.isFile();
+      } catch {
+        continue; // dangling link
+      }
+    }
+    if (isDir) {
+      found.push(...findFilesRecursive(full, matches, seen));
+    } else if (isFile && matches(entry.name)) {
       found.push(full);
     }
   }

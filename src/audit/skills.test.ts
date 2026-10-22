@@ -139,6 +139,24 @@ describe("auditSkills", () => {
     expect(report.entries.some((e) => e.name === "RealSkill")).toBe(true);
   });
 
+  it("includes symlinked commands and plugin dirs, survives symlink cycles", () => {
+    const root = newDir();
+    const realRoot = newDir();
+    writeFileSync(join(realRoot, "real.md"), "# real command\n", "utf8");
+    mkdirSync(join(root, "commands"), { recursive: true });
+    symlinkSync(join(realRoot, "real.md"), join(root, "commands", "linked.md"));
+    const plugDir = join(realRoot, "plug");
+    mkdirSync(plugDir, { recursive: true });
+    writeFileSync(join(plugDir, "SKILL.md"), "---\nname: Plug\ndescription: p\n---\n", "utf8");
+    mkdirSync(join(root, "plugins"), { recursive: true });
+    symlinkSync(plugDir, join(root, "plugins", "x"));
+    symlinkSync(join(root, "plugins"), join(plugDir, "loop"));
+
+    const files = findCatalogueFiles(root);
+    expect(files.some((f) => f.source === "commands" && f.path.endsWith("linked.md"))).toBe(true);
+    expect(files.some((f) => f.path.endsWith("x/SKILL.md"))).toBe(true);
+  });
+
   it("dedupes the same real file reached through a symlink", () => {
     const root = newDir();
     const real = writeSkill(root, "Foo", { name: "Foo", description: "does a thing" });

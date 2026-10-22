@@ -103,8 +103,9 @@ function averageEmbeddings(embeddings: Float32Array[]): Float32Array {
 }
 
 /**
- * Detect emerging themes in recently-modified notes using agglomerative single-linkage
- * clustering of note-level embeddings.
+ * Detect emerging themes in recently-modified notes using agglomerative average-linkage
+ * clustering of note-level embeddings: the closest pair of clusters (cosine similarity
+ * of their centroids) is merged repeatedly while it stays above the threshold.
  */
 export async function zettelThemes(
   backend: StorageBackend,
@@ -156,7 +157,7 @@ export async function zettelThemes(
 
   const totalNotesAnalyzed = clusters.length;
 
-  // Step 4: agglomerative single-linkage clustering
+  // Step 4: agglomerative centroid (average-linkage) clustering
   // Stop when no two clusters have similarity >= threshold
   let merged = true;
   while (merged && clusters.length > 1) {

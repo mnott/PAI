@@ -16,6 +16,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { RegistryBackend } from "../storage/registry-interface.js";
 import { smartDecodeDir } from "../cli/lib/utils.js";
@@ -35,12 +36,41 @@ interface RegistryEntry {
   [key: string]: unknown;
 }
 
-/** Top-level shape of session-registry.json */
-type SessionRegistry = Record<string, RegistryEntry>;
-
 // ---------------------------------------------------------------------------
 // Encoding / decoding
 // ---------------------------------------------------------------------------
+
+/**
+ * Extract project entries from a parsed session-registry.json. Supports both
+ * formats:
+ *   list-based:   { "projects": [ { "encoded_dir", "original_path" }, ... ] }
+ *   object-keyed: { "<encoded_dir>": { ... } }  (original Claude format)
+ * The `version` key and non-object values are not projects.
+ */
+function parseRegistryEntries(
+  parsed: unknown
+): Array<{ encodedDir: string; entry: RegistryEntry }> {
+  const out: Array<{ encodedDir: string; entry: RegistryEntry }> = [];
+  if (!parsed || typeof parsed !== "object") return out;
+  const obj = parsed as Record<string, unknown>;
+
+  if (Array.isArray(obj.projects)) {
+    for (const item of obj.projects) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as RegistryEntry;
+      const key = entry.encoded_dir;
+      if (typeof key === "string" && key) out.push({ encodedDir: key, entry });
+    }
+    return out;
+  }
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === "version") continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    out.push({ encodedDir: key, entry: value as RegistryEntry });
+  }
+  return out;
+}
 
 /**
  * Build a lookup table from session-registry.json mapping encoded_dir →
@@ -65,27 +95,10 @@ export function buildEncodedDirMap(
   if (!existsSync(jsonPath)) return map;
 
   try {
-    const raw = readFileSync(jsonPath, "utf8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-
-    // Support both formats:
-    //   list-based:   { "projects": [ { "encoded_dir", "original_path" }, ... ] }
-    //   object-keyed: { "<encoded_dir>": { ... } }  (original Claude format)
-    if (Array.isArray(parsed.projects)) {
-      for (const entry of parsed.projects as Array<Record<string, unknown>>) {
-        const key = entry.encoded_dir as string | undefined;
-        const val = entry.original_path as string | undefined;
-        if (key && val) map.set(key, val);
-      }
-    } else {
-      // Object-keyed format — keys are encoded dirs
-      for (const [key, value] of Object.entries(parsed)) {
-        if (key === "version") continue;
-        const val = (value as Record<string, unknown>)?.original_path as
-          | string
-          | undefined;
-        if (val) map.set(key, val);
-      }
+    const parsed = JSON.parse(readFileSync(jsonPath, "utf8")) as unknown;
+    for (const { encodedDir, entry } of parseRegistryEntries(parsed)) {
+      const val = entry.original_path;
+      if (typeof val === "string" && val) map.set(encodedDir, val);
     }
   } catch {
     // Unparseable — return empty map; callers fall back to heuristic decode
@@ -168,6 +181,11 @@ export function slugify(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-") // non-alphanumeric runs → single dash
     .replace(/^-+|-+$/g, "");    // trim leading/trailing dashes
+}
+
+/** Stable slug for names slugify() reduces to nothing (e.g. non-ASCII only). */
+export function fallbackSlug(value: string): string {
+  return "project-" + createHash("sha1").update(value).digest("hex").slice(0, 8);
 }
 
 // ---------------------------------------------------------------------------
@@ -262,10 +280,10 @@ export async function migrateFromJson(
     return result;
   }
 
-  let registry: SessionRegistry;
+  let registry: Array<{ encodedDir: string; entry: RegistryEntry }>;
   try {
     const raw = readFileSync(registryPath, "utf8");
-    registry = JSON.parse(raw) as SessionRegistry;
+    registry = parseRegistryEntries(JSON.parse(raw));
   } catch (err) {
     result.errors.push(`Failed to parse registry JSON: ${String(err)}`);
     return result;
@@ -277,9 +295,9 @@ export async function migrateFromJson(
   const lookupMap = buildEncodedDirMap(registryPath);
 
   // ── Process each encoded directory entry ──────────────────────────────────
-  for (const [encodedDir, entry] of Object.entries(registry)) {
+  for (const { encodedDir, entry } of registry) {
     const rootPath = decodeEncodedDir(encodedDir, lookupMap);
-    const baseSlug = slugify(rootPath);
+    const baseSlug = slugify(rootPath) || fallbackSlug(rootPath);
 
     // --- Upsert project ---
     const { id: projectId, created } = await backend.createProjectWithSlugRetry({

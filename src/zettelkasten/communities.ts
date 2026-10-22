@@ -1,14 +1,15 @@
 /**
  * Community detection for the Zettelkasten vault link graph.
  *
- * Implements the Louvain algorithm in pure TypeScript for discovering
- * densely connected clusters of notes. This reveals emergent knowledge
- * communities that may not be obvious from folder structure alone.
+ * Implements phase 1 of the Louvain algorithm (local node moves) in pure
+ * TypeScript for discovering densely connected clusters of notes. This reveals
+ * emergent knowledge communities that may not be obvious from folder structure
+ * alone.
  *
- * The Louvain method optimizes modularity in two phases:
- *  1. Local: each node greedily moves to the community that maximizes modularity gain.
- *  2. Aggregation: communities are collapsed into super-nodes, forming a new graph.
- * Repeat until no further improvement.
+ * Each node greedily moves to the neighbouring community with the best
+ * modularity gain, repeated until no node moves (or an iteration cap). Phase 2
+ * (aggregating communities into super-nodes) is not implemented. Node order is
+ * sorted, so results are deterministic for a given graph.
  */
 
 import type { StorageBackend } from "../storage/interface.js";
@@ -147,14 +148,10 @@ function louvainPhase1(
   }
 
   let improved = false;
-  // Shuffle node order for better convergence
-  const shuffled = [...graph.nodes];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
+  // Deterministic node order (sorted) so identical graphs give identical results
+  const ordered = [...graph.nodes].sort();
 
-  for (const node of shuffled) {
+  for (const node of ordered) {
     const currentComm = community.get(node)!;
     const ki = graph.degree.get(node) ?? 0;
     const neighbors = graph.adj.get(node) ?? new Map();
@@ -358,7 +355,6 @@ export async function zettelCommunities(
 
   // Build community results
   const communities: Community[] = [];
-  let commId = 0;
 
   for (const [, members] of groups) {
     if (members.length < minSize) continue;
@@ -405,7 +401,7 @@ export async function zettelCommunities(
       .map(([f]) => f);
 
     communities.push({
-      id: commId++,
+      id: 0, // assigned after the size sort
       label,
       nodes,
       size: members.length,
@@ -414,8 +410,12 @@ export async function zettelCommunities(
     });
   }
 
-  // Sort by size descending
-  communities.sort((a, b) => b.size - a.size);
+  // Sort by size descending (ties by smallest member path), then ids follow rank
+  const minPath = (c: Community) => c.nodes.map((n) => n.path).sort()[0];
+  communities.sort((a, b) => b.size - a.size || minPath(a).localeCompare(minPath(b)));
+  communities.forEach((c, i) => {
+    c.id = i;
+  });
 
   return {
     communities: communities.slice(0, maxCommunities),

@@ -50,17 +50,31 @@ function extractDomain(vaultPath: string): string {
   return slash === -1 ? vaultPath : vaultPath.slice(0, slash);
 }
 
+/** Hard caps so a hub-heavy vault cannot fan out into thousands of queries. */
+const MAX_DEPTH = 3;
+const MAX_FRONTIER = 200;
+const LOOKUP_BATCH = 20;
+
+/** Map `items` through `fn`, at most LOOKUP_BATCH calls in flight at once. */
+async function mapInBatches<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += LOOKUP_BATCH) {
+    out.push(...(await Promise.all(items.slice(i, i + LOOKUP_BATCH).map(fn))));
+  }
+  return out;
+}
+
 /**
  * Expand one level of graph neighbors for a set of paths.
  * Returns all outbound and inbound neighbor paths (excluding already-visited).
  */
 async function expandNeighbors(backend: StorageBackend, paths: Set<string>): Promise<string[]> {
   if (paths.size === 0) return [];
-  const pathList = Array.from(paths);
+  const pathList = Array.from(paths).slice(0, MAX_FRONTIER);
 
   const [forwardLinks, backwardLinks] = await Promise.all([
     backend.getVaultLinksFromPaths(pathList),
-    Promise.all(pathList.map(p => backend.getLinksToTarget(p))),
+    mapInBatches(pathList, (p) => backend.getLinksToTarget(p)),
   ]);
 
   const neighbors: string[] = [];
@@ -182,7 +196,7 @@ export async function zettelConverse(
   const allPaths = new Set<string>(searchHits.keys());
   let frontier = new Set<string>(searchHits.keys());
 
-  for (let d = 0; d < depth; d++) {
+  for (let d = 0; d < Math.min(depth, MAX_DEPTH); d++) {
     const neighbors = await expandNeighbors(backend, frontier);
     const newFrontier = new Set<string>();
     for (const n of neighbors) {
@@ -205,8 +219,8 @@ export async function zettelConverse(
   const neighborPaths = Array.from(allPaths).filter((p) => !searchHits.has(p));
 
   // Fetch health data for neighbor ranking
-  const neighborHealthRows = await Promise.all(
-    neighborPaths.map(p => backend.getVaultHealth(p))
+  const neighborHealthRows = await mapInBatches(neighborPaths, (p) =>
+    backend.getVaultHealth(p),
   );
   const neighborRanked = neighborPaths
     .map((path, idx) => ({
