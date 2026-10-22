@@ -25,6 +25,7 @@ describe("restoreConfigWithSafety", () => {
   });
 });
 
+const T = { database: "pai", user: "pai" };
 const GOOD = "CREATE TABLE a();\n-- PostgreSQL database dump complete\n";
 interface Call { args: string[]; input?: string }
 
@@ -46,7 +47,7 @@ describe("restorePostgres", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), "CREATE TABLE a();\nINSERT INTO");
     const { calls, run } = stub();
-    const r = restorePostgres(join(d, "dump.sql"), d, run);
+    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     expect(calls).toHaveLength(0);
   });
@@ -55,7 +56,7 @@ describe("restorePostgres", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), "");
     const { calls, run } = stub();
-    expect(restorePostgres(join(d, "dump.sql"), d, run).ok).toBe(false);
+    expect(restorePostgres(join(d, "dump.sql"), d, T, run).ok).toBe(false);
     expect(calls).toHaveLength(0);
   });
 
@@ -63,7 +64,7 @@ describe("restorePostgres", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { calls, run } = stub((a) => (a.includes("ON_ERROR_STOP=1") ? { status: 3, stderr: "boom" } : undefined));
-    const r = restorePostgres(join(d, "dump.sql"), d, run);
+    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     const all = sqlOf(calls).join("\n");
     expect(all).not.toMatch(/DROP DATABASE IF EXISTS pai;/);
@@ -76,7 +77,7 @@ describe("restorePostgres", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { calls, run } = stub((a) => (a[0] === "pg_dump" ? { status: 1, stderr: "connection refused" } : undefined));
-    expect(restorePostgres(join(d, "dump.sql"), d, run).ok).toBe(false);
+    expect(restorePostgres(join(d, "dump.sql"), d, T, run).ok).toBe(false);
     expect(calls).toHaveLength(1);
   });
 
@@ -84,7 +85,7 @@ describe("restorePostgres", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { calls, run } = stub();
-    const r = restorePostgres(join(d, "dump.sql"), d, run);
+    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(true);
     expect(r.oldDb).toMatch(/^pai_prerestore_/);
     const all = sqlOf(calls).join("\n");
@@ -97,7 +98,7 @@ describe("restorePostgres", () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { run } = stub((a) => (a.join(" ").includes("RENAME TO pai_prerestore_") ? { status: 1, stderr: "being accessed by other users" } : undefined));
-    const r = restorePostgres(join(d, "dump.sql"), d, run);
+    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     expect(r.message).toMatch(/live database untouched/);
   });

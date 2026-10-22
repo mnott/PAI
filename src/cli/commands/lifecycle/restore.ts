@@ -29,6 +29,7 @@ import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../../daemon/config.js";
 import { inspectStorageBackup, restoreStorageFiles } from "../../../storage/backup.js";
 import { backupsDirPath } from "./backup.js";
+import { BACKUP_TABLES, countDumpRows, planPostgresRestore, readBackupMeta, type BackupMeta } from "./backup-postgres.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -37,8 +38,6 @@ import { backupsDirPath } from "./backup.js";
 const CONFIG_FILE = paiConfigFilePath();
 const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
-const PG_DATABASE = "pai";
-const PG_USER = "pai";
 
 // ---------------------------------------------------------------------------
 // Safety helpers
@@ -86,14 +85,22 @@ export function validatePgDump(dump: string): string | null {
   return null;
 }
 
-export interface PgRestoreResult { ok: boolean; message: string; safetyDump?: string; oldDb?: string }
+export interface PgRestoreResult { ok: boolean; message: string; safetyDump?: string; oldDb?: string; counts?: Record<string, { expected: number; actual: number | null }> }
 
 /**
  * Restores a dump without destroying the live database first:
  * validate -> pre-restore dump of live DB -> restore into a NEW database -> swap by rename.
  * Any failure before the swap leaves the live database untouched.
  */
-export function restorePostgres(dumpFile: string, safetyDir: string, run: PgRunner = defaultPgRunner): PgRestoreResult {
+export function restorePostgres(
+  dumpFile: string,
+  safetyDir: string,
+  target: { database: string; user: string },
+  run: PgRunner = defaultPgRunner,
+  recordedCounts?: Record<string, number>,
+): PgRestoreResult {
+  const PG_DATABASE = target.database;
+  const PG_USER = target.user;
   const dump = readFileSync(dumpFile, "utf8");
   const invalid = validatePgDump(dump);
   if (invalid) return { ok: false, message: `${invalid}; live database untouched` };
@@ -141,7 +148,23 @@ export function restorePostgres(dumpFile: string, safetyDir: string, run: PgRunn
     cleanup();
     return { ok: false, message: `swap failed: ${firstLine(swap2)}; live database restored`, safetyDump };
   }
-  return { ok: true, message: "restored", safetyDump, oldDb: liveExisted ? oldDb : undefined };
+  const oldDbKept = liveExisted ? oldDb : undefined;
+
+  // Verify the main tables against the dump's recorded counts.
+  const expected = recordedCounts ?? Object.fromEntries(countDumpRows(dump));
+  const counts: NonNullable<PgRestoreResult["counts"]> = {};
+  const bad: string[] = [];
+  for (const table of BACKUP_TABLES) {
+    if (!(table in expected)) continue;
+    const r = run(["psql", "-U", PG_USER, "-d", PG_DATABASE, "-tAc", `SELECT count(*) FROM ${table}`]);
+    const actual = r.status === 0 ? Number(r.stdout.trim()) : null;
+    counts[table] = { expected: expected[table]!, actual };
+    if (actual !== expected[table]) bad.push(`${table}: expected ${expected[table]}, got ${actual ?? "n/a"}`);
+  }
+  if (bad.length > 0) {
+    return { ok: false, message: `restored into "${PG_DATABASE}" but row counts differ (${bad.join("; ")})`, safetyDump, oldDb: oldDbKept, counts };
+  }
+  return { ok: true, message: "restored", safetyDump, oldDb: oldDbKept, counts };
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +207,7 @@ function backupContents(backupDir: string): string[] {
   }
 }
 
-export async function runRestore(backupPath: string | undefined, opts: { postgres: boolean; yes: boolean }): Promise<void> {
+export async function runRestore(backupPath: string | undefined, opts: { postgres: boolean; yes: boolean; dryRun?: boolean; into?: string }): Promise<void> {
 
   // ------------------------------------------------------------------
   // 1. Determine backup directory
@@ -241,6 +264,26 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
   console.log(`  postgres-pai.sql     ${hasSql && opts.postgres ? ok("present") : hasSql ? warn("present (skipped via --no-postgres)") : warn("missing")}`);
   if (inventory.hasFederation) {
     console.log(`  Federation DB        ${ok("present")} ${dim("(legacy)")}`);
+  }
+
+  // Postgres target: same resolver as backup and the running storage.
+  const meta: BackupMeta | null = readBackupMeta(resolvedDir);
+  const plan = planPostgresRestore(loadConfig().postgres, meta, opts.into);
+  if (hasSql && opts.postgres) {
+    console.log(`\n${bold("Postgres:")}`);
+    console.log(`  Target database      ${plan.target.database} (user ${plan.target.user})`);
+    console.log(`  Dump source database ${plan.source ?? "unknown"}`);
+    if (plan.refusal) {
+      console.error(err(`Refusing to restore: ${plan.refusal}`));
+      if (!opts.dryRun) {
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
+  if (opts.dryRun) {
+    console.log(dim("\nDry run: nothing was changed."));
+    return;
   }
 
   // ------------------------------------------------------------------
@@ -301,9 +344,12 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
         stdio: "pipe",
       });
 
-      const pg = restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE));
+      const pg = restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE), plan.target, undefined, meta?.counts);
       if (pg.safetyDump) console.log(dim(`  Pre-restore dump of live database: ${pg.safetyDump}`));
       if (pg.oldDb) console.log(dim(`  Previous database kept as '${pg.oldDb}' (drop it when satisfied)`));
+      for (const [t, c] of Object.entries(pg.counts ?? {})) {
+        console.log(dim(`  ${t}: expected ${c.expected}, restored ${c.actual ?? "n/a"}`));
+      }
       results.push({ label: "Postgres DB", status: pg.ok ? ok("restored") : err(`failed: ${pg.message}`) });
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
