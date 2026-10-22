@@ -42,10 +42,10 @@ html.locked .cgrip,html.locked .cmin,html.locked #reset{display:none}
 .phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
 /* provider card: the gauge row wraps on WIDTH only; a short card scales the dials down (never an inner scrollbar, whose width would force the wrap) */
-/* a card with no user height is as tall as its gauges (a size container of auto height would collapse to 0); a card the user sized (data-uh: the body has a definite height) scales the dials to it */
+/* a card with no user height is as tall as its gauges; a card the user sized (data-uh) scales the dials to the body height the handle stored (--uh), not to a size container: no layout feedback from the dials into the card's own size */
 .gauges.fit{align-content:center}.gauges.fit .gauge svg{height:70px}
-.card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden;container-type:size}.card[data-uh]>.cbody>.gauges.fit .gauge svg{height:clamp(24px,calc(100cqh - 46px),70px)}
-@container (max-height:110px){.card[data-uh]>.cbody>.gauges.fit .gauge .s{display:none}.card[data-uh]>.cbody>.gauges.fit .gauge svg{height:clamp(24px,calc(100cqh - 22px),70px)}}
+.card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden}.card[data-uh]>.cbody>.gauges.fit .gauge svg{height:clamp(24px,calc(var(--uh) - 46px),70px)}
+.card[data-uh][data-short]>.cbody>.gauges.fit .gauge .s{display:none}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge svg{height:clamp(24px,calc(var(--uh) - 22px),70px)}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 .tw{max-width:100%}
 /* auto layout: a column is never squeezed under its min-content (a nowrap header or
