@@ -105,7 +105,7 @@ function parseLines(text: string, partialFirst: boolean, partialLast: boolean): 
 }
 
 /** The session of one transcript, reading only its first and last 64 KB; null when the file vanished. */
-function toSession(harness: string, file: string, dir: string): HarnessSession | null {
+export function toSession(harness: string, file: string, dir: string): HarnessSession | null {
   const id = file.slice(0, -".jsonl".length);
   const path = join(dir, file);
   let startedAt: string | undefined;
