@@ -1,5 +1,7 @@
 # PAI documentation
 
+**Start here: [everything PAI does](features.md)**: every capability by family, with the command or phrase to use.
+
 ## Words used in these docs
 
 - **PAI home**: the directory where PAI keeps its files (`config.yaml`, `workers.yaml`, keys, logs, state). It is `~/.pai`; installs from before the move use `~/.claude/pai` until `pai home migrate` is run. `pai home path` prints the one in use, `pai worker config path` prints the path of `workers.yaml`. Details: [PAI home](pai-home.md). Where a page writes `<PAI home>`, read this directory.

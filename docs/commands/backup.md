@@ -13,10 +13,12 @@ Copies the registry database and config into a dated folder under PAI_HOME/backu
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--no-postgres` | flag | — | Skip the Postgres dump (faster; registry and config only) |
+| `--dry-run` | flag | — | Print the database that would be dumped, write nothing |
 
 ```sh
 pai backup
 pai backup --no-postgres
+pai backup --dry-run
 ```
 
 See also: `pai restore`

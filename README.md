@@ -16,6 +16,22 @@ You burn your premium tokens on work a local model could do. You hit the weekly 
 - **A live cockpit.** One page shows your token budget per provider, cache hits, every model and local server with start and stop buttons, running workers, routing per tier, and memory and embedding progress. Drag the cards into the layout you want.
 - **Memory underneath it all.** Every session writes its own notes in the background, searchable across sessions, projects and your notes vault, by keyword, meaning or both. Everything stays on your machine.
 
+**What's inside**
+
+- Sessions: [pick and open](docs/features.md#pick-and-open-a-session) · [pause and end](docs/features.md#pause-and-end-a-session) · [session notes](docs/features.md#session-notes) · [context preservation](docs/features.md#context-preservation-and-auto-compact)
+- Memory and search: [search memory](docs/features.md#search-your-memory) · [knowledge graph](docs/features.md#knowledge-graph) · [embeddings](docs/features.md#index-and-embeddings) · [observations](docs/features.md#observations)
+- Notes and vault: [connect two ideas](docs/features.md#connect-two-ideas) · [find orphans](docs/features.md#find-orphans) · [what is emerging](docs/features.md#what-is-emerging) · [trace an idea](docs/features.md#trace-an-idea)
+- Zettelkasten: [explore links](docs/features.md#explore-links) · [surprising connections](docs/features.md#surprising-connections) · [ask the vault](docs/features.md#ask-the-vault) · [vault health](docs/features.md#vault-health)
+- Journal, review, plan: [journal](docs/features.md#journal) · [review](docs/features.md#review) · [plan](docs/features.md#plan)
+- Tasks: [task list](docs/features.md#cross-session-task-list) · [Todoist task bus](docs/features.md#todoist-as-an-input-channel)
+- Workers: [run a worker](docs/features.md#run-a-worker) · [tiers and routing](docs/features.md#tiers-and-routing) · [local models](docs/features.md#local-models) · [plans](docs/features.md#plans) · [queue](docs/features.md#queue)
+- Router and cockpit: [router](docs/features.md#router) · [cockpit](docs/features.md#cockpit) · [where tokens go](docs/features.md#where-tokens-go)
+- Messaging and rules: [AIBroker](docs/features.md#aibroker) · [whisper rules](docs/features.md#whisper-rules) · [budget advisor](docs/features.md#budget-and-advisor-mode)
+- Make and share: [art and diagrams](docs/features.md#art-and-diagrams) · [share](docs/features.md#share) · [research](docs/features.md#research-and-extraction)
+- Care: [setup](docs/features.md#setup-and-update) · [backup](docs/features.md#backup-and-restore)
+
+Everything PAI does: [docs/features.md](docs/features.md)
+
 `pai` starts or resumes a session in the current project. `pai pause` and `pai end` save your place. Memory works on its own; the router, workers and cockpit join when you want them. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
 
 **Install it in one sentence: tell Claude Code "Clone https://github.com/mnott/PAI and set it up for me".** [Jump to install](#install).
