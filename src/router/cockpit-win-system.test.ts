@@ -62,12 +62,14 @@ function boxes(){return Array.prototype.map.call(document.querySelectorAll("#win
 function srv(){return Array.prototype.map.call(document.querySelectorAll('#win-root [data-card^="system.srv:"]'),function(c){var v=c.querySelector('[data-k="v"]'),n=c.querySelector('[data-k="n"]'),s=c.querySelector('[data-k="s"]');return c.getAttribute("data-card")+"="+(v?v.textContent:"")+"/"+(n?n.textContent:s?s.textContent:"")}).join("|")}
 var o={ids:Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){return c.getAttribute("data-card")}),
  boxes:boxes(),none:srv(),err:window.__err||null};
-window.WINPAY&&(window.winFeedSystem(window.WINPAY[1]),o.srv2=srv(),o.boxes2=boxes(),o.kids=JSON.stringify(window.Win.state().kids["sys-servers"]),
- window.winFeedSystem(window.WINPAY[2]),o.srv3=srv(),o.boxes3=boxes());
-document.body.setAttribute("data-r",JSON.stringify(o));
+function done(){document.body.setAttribute("data-r",JSON.stringify(o))}
+setTimeout(function(){o.srv2=srv();o.boxes2=boxes();o.kids=JSON.stringify(window.Win.state().kids["sys-servers"]);
+ setTimeout(function(){o.srv3=srv();o.boxes3=boxes();done()},5000)},5000);
 }catch(e){document.body.setAttribute("data-r",JSON.stringify({err:String(e.stack)}))}},1500)</script>`;
 
 let server: Server;
+/** The /none page polls the system feed every 5 s: its first read is no server up, then one up, then that one down. */
+let sysCalls = 0;
 let base = "";
 let tmp = "";
 const browsers = new Set<ChildProcess>();
@@ -77,11 +79,11 @@ beforeAll(async () => {
     const url = req.url ?? "";
     res.setHeader("content-type", "application/json");
     if (url.startsWith("/cockpit/data")) return res.end(JSON.stringify(data()));
-    if (url.startsWith("/cockpit/system")) return res.end(JSON.stringify(url.includes("window=24h") ? sysPayloadNone(0) : sysPayload(0)));
+    if (url.startsWith("/cockpit/system")) return res.end(JSON.stringify(url.includes("window=24h") ? [sysPayloadNone(0), sysPayload(1), { ...sysPayloadNone(2), servers: [{ provider: "gyro-m", up: false }] }][Math.min(sysCalls++, 2)] : sysPayload(0)));
     if (url.startsWith("/cockpit/")) return res.end("{}");
     if (url.startsWith("/none")) {
       res.setHeader("content-type", "text/html");
-      return res.end(cockpitHtml().replace("</head>", '<script>window.onerror=function(m,s,l,c){window.__err=String(m)+" @"+l+":"+c};try{localStorage.setItem("cockpitWin","24h")}catch(e){}</script></head>').replace("</body>", "<script>window.WINPAY=" + JSON.stringify([sysPayload(1), sysPayloadNone(2)]) + "</script>" + PROBE_NONE + "</body>"));
+      return res.end(cockpitHtml().replace("</head>", '<script>window.onerror=function(m,s,l,c){window.__err=String(m)+" @"+l+":"+c};try{localStorage.setItem("cockpitWin","24h")}catch(e){}</script></head>').replace("</body>", "<script>window.WINPAY=" + "null" + "</script>" + PROBE_NONE + "</body>"));
     }
     if (url.startsWith("/page")) {
       res.setHeader("content-type", "text/html");
@@ -101,8 +103,8 @@ function run(args: string[]): Promise<string> {
     browsers.add(c);
   });
 }
-async function open(query: string, width: number, shot?: string) {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, `--window-size=${width},900`, "--virtual-time-budget=6000"];
+async function open(query: string, width: number, shot?: string, budget = 6000) {
+  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, `--window-size=${width},900`, `--virtual-time-budget=${budget}`];
   const url = `${base}${query}`;
   const dom = await run([...args, "--dump-dom", url]);
   if (shot) await run([...args, `--screenshot=${shot}`, url]);
@@ -146,13 +148,21 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
   }, 120_000);
 
   it("no server up shows the note card; one up hides it; a down server's cards say down", async () => {
-    const r = await open("/none?window=24h", 1400);
+    const r = await open("/none?window=24h", 1400, undefined, 16000);
     expect(r.err).toBeNull();
     // no server up: the note card is present and takes space
     expect(r.ids).toContain("system.srv:none");
     expect(r.none).not.toContain("system.srv:gyro-m/");
     expect(r.boxes).toContain("system.srv:none:");
     expect(r.none).toContain("system.srv:none=/no local model server is up");
+    // one server up: its four cards mount beside the kept note leaf; the note takes no space
+    expect(r.srv2).toContain("system.srv:gyro-m/rss=39.2/resident memory");
+    expect(r.srv2).toContain("system.srv:gyro-m/decode=61/decode");
+    // addCards on a group holding one leaf: the leaf stays on top, the server's row goes below it
+    const kids = JSON.parse(r.kids);
+    expect(kids.d).toBe("c");
+    expect(kids.ch[0]).toEqual({ k: "c", id: "system.srv:none" });
+    expect(kids.ch[1].ch.map((c: { id: string }) => c.id)).toEqual(["rss", "e2e", "decode", "prefix"].map((w) => `system.srv:gyro-m/${w}`));
     // a server that was up and goes down: its cards stay and read "–" / "down"
     expect(r.srv3).toContain("system.srv:gyro-m/rss=–/down");
     expect(r.srv3).toContain("system.srv:gyro-m/decode=–/down");
