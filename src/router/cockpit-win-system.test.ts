@@ -47,6 +47,9 @@ var o={cards:document.querySelectorAll("#win-root .card").length,ids:Array.proto
  syshid:!!document.querySelector("#win-root #syshid"),
  vals:vals(),boxes:boxes(),overlap:overlap(),paths:document.querySelectorAll('#win-root [data-card="system.power-chart"] path').length,legend:document.querySelectorAll('#win-root [data-card="system.power-chart"] .legend span').length,
  spark:document.querySelectorAll('#win-root [data-card="system.memory"] svg path').length,err:window.__err||null,ov:window.__ov};
+(function(){var c=document.querySelector('#win-root [data-card="system.power-chart"]'),b=c.querySelector(".cbody"),stt=window.Win.state().st,id="system.power-chart";o.leg=[];
+ [0,180,300,500].forEach(function(h){if(h){stt[id]=stt[id]||{};stt[id].h=h+28}else if(stt[id])delete stt[id].h;window.Win.relayout();var lg=c.querySelector('[data-k="legend"]'),bt=b.getBoundingClientRect().top;o.leg.push({h:h,bodyH:Math.round(b.clientHeight),legTop:Math.round(lg.getBoundingClientRect().top-bt),legBottom:Math.round(lg.getBoundingClientRect().bottom-bt),legH:Math.round(lg.getBoundingClientRect().height),svgBottom:Math.round(c.querySelector("svg").getBoundingClientRect().bottom-bt)})});
+ if(stt[id])delete stt[id].h;window.Win.relayout();o.boxes=boxes()})();
 window.WINPAY&&(function(){
  window.Win.toggleMin('system.ane-load');window.Win.toggleMin('system.cpu-w');o.restored=vals();window.Win.toggleMin('system.ane-load');window.Win.toggleMin('system.cpu-w');o.boxesR=boxes();window.Win.update("system",window.WINPAY[1]);o.vals2=vals();o.boxes2=boxes();
  window.winFeedSystem(window.WINPAY[2]);o.ids3=Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){return c.getAttribute("data-card")});o.boxes3=boxes();o.overlap3=overlap()})();
@@ -124,6 +127,9 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     expect(r.vals).toContain("system.srv:gyro-m/rss=39.1 / resident memory");
     expect(r.vals).toContain("system.srv:gyro-m/decode=61 / decode");
     expect(r.vals).toContain("system.srv:gyro-m/prefix=50.0 / 5/10");
+    // the legend is whole inside the card body at body heights 160 (default) / 180 / 300 / 500
+    expect(r.leg.length).toBe(4);
+    for (const l of r.leg) expect(l.legBottom, `legend bottom at body ${l.bodyH}`).toBeLessThanOrEqual(l.bodyH);
     expect(r.paths).toBe(3);
     expect(r.legend).toBe(3);
     expect(r.spark).toBeGreaterThan(0);

@@ -31,9 +31,10 @@ var o={err:window.__err||null,tokens:info("tokens"),daily:info("daily"),
 var rawBtn=document.querySelector('#win-root [data-card="tokens"] [data-act="mode-raw"]');rawBtn.click();o.afterRaw=info("tokens");o.modeSaved=localStorage.getItem("cockpitMode");
 window.Win.update("data",window.WINPAY);o.boxes2=box("tokens")+"|"+box("daily");o.tokens2=info("tokens");
 var sel=document.querySelector('#win-root [data-card="tokens"] .wsel-btn');sel.click();var opt=document.querySelectorAll(".wpop .wopt");o.opts=Array.prototype.map.call(opt,function(x){return x.textContent});opt[2].click();o.afterSel=info("tokens");o.selLabel=sel.textContent;
-o.fit=[];var ids=["tokens","daily","system.power-chart"],hs=[0],qi=0,jobs=[];ids.forEach(function(id){hs.forEach(function(h){jobs.push([id,h])})});
+o.fit=[];o.leg=[];var ids=["tokens","daily","system.power-chart"],hs=[0,180,300,500],qi=0,jobs=[];ids.forEach(function(id){hs.forEach(function(h){jobs.push([id,h])})});
 function next(){if(qi>=jobs.length){document.body.setAttribute("data-r",JSON.stringify(o));return}var j=jobs[qi++],c=document.querySelector('#win-root [data-card="'+j[0]+'"]'),b=c.querySelector(".cbody");
- setTimeout(function(){var s=c.querySelector("svg");o.fit.push({id:j[0],h:j[1],bodyH:Math.round(b.clientHeight),scrollH:b.scrollHeight,svgH:s?+s.getAttribute("height"):0});next()},120)}
+ var stt=window.Win.state().st;if(j[1]){stt[j[0]]=stt[j[0]]||{};stt[j[0]].h=j[1]+28}else if(stt[j[0]])delete stt[j[0]].h;window.Win.relayout();
+ setTimeout(function(){var s=c.querySelector("svg"),lg=c.querySelector('[data-k="legend"]');if(j[1])o.leg.push({id:j[0],h:j[1],bodyH:Math.round(b.clientHeight),legBottom:Math.round(lg.getBoundingClientRect().bottom-b.getBoundingClientRect().top),legH:Math.round(lg.getBoundingClientRect().height)});if(!j[1])o.fit.push({id:j[0],h:j[1],bodyH:Math.round(b.clientHeight),scrollH:b.scrollHeight,svgH:s?+s.getAttribute("height"):0});next()},120)}
 next();
 }catch(e){document.body.setAttribute("data-r",JSON.stringify({err:String(e.stack)}))}},1500)</script>`;
 
@@ -96,6 +97,9 @@ describe.skipIf(!CHROME)("B9 tokens + daily on the win runtime", () => {
     expect(r.afterSel.legend).toBe(5); // the caption + 4 kinds, no model legend
     // the tile sets the height: no chart card scrolls and no svg is taller than its body at the layout default
     expect(r.fit.length).toBe(3);
+    // the legend is whole inside the card body at body heights 180/300/500 (the plot takes the height left under it)
+    expect(r.leg.length).toBe(9);
+    for (const l of r.leg) expect(l.legBottom, `${l.id}@${l.h} legend bottom ${l.legBottom} body ${l.bodyH}`).toBeLessThanOrEqual(l.bodyH);
     for (const f of r.fit) { expect(f.scrollH, `${f.id}@${f.h}`).toBeLessThanOrEqual(f.bodyH); expect(f.svgH, `${f.id}@${f.h}`).toBeLessThanOrEqual(f.bodyH); }
   }, 120_000);
 });
