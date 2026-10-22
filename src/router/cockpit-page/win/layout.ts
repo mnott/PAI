@@ -50,16 +50,16 @@ function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
 function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 /** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
 function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
-/** The least height a node needs at width w: a card its type's minH (a group HEAD_H plus its kids), a row the tallest
+/** The least height a node needs at width w (flat: a fitted band, whose cards take their content height, not a weight share; a column needs only the sum of its cards): a card its type's minH (a group HEAD_H plus its kids), a row the tallest
  *  child (the sum when narrow mode stacks it), a column enough that every child's weight share holds its need. */
-function winNeed(node,w,st,cfg,kids){
+function winNeed(node,w,st,cfg,kids,flat){
  var i,vis=[];
  for(i=0;i<(node.ch||[]).length;i++)if(!winGhost(st,node.ch[i].id))vis.push(node.ch[i]);
  if(node.k==="c"){
   if(winGhost(st,node.id))return 0;
   if(winMin(st,node.id))return cfg.HEAD_H;
   var ty=winType(cfg,winLeafType(kids,node.id,cfg)),mh=ty.minH!==undefined?ty.minH:(cfg.minH||0),kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
-  return kt?Math.max(mh,cfg.HEAD_H+winNeed(kt,w,st,cfg,kids)):mh;
+  return kt?Math.max(mh,cfg.HEAD_H+winNeed(kt,w,st,cfg,kids,flat)):mh;
  }
  var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,need=0,sum=0,k;
  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id))t+=node.sz[i]||0;
@@ -69,17 +69,17 @@ function winNeed(node,w,st,cfg,kids){
   for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&(node.sz[i]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[i].id,cfg)))wide=false;
   for(i=0;i<node.ch.length;i++){
    if(winGhost(st,node.ch[i].id))continue;
-   k=winNeed(node.ch[i],wide?(node.sz[i]||0)/t*total:w,st,cfg,kids);
+   k=winNeed(node.ch[i],wide?(node.sz[i]||0)/t*total:w,st,cfg,kids,flat);
    if(wide)need=Math.max(need,k);else sum+=k+gap;
   }
   return wide?need:Math.max(0,sum-gap);
  }
  for(i=0;i<node.ch.length;i++){
   if(winGhost(st,node.ch[i].id))continue;
-  k=winNeed(node.ch[i],w,st,cfg,kids);
+  k=winNeed(node.ch[i],w,st,cfg,kids,flat);
   sum+=k;need=Math.max(need,(node.sz[i]||0)>0?k/((node.sz[i]||0)/t):0);
  }
- return(winNar(cfg,w)?sum:Math.max(sum,need))+(vis.length-1)*gap;
+ return(flat||winNar(cfg,w)?sum:Math.max(sum,need))+(vis.length-1)*gap;
 }
 /** Content-driven height (auto layout only: cfg.fit = {id: card px} measured by the runtime): a card its measured height, a
  *  group HEAD_H plus its kids, a row the tallest child, a column the sum. null when any card in it has no reading (keep the default). */
@@ -184,7 +184,8 @@ function winSplit(node,box,bounded,st,cfg,kids){
   if(winGhost(st,node.ch[i].id))continue;
   var c3=node.ch[i];
   // auto layout: a default band shrinks to its content (never above its default px, never below its types' minH)
-  if(cfg.fit){var fb=winFit(c3,box.w,st,cfg,kids);if(fb!==null)sz=Math.max(fb,winNeed(c3,box.w,st,cfg,kids))}
+  var flat=false;
+  if(cfg.fit){var fb=winFit(c3,box.w,st,cfg,kids);if(fb!==null){flat=true;sz=Math.max(fb,winNeed(c3,box.w,st,cfg,kids,true))}}
   var h3;
   if(c3.k==="s"){
    var allMin=true,any=false;
@@ -212,7 +213,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
     h3=Math.max(sz,maxB);
    }
   }else{
-   h3=winMin(st,c3.id)?cfg.HEAD_H:Math.max(winPx(st,c3.id)!==null?winPx(st,c3.id):sz,winNeed(c3,box.w,st,cfg,kids));
+   h3=winMin(st,c3.id)?cfg.HEAD_H:Math.max(winPx(st,c3.id)!==null?winPx(st,c3.id):sz,winNeed(c3,box.w,st,cfg,kids,flat&&winPx(st,c3.id)===null));
    out.push({n:c3,x:0,y:y3,w:box.w,h:h3});
   }
   y3+=h3+gap;

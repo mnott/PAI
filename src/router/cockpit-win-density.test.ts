@@ -71,7 +71,17 @@ var out={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .ca
  Array.prototype.forEach.call(c.querySelectorAll(".cbody *"),function(e){if(e.children.length||!e.getClientRects().length)return;var r=e.getBoundingClientRect();if(r.height>0&&r.bottom-b.top>max)max=r.bottom-b.top});
  out[c.getAttribute("data-card")]={y:Math.round(c.getBoundingClientRect().top),type:ty,h:Math.round(c.getBoundingClientRect().height),content:Math.round(28+max)};
 });
-document.body.setAttribute("data-r",JSON.stringify({err:window.__err||null,cards:out}));
+var bands={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .card"),function(c){
+ if(c.parentNode.closest&&c.parentNode.closest(".card")||c.style.display==="none")return;
+ var r=c.getBoundingClientRect(),low=r.top+28,kc=c.querySelectorAll(".card"),vis=0,i;
+ for(i=0;i<kc.length;i++)if(kc[i].style.display!=="none")vis++;
+ if(kc.length&&!vis)return; // a band holding only its hidden placeholder
+ if(!kc.length&&((Win.cfg().types||{})[c.getAttribute("data-type")]||{}).resize)return; // a card that draws at the body size has no content height
+ Array.prototype.forEach.call(c.querySelectorAll(".card"),function(k){if(k.style.display==="none")return;var b=k.getBoundingClientRect();if(b.height>0&&b.bottom>low)low=b.bottom});
+ if(!c.querySelector(".card")){var bd=c.querySelector(".cbody");if(bd)Array.prototype.forEach.call(bd.querySelectorAll("*"),function(e){if(e.children.length||!e.getClientRects().length)return;var b=e.getBoundingClientRect();if(b.height>0&&b.bottom>low)low=b.bottom})}
+ bands[c.getAttribute("data-card")]={h:Math.round(r.height),empty:Math.round(r.bottom-low)};
+});
+document.body.setAttribute("data-r",JSON.stringify({err:window.__err||null,cards:out,bands:bands}));
 },2500)</script>`;
 
 let server: Server;
@@ -106,7 +116,7 @@ function run(args: string[]): Promise<string> {
   });
 }
 
-type Probe = { err: string | null; cards: Record<string, { y: number; type: string; h: number; content: number }> };
+type Probe = { err: string | null; bands: Record<string, { h: number; empty: number }>; cards: Record<string, { y: number; type: string; h: number; content: number }> };
 async function probe(size: string, shot?: string): Promise<Probe> {
   const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + size)}`, `--window-size=${size}`, "--virtual-time-budget=8000"];
   const url = `${base}/page`;
@@ -137,6 +147,17 @@ describe.skipIf(!CHROME)("every default card is as tall as its content", () => {
       const c = r.cards["pool.slots"]!;
       expect(c, "pool.slots is measured").toBeDefined();
       expect(c.h, `pool.slots ${c.h} vs content ${c.content}`).toBeLessThanOrEqual(c.content + SLACK);
+    }, 120_000);
+  }
+
+  for (const w of [1500, 1300]) {
+    it(`${w} px: every root band in auto layout has at most ${SLACK} px empty below its last card`, async () => {
+      const r = await probe(`${w},700`);
+      expect(r.err).toBeNull();
+      const ids = Object.keys(r.bands);
+      if (process.env.PAI_DENSITY_TABLE) console.log(ids.map((i) => `${i}\t${r.bands[i]!.h}\t${r.bands[i]!.empty}`).join("\n"));
+      expect(ids.length).toBeGreaterThan(5);
+      expect(ids.filter((i) => r.bands[i]!.empty > SLACK).map((i) => `${i}(${r.bands[i]!.empty})`)).toEqual([]);
     }, 120_000);
   }
 });
