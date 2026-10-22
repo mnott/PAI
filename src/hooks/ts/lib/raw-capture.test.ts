@@ -101,9 +101,14 @@ describe("capture hook provenance fields", () => {
     const home = mkdtempSync(join(tmpdir(), "cap-hook-"));
     const stdin = JSON.stringify({ session_id: "s1", tool_use_id: "tu1" });
     runHook("src/hooks/ts/capture-all-events.ts", ["--event-type", "PreToolUse"], stdin, home);
-    const day = new Date().toISOString().substring(0, 10);
-    const dir = join(home, "History", "raw-outputs", day.substring(0, 7));
-    const entry = JSON.parse(readFileSync(join(dir, `${day}_all-events.jsonl`), "utf-8").trim());
+    // Same local-date naming as getEventsFilePath() in capture-all-events.ts — never toISOString
+    const tz = process.env.TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const localDate = new Date(new Date().toLocaleString("en-US", { timeZone: tz }));
+    const year = localDate.getFullYear();
+    const month = String(localDate.getMonth() + 1).padStart(2, "0");
+    const day = String(localDate.getDate()).padStart(2, "0");
+    const dir = join(home, "History", "raw-outputs", `${year}-${month}`);
+    const entry = JSON.parse(readFileSync(join(dir, `${year}-${month}-${day}_all-events.jsonl`), "utf-8").trim());
     expect(entry.source).toBe("hook");
     expect(entry.fidelity).toBe("observed");
     expect(entry.eventId).toMatch(/^[0-9a-f]{16}$/);

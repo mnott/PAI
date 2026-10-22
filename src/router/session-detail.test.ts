@@ -87,7 +87,7 @@ describe("sessionDetail", () => {
   it("masks secrets in prompts", async () => {
     const d = (await sessionDetail(ID, { projectsDir: projects }))!;
     expect(d.turns[0].prompt).not.toContain("sk-ant-api03-abcdefghijklmnopqrstuvwxyz");
-    expect(d.turns[0].prompt).toBe("[line masked: looks like a secret]");
+    expect(d.turns[0].prompt).toBe("first prompt with [REDACTED] inside");
   });
 
   it("keeps only the last maxTurns turns but reports the total", async () => {
