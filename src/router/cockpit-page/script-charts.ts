@@ -29,7 +29,7 @@ function tick(){
  // every poll marks itself ok; the stamp reads offline only when all polls fail
  var age=(Date.now()-lastOk)/1000;
  st.textContent=lastOk?(age<STALE_SEC?"live · ":"stale "+Math.round(age)+"s · ")+new Date(lastOk).toLocaleTimeString():"offline";
- st.title=st.textContent;st.setAttribute("data-s",lastOk?new Date(lastOk).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"off");st.className=lastOk&&age>=STALE_SEC?"stale":"";
+ st.title=st.textContent;if(st.setAttribute)st.setAttribute("data-s",lastOk?new Date(lastOk).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"off");st.className=lastOk&&age>=STALE_SEC?"stale":"";
 }
 /** Time-axis labels: one every k buckets so neighbouring labels keep MIN_LABEL_GAP_PX between their centres. */
 function labelStep(pitch){return Math.max(1,Math.ceil(MIN_LABEL_GAP_PX/Math.max(pitch,0.01)))}
