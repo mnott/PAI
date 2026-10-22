@@ -37,7 +37,10 @@ export interface LocalLauncher {
 export const DEFAULT_MAX_INSTANCES = 4;
 export const DEFAULT_RESERVE_GB = 4;
 
-export type LocalEngine = "vllm-mlx" | "strata" | "script";
+export type LocalEngine = "vllm-mlx" | "strata" | "script" | "command";
+
+/** Engines whose server is found by what listens on the port (no ps signature of their own). */
+export const listensOnPort = (t: Pick<LocalTier, "engine">): boolean => t.engine === "script" || t.engine === "command";
 
 export interface LocalTier {
   tier: string;
@@ -66,6 +69,76 @@ export interface LocalTier {
   exe?: string;
   /** script: the start script, run detached. */
   start?: string;
+  /** Where the weights are: a path or an HF id. Defaults per engine (model, strata config, start script). */
+  location: string;
+  /** Explicit start command (`{port}` is replaced); required for engine command, overrides the engine's own start otherwise. */
+  startCommand?: string[];
+  /** Extra stop step, run after the process group and the port's listener were signalled and the port is still open (`{port}` replaced). */
+  stopCommand?: string;
+  /** Health URL, `{port}` replaced. Default http://127.0.0.1:{port}/v1/models. */
+  health: string;
+  /** Log line that also counts as ready (health OK counts either way). */
+  ready?: string;
+}
+
+export const DEFAULT_HEALTH = "http://127.0.0.1:{port}/v1/models";
+
+/** Split a command line on whitespace, honouring single and double quotes. */
+export function splitCommand(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q = "";
+  let has = false;
+  for (const ch of line) {
+    if (q) {
+      if (ch === q) q = "";
+      else cur += ch;
+    } else if (ch === "'" || ch === '"') {
+      q = ch;
+      has = true;
+    } else if (/\s/.test(ch)) {
+      if (has || cur) out.push(cur);
+      cur = "";
+      has = false;
+    } else cur += ch;
+  }
+  if (has || cur) out.push(cur);
+  return out;
+}
+
+const withPort = (s: string, port: number): string => s.replaceAll("{port}", String(port));
+
+/** The tier's health URL for `port`. */
+export const healthUrl = (t: Pick<LocalTier, "health">, port: number): string => withPort(t.health, port);
+
+/** The tier's stop command for `port`, or undefined. */
+export const stopCommandFor = (t: Pick<LocalTier, "stopCommand">, port: number): string | undefined => (t.stopCommand ? withPort(t.stopCommand, port) : undefined);
+
+/**
+ * The tier's complete lifecycle with every default made explicit — what the
+ * registry serializer writes and what the pool host executes.
+ * Stop is always: process group of the started pid, then the listener on
+ * `port`, then `stopCommand` when given.
+ */
+export interface Lifecycle {
+  location: string;
+  start: string;
+  stop: string;
+  health: string;
+  port: number;
+  ready?: string;
+}
+
+export function lifecycleOf(cfg: LocalConfig, tier: LocalTier): Lifecycle {
+  const plan = planStart(cfg, tier);
+  return {
+    location: tier.location,
+    start: plan.argv.map(shq).join(" "),
+    stop: `process group of the started pid, then listener on port ${tier.port}${tier.stopCommand ? `, then ${tier.stopCommand}` : ""}`,
+    health: healthUrl(tier, tier.port),
+    port: tier.port,
+    ...(tier.ready ? { ready: tier.ready } : {}),
+  };
 }
 
 export interface LocalConfig {
@@ -153,8 +226,8 @@ export function parseLocalConfig(
       const provider = str(t.provider, `${where}.provider`);
       if (!provider) throw new LocalTierError(`${where}.provider: required`);
       const engine = (str(t.engine, `${where}.engine`) ?? "vllm-mlx") as LocalEngine;
-      if (engine !== "vllm-mlx" && engine !== "strata" && engine !== "script") {
-        throw new LocalTierError(`${where}.engine: must be vllm-mlx, strata or script, got "${engine}"`);
+      if (engine !== "vllm-mlx" && engine !== "strata" && engine !== "script" && engine !== "command") {
+        throw new LocalTierError(`${where}.engine: must be vllm-mlx, strata, script or command, got "${engine}"`);
       }
       const model = str(t.model, `${where}.model`);
       if (engine === "vllm-mlx" && !model) throw new LocalTierError(`${where}.model: required`);
@@ -174,7 +247,7 @@ export function parseLocalConfig(
       const mem = t.memoryGb === undefined ? undefined : Number(t.memoryGb);
       if (mem !== undefined && !(mem > 0)) throw new LocalTierError(`${where}.memoryGb: must be a positive number`);
       const maxRaw = t.maxInstances ?? t.max_instances;
-      const maxInstances = maxRaw === undefined ? (engine === "script" ? 1 : DEFAULT_MAX_INSTANCES) : Number(maxRaw);
+      const maxInstances = maxRaw === undefined ? (engine === "script" || engine === "command" ? 1 : DEFAULT_MAX_INSTANCES) : Number(maxRaw);
       if (!Number.isInteger(maxInstances) || maxInstances < 1) throw new LocalTierError(`${where}.maxInstances: must be a positive integer`);
       const tier: LocalTier = {
         tier: name,
@@ -187,7 +260,15 @@ export function parseLocalConfig(
         port,
         flags: flagList(t.flags, `${where}.flags`),
         maxInstances,
+        location: "",
+        health: str(t.health, `${where}.health`) ?? DEFAULT_HEALTH,
       };
+      const startCmd = str(t.start_command, `${where}.start_command`);
+      if (startCmd) tier.startCommand = splitCommand(expandHome(startCmd));
+      const stopCmd = str(t.stop_command, `${where}.stop_command`);
+      if (stopCmd) tier.stopCommand = stopCmd;
+      const ready = str(t.ready, `${where}.ready`);
+      if (ready) tier.ready = ready;
       if (engine === "strata") {
         const config = str(t.config, `${where}.config`);
         if (!config) throw new LocalTierError(`${where}.config: required for engine strata`);
@@ -201,6 +282,8 @@ export function parseLocalConfig(
         if (!start) throw new LocalTierError(`${where}.start: required for engine script`);
         tier.start = expandHome(start);
       }
+      if (engine === "command" && !tier.startCommand) throw new LocalTierError(`${where}.start_command: required for engine command`);
+      tier.location = expandHome(str(t.location, `${where}.location`) ?? (engine === "strata" ? tier.config! : engine === "script" ? tier.start! : tier.model));
       tiers[name] = tier;
     }
   }
@@ -307,6 +390,12 @@ const STRATA_READY_MS = 5 * 60 * 1000;
  */
 export function planStart(cfg: LocalConfig, tier: LocalTier, port = tier.port, n = 1): StartPlan {
   const logPath = logPathFor(tier.provider, n);
+  if (tier.startCommand) {
+    const argv = tier.startCommand.map((a) => withPort(a, port));
+    const env = { PORT: String(port) };
+    const line = `PORT=${port} nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
+    return { env, argv, ...(tier.engine === "strata" ? { cwd: tier.strataDir } : {}), logPath, readyMs: tier.engine === "vllm-mlx" ? VLLM_READY_MS : STRATA_READY_MS, line };
+  }
   if (tier.engine === "strata") {
     const argv = [tier.python!, "serve/server.py", "--engine", "strata", "--config", tier.config!, "--port", String(port)];
     const line = `cd ${shq(tier.strataDir!)} && nohup ${argv.map(shq).join(" ")} > ${shq(logPath)} 2>&1 < /dev/null &`;
@@ -346,7 +435,7 @@ export function stopLines(cfg: LocalConfig): string[] {
       lines.push(`for p in $(pgrep -f ${shq(exe + " --serve")}); do kill $p; done`);
     }
   }
-  for (const port of new Set(tiers.filter((t) => t.engine === "script").map((t) => t.port))) {
+  for (const port of new Set(tiers.filter(listensOnPort).map((t) => t.port))) {
     lines.push(`for p in $(lsof -nP -iTCP:${port} -sTCP:LISTEN -t); do kill $p; done`);
   }
   return lines;
@@ -426,7 +515,7 @@ export function parseServers(
   }
   const seen = new Set(out.map((s) => s.pid));
   for (const t of tiers) {
-    if (t.engine !== "script") continue;
+    if (!listensOnPort(t)) continue;
     for (const pid of listeners[t.port] ?? []) {
       if (pid === selfPid || seen.has(pid)) continue;
       seen.add(pid);
@@ -508,3 +597,6 @@ export function findModelPath(served: string, dirs: { name: string; path: string
   if (!want) return null;
   return dirs.find((d) => norm(d.name).includes(want))?.path ?? null;
 }
+
+/** Quote one argument for a shell command line. */
+export const shellQuote = shq;

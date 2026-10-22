@@ -8,20 +8,25 @@ Every local model runtime, its models, memory and users; start/stop a runtime
 pai models [OP] [RUNTIME] [options]
 ```
 
-One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A disabled provider (workers.yaml provider enabled:false) is not listed at all. A duplicates hint appears only when the same model id runs on two runtimes. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here.
+One table of what runs on this machine: runtime, status, model, kind, memory, who uses it and the port. Covers the loopback worker providers (Strata, vllm-mlx, llama-server), ollama and Docker Model Runner. Users are PAI's embedding backend, worker providers and consumers declared under models.consumers in config.yaml. A disabled provider (workers.yaml provider enabled:false) is not listed at all. A duplicates hint appears only when the same model id runs on two runtimes. The table is read-only: status endpoints only, no model is loaded. Uses the daemon's 30 s cache; --fresh probes now. `pai models start|stop <runtime>` runs the commands configured under models.runtimes.<runtime> (start/stop/ready) and logs the output to <PAI home>/logs/local/<runtime>.log; a runtime without configured commands cannot be started here. `pai models add <hf-id|path>` registers a new local model: it resolves the weights (HF ids are downloaded only with --download), picks the runtime by format (MLX: mlx_lm.server; GGUF: llama-server if installed, else refused with the reason), assigns a free port and writes a DISABLED registry entry (workers.yaml) with location, start, health and port filled. It never enables or routes to the model. --try then starts it, waits for health, runs one 16-token completion, stops it and reports tok/s and memory.
 
 | Argument | Required | Description |
 |---|---|---|
-| `OP` | no | start | stop (omit for the inventory table) |
-| `RUNTIME` | no | the runtime to start or stop (a name under models.runtimes) |
+| `OP` | no | start | stop | add (omit for the inventory table) |
+| `RUNTIME` | no | start/stop: the runtime (a name under models.runtimes); add: the HF id or weights path |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--fresh` | flag | — | Probe now instead of reading the daemon's cache |
 | `--json` | flag | — | Print the inventory as JSON |
+| `--name STRING` | string | — | add: registry name of the new model (default: from the id or path) |
+| `--download` | flag | — | add: fetch an HF id that is not on disk (otherwise the weights must exist locally) |
+| `--try` | flag | — | add: smoke test (start, health, one 16-token completion, stop; reports tok/s and memory) |
 | `--model STRING` | string | — | start/stop: the model to load or unload (docker model run|unload) |
 
 ```sh
+pai models add mlx-community/Qwen3-4B-4bit --try
+pai models add ~/models/x.gguf --name x
 pai models
 pai models --fresh --json
 pai models start ollama

@@ -89,6 +89,33 @@ pai models stop docker-model-runner --model e5
 Output goes to `<PAI home>/logs/local/<runtime>.log`. A runtime with no
 configured command cannot be started this way.
 
+## Lifecycle per model, and `pai models add`
+
+Every `local_tiers:` entry owns its lifecycle; the pool host runs these and nothing else.
+
+| Key | Meaning | Default |
+|---|---|---|
+| `location` | weights path or HF id | `model` (vllm-mlx), `config` (strata), `start` (script) |
+| `start_command` | start command, `{port}` is replaced; engine `command` requires it | derived from the engine |
+| `stop_command` | extra stop step, `{port}` replaced | none |
+| `health` | URL that answers 2xx when the server is up | `http://127.0.0.1:{port}/v1/models` |
+| `ready` | a log line that also counts as ready | none (health OK) |
+| `port` | the model's base port | from the provider url |
+
+Stop is always, in order: the process group of the started pid and its descendants, the
+listener on `port`, then `stop_command` if given, then SIGKILL; it is reported done only
+when the port no longer accepts connections. Existing entries need no edit: the loader
+fills the defaults and a registry save from the cockpit writes `location` and `health`
+explicitly.
+
+`pai models add <hf-id|path> [--name n] [--download] [--try]` registers a new model:
+
+- the weights must exist locally; an HF id that is not in the hub cache is fetched only with `--download`
+- MLX weights (`config.json` + `*.safetensors`) run under `mlx_lm.server`; GGUF under `llama-server` when installed, otherwise the add is refused with that reason; any other format is refused with what was found
+- a free port is assigned above every port the registry already uses
+- the entry is written as a provider with `enabled: false` plus a `local_tiers` entry, through the registry's validate-and-backup save; nothing is enabled or routed
+- `--try` starts it, waits for health, runs one 16-token completion, stops it and reports tok/s and memory
+
 ## Consumers and aliases
 
 - **Consumers** are the users of a model that PAI cannot see itself, declared

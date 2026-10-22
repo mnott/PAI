@@ -60,7 +60,7 @@ import {
 import { clearLocalStart, failLocalStart, readLocalStarts, writeLocalStart } from "../../workers/local-start.js";
 import { instanceNumber, instancesFromProcesses, readInstances, reconcileInstances, writeInstances, type LocalInstance } from "../../workers/local-instances.js";
 import { allocatePort, checkStart, freeMemoryGb, neededGb, sizeOnDiskGb } from "../../workers/local-memory.js";
-import { fetchServedModels, fmtRss, LocalTierError, parseServers, planStart, readLocalConfig, resolveModelPath, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
+import { fetchServedModels, fmtRss, healthUrl, listensOnPort, LocalTierError, stopCommandFor, parseServers, planStart, readLocalConfig, resolveModelPath, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
 import { PROMPTS, aggregate, planArms, readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
 import {
   POLICY_MODES,
@@ -738,7 +738,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function scriptListeners(cfg: LocalConfig): Record<number, number[]> {
   const out: Record<number, number[]> = {};
   for (const t of Object.values(cfg.tiers)) {
-    if (t.engine !== "script") continue;
+    if (!listensOnPort(t)) continue;
     try {
       const o = execFileSync("lsof", ["-nP", `-iTCP:${t.port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
       out[t.port] = o.split(/\s+/).filter(Boolean).map(Number);
@@ -779,6 +779,25 @@ export async function isUp(port: number): Promise<boolean> {
   return (await fetchServedModels(port)) !== null;
 }
 
+/** Health of a model's server: its registry `health` URL answers 2xx (default: /v1/models). */
+export async function healthOk(tier: Pick<LocalTier, "health">, port: number): Promise<boolean> {
+  try {
+    return (await fetch(healthUrl(tier, port), { signal: AbortSignal.timeout(3000) })).ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the log holds the tier's `ready` line. */
+function logHasReady(tier: Pick<LocalTier, "ready">, log: string): boolean {
+  if (!tier.ready) return false;
+  try {
+    return readFileSync(log, "utf8").includes(tier.ready);
+  } catch {
+    return false;
+  }
+}
+
 export interface StartDeps {
   /** Ledger file for the LOCAL-START / LOCAL-STOP lines (default: the workers ledger). */
   ledger?: string;
@@ -800,7 +819,7 @@ export interface StartDeps {
   force?: boolean;
 }
 
-function launchDetached(plan: StartPlan): () => number | null {
+export function launchDetached(plan: StartPlan): () => number | null {
   mkdirSync(dirname(plan.logPath), { recursive: true });
   const fd = openSync(plan.logPath, "w");
   const [cmd, ...args] = plan.argv;
@@ -852,17 +871,17 @@ export async function startInstance(cfg: LocalConfig, model: string, deps: Start
   writeInstances(dir, [...rows.filter((r) => r.id !== id), instance]);
   const exited = (deps.launch ?? launchDetached)(plan);
   out(dim(`starting ${tier.label} #${n} (${tier.provider}) on :${port}, log ${plan.logPath}`));
-  const up = deps.up ?? isUp;
+  const up = deps.up ?? ((p: number) => healthOk(tier, p));
   const deadline = Date.now() + plan.readyMs;
   const failWith = (error: string, msg: string): never => {
     failLocalStart(dir, error, id);
     writeInstances(dir, readInstances(dir).map((r) => (r.id === id ? { ...r, state: "failed" as const, error } : r)));
     throw new LocalTierError(msg);
   };
-  while (!(await up(port))) {
+  while (!(await up(port)) && !logHasReady(tier, plan.logPath)) {
     const code = exited();
     // a script may hand off to a background server and exit 0
-    if (code !== null && !(tier.engine === "script" && code === 0)) failWith(`server exited (${code})`, `server exited (${code}); see ${plan.logPath}`);
+    if (code !== null && !(listensOnPort(tier) && code === 0)) failWith(`server exited (${code})`, `server exited (${code}); see ${plan.logPath}`);
     if (Date.now() > deadline) failWith("not ready in time", `not ready after ${Math.round(plan.readyMs / 60000)} min; see ${plan.logPath}`);
     await sleep(deps.pollMs ?? 5000);
   }
@@ -891,8 +910,17 @@ export interface StopDeps extends Pick<StartDeps, "ledger" | "startDir" | "serve
   kill?: (inst: LocalInstance) => Promise<void>;
 }
 
+/** Run a registry stop command through the shell, bounded; failures are not fatal (the port check decides). */
+function runStopCommand(cmd: string): void {
+  try {
+    execFileSync("/bin/sh", ["-c", cmd], { stdio: "ignore", timeout: 30_000 });
+  } catch {
+    /* the port check after it decides */
+  }
+}
+
 /** Pids listening on a loopback TCP port (empty when none or lsof is missing). */
-function portListeners(port: number): number[] {
+export function portListeners(port: number): number[] {
   try {
     return execFileSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split(/\s+/).filter(Boolean).map(Number);
   } catch {
@@ -931,7 +959,7 @@ function pidTree(roots: number[]): { pids: number[]; groups: number[] } {
  * their descendants and led process groups; after a grace period SIGKILL. Resolves only when nothing
  * accepts connections on the port any more, else throws (the stop is not reported as done).
  */
-export async function killInstance(inst: LocalInstance, open: (port: number) => Promise<boolean> = portOpen, graceMs = 15_000): Promise<void> {
+export async function killInstance(inst: LocalInstance, open: (port: number) => Promise<boolean> = portOpen, graceMs = 15_000, stopCommand?: string): Promise<void> {
   const signal = (sig: NodeJS.Signals) => {
     const { pids, groups } = pidTree([...(inst.pid !== undefined ? [inst.pid] : []), ...portListeners(inst.port)]);
     for (const g of groups) try { process.kill(-g, sig); } catch { /* group gone */ }
@@ -947,6 +975,10 @@ export async function killInstance(inst: LocalInstance, open: (port: number) => 
   };
   signal("SIGTERM");
   if (await drained(graceMs)) return;
+  if (stopCommand) {
+    runStopCommand(stopCommand);
+    if (await drained(Math.min(graceMs, 10_000))) return;
+  }
   signal("SIGKILL");
   if (!(await drained(10_000))) throw new LocalTierError(`${inst.id}: port ${inst.port} still accepts connections after SIGKILL (pid ${inst.pid ?? "?"})`);
 }
@@ -969,7 +1001,7 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
     if (busy.length) throw new LocalTierError(`${busy.map(([i, c]) => `${i} has ${c} request(s) in flight`).join(", ")}; confirm to stop anyway (--yes)`);
   }
   for (const p of picked) {
-    await (deps.kill ?? ((i) => killInstance(i, deps.up ?? portOpen)))(p);
+    await (deps.kill ?? ((i) => killInstance(i, deps.up ?? portOpen, undefined, cfg.tiers[i.model] ? stopCommandFor(cfg.tiers[i.model]!, i.port) : undefined)))(p);
     writeInstances(dir, readInstances(dir).filter((r) => r.id !== p.id));
     clearLocalStart(dir, p.id);
     appendLedger(deps.ledger ?? ledgerPath(workersLogDir(readWorkersSection().workers)), "LOCAL-STOP", { model: p.model, id: p.id, port: p.port, pid: p.pid ?? "?" });

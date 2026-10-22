@@ -54,6 +54,8 @@ export interface RegistryCtx {
   now?: () => Date;
   /** write every providers entry with an explicit `enabled:` (default registry ctx: on) */
   explicitEnabled?: boolean;
+  /** write every local_tiers entry with explicit `location:` and `health:` */
+  explicitLifecycle?: boolean;
   /** test seam: called before each save step (1..6); throwing fails that step */
   failAt?: (step: number) => void;
 }
@@ -252,7 +254,12 @@ export function validateRequest(yamlText: string, baseHash: string, ctx: Registr
   const cur = readCurrent(ctx);
   if (baseHash !== hashText(cur)) return { ok: false, stale: true, errors: [{ path: "", line: 1, message: "changed on disk - reload" }], diff: [] };
   const { errors } = validateRegistry(yamlText, ctx, cur);
-  return { ok: errors.length === 0, errors, diff: diffLines(cur, errors.length || !ctx.explicitEnabled ? yamlText : withExplicitEnabled(yamlText)) };
+  let shown = yamlText;
+  if (!errors.length) {
+    if (ctx.explicitEnabled) shown = withExplicitEnabled(shown);
+    if (ctx.explicitLifecycle) shown = withExplicitLifecycle(shown);
+  }
+  return { ok: errors.length === 0, errors, diff: diffLines(cur, shown) };
 }
 
 function stamp(d: Date): string {
@@ -284,6 +291,7 @@ export function saveRegistry(yamlText: string, baseHash: string, ctx: RegistryCt
     const { errors } = validateRegistry(yamlText, ctx, cur);
     if (errors.length) return { ok: false, error: errors.map((e) => `line ${e.line}: ${e.message}`).join("; ") };
     if (ctx.explicitEnabled) yamlText = withExplicitEnabled(yamlText);
+    if (ctx.explicitLifecycle) yamlText = withExplicitLifecycle(yamlText);
     step(3);
     mkdirSync(ctx.backupDir, { recursive: true });
     const name = backupName(ctx);
@@ -413,11 +421,57 @@ export function duplicateEntry(
   return { ok: true, yaml: String(doc), name: newName, port };
 }
 
+/**
+ * Every local_tiers.<name> entry carries its lifecycle explicitly: `location`, `health` (the values the
+ * loader would fill in) are inserted after the entry's name when missing, indented like its other keys.
+ * An entry that does not parse, or a flow-style one, is left alone; the rest of the text is untouched.
+ */
+export function withExplicitLifecycle(yamlText: string): string {
+  const doc = parseDocument(yamlText, { uniqueKeys: false });
+  if (doc.errors.length) return yamlText;
+  const tiersNode = doc.get("local_tiers", true);
+  if (!isMap(tiersNode)) return yamlText;
+  const root = doc.toJS() as Record<string, unknown>;
+  const provs: Record<string, { url?: string; model?: string }> = {};
+  for (const [n, raw] of Object.entries((root.providers ?? {}) as Record<string, { url?: unknown; models?: { default?: unknown } }>)) {
+    provs[n] = { url: typeof raw?.url === "string" ? raw.url : undefined, model: typeof raw?.models?.default === "string" ? raw.models.default : undefined };
+  }
+  let cfg;
+  try {
+    cfg = parseLocalConfig(root, provs);
+  } catch {
+    return yamlText;
+  }
+  const inserts: { at: number; text: string }[] = [];
+  for (const pair of tiersNode.items) {
+    const name = isScalar(pair.key) ? String(pair.key.value) : "";
+    const v = pair.value;
+    const tier = cfg.tiers[name];
+    if (!tier || !isMap(v) || v.flow || !v.items.length || !isScalar(pair.key) || !pair.key.range) continue;
+    const first = v.items[0]!.key as { range?: [number, number, number] } | null;
+    if (!first?.range) continue;
+    const lineStart = yamlText.lastIndexOf("\n", first.range[0] - 1) + 1;
+    const indent = yamlText.slice(lineStart, first.range[0]);
+    if (!/^[ ]+$/.test(indent)) continue;
+    const nl = yamlText.indexOf("\n", pair.key.range[1]);
+    if (nl < 0) continue;
+    const lines = [
+      ...(v.has("location") || !tier.location ? [] : [`${indent}location: ${JSON.stringify(tier.location)}\n`]),
+      ...(v.has("health") ? [] : [`${indent}health: ${JSON.stringify(tier.health)}\n`]),
+    ];
+    if (lines.length) inserts.push({ at: nl + 1, text: lines.join("") });
+  }
+  let out = yamlText;
+  for (const { at, text } of inserts.sort((a, b) => b.at - a.at)) out = out.slice(0, at) + text + out.slice(at);
+  return out;
+}
+
 export function defaultRegistryCtx(yamlPath: string, ledger?: string, logDir?: string): RegistryCtx {
   return {
     yamlPath,
     backupDir: join(dirname(yamlPath), "workers-backups"),
     explicitEnabled: true,
+    explicitLifecycle: true,
     ledger,
     ...(logDir ? { running: () => readLiveInstances(logDir) } : {}),
   };
