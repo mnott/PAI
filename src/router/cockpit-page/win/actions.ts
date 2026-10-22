@@ -61,6 +61,7 @@ function winBody(def,args){
  if(b&&b.target!==undefined)out.target=b.target;
  if(b&&b.value!==undefined)out.value=b.value;
  if(b&&b.count!==undefined)out.count=b.count;
+ if(b&&b.all!==undefined)out.all=b.all;
  if(b&&b.models!==undefined)out.models=b.models;
  return out;
 }
@@ -215,7 +216,7 @@ function winClick(el,cardId,verb,args,host){
  *  field-contract test iterates it. route is the POST url when it is not /cockpit/action. */
 var WIN_VERBS={
  "local.start":{fields:["target"],build:function(a){return{action:"local.start",target:a.target}},doneRefresh:["limits","models"]},
- "local.stop":{fields:["target","value"],build:function(a){return{action:"local.stop",target:a.target,value:a.value}},confirm:"stop - click again",doneRefresh:["limits","models"]},
+ "local.stop":{fields:["target","value","all"],build:function(a){return{action:"local.stop",target:a.target,value:a.value,all:a.all}},confirm:"stop - click again",doneRefresh:["limits","models"]},
  "local.scale":{fields:["target","count"],build:function(a){return{action:"local.scale",target:a.target,count:a.count}},doneRefresh:["limits","models"]},
  "local.off":{fields:[],build:function(){return{action:"local.off"}},confirm:"stop every local - click again",doneRefresh:["limits","models"]},
  "runtime":{fields:["target","value"],build:function(a){return{action:"runtime",target:a.target,value:a.value}}},

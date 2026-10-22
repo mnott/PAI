@@ -415,7 +415,7 @@ export async function runtimeStartStop(
  * answer at once with a jobId and run through hooks.runLocalJob.
  */
 export async function runCockpitAction(
-  body: { action?: unknown; target?: unknown; value?: unknown; count?: unknown; class?: unknown; models?: unknown; session?: unknown; clear?: unknown },
+  body: { action?: unknown; target?: unknown; value?: unknown; count?: unknown; all?: unknown; class?: unknown; models?: unknown; session?: unknown; clear?: unknown },
   deps: ActionDeps,
   hooks: ActionHooks = {}
 ): Promise<ActionResult> {
@@ -451,7 +451,7 @@ export async function runCockpitAction(
     const verb = kind === "start" ? `starting ${target}` : kind === "stop" ? `stopping ${target}` : `scaling ${target} to ${count}`;
     writeJob(deps.home, { id, kind, tier: target, state: "running", message: verb, at: new Date().toISOString() });
     writeLedgerLine(deps, action, target, `job ${id}: started`);
-    const job = finishLocalJob(deps, hooks, id, kind, target, { count, confirm: value === "confirm" });
+    const job = finishLocalJob(deps, hooks, id, kind, target, { count, confirm: value === "confirm", all: body.all === true });
     // a refusal (short memory, maxInstances, requests in flight) comes back at once, not as a job to poll
     const early = await Promise.race([job, new Promise<null>((res) => setTimeout(() => res(null), deps.earlyMs ?? 1500))]);
     if (early && !early.ok) return { ok: false, message: early.message };
@@ -733,7 +733,7 @@ async function finishLocalJob(
   id: string,
   kind: "switch" | "off" | "start" | "stop" | "scale",
   tier: string,
-  opts: { count?: number; confirm?: boolean } = {}
+  opts: { count?: number; confirm?: boolean; all?: boolean } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const action = `local.${kind}`;
   const legacy = hooks.runLocalJob ?? (kind === "switch" ? () => deps.startTier(tier) : () => deps.stopAll());
@@ -741,7 +741,7 @@ async function finishLocalJob(
     kind === "start"
       ? () => needDep(deps.startModel)(tier)
       : kind === "stop"
-        ? () => needDep(deps.stopModel)(tier, { confirm: opts.confirm })
+        ? () => needDep(deps.stopModel)(tier, { confirm: opts.confirm, ...(opts.all ? { all: true } : {}) })
         : kind === "scale"
           ? () => scaleModel(deps, tier, opts.count ?? 0)
           : () => legacy(kind, tier);

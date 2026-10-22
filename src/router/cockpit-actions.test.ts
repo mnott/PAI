@@ -169,6 +169,15 @@ describe("cockpit actions", () => {
     expect(calls.stop).toEqual(['big#2:{"confirm":false}','big:{"confirm":true}']);
   });
 
+  it("local.stop routes one instance id alone, and all:true to every instance of the model", async () => {
+    const tmp = newDir();
+    const calls = instCalls();
+    await runCockpitAction({ action: "local.stop", target: "big#2" }, instDeps(tmp, calls, 2));
+    await runCockpitAction({ action: "local.stop", target: "big", all: true, value: "confirm" }, instDeps(tmp, calls, 2));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(calls.stop).toEqual(['big#2:{"confirm":false}', 'big:{"confirm":true,"all":true}']);
+  });
+
   it("a provider name from the Local servers card resolves to its model for stop, start and scale", async () => {
     const tmp = newDir();
     writeFileSync(join(tmp, "workers.yaml"), "providers:\n  pbig:\n    url: http://127.0.0.1:8035\nlocal_tiers:\n  big:\n    engine: script\n    provider: pbig\n    start: /x.sh\n    port: 8035\n");

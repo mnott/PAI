@@ -29,6 +29,14 @@ function limServerHtml(l){
   var m=l.served&&l.served.length?String(l.served[0]):"";
   function r(k,v,t){return'<span class="dim">'+k+'</span><span class="nw"'+(t?' title="'+esc(t)+'"':"")+'>'+v+'</span>'}
   var res=limResident(l.rssMb,l.weightsBytes);
+  var ins=l.instances||[];
+  if(ins.length>0){
+   var w=l.weightsBytes?r("weights",esc(gbm(l.weightsBytes/1048576)+" GB (shared, mapped)")):"";
+   var sp=l.tokensPerSec?" · "+Math.round(l.tokensPerSec)+" tok/s":"";
+   var ih=ins.map(function(i){
+    return'<div class="rtsess"><span class="'+(i.state==="ready"?"ok":"warn")+'">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+(i.rssMb?" · resident "+gbm(i.rssMb)+" GB":"")+sp+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b" data-stop="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+'">stop</button></div>'}).join("");
+   return'<div class="phead"><span class="ok nw">● up</span></div>'+(w?'<div class="ltab">'+w+(m?r("model",esc(shortModel(m)),m):"")+'</div>':"")+ih;
+  }
   var rows=(l.rssMb?r("memory",esc(res.txt))+(res.note?'<span class="dim"></span><span class="dim nw">'+esc(res.note)+"</span>":""):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+" tok/s"):"")+(m?r("model",esc(shortModel(m)),m):"");
   return'<div class="phead"><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"");
  }
@@ -36,7 +44,14 @@ function limServerHtml(l){
  return'<div class="phead"><span class="'+(failed?"bad":"warn")+'" title="'+esc(s.log)+'">'+(failed?esc(s.message):"starting · loading "+s.sinceSec+" s")+'</span></div>';
 }
 Win.registerType("server",{minW:180,minH:96,defaultH:130,
- mount:function(ctx){ctx.body.innerHTML='<div class="wr" data-k="b"></div>'},
+ mount:function(ctx){
+  ctx.body.innerHTML='<div class="wr" data-k="b"></div>';
+  ctx.body.addEventListener("click",function(ev){
+   var b=ev.target;
+   if(!b||!b.getAttribute||!b.getAttribute("data-stop"))return;
+   WinA.winClick(b,ctx.id,"local.stop",{target:b.getAttribute("data-stop"),value:b.getAttribute("data-busy")!=="0"?"confirm":undefined},winHost());
+  });
+ },
  update:function(ctx,d){
   if(!d||!d.limits)return;
   var l=limRow(d,ctx.id.slice(17));
@@ -45,6 +60,8 @@ Win.registerType("server",{minW:180,minH:96,defaultH:130,
   ctx.html("b",limServerHtml(l));
   var al=l.served&&l.served.length&&ringName(String(l.served[0]))!==shortModel(String(l.served[0]))?ringName(String(l.served[0])):"";
   ctx.title(al||l.provider);
+  var n=(l.instances||[]).length,hb=n?Win.el(ctx.id).querySelector('[data-act="stop"]'):null;
+  if(hb){hb.textContent=n>1?"stop all ("+n+")":"stop";hb.title=n>1?"stop all "+n+" instances":"stop this local server"}
  }});
 Win.registerType("provider",{minW:120,minH:108,defaultH:160,
  mount:function(ctx){ctx.body.innerHTML='<div class="gauges fit" data-k="g"></div>'},
@@ -64,7 +81,7 @@ function limStart(ctx,btn){
 }
 function limStop(l){
  return{id:"stop",label:"stop",title:"stop this local server",
-  run:function(ctx){var b=Win.el(ctx.id).querySelector('[data-act="stop"]');WinA.winClick(b,ctx.id,"local.stop",{target:l},winHost())}};
+  run:function(ctx){var b=Win.el(ctx.id).querySelector('[data-act="stop"]'),n=/^stop all/.test(b.textContent||"");WinA.winClick(b,ctx.id,"local.stop",n?{target:l,all:true,value:"confirm"}:{target:l},winHost())}};
 }
 function limNoneView(d){
  if(!d||!d.limits)return null;

@@ -33,6 +33,7 @@ import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-h
 import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpoints.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
+import { processTreeRssMb } from "../workers/model-inventory.js";
 import { readLocalStatus } from "../workers/local-status.js";
 import { localTierOrder, pickLocal } from "../workers/local-provider.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
@@ -807,6 +808,38 @@ export function withWeights<T extends ProviderLimits>(ls: T[], sizeOf: (t: Local
   });
 }
 
+/** One managed instance on a local limits entry: its own port, pid, resident memory and in-flight count. */
+export interface LimitInstance { id: string; port: number; pid?: number; state: string; inflight: number; rssMb?: number }
+
+/** Local entries carry their managed instances (`instances`), each with the resident memory of its own pid tree, so a card lists and stops them one by one. */
+export async function withInstances<T extends ProviderLimits>(
+  ls: T[],
+  rows: Array<{ id: string; model: string; port: number; pid?: number; state: string; inflight: number }> = localInstanceRows(),
+  rssOf: (pid: number) => Promise<number | undefined> = async (pid) => ((await processTreeRssMb(String(pid))) || undefined),
+  providerOf: (model: string) => string | undefined = (m) => {
+    try {
+      return readLocalConfig(workersYamlPath()).tiers[m]?.provider;
+    } catch {
+      return undefined;
+    }
+  }
+): Promise<Array<T & { instances?: LimitInstance[] }>> {
+  return Promise.all(
+    ls.map(async (l) => {
+      if (l.kind !== "local") return l;
+      const mine = rows.filter((r) => (providerOf(r.model) ?? r.model) === l.provider && r.state !== "failed");
+      if (!mine.length) return l;
+      const instances = await Promise.all(
+        mine.map(async (r): Promise<LimitInstance> => {
+          const rssMb = r.pid !== undefined ? await rssOf(r.pid).catch(() => undefined) : undefined;
+          return { id: r.id, port: r.port, ...(r.pid !== undefined ? { pid: r.pid } : {}), state: r.state, inflight: r.inflight, ...(rssMb ? { rssMb } : {}) };
+        })
+      );
+      return { ...l, instances };
+    })
+  );
+}
+
 /** The catalogue tier whose base port is this port (a cached inventory without tier info still gets its per-model controls). */
 function tierAtPort(port: number | undefined): string | undefined {
   if (port === undefined) return undefined;
@@ -1279,10 +1312,10 @@ export function handleCockpit(
     }
   } else if (url.pathname === "/cockpit/limits") {
     limits.get().then((l0) => enabledLocalLimits(l0, configuredProviders())).then((l) => routingPayload(l).then((routing) => [l, routing] as const)).then(
-      ([l, routing]) => {
+      async ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withWeights(withStarting(l)), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
