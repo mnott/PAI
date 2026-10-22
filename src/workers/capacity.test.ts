@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from "vitest";
@@ -507,5 +507,45 @@ describe("waiting since", () => {
     writeFileSync(join(q, "w-001"), `${process.pid}`);
     writeFileSync(join(q, "w-002"), "not a pid");
     expect(liveQueue(logDir, "p")).toEqual(["w-001"]);
+  });
+});
+
+describe("queue tickets and the pane line", () => {
+  it("a failing onQueued never fails the gate", async () => {
+    const h = harness((ms) => [st("a"), st("b"), st("c", { state: ms >= 1000 ? "done" : "running" })], "d");
+    const r = await capacityGate({ ...h.base, onQueued: () => { throw new Error("disk full"); } });
+    expect(r).not.toBeNull();
+  });
+
+  it("an empty or unparsable ticket is kept, not removed as dead", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-"));
+    dirs.push(logDir);
+    const q = join(logDir, "queue", "p");
+    mkdirSync(q, { recursive: true });
+    writeFileSync(join(q, "w-empty"), "");
+    writeFileSync(join(q, "w-junk"), "garbage");
+    writeFileSync(join(q, "w-live"), "100");
+    writeFileSync(join(q, "w-dead"), String(DEAD));
+    expect(liveQueue(logDir, "p", (pid) => pid !== DEAD, [])).toEqual(["w-live"]);
+    expect(existsSync(join(q, "w-empty"))).toBe(true);
+    expect(existsSync(join(q, "w-junk"))).toBe(true);
+    expect(existsSync(join(q, "w-dead"))).toBe(false);
+  });
+
+  it("reordering leaves whole tickets and no temp files", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-"));
+    dirs.push(logDir);
+    const q = join(logDir, "queue", "p");
+    mkdirSync(q, { recursive: true });
+    writeFileSync(join(q, "w-1"), "100");
+    writeFileSync(join(q, "w-2"), "100");
+    expect(setFront(logDir, "p", "w-2", () => true)).toBe(true);
+    expect(readFileSync(join(q, "w-2"), "utf8")).toBe("100 front");
+    expect(readdirSync(q).sort()).toEqual(["w-1", "w-2"]);
+  });
+
+  it("strips control characters from the label in the queue line", () => {
+    const line = queuedPaneLine({ provider: "p", position: 1, queued: 1, elapsedSec: 0, label: "evil\x1b[2J\rlabel\x07" });
+    expect(line).toBe("queued on p · position 1 of 1 · waiting 0m00s · evil[2Jlabel");
   });
 });

@@ -86,6 +86,13 @@ interface QueueEntry {
   since?: number;
 }
 
+/** Write a ticket atomically (temp + rename): a poller never reads it half-written. The ".tmp" suffix keeps it out of the listing. */
+function writeTicket(path: string, text: string): void {
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
 const entryText = (e: QueueEntry): string =>
   `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}`;
 
@@ -211,7 +218,9 @@ function liveEntries(logDir: string, provider: string, isAlive: (pid: number) =>
   for (const id of names.sort()) {
     const e = readEntry(dir, id);
     if (!e) continue;
-    if (Number.isInteger(e.pid) && e.pid > 0 && isAlive(e.pid)) out.push(e);
+    // an empty or unparsable ticket is unknown, not dead: keep it, leave it out of the order
+    if (!Number.isInteger(e.pid) || e.pid <= 0) continue;
+    if (isAlive(e.pid)) out.push(e);
     else rmSync(join(dir, id), { force: true });
   }
   const group = (e: QueueEntry) => (e.front ? 0 : 1);
@@ -234,7 +243,7 @@ export function liveQueue(logDir: string, provider: string, isAlive: (pid: numbe
 export function setFront(logDir: string, provider: string, id: string, isAlive: (pid: number) => boolean = alive): boolean {
   const e = liveEntries(logDir, provider, isAlive).find((x) => x.id === id);
   if (!e) return false;
-  if (!e.front) writeFileSync(join(queueDir(logDir, provider), id), entryText({ ...e, front: true, rank: undefined }));
+  if (!e.front) writeTicket(join(queueDir(logDir, provider), id), entryText({ ...e, front: true, rank: undefined }));
   return true;
 }
 
@@ -245,7 +254,7 @@ export function moveUp(logDir: string, provider: string, id: string, isAlive: (p
   if (i <= 0) return false;
   // the run takes the place (and group) of the one it passes
   [order[i - 1], order[i]] = [{ ...order[i], front: order[i - 1].front }, order[i - 1]];
-  order.forEach((e, rank) => writeFileSync(join(queueDir(logDir, provider), e.id), entryText({ ...e, rank })));
+  order.forEach((e, rank) => writeTicket(join(queueDir(logDir, provider), e.id), entryText({ ...e, rank })));
   return true;
 }
 
@@ -262,7 +271,7 @@ export function moveTo(logDir: string, provider: string, id: string, position: n
   const to = Math.max(0, Math.min(order.length, Math.floor(position) - 1));
   const near = order[to - 1] ?? order[to];
   order.splice(to, 0, { ...e, front: near ? near.front : e.front });
-  order.forEach((x, rank) => writeFileSync(join(queueDir(logDir, provider), x.id), entryText({ ...x, rank })));
+  order.forEach((x, rank) => writeTicket(join(queueDir(logDir, provider), x.id), entryText({ ...x, rank })));
   return true;
 }
 
@@ -373,7 +382,7 @@ export interface QueuedFile {
 export function queuedPaneLine(q: QueuedFile): string {
   const parts = [`queued on ${q.provider}`, `position ${q.position} of ${q.queued}`, `waiting ${fmtElapsed(q.elapsedSec)}`];
   if (q.behind) parts.push(`behind ${q.behind}`);
-  if (q.label) parts.push(q.label);
+  if (q.label) parts.push(q.label.replace(/[\x00-\x1f\x7f-\x9f]/g, ""));
   return parts.join(" · ");
 }
 
@@ -464,7 +473,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
   const t0 = now();
-  writeFileSync(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""} @${t0}`);
+  writeTicket(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""} @${t0}`);
 
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
@@ -499,6 +508,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     };
   };
   o.log?.(info().line);
+  // the pane file is cosmetic: a failing writer never fails the gate
+  const queued = (q: QueuedFile | null): void => {
+    try { o.onQueued?.(q); } catch { /* ignore */ }
+  };
   let lastBeat = t0;
   let alarmed = false;
   // the pane opened before the wait shows its place in line until the slot is granted
@@ -511,7 +524,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   });
   try {
     o.onWait?.(info());
-    o.onQueued?.(paneQueued(info()));
+    queued(paneQueued(info()));
     for (let n = 0; ; n++) {
       await sleep(backoffMs(n));
       const fresh = o.capOf?.();
@@ -519,7 +532,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       c = check();
       if (c.position === 1 && c.holding < cap) break;
       o.onWait?.(info());
-      o.onQueued?.(paneQueued(info()));
+      queued(paneQueued(info()));
       if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? cfg.maxTotalWaitMs)) {
         alarmed = true;
         o.onAlarm(info());
@@ -537,7 +550,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   // The slot is ours: the caller flips the status back to "running" (and
   // rewrites `started`) before we report the release.
   o.onWait?.(null);
-  o.onQueued?.(null);
+  queued(null);
   o.log?.(`waited ${waitedSec}s for a ${label} slot`);
   return { waitedSec, cap };
 }
