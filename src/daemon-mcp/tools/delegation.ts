@@ -184,6 +184,9 @@ export async function planSave(args: { project: string; name: string; plan: Plan
     if (!NAME_RE.test(name)) return fail(`plan name "${name}" must be letters, digits, dot, dash or underscore`);
     if (!input || !Array.isArray(input.units) || !input.units.length) return fail("the plan needs at least one unit with parts");
     if (!input.gate?.trim()) return fail("the plan needs a gate: the shell command that must pass on the merged tree");
+    for (const u of input.units) {
+      if (!NAME_RE.test(u.id)) return fail(`unit id "${u.id}" must be letters, digits, dot, dash or underscore`);
+    }
     const repo = await deps.resolveProject(args.project);
     const dir = planDir(repo, name);
     const specs = join(dir, "specs");

@@ -81,6 +81,13 @@ describe("plan_save", () => {
     expect(text(await planSave({ project: "p", name: "j", plan: { ...plan, gate: " " } }, deps))).toContain("needs a gate");
     expect(text(await planSave({ project: "p", name: "j", plan: { ...plan, units: [] } }, deps))).toContain("at least one unit");
   });
+  it("rejects a unit id that is not a plain name before writing anything", async () => {
+    const bad = { ...plan, units: [{ id: "../u", preamble: "p", parts: [{ id: "a", spec: "x" }] }] };
+    const r = await planSave({ project: "p", name: "jobbad", plan: bad }, deps);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('unit id "../u"');
+    expect(existsSync(join(repo, ".pai/plans/jobbad"))).toBe(false);
+  });
   it("local: true / where go through the resolver; the result starts with where it runs", async () => {
     const r = await planSave({ project: "p", name: "jobl", plan: { ...plan, provider: undefined, local: true } }, deps);
     expect(r.isError).toBeUndefined();
