@@ -18,11 +18,18 @@ function limDown(d){
  ((d&&d.limits)||[]).forEach(function(l){if(l.kind==="local"&&!l.up&&!l.starting&&run.indexOf(l.provider)>=0)out.push(l.provider)});
  return out;
 }
+/** Resident memory against the model's weight size on disk: text "X GB of Y GB" and, below half resident, the paged-out note. A mapped model's RSS is only the pages currently held. */
+function limResident(rssMb,weightsBytes){
+ if(rssMb==null)return{txt:"–",note:""};
+ if(!weightsBytes)return{txt:gbm(rssMb)+" GB",note:""};
+ var y=weightsBytes/1048576;
+ return{txt:"resident "+gbm(rssMb)+" GB of "+gbm(y)+" GB",note:rssMb<y/2?"partly paged out — next request slower":""}}
 function limServerHtml(l){
  if(l.up){
   var m=l.served&&l.served.length?String(l.served[0]):"";
   function r(k,v,t){return'<span class="dim">'+k+'</span><span class="nw"'+(t?' title="'+esc(t)+'"':"")+'>'+v+'</span>'}
-  var rows=(l.rssMb?r("memory",esc(gbm(l.rssMb))+" GB"):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+" tok/s"):"")+(m?r("model",esc(shortModel(m)),m):"");
+  var res=limResident(l.rssMb,l.weightsBytes);
+  var rows=(l.rssMb?r("memory",esc(res.txt))+(res.note?'<span class="dim"></span><span class="dim nw">'+esc(res.note)+"</span>":""):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+" tok/s"):"")+(m?r("model",esc(shortModel(m)),m):"");
   return'<div class="phead"><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"");
  }
  var s=l.starting,failed=s.state==="failed";

@@ -16,6 +16,7 @@ import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, typ
 import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindows, loadWorkerWindowsSteps, runSliced, withJobNames, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
+import { weightsBytes } from "./cockpit-weights.js";
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
@@ -25,7 +26,7 @@ import { currentInventory, readInventory, readInventoryInput } from "../workers/
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
 import { localStartView, readLocalStarts, type LocalStartView } from "../workers/local-start.js";
 import { registryModels, type RegistryModel } from "./cockpit-registry-models.js";
-import { readLocalConfig, tierButtons } from "../workers/local-tiers.js";
+import { readLocalConfig, tierButtons, type LocalTier } from "../workers/local-tiers.js";
 import { instanceEngineKey, readInstances } from "../workers/local-instances.js";
 import { createEndpointHealth, type EndpointHealth } from "../workers/endpoint-health.js";
 import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpoints.js";
@@ -618,7 +619,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
 /** Every registry model with its live instances, stopped ones included (the model cards). */
 function registryModelsNow(): RegistryModel[] {
   try {
-    return registryModels(readLocalConfig(workersYamlPath()), localInstanceRows());
+    return registryModels(readLocalConfig(workersYamlPath()), localInstanceRows(), weightsBytes);
   } catch {
     return [];
   }
@@ -701,6 +702,22 @@ export function withStarting(ls: ProviderLimits[], views: LocalStartView | Local
     const own = list.filter((v) => v.provider === l.provider);
     const v = l.up === false ? own[0] : own.find((x) => x.id && !x.id.endsWith("#1"));
     return v ? { ...l, starting: v } : l;
+  });
+}
+
+/** Local entries carry the weight size on disk of their tier's model (`weightsBytes`), so a card can set the resident memory against it. */
+export function withWeights<T extends ProviderLimits>(ls: T[], sizeOf: (t: LocalTier) => number | undefined = weightsBytes): T[] {
+  let tiers: LocalTier[];
+  try {
+    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers);
+  } catch {
+    return ls;
+  }
+  return ls.map((l) => {
+    if (l.kind !== "local") return l;
+    const t = tiers.find((x) => x.provider === l.provider);
+    const bytes = t ? sizeOf(t) : undefined;
+    return bytes !== undefined ? { ...l, weightsBytes: bytes } : l;
   });
 }
 
@@ -1153,7 +1170,7 @@ export function handleCockpit(
       ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withStarting(l), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: withWeights(withStarting(l)), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

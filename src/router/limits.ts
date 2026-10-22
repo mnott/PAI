@@ -48,6 +48,8 @@ export interface ProviderLimits {
   /** why `up` is false (local servers only) */
   downReason?: DownReason;
   rssMb?: number;
+  /** weight size of the tier's model on disk, bytes (added by the cockpit payload) */
+  weightsBytes?: number;
   /** model ids the local server lists */
   served?: string[];
   /** average output tokens per second of request wall time (the router's own accounting), over `tokensPerSecWindow` */

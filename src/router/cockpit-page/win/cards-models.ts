@@ -84,6 +84,13 @@ function wmdLive(inv,r){var l=(inv.live&&inv.live.runtimes||[]).filter(function(
 function wmdEntry(id){if(!WMD)return null;if(WMD.byId===undefined||WMD.at!==WMD.inv){WMD.byId={};wmdCards(WMD.inv).forEach(function(e){WMD.byId[e.id]=e});WMD.at=WMD.inv}return WMD.byId[id]||null}
 /** One cell of the metric grid. */
 function wmdCell(t,v,u,s){return'<div class="wmdc"><div class="wmdt">'+esc(t)+'</div><div><b class="wmdv">'+esc(v)+'</b><small class="wm-u">'+esc(u||"")+'</small></div><div class="dim wmds">'+s+'</div></div>'}
+/** "of Y GB on disk" + the paged-out note for a runtime whose tier's model size is known; "" otherwise. */
+function wmdRes(inv,r,ram){
+ var m=(inv.registryModels||[]).filter(function(x){return x.tier===r.tier})[0];
+ if(!m||!m.weightsBytes||ram==null)return"";
+ var y=m.weightsBytes/1048576;
+ return"of "+gbm(y)+" GB · "+(ram<y/2?"partly paged out — next request slower · ":"");
+}
 function wmdCells(e,inv){
  var r=e.r,lv=wmdLive(inv,r),eng=lv&&lv.engine,w=(lv&&lv.workers)||[];
  if(e.stopped||e.down)return"";
@@ -94,7 +101,7 @@ function wmdCells(e,inv){
  }
  var ram=lv&&lv.rssMb!=null?lv.rssMb:(e.loaded.reduce(function(a,m){return a+(m.memoryMb||0)},0)||null);
  return wmdCell("Speed",wmdF1(eng&&eng.decode),eng&&eng.decode!=null?"t/s":"",(eng&&eng.phase?esc(eng.phase)+" · ":"")+"decode"+(eng&&eng.prefill!=null?" · prefill "+Math.round(eng.prefill)+" t/s":""))+
-  wmdCell("Memory",ram!=null?gbm(ram):"–",ram!=null?"GB":"","RAM"+(eng&&eng.gpuMemUsed!=null?" · GPU "+gb(eng.gpuMemUsed):" · GPU not reported"))+
+  wmdCell("Memory",ram!=null?gbm(ram):"–",ram!=null?"GB":"",wmdRes(inv,r,ram)+"RAM"+(eng&&eng.gpuMemUsed!=null?" · GPU "+gb(eng.gpuMemUsed):" · GPU not reported"))+
   wmdCell("Workers",String(w.filter(function(x){return x.state==="running"}).length),"",(lv&&lv.cap!=null?"cap "+lv.cap:"cap –")+" · queued "+((lv&&lv.queued)||0)+" · spares "+((lv&&lv.sparesReady)||0))+
   wmdCell("Conversation cache",eng&&eng.parked!=null?String(eng.parked):"–",eng&&eng.parked!=null?"/ "+(eng.slots!=null?eng.slots:"–"):"",eng&&eng.reusedPct!=null?"reused "+pct(eng.reusedPct/100)+" of prompt tokens":"no prompt reuse reported");
 }
@@ -217,7 +224,7 @@ Win.registerType("model",{minW:300,minH:90,defaultH:120,
   if(!m){ctx.status("stale","no longer reported");return}
   var n=m.instances.length;
   ctx.html("badges",'<span class="badge">'+esc(m.engine)+'</span> <span class="badge mstate">'+esc(m.state)+'</span> '+(WMD&&WMD.inv&&WMD.inv.localDefaultTier===m.tier?'<span class="badge ok" title="the running model local work goes to (pai worker run --local)">local default</span> ':"")+'<span class="num" title="running instances (max '+m.maxInstances+')">'+n+" / "+m.maxInstances+"</span>");
-  ctx.html("note",'<span title="'+esc(m.file)+'">'+esc(String(m.file).replace(/^.*\//,""))+"</span> · :"+m.port);
+  ctx.html("note",(m.weightsBytes?'<span class="num" title="weight size on disk">'+gbm(m.weightsBytes/1048576)+" GB</span> · ":"")+'<span title="'+esc(m.file)+'">'+esc(String(m.file).replace(/^.*\//,""))+"</span> · :"+m.port);
   ctx.list("inst",m.instances,function(i){return i.id},function(){var d=document.createElement("div");d.className="linst";return d},function(d,i){
    var h='<span class="ok">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b wmd-stop" data-act="local.stop" data-id="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+' (asks to confirm when requests are in flight)">stop</button>';
    if(d.__h!==h){d.innerHTML=h;d.__h=h}

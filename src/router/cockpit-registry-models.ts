@@ -18,6 +18,8 @@ export interface RegistryModel {
   state: "running" | "starting" | "failed" | "stopping" | "stopped";
   instances: Array<{ id: string; pid?: number; port: number; inflight: number }>;
   maxInstances: number;
+  /** Weight size on disk, bytes (the model's full size; the resident memory of a mapped model can be far less). */
+  weightsBytes?: number;
 }
 
 /** What the entry serves: the model file itself (Strata config, serve script or model path). Two tiers on one engine differ here. */
@@ -37,13 +39,14 @@ function stateOf(rows: RegistryInstanceRow[]): RegistryModel["state"] {
  * the entry whose model FILE equals the file of the instance's own tier; the
  * engine is only a badge (gyro-m and iq3s share the Strata engine).
  */
-export function registryModels(cfg: LocalConfig, instances: RegistryInstanceRow[]): RegistryModel[] {
+export function registryModels(cfg: LocalConfig, instances: RegistryInstanceRow[], sizeOf: (t: LocalTier) => number | undefined = () => undefined): RegistryModel[] {
   return Object.values(cfg.tiers).map((t) => {
     const file = modelFile(t);
     const mine = instances.filter((i) => {
       const own = cfg.tiers[i.model];
       return own ? modelFile(own) === file : false;
     });
+    const bytes = sizeOf(t);
     return {
       name: t.tier,
       file,
@@ -53,6 +56,7 @@ export function registryModels(cfg: LocalConfig, instances: RegistryInstanceRow[
       state: stateOf(mine),
       instances: mine.map((i) => ({ id: i.id, ...(i.pid !== undefined ? { pid: i.pid } : {}), port: i.port, inflight: i.inflight })),
       maxInstances: t.maxInstances,
+      ...(bytes !== undefined ? { weightsBytes: bytes } : {}),
     };
   });
 }
