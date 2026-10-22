@@ -123,19 +123,19 @@ describe.skipIf(!CHROME)("star sits left of the lock; the lock shows its state",
 });
 
 const VERPROBE = `<script>setTimeout(function(){var h=document.querySelector("header"),t=[],v=document.getElementById("ver");[].forEach.call(h.children,function(c){if(c.offsetParent!==null)t.push(Math.round((c.getBoundingClientRect().top+c.getBoundingClientRect().bottom)/2))});
-document.body.setAttribute("data-r",JSON.stringify({spread:Math.max.apply(null,t)-Math.min.apply(null,t),ver:v.offsetParent!==null,txt:v.innerText}))},2000)</script>`;
+document.body.setAttribute("data-r",JSON.stringify({spread:Math.max.apply(null,t)-Math.min.apply(null,t),ver:v.offsetParent!==null,txt:v.textContent,w:Math.round(v.getBoundingClientRect().width),sw:v.scrollWidth}))},2000)</script>`;
 
-// headless Chromium cannot open a window narrower than 500 px, so the below-400 px rule is pinned in the served CSS
-it("the version is hidden only below 400 px and compact up to 600 px", async () => {
+// no width breakpoints: the version is a flex item whose patch part (.vp) yields first, then the whole version
+it("the version has no width breakpoints; its patch part collapses first", async () => {
   const sent = { body: "" };
   handleCockpit({ url: "/cockpit", method: "GET" } as never, { setHeader: () => undefined, writeHead: () => undefined, end: (b: string) => void (sent.body = b) } as never, { get: async () => [] } as never, () => [], () => new Map(), undefined, () => []);
-  expect(sent.body).toContain("@media(max-width:399px){#ver{display:none}}");
-  expect(sent.body).toContain("@media(max-width:600px){#ver .vf{display:none}#ver .vc{display:inline}}");
-  expect(sent.body).not.toContain("@media(max-width:600px){#ver{display:none}}");
+  expect(sent.body).toMatch(/#ver\{display:flex;flex:0 100 auto;min-width:0;overflow:hidden;/);
+  expect(sent.body).toContain("#ver .vp{flex:0 1000 auto;min-width:0;overflow:hidden}");
+  expect(sent.body).not.toMatch(/@media[^{]*\{[^}]*#ver/);
 });
 
 describe.skipIf(!CHROME)("header version", () => {
-  for (const [width, ver, txt] of [[540, true, /^v\d+\.\d+$/], [1100, true, /^v\d+\.\d+\.\d+/]] as const) {
+  for (const [width, ver, txt] of [[540, true, /^v\d+\.\d+\.\d+/], [1100, true, /^v\d+\.\d+\.\d+/]] as const) {
     it(`${width} px: one line, version ${ver ? "shown" : "hidden"}`, async () => {
       pollBuild = "A";
       const orig = server.listeners("request")[0] as (...a: unknown[]) => void;
@@ -154,6 +154,7 @@ describe.skipIf(!CHROME)("header version", () => {
       expect(r.spread).toBeLessThanOrEqual(6);
       expect(r.ver).toBe(ver);
       if (ver) expect(r.txt).toMatch(txt as RegExp);
+      if (ver) expect(r.sw).toBeLessThanOrEqual(r.w);
     }, 40000);
   }
 });

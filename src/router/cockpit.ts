@@ -1121,6 +1121,7 @@ export function cockpitQueue(
 const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;
 const VERSION_PLACEHOLDER = /__COCKPIT_VERSION__/g;
 const VERSION_SHORT_PLACEHOLDER = /__COCKPIT_VERSION_SHORT__/g;
+const VERSION_PATCH_PLACEHOLDER = /__COCKPIT_VERSION_PATCH__/g;
 let pkgVersion: string | null = null;
 /** The version this router runs: package.json, read once at startup (the one owner of the header's "v<version>"). */
 function cockpitVersion(): string {
@@ -1228,7 +1229,7 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(VERSION_SHORT_PLACEHOLDER, cockpitVersion().split(".").slice(0, 2).join(".")).replace(VERSION_PLACEHOLDER, cockpitVersion()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
+      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(VERSION_SHORT_PLACEHOLDER, cockpitVersion().split(".").slice(0, 2).join(".")).replace(VERSION_PATCH_PLACEHOLDER, cockpitVersion().split(".").slice(2).map((p) => "." + p).join("")).replace(VERSION_PLACEHOLDER, cockpitVersion()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
     } catch {
       /* falls through to the 503 */
     }
