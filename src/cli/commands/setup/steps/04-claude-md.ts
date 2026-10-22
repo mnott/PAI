@@ -1,6 +1,6 @@
 /** Step 4: CLAUDE.md generation from PAI template. */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
@@ -43,8 +43,8 @@ export async function stepClaudeMd(rl: Rl): Promise<boolean> {
       return false;
     }
 
-    if (!isGenerated) {
-      const backupPath = claudeMd + ".backup";
+    {
+      const backupPath = `${claudeMd}.bak-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}`;
       writeFileSync(backupPath, content, "utf-8");
       console.log(c.ok(`Backed up existing CLAUDE.md to ${backupPath}`));
     }
@@ -56,7 +56,9 @@ export async function stepClaudeMd(rl: Rl): Promise<boolean> {
   if (!existsSync(claudeDir)) {
     mkdirSync(claudeDir, { recursive: true });
   }
-  writeFileSync(claudeMd, template, "utf-8");
+  const tmp = `${claudeMd}.tmp-pai-${process.pid}`;
+  writeFileSync(tmp, template, "utf-8");
+  renameSync(tmp, claudeMd);
 
   line();
   console.log(c.ok("Generated ~/.claude/CLAUDE.md from PAI template."));
