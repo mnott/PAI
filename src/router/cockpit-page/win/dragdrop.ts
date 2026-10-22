@@ -75,7 +75,20 @@ function winDragInit(doc,win,opts){
    }
    all.sort(function(p,q){return p.a-q.a});
    for(i=0;i<all.length;i++){
-    var R={x:all[i].r.left,y:all[i].r.top,w:all[i].r.width,h:all[i].r.height},tid=all[i].e.getAttribute("data-card"),z=zoneAt(R,{x:x,y:y});
+    var ce=all[i].e,tid=ce.getAttribute("data-card"),src=ddContainer(D.id),cc=ddContainer(tid);
+    if(src&&cc&&cc.key!==src.key){
+     // the pointer is over a card of another container: the drop target is the ancestor that lives in the dragged card's own container
+     var up=ce.parentElement?ce.parentElement.closest(".card"):null,uc=null;
+     while(up){uc=ddContainer(up.getAttribute("data-card"));if(uc&&uc.key===src.key)break;up=up.parentElement?up.parentElement.closest(".card"):null}
+     if(!up)continue;
+     ce=up;tid=ce.getAttribute("data-card");
+    }
+    var rr=ce.getBoundingClientRect(),R={x:rr.left,y:rr.top,w:rr.width,h:rr.height},z=zoneAt(R,{x:x,y:y});
+    if(z==="none"&&ce!==all[i].e){
+     // inside the ancestor but away from its edges: the nearer side of its rect
+     var fx=(x-R.x)/R.w-0.5,fy=(y-R.y)/R.h-0.5;
+     z=Math.abs(fx)>Math.abs(fy)?(fx<0?"left":"right"):(fy<0?"top":"bottom");
+    }
     if(z==="none"){
      var hd=all[i].e.querySelector(".chead");
      if(hd&&Win.isGroup(tid)&&y<hd.getBoundingClientRect().bottom)z="into";

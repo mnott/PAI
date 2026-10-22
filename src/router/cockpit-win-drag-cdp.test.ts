@@ -116,4 +116,25 @@ describe.skipIf(!CHROME)("cockpit drag and drop with real pointer events (CDP)",
     expect(e3.ind?.cls, "E3 shows the indicator").toBe("dropind");
     expect(await b.ev<string>(`Win.el("kpis.requests").parentElement.closest(".card").dataset.card`), "E3 reparented").toBe("pool");
   }, 120_000);
+  it("E4 a top-level section dragged over an inner card of another section drops beside/below that section", async () => {
+    const b = await launchDrag(1500, 1000);
+    await b.send("Page.navigate", { url: `${base}/page` });
+    for (let i = 0; i < 60; i++) { await sleep(250); if (await b.ev<boolean>(`!!document.querySelector('#win-root [data-card="limits-local"] .cgrip')&&typeof Win!=="undefined"`)) break; }
+    await sleep(1500);
+    await b.ev(`document.querySelector('#win-root [data-card="limits-cloud"]').scrollIntoView({block:"center"})`);
+    await sleep(200);
+    const [gx, gy] = await b.ev<[number, number]>(`(function(){var r=document.querySelector('#win-root [data-card="limits-local"] .cgrip').getBoundingClientRect();return[r.left+r.width/2,r.top+r.height/2]})()`);
+    const [tx, ty] = await b.ev<[number, number]>(`(function(){var r=document.querySelector('#win-root [data-card="limits-cloud"]').getBoundingClientRect();return[r.left+r.width/2,r.top+r.height*0.9]})()`);
+    const inner = await b.ev<string>(`(function(){var e=document.elementFromPoint(${tx},${ty});var c=e&&e.closest(".card");return c?c.dataset.card:""})()`);
+    await b.mouse("mouseMoved", gx, gy); await b.mouse("mousePressed", gx, gy);
+    for (let i = 1; i <= 12; i++) { await b.mouse("mouseMoved", gx + ((tx - gx) * i) / 12, gy + ((ty - gy) * i) / 12); await sleep(30); }
+    await sleep(200);
+    const cls = await b.ev<string>(`(function(){var i=document.querySelector(".dropind");return i?i.className:""})()`);
+    await b.mouse("mouseReleased", tx, ty); await sleep(800);
+    expect(inner, "pointer is over an inner card of limits-cloud").not.toBe("limits-cloud");
+    expect(cls).toBe("dropind");
+    const top = await b.ev<[number, number]>(`[Win.el("limits-local").getBoundingClientRect().top,Win.el("limits-cloud").getBoundingClientRect().top]`);
+    expect(top[0], "limits-local sits below limits-cloud").toBeGreaterThan(top[1]);
+    expect(await b.ev<string>(`String(Win.el("limits-local").parentElement.closest(".card"))`), "stays top-level").toBe("null");
+  }, 120_000);
 });
