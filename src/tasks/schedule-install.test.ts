@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { installSchedule } from "./schedule-install.js";
+import { installSchedule, generateSchedulePlist } from "./schedule-install.js";
 
 const REAL_PLATFORM = process.platform;
 
@@ -24,5 +24,16 @@ describe("installSchedule on an unsupported platform", () => {
     const result = installSchedule(900);
     expect(result.loaded).toBe(false);
     expect(result.message).toBe("scheduler install supports launchd (macOS) only");
+  });
+});
+
+describe("generateSchedulePlist escaping", () => {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  it("XML-escapes interpolated paths and uses the running node", () => {
+    const plist = generateSchedulePlist(900, "/tmp/a&b/<x>/cli.mjs");
+    expect(plist).toContain("<string>/tmp/a&amp;b/&lt;x&gt;/cli.mjs</string>");
+    expect(plist).not.toContain("a&b");
+    expect(plist).toContain(`<string>${esc(process.execPath)}</string>`);
   });
 });

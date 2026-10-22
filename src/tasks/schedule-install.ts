@@ -54,33 +54,42 @@ function cliPath(): string {
   );
 }
 
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 export function generateSchedulePlist(intervalSecs: number, cli: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>${SCHEDULE_LABEL}</string>
+    <string>${xmlEscape(SCHEDULE_LABEL)}</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/node</string>
-        <string>${cli}</string>
+        <string>${xmlEscape(process.execPath)}</string>
+        <string>${xmlEscape(cli)}</string>
         <string>task</string>
         <string>poll</string>
     </array>
 
     <key>StartInterval</key>
-    <integer>${intervalSecs}</integer>
+    <integer>${Math.trunc(intervalSecs)}</integer>
 
     <key>RunAtLoad</key>
     <true/>
 
     <key>StandardOutPath</key>
-    <string>${SCHEDULE_LOG}</string>
+    <string>${xmlEscape(SCHEDULE_LOG)}</string>
 
     <key>StandardErrorPath</key>
-    <string>${SCHEDULE_LOG}</string>
+    <string>${xmlEscape(SCHEDULE_LOG)}</string>
 
     <key>EnvironmentVariables</key>
     <dict>
