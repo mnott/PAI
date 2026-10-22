@@ -19,6 +19,7 @@ import {
   mkdirSync,
   readFileSync,
   chmodSync,
+  writeFileSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -38,6 +39,110 @@ const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
 const PG_DATABASE = "pai";
 const PG_USER = "pai";
+
+// ---------------------------------------------------------------------------
+// Safety helpers
+// ---------------------------------------------------------------------------
+
+function stampNow(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+/** Copies the current config to a timestamped 0600 file next to it, then installs src. Returns the safety path (null when there was no current config). */
+export function restoreConfigWithSafety(src: string, dest: string): string | null {
+  mkdirSync(dirname(dest), { recursive: true });
+  let safety: string | null = null;
+  if (existsSync(dest)) {
+    safety = `${dest}.pre-restore-${stampNow()}`;
+    for (let i = 1; existsSync(safety); i++) safety = `${dest}.pre-restore-${stampNow()}-${i}`;
+    copyFileSync(dest, safety);
+    chmodSync(safety, 0o600);
+  }
+  copyFileSync(src, dest);
+  chmodSync(dest, 0o600);
+  return safety;
+}
+
+export interface PgRunResult { status: number | null; stdout: string; stderr: string }
+/** Runs `psql`/`pg_dump` inside the container; args are those after `docker exec [-i] <container>`. */
+export type PgRunner = (args: string[], input?: string) => PgRunResult;
+
+const defaultPgRunner: PgRunner = (args, input) => {
+  const r = spawnSync("docker", ["exec", ...(input !== undefined ? ["-i"] : []), DOCKER_CONTAINER, ...args], {
+    input,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+    maxBuffer: 1024 * 1024 * 1024,
+  });
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+};
+
+/** A plain pg_dump ends with this marker; a truncated dump does not. */
+export function validatePgDump(dump: string): string | null {
+  if (dump.trim().length === 0) return "dump is empty";
+  if (!dump.slice(-2048).includes("PostgreSQL database dump complete")) {
+    return "dump is truncated (no pg_dump completion marker)";
+  }
+  return null;
+}
+
+export interface PgRestoreResult { ok: boolean; message: string; safetyDump?: string; oldDb?: string }
+
+/**
+ * Restores a dump without destroying the live database first:
+ * validate -> pre-restore dump of live DB -> restore into a NEW database -> swap by rename.
+ * Any failure before the swap leaves the live database untouched.
+ */
+export function restorePostgres(dumpFile: string, safetyDir: string, run: PgRunner = defaultPgRunner): PgRestoreResult {
+  const dump = readFileSync(dumpFile, "utf8");
+  const invalid = validatePgDump(dump);
+  if (invalid) return { ok: false, message: `${invalid}; live database untouched` };
+
+  const stamp = stampNow().replace(/[^0-9A-Za-z]/g, "").toLowerCase();
+  const newDb = `${PG_DATABASE}_restore_${stamp}`;
+  const oldDb = `${PG_DATABASE}_prerestore_${stamp}`;
+  const firstLine = (r: PgRunResult) => r.stderr.split("\n")[0] || "unknown error";
+
+  // Pre-restore dump of the live DB (must succeed and be complete, else abort).
+  const live = run(["pg_dump", "-U", PG_USER, PG_DATABASE]);
+  let safetyDump: string | undefined;
+  if (live.status === 0 && validatePgDump(live.stdout) === null) {
+    safetyDump = join(safetyDir, `postgres-pai.pre-restore-${stampNow()}.sql`);
+    mkdirSync(safetyDir, { recursive: true });
+    writeFileSync(safetyDump, live.stdout, { mode: 0o600 });
+  } else if (live.status === 0) {
+    return { ok: false, message: "pre-restore dump of live database is incomplete; live database untouched" };
+  } else if (!/does not exist/.test(live.stderr)) {
+    return { ok: false, message: `pre-restore dump failed: ${firstLine(live)}; live database untouched` };
+  }
+
+  const cleanup = () => run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `DROP DATABASE IF EXISTS ${newDb};`]);
+  const created = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `CREATE DATABASE ${newDb} OWNER ${PG_USER};`]);
+  if (created.status !== 0) {
+    return { ok: false, message: `could not create staging database: ${firstLine(created)}; live database untouched`, safetyDump };
+  }
+
+  const loaded = run(["psql", "-U", PG_USER, "-v", "ON_ERROR_STOP=1", "-d", newDb], dump);
+  if (loaded.status !== 0) {
+    cleanup();
+    return { ok: false, message: `psql failed: ${firstLine(loaded)}; live database untouched`, safetyDump };
+  }
+
+  // Swap: live -> old, staging -> live. Old is kept as an extra way back.
+  const swap1 = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${PG_DATABASE} RENAME TO ${oldDb};`]);
+  const liveExisted = swap1.status === 0;
+  if (!liveExisted && !/does not exist/.test(swap1.stderr)) {
+    cleanup();
+    return { ok: false, message: `could not rename live database (active connections? stop the daemon): ${firstLine(swap1)}; live database untouched`, safetyDump };
+  }
+  const swap2 = run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${newDb} RENAME TO ${PG_DATABASE};`]);
+  if (swap2.status !== 0) {
+    if (liveExisted) run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `ALTER DATABASE ${oldDb} RENAME TO ${PG_DATABASE};`]);
+    cleanup();
+    return { ok: false, message: `swap failed: ${firstLine(swap2)}; live database restored`, safetyDump };
+  }
+  return { ok: true, message: "restored", safetyDump, oldDb: liveExisted ? oldDb : undefined };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,9 +279,8 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
 
   if (hasConfig) {
     try {
-      mkdirSync(dirname(CONFIG_FILE), { recursive: true });
-      copyFileSync(join(resolvedDir, "config.json"), CONFIG_FILE);
-      chmodSync(CONFIG_FILE, 0o600);
+      const safety = restoreConfigWithSafety(join(resolvedDir, "config.json"), CONFIG_FILE);
+      if (safety) console.log(dim(`  Previous config.json saved to ${safety}`));
       results.push({ label: "Config", status: ok("restored") });
     } catch (e) {
       results.push({ label: "Config", status: err(`failed: ${e}`) });
@@ -197,35 +301,10 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
         stdio: "pipe",
       });
 
-      // Drop and recreate the database, then restore
-      execFileSync(
-        "docker",
-        [
-          "exec",
-          DOCKER_CONTAINER,
-          "psql",
-          "-U",
-          PG_USER,
-          "-c",
-          `DROP DATABASE IF EXISTS ${PG_DATABASE}; CREATE DATABASE ${PG_DATABASE} OWNER ${PG_USER};`,
-        ],
-        { stdio: "pipe" }
-      );
-
-      // Pipe the SQL dump into psql
-      const sqlContent = readFileSync(join(resolvedDir, "postgres-pai.sql"), "utf8");
-      const psqlResult = spawnSync(
-        "docker",
-        ["exec", "-i", DOCKER_CONTAINER, "psql", "-U", PG_USER, PG_DATABASE],
-        { input: sqlContent, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
-      );
-
-      if (psqlResult.status !== 0) {
-        const errMsg = psqlResult.stderr?.split("\n")[0] ?? "unknown error";
-        results.push({ label: "Postgres DB", status: err(`failed: ${errMsg}`) });
-      } else {
-        results.push({ label: "Postgres DB", status: ok("restored") });
-      }
+      const pg = restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE));
+      if (pg.safetyDump) console.log(dim(`  Pre-restore dump of live database: ${pg.safetyDump}`));
+      if (pg.oldDb) console.log(dim(`  Previous database kept as '${pg.oldDb}' (drop it when satisfied)`));
+      results.push({ label: "Postgres DB", status: pg.ok ? ok("restored") : err(`failed: ${pg.message}`) });
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       results.push({ label: "Postgres DB", status: err(`failed: ${msg}`) });
