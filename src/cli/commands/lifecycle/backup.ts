@@ -7,7 +7,7 @@
  * Contents:
  *   registry file        — SQLite registry database (sqlite backend only)
  *   config.json          — PAI daemon config
- *   postgres-pai.sql     — pg_dump of the Postgres "pai" database (via docker exec)
+ *   postgres-pai.sql     — pg_dump of the daemon's Postgres database (via docker exec), row counts verified
  */
 
 import {
@@ -24,6 +24,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../../daemon/config.js";
 import { backupStorageFiles } from "../../../storage/backup.js";
+import { backupPostgres, resolveBackupTarget, type PgRunner } from "./backup-postgres.js";
 import { defaultPaiHomeDir, paiHomePath, resolvePaiFile } from "../../../config/pai-home.js";
 
 // ---------------------------------------------------------------------------
@@ -45,8 +46,6 @@ export function backupsDirPath(): string {
 
 const BACKUPS_DIR = backupsDirPath();
 const DOCKER_CONTAINER = "pai-pgvector";
-const PG_DATABASE = "pai";
-const PG_USER = "pai";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -77,7 +76,37 @@ function fileSize(path: string): string {
   }
 }
 
-export async function runBackup(opts: { postgres: boolean }): Promise<void> {
+const dockerRunner: PgRunner = {
+  dump(database, user, destPath) {
+    execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], { stdio: "pipe" });
+    const sqlFd = openSync(destPath, "w");
+    try {
+      const dump = spawnSync("docker", ["exec", DOCKER_CONTAINER, "pg_dump", "-U", user, database], {
+        stdio: ["pipe", sqlFd, "pipe"],
+      });
+      if (dump.status !== 0) {
+        throw new Error(dump.stderr?.toString().trim() || `pg_dump exited with code ${dump.status}`);
+      }
+    } finally {
+      closeSync(sqlFd);
+    }
+  },
+  count(database, user, table) {
+    const r = spawnSync(
+      "docker",
+      ["exec", DOCKER_CONTAINER, "psql", "-U", user, "-d", database, "-tAc", `SELECT count(*) FROM ${table}`],
+      { stdio: "pipe" },
+    );
+    return r.status === 0 ? Number(r.stdout.toString().trim()) : null;
+  },
+};
+
+export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): Promise<void> {
+  if (opts.dryRun) {
+    const t = resolveBackupTarget(loadConfig().postgres);
+    console.log(`Would dump Postgres database "${t.database}" (user ${t.user}) from container ${DOCKER_CONTAINER}`);
+    return;
+  }
   const ts = timestamp();
   const backupDir = join(BACKUPS_DIR, ts);
 
@@ -126,25 +155,10 @@ export async function runBackup(opts: { postgres: boolean }): Promise<void> {
     const sqlDest = join(backupDir, "postgres-pai.sql");
     console.log(dim(`  Running pg_dump on ${DOCKER_CONTAINER} (this may take a moment)...`));
     try {
-      // Check Docker is running and container exists
-      execFileSync("docker", ["inspect", DOCKER_CONTAINER, "--format={{.State.Status}}"], {
-        stdio: "pipe",
-      });
-
-      const sqlFd = openSync(sqlDest, "w");
-      try {
-        const dump = spawnSync(
-          "docker",
-          ["exec", DOCKER_CONTAINER, "pg_dump", "-U", PG_USER, PG_DATABASE],
-          { stdio: ["pipe", sqlFd, "pipe"] }
-        );
-        if (dump.status !== 0) {
-          throw new Error(dump.stderr?.toString().trim() || `pg_dump exited with code ${dump.status}`);
-        }
-      } finally {
-        closeSync(sqlFd);
-      }
-      results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok") });
+      const target = resolveBackupTarget(config.postgres);
+      console.log(dim(`  Database: ${target.database}`));
+      backupPostgres(target, sqlDest, dockerRunner);
+      results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok (verified)") });
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       results.push({ label: "Postgres DB", path: sqlDest, size: "-", status: err(`failed: ${msg}`) });
