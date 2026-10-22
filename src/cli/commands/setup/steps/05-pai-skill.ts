@@ -5,6 +5,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { c, line, section, type Rl, promptYesNo, getTemplatesDir } from "../utils.js";
 
+/** `<file>.backup-<timestamp>`; never reuses an existing name, so earlier backups survive. */
+export function timestampedBackupPath(file: string): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  let p = `${file}.backup-${stamp}`;
+  for (let i = 1; existsSync(p); i++) p = `${file}.backup-${stamp}-${i}`;
+  return p;
+}
+
 export async function stepPaiSkill(rl: Rl): Promise<boolean> {
   section("Step 5: PAI Skill Installation");
   line();
@@ -41,7 +49,7 @@ export async function stepPaiSkill(rl: Rl): Promise<boolean> {
     }
 
     if (!isGenerated) {
-      const backupPath = skillFile + ".backup";
+      const backupPath = timestampedBackupPath(skillFile);
       writeFileSync(backupPath, content, "utf-8");
       console.log(c.ok(`Backed up existing SKILL.md to ${backupPath}`));
     }

@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { timestampedBackupPath } from "./05-pai-skill.js";
 import { c, line, section, type Rl, promptYesNo, getTemplatesDir } from "../utils.js";
 
 export async function stepAiSteeringRules(rl: Rl): Promise<boolean> {
@@ -43,7 +44,7 @@ export async function stepAiSteeringRules(rl: Rl): Promise<boolean> {
     }
 
     if (!isGenerated) {
-      const backupPath = skillFile + ".backup";
+      const backupPath = timestampedBackupPath(skillFile);
       writeFileSync(backupPath, content, "utf-8");
       console.log(c.ok(`Backed up existing AI-STEERING-RULES.md to ${backupPath}`));
     }

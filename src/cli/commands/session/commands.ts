@@ -10,7 +10,7 @@ import {
   writeFileSync,
   statSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import chalk from "chalk";
 import {
@@ -168,6 +168,23 @@ export async function cmdRename(
   await cmdRenameWith(registryBackend, projectSlug, numberOrLatest, newSlug);
 }
 
+/** Strips path separators and ".." so a title can never leave the notes dir. */
+export function sanitizeTitle(title: string): string {
+  return title.replace(/[\\/]/g, " ").replace(/\.{2,}/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Target path for a rename; throws unless it stays inside notesDir and does not clobber another note. */
+export function checkedRenameTarget(notesDir: string, oldPath: string, newFilename: string): string {
+  const newPath = join(notesDir, newFilename);
+  if (resolve(dirname(newPath)) !== resolve(notesDir)) {
+    throw new Error(`target escapes the notes directory: ${newFilename}`);
+  }
+  if (newPath !== oldPath && existsSync(newPath)) {
+    throw new Error(`refusing to overwrite existing note: ${newFilename}`);
+  }
+  return newPath;
+}
+
 async function cmdRenameWith(
   registryBackend: RegistryBackend,
   projectSlug: string,
@@ -190,10 +207,23 @@ async function cmdRenameWith(
     return;
   }
 
+  newSlug = sanitizeTitle(newSlug);
+  if (!newSlug) {
+    console.error(err("Title is empty after removing path separators."));
+    process.exitCode = 1;
+    return;
+  }
   const titleSlug = toTitleCase(newSlug);
   const newFilename = formatFilename(session.number, session.date, titleSlug);
   const oldPath = join(notesDir, session.filename);
-  const newPath = join(notesDir, newFilename);
+  let newPath: string;
+  try {
+    newPath = checkedRenameTarget(notesDir, oldPath, newFilename);
+  } catch (e) {
+    console.error(err(e instanceof Error ? e.message : String(e)));
+    process.exitCode = 1;
+    return;
+  }
 
   if (existsSync(oldPath)) {
     if (oldPath !== newPath) {
