@@ -13,6 +13,8 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.map",
+    "!dist/.prune-manifest.json",
     "templates",
     "plugins",
     "user-extensions",

@@ -28,6 +28,9 @@
  * nothing in that graph names. dist/hooks/ and dist/skills/ are never touched —
  * they are not part of this graph and are rewritten by their own build steps.
  *
+ * LIVE ROUTER: chunks reachable from the previous build's entries are kept for one more build (manifest below);
+ * older generations are deleted. Source maps are pruned with their module; they are excluded from the npm package.
+ *
  * Deliberately conservative in both directions:
  *   - only files directly in dist/ are considered, never subdirectories;
  *   - only bundle extensions, so nothing hand-placed is at risk;
@@ -36,8 +39,9 @@
  *     on it would delete a working build.
  */
 
-import { readdirSync, readFileSync, statSync, unlinkSync, existsSync } from "node:fs";
-import { join, dirname, resolve, relative } from "node:path";
+import { readdirSync, readFileSync, writeFileSync, statSync, unlinkSync, existsSync } from "node:fs";
+import { join, resolve, relative } from "node:path";
+import { reachableFrom } from "./lib/dist-reachable.mjs";
 
 const DIST = resolve(process.argv[2] ?? "dist");
 
@@ -59,43 +63,23 @@ const MAX_AGE_MS = Number(process.env.PRUNE_DIST_MAX_AGE_MS ?? 24 * 3600_000);
 /** Extensions this script is allowed to delete. */
 const PRUNABLE = [".mjs", ".mjs.map", ".d.mts", ".d.mts.map"];
 
-/** Every relative specifier in a built module, resolved to an absolute path. */
-function importsOf(file) {
-  let src;
-  try {
-    src = readFileSync(file, "utf8");
-  } catch {
-    return [];
-  }
-  const out = [];
-  // `from "./x.mjs"`, `import "./x.mjs"`, and dynamic `import("./x.mjs")`.
-  const re = /(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    out.push(resolve(dirname(file), m[1]));
-  }
-  return out;
+const missingEntries = ENTRIES.filter((e) => !existsSync(e)).map((e) => relative(DIST, e));
+const reachable = reachableFrom(ENTRIES);
+
+/**
+ * Generation manifest: basenames reachable from the current and the previous build. A chunk survives while it is in
+ * either, so a running process (started from the previous build) keeps its lazy imports, and anything older goes —
+ * regardless of mtime, because with frequent builds every stale chunk is younger than MAX_AGE_MS and the age rule alone
+ * never deletes anything (measured: 4219 files / 436 MB). Without a manifest (first run) the age rule applies.
+ */
+const MANIFEST = join(DIST, ".prune-manifest.json");
+const names = (set) => [...set].map((p) => relative(DIST, p)).sort();
+let manifest = null;
+try {
+  manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
+} catch {
+  /* none yet */
 }
-
-const reachable = new Set();
-const missingEntries = [];
-
-for (const entry of ENTRIES) {
-  if (!existsSync(entry)) {
-    missingEntries.push(relative(DIST, entry));
-    continue;
-  }
-  const stack = [entry];
-  while (stack.length > 0) {
-    const f = stack.pop();
-    if (reachable.has(f)) continue;
-    reachable.add(f);
-    for (const dep of importsOf(f)) {
-      if (!reachable.has(dep) && existsSync(dep)) stack.push(dep);
-    }
-  }
-}
-
 if (missingEntries.length > 0) {
   // A partial graph is indistinguishable from "almost everything is dead".
   console.error(
@@ -103,6 +87,13 @@ if (missingEntries.length > 0) {
   );
   process.exit(0);
 }
+
+const current = names(reachable);
+// Entries are rewritten by every build, so their mtimes identify the build; re-running prune on one build must not rotate.
+const stamp = ENTRIES.map((e) => statSync(e).mtimeMs).join(",");
+const sameBuild = manifest && manifest.stamp === stamp;
+const previous = manifest ? (sameBuild ? manifest.previous : manifest.current) : null;
+const keep = new Set([...current, ...(previous ?? [])]);
 
 let removed = 0;
 let freed = 0;
@@ -121,8 +112,9 @@ for (const name of readdirSync(DIST)) {
   // A sourcemap or declaration lives or dies with the module it belongs to.
   const owner = p.replace(/\.map$/, "").replace(/\.d\.mts$/, ".mjs");
   if (reachable.has(p) || reachable.has(owner)) continue;
+  if (previous && keep.has(name.replace(/\.map$/, "").replace(/\.d\.mts$/, ".mjs"))) continue;
 
-  if (Date.now() - st.mtimeMs < MAX_AGE_MS) {
+  if (!previous && Date.now() - st.mtimeMs < MAX_AGE_MS) {
     kept += 1;
     continue;
   }
@@ -135,6 +127,8 @@ for (const name of readdirSync(DIST)) {
     /* leave it; a file we cannot remove is not worth failing a build over */
   }
 }
+
+writeFileSync(MANIFEST, JSON.stringify({ stamp, current: sameBuild ? manifest.current : current, previous: previous ?? [] }));
 
 console.log(
   removed > 0
