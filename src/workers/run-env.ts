@@ -122,6 +122,14 @@ export function pinWorkersYamlCopy(env: NodeJS.ProcessEnv, root: string = WORKER
   }
 }
 
+/** Caller's env minus ANTHROPIC_API_KEY: a spawned claude must bill the
+ *  subscription, never an API key left in the user's shell. */
+export function nativeLaunchEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  return env;
+}
+
 /**
  * Environment for a run through `provider`. Caller's env minus the Anthropic
  * key. `routerEnabled` routes the run through the local model router instead
@@ -137,8 +145,7 @@ export function buildRunEnv(
   routerEnabled?: boolean,
   orchestrate?: boolean
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
+  const env = nativeLaunchEnv();
   if (headless) {
     for (const k of SESSION_IDENTITY_VARS) delete env[k];
     for (const k of HEADLESS_STRIP_VARS) delete env[k];

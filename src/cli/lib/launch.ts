@@ -44,7 +44,7 @@ import {
   type WorkersConfig,
   type WorkerProvider,
 } from "../../workers/config.js";
-import { buildRunEnv, claudeCommand, pinnedSettingsArgs, nativeLaunchSettingsArgs, nativeRoutePreflight, routeVerdictLine } from "../../workers/run-env.js";
+import { buildRunEnv, nativeLaunchEnv, claudeCommand, pinnedSettingsArgs, nativeLaunchSettingsArgs, nativeRoutePreflight, routeVerdictLine } from "../../workers/run-env.js";
 import { SESSION_PROVIDER_ENV } from "../../workers/session-provider.js";
 import { stripModelVariant } from "../../utils/model-window.js";
 import { printExitDir } from "./exit-dir.js";
@@ -242,7 +242,7 @@ export function probeResume(uuid: string, cwd: string, home?: string): ProbeResu
   const result = spawnSync(
     "claude",
     ["--resume", uuid, "--print", "--output-format=json", "_"],
-    { cwd, timeout: 30_000, env: process.env, stdio: ["ignore", "ignore", "pipe"] }
+    { cwd, timeout: 30_000, env: nativeLaunchEnv(), stdio: ["ignore", "ignore", "pipe"] }
   );
 
   if (result.error) return { ok: false, reason: `spawn error: ${result.error.message}` };
@@ -774,7 +774,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
       [...(wantsResume ? ["--resume", opts.resumableUuid!] : []), "--name", name, ...promptArgs],
       opts.dryRun
     );
-    const result = spawnSync("pai", argv, { cwd, stdio: "inherit", env: process.env });
+    const result = spawnSync("pai", argv, { cwd, stdio: "inherit", env: nativeLaunchEnv() });
     if (result.error) {
       console.error(err(`Failed to launch pai launch: ${result.error.message}`));
       process.exitCode = 1;
@@ -828,7 +828,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     const result = spawnSync("pai", workerRunArgv(name, cwd), {
       cwd,
       stdio: "inherit",
-      env: process.env,
+      env: nativeLaunchEnv(),
     });
     if (result.error) {
       console.error(err(`Failed to launch pai worker run: ${result.error.message}`));
@@ -844,7 +844,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
     const result = spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--name", name, ...freshPromptArgs], {
       cwd,
       stdio: "inherit",
-      env: process.env,
+      env: nativeLaunchEnv(),
     });
     if (result.error) {
       console.error(err(`Failed to launch claude: ${result.error.message}`));
@@ -873,7 +873,7 @@ export function launchInDir(dir: string, name: string, opts: LaunchOpts = {}): v
         : spawnSync("claude", [...nativeLaunchSettingsArgs(process.env), "--resume", opts.resumableUuid!, "--name", name, ...promptArgs], {
             cwd,
             stdio: "inherit",
-            env: process.env,
+            env: nativeLaunchEnv(),
           });
       if (result.error) {
         console.error(err(`Failed to launch claude: ${result.error.message}`));
