@@ -736,6 +736,22 @@ async function startShim(): Promise<void> {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: memory_lessons
+  // -------------------------------------------------------------------------
+
+  server.tool(
+    "memory_lessons",
+    "Read the curated, review-gated lessons (corrections, gotchas, conventions). Lists approved lessons by default; read-only.",
+    {
+      action: z.enum(["list", "get"]).describe("list: lessons filtered by state/project; get: one lesson by id."),
+      state: z.enum(["candidate", "approved", "rejected", "superseded"]).optional().describe("State filter for list. Default: approved."),
+      project: z.string().optional().describe('Project slug or "global" filter for list.'),
+      id: z.string().optional().describe("Lesson id (required for get)."),
+    },
+    async (args) => proxyTool("memory_lessons", args)
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: memory_taxonomy
   // -------------------------------------------------------------------------
 

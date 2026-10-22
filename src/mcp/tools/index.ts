@@ -13,6 +13,7 @@
  *                      zettel_converse, zettel_themes, zettel_god_notes, zettel_communities
  *   observations.ts  — observation_search, observation_timeline
  *   wakeup.ts        — memory_wakeup (L0+L1 wake-up context)
+ *   lessons.ts       — memory_lessons (approved, review-gated lessons)
  *   taxonomy.ts      — memory_taxonomy (structural overview of stored memory)
  *   tunnels.ts       — memory_tunnels (cross-project concept connections)
  */
@@ -28,6 +29,7 @@ export * from "./zettel.js";
 export * from "./observations.js";
 export * from "./kg.js";
 export * from "./wakeup.js";
+export * from "./lessons.js";
 export * from "./taxonomy.js";
 export * from "./tunnels.js";
 export * from "./feedback.js";

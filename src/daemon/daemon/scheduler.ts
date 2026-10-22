@@ -4,6 +4,7 @@
  * and the start* functions invoked once at daemon startup.
  */
 
+import { existsSync } from "node:fs";
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -46,7 +47,8 @@ import {
 } from "../../memory/embed-pass.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
-import { vaultIndexEnabled } from "../../obsidian/enabled.js";
+import { lessonsDir } from "../../memory/lessons.js";
+import { lessonsIndexEnabled, vaultIndexEnabled } from "../../obsidian/enabled.js";
 import { deferIfQuiet, type DeferredKind } from "../quiet.js";
 import { enqueueRegistryScan } from "../work-queue-worker.js";
 import { PassSpawnError, runPassChild, type PassName } from "../pass-priority.js";
@@ -184,11 +186,26 @@ export async function runIndex(): Promise<void> {
   }
 }
 
+/** Synthetic project id of the lessons chunks (the vault uses 999 when unregistered). */
+const LESSONS_PROJECT_ID = 998;
+
+/** Index `<PAI home>/lessons` so memory search finds approved and candidate lessons. */
+async function runLessonsIndex(): Promise<void> {
+  const dir = lessonsDir();
+  if (!lessonsIndexEnabled() || !existsSync(dir)) return;
+  try {
+    await indexVault(storageBackend, LESSONS_PROJECT_ID, dir);
+  } catch (e) {
+    process.stderr.write(`[pai-daemon] Lessons index error: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+}
+
 /**
  * Run a vault index pass. Guards against overlapping runs with vaultIndexInProgress.
  * Skips if no vaultPath is configured, or if project index/embed is in progress.
  */
 export async function runVaultIndex(): Promise<void> {
+  await runLessonsIndex();
   if (!daemonConfig.vaultPath || !vaultIndexEnabled()) return;
 
   if (vaultIndexInProgress) {

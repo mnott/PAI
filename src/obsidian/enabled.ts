@@ -15,6 +15,16 @@ export function obsidianEnabled(): boolean {
   }
 }
 
+/** Lessons indexing (`<PAI home>/lessons`) is on unless `lessonsIndex: { enabled: false }`. */
+export function lessonsIndexEnabled(): boolean {
+  try {
+    const v = readMainConfigRaw()["lessonsIndex"];
+    return !(v && typeof v === "object" && (v as { enabled?: unknown }).enabled === false);
+  } catch {
+    return true;
+  }
+}
+
 /** Vault indexing (read-only, `vaultPath`) is on unless `vaultIndex: { enabled: false }`; independent of `obsidian.enabled`. */
 export function vaultIndexEnabled(): boolean {
   try {
