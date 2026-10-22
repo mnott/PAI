@@ -29,6 +29,7 @@ import { parseProvider, WorkersConfigError, ANTHROPIC_NATIVE } from "../workers/
 import { yamlProviderToRaw, parseBuiltinAnthropic } from "../workers/workers-config.js";
 import { normalizePathsText, type PathChange } from "../workers/normalize-paths.js";
 import { readLiveInstances, type LocalInstance } from "../workers/local-instances.js";
+import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { appendLedger } from "../workers/ledger.js";
 import { COCKPIT_ACTION_EVENT } from "./cockpit-actions.js";
 
@@ -537,9 +538,7 @@ export function handleRegistryRoute(
     return true;
   }
   if (!io.sameOrigin(req)) return send(403, { ok: false, message: "cross-origin action refused" }), true;
-  io.readBody(req)
-    .then((raw) => JSON.parse(raw || "{}") as { yaml?: unknown; baseHash?: unknown; name?: unknown; newName?: unknown; port?: unknown; label?: unknown })
-    .catch(() => ({}) as Record<string, unknown>)
+  readJsonObject(io.readBody, req)
     .then((b) => {
       const yaml = typeof b.yaml === "string" ? b.yaml : "";
       const baseHash = typeof b.baseHash === "string" ? b.baseHash : "";
@@ -578,6 +577,7 @@ export function handleRegistryRoute(
       } catch (e) {
         send(500, { ok: false, message: (e as Error).message });
       }
-    });
+    })
+    .catch((e: unknown) => send(bodyErrorStatus(e), { ok: false, message: (e as Error).message }));
   return true;
 }

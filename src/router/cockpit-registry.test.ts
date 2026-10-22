@@ -315,6 +315,25 @@ describe("routes", () => {
     }
   };
 
+  it("a non-object body (null, array, number, bad JSON) answers 400 instead of hanging", async () => {
+    for (const raw of ["null", "[1]", "7", "{nope"]) {
+      const server = http.createServer((req, res) => {
+        const io = {
+          sameOrigin: () => true,
+          readBody: (r: http.IncomingMessage) => new Promise<string>((ok) => { let d = ""; r.on("data", (c) => (d += c)); r.on("end", () => ok(d)); }),
+        };
+        handleRegistryRoute(req, res, req.url ?? "", () => ctx, io);
+      });
+      await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+      try {
+        const r = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/cockpit/registry/save`, { method: "POST", body: raw, signal: AbortSignal.timeout(3000) });
+        expect(r.status, raw).toBe(400);
+      } finally {
+        server.close();
+      }
+    }
+  });
+
   it("GET /cockpit/registry returns yaml, mtime, hash", async () => {
     const r = await call("GET", "/cockpit/registry");
     expect(r.json).toMatchObject({ yaml: BASE, hash: hashText(BASE) });

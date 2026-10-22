@@ -38,6 +38,9 @@ export function ensureNoMcpConfig(logDir: string): string {
   return path;
 }
 
+/** A worker id as a file stem: no path separators, so `<logDir>/<id>.status` stays inside logDir. */
+export const WORKER_ID_RE = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
 export function statusPath(logDir: string, id: string): string {
   return join(logDir, `${id}.status`);
 }

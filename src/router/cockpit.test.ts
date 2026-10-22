@@ -203,6 +203,21 @@ describe("cockpit http", () => {
     srv.close();
   });
 
+  it("/cockpit/pool answers 500 when the panel read rejects", async () => {
+    const limits = { get: async () => [] as never[] };
+    const srv = http.createServer((req, res) => {
+      if (!handleCockpit(req, res, limits as never, () => [], () => new Map(), undefined, () => [], () => null, (async () => { throw new Error("pool down"); }) as never)) res.end("other");
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    try {
+      const r = await fetch(`http://127.0.0.1:${(srv.address() as AddressInfo).port}/cockpit/pool`, { signal: AbortSignal.timeout(3000) });
+      expect(r.status).toBe(500);
+      expect(await r.json()).toEqual({ error: "pool down" });
+    } finally {
+      srv.close();
+    }
+  });
+
   it("/cockpit/queue shape and ordering; POST front/up reorder the grant order", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "pai-cockpit-q-"));
     const yaml = join(tmp, "workers.yaml");
@@ -257,6 +272,12 @@ describe("cockpit http", () => {
       expect(JSON.parse(moved.body).order).toEqual(["w-late", "w-early"]);
       const after = JSON.parse((await ask("/cockpit/queue")).body);
       expect(after.providers[0].waiting.map((w: { id: string }) => w.id)).toEqual(["w-late", "w-early"]);
+
+      for (const raw of ["null", "[]", "5", "{bad"]) expect((await ask("/cockpit/queue/front", "POST", raw)).status, raw).toBe(400);
+      expect((await ask("/cockpit/action", "POST", "null")).status).toBe(400);
+      const esc = await ask("/cockpit/queue/front", "POST", JSON.stringify({ id: "../../x/y" }));
+      expect(esc.status).toBe(400);
+      expect(JSON.parse(esc.body).message).toBe("invalid id");
 
       const nxt = await ask("/cockpit/queue/next", "POST", JSON.stringify({ id: "w-late" }));
       expect(nxt.status).toBe(200);

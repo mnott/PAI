@@ -21,7 +21,7 @@ import { weightsBytes } from "./cockpit-weights.js";
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
-import { ledgerPath, workersLogDir } from "../workers/paths.js";
+import { WORKER_ID_RE, ledgerPath, workersLogDir } from "../workers/paths.js";
 import { sharedPoolPanel } from "./pool-panel.js";
 import { currentInventory, readInventory, readInventoryInput } from "../workers/model-inventory.js";
 import { readRuntimeCommands, embeddingRuntimeName } from "../workers/model-runtimes.js";
@@ -54,6 +54,7 @@ import { readProfiles } from "../workers/session-profile-store.js";
 import { flowText, routeRows, type RouteRow } from "../workers/route-table.js";
 import type { BudgetMap } from "../workers/budget.js";
 import { paiHomeDir } from "../config/pai-home.js";
+import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
@@ -1203,11 +1204,10 @@ export function handleCockpit(
   };
   if (req.method === "POST" && (url.pathname === "/cockpit/queue/next" || url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
-    const body = readBody(req)
-      .then((raw) => JSON.parse(raw || "{}") as { id?: string; position?: number })
-      .catch(() => ({} as { id?: string; position?: number }));
-    body.then(({ id, position }) => {
+    readJsonObject(readBody, req).then((b) => {
+      const { id, position } = b as { id?: unknown; position?: unknown };
       if (!id || typeof id !== "string") return send(400, "application/json", JSON.stringify({ ok: false, message: "id required", error: "id required" }));
+      if (!WORKER_ID_RE.test(id)) return send(400, "application/json", JSON.stringify({ ok: false, message: "invalid id", error: "invalid id" }));
       const move = url.pathname.endsWith("/move");
       if (move && !(typeof position === "number" && Number.isFinite(position) && position >= 1)) return send(400, "application/json", JSON.stringify({ ok: false, message: "position (>= 1) required", error: "position (>= 1) required" }));
       try {
@@ -1222,14 +1222,12 @@ export function handleCockpit(
       } catch (e) {
         send(409, "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message }));
       }
-    });
+    }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message })));
     return true;
   }
   if (req.method === "POST" && url.pathname === "/cockpit/action") {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
-    readBody(req)
-      .then((raw) => JSON.parse(raw || "{}") as { action?: unknown; target?: unknown; value?: unknown; class?: unknown; models?: unknown })
-      .catch(() => ({}))
+    readJsonObject(readBody, req)
       .then(async (body) => {
         try {
           const r = await runCockpitAction(body, { ...defaultDeps(), onLocalChange: () => (limits as Partial<LimitsCache>).invalidate?.(), ...(actionDepsOverride ?? {}) }, actionHooks);
@@ -1237,7 +1235,8 @@ export function handleCockpit(
         } catch (e) {
           send(500, "application/json", JSON.stringify({ ok: false, message: (e as Error).message }));
         }
-      });
+      })
+      .catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message })));
     return true;
   }
   if (url.pathname === "/cockpit/layout-default" && req.method === "POST") {
@@ -1300,7 +1299,10 @@ export function handleCockpit(
   } else if (url.pathname === "/cockpit/scheduler") {
     send(200, "application/json", JSON.stringify(sharedScheduler().snapshot()));
   } else if (url.pathname === "/cockpit/pool") {
-    readPoolPanel().then((p) => send(200, "application/json", JSON.stringify(p)));
+    readPoolPanel().then(
+      (p) => send(200, "application/json", JSON.stringify(p)),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
   } else if (url.pathname === "/cockpit/queue") {
     try {
       const { workers } = readWorkersSection();
