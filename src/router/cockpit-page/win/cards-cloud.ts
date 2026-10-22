@@ -46,7 +46,7 @@ Win.registerType("server",{minW:180,minH:96,defaultH:130,
   var al=l.served&&l.served.length&&ringName(String(l.served[0]))!==shortModel(String(l.served[0]))?ringName(String(l.served[0])):"";
   ctx.title(al||l.provider);
  }});
-Win.registerType("provider",{minW:120,minH:106,defaultH:160,
+Win.registerType("provider",{minW:120,minH:108,defaultH:160,
  mount:function(ctx){ctx.body.innerHTML='<div class="gauges fit" data-k="g"></div>'},
  update:function(ctx,d){
   if(!d||!d.limits)return;
