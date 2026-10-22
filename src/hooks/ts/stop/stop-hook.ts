@@ -2,7 +2,7 @@
 
 import { isWorkerSession } from "../lib/worker-session.js";
 import { setTabTitle } from "../lib/tab-title.js";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join, basename, dirname } from 'path';
 import { connect } from 'net';
 import { randomUUID } from 'crypto';
@@ -18,6 +18,7 @@ import {
   WorkItem
 } from '../lib/project-utils.js';
 import { paiHomePath, sessionStateDir } from '../../../config/pai-files.js';
+import { writeFileAtomic } from '../../../config/atomic-file.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,8 +64,12 @@ interface SessionState {
   humanMessageCount: number;
 }
 
+/** uuid-like ids only: no path separators or dots, so the state file stays inside session-state. */
+const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
 function readSessionState(sessionId: string): SessionState {
   try {
+    if (!SAFE_SESSION_ID.test(sessionId)) return { humanMessageCount: 0 };
     const stateFile = join(sessionStateDir(), `${sessionId}.json`);
     if (!existsSync(stateFile)) return { humanMessageCount: 0 };
     const raw = readFileSync(stateFile, 'utf-8');
@@ -79,10 +84,12 @@ function readSessionState(sessionId: string): SessionState {
 
 function writeSessionState(sessionId: string, state: SessionState): void {
   try {
-    const dir = paiHomePath('session-state');
-    mkdirSync(dir, { recursive: true });
-    const stateFile = join(dir, `${sessionId}.json`);
-    writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf-8');
+    if (!SAFE_SESSION_ID.test(sessionId)) {
+      console.error(`STOP-HOOK: Refusing session state for unsafe session id`);
+      return;
+    }
+    const stateFile = join(paiHomePath('session-state'), `${sessionId}.json`);
+    writeFileAtomic(stateFile, JSON.stringify(state, null, 2));
   } catch (e) {
     console.error(`STOP-HOOK: Could not write session state: ${e}`);
   }
@@ -90,6 +97,7 @@ function writeSessionState(sessionId: string, state: SessionState): void {
 
 function deleteSessionState(sessionId: string): void {
   try {
+    if (!SAFE_SESSION_ID.test(sessionId)) return;
     const stateFile = join(sessionStateDir(), `${sessionId}.json`);
     if (existsSync(stateFile)) {
       unlinkSync(stateFile);
