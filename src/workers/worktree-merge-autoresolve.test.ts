@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git, mergeWorker, type MergeSettings } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
+import { shippedMainDefaults } from "../config/shipped-defaults.js";
 
 const settings: MergeSettings = {
   generated: ["gen/**"],
@@ -114,6 +115,11 @@ describe("merge auto-resolution", () => {
     expect(git(repo, ["rev-parse", "HEAD"])).toBe(head);
     expect(git(repo, ["status", "--porcelain", "--untracked-files=no"])).toBe("");
     expect(existsSync(join(repo, ".git", "MERGE_HEAD"))).toBe(false);
+  });
+
+  it("ships the union list in the defaults, not in code", () => {
+    const merge = (shippedMainDefaults().workers as { merge?: { union?: string[] } } | undefined)?.merge;
+    expect(merge?.union).toEqual(["docs/**", "*.md", "CHANGELOG.md", "src/cli/registry.ts"]);
   });
 
   it("does not treat binary changes as pure additions", () => {

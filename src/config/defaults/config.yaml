@@ -142,6 +142,12 @@ workers:
       - "docs/commands/**"
     # Shell command, run in the target checkout, that rewrites the generated files.
     regenerate: "npm run build"
+    # Globs where add-only clashes on both sides are union-merged.
+    union:
+      - "docs/**"
+      - "*.md"
+      - "CHANGELOG.md"
+      - "src/cli/registry.ts"
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:

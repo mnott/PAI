@@ -263,7 +263,7 @@ export interface PaiDaemonConfig {
       generated?: string[];
       /** Shell command that regenerates them. */
       regenerate?: string;
-      /** Globs of files where two add-only clashes are union-merged (default: docs, markdown, CHANGELOG, CLI registry). */
+      /** Globs of files where two add-only clashes are union-merged (shipped defaults: docs, markdown, CHANGELOG, CLI registry). */
       union?: string[];
     };
   };

@@ -1104,11 +1104,9 @@ export interface MergeSettings {
   union: string[];
 }
 
-const DEFAULT_UNION = ["docs/**", "*.md", "CHANGELOG.md", "src/cli/registry.ts"];
-
 function mergeSettings(): MergeSettings {
   const m = loadConfig().workers?.merge;
-  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? DEFAULT_UNION };
+  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [] };
 }
 
 /** Glob to RegExp: `**` crosses directories, `*` and `?` stay inside one. */
