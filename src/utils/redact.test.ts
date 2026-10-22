@@ -137,6 +137,11 @@ describe("redactSecrets", () => {
     ["token_count: 5", "token_count: 5"],
     ["password_length: 12", "password_length: 12"],
     ["the secret: is out", "the secret: is out"],
+    // a passphrase after a secret key is not a known non-secret word
+    ["password: correcthorsebattery", "password: [REDACTED]"],
+    ["password: required", "password: required"],
+    ["token: none", "token: none"],
+    ["password: string;", "password: string;"],
     ["Authorization: Bearer x'", "Authorization: Bearer [REDACTED]'"],
     ["mysql -p db", "mysql -p db"],
     ["echo -phunter2", "echo -phunter2"],

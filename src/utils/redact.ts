@@ -29,6 +29,8 @@ const KEY_SUBSTR = "pass|pwd|secret|token|key|credential|auth|bearer|sig";
 const SECRET_SEGMENTS = new Set(["password", "passwd", "pwd", "pass", "secret", "token", "key", "apikey", "accountkey", "credential", "credentials", "auth", "authorization", "bearer", "signature", "sig"]);
 /** Values that are types, identifiers or references rather than secrets. */
 const TYPE_VALUE = /^(?:string|number|boolean|any|unknown|null|undefined|void|never|object|required|optional|true|false|none)$/i;
+/** Known non-secret words that may follow `key:` in prose or schema docs — a closed list, so a passphrase (`password: correcthorsebattery`) is redacted. */
+const NON_SECRET_WORDS = new Set(["is", "are", "was", "be", "required", "optional", "none", "null", "nil", "undefined", "true", "false", "yes", "no", "string", "number", "boolean", "any", "object", "unknown", "void", "empty", "missing", "set", "unset", "see", "below", "above", "here", "there", "enabled", "disabled", "todo", "tbd", "n/a"]);
 
 /** True when any `_`/`-`/camelCase segment of the key is a secret word. */
 function isSecretKey(key: string): boolean {
@@ -36,13 +38,13 @@ function isSecretKey(key: string): boolean {
   return spaced.split(/[_-]+/).some((seg) => SECRET_SEGMENTS.has(seg.toLowerCase()));
 }
 
-/** Unquoted value that is code or prose: type keyword, call, env reference, or (after `:`) a lowercase word. */
+/** Unquoted value that is code or prose: type keyword, call, env reference, or (after `:`) a known non-secret word. */
 function isNotSecretValue(val: string, sep: string): boolean {
   const v = val.replace(/[;,)]+$/, "");
   return TYPE_VALUE.test(v)
     || /^[A-Za-z_$][\w$.]*\(/.test(v)
     || /^(?:process\.env|import\.meta\.env)\.\w+$/.test(v)
-    || (sep.trim() === ":" && /^[a-z]{3,}$/.test(v));
+    || (sep.trim() === ":" && NON_SECRET_WORDS.has(v.toLowerCase()));
 }
 
 /** A long run that is a file path: `.ext` follows it, or it has 3+ alphanumeric `/` segments. */
