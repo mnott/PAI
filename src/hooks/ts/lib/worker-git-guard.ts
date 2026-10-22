@@ -91,6 +91,28 @@ function isInsideWorktree(cwd: string, root: string): boolean {
   return cwd === normalizedRoot || cwd.startsWith(`${normalizedRoot}/`);
 }
 
+const GIT_WRITE = /\bgit\b[^&;|\n]*?\s(?:commit|add|am|cherry-pick|apply|push|tag|rm|mv)(?![\w-])/;
+const RETARGET = /(?:\bcd\s+|\bgit\s+-C\s+)(["']?)(\/[^\s"';&|]+)\1/g;
+
+/**
+ * A worker inside its own worktree that points a git write at an absolute
+ * directory elsewhere (typically the operator's main checkout named in its
+ * spec) commits there instead of on its branch — seen 2026-10-22. Scratch
+ * dirs and other worktrees stay allowed.
+ */
+function worktreeEscape(command: string, cwd: string, worktreesRoot: string): boolean {
+  if (!GIT_WRITE.test(command)) return false;
+  RETARGET.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = RETARGET.exec(command))) {
+    const dir = resolve(m[2]);
+    if (isInsideWorktree(dir, cwd) || isInsideWorktree(dir, worktreesRoot)) continue;
+    if (/^\/(tmp|private\/tmp|var\/folders|private\/var\/folders)(\/|$)/.test(dir)) continue;
+    return true;
+  }
+  return false;
+}
+
 export interface WorkerGitGuardResult {
   blocked: boolean;
   /** The tree-rewriting git invocation matched, e.g. "git stash". */
@@ -110,7 +132,9 @@ export function decideWorkerGitGuard(
   worktreesRoot: string | null
 ): WorkerGitGuardResult {
   if (!isWorker) return { blocked: false };
-  if (worktreesRoot && isInsideWorktree(cwd, worktreesRoot)) return { blocked: false };
+  if (worktreesRoot && isInsideWorktree(cwd, worktreesRoot)) {
+    return worktreeEscape(command, cwd, worktreesRoot) ? { blocked: true, cmd: "git write outside the worktree" } : { blocked: false };
+  }
   if (!NAMES_OTHER_DIR.test(command) && isPrivateClone(cwd)) return { blocked: false };
 
   for (const { name, pattern } of TREE_REWRITE) {
@@ -123,7 +147,9 @@ export function decideWorkerGitGuard(
 
 export function workerGitGuardMessage(cmd: string): string {
   return (
-    `in-place worker: ${cmd} rewrites the shared checkout and is blocked; ` +
-    "take baselines from the numbers before your edit, or run with --worktree"
+    cmd === "git write outside the worktree"
+      ? "worker: git write aimed at a directory outside your worktree is blocked; use relative paths and commit on your own branch"
+      : `in-place worker: ${cmd} rewrites the shared checkout and is blocked; ` +
+        "take baselines from the numbers before your edit, or run with --worktree"
   );
 }

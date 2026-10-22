@@ -170,3 +170,18 @@ describe("private clone marker", () => {
     expect(decideWorkerGitGuard("cd /some/shared/checkout && git merge x", true, marked, null).blocked).toBe(true);
   });
 });
+
+describe("worktree escape", () => {
+  const deny = (c: string) => decideWorkerGitGuard(c, true, WORKTREE_CWD, WORKTREES_ROOT).blocked;
+  it("blocks git writes aimed at the main checkout", () => {
+    expect(deny("cd /Users/x/dev/PAI && git commit -m x")).toBe(true);
+    expect(deny("git -C /Users/x/dev/PAI add -A")).toBe(true);
+  });
+  it("allows relative work, scratch and own-worktree targets", () => {
+    expect(deny("git add -A && git commit -m x")).toBe(false);
+    expect(deny("cd /var/folders/ab/T/s && git add f")).toBe(false);
+    expect(deny(`cd ${WORKTREE_CWD}/src && git commit -m x`)).toBe(false);
+    expect(deny("cd /Users/x/dev/PAI && npx tsc --noEmit")).toBe(false);
+    expect(deny("cd /Users/x/dev/PAI && git log --oneline -1")).toBe(false);
+  });
+});
