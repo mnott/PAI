@@ -651,8 +651,9 @@ export class SQLiteRegistryBackend implements RegistryBackend {
     `;
     if (where.length) sql += " WHERE " + where.join(" AND ");
     sql += " ORDER BY s.date DESC, s.number DESC";
-    const limit = opts.limit ?? 20;
-    sql += ` LIMIT ${limit}`;
+    const limit = Math.max(1, Math.trunc(Number(opts.limit ?? 20)) || 20);
+    sql += " LIMIT ?";
+    params.push(limit);
     return this.db.prepare(sql).all(...params) as SessionWithProject[];
   }
 
