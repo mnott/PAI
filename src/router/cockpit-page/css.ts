@@ -3,6 +3,7 @@
 import type { CockpitLayout } from "../cockpit-layout.js";
 import type { Num, Str } from "./types.js";
 import { winSelectCss } from "./win/select.js";
+import { winGridCss } from "./win/layout.js";
 
 /** All CSS rules. */
 export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0}
@@ -26,7 +27,7 @@ h1{font-size:15px;margin:0;font-weight:600}
 #ask .aq{display:inline}header.asking #stamp{margin-left:0}header.asking #ask{margin-left:auto}
 #toast{position:fixed;top:48px;right:14px;z-index:5;background:var(--card,var(--bg));border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--ok)}#toast[hidden]{display:none}
 #savedef.ok{color:var(--ok)}
-html.locked .cgrip,html.locked .cmin,html.locked .wgutter,html.locked #reset{display:none}
+html.locked .cgrip,html.locked .cmin,html.locked #reset{display:none}
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}
@@ -132,11 +133,16 @@ svg text{fill:var(--dim);font-size:10px}
 
 .tog.on{background:var(--acc);border-color:var(--acc);color:#fff}
 /* win cards (A5): scoped under main.win, old rules untouched until W-cut */
-main.win{display:block;position:relative;padding:0;margin:10px 14px}
-main.win .card{position:absolute;padding:0;border:0;outline:1px solid var(--line);outline-offset:-1px;overflow:hidden;min-width:0}
-main.win .chead{position:absolute;left:0;right:0;top:0;height:28px;display:flex;align-items:center;gap:6px;padding:0 6px;border-bottom:1px solid var(--line);min-width:0}
+/* the grid: the page and every group body are 12 columns; a card spans its width units, is as tall as its content, and the cards of a grid row share its height */
+main.win,main.win .cbody.cgroup{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:6px;align-content:start;container-type:inline-size}
+main.win{margin:10px 14px;overflow-anchor:none}/* the anchor keeper (win/anchor.ts) is the one owner of scroll compensation: the browser must not add its own */
+main.win .card[data-w="2"]{grid-column:span 2}main.win .card[data-w="3"]{grid-column:span 3}main.win .card[data-w="4"]{grid-column:span 4}main.win .card[data-w="6"]{grid-column:span 6}main.win .card[data-w="8"]{grid-column:span 8}main.win .card[data-w="9"]{grid-column:span 9}
+main.win .cdock{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;min-width:0}main.win .cdock:empty{display:none}main.win .cdock>.card{flex:1 1 150px;max-width:100%}
+main.win .card{position:relative;display:flex;flex-direction:column;grid-column:span 12;padding:0;border:0;outline:1px solid var(--line);outline-offset:-1px;overflow:hidden;min-width:0}
+main.win .chead{position:relative;flex:none;height:28px;display:flex;align-items:center;gap:6px;padding:0 6px;border-bottom:1px solid var(--line);min-width:0}
 main.win .card.min .chead{border-bottom:0}
-main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto;contain:strict}
+main.win .cbody{flex:1 1 auto;min-height:0;min-width:0;overflow:auto}
+main.win .card[data-type="chart"]:not([data-card="speed"]):not([data-uh])>.cbody{height:160px}main.win .card[data-type="editor"]:not([data-uh])>.cbody{height:332px}
 main.win .cbody{scrollbar-width:thin;scrollbar-color:var(--line) transparent}main.win .cbody::-webkit-scrollbar{width:8px;height:8px}main.win .cbody::-webkit-scrollbar-track{background:transparent}main.win .cbody::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 main.win .cbody.cgroup{overflow:hidden}
 main.win .wrg-wrap{position:relative;flex:1 1 auto;min-height:0;border:1px solid var(--line);border-radius:4px;background:var(--card)}main.win .wrg-hl,main.win .wrg-ta{position:absolute;inset:0 0 0 52px;margin:0;box-sizing:border-box;border:0;padding:4px;font:12px/1.4 ui-monospace,Menlo,monospace;tab-size:2;white-space:pre;overflow-wrap:normal;letter-spacing:0}main.win .wrg-hl{overflow:hidden;padding-right:24px;padding-bottom:24px;color:var(--fg);pointer-events:none}main.win .wrg-ta{width:100%;height:100%;resize:none;overflow:auto;background:transparent;color:transparent;caret-color:var(--fg);outline:0}main.win .wrg-ta:focus-visible{outline:1px solid var(--acc);outline-offset:-1px}main.win .wrg-gut{position:absolute;left:0;top:0;bottom:0;width:52px;margin:0;box-sizing:border-box;padding:4px 0 24px;overflow:hidden;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre;color:var(--dim);border-right:1px solid var(--line);user-select:none;font-variant-numeric:tabular-nums}main.win .wrg-gn{display:inline-block;width:3.2em;text-align:right;opacity:.7}main.win .wrg-tg{display:inline-block;width:1.6em;text-align:center;font-weight:400;cursor:pointer}main.win .wrg-row{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding:2px 0}main.win .wrg-inf{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px;flex:1 1 auto;min-width:0}main.win .wrg-inf>*{white-space:nowrap}main.win .wrg-acts{display:flex;gap:4px;margin-left:auto;flex:0 0 auto}main.win .wrg-acts .cbtn{white-space:nowrap;flex:0 0 auto}main.win .wrg-m{color:var(--dim);font-style:italic}main.win .wrg-c{color:var(--dim);font-style:italic}main.win .wrg-k{color:var(--acc)}main.win .wrg-s{color:var(--ok)}main.win .wrg-n{color:var(--warn)}main.win .wrg-b{color:var(--bad)}main.win .wrg-d{color:var(--dim)}main.win .wrg-a{color:var(--sec-6)}
@@ -147,7 +153,7 @@ main.win .card[data-depth="0"]{--sec:var(--sec-1)}
 main.win .card[data-depth="0"]>.chead{background:var(--sec);color:var(--sec-ink);border-bottom:2px solid var(--line)}
 main.win .card[data-depth="0"]>.chead .ctitle{font-size:13px;font-weight:700;color:var(--sec-ink)}
 main.win .card[data-depth="0"]>.chead button,main.win .card[data-depth="0"]>.chead .cbtn,main.win .card[data-depth="0"]>.chead .wctl{background:rgba(255,255,255,.18);color:var(--sec-ink);border-color:rgba(255,255,255,.4)}
-main.win .card[data-depth="0"]>.cbody.cgroup{padding:4px;background:color-mix(in srgb,var(--sec) 12%,var(--card))}
+main.win .card[data-depth="0"]>.cbody.cgroup{padding:6px;background:color-mix(in srgb,var(--sec) 12%,var(--card))}
 main.win .card[data-depth="0"]:nth-of-type(4n+2){--sec:var(--sec-2)}
 main.win .card[data-depth="0"]:nth-of-type(4n+2)>.chead{background:var(--sec)}
 main.win .card[data-depth="0"]:nth-of-type(4n+3){--sec:var(--sec-3)}
@@ -164,58 +170,54 @@ main.win .card[data-depth="0"]:nth-of-type(8n+8){--sec:var(--sec-8)}
 main.win .card[data-depth="0"]:nth-of-type(8n+8)>.chead{background:var(--sec)}
 main.win .card[data-depth="1"]>.chead{background:var(--grp-h2)}
 main.win .card[data-depth="1"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="1"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="1"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="2"]>.chead{background:var(--grp-h3)}
 main.win .card[data-depth="2"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="2"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="2"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="3"]>.chead{background:var(--grp-h4)}
 main.win .card[data-depth="3"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="3"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="3"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="4"]>.chead{background:var(--grp-h5)}
 main.win .card[data-depth="4"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="4"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="4"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="5"]>.chead{background:var(--grp-h6)}
 main.win .card[data-depth="5"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="5"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="5"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="6"]>.chead{background:var(--grp-h7)}
 main.win .card[data-depth="6"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="6"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="6"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="7"]>.chead{background:var(--grp-h8)}
 main.win .card[data-depth="7"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="7"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="7"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="8"]>.chead{background:var(--grp-h1)}
 main.win .card[data-depth="8"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="8"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="8"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="9"]>.chead{background:var(--grp-h2)}
 main.win .card[data-depth="9"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="9"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="9"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="10"]>.chead{background:var(--grp-h3)}
 main.win .card[data-depth="10"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="10"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="10"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="11"]>.chead{background:var(--grp-h4)}
 main.win .card[data-depth="11"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="11"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="11"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="12"]>.chead{background:var(--grp-h5)}
 main.win .card[data-depth="12"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="12"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="12"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="13"]>.chead{background:var(--grp-h6)}
 main.win .card[data-depth="13"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="13"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="13"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="14"]>.chead{background:var(--grp-h7)}
 main.win .card[data-depth="14"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="14"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="14"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .card[data-depth="15"]>.chead{background:var(--grp-h8)}
 main.win .card[data-depth="15"]>.chead .ctitle{color:var(--fg)}
-main.win .card[data-depth="15"]>.cbody.cgroup{padding:4px;background:transparent}
+main.win .card[data-depth="15"]>.cbody.cgroup{padding:6px;background:transparent}
 main.win .tw>.dim{display:block;padding:6px 10px}
-main.win .card.min .cbody{display:none}
+main.win .card.min .cbody{display:none}main.win .card.min{align-self:start}main.win .card.nohd>.chead{display:none}
 /* header actions never wrap: the title gives way (.ctitle already ellipsises) */
 main.win .chead>button,main.win .chead>.cbtn,main.win .chead>.wctl{white-space:nowrap;flex:none}
 main.win .card.chip .chead{height:22px;border-bottom:0}main.win .card.chip .chead>:not(.ctitle):not(.cmin){display:none}main.win .card.chip .cmin{margin-left:auto}
-main.win .card.nohd>.chead{display:none}main.win .card.nohd>.cbody{top:0}
-.wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}
-.wgutter[data-axis=y]{cursor:row-resize}
-.wgutter:hover,.wgutter:focus-visible{background:var(--acc);opacity:.45;outline:none}
 .chandle{position:absolute;right:2px;bottom:2px;width:12px;height:12px;z-index:3;cursor:ns-resize;touch-action:none;opacity:.7;background:linear-gradient(135deg,transparent 0 48%,var(--dim) 48% 58%,transparent 58% 74%,var(--dim) 74% 84%,transparent 84%)}
 .card.rz{outline:1px solid var(--acc);outline-offset:-1px}
 .chandle:hover,.chandle:focus-visible{opacity:1;outline:none;background:linear-gradient(135deg,transparent 0 48%,var(--acc) 48% 58%,transparent 58% 74%,var(--acc) 74% 84%,transparent 84%)}
@@ -251,4 +253,5 @@ main.win .cbody>.tw{padding:6px 10px}.wt-auto>.sp{padding:6px 10px}
 .wr{padding:6px 10px;min-width:0}.wr-top{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}.wr-sel{flex:none}.wr .rtcls{font-size:11px}.wr-sess{margin-top:4px}.wr-sess .rtsess{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;margin-left:12px}
 .wmd{padding:6px 10px;min-width:0}.wmd-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.wmd-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 10px;margin-top:6px}.wmdt{font-size:11px;color:var(--dim)}.wmdv{font-size:18px}.wmds{font-size:11px}.wmd-n{margin-top:4px}.wmd-i .linst{margin-top:3px}.wmd-in{font:inherit;min-width:120px}.wmd-e .eprow{padding:2px 0}
 ${winSelectCss()}
+${winGridCss()}
 `;

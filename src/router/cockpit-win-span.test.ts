@@ -39,7 +39,7 @@ describe.skipIf(!CHROME)("card width share (CDP)", () => {
     const mouse = (type: string, x: number, y: number) => b.send("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", buttons: type === "mouseReleased" ? 0 : 1, clickCount: 1 });
     const load = async () => {
       await b.send("Page.navigate", { url: `${base}/page` });
-      for (let i = 0; i < 60; i++) { await sleep(250); if (await b.ev<boolean>(`!!document.querySelector(${JSON.stringify(sel("pause") + " .chandle")})&&typeof Win!=="undefined"`)) break; }
+      for (let i = 0; i < 60; i++) { await sleep(250); if (await b.ev<boolean>(`!!document.querySelector(${JSON.stringify(sel("kpis.requests") + " .chandle")})&&typeof Win!=="undefined"`)) break; }
       await sleep(1500);
     };
     const box = (id: string) => b.ev<number>(`Math.round(document.querySelector(${JSON.stringify(sel(id))}).getBoundingClientRect().height)`);
@@ -53,7 +53,7 @@ describe.skipIf(!CHROME)("card width share (CDP)", () => {
       for (let i = 1; i <= 8; i++) { await mouse("mouseMoved", x, y + (dy * i) / 8); await sleep(30); }
       await mouse("mouseReleased", x, y + dy); await sleep(600);
     };
-    /** Re-save the layout with the cards `ids` side by side in one row (at the first one's band), then reload. */
+    /** Re-save the layout with the cards `ids` at the end of the page, a third of the row each (w 4), then reload. */
     const arrange = async (ids: string[]) => {
       await load();
       await sleep(800);
@@ -62,7 +62,7 @@ describe.skipIf(!CHROME)("card width share (CDP)", () => {
         function strip(n){if(n.k!=="s")return;var ch=[],sz=[],i;for(i=0;i<n.ch.length;i++){var q=n.ch[i];if(q.k==="c"&&ids.indexOf(q.id)>=0){row.push(q);continue}strip(q);ch.push(q);sz.push(n.sz[i])}n.ch=ch;n.sz=sz}
         strip(o.tree);for(var g in o.kids)strip(o.kids[g]);
         row.sort(function(x,y){return ids.indexOf(x.id)-ids.indexOf(y.id)});
-        o.tree.ch.push({k:"s",d:"r",ch:row,sz:row.map(function(){return 1/row.length})});o.tree.sz.push(0.1);
+        row.forEach(function(q){o.tree.ch.push(q);o.tree.sz.push(1);(o.st[q.id]=o.st[q.id]||{}).w=4});
         localStorage.setItem(k,JSON.stringify(o))})()`);
       await load();
     };
@@ -71,49 +71,49 @@ describe.skipIf(!CHROME)("card width share (CDP)", () => {
 
   const rootW = (b: { ev<T>(s: string): Promise<T> }) => b.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`);
   const wOf = (b: { ev<T>(s: string): Promise<T> }, id: string) => b.ev<number>(`document.querySelector(${JSON.stringify(sel(id))}).getBoundingClientRect().width`);
-  /** Store a width share (st.sp divisor) for a card and reload: the state the handle drag writes. */
+  /** Store a width in units of 12 (st.w) for a card and reload: the state the handle drag writes. */
   const setSp = async (b: { ev<T>(s: string): Promise<T> }, load: () => Promise<void>, id: string, sp: number) => {
-    await b.ev(`(function(){var k="pai.cockpit.win.v2",o=JSON.parse(localStorage.getItem(k));o.st=o.st||{};(o.st[${JSON.stringify(id)}]=o.st[${JSON.stringify(id)}]||{}).sp=${sp};localStorage.setItem(k,JSON.stringify(o))})()`);
+    await b.ev(`(function(){var k="pai.cockpit.win.v2",o=JSON.parse(localStorage.getItem(k));o.st=o.st||{};(o.st[${JSON.stringify(id)}]=o.st[${JSON.stringify(id)}]||{}).w=${sp};localStorage.setItem(k,JSON.stringify(o))})()`);
     await load();
   };
 
-  it("a stored 1/2 in a row of three takes about half the row; full takes its own row; clearing it restores auto", async () => {
+  it("a stored 1/2 in a line of three takes about half the row; full takes its own line", async () => {
     const { b, arrange, rowOf, load } = await setup();
-    await arrange(["pause", "daily", "speed"]);
-    expect((await rowOf("pause")).length, "three in a row before").toBe(3);
-    const w0 = await wOf(b, "pause");
-    await setSp(b, load, "pause", 2);
+    await arrange(["kpis.requests", "kpis.input", "kpis.errors"]);
+    expect((await rowOf("kpis.requests")).length, "three in a row before").toBe(3);
+    const w0 = await wOf(b, "kpis.requests");
+    await setSp(b, load, "kpis.requests", 6);
     const W = await rootW(b);
-    const w1 = await wOf(b, "pause");
-    console.log("READING " + JSON.stringify({ rootW: W, auto: w0, half: w1, row: await rowOf("pause") }));
+    const w1 = await wOf(b, "kpis.requests");
+    console.log("READING " + JSON.stringify({ rootW: W, auto: w0, half: w1, row: await rowOf("kpis.requests") }));
     expect(Math.abs(w1 / W - 0.5)).toBeLessThan(0.03);
-    await setSp(b, load, "pause", 1);
-    expect(await rowOf("pause"), "full is alone in its row").toEqual(["pause"]);
-    expect(Math.abs((await wOf(b, "pause")) / W - 1)).toBeLessThan(0.01);
+    await setSp(b, load, "kpis.requests", 12);
+    expect(await rowOf("kpis.requests"), "full is alone in its row").toEqual(["kpis.requests"]);
+    expect(Math.abs((await wOf(b, "kpis.requests")) / W - 1)).toBeLessThan(0.01);
   }, 120000);
 
   it("the share survives a reload and is stored beside the card state", async () => {
     const { b, arrange, load } = await setup();
-    await arrange(["pause", "daily", "speed"]);
-    await setSp(b, load, "daily", 2);
-    expect(await b.ev<number>(`JSON.parse(localStorage.getItem("pai.cockpit.win.v2")).st.daily.sp`)).toBe(2);
+    await arrange(["kpis.requests", "kpis.input", "kpis.errors"]);
+    await setSp(b, load, "kpis.input", 6);
+    expect(await b.ev<number>(`JSON.parse(localStorage.getItem("pai.cockpit.win.v2")).st["kpis.input"].w`)).toBe(6);
     const W = await rootW(b);
-    expect(Math.abs((await wOf(b, "daily")) / W - 0.5)).toBeLessThan(0.03);
+    expect(Math.abs((await wOf(b, "kpis.input")) / W - 0.5)).toBeLessThan(0.03);
   }, 120000);
 
   it("no card header carries a width button; the handle has the resize tooltip", async () => {
     const { b, arrange } = await setup();
-    await arrange(["pause", "daily", "speed"]);
+    await arrange(["kpis.requests", "kpis.input", "kpis.errors"]);
     expect(await b.ev<number>(`document.querySelectorAll("#win-root .cspan,#win-root [data-act=span]").length`)).toBe(0);
-    expect(await b.ev<string>(`document.querySelector(${JSON.stringify(sel("pause") + " .chandle")}).title`)).toBe("drag to resize \u00b7 double-click to reset");
+    expect(await b.ev<string>(`document.querySelector(${JSON.stringify(sel("kpis.requests") + " .chandle")}).title`)).toBe("drag to resize \u00b7 double-click to reset");
   }, 120000);
 
   it("double-clicking the handle resets the stored width", async () => {
     const { b, arrange, load } = await setup();
-    await arrange(["pause", "daily", "speed"]);
-    await setSp(b, load, "pause", 2);
-    await b.ev(`document.querySelector(${JSON.stringify(sel("pause") + " .chandle")}).dispatchEvent(new MouseEvent("dblclick",{bubbles:true}))`);
+    await arrange(["kpis.requests", "kpis.input", "kpis.errors"]);
+    await setSp(b, load, "kpis.requests", 6);
+    await b.ev(`document.querySelector(${JSON.stringify(sel("kpis.requests") + " .chandle")}).dispatchEvent(new MouseEvent("dblclick",{bubbles:true}))`);
     await sleep(900);
-    expect(await b.ev<boolean>(`!(JSON.parse(localStorage.getItem("pai.cockpit.win.v2")).st.pause||{}).sp`)).toBe(true);
+    expect(await b.ev<boolean>(`!(JSON.parse(localStorage.getItem("pai.cockpit.win.v2")).st.pause||{}).w`)).toBe(true);
   }, 120000);
 });

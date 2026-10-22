@@ -58,9 +58,9 @@ setTimeout(function(){
   var c=cards[i],id=c.getAttribute("data-card"),g=c.querySelector(":scope>.cbody.cgroup"),b=r(c),o={id:id,h:Math.round(b.b-b.t),kind:g?"group":"leaf",chart:c.getAttribute("data-type")==="chart"||c.getAttribute("data-type")==="editor",chip:c.classList.contains("chip"),line:(c.parentElement.closest(".card")||{getAttribute:function(){return""}}).getAttribute("data-card")+"@"+Math.round(b.t)};
   if(c.classList.contains("chip")){out.push(o);continue}
   if(g){
-   var kids=Array.prototype.slice.call(g.children).filter(function(k){return k.style.display!=="none"}),m=0,dk=1e9;
-   kids.forEach(function(k){var kb=r(k);m=Math.max(m,kb.b);if(k.classList.contains("chip"))dk=Math.min(dk,kb.t)});
-   var nonChip=kids.filter(function(k){return!k.classList.contains("chip")}),lb=0;
+   var kids=Array.prototype.slice.call(g.children).filter(function(k){var q=k.getBoundingClientRect();return k.style.display!=="none"&&(q.width||q.height)}),m=0,dk=1e9;
+   kids.forEach(function(k){var kb=r(k);m=Math.max(m,kb.b);if(k.classList.contains("cdock"))dk=Math.min(dk,kb.t)});
+   var nonChip=kids.filter(function(k){return!k.classList.contains("cdock")}),lb=0;
    nonChip.forEach(function(k){lb=Math.max(lb,r(k).b)});
    o.content=kids.length?Math.round(m-b.t):28;o.dock=dk<1e9?Math.round(dk-lb):null;
   }else{

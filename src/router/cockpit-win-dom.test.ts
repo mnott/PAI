@@ -128,34 +128,35 @@ describe.skipIf(!CHROME)("win cards (A5, spec 2.2/2.3/4.1) in Chromium", () => {
     expect(r.ran, "enabled action ran once, disabled never").toBe(1);
     expect(r.info, "info renders next to the title").toBe(true);
     expect(r.attrs).toBe("a|t|group|Alpha");
-    expect(r.cardPos).toBe("absolute");
-    // 2.3 contain on every cbody
-    for (const c of r.contain) expect(c).toBe("strict/strict");
-    // 3.2: explicit px; heights are content-driven: a line is as tall as its tallest card, the next starts GAP below
+    expect(r.cardPos).toBe("relative");
+    // positions are CSS grid now: no size containment on a body (the card is as tall as its content), no explicit px
+    for (const c of r.contain) expect(c).toBe("/none");
+    // heights are content-driven: a grid row is as tall as its tallest card, the next starts GAP (6 px) below
     const q = (r.rects0 as string).split("|").map((s: string) => s.split(",").map(Number));
-    expect(q[0]!.slice(0, 3)).toEqual([0, 0, 482]);
-    expect(q[1]!.slice(0, 3)).toEqual([490, 0, 482]);
-    expect(q[2]!.slice(0, 3)).toEqual([0, Math.max(q[0]![3]!, q[1]![3]!) + 8, 972]);
-    expect(r.mainH).toBe(`${q[2]![1]! + q[2]![3]!}px`);
+    expect(q[0]!.slice(0, 3)).toEqual([0, 0, 483]);
+    expect(q[1]!.slice(0, 3)).toEqual([489, 0, 483]);
+    expect(q[2]!.slice(0, 3)).toEqual([0, Math.max(q[0]![3]!, q[1]![3]!) + 6, 972]);
+    expect(r.mainH, "the page has no explicit height").toBe("");
     expect(r.mountsAtInit, "mount ran once per card").toBe(3);
-    expect(r.size0, "resize(ctx,w,h) got the body box").toBe(`482x${q[0]![3]! - 28}`);
+    expect(r.size0, "resize(ctx,w,h) got the body box").toBe(`483x${q[0]![3]! - 28}`);
     // 4.1 ctx
     expect(r.updated, "update(feed) reaches only the subscribed cards").toBe(2);
     expect(r.vtext).toBe("1");
     expect(r.rows1).toBe(3);
     expect(r.rowIdent, "keyed list row survives").toBe(true);
     expect(r.hot).toBe(true);
-    expect(r.rectsAfterUpdate, "content updates never change a box").toBe(r.rects0);
+    // a card is as tall as its content, so a content update may change heights; x and width (the grid spans) never change
+    const xw = (rs: string) => rs.split("|").map((x) => x.split(",").filter((_, i) => i === 0 || i === 2).join(","));
+    expect(xw(r.rectsAfterUpdate), "content updates never change an x or width").toEqual(xw(r.rects0));
     expect(r.status).toBe("boom|err");
     expect(r.title).toBe("Alpha 2|Alpha 2|move Alpha 2");
     // minimize: header height only, siblings and band unchanged; restore returns the same rect; no remount
-    expect(r.minH).toBe("28px");
+    expect(r.minH, "no inline height").toBe("");
     expect(r.minRects.split("|")[1], "sibling b did not move").toBe(r.before.split("|")[1]);
     expect(r.minRects.split("|")[2], "card c did not move").toBe(r.before.split("|")[2]);
-    expect(r.minRects.split("|")[0]).toBe("0,0,482,28");
+    expect(r.minRects.split("|")[0]).toBe("0,0,483,28");
     expect(r.minExpanded).toBe("false");
     expect(r.minBodyDisplay).toBe("none");
-    expect(r.minMain, "the line keeps its height (b is as tall as before)").toBe(r.mainH);
     expect(r.mountsAfterMin).toBe(3);
     expect(r.restRects, "restore returns the same rects").toBe(r.before);
     expect(r.mountsAfterRestore, "no remount on restore").toBe(3);
@@ -166,14 +167,11 @@ describe.skipIf(!CHROME)("win cards (A5, spec 2.2/2.3/4.1) in Chromium", () => {
     expect(saved.v).toBe(2);
     expect(saved.st.a.min).toBe(1);
     // width change relayouts: two-up halves of 600 - GAP
-    expect(r.narrowRects.split("|")[1]!.split(",").slice(0, 3).join(","), "b at half of 600 - GAP").toBe("304,0,296");
+    expect(r.narrowRects.split("|")[1]!.split(",").slice(0, 3).join(","), "b at half of 600 - GAP").toBe("303,0,297");
     expect(Number(r.narrowRects.split("|")[2]!.split(",")[2]), "c spans the new width").toBe(600);
     expect(r.resizes, "resize called again for the new width").toBeGreaterThan(3);
     expect(r.hasRO, "main is observed by a ResizeObserver").toBe(true);
-    expect(r.syncSame, "no width change: no relayout").toBe(false);
-    expect(r.layoutsSame).toBe(0);
-    expect(r.syncNarrow, "width change relayouts once").toBe(true);
-    expect(r.layoutsNarrow).toBe(1);
-    expect(r.syncAgain, "same width again: no relayout").toBe(false);
+    expect(r.layoutsSame, "no relayout without a change").toBe(0);
+    expect(r.layoutsNarrow, "a width change needs no relayout: the grid reflows by itself").toBe(0);
   }, 120_000);
 });

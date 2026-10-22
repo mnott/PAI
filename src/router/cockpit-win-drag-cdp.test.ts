@@ -100,22 +100,20 @@ describe.skipIf(!CHROME)("cockpit drag and drop with real pointer events (CDP)",
     expect(e2b.ind?.cls, "E2b indicator is not a refused state").toBe("dropind");
     expect(s2b.tree, "E2b applies the drop").not.toBe(s2.tree);
     expect(s2b.r["kpis.errors"]![1], "errors sits below input").toBeGreaterThan(s2b.r["kpis.input"]![1]);
-    const fit = await b.ev<string[]>(`(function(){var bad=[],c=Win.cfg();document.querySelectorAll('#win-root [data-card^="kpis."]').forEach(function(e){if(e.style.display==="none")return;var t=c.types&&c.types[e.getAttribute("data-type")],mw=(t&&t.minW)||c.minW||0,w=e.getBoundingClientRect().width;if(w<mw-1)bad.push(e.dataset.card+" w "+w+" < "+mw);var body=e.querySelector(".cbody");if(body&&body.scrollHeight>body.clientHeight+1)bad.push(e.dataset.card+" inner scroll")});return bad})()`);
+    const fit = await b.ev<string[]>(`(function(){var bad=[];document.querySelectorAll('#win-root [data-card^="kpis."]').forEach(function(e){if(e.style.display==="none")return;var mw=Number(e.getAttribute("data-mw"))||0,w=e.getBoundingClientRect().width;if(w<mw-1)bad.push(e.dataset.card+" w "+w+" < "+mw);var body=e.querySelector(".cbody");if(body&&body.scrollHeight>body.clientHeight+1)bad.push(e.dataset.card+" inner scroll")});return bad})()`);
     expect(fit, "E2b afterwards no card is narrower than its minW or scrolls inside").toEqual([]);
 
     // E2c: a root group dropped under another root group (the operator case) applies, and nothing scrolls or clips afterwards
-    const e2c = await drag("limits-cloud", "limits-local", 0.5, 0.95);
+    const e2c = await drag("limits-local", "limits-cloud", 0.5, 0.95);
     const s2c = await snap();
     expect(e2c.ind?.cls, "E2c indicator is not a refused state").toBe("dropind");
-    expect(s2c.r["limits-cloud"]![1], "limits-cloud sits below limits-local").toBeGreaterThan(s2c.r["limits-local"]![1]);
+    expect(s2c.r["limits-local"]![1], "limits-local sits below limits-cloud").toBeGreaterThan(s2c.r["limits-cloud"]![1]);
     const fit2 = await b.ev<string[]>(`(function(){var bad=[];document.querySelectorAll('#win-root [data-card^="limits"]').forEach(function(e){if(e.style.display==="none")return;var body=e.querySelector(".cbody");if(body&&body.scrollHeight>body.clientHeight+1)bad.push(e.dataset.card+" inner scroll")});return bad})()`);
     expect(fit2, "E2c the limits cards do not scroll inside").toEqual([]);
 
-    // E3: a target in another container is not a drop target
+    // E3: a target in another container is a drop target now (the card changes its parent); the dropped card stays inside the new group
     const e3 = await drag("kpis.requests", "pool.host", 0.95, 0.5);
-    const s3 = await snap();
-    expect(e3.ind, "E3 shows no indicator").toBeNull();
-    // a mere grab freezes auto layout (bakes the on-screen sizes into the weights), so the tree text may differ; what is on screen must not
-    expect(rectDiffs(s2c, s3)).toEqual([]);
+    expect(e3.ind?.cls, "E3 shows the indicator").toBe("dropind");
+    expect(await b.ev<string>(`Win.el("kpis.requests").parentElement.closest(".card").dataset.card`), "E3 reparented").toBe("pool");
   }, 120_000);
 });

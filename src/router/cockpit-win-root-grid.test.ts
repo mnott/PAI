@@ -48,9 +48,10 @@ const limits = () => ({
 const MOVE = `<script>
 setTimeout(function(){
  if(location.search.indexOf("mv=1")<0)return;
- var st=Win.state(),tk=st.kids["tokens-group"];
- Win.apply("tokens-group",{k:"s",d:"c",ch:tk.ch.slice(0,2),sz:[0.5,0.5]});
+ var st=Win.state();
  var sm=st.kids["sys-metrics"];
+ var pg=st.kids["perf-group"];
+ Win.apply("perf-group",{k:"s",d:"c",ch:pg.ch.filter(function(c){return c.id!=="speed"}),sz:[1,1,1]});
  Win.apply("sys-metrics",{k:"s",d:"c",ch:[sm,{k:"c",id:"speed"}],sz:[0.8,0.2]});
 },5000);
 </script>`;
@@ -58,13 +59,13 @@ const OP = `<script>
 setTimeout(function(){
  if(location.search.indexOf("op=1")<0)return;
  Win.toggleMin("memory");Win.toggleMin("system.swap");Win.toggleMin("system.cpu-w");
- var st=Win.state().st;(st["system.compressed"]=st["system.compressed"]||{}).sp=2;
+ var st=Win.state().st;(st["system.compressed"]=st["system.compressed"]||{}).w=6;
  Win.relayout();
 },5000);
 </script>`;
 const PROBE = `<script>
 setTimeout(function(){
- var cards=Array.prototype.slice.call(document.querySelectorAll("#win-root .card")).filter(function(c){return c.style.display!=="none"});
+ var cards=Array.prototype.slice.call(document.querySelectorAll("#win-root .card")).filter(function(c){var r=c.getBoundingClientRect();return c.style.display!=="none"&&(r.width||r.height)});
  var out=[];
  cards.forEach(function(c){
   var b=c.getBoundingClientRect(),p=c.parentElement&&c.parentElement.closest(".card"),pb=p?p.getBoundingClientRect():null,id=c.getAttribute("data-card");
@@ -157,7 +158,8 @@ describe.skipIf(!CHROME)("root grid readings", () => {
     it(`${width} px: a group has >= 6 px padding around its lines and dock; cards of one line share its height`, async () => {
       const rows = await read(width);
       const bad: string[] = [];
-      for (const r of rows) if (r.pr && (r.x - r.pr.x < 6 || r.pr.x + r.pr.w - (r.x + r.w) < 6 || r.pr.y + r.pr.h - (r.y + r.h) < 6 - 1)) bad.push(`${r.id} in ${r.p}`);
+      // the boxes are rounded to whole px one by one: 6 px of padding reads as 5 at worst
+      for (const r of rows) if (r.pr && (r.x - r.pr.x < 5 || r.pr.x + r.pr.w - (r.x + r.w) < 5 || r.pr.y + r.pr.h - (r.y + r.h) < 5)) bad.push(`${r.id} in ${r.p}`);
       expect(bad).toEqual([]);
       const lines = new Map<string, Row[]>();
       for (const r of rows) if (!r.chip && r.h > 40) lines.set(`${r.p}@${r.y}`, [...(lines.get(`${r.p}@${r.y}`) ?? []), r]);
