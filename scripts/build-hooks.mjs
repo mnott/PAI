@@ -190,7 +190,7 @@ if (skipReason) {
   /**
    * Ensure `target` is a symlink (or copy on Windows) pointing to `source`.
    * Replaces stale symlinks and plain-file copies with correct symlinks.
-   * Never overwrites non-symlink, non-PAI files (user's own scripts).
+   * A plain-file target (user's own script) is renamed to <name>.user-backup-<timestamp>, never deleted.
    */
   function syncFile(source, target) {
     const absSource = resolve(source);
@@ -212,7 +212,10 @@ if (skipReason) {
         unlinkSync(target);
         isUpdate = true;
       } else if (stat.isFile()) {
-        unlinkSync(target);
+        // Plain file: may be the user's own script — keep it, don't clobber.
+        const backup = `${target}.user-backup-${Date.now()}`;
+        renameSync(target, backup);
+        console.log(`  ↪ Existing file moved to ${backup}`);
         isUpdate = true;
       } else {
         return; // Directory or something unexpected — don't touch
@@ -278,24 +281,30 @@ if (skipReason) {
   function syncContentDirSymlink(paiHomeSubdir, targetDir) {
     if (!existsSync(paiHomeSubdir)) return; // not migrated yet — nothing to link to
 
+    let stat = null;
     try {
-      const stat = lstatSync(targetDir);
-      if (stat.isSymbolicLink()) {
+      stat = lstatSync(targetDir);
+    } catch (err) {
+      if (err.code !== "ENOENT") {
+        console.warn(`  ⚠ Cannot inspect ${targetDir}: ${err.message}`);
+        return;
+      }
+    }
+    // Real directory or file — leave it alone (`pai config migrate` is what moves it).
+    if (stat && !stat.isSymbolicLink()) return;
+    try {
+      if (stat) {
         if (resolve(readlinkSync(targetDir)) === resolve(paiHomeSubdir)) {
           current++;
           return;
         }
         unlinkSync(targetDir);
-        symlinkSync(resolve(paiHomeSubdir), targetDir);
-        updated++;
-        return;
       }
-      // Real directory — leave it alone (`pai config migrate` is what moves it).
-      return;
-    } catch {
-      // Target doesn't exist — fresh symlink.
       symlinkSync(resolve(paiHomeSubdir), targetDir);
-      created++;
+      if (stat) updated++;
+      else created++;
+    } catch (err) {
+      console.warn(`  ⚠ Could not link ${targetDir}: ${err.message}`);
     }
   }
 
