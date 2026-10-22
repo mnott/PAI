@@ -18,7 +18,7 @@ const zoneAt = api.zoneAt as (R: any, p: any) => string;
 const move = api.moveCard as (root: any, kids: any, d: string, t: string, z: string) => { tree: any; kids: any } | null;
 const order = (t: any) => (t ? api.ids(t) : []);
 
-describe("win drop (spec 3.3)", () => {
+describe("win drop", () => {
   it("zoneAt: four edge bands, corners to the nearer edge, middle none", () => {
     const R = { x: 0, y: 0, w: 400, h: 200 }; // bands: 100 wide, 50 tall
     expect(zoneAt(R, { x: 10, y: 100 })).toBe("left");

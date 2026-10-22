@@ -1,4 +1,4 @@
-/** cockpit-page/win — B10 `cache`: the "Cache hit ratio" group on the win runtime (spec 7/B10).
+/** cockpit-page/win — `cache`: the "Cache hit ratio" group on the win runtime.
  *  Page-scope ES5 (after scriptCore/scriptTables: esc/fmt/pct/table/donut/emptyRing/lowChips/localDetail/ageMark/
  *  provHit/ringName/assignColors/LOW_REQ in scope), needs `Win` and `WinT`. Feed `cache` = {data, sys, lim} (the page's
  *  /cockpit/data, /cockpit/system and /cockpit/limits readings, pushed by winFeedCache after every renderDonuts).

@@ -1,4 +1,4 @@
-/** cockpit-page/win — the action registry and runner (spec 5.2). Pure ES5 inside a string.
+/** cockpit-page/win — the action registry and runner. Pure ES5 inside a string.
  *  Replaces postAction/wireAct/reapplyActs/actMsg/armBtn. The page runtime supplies the host:
  *  { fetch, setStatus(id,kind,text), setBusy(id,on,el), clearStatus(cardId), refresh(feeds), announce(text) }.
  *  WIN_VERBS is the one production table: the defAction registrations below and the page both
@@ -18,7 +18,7 @@ export type WinActionRegistry = { [verb: string]: WinActionDef };
 export type WinActionHost = {
   fetch: (url: string, opts: { method: string; headers: { [k: string]: string }; body: string }) => Promise<{ status: number; text: () => Promise<string> }>;
   setStatus: (cardId: string, kind: string, text: string) => void;
-  /** disables/enables the INVOKING control (el), not the whole card (spec 5.2). */
+  /** disables/enables the INVOKING control (el), not the whole card. */
   setBusy: (cardId: string, on: boolean, el?: unknown) => void;
   /** clears the card's status line (the err path: a click on the status text calls it). */
   clearStatus?: (cardId: string) => void;
@@ -29,7 +29,7 @@ export type WinActionHost = {
 export type WinActionOpts = { pollMs?: number };
 export type WinActionResult = { ok: boolean; message: string };
 
-/** Action registry, runner, confirm button and status flow, per spec 5.2. Testable with new Function.
+/** Action registry, runner, confirm button and status flow. Testable with new Function.
  *  - defAction(verb, def) registers one action; runAction(cardId, verb, args, el, host) runs it.
  *  - runAction: status "pending" + the invoking control disabled; POST /cockpit/action (or the
  *    def's route); ok -> status "ok" for STATUS_OK_MS then refresh doneRefresh feeds;

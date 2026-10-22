@@ -1,4 +1,4 @@
-/** cockpit-page/win — page-wide anchor keeper (spec 4.3): a safety net, not the mechanism.
+/** cockpit-page/win — page-wide anchor keeper: a safety net, not the mechanism.
  *  Pure ES5 inside a string, testable in a page with a `main` holding `.card` elements.
  *  Tracks the topmost card whose top is at or below the viewport top ({id, offset, y}) on every
  *  scroll. A MutationObserver on main (childList, subtree, attributes style/class/hidden)

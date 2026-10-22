@@ -1,4 +1,4 @@
-/** cockpit-page/win — persistence (spec 6). Pure ES5 inside a string; storage is injected
+/** cockpit-page/win — persistence. Pure ES5 inside a string; storage is injected
  *  (localStorage in the page, an in-memory object in tests). No DOM, no timers. */
 
 /** State per card id: min 1 minimized / 0 explicitly restored (a default-minimized card the
@@ -13,11 +13,11 @@ export type WinStore = {
 
 /** The layout object the page persists under WIN_KEY. */
 export const WIN_KEY = "pai.cockpit.win.v2";
-/** Bump only when the tree schema changes (spec 6). */
+/** Bump only when the tree schema changes. */
 export const LAYOUT_V = 2;
-/** A gone card keeps its place in the tree this long (spec 3.4). */
+/** A gone card keeps its place in the tree this long. */
 export const GHOST_DAYS = 30;
-/** Pre-v2 keys: their models do not map onto the tree; deleted on first load (spec 6). */
+/** Pre-v2 keys: their models do not map onto the tree; deleted on first load. */
 export const OLD_KEYS = ["pai.cockpit.layout.v1", "pai.cockpit.tiles.v1", "pai.cockpit.collapsed"];
 
 /** defaults: { tree, kids, stDefaults } — the shipped default layout (win-defaults.ts later);
@@ -411,7 +411,7 @@ function reconcileSaved(saved,defaults,knownIds,now){
  normMin(st);
  return{tree:tree,kids:kids,st:st};
 }
-/** One write, whole object, debounced by the caller (spec 6). t is the save time: another tab compares it to know which layout is newer. Returns t. */
+/** One write, whole object, debounced by the caller. t is the save time: another tab compares it to know which layout is newer. Returns t. */
 function saveWin(storage,tree,kids,st,auto){
  var o={v:LAYOUT_V,t:Date.now(),tree:tree,kids:kids||{},st:st||{}};
  // auto: the sizes are still the defaults (heights follow the content); a layout saved without it holds the user's sizes
@@ -419,6 +419,6 @@ function saveWin(storage,tree,kids,st,auto){
  try{storage.setItem(WIN_KEY,JSON.stringify(o))}catch(e){}
  return o.t;
 }
-/** Reset: the defaults, fresh state (minimized state resets too, spec 6). */
+/** Reset: the defaults, fresh state (minimized state resets too). */
 function resetWin(defaults){return defaultsOf(defaults)}
 `;

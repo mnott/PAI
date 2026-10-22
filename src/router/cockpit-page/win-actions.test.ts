@@ -42,7 +42,7 @@ const def = (over: any = {}) => ({
   ...over,
 });
 
-describe("win actions (spec 5.2)", () => {
+describe("win actions", () => {
   it("pending then ok: status flow, control disabled while pending, ok clears after STATUS_OK_MS, feeds refresh", async () => {
     vi.useFakeTimers();
     defAction("stop-a", def());

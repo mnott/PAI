@@ -1,4 +1,4 @@
-/** cockpit-page/win — B7 `cloud`: the Limits and local servers section on the win runtime (spec 7/B7).
+/** cockpit-page/win — `cloud`: the Limits and local servers section on the win runtime.
  *  Page-scope ES5 (after scriptCore + scriptModels: esc/gauge/gbm/shortModel/ringName/ago in scope), needs `Win`,
  *  `WinT`, `WinA` and `winHost()`. Feed `limits` (/cockpit/limits: limits, runningLocal, activeLocal).
  *  Group `limits-local`: one `server` card `limits.local.srv:<provider>` per up local server (a stop header action,

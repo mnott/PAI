@@ -1,4 +1,4 @@
-/** cockpit-page/win — drag/drop tree ops (spec 3.3). Pure ES5 inside a string. No DOM, no geometry but the rects the caller hands in.
+/** cockpit-page/win — drag/drop tree ops. Pure ES5 inside a string. No DOM, no geometry but the rects the caller hands in.
  *  A container (the root, a group's kids) is an ordered list of cards; a drop only changes that order and the parent. */
 
 export type WinZone = "left" | "right" | "top" | "bottom" | "into" | "none";

@@ -14,7 +14,7 @@ const leaf = (id: string) => api.leaf(id);
 const split = (d: string, ch: any[], sz: number[]) => api.split(d, ch, sz);
 const { normalize, findLeaf, parentOf, ids, removeLeaf } = api;
 
-describe("win tree (spec 3.1)", () => {
+describe("win tree", () => {
   it("a one-child split collapses to the child", () => {
     const t = split("r", [split("r", [leaf("a")], [1])], [1]);
     const n = normalize(t);

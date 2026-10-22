@@ -1,4 +1,4 @@
-/** cockpit-page/win — B11 `speed`, `pause`, `sessions`, `runs`: four cards on the general types, no type of their own (spec 7/B11).
+/** cockpit-page/win — `speed`, `pause`, `sessions`, `runs`: four cards on the general types, no type of their own.
  *  Page-scope ES5 (after script-tables: speedHtml, pauseHtml, sessionsHtml, workersHtml, fitTables in scope), needs `Win`.
  *  `speed` is a `chart` card (hook WCHX.speed: the bars), `pause` and `sessions` are `table` cards, `runs` a `list` card;
  *  each spec's view(payload, ctx) returns the html its page builder makes plus after: fitTables (stacked rows when the table

@@ -1,4 +1,4 @@
-/** cockpit-page/win — the card DOM factory and runtime (spec 2, 3.2, 4.1). Pure ES5 inside a string.
+/** cockpit-page/win — the card DOM factory and runtime. Pure ES5 inside a string.
  *  Needs, in the same script scope: WIN_TREE_JS, WIN_LAYOUT_JS, WIN_MORPH_JS, WIN_STORE_JS
  *  (WIN_INFO_JS optional: with it the ⓘ renders and is wired). */
 
@@ -423,7 +423,7 @@ function init(main,defaults,opts){
  relayout();
  return api;
 }
-/** Add cards by data (a structural change, spec 3.4): rows = [[id,...],...], appended in order to the group's kids; the cards of a row
+/** Add cards by data (a structural change): rows = [[id,...],...], appended in order to the group's kids; the cards of a row
  *  of n share the line (width 12/n units). A card the group's tree already holds (a saved layout) only gets built. */
 function addCards(group,specs,rows){
  var g=W.cards[group],i,j,fresh=[];

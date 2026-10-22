@@ -1,4 +1,4 @@
-/** cockpit-page/win — B3 `memory`: the Memory index group on the win runtime (spec 7/B3).
+/** cockpit-page/win — `memory`: the Memory index group on the win runtime.
  *  Page-scope ES5 (after scriptCore + scriptMemory: esc/fmt/memDur/memAt/memClock/memBound/memLvl/memRunLine in scope),
  *  needs `Win`, `WinT` and `WinA` (the action runner, win/actions.ts). Feed `memory` (/cockpit/memory).
  *  Group `memory`: `kv` card `memory.kv` (pill + reason; the run progress is a line under the pill, never in a header),

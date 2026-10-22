@@ -1,4 +1,4 @@
-/** cockpit-page/win — keyed DOM patch behind ctx.html / ctx.list (spec 4.2). Pure ES5 inside a string. */
+/** cockpit-page/win — keyed DOM patch behind ctx.html / ctx.list. Pure ES5 inside a string. */
 
 /** The page-side shapes the ES5 code mirrors (types here are for the TS side only). */
 export type WinMorph = (slot: Element, html: string) => void;

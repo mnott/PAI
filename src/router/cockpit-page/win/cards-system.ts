@@ -1,4 +1,4 @@
-/** cockpit-page/win — B2 `system`: the system metrics, the power chart and the local-server cards (spec 7/B2).
+/** cockpit-page/win — `system`: the system metrics, the power chart and the local-server cards.
  *  Page-scope ES5 (runs after scriptCore/scriptCharts helpers exist at call time: fmt, esc, gb, gbm, metricSpark,
  *  trimEmpty, fmtAxis, padFor, labelStep, label) and needs `Win` + `WinT`. Feed `system` (/cockpit/system);
  *  the server cards also read the `data` feed (speed table) and the page's `lim`/`data` globals.

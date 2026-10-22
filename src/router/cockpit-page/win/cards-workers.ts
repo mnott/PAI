@@ -1,4 +1,4 @@
-/** cockpit-page/win — B5 `workers`: the queue section on the win runtime (spec 7/B5).
+/** cockpit-page/win — `workers`: the queue section on the win runtime.
  *  Page-scope ES5 (after scriptCore: esc/table in scope), needs `Win`, `WinT`, `WinA` and `loadQueue`. Feed `queue`
  *  (/cockpit/queue). Group `workers`: the `note` cards `workers.local` / `workers.wt` (local-model and worktrees lines) and one
  *  dynamic `table` card per block, added by data through Win.addCards: `workers.plans|panes|violations|tests|builds`,

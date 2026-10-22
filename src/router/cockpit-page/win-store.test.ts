@@ -57,7 +57,7 @@ const defaultsNoGroup = () => ({
 
 const saved = (obj: unknown) => JSON.stringify(obj);
 
-describe("win store (spec 6)", () => {
+describe("win store", () => {
   it("invalid JSON -> defaults", () => {
     const s = new MemStorage();
     s.setItem("pai.cockpit.win.v2", "{not json");

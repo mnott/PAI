@@ -1,4 +1,4 @@
-/** cockpit-page/win — B8 `models`: the Models section on the win runtime (spec 7/B8).
+/** cockpit-page/win — `models`: the Models section on the win runtime.
  *  Page-scope ES5 (after scriptCore + scriptModels: esc/gbm/gb/pct/shortModel/BLUR_CANCEL_MS in scope), needs `Win`, `WinT`,
  *  `WinA` ({runAction, winClick}) and `winHost()`. Feeds `models` (/cockpit/models) and `limits` (routing.endpoints).
  *  Group `models`: header action `local.off` (confirm), the `eplist` card `models.endpoints` (origin/host/health + enable

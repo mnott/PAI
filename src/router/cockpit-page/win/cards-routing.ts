@@ -1,4 +1,4 @@
-/** cockpit-page/win — B6 `routing`: the Routing section on the win runtime (spec 7/B6).
+/** cockpit-page/win — `routing`: the Routing section on the win runtime.
  *  Page-scope ES5 (after scriptCore: esc in scope), needs `Win`, `WinT`, `WinA` ({Select, runAction}) and
  *  `winHost()`. Feed `limits` (/cockpit/limits, payload.routing = {rows, flow, choices}). Group `routing`:
  *  the `rtflow` card `routing.flow` (the flow line), then one `routing-row` card `routing.<tier>` per tier,

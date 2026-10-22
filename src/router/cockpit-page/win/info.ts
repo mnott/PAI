@@ -1,4 +1,4 @@
-/** cockpit-page/win — info popover (spec 2.4): ⓘ anchor, popup on <body>, replaces the
+/** cockpit-page/win — info popover: ⓘ anchor, popup on <body>, replaces the
  *  .tip CSS tooltip so no card's overflow can clip it. Pure ES5 inside a string. */
 
 /** Info popover, testable with new Function. One popup element lives on document.body

@@ -1,4 +1,4 @@
-/** cockpit-page/win — pointer and keyboard drag wired to moveCard (spec 3.3, 5.3). Pure ES5 inside a string.
+/** cockpit-page/win — pointer and keyboard drag wired to moveCard. Pure ES5 inside a string.
  *  Needs, in the same script scope: WIN_DROP_JS (zoneAt, moveCard, neighbor, ids), WIN_CARD_JS (Win),
  *  WIN_ANCHOR_JS (anchorKeep; optional, falls back to a bare call). `edgeScroll(y)` is reused when the page
  *  defines it. No backticks inside the string: the tests extract it up to the closing one.

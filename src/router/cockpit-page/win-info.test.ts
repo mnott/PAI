@@ -1,5 +1,5 @@
 /**
- * A11 win/info.ts — the info popover (spec 2.4): hover/focus shows, Esc hides, and the
+ * A11 win/info.ts — the info popover: hover/focus shows, Esc hides, and the
  * popup is never clipped by a card with overflow:hidden (it lives on <body>).
  * Headless Chromium, skipped when none is installed.
  */
@@ -150,7 +150,7 @@ async function shoot(): Promise<(Snap | Clip)[]> {
 
 afterAll(() => { killChromes(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-describe.skipIf(!CHROME)("win info popover (spec 2.4), real CSS in Chromium", () => {
+describe.skipIf(!CHROME)("win info popover, real CSS in Chromium", () => {
   it("hover/focus show, Esc hides, click toggles, pointerout hides, popup on body and not clipped by overflow:hidden", async () => {
     const snaps = await shoot();
     const by = (why: string) => snaps.find((s) => s.why === why) as Snap | undefined;

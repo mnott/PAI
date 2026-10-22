@@ -1,11 +1,11 @@
-/** cockpit-page/win — split-tree types and normalize (spec 3.1). Pure ES5 inside a string. */
+/** cockpit-page/win — split-tree types and normalize. Pure ES5 inside a string. */
 
 /** The tree node shapes the page script mirrors (types here are for the TS side only). */
 export type WinLeaf = { k: "c"; id: string };
 export type WinSplit = { k: "s"; d: "r" | "c"; ch: WinNode[]; sz: number[] };
 export type WinNode = WinLeaf | WinSplit;
 
-/** Tree helpers, testable with new Function. Invariants after normalize (spec 3.1):
+/** Tree helpers, testable with new Function. Invariants after normalize:
  *  a Split has at least 2 children (a one-child split is replaced by the child);
  *  a Split never has a direct Split child of the same d (merged, weights multiplied);
  *  sz.length === ch.length; all weights > 0; weights of a split sum to 1.

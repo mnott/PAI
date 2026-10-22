@@ -1,4 +1,4 @@
-/** cockpit-page/win — B1 `kpis`: the `metric` card type and the "Totals in this window" group (spec 2.1, 7/B1).
+/** cockpit-page/win — `kpis`: the `metric` card type and the "Totals in this window" group.
  *  Page-scope ES5 (runs after scriptCore, so fmt/cls/ERROR_WARN/ERROR_BAD are in scope) and needs
  *  `Win` from WIN_CARD_JS. Feed `data` (/cockpit/data); the six cards are `kpis.requests|input|
  *  output|cache-read|cache-write|errors` in one row inside the group `kpis`. */

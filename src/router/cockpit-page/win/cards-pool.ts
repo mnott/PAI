@@ -1,4 +1,4 @@
-/** cockpit-page/win — B4 `pool`: the "Worker pool" group on the win runtime (spec 7/B4).
+/** cockpit-page/win — `pool`: the "Worker pool" group on the win runtime.
  *  Page-scope ES5 (after scriptCore: esc/fmt/pct/table in scope), needs `Win` and `WinT`. Feed `pool`
  *  (/cockpit/pool, PoolPanelData). Group `pool`: six `kv` cards pool|host|tasks|hit|spares|not-pooled
  *  over the `table` card `pool.slots`; with the pool off and its host down the group holds the single

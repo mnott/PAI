@@ -1,4 +1,4 @@
-/** cockpit-page/win — styled Select and Menu (spec 5.1). Pure ES5 inside a string. */
+/** cockpit-page/win — styled Select and Menu. Pure ES5 inside a string. */
 
 /** The page-side shapes the ES5 code mirrors (types here are for the TS side only). */
 export type WinSelectOption = { value: string; label: string; hint?: string; group?: string; disabled?: boolean };

@@ -1,4 +1,4 @@
-/** cockpit-page/win — B8b-client `settings`: the registry editor on the win runtime (spec 7/B8b).
+/** cockpit-page/win — `settings`: the registry editor on the win runtime.
  *  Page-scope ES5 (after scriptCore: esc in scope), needs `Win`, `WinT` and `WIN_HOST` ({fetch}). Group `settings`:
  *  the `editor` card `settings.registry-edit` (a monospace textarea holding the whole workers.yaml text from
  *  GET /cockpit/registry; header actions Validate, Save, Duplicate) and the `list` card `settings.registry-backups`

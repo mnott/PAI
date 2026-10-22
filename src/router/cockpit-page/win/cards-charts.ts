@@ -1,4 +1,4 @@
-/** cockpit-page/win — B9 `tokens` + `daily`: the two bar-chart cards (spec 7/B9, type `chart` of cards-system).
+/** cockpit-page/win — `tokens` + `daily`: the two bar-chart cards.
  *  Page-scope ES5 (needs the page's KINDS/mode/msel/DAILY_DAYS, label, tot, ringName, legendLine, colorOf,
  *  assignColors, stackedBarsSvg/twoToneSvg from script-charts, plus Win, WinT, WinA). Feed `data` (/cockpit/data).
  *  Cards: `tokens` (header actions: weighted/raw toggle with aria-pressed, a Select of models; slots svg, cap, legend)
