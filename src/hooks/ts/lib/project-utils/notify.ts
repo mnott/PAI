@@ -50,6 +50,7 @@ export async function sendNtfyNotification(message: string, retries = 2): Promis
     try {
       const response = await fetch(`https://ntfy.sh/${topic}`, {
         method: 'POST',
+        signal: AbortSignal.timeout(5000),
         body: message,
         headers: {
           'Title': 'Claude Code',

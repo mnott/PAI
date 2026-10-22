@@ -10,6 +10,11 @@ import { join, basename } from 'path';
 // ---------------------------------------------------------------------------
 
 /** Get or create the YYYY/MM subdirectory for the current month inside notesDir. */
+/** Local YYYY-MM-DD, consistent with the month directory. */
+function localDateString(now = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 function getMonthDir(notesDir: string): string {
   const now = new Date();
   const year = String(now.getFullYear());
@@ -94,7 +99,7 @@ export function getCurrentNotePath(notesDir: string): string | null {
  */
 export function createSessionNote(notesDir: string, description: string): string {
   const noteNumber = getNextNoteNumber(notesDir);
-  const date = new Date().toISOString().split('T')[0];
+  const date = localDateString();
   const monthDir = getMonthDir(notesDir);
   const filename = `${noteNumber} - ${date} - New Session.md`;
   const filepath = join(monthDir, filename);
@@ -137,7 +142,7 @@ export function appendCheckpoint(notePath: string, checkpoint: string): void {
       const noteFilename = basename(notePath);
       const numberMatch = noteFilename.match(/^(\d+)/);
       const noteNumber = numberMatch ? numberMatch[1] : '0000';
-      const date = new Date().toISOString().split('T')[0];
+      const date = localDateString();
       const content = `# Session ${noteNumber}: Recovered\n\n**Date:** ${date}\n**Status:** In Progress\n\n---\n\n## Work Done\n\n<!-- PAI will add completed work here during session -->\n\n---\n\n## Next Steps\n\n<!-- To be filled at session end -->\n\n---\n\n**Tags:** #Session\n`;
       writeFileSync(notePath, content);
       console.error(`Recreated session note: ${noteFilename}`);
@@ -325,10 +330,18 @@ export function renameSessionNote(notePath: string, meaningfulName: string): str
     .trim();
 
   const paddedNumber = noteNumber.padStart(4, '0');
-  const newFilename = `${paddedNumber} - ${date} - ${titleCaseName}.md`;
-  const newPath = join(dir, newFilename);
+  let newFilename = `${paddedNumber} - ${date} - ${titleCaseName}.md`;
+  let newPath = join(dir, newFilename);
 
   if (newFilename === oldFilename) return notePath;
+
+  // Never overwrite another note: pick a free name.
+  if (existsSync(newPath)) {
+    let n = 2;
+    while (existsSync(join(dir, `${paiNumberedBase(paddedNumber, date, titleCaseName)} (${n}).md`))) n++;
+    newFilename = `${paiNumberedBase(paddedNumber, date, titleCaseName)} (${n}).md`;
+    newPath = join(dir, newFilename);
+  }
 
   try {
     renameSync(notePath, newPath);
@@ -338,6 +351,10 @@ export function renameSessionNote(notePath: string, meaningfulName: string): str
     console.error(`Could not rename note: ${error}`);
     return notePath;
   }
+}
+
+function paiNumberedBase(num: string, date: string, name: string): string {
+  return `${num} - ${date} - ${name}`;
 }
 
 /** Update the session note's H1 title and rename the file. */
@@ -380,7 +397,7 @@ export function finalizeSessionNote(notePath: string, summary: string): string {
     const completionTime = new Date().toISOString();
     content = content.replace(
       '---\n\n## Work Done',
-      `**Completed:** ${completionTime}\n\n---\n\n## Work Done`
+      () => `**Completed:** ${completionTime}\n\n---\n\n## Work Done`
     );
   }
 
@@ -388,7 +405,7 @@ export function finalizeSessionNote(notePath: string, summary: string): string {
   if (nextStepsMatch) {
     content = content.replace(
       nextStepsMatch[0],
-      `## Next Steps\n\n${summary || 'Session completed.'}`
+      () => `## Next Steps\n\n${summary || 'Session completed.'}`
     );
   }
 

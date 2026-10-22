@@ -694,7 +694,7 @@ async function main() {
             let noteContent = readFileSync(newPath, 'utf-8');
             noteContent = noteContent.replace(
               /^(# Session \d+:)\s*.*$/m,
-              `$1 ${title}`
+              (_m, h1) => `${h1} ${title}`
             );
             writeFileSync(newPath, noteContent);
             console.error(`Updated note H1 to match rename`);

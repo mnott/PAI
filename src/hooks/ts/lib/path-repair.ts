@@ -339,7 +339,7 @@ function cdReason(command: string, cwd: string): string | null {
     if (existsSync(target)) continue;
     const fixed = repairValue(target, cwd, true, existsSync);
     if (!fixed) continue;
-    const next = command.replace(target, fixed);
+    const next = command.replace(target, () => fixed);
     return `Wrong path in cd: ${target}. You are already in your worktree ${cwd}; drop the cd. Corrected command: ${next}`;
   }
   return null;

@@ -74,9 +74,9 @@ async function main() {
 
     // Replace placeholders {{DA}}, {{DA_COLOR}}, {{ENGINEER_NAME}}
     coreContent = coreContent
-      .replace(/\{\{DA\}\}/g, daName)
-      .replace(/\{\{DA_COLOR\}\}/g, daColor)
-      .replace(/\{\{ENGINEER_NAME\}\}/g, engineerName);
+      .replace(/\{\{DA\}\}/g, () => daName)
+      .replace(/\{\{DA_COLOR\}\}/g, () => daColor)
+      .replace(/\{\{ENGINEER_NAME\}\}/g, () => engineerName);
 
     console.error(`Read ${coreContent.length} characters from ${coreSkillPath} (Personalized for ${engineerName} & ${daName})`);
 
