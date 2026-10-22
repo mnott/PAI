@@ -113,7 +113,7 @@ describe("buildHandoffBrief", () => {
     expect(brief).not.toContain("## Last steps");
   });
 
-  it("keeps commands when only Last steps must go", () => {
+  it("cuts Recent commands before Last steps", () => {
     const lines = baseTranscript();
     for (let i = 0; i < 10; i++) {
       lines.push(
@@ -124,13 +124,13 @@ describe("buildHandoffBrief", () => {
         })
       );
     }
-    // ~4.8 KB full; ~0.8 KB once "Last steps" is gone — so the cut stops
-    // after dropping steps only, and commands stay.
-    const brief = buildHandoffBrief(fixture(lines), { maxBytes: 1500 });
-    expect(Buffer.byteLength(brief, "utf8")).toBeLessThanOrEqual(1500);
-    expect(brief).toContain("[truncated to 1500 bytes]");
-    expect(brief).toContain("## Recent commands");
-    expect(brief).not.toContain("## Last steps");
+    const full = Buffer.byteLength(buildHandoffBrief(fixture(lines)), "utf8");
+    const max = full - 20;
+    const brief = buildHandoffBrief(fixture(lines), { maxBytes: max });
+    expect(Buffer.byteLength(brief, "utf8")).toBeLessThanOrEqual(max);
+    expect(brief).toContain(`[truncated to ${max} bytes]`);
+    expect(brief).not.toContain("## Recent commands");
+    expect(brief).toContain("## Last steps");
   });
 });
 

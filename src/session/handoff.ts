@@ -196,6 +196,8 @@ export function buildHandoffBrief(transcriptPath: string, opts: { maxBytes?: num
   );
 
   if (Buffer.byteLength(masked, "utf8") <= maxBytes) return masked;
+  const note = `\n\n[truncated to ${maxBytes} bytes]`;
+  const budget = maxBytes - Buffer.byteLength(note, "utf8");
 
   const render = (parts: Record<string, string>): string =>
     Object.entries(parts)
@@ -208,9 +210,7 @@ export function buildHandoffBrief(transcriptPath: string, opts: { maxBytes?: num
   for (const name of order) {
     delete kept[name];
     const text = render(kept);
-    if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-      return `${text}\n\n[truncated to ${maxBytes} bytes]`;
-    }
+    if (Buffer.byteLength(text, "utf8") <= budget) return text + note;
   }
   // Still too big: shorten "Where it stopped" to its first line, keeping its
   // heading — the successor needs to know the brief was cut, not just that
@@ -218,12 +218,10 @@ export function buildHandoffBrief(transcriptPath: string, opts: { maxBytes?: num
   const stopped = kept["Where it stopped"] ?? "";
   kept["Where it stopped"] = stopped.split("\n")[0].slice(0, 200);
   const text = render(kept);
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-    return `${text}\n\n[truncated to ${maxBytes} bytes]`;
-  }
+  if (Buffer.byteLength(text, "utf8") <= budget) return text + note;
   // Still too big: keep the head of what remains, so the brief is never empty.
-  const head = Buffer.from(text, "utf8").subarray(0, Math.max(0, maxBytes - 32)).toString("utf8");
-  return `${head}\n[truncated to ${maxBytes} bytes]`;
+  const head = Buffer.from(text, "utf8").subarray(0, Math.max(0, budget)).toString("utf8");
+  return head + note;
 }
 
 /** `yyyymmdd-hhmm` in local time, for the handoff file name. */
