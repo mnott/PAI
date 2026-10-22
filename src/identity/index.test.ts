@@ -118,3 +118,21 @@ describe("checkDeliveryReachability", () => {
     expect(checkDeliveryReachability("a@b.com", undefined).verdict).toBe("unknown");
   });
 });
+
+describe("multi-address recipient strings", () => {
+  const id = { selfEmails: ["me@self.com"] };
+  it("refuses a string carrying a foreign address after an own one", () => {
+    expect(maySendWithoutReview(["Me <me@self.com>, Evil <evil@x.com>"], id).allowed).toBe(false);
+    expect(maySendWithoutReview(["me@self.com; evil@x.com"], id).allowed).toBe(false);
+  });
+  it("allows several own addresses in one string", () => {
+    expect(maySendWithoutReview(["Me <me@self.com>, me@self.com"], id).allowed).toBe(true);
+  });
+  it("handles commas inside quoted display names", () => {
+    expect(maySendWithoutReview(['"Doe, Me" <me@self.com>'], id).allowed).toBe(true);
+    expect(maySendWithoutReview(['"Doe, Me" <me@self.com>, "A, B" <evil@x.com>'], id).allowed).toBe(false);
+  });
+  it("treats an unparseable entry as not allowed", () => {
+    expect(maySendWithoutReview(["me@self.com, garbage"], id).allowed).toBe(false);
+  });
+});

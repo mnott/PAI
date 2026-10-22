@@ -27,6 +27,36 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * Split a recipient field into its individual entries. Commas and semicolons
+ * separate entries unless inside a quoted display name or an angle-bracket
+ * address. Empty entries are dropped.
+ */
+export function splitAddresses(raw: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quoted = false;
+  let angled = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (quoted && c === "\\" && i + 1 < raw.length) {
+      cur += c + raw[++i];
+      continue;
+    }
+    if (c === '"') quoted = !quoted;
+    else if (!quoted && c === "<") angled = true;
+    else if (!quoted && c === ">") angled = false;
+    if (!quoted && !angled && (c === "," || c === ";")) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+/**
  * Reduce an address to a comparable form: trimmed, unwrapped, lowercased.
  *
  * Handles `Display Name <addr@example.com>` because recipient fields carry that
@@ -37,9 +67,12 @@
 export function normalizeEmail(raw: string | null | undefined): string | null {
   if (!raw) return null;
 
-  let value = raw.trim();
-  if (!value) return null;
+  // A string holding several addresses is not one address: ownership of the
+  // first says nothing about the rest.
+  const parts = splitAddresses(raw);
+  if (parts.length !== 1) return null;
 
+  let value = parts[0];
   const angled = value.match(/<([^>]*)>/);
   if (angled) value = angled[1].trim();
 
@@ -96,7 +129,9 @@ export function maySendWithoutReview(
   recipients: Array<string | null | undefined>,
   identity: IdentityLike | undefined
 ): SendDecision {
-  const listed = recipients.filter((r): r is string => Boolean(r && r.trim()));
+  const listed = recipients
+    .filter((r): r is string => Boolean(r && r.trim()))
+    .flatMap((r) => splitAddresses(r));
 
   if (listed.length === 0) {
     return { allowed: false, foreign: [], reason: "No recipients to check" };
