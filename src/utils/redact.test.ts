@@ -72,6 +72,31 @@ describe("redactSecrets", () => {
     ["token for 0123456789012345678901234567890123456789", "token for 0123456789012345678901234567890123456789"],
     ["token=0123456789012345678901234567890123456789", "token=[REDACTED]"],
     ["-p hunter2 db", "-p hunter2 db"],
+    // JSON: the key's closing quote sits before the separator; quotes survive
+    ['{"password": "hunter2"}', '{"password": "[REDACTED]"}'],
+    ['{"api_key":"abc123def"}', '{"api_key":"[REDACTED]"}'],
+    ['{"token": "abc"}', '{"token": "[REDACTED]"}'],
+    // leaks closed
+    ["curl -u admin:s3cret https://x", "curl -u admin:[REDACTED] https://x"],
+    ["mysql -p'hunter2' db", "mysql -p[REDACTED] db"],
+    ["mysqldump -phunter2 db", "mysqldump -p[REDACTED] db"],
+    [`key ${fake("sk", "_live_", "abcdefghijklmnopqrst")}`, "key [REDACTED]"],
+    [`${fake("sk", "_test_", "abcdefghijklmnopqrst")}`, "[REDACTED]"],
+    [`${fake("rk", "_live_", "abcdefghijklmnopqrst")}`, "[REDACTED]"],
+    [`${fake("np", "m_", "a".repeat(36))}`, "[REDACTED]"],
+    [`${fake("h", "f_", "a".repeat(30))}`, "[REDACTED]"],
+    ["//registry.npmjs.org/:_authToken=abc123", "//registry.npmjs.org/:_authToken=[REDACTED]"],
+    ["Cookie: sid=abc; theme=dark", "Cookie: sid=[REDACTED]; theme=[REDACTED]"],
+    [`${fakeAwsKey("AGPA", AKIA_REST)}`, "[REDACTED]"],
+    [`${fakeAwsKey("AIDA", AKIA_REST)}`, "[REDACTED]"],
+    [`${fakeAwsKey("AROA", AKIA_REST)}`, "[REDACTED]"],
+    // over-redaction stopped
+    ["token_count: 5", "token_count: 5"],
+    ["password_length: 12", "password_length: 12"],
+    ["the secret: is out", "the secret: is out"],
+    ["Authorization: Bearer x'", "Authorization: Bearer [REDACTED]'"],
+    ["mysql -p db", "mysql -p db"],
+    ["echo -phunter2", "echo -phunter2"],
   ];
   for (const [input, expected] of cases) {
     it(`redacts: ${input.slice(0, 40)}`, () => {
@@ -84,6 +109,12 @@ describe("redactSecrets", () => {
   it("redacts a PEM block between other lines", () => {
     const t = `ok\n${pemBegin("EC")}\nabc\ndef\n${pemEnd("EC")}\nok`;
     expect(redactSecrets(t)).toBe(`ok\n${PEM_OUT}[REDACTED]\nok`);
+  });
+  it("a 180 KB opaque line finishes fast", () => {
+    const line = "token " + "ab/".repeat(60000) + "_";
+    const t0 = performance.now();
+    redactSecrets(line);
+    expect(performance.now() - t0).toBeLessThan(100);
   });
   it("the rule table is exported with ids", () => {
     expect(REDACT_RULES.length).toBeGreaterThanOrEqual(7);

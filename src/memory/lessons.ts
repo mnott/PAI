@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
+import { redactSecrets } from "../utils/redact.js";
 
 export type LessonState = "candidate" | "approved" | "rejected" | "superseded";
 export type LessonKind = "workflow" | "correction" | "debugging" | "gotcha" | "convention";
@@ -134,13 +135,14 @@ export function getLesson(id: string): Lesson | null {
 /** Add a candidate lesson; the slug comes from the title, made unique with -2, -3, ... */
 export function addLesson(input: LessonInput): Lesson {
   if (!LESSON_KINDS.includes(input.kind)) throw new Error(`invalid kind "${input.kind}" (${LESSON_KINDS.join("|")})`);
-  const base = slugify(input.title);
+  const title = redactSecrets(input.title);
+  const base = slugify(title);
   let id = base;
   for (let n = 2; existsSync(lessonPath(id)); n++) id = `${base}-${n}`;
   const now = new Date().toISOString();
   const lesson: Lesson = {
     id,
-    title: input.title,
+    title,
     state: "candidate",
     kind: input.kind,
     applies_when: input.applies_when,
@@ -148,7 +150,7 @@ export function addLesson(input: LessonInput): Lesson {
     evidence: input.evidence ?? [],
     created: now,
     updated: now,
-    body: input.body ?? "",
+    body: redactSecrets(input.body ?? ""),
   };
   writeLesson(lesson);
   return lesson;
@@ -209,18 +211,9 @@ export function promoteLesson(id: string, opts: { projectDir: string; force?: bo
   return paths;
 }
 
-const CORRECTION = [
-  /^\s*no\b[,.!]/i,
-  /\bdon'?t\b/i,
-  /\bnever\b/i,
-  /\bstop\b/i,
-  /\bwrong\b/i,
-  /\bthat'?s not\b/i,
-  /\bnein\b/i,
-  /\bnicht\b/i,
-  /\bfalsch\b/i,
-  /\bnie\b/i,
-];
+/** A correction signal must sit in the first 30 chars of the message; later words are not corrections. */
+const CORRECTION = [/^\s*no\b[,.!]/i, /\bdon'?t\b/i, /\bnever\b/i, /\bwrong\b/i, /\bthat'?s not\b/i, /\bnein\b/i, /\bfalsch\b/i];
+const CORRECTION_WINDOW = 30;
 
 function userText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -246,11 +239,11 @@ export function proposeFromTranscript(transcriptPath: string): LessonInput[] {
     }
     if (ev.type !== "user" || ev.isMeta) continue;
     const text = userText(ev.message?.content).trim();
-    if (!text || text.startsWith("<") || !CORRECTION.some((re) => re.test(text))) continue;
-    const title = text.replace(/\s+/g, " ").slice(0, 80);
+    if (!text || text.startsWith("<") || !CORRECTION.some((re) => re.test(text.slice(0, CORRECTION_WINDOW)))) continue;
+    const title = redactSecrets(text.replace(/\s+/g, " ")).slice(0, 80);
     if (seen.has(title)) continue;
     seen.add(title);
-    out.push({ title, kind: "correction", applies_when: "", evidence: [sessionId], body: text.slice(0, 600) });
+    out.push({ title, kind: "correction", applies_when: "", evidence: [sessionId], body: redactSecrets(text).slice(0, 600) });
   }
   return out;
 }

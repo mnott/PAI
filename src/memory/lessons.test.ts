@@ -136,6 +136,15 @@ describe("promoteLesson", () => {
   });
 });
 
+describe("addLesson redaction", () => {
+  it("redacts title and body", () => {
+    const l = addLesson({ title: "use token=abc123 here", kind: "gotcha", applies_when: "", body: "password: hunter2" });
+    expect(l.title).toBe("use token=[REDACTED] here");
+    expect(l.body).toBe("password: [REDACTED]");
+    expect(getLesson(l.id)?.body).not.toContain("hunter2");
+  });
+});
+
 describe("proposeFromTranscript", () => {
   it("finds corrections and ignores normal messages", () => {
     const dir = join(home, "t");
@@ -152,5 +161,19 @@ describe("proposeFromTranscript", () => {
     const out = proposeFromTranscript(path);
     expect(out.map((o) => o.title)).toEqual(["No, don't use var here. Use const.", "Das ist falsch, nimm bitte die andere Datei"]);
     expect(out[0]).toMatchObject({ applies_when: "", evidence: ["sess-123"] });
+  });
+  it("needs the signal at the start and redacts secrets", () => {
+    const dir = join(home, "t2");
+    mkdirSync(dir);
+    const path = join(dir, "sess-9.jsonl");
+    const ev = (content: string) => JSON.stringify({ type: "user", message: { content } });
+    writeFileSync(path, [
+      ev("Please run the build and stop when it is green, never mind the lint warnings at all"),
+      ev("Das ist nicht schlimm, mach weiter und nie vergessen"),
+      ev("No, use password=hunter2 for the db"),
+    ].join("\n"));
+    const out = proposeFromTranscript(path);
+    expect(out.map((o) => o.title)).toEqual(["No, use password=[REDACTED] for the db"]);
+    expect(out[0].body).not.toContain("hunter2");
   });
 });
