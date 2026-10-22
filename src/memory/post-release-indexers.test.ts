@@ -59,18 +59,42 @@ function fakeVaultBackend() {
 describe("indexVault pruning", () => {
   it("removes chunks and vault rows for files deleted from the vault", async () => {
     const root = scratch();
-    write(join(root, "a.md"), "# A\n\nalpha\n");
-    write(join(root, "b.md"), "# B\n\nbeta\n");
+    for (let i = 0; i < 10; i++) write(join(root, `n${i}.md`), `# N${i}\n\nbody ${i}\n`);
     const f = fakeVaultBackend();
     await indexVault(f.backend, 9, root);
-    expect([...f.files.keys()].sort()).toEqual(["a.md", "b.md"]);
+    expect(f.files.size).toBe(10);
 
-    rmSync(join(root, "b.md"));
+    rmSync(join(root, "n9.md"));
     await indexVault(f.backend, 9, root);
-    expect(f.deleted).toEqual(["b.md"]);
-    expect([...f.files.keys()]).toEqual(["a.md"]);
-    expect(f.chunks.has("b.md")).toBe(false);
-    expect(f.chunks.has("a.md")).toBe(true);
+    expect(f.deleted).toEqual(["n9.md"]);
+    expect(f.files.size).toBe(9);
+    expect(f.chunks.has("n9.md")).toBe(false);
+    expect(f.chunks.has("n0.md")).toBe(true);
+  });
+
+  it("skips pruning and warns when 50% of files look stale", async () => {
+    const root = scratch();
+    for (let i = 0; i < 10; i++) write(join(root, `n${i}.md`), `# N${i}\n\nbody ${i}\n`);
+    const f = fakeVaultBackend();
+    await indexVault(f.backend, 9, root);
+    for (let i = 0; i < 5; i++) rmSync(join(root, `n${i}.md`));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await indexVault(f.backend, 9, root);
+    expect(f.deleted).toEqual([]);
+    expect(f.files.size).toBe(10);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("5 of 10");
+  });
+
+  it("prunes a mass delete when forcePrune is set", async () => {
+    const root = scratch();
+    for (let i = 0; i < 10; i++) write(join(root, `n${i}.md`), `# N${i}\n\nbody ${i}\n`);
+    const f = fakeVaultBackend();
+    await indexVault(f.backend, 9, root);
+    for (let i = 0; i < 5; i++) rmSync(join(root, `n${i}.md`));
+    await indexVault(f.backend, 9, root, { forcePrune: true });
+    expect(f.deleted.length).toBe(5);
+    expect(f.files.size).toBe(5);
   });
 
   it("does not prune when the vault is empty or the root is missing", async () => {

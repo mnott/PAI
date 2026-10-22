@@ -36,6 +36,11 @@ import type { VaultIndexResult } from "./types.js";
 /** Number of files to process before yielding to the event loop. */
 const VAULT_YIELD_EVERY = 1;
 
+/** Prune refuses a stale set above this share of indexed files... */
+const VAULT_PRUNE_MAX_RATIO = 0.2;
+/** ...or above this absolute count. */
+const VAULT_PRUNE_MAX_FILES = 500;
+
 /**
  * Index an entire Obsidian vault (or markdown knowledge base) using the
  * async StorageBackend interface.
@@ -61,11 +66,13 @@ const VAULT_YIELD_EVERY = 1;
  * @param backend         StorageBackend to write to.
  * @param vaultProjectId  Registry project ID for the vault "project".
  * @param vaultRoot       Absolute path to the vault root directory.
+ * @param opts.forcePrune Prune even when the stale set exceeds the safety limits.
  */
 export async function indexVault(
   backend: StorageBackend,
   vaultProjectId: number,
   vaultRoot: string,
+  opts: { forcePrune?: boolean } = {},
 ): Promise<VaultIndexResult> {
   const startTime = Date.now();
 
@@ -178,15 +185,26 @@ export async function indexVault(
 
   // Step 4b: Prune index data for files no longer in the vault. Skipped when
   // the scan found nothing or the root is missing (e.g. an unmounted vault
-  // must not wipe the index).
+  // must not wipe the index), and when the stale set is implausibly large
+  // (partial scan) unless opts.forcePrune is set.
   if (allFiles.length > 0 && existsSync(vaultRoot)) {
     await yieldToEventLoop();
     const livePaths = new Set(inodeGroups.map((g) => g.canonical.vaultRelPath));
     const dbPaths = await backend.getAllVaultFilePaths();
-    for (const stale of dbPaths) {
-      if (livePaths.has(stale)) continue;
-      await backend.deleteChunksForFile(vaultProjectId, stale);
-      await backend.deleteVaultFile(stale);
+    const stalePaths = dbPaths.filter((p) => !livePaths.has(p));
+    if (
+      !opts.forcePrune &&
+      (stalePaths.length > dbPaths.length * VAULT_PRUNE_MAX_RATIO ||
+        stalePaths.length > VAULT_PRUNE_MAX_FILES)
+    ) {
+      console.warn(
+        `[vault] prune skipped: ${stalePaths.length} of ${dbPaths.length} indexed files look stale (possible partial scan)`,
+      );
+    } else {
+      for (const stale of stalePaths) {
+        await backend.deleteChunksForFile(vaultProjectId, stale);
+        await backend.deleteVaultFile(stale);
+      }
     }
   }
 
