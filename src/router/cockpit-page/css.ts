@@ -219,6 +219,7 @@ main.win .card[data-depth]>.chandle,main.win .card.min>.chandle,html.locked .cha
 main.win .linst .b{align-self:flex-start;padding:1px 8px;font-size:11px}
 .wm{padding:6px 10px;min-width:0}.wm-v{display:inline;font-size:20px;font-weight:600}.wm-s{display:block;color:var(--dim);font-size:12px}
 .wm{position:relative;height:100%}.wm-s{margin-top:2px}.wm-u{color:var(--dim);margin-left:3px;font-size:12px}.wm-sp{position:absolute;right:8px;top:6px;width:40%;height:32px}
+main.win .wm-sp{top:auto;bottom:6px;left:0;right:0;width:auto;height:36px}main.win .wm-sp svg{width:100%;height:100%}
 .wt-svg{height:calc(100% - 62px);overflow:hidden}.wt-cap{height:16px;overflow:hidden;padding:0 10px}.wt-leg{height:46px;overflow:auto;padding:0 10px}
 .wt-leg{height:auto;overflow:visible}.wt-svg{height:auto}
 .wt-svg.wt-auto{overflow:visible}.wt-svg svg{display:block}
