@@ -69,3 +69,24 @@ describe("a genuine miss is still a genuine miss", () => {
     await expect(searchKeyword(pool, "!!!")).resolves.toEqual([]);
   });
 });
+
+describe("searchKeyword result shape", () => {
+  const rowsPool = (rows: unknown[]): Pool =>
+    ({ query: () => Promise.resolve({ rows }) }) as unknown as Pool;
+  const row = (rank: number) => ({
+    id: "c1", project_id: 1, path: "a.md", start_line: 1, end_line: 2,
+    snippet: "s", tier: "note", source: "project", updated_at: "1700000000000",
+    last_accessed_at: null, rank_score: rank,
+  });
+
+  it("returns chunkId and numeric updatedAt", async () => {
+    const [r] = await searchKeyword(rowsPool([row(0.5)]), "alpha");
+    expect(r.chunkId).toBe("c1");
+    expect(r.updatedAt).toBe(1700000000000);
+  });
+
+  it("honours minScore", async () => {
+    const res = await searchKeyword(rowsPool([row(0.1), row(0.9)]), "alpha", { minScore: 0.5 });
+    expect(res.map((r) => r.score)).toEqual([0.9]);
+  });
+});
