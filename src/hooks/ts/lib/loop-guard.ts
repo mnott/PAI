@@ -19,7 +19,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
@@ -168,6 +168,11 @@ export function actionKey(command: string): string | null {
   return null;
 }
 
+/** Untracked files up to this size are hashed by content; larger ones by size + mtime. */
+const FP_FULL_READ_BYTES = 256 * 1024;
+/** Content bytes read per fingerprint across all untracked files; past it files are hashed by size + mtime. */
+const FP_TOTAL_BYTES = 4 * 1024 * 1024;
+
 /**
  * Cheap fingerprint of the worktree CONTENT: the diff of tracked files against HEAD plus the content of untracked
  * files that are not ignored, not empty and not dot-files. A touch (mtime-only change), an empty file or a dot-file
@@ -188,11 +193,20 @@ export function worktreeFingerprint(cwd: string): string | null {
     }
     if (hasHead) h.update(git(["diff", "HEAD", "--no-color", "--no-ext-diff"]));
     const untracked = git(["ls-files", "--others", "--exclude-standard"]);
+    let budget = FP_TOTAL_BYTES;
     for (const p of untracked.split("\n")) {
       if (!p || p.startsWith(".") || p.includes("/.")) continue; // dot-files and nudges do not count
       try {
-        const content = readFileSync(join(root, p));
-        if (content.length) h.update(`${p}\0`).update(content); // an empty file is no change
+        const file = join(root, p);
+        const st = statSync(file);
+        if (!st.isFile() || !st.size) continue; // an empty file is no change
+        if (st.size > FP_FULL_READ_BYTES || st.size > budget) {
+          // too big to read on every call: size + mtime still change when the file does
+          h.update(`${p}\0${st.size}\0${st.mtimeMs}`);
+          continue;
+        }
+        budget -= st.size;
+        h.update(`${p}\0`).update(readFileSync(file));
       } catch {
         // unreadable path: skip it
       }
@@ -387,7 +401,7 @@ function resultsSimilar(a: string | null | undefined, b: string | null | undefin
   return inter / (x.size + y.size - inter) >= SIMILARITY;
 }
 
-const SECRET_LINE = /pass(?:word|wd)|secret|token|api[_-]?key|credential|authorization|bearer|private key|^\s*(?:export\s+)?[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASS\w*|CRED\w*|AUTH\w*)\s*=|\b(?:sk|ghp|gho|xox[bap])[-_][A-Za-z0-9_-]{16,}|\b[A-Za-z0-9+]{40,}={0,2}(?![\w/])/i;
+const SECRET_LINE = /pass(?:word|wd)|secret|token|api[_-]?key|credential|authorization|bearer|private key|^\s*(?:export\s+)?[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASS\w*|CRED\w*|AUTH\w*)\s*=|\b(?:sk|ghp|gho|xox[bap])[-_][A-Za-z0-9_-]{16,}|\b[A-Za-z0-9+]{40,}={0,2}(?![\w/])|\b[a-z][a-z0-9+.-]*:\/\/[^\s\/:@]+:[^\s\/@]+@|\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}/i;
 const MASKED_LINE = "[line masked: looks like a secret]";
 
 /** Result text with lines that look like secrets replaced by a marker. */

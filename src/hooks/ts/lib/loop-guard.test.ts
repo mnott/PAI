@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
-import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 
 /** Feeds calls in order; returns the index of each denied call. */
@@ -653,5 +653,51 @@ describe("loop guard: a denied runner re-run gets the end of its last output", (
     const r = run().reason as string;
     expect(r).not.toContain("abc123");
     expect(r).toContain("[line masked");
+  });
+});
+
+describe("maskSecrets", () => {
+  const probes = [
+    "DATABASE_URL=postgres://u:hunter2@db/x",
+    "see https://user:hunter2@example.com/repo.git",
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "found AKIAIOSFODNN7EXAMPLE in env",
+    "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "origin ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    "key sk-ant-api03-abcdefghijklmnopqrstuvwx",
+    "key sk-abcdefghijklmnopqrstuvwx",
+    "GITHUB_TOKEN=abc123",
+    "APP_SECRET=abc123",
+    "DB_PASSWORD=abc123",
+  ];
+  for (const line of probes) {
+    it(`masks: ${line.slice(0, 30)}`, () => {
+      const out = maskSecrets(`before\n${line}\nafter`);
+      expect(out).toBe("before\n[line masked: looks like a secret]\nafter");
+    });
+  }
+  it("keeps ordinary lines, including urls without credentials", () => {
+    const t = "see https://example.com/a:b@c\nssh://git@host/repo.git\nplain text";
+    expect(maskSecrets(t)).toBe(t);
+  });
+});
+
+describe("worktreeFingerprint on large untracked files", () => {
+  it("completes quickly and still changes when a large file changes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fp-big-"));
+    try {
+      spawnSync("git", ["-C", dir, "init", "-q"]);
+      const big = join(dir, "big.bin");
+      writeFileSync(big, Buffer.alloc(30 * 1024 * 1024, 1));
+      const t0 = Date.now();
+      const f0 = worktreeFingerprint(dir);
+      expect(Date.now() - t0).toBeLessThan(1500);
+      expect(f0).not.toBeNull();
+      expect(worktreeFingerprint(dir)).toBe(f0);
+      appendFileSync(big, "x");
+      expect(worktreeFingerprint(dir)).not.toBe(f0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
