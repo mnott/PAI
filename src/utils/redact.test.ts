@@ -90,6 +90,49 @@ describe("redactSecrets", () => {
     [`${fakeAwsKey("AGPA", AKIA_REST)}`, "[REDACTED]"],
     [`${fakeAwsKey("AIDA", AKIA_REST)}`, "[REDACTED]"],
     [`${fakeAwsKey("AROA", AKIA_REST)}`, "[REDACTED]"],
+    // review #4: camelCase and common key shapes
+    ["clientSecret: abcd1234", "clientSecret: [REDACTED]"],
+    ['accessToken: "abcd1234"', "accessToken: [REDACTED]"],
+    ['secretAccessKey: "abcd1234"', "secretAccessKey: [REDACTED]"],
+    ["apiKey = abcd1234", "apiKey = [REDACTED]"],
+    ["private_key = abcd1234", "private_key = [REDACTED]"],
+    ["pwd=x", "pwd=[REDACTED]"],
+    ["pass=x", "pass=[REDACTED]"],
+    ["key=x", "key=[REDACTED]"],
+    ["https://h/api?key=abc123", "https://h/api?key=[REDACTED]"],
+    ["https://h/api?sig=abc123", "https://h/api?sig=[REDACTED]"],
+    ["X-Amz-Signature=abc123", "X-Amz-Signature=[REDACTED]"],
+    ["AccountKey=abc123==", "AccountKey=[REDACTED]"],
+    ["tool --client-secret x", "tool --client-secret [REDACTED]"],
+    ["tool --access-token x", "tool --access-token [REDACTED]"],
+    ["tool --auth-token x", "tool --auth-token [REDACTED]"],
+    ["tool --secret-key x", "tool --secret-key [REDACTED]"],
+    ["tool --http-password x", "tool --http-password [REDACTED]"],
+    ["curl -uuser:pass https://x", "curl -uuser:[REDACTED] https://x"],
+    ["mysql -u root -p hunter2", "mysql -u root -p [REDACTED]"],
+    ["redis://:secretpw@host", "redis://:[REDACTED]@host"],
+    ["token=Bearer abc123", "token=[REDACTED]"],
+    ["got Bearer abc123def456 back", "got Bearer [REDACTED] back"],
+    // review #5: token prefixes
+    [`${fakeSlack("xs", SLACK_ID, BODY)}`, "[REDACTED]"],
+    [`${fake("xa", "pp-1-A0123456789-", SLACK_ID)}`, "[REDACTED]"],
+    [`${fake("ya", "29.", "a".repeat(30))}`, "[REDACTED]"],
+    [`${fake("S", "G.", "a".repeat(22), ".", "b".repeat(43))}`, "[REDACTED]"],
+    [`${fake("sh", "pat_", "a1".repeat(16))}`, "[REDACTED]"],
+    [`${fake("sh", "pss_", "a1".repeat(16))}`, "[REDACTED]"],
+    [`${fake("do", "p_v1_", "a1".repeat(32))}`, "[REDACTED]"],
+    [`${fake("py", "pi-", "A".repeat(30))}`, "[REDACTED]"],
+    [`${fake("-----BEGIN PGP ", "PRIVATE KEY", " BLOCK-----")}\nabc\n${fake("-----END PGP ", "PRIVATE KEY", " BLOCK-----")}`, `${PEM_OUT}[REDACTED]`],
+    // review #6: paths and code stay
+    ["src/components/authentication/PasswordInput/PasswordInputComponent.tsx", "src/components/authentication/PasswordInput/PasswordInputComponent.tsx"],
+    ["/Users/bob/Library/Application Support/Some Long Product Name/token/handling.ts", "/Users/bob/Library/Application Support/Some Long Product Name/token/handling.ts"],
+    ["const token = getToken();", "const token = getToken();"],
+    ["password: string;", "password: string;"],
+    ["secret: string", "secret: string"],
+    ["let apiKey = process.env.KEY", "let apiKey = process.env.KEY"],
+    ["password = input()", "password = input()"],
+    ["authorization: required", "authorization: required"],
+    ["token sha " + "0123456789abcdef".repeat(4), "token sha " + "0123456789abcdef".repeat(4)],
     // over-redaction stopped
     ["token_count: 5", "token_count: 5"],
     ["password_length: 12", "password_length: 12"],
@@ -115,6 +158,28 @@ describe("redactSecrets", () => {
     const t0 = performance.now();
     redactSecrets(line);
     expect(performance.now() - t0).toBeLessThan(100);
+  });
+  it("1 MB shapes finish under 50 ms", () => {
+    const MB = 1 << 20;
+    const shapes = [
+      "lorem ipsum dolor sit amet\n".repeat(40000),
+      "word ".repeat(210000),
+      "token " + "x".repeat(MB),
+      "Cookie: " + "a=b; ".repeat(210000),
+      "https://u:p@h/".repeat(75000),
+      "http://".repeat(150000),
+      "key=".repeat(260000),
+      "curl ".repeat(210000),
+      "curl -u ".repeat(130000),
+      "mysql -p ".repeat(115000),
+      "Bearer ".repeat(150000),
+      pemBegin() + "\n" + "A".repeat(MB),
+    ];
+    for (const t of shapes) {
+      const t0 = performance.now();
+      redactSecrets(t);
+      expect(performance.now() - t0).toBeLessThan(50);
+    }
   });
   it("the rule table is exported with ids", () => {
     expect(REDACT_RULES.length).toBeGreaterThanOrEqual(7);
