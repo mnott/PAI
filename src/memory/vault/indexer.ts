@@ -13,7 +13,7 @@
  *  - Computes health metrics per file: inbound/outbound link counts, dead links, orphans
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { basename } from "node:path";
 import type {
   StorageBackend,
@@ -176,6 +176,20 @@ export async function indexVault(
     result.chunksCreated += chunks.length;
   }
 
+  // Step 4b: Prune index data for files no longer in the vault. Skipped when
+  // the scan found nothing or the root is missing (e.g. an unmounted vault
+  // must not wipe the index).
+  if (allFiles.length > 0 && existsSync(vaultRoot)) {
+    await yieldToEventLoop();
+    const livePaths = new Set(inodeGroups.map((g) => g.canonical.vaultRelPath));
+    const dbPaths = await backend.getAllVaultFilePaths();
+    for (const stale of dbPaths) {
+      if (livePaths.has(stale)) continue;
+      await backend.deleteChunksForFile(vaultProjectId, stale);
+      await backend.deleteVaultFile(stale);
+    }
+  }
+
   // Step 5: Record aliases in vault_aliases
   await yieldToEventLoop();
 
@@ -255,9 +269,15 @@ export async function indexVault(
 
   // Replace all links for all sources in batches of 500
   const LINK_BATCH_SIZE = 500;
+  const linksBySource = new Map<string, VaultLinkRow[]>();
+  for (const r of linkRows) {
+    const list = linksBySource.get(r.sourcePath);
+    if (list) list.push(r);
+    else linksBySource.set(r.sourcePath, [r]);
+  }
   for (let i = 0; i < allSourcePaths.length; i += LINK_BATCH_SIZE) {
     const batchSources = allSourcePaths.slice(i, i + LINK_BATCH_SIZE);
-    const batchLinks = linkRows.filter((r) => batchSources.includes(r.sourcePath));
+    const batchLinks = batchSources.flatMap((src) => linksBySource.get(src) ?? []);
     await backend.replaceLinksForSources(batchSources, batchLinks);
     await yieldToEventLoop();
   }

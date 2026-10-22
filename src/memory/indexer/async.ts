@@ -34,6 +34,9 @@ import type { IndexResult } from "./types.js";
 
 export type { IndexResult };
 
+/** Path namespace for memory files from the claude project dir (avoids clashing with the project root's memory/). */
+export const CLAUDE_MEMORY_PREFIX = ".claude-memory/";
+
 // ---------------------------------------------------------------------------
 // Single-file indexing via StorageBackend
 // ---------------------------------------------------------------------------
@@ -49,8 +52,12 @@ export async function indexFileWithBackend(
   relativePath: string,
   source: string,
   tier: string,
+  pathPrefix = "",
 ): Promise<boolean> {
   const absPath = join(rootPath, relativePath);
+  // Path under which the file is stored; the prefix keeps files from other
+  // roots (claude project dir) from colliding with the project root's paths.
+  const dbPath = pathPrefix + relativePath;
 
   let content: string;
   let stat: ReturnType<typeof statSync>;
@@ -66,22 +73,22 @@ export async function indexFileWithBackend(
   const size = stat.size;
 
   // Change detection
-  const existingHash = await backend.getFileHash(projectId, relativePath);
+  const existingHash = await backend.getFileHash(projectId, dbPath);
   if (existingHash === hash) return false;
 
   // Delete old chunks
-  await backend.deleteChunksForFile(projectId, relativePath);
+  await backend.deleteChunksForFile(projectId, dbPath);
 
   // Chunk the content
   const rawChunks = chunkMarkdown(content);
   const updatedAt = Date.now();
 
   const chunks: ChunkRow[] = rawChunks.map((c, i) => ({
-    id: chunkId(projectId, relativePath, i, c.startLine, c.endLine),
+    id: chunkId(projectId, dbPath, i, c.startLine, c.endLine),
     projectId,
     source,
     tier,
-    path: relativePath,
+    path: dbPath,
     startLine: c.startLine,
     endLine: c.endLine,
     hash: c.hash,
@@ -92,7 +99,7 @@ export async function indexFileWithBackend(
 
   // Insert chunks + update file record
   await backend.insertChunks(chunks);
-  await backend.upsertFile({ projectId, path: relativePath, source, tier, hash, mtime, size });
+  await backend.upsertFile({ projectId, path: dbPath, source, tier, hash, mtime, size });
 
   return true;
 }
@@ -109,7 +116,7 @@ export async function indexProjectWithBackend(
 ): Promise<IndexResult> {
   const result: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
 
-  const filesToIndex: Array<{ absPath: string; rootBase: string; source: string; tier: string }> = [];
+  const filesToIndex: Array<{ absPath: string; rootBase: string; source: string; tier: string; pathPrefix?: string }> = [];
 
   const rootMemoryMd = join(rootPath, "MEMORY.md");
   if (existsSync(rootMemoryMd)) {
@@ -145,6 +152,7 @@ export async function indexProjectWithBackend(
         hash, text, updatedAt, embedding: null,
       };
       try {
+        if ((await backend.getChunkIds(projectId, syntheticPath)).length > 0) continue;
         await backend.insertChunks([titleChunk]);
       } catch {
         // Skip title chunks that cause backend errors
@@ -180,6 +188,7 @@ export async function indexProjectWithBackend(
           hash, text, updatedAt, embedding: null,
         };
         try {
+          if ((await backend.getChunkIds(projectId, syntheticPath)).length > 0) continue;
           await backend.insertChunks([titleChunk]);
         } catch {
           // Skip title chunks that cause backend errors
@@ -191,13 +200,13 @@ export async function indexProjectWithBackend(
       const claudeProjectDir = claudeNotesDir.slice(0, -"/Notes".length);
       const claudeMemoryMd = join(claudeProjectDir, "MEMORY.md");
       if (existsSync(claudeMemoryMd)) {
-        filesToIndex.push({ absPath: claudeMemoryMd, rootBase: claudeProjectDir, source: "memory", tier: "evergreen" });
+        filesToIndex.push({ absPath: claudeMemoryMd, rootBase: claudeProjectDir, source: "memory", tier: "evergreen", pathPrefix: CLAUDE_MEMORY_PREFIX });
       }
       const claudeMemoryDir = join(claudeProjectDir, "memory");
       for (const absPath of walkMdFiles(claudeMemoryDir)) {
         const relPath = relative(claudeProjectDir, absPath);
         const tier = detectTier(relPath);
-        filesToIndex.push({ absPath, rootBase: claudeProjectDir, source: "memory", tier });
+        filesToIndex.push({ absPath, rootBase: claudeProjectDir, source: "memory", tier, pathPrefix: CLAUDE_MEMORY_PREFIX });
       }
     }
   }
@@ -206,7 +215,7 @@ export async function indexProjectWithBackend(
 
   let filesSinceYield = 0;
 
-  for (const { absPath, rootBase, source, tier } of filesToIndex) {
+  for (const { absPath, rootBase, source, tier, pathPrefix = "" } of filesToIndex) {
     if (filesSinceYield >= INDEX_YIELD_EVERY) {
       await yieldToEventLoop();
       filesSinceYield = 0;
@@ -215,10 +224,10 @@ export async function indexProjectWithBackend(
 
     const relPath = relative(rootBase, absPath);
     try {
-      const changed = await indexFileWithBackend(backend, projectId, rootBase, relPath, source, tier);
+      const changed = await indexFileWithBackend(backend, projectId, rootBase, relPath, source, tier, pathPrefix);
 
       if (changed) {
-        const ids = await backend.getChunkIds(projectId, relPath);
+        const ids = await backend.getChunkIds(projectId, pathPrefix + relPath);
         result.filesProcessed++;
         result.chunksCreated += ids.length;
       } else {
@@ -232,8 +241,8 @@ export async function indexProjectWithBackend(
 
   // Prune stale paths
   const livePaths = new Set<string>();
-  for (const { absPath, rootBase } of filesToIndex) {
-    livePaths.add(relative(rootBase, absPath));
+  for (const { absPath, rootBase, pathPrefix = "" } of filesToIndex) {
+    livePaths.add(pathPrefix + relative(rootBase, absPath));
   }
 
   const dbChunkPaths = await backend.getDistinctChunkPaths(projectId);
