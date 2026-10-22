@@ -541,6 +541,7 @@ Moves old finished workers' worktrees into refs/pai-archive/ID. Before a worktre
 | `--all-finished` | flag | — | Any finished worker, regardless of age |
 | `--pool` | flag | — | Also remove leftover pool reserve worktrees (spare-*, slots/*) no worker owns and no process sits in (implied by --all-finished) |
 | `--foreign` | flag | — | Also archive merged, clean worktrees of this repo that PAI did not create (refs/pai-archive/BRANCH); unmerged ones are kept |
+| `--kill-orphans` | flag | — | End processes (pid + command listed) whose cwd sits inside a finished worker's worktree: SIGTERM, 3 s, SIGKILL |
 | `--dry-run` | flag | — | Print what would be archived and what each worktree carries, change nothing |
 
 ```sh
