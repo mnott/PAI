@@ -1,8 +1,23 @@
 # PAI Knowledge OS
 
-PAI is an operating layer for Claude Code. From the first day it gives every session a memory: notes written in the background, searchable across sessions, projects and vaults, all stored locally. `pai` starts or resumes a Claude Code session in the current project, and `pai pause` and `pai end` save your place.
+**One Claude Code chat is one model, one budget and no memory. PAI turns it into a team: it remembers, it routes every job to the right model, cloud or local, and it shows you all of it live.**
 
-It can also hand work to cheaper background Claude Code runs (workers) on other providers or a local model, with a router and a cockpit page that show what the models and your token budget are doing. You do not need this to start. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
+You burn your premium tokens on work a local model could do. You hit the weekly limit on a Tuesday. Every new session starts from zero. PAI fixes all three:
+
+- **Model routing, cloud and local.** One router sits in front of every model you have: Anthropic, other cloud providers, and the models running on your own machine. `/model` switches between them mid-session, and when one provider's budget runs out, the next one takes over.
+- **A hierarchy that spends tokens where they matter.** Three tiers: `t0` the session you talk to, `t1` the orchestrator that plans and reviews, `t2` the workers that implement. Workers go local first, because local tokens are free. Cloud comes first only where it earns its price: wide context and real reasoning. Every worker runs in its own visible pane and git worktree; you review the diff, PAI merges it.
+- **A live cockpit.** One page shows your token budget per provider, cache hits, every model and local server with start and stop buttons, running workers, routing per tier, and memory and embedding progress. Drag the cards into the layout you want.
+- **Memory underneath it all.** Every session writes its own notes in the background, searchable across sessions, projects and your notes vault, by keyword, meaning or both. Everything stays on your machine.
+
+### Local AI used to be hard. Now it is a button.
+
+I have spent a long time on local AI. Getting a strong model to run on my own machine was the easy part; making it actually useful was not. Which server, which quantization, which port, how to keep it alive, how to send it only the work it can do, and how to fall back to the cloud when it cannot. Every piece worked on its own and none of them worked together.
+
+PAI is what came out of that, and I am giving it to the community. A MacBook can already run a serious model: on mine, [Strata](https://github.com/Niko1221/Strata) serves [Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next) in its compact [Gyro-M](https://huggingface.co/agentionai/Qwen3.8-Flash-Next-Gyro-GGUF) quantization, and PAI turns that into a worker like any other. Start it from the cockpit, and PAI routes worker jobs to it automatically, shows its speed and cache live, and hands a job to the cloud only when it needs a wider context or deeper reasoning than the local model has. You stop thinking about local AI. It just takes its share of the work.
+
+`pai` starts or resumes a session in the current project. `pai pause` and `pai end` save your place. Memory works on its own; the router, workers and cockpit join when you want them. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
+
+**Install it in two lines inside Claude Code, then say "set up PAI".** [Jump to install](#install).
 
 ![Cockpit: system memory, load, temperature and power, local model server speed, and tokens per bucket and per day per model](docs/images/cockpit-01-system-tokens.jpg)
 
