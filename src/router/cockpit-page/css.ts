@@ -20,7 +20,7 @@ h1{font-size:15px;margin:0;font-weight:600}
 #newer,#newdef{margin-left:auto;color:var(--warn);font-size:12px;text-decoration:underline;cursor:pointer}#newer[hidden],#newdef[hidden]{display:none}#newer:hover,#newdef:hover{color:var(--acc)}#newer:not([hidden])+#stamp,#newdef:not([hidden])+#stamp,#newer:not([hidden])+#newdef{margin-left:0}#stamp{margin-left:auto;color:var(--dim)}#stamp.stale{color:var(--bad)}
 @media(max-width:600px){header{flex-wrap:nowrap;gap:8px;padding:8px 10px}h1{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}.tabs{flex:0 0 auto}.tabs button{padding:3px 8px}#stamp{font-size:0;white-space:nowrap;margin-left:auto}#stamp::after{content:attr(data-s);font-size:12px}#reset{flex:0 0 auto}header.asking #stamp{display:none}#theme{flex:0 0 auto}#lock{flex:0 0 auto}}
 @media(max-width:430px){h1 .hc{display:none}}
-@media(max-width:600px){#ver{display:none}}
+#ver .vf{display:inline}#ver .vc{display:none}@media(max-width:600px){#ver .vf{display:none}#ver .vc{display:inline}}@media(max-width:399px){#ver{display:none}}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 /* layout lock: the lock button is themed like #theme; locked hides every layout edit control */
 #lock{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:13px;line-height:1;border-radius:6px;display:inline-flex;align-items:center}#lock svg{width:14px;height:14px;display:block}#lock:hover,#lock[aria-pressed=true],html.locked #lock{color:var(--acc)}

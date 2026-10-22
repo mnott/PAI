@@ -121,3 +121,39 @@ describe.skipIf(!CHROME)("star sits left of the lock; the lock shows its state",
     expect(r.c0).not.toBe(r.c1);
   }, 30000);
 });
+
+const VERPROBE = `<script>setTimeout(function(){var h=document.querySelector("header"),t=[],v=document.getElementById("ver");[].forEach.call(h.children,function(c){if(c.offsetParent!==null)t.push(Math.round((c.getBoundingClientRect().top+c.getBoundingClientRect().bottom)/2))});
+document.body.setAttribute("data-r",JSON.stringify({spread:Math.max.apply(null,t)-Math.min.apply(null,t),ver:v.offsetParent!==null,txt:v.innerText}))},2000)</script>`;
+
+// headless Chromium cannot open a window narrower than 500 px, so the below-400 px rule is pinned in the served CSS
+it("the version is hidden only below 400 px and compact up to 600 px", async () => {
+  const sent = { body: "" };
+  handleCockpit({ url: "/cockpit", method: "GET" } as never, { setHeader: () => undefined, writeHead: () => undefined, end: (b: string) => void (sent.body = b) } as never, { get: async () => [] } as never, () => [], () => new Map(), undefined, () => []);
+  expect(sent.body).toContain("@media(max-width:399px){#ver{display:none}}");
+  expect(sent.body).toContain("@media(max-width:600px){#ver .vf{display:none}#ver .vc{display:inline}}");
+  expect(sent.body).not.toContain("@media(max-width:600px){#ver{display:none}}");
+});
+
+describe.skipIf(!CHROME)("header version", () => {
+  for (const [width, ver, txt] of [[540, true, /^v\d+\.\d+$/], [1100, true, /^v\d+\.\d+\.\d+/]] as const) {
+    it(`${width} px: one line, version ${ver ? "shown" : "hidden"}`, async () => {
+      pollBuild = "A";
+      const orig = server.listeners("request")[0] as (...a: unknown[]) => void;
+      server.removeAllListeners("request");
+      server.on("request", (req, res) => {
+        const w = res.end.bind(res);
+        res.end = ((b: string) => w(typeof b === "string" ? b.replace("</body>", VERPROBE + "</body>") : b)) as never;
+        orig(req, res);
+      });
+      const dom = await dumpDom(`${base}/page`, { width, height: 800, budgetMs: 6000 });
+      server.removeAllListeners("request");
+      server.on("request", orig);
+      const m = /data-r="([^"]*)"/.exec(dom);
+      if (!m) throw new Error("no probe result in dump");
+      const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+      expect(r.spread).toBeLessThanOrEqual(6);
+      expect(r.ver).toBe(ver);
+      if (ver) expect(r.txt).toMatch(txt as RegExp);
+    }, 40000);
+  }
+});
