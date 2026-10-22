@@ -31,11 +31,14 @@ interface Call { args: string[]; input?: string | { file: string } }
 
 function stub(overrides: (args: string[]) => { status: number; stderr?: string; stdout?: string } | undefined = () => undefined) {
   const calls: Call[] = [];
-  const run: PgRunner = (args, input) => {
+  const run: PgRunner = (args, input, output) => {
     calls.push({ args, input });
     const o = overrides(args);
     if (o) return { status: o.status, stdout: o.stdout ?? "", stderr: o.stderr ?? "" };
-    if (args[0] === "pg_dump") return { status: 0, stdout: GOOD, stderr: "" };
+    if (args[0] === "pg_dump") {
+      if (output) writeFileSync(output.file, GOOD);
+      return { status: 0, stdout: "", stderr: "" };
+    }
     return { status: 0, stdout: "", stderr: "" };
   };
   return { calls, run };
@@ -79,6 +82,33 @@ describe("restorePostgres", () => {
     const { calls, run } = stub((a) => (a[0] === "pg_dump" ? { status: 1, stderr: "connection refused" } : undefined));
     expect((await restorePostgres(join(d, "dump.sql"), d, T, run)).ok).toBe(false);
     expect(calls).toHaveLength(1);
+    expect(readdirSync(d).some((f) => f.startsWith("postgres-pai.pre-restore-"))).toBe(false);
+  });
+
+  it("refuses when the safety dump is incomplete, removing the partial file", async () => {
+    const d = tmpDir();
+    writeFileSync(join(d, "dump.sql"), GOOD);
+    const calls: string[] = [];
+    const run: PgRunner = (args, _in, output) => {
+      calls.push(args[0]!);
+      if (args[0] === "pg_dump") { writeFileSync(output!.file, "CREATE TABLE a();\nINSERT INTO"); return { status: 0, stdout: "", stderr: "" }; }
+      return { status: 0, stdout: "", stderr: "" };
+    };
+    const r = await restorePostgres(join(d, "dump.sql"), d, T, run);
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/incomplete.*--no-safety-dump/);
+    expect(calls).toEqual(["pg_dump"]);
+    expect(readdirSync(d).some((f) => f.startsWith("postgres-pai.pre-restore-"))).toBe(false);
+  });
+
+  it("--no-safety-dump skips the dump and restores", async () => {
+    const d = tmpDir();
+    writeFileSync(join(d, "dump.sql"), GOOD);
+    const { calls, run } = stub((a) => (a[0] === "pg_dump" ? { status: 1, stderr: "connection refused" } : undefined));
+    const r = await restorePostgres(join(d, "dump.sql"), d, T, run, undefined, { noSafetyDump: true });
+    expect(r.ok).toBe(true);
+    expect(r.safetyDump).toBeUndefined();
+    expect(sqlOf(calls).some((c) => c.startsWith("pg_dump"))).toBe(false);
   });
 
   it("restores into a new db and swaps by rename on success", async () => {

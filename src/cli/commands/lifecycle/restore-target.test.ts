@@ -54,9 +54,9 @@ describe("planPostgresRestore", () => {
 
 function runner(countFor: (table: string) => string) {
   const calls: string[][] = [];
-  const run: PgRunner = (args) => {
+  const run: PgRunner = (args, _in, output) => {
     calls.push(args);
-    if (args[0] === "pg_dump") return { status: 0, stdout: DUMP, stderr: "" };
+    if (args[0] === "pg_dump") { if (output) writeFileSync(output.file, DUMP); return { status: 0, stdout: "", stderr: "" }; }
     const q = args[args.indexOf("-tAc") + 1];
     if (q) return { status: 0, stdout: countFor(q.replace('SELECT count(*) FROM ', "").replace(/"/g, "")), stderr: "" };
     return { status: 0, stdout: "", stderr: "" };

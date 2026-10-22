@@ -20,6 +20,7 @@ import {
   openSync,
   closeSync,
   chmodSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
@@ -72,14 +73,14 @@ export function restoreConfigWithSafety(src: string, dest: string): string | nul
 
 export interface PgRunResult { status: number | null; stdout: string; stderr: string }
 /** Runs `psql`/`pg_dump`; args are the program and its arguments (connection options excluded). */
-export type PgRunner = (args: string[], input?: string | { file: string }) => PgRunResult;
+export type PgRunner = (args: string[], input?: string | { file: string }, output?: { file: string }) => PgRunResult;
 
 /**
  * Runner for a target: inside the PAI container when the target is the local PAI server,
  * otherwise the host's psql/pg_dump pointed at the server the connection string names.
  */
 export function makePgRunner(target: PgTarget): PgRunner {
-  return (args, input) => {
+  return (args, input, output) => {
     const inContainer = isContainerTarget(target);
     const [prog, ...rest] = args;
     const cmd = inContainer ? "docker" : prog!;
@@ -88,17 +89,20 @@ export function makePgRunner(target: PgTarget): PgRunner {
       : [...(target.host ? ["-h", target.host] : []), ...(target.port ? ["-p", String(target.port)] : []), ...rest];
     // A file input is handed to the child as its stdin fd: the kernel streams it, nothing is read into this process.
     const fd = typeof input === "object" ? openSync(input.file, "r") : undefined;
+    // A file output receives the child's stdout directly (0600): a multi-GB dump never becomes a JS string.
+    const outFd = output ? openSync(output.file, "w", 0o600) : undefined;
     try {
       const r = spawnSync(cmd, argv, {
         input: typeof input === "string" ? input : undefined,
         encoding: "utf8",
-        stdio: [fd ?? "pipe", "pipe", "pipe"],
+        stdio: [fd ?? "pipe", outFd ?? "pipe", "pipe"],
         maxBuffer: 1024 * 1024 * 1024,
         env: target.password !== undefined ? { ...process.env, PGPASSWORD: target.password } : process.env,
       });
       return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
     } finally {
       if (fd !== undefined) closeSync(fd);
+      if (outFd !== undefined) closeSync(outFd);
     }
   };
 }
@@ -116,6 +120,7 @@ export async function restorePostgres(
   target: PgTarget,
   run: PgRunner = makePgRunner(target),
   recordedCounts?: Record<string, number>,
+  opts: { noSafetyDump?: boolean } = {},
 ): Promise<PgRestoreResult> {
   const PG_DATABASE = target.database;
   const PG_USER = target.user;
@@ -137,17 +142,26 @@ export async function restorePostgres(
   const qUser = quoteIdent(PG_USER);
   const firstLine = (r: PgRunResult) => r.stderr.split("\n")[0] || "unknown error";
 
-  // Pre-restore dump of the live DB (must succeed and be complete, else abort).
-  const live = run(["pg_dump", "-U", PG_USER, PG_DATABASE]);
+  // Pre-restore dump of the live DB, written straight to a file. It must succeed and verify, else refuse
+  // (unless the caller opted out); a database that does not exist yet has nothing to save.
   let safetyDump: string | undefined;
-  if (live.status === 0 && validatePgDump(live.stdout) === null) {
-    safetyDump = join(safetyDir, `postgres-pai.pre-restore-${stampNow()}.sql`);
+  if (!opts.noSafetyDump) {
+    const path = join(safetyDir, `postgres-pai.pre-restore-${stampNow()}.sql`);
     mkdirSync(safetyDir, { recursive: true });
-    writeFileSync(safetyDump, live.stdout, { mode: 0o600 });
-  } else if (live.status === 0) {
-    return { ok: false, message: "pre-restore dump of live database is incomplete; live database untouched" };
-  } else if (!/does not exist/.test(live.stderr)) {
-    return { ok: false, message: `pre-restore dump failed: ${firstLine(live)}; live database untouched` };
+    const live = run(["pg_dump", "-U", PG_USER, PG_DATABASE], undefined, { file: path });
+    if (live.status === 0) {
+      const { invalid: safetyInvalid } = await scanDumpFile(path);
+      if (safetyInvalid) {
+        rmSync(path, { force: true });
+        return { ok: false, message: `pre-restore dump of live database is incomplete (${safetyInvalid}); live database untouched (use --no-safety-dump to skip it)` };
+      }
+      safetyDump = path;
+    } else {
+      rmSync(path, { force: true });
+      if (!/does not exist/.test(live.stderr)) {
+        return { ok: false, message: `pre-restore dump failed: ${firstLine(live)}; live database untouched (use --no-safety-dump to skip it)` };
+      }
+    }
   }
 
   const cleanup = () => run(["psql", "-U", PG_USER, "-d", "postgres", "-c", `DROP DATABASE IF EXISTS ${qNew};`]);
@@ -234,7 +248,7 @@ function backupContents(backupDir: string): string[] {
   }
 }
 
-export async function runRestore(backupPath: string | undefined, opts: { postgres: boolean; yes: boolean; dryRun?: boolean; into?: string }): Promise<void> {
+export async function runRestore(backupPath: string | undefined, opts: { postgres: boolean; yes: boolean; dryRun?: boolean; into?: string; noSafetyDump?: boolean }): Promise<void> {
 
   // ------------------------------------------------------------------
   // 1. Determine backup directory
@@ -376,7 +390,7 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
         });
       }
 
-      const pg = await restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE), plan.target, undefined, meta?.counts);
+      const pg = await restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE), plan.target, undefined, meta?.counts, { noSafetyDump: opts.noSafetyDump });
       if (pg.safetyDump) console.log(dim(`  Pre-restore dump of live database: ${pg.safetyDump}`));
       if (pg.oldDb) console.log(dim(`  Previous database kept as '${pg.oldDb}' (drop it when satisfied)`));
       for (const [t, c] of Object.entries(pg.counts ?? {})) {
