@@ -54,7 +54,7 @@ Everything PAI does: [docs/features.md](docs/features.md)
 
 ## How it fits together
 
-![PAI architecture: Claude Code sessions with PAI hooks and skills on top; PAI core (CLI, daemon, storage, notes, router on port 8790 with tiers t0, t1, t2 and the cockpit, workers) side by side with AIBroker (messaging hub, session control, inbound channels with prefixes); ingress from Todoist, GitHub issues, PAILot, WhatsApp and Telegram feeding AIBroker; model providers Anthropic, other cloud and local models behind the router; an operating system layer with iTerm2 and tmux for worker panes and session tabs, launchd or systemd services, and git worktrees](docs/images/architecture.svg)
+<img src="docs/images/architecture.svg" width="100%" alt="PAI architecture: Claude Code sessions with PAI hooks and skills on top; PAI core (CLI, daemon, storage, notes, router on port 8790 with tiers t0, t1, t2 and the cockpit, workers) side by side with AIBroker (messaging hub, session control, inbound channels with prefixes); ingress from Todoist, GitHub issues, PAILot, WhatsApp and Telegram feeding AIBroker; model providers Anthropic, other cloud and local models behind the router; an operating system layer with iTerm2 and tmux for worker panes and session tabs, launchd or systemd services, and git worktrees">
 
 *Source: [docs/images/architecture.drawio](docs/images/architecture.drawio), editable in draw.io.*
 
