@@ -183,7 +183,7 @@ describe("killTree session ownership", () => {
   it("another session is refused, nothing signalled", async () => {
     const dir = owned();
     const f = fakes(dir);
-    await expect(killTree(dir, "w1", { deps: f.deps, caller: { env: env("CaseLeaf"), force: false } })).rejects.toThrow(
+    await expect(killTree(dir, "w1", { deps: f.deps, caller: { env: env("MyApp"), force: false } })).rejects.toThrow(
       "worker w1 belongs to session PAI; refused (use --force from the operator's terminal or that session)"
     );
     expect(f.signalled).toEqual([]);
@@ -194,19 +194,19 @@ describe("killTree session ownership", () => {
     const f = fakes(dir);
     const forced: (boolean | undefined)[] = [];
     f.deps.request = (_d, _l, _i, fo) => void forced.push(fo);
-    await killTree(dir, "w1", { deps: { ...f.deps, notifyOwner: async () => undefined }, reason: "test", caller: { env: env("CaseLeaf"), force: true } });
+    await killTree(dir, "w1", { deps: { ...f.deps, notifyOwner: async () => undefined }, reason: "test", caller: { env: env("MyApp"), force: true } });
     expect(f.signalled).toEqual(["w1"]);
     expect(forced).toEqual([true]);
     const dir2 = owned();
     await expect(
-      killTree(dir2, "w1", { deps: fakes(dir2).deps, caller: { env: env("CaseLeaf", { PAI_WORKER: "1" }), force: true } })
+      killTree(dir2, "w1", { deps: fakes(dir2).deps, caller: { env: env("MyApp", { PAI_WORKER: "1" }), force: true } })
     ).rejects.toThrow("--force");
   });
 
   it("ownerless worker and internal callers are unaffected", async () => {
     const dir = tree();
     const f = fakes(dir);
-    await killTree(dir, "w1", { deps: f.deps, caller: { env: env("CaseLeaf"), force: false } });
+    await killTree(dir, "w1", { deps: f.deps, caller: { env: env("MyApp"), force: false } });
     expect(f.signalled.length).toBe(4);
     const dir2 = owned();
     const f2 = fakes(dir2);
@@ -221,7 +221,7 @@ describe("killTree records who stopped a worker and why", () => {
 
   function owned(): string {
     const dir = mkdtempSync(join(tmpdir(), "pai-kill-why-"));
-    mk(dir, "w1", 1, { label: "CaseLeaf", session: { id: "SESS-OWNER", name: "owner" } });
+    mk(dir, "w1", 1, { label: "MyApp", session: { id: "SESS-OWNER", name: "owner" } });
     return dir;
   }
   const other = { CLAUDE_CODE_SESSION_ID: "224db3e0" } as NodeJS.ProcessEnv;
@@ -239,7 +239,7 @@ describe("killTree records who stopped a worker and why", () => {
     const last = readEvents(dir, "w1").at(-1);
     expect(last).toMatchObject({ type: "worker-stopped", killed_by: "claude-session:224db3e0", forced: true, reason: "stuck in a loop" });
     expect(reqs[0]).toEqual([expect.anything(), expect.anything(), "w1", true, "claude-session:224db3e0", "stuck in a loop"]);
-    expect(sent).toEqual([["SESS-OWNER", "worker w1 (CaseLeaf) stopped by claude-session:224db3e0: stuck in a loop"]]);
+    expect(sent).toEqual([["SESS-OWNER", "worker w1 (MyApp) stopped by claude-session:224db3e0: stuck in a loop"]]);
   });
 
   it("--force on another session's worker without a reason is refused; the owner needs none", async () => {
@@ -263,7 +263,7 @@ describe("killTree records who stopped a worker and why", () => {
       const sent: string[] = [];
       await killTree(dir, "w1", { by, reason: `${by} fired`, deps: { ...f.deps, notifyOwner: async (_o, t) => void sent.push(t) } });
       expect(readEvents(dir, "w1").at(-1)).toMatchObject({ killed_by: by, forced: false, reason: `${by} fired` });
-      expect(sent).toEqual([`worker w1 (CaseLeaf) stopped by ${by}: ${by} fired`]);
+      expect(sent).toEqual([`worker w1 (MyApp) stopped by ${by}: ${by} fired`]);
     }
   });
 

@@ -61,8 +61,8 @@ const input = (over: Partial<InventoryInput> = {}): InventoryInput => ({
   embedding: { backend: "ollama-f16", ollamaUrl: "http://127.0.0.1:11434", inProcessModel: "snowflake" },
   runtimes: [{ name: "strata", kind: "strata", url: "http://127.0.0.1:8035" }],
   consumers: [
-    { name: "paperfull-chat", runtime: "ollama", model: "qwen3:8b", label: "Paperfull chat" },
-    { name: "paperfull-embed", runtime: "docker-model-runner", model: "multilingual-e5-base-gguf-f16", label: "Paperfull search" },
+    { name: "exampleco-chat", runtime: "ollama", model: "qwen3:8b", label: "ExampleCo chat" },
+    { name: "exampleco-embed", runtime: "docker-model-runner", model: "multilingual-e5-base-gguf-f16", label: "ExampleCo search" },
   ],
   ...over,
 });
@@ -117,10 +117,10 @@ describe("computeInventory", () => {
     expect(by["coder"]).toBeUndefined();
     expect(inv.runtimes.some((r) => r.users.some((u) => u === "worker:coder"))).toBe(false);
     expect(by["ollama"]!.models.find((m) => m.model === "arctic-embed-m-v1.5-f16")).toMatchObject({ loaded: true, memoryMb: 600, usedBy: ["pai-embedding"] });
-    expect(by["ollama"]!.models.find((m) => m.model === "qwen3:8b")).toMatchObject({ loaded: false, usedBy: ["paperfull-chat"], label: "Paperfull chat" });
+    expect(by["ollama"]!.models.find((m) => m.model === "qwen3:8b")).toMatchObject({ loaded: false, usedBy: ["exampleco-chat"], label: "ExampleCo chat" });
     const dmr = by["docker-model-runner"]!;
     expect(dmr.status).toBe("running");
-    expect(dmr.models.find((m) => m.loaded)!.usedBy).toEqual(["paperfull-embed"]);
+    expect(dmr.models.find((m) => m.loaded)!.usedBy).toEqual(["exampleco-embed"]);
   });
 
   it("carries the size on disk per installed model (ollama tags `size`, docker ls SIZE)", async () => {
@@ -217,7 +217,7 @@ describe("render and cache", () => {
     expect(text).toContain("runtime | status | model | label | kind | memory / on disk | used by | port");
     expect(text).toContain("strata | running | flash-next | - | coding | 20.5 GB (+87.9 GB file mapped) | worker:flashnext-iq3 | 8035");
     // an installed-only model shows its size on disk, not "-"; the consumer label is the purpose
-    expect(text).toContain("qwen3:8b (installed) | Paperfull chat | chat | 4.7 GB | paperfull-chat | 11434");
+    expect(text).toContain("qwen3:8b (installed) | ExampleCo chat | chat | 4.7 GB | exampleco-chat | 11434");
     expect(text).not.toContain("duplicates:");
   });
 

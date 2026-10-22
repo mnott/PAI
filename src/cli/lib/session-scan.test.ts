@@ -5,7 +5,7 @@
  * hook MOVES that file to <project>/sessions/<uuid>.jsonl when the session ends.
  * scanSessions walked only the top level, so a session vanished from the catalog
  * the moment it was cleanly stopped — and `pai <name>` resolves names through
- * this catalog. Observed 2026-08-04: `pai Northwind` reported zero sessions for
+ * this catalog. Observed 2026-08-04: `pai Sample` reported zero sessions for
  * a project holding three resumable transcripts, and fell through to a free-text
  * search of prompt history.
  *
@@ -33,7 +33,7 @@ vi.mock("../../storage/factory.js", () => ({
   getRegistryBackend: async () => ({ listProjects: async () => [] }),
 }));
 
-const PROJECT = "/Users/someone/dev/Northwind";
+const PROJECT = "/Users/someone/dev/Sample";
 const ENCODED = PROJECT.replace(/[^a-zA-Z0-9]/g, "-");
 
 const RUNNING = "11111111-1111-4111-8111-111111111111";
@@ -65,7 +65,7 @@ afterEach(() => {
 async function scan(filter: "named" | "all" | "resumable") {
   const { scanSessions } = await import("./session-scan.js");
   return (await scanSessions({ limit: 100, filter })).filter(
-    (s) => s.decodedPath.includes("Northwind") || s.encodedDir === ENCODED
+    (s) => s.decodedPath.includes("Sample") || s.encodedDir === ENCODED
   );
 }
 
@@ -98,11 +98,11 @@ describe("scanSessions finds sessions the stop hook has moved", () => {
   /**
    * The name is what `pai <name>` matches on. With no clc entry and no AI title
    * the project directory is the only thing left that a human would recognise,
-   * and it is the reason `pai Northwind` can find Northwind again.
+   * and it is the reason `pai Sample` can find Sample again.
    */
   it("names them after the project directory", async () => {
     for (const s of await scan("named")) {
-      expect(s.friendlyName).toBe("Northwind");
+      expect(s.friendlyName).toBe("Sample");
     }
   });
 
@@ -129,7 +129,7 @@ describe("a project whose sessions have all ended is still findable", () => {
     );
     const found = await scan("named");
     expect(found).toHaveLength(1);
-    expect(found[0].friendlyName).toBe("Northwind");
+    expect(found[0].friendlyName).toBe("Sample");
   });
 });
 

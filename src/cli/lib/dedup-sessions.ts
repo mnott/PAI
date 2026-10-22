@@ -134,13 +134,13 @@ export interface RegisteredProject {
  * the transcript it failed to open. So the tie-break reliably handed back the
  * artefact of a bug in preference to the work.
  *
- * Measured on Northwind, 2026-08-04:
+ * Measured on Sample, 2026-08-04:
  *
  *   b3462801  867 KB  32 lines  3 user  15:41:57   <- the actual work
  *   7fdbb9a8   82 KB  25 lines  2 user  15:41:59   <- empty, Ctrl-C'd, WON by 2s
  *   a9ecdc1c   82 KB  25 lines  2 user  15:49:40   <- a second failed resume
  *
- * `pai Northwind` therefore resolved to 7fdbb9a8 — 82 KB of hook context in
+ * `pai Sample` therefore resolved to 7fdbb9a8 — 82 KB of hook context in
  * `attachment` lines, with no assistant turn anywhere in it — while 867 KB of
  * real work sat one second older and unchosen.
  *
@@ -195,8 +195,8 @@ const within = (dir: string, root: string): boolean => {
  *
  * A session is a conversation that ran in a directory; its NAME is a label the
  * operator can change with /Name. Grouping by name alone put a session renamed
- * "PAI" whose cwd was CaseLeaf under the PAI row, so `pai PAI` resumed it in
- * CaseLeaf (reported 2026-10-21). When the name belongs to a registered project
+ * "PAI" whose cwd was MyApp under the PAI row, so `pai PAI` resumed it in
+ * MyApp (reported 2026-10-21). When the name belongs to a registered project
  * and the session's cwd is not inside that project, the session is grouped
  * under the project of its cwd instead (the longest registered root containing
  * it, else the directory's own name) and keeps its label in `sessionName`.

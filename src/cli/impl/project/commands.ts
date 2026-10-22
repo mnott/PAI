@@ -212,8 +212,8 @@ export function findMovedPath(registeredPath: string): { found?: string; ambiguo
 
   // Walk UP the registered path to find the deepest existing ancestor.
   // This is the best search root when a project has moved within the same tree.
-  // e.g. ~/Cloud/Ablage/2025/Project → ~/Cloud/Ablage/2026/Project
-  //      Deepest existing ancestor: ~/Cloud/Ablage (if 2025 is gone but Ablage exists)
+  // e.g. ~/Vault/Archive/2025/Project → ~/Vault/Archive/2026/Project
+  //      Deepest existing ancestor: ~/Vault/Archive (if 2025 is gone but Archive exists)
   function deepestExistingAncestor(p: string): string | null {
     let current = p;
     while (true) {

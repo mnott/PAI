@@ -34,8 +34,8 @@ describe("normalising a directory name", () => {
   });
 
   it("ignores case, spaces and punctuation", () => {
-    expect(norm("04 - Ablage")).toBe("04ablage");
-    expect(norm("04-Ablage")).toBe("04ablage");
+    expect(norm("04 - Archive")).toBe("04archive");
+    expect(norm("04-Archive")).toBe("04archive");
   });
 
   it("treats decomposed and precomposed Unicode as the same name", () => {
@@ -87,7 +87,7 @@ describe("an ancestor was renamed", () => {
 
 describe("an ordering prefix was added or removed", () => {
   /**
-   * The vault numbers directories to force sort order — `04 - Ablage`,
+   * The vault numbers directories to force sort order — `04 - Archive`,
    * `08 - Others`, `20 - Webseiten` — and gaining or losing that prefix is the
    * same kind of rename as gaining an emoji. norm() cannot see it because the
    * digits survive: "webseiten" against "20webseiten".

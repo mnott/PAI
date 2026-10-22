@@ -65,8 +65,8 @@ describe("build keys", () => {
   });
 
   it("derives a key from door + last argument; explicit key and env win", () => {
-    expect(deriveKey(["tools/build.sh", "test", "mac"], "/x/CaseLeaf")).toBe("/x/CaseLeaf:tools/build.sh:mac");
-    expect(deriveKey(["./tools/build.sh", "install", "mac"], "/x/CaseLeaf")).toBe("/x/CaseLeaf:tools/build.sh:mac");
+    expect(deriveKey(["tools/build.sh", "test", "mac"], "/x/MyApp")).toBe("/x/MyApp:tools/build.sh:mac");
+    expect(deriveKey(["./tools/build.sh", "install", "mac"], "/x/MyApp")).toBe("/x/MyApp:tools/build.sh:mac");
     expect(deriveKey(["xcodebuild", "-scheme", "App", "build"], "/x/P")).toBe("/x/P:xcodebuild:App");
     expect(deriveKey(["sleep", "1"], "/x/P")).toBeUndefined();
   });

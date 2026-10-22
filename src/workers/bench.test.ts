@@ -41,7 +41,7 @@ describe("aggregate", () => {
     expect(aggregate(rows)).toContain("| p | task | 1/2 | 6 | 6 |");
   });
 
-  it("aggregates the CaseLeaf sample rows", () => {
+  it("aggregates the MyApp sample rows", () => {
     const table = aggregate(parseRows(fixture));
     expect(table).toMatch(/\| anthropic \| task \| \d+\/\d+ \|/);
     expect(table).not.toContain("fix");

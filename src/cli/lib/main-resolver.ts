@@ -209,7 +209,7 @@ function launchSession(
   // A session is named for a human to recognise, so a UUID prefix is never an
   // acceptable answer. `friendlyName` is undefined for the sessions synthesized
   // from a prompt-history match, and picking one of those used to open a tab
-  // called "7fdbb9a8" — for a project plainly called Northwind, sitting right
+  // called "7fdbb9a8" — for a project plainly called Sample, sitting right
   // there in the path we already resolved. The directory is the better fallback
   // in every case, so shortId is now only reached for a path with no basename.
   const name = session.friendlyName ?? (basename(projectDir) || session.shortId);
@@ -345,7 +345,7 @@ async function doSwitch(
  * sessions have all ended matches by name perfectly well, but carries no
  * `diskSession`, and the old code simply ran off the end of both the exact and
  * the partial branch — past the picker, into a free-text search of prompt
- * history. So `pai Northwind` answered a request to open a project with a list
+ * history. So `pai Sample` answered a request to open a project with a list
  * of five old conversations that merely mentioned the word, while the project's
  * own directory was sitting in `entry.project` the whole time.
  *

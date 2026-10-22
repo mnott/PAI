@@ -2,7 +2,7 @@
  * Which session a name resolves to.
  *
  * `buildDeduped` decides what `pai <Name>` hands back, so a wrong answer here is
- * not a cosmetic listing bug — it is the owner typing `pai Northwind` and getting
+ * not a cosmetic listing bug — it is the owner typing `pai Sample` and getting
  * "No conversation found with session ID" while 867 KB of his work sits on disk
  * one second older than the empty file that beat it.
  *
@@ -19,8 +19,8 @@ import type { ScannedSession } from "./session-scan.js";
 function disk(over: Partial<ScannedSession> & { uuid: string }): ScannedSession {
   return {
     shortId: over.uuid.slice(0, 8),
-    encodedDir: "-Users-owner-Daten-Cloud-Development-apps-Northwind",
-    decodedPath: "/Users/owner/Cloud/Development/apps/Northwind",
+    encodedDir: "-Users-owner-Daten-Cloud-Development-apps-Sample",
+    decodedPath: "/Users/owner/Cloud/Development/apps/Sample",
     topLevelPath: "",
     topLevelSystemLines: 0,
     topLevelSize: 0,
@@ -31,12 +31,12 @@ function disk(over: Partial<ScannedSession> & { uuid: string }): ScannedSession 
     lastUserPrompt: "",
     msgCount: 0,
     mtime: 0,
-    friendlyName: "Northwind",
+    friendlyName: "Sample",
     ...over,
   };
 }
 
-// The measured Northwind collision, to the second.
+// The measured Sample collision, to the second.
 const REAL = disk({ uuid: "b3462801-2885-4f88-885d-c401629997cf", userLines: 3, msgCount: 32, mtime: Date.parse("2026-08-04T15:41:57Z") });
 const JUNK = disk({ uuid: "7fdbb9a8-5095-47fa-b3e7-490c25f3f98e", userLines: 2, msgCount: 25, mtime: Date.parse("2026-08-04T15:41:59Z") });
 const JUNK_LATER = disk({ uuid: "a9ecdc1c-428f-4094-b6a2-64b9ce51425c", userLines: 2, msgCount: 25, mtime: Date.parse("2026-08-04T15:49:40Z") });
@@ -102,18 +102,18 @@ describe("status priority is not overridden by transcript volume", () => {
 
 describe("a session is listed under the project of its cwd, not under its name", () => {
   const PAI = "/Users/owner/dev/ai/PAI";
-  const CASELEAF = "/Users/owner/dev/apps/Paperfull/apps/CaseLeaf";
+  const MYAPP = "/Users/owner/dev/apps/sample/app";
   const project = (slug: string, display_name: string, root_path: string) => ({
     slug, display_name, root_path, session_count: 5, last_active: Date.now(), status: "active",
   });
-  const projects = [project("pai", "PAI", PAI), project("caseleaf", "CaseLeaf", CASELEAF)];
+  const projects = [project("pai", "PAI", PAI), project("myapp", "MyApp", MYAPP)];
 
-  // Measured 2026-10-21: renamed back and forth between PAI and CaseLeaf, cwd CaseLeaf.
+  // Measured 2026-10-21: renamed back and forth between PAI and MyApp, cwd MyApp.
   const renamed = disk({
     uuid: "cdd93e8d-458c-4a63-a9cf-c24488cdd6f4",
     friendlyName: "PAI",
-    decodedPath: CASELEAF,
-    registryRootPath: CASELEAF,
+    decodedPath: MYAPP,
+    registryRootPath: MYAPP,
     userLines: 400,
     msgCount: 4000,
     mtime: Date.now(),
@@ -130,9 +130,9 @@ describe("a session is listed under the project of its cwd, not under its name",
   it("lists the renamed session under the cwd project and marks the name", () => {
     const out = buildDeduped([], [renamed], projects, true);
     const row = out.find((e) => e.diskSession?.uuid === renamed.uuid)!;
-    expect(row.name).toBe("CaseLeaf");
+    expect(row.name).toBe("MyApp");
     expect(row.sessionName).toBe("PAI");
-    expect(row.project).toBe(CASELEAF); // resume keeps the session's own cwd
+    expect(row.project).toBe(MYAPP); // resume keeps the session's own cwd
   });
 
   it("leaves a session whose name and cwd agree alone, including from a subdirectory", () => {

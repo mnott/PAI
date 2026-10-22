@@ -30,7 +30,7 @@ const GUARD_HOOKS = [
   "route-edits-to-worker",
   "security-validator",
   "ztk-auto.sh",
-  "caseleaf-warm-builds",
+  "myapp-warm-builds",
   "block-sleep-poll",
   "local-model-hint",
   "worker-guard",

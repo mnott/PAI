@@ -734,8 +734,8 @@ export async function scanSessions(
     // The stop hook MOVES a session's transcript from <project>/<uuid>.jsonl to
     // <project>/sessions/<uuid>.jsonl. Pass 1 walks the top level only, so a
     // session becomes invisible to this scan the moment it is cleanly stopped —
-    // and name resolution is built on this scan. That is why `pai Northwind`
-    // stopped finding Northwind: three resumable transcripts sat in sessions/
+    // and name resolution is built on this scan. That is why `pai Sample`
+    // stopped finding Sample: three resumable transcripts sat in sessions/
     // while the scan reported zero sessions for the project, so `pai <name>`
     // fell through to a prompt-history search over old messages.
     //

@@ -211,9 +211,9 @@ function transcriptOnDisk(
  *
  * So the check failed precisely for the sessions most worth resuming, and the
  * caller's fallback quietly started a fresh session in their place. Observed
- * 2026-08-04: `pai Northwind` reported `spawn error: spawnSync claude ETIMEDOUT`
+ * 2026-08-04: `pai Sample` reported `spawn error: spawnSync claude ETIMEDOUT`
  * for fb76a6c3 and started over, while
- * `~/.claude/projects/…-Northwind/sessions/fb76a6c3-….jsonl` sat on disk the
+ * `~/.claude/projects/…-Sample/sessions/fb76a6c3-….jsonl` sat on disk the
  * whole time.
  *
  * A transcript on disk is what resumable MEANS, and reading a directory entry is

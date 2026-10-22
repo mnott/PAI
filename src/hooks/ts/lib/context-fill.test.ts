@@ -603,7 +603,7 @@ describe("contextFillThresholds — trigger source", () => {
   // above the real boundary, so the handover would never fire.
   // ---------------------------------------------------------------------
 
-  it("CLAMPS a stale-HIGH measured value down to the configured one — the real CaseLeaf case", () => {
+  it("CLAMPS a stale-HIGH measured value down to the configured one — the real MyApp case", () => {
     // measured=998,267 (this project's real, but stale, most-recent trigger)
     // configured=784,000 (80% of a 1,000,000 window, platform formula)
     const t = contextFillThresholds(readingAt(1_000_000), {}, { measuredTrigger: 998_267 });

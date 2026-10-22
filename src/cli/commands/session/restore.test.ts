@@ -48,7 +48,7 @@ afterEach(() => {
 
 describe("finding what is actually unresumable", () => {
   it("reports a transcript that exists only under sessions/", () => {
-    const dir = project("-Users-x-Northwind");
+    const dir = project("-Users-x-Sample");
     writeFileSync(join(dir, "sessions", `${UUID}.jsonl`), "x".repeat(500));
 
     const found = findDisplaced(projects);

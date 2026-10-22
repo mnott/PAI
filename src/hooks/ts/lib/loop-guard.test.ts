@@ -106,7 +106,7 @@ describe("similarity of commands", () => {
     expect(feed(Array.from({ length: 6 }, () => bash("sleep 300")))).toEqual([4, 5]);
   });
   it("a sleep inside a longer command is not a wait (live miss: rm; door x2; sleep 5; cat)", () => {
-    const c = "rm -f /tmp/cl-build/mac-1.seen; CASELEAF_TREES=/tmp/t2 CASELEAF_BUILD_STUB=8 sh /tmp/cl-stub3/tools/build.sh mac 2>/dev/null; echo A-rc=$?; sleep 5; echo ---A---; cat /tmp/cl-build/mac-1.log";
+    const c = "rm -f /tmp/cl-build/mac-1.seen; MYAPP_TREES=/tmp/t2 MYAPP_BUILD_STUB=8 sh /tmp/cl-stub3/tools/build.sh mac 2>/dev/null; echo A-rc=$?; sleep 5; echo ---A---; cat /tmp/cl-build/mac-1.log";
     const out = "A-rc=0\n---A---\nBUILD FAILED 0s (the job ended without a result; see /tmp/cl-build/mac-1.full.log)";
     const denied = feed(Array.from({ length: 12 }, () => bash(c)), () => out);
     expect(denied[0]).toBeLessThanOrEqual(4);

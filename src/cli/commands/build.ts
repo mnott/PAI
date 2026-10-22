@@ -71,7 +71,7 @@ const runCmd: CommandDef = {
   options: [
     { name: "full", type: "boolean", summary: "Full build (PAI_BUILD_MODE=full): releases only, or when asked" },
     { name: "label", type: "string", value: "TEXT", summary: "Name shown in the queue (default: the command)" },
-    { name: "key", type: "string", value: "NAME", summary: "Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. caseleaf-mac" },
+    { name: "key", type: "string", value: "NAME", summary: "Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. myapp-mac" },
     { name: "kind", type: "string", value: "build|test", summary: "Slot pool: build (default) or test for simulator/device test runs" },
   ],
   passthrough: true,

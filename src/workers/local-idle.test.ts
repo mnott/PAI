@@ -13,8 +13,8 @@ const prov = (over: Partial<LocalProviderSample> = {}): LocalProviderSample => (
   cap: 4,
   queued: 0,
   workers: [
-    { id: "w1", activity: "build", iterm: "T1", name: "caseleaf" },
-    { id: "w2", activity: "test", iterm: "T1", name: "caseleaf" },
+    { id: "w1", activity: "build", iterm: "T1", name: "myapp" },
+    { id: "w2", activity: "test", iterm: "T1", name: "myapp" },
   ],
   ...over,
 });
@@ -42,7 +42,7 @@ describe("local idle watcher", () => {
     const { nudges } = run(5, 0, [prov()]);
     expect(nudges).toHaveLength(1);
     expect(nudges[0].free).toBe(2);
-    expect(nudges[0].targets).toEqual([{ iterm: "T1", name: "caseleaf", ids: ["w1", "w2"] }]);
+    expect(nudges[0].targets).toEqual([{ iterm: "T1", name: "myapp", ids: ["w1", "w2"] }]);
   });
 
   it("no nudge before the idle minutes elapse", () => {
@@ -90,7 +90,7 @@ describe("local idle watcher", () => {
   });
 
   it("a muted session is not told", () => {
-    const { nudges } = run(3, 0, [prov()], new Set(["caseleaf"]));
+    const { nudges } = run(3, 0, [prov()], new Set(["myapp"]));
     expect(nudges[0].targets).toEqual([]);
   });
 
@@ -141,40 +141,40 @@ describe("local idle watcher", () => {
 });
 
 describe("owner resolution and delivery", () => {
-  const caseLeaf = {
+  const myApp = {
     id: "20261020-020000-111",
-    cwd: "/Users/someone/Daten/Cloud/Development/CaseLeaf",
+    cwd: "/Users/someone/Daten/Cloud/Development/MyApp",
     term: "w8t0p0:0A1A0BFE-1111-4222-8333-444455556666",
     provider: "gyro-m",
     state: "running",
     pid: process.pid,
     started: new Date().toISOString(),
     last: "",
-    session: { name: "CaseLeaf" },
+    session: { name: "MyApp" },
     spawnerSession: "c0ffee00-spawner",
   };
   const workers = { providers: { "gyro-m": { enabled: true, baseUrl: "http://127.0.0.1:8010/v1", maxConcurrent: 4 } }, localIdle: defaultWorkersConfig().localIdle } as unknown as WorkersConfig;
 
   it("ownerOf strips the ITERM_SESSION_ID prefix and keeps name and spawner", () => {
-    expect(ownerOf(caseLeaf as never)).toEqual({ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "CaseLeaf", claudeSession: "c0ffee00-spawner" });
+    expect(ownerOf(myApp as never)).toEqual({ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "MyApp", claudeSession: "c0ffee00-spawner" });
     expect(ownerOf({ term: "" } as never)).toEqual({ iterm: undefined, name: undefined, claudeSession: undefined });
   });
 
   it("the tick sends to the bare uuid taken from a real status file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pai-li-"));
-    writeFileSync(join(dir, `${caseLeaf.id}.status`), JSON.stringify(caseLeaf));
+    writeFileSync(join(dir, `${myApp.id}.status`), JSON.stringify(myApp));
     const calls: Array<{ iterm?: string; name?: string }> = [];
     const msg = { toSession: async (o: { iterm?: string; name?: string }) => (calls.push(o), true), toPailot: async () => true };
     const sample = await takeSample(dir, workers, 0, async () => 0, null);
     const st = { current: { idleSince: 0, lastNudge: {} } as LocalIdleState };
     await localIdleTick(dir, workers, msg, { sample: async () => ({ ...sample, at: 3 * MIN, providers: sample.providers.map((p) => ({ ...p, workers: p.workers.map((w) => ({ ...w, activity: "build" as const })) })) }), now: () => 3 * MIN }, st);
-    expect(calls).toEqual([{ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "CaseLeaf", claudeSession: "c0ffee00-spawner" }]);
+    expect(calls).toEqual([{ iterm: "0A1A0BFE-1111-4222-8333-444455556666", name: "MyApp", claudeSession: "c0ffee00-spawner" }]);
   });
 
   it("a failed delivery is logged as LOCAL-IDLE-UNDELIVERED with the reason", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pai-li-"));
     const msg = { toSession: async () => false, lastError: "no such session", toPailot: async () => true };
-    const p = prov({ workers: [{ id: "w1", activity: "build", iterm: "U1", name: "CaseLeaf" }] });
+    const p = prov({ workers: [{ id: "w1", activity: "build", iterm: "U1", name: "MyApp" }] });
     await localIdleTick(dir, workers, msg, { sample: async () => at(3 * MIN, 0, [p]), now: () => 3 * MIN }, { current: { idleSince: 0, lastNudge: {} } });
     const led = readFileSync(join(dir, "ledger.log"), "utf8");
     expect(led).toContain("LOCAL-IDLE-UNDELIVERED");

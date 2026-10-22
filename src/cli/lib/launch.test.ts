@@ -7,7 +7,7 @@
  * lib/launch.ts, and two verbatim copies in commands/main-resolver.ts and
  * commands/session/goto.ts did not get it. `pai <Name>` and `pai resume <name>`
  * both go through those copies, so from the user's side nothing was fixed at
- * all: `pai Northwind` still reported `spawn error: spawnSync claude ETIMEDOUT`
+ * all: `pai Sample` still reported `spawn error: spawnSync claude ETIMEDOUT`
  * and started over on top of a transcript that was sitting on disk.
  *
  * Hence the last test in this file. The behavioural tests below only protect

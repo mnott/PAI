@@ -949,7 +949,7 @@ describe("a do-nothing session cannot take the handover slot", () => {
       "",
       "### What was being asked",
       "",
-      "- [Session:Northwind] Request: please open a Todoist project for Northwind",
+      "- [Session:Sample] Request: please open a Todoist project for Sample",
       "",
       "### Working tree",
       "",
@@ -982,7 +982,7 @@ describe("a do-nothing session cannot take the handover slot", () => {
     });
     expect(r.action).toBe("preserved");
     const after = readTodo();
-    expect(after).toContain("Todoist project for Northwind");
+    expect(after).toContain("Todoist project for Sample");
     expect(after).not.toContain("No Work Performed");
   });
 

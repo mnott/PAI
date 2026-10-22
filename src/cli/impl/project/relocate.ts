@@ -54,7 +54,7 @@ function isHidden(name: string): boolean {
 /**
  * Drop a leading ordering prefix: `20 - Webseiten` -> `Webseiten`.
  *
- * This vault numbers directories to force sort order — `04 - Ablage`,
+ * This vault numbers directories to force sort order — `04 - Archive`,
  * `08 - Others`, `01 - Base Setup`, `20 - Webseiten` — and adding or removing that
  * prefix is a rename of exactly the same kind as adding an emoji. `norm()` alone
  * cannot see it, because the digits survive normalisation: "webseiten" against

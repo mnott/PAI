@@ -75,7 +75,7 @@ const DENY: [string, ReturnType<typeof bash>, WorkerGuardContext, string][] = [
   ["tilde settings.json sed -i", bash("sed -i s/a/b/ ~/.claude/settings.json"), wtCtx(), "temp-dir copies"],
   ["cp onto pai yaml", bash("cp /tmp/x.yaml ~/.claude/pai/config.yaml"), wtCtx(), "temp-dir copies"],
   ["mv pai json", bash("mv /tmp/x ~/.claude/pai/config.json"), wtCtx(), "temp-dir copies"],
-  ["pkill -f real command", bash(`pkill -f "uvicorn paperfull_server.main:app --port 8490"`), wtCtx(), "by PID"],
+  ["pkill -f real command", bash(`pkill -f "uvicorn exampleco_server.main:app --port 8490"`), wtCtx(), "by PID"],
   ["pkill after &&", bash("cd x && pkill node"), wtCtx(), "by PID"],
   ["sudo killall", bash("sudo killall node"), wtCtx(), "by PID"],
   ["kill $(pgrep)", bash("kill $(pgrep -f uvicorn)"), wtCtx(), "by PID"],

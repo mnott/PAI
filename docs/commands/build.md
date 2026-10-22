@@ -29,7 +29,7 @@ Waits for a free build slot (builds.slots, default 1; FIFO across every session 
 |---|---|---|---|
 | `--full` | flag | — | Full build (PAI_BUILD_MODE=full): releases only, or when asked |
 | `--label TEXT` | string | — | Name shown in the queue (default: the command) |
-| `--key NAME` | string | — | Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. caseleaf-mac |
+| `--key NAME` | string | — | Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. myapp-mac |
 | `--kind build|test` | string | — | Slot pool: build (default) or test for simulator/device test runs |
 
 ```sh
@@ -54,7 +54,7 @@ A door script (registered in .pai/builds.yaml) wraps its real command in this: `
 |---|---|---|---|
 | `--full` | flag | — | Full build (PAI_BUILD_MODE=full): releases only, or when asked |
 | `--label TEXT` | string | — | Name shown in the queue (default: the command) |
-| `--key NAME` | string | — | Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. caseleaf-mac |
+| `--key NAME` | string | — | Build key (or PAI_BUILD_KEY): same-key jobs run one at a time, e.g. myapp-mac |
 | `--kind build|test` | string | — | Slot pool: build (default) or test for simulator/device test runs |
 
 ```sh

@@ -56,9 +56,9 @@ export function slugFromPath(projectPath: string): string {
  *
  * Examples:
  *   "/Users/foo/my-project"        →  "-Users-foo-my-project"
- *   "/Users/foo/04 - Ablage"       →  "-Users-foo-04---Ablage"
+ *   "/Users/foo/04 - Archive"       →  "-Users-foo-04---Archive"
  *   "/Users/foo/.ssh"              →  "-Users-foo--ssh"
- *   "/Users/foo/Client-System.de"     →  "-Users-foo-Client-System-de"
+ *   "/Users/foo/Example-System.de"     →  "-Users-foo-Example-System-de"
  *
  * NOTE: For `project add`, prefer {@link findExistingEncodedDir} to look up
  * whether Claude Code has already created a directory for this path — that
@@ -144,7 +144,7 @@ function encIndex(entries: DirEntries): Map<string, { name: string; enc: string 
  *
  *   "-Users-foo-09---Personal"  →  "/Users/foo/09 - Personal"
  *   "-Users-foo-87---Archive"  →  "/Users/foo/87 - Archive"
- *   "-Users-foo-Client-System-de"    →  "/Users/foo/Client-System.de"
+ *   "-Users-foo-Example-System-de"    →  "/Users/foo/Example-System.de"
  *
  * Returns `null` if the path cannot be resolved against the filesystem.
  *

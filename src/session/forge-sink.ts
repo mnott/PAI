@@ -6,7 +6,7 @@
  *     sink: forge            # todo (default) | forge
  *     forge:
  *       anchor: 283          # issue number of the anchor
- *       marker: CASELEAF-HANDOVER-ANCHOR-V1   # must occur in the anchor body
+ *       marker: MYAPP-HANDOVER-ANCHOR-V1   # must occur in the anchor body
  *       repo: OWNER/NAME     # optional; default from `git remote get-url origin`
  *
  * Anchor format: the anchor body carries the line `handover: #<n>`, naming the

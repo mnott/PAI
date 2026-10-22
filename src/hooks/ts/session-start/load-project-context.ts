@@ -266,7 +266,7 @@ async function main() {
   // in its own archived handovers as `claude --resume <uuid>`, so the instruction
   // we ship in every checkpoint could not work.
   //
-  // It also completes the incident of that morning: `pai Northwind` failed to
+  // It also completes the incident of that morning: `pai Sample` failed to
   // resume b3462801 because of a probe bug, started a fresh session instead, and
   // THIS hook then moved b3462801 — 867 KB of real work — out of reach. The
   // failed resume destroyed what it had failed to open.
