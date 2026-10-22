@@ -3,7 +3,8 @@ id: rm-trailing-tilde
 severity: block
 quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*[^\s;&|]+\s+~\/?(?:\s|["']|$)/m
+flags: m
+match: /{{CMD}}rm(?=\s)(?:\s+[^\s;&|]+){1,16}?\s+["']?~\/*{{ARGEND}}/
 reason: rm with a trailing ~/ argument deletes the home directory
 tests:
   match:

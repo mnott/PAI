@@ -1,15 +1,27 @@
-# Writing NOPASSWD into sudoers grants passwordless root.
+# Writing NOPASSWD into sudoers grants passwordless root. Four write shapes,
+# each at command position and each bounded ({0,300}), in either order of the
+# NOPASSWD text and the sudoers path: echo/printf into the file, tee onto it
+# (here-string or heredoc body after), cat > it with a heredoc body, sed -i on it.
+# grep, cat and visudo -c only read, so they are not in the list.
 id: sudoers-nopasswd
 severity: block
 quoted: true
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?(?:echo|printf)\b[^;&]*?NOPASSWD(?![\w-])[^;&]*?(?:>>?\s*|\btee\b[^;&]*\s)\/etc\/sudo(?:ers|\.d\/)/
+flags: m
+match: /{{CMD}}(?:echo|printf)\b[^;&]{0,300}?NOPASSWD(?![\w-])[^;&]{0,300}?(?:>>?\s*|\btee\s+(?:-\w+\s+)*)\/etc\/sudo(?:ers|\.d\/)|{{CMD}}(?:tee\s+(?:-\w+\s+)*|cat\b[^;&|]{0,200}?>>?\s*)\/etc\/sudo(?:ers|\.d\/)[^;&]{0,300}?NOPASSWD(?![\w-])|{{CMD}}sed\b[^;&|\n]{0,100}?\s-\w*i[^;&|\n]{0,300}?NOPASSWD(?![\w-])[^;&|\n]{0,300}?\/etc\/sudo(?:ers|\.d\/)/
 reason: a command writes a NOPASSWD entry into sudoers (passwordless root)
 tests:
   match:
     - "echo 'user ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers"
     - "echo 'user ALL=(ALL) NOPASSWD: ALL' > /etc/sudo.d/99-user"
     - "echo 'user ALL=(ALL) NOPASSWD: ALL' | tee -a /etc/sudoers"
+    - "sudo sh -c \"echo 'user ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers\""
+    - "sudo tee -a /etc/sudoers <<< 'user ALL=(ALL) NOPASSWD: ALL'"
+    - "cat <<EOF | sudo tee /etc/sudoers.d/x\nuser ALL=(ALL) NOPASSWD: ALL\nEOF"
+    - "sed -i 's/ALL/NOPASSWD: ALL/' /etc/sudoers"
+    - "cat > /etc/sudoers.d/x <<EOF\nuser ALL=(ALL) NOPASSWD: ALL\nEOF"
   no_match:
     - git commit -m "echo NOPASSWD >> /etc/sudoers"
     - grep NOPASSWD /etc/sudoers
+    - cat /etc/sudoers | grep NOPASSWD
+    - visudo -c -f /etc/sudoers
     - "echo 'user ALL=(ALL) ALL' >> /etc/sudoers"

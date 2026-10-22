@@ -1,13 +1,27 @@
-# chmod 000 (or longer zero run) strips every permission.
+# chmod to an empty mode locks out / ~ . .. or a whole tree. A single file
+# (a lock-down of one key file) is legitimate and stays allowed.
 id: chmod-zero
 severity: block
 quoted: true
 category: dangerous_file_ops
-match: /\bchmod\s+(-R\s+)?0{3,}/
-reason: chmod with an all-zero mode removes every permission from the files
+flags: m
+match: /{{CMD}}chmod(?:\s+-[^\s;&|]+){0,4}?(?:\s+(?:-\w*R\w*|--recursive)(?:\s+-[^\s;&|]+){0,4}\s+(?:0+|[ugoa]*-rwx)(?=[\s;&|)"'`]|$)|\s+(?:0+|[ugoa]*-rwx)(?:\s+[^\s;&|]+){0,8}?\s+["']?(?:\/+\*?|~\/*\*?|\$\{?HOME\}?\/*\*?|\.\.?\/*\*?){{ARGEND}})/
+reason: chmod with an empty mode removes every permission from / ~ . .. or a whole tree
 tests:
   match:
     - bash -c "chmod -R 000 /"
     - chmod -R 000 ./data
+    - chmod -R 0 /
+    - chmod -R 00 /
+    - chmod -R a-rwx /
+    - chmod -R u-rwx ~
+    - chmod 000 .
+    - chmod 0000 ~
+    - chmod 000 $HOME
+    - sudo chmod 000 /
   no_match:
     - chmod 644 file.txt
+    - chmod 000 secret.key
+    - chmod 0000 f
+    - chmod 0755 f
+    - chmod -R 755 /

