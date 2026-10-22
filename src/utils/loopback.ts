@@ -14,11 +14,7 @@ export function isLoopbackHostname(h: string): boolean {
 
 /** True when the URL's host is loopback; false for anything unparsable. */
 export function isLoopbackUrl(url: string): boolean {
-  try {
-    return isLoopbackHostname(new URL(url).hostname);
-  } catch {
-    return false;
-  }
+  return URL.canParse(url) && isLoopbackHostname(new URL(url).hostname);
 }
 
 /** http://127.0.0.1:<port><path> */

@@ -88,3 +88,18 @@ describe("cockpit routing selectors", () => {
     expect(selectorChoices(workers, disabled).map((c) => c.entry)).not.toContain("tag:fast");
   });
 });
+
+describe("endpointRows with an unparsable baseUrl", () => {
+  it("falls back to the raw value without throwing a URL error", () => {
+    const workers = { providers: { muse: { baseUrl: "", characteristics: { tags: [] } } } } as unknown as Parameters<typeof endpointRows>[0];
+    const real = globalThis.URL;
+    let thrown = 0;
+    globalThis.URL = new Proxy(real, { construct(t, a: [string, string?]) { try { return new t(...a); } catch (e) { thrown++; throw e; } } });
+    try {
+      expect(endpointRows(workers, [], () => true)[0]!.host).toBe("");
+    } finally {
+      globalThis.URL = real;
+    }
+    expect(thrown).toBe(0);
+  });
+});

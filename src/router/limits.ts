@@ -29,7 +29,7 @@ import { serves } from "../workers/served-models.js";
 import { isLocalCandidate, tierProviderNames } from "../workers/local-provider.js";
 import type { UsageRow } from "./usage.js";
 import { writeRate, percentile } from "./speed.js";
-import { isLoopbackHostname } from "../utils/loopback.js";
+import { isLoopbackUrl } from "../utils/loopback.js";
 
 export interface LimitWindow {
   name: string;
@@ -695,11 +695,7 @@ export function decodeTokPerSec(rows: UsageRow[], provider: string, now: number)
 }
 
 function isLocalUrl(u: string): boolean {
-  try {
-    return isLoopbackHostname(new URL(u).hostname);
-  } catch {
-    return false;
-  }
+  return isLoopbackUrl(u);
 }
 
 /** A kept prefix-cache reading older than this is treated as unknown. */

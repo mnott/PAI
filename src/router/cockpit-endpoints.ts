@@ -25,11 +25,7 @@ export interface EndpointRow {
 }
 
 const hostOf = (url: string): string => {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
+  return URL.canParse(url) ? new URL(url).host : url;
 };
 
 /** Managed instances first, then every provider that declares characteristics (disabled ones too, so they can be switched back on). */

@@ -652,11 +652,7 @@ export function sameOriginAction(req: http.IncomingMessage): boolean {
   if (typeof sfs === "string" && sfs !== "same-origin" && sfs !== "none") return false;
   const origin = req.headers.origin;
   if (typeof origin !== "string" || !origin) return true;
-  try {
-    return new URL(origin).host === (req.headers.host ?? "");
-  } catch {
-    return false;
-  }
+  return URL.canParse(origin) && new URL(origin).host === (req.headers.host ?? "");
 }
 
 /** Memory section sources (daemon status, run marker); tests install fakes. */
