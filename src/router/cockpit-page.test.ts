@@ -578,6 +578,28 @@ describe("generated model colours", () => {
   });
 });
 
+describe("donut centre label fits the ring's hole", () => {
+  it("the label's font-size is capped by the hole: font-size * label.length * 0.62 <= inner diameter", () => {
+    const src = COCKPIT_HTML.match(/function donut\([\s\S]*?\n\}\n/)![0];
+    const donut = new Function("hitCls", "pct", `var HIT_WARN=0.8,HIT_BAD=0.5;\n${src}\nreturn donut;`)(
+      (r: number) => (r < 0.5 ? "bad" : r < 0.8 ? "warn" : "ok"),
+      (x: number) => (x * 100).toFixed(1) + "%"
+    ) as (ratio: number, sz?: number, tone?: string) => string;
+    // the page's own layout values, read from the baked markup — not re-spelled
+    const r = Number(COCKPIT_HTML.match(/function donut\([\s\S]*?var r=(\d+),/)![1]);
+    const stroke = Number(COCKPIT_HTML.match(/function donut\([\s\S]*?stroke-width="(\d+)"/)![1]);
+    const inner = 2 * r - stroke;
+    for (const ratio of [0.93, 1.0]) {
+      const svg = donut(ratio);
+      const fs = Number(svg.match(/font-size:([\d.]+)px/)![1]);
+      const label = svg.match(/<text[^>]*>([^<]*)<\/text>/)![1];
+      expect(label).toBe((ratio * 100).toFixed(1) + "%");
+      // fs = min(cap, inner/(len*0.62)): re-multiplying can land 1 ULP above inner
+      expect(fs * label.length * 0.62).toBeLessThanOrEqual(inner + 1e-9);
+    }
+  });
+});
+
 describe("local server tiles say why they are empty", () => {
   it("end-to-end tile carries the window reason and the 24 h counts; prefix cache says the server reports none", () => {
     expect(COCKPIT_HTML).toContain("no requests in the last hour (24 h: ");

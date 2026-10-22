@@ -7,7 +7,8 @@ import type { Num, Str } from "./types.js";
 export const scriptTables = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`function donut(ratio,sz,tone){
  var r=${n(L.donutRadiusPx)},c=2*Math.PI*r,d=c*ratio;sz=sz||${n(L.donutSizePx)};
  var cx=${n(L.donutViewBoxPx)}/2;
- return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+${n(L.donutViewBoxPx)}+' '+${n(L.donutViewBoxPx)}+'"><circle cx="'+cx+'" cy="'+cx+'" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="${n(L.donutStrokePx)}"/><circle cx="'+cx+'" cy="'+cx+'" r="'+r+'" fill="none" stroke="'+(tone?"var(--"+tone+")":hitCls(ratio)==="bad"?"var(--bad)":hitCls(ratio)==="warn"?"var(--warn)":"var(--ok)")+'" stroke-width="${n(L.donutStrokePx)}" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 '+cx+' '+cx+')"/><text x="'+cx+'" y="'+(sz>120?79:76)+'" text-anchor="middle" style="font-size:'+(sz>120?28:22)+'px;font-weight:600;fill:var(--fg)">'+pct(ratio)+'</text></svg>';
+ var lab=pct(ratio),fs=sz>120?28:22,inner=2*r-${n(L.donutStrokePx)};fs=Math.min(fs,inner/(lab.length*0.62));
+ return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+${n(L.donutViewBoxPx)}+' '+${n(L.donutViewBoxPx)}+'"><circle cx="'+cx+'" cy="'+cx+'" r="'+r+'" fill="none" stroke="var(--line)" stroke-width="${n(L.donutStrokePx)}"/><circle cx="'+cx+'" cy="'+cx+'" r="'+r+'" fill="none" stroke="'+(tone?"var(--"+tone+")":hitCls(ratio)==="bad"?"var(--bad)":hitCls(ratio)==="warn"?"var(--warn)":"var(--ok)")+'" stroke-width="${n(L.donutStrokePx)}" stroke-dasharray="'+d.toFixed(1)+' '+c.toFixed(1)+'" transform="rotate(-90 '+cx+' '+cx+')"/><text x="'+cx+'" y="'+(sz>120?79:76)+'" text-anchor="middle" style="font-size:'+fs+'px;font-weight:600;fill:var(--fg)">'+lab+'</text></svg>';
 }
 function emptyRing(sz){
  sz=sz||${n(L.donutSizePx)};
