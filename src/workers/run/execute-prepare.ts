@@ -160,30 +160,6 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // session map supplies the claude session they were spawned by instead
   const spawnerSession = resolveSpawnerSession(logDir, cwd, process.env);
 
-  // One worktree per run whose tools can write (Edit/Write/Bash or no
-  // restriction), in a git cwd; --worktree/--no-worktree override. A git refusal
-  // fails the start for a writing run (hard gate); read-only runs go in place.
-  // Skipped for --print-cmd: it is a dry-run and must not touch git.
-  let worktree: WorktreeInfo | null = adopted;
-  if (
-    !adopted &&
-    headless &&
-    !a.printCmd &&
-    worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })
-  ) {
-    try {
-      worktree = addWorktree(logDir, wid, cwd);
-      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
-    } catch (e) {
-      const why = (e as Error).message;
-      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
-        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
-        return 1;
-      }
-      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
-      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
-    }
-  }
   // project preamble (.pai/worker.md): headless only, oversize refuses the run
   let preamble: Preamble | null = null;
   if (headless) {
@@ -261,6 +237,31 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     if (picked.tools.length) toolsFlag = ["--tools", picked.tools.join(",")];
   }
 
+  // Created last among the steps that can refuse or throw (preamble size, unknown --mcp names), so those exits strand no worktree.
+  // One worktree per run whose tools can write (Edit/Write/Bash or no
+  // restriction), in a git cwd; --worktree/--no-worktree override. A git refusal
+  // fails the start for a writing run (hard gate); read-only runs go in place.
+  // Skipped for --print-cmd: it is a dry-run and must not touch git.
+  let worktree: WorktreeInfo | null = adopted;
+  if (
+    !adopted &&
+    headless &&
+    !a.printCmd &&
+    worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })
+  ) {
+    try {
+      worktree = addWorktree(logDir, wid, cwd);
+      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
+    } catch (e) {
+      const why = (e as Error).message;
+      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
+        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
+        return 1;
+      }
+      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
+      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
+    }
+  }
   // In stdin mode the prompt moves to the first user message on stdin, so it
   // must come off the command line (bare -p stays: stream-json needs --print).
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;
