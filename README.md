@@ -32,6 +32,12 @@ You burn your premium tokens on work a local model could do. You hit the weekly 
 
 Everything PAI does: [docs/features.md](docs/features.md)
 
+**How it fits together**
+
+![PAI architecture: Claude Code with PAI hooks and skills; the PAI core with CLI, daemon, storage and notes; the router on port 8790 with tiers t0, t1 and t2 and the cockpit; workers in their own panes and worktrees; model providers Anthropic, other cloud and local models; AIBroker for messaging; the Todoist task bus](docs/images/architecture.svg)
+
+*Source: [docs/images/architecture.drawio](docs/images/architecture.drawio), editable in draw.io.*
+
 `pai` starts or resumes a session in the current project. `pai pause` and `pai end` save your place. Memory works on its own; the router, workers and cockpit join when you want them. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
 
 **Install it in one sentence: tell Claude Code "Clone https://github.com/mnott/PAI and set it up for me".** [Jump to install](#install).
