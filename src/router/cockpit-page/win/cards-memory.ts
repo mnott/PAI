@@ -3,7 +3,7 @@
  *  needs `Win`, `WinT` and `WinA` (the action runner, win/actions.ts). Feed `memory` (/cockpit/memory).
  *  Group `memory`: `kv` card `memory.kv` (pill + reason; the running pill sits in its status slot as ctx.status("run", ...)),
  *  `metric` cards `memory.index|backend|passes|daemon` and one dynamic `metric` card `memory.job:<id>` per job (Win.addCards).
- *  embed / index now / stop are header actions of the group card, disabled with their reason in the title; results go
+ *  index now / embed backlog / stop are header actions of the group card, disabled with their reason in the title; results go
  *  through WinA.runAction into the group card's status slot. The `kv`/`metric` types are the generic ones of win/types.ts;
  *  the cards here carry memKvView / memMetricView. */
 
@@ -12,8 +12,8 @@ var WMEM=null,WMEM_JOBS={};
 function memBusy(m){return!!(m&&(m.run||m.starting))}
 /** The group's three actions: [id, label, verb, enabled(m) -> true | reason]. */
 var MEM_ACTS=[
- ["embed","embed backlog","memory.embed",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":m.counts&&m.counts.backlog===0?"nothing to embed (backlog 0)":true}],
  ["index","index now","memory.index",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":true}],
+ ["embed","embed backlog","memory.embed",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":m.counts&&m.counts.backlog===0?"nothing to embed (backlog 0)":true}],
  ["stop","stop","memory.stop",function(m){return m&&m.run&&m.run.stoppable?true:"nothing to stop"}]
 ];
 function memAction(a){

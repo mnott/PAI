@@ -42,6 +42,7 @@ function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');
 function btn(a){var b=document.querySelector('#win-root [data-card="memory"] [data-act="'+a+'"]');return b?{dis:b.disabled,title:b.title||""}:null}
 function st(id){var c=document.querySelector('#win-root [data-card="'+id+'"] .cstatus');return c?c.getAttribute("data-kind")+"|"+c.textContent:null}
 var o={err:window.__err||null,over:["memory.index","memory.backend","memory.passes","memory.daemon"].map(function(i){var b=document.querySelector('#win-root [data-card="'+i+'"] .cbody');return b?b.scrollHeight-b.clientHeight:-1}),vis:vis(),kv:txt("memory.kv"),kvst:st("memory.kv"),index:txt("memory.index"),backend:txt("memory.backend"),job:txt("memory.job:run-embed"),passes:txt("memory.passes"),daemon:txt("memory.daemon"),
+ acts:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="memory"] > .chead [data-act]'),function(b){return b.getAttribute("data-act")}),
  embed:btn("embed"),index2:btn("index"),stop:btn("stop"),oldRt:document.querySelectorAll('#win-root [data-rt="memory"]').length,
  heads:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="memory"] > .chead'),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")})};
 document.body.setAttribute("data-r1",JSON.stringify(o));
@@ -103,6 +104,7 @@ describe.skipIf(!CHROME)("B3 memory on the win runtime", () => {
     expect(o.embed).toEqual({ dis: true, title: "a run is in progress" });
     expect(o.index2).toEqual({ dis: true, title: "a run is in progress" });
     expect(o.stop.dis).toBe(false);
+    expect(o.acts).toEqual(["index", "embed", "stop"]);
     expect(o.oldRt).toBe(0);
     expect(o.heads[0]).toMatch(/^cgrip,ctitle,cstatus(,cbtn)+$/);
   }, 120_000);

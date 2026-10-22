@@ -92,8 +92,8 @@ describe.skipIf(!CHROME)("header stays on one line and the star confirms", () =>
 
 const LOCKPROBE = `<script>setTimeout(function(){var h=document.querySelector("header"),k=[].slice.call(h.querySelectorAll("button")),l=document.getElementById("lock"),r={};
 r.starBeforeLock=k.indexOf(document.getElementById("savedef"))<k.indexOf(l);r.starLeft=document.getElementById("savedef").getBoundingClientRect().right<=l.getBoundingClientRect().left+1;
-r.a0=l.getAttribute("aria-label");r.p0=l.getAttribute("aria-pressed");r.g0=l.innerHTML;l.click();
-r.a1=l.getAttribute("aria-label");r.p1=l.getAttribute("aria-pressed");r.g1=l.innerHTML;
+r.a0=l.getAttribute("aria-label");r.p0=l.getAttribute("aria-pressed");r.g0=l.innerHTML;r.c0=getComputedStyle(l).color;r.d0=l.querySelector("path").getAttribute("d");l.click();l.blur();l.style.pointerEvents="none";
+r.a1=l.getAttribute("aria-label");r.p1=l.getAttribute("aria-pressed");r.g1=l.innerHTML;r.c1=getComputedStyle(l).color;r.d1=l.querySelector("path").getAttribute("d");
 document.body.setAttribute("data-r",JSON.stringify(r))},2000)</script>`;
 
 describe.skipIf(!CHROME)("star sits left of the lock; the lock shows its state", () => {
@@ -117,5 +117,7 @@ describe.skipIf(!CHROME)("star sits left of the lock; the lock shows its state",
     expect(r.g0).toMatch(/(<|&lt;)svg/);
     expect(r.g1).toMatch(/(<|&lt;)svg/);
     expect(r.g0).not.toBe(r.g1);
+    expect(r.d0).not.toBe(r.d1);
+    expect(r.c0).not.toBe(r.c1);
   }, 30000);
 });
