@@ -6,7 +6,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -31,6 +31,49 @@ async function sha256File(path: string): Promise<string> {
   return h.digest("hex");
 }
 
+/** The Modelfile body; the path is quoted so a PAI_HOME with a space survives. */
+export function modelfileText(gguf: string): string {
+  return `FROM "${gguf.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
+}
+
+export interface GgufSource {
+  url: string;
+  size: number;
+  sha256: string;
+  fetchFn: (url: string, init: { redirect: "follow" }) => Promise<{ ok: boolean; status: number; body: unknown }>;
+  log: (m: string) => void;
+}
+
+/**
+ * Make `gguf` a verified copy of the model file. A present file is kept only
+ * if size and checksum match (else it is deleted and fetched again); the
+ * download goes to `<gguf>.part`, is verified, then renamed, so the final path
+ * never holds a partial or corrupt file.
+ */
+export async function ensureGguf(gguf: string, o: Partial<GgufSource> = {}): Promise<void> {
+  const src: GgufSource = { url: GGUF_URL, size: GGUF_SIZE, sha256: GGUF_SHA256, fetchFn: fetch as GgufSource["fetchFn"], log: (m) => console.log(m), ...o };
+  if (existsSync(gguf)) {
+    if (statSync(gguf).size === src.size && (await sha256File(gguf)) === src.sha256) return;
+    src.log(`Existing ${gguf} is incomplete or corrupt; downloading again.`);
+    rmSync(gguf, { force: true });
+  }
+  src.log(`Downloading ${src.url} (${Math.round(src.size / 1e6)} MB)...`);
+  const res = await src.fetchFn(src.url, { redirect: "follow" });
+  if (!res.ok || !res.body) throw new Error(`Download failed: HTTP ${res.status}`);
+  const part = `${gguf}.part`;
+  try {
+    await pipeline(Readable.fromWeb(res.body as never), createWriteStream(part));
+    const size = statSync(part).size;
+    if (size !== src.size) throw new Error(`Downloaded ${size} bytes, expected ${src.size}; the partial file was deleted, rerun to retry`);
+    const sha = await sha256File(part);
+    if (sha !== src.sha256) throw new Error(`Checksum mismatch for ${gguf}: got ${sha}; the corrupt download was deleted, rerun to retry`);
+  } catch (e) {
+    rmSync(part, { force: true });
+    throw e;
+  }
+  renameSync(part, gguf);
+}
+
 export async function provisionOllama(opts: {
   baseUrl: string;
   model: string;
@@ -53,19 +96,10 @@ export async function provisionOllama(opts: {
   mkdirSync(dir, { recursive: true });
   const gguf = join(dir, "snowflake-arctic-embed-m-v1.5-F16.gguf");
 
-  if (!(existsSync(gguf) && statSync(gguf).size === GGUF_SIZE)) {
-    log(`Downloading ${GGUF_URL} (${Math.round(GGUF_SIZE / 1e6)} MB)...`);
-    const res = await fetch(GGUF_URL, { redirect: "follow" });
-    if (!res.ok || !res.body) throw new Error(`Download failed: HTTP ${res.status}`);
-    await pipeline(Readable.fromWeb(res.body as never), createWriteStream(gguf));
-  }
-  const size = statSync(gguf).size;
-  if (size !== GGUF_SIZE) throw new Error(`Downloaded ${size} bytes, expected ${GGUF_SIZE}; delete ${gguf} and retry`);
-  const sha = await sha256File(gguf);
-  if (sha !== GGUF_SHA256) throw new Error(`Checksum mismatch for ${gguf}: ${sha}`);
+  await ensureGguf(gguf, { log });
 
   const modelfile = join(dir, "Modelfile");
-  writeFileSync(modelfile, `FROM ${gguf}\n`);
+  writeFileSync(modelfile, modelfileText(gguf));
   log(`Importing as ${opts.model} (ollama create)...`);
   execFileSync(bin, ["create", opts.model, "-f", modelfile], { stdio: "inherit", env: { ...process.env, OLLAMA_HOST: opts.baseUrl } });
   return { created: true };
