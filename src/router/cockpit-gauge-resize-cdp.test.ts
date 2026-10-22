@@ -100,8 +100,8 @@ describe.skipIf(!CHROME)("gauge card handle drag (CDP)", () => {
     expect(await b.ev<number>("1+1")).toBe(2);
     expect(Date.now() - t1).toBeLessThan(1000);
     expect(mv).toBeGreaterThanOrEqual(n);
-    // the dials follow the stored body height through --uh: no size container (a layout feedback loop) on the gauge row
-    expect(await b.ev<string>(`getComputedStyle(document.querySelector('${sel} .gauges')).containerType`)).toBe("normal");
+    // dials scale with width (inline-size container, no height feedback) and heights follow --uh: never a size container
+    expect(["normal", "inline-size"]).toContain(await b.ev<string>(`getComputedStyle(document.querySelector('${sel} .gauges')).containerType`));
     expect(await b.ev<boolean>(`document.querySelector('${sel}').hasAttribute("data-uh")`)).toBe(true);
     expect((after.layouts - base0.layouts) / n).toBeLessThan(6);
     expect(after.heap - base0.heap).toBeLessThan(30e6);
