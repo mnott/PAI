@@ -29,7 +29,7 @@ import { resolvedMainConfigPath } from "../../config/main-config.js";
 import { describeQuiet, nextOccurrence, readQuiet, writeQuiet } from "../../daemon/quiet.js";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
-import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
+import { readClaudeJson, writeClaudeJson, registerMcpScript } from "../../config/claude-json.js";
 import { daemonLogPath } from "../../runtime-paths.js";
 import { resolveFromModule } from "../../module-paths.js";
 import { serviceManagerAllowed } from "../../service-manager.js";
@@ -390,32 +390,21 @@ function cmdInstall(): number {
 
   const servers = config.mcpServers as Record<string, unknown>;
 
-  // Check if already pointing to the shim
-  const existing = servers["pai"] as Record<string, unknown> | undefined;
-  const existingArgs = existing?.args as string[] | undefined;
-  const alreadyShim = existingArgs?.includes(shimBin);
+  const outcome = registerMcpScript(servers, "pai", shimBin);
 
-  if (alreadyShim) {
+  if (outcome === "unchanged") {
     console.log(ok("  ~/.claude.json already points to the shim."));
   } else {
-    // Back up the existing entry if any
-    if (existing) {
-      servers["pai-legacy"] = existing;
-      console.log(dim("  Backed up existing 'pai' entry as 'pai-legacy'."));
-    }
-
-    servers["pai"] = {
-      command: "node",
-      args: [shimBin],
-    };
-
     try {
       writeClaudeJson(config);
-      console.log(ok("  Updated ~/.claude.json to use daemon shim."));
     } catch (e) {
       console.error(err(`  Failed to write ~/.claude.json: ${e}`));
       return 1;
     }
+    if (outcome === "legacy-kept") {
+      console.log(dim("  Existing 'pai' entry runs a different server; kept as 'pai-legacy'."));
+    }
+    console.log(ok("  Updated ~/.claude.json to use daemon shim."));
   }
 
   // 4. Verify binaries exist

@@ -11,7 +11,7 @@
 
 import { existsSync } from "node:fs";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
-import { readClaudeJson, writeClaudeJson } from "../../config/claude-json.js";
+import { readClaudeJson, writeClaudeJson, mcpEntryRunsScript } from "../../config/claude-json.js";
 import { join } from "node:path";
 import { packageRoot, resolveFromModule } from "../../module-paths.js";
 
@@ -71,7 +71,8 @@ export function mcpInstallCmd(): number {
     const bin = distEntry(spec.entry);
 
     if (spec.name in servers) {
-      console.log(warn(`${spec.label} is already registered in ~/.claude.json as "${spec.name}".`));
+      const same = mcpEntryRunsScript(servers[spec.name], bin);
+      console.log(warn(`${spec.label} is already registered in ~/.claude.json as "${spec.name}"${same ? "" : " (different script)"}.`));
       console.log(dim(`  Entry: ${JSON.stringify(servers[spec.name])}`));
       continue;
     }
