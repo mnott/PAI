@@ -1,7 +1,22 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+// vi.mock factories are hoisted above the imports; the stub lives here
+const stubbedQueueDir = { current: "" };
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    readFileSync: (file: Parameters<typeof fs.readFileSync>[0], ...rest: unknown[]) => {
+      // one ticket of the stubbed queue dir fails with ENOENT after the listing named it
+      if (stubbedQueueDir.current && String(file).startsWith(join(stubbedQueueDir.current, "w-002"))) {
+        throw Object.assign(new Error(`ENOENT: no such file or directory, open '${file}'`), { code: "ENOENT" });
+      }
+      return (fs.readFileSync as (...a: unknown[]) => unknown)(file, ...rest) as never;
+    },
+  };
+});
 import { capacityGate, effectiveCap, fairOrder, liveQueue, moveUp, providerCap, queueRows, queuedPaneLine, queuedText, readQueued, removeQueued, reorderQueue, reorderQueueTo, resolveCap, setFront, writeQueued, type CapacityConfig, type CapacityInfo, type QueuedFile } from "./capacity.js";
 import { defaultWorkersConfig, readWorkersSection } from "./config.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
@@ -462,5 +477,35 @@ describe("waiting since", () => {
     });
     expect(seen.every((s) => s.since === 5000)).toBe(true);
     expect(seen[0].text).toMatch(/^queued on p: position 1 of 1, behind the holder — waiting since \d\d:\d\d$/);
+  });
+
+  it("a ticket deleted between the listing and the read is skipped, not an error", () => {
+    // the bug: another run was stopped and its ticket file vanished between
+    // readdirSync and the read; the waiter crashed with ENOENT instead of
+    // skipping the entry. The module-level fs stub makes the read of w-002
+    // fail with ENOENT while the listing still names it.
+    const logDir = mkdtempSync(join(tmpdir(), "cap-race-"));
+    dirs.push(logDir);
+    const q = join(logDir, "queue", "p");
+    mkdirSync(q, { recursive: true });
+    writeFileSync(join(q, "w-001"), `${process.pid}`);
+    writeFileSync(join(q, "w-002"), `${process.pid}`);
+    stubbedQueueDir.current = q;
+    try {
+      expect(liveQueue(logDir, "p")).toEqual(["w-001"]);
+      expect(queueRows(logDir).map((r) => r.id)).toEqual(["w-001"]);
+    } finally {
+      stubbedQueueDir.current = "";
+    }
+  });
+
+  it("an unparsable ticket is skipped", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "cap-junk-"));
+    dirs.push(logDir);
+    const q = join(logDir, "queue", "p");
+    mkdirSync(q, { recursive: true });
+    writeFileSync(join(q, "w-001"), `${process.pid}`);
+    writeFileSync(join(q, "w-002"), "not a pid");
+    expect(liveQueue(logDir, "p")).toEqual(["w-001"]);
   });
 });
