@@ -353,6 +353,7 @@ function complete(){
  return true;
 }
 function save(){
+ W.dirtyT=Date.now();
  if(W.timer)clearTimeout(W.timer);
  W.timer=setTimeout(function(){
   W.timer=null;
@@ -360,8 +361,33 @@ function save(){
   var now=W.opts.now||Date.now(),st={},id;
   for(id in W.st)st[id]=W.st[id];
   for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}
-  saveWin(W.opts.storage,W.tree,W.kids,st,W.auto);
+  W.t=saveWin(W.opts.storage,W.tree,W.kids,st,W.auto);
  },SAVE_MS);
+}
+/** Another tab saved a layout (storage event): adopt it unless this tab changed its own later. The adopted layout is never
+ *  written back, and this tab's pending debounced save is dropped (the newer save wins). While a grip or gutter is held
+ *  the layout would change under the pointer, so it waits for the release. */
+function adoptSaved(raw){
+ var obj=parseWin(raw);
+ if(!obj)return;
+ var mine=W.timer?W.dirtyT:W.t;
+ if(typeof obj.t==="number"&&typeof mine==="number"&&obj.t<mine)return;
+ if(W.down){W.pendingRaw=raw;return}
+ W.pendingRaw=null;
+ if(W.timer){clearTimeout(W.timer);W.timer=null}
+ var known=Object.keys(W.cards);
+ var l=reconcileSaved(obj,W.defaults,known,Date.now());
+ W.t=typeof obj.t==="number"?obj.t:Date.now();
+ W.auto=W.auto&&obj.auto===1;
+ var go=function(){W.tree=l.tree;W.kids=l.kids;W.st=l.st;relayout()};
+ if(typeof anchorKeep==="function")anchorKeep(go);else go();
+}
+function crossTabWire(){
+ window.addEventListener("storage",function(e){if(e.key===WIN_KEY&&e.newValue&&e.storageArea===W.opts.storage)adoptSaved(e.newValue)});
+ var dn=function(e){if(e.target&&e.target.closest&&e.target.closest(".cgrip,.wgutter"))W.down=1};
+ var up=function(){if(!W.down)return;W.down=0;if(W.pendingRaw)setTimeout(function(){if(!W.down&&W.pendingRaw)adoptSaved(W.pendingRaw)},0)};
+ document.addEventListener("pointerdown",dn,true);
+ window.addEventListener("pointerup",up,true);window.addEventListener("pointercancel",up,true);
 }
 function toggleMin(id){
  var c=W.cards[id];if(!c)return;
@@ -396,7 +422,7 @@ function attach(parent,node){
 function init(main,defaults,opts){
  opts=opts||{};
  W.opts={storage:opts.storage||window.localStorage,now:opts.now};
- W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
+ W.defaults=defaults;W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
  W.cfg={HEAD_H:HEAD_H,GAP:8,GUTTER:8,minW:220,narrowW:480};
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];
  var specs=defaults.cards||[],known=[],i;
@@ -413,6 +439,7 @@ function init(main,defaults,opts){
   window.addEventListener("pagehide",function(){api.flush()});
   document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")api.flush()});
  }
+ if(!main.__winTabs){main.__winTabs=1;crossTabWire()}
  if(!main.__winFreeze){main.__winFreeze=1;
   var fz=function(e){var t=e.target&&e.target.closest?e.target.closest(".cgrip,.wgutter"):null;if(t)freeze()};
   document.addEventListener("pointerdown",fz,true);document.addEventListener("keydown",fz,true);
@@ -526,7 +553,7 @@ var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerT
  cfg:cfgOf,announce:announce,layState:layState,
  /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
  apply:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
- flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;if(!complete())return;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
+ flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;if(!complete())return;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}W.t=saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
 return api;
 })();
 `;

@@ -240,12 +240,13 @@ function reconcileSaved(saved,defaults,knownIds,now){
  for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);
  return{tree:tree,kids:kids,st:st};
 }
-/** One write, whole object, debounced by the caller (spec 6). */
+/** One write, whole object, debounced by the caller (spec 6). t is the save time: another tab compares it to know which layout is newer. Returns t. */
 function saveWin(storage,tree,kids,st,auto){
- var o={v:LAYOUT_V,tree:tree,kids:kids||{},st:st||{}};
+ var o={v:LAYOUT_V,t:Date.now(),tree:tree,kids:kids||{},st:st||{}};
  // auto: the sizes are still the defaults (heights follow the content); a layout saved without it holds the user's sizes
  if(auto)o.auto=1;
  try{storage.setItem(WIN_KEY,JSON.stringify(o))}catch(e){}
+ return o.t;
 }
 /** Reset: the defaults, fresh state (minimized state resets too, spec 6). */
 function resetWin(defaults){return defaultsOf(defaults)}
