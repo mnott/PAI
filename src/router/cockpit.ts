@@ -1274,6 +1274,8 @@ const VERSION_PLACEHOLDER = /__COCKPIT_VERSION__/g;
 const VERSION_SHORT_PLACEHOLDER = /__COCKPIT_VERSION_SHORT__/g;
 const VERSION_PATCH_PLACEHOLDER = /__COCKPIT_VERSION_PATCH__/g;
 const HOMEPAGE_PLACEHOLDER = /__COCKPIT_HOMEPAGE__/g;
+/** The header title markup, spelled once: the link's inner content and the no-homepage fallback. */
+const TITLE_MARKUP = 'PAI<span class="hc"> Cockpit</span>';
 let pkgVersion: string | null = null;
 /** The version this router runs: package.json, read once at startup (the one owner of the header's "v<version>"). */
 function cockpitVersion(): string {
@@ -1425,9 +1427,9 @@ export function handleCockpit(
     try {
       html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(VERSION_SHORT_PLACEHOLDER, cockpitVersion().split(".").slice(0, 2).join(".")).replace(VERSION_PATCH_PLACEHOLDER, cockpitVersion().split(".").slice(2).map((p) => "." + p).join("")).replace(VERSION_PLACEHOLDER, cockpitVersion()).replace(HOMEPAGE_PLACEHOLDER, () => {
         const home = cockpitHomepage();
-        if (!home) return "";
+        if (!home) return TITLE_MARKUP;
         const href = home.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-        return `<a class="home" href="${href}" target="_blank" rel="noopener">PAI<span class="hc"> Cockpit</span></a>`;
+        return `<a class="home" href="${href}" target="_blank" rel="noopener">${TITLE_MARKUP}</a>`;
       }).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
     } catch {
       /* falls through to the 503 */
