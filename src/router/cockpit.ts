@@ -1374,7 +1374,12 @@ export function handleCockpit(
   const concurrency = req.method === "POST" ? /^\/cockpit\/providers\/([^/]+)\/concurrency$/.exec(url.pathname) : null;
   if (concurrency) {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
-    const name = decodeURIComponent(concurrency[1]!);
+    let name: string;
+    try {
+      name = decodeURIComponent(concurrency[1]!);
+    } catch {
+      return send(400, "application/json", JSON.stringify({ ok: false, message: "malformed provider name" })), true;
+    }
     readJsonObject(readBody, req).then((b) => {
       const { delta } = b as { delta?: unknown };
       if (delta !== 1 && delta !== -1) return send(400, "application/json", JSON.stringify({ ok: false, message: "delta must be +1 or -1" }));

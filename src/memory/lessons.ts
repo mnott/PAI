@@ -72,13 +72,15 @@ export function serializeLesson(l: Lesson): string {
   return `---\n${stringify(data)}---\n\n${body.trim()}\n`;
 }
 
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
+
 export function parseLesson(text: string, fallbackId = ""): Lesson {
   const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!m) throw new Error("lesson has no YAML frontmatter");
   const f = (parse(m[1]!) ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string => (v === undefined || v === null ? "" : String(v));
   const lesson: Lesson = {
-    id: str(f.id) || fallbackId,
+    id: SLUG_RE.test(str(f.id)) ? str(f.id) : fallbackId,
     title: str(f.title),
     state: str(f.state) as LessonState,
     kind: str(f.kind) as LessonKind,
@@ -126,7 +128,7 @@ export function listLessons(filter: { state?: LessonState; project?: string } = 
 }
 
 export function getLesson(id: string): Lesson | null {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) return null;
+  if (!SLUG_RE.test(id)) return null;
   const p = lessonPath(id);
   if (!existsSync(p)) return null;
   return parseLesson(readFileSync(p, "utf8"), id);

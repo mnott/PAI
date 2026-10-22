@@ -417,7 +417,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
   const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
   if (status.sessionKey && max) {
     const key = status.sessionKey;
-    await capacityGate({ ...gate, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
+    await capacityGate({ ...gate, capOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
   }
   await capacityGate(gate);
   await staggerGate({

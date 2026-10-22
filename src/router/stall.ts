@@ -60,6 +60,12 @@ export function startStallMonitor(o: StallOptions): StallMonitor {
         const at = now();
         try {
           handler(req, res);
+        } catch (e) {
+          o.log(`${new Date(now()).toISOString()} handler error on ${path}: ${(e as Error)?.stack ?? String(e)}`);
+          if (!res.headersSent) {
+            res.writeHead(500, { "content-type": "application/json" });
+            res.end(JSON.stringify({ ok: false, message: "internal error" }));
+          } else res.end();
         } finally {
           const ms = now() - at;
           if (ms >= SLOW_SYNC_MS) {

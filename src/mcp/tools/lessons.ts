@@ -21,6 +21,7 @@ export async function toolMemoryLessons(params: MemoryLessonsParams): Promise<To
     if (params.action === "get") {
       if (!params.id) return text("id is required for action=get", true);
       const l = getLesson(params.id);
+      if (l && l.state !== (params.state ?? "approved")) return text(`Lesson not found: ${params.id} (state ${l.state}; pass state=${l.state} to read it)`, true);
       return l ? text(JSON.stringify(l, null, 2)) : text(`Lesson not found: ${params.id}`, true);
     }
     const state = params.state ?? "approved";

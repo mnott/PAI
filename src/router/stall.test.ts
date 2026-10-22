@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { startStallMonitor } from "./stall.js";
 
@@ -49,5 +49,19 @@ describe("startStallMonitor", () => {
     await new Promise((r) => setTimeout(r, 60));
     m.stop();
     expect(lines).toEqual([]);
+  });
+});
+
+describe("startStallMonitor wrap errors", () => {
+  it("logs a handler exception and answers 500 when headers are not sent", () => {
+    const lines: string[] = [];
+    const m = startStallMonitor({ thresholdMs: 150, tickMs: 20, log: (l) => lines.push(l) });
+    const res = Object.assign(new EventEmitter(), { headersSent: false, writeHead: vi.fn(), end: vi.fn() });
+    m.wrap(() => {
+      throw new Error("boom");
+    })(fakeReq("/x"), res as never);
+    m.stop();
+    expect(res.writeHead).toHaveBeenCalledWith(500, expect.anything());
+    expect(lines.join("\n")).toContain("boom");
   });
 });

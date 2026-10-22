@@ -196,6 +196,8 @@ const runCommand: CommandDef = {
     const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { hosts, ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp, health: endpointHealth });
     const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
     const handler = stalls.wrap(inner);
+    // backstop: a stray exception is logged, it does not take the proxy down
+    process.on("uncaughtException", (e) => process.stderr.write(`pai: router: uncaught exception: ${(e as Error)?.stack ?? String(e)}\n`));
     return new Promise<number>(() => {
       // after SIGTERM the open keep-alive sockets stay served by this process, each reply tells its client to reconnect (to the new router)
       let draining = false;
