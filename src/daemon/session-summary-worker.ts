@@ -38,6 +38,7 @@ import {
 } from "../hooks/ts/lib/project-utils/index.js";
 
 import { buildSessionSummaryPrompt } from "./templates/session-summary-prompt.js";
+import { redactSecrets } from "../utils/redact.js";
 import {
   extractAndStoreTriples as kgExtractAndStoreTriples,
 } from "../memory/kg-extraction.js";
@@ -759,7 +760,7 @@ function updateNoteWithSummary(notePath: string, summaryText: string): void {
     }
   }
 
-  writeFileSync(notePath, content, "utf-8");
+  writeFileSync(notePath, redactSecrets(content), "utf-8");
 }
 
 /**
@@ -860,7 +861,7 @@ ${aiBody}
 **Tags:** #Session
 `;
 
-    writeFileSync(notePath, finalContent, "utf-8");
+    writeFileSync(notePath, redactSecrets(finalContent), "utf-8");
     process.stderr.write(`[session-summary] Created AI-powered note: ${noteFilename}\n`);
     return notePath;
   } catch (e) {
@@ -1059,14 +1060,15 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
     }
   }
 
-  const prompt = buildSessionSummaryPrompt({
+  // secret values never reach the summarizer prompt or the note it produces
+  const prompt = redactSecrets(buildSessionSummaryPrompt({
     userMessages: extracted.userMessages,
     gitLog,
     cwd,
     date: today,
     filesModified: extracted.filesModified,
     existingNote,
-  });
+  }));
 
   process.stderr.write(
     `[session-summary] Sending ${prompt.length} char prompt to ${selectedModel}...\n`

@@ -607,12 +607,13 @@ describe("loop guard: a denied repeat gets its last output back", () => {
     expect(r.reason).toBeUndefined();
   });
   it("secret-looking lines are masked", () => {
-    const r = run("cat src/.env.ts", "PORT=1\nAPI_KEY=abc123\nnote: password is hunter2\nok");
+    const r = run("cat src/.env.ts", "PORT=1\nAPI_KEY=abc123\npassword: hunter2\nok");
     expect(r.reason).toContain("PORT=1");
     expect(r.reason).toContain("ok");
     expect(r.reason).not.toContain("abc123");
     expect(r.reason).not.toContain("hunter2");
-    expect(r.reason).toContain("[line masked: looks like a secret]");
+    expect(r.reason).toContain("API_KEY=[REDACTED]");
+    expect(r.reason).toContain("password: [REDACTED]");
   });
   it("stores nothing for a non-read call and bounds the kept results", () => {
     let s = emptyLoopState();
@@ -652,28 +653,28 @@ describe("loop guard: a denied runner re-run gets the end of its last output", (
   it("masks secret-looking lines", () => {
     const r = run().reason as string;
     expect(r).not.toContain("abc123");
-    expect(r).toContain("[line masked");
+    expect(r).toContain("API_KEY=[REDACTED]");
   });
 });
 
 describe("maskSecrets", () => {
-  const probes = [
-    "DATABASE_URL=postgres://u:hunter2@db/x",
-    "see https://user:hunter2@example.com/repo.git",
-    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-    "found AKIAIOSFODNN7EXAMPLE in env",
-    "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-    "origin ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-    "key sk-ant-api03-abcdefghijklmnopqrstuvwx",
-    "key sk-abcdefghijklmnopqrstuvwx",
-    "GITHUB_TOKEN=abc123",
-    "APP_SECRET=abc123",
-    "DB_PASSWORD=abc123",
+  const cases: Array<[string, string]> = [
+    ["DATABASE_URL=postgres://u:hunter2@db/x", "DATABASE_URL=postgres://u:[REDACTED]@db/x"],
+    ["see https://user:hunter2@example.com/repo.git", "see https://user:[REDACTED]@example.com/repo.git"],
+    ["AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", "AWS_ACCESS_KEY_ID=[REDACTED]"],
+    ["found AKIAIOSFODNN7EXAMPLE in env", "found [REDACTED] in env"],
+    ["aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "aws_secret_access_key = [REDACTED]"],
+    ["origin ghp_abcdefghijklmnopqrstuvwxyz0123456789", "origin [REDACTED]"],
+    ["key sk-ant-api03-abcdefghijklmnopqrstuvwx", "key [REDACTED]"],
+    ["key sk-abcdefghijklmnopqrstuvwx", "key [REDACTED]"],
+    ["GITHUB_TOKEN=abc123", "GITHUB_TOKEN=[REDACTED]"],
+    ["APP_SECRET=abc123", "APP_SECRET=[REDACTED]"],
+    ["DB_PASSWORD=abc123", "DB_PASSWORD=[REDACTED]"],
   ];
-  for (const line of probes) {
+  for (const [line, expected] of cases) {
     it(`masks: ${line.slice(0, 30)}`, () => {
       const out = maskSecrets(`before\n${line}\nafter`);
-      expect(out).toBe("before\n[line masked: looks like a secret]\nafter");
+      expect(out).toBe(`before\n${expected}\nafter`);
     });
   }
   it("keeps ordinary lines, including urls without credentials", () => {
