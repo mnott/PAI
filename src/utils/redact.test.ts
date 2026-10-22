@@ -42,7 +42,7 @@ describe("redactSecrets", () => {
     ["found AKIAIOSFODNN7EXAMPLE in env", "found [REDACTED] in env"],
     ["ASIAIOSFODNN7EXAMPLE", "[REDACTED]"],
     ["jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "jwt [REDACTED]"],
-    ["AIzaSyAabcdefghijklmnopqrstuvwxyz0123456789", "[REDACTED]"],
+    ["AIzaSyAabcdefghijklmnopqrstuvwxyz012345", "[REDACTED]"],
     // PEM block, complete and truncated
     ["-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----", "-----BEGIN PRIVATE KEY----- [REDACTED]"],
     ["-----BEGIN OPENSSH PRIVATE KEY-----\nabcdef", "-----BEGIN PRIVATE KEY----- [REDACTED]"],
@@ -57,6 +57,10 @@ describe("redactSecrets", () => {
     ["commit 0123456789012345678901234567890123456789", "commit 0123456789012345678901234567890123456789"],
     ["merged " + "B".repeat(64) + " branch", "merged " + "B".repeat(64) + " branch"],
     ["monkeys=12345", "monkeys=12345"],
+    ["mysql --password hunter2 db", "mysql --password [REDACTED] db"],
+    ["pip install sk-learn", "pip install sk-learn"],
+    ["token for 0123456789012345678901234567890123456789", "token for 0123456789012345678901234567890123456789"],
+    ["token=0123456789012345678901234567890123456789", "token=[REDACTED]"],
     ["-p hunter2 db", "-p hunter2 db"],
   ];
   for (const [input, expected] of cases) {
