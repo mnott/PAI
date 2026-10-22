@@ -84,6 +84,9 @@ function getRoutedNotesPath(): string | null {
 /**
  * Project signals that indicate a directory is a real project root.
  */
+/** Upper bound for each `pai` CLI call on the SessionStart path. */
+const PAI_CLI_TIMEOUT_MS = 10_000;
+
 const PROJECT_SIGNALS = [
   '.git',
   'package.json',
@@ -296,10 +299,11 @@ async function main() {
   if (hasTodo) {
     console.error(`TODO.md: ${todoPath}`);
   } else {
-    // Create TODO.md in the Notes directory
-    const newTodoPath = join(notesDir, 'TODO.md');
-    const { writeFileSync } = await import('fs');
-    writeFileSync(newTodoPath, `# TODO\n\n## Offen\n\n- [ ] \n\n---\n\n*Created: ${new Date().toISOString()}*\n`);
+    // Create TODO.md where findTodoPath expects it
+    const newTodoPath = todoPath;
+    const { writeFileSync, mkdirSync } = await import('fs');
+    mkdirSync(dirname(newTodoPath), { recursive: true });
+    writeFileSync(newTodoPath, `# TODO\n\n## Current Session\n\n- [ ] (Tasks will be tracked here)\n\n## Backlog\n\n- [ ] (Future tasks)\n\n---\n\n*Last updated: ${new Date().toISOString()}*\n`);
     console.error(`Created TODO.md: ${newTodoPath}`);
   }
 
@@ -355,16 +359,18 @@ async function main() {
   }
 
   // 7. Send ntfy.sh notification (MANDATORY)
-  await sendNtfyNotification(`Session started in ${projectName}`);
+  await sendNtfyNotification('Session started');
 
   // 7.5. Run pai project detect to identify the registered PAI project
   const paiBin = findPaiBinary();
   let paiProjectBlock = '';
+  let detectedRootPath: string | undefined;
   try {
     const { execFileSync } = await import('child_process');
     const raw = execFileSync(paiBin, ['project', 'detect', '--json', cwd], {
       encoding: 'utf-8',
       env: process.env,
+      timeout: PAI_CLI_TIMEOUT_MS,
     }).trim();
 
     if (raw) {
@@ -379,6 +385,7 @@ async function main() {
         error?: string;
         cwd?: string;
       };
+      detectedRootPath = detected.root_path;
 
       /**
        * Attempt to auto-register the CWD as a new PAI project.
@@ -393,6 +400,7 @@ async function main() {
           execFileSync(paiBin, ['project', 'add', cwd], {
             encoding: 'utf-8',
             env: process.env,
+            timeout: PAI_CLI_TIMEOUT_MS,
           });
           console.error(`PAI auto-registered project at: ${cwd}`);
 
@@ -401,6 +409,7 @@ async function main() {
             const raw2 = execFileSync(paiBin, ['project', 'detect', '--json', cwd], {
               encoding: 'utf-8',
               env: process.env,
+              timeout: PAI_CLI_TIMEOUT_MS,
             }).trim();
 
             if (raw2) {
@@ -474,6 +483,7 @@ Match: ${matchDesc} | Sessions: ${detected.session_count ?? 0}${detected.status 
   } catch (e) {
     // Non-fatal — don't break session start if pai is unavailable
     console.error('pai project detect failed:', e);
+    detectedRootPath = cwd;
   }
 
   // 8. Output system reminder with session info
@@ -509,7 +519,7 @@ ${paiProjectBlock ? `\n${paiProjectBlock}` : ''}
   // An MCP/tools pin silently drops servers; say so. Nothing printed when unpinned.
   try {
     const { execFileSync: run } = await import('child_process');
-    const pins = run(paiBin, ['project', 'pins'], { encoding: 'utf-8', cwd }).trim();
+    const pins = run(paiBin, ['project', 'pins'], { encoding: 'utf-8', cwd, timeout: PAI_CLI_TIMEOUT_MS }).trim();
     if (pins) console.log(pins);
   } catch {
     // pai unavailable: stay silent
@@ -590,22 +600,8 @@ THE ABOVE INSTRUCTIONS ARE MANDATORY. Follow them exactly.
   // We derive it from the `paiProjectBlock` detection result by re-running a
   // lightweight registry lookup, or by falling back to cwd for local-notes projects.
   try {
-    // Attempt to find the project root path from the registry via `pai project detect --json`
-    let wakeupRootPath: string | undefined;
-    try {
-      const { execFileSync: efs } = await import('child_process');
-      const raw2 = efs(paiBin, ['project', 'detect', '--json', cwd], {
-        encoding: 'utf-8',
-        env: process.env,
-      }).trim();
-      if (raw2) {
-        const det = JSON.parse(raw2) as { root_path?: string; slug?: string };
-        if (det.root_path) wakeupRootPath = det.root_path;
-      }
-    } catch {
-      // Non-fatal — fall back to cwd
-      wakeupRootPath = cwd;
-    }
+    // Reuse the root path from the detect call above (no second spawn).
+    const wakeupRootPath = detectedRootPath;
 
     // Handover supersedes the L1 story: both summarise the same recent note,
     // and the handover is a curated message while the story is auto-extracted.
