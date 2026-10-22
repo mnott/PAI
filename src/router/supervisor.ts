@@ -49,12 +49,12 @@ export function routerRunningPid(): number | null {
   return pidAlive(pid) ? pid : null;
 }
 
-/** Spawn `<cli> router run` detached, logging to the router log. Returns the child pid. */
 /** Args for a router that replaces `oldPid`: it warms up first, then SIGTERMs the old one and binds the port the moment it frees. */
 export function routerSwapArgs(oldPid: number | undefined): string[] {
   return ["--wait-bind", "10", ...(oldPid === undefined ? [] : ["--replace", String(oldPid)])];
 }
 
+/** Spawn `<cli> router run` detached, logging to the router log. Returns the child pid. */
 export function spawnRouter(cliEntry: string, extraArgs: string[] = []): number | undefined {
   mkdirSync(dirname(routerLogFile()), { recursive: true });
   const fd = openSync(routerLogFile(), "a");
