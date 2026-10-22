@@ -98,13 +98,6 @@ function getPaiSrcDir(): string {
  * Locate the templates directory relative to the installed package.
  */
 function getTemplatesDir(): string {
-  const candidates = [
-    join(getPaiSrcDir(), "templates"),
-    join("/", "usr", "local", "lib", "node_modules", "@mnott", "pai", "templates"),
-  ];
-  for (const c of candidates) {
-    if (existsSync(join(c, "claude-md.template.md"))) return c;
-  }
   return join(getPaiSrcDir(), "templates");
 }
 
