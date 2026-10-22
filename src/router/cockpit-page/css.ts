@@ -45,9 +45,9 @@ html.locked .cgrip,html.locked .cmin,html.locked #reset,html.locked main.win .cd
 .gauge svg{display:block;width:100%;height:auto}
 /* provider card: the gauge row wraps on WIDTH only; a short card scales the dials down (never an inner scrollbar, whose width would force the wrap) */
 /* a card with no user height is as tall as its gauges; a card the user sized (data-uh) scales the dials to the body height the handle stored (--uh), not to a size container: no layout feedback from the dials into the card's own size.
- * Width: a dial is as wide as its share of the row (down to 56 px), so the card's least width is two small dials, not two full ones; the row is centred; the "resets in" line drops, then the labels shrink (inline-size container: width only) */
+ * Width: a dial is as wide as its share of the row (down to 56 px), so the card's least width is two small dials, not two full ones; the row is centred; the "resets in" line shrinks (never hidden), then the labels shrink (inline-size container: width only) */
 .gauges.fit{align-content:start;justify-content:center;container-type:inline-size}.gauges.fit .gauge{flex:1 1 56px}.gauges.fit .gauge svg{height:auto;max-height:70px}
-@container (max-width:230px){.gauges.fit .gauge .s{display:none}}@container (max-width:150px){.gauges.fit .gauge .n{font-size:11px}}
+@container (max-width:230px){.gauges.fit .gauge .s{font-size:10px;line-height:13px;text-align:center}}@container (max-width:150px){.gauges.fit .gauge .n{font-size:11px}}
 .card[data-uh]>.cbody>.gauges.fit{height:100%;overflow:hidden}.card[data-uh]>.cbody>.gauges.fit .gauge svg{max-height:clamp(48px,calc(var(--uh) - 36px),70px)}
 .card[data-uh][data-short]>.cbody>.gauges.fit .gauge .n{font-size:11px;line-height:14px}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge .s{font-size:10px;line-height:13px}.card[data-uh][data-short]>.cbody>.gauges.fit .gauge svg{max-height:clamp(48px,calc(var(--uh) - 28px),70px)}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}

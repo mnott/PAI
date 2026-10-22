@@ -64,4 +64,20 @@ describe.skipIf(!CHROME)("gauge card whitespace before dial shrink (CDP)", () =>
     console.log(`natural ${Math.round(natural)}\nbody-h | dial px | empty below labels | resets\n` + rows.map((r) => `${r.h} | ${r.dial} | ${r.below} | ${r.resets}`).join("\n"));
     for (const r of rows) { expect(r.below, `empty below labels at ${r.h}`).toBeLessThanOrEqual(6); expect(r.resets, `resets line at ${r.h}`).toBe(true); }
   }, 120_000);
+
+  it("the resets-in line is visible on every dial at narrow, mid and wide card widths and at the minimum handle height", async () => {
+    const b = await launch(530, 1000);
+    await b.send("Page.navigate", { url: `${base}/page` });
+    const sel = `[data-card="limits.cloud:glm"]`;
+    for (let i = 0; i < 60; i++) { await sleep(250); if (await b.ev<boolean>(`!!document.querySelector('${sel} .gauge svg')`)) break; }
+    await sleep(500);
+    const rows: { w: number; h: number; n: number; shown: number }[] = [];
+    for (const w of [180, 250, 400]) for (const h of [80, 120]) {
+      await b.ev(`(function(){var c=document.querySelector('${sel}'),bd=c.querySelector(".cbody");c.style.width=${w}+"px";bd.style.height=${h}+"px";bd.style.setProperty("--uh",${h}+"px");c.setAttribute("data-uh","1");c.toggleAttribute("data-short",${h}<84)})()`);
+      await sleep(200);
+      rows.push(await b.ev(`(function(){var l=Array.prototype.slice.call(document.querySelectorAll('${sel} .gauge .s'));return{w:${w},h:${h},n:l.length,shown:l.filter(function(e){return e.offsetHeight>0}).length}})()`));
+    }
+    console.log("card w | body h | .s count | visible\n" + rows.map((r) => `${r.w} | ${r.h} | ${r.n} | ${r.shown}`).join("\n"));
+    for (const r of rows) { expect(r.n).toBeGreaterThan(0); expect(r.shown, `resets lines visible at ${r.w}x${r.h}`).toBe(r.n); }
+  }, 120_000);
 });
