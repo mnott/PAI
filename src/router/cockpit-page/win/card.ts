@@ -401,6 +401,11 @@ function init(main,defaults,opts){
  W.tree=l.tree;W.kids=l.kids;W.st=l.st;W.defRoot=ids(defaults.tree);
  main.classList.add("win");
  if(!main.__winGut){main.__winGut=1;gutterWire()}
+ if(!main.__winFlush){main.__winFlush=1;
+  // a debounced save still pending when the page is left would be lost: write it now
+  window.addEventListener("pagehide",function(){api.flush()});
+  document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")api.flush()});
+ }
  if(!main.__winFreeze){main.__winFreeze=1;
   var fz=function(e){var t=e.target&&e.target.closest?e.target.closest(".cgrip,.wgutter"):null;if(t)freeze()};
   document.addEventListener("pointerdown",fz,true);document.addEventListener("keydown",fz,true);
