@@ -32,6 +32,6 @@ function tablesDefaults(){
   {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,view:wtView(workersHtml),mount:wtWire,resize:wtFit},
   {id:"sessions",type:"list",cls:"wm",title:"Sessions by tokens",feeds:f,view:wtView(sessionsHtml),mount:wtWire,resize:wtFit},
   {id:"pause",type:"table",title:"Cache verdict by pause",info:WT_INFO.pause,feeds:f,view:function(d){return d&&d.bySession?{html:pauseHtml(d),after:pauseFit}:null},resize:pauseFit}];
- return{parts:[[{tree:WinT.leaf("perf-group"),kids:{"perf-group":WinT.split("c",[WinT.leaf("runs"),WinT.leaf("sessions"),WinT.leaf("pause")],[0.38,0.38,0.24])},stDefaults:{},cards:cards},760]]};
+ return{parts:[[{tree:WinT.leaf("perf-group"),kids:{"perf-group":WinT.split("c",[WinT.leaf("speed"),WinT.leaf("runs"),WinT.leaf("sessions"),WinT.leaf("pause")],[0.25,0.25,0.25,0.25])},stDefaults:{},cards:cards},760]]};
 }
 `;

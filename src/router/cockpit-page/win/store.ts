@@ -31,7 +31,7 @@ var GHOST_MS=30*24*60*60*1000;
 var SEEN_KEY="pai.cockpit.win.defaultSeen";
 var OLD_KEYS=["pai.cockpit.layout.v1","pai.cockpit.tiles.v1","pai.cockpit.collapsed"];
 function clone(o){return o===undefined||o===null?o:JSON.parse(JSON.stringify(o))}
-function defaultsOf(defaults){return{tree:clone(defaults.tree),kids:clone(defaults.kids||{}),st:clone(defaults.stDefaults||{})}}
+function defaultsOf(defaults){var d=flatDefaults(defaults);migrateState(d.stDefaults);return{tree:d.tree,kids:d.kids||{},st:d.stDefaults}}
 /** Parse the stored object. Invalid JSON, a missing/lower v, or a non-object -> null (defaults). */
 function parseWin(raw){
  if(!raw)return null;
@@ -51,9 +51,48 @@ function normMin(st){
   st[id].min=s.min?1:0;
  }
 }
-/** Heights are content-driven: the only stored height is st[id].h, set by a card's height handle. Band px (px) and band marks (ub) of older saves go. */
-function dropBandHeights(st){
- for(var id in st){var s=st[id];if(s&&typeof s==="object"){delete s.px;delete s.ub}}
+/** The stored per-card state is exactly {min, h, w, seen}: min 1/0 minimized, h the user's height of the card body, w its width in
+ *  12ths of its group (3 4 6 8 9 12), seen the last-seen ms. Every other field of older saves (px, ub, sp, fits, positions) goes;
+ *  an old width divisor sp becomes w. */
+var WIN_UNITS=[3,4,6,8,9,12];
+function unitsOf(f){
+ var x=f*12,best=12,bd=1e9,i,d;
+ for(i=0;i<WIN_UNITS.length;i++){d=Math.abs(WIN_UNITS[i]-x);if(d<bd){bd=d;best=WIN_UNITS[i]}}
+ return best;
+}
+function migrateState(st){
+ for(var id in st){
+  var s=st[id];
+  if(!s||typeof s!=="object"){delete st[id];continue}
+  if(s.w===undefined&&s.sp>0)s.w=unitsOf(1/s.sp);
+  if(WIN_UNITS.indexOf(s.w)<0)delete s.w;
+  if(!(s.h>0))delete s.h;
+  for(var k in s)if(k!=="min"&&k!=="h"&&k!=="w"&&k!=="seen")delete s[k];
+ }
+}
+/** A container's tree is a flat column of cards (parent + order): a row split of an older save becomes consecutive cards,
+ *  each with the width it had, as units in st.w. Returns the flat column (a lone card stays a leaf), null for none. */
+function flatTree(node,st){
+ if(!node)return null;
+ var out=[];
+ (function walk(n,f){
+  if(n.k==="c"){
+   if(f<0.999){var s=st[n.id]=st[n.id]||{};if(s.w===undefined)s.w=unitsOf(f)}
+   out.push(leaf(n.id));return;
+  }
+  var t=0,i;for(i=0;i<n.sz.length;i++)t+=n.sz[i];
+  for(i=0;i<n.ch.length;i++)walk(n.ch[i],n.d==="r"&&t>0?f*n.sz[i]/t:f);
+ })(node,1);
+ if(!out.length)return null;
+ if(out.length===1)return out[0];
+ return split("c",out,out.map(function(){return 1/out.length}));
+}
+/** The defaults with every container flattened; the widths of their rows land in stDefaults. */
+function flatDefaults(d){
+ var o=clone(d),st=o.stDefaults=o.stDefaults||{},g;
+ o.tree=flatTree(o.tree,st);
+ for(g in o.kids||{})o.kids[g]=flatTree(o.kids[g],st);
+ return o;
 }
 /** Delete the pre-v2 keys (their models do not map onto the tree). */
 function deleteOldKeys(storage){
@@ -125,42 +164,6 @@ function insertMissing(node,missing,prevOf,knownIds,isRoot,defaultsNode){
 function placeLeaf(n,id){
   var nxt=anchorOf(n,id);
   if(nxt){
-   // the default row rule: if the default layout holds the anchor and id side by side in a
-   // row, the new card joins that row wherever the anchor lives in the saved tree
-   var defRow=null,defIdx=-1;
-   var dp=parentOf(defaultsNode,nxt);
-   if(dp&&dp.d==="r"){
-    for(var q=0;q<dp.ch.length;q++)if(dp.ch[q].k==="c"&&dp.ch[q].id===nxt){defIdx=q;break}
-    if(defIdx>=0&&defIdx+1<dp.ch.length&&dp.ch[defIdx+1].k==="c"&&dp.ch[defIdx+1].id===id)defRow=dp;
-   }
-   if(defRow){
-    var path=pathTo(n,nxt);
-    var ri=-1,k;
-    if(path){
-     var row=path.length>=2?path[path.length-2]:null;
-     if(row&&row.k==="s"&&row.d==="r"){
-      for(k=0;k<row.ch.length;k++)if(row.ch[k].k==="c"&&row.ch[k].id===nxt){ri=k;break}
-     }
-    }
-    if(ri>=0){
-     // the anchor lives in a row in the saved tree: join that row, side by side
-     var par=row;
-     // skip saved cards the defaults do not know (ghosts): they keep their place after the anchor
-     while(ri+1<par.ch.length&&par.ch[ri+1].k==="c"&&!defIds[par.ch[ri+1].id])ri++;
-     par.ch.splice(ri+1,0,leaf(id));par.sz.splice(ri+1,0,0.5);
-     return n;
-    }
-    // the anchor sits alone in a band (its default row collapsed): the band regains a row
-    // [anchor, id] and keeps its px height
-    if(path&&path.length>=2&&path[path.length-1].k==="c"&&path[path.length-2].k==="s"&&path[path.length-2].d==="c"){
-     var band=path[path.length-2],ci=-1;
-     for(k=0;k<band.ch.length;k++)if(band.ch[k]===path[path.length-1]){ci=k;break}
-     if(ci>=0){
-      band.ch[ci]=split("r",[path[path.length-1],leaf(id)],[0.5,0.5]);
-      return n;
-     }
-    }
-   }
    var p=parentOf(n,nxt);
    if(p){
     var idx=-1;
@@ -260,7 +263,7 @@ function repairOrder(tree,def){
 }
 /** Cards that live in a default top-level group, {cardId: groupId}. A layout saved before a group existed holds
  *  its cards as root bands. */
-var GROUP_OF={tokens:"tokens-group",daily:"tokens-group",speed:"tokens-group",runs:"perf-group",sessions:"perf-group",pause:"perf-group"};
+var GROUP_OF={tokens:"tokens-group",daily:"tokens-group",speed:"perf-group",runs:"perf-group",sessions:"perf-group",pause:"perf-group"};
 /** A stored tree whose root holds mapped cards as bands, for a group that is not stored yet: the group is created at
  *  the first of them, they move in with their px heights as the body weights. A card the user put inside some group
  *  stays there; a group whose cards sit only elsewhere is dropped from the defaults so it is not inserted over them.
@@ -329,8 +332,11 @@ function dedupeCards(tree,kids,defaults){
  for(i=0;i<order.length;i++){
   var id=order[i];a=where[id];
   if(a.length<2)continue;
-  var keep=a[0],k;
-  for(k=0;k<a.length;k++)if(a[k]!==defAt[id]){keep=a[k];break}
+  // a copy inside a group always wins over one at the page root; then the one outside the default container (the user's placement)
+  var keep=a[0],k,pool=a.filter(function(x){return x!==""});
+  if(!pool.length)pool=a;
+  keep=pool[0];
+  for(k=0;k<pool.length;k++)if(pool[k]!==defAt[id]){keep=pool[k];break}
   var done=false;
   for(k=0;k<a.length;k++){
    var c=a[k];
@@ -352,12 +358,17 @@ function placedAnywhere(tree,kids,id){
 function reconcileSaved(saved,defaults,knownIds,now){
  now=typeof now==="number"?now:Date.now();
  knownIds=knownIds||[];
- var tree=saved.tree,kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
+ defaults=flatDefaults(defaults);
+ var st=saved.st&&typeof saved.st==="object"?saved.st:{};
+ migrateState(st);migrateState(defaults.stDefaults);
+ var tree=flatTree(saved.tree,st),kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
+ for(var kg in kids){var kt=flatTree(kids[kg],st);if(kt)kids[kg]=kt;else delete kids[kg]}
  var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;
  nestRoots(tree,kids);
  tree=dedupeCards(tree,kids,defaults);
- var st=saved.st&&typeof saved.st==="object"?saved.st:{};
+ // a mapped card left at the page root while its group exists goes back into the group (insertMissing below places it)
+ for(var mc in GROUP_OF)if(kids[GROUP_OF[mc]]&&findLeaf(tree,mc)&&!(function(){for(var q in kids)if(findLeaf(kids[q],mc))return true;return false})())tree=removeLeaf(tree,mc,true)||tree;
  tree=pruneGhosts(tree,kids,st,knownIds,now);
  var prevOf=prevOfDefault(defaults);
  tree=insertMissing(tree,missingIn(defaults.tree,tree,knownIds),prevOf,knownIds,true,defaults.tree);
@@ -366,9 +377,8 @@ function reconcileSaved(saved,defaults,knownIds,now){
   if(defKid)kids[g]=insertMissing(kids[g],missingIn(defKid,kids[g],knownIds).filter(function(m){return !placedAnywhere(tree,kids,m)}),prevOf,knownIds,false,defKid);
  }
  var sd=defaults.stDefaults||{};
- for(var id in sd)if(st[id]===undefined)st[id]=clone(sd[id]);
+ for(var id in sd){if(st[id]===undefined)st[id]=clone(sd[id]);else if(st[id].w===undefined&&sd[id].w!==undefined)st[id].w=sd[id].w}
  normMin(st);
- dropBandHeights(st);
  return{tree:tree,kids:kids,st:st};
 }
 /** One write, whole object, debounced by the caller (spec 6). t is the save time: another tab compares it to know which layout is newer. Returns t. */
