@@ -32,6 +32,7 @@ const fakePane = (id: string, started: StartSpec[]): OwnedPane => ({
   id,
   where: "fake",
   cancel: () => undefined,
+  setQueued: () => undefined,
   start: async (spec) => {
     started.push(spec);
     return { asChild: () => Object.assign(new EventEmitter(), { stderr: null }) } as never;
