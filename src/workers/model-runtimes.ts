@@ -73,34 +73,52 @@ export function runtimeOpArgv(cmd: string, model?: string): string[] {
 
 export interface RuntimeOpDeps {
   /** shell run (stop commands); resolves when the process exits */
-  runShell: (cmd: string, logPath: string) => Promise<{ code: number | null }>;
+  runShell: (cmd: string, logPath: string, timeoutMs?: number) => Promise<{ code: number | null }>;
   /** detached long-running shell run (start commands): returns at once; `exit` settles only if the child ends */
   spawnDetached: (cmd: string, logPath: string) => { exit: Promise<{ code: number | null }> };
   /** a ready URL answered 2xx */
   getUrl: (url: string) => Promise<boolean>;
   /** a ready command: resolves its exit code */
-  runCmd: (cmd: string) => Promise<number | null>;
+  runCmd: (cmd: string, timeoutMs?: number) => Promise<number | null>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
 }
 
 export const RUNTIME_READY_TIMEOUT_MS = 120_000;
 export const RUNTIME_READY_POLL_MS = 2_000;
+/** A ready probe answers within one poll-ish window; a stop command within half a minute. */
+export const RUNTIME_PROBE_TIMEOUT_MS = 10_000;
+export const RUNTIME_STOP_TIMEOUT_MS = 30_000;
+/** Exit code reported for a stop command that was killed on timeout. */
+export const RUNTIME_TIMEOUT_CODE = 124;
+
+const killGroup = (pid: number | undefined): void => {
+  if (pid === undefined) return;
+  try { process.kill(-pid, "SIGKILL"); } catch { /* already gone */ }
+};
 
 /** The production deps: one shell run through a detached child, output appended to the runtime's log. */
 export const liveRuntimeOpDeps: RuntimeOpDeps = {
-  runShell(cmd, logPath) {
+  runShell(cmd, logPath, timeoutMs = RUNTIME_STOP_TIMEOUT_MS) {
     return new Promise((resolve) => {
       mkdirSync(dirname(logPath), { recursive: true });
       const fd = openSync(logPath, "a");
       appendFileSync(fd, `\n$ ${cmd}\n`, "utf8");
       const child = spawn(cmd, { shell: true, detached: true, stdio: ["ignore", fd, fd] });
       child.unref();
+      const timer = setTimeout(() => {
+        appendFileSync(fd, `\n[timed out after ${timeoutMs} ms]\n`, "utf8");
+        killGroup(child.pid);
+        closeFd(fd);
+        resolve({ code: RUNTIME_TIMEOUT_CODE });
+      }, timeoutMs);
       child.on("exit", (code) => {
+        clearTimeout(timer);
         closeFd(fd);
         resolve({ code });
       });
       child.on("error", () => {
+        clearTimeout(timer);
         closeFd(fd);
         resolve({ code: null });
       });
@@ -128,11 +146,21 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
       return false;
     }
   },
-  runCmd(cmd) {
+  runCmd(cmd, timeoutMs = RUNTIME_PROBE_TIMEOUT_MS) {
     return new Promise((resolve) => {
-      const child = spawn(cmd, { shell: true });
-      child.on("exit", (code) => resolve(code));
-      child.on("error", () => resolve(null));
+      const child = spawn(cmd, { shell: true, detached: true, stdio: "ignore" });
+      const timer = setTimeout(() => {
+        killGroup(child.pid);
+        resolve(null);
+      }, timeoutMs);
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+      child.on("error", () => {
+        clearTimeout(timer);
+        resolve(null);
+      });
     });
   },
   now: () => Date.now(),

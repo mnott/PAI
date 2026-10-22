@@ -224,3 +224,16 @@ describe("models.runtimes shipped defaults (temp dirs only, never a user write)"
     }
   });
 });
+
+describe("live runtime ops time out", () => {
+  it("a hung ready probe is not-ready and a hung stop command fails with the timeout code", async () => {
+    const { liveRuntimeOpDeps, RUNTIME_TIMEOUT_CODE } = await import("./model-runtimes.js");
+    const hang = `${process.execPath} -e "setTimeout(() => {}, 60000)"`;
+    const t0 = Date.now();
+    expect(await liveRuntimeOpDeps.runCmd(hang, 300)).toBeNull();
+    const { code } = await liveRuntimeOpDeps.runShell(hang, join(newDir(), "rt.log"), 300);
+    expect(code).toBe(RUNTIME_TIMEOUT_CODE);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(await liveRuntimeOpDeps.runCmd("true", 5000)).toBe(0);
+  });
+});
