@@ -14,14 +14,15 @@
  */
 
 import { execFile, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
 import { loadConfig } from "../daemon/config.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
 import { vllmLogCacheStats } from "./vllm-log-cache.js";
@@ -118,8 +119,7 @@ export function readLastGood(file: string = lastGoodPath()): Record<string, Last
 
 function writeLastGood(file: string, entries: Record<string, LastGoodEntry>): void {
   try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify(entries, null, 1));
+    writeFileAtomic(file, JSON.stringify(entries, null, 1));
   } catch {
     /* best-effort cache */
   }
@@ -216,8 +216,7 @@ export class Backoff {
   private save(): void {
     if (!this.file) return;
     try {
-      mkdirSync(dirname(this.file), { recursive: true });
-      writeFileSync(this.file, JSON.stringify(this.state));
+      writeFileAtomic(this.file, JSON.stringify(this.state));
     } catch {
       /* best-effort shared state */
     }

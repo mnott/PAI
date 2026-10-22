@@ -6,8 +6,8 @@
  * while a local-model worker holds the machine or the load average is high.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { loadavg } from "node:os";
 import { paiHomePath } from "../config/pai-home.js";
 import { isLocalProvider, readWorkersSection } from "../workers/config.js";
@@ -154,8 +154,7 @@ export function recordEmbedPass(entry: EmbedPassLogEntry, path = embedPassLogPat
   try {
     const all = readEmbedPasses(path);
     all.push(entry);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(all.slice(-MAX_LOGGED_PASSES)) + "\n");
+    writeFileAtomic(path, JSON.stringify(all.slice(-MAX_LOGGED_PASSES)) + "\n");
   } catch { /* the record is informational; never fail a pass over it */ }
 }
 
