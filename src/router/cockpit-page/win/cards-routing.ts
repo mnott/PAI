@@ -22,11 +22,11 @@ function rtRemove(ctx,btn){
  if(!left.length){ctx.status("err",RT_NONE);return}
  rtSet(ctx,st.tier,left,btn);
 }
-/** A selector pick goes first; the other entries stay as fallbacks. */
+/** A selector pick is appended as the lowest preference; one already in the chain keeps its place. */
+function rtAppend(entries,pick){return entries.indexOf(pick)<0?entries.concat([pick]):entries}
 function rtPick(ctx,pick){
  var st=ctx.body.__rt;if(!st||!pick)return;
- var rest=st.entries.filter(function(x){return x!==pick});
- rtSet(ctx,st.tier,[pick].concat(rest),st.sel);
+ if(st.entries.indexOf(pick)<0)rtSet(ctx,st.tier,rtAppend(st.entries,pick),st.sel);
  st.sel.setValue(null);
 }
 Win.registerType("rtflow",{minW:200,minH:40,defaultH:44,
@@ -37,7 +37,7 @@ Win.registerType("routing-row",{minW:260,minH:70,defaultH:96,
   ctx.body.innerHTML='<div class="wr"><div class="wr-top"><span class="rtchips" data-k="chips"></span><span class="wr-sel" data-k="sel"></span><span class="rtcls dim" data-k="cls"></span></div><div class="wr-sess" data-k="sess"></div></div>';
   var st={tier:ctx.id.slice(8),entries:[],opts:"",sel:null};
   st.sel=WinA.Select({options:[],value:null,placeholder:"selector…",ariaLabel:"selector for "+st.tier,onChange:function(v){rtPick(ctx,v)}});
-  st.sel.title="Serve this tier from a selector: local, model:, tag:, class: or a provider. The pick goes first; the other entries stay as fallbacks.";
+  st.sel.title="Serve this tier from a selector: local, model:, tag:, class: or a provider. The pick is appended to the end of the chain (lowest preference).";
   ctx.body.querySelector('[data-k="sel"]').appendChild(st.sel);
   ctx.body.__rt=st;
   ctx.body.addEventListener("click",function(e){var b=e.target;if(b&&b.classList&&b.classList.contains("rtrm"))rtRemove(ctx,b)});
