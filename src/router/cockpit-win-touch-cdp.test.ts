@@ -53,7 +53,7 @@ async function launch(w: number, h: number) {
   }
   if (!port) throw new Error("chrome did not start");
   let tabs: { type: string; webSocketDebuggerUrl: string }[] = [];
-  for (let i = 0; i < 50 && !tabs.length; i++) { try { tabs = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as typeof tabs; } catch { await sleep(200); } }
+  for (let i = 0; i < 50 && !tabs.some((t) => t.type === "page"); i++) { try { tabs = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as typeof tabs; } catch { /* not up yet */ } if (!tabs.some((t) => t.type === "page")) await sleep(200); }
   ws = new WebSocket(tabs.find((t) => t.type === "page")!.webSocketDebuggerUrl);
   await new Promise((r) => { ws!.onopen = r; });
   let id = 0;
