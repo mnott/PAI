@@ -133,46 +133,16 @@ function buildCard(spec){
  var min=el("button","cbtn cmin");min.type="button";min.textContent="–";min.setAttribute("aria-expanded","true");
  min.addEventListener("click",function(){toggleMin(c.id)});
  status.addEventListener("click",function(){if(status.getAttribute("data-kind")==="err")setStatus(c,"","")});
- // the page turns the width control on (opts.span); it sits in the title so the header children stay grip, title, status, actions, minimize; a pointer control, not a tab stop (tabindex -1)
- if(W.opts&&W.opts.span){
-  var sp=el("button","cbtn cspan");sp.type="button";sp.setAttribute("data-act","span");sp.tabIndex=-1;
-  sp.addEventListener("click",function(){cycleSpan(c.id)});
-  title.appendChild(sp);c.span=sp;
- }
- head.appendChild(min);c.min=min;if(c.span)paintSpan(c);
+ head.appendChild(min);c.min=min;
  e.appendChild(head);e.appendChild(body);
  // height handle (bottom-right "//"): drag, arrows or double-click change this card's height only; hidden on groups and when locked by CSS
  var hd=el("div","chandle");hd.tabIndex=0;hd.setAttribute("role","separator");hd.setAttribute("aria-orientation","horizontal");
- hd.title="drag to change height \u00b7 double-click: fit to content";hd.setAttribute("data-handle",spec.id);
+ hd.title="drag to resize \u00b7 double-click to reset";hd.setAttribute("data-handle",spec.id);
  e.appendChild(hd);c.handle=hd;
  setTitle(c,spec.title);
  paintActions(c);
  min.title="minimize "+c.titleText;min.setAttribute("aria-label",min.title);
  return c;
-}
-/** Width share in the row: auto, 1/4, 1/3, 1/2, the whole row. st.sp holds the divisor (absent = auto). */
-var SPAN_CYCLE=[0,4,3,2,1],SPAN_MARK={0:"\u2194",4:"\u00bc",3:"\u2153",2:"\u00bd",1:"1"},SPAN_NAME={0:"auto",4:"1/4",3:"1/3",2:"1/2",1:"full"};
-function spanOf(id){var s=W.st&&W.st[id];return s&&s.sp>0?s.sp:0}
-/** A share the handle set (k of N columns) has no preset name: its percentage. */
-function spanName(v){return SPAN_NAME[v]||Math.round(100/v)+"%"}
-function paintSpan(c){
- if(!c.span)return;
- var v=spanOf(c.id);
- if(c.span.getAttribute("data-span")===spanName(v))return;
- var nm=spanName(v);
- c.span.textContent=SPAN_MARK[v]||nm;
- c.span.title="width in the row: "+nm+" \u00b7 click for "+SPAN_NAME[SPAN_CYCLE[(SPAN_CYCLE.indexOf(v)+1)%SPAN_CYCLE.length]];
- c.span.setAttribute("aria-label","width of "+(c.titleText||c.id)+": "+nm);
- c.span.setAttribute("data-span",nm);
-}
-function cycleSpan(id){
- var c=W.cards[id];if(!c||winLocked())return;
- var nx=SPAN_CYCLE[(SPAN_CYCLE.indexOf(spanOf(id))+1)%SPAN_CYCLE.length];
- W.st[id]=W.st[id]||{};
- if(nx)W.st[id].sp=nx;else delete W.st[id].sp;
- paintSpan(c);
- anchorKeep(relayout);save();
- announce(c.titleText+" width "+SPAN_NAME[nx]);
 }
 function isMin(id){var s=W.st[id];return!!s&&s.min===1}
 /** layout state: unknown ids are ghosts (no space), known minimized cards carry min. */
@@ -217,7 +187,7 @@ function paintMin(c){
 function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=fitCfg();return W.cfg}
 /** Each card's title text width plus header controls, measured once the card is placed (c.tw; the status slot may truncate, so it is not counted); a new reading re-lays out once. */
 /** The title element is stretched by flex, so its natural width is where its last child (text or info icon) ends. */
-function titleText(c){return(c.span?c.span.previousSibling:c.title.lastChild).getBoundingClientRect().right-c.title.getBoundingClientRect().left}
+function titleText(c){return c.title.lastChild.getBoundingClientRect().right-c.title.getBoundingClientRect().left}
 function measureTitles(){
  var id,c,n=0;
  for(id in W.cards){
@@ -304,7 +274,7 @@ function relayout(){
   var c=W.cards[W.order[i]],rect=r.rects[c.id];
   if(!rect){c.el.style.display="none";continue}
   if(c.el.style.display==="none")c.el.style.display="";
-  place(c,rect);paintSpan(c);if(W.st[c.id]&&W.st[c.id].h)c.el.setAttribute("data-uh","1");else c.el.removeAttribute("data-uh");
+  place(c,rect);if(W.st[c.id]&&W.st[c.id].h)c.el.setAttribute("data-uh","1");else c.el.removeAttribute("data-uh");
   paintMin(c);
   var def=TYPES[c.type]||{};
   if(isMin(c.id))continue;
@@ -413,7 +383,7 @@ function heightWire(){
  });
  document.addEventListener("pointermove",function(e){
   if(!cur)return;
-  // the handle also sets the width: snapped to whole column units of the row's container; the share control writes the same st.sp
+  // the handle also sets the width: snapped to whole column units of the row's container
   var dx=e.clientX-cur.x,p=cur.c.el.parentNode;
   if(Math.abs(dx)>=8&&p&&p.clientWidth>0){var sp=winColSpan(p.clientWidth,W.cfg.GAP,W.cfg.minW,cur.w+dx);(W.st[cur.c.id]=W.st[cur.c.id]||{}).sp=sp}
   setHeight(cur.c.id,cur.h+e.clientY-cur.y,true);
@@ -438,7 +408,7 @@ function heightWire(){
  document.addEventListener("dblclick",function(e){
   var c=card(e);
   if(!c||winLocked())return;
-  setHeight(c.id,null);save();announce("height fitted");
+  setHeight(c.id,null);if(W.st[c.id])delete W.st[c.id].sp;anchorKeep(relayout);save();announce("size reset");
  });
 }
 /** The ResizeObserver callback: main's height is set by layout itself, so only a width change relayouts. */
@@ -521,7 +491,7 @@ function attach(parent,node,d){
 }
 function init(main,defaults,opts){
  opts=opts||{};
- W.opts={storage:opts.storage||window.localStorage,now:opts.now,span:!!opts.span};
+ W.opts={storage:opts.storage||window.localStorage,now:opts.now};
  W.defaults=defaults;W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
  W.cfg={HEAD_H:HEAD_H,CHIP_H:22,GAP:8,GUTTER:8,minW:220,narrowW:480};
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];
