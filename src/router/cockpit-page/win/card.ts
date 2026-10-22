@@ -226,6 +226,16 @@ function syncBodies(){
  }
 }
 /** Apply the tree and the card states to the DOM. The browser lays the cards out (CSS grid). */
+/** A card a locked layout shows nothing of: minimized or hidden, or a group all of whose cards are (bottom-up, so a parent left with no visible child goes too). The class is inert unless html.locked. */
+function lkGone(id){
+ var c=W.cards[id],g,l,i,x;
+ if(!c)return true;
+ if(isMin(id)||(W.hide&&W.hide[id]))g=true;
+ else if(kidsOf(id)){g=true;l=ids(W.kids[id]);for(i=0;i<l.length;i++){x=lkGone(l[i]);g=g&&x}}
+ else g=false;
+ c.el.classList.toggle("lkgone",g);
+ return g;
+}
 function relayout(){
  W.n++;
  W.order=[];
@@ -243,6 +253,7 @@ function relayout(){
   mountCard(c);
   if(W.bro)W.bro.observe(c.body);
  }
+ var top=ids(W.tree);for(i=0;i<top.length;i++)lkGone(top[i]);
  // a card no tree holds (a group's kids were replaced) takes no space
  var placed={};
  for(i=0;i<W.order.length;i++)placed[W.order[i]]=1;

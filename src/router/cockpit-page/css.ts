@@ -27,7 +27,7 @@ h1{font-size:15px;margin:0;font-weight:600}
 #ask .aq{display:inline}header.asking #stamp{margin-left:0}header.asking #ask{margin-left:auto}
 #toast{position:fixed;top:48px;right:14px;z-index:5;background:var(--card,var(--bg));border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--ok)}#toast[hidden]{display:none}
 #savedef.ok{color:var(--ok)}
-html.locked .cgrip,html.locked .cmin,html.locked #reset,html.locked main.win .cdock{display:none}html.locked main.win .card.min:not([data-depth]),html.locked main.win .card:not([data-depth]):has(>.cbody.cgroup:not(:has(>.card))){display:none}
+html.locked .cgrip,html.locked .cmin,html.locked #reset,html.locked main.win .cdock{display:none}html.locked main.win .card.lkgone{display:none}
 #reset{background:none;border:0;padding:2px 4px;color:var(--dim);cursor:pointer;font-size:15px;line-height:1;border-radius:6px}#reset:hover{color:var(--acc)}
 :root[data-theme=dark] .ic-moon{display:none}:root:not([data-theme=dark]) .ic-sun{display:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;overflow-wrap:anywhere}

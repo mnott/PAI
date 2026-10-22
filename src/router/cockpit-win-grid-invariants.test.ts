@@ -295,4 +295,67 @@ describe.skipIf(!CHROME)("CSS grid invariants", () => {
       expect(violations(await b.ev<Row[]>(PROBE))).toEqual([]);
     }, 120_000);
   }
+
+  const setW = (b: Page, ids: string[], w: number) => b.ev(`(function(){var s=Win.state().st;${JSON.stringify(ids)}.forEach(function(id){s[id]=Object.assign(s[id]||{},{w:${w}});delete s[id].h});Win.relayout()})()`);
+
+  it("530 px: the two provider cards sit side by side at 6+6 units, both dials visible and unclipped, the gauge row is centred", async () => {
+    const b = await open(530, null);
+    const ids = await b.ev<string[]>(`Array.from(document.querySelectorAll('#win-root [data-card^="limits.cloud:"]')).map(function(c){return c.dataset.card})`);
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    await setW(b, ids.slice(0, 2), 6); await sleep(300);
+    const r = await b.ev<{ top: number; l: number; r: number; gl: number; gr: number; clip: boolean; n: number }[]>(`${JSON.stringify(ids.slice(0, 2))}.map(function(id){var c=document.querySelector('#win-root [data-card="'+id+'"]'),cb=c.querySelector(".cbody").getBoundingClientRect(),g=Array.from(c.querySelectorAll(".gauge")).filter(function(x){return x.querySelector("svg")}),cl=false,gl=1e9,gr=0;g.forEach(function(x){var s=x.querySelector("svg").getBoundingClientRect();if(s.width<30||s.left<cb.left-1||s.right>cb.right+1)cl=true;gl=Math.min(gl,s.left);gr=Math.max(gr,s.right)});var cr=c.getBoundingClientRect();return{top:Math.round(cr.top),l:cb.left,r:cb.right,gl:gl,gr:gr,clip:cl,n:g.length}})`);
+    expect(Math.abs(r[0].top - r[1].top), "same row").toBeLessThan(3);
+    for (const c of r) {
+      expect(c.n).toBeGreaterThanOrEqual(2);
+      expect(c.clip, "dials visible and inside the card").toBe(false);
+      expect(Math.abs(c.gl - c.l - (c.r - c.gr)), "gauge row centred").toBeLessThanOrEqual(6);
+    }
+  }, 120_000);
+
+  it("530 px: the memory/load stat tiles fit four to a row at 3 units", async () => {
+    const b = await open(530, null);
+    const ids = await b.ev<string[]>(`Array.from(document.querySelectorAll('#win-root [data-type="metric"][data-card^="system."]')).filter(function(c){return c.getBoundingClientRect().height>0}).map(function(c){return c.dataset.card})`);
+    expect(ids.length).toBeGreaterThanOrEqual(4);
+    await setW(b, ids, 3); await sleep(300);
+    const tops = await b.ev<number[]>(`${JSON.stringify(ids)}.map(function(id){return Math.round(document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().top)})`);
+    const perRow = Math.max(...[...new Set(tops)].map((t) => tops.filter((x) => Math.abs(x - t) < 3).length));
+    expect(perRow).toBeGreaterThanOrEqual(4);
+  }, 120_000);
+
+  it("530 px: the Slots card narrows to 3 units", async () => {
+    const b = await open(530, null);
+    await setW(b, ["pool.slots"], 3); await sleep(300);
+    const w = await widthOf(b, "pool.slots");
+    const root = await b.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`);
+    expect(w, "about a quarter of the width").toBeLessThan(root / 3);
+  }, 120_000);
+
+  it("a locked layout hides docks and every section whose cards are all minimized (bottom-up); unlocked shows them again", async () => {
+    const b = await open(900, LAYOUT);
+    const shown = (id: string) => b.ev<boolean>(`(function(){var e=document.querySelector('#win-root [data-card="${id}"]');return!!e&&e.getBoundingClientRect().height>0})()`);
+    const dockShown = () => b.ev<boolean>(`Array.from(document.querySelectorAll("#win-root .cdock")).some(function(d){return d.getBoundingClientRect().height>0})`);
+    const lock = async (on: boolean) => { await b.ev(`document.documentElement.classList.${on ? "add" : "remove"}("locked")`); await sleep(200); };
+    const leaves = (g: string) => b.ev<string[]>(`(function f(id){var n=Win.state().kids[id],o=[];(function w(t){if(t.k==="c"){if(Win.state().kids[t.id])o=o.concat(f(t.id));else o.push(t.id)}else t.ch.forEach(w)})(n);return o})(${JSON.stringify(g)})`);
+    const minimize = (ids: string[]) => b.ev(`${JSON.stringify(ids)}.forEach(function(id){var s=Win.state().st;s[id]=Object.assign(s[id]||{},{min:1})});Win.relayout()`);
+    const inner = await leaves("cache-rings");
+    const all = await leaves("cache");
+    expect(inner.length).toBeGreaterThan(0);
+    await minimize([inner[0]]);
+    await lock(false);
+    expect(await dockShown(), "unlocked: dock visible").toBe(true);
+    await lock(true);
+    expect(await dockShown(), "locked: no dock").toBe(false);
+    await lock(false);
+    await minimize(inner);
+    await lock(true);
+    expect(await shown("cache-rings"), "locked: nested group with all cards minimized is hidden").toBe(false);
+    if (all.some((id) => !inner.includes(id))) expect(await shown("cache"), "its parent still has a visible card").toBe(true);
+    await lock(false);
+    expect(await shown("cache-rings"), "unlocked: back").toBe(true);
+    await minimize(all);
+    await lock(true);
+    expect(await shown("cache"), "locked: a parent with no visible child is hidden too").toBe(false);
+    await lock(false);
+    expect(await shown("cache"), "unlocked: back").toBe(true);
+  }, 120_000);
 });
