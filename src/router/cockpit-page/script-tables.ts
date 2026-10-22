@@ -137,7 +137,7 @@ function pauseHtml(d){
  return ph.length?table(["model (hit% n) .txt"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>';
 }
 function load(){
- feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){data=j;Win.update("data",j);winFeedCache()});
+ feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){newerCheck(j);data=j;Win.update("data",j);winFeedCache()});
 }
 function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;winFeedSystem(j);winFeedCache()})}
 `;

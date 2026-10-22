@@ -8,6 +8,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
+import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
 import { expandHome, loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
@@ -997,6 +998,17 @@ export function cockpitQueue(
   return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 
+const BUILD_PLACEHOLDER = "__COCKPIT_BUILD__";
+let buildId: string | null = null;
+/** Test seam: pin the build id the page is stamped with and the poll reports (null = derive again). */
+export function setCockpitBuildId(id: string | null): void {
+  buildId = id;
+}
+/** This router's page build: a hash of the page source it serves, fixed for the life of the process. */
+function cockpitBuildId(): string {
+  return (buildId ??= createHash("sha1").update(cockpitHtml()).digest("hex").slice(0, 12));
+}
+
 /**
  * Serve /cockpit, /cockpit/data, /cockpit/system, /cockpit/pool,
  * /cockpit/queue and the queue write actions. Returns false when the path is
@@ -1072,7 +1084,7 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml();
+      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId());
     } catch {
       /* falls through to the 503 */
     }
@@ -1085,7 +1097,7 @@ export function handleCockpit(
   else if (url.pathname === "/cockpit/data") {
     try {
       const rows = readRows();
-      send(200, "application/json", JSON.stringify(buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool(), configuredProviders())));
+      send(200, "application/json", JSON.stringify({ ...buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool(), configuredProviders()), build: cockpitBuildId() }));
     } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }

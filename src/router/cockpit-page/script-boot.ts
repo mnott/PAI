@@ -33,6 +33,10 @@ function feed(key,url,secs,apply,onErr){
   F.good=j;F.at=Date.now();F.err=null;F.degraded=null;F.shown=0;lastOk=F.at;apply(j);
  },function(e){bad(String((e&&e.message)||"fetch failed"),null)}).catch(function(){});
 }
+/** The build this page was served with; a poll carrying another one shows the reload link (once, until the reload). */
+var BUILD=(document.querySelector('meta[name="cockpit-build"]')||{}).content;
+function newerCheck(j){var a=$("newer");if(j&&j.build&&BUILD&&BUILD.charAt(0)!=="_"&&j.build!==BUILD&&a.hidden)a.hidden=false}
+$("newer").onclick=function(e){e.preventDefault();location.reload()};
 function loadQueue(){feed("queue","/cockpit/queue",["workers"],function(j){winFeedQueue(j)})}
 function loadModels(){feed("models","/cockpit/models",["models"],function(j){mdl=j;winFeedModels(mdl)})}
 function loadLimits(){feed("limits","/cockpit/limits",["cloud","routing","models","system","cache"],function(j){lim=j;winFeedLimits(lim);limitsSync(lim);winFeedCache()})}
