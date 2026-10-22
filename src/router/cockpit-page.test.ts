@@ -617,8 +617,12 @@ describe("provider limits card gauge fit", () => {
     expect(html).toContain('class="gauges fit"');
     expect(html).toMatch(/\.gauges\.fit\{[^}]*height:100%[^}]*overflow:hidden/);
     expect(html).not.toContain("container-type:size");
-    expect(html).toContain("[data-short]>.cbody>.gauges.fit .gauge .s{display:none}");
+    // was: a [data-short] rule hiding the sub line and a size-container width query; now: the dials shrink only as far as the
+    // card height (--uh) requires, the sub line hides on the inline-size container (width) alone
+    expect(html).toContain(".gauges.fit{align-content:start;justify-content:center;container-type:inline-size}");
+    expect(html).toContain("max-height:clamp(48px,calc(var(--uh) - 28px),70px)");
     expect(html).toContain("@container (max-width:230px){.gauges.fit .gauge .s{display:none}}");
+    expect(html).not.toContain("[data-short]>.cbody>.gauges.fit .gauge .s{display:none}");
     expect(html).not.toMatch(/\.gauges\.fit[^{]*\{[^}]*flex-direction:column/);
   });
 });
