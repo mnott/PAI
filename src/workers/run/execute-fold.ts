@@ -49,6 +49,7 @@ import { armResultGrace, leftoverNote } from "../result-grace.js";
 import { armDeadline } from "../deadline.js";
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
+import { reapRunTree } from "./lifecycle.js";
 import { buildsDir, releaseBuildsOf } from "../../builds/queue.js";
 import { type StreamEvent, type ExecuteArgs } from "./types.js";
 import {
@@ -167,10 +168,96 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   if (paneVerified) status.pane = { opened: true, exec: true };
   else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
-  let proc: ReturnType<typeof spawn>;
+  // The signal handlers and the one failure path come first: nothing below that can block (gates, the spawn) may run unguarded.
+  let spawned: ReturnType<typeof spawn> | undefined;
+  let t0 = Date.now();
+  let stopDeadline: (() => void) | null = null;
+  let stopTrack: (() => void) | null = null;
+  let operatorServer: ReturnType<typeof createOperatorServer> | null = null;
+  const cleanup = () => {
+    stopDeadline?.();
+    stopTrack?.();
+    if (state.closeTimer) clearTimeout(state.closeTimer);
+    operatorServer?.close();
+  };
+  const onSignal = (sig: string) => {
+    state.killed = true;
+    status.state = "killed";
+    status.rc = 143;
+    status.secs = Math.floor((Date.now() - t0) / 1000);
+    const end = recordSignalEnd(logDir, status, sig);
+    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
+    saveStatus(logDir, status);
+    appendLedger(ledger, "WORKER-END", {
+      id: wid,
+      provider: target.providerName,
+      mode: "headless",
+      model,
+      rc: 143,
+      secs: status.secs,
+      killed: 1,
+      ...endFields(end),
+      note: end.note,
+      label,
+    });
+    // a killed worktree run leaves nothing to merge — drop its worktree and
+    // branch too, or every kill strands them for hand-pruning (2026-09-18)
+    if (worktree) {
+      salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
+      try {
+        recordWorktree(logDir, status, worktree, false);
+      } catch {
+        /* best effort: the status already says killed */
+      }
+    }
+    cleanup();
+    try {
+      spawned?.kill();
+    } catch {
+      /* already gone */
+    }
+    // the worker's process tree, build lock and tree go with it (finaliseRun, which reaps, never runs on this path)
+    void reapRunTree(worktree?.dir)
+      .then(() => releaseBuildsOf(buildsDir(), wid))
+      .catch(() => [])
+      .finally(() => process.exit(143));
+    setTimeout(() => process.exit(143), 2000).unref();
+  };
+  const sigHandlers = (["SIGTERM", "SIGINT", "SIGHUP"] as const).map((sig) => [sig, () => onSignal(sig)] as const);
+  for (const [sig, h] of sigHandlers) process.once(sig, h);
+  // A start that dies (gates, spawn, process "error"): the same end as a normal exit — cleanup, status failed with the error, tree reaped, worktree salvaged.
+  const failRun = async (e: unknown): Promise<void> => {
+    for (const [sig, h] of sigHandlers) process.off(sig, h);
+    markStartFailed(logDir, status, e);
+    cleanup();
+    if (state.troubleTimer) clearInterval(state.troubleTimer);
+    if (state.eventsFd !== null) {
+      try {
+        closeSync(state.eventsFd);
+      } catch {
+        /* already closed */
+      }
+      state.eventsFd = null;
+    }
+    try {
+      spawned?.kill();
+    } catch {
+      /* already gone */
+    }
+    await reapRunTree(worktree?.dir);
+    if (worktree) {
+      salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
+      try {
+        recordWorktree(logDir, status, worktree, false);
+      } catch {
+        /* best effort: the status already says failed */
+      }
+    }
+  };
+
   try {
     if (headless && !a.gated) await runGates(a, wid, status);
-    proc = await spawnOwned(wid, cmd, {
+    spawned = await spawnOwned(wid, cmd, {
       env,
       cwd: worktree?.dir ?? cwd,
       stdio: headless ? ["pipe", "pipe", "pipe"] : "inherit",
@@ -179,10 +266,11 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       statusLine: { kind: "worker", id: wid, logDir },
     });
   } catch (e) {
-    markStartFailed(logDir, status, e);
+    await failRun(e);
     throw e;
   }
-  const t0 = Date.now();
+  const proc = spawned;
+  t0 = Date.now();
   // claude's stderr: passed through, and the tail kept for a start that dies before any model event
   proc.stderr?.on("data", (d: Buffer) => {
     process.stderr.write(d);
@@ -212,7 +300,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     }
   };
 
-  const operatorServer = headless
+  operatorServer = headless
     ? createOperatorServer(logDir, wid, async (text) => {
         const stdin = proc.stdin;
         if (!stdin || !stdin.writable || stdin.writableEnded) {
@@ -251,57 +339,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   };
 
   const resultGrace = armResultGrace(headless ? proc.pid : undefined);
-  const stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid)) : null;
-  const stopTrack = trackBlocked(logDir, status, limit);
-  const cleanup = () => {
-    stopDeadline?.();
-    stopTrack();
-    if (state.closeTimer) clearTimeout(state.closeTimer);
-    operatorServer?.close();
-  };
-  const onSignal = (sig: string) => {
-    state.killed = true;
-    status.state = "killed";
-    status.rc = 143;
-    status.secs = Math.floor((Date.now() - t0) / 1000);
-    const end = recordSignalEnd(logDir, status, sig);
-    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
-    saveStatus(logDir, status);
-    appendLedger(ledger, "WORKER-END", {
-      id: wid,
-      provider: target.providerName,
-      mode: "headless",
-      model,
-      rc: 143,
-      secs: status.secs,
-      killed: 1,
-      ...endFields(end),
-      note: end.note,
-      label,
-    });
-    // a killed worktree run leaves nothing to merge — drop its worktree and
-    // branch too, or every kill strands them for hand-pruning (2026-09-18)
-    if (worktree) {
-      salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
-      try {
-        recordWorktree(logDir, status, worktree, false);
-      } catch {
-        /* best effort: the status already says killed */
-      }
-    }
-    cleanup();
-    try {
-      proc.kill();
-    } catch {
-      /* already gone */
-    }
-    // the build lock and tree of a killed worker go with it
-    void releaseBuildsOf(buildsDir(), wid).catch(() => []).finally(() => process.exit(143));
-    setTimeout(() => process.exit(143), 2000).unref();
-  };
-  process.once("SIGTERM", () => onSignal("SIGTERM"));
-  process.once("SIGINT", () => onSignal("SIGINT"));
-  process.once("SIGHUP", () => onSignal("SIGHUP"));
+  stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid)) : null;
+  stopTrack = trackBlocked(logDir, status, limit);
 
   const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
@@ -431,10 +470,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   }
 
   let rc = await new Promise<number>((resolve, reject) => {
-    proc.on("error", (e) => {
-      markStartFailed(logDir, status, e);
-      reject(e);
-    });
+    proc.on("error", (e) => void failRun(e).then(() => reject(e), () => reject(e)));
     proc.on("close", (code) => resolve(code ?? (state.killed ? 143 : 1)));
   });
   if (state.troubleTimer) clearInterval(state.troubleTimer);

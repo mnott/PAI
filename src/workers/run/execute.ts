@@ -13,7 +13,7 @@ import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { endFields, parentInfo } from "../endreason.js";
 import { eventsPath, ledgerPath } from "../paths.js";
-import { type WorkerStatus, newWorkerId, saveStatus, nowStamp } from "../status.js";
+import { type WorkerStatus, newWorkerId, saveStatus, nowStamp, markStartFailed } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
 import { runImageCapability } from "../engines/image.js";
 import { resolveHostSession } from "../pane.js";
@@ -50,6 +50,8 @@ import {
   worktreeExtras,
   printResult,
 } from "./finalise.js";
+import { spawn } from "node:child_process";
+import { reapRunTree } from "./lifecycle.js";
 import { prepareRun } from "./execute-prepare.js";
 import { foldRun } from "./execute-fold.js";
 
@@ -256,17 +258,105 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   if (paneVerified) status.pane = { opened: true, exec: true };
   else void announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
-  const t0 = Date.now();
-  const proc = await spawnOwned(wid, ["codex", ...buildCodexArgs(prompt, parsed.callerModel ? undefined : model)], {
-    env,
-    cwd: worktree?.dir ?? cwd,
-    stdio: ["ignore", "pipe", "inherit"],
-    title: paneTitle(label, target.providerName),
-  });
+  // The signal handlers and the one failure path come first: the spawn must not run unguarded.
+  let spawned: ReturnType<typeof spawn> | undefined;
+  let t0 = Date.now();
+  let eventsFd: number | null = null;
+  let killed = false;
+  let stopDeadline: (() => void) | null = null;
+  let stopTrack: (() => void) | null = null;
+  const cleanup = () => {
+    stopDeadline?.();
+    stopTrack?.();
+    if (eventsFd !== null) {
+      try {
+        closeSync(eventsFd);
+      } catch {
+        /* already closed */
+      }
+      eventsFd = null;
+    }
+  };
+  const onCodexSignal = (sig: string) => {
+    killed = true;
+    status.state = "killed";
+    status.rc = 143;
+    status.secs = Math.floor((Date.now() - t0) / 1000);
+    const end = recordSignalEnd(logDir, status, sig);
+    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
+    saveStatus(logDir, status);
+    appendLedger(ledger, "WORKER-END", {
+      id: wid,
+      provider: target.providerName,
+      mode: "headless",
+      model,
+      rc: 143,
+      secs: status.secs,
+      killed: 1,
+      ...endFields(end),
+      note: end.note,
+      label,
+    });
+    // same as the claude path: a killed run's worktree and branch go now
+    if (worktree) {
+      salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
+      try {
+        recordWorktree(logDir, status, worktree, false);
+      } catch {
+        /* best effort: the status already says killed */
+      }
+    }
+    cleanup();
+    try {
+      spawned?.kill();
+    } catch {
+      /* already gone */
+    }
+    // the codex tree goes with it (finaliseRun, which reaps, never runs on this path)
+    void reapRunTree(worktree?.dir).finally(() => process.exit(143));
+    setTimeout(() => process.exit(143), 2000).unref();
+  };
+  const sigHandlers = (["SIGTERM", "SIGINT", "SIGHUP"] as const).map((sig) => [sig, () => onCodexSignal(sig)] as const);
+  for (const [sig, h] of sigHandlers) process.once(sig, h);
+  // A start that dies (spawn, process "error"): the same end as a normal exit — cleanup, status failed with the error, tree reaped, worktree salvaged.
+  const failRun = async (e: unknown): Promise<void> => {
+    for (const [sig, h] of sigHandlers) process.off(sig, h);
+    markStartFailed(logDir, status, e);
+    cleanup();
+    try {
+      spawned?.kill();
+    } catch {
+      /* already gone */
+    }
+    await reapRunTree(worktree?.dir);
+    if (worktree) {
+      salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
+      try {
+        recordWorktree(logDir, status, worktree, false);
+      } catch {
+        /* best effort: the status already says failed */
+      }
+    }
+  };
+
+  try {
+    spawned = await spawnOwned(wid, ["codex", ...buildCodexArgs(prompt, parsed.callerModel ? undefined : model)], {
+      env,
+      cwd: worktree?.dir ?? cwd,
+      stdio: ["ignore", "pipe", "inherit"],
+      title: paneTitle(label, target.providerName),
+    });
+  } catch (e) {
+    await failRun(e);
+    throw e;
+  }
+  const proc = spawned;
+  t0 = Date.now();
 
   const fold = emptyCodexResult();
-  const eventsFd = openSync(eventsPath(logDir, wid), "a");
+  eventsFd = openSync(eventsPath(logDir, wid), "a");
   const writeEvent = (obj: Record<string, unknown>) => {
+    if (eventsFd === null) return;
     try {
       writeSync(eventsFd, JSON.stringify({ ...obj, _ts: isoStamp() }) + "\n");
     } catch {
@@ -281,50 +371,8 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     ...(target.provider.contextWindow ? { context_window: target.provider.contextWindow } : {}),
   });
 
-  let killed = false;
-  const stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => blockedMsOf(logDir, wid)) : null;
-  const stopTrack = trackBlocked(logDir, status, a.limit);
-  process.once("SIGTERM", onCodexSignal("SIGTERM"));
-  process.once("SIGINT", onCodexSignal("SIGINT"));
-  process.once("SIGHUP", onCodexSignal("SIGHUP"));
-  function onCodexSignal(sig: string) {
-    return () => {
-      killed = true;
-      status.state = "killed";
-      status.rc = 143;
-      status.secs = Math.floor((Date.now() - t0) / 1000);
-      const end = recordSignalEnd(logDir, status, sig);
-      status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
-      saveStatus(logDir, status);
-      appendLedger(ledger, "WORKER-END", {
-        id: wid,
-        provider: target.providerName,
-        mode: "headless",
-        model,
-        rc: 143,
-        secs: status.secs,
-        killed: 1,
-        ...endFields(end),
-        note: end.note,
-        label,
-      });
-      // same as the claude path: a killed run's worktree and branch go now
-      if (worktree) {
-        salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);
-        try {
-          recordWorktree(logDir, status, worktree, false);
-        } catch {
-          /* best effort: the status already says killed */
-        }
-      }
-      try {
-        proc.kill();
-      } catch {
-        /* already gone */
-      }
-      process.exit(143);
-    };
-  }
+  stopDeadline = a.limit ? armDeadline(proc, a.limit, () => fireDeadline(logDir, status, ledger, a.limit!), undefined, () => blockedMsOf(logDir, wid)) : null;
+  stopTrack = trackBlocked(logDir, status, a.limit);
 
   const rl = createInterface({ input: proc.stdout! });
   rl.on("line", (line) => {
@@ -342,12 +390,9 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   });
 
   const rc = await new Promise<number>((resolve, reject) => {
-    proc.on("error", reject);
+    proc.on("error", (e) => void failRun(e).then(() => reject(e), () => reject(e)));
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
-  stopDeadline?.();
-  stopTrack();
-  closeSync(eventsFd);
 
   const secs = Math.floor((Date.now() - t0) / 1000);
   const finalText = fold.finalText ?? "";
@@ -360,6 +405,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     duration_ms: secs * 1000,
   };
   writeEvent(resultEvent);
+  cleanup();
 
   const ok = rc === 0 && !fold.isError;
   status.last = shortText(report?.notes ?? finalText, 90) || (ok ? "done" : "failed");
