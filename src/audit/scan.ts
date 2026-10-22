@@ -3,8 +3,8 @@
  *
  * `pai audit scan` reads a Claude Code JSONL transcript line by line and
  * runs the rules module against it: single-step rules against every tool_use
- * (Bash command, Write/Edit file_path + content, WebFetch url) and against
- * tool results, sequence rules against the whole run — all steps within
+ * (Bash command, Write/Edit file_path + content, WebFetch url) and, for a
+ * rule that sets `results: true`, against tool results; sequence rules against the whole run — all steps within
  * `window_seconds` of each other, in step order when `order` is "strict".
  * Evidence is the matched content passed through maskSecrets, so a finding
  * can be shown without leaking the secret it caught.
@@ -28,6 +28,14 @@ export interface Finding {
 }
 
 const EVIDENCE_MAX = 300;
+
+/** A line or tool result larger than this is skipped: rules are not run over megabytes of file reads. */
+const MAX_TEXT_BYTES = 256 * 1024;
+
+/** Regex source for a literal string (a captured filename inserted into a later step's pattern). */
+function escapeRegex(v: string): string {
+  return v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /** The matched content, masked and capped, as it goes into a Finding. */
 function evidence(text: string): string {
@@ -128,12 +136,21 @@ function parseLine(lineNo: number, obj: TranscriptLine, names: ToolNames): Parse
   return out;
 }
 
-function stepRegex(step: RuleSequenceStep): RegExp | null {
+/** Compiled regexes by source+flags, so a rule is compiled once per scan and not once per event. */
+type RegexCache = Map<string, RegExp | null>;
+
+function compiled(cache: RegexCache, source: string, flags: string | undefined): RegExp | null {
+  const fl = (flags ?? "").replace(/[gy]/g, ""); // g/y would make .test stateful
+  const key = `${fl}/${source}`;
+  if (cache.has(key)) return cache.get(key) ?? null;
+  let re: RegExp | null;
   try {
-    return new RegExp(step.match, step.flags ?? "");
+    re = new RegExp(source, fl);
   } catch {
-    return null; // loadRules validates; a hand-built bad step never matches
+    re = null; // loadRules validates; a hand-built bad pattern never matches
   }
+  cache.set(key, re);
+  return re;
 }
 
 function toolMatches(step: RuleSequenceStep | { tool?: string }, toolName: string): boolean {
@@ -164,17 +181,20 @@ type StepChains = StepHit[][][];
  * substituted in — download-then-execute's filename — which a per-step regex
  * cannot see on its own.
  */
-function stepMatch(step: RuleSequenceStep, text: string, prior: RegExpMatchArray[]): RegExpMatchArray | null {
+function stepMatch(step: RuleSequenceStep, text: string, prior: RegExpMatchArray[], cache: RegexCache): RegExpMatchArray | null {
   const refs = step.match.includes("\\1") ? prior.flatMap((p) => (p[1] ? [p[1]] : [])) : [];
   if (refs.length) {
     for (const v of refs) {
-      const re = new RegExp(step.match.replace(/\\1/g, v), step.flags ?? "");
-      const m = text.match(re);
+      // the capture is data from the transcript: literal in the pattern, and a
+      // function replacement so `$&` in it is not interpreted
+      const lit = escapeRegex(v);
+      const re = compiled(cache, step.match.replace(/\\1/g, () => lit), step.flags);
+      const m = re ? text.match(re) : null;
       if (m) return m;
     }
     return null;
   }
-  const re = stepRegex(step);
+  const re = compiled(cache, step.match, step.flags);
   return re ? text.match(re) : null;
 }
 
@@ -193,11 +213,18 @@ function sequenceAdvance(
   toolName: string,
   text: string,
   tsMs: number,
-  line: number
+  line: number,
+  cache: RegexCache
 ): StepHit[] | null {
   const seq = rule.sequence;
   if (!seq) return null;
   const windowMs = seq.window_seconds * 1000;
+  // a chain whose head is older than the window can never complete
+  for (const list of chains) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (tsMs - list[i][0].tsMs > windowMs) list.splice(i, 1);
+    }
+  }
   const out: StepHit[] = [];
   seq.steps.forEach((step, idx) => {
     if (!toolMatches(step, toolName)) return;
@@ -211,7 +238,7 @@ function sequenceAdvance(
       : empty.concat(chains.flatMap((list, k) => (k === idx ? [] : list)));
     for (const chain of priorChains) {
       const prior = chain.map((h) => h.match);
-      const m = stepMatch(step, text, prior);
+      const m = stepMatch(step, text, prior, cache);
       if (!m) continue;
       const first = chain[0];
       if (first && (tsMs < first.tsMs || tsMs - first.tsMs > windowMs)) continue;
@@ -246,12 +273,13 @@ export async function scanTranscript(path: string, rules: Rule[]): Promise<Findi
   const chains = new Map<string, StepChains>();
   for (const r of seqRules) chains.set(r.id, r.sequence!.steps.map(() => []));
 
+  const cache: RegexCache = new Map();
   const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
   const toolNames: ToolNames = new Map();
   let lineNo = 0;
   for await (const raw of rl) {
     lineNo++;
-    if (!raw.trim()) continue;
+    if (!raw.trim() || raw.length > MAX_TEXT_BYTES) continue;
     let obj: TranscriptLine;
     try {
       obj = JSON.parse(raw) as TranscriptLine;
@@ -261,29 +289,33 @@ export async function scanTranscript(path: string, rules: Rule[]): Promise<Findi
     const parsed = parseLine(lineNo, obj, toolNames);
     const events = [
       ...parsed.calls.map((c) => ({ tool: c.tool, text: c.content, result: false })),
-      ...parsed.results.map((r) => ({ tool: r.tool, text: r.text, result: true })),
+      ...parsed.results.filter((r) => r.text.length <= MAX_TEXT_BYTES).map((r) => ({ tool: r.tool, text: r.text, result: true })),
     ];
     for (const ev of events) {
       for (const rule of single) {
-        // a single-step rule tests every call; a result only when the rule
-        // pins no tool (its text is plain content, not a tool's input)
-        if (ev.result && rule.tool) continue;
+        // a single-step rule tests tool calls; a result only when the rule opts in
+        if (ev.result && !rule.results) continue;
         if (!toolMatches(rule, ev.tool)) continue;
         try {
-          if (new RegExp(rule.match!, rule.flags ?? "").test(ev.text)) {
+          const re = compiled(cache, rule.match!, rule.flags);
+          if (re?.test(ev.text)) {
             findings.push({ ruleId: rule.id, severity: rule.severity, ts: obj.timestamp ?? null, tool: ev.tool, evidence: evidence(ev.text), line: lineNo });
           }
         } catch {
-          // a bad regex never matches
+          // one bad rule skips only itself
         }
       }
       if (parsed.tsMs !== null) {
         for (const rule of seqRules) {
-          const c = chains.get(rule.id)!;
-          const done = sequenceAdvance(rule, c, ev.tool, ev.text, parsed.tsMs, lineNo);
-          if (done) {
-            findings.push({ ruleId: rule.id, severity: rule.severity, ts: obj.timestamp ?? null, tool: ev.tool, evidence: evidence(ev.text), line: lineNo });
-            for (const list of c) list.length = 0;
+          try {
+            const c = chains.get(rule.id)!;
+            const done = sequenceAdvance(rule, c, ev.tool, ev.text, parsed.tsMs, lineNo, cache);
+            if (done) {
+              findings.push({ ruleId: rule.id, severity: rule.severity, ts: obj.timestamp ?? null, tool: ev.tool, evidence: evidence(ev.text), line: lineNo });
+              for (const list of c) list.length = 0;
+            }
+          } catch {
+            // one bad rule skips only itself
           }
         }
       }

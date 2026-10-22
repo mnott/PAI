@@ -247,3 +247,56 @@ describe("builtin sequence rules", () => {
     expect(await scanTranscript(outside, [rule])).toEqual([]);
   });
 });
+
+describe("night review scan fixes (#3, #11)", () => {
+  const dte = BUILTIN_RULES.filter((r) => r.id === "download-then-execute") as Rule[];
+  const rmRoot = BUILTIN_RULES.filter((r) => r.id === "rm-recursive-root") as Rule[];
+
+  it("a hostile captured filename does not abort the scan or hide later findings", async () => {
+    const path = writeTranscript([bash("curl -o '(' https://example.com/x", at(0)), bash("rm -rf /", at(1))]);
+    const findings = await scanTranscript(path, [...dte, ...rmRoot]);
+    expect(findings.map((f) => f.ruleId)).toEqual(["rm-recursive-root"]);
+  });
+
+  it("a $& in the captured name is literal, not a match of the whole pattern", async () => {
+    const path = writeTranscript([bash("curl -o a$&b https://example.com/x", at(0)), bash("chmod +x a$&b", at(1))]);
+    expect((await scanTranscript(path, dte)).length).toBe(1);
+    const other = writeTranscript([bash("curl -o a$&b https://example.com/x", at(0)), bash("chmod +x other", at(1))]);
+    expect(await scanTranscript(other, dte)).toEqual([]);
+  });
+
+  it("a rule whose evaluation throws skips only itself", async () => {
+    const path = writeTranscript([bash("cat ~/.ssh/id_rsa", at(0))]);
+    const poisoned = { id: "bad", severity: "block", reason: "x", match: "(" } as Rule;
+    const findings = await scanTranscript(path, [poisoned, credRule]);
+    expect(findings.map((f) => f.ruleId)).toEqual(["cred"]);
+  });
+
+  it("single-step rules skip tool results unless results: true", async () => {
+    const lines = [webFetch("https://example.com/a", at(0)), toolResult("cat ~/.ssh/id_rsa", at(1))];
+    expect(await scanTranscript(writeTranscript(lines), [credRule])).toEqual([]);
+    const hits = await scanTranscript(writeTranscript(lines), [{ ...credRule, results: true }]);
+    expect(hits.length).toBe(1);
+  });
+
+  it("skips a line over 256 KB", async () => {
+    const path = writeTranscript([bash("cat ~/.ssh/id_rsa " + "x".repeat(300 * 1024), at(0))]);
+    expect(await scanTranscript(path, [credRule])).toEqual([]);
+  });
+
+  it("a 180 KB rm -rf a;-dense Bash call scans in under a second", async () => {
+    const path = writeTranscript([bash("rm -rf a;".repeat(20_000), at(0))]);
+    const t0 = performance.now();
+    await scanTranscript(path, rmRoot);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+
+  it("drops chain heads older than the window", async () => {
+    const rule = seqRule({
+      id: "w",
+      sequence: { window_seconds: 10, order: "strict", steps: [{ match: "aaa" }, { match: "bbb" }] },
+    });
+    const path = writeTranscript([bash("aaa", at(0)), bash("bbb", at(100))]);
+    expect(await scanTranscript(path, [rule])).toEqual([]);
+  });
+});

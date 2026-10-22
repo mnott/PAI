@@ -1,14 +1,14 @@
 /** `pai rules ...`: the PreToolUse security rules and their fixtures. */
 
 import { type CommandDef, type RunContext } from "../define.js";
-import { listRules, userRuleDirs } from "../../hooks/ts/lib/rules/load.js";
+import { listRules, projectRuleDirs, userRuleDirs } from "../../hooks/ts/lib/rules/load.js";
 import { lintRules } from "../../hooks/ts/lib/rules/lint.js";
 import { renderTable, ok, warn, err } from "../lib/utils.js";
 
 function listCmd(json: boolean): number {
-  const { rules, errors } = listRules(userRuleDirs(process.cwd()));
+  const { rules, errors, ignored } = listRules(userRuleDirs(process.cwd()), { projectDirs: projectRuleDirs(process.cwd()) });
   if (json) {
-    console.log(JSON.stringify({ rules, errors }, null, 2));
+    console.log(JSON.stringify({ rules, errors, ignored }, null, 2));
     return 0;
   }
   console.log(
@@ -18,11 +18,12 @@ function listCmd(json: boolean): number {
     ),
   );
   for (const e of errors) console.log(err(`load error: ${e}`));
+  for (const i of ignored) console.log(warn(`ignored: ${i}`));
   return 0;
 }
 
 function lintCmd(json: boolean): number {
-  const { rules, errors } = listRules(userRuleDirs(process.cwd()));
+  const { rules, errors } = listRules(userRuleDirs(process.cwd()), { projectDirs: projectRuleDirs(process.cwd()) });
   const enabled = rules.filter((r) => r.severity !== "off");
   const lints = lintRules(enabled);
   const failed = lints.filter((l) => !l.ok);

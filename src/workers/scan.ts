@@ -12,7 +12,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { scanTranscript, type Finding } from "../audit/scan.js";
-import { loadRules, userRuleDirs } from "../hooks/ts/lib/rules/load.js";
+import { loadRules, projectRuleDirs, userRuleDirs } from "../hooks/ts/lib/rules/load.js";
 import { eventsPath } from "./paths.js";
 import { type WorkerStatus, saveStatus } from "./status.js";
 
@@ -76,7 +76,7 @@ export async function scanWorkerRun(
       if (t) paths.push(t);
     }
     if (!paths.length) return null;
-    const { rules } = loadRules(userRuleDirs(opts.cwd ?? status.cwd));
+    const { rules } = loadRules(userRuleDirs(opts.cwd ?? status.cwd), { projectDirs: projectRuleDirs(opts.cwd ?? status.cwd) });
     const findings: Finding[] = [];
     for (const p of paths) findings.push(...(await scanTranscript(p, rules)));
     const counts = scanCounts(findings);

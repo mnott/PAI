@@ -1,11 +1,14 @@
 # find / -delete wipes the filesystem.
 id: find-root-delete
 severity: block
+quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?find\s+(?:\/|~|\$\{?HOME\}?)\/?\s+(?:\S+\s+)*?-delete\b/m
+match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?find\s+(?:\/|~|\$\{?HOME\}?)\/?\s+(?:-(?:depth|xdev|mount)\s+|-(?:max|min)depth\s+\d+\s+|-type\s+\w\s+)*-delete\b/m
 reason: find over / or the home directory with -delete removes everything it matches
 tests:
   match:
+    - find / -type f -delete
     - find / -delete
   no_match:
+    - find ~ -name '*.tmp' -delete
     - find /tmp/build -name '*.o' -print

@@ -1,11 +1,13 @@
 # chmod 000 (or longer zero run) strips every permission.
 id: chmod-zero
 severity: block
+quoted: true
 category: dangerous_file_ops
 match: /\bchmod\s+(-R\s+)?0{3,}/
 reason: chmod with an all-zero mode removes every permission from the files
 tests:
   match:
+    - bash -c "chmod -R 000 /"
     - chmod -R 000 ./data
   no_match:
     - chmod 644 file.txt

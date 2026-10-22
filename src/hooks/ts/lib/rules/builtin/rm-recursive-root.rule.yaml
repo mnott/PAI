@@ -6,7 +6,7 @@ id: rm-recursive-root
 severity: block
 quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-\S+\s+)*(?:-\w*[rR]\w*|--recursive)\s+(?:-\S+\s+)*(?:\S+\s+)*(?:\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\/?\*?)(?=\s|;|&|\||$)/m
+match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[^\s;&|]+\s+)*(?:-\w*[rR]\w*|--recursive)\s+(?:[^\s;&|]+\s+)*(?:\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\/?\*?)(?=\s|;|&|\||$)/m
 reason: recursive rm aimed at /, the home directory or a system directory
 tests:
   match:
@@ -18,6 +18,9 @@ tests:
     - rm -rf "$HOME"
     - rm -rf '/'
   no_match:
+    - "rm -rf node_modules; ls /"
+    - rm -rf dist && du -sh /
+    - rm -r build && ls ~
     - rm -rf /tmp/build
     - rm -rf ~/tmp/build
     - awk -F'\t' '$2 ~ /-anthropic-precise-00/ {print $1,$3,$8,$9}' file

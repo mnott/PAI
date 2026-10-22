@@ -23,6 +23,7 @@ import {
 } from "../worktree.js";
 import { AG2_REASK_TEXT, type WorkerReport } from "../report.js";
 import { scanWorkerRun } from "../scan.js";
+import { readWorkersCached } from "../config.js";
 import { killTree } from "../kill-tree.js";
 import { removeRunSettings } from "../settings-file.js";
 import { type RunLimit } from "../deadline.js";
@@ -123,6 +124,33 @@ export function applyLoopStop(
   return { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
 }
 
+/** Race the end-of-run scan against its budget (workers.scanBudgetMs, default 5000): a slow scan is skipped, not waited for. */
+async function scanWithinBudget(logDir: string, status: WorkerStatus, ledger: string): Promise<void> {
+  let budgetMs = 5000;
+  try {
+    budgetMs = readWorkersCached().scanBudgetMs ?? budgetMs;
+  } catch {
+    // unreadable config: the default budget
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const over = new Promise<"over">((resolve) => {
+    timer = setTimeout(() => resolve("over"), budgetMs);
+    timer.unref();
+  });
+  try {
+    const done = await Promise.race([scanWorkerRun(logDir, status).catch(() => undefined), over]);
+    if (done === "over") {
+      appendLedger(ledger, "WORKER-SCAN-SKIPPED", { id: status.id, reason: "scan skipped: over budget", budgetMs });
+      if (!status.last) {
+        status.last = "scan skipped: over budget";
+        saveStatus(logDir, status);
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const { logDir, ledger, ok, rc } = f;
   let { status, report } = f;
@@ -175,7 +203,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
 
   // the after-the-fact rule scan over the run's transcript; counts land on
   // the status for ps/replay. Best effort: a scan never fails the run.
-  await scanWorkerRun(logDir, status).catch(() => undefined);
+  await scanWithinBudget(logDir, status, ledger);
 
   const reviewed = f.worktree ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
   if (reviewed) {

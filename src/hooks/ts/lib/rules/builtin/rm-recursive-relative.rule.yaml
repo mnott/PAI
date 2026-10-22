@@ -1,8 +1,9 @@
 # Recursive deletion of the current or parent directory.
 id: rm-recursive-relative
 severity: block
+quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\/\s*$/m
+match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\/\s*["']?\s*$/m
 reason: recursive rm of ./ deletes the current directory
 tests:
   match:

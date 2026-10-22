@@ -1,6 +1,7 @@
 # Interactive bash with its output redirected into a device or file.
 id: reverse-shell-interactive-bash
 severity: block
+quoted: true
 category: reverse_shell
 match: /bash\s+-i\s+>&?\s*\/dev\//
 reason: interactive bash redirected to a device file looks like a reverse shell

@@ -90,6 +90,8 @@ workers:
   defaultMaxMinutes: 60
   # Minutes a run may queue for a slot before the owner is told.
   waitAlarmMinutes: 120
+  # Milliseconds the end-of-run security scan may take before it is skipped.
+  scanBudgetMs: 5000
   # Start gate for same-provider runs.
   stagger:
     enabled: true
