@@ -21,7 +21,7 @@ h1{font-size:15px;margin:0;font-weight:600}
 @media(max-width:430px){h1 .hc{display:none}}
 #theme{background:none;border:0;padding:2px;color:var(--dim);cursor:pointer;line-height:0;border-radius:50%}#theme:hover{color:var(--acc)}
 /* layout lock: the lock button is themed like #theme; locked hides every layout edit control */
-#lock{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:13px;line-height:1;border-radius:6px}#lock:hover,#lock[aria-pressed=true]{color:var(--acc)}
+#lock{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:13px;line-height:1;border-radius:6px;display:inline-flex;align-items:center}#lock svg{width:14px;height:14px;display:block}#lock:hover,#lock[aria-pressed=true]{color:var(--acc)}
 #savedef{background:none;border:0;padding:2px 0;color:var(--dim);cursor:pointer;font-size:14px;line-height:1;border-radius:6px;white-space:nowrap;flex:0 0 auto}@media(min-width:601px){#reset,#lock,#savedef,#theme{margin-left:-8px}}#savedef:hover,#savedef.ok{color:var(--acc)}#savedef.bad{color:var(--bad,#c33)}
 #ask{display:inline-flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;color:var(--dim);flex:0 0 auto}#ask[hidden]{display:none}#ask button{background:none;border:1px solid var(--line);border-radius:6px;color:var(--fg);cursor:pointer;padding:1px 7px;font-size:12px}#ask #askyes:hover{color:var(--ok)}#ask #askno:hover{color:var(--bad)}
 #ask .aq{display:inline}header.asking #stamp{margin-left:0}header.asking #ask{margin-left:auto}

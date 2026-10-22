@@ -89,3 +89,33 @@ describe.skipIf(!CHROME)("header stays on one line and the star confirms", () =>
     }, 40000);
   }
 });
+
+const LOCKPROBE = `<script>setTimeout(function(){var h=document.querySelector("header"),k=[].slice.call(h.querySelectorAll("button")),l=document.getElementById("lock"),r={};
+r.starBeforeLock=k.indexOf(document.getElementById("savedef"))<k.indexOf(l);r.starLeft=document.getElementById("savedef").getBoundingClientRect().right<=l.getBoundingClientRect().left+1;
+r.a0=l.getAttribute("aria-label");r.p0=l.getAttribute("aria-pressed");r.g0=l.innerHTML;l.click();
+r.a1=l.getAttribute("aria-label");r.p1=l.getAttribute("aria-pressed");r.g1=l.innerHTML;
+document.body.setAttribute("data-r",JSON.stringify(r))},2000)</script>`;
+
+describe.skipIf(!CHROME)("star sits left of the lock; the lock shows its state", () => {
+  it("DOM order, distinct glyphs and labels per state", async () => {
+    pollBuild = "A";
+    const orig = server.listeners("request")[0] as (...a: unknown[]) => void;
+    server.removeAllListeners("request");
+    server.on("request", (req, res) => {
+      const w = res.end.bind(res);
+      res.end = ((b: string) => w(typeof b === "string" ? b.replace("</body>", LOCKPROBE + "</body>") : b)) as never;
+      orig(req, res);
+    });
+    const dom = await dumpDom(`${base}/page`, { width: 1100, height: 800, budgetMs: 6000 });
+    server.removeAllListeners("request");
+    server.on("request", orig);
+    const m = /data-r="([^"]*)"/.exec(dom);
+    if (!m) throw new Error("no probe result in dump");
+    const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+    expect(r.starBeforeLock && r.starLeft).toBe(true);
+    expect([r.a0, r.p0, r.a1, r.p1]).toEqual(["layout unlocked", "false", "layout locked", "true"]);
+    expect(r.g0).toMatch(/(<|&lt;)svg/);
+    expect(r.g1).toMatch(/(<|&lt;)svg/);
+    expect(r.g0).not.toBe(r.g1);
+  }, 30000);
+});
