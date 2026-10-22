@@ -34,6 +34,9 @@ Orchestration, in reading order:
 - [Router](concepts/router.md): usage accounting and the cockpit service
 - [Pool](concepts/pool.md): warm spare workers
 - [Loop guard and limits](concepts/loop-guard-and-limits.md): stopping runaway runs
+- [Security rules](concepts/security-rules.md): rule files, severities, the audit scan
+- [Lessons](concepts/lessons.md): review-gated notes, promoted to skills
+- [Handoff](concepts/handoff.md): carry a session to another session, and git notes
 - [Notifications](concepts/notifications.md): what reaches your phone
 - [Session profiles](concepts/session-profiles.md): per-session settings
 

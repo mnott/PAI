@@ -12,6 +12,7 @@ One page, grouped by what you want to do. Each item gives the command to type or
 - [Router and cockpit](#router-and-cockpit)
 - [Messaging](#messaging)
 - [Rules, budget and advisor mode](#rules-budget-and-advisor-mode)
+- [Safety and audit](#safety-and-audit)
 - [Images, art and sharing](#images-art-and-sharing)
 - [Research](#research)
 - [Setup and health](#setup-and-health)
@@ -46,6 +47,18 @@ When Claude compresses a long conversation, PAI saves a checkpoint first and put
 
 Say "what project is this" or "tag this session"; `pai topic check` detects when a conversation has moved to another project. See [`pai topic`](commands/topic.md).
 
+### Hand a session to another
+
+`pai handoff export` writes a short, redacted brief of a session (48 KB at most) and prints the line that continues it in another session, provider or worker. See [handoff](concepts/handoff.md), [`pai handoff`](commands/handoff.md).
+
+### Git notes: which session made this commit
+
+`pai git setup` installs a post-commit hook that records the session and worker behind each commit as a git note; `pai git notes [REV]` shows it. See [handoff](concepts/handoff.md#git-notes), [`pai git`](commands/git.md).
+
+### Session drill-down
+
+In the cockpit, click a session row to see its turns, files changed, skills, MCP calls and guard denials. See [cockpit](cockpit.md#sessions-by-tokens-sessions).
+
 ## Memory and search
 
 ### Search your memory
@@ -67,6 +80,10 @@ Say "what did we do about X" or "search history"; `pai find "text"` searches you
 ### Memory tools for Claude
 
 Claude can call `memory_search`, `memory_get`, `memory_outline` (section-aware reading), `memory_kg_search`, `memory_wakeup`, `memory_taxonomy`, `memory_tunnels` and `memory_feedback` itself. See [memory](memory.md) and [search](search.md#section-aware-retrieval).
+
+### Lessons
+
+`pai lessons` keeps a short, review-gated memory: add or propose a lesson, approve or reject it, supersede it, or promote an approved one to a project skill. Claude reads them with `memory_lessons`. See [lessons](concepts/lessons.md), [`pai lessons`](commands/lessons.md).
 
 ### Observations
 
@@ -186,9 +203,25 @@ Three tiers (session, orchestrator, workers) each hold an ordered list of models
 
 `pai models` shows every local runtime with its models, memory and users, and starts or stops one. See [local models](concepts/local-models.md), [`pai models`](commands/models.md).
 
+### Parallel runs, live
+
+On a model card in the cockpit, **+** and **−** change the provider's `maxConcurrent` by one. It takes effect without a restart. A worker pane waiting for a slot shows its queue position. See [cockpit](cockpit.md#models--runtimes-models).
+
+### Merge a worker, with auto-resolve
+
+`pai worker merge ID` brings a worker's branch back. Conflicts only in generated files are regenerated, and add-only clashes in the configured files are union-merged (`workers.merge.generated`, `regenerate`, `union`). See [workers](concepts/workers.md), [`pai worker`](commands/worker.md).
+
+### Check the workers settings
+
+`pai config validate` names `workers.*` keys that are written in a file that does not win, and `workers.yaml` blocks nothing reads. See [config](config.md), [`pai config`](commands/config.md).
+
 ### Pool and panes
 
 A pool keeps warm spare workers; `pai pane run` runs a command in a visible pane. See [pool](concepts/pool.md), [panes](concepts/panes.md), [`pai pane`](commands/pane.md).
+
+### Other harnesses
+
+`pai harness list` shows the adapters (Claude Code, Codex CLI); `pai harness sessions` lists their sessions through one interface. Enabled adapters are set in `harness.adapters`. See [`pai harness`](commands/harness.md).
 
 ### Plans
 
@@ -259,6 +292,24 @@ Wrap text in `<private>...</private>` to keep it out of the memory index. See [r
 ### Cache keepalive
 
 Keeps a worker's provider cache warm between turns. See [cache keepalive](cache-keepalive.md).
+
+## Safety and audit
+
+### Security rules as files
+
+The PreToolUse guard reads `*.rule.yaml` files: built-ins, your own in `<PAI home>/rules` and a project's in `.pai/rules`. `pai rules list` shows them and `pai rules lint` runs their fixtures. A rule with a built-in's id overrides it, `severity: off` disables it, and a project rule cannot switch a built-in off. See [security rules](concepts/security-rules.md), [`pai rules`](commands/rules.md).
+
+### Scan a finished session
+
+`pai audit scan [--session ID | --worker ID | PATH]` runs the same rules over a transcript, plus two-step rules such as a credential read followed by a network call. Finished workers are scanned automatically. See [security rules](concepts/security-rules.md#sequence-rules), [`pai audit`](commands/audit.md).
+
+### Secret redaction
+
+Secrets are redacted by value: the label stays, the value becomes `[REDACTED]` (`token=[REDACTED]`, `Authorization: Bearer [REDACTED]`, `https://user:[REDACTED]@host`). It covers provider token prefixes, JWTs, PEM blocks, JSON secrets and `--password X` flags. It applies to raw captures, the loop guard, session notes, the session-summary prompt, handoff briefs and lessons. See [rules and privacy](rules-and-privacy.md).
+
+### Hook health
+
+`pai audit tokens hooks` and `pai build doctor` show whether each hook event was observed in the raw captures or is only configured. A hook that is configured but never observed may not be running. See [`pai audit`](commands/audit.md), [`pai build`](commands/build.md).
 
 ## Images, art and sharing
 
