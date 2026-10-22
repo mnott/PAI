@@ -439,6 +439,20 @@ function growBand(group,delta){
   return;
  }
 }
+/** Auto layout: a card added at runtime that will never be measured (it draws at the body size and is not a viewed type, or is a group) gets its type's default
+ *  height as its fit reading at once, when the group it joins is sized by readings (every card has one). Without one the group has no
+ *  content-driven heights and every card in it, and in the groups around it, falls back to weights. A group that had no readings
+ *  before is left as it was. A measured card gets its reading on the next refit; other cards' readings are not touched. */
+function seedFit(group,fresh){
+ var kt=W.kids[group],r=W.rects&&W.rects[group],i,c,def;
+ if(!kt||!kt.k||!r)return;
+ var cfg=cfgOf();
+ if(winFit(kt,r.w,layState(),cfg,W.kids)===null)return;
+ for(i=0;i<fresh.length;i++){
+  c=W.cards[fresh[i]];def=TYPES[c.type]||{};
+  if(W.fit[c.id]===undefined&&def.defaultH&&!def.viewed&&(def.resize||c.type==="group"))W.fit[c.id]=def.defaultH;
+ }
+}
 /** Add cards by data (a structural change, spec 3.4): rows = [[id,...],...], one row split per entry, appended to
  *  the group's column. A row whose ids the group's tree already holds (a saved layout) only gets its cards built.
  *  The cards already in the group keep their size; the group grows by the new cards' need. */
@@ -463,6 +477,7 @@ function addCards(group,specs,rows){
    for(i=0;i<add.length;i++){var nd=Math.max(1,winNeed(add[i],bw,st,cfg,W.kids));sz.push(nd);delta+=nd+gap}
    growBand(group,delta);
   }else sz=ch.map(function(){return 1/ch.length});
+  if(W.auto)seedFit(group,fresh);
   W.kids[group]=normalize(split("c",ch,sz),false);
  }
  g.body.style.overflow="hidden";g.body.classList.add("cgroup");
