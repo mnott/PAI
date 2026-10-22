@@ -5,8 +5,10 @@ import type { Num, Str } from "./types.js";
 import { winSelectCss } from "./win/select.js";
 
 /** All CSS rules. */
-export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0;--grp-h1:#eef3fb;--grp-h2:#f0f7f1;--grp-h3:#fbf4ea;--grp-h4:#f7eef2;--grp-h5:#eef6f7;--grp-h6:#f4f0f9;--grp-h7:#f7f4ec;--grp-h8:#f0f4f4;--grp-b1:#f8fafd;--grp-b2:#f8fbf8;--grp-b3:#fdf9f3;--grp-b4:#fbf6f8;--grp-b5:#f6fbfb;--grp-b6:#f9f7fc;--grp-b7:#fbf9f4;--grp-b8:#f6f9f9}
-:root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5;--grp-h1:#1c2433;--grp-h2:#1c2b24;--grp-h3:#2b2519;--grp-h4:#2a1f27;--grp-h5:#1a282c;--grp-h6:#241f31;--grp-h7:#282418;--grp-h8:#1c2628;--grp-b1:#151a24;--grp-b2:#151f1a;--grp-b3:#1f1a12;--grp-b4:#1e171d;--grp-b5:#131d20;--grp-b6:#1a1724;--grp-b7:#1e1b12;--grp-b8:#141c1e}
+export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0}
+:root{--grp-h1:#eef3fb;--grp-h2:#f0f7f1;--grp-h3:#fbf4ea;--grp-h4:#f7eef2;--grp-h5:#eef6f7;--grp-h6:#f4f0f9;--grp-h7:#f7f4ec;--grp-h8:#f0f4f4;--grp-b1:#f8fafd;--grp-b2:#f8fbf8;--grp-b3:#fdf9f3;--grp-b4:#fbf6f8;--grp-b5:#f6fbfb;--grp-b6:#f9f7fc;--grp-b7:#fbf9f4;--grp-b8:#f6f9f9}
+:root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}
+:root[data-theme=dark]{--grp-h1:#1c2433;--grp-h2:#1c2b24;--grp-h3:#2b2519;--grp-h4:#2a1f27;--grp-h5:#1a282c;--grp-h6:#241f31;--grp-h7:#282418;--grp-h8:#1c2628;--grp-b1:#151a24;--grp-b2:#151f1a;--grp-b3:#1f1a12;--grp-b4:#1e171d;--grp-b5:#131d20;--grp-b6:#1a1724;--grp-b7:#1e1b12;--grp-b8:#141c1e}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
 header{flex-wrap:wrap;display:flex;align-items:center;gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
 h1{font-size:15px;margin:0;font-weight:600}
