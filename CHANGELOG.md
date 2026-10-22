@@ -4,6 +4,18 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Cockpit sessions:** a session with a very large request history no longer breaks the cockpit's data page; an unreadable session or project folder is skipped, and the job-name cache drops expired entries.
+- **Large logs and tables:** minimum and maximum over long lists no longer overflow the call stack (memory search, graph trace, tunnels, worker usage, scheduler, build queue).
+- **Local servers:** two starts of one model at the same time can no longer both pass the instance limit or take the same port; a server that is not ready in time is stopped instead of left running; `--cost-tier` must be a whole number; `pai worker bench --max-parallel` and `--max-load` must be positive numbers.
+- **Cockpit data:** a model or provider named `__proto__` in the usage log can no longer alter the router's objects; the cached usage log is extended in place, so a cockpit poll no longer recomputes the whole log, and a log replaced in place is noticed. (The 1.0.0 note that usage history keeps only the longest range window described an unused code path, now removed; the cockpit keeps the whole log.)
+- **Request bodies:** multi-byte characters split across network packets are no longer corrupted when saving a layout or the registry; a layout threshold of 0 is honoured.
+- **Stopping a local server:** `pai worker local stop` reads the router's requests in flight and refuses to stop a busy server unless `--yes` is given; when the router's state cannot be read it refuses too, saying so.
+- **Provider keys:** `pai worker providers add --key` warns that the key is visible to other users and points to `--key-file`.
+
 ## [1.0.0] - 2026-10-22
 
 The first full release: the cockpit as a responsive card grid, delegation tiers with automatic escalation, a worker pool, local model servers with several instances, and a release-wide review of security, data safety and process lifecycle.
