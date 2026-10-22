@@ -184,4 +184,20 @@ describe("worktree escape", () => {
     expect(deny("cd /Users/x/dev/PAI && npx tsc --noEmit")).toBe(false);
     expect(deny("cd /Users/x/dev/PAI && git log --oneline -1")).toBe(false);
   });
+  it("blocks relative and env/flag retargeting", () => {
+    expect(deny("git -C ../../main commit -am x")).toBe(true);
+    expect(deny("cd ../../main && git commit -am x")).toBe(true);
+    expect(deny("GIT_DIR=/main/.git git commit -am x")).toBe(true);
+    expect(deny("git --git-dir=/main/.git commit -am x")).toBe(true);
+    expect(deny("git --work-tree=/main commit -am x")).toBe(true);
+    expect(deny("export GIT_DIR=/main/.git; git commit -am x")).toBe(true);
+    expect(deny("cd /main; git push")).toBe(true);
+  });
+  it("judges each command segment on its own", () => {
+    expect(deny("git push && cd /main")).toBe(false);
+    expect(deny("git commit -m 'a && cd /main'")).toBe(false);
+    expect(deny("cd src && git commit -am x")).toBe(false);
+    expect(deny("git -C . add f")).toBe(false);
+    expect(deny("cd /main && git log; git commit -m x")).toBe(true);
+  });
 });
