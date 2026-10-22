@@ -156,7 +156,7 @@ describe("startInstance / stopInstance", () => {
     await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight, kill, confirm: true })).resolves.toHaveLength(1);
   });
 
-  it("stop refuses when the router snapshot is missing or stale, confirm overrides, idle fresh allows", async () => {
+  it("stop refuses when the router snapshot is missing, confirm overrides; an old idle snapshot allows, an old busy one refuses", async () => {
     const { d, cfg, deps } = mk();
     const kill = async () => {};
     const inst = await startInstance(cfg, "one", deps());
@@ -164,13 +164,15 @@ describe("startInstance / stopInstance", () => {
     await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: missing, kill })).rejects.toThrow(/could not be checked.*--yes/);
     const s = new RequestScheduler();
     writeFileSync(join(d, "router-sched.json"), JSON.stringify({ ...s.snapshot(), at: Date.now() - 60_000 }));
-    const stale = await cliInflight(cfg, deps());
-    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: stale, kill })).rejects.toThrow(/could not be checked/);
-    writeFileSync(join(d, "router-sched.json"), JSON.stringify({ ...s.snapshot(), at: Date.now() }));
     const idle = await cliInflight(cfg, deps());
-    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: stale, kill, confirm: true })).resolves.toHaveLength(1);
+    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: idle, kill })).resolves.toHaveLength(1);
     const inst2 = await startInstance(cfg, "big", deps());
-    await expect(stopInstance(cfg, inst2.id, {}, { ...deps(), inflight: idle, kill })).resolves.toHaveLength(1);
+    const b = new RequestScheduler();
+    void b.acquire(instanceEngineKey(inst2), "s1", "w1");
+    writeFileSync(join(d, "router-sched.json"), JSON.stringify({ ...b.snapshot(), at: Date.now() - 60_000 }));
+    const busy = await cliInflight(cfg, deps());
+    await expect(stopInstance(cfg, inst2.id, {}, { ...deps(), inflight: busy, kill })).rejects.toThrow(/1 request\(s\) in flight.*--yes/);
+    await expect(stopInstance(cfg, inst2.id, {}, { ...deps(), inflight: busy, kill, confirm: true })).resolves.toHaveLength(1);
   });
 
   it("labels a server that no tier or provider claims", () => {

@@ -1081,12 +1081,9 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
   return picked;
 }
 
-/** A router snapshot older than this no longer says what is running now. */
-const SCHED_FRESH_MS = 10_000;
-
 /**
  * Requests in flight per instance id, from the snapshot the router mirrors to its log dir (the scheduler lives in
- * the router process, not here). A missing, unreadable or stale snapshot cannot be checked: the lookup throws so
+ * the router process, not here). A missing or unreadable snapshot cannot be checked: the lookup throws so
  * the stop is refused unless confirmed.
  */
 export async function cliInflight(cfg: LocalConfig, deps: Pick<StartDeps, "startDir" | "servers"> & { now?: number } = {}): Promise<(id: string) => number> {
@@ -1096,10 +1093,11 @@ export async function cliInflight(cfg: LocalConfig, deps: Pick<StartDeps, "start
     import("../../workers/local-instances.js"),
   ]);
   const now = deps.now ?? Date.now();
+  // no age check: the router writes the file only when the scheduler changes, so an idle router leaves an old but current one
   const snap = readSchedFile(deps.startDir ?? logDir(), now);
   const keys = new Map(currentInstances(cfg, deps).map((r) => [r.id, instanceEngineKey(r)]));
   return (id) => {
-    if (!snap || now - snap.at > SCHED_FRESH_MS) throw new LocalTierError(`${id}: in-flight requests could not be checked (no fresh router snapshot); confirm to stop anyway (--yes)`);
+    if (!snap) throw new LocalTierError(`${id}: in-flight requests could not be checked (no router snapshot); confirm to stop anyway (--yes)`);
     return engineInflight(snap, keys.get(id) ?? id);
   };
 }
