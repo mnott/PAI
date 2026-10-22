@@ -4,6 +4,7 @@
 # strings never match on their own.
 id: rm-recursive-root
 severity: block
+quoted: true
 category: catastrophic_deletion
 match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-\S+\s+)*(?:-\w*[rR]\w*|--recursive)\s+(?:-\S+\s+)*(?:\S+\s+)*(?:\/\*?|~\/?\*?|\$\{?HOME\}?\/?\*?|\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\/?\*?)(?=\s|;|&|\||$)/m
 reason: recursive rm aimed at /, the home directory or a system directory

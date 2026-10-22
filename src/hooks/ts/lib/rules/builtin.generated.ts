@@ -6,7 +6,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "base64-decode-to-shell",
     "severity": "block",
-    "match": "\\bbase64\\s+(?:-d|--decode)\\b[^|]*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?base64\\s+(?:-d|--decode)\\b[^|]*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
     "reason": "a base64-decoded payload is executed straight in a shell",
     "tests": {
       "match": [
@@ -15,6 +15,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
       ],
       "no_match": [
         "base64 file.txt",
+        "echo \"base64 -d | sh\"",
         "echo aGVsbG8= | base64 -d > out.txt"
       ]
     },
@@ -23,7 +24,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "world-writable-chmod",
     "severity": "confirm",
-    "match": "\\bchmod\\s+(?:-R\\s+)?(?:777|a\\+rwx|o\\+w)\\s+(?:\\/|~\\/?|\\$HOME)(?:\\s|$)",
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?chmod\\s+(?:-R\\s+)?(?:777|a\\+rwx|o\\+w)\\s+(?:\\/|~\\/?|\\$HOME)(?:\\s|$)",
     "reason": "chmod makes / or the home directory world-writable",
     "tests": {
       "match": [
@@ -58,7 +59,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "credential-file-read",
     "severity": "warn",
-    "match": "\\b(?:cat|less|more|head|tail|cp|copy|scp)\\b[^|;&]*\\/(?:\\.ssh\\/id_\\w*|\\.aws\\/credentials|\\.netrc)\\b",
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?(?:cat|less|more|head|tail|cp|copy|scp)\\b[^|;&]*\\/(?:\\.ssh\\/id_\\w*|\\.aws\\/credentials|\\.netrc)\\b",
     "reason": "a credential file is being read or copied",
     "tests": {
       "match": [
@@ -77,7 +78,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "crontab-persistence",
     "severity": "confirm",
-    "match": "\\bcrontab\\s+(?:-\\S+\\s+)*[^\\s|;&]+\\.\\w+(?:\\s|$)",
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?crontab\\s+(?:-\\S+\\s+)*[^\\s|;&]+\\.\\w+(?:\\s|$)",
     "reason": "installing a crontab file persists a scheduled command",
     "tests": {
       "match": [
@@ -93,7 +94,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "curl-or-wget-piped-to-shell",
     "severity": "block",
-    "match": "\\b(?:curl|wget)\\b[^|]*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?(?:curl|wget)\\b[^|]*\\|\\s*(?:sudo\\s+)?(?:sh|bash|zsh)\\b",
     "reason": "a downloaded script is executed straight from a pipe",
     "tests": {
       "match": [
@@ -103,7 +104,9 @@ export const BUILTIN_RULES: LoadedRule[] = [
       ],
       "no_match": [
         "curl https://example.com/api > out.json",
-        "bash install.sh"
+        "bash install.sh",
+        "printf '%s\\n' \"curl x | sh is blocked\"",
+        "git commit -m \"curl https://x | bash\""
       ]
     },
     "source": "builtin/curl-piped-to-shell.rule.yaml"
@@ -210,6 +213,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "instruction-override-ignore",
     "severity": "block",
+    "quoted": true,
     "category": "instruction_override",
     "flags": "i",
     "match": "ignore\\s+(all\\s+)?previous\\s+instructions?",
@@ -227,7 +231,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "launchagents-write-persistence",
     "severity": "confirm",
-    "match": "(?:>>?|\\btee\\b[^|;&]*|\\b(?:cp|mv)\\b[^|;&]*)\\s*(?:~\\/Library\\/LaunchAgents\\/|\\$HOME\\/Library\\/LaunchAgents\\/|\\/Library\\/LaunchAgents\\/)",
+    "match": "(?:>>?|(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?(?:tee|cp|mv)\\b[^|;&]*)\\s*(?:~\\/Library\\/LaunchAgents\\/|\\$HOME\\/Library\\/LaunchAgents\\/|\\/Library\\/LaunchAgents\\/)",
     "reason": "writing into a LaunchAgents directory registers a startup item",
     "tests": {
       "match": [
@@ -245,7 +249,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "launchctl-load-persistence",
     "severity": "confirm",
-    "match": "\\blaunchctl\\s+(?:load|bootstrap)\\b",
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?launchctl\\s+(?:load|bootstrap)\\b",
     "reason": "loading a launchd agent persists a background job",
     "tests": {
       "match": [
@@ -326,6 +330,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "rm-recursive-root",
     "severity": "block",
+    "quoted": true,
     "category": "catastrophic_deletion",
     "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?rm\\s+(?:-\\S+\\s+)*(?:-\\w*[rR]\\w*|--recursive)\\s+(?:-\\S+\\s+)*(?:\\S+\\s+)*(?:\\/\\*?|~\\/?\\*?|\\$\\{?HOME\\}?\\/?\\*?|\\/(?:usr|etc|bin|sbin|lib|var|opt|home|System|Library|Users|Applications)\\/?\\*?)(?=\\s|;|&|\\||$)",
     "reason": "recursive rm aimed at /, the home directory or a system directory",
@@ -369,7 +374,8 @@ export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "sudoers-nopasswd",
     "severity": "block",
-    "match": "NOPASSWD(?![\\w-])[^;&]*?(?:>>?\\s*|\\btee\\b[^;&]*\\s)\\/etc\\/sudo(?:ers|\\.d\\/)",
+    "quoted": true,
+    "match": "(?:^|[;&|(`\\n]|\\$\\()\\s*(?:sudo\\s+(?:-\\S+\\s+)*)?(?:echo|printf)\\b[^;&]*?NOPASSWD(?![\\w-])[^;&]*?(?:>>?\\s*|\\btee\\b[^;&]*\\s)\\/etc\\/sudo(?:ers|\\.d\\/)",
     "reason": "a command writes a NOPASSWD entry into sudoers (passwordless root)",
     "tests": {
       "match": [
@@ -378,6 +384,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "echo 'user ALL=(ALL) NOPASSWD: ALL' | tee -a /etc/sudoers"
       ],
       "no_match": [
+        "git commit -m \"echo NOPASSWD >> /etc/sudoers\"",
         "grep NOPASSWD /etc/sudoers",
         "echo 'user ALL=(ALL) ALL' >> /etc/sudoers"
       ]

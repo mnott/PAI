@@ -15,6 +15,8 @@ export interface Rule {
   /** Regex source; flags come from `flags`. Required unless severity is "off". */
   match?: string;
   flags?: string;
+  /** Also test the text with only the quote marks removed (default: quoted strings are dropped). */
+  quoted?: boolean;
   /** Legacy group name shown in deny messages and security events; defaults to the id. */
   category?: string;
   reason: string;

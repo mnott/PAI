@@ -87,6 +87,7 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     category: typeof raw.category === "string" ? raw.category : undefined,
     match: source2,
     flags: flags || undefined,
+    quoted: raw.quoted === true ? true : undefined,
     reason,
     tests,
   };

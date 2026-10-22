@@ -1,6 +1,7 @@
 # Prompt injection: tell the model to drop its instructions.
 id: instruction-override-ignore
 severity: block
+quoted: true
 category: instruction_override
 flags: i
 match: /ignore\s+(all\s+)?previous\s+instructions?/i

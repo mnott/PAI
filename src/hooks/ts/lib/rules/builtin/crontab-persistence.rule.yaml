@@ -1,7 +1,7 @@
 # Installing a crontab persists a scheduled command.
 id: crontab-persistence
 severity: confirm
-match: /\bcrontab\s+(?:-\S+\s+)*[^\s|;&]+\.\w+(?:\s|$)/m
+match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?crontab\s+(?:-\S+\s+)*[^\s|;&]+\.\w+(?:\s|$)/m
 reason: installing a crontab file persists a scheduled command
 tests:
   match:
