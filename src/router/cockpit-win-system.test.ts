@@ -28,6 +28,13 @@ const sysPayload = (i: number, servers = 1) => ({
   series: { wh: { "1h": 4 + i }, coveredMin: { "1h": 60 }, series: [1, 2, 3, 4, 5].map((k) => ({ t: 1_700_000_000_000 + k * 60_000, n: 1, cpu: 10 * k + i, gpu: 5 * k, ane: 0, cpuW: 0, gpuW: 0, aneW: 0, totalW: 10 + k + i, systemW: 20, socTemp: 50 })) },
   servers: [{ provider: "gyro-m", up: true, rssMb: 40000 + i * 100, tokensPerSec: 50 + i, prefixCache: { hitRate: 0.5, hits: 5, misses: 5 } }, ...(servers > 1 ? [{ provider: "second", up: true, rssMb: 1000, tokensPerSec: 5, prefixCache: { hitRate: 0.1, hits: 1, misses: 9 } }] : []), { provider: "off", up: false }],
 });
+/** No server up at all: the note card stands in for the server cards. */
+const sysPayloadNone = (i: number) => ({
+  window: "1h", slowAgeS: 12,
+  current: { memUsed: (8 + i) * GB, memTotal: 36 * GB, pressureLevel: 80, swapUsed: i * GB, swapTotal: 4 * GB, wired: 3 * GB, compressed: GB, cpu: 10 + i, gpu: 20 + i, ane: 0, socTemp: 50 + i, cpuW: 0, gpuW: 0, aneW: 0, systemW: 20 + i, totalW: 30 + i, gpuFreqMhz: 1200, source: "test" },
+  series: { wh: { "1h": 4 + i }, coveredMin: { "1h": 60 }, series: [1, 2, 3, 4, 5].map((k) => ({ t: 1_700_000_000_000 + k * 60_000, n: 1, cpu: 10 * k + i, gpu: 5 * k, ane: 0, cpuW: 0, gpuW: 0, aneW: 0, totalW: 10 + k + i, systemW: 20, socTemp: 50 })) },
+  servers: [{ provider: "off", up: false }],
+});
 
 /** Reads the card boxes and values, pushes a second system payload (values change, no structural change), reads again,
  *  then a third with one more server (structural: only new cards may appear). */
@@ -48,6 +55,18 @@ window.WINPAY&&(function(){
 document.body.setAttribute("data-r",JSON.stringify(o));
 }catch(e){document.body.setAttribute("data-r",JSON.stringify({err:String(e.stack)}))}},1500)</script>`;
 
+/** No server up: the note card shows and takes space; one up: its four cards show and the note takes none;
+ *  up then down: the decode card reads "–" / "down". */
+const PROBE_NONE = `<script>setTimeout(function(){try{
+function boxes(){return Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){var r=c.getBoundingClientRect();return c.getAttribute("data-card")+":"+[r.left,r.top,r.width,r.height].map(Math.round).join(",")}).join("|")}
+function srv(){return Array.prototype.map.call(document.querySelectorAll('#win-root [data-card^="system.srv:"]'),function(c){var v=c.querySelector('[data-k="v"]'),n=c.querySelector('[data-k="n"]'),s=c.querySelector('[data-k="s"]');return c.getAttribute("data-card")+"="+(v?v.textContent:"")+"/"+(n?n.textContent:s?s.textContent:"")}).join("|")}
+var o={ids:Array.prototype.map.call(document.querySelectorAll("#win-root .card"),function(c){return c.getAttribute("data-card")}),
+ boxes:boxes(),none:srv(),err:window.__err||null};
+window.WINPAY&&(window.winFeedSystem(window.WINPAY[1]),o.srv2=srv(),o.boxes2=boxes(),o.kids=JSON.stringify(window.Win.state().kids["sys-servers"]),
+ window.winFeedSystem(window.WINPAY[2]),o.srv3=srv(),o.boxes3=boxes());
+document.body.setAttribute("data-r",JSON.stringify(o));
+}catch(e){document.body.setAttribute("data-r",JSON.stringify({err:String(e.stack)}))}},1500)</script>`;
+
 let server: Server;
 let base = "";
 let tmp = "";
@@ -58,8 +77,12 @@ beforeAll(async () => {
     const url = req.url ?? "";
     res.setHeader("content-type", "application/json");
     if (url.startsWith("/cockpit/data")) return res.end(JSON.stringify(data()));
-    if (url.startsWith("/cockpit/system")) return res.end(JSON.stringify(sysPayload(0)));
+    if (url.startsWith("/cockpit/system")) return res.end(JSON.stringify(url.includes("window=24h") ? sysPayloadNone(0) : sysPayload(0)));
     if (url.startsWith("/cockpit/")) return res.end("{}");
+    if (url.startsWith("/none")) {
+      res.setHeader("content-type", "text/html");
+      return res.end(cockpitHtml().replace("</head>", '<script>window.onerror=function(m,s,l,c){window.__err=String(m)+" @"+l+":"+c};try{localStorage.setItem("cockpitWin","24h")}catch(e){}</script></head>').replace("</body>", "<script>window.WINPAY=" + JSON.stringify([sysPayload(1), sysPayloadNone(2)]) + "</script>" + PROBE_NONE + "</body>"));
+    }
     if (url.startsWith("/page")) {
       res.setHeader("content-type", "text/html");
       return res.end(cockpitHtml().replace("</head>", '<script>window.onerror=function(m,s,l,c){window.__err=String(m)+" @"+l+":"+c}</script></head>').replace("</body>", "<script>window.WINPAY=" + JSON.stringify([0, sysPayload(3), sysPayload(5, 2)]) + "</script>" + PROBE + "</body>"));
@@ -80,7 +103,7 @@ function run(args: string[]): Promise<string> {
 }
 async function open(query: string, width: number, shot?: string) {
   const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, `--window-size=${width},900`, "--virtual-time-budget=6000"];
-  const url = `${base}/page${query}`;
+  const url = `${base}${query}`;
   const dom = await run([...args, "--dump-dom", url]);
   if (shot) await run([...args, `--screenshot=${shot}`, url]);
   const m = /data-r="([^"]*)"/.exec(dom);
@@ -91,10 +114,10 @@ async function open(query: string, width: number, shot?: string) {
 describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
   it("shows 14 metric cards, the chart and the up server's cards; zero metrics are minimized; updates move no box; a new server adds only its cards", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
-    const r = await open("", 1400, shots ? join(shots, "system-1400-light.png") : undefined);
+    const r = await open("/page", 1400, shots ? join(shots, "system-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     for (const id of ["system", "sys-metrics", "sys-power", "sys-servers", "system.power-chart", "system.memory", "system.energy", "system.ane-load", "system.cpu-w", "system.gpu-w", "system.ane-w"]) expect(r.ids).toContain(id);
-    expect(r.ids.filter((i: string) => /^system\.srv:/.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/e2e", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
+    expect(r.ids.filter((i: string) => /^system\.srv:gyro-m\//.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/e2e", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
     expect(r.syshid).toBe(false);
     for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl)*$/);
     expect(r.vals).toContain("system.memory=8.0 / of 36 GB · pressure 20%");
@@ -120,5 +143,19 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     const added = r.ids3.filter((i: string) => !r.ids.includes(i));
     expect(added).toEqual(["system.srv:second/rss", "system.srv:second/e2e", "system.srv:second/decode", "system.srv:second/prefix"]);
     expect(r.overlap3).toBe(0);
+  }, 120_000);
+
+  it("no server up shows the note card; one up hides it; a down server's cards say down", async () => {
+    const r = await open("/none?window=24h", 1400);
+    expect(r.err).toBeNull();
+    // no server up: the note card is present and takes space
+    expect(r.ids).toContain("system.srv:none");
+    expect(r.none).not.toContain("system.srv:gyro-m/");
+    expect(r.boxes).toContain("system.srv:none:");
+    expect(r.none).toContain("system.srv:none=/no local model server is up");
+    // a server that was up and goes down: its cards stay and read "–" / "down"
+    expect(r.srv3).toContain("system.srv:gyro-m/rss=–/down");
+    expect(r.srv3).toContain("system.srv:gyro-m/decode=–/down");
+    expect(r.boxes3).toContain("system.srv:none:");
   }, 120_000);
 });

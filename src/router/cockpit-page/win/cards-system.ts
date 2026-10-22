@@ -3,8 +3,9 @@
  *  trimEmpty, fmtAxis, padFor, labelStep, label) and needs `Win` + `WinT`. Feed `system` (/cockpit/system);
  *  the server cards also read the `data` feed (speed table) and the page's `lim`/`data` globals.
  *  Cards: group `system` > groups `sys-metrics` (14 `metric` cards `system.<name>`), `sys-power` (chart card
- *  `system.power-chart`), `sys-servers` (dynamic: four `metric` cards `system.srv:<provider>/<rss|e2e|decode|prefix>`
- *  per up server, added by data through Win.addCards). The `metric` type itself is registered in cards-kpis;
+ *  `system.power-chart`), `sys-servers` (the note card `system.srv:none`, shown while no server is up, plus
+ *  dynamic: four `metric` cards `system.srv:<provider>/<rss|e2e|decode|prefix>` per up server, added by data
+ *  through Win.addCards). The `metric` type itself is registered in cards-kpis;
  *  their cards carry sysMetricView / sysServerView. */
 
 /** The metric table, the history helper `sysSeries`, the metric/server/chart updates and the shipped defaults. */
@@ -78,7 +79,8 @@ function sysServerView(_d,ctx){
  var id=ctx.id.slice(11),k=id.lastIndexOf("/"),p=id.slice(0,k),what=id.slice(k+1),d=sys;
  if(!d)return null;
  var s=(d.servers||[]).filter(function(x){return x.provider===p})[0];
- if(!s||s.up===false)return{status:["stale","down"]};
+ if(!s)return{status:["stale","down"]};
+ if(s.up===false)return sysMetric("–","", "down",sysSeries(d,"srv:"+p+":"+what,null,null));
 
  var pc=s.prefixCache,tot=pc?pc.hits+pc.misses:0,v,txt,unit,sub;
  if(what==="rss"){v=s.rssMb;txt=gbm;unit="GB";sub="resident memory"}
@@ -87,6 +89,8 @@ function sysServerView(_d,ctx){
  else{v=pc?pc.hitRate:null;txt=function(x){return(x*100).toFixed(1)};unit="%";sub=pc?pc.hits+"/"+tot:lim?"server reports no prefix-cache counter":"loading: first limits poll pending"}
  return Object.assign({status:["",""]},sysMetric(v==null?"–":txt(v),unit,sub,sysSeries(d,"srv:"+p+":"+what,null,v)));
 }
+/** The note shown while no local server is up. */
+function sysSrvNoneView(){return{text:"no local model server is up"}}
 var WCH={};
 /** Per-id chart hooks {mount,update,resize} for the data charts (cards-charts); the power chart is the default. */
 /** The power/GPU/CPU line chart as a string at an explicit pixel box (no DOM measuring). */
@@ -120,9 +124,10 @@ Win.registerType("chart",{minW:260,minH:150,defaultH:220,
 /** The up servers' four cards per server, added by data (a structural change). */
 var SRV_WHAT=[["rss","RSS"],["e2e","end-to-end"],["decode","decode"],["prefix","prefix cache"]];
 function sysServerSync(d){
- var specs=[],rows=[],list=(d&&d.servers)||[],i,j;
+ var specs=[],rows=[],list=(d&&d.servers)||[],i,j,up=0;
  for(i=0;i<list.length;i++){
   if(list[i].up===false)continue;
+  up++;
   var row=[];
   for(j=0;j<SRV_WHAT.length;j++){
    var id="system.srv:"+list[i].provider+"/"+SRV_WHAT[j][0];
@@ -130,6 +135,7 @@ function sysServerSync(d){
   }
   rows.push(row);
  }
+ Win.hide("system.srv:none",up>0);
  if(specs.length&&Win.addCards("sys-servers",specs,rows))Win.update("system",d);
 }
 /** The system feed: the static cards, then the dynamic server cards. */
@@ -138,7 +144,8 @@ function sysDefaults(){
  var cards=[{id:"system",type:"group",title:"System — memory, load, temperature, power",info:SYS_INFO},
   {id:"sys-metrics",type:"group",title:"Memory, load, temperature, power"},
   {id:"sys-power",type:"group",title:"Power and load"},
-  {id:"sys-servers",type:"group",title:"Local model servers"}],st={},i,r1=[],r2=[],r3=[];
+  {id:"sys-servers",type:"group",title:"Local model servers"},
+  {id:"system.srv:none",type:"note",title:"Local model servers",feeds:["system"],view:sysSrvNoneView,hidden:true}],st={},i,r1=[],r2=[],r3=[];
  for(i=0;i<SYS_NAMES.length;i++){
   var id="system."+SYS_NAMES[i],t=SYS_NAMES[i]==="energy"?"energy":SYSM[SYS_NAMES[i]][0];
   cards.push({id:id,type:"metric",title:t,feeds:["system"],view:sysMetricView});
@@ -150,6 +157,7 @@ function sysDefaults(){
  return{tree:WinT.leaf("system"),stDefaults:st,cards:cards,kids:{
   "system":WinT.split("c",[WinT.leaf("sys-metrics"),WinT.leaf("sys-power"),WinT.leaf("sys-servers")],[0.4,0.27,0.33]),
   "sys-metrics":WinT.split("c",[WinT.split("r",r1,eq(5)),WinT.split("r",r2,eq(5)),WinT.split("r",r3,eq(4))],[1/3,1/3,1/3]),
-  "sys-power":WinT.leaf("system.power-chart")}};
+  "sys-power":WinT.leaf("system.power-chart"),
+  "sys-servers":WinT.leaf("system.srv:none")}};
 }
 `;
