@@ -108,6 +108,23 @@ describe("memory payload", () => {
   });
 });
 
+describe("a run whose process died", () => {
+  it("shows once as 'ended unexpectedly' in its Last-run card, not as a live run", async () => {
+    const p = (await cockpitMemoryPayload(deps({ deadRun: () => run({ kind: "index", done: 0, backlogStart: null }) }))) as any;
+    expect(p.run).toBeNull();
+    const last = p.jobs.filter((j: any) => j.finished);
+    expect(last).toHaveLength(1);
+    expect(last[0]).toMatchObject({ id: "last-index", finished: { outcome: "failed" } });
+    expect(last[0].finished.reason).toMatch(/^ended unexpectedly at \d\d:\d\d:\d\d$/);
+    expect(p.jobs.filter((j: any) => !j.finished)).toHaveLength(0);
+  });
+  it("is superseded by a later finished record of the same kind", async () => {
+    const fin = { kind: "index" as const, by: "cli" as const, startedAt: new Date(NOW - 50_000).toISOString(), endedAt: new Date(NOW - 20_000).toISOString(), backlogStart: null, done: 5, outcome: "done" as const, reason: "" };
+    const p = (await cockpitMemoryPayload(deps({ deadRun: () => run({ kind: "index", startedAt: new Date(NOW - 100_000).toISOString() }), finished: (k) => (k === "index" ? fin : null) }))) as any;
+    expect(p.jobs.filter((j: any) => j.finished).map((j: any) => j.finished.outcome)).toEqual(["done"]);
+  });
+});
+
 describe("run progress", () => {
   it("computes elapsed, rate over the time to the last update, and the ETA from the backlog at start", () => {
     const pr = runProgress(run(), NOW, home);

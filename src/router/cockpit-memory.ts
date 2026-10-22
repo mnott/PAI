@@ -41,6 +41,8 @@ export interface MemoryDeps {
   now: () => number;
   /** The recorded embed passes (oldest first); defaults to the pass log under the PAI home. */
   embedPasses?: () => EmbedPassLogEntry[];
+  /** A run marker whose process died without finishing; defaults to the stale marker under the PAI home. */
+  deadRun?: () => RunState | null;
   /** The last finished run of a kind (run-state); defaults to the marker kept under the PAI home. */
   finished?: (kind: "embed" | "index") => FinishedRun | null;
 }
@@ -57,6 +59,11 @@ export async function fetchDaemonMemory(): Promise<DaemonMemory | null> {
   } catch {
     return null;
   }
+}
+
+/** The run marker of a process that is gone (readRun ignores it); null when there is none or its process lives. */
+function deadRunMarker(home: string): RunState | null {
+  return readRun(home) ? null : readRun(home, () => true);
 }
 
 export function liveMemoryDeps(): MemoryDeps {
@@ -280,8 +287,13 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   }
   const readFin = deps.finished ?? ((k) => readFinishedRun(k, deps.home));
   const fins: FinishedRun[] = [];
+  const dead = !run ? (deps.deadRun ?? (() => deadRunMarker(deps.home)))() : null;
   for (const k of ["embed", "index"] as const) {
-    const f = run?.kind === k ? null : readFin(k);
+    let f = run?.kind === k ? null : readFin(k);
+    // a run that died without recording its end is shown once, in its Last-run card, unless a later finish superseded it
+    if (dead && dead.kind === k && (!f || Date.parse(f.endedAt) < Date.parse(dead.startedAt))) {
+      f = { kind: k, by: dead.by, startedAt: dead.startedAt, endedAt: dead.updatedAt, backlogStart: dead.backlogStart, done: dead.done, outcome: "failed", reason: `ended unexpectedly at ${hhmmss(Date.parse(dead.updatedAt))}` };
+    }
     if (f) fins.push(f);
   }
   for (const f of fins) jobs.push(finishedTile(f));
