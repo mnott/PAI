@@ -19,6 +19,7 @@ Overwrites the current registry, config and (unless skipped) the Postgres databa
 | `--no-postgres` | flag | — | Do not restore the Postgres database |
 | `--yes` | flag | — | Do not ask for confirmation |
 | `--into DB` | string | — | Restore into this Postgres database instead of the daemon's (required when the backup came from another database) |
+| `--no-safety-dump` | flag | — | Do not dump the live database before replacing it (a failed safety dump otherwise aborts the restore) |
 | `--dry-run` | flag | — | Print the target and source databases, change nothing |
 
 ```sh
