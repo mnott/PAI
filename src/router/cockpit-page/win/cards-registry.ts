@@ -106,7 +106,6 @@ function wrgLabel(S,io,name,label){
   return wrgBackups(S,io).then(function(){return r});
  }).catch(function(e){wrgFail(io,e)});
 }
-/** The local_tiers entry names in the text (the first one prefills the duplicate form). */
 /** YAML highlight: one line to HTML spans (classes wrg-c comment, wrg-k key, wrg-s string, wrg-n number, wrg-b bool/null, wrg-d list dash, wrg-a anchor/alias). Pure, per line, no state across lines. */
 function wrgHlLine(l){
  var o="",i=0,m=/^(\s*)((?:-(?:\s+|$))*)/.exec(l);
@@ -232,6 +231,7 @@ function wrgFoldRender(root){
  if(g)g.innerHTML=wrgGutHtml(WRG.text,V);
  wrgHlSync(root);
 }
+/** The local_tiers entry names in the text (the first one prefills the duplicate form). */
 function wrgTierNames(text){
  var out=[],inT=false,lines=String(text).split("\n"),i,m;
  for(i=0;i<lines.length;i++){

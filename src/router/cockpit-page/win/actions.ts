@@ -113,8 +113,6 @@ function winPost(host,url,bodyObj){
   })
   .catch(function(e){return{ok:false,message:"no answer: "+(detail||(e&&e.message)||"network failure")}});
 }
-/** Polls /cockpit/job?id= under the JOB_* policy. Resolves the last job seen, or null when
- *  every poll failed; a job that never ends resolves null after JOB_TRIES*JOB_POLL ms. */
 /** Polls a job to its end, but resolves early when the job file is gone: a 404 or a
  *  {"error":"no such job"} body twice in a row means the job is over and unreadable —
  *  do not sit out the whole JOB_TRIES budget. pollMs is the wait between polls; the

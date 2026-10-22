@@ -15,11 +15,11 @@ function emptyRing(sz){
  var cx=${n(L.donutViewBoxPx)}/2;
  return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+${n(L.donutViewBoxPx)}+' '+${n(L.donutViewBoxPx)}+'"><circle cx="'+cx+'" cy="'+cx+'" r="${n(L.donutRadiusPx)}" fill="none" stroke="var(--line)" stroke-width="${n(L.donutStrokePx)}"/></svg>';
 }
-/** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
 /** " (Ns old)" when the server counter is a kept reading older than one poll interval (60 s). */
 function ageMark(s){
  return s&&s.prefixCacheAgeSec>SRV_STALE_SEC?' <span class="dim">('+(s.prefixCacheAgeSec>=2*SRV_STALE_SEC?Math.round(s.prefixCacheAgeSec/60)+' min':s.prefixCacheAgeSec+'s')+' old)</span>':''
 }
+/** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
 function provHit(p,servers){
  var srv=(servers||[]).filter(function(s){return s.provider===p.provider})[0];
  if(p.cacheRead+p.cacheWrite>0||!srv)return pct(p.hitRatio);
