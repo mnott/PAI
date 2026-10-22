@@ -10,11 +10,13 @@ All notable changes to PAI Knowledge OS are documented here.
 
 - **macOS notifications:** notification text is passed to `osascript` as arguments instead of being written into the AppleScript, so a message containing quotes can no longer run commands. Present since 0.60.0.
 - **Ideas into notes:** `idea_materialize` stays inside the vault and refuses to overwrite an existing note.
+- **Own-address check:** a recipient entry holding several addresses is checked address by address, so an outside address after one's own is no longer let through.
+- **Audit ladder** no longer passes `ANTHROPIC_API_KEY` to the `claude` processes it starts; the forge sink escapes values in its curl configuration.
 
 ### Fixed
 
 - **Notification settings:** `pai notifications set` refuses to write when the main config cannot be read, instead of replacing it with only the notifications section; ntfy titles with emoji or non-Latin text are delivered.
-- **Vault notes:** the vault fixer writes notes atomically; query notes write their frontmatter as valid YAML whatever the query contains; valid relative symlinks are no longer removed as broken.
+- **Vault notes:** the vault fixer and the project marker (`Notes/PAI.md`) write notes atomically; query notes write their frontmatter as valid YAML whatever the query contains; valid relative symlinks are no longer removed as broken.
 
 - **Cockpit sessions:** a session with a very large request history no longer breaks the cockpit's data page; an unreadable session or project folder is skipped, and the job-name cache drops expired entries.
 - **Large logs and tables:** minimum and maximum over long lists no longer overflow the call stack (memory search, graph trace, tunnels, worker usage, scheduler, build queue).
