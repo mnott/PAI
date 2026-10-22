@@ -159,6 +159,17 @@ describe("wrapped commands survive the shell", () => {
   };
   const viaGuard = (command: string, cwd = tmp) =>
     spawnSync("bash", ["-c", wrapTestCommand(command)], { cwd, env: { ...childEnv(), FOO: "bar" }, encoding: "utf8" });
+  /** Kills what a failed run left behind (a spinning fork orphaned to init): every process with its cwd in the fixture. */
+  const reap = (dir: string) => {
+    const pids = spawnSync("lsof", ["-t", "+d", dir], { encoding: "utf8" }).stdout.split("\n").filter(Boolean);
+    for (const p of pids) {
+      try {
+        process.kill(Number(p), "SIGKILL");
+      } catch {
+        // gone
+      }
+    }
+  };
 
   it("runs timeout 5 echo hello", () => {
     const r = viaGuard("timeout 5 echo hello");
@@ -185,6 +196,7 @@ function spin() {
 test("loops", () => { spin(); });
 `);
     const r = viaGuard("timeout 20 npx vitest run case.test.ts", dir);
+    reap(dir);
     expect(r.stderr + r.stdout).toContain("stuck in case.test.ts:3 spin()");
     expect(r.status).toBe(124);
   }, 90_000);
