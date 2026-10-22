@@ -1,7 +1,8 @@
 /**
  * Group levels: every group card carries data-depth (0 = a top-level band, a nested group one deeper);
- * a top-level header has its own tint (--grp-h1..h8 by DOM position), a 13px title, a 2px bottom border and a
- * 4px inset body; a nested header keeps the 12px title and gets a 3px accent bar; a leaf card has no data-depth
+ * a top-level header has its own tint (--grp-h1..h8 by DOM position), a 13px title, a 2px bottom border, a
+ * 3px left edge in its own --sec colour and a 4px inset body; a nested header keeps the 12px title and has no
+ * left edge; a leaf card has no data-depth
  * and its body keeps the old padding. Headless Chromium, skipped when none is installed.
  */
 
@@ -37,7 +38,7 @@ var o={err:window.__err||null,theme:document.documentElement.dataset.theme,group
 Array.prototype.forEach.call(document.querySelectorAll("#win-root .card[data-type=group]"),function(c){
  var head=c.querySelector(".chead"),body=c.querySelector(".cbody.cgroup"),tt=c.querySelector(".ctitle");
  o.groups.push({id:c.getAttribute("data-card"),depth:c.getAttribute("data-depth"),
-  headBg:rgb(getComputedStyle(head).backgroundColor),borderBottom:getComputedStyle(head).borderBottomWidth,borderLeft:getComputedStyle(head).borderLeftWidth,
+  headBg:rgb(getComputedStyle(head).backgroundColor),borderBottom:getComputedStyle(head).borderBottomWidth,borderLeft:getComputedStyle(head).borderLeftWidth,borderLeftColor:rgb(getComputedStyle(head).borderLeftColor),
   titleSize:getComputedStyle(tt).fontSize,titleColor:rgb(getComputedStyle(tt).color),
   bodyPad:getComputedStyle(body).paddingTop,bodyBg:rgb(getComputedStyle(body).backgroundColor)});
 });
@@ -105,8 +106,11 @@ describe("group levels on the page", () => {
     expect(byId.system.titleSize).toBe("13px");
     expect(byId.system.borderBottom).toBe("2px");
     expect(byId.system.bodyPad).toBe("4px");
-    // nested: accent bar, normal title size, inset body
-    expect(byId["sys-metrics"].borderLeft).toBe("3px");
+    // top-level: 3px left edge in the section's own colour (the header tint, i.e. --sec)
+    expect(byId.system.borderLeft).toBe("3px");
+    expect(byId.system.borderLeftColor).toBe(byId.system.headBg);
+    // nested: no left edge, normal title size, inset body
+    expect(byId["sys-metrics"].borderLeft).toBe("0px");
     expect(byId["sys-metrics"].titleSize).toBe("12px");
     expect(byId["sys-metrics"].bodyPad).toBe("4px");
     // a nested header's tint differs from the top-level one and from the plain card
