@@ -8,12 +8,14 @@
  */
 
 import { paiSocketPath } from "../../../runtime-paths.js";
-import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
+import { analyzeSession, formatSessionDocument } from '../lib/session-summary.js';
 
 interface SessionData {
-  conversation_id: string;
+  session_id: string;
   timestamp: string;
   [key: string]: any;
 }
@@ -27,25 +29,35 @@ async function main() {
       chunks.push(chunk);
     }
     const input = Buffer.concat(chunks).toString('utf-8');
-    if (!input || input.trim() === '') {
+    // The detached child has stdin ignored; its payload comes from the temp file.
+    if ((!input || input.trim() === '') && !process.env.__PAI_HOOK_INPUT_FILE) {
       process.exit(0);
     }
 
-    // Fork: re-exec ourselves with --background flag and pipe the stdin data via env.
+    // Fork: re-exec ourselves with --background flag and hand the stdin data over via a private temp file
+    // (an env var is visible to ps eww and hits E2BIG on large payloads).
     // This detaches the heavy work (JSONL scan, IPC) from CC's abort signal.
     if (!process.env.__PAI_HOOK_BG) {
       const { spawn } = await import('child_process');
+      const inputFile = join(tmpdir(), `pai-session-end-${process.pid}-${Date.now()}.json`);
+      writeFileSync(inputFile, input, { mode: 0o600 });
       const child = spawn(process.execPath, [process.argv[1], '--background'], {
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env, __PAI_HOOK_BG: '1', __PAI_HOOK_INPUT: input },
+        env: { ...process.env, __PAI_HOOK_BG: '1', __PAI_HOOK_INPUT_FILE: inputFile },
       });
       child.unref();
       process.exit(0); // Return immediately — CC sees success, abort signal is harmless
     }
 
     // Background mode: we're detached, safe from abort signals
-    const data: SessionData = JSON.parse(process.env.__PAI_HOOK_INPUT || input);
+    const inputFile = process.env.__PAI_HOOK_INPUT_FILE;
+    let raw = input;
+    if (inputFile) {
+      raw = readFileSync(inputFile, 'utf-8');
+      try { unlinkSync(inputFile); } catch { /* ignore */ }
+    }
+    const data: SessionData = JSON.parse(raw);
 
     // Generate timestamp for filename
     const now = new Date();
@@ -57,7 +69,7 @@ async function main() {
     const yearMonth = timestamp.substring(0, 7); // YYYY-MM
 
     // Try to extract session info from raw outputs
-    const sessionInfo = await analyzeSession(data.conversation_id, yearMonth);
+    const sessionInfo = await analyzeSession(data.session_id, yearMonth);
 
     // Generate filename
     const filename = `${timestamp}_SESSION_${sessionInfo.focus}.md`;
@@ -75,7 +87,7 @@ async function main() {
     writeFileSync(join(sessionDir, filename), sessionDoc);
 
     // Also store structured summary via daemon IPC for the observations system
-    await storeStructuredSummary(data.conversation_id, sessionInfo);
+    await storeStructuredSummary(data.session_id, sessionInfo);
 
     // Exit successfully
     process.exit(0);
@@ -84,126 +96,6 @@ async function main() {
     console.error(`[UOCS] SessionEnd hook error: ${error}`);
     process.exit(0);
   }
-}
-
-async function analyzeSession(conversationId: string, yearMonth: string): Promise<any> {
-  // Try to read raw outputs for this session
-  const rawOutputsDir = join(historyDir(), 'raw-outputs', yearMonth);
-
-  let filesChanged: string[] = [];
-  let commandsExecuted: string[] = [];
-  let toolsUsed: Set<string> = new Set();
-
-  try {
-    if (existsSync(rawOutputsDir)) {
-      // Only scan today's file — not the entire month (which can be 400MB+).
-      // JSONL filenames are prefixed with YYYY-MM-DD.
-      const todayPrefix = new Date().toISOString().substring(0, 10);
-      const files = readdirSync(rawOutputsDir).filter(
-        f => f.endsWith('.jsonl') && f.startsWith(todayPrefix)
-      );
-
-      for (const file of files) {
-        const filePath = join(rawOutputsDir, file);
-        const content = readFileSync(filePath, 'utf-8');
-        const lines = content.split('\n').filter(l => l.trim());
-
-        for (const line of lines) {
-          try {
-            const entry = JSON.parse(line);
-            if (entry.session === conversationId) {
-              toolsUsed.add(entry.tool);
-
-              // Extract file changes
-              if (entry.tool === 'Edit' || entry.tool === 'Write') {
-                if (entry.input?.file_path) {
-                  filesChanged.push(entry.input.file_path);
-                }
-              }
-
-              // Extract bash commands
-              if (entry.tool === 'Bash' && entry.input?.command) {
-                commandsExecuted.push(entry.input.command);
-              }
-            }
-          } catch (e) {
-            // Skip invalid JSON lines
-          }
-        }
-      }
-    }
-  } catch (error) {
-    // Silent failure
-  }
-
-  return {
-    focus: 'general-work',
-    filesChanged: [...new Set(filesChanged)].slice(0, 10), // Unique, max 10
-    commandsExecuted: commandsExecuted.slice(0, 10), // Max 10
-    toolsUsed: Array.from(toolsUsed),
-    duration: 0 // Unknown
-  };
-}
-
-function formatSessionDocument(timestamp: string, data: SessionData, info: any): string {
-  const date = timestamp.substring(0, 10); // YYYY-MM-DD
-  const time = timestamp.substring(11).replace(/-/g, ':'); // HH:MM:SS
-  const da = process.env.DA || 'PAI';
-
-  return `---
-capture_type: SESSION
-timestamp: ${new Date().toISOString()}
-session_id: ${data.conversation_id}
-duration_minutes: ${info.duration}
-executor: ${da}
----
-
-# Session: ${info.focus}
-
-**Date:** ${date}
-**Time:** ${time}
-**Session ID:** ${data.conversation_id}
-
----
-
-## Session Overview
-
-**Focus:** General development work
-**Duration:** ${info.duration > 0 ? `${info.duration} minutes` : 'Unknown'}
-
----
-
-## Tools Used
-
-${info.toolsUsed.length > 0 ? info.toolsUsed.map((t: string) => `- ${t}`).join('\n') : '- None recorded'}
-
----
-
-## Files Modified
-
-${info.filesChanged.length > 0 ? info.filesChanged.map((f: string) => `- \`${f}\``).join('\n') : '- None recorded'}
-
-**Total Files Changed:** ${info.filesChanged.length}
-
----
-
-## Commands Executed
-
-${info.commandsExecuted.length > 0 ? '```bash\n' + info.commandsExecuted.join('\n') + '\n```' : 'None recorded'}
-
----
-
-## Notes
-
-This session summary was automatically generated by the UOCS SessionEnd hook.
-
-For detailed tool outputs, see: \`${join(historyDir(), 'raw-outputs', timestamp.substring(0, 7))}/\`
-
----
-
-**Session Outcome:** Completed
-**Generated:** ${new Date().toISOString()}
-`;
 }
 
 async function storeStructuredSummary(

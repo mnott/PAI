@@ -7,15 +7,15 @@
  * for later processing and analysis.
  */
 
-import { appendFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
+import { appendRawCapture, redactDeep } from '../lib/raw-capture.js';
 
 interface ToolUseData {
   tool_name: string;
   tool_input: Record<string, any>;
   tool_response: Record<string, any>;
-  conversation_id: string;
+  session_id: string;
   timestamp: string;
 }
 
@@ -47,24 +47,20 @@ async function main() {
     const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
     const yearMonth = today.substring(0, 7); // YYYY-MM
 
-    // Ensure capture directory exists
     const dateDir = join(CAPTURE_DIR, yearMonth);
-    if (!existsSync(dateDir)) {
-      mkdirSync(dateDir, { recursive: true });
-    }
 
     // Format output as JSONL (one JSON object per line)
     const captureFile = join(dateDir, `${today}_tool-outputs.jsonl`);
     const captureEntry = JSON.stringify({
       timestamp: data.timestamp || now.toISOString(),
       tool: data.tool_name,
-      input: data.tool_input,
-      output: data.tool_response,
-      session: data.conversation_id
+      input: redactDeep(data.tool_input),
+      output: redactDeep(data.tool_response),
+      session: data.session_id
     }) + '\n';
 
     // Append to daily log
-    appendFileSync(captureFile, captureEntry);
+    appendRawCapture(captureFile, dateDir, captureEntry);
 
     // Exit successfully (code 0 = continue normally)
     process.exit(0);

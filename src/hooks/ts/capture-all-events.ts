@@ -6,11 +6,12 @@
  * Enhanced with agent instance metadata extraction
  */
 
-import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { historyDir, agentSessionsPath } from './lib/pai-paths.js';
 import { enrichEventWithAgentMetadata, isAgentSpawningCall } from './lib/metadata-extraction.js';
 import { isProbeSession } from './lib/project-utils.js';
+import { appendRawCapture, redactDeep } from './lib/raw-capture.js';
 import { writeJsonAtomic } from '../../config/json-store.js';
 
 interface HookEvent {
@@ -39,7 +40,7 @@ function getLocalTimestamp(): string {
 }
 
 // Get current events file path
-function getEventsFilePath(): string {
+function getEventsFilePath(): { dir: string; file: string } {
   const now = new Date();
   const tz = process.env.TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const localDate = new Date(now.toLocaleString('en-US', { timeZone: tz }));
@@ -49,12 +50,7 @@ function getEventsFilePath(): string {
 
   const monthDir = join(historyDir(), 'raw-outputs', `${year}-${month}`);
 
-  // Ensure directory exists
-  if (!existsSync(monthDir)) {
-    mkdirSync(monthDir, { recursive: true });
-  }
-
-  return join(monthDir, `${year}-${month}-${day}_all-events.jsonl`);
+  return { dir: monthDir, file: join(monthDir, `${year}-${month}-${day}_all-events.jsonl`) };
 }
 
 // Session-to-agent mapping functions
@@ -162,7 +158,7 @@ async function main() {
       source_app: agentName,
       session_id: hookData.session_id || 'main',
       hook_event_type: eventType,
-      payload: hookData,
+      payload: redactDeep(hookData),
       timestamp: Date.now(),
       timestamp_local: getLocalTimestamp()
     };
@@ -177,9 +173,8 @@ async function main() {
     }
 
     // Append to events file
-    const eventsFile = getEventsFilePath();
-    const jsonLine = JSON.stringify(event) + '\n';
-    appendFileSync(eventsFile, jsonLine, 'utf-8');
+    const events = getEventsFilePath();
+    appendRawCapture(events.file, events.dir, JSON.stringify(event) + '\n');
 
   } catch (error) {
     // Silently fail - don't block Claude Code
