@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { nowStamp, saveStatus, type WorkerStatus } from "../workers/status.js";
 import type { WorkersConfig } from "../workers/config.js";
 import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
-import type { UsageRow } from "./usage.js";
+import { isTimeOrdered, type UsageRow } from "./usage.js";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const row = (minAgo: number, o: Partial<UsageRow> = {}): UsageRow => ({
@@ -505,6 +505,59 @@ describe("cachedRows", () => {
     expect(read().map((r) => r.session_id)).toEqual(["s1", "s2", "s3"]);
     writeFileSync(f, row(9) + "\n");
     expect(read().map((r) => r.session_id)).toEqual(["s9"]);
+  });
+});
+
+describe("cockpit prototype-safe maps", () => {
+  it("a logged model or provider named __proto__ does not reach Object.prototype", () => {
+    const keys = () => Object.getOwnPropertyNames(Object.prototype).sort();
+    const before = keys();
+    const rows = [row(2, { model: "__proto__", provider: "__proto__" }), row(3, { model: "constructor", provider: "toString" })];
+    const d = buildCockpitData(rows, "1h", NOW) as unknown as { daily: { models: Record<string, number[]> } };
+    expect(keys()).toEqual(before);
+    expect(({} as Record<string, unknown>).input).toBeUndefined();
+    expect(Object.keys(d.daily.models)).toContain("__proto__");
+  });
+});
+
+describe("cachedRows identity and replacement", () => {
+  const line = (ts: string, n: number) => JSON.stringify({ ts, session_id: `s${n}` }) + "\n";
+  it("appends in place and keeps the array time-ordered", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
+    writeFileSync(f, line("2026-03-10T10:00:00Z", 1));
+    const read = cachedRows(f);
+    const a = read();
+    appendFileSync(f, line("2026-03-10T10:01:00Z", 2));
+    const b = read();
+    expect(b).toBe(a);
+    expect(b).toHaveLength(2);
+    expect(isTimeOrdered(b)).toBe(true);
+  });
+  it("detects a same-size-or-larger replacement by head", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
+    writeFileSync(f, line("2026-03-10T10:00:00Z", 1));
+    const read = cachedRows(f);
+    expect(read().map((r) => r.session_id)).toEqual(["s1"]);
+    writeFileSync(f, line("2026-03-10T10:00:00Z", 7) + line("2026-03-10T10:01:00Z", 8));
+    expect(read().map((r) => r.session_id)).toEqual(["s7", "s8"]);
+  });
+  it("prunes rows older than 7 days of the newest row", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
+    writeFileSync(f, line("2026-03-01T00:00:00Z", 1));
+    const read = cachedRows(f);
+    read();
+    appendFileSync(f, line("2026-03-20T00:00:00Z", 2));
+    expect(read().map((r) => r.session_id)).toEqual(["s2"]);
+  });
+  it("an unordered append yields an unmarked array", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
+    writeFileSync(f, line("2026-03-10T10:05:00Z", 1));
+    const read = cachedRows(f);
+    read();
+    appendFileSync(f, line("2026-03-10T10:00:00Z", 2));
+    const r = read();
+    expect(r).toHaveLength(2);
+    expect(isTimeOrdered(r)).toBe(false);
   });
 });
 

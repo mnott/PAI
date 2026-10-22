@@ -60,6 +60,12 @@ function num(section: Record<string, unknown>, key: string, fallback: number): n
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
+/** Like num, but 0 is a real setting (a threshold or hold of 0 turns it off). */
+function numZ(section: Record<string, unknown>, key: string, fallback: number): number {
+  const v = section[key];
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : fallback;
+}
+
 /** A non-empty string from the config subtree, else the shipped fallback. */
 function str(section: Record<string, unknown>, key: string, fallback: string): string {
   return typeof section[key] === "string" && section[key] ? (section[key] as string) : fallback;
@@ -256,42 +262,42 @@ export function cockpitLayout(): CockpitLayout {
     sparkHeightPx: num(s, "sparkHeightPx", SHIPPED.sparkHeightPx),
     sparkViewMaxPx: num(s, "sparkViewMaxPx", SHIPPED.sparkViewMaxPx),
     sparkPlotHeightPx: num(s, "sparkPlotHeightPx", SHIPPED.sparkPlotHeightPx),
-    sparkPlotTopPx: num(s, "sparkPlotTopPx", SHIPPED.sparkPlotTopPx),
+    sparkPlotTopPx: numZ(s, "sparkPlotTopPx", SHIPPED.sparkPlotTopPx),
     donutSizePx: num(s, "donutSizePx", SHIPPED.donutSizePx),
     donutRadiusPx: num(s, "donutRadiusPx", SHIPPED.donutRadiusPx),
     donutStrokePx: num(s, "donutStrokePx", SHIPPED.donutStrokePx),
     donutViewBoxPx: num(s, "donutViewBoxPx", SHIPPED.donutViewBoxPx),
-    minLabelGapPx: num(s, "minLabelGapPx", SHIPPED.minLabelGapPx),
-    minBarPx: num(s, "minBarPx", SHIPPED.minBarPx),
+    minLabelGapPx: numZ(s, "minLabelGapPx", SHIPPED.minLabelGapPx),
+    minBarPx: numZ(s, "minBarPx", SHIPPED.minBarPx),
     sysHistoryLen: num(s, "sysHistoryLen", SHIPPED.sysHistoryLen),
     dailyDays: num(s, "dailyDays", SHIPPED.dailyDays),
     sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
     sessionsTopRows: num(s, "sessionsTopRows", SHIPPED.sessionsTopRows),
     sessionNameMaxPct: num(s, "sessionNameMaxPct", SHIPPED.sessionNameMaxPct),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),
-    lowRequestMin: num(s, "lowRequestMin", SHIPPED.lowRequestMin),
+    lowRequestMin: numZ(s, "lowRequestMin", SHIPPED.lowRequestMin),
     colorPruneDays: num(s, "colorPruneDays", SHIPPED.colorPruneDays),
     pollMs: num(s, "pollMs", SHIPPED.pollMs),
     limitsPollMs: num(s, "limitsPollMs", SHIPPED.limitsPollMs),
     poolPollMs: num(s, "poolPollMs", SHIPPED.poolPollMs),
     clockTickMs: num(s, "clockTickMs", SHIPPED.clockTickMs),
     stampStaleSecs: num(s, "stampStaleSecs", SHIPPED.stampStaleSecs),
-    holdLastGoodSecs: num(s, "holdLastGoodSecs", SHIPPED.holdLastGoodSecs),
+    holdLastGoodSecs: numZ(s, "holdLastGoodSecs", SHIPPED.holdLastGoodSecs),
     jobPollMs: num(s, "jobPollMs", SHIPPED.jobPollMs),
-    jobFirstDelayMs: num(s, "jobFirstDelayMs", SHIPPED.jobFirstDelayMs),
+    jobFirstDelayMs: numZ(s, "jobFirstDelayMs", SHIPPED.jobFirstDelayMs),
     jobMaxTries: num(s, "jobMaxTries", SHIPPED.jobMaxTries),
     serverCounterStaleSecs: num(s, "serverCounterStaleSecs", SHIPPED.serverCounterStaleSecs),
-    gaugeWarnPct: num(s, "gaugeWarnPct", SHIPPED.gaugeWarnPct),
-    gaugeBadPct: num(s, "gaugeBadPct", SHIPPED.gaugeBadPct),
-    hitWarn: num(s, "hitWarn", SHIPPED.hitWarn),
-    hitBad: num(s, "hitBad", SHIPPED.hitBad),
-    errorWarn: num(s, "errorWarn", SHIPPED.errorWarn),
-    errorBad: num(s, "errorBad", SHIPPED.errorBad),
+    gaugeWarnPct: numZ(s, "gaugeWarnPct", SHIPPED.gaugeWarnPct),
+    gaugeBadPct: numZ(s, "gaugeBadPct", SHIPPED.gaugeBadPct),
+    hitWarn: numZ(s, "hitWarn", SHIPPED.hitWarn),
+    hitBad: numZ(s, "hitBad", SHIPPED.hitBad),
+    errorWarn: numZ(s, "errorWarn", SHIPPED.errorWarn),
+    errorBad: numZ(s, "errorBad", SHIPPED.errorBad),
     memoryTitle: str(s, "memoryTitle", SHIPPED.memoryTitle),
     memoryPollMs: num(s, "memoryPollMs", SHIPPED.memoryPollMs),
-    memoryCoverageWarn: num(s, "memoryCoverageWarn", SHIPPED.memoryCoverageWarn),
-    memoryCoverageBad: num(s, "memoryCoverageBad", SHIPPED.memoryCoverageBad),
-    memoryStartGraceSecs: num(s, "memoryStartGraceSecs", SHIPPED.memoryStartGraceSecs),
+    memoryCoverageWarn: numZ(s, "memoryCoverageWarn", SHIPPED.memoryCoverageWarn),
+    memoryCoverageBad: numZ(s, "memoryCoverageBad", SHIPPED.memoryCoverageBad),
+    memoryStartGraceSecs: numZ(s, "memoryStartGraceSecs", SHIPPED.memoryStartGraceSecs),
     memoryStallSecs: num(s, "memoryStallSecs", SHIPPED.memoryStallSecs),
     memoryHistoryLen: num(s, "memoryHistoryLen", SHIPPED.memoryHistoryLen),
     memoryRingPx: num(s, "memoryRingPx", SHIPPED.memoryRingPx),

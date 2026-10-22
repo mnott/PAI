@@ -50,3 +50,27 @@ describe("cockpit layout: removed keys", () => {
     expect(lines[0]).toContain("gridBreakpointPx");
   });
 });
+
+describe("cockpit layout: zero thresholds", () => {
+  let dir = "";
+  const prev = process.env.PAI_CONFIG_FILE;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-cockpit-layout-zero-"));
+    process.env.PAI_CONFIG_FILE = join(dir, "config.json");
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (prev === undefined) delete process.env.PAI_CONFIG_FILE;
+    else process.env.PAI_CONFIG_FILE = prev;
+  });
+
+  it("keeps a configured 0 for a threshold and still rejects 0 for an interval", () => {
+    writeFileSync(
+      join(dir, "config.yaml"),
+      "router:\n  cockpit:\n    layout:\n      errorWarn: 0\n      hitBad: 0\n      holdLastGoodSecs: 0\n      minBarPx: 0\n      pollMs: 0\n",
+    );
+    const l = cockpitLayout();
+    expect([l.errorWarn, l.hitBad, l.holdLastGoodSecs, l.minBarPx]).toEqual([0, 0, 0, 0]);
+    expect(l.pollMs).toBeGreaterThan(0);
+  });
+});

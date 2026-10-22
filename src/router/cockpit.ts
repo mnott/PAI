@@ -4,7 +4,7 @@
  * gets numbers and display names, never keys, bodies or prompt content.
  */
 
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
@@ -248,7 +248,7 @@ function wholeLog(allRows: UsageRow[], now: number, providers: Record<string, { 
   const dayFrom = bucketStart(now, DAY) - 13 * DAY;
   const days: number[] = [];
   for (let t = dayFrom; t <= now; t += DAY) days.push(t);
-  const daily: Record<string, number[]> = {};
+  const daily = dict<number[]>();
   for (const r of allRows) {
     const t = Date.parse(r.ts);
     if (t < dayFrom) continue;
@@ -258,9 +258,9 @@ function wholeLog(allRows: UsageRow[], now: number, providers: Record<string, { 
 
   // prompt tokens per provider over the whole log: denominator for the local
   // servers' tokensSaved counter, which the stats endpoint gives no total for
-  const promptByProvider: Record<string, number> = {};
+  const promptByProvider = dict<number>();
   // first row per provider: the log (router restart) is younger than a server's own counters
-  const promptSince: Record<string, string> = {};
+  const promptSince = dict<string>();
   for (const r of allRows) {
     if (!promptSince[r.provider] || r.ts < promptSince[r.provider]!) promptSince[r.provider] = r.ts;
     promptByProvider[r.provider] = (promptByProvider[r.provider] ?? 0) + (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
@@ -323,12 +323,12 @@ export function buildCockpitData(
     c.set(e, (c.get(e) ?? 0) + 1);
     ecoCount.set(m, c);
   }
-  const ecosystems: Record<string, string> = {};
+  const ecosystems = dict<string>();
   for (const [m, c] of ecoCount) ecosystems[m] = [...c.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]![0];
 
   // series: one entry per bucket, per model token parts
   const series: Array<{ t: number; models: Record<string, Tok & { requests: number }> }> = [];
-  for (let t = from; t <= now; t += bucket) series.push({ t, models: {} });
+  for (let t = from; t <= now; t += bucket) series.push({ t, models: dict() });
   const total = tok();
   let errors = 0;
   const byModel = new Map<string, Tok & { model: string; provider: string; requests: number; errors: number }>();
@@ -338,7 +338,7 @@ export function buildCockpitData(
   const byInstance = new Map<string, Tok & { provider: string; instance: string; requests: number; errors: number; ms: number }>();
   const bySession = new Map<string, Tok & { session: string; name: string | null; requests: number; errors: number; busts: number; lastTs: string; models: Set<string> }>();
   const pause = new Map<string, Map<string, { n: number; hit: number; write: number; miss: number; readTok: number; writeTok: number }>>();
-  const bustParts: Record<string, number> = {};
+  const bustParts = dict<number>();
 
   for (const r of rows) {
     const model = canonicalModel(r.model);
@@ -465,6 +465,12 @@ export function buildCockpitData(
   };
 }
 
+const USAGE_HEAD_BYTES = 4096;
+const CACHED_ROWS_WINDOW_MS = 7 * 86_400_000;
+
+/** A map keyed by logged names (model, provider): no prototype, so a key such as "__proto__" is an ordinary entry. */
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+
 /**
  * The usage log as rows, kept in memory: a log that only grew is read from where the last read
  * stopped (the router appends a row per request, so a full reread of tens of MB on every append
@@ -472,40 +478,71 @@ export function buildCockpitData(
  */
 export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
   let rows: UsageRow[] = [];
+  let ordered = true;
   let offset = 0;
   let mtimeMs = 0;
+  let ino = -1;
+  let head = "";
+  let lastMs = 0;
+  const fresh = (kept: UsageRow[]) => {
+    rows = kept;
+    if (ordered) markTimeOrdered(rows);
+  };
+  const reset = () => {
+    ordered = true;
+    fresh([]);
+    offset = 0;
+    ino = -1;
+    head = "";
+    lastMs = 0;
+    mtimeMs = 0;
+  };
+  reset();
   return () => {
     try {
-      const st = statSync(file);
-      if (st.size === offset && st.mtimeMs === mtimeMs) return rows;
-      if (st.size < offset) {
-        rows = [];
-        offset = 0;
-      }
       const fd = openSync(file, "r");
       try {
+        const st = fstatSync(fd);
+        const headLen = Math.min(USAGE_HEAD_BYTES, st.size);
+        const headBuf = Buffer.alloc(headLen);
+        readSync(fd, headBuf, 0, headLen, 0);
+        const nowHead = headBuf.toString("latin1");
+        // replaced or rotated: another inode, a shorter file, or a head that is not a prefix of the cached one
+        if (offset > 0 && (st.ino !== ino || st.size < offset || !nowHead.startsWith(head))) reset();
+        if (st.size === offset && st.mtimeMs === mtimeMs) return rows;
         const buf = Buffer.alloc(st.size - offset);
         const n = readSync(fd, buf, 0, buf.length, offset);
-        const text = buf.subarray(0, n).toString("utf8");
-        const end = text.lastIndexOf("\n") + 1; // a torn last line waits for its newline
-        const added: UsageRow[] = [];
-        for (const l of text.slice(0, end).split("\n")) {
+        let chunk = buf.subarray(0, n);
+        const nl = chunk.lastIndexOf(10); // a torn last line waits for its newline
+        chunk = nl < 0 ? chunk.subarray(0, 0) : chunk.subarray(0, nl + 1);
+        const from = rows.length;
+        // appended in place, so the memos keyed by the array keep their identity
+        for (const l of chunk.toString("utf8").split("\n")) {
           if (!l) continue;
           try {
-            added.push(JSON.parse(l) as UsageRow);
+            rows.push(JSON.parse(l) as UsageRow);
           } catch {
             /* skip torn line */
           }
         }
-        if (added.length) rows = rows.concat(added);
-        offset += Buffer.byteLength(text.slice(0, end), "utf8");
+        for (let i = from; i < rows.length; i++) {
+          const t = Date.parse(rows[i]!.ts);
+          if (t < lastMs) ordered = false;
+          else if (t >= 0) lastMs = t;
+        }
+        if (!ordered) fresh([...rows]); // a new, unmarked array: the order-dependent scans fall back to a filter
+        offset += chunk.length;
+        ino = st.ino;
+        if (head.length < USAGE_HEAD_BYTES) head = nowHead.slice(0, Math.min(offset, USAGE_HEAD_BYTES));
+        // rows older than the window are dropped (a new array, so the memos rebuild); the slack keeps the O(n) trim to once a day
+        const cutoff = lastMs - CACHED_ROWS_WINDOW_MS;
+        if (rows.length && Date.parse(rows[0]!.ts) < cutoff - 86_400_000) fresh(rows.filter((r) => !(Date.parse(r.ts) < cutoff)));
+        mtimeMs = st.mtimeMs;
       } finally {
         closeSync(fd);
       }
-      mtimeMs = st.mtimeMs;
     } catch {
-      rows = [];
-      offset = 0;
+      reset();
     }
     return rows;
   };
@@ -1000,15 +1037,18 @@ export function cachedPoolCarry(): () => PoolCarry | null {
 /** The whole request body as text. */
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (c) => {
-      data += c;
-      if (data.length > 64_000) {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer | string) => {
+      const b = typeof c === "string" ? Buffer.from(c) : c;
+      chunks.push(b);
+      size += b.length;
+      if (size > 64_000) {
         reject(new Error("body too large"));
         req.destroy();
       }
     });
-    req.on("end", () => resolve(data));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
