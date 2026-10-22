@@ -19,9 +19,9 @@
  * be malformed.
  */
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, copyFileSync, renameSync, unlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { assertTestWriteAllowed } from "./test-isolation.js";
 
 /** Resolved at call time so a changed HOME (tests) is honoured. */
@@ -122,4 +122,49 @@ export function trustProjectPath(absPath: string): boolean {
   if (entry.hasTrustDialogAccepted === true) return false;
   writeClaudeJson({ ...config, projects: { ...projects, [absPath]: { ...entry, hasTrustDialogAccepted: true } } });
   return true;
+}
+
+/** Canonical form of a script path: realpath when it exists, else the resolved text. */
+function canonicalScript(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/** True when an mcpServers entry runs `script`, comparing by realpath (symlinked repo paths match). */
+export function mcpEntryRunsScript(entry: unknown, script: string): boolean {
+  const args = (entry as { args?: unknown } | undefined)?.args;
+  if (!Array.isArray(args)) return false;
+  const want = canonicalScript(script);
+  return args.some((a) => typeof a === "string" && canonicalScript(a) === want);
+}
+
+export type PaiMcpRegistration = "added" | "updated" | "unchanged" | "legacy-kept";
+
+/**
+ * Point `servers[name]` at `script`. An existing entry running the same file
+ * (by realpath) is updated in place; a genuinely different one is kept as
+ * `<name>-legacy`.
+ */
+export function registerMcpScript(
+  servers: Record<string, unknown>,
+  name: string,
+  script: string,
+): PaiMcpRegistration {
+  const existing = servers[name] as Record<string, unknown> | undefined;
+  const entry = { command: "node", args: [script] };
+  if (!existing) {
+    servers[name] = entry;
+    return "added";
+  }
+  if (mcpEntryRunsScript(existing, script)) {
+    const same = JSON.stringify(existing) === JSON.stringify(entry);
+    servers[name] = entry;
+    return same ? "unchanged" : "updated";
+  }
+  servers[`${name}-legacy`] = existing;
+  servers[name] = entry;
+  return "legacy-kept";
 }
