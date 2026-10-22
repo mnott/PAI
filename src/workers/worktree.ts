@@ -1101,11 +1101,14 @@ export function adoptDetachedHead(dir: string, branch: string): string | null {
 export interface MergeSettings {
   generated: string[];
   regenerate: string;
+  union: string[];
 }
+
+const DEFAULT_UNION = ["docs/**", "*.md", "CHANGELOG.md", "src/cli/registry.ts"];
 
 function mergeSettings(): MergeSettings {
   const m = loadConfig().workers?.merge;
-  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "" };
+  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? DEFAULT_UNION };
 }
 
 /** Glob to RegExp: `**` crosses directories, `*` and `?` stay inside one. */
@@ -1128,7 +1131,7 @@ function globToRegExp(glob: string): RegExp {
 function onlyAdds(dir: string, base: string, side: string): boolean {
   const r = spawnSync("git", ["diff", "--no-index", "--numstat", "--", base, side], { cwd: dir, encoding: "utf8" });
   const m = /^(\d+)\t(\d+)\t/.exec(r.stdout ?? "");
-  return !m || m[2] === "0";
+  return !!m && m[2] === "0";
 }
 
 /**
@@ -1143,6 +1146,8 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
   const isGen = (f: string): boolean => res.some((r) => r.test(f));
   const gen = files.filter(isGen);
   const rest = files.filter((f) => !isGen(f));
+  const unionRes = cfg.union.map(globToRegExp);
+  if (rest.some((f) => !unionRes.some((r) => r.test(f)))) return null;
   const tmp = mkdtempSync(join(tmpdir(), "pai-union-"));
   const unions: Array<{ file: string; content: string }> = [];
   try {
@@ -1245,21 +1250,28 @@ export function mergeWorker(
     } catch {
       /* fall through to the generic message */
     }
+    let autoErr: Error | null = null;
     if (inProgress && files.length) {
-      autoNote = autoResolveMerge(st.cwd, files, opts.merge ?? mergeSettings());
-      if (autoNote !== null) git(st.cwd, ["commit", "-q", "-m", `merge worker ${id} (${st.label})`]);
+      try {
+        autoNote = autoResolveMerge(st.cwd, files, opts.merge ?? mergeSettings());
+        if (autoNote !== null) git(st.cwd, ["commit", "-q", "-m", `merge worker ${id} (${st.label}); auto-resolved: ${autoNote}`]);
+      } catch (err) {
+        autoErr = err as Error;
+        autoNote = null;
+      }
     }
     if (inProgress && autoNote === null) {
-      git(st.cwd, ["merge", "--abort"]);
+      try { git(st.cwd, ["merge", "--abort"]); } catch { /* already aborted */ }
       if (git(st.cwd, ["rev-parse", "HEAD"]) !== oldHead || git(st.cwd, ["status", "--porcelain", "--untracked-files=no"])) {
         throw new Error(`worker ${id}: git merge --abort left ${st.cwd} not at ${oldHead}; inspect it before retrying`);
       }
     }
+    if (autoErr && /the merge was aborted$/.test(autoErr.message)) throw autoErr;
     if (autoNote === null) {
     const msg =
       `worker ${id}: git refused the merge of ${st.branch}` +
         (files.length
-          ? ` — conflict in ${files.join(", ")}: merge main into the worker branch in its kept worktree (${st.worktreeDir}), resolve, then re-run pai worker merge ${id}`
+          ? ` — conflict in ${files.join(", ")}${autoErr ? ` (auto-resolution failed: ${autoErr.message.split("\n")[0].slice(0, 200)})` : ""}: merge main into the worker branch in its kept worktree (${st.worktreeDir}), resolve, then re-run pai worker merge ${id}`
           : ` — ${(e as Error).message}. The worktree ${st.worktreeDir} was kept: resolve the problem, then re-run pai worker merge ${id}`);
     throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
     }
