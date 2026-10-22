@@ -3,7 +3,7 @@
  * Owns: isSocketLive, startIpcServer, serve (exported).
  */
 
-import { existsSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createServer, connect, Socket, Server } from "node:net";
 import { setPriority } from "node:os";
 import { createStorageBackend, createRegistryBackend } from "../../storage/factory.js";

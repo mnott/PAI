@@ -5,17 +5,19 @@
  * Walks `Notes/YYYY/MM/*.md` for each registered project, runs the same
  * extractor that the session-summary-worker uses on every NEW summary, and
  * stores triples in Postgres. Idempotent: a state file at
- * ~/.config/pai/kg-backfill-state.json records which note paths have been
- * processed so re-runs skip them.
+ * <pai home>/kg-backfill-state.json records which note paths have been
+ * processed so re-runs skip them. Failed extractions are recorded with a
+ * retry-after time so a note the extractor rejects is not retried every run.
  *
  * Even without the state file the operation is safe — extractAndStoreTriples
  * uses supersession logic so re-extracting a note never produces duplicates.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { loadConfig, CONFIG_FILE } from "../daemon/config.js";
 import { createStorageBackend, getRegistryBackend } from "../storage/factory.js";
 import { extractAndStoreTriples } from "./kg-extraction.js";
@@ -40,7 +42,12 @@ export function migrateKgBackfillState(opts: { dryRun?: boolean } = {}): Migrate
 interface BackfillState {
   /** Map of absolute note path -> ISO timestamp of when it was processed. */
   processed: Record<string, string>;
+  /** Map of absolute note path -> epoch ms before which it is not retried. */
+  failedRetryAfter?: Record<string, number>;
 }
+
+/** How long a note whose extraction failed is left alone. */
+const FAILED_RETRY_MS = 24 * 60 * 60 * 1000;
 
 function loadState(): BackfillState {
   try {
@@ -58,7 +65,7 @@ function saveState(state: BackfillState): void {
     const file = paiHomePath("kg-backfill-state.json");
     const dir = dirname(file);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(file, JSON.stringify(state, null, 2), "utf-8");
+    writeFileAtomic(file, JSON.stringify(state, null, 2));
   } catch (e) {
     process.stderr.write(`[kg-backfill] failed to save state: ${e}\n`);
   }
@@ -175,79 +182,84 @@ export async function backfillKgFromNotes(
     );
   }
 
-  // -- Load projects -------------------------------------------------------
-  const registry = await getRegistryBackend();
-  let projects: ProjectRow[];
-  if (options.projectSlug) {
-    const row = await registry.getProjectBySlug(options.projectSlug);
-    if (!row) {
-      throw new Error(`Project not found: ${options.projectSlug}`);
+  try {
+    // -- Load projects -------------------------------------------------------
+    const registry = await getRegistryBackend();
+    let projects: ProjectRow[];
+    if (options.projectSlug) {
+      const row = await registry.getProjectBySlug(options.projectSlug);
+      if (!row) {
+        throw new Error(`Project not found: ${options.projectSlug}`);
+      }
+      projects = [row];
+    } else {
+      projects = await registry.listProjects({ status: "active", orderBy: "slug" });
     }
-    projects = [row];
-  } else {
-    projects = await registry.listProjects({ status: "active", orderBy: "slug" });
+
+    // -- Build the work list -------------------------------------------------
+    const state = loadState();
+    const work: ProjectNote[] = [];
+    for (const project of projects) {
+      const notes = findProjectNotes(project);
+      for (const notePath of notes) {
+        if (state.processed[notePath]) continue;
+        if ((state.failedRetryAfter?.[notePath] ?? 0) > Date.now()) continue;
+        work.push({ project, notePath });
+      }
+    }
+
+    const total = options.limit ? Math.min(options.limit, work.length) : work.length;
+
+    // -- Process notes -------------------------------------------------------
+    for (let i = 0; i < total; i++) {
+      const { project, notePath } = work[i];
+      options.onProgress?.(i + 1, total, notePath);
+
+      if (options.dryRun) {
+        result.notes_processed++;
+        continue;
+      }
+
+      let noteContent: string;
+      try {
+        noteContent = readFileSync(notePath, "utf-8");
+      } catch (e) {
+        process.stderr.write(`[kg-backfill] read failed ${notePath}: ${e}\n`);
+        result.errors++;
+        continue;
+      }
+
+      try {
+        const stats = await extractAndStoreTriples(backend, {
+          summaryText: noteContent,
+          projectSlug: project.slug,
+          projectId: project.id,
+          sessionId: `backfill:${notePath}`,
+          gitLog: "",
+          model: "sonnet",
+        });
+
+        result.notes_processed++;
+        result.triples_extracted += stats.extracted;
+        result.triples_added += stats.added;
+        result.triples_superseded += stats.superseded;
+
+        // Mark as processed (state file is the idempotency hint; the supersession
+        // logic in the extractor is the actual safety net)
+        state.processed[notePath] = new Date().toISOString();
+        if (state.failedRetryAfter) delete state.failedRetryAfter[notePath];
+        // Save incrementally so a crash mid-run doesn't lose progress
+        if ((i + 1) % 5 === 0) saveState(state);
+      } catch (e) {
+        process.stderr.write(`[kg-backfill] extract failed ${notePath}: ${e}\n`);
+        result.errors++;
+        (state.failedRetryAfter ??= {})[notePath] = Date.now() + FAILED_RETRY_MS;
+      }
+    }
+
+    if (!options.dryRun) saveState(state);
+    return result;
+  } finally {
+    await backend.close();
   }
-
-  // -- Build the work list -------------------------------------------------
-  const state = loadState();
-  const work: ProjectNote[] = [];
-  for (const project of projects) {
-    const notes = findProjectNotes(project);
-    for (const notePath of notes) {
-      if (state.processed[notePath]) continue;
-      work.push({ project, notePath });
-    }
-  }
-
-  const total = options.limit ? Math.min(options.limit, work.length) : work.length;
-
-  // -- Process notes -------------------------------------------------------
-  for (let i = 0; i < total; i++) {
-    const { project, notePath } = work[i];
-    options.onProgress?.(i + 1, total, notePath);
-
-    if (options.dryRun) {
-      result.notes_processed++;
-      continue;
-    }
-
-    let noteContent: string;
-    try {
-      noteContent = readFileSync(notePath, "utf-8");
-    } catch (e) {
-      process.stderr.write(`[kg-backfill] read failed ${notePath}: ${e}\n`);
-      result.errors++;
-      continue;
-    }
-
-    try {
-      const stats = await extractAndStoreTriples(backend, {
-        summaryText: noteContent,
-        projectSlug: project.slug,
-        projectId: project.id,
-        sessionId: `backfill:${notePath}`,
-        gitLog: "",
-        model: "sonnet",
-      });
-
-      result.notes_processed++;
-      result.triples_extracted += stats.extracted;
-      result.triples_added += stats.added;
-      result.triples_superseded += stats.superseded;
-
-      // Mark as processed (state file is the idempotency hint; the supersession
-      // logic in the extractor is the actual safety net)
-      state.processed[notePath] = new Date().toISOString();
-      // Save incrementally so a crash mid-run doesn't lose progress
-      if ((i + 1) % 5 === 0) saveState(state);
-    } catch (e) {
-      process.stderr.write(`[kg-backfill] extract failed ${notePath}: ${e}\n`);
-      result.errors++;
-    }
-  }
-
-  if (!options.dryRun) saveState(state);
-  await backend.close();
-
-  return result;
 }
