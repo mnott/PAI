@@ -2,7 +2,7 @@
 
 The cockpit is one web page served by the [router](concepts/router.md). It answers four questions in one place: how full are my provider limits, where do delegated workers go and what are they doing, what are the local model servers and the machine doing, and where do my tokens and cache hits go. It is mostly read-only. The few controls it has start and stop local models and name them.
 
-![The cockpit's top: Limits and local servers with the local server tiles and the cloud provider gauges, then Routing with one line per delegation tier](images/cockpit-limits-routing.jpg)
+![Worker runs, speed per model, and Routing with one line per delegation tier](images/cockpit-06-runs-speed-routing.jpg)
 
 ## Open it
 
@@ -61,7 +61,7 @@ A runtime's note (`models.runtimes.<name>.note`) is the tooltip of the runtime c
 
 A card folds by clicking its header. By default a running coding runtime is open and the rest are folded.
 
-![Models: the local engine card with speed, memory, workers and conversation cache tiles and the local model switch, then one card per consumer on the shared runtimes](images/cockpit-models.jpg)
+![Local servers with their instances, the Models cards with start and stop per model, and the Worker pool](images/cockpit-03-local-servers-models-pool.jpg)
 
 ### Memory (`memory`)
 
@@ -76,7 +76,9 @@ Answers: is the machine under pressure. Metric tiles for memory, load, temperatu
 
 Tile grids never leave a partial last row: in wide mode the grid has 12 tracks, and when the last row is short its tiles widen to fill it, so there is no 3+1.
 
-![Workers and the worker pool, the Models cards, System tiles and Totals in this window](images/cockpit-workers-system.jpg)
+![Workers running and waiting, and the Memory section with backend, passes, embedding and index progress](images/cockpit-04-workers-memory.jpg)
+
+![System tiles for memory, load, temperature and power, the local model servers, and Tokens per bucket and per day per model](images/cockpit-01-system-tokens.jpg)
 
 ### Totals in this window (`kpis`)
 
@@ -90,7 +92,7 @@ Answers: when were tokens spent and of what kind. Stacked bars per time bucket i
 
 Answers: is the cache earning its keep. **Cache hit ratio** is `cache_read / (read + write + fresh input)`, one ring per provider and model; models under `lowRequestMin` requests are folded into a chip instead. A local server that reports no cache fields per request shows its own prefix-cache counter instead, marked `*` (it covers the time since that server started, so its window differs from the router log). **Providers** is one tile per provider; the tiles fill their row. Each has requests, tokens, average latency and time to first token.
 
-![Cache hit ratio and Providers, Tokens per day per model and Tokens per bucket by kind](images/cockpit-usage.jpg)
+![Totals in this window, Cache hit ratio per model, the local prefix cache and Providers](images/cockpit-02-totals-cache.jpg)
 
 ### Speed per model (`speed`)
 
@@ -103,6 +105,8 @@ Answers: did the cache expire between turns. Per model, hits grouped by the paus
 ### Sessions by tokens (`sessions`)
 
 Answers: which sessions cost the most. The top `sessionsRows` sessions with models, requests, tokens, fresh input, output, hit percentage, cache busts, errors and last activity. A worker session carries its verdict.
+
+![Performance details: Cache verdict by pause and Sessions by tokens](images/cockpit-05-performance.jpg)
 
 ### Worker runs (`runs`)
 
@@ -136,6 +140,8 @@ What is stored where:
 Nothing about your arrangement is sent to the server, so a different browser starts from the default. The default arrangement comes from the card registry in the page source.
 
 ## Configuration
+
+![Settings: the model registry (workers.yaml) in the editor with validate, save and duplicate, and its backups with diff, name, restore and delete](images/cockpit-07-settings-registry.jpg)
 
 ### Choosing sections
 

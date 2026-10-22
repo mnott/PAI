@@ -4,7 +4,19 @@ PAI is an operating layer for Claude Code. From the first day it gives every ses
 
 It can also hand work to cheaper background Claude Code runs (workers) on other providers or a local model, with a router and a cockpit page that show what the models and your token budget are doing. You do not need this to start. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
 
-![The PAI router cockpit: limits per cloud provider, the local model server, and the routing table with one line per delegation tier](docs/images/cockpit-limits-routing.jpg)
+![Cockpit: system memory, load, temperature and power, local model server speed, and tokens per bucket and per day per model](docs/images/cockpit-01-system-tokens.jpg)
+
+![Cockpit: totals in the window, cache hit ratio per model, local prefix cache and providers](docs/images/cockpit-02-totals-cache.jpg)
+
+![Cockpit: local servers with their instances, the models with start and stop, and the worker pool](docs/images/cockpit-03-local-servers-models-pool.jpg)
+
+![Cockpit: workers running and waiting, and the memory section with backend, passes, embedding and index progress](docs/images/cockpit-04-workers-memory.jpg)
+
+![Cockpit: performance details with the cache verdict by pause and sessions by tokens](docs/images/cockpit-05-performance.jpg)
+
+![Cockpit: worker runs, speed per model, and routing with one line per delegation tier](docs/images/cockpit-06-runs-speed-routing.jpg)
+
+![Cockpit: settings with the model registry editor and its backups](docs/images/cockpit-07-settings-registry.jpg)
 
 *The router cockpit (`http://127.0.0.1:8790/cockpit`). See [the cockpit page](docs/cockpit.md).*
 
