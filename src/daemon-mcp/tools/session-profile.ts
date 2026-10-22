@@ -20,7 +20,7 @@ import {
   type SessionProfile,
 } from "../../workers/session-profile.js";
 
-import { clearSessionRoute, setSessionRoute } from "../../workers/route-table.js";
+import { clearSessionRoute, sessionRoutesPatch } from "../../workers/route-table.js";
 import { detectSessionName } from "../../workers/session-name.js";
 export type { WorkerToolResult } from "./worker-model.js";
 import type { WorkerToolResult } from "./worker-model.js";
@@ -107,10 +107,9 @@ export async function sessionProfileSet(args: SessionProfileArgs, deps: SessionP
       if (args.routes === null || args.routes === undefined) {
         clearSessionRoute(name, undefined, deps.path);
       } else {
-        for (const [cls, models] of Object.entries(args.routes)) {
-          if (models === null || !models.length) clearSessionRoute(name, cls, deps.path);
-          else setSessionRoute(name, cls, models, { profilesPath: deps.path });
-        }
+        const rows = sessionRoutesPatch(name, args.routes, { profilesPath: deps.path });
+        patch.routes = rows.routes;
+        patch.route_notes = rows.route_notes;
       }
     }
     if (!Object.keys(patch).length && !("routes" in args)) return fail("nothing to set: pass chat, workers, fallback, parallel_min, max_parallel and/or routes");

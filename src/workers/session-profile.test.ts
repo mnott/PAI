@@ -191,6 +191,16 @@ describe("session_profile_get / set", () => {
     await sessionProfileSet({ routes: null }, d);
     expect(getProfile("job-search", d.path)?.routes).toBeUndefined();
   });
+  it("an invalid route row leaves the stored profile unchanged", async () => {
+    const { raw, workers } = readWorkersSection();
+    workers.tiers = [{ id: "t2", name: "Worker", models: ["gyro-m"], classes: ["implement"], default: true }];
+    writeWorkersSection(raw, workers);
+    await sessionProfileSet({ routes: { implement: ["anthropic/haiku"] } }, d);
+    const before = getProfile("job-search", d.path);
+    const r = await sessionProfileSet({ routes: { implement: ["anthropic/sonnet"], bogusclass: ["x"] } }, d);
+    expect(r.isError).toBe(true);
+    expect(getProfile("job-search", d.path)).toEqual(before);
+  });
   it("another session by name; an unnamed session is told to pass a name", async () => {
     await sessionProfileSet({ name: "other", workers: { provider: "glm" } }, d);
     expect(getProfile("other", d.path)?.workers?.provider).toBe("glm");

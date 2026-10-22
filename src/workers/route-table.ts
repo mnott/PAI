@@ -239,6 +239,28 @@ export function setSessionRoute(session: string, name: string, models: unknown, 
   return { id: cls, entries, text: `${session}: ${cls}=${entries.join(">")}` };
 }
 
+/**
+ * The profile patch for several route rows at once (a null or empty row clears
+ * that class). Every row is validated before anything is returned, so the
+ * caller stores all of them in one write or none.
+ */
+export function sessionRoutesPatch(session: string, rows: Record<string, unknown>, opts: { path?: string; profilesPath?: string } = {}): { routes: Record<string, string[]> | null; route_notes: Record<string, string> | null } {
+  const { workers } = readWorkersSection(opts.path);
+  const cur = readProfiles(opts.profilesPath)[session] ?? {};
+  const routes = { ...(cur.routes ?? {}) };
+  const notes = { ...(cur.route_notes ?? {}) };
+  for (const [name, models] of Object.entries(rows)) {
+    const cls = tierFor(workers, name).id;
+    if (models === null || (Array.isArray(models) && !models.length)) {
+      delete routes[cls];
+      delete notes[cls];
+    } else {
+      routes[cls] = validateRoute(workers, cls, models);
+    }
+  }
+  return { routes: Object.keys(routes).length ? routes : null, route_notes: Object.keys(notes).length ? notes : null };
+}
+
 /** Drop one override (or all of a session's); the global row applies again. */
 export function clearSessionRoute(session: string, name?: string, profilesPath?: string, path?: string): string {
   const cls = name ? tierFor(readWorkersSection(path).workers, name).id : undefined;
