@@ -19,6 +19,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { capContent } from "./rules/cap.js";
 
 export const PRIVATE_CLONE_MARKER = "pai-private-clone";
 
@@ -209,6 +210,7 @@ export function decideWorkerGitGuard(
   worktreesRoot: string | null
 ): WorkerGitGuardResult {
   if (!isWorker) return { blocked: false };
+  command = capContent(command); // the git patterns below are not linear on megabytes of padding
   if (worktreesRoot && isInsideWorktree(cwd, worktreesRoot)) {
     return worktreeEscape(command, cwd, worktreesRoot) ? { blocked: true, cmd: "git write outside the worktree" } : { blocked: false };
   }

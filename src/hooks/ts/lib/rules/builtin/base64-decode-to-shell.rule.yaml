@@ -1,15 +1,31 @@
-# Obfuscated payload decoded straight into a shell.
+# Obfuscated payload decoded straight into a shell (or interpreter): through a
+# pipe, a process substitution, or a command substitution handed to sh -c/eval.
 id: base64-decode-to-shell
 severity: block
 quoted: true
-match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?base64\s+(?:-d|--decode)\b[^|;&\n]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh)\b/
+flags: m
+match: /{{CMD}}{{B64DEC}}[^|;&\n]*(?:{{PIPE}}[^|;&\n]*){0,3}?{{PIPE}}\s*{{SHELL_OR_INTERP}}|{{CMD}}{{SHELLNAME}}(?:\s+-\w+)*\s+<\(\s*{{B64DEC}}|{{CMD}}(?:eval|{{SHELLNAME}}\s+-\w*c)\s+["']?(?:\$\(|`)\s*{{B64DEC}}/
 reason: a base64-decoded payload is executed straight in a shell
 tests:
   match:
     - bash -c "base64 -d f | sh"
     - echo aGVsbG8= | base64 -d | sh
     - base64 --decode payload.b64 | bash
+    - echo cm0g | base64 -D | sh
+    - base64 -d f | /bin/sh
+    - base64 -d f | dash
+    - base64 -d f | ksh
+    - base64 -d f | env sh
+    - base64 -d f | xargs sh -c
+    - sh <(base64 -d f)
+    - sh -c "$(base64 -d f)"
+    - eval "$(base64 -d f)"
+    - base64 -d f | python3
+    - xxd -r -p f | sh
+    - openssl base64 -d -in f | sh
   no_match:
     - base64 file.txt
     - echo "base64 -d | sh"
     - echo aGVsbG8= | base64 -d > out.txt
+    - base64 -d f | sh_tool
+    - base64 -d f | base64 -e

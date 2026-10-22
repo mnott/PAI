@@ -9,10 +9,16 @@
  * command position so a message that merely mentions the payload stays
  * allowed. Confirm rules test per-segment, so a quoted `git push -f` in a commit
  * message stays inert while a quoted `+main` refspec still counts.
+ *
+ * What a rule sees is bounded first (capContent), so a megabyte of padding
+ * cannot make a pattern run long enough for the hook to time out.
  */
 
 import { splitSegments } from "../worker-git-guard.js";
+import { capContent } from "./cap.js";
 import type { Rule } from "./types.js";
+
+export { capContent };
 
 export interface RuleHit {
   rule: Rule;
@@ -23,11 +29,37 @@ function dropQuoted(segment: string): string {
   return segment.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, '""');
 }
 
-/** A quoted +refspec is still a forced push, so push segments also test with only the quote marks removed. */
-function gitPatternHit(pattern: RegExp, segment: string): boolean {
+/** A segment that starts a git push (bounded, no `.*` scan). */
+const GIT_PUSH = /^\s*(?:\S+\s+){0,8}?git(?:\s+\S+){0,6}?\s+push(?=\s|$)/;
+
+/** A segment whose command only carries text: a commit message, a grep/rg pattern, echo/printf. */
+const TEXT_COMMAND = /^\s*(?:(?:sudo|env|command)\s+)*(?:git(?:\s+\S+){0,4}?\s+(?:commit|tag|notes)(?=\s|$)|(?:grep|egrep|fgrep|rg|ag|ack|echo|printf)(?=\s|$))/;
+
+/** A heredoc fed to an interpreter is code; any other heredoc body is text. */
+const HEREDOC_RUNNER = /(?:^|[\s;&|(])(?:(?:ba|z|da|k)?sh|python[\d.]*|node|perl|ruby|sqlite3|psql|mysql|osascript)(?=\s|$)/;
+
+/** Drop the bodies of heredocs not fed to an interpreter (`cat > f <<EOF`, `$(cat <<'EOF')` in a commit message). */
+function stripHeredocBodies(text: string): string {
+  const out: string[] = [];
+  let end: string | null = null;
+  for (const line of text.split("\n")) {
+    if (end !== null) {
+      if (line.trim() === end) end = null;
+      continue;
+    }
+    out.push(line);
+    const m = /(?<!<)<<(?!<)-?\s*(["']?)(\w+)\1/.exec(line);
+    if (m && !HEREDOC_RUNNER.test(line.slice(0, m.index))) end = m[2];
+  }
+  return out.join("\n");
+}
+
+/** Confirm rules test one segment: quoted text is inert, except a quoted +refspec on a push and rules marked `quoted`. */
+function confirmHit(rule: Rule, pattern: RegExp, segment: string): boolean {
   const bare = dropQuoted(segment);
   if (pattern.test(bare)) return true;
-  return /\bgit\b.*\spush\b/.test(bare) && pattern.test(segment.replace(/["']/g, ''));
+  if (rule.quoted === true) return pattern.test(segment) || pattern.test(segment.replace(/["']/g, ""));
+  return GIT_PUSH.test(bare) && pattern.test(segment.replace(/["']/g, ""));
 }
 
 const regexCache = new Map<string, RegExp>();
@@ -57,18 +89,27 @@ function toolMatches(rule: Rule, toolName: string): boolean {
 
 /** First block hit, else first confirm hit, else first warn hit; null when none. */
 export function evaluateRules(rules: Rule[], toolName: string, content: string): RuleHit | null {
-  const unquoted = content.replace(/["']/g, "");
-  const bare = dropQuoted(content);
-  const segments = splitSegments(content);
+  const capped = capContent(content);
+  const bare = dropQuoted(capped);
+  const variants = [...new Set([bare, capped, capped.replace(/["']/g, "")])];
+  const segments = splitSegments(capped);
+  let textSegments: string[] | null = null; // built on the first text_ok rule
   for (const severity of ["block", "confirm", "warn"] as const) {
     for (const rule of rules) {
       if (rule.severity !== severity || !toolMatches(rule, toolName)) continue;
       const re = ruleRegex(rule);
       if (!re) continue;
-      const hit =
-        severity === "confirm"
-          ? segments.some((seg) => gitPatternHit(re, seg))
-          : re.test(bare) || (rule.quoted === true && (re.test(content) || re.test(unquoted)));
+      let hit: boolean;
+      if (severity === "confirm") {
+        let segs = segments;
+        if (rule.text_ok) {
+          textSegments ??= splitSegments(stripHeredocBodies(capped)).filter((seg) => !TEXT_COMMAND.test(seg));
+          segs = textSegments;
+        }
+        hit = segs.some((seg) => confirmHit(rule, re, seg));
+      } else {
+        hit = rule.quoted === true ? variants.some((t) => re.test(t)) : re.test(bare);
+      }
       if (hit) return { rule };
     }
   }

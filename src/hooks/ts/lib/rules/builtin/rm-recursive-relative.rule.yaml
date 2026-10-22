@@ -1,12 +1,19 @@
-# Recursive deletion of the current or parent directory.
+# Recursive deletion of the current directory or everything in it.
 id: rm-recursive-relative
 severity: block
 quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\/\s*["']?\s*$/m
-reason: recursive rm of ./ deletes the current directory
+flags: m
+match: /{{RMREC}}(?:\.\/*\*?|\*){{ARGEND}}/
+reason: recursive rm of ., ./ or * deletes the current directory's contents
 tests:
   match:
     - rm -rf ./
+    - rm -rf .
+    - rm -rf ./*
+    - rm -rf *
+    - rm -rf ./ ; ls
   no_match:
     - rm -rf ./build
+    - rm -rf .git
+    - rm -rf *.o

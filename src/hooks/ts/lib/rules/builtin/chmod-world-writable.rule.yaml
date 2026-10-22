@@ -1,7 +1,8 @@
 # Making / or ~ world-writable exposes the whole tree.
 id: world-writable-chmod
 severity: confirm
-match: /(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?chmod\s+(?:-R\s+)?(?:777|a\+rwx|o\+w)\s+(?:\/|~\/?|\$HOME)(?:\s|$)/m
+flags: m
+match: /{{CMD}}chmod\s+(?:-R\s+)?(?:777|a\+rwx|o\+w)\s+(?:\/|~\/?|\$HOME)(?:\s|$)/
 reason: chmod makes / or the home directory world-writable
 tests:
   match:

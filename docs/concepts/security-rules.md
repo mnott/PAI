@@ -58,6 +58,7 @@ Fields:
 - `reason`: shown in the deny message.
 - `category`: optional group name for security events. Defaults to the id.
 - `quoted`: see below.
+- `text_ok`: confirm rules only. Skip text that only mentions the payload: a commit message, a `grep`/`rg` pattern, `echo`/`printf`, a heredoc written to a file. The built-in instruction-override rules use it.
 - `results`: for single-step rules in `pai audit scan` only. Also test tool results, not just tool calls.
 - `tests`: fixtures. Every `match` string must hit, every `no_match` string must not.
 
@@ -68,6 +69,22 @@ By default a rule tests the command with quoted strings removed. Text inside a c
 Some payloads are dangerous inside quotes, for example a reverse shell inside `bash -c "..."`. A rule with `quoted: true` also tests the text as written and with only the quote marks removed. Anchor such a rule on command position, so a message that merely mentions the payload stays allowed. Every built-in block rule that needs this is marked.
 
 Patterns should not cross `;`, `&&` or `|`. Match within one command segment.
+
+## Shared building blocks (built-in rules)
+
+Built-in rules are written with macros that the generator (`scripts/gen-builtin-rules.mjs`) expands into the final regex, so every rule spells command position, prefix wrappers and shell sinks the same way. The macros work only in built-in files, not in user or project rules.
+
+| Macro | Matches |
+|---|---|
+| `{{CMD}}` | Command position (line start, after `;` `&` `\|` `(` `{` a backtick or `$(`, after `then`/`do`/`else`, inside `sh -c "`), then any prefix wrappers (`command`, `env`, `exec`, `nohup`, `time`, `sudo`, `nice`, `xargs`, `VAR=value`), then an optional leading backslash or absolute path. The binary name follows. |
+| `{{SHELL}}` | A shell sink: `sh`, `bash`, `zsh`, `dash`, `ksh`, `fish` with wrappers and a path, optionally in parentheses. Not `bash-completion` or `sh_tool`. |
+| `{{SHELL_OR_INTERP}}` | `{{SHELL}}` plus `python`, `perl`, `ruby`, `node`. |
+| `{{PIPE}}` | A pipe, `\|` or `\|&`, never `\|\|`. |
+| `{{GIT}}` | A git command at the start of a segment, wrappers allowed. |
+| `{{RMREC}}`, `{{ARGEND}}` | A recursive `rm` up to one target argument, and the end of that argument. |
+| `{{B64DEC}}` | `base64 -d/-D/--decode`, `xxd -r`, `openssl base64 -d`. |
+
+Rules must stay fast on hostile input. The macros use no nested open-ended repeats: tokens are separated by whitespace and argument skips are bounded (`{0,16}`). Before a rule runs, the text is capped: over 64 KB keeps the first and last 32 KB, and every segment (split at `;` `&` `||` newline) over 4 KB keeps its first and last 2 KB. Backslash-newline joins lines. Each built-in rule has a perf test that runs it over 1 MB of padding in under 50 ms.
 
 ## Sequence rules
 

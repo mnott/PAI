@@ -2,7 +2,8 @@
 id: git-push-plus-refspec
 severity: confirm
 category: dangerous_git
-match: /\bgit\b.*\spush\b.*\s\+\S/i
+flags: i
+match: /{{GIT}}(?:\s+[^\s;&|]+){0,6}?\s+push(?=\s|$)(?:\s+[^\s;&|]+){0,30}?\s+["']?\+\S/i
 reason: a plus-prefixed refspec forces the remote update without -f
 tests:
   match:

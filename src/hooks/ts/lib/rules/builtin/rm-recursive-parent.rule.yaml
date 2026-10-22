@@ -3,11 +3,17 @@ id: rm-recursive-parent
 severity: block
 quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?rm\s+(?:-[rfivd]+\s+)*\.\.\/\s*["']?\s*$/m
-reason: recursive rm of ../ deletes the parent directory
+flags: m
+match: /{{RMREC}}\.\.(?:\/\.\.)*\/*\*?{{ARGEND}}/
+reason: recursive rm of .. or ../ deletes the parent directory
 tests:
   match:
     - bash -c "rm -rf ../"
     - rm -rf ../
+    - rm -rf ..
+    - rm -rf ../..
+    - rm -rf ../ && echo done
+    - sh -c "rm -rf .."
   no_match:
     - rm -rf ../build
+    - rm -rf ..foo

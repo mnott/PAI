@@ -1,14 +1,24 @@
-# find / -delete wipes the filesystem.
+# find / -delete wipes the filesystem; find ~ with only depth/type limits does too.
 id: find-root-delete
 severity: block
 quoted: true
 category: catastrophic_deletion
-match: /(?:^|[;&|(`\n]|\$\(|\b(?:sh|bash|zsh)\s+-\w*c\s+["'])\s*(?:sudo\s+(?:-\S+\s+)*)?find\s+(?:\/|~|\$\{?HOME\}?)\/?\s+(?:-(?:depth|xdev|mount)\s+|-(?:max|min)depth\s+\d+\s+|-type\s+\w\s+)*-delete\b/m
+flags: m
+match: /{{CMD}}find\s+(?:(?:[^\s;&|]+\s+){0,3}?\/+\s+(?:[^\s;&|]+\s+){0,12}?(?:-delete\b|-exec(?:dir)?\s+(?:\/[^\s;&|]*\/)?rm\b)|(?:~|\$\{?HOME\}?)\/?\s+(?:-(?:depth|xdev|mount)\s+|-(?:max|min)depth\s+\d+\s+|-type\s+\w\s+)*-delete\b)/
 reason: find over / or the home directory with -delete removes everything it matches
 tests:
   match:
     - find / -type f -delete
     - find / -delete
+    - find / -name x -delete
+    - find / -type f -name '*' -delete
+    - find / -exec rm -rf {} +
+    - find . / -delete
+    - sudo find / -mount -delete
+    - find ~ -depth -delete
   no_match:
     - find ~ -name '*.tmp' -delete
+    - find ~ -maxdepth 1 -name '*.tmp' -delete
+    - find . -name '*.o' -delete
     - find /tmp/build -name '*.o' -print
+    - find / -name x -print
