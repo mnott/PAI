@@ -143,6 +143,10 @@ vaultIndex:
 # Index <PAI home>/lessons (review-gated lessons) for memory search.
 lessonsIndex:
   enabled: true
+# Harness session ingestion (src/harness): names from the adapter registry
+# (claude-code, codex). Read-only; an adapter whose store is absent never runs.
+harness:
+  adapters: [claude-code]
 # Keep `pai router` (127.0.0.1:8790) running under the daemon.
 router:
   enabled: false
