@@ -18,7 +18,7 @@ You burn your premium tokens on work a local model could do. You hit the weekly 
 
 `pai` starts or resumes a session in the current project. `pai pause` and `pai end` save your place. Memory works on its own; the router, workers and cockpit join when you want them. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
 
-**Install it in two lines inside Claude Code, then say "set up PAI".** [Jump to install](#install).
+**Install it from inside Claude Code, say "set up PAI", and add AIBroker for messaging.** [Jump to install](#install).
 
 ![Cockpit: system memory, load, temperature and power, local model server speed, and tokens per bucket and per day per model](docs/images/cockpit-01-system-tokens.jpg)
 
@@ -48,6 +48,14 @@ Inside Claude Code, add this repository as a plugin marketplace and install the 
 ```
 
 Then say **"set up PAI"**. `/plugin` lists `pai` once it is installed. The skill checks each phase first and does only what is missing, and ends with a pass/fail list of its checks.
+
+**Install [AIBroker](https://github.com/mnott/AIBroker) as well.** It is a separate project and PAI's messaging layer: messages between sessions, worker reports to the session that started them, terminal tab names, and WhatsApp, Telegram and PAILot all go through it. PAI starts without it, but none of that works until it is installed:
+
+```bash
+npm install -g aibroker
+aibroker setup      # service, MCP registration, Claude Code hooks
+aibroker doctor     # every check green, or it says exactly what to fix
+```
 
 Without the plugin, from a clone, or for a one-session plugin load: [docs/install/index.md](docs/install/index.md). Memory works as soon as setup is done; workers are optional ([First workers](docs/install/first-workers.md)).
 
