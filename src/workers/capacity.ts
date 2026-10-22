@@ -88,8 +88,15 @@ interface QueueEntry {
 const entryText = (e: QueueEntry): string =>
   `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}`;
 
-function readEntry(dir: string, id: string): QueueEntry {
-  const [p, ...marks] = readFileSync(join(dir, id), "utf8").trim().split(/\s+/);
+/** A ticket deleted (its run stopped) or written unparsably between the listing and this read is absent, not an error. */
+function readEntry(dir: string, id: string): QueueEntry | null {
+  let text: string;
+  try {
+    text = readFileSync(join(dir, id), "utf8");
+  } catch {
+    return null;
+  }
+  const [p, ...marks] = text.trim().split(/\s+/);
   const rank = marks.map(Number).find((n) => Number.isInteger(n));
   const at = marks.find((m) => m.startsWith("@"));
   const since = at ? Number(at.slice(1)) : NaN;
@@ -202,6 +209,7 @@ function liveEntries(logDir: string, provider: string, isAlive: (pid: number) =>
   const out: QueueEntry[] = [];
   for (const id of names.sort()) {
     const e = readEntry(dir, id);
+    if (!e) continue;
     if (Number.isInteger(e.pid) && e.pid > 0 && isAlive(e.pid)) out.push(e);
     else rmSync(join(dir, id), { force: true });
   }
