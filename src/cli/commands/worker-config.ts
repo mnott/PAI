@@ -39,7 +39,6 @@ import {
   needsWorkersYamlRelocation,
   parseWorkersYamlDocument,
   relocateWorkersYaml,
-  setLocalPreference,
   workersYamlLegacyNotice,
   workersYamlPath,
 } from "../../workers/workers-config.js";

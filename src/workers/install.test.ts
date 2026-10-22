@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { patchAgentHookSettings, AGENT_MATCHER, NEW_AGENT_HOOK, shim } from "./install.js";
+import { installShims, patchAgentHookSettings, AGENT_MATCHER, NEW_AGENT_HOOK, shim } from "./install.js";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("shell shims", () => {
   const pai = "/usr/local/bin/pai";
@@ -115,5 +118,32 @@ describe("subagent hook registration", () => {
       "/opt/other/guard.sh"
     );
     expect(agentRule(s)?.["matcher"]).toBe(AGENT_MATCHER);
+  });
+});
+
+describe("installShims", () => {
+  it("never deletes a non-pai file: backs it up with a timestamp when .pre-pai exists", () => {
+    const home = mkdtempSync(join(tmpdir(), "pai-shim-"));
+    const saved = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const bin = join(home, ".local", "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "glm"), "#!/bin/sh\necho user-glm\n");
+      writeFileSync(join(bin, "glm.pre-pai"), "older\n");
+      installShims([]);
+      const files = readdirSync(bin).filter((f) => f.startsWith("glm.pre-pai."));
+      expect(files).toHaveLength(1);
+      expect(readFileSync(join(bin, files[0]!), "utf8")).toContain("user-glm");
+      expect(readFileSync(join(bin, "glm.pre-pai"), "utf8")).toBe("older\n");
+      expect(readFileSync(join(bin, "glm"), "utf8")).toContain("# pai launch shim");
+      // a second run recognises its own launch shim: no further backups
+      installShims([]);
+      expect(readdirSync(bin).filter((f) => f.startsWith("glm.pre-pai."))).toHaveLength(1);
+    } finally {
+      if (saved === undefined) delete process.env.HOME;
+      else process.env.HOME = saved;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

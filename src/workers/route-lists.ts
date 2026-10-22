@@ -5,9 +5,7 @@
  * fallback order. One entry names a provider and optionally one of its models:
  * "gyro-m" (a local model, or a provider's default for the class), "glm/fast"
  * (a model alias), "glm/glm-5.3-flash" or "anthropic/opus" (a model id). The
- * list lives in the class map (`workers.classes`) under the tier's key: a plain
- * "<provider>[/alias]" target is a list of one, the object form carries
- * `models: [...]`. Pure functions only; the I/O (validation against the
+ * list lives in the `tiers:` list of workers.yaml, one `models: [...]` per tier. Pure functions only; the I/O (validation against the
  * providers, persistence, state) is in route-table.ts.
  */
 

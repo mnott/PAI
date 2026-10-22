@@ -1231,10 +1231,13 @@ const withGate = (gate: string, msg: string): string => (gate ? `${gate}\n${msg}
 /** Marker a timed gate writes to stderr; the plan runner (plan-deps.ts) reads these lines and strips them. */
 export const GATE_MARK = "\u0001pai-gate ";
 
-/** The commands of a `a && b && c` gate; one command when it holds quoting, pipes, `;` or `||` that a plain split would break. */
+/** The commands of a `a && b && c` gate; one command when it holds quoting, pipes, `;`, `||`, or a `cd`/`export`/assignment step that a plain split would break. */
 export function splitGate(verify: string): string[] {
   if (/["'`|;()\\]/.test(verify)) return [verify];
-  return verify.split(/\s*&&\s*/).map((c) => c.trim()).filter(Boolean);
+  const cmds = verify.split(/\s*&&\s*/).map((c) => c.trim()).filter(Boolean);
+  // cwd and env changes only live inside one shell: such a chain must run whole
+  if (cmds.some((c) => /^(cd|export|unset|set|source|\.|\w+=\S*)(\s|$)/.test(c))) return [verify];
+  return cmds;
 }
 
 /** Run the gate one command at a time, reporting each start and end as marker lines; stops at the first failure. */

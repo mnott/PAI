@@ -311,7 +311,7 @@ export function resolveTarget(
     const cn = opts.className;
     if (!(WORKER_CLASSES as readonly string[]).includes(cn) && !(config.tiers ?? []).some((t) => t.id === cn || t.classes?.includes(cn))) {
       throw new NoProviderError(
-        `no class named "${opts.className}". Standard classes: ${WORKER_CLASSES.join(", ")}.` +
+        `no class named "${opts.className}". Standard classes: ${WORKER_CLASSES.join(", ")}. ` +
           `Defined: ${Object.keys(config.classes).join(", ") || "(none)"}.` +
           `\nSet one with: pai worker classes set ${opts.className}=<provider[/alias]>`
       );

@@ -525,6 +525,11 @@ export interface FollowStream {
   removeListener?(event: "resize", fn: () => void): unknown;
 }
 
+/** The argv of the `pai worker resume` spawn: the launcher's own resume, no pane override. */
+export function resumeArgv(id: string, text: string): string[] {
+  return ["worker", "resume", id, text, "--print-id"];
+}
+
 /** The child of a `pai worker resume` spawn (tests inject a fake). */
 export interface ResumeChild {
   stdout?: { on(event: "data", cb: (chunk: Buffer) => void): unknown };
@@ -824,7 +829,7 @@ export async function followWorkers(
   const spawnResume =
     io?.spawnResume ??
     ((id: string, text: string): ResumeChild =>
-      spawn("pai", ["worker", "resume", id, text, "--print-id"], {
+      spawn("pai", resumeArgv(id, text), {
         stdio: ["ignore", "pipe", "inherit"],
       } as SpawnOptions) as unknown as ResumeChild);
   const resumeTarget = (text: string, id: string) => {

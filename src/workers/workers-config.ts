@@ -461,12 +461,43 @@ function quotedKeyNode(value: string): Scalar {
 }
 
 /**
+ * The tier list to store: a tier that did not change keeps its raw (unresolved)
+ * form, so a `local` placeholder stays `local` and nothing shipped is rewritten;
+ * a changed tier is written from `after`, with its resolved local provider put
+ * back as `local` wherever the raw tier held the placeholder.
+ */
+function tiersForFile(before: TierDef[], after: TierDef[], rawTiers: unknown[]): unknown[] {
+  const rawById = new Map<string, Record<string, unknown>>();
+  for (const t of rawTiers) {
+    if (t && typeof t === "object" && typeof (t as { id?: unknown }).id === "string") {
+      rawById.set((t as { id: string }).id, t as Record<string, unknown>);
+    }
+  }
+  return after.map((t) => {
+    const fresh = JSON.parse(JSON.stringify(t)) as Record<string, unknown>;
+    const raw = rawById.get(t.id);
+    const was = before.find((b) => b.id === t.id);
+    if (!raw) return fresh;
+    if (was && JSON.stringify(was) === JSON.stringify(t)) return raw;
+    const rawModels = Array.isArray(raw.models) ? raw.models : [];
+    const locals = new Set<string>();
+    if (was && was.models.length === rawModels.length) {
+      rawModels.forEach((m, i) => {
+        if (m === "local") locals.add(was.models[i]);
+      });
+    }
+    if (locals.size) fresh.models = t.models.map((m) => (locals.has(m) ? "local" : m));
+    return fresh;
+  });
+}
+
+/**
  * Apply the changes between `before` and `after` onto `doc`, touching only
  * the providers/classes/mcp_sets/active entries that actually differ. This is
  * what makes comment preservation possible: an untouched provider's node
  * (and any comment above it) is never revisited.
  */
-function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: WorkersYamlData): void {
+function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: WorkersYamlData, rawTiers: unknown[] = []): void {
   // providers: add/update changed, remove gone (never touch the builtin anthropic block)
   for (const [name, p] of Object.entries(after.providers)) {
     const beforeP = before.providers[name];
@@ -511,7 +542,7 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
 
   // tiers: one list, replaced when it differs
   if (JSON.stringify(before.tiers) !== JSON.stringify(after.tiers)) {
-    if (after.tiers.length) doc.setIn(["tiers"], JSON.parse(JSON.stringify(after.tiers)));
+    if (after.tiers.length) doc.setIn(["tiers"], tiersForFile(before.tiers, after.tiers, rawTiers));
     else doc.deleteIn(["tiers"]);
   }
 
@@ -565,18 +596,8 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
         mcpSets: {},
         nativeModels: { ...nativeAnthropicModels() },
       };
-  syncWorkersYamlDocument(doc, before, after);
-  writeWorkersYamlText(yamlPath, String(doc));
-}
-
-/**
- * Set the top-level `local:` key (the provider `--local` routes to), keeping
- * every comment and other key. Same validated atomic write as writeWorkersYaml.
- */
-export function setLocalPreference(yamlPath: string, provider: string): void {
-  const existing = readWorkersYaml(yamlPath);
-  const doc = existing ? existing.doc : new Document({});
-  doc.set("local", provider);
+  const rawTiers = existsSync(yamlPath) ? effectiveWorkersYamlRaw(yamlPath).tiers : undefined;
+  syncWorkersYamlDocument(doc, before, after, Array.isArray(rawTiers) ? rawTiers : []);
   writeWorkersYamlText(yamlPath, String(doc));
 }
 
@@ -754,6 +775,7 @@ export function buildWorkersYamlText(data: WorkersYamlData): string {
       if (t.default) lines.push("    default: true");
       if (t.session) lines.push("    session: true");
       if (t.note) lines.push(`    note: ${yamlScalar(t.note)}`);
+      if (t.escalation) lines.push(`    escalation: ${JSON.stringify(t.escalation)}`);
     }
     lines.push("");
   }

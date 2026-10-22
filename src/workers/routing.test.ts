@@ -76,6 +76,10 @@ describe("resolveTarget", () => {
     expect(t.via).toBe("flag");
   });
 
+  it("separates the standard classes from the defined ones with a space", () => {
+    expect(() => resolveTarget(config(), dir, { className: "nope" })).toThrow(/classes: .*\. Defined: /);
+  });
+
   it("names the class when it does not exist", () => {
     expect(() => resolveTarget(config(), dir, { className: "nope" })).toThrow(/no class named "nope"/);
   });

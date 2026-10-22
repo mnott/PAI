@@ -143,7 +143,7 @@ describe("local idle watcher", () => {
 describe("owner resolution and delivery", () => {
   const myApp = {
     id: "20261020-020000-111",
-    cwd: "/Users/someone/Daten/Cloud/Development/MyApp",
+    cwd: "/Users/someone/dev/MyApp",
     term: "w8t0p0:0A1A0BFE-1111-4222-8333-444455556666",
     provider: "gyro-m",
     state: "running",

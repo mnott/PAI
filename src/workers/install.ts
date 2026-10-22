@@ -175,12 +175,11 @@ export function shim(name: string, pai: string): string {
   return `#!/bin/sh\n# pai worker shim — replaces the previous ${name} of the same name\nexec ${pai} worker run "$@"\n`;
 }
 
-function installShims(lines: string[]): boolean {
+export function installShims(lines: string[]): boolean {
   const pai = paiPath();
   let changed = false;
   for (const name of ["glm", "glm-run", "glm-ps", "glm-log", "worker-say", "kimi"]) {
     const path = join(localBin(), name);
-    const ours = `# pai worker shim`;
     let current: string | null = null;
     if (existsSync(path)) {
       try {
@@ -189,15 +188,17 @@ function installShims(lines: string[]): boolean {
         current = null;
       }
     }
-    if (current !== null && !current.includes(ours)) {
+    if (current !== null && !/# pai (worker|launch) shim/.test(current)) {
       // one-time move-aside; never clobber what a later run moved there
       const aside = join(localBin(), `${name}.pre-pai`);
       if (!existsSync(aside)) {
         renameSync(path, aside);
         lines.push(`${name}: previous version kept as ${name}.pre-pai`);
       } else {
-        unlinkSync(path);
-        lines.push(`${name}: replaced (${name}.pre-pai already exists)`);
+        // never delete a file that is not ours: keep it under a timestamped name
+        const stamped = `${name}.pre-pai.${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
+        renameSync(path, join(localBin(), stamped));
+        lines.push(`${name}: replaced (${name}.pre-pai already exists; previous version kept as ${stamped})`);
       }
       changed = true;
     } else if (current === null) {

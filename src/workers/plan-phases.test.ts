@@ -103,6 +103,9 @@ describe("gate markers", () => {
   it("splitGate splits plain && chains and leaves quoted gates whole", () => {
     expect(splitGate("npx tsc --noEmit && npx tsdown && npx vitest run a b")).toHaveLength(3);
     expect(splitGate("sh -c 'a && b'")).toEqual(["sh -c 'a && b'"]);
+    expect(splitGate("cd packages/app && npm test")).toEqual(["cd packages/app && npm test"]);
+    expect(splitGate("export CI=1 && npm test")).toEqual(["export CI=1 && npm test"]);
+    expect(splitGate("CI=1 && npm test")).toHaveLength(1);
   });
   it("names gate phases", () => {
     expect([gatePhaseName("npx tsc --noEmit"), gatePhaseName("npx tsdown"), gatePhaseName("npx vitest run x"), gatePhaseName("make lint all now")]).toEqual(["tsc", "build", "tests", "make lint all"]);
