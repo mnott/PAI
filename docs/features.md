@@ -7,7 +7,7 @@ One page, grouped by what you want to do. Each item gives the command to type or
 - [Notes and vault](#notes-and-vault)
 - [Zettelkasten](#zettelkasten)
 - [Journal, review and plan](#journal-review-and-plan)
-- [Tasks and task bus](#tasks-and-task-bus)
+- [Tasks and ingress](#tasks-and-ingress)
 - [Workers and delegation](#workers-and-delegation)
 - [Router and cockpit](#router-and-cockpit)
 - [Messaging](#messaging)
@@ -150,7 +150,7 @@ Say "plan my week" or "what should I focus on". Skill `/plan` plans from your op
 
 Say "explain this as a story". Skill `/story` writes a numbered narrative of any content. See [skills](skills.md#tools--system).
 
-## Tasks and task bus
+## Tasks and ingress
 
 ### Cross-session task list
 
@@ -159,6 +159,10 @@ Say "explain this as a story". Skill `/story` writes a numbered narrative of any
 ### Todoist as an input channel
 
 `pai task poll` and `pai task schedule` pick up Todoist tasks and `pai task dispatch` hands them to a session; `pai task config` sets it up. See [task bus](task-bus.md).
+
+### GitHub issues as an input channel
+
+Issues and comments from a GitHub, Gitea or Forgejo repository arrive in your session through AIBroker. Ask the session to subscribe to the repository (`aibroker_subscribe_issues`); it registers the webhook and later issue events come in as messages. See [companion projects](companion-projects.md).
 
 ### Issue claims
 
@@ -221,6 +225,18 @@ Open `http://127.0.0.1:8790/cockpit` for budget per provider, cache hits, models
 ### AIBroker
 
 PAI's messaging layer is the separate project AIBroker: messages between sessions, worker reports to the session that started them, tab names, and WhatsApp, Telegram and PAILot. `pai setup` installs it. See [companion projects](companion-projects.md).
+
+### PAILot as an input channel
+
+Text and voice from the PAILot phone app reach the session through AIBroker as `[PAILot]` messages; the session answers on the same channel. See [companion projects](companion-projects.md).
+
+### WhatsApp as an input channel
+
+Messages to your WhatsApp self-chat reach the session as `[Whazaa]` messages and are answered there. See [companion projects](companion-projects.md).
+
+### Telegram as an input channel
+
+Messages to your Telegram bot reach the session as `[Telex]` messages and are answered there. See [companion projects](companion-projects.md).
 
 ### Notifications
 
