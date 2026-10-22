@@ -198,8 +198,8 @@ export interface SystemSeries {
   coveredMin: Record<SystemWindow, number>;
 }
 
-const POWER_KEYS = ["cpuW", "gpuW", "aneW", "systemW", "totalW"] as const;
-const implausibleW = (w: number | undefined): boolean => w !== undefined && (w < 0 || w > MAX_PLAUSIBLE_SOC_W);
+export const POWER_KEYS = ["cpuW", "gpuW", "aneW", "systemW", "totalW"] as const;
+export const implausibleW = (w: number | undefined): boolean => w !== undefined && (w < 0 || w > MAX_PLAUSIBLE_SOC_W);
 
 /** History written before the probe check holds bogus watts; ignore them on read, the data file stays as is. */
 function withoutImplausiblePower(s: SystemSample): SystemSample {
