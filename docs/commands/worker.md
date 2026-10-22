@@ -876,7 +876,7 @@ ChatGPT plan through the Codex CLI: --engine codex. Image generation: --engine i
 | `--base-url URL` | string | — | Anthropic-compatible API base URL (required unless --protocol openai) |
 | `--url URL` | string | — | Same as --base-url |
 | `--model ID` | string | — | Default model id for this provider (required) |
-| `--key TOKEN` | string | — | API token, written into workers.yaml; use instead of --key-file |
+| `--key TOKEN` | string | — | API token, written into workers.yaml; visible in ps and shell history, prefer --key-file |
 | `--key-file PATH` | string | — | File holding the API token (kept private); leave out for a local server |
 | `--fast-model ID` | string | — | Cheaper model for quick checks and routing |
 | `--env NAME=VALUE` | string | — | Extra environment variable for runs (repeat for several) |
