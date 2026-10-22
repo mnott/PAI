@@ -5,8 +5,8 @@ import type { Num, Str } from "./types.js";
 import { winSelectCss } from "./win/select.js";
 
 /** All CSS rules. */
-export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0}
-:root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5}
+export const css = (L: CockpitLayout, n: Num, q: Str, hex: Str): string => String.raw`:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--dim:#6b7385;--line:#e3e6ec;--ok:#2e9e5b;--warn:#d98a1c;--bad:#d64545;--acc:#3b6fe0;--grp-h1:#eef3fb;--grp-h2:#f0f7f1;--grp-h3:#fbf4ea;--grp-h4:#f7eef2;--grp-h5:#eef6f7;--grp-h6:#f4f0f9;--grp-h7:#f7f4ec;--grp-h8:#f0f4f4;--grp-b1:#f8fafd;--grp-b2:#f8fbf8;--grp-b3:#fdf9f3;--grp-b4:#fbf6f8;--grp-b5:#f6fbfb;--grp-b6:#f9f7fc;--grp-b7:#fbf9f4;--grp-b8:#f6f9f9}
+:root[data-theme=dark]{--bg:#10131a;--card:#181c26;--fg:#e4e8f1;--dim:#8b93a7;--line:#2a3040;--ok:#46c47a;--warn:#e8a43a;--bad:#ef6b6b;--acc:#6b95f5;--grp-h1:#1c2433;--grp-h2:#1c2b24;--grp-h3:#2b2519;--grp-h4:#2a1f27;--grp-h5:#1a282c;--grp-h6:#241f31;--grp-h7:#282418;--grp-h8:#1c2628;--grp-b1:#151a24;--grp-b2:#151f1a;--grp-b3:#1f1a12;--grp-b4:#1e171d;--grp-b5:#131d20;--grp-b6:#1a1724;--grp-b7:#1e1b12;--grp-b8:#141c1e}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
 header{flex-wrap:wrap;display:flex;align-items:center;gap:16px;padding:8px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:2}
 h1{font-size:15px;margin:0;font-weight:600}
@@ -115,6 +115,69 @@ main.win .card.min .chead{border-bottom:0}
 main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto;contain:strict}
 main.win .cbody{scrollbar-width:thin;scrollbar-color:var(--line) transparent}main.win .cbody::-webkit-scrollbar{width:8px;height:8px}main.win .cbody::-webkit-scrollbar-track{background:transparent}main.win .cbody::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 main.win .cbody.cgroup{overflow:hidden}
+/* group levels: a group card carries data-depth (0 = a top-level band); the tint is chosen by the card's position in the DOM */
+main.win .card[data-depth="0"]>.chead{background:var(--grp-h1);border-bottom:2px solid var(--line)}
+main.win .card[data-depth="0"]>.chead .ctitle{font-size:13px;color:var(--fg)}
+main.win .card[data-depth="0"]>.cbody.cgroup{padding:4px;background:var(--grp-b1)}
+main.win .card[data-depth="0"]:nth-of-type(4n+2)>.chead{background:var(--grp-h2)}
+main.win .card[data-depth="0"]:nth-of-type(4n+2)>.cbody.cgroup{background:var(--grp-b2)}
+main.win .card[data-depth="0"]:nth-of-type(4n+3)>.chead{background:var(--grp-h3)}
+main.win .card[data-depth="0"]:nth-of-type(4n+3)>.cbody.cgroup{background:var(--grp-b3)}
+main.win .card[data-depth="0"]:nth-of-type(4n+4)>.chead{background:var(--grp-h4)}
+main.win .card[data-depth="0"]:nth-of-type(4n+4)>.cbody.cgroup{background:var(--grp-b4)}
+main.win .card[data-depth="0"]:nth-of-type(8n+5)>.chead{background:var(--grp-h5)}
+main.win .card[data-depth="0"]:nth-of-type(8n+5)>.cbody.cgroup{background:var(--grp-b5)}
+main.win .card[data-depth="0"]:nth-of-type(8n+6)>.chead{background:var(--grp-h6)}
+main.win .card[data-depth="0"]:nth-of-type(8n+6)>.cbody.cgroup{background:var(--grp-b6)}
+main.win .card[data-depth="0"]:nth-of-type(8n+7)>.chead{background:var(--grp-h7)}
+main.win .card[data-depth="0"]:nth-of-type(8n+7)>.cbody.cgroup{background:var(--grp-b7)}
+main.win .card[data-depth="0"]:nth-of-type(8n+8)>.chead{background:var(--grp-h8)}
+main.win .card[data-depth="0"]:nth-of-type(8n+8)>.cbody.cgroup{background:var(--grp-b8)}
+main.win .card[data-depth="1"]>.chead{background:var(--grp-h2);border-left:3px solid var(--acc)}
+main.win .card[data-depth="1"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="1"]>.cbody.cgroup{padding:4px;background:var(--grp-b2)}
+main.win .card[data-depth="2"]>.chead{background:var(--grp-h3);border-left:3px solid var(--acc)}
+main.win .card[data-depth="2"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="2"]>.cbody.cgroup{padding:4px;background:var(--grp-b3)}
+main.win .card[data-depth="3"]>.chead{background:var(--grp-h4);border-left:3px solid var(--acc)}
+main.win .card[data-depth="3"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="3"]>.cbody.cgroup{padding:4px;background:var(--grp-b4)}
+main.win .card[data-depth="4"]>.chead{background:var(--grp-h5);border-left:3px solid var(--acc)}
+main.win .card[data-depth="4"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="4"]>.cbody.cgroup{padding:4px;background:var(--grp-b5)}
+main.win .card[data-depth="5"]>.chead{background:var(--grp-h6);border-left:3px solid var(--acc)}
+main.win .card[data-depth="5"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="5"]>.cbody.cgroup{padding:4px;background:var(--grp-b6)}
+main.win .card[data-depth="6"]>.chead{background:var(--grp-h7);border-left:3px solid var(--acc)}
+main.win .card[data-depth="6"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="6"]>.cbody.cgroup{padding:4px;background:var(--grp-b7)}
+main.win .card[data-depth="7"]>.chead{background:var(--grp-h8);border-left:3px solid var(--acc)}
+main.win .card[data-depth="7"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="7"]>.cbody.cgroup{padding:4px;background:var(--grp-b8)}
+main.win .card[data-depth="8"]>.chead{background:var(--grp-h1);border-left:3px solid var(--acc)}
+main.win .card[data-depth="8"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="8"]>.cbody.cgroup{padding:4px;background:var(--grp-b1)}
+main.win .card[data-depth="9"]>.chead{background:var(--grp-h2);border-left:3px solid var(--acc)}
+main.win .card[data-depth="9"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="9"]>.cbody.cgroup{padding:4px;background:var(--grp-b2)}
+main.win .card[data-depth="10"]>.chead{background:var(--grp-h3);border-left:3px solid var(--acc)}
+main.win .card[data-depth="10"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="10"]>.cbody.cgroup{padding:4px;background:var(--grp-b3)}
+main.win .card[data-depth="11"]>.chead{background:var(--grp-h4);border-left:3px solid var(--acc)}
+main.win .card[data-depth="11"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="11"]>.cbody.cgroup{padding:4px;background:var(--grp-b4)}
+main.win .card[data-depth="12"]>.chead{background:var(--grp-h5);border-left:3px solid var(--acc)}
+main.win .card[data-depth="12"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="12"]>.cbody.cgroup{padding:4px;background:var(--grp-b5)}
+main.win .card[data-depth="13"]>.chead{background:var(--grp-h6);border-left:3px solid var(--acc)}
+main.win .card[data-depth="13"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="13"]>.cbody.cgroup{padding:4px;background:var(--grp-b6)}
+main.win .card[data-depth="14"]>.chead{background:var(--grp-h7);border-left:3px solid var(--acc)}
+main.win .card[data-depth="14"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="14"]>.cbody.cgroup{padding:4px;background:var(--grp-b7)}
+main.win .card[data-depth="15"]>.chead{background:var(--grp-h8);border-left:3px solid var(--acc)}
+main.win .card[data-depth="15"]>.chead .ctitle{color:var(--fg)}
+main.win .card[data-depth="15"]>.cbody.cgroup{padding:4px;background:var(--grp-b8)}
 main.win .tw>.dim{display:block;padding:6px 10px}
 main.win .card.min .cbody{display:none}
 .wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}

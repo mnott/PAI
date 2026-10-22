@@ -425,14 +425,15 @@ function update(feed,payload){
  if(n)scheduleFit();
  return n;
 }
-/** Tree reading order, so Tab order = DOM order; a group's kids live inside its body. */
-function attach(parent,node){
+/** Tree reading order, so Tab order = DOM order; a group's kids live inside its body.
+ *  d is the nesting depth (0 = a root band): a group card carries it as data-depth, the level marker the CSS styles. */
+function attach(parent,node,d){
  var order=ids(node);
  for(var i=0;i<order.length;i++){
   var c=W.cards[order[i]];
   if(!c)continue;
   parent.appendChild(c.el);W.order.push(c.id);
-  if(kidsOf(c.id)){c.body.style.overflow="hidden";c.body.classList.add("cgroup");attach(c.body,W.kids[c.id])}
+  if(kidsOf(c.id)){c.el.setAttribute("data-depth",String(d));c.body.style.overflow="hidden";c.body.classList.add("cgroup");attach(c.body,W.kids[c.id],d+1)}
  }
 }
 function init(main,defaults,opts){
@@ -466,7 +467,7 @@ function init(main,defaults,opts){
  var a=ids(W.tree);for(i=0;i<a.length;i++)ord.push(a[i]);
  var all={};for(i=0;i<ord.length;i++)all[ord[i]]=1;
  for(var id in W.cards)if(!all[id]){var inKids=false;for(var g in W.kids)if(ids(W.kids[g]).indexOf(id)>=0)inKids=true;if(!inKids){delete W.cards[id]}}
- attach(main,W.tree);
+ attach(main,W.tree,0);
  relayout();
  // any content write (feed, action status, a section's own paint) re-reads the content heights; style writes are not observed
  if(typeof MutationObserver!=="undefined"&&!main.__winMo){main.__winMo=1;new MutationObserver(scheduleFit).observe(main,{childList:true,subtree:true,characterData:true})}
@@ -508,11 +509,18 @@ function seedFit(group,fresh){
   if(W.fit[c.id]===undefined&&def.defaultH&&!def.viewed&&(def.resize||c.type==="group"))W.fit[c.id]=def.defaultH;
  }
 }
+/** The group's nesting depth, read back from the DOM (the attach walk set it); 0 for a root group. */
+function depthOf(id){
+ var c=W.cards[id];
+ if(!c)return 0;
+ var d=c.el.closest("[data-depth]");
+ return d?Number(d.getAttribute("data-depth"))+1:0;
+}
 /** Add cards by data (a structural change, spec 3.4): rows = [[id,...],...], one row split per entry, appended to
  *  the group's column. A row whose ids the group's tree already holds (a saved layout) only gets its cards built.
  *  The cards already in the group keep their size; the group grows by the new cards' need. */
 function addCards(group,specs,rows){
- var g=W.cards[group],i,j,fresh=[];
+ var g=W.cards[group],i,j,fresh=[],gd=depthOf(group);
  if(!g)return 0;
  for(i=0;i<specs.length;i++)if(!W.cards[specs[i].id]){W.cards[specs[i].id]=buildCard(specs[i]);fresh.push(specs[i].id)}
  if(!fresh.length)return 0;
@@ -536,7 +544,11 @@ function addCards(group,specs,rows){
   W.kids[group]=normalize(split("c",ch,sz),false);
  }
  g.body.style.overflow="hidden";g.body.classList.add("cgroup");
- for(i=0;i<fresh.length;i++){g.body.appendChild(W.cards[fresh[i]].el);W.order.push(fresh[i])}
+ for(i=0;i<fresh.length;i++){
+  var fc=W.cards[fresh[i]];
+  if(kidsOf(fc.id))fc.el.setAttribute("data-depth",String(gd+1));
+  g.body.appendChild(fc.el);W.order.push(fc.id);
+ }
  relayout();save();
  return fresh.length;
 }
