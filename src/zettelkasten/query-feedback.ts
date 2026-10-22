@@ -85,7 +85,7 @@ export function saveQueryResult(record: QueryRecord): string | null {
 
     const frontmatter = [
       "---",
-      `query: "${record.query.replace(/"/g, '\\"')}"`,
+      `query: ${JSON.stringify(record.query)}`,
       `timestamp: ${new Date(record.timestamp).toISOString()}`,
       `source: ${record.source}`,
       `result_count: ${record.resultCount}`,
