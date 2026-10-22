@@ -33,17 +33,18 @@ export function isLiveRouter(cmd: string): boolean {
   return /\brouter run\b/.test(cmd) && !/--port\b/.test(cmd);
 }
 
-/** Pids whose cwd is `dir` or below, one `lsof -d cwd` listing; `process.pid` excluded. */
-export function pidsWithCwdInside(dir: string): number[] {
+/** Pids whose cwd is `dir` or below, one `lsof -d cwd` listing (limited to `among` when given: far cheaper); `process.pid` excluded. */
+export function pidsWithCwdInside(dir: string, among?: number[]): number[] {
   let real: string;
   try {
     real = realpathSync(dir);
   } catch {
     return [];
   }
+  if (among && !among.length) return [];
   let raw = "";
   try {
-    raw = execFileSync("lsof", ["-d", "cwd", "-Fpn"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 });
+    raw = execFileSync("lsof", among ? ["-a", "-d", "cwd", "-p", among.join(","), "-Fpn"] : ["-d", "cwd", "-Fpn"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 });
   } catch (e) {
     raw = String((e as { stdout?: string }).stdout ?? "");
   }
@@ -118,19 +119,34 @@ export async function reapWorkerProcesses(opts: { rootPid?: number; dir?: string
   }
 }
 
-/** Pids of a long-lived worker's leftovers right now (descendants of `rootPid`, cwd inside `dir`); the baseline for reapNewSince. */
-export function snapshotWorkerPids(opts: { rootPid?: number; dir?: string }): Set<number> {
+/** Every live pid right now (one `ps`); the baseline for reapNewSince. */
+export function snapshotWorkerPids(_opts?: { rootPid?: number; dir?: string }): Set<number> {
   try {
-    return new Set(findOrphans(opts).map((p) => p.pid));
+    const raw = execFileSync("ps", ["-axo", "pid="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 16 << 20 });
+    return new Set(raw.split("\n").map((l) => Number(l.trim())).filter((n) => n > 0));
   } catch {
     return new Set();
   }
 }
 
-/** End what a pooled task left: pids in the worker's set now that were not in `before`. `rootPid` itself and the live router are never touched. */
+/**
+ * End what a pooled task left: processes that did not exist at the snapshot and are descendants of `rootPid` or have their cwd in `dir`.
+ * The cwd listing only looks at the new pids, so it stays cheap. `rootPid` itself, the live router and anything older are never touched;
+ * a spare the host starts meanwhile has its own dir and is no descendant of the slot process, so it is no candidate.
+ */
 export async function reapNewSince(opts: { rootPid?: number; dir?: string }, before: Set<number>, log?: (line: string) => void, graceMs?: number): Promise<OrphanProc[]> {
   try {
-    const procs = findOrphans(opts).filter((p) => !before.has(p.pid) && p.pid !== opts.rootPid);
+    const fresh = [...snapshotWorkerPids()].filter((p) => !before.has(p) && p !== process.pid && p !== opts.rootPid);
+    const pids = new Set<number>();
+    if (opts.rootPid) for (const p of processTree(opts.rootPid).slice(1)) if (!before.has(p)) pids.add(p);
+    if (opts.dir) for (const p of pidsWithCwdInside(opts.dir, fresh)) pids.add(p);
+    pids.delete(process.pid);
+    if (opts.rootPid) pids.delete(opts.rootPid);
+    const procs: OrphanProc[] = [];
+    for (const pid of pids) {
+      const cmd = commandOf(pid);
+      if (cmd && !isLiveRouter(cmd)) procs.push({ pid, cmd });
+    }
     if (procs.length) await endProcesses(procs, log, graceMs);
     return procs;
   } catch {

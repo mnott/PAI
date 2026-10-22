@@ -98,6 +98,18 @@ describe("reapNewSince (pooled task end)", () => {
     expect(alive(root)).toBe(true);
   });
 
+  it("leaves alone a process the host started meanwhile in another dir (a spare)", async () => {
+    const dir = tmp();
+    const other = tmp();
+    const root = sleeper(dir);
+    const before = snapshotWorkerPids({ rootPid: root, dir });
+    const spare = sleeper(other);
+    const late = sleeper(dir);
+    const ended = await reapNewSince({ rootPid: root, dir }, before, () => {}, 200);
+    expect(ended.map((p) => p.pid)).toEqual([late]);
+    expect(alive(spare)).toBe(true);
+  });
+
   it("never ends the root pid even when it was not in the snapshot", async () => {
     const dir = tmp();
     const root = sleeper(dir);
