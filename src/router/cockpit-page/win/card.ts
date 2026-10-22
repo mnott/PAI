@@ -211,10 +211,7 @@ function paintMin(c){
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
-function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=W.auto?fitCfg():undefined;W.cfg.content=W.auto?undefined:contentOf();return W.cfg}
-/** Frozen layout: the content height of each table/list card, read once per width and set of mounted cards (the layout gives a stack's leftover height to growable cards, never to these). */
-function contentKey(){var n=0,id;for(id in W.cards)if(W.cards[id].mounted)n++;return W.main.clientWidth+":"+n}
-function contentOf(){var k=contentKey();if(!W.content||W.contentKey!==k){W.content=fitReadAll();W.contentKey=k}return W.content}
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
 /** Each card's title text width plus header controls, measured once the card is placed (c.tw; the status slot may truncate, so it is not counted); a new reading re-lays out once. */
 /** The title element is stretched by flex, so its natural width is where its last child (text or info icon) ends. */
 function titleText(c){return(c.span?c.span.previousSibling:c.title.lastChild).getBoundingClientRect().right-c.title.getBoundingClientRect().left}
@@ -275,8 +272,7 @@ function refit(){
  if(changed)relayout();
 }
 function scheduleFit(){
- if(!W.auto){W.content=null;return}
- if(W.fitT)return;
+ if(!W.auto||W.fitT)return;
  W.fitT=1;if(typeof Promise!=="undefined")Promise.resolve().then(refit);else setTimeout(refit,0);
 }
 /** The first user move leaves auto layout: the heights on screen become the saved band px and group weights. */
@@ -344,7 +340,6 @@ function relayout(){
    if(c.mounted&&def.resize)def.resize(c.ctx,rect.body.w,rect.body.h);
   }
  } paintGutters();
- if(!W.auto&&!W.cr&&W.contentKey!==contentKey()){W.cr=1;relayout();W.cr=0}
  if(measureTitles()&&W.tm<3){W.tm++;relayout();W.tm--}
 }
 /** Gutters (spec 3.3): one .wgutter in the GAP between siblings of every split, in the container that holds the
@@ -420,20 +415,6 @@ function treeOf(id){
  for(var g in W.kids)if(W.kids[g]&&W.kids[g].k&&ids(W.kids[g]).indexOf(id)>=0)return{key:g,tree:W.kids[g]};
  return null;
 }
-/** The cards that resize together with card id: those of its row that sit on the same rendered line (equal top within 2 px). A card stacked under another, or on another line of a wrapped row, is alone. */
-function lineOf(id){
- var c=W.cards[id],t=treeOf(id),p=t&&parentOf(t.tree,id),out=[id];
- if(!c||!p||p.d!=="r")return out;
- var top=c.el.getBoundingClientRect().top;
- for(var i=0;i<p.ch.length;i++){var sb=p.ch[i],o=sb.k==="c"&&sb.id!==id?W.cards[sb.id]:null;if(o&&!kidsOf(sb.id)&&o.el.style.display!=="none"&&Math.abs(o.el.getBoundingClientRect().top-top)<=2)out.push(sb.id)}
- return out;
-}
-/** Outline the cards that resize with id (null clears). */
-function markLine(id){
- var m=document.querySelectorAll(".card.rz"),i;
- for(i=0;i<m.length;i++)m[i].classList.remove("rz");
- if(id)lineOf(id).forEach(function(k){if(W.cards[k])W.cards[k].el.classList.add("rz")});
-}
 /** A card's user height (the card's saved st.h; h null clears it). A row shares its line height: the siblings of the card
  *  in its row get the same user height, the whole line takes this one. Content taller than h scrolls inside the card.
  *  Frozen (non-auto) layouts size a group by band px, so the card's group band grows by the change; a start snapshot
@@ -444,11 +425,13 @@ function setHeight(id,h,snap,drag){
  if(snap)W.tree=JSON.parse(snap.tree);
  if(h===null){
   delete s.h;
-  lineOf(id).forEach(function(k){if(W.st[k])delete W.st[k].h});
+  var p0=parentOf(t.tree,id);
+  if(p0&&p0.d==="r")for(var j=0;j<p0.ch.length;j++)if(p0.ch[j].k==="c"&&W.st[p0.ch[j].id])delete W.st[p0.ch[j].id].h;
  }else{
   var ty=TYPES[c.type]||{};
   s.h=Math.max(Math.round(h),ty.minH||W.cfg.minH||0,HEAD_H);
-  lineOf(id).forEach(function(k){if(k!==id){var sbt=TYPES[W.cards[k].type]||{};(W.st[k]=W.st[k]||{}).h=Math.max(s.h,sbt.minH||W.cfg.minH||0,HEAD_H)}});
+  var p=parentOf(t.tree,id);
+  if(p&&p.d==="r")for(var i=0;i<p.ch.length;i++){var sb=p.ch[i];if(sb.k==="c"&&sb.id!==id&&W.cards[sb.id]&&!kidsOf(sb.id)){var sbt=TYPES[W.cards[sb.id].type]||{};(W.st[sb.id]=W.st[sb.id]||{}).h=Math.max(s.h,sbt.minH||W.cfg.minH||0,HEAD_H)}}
   if(!W.auto&&t.key&&snap){
    var keep=W.rects;W.rects=snap.rects;growBand(t.key,s.h-snap.h);W.rects=keep;
   }
@@ -470,16 +453,11 @@ function heightWire(){
   var keepSt=JSON.stringify(W.st);
   var snap={tree:JSON.stringify(W.tree),rects:W.rects,h:r.h};
   cur={c:c,y:e.clientY,snap:snap,st:keepSt};
-  markLine(c.id);
  });
  document.addEventListener("pointermove",function(e){if(cur)setHeight(cur.c.id,cur.snap.h+e.clientY-cur.y,cur.snap,true)});
- document.addEventListener("pointerover",function(e){var c=card(e);if(c&&!cur&&!winLocked())markLine(c.id)});
- document.addEventListener("pointerout",function(e){if(card(e)&&!cur)markLine(null)});
- document.addEventListener("focusin",function(e){var c=card(e);if(c&&!winLocked())markLine(c.id)});
- document.addEventListener("focusout",function(e){if(card(e)&&!cur)markLine(null)});
  function end(commit){
   if(!cur)return;
-  var d=cur;cur=null;markLine(null);
+  var d=cur;cur=null;
   if(!commit){W.tree=JSON.parse(d.snap.tree);W.st=JSON.parse(d.st);relayout();return}
   save();announce("height changed");
  }

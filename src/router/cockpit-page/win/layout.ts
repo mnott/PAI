@@ -167,7 +167,6 @@ function winNeed(node,w,st,cfg,kids,flat){
  for(i=0;i<node.ch.length;i++){
   if(winGhost(st,node.ch[i].id))continue;
   k=winNeed(node.ch[i],w,st,cfg,kids,flat);
-  var uk=winUH(node.ch[i],st,cfg,kids);if(uk!==null&&uk>k)k=uk;
   sum+=k;need=Math.max(need,(node.sz[i]||0)>0?k/((node.sz[i]||0)/t):0);
  }
  return(flat||winNar(cfg,w)?sum:Math.max(sum,need))+(vis.length-1)*gap;
@@ -222,32 +221,6 @@ function winFit(node,w,st,cfg,kids){
  if(g){if(lc>0)sum+=(lu>0?lu:ln)+gap;return Math.max(0,sum-gap)}
  return node.d==="r"&&wide?r:sum+(vis.length-1)*gap;
 }
-/** Whether a node scales with the height it is given (a chart, a group, a split holding one): it takes a stack's leftover height; a table or list does not. */
-function winGrow(node,st,cfg,kids){
- var i;
- if(node.k==="c")return winLeafType(kids,node.id,cfg)==="chart"||!!(kids&&kids[node.id]&&kids[node.id].k);
- for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&winGrow(node.ch[i],st,cfg,kids))return true;
- return false;
-}
-/** The default height of a node when no band gives it one: a card its type's defaultH (a table or list holding content its content height), a column the sum of its cards, a row the tallest. */
-function winDef(node,st,cfg,kids){
- var i,h=0,v;
- if(node.k==="c"){
-  if(winGhost(st,node.id))return 0;
-  if(winMin(st,node.id))return cfg.HEAD_H;
-  var d=winDefH(cfg,winLeafType(kids,node.id,cfg)),rd=cfg.content&&!winGrow(node,st,cfg,kids)?cfg.content[node.id]:null;
-  var u=winUH(node,st,cfg,kids);
-  if(u!==null)return u;
-  return rd!==undefined&&rd!==null?Math.max(rd,winNeed(node,0,st,cfg,kids)):d;
- }
- var n=0;
- for(i=0;i<node.ch.length;i++){
-  if(winGhost(st,node.ch[i].id))continue;
-  v=winDef(node.ch[i],st,cfg,kids);n++;
-  h=node.d==="r"?Math.max(h,v):h+v;
- }
- return node.d==="r"||n<2?h:h+(n-1)*cfg.GAP;
-}
 /** Lay out one split into pieces {n,x,y,w,h}. bounded: the container has a fixed h. */
 function winSplit(node,box,bounded,st,cfg,kids){
  var n=node.ch.length,i,out=[];
@@ -280,7 +253,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
     for(var lj=0;lj<lines[li].length;lj++){
      var it=lines[li][lj],c=node.ch[it.i];
      var nf=cfg.fit&&!winMin(st,c.id)?winFit(c,it.w,st,cfg,kids):null;
-     var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,it.w,st,cfg,kids)):c.k==="s"?winDef(c,st,cfg,kids):winDefH(cfg,winLeafType(kids,c.id,cfg)));
+     var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,it.w,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
      out.push({n:c,x:it.x,y:y,w:it.w,h:hh});
      lh=Math.max(lh,hh);
      var u2=winUH(c,st,cfg,kids);if(u2!==null)lu2=Math.max(lu2,u2);
@@ -322,30 +295,12 @@ function winSplit(node,box,bounded,st,cfg,kids){
    }
    if(fs&&(winNar(cfg,box.w)||fsum<=avail+fxs+0.5))fh=fs;
   }
-  // frozen layout: a card that does not scale with height (table, list) keeps its content height; the leftover goes to the growable cards by weight, and stays empty at the bottom when there are none
-  var cg=null;
-  if(!fh&&cfg.content&&t2>0){
-   var cb=[],cs=0,rw=0,nr=0;
-   for(i=0;i<vis.length;i++){
-    var cn=node.ch[vis[i]],cv=null;
-    if(!winMin(st,cn.id)&&fx[i]===null){
-     var rd=winGrow(cn,st,cfg,kids)?null:cfg.content[cn.id];
-     if(rd!==undefined&&rd!==null)rd=Math.max(rd,winNeed(cn,box.w,st,cfg,kids));
-     // only a card whose weight share is taller than its content is capped to it
-     if(rd===undefined||rd===null||(node.sz[vis[i]]||0)/t2*avail<=rd){rw+=node.sz[vis[i]]||0;nr++}
-     else{cv=rd;cs+=cv}
-    }
-    cb.push(cv);
-   }
-   if(cs<=avail&&cs>0)cg={b:cb,rest:avail-cs,rw:rw,nr:nr};
-  }
   var y2=0;
   for(i=0;i<vis.length;i++){
    var c2=node.ch[vis[i]],h2;
    if(winMin(st,c2.id))h2=cfg.HEAD_H;
    else if(fh)h2=fh[i];
    else if(fx[i]!==null)h2=fx[i];
-   else if(cg)h2=cg.b[i]!==null?cg.b[i]:cg.rw>0?(node.sz[vis[i]]||0)/cg.rw*cg.rest:cg.rest/cg.nr;
    else h2=t2>0?(node.sz[vis[i]]||0)/t2*avail:avail/Math.max(1,vis.length);
    out.push({n:c2,x:0,y:y2,w:box.w,h:h2});
    y2+=h2+gap;
@@ -366,8 +321,6 @@ function winSplit(node,box,bounded,st,cfg,kids){
   if(uh!==null)sz=uh;
   var h3;
   if(c3.k==="s"){
-   // a band is never shorter than its cards need (a card the user made taller than the band pushes the next band down)
-   if(!flat)sz=Math.max(sz,winNeed(c3,box.w,st,cfg,kids,true));
    var allMin=true,any=false;
    for(var q=0;q<c3.ch.length;q++)if(!winGhost(st,c3.ch[q].id)){any=true;if(!winMin(st,c3.ch[q].id))allMin=false}
    // a band with no visible card takes no space; all visible minimized shrinks to HEAD_H

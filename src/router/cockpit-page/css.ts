@@ -205,7 +205,6 @@ main.win .card.nohd>.chead{display:none}main.win .card.nohd>.cbody{top:0}
 .wgutter[data-axis=y]{cursor:row-resize}
 .wgutter:hover,.wgutter:focus-visible{background:var(--acc);opacity:.45;outline:none}
 .chandle{position:absolute;right:2px;bottom:2px;width:12px;height:12px;z-index:3;cursor:ns-resize;touch-action:none;opacity:.7;background:linear-gradient(135deg,transparent 0 48%,var(--dim) 48% 58%,transparent 58% 74%,var(--dim) 74% 84%,transparent 84%)}
-.card.rz{outline:1px solid var(--acc);outline-offset:-1px}
 .chandle:hover,.chandle:focus-visible{opacity:1;outline:none;background:linear-gradient(135deg,transparent 0 48%,var(--acc) 48% 58%,transparent 58% 74%,var(--acc) 74% 84%,transparent 84%)}
 main.win .card[data-depth]>.chandle,main.win .card.min>.chandle,html.locked .chandle{display:none}
 .cgrip{background:none;border:0;padding:0 2px;color:var(--dim);cursor:grab;font:inherit;line-height:1;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
