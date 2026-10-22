@@ -18,11 +18,12 @@
  */
 
 import { currentWorkerId } from "../../../workers/worker-id.js";
-import { appendFileSync, mkdirSync, existsSync } from 'fs';
+import { appendFileSync, mkdirSync, existsSync, chmodSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { securityEventsPath } from '../lib/pai-paths.js';
 import { isSharedCheckout } from '../lib/shared-checkout.js';
-import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
+import { maskSecrets } from '../lib/loop-guard.js';
+import { decideWorkerGitGuard, splitSegments, workerGitGuardMessage } from '../lib/worker-git-guard.js';
 import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
 import { readWorkersSection } from '../../../workers/config.js';
 import { workersLogDir } from '../../../workers/paths.js';
@@ -75,6 +76,7 @@ const DANGEROUS_FILE_OPS_PATTERNS: RegExp[] = [
 // OPTIONAL: Operations that require confirmation instead of blocking
 const DANGEROUS_GIT_PATTERNS: RegExp[] = [
   /\bgit\b.*\spush\b.*(\s-f\b|\s--force(\s|$))/i,  // git push -f / --force; --force-with-lease and --follow-tags pass
+  /\bgit\b.*\spush\b.*\s\+\S/i,                  // a plus-prefixed refspec forces the update without -f
   /\bgit\s+reset\s+--hard/i,                        // git reset --hard
   // Add your own git safety patterns here
 ];
@@ -149,20 +151,35 @@ interface DetectionResult {
   pattern?: string;
 }
 
+/** Quoted strings removed: text inside a commit message or echo is not a command. */
+function dropQuoted(segment: string): string {
+  return segment.replace(/"(?:\\.|[^"\\])*"|'[^']*'/g, '""');
+}
+
+/** A quoted +refspec is still a forced push, so push segments also test with only the quote marks removed. */
+function gitPatternHit(pattern: RegExp, segment: string): boolean {
+  const bare = dropQuoted(segment);
+  if (pattern.test(bare)) return true;
+  return /\bgit\b.*\spush\b/.test(bare) && pattern.test(segment.replace(/["']/g, ''));
+}
+
 function detectAttack(content: string): DetectionResult {
+  // A quoted target is the same target: test the text with quote marks removed too.
+  const unquoted = content.replace(/["']/g, '');
   // First check for hard blocks
   for (const { category, patterns } of ALL_BLOCK_PATTERNS) {
     for (const pattern of patterns) {
-      if (pattern.test(content)) {
+      if (pattern.test(content) || pattern.test(unquoted)) {
         return { blocked: true, category, pattern: pattern.source };
       }
     }
   }
 
   // Then check for confirmation-required patterns
+  const segments = splitSegments(content);
   for (const { category, patterns } of CONFIRM_PATTERNS) {
     for (const pattern of patterns) {
-      if (pattern.test(content)) {
+      if (segments.some((seg) => gitPatternHit(pattern, seg))) {
         return { blocked: false, requiresConfirmation: true, category, pattern: pattern.source };
       }
     }
@@ -177,6 +194,7 @@ function detectAttack(content: string): DetectionResult {
 
 function logSecurityEvent(event: Record<string, unknown>): void {
   const logPath = securityEventsPath();
+  if (typeof event.command === 'string') event = { ...event, command: maskSecrets(event.command) };
   const entry = JSON.stringify({ timestamp: new Date().toISOString(), ...event }) + '\n';
 
   try {
@@ -184,7 +202,8 @@ function logSecurityEvent(event: Record<string, unknown>): void {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
-    appendFileSync(logPath, entry);
+    appendFileSync(logPath, entry, { mode: 0o600 });
+    chmodSync(logPath, 0o600);
   } catch {
     // Silently fail - logging should never break the hook
   }
@@ -198,11 +217,12 @@ async function main(): Promise<void> {
   let input: HookInput;
 
   try {
-    // Read stdin
+    // Read stdin to end of input; the timer only bounds a hung pipe.
     const chunks: Buffer[] = [];
-    const timeoutPromise = new Promise<Buffer[]>((_, reject) =>
-      setTimeout(() => reject(new Error('timeout')), 100)
-    );
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<Buffer[]>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timeout')), 2000);
+    });
     const readPromise = (async () => {
       for await (const chunk of process.stdin) {
         chunks.push(chunk);
@@ -215,8 +235,10 @@ async function main(): Promise<void> {
       const result = await Promise.race([readPromise, timeoutPromise]);
       text = Buffer.concat(result).toString('utf-8');
     } catch {
-      console.log(JSON.stringify({ permissionDecision: 'allow' }));
-      return;
+      // Without the payload the delete and git guards cannot run: fail closed.
+      deny('The hook input could not be read in time, so the command cannot be checked. Retry the command.');
+    } finally {
+      clearTimeout(timer);
     }
 
     if (!text.trim()) {
@@ -226,9 +248,8 @@ async function main(): Promise<void> {
 
     input = JSON.parse(text);
   } catch {
-    // Parse error or timeout - fail open
-    console.log(JSON.stringify({ permissionDecision: 'allow' }));
-    return;
+    // Unparseable payload: the command is unknown, so the guards cannot run.
+    deny('The hook input could not be parsed, so the command cannot be checked. Retry the command.');
   }
 
   // Only validate Bash commands

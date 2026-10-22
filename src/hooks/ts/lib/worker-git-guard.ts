@@ -95,7 +95,7 @@ const GIT_WRITE = /\bgit\b[^&;|\n]*?\s(?:commit|add|am|cherry-pick|apply|push|ta
 const UNKNOWN_DIR = "/\0unresolved";
 
 /** Splits on &&, ||, ;, | and newlines outside quotes. */
-function splitSegments(command: string): string[] {
+export function splitSegments(command: string): string[] {
   const out: string[] = [];
   let cur = "";
   let quote = "";

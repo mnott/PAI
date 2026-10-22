@@ -114,4 +114,51 @@ describe("security-validator", () => {
     expect(status).toBe(0);
     expect(stderr).toBe("");
   });
+
+  it.each([
+    'rm -rf "/"',
+    'rm -rf "$HOME"',
+    "rm -rf '/'",
+  ])("denies catastrophic deletion with a quoted target %s", (command) => {
+    const { status, stderr } = runHook(command);
+    expect(status).toBe(2);
+    expect(stderr).toContain("catastrophic_deletion");
+  });
+
+  it.each([
+    'git commit -m "docs: explain git push -f policy"',
+    "echo 'git push --force is blocked' && git status",
+    'git commit -m "git reset --hard notes"',
+  ])("allows quoted git text in %s", (command) => {
+    const { status } = runHook(command);
+    expect(status).toBe(0);
+  });
+
+  it.each([
+    "git push -f origin main",
+    "git push origin +main",
+    "git push origin '+main'",
+    'git commit -m "x" && git push --force',
+    "git reset --hard HEAD~1",
+  ])("denies a forced push or hard reset %s", (command) => {
+    const { status, stderr } = runHook(command);
+    expect(status).toBe(2);
+    expect(stderr).toContain("dangerous operation");
+  });
+
+  it("allows git push --force-with-lease and a plain push", () => {
+    expect(runHook("git push --force-with-lease origin main").status).toBe(0);
+    expect(runHook("git push origin main").status).toBe(0);
+  });
+
+  it("fails closed when the payload cannot be parsed", () => {
+    try {
+      execFileSync("bun", [ENTRYPOINT], { input: "{not json", encoding: "utf8", timeout: 15_000 });
+      throw new Error("expected exit 2");
+    } catch (err) {
+      const e = err as { status: number | null; stderr: string };
+      expect(e.status).toBe(2);
+      expect(e.stderr).toContain("could not be parsed");
+    }
+  });
 });
