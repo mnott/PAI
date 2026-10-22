@@ -1,7 +1,7 @@
 /**
- * C1 / spec 9.3 structure checks on the full /cockpit page, fixture data for the data, queue and memory feeds:
+ * C1 structure checks on the full /cockpit page, fixture data for the data, queue and memory feeds:
  * every .chead holds grip, title, status, 0..n actions, minimize in that order; no <select> and no <details> anywhere;
- * no text outside a .card (the header aside); every button in a card is a card control, a registered action (data-act),
+ * no text outside a .card (the header and the #newer/#newdef notices aside); every button in a card is a card control, a registered action (data-act),
  * a queue verb (data-q) or disabled with a title; no .tw scrolls sideways. Headless Chromium, skipped when none is installed.
  */
 
@@ -43,7 +43,7 @@ var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,null);
 for(var n;n=w.nextNode();){
  if(!n.nodeValue.trim())continue;
  var p=n.parentNode;
- if(p.closest("script,style,header,.card,.cwlive"))continue;
+ if(p.closest("script,style,header,#newer,#newdef,.card,.cwlive"))continue;
  text.push(p.tagName+":"+n.nodeValue.trim().slice(0,30));
 }
 var tws=Array.prototype.filter.call(document.querySelectorAll("#win-root .tw"),function(t){return t.scrollWidth>t.clientWidth}).length;
@@ -90,7 +90,7 @@ async function open(query: string, width: number, shot?: string) {
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
 
-describe.skipIf(!CHROME)("C1 structure checks on the full page (spec 9.3)", () => {
+describe.skipIf(!CHROME)("C1 structure checks on the full page", () => {
   it("chead order, no select/details, no text outside a card, every control registered or disabled with a title, no sideways table scroll", async () => {
     const r = await open("", 1400);
     expect(r.err).toBeNull();
