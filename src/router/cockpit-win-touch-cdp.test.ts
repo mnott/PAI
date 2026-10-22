@@ -5,26 +5,16 @@
  * Skipped when no Chromium is installed.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CHROME, closeBrowser, launch, sleep } from "./cdp-browser.js";
 import { cockpitHtml } from "./cockpit-page.js";
 import { fixtureData, fixtureLimits, fixturePool, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
 
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
-
 let server: Server;
 let base = "";
-let tmp = "";
-let proc: ChildProcess | undefined;
-let ws: WebSocket | undefined;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
-  tmp = mkdtempSync(join(tmpdir(), "cockpit-win-touch-cdp-"));
   server = createServer((req, res) => {
     const url = req.url ?? "";
     const json = (o: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
@@ -41,34 +31,8 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { try { ws?.close(); } catch { /* closed */ } proc?.kill("SIGKILL"); server?.close(); if (tmp) try { rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* the browser may still be flushing its profile */ } });
+afterAll(async () => { await closeBrowser(); server?.close(); });
 
-async function launch(w: number, h: number) {
-  const dir = join(tmp, "profile");
-  proc = spawn(CHROME!, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${dir}`, `--window-size=${w},${h}`, "--no-first-run", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "about:blank"], { stdio: "ignore" });
-  let port = 0;
-  for (let i = 0; i < 100 && !port; i++) {
-    await sleep(200);
-    try { port = Number(readFileSync(join(dir, "DevToolsActivePort"), "utf8").split("\n")[0]); } catch { /* not up yet */ }
-  }
-  if (!port) throw new Error("chrome did not start");
-  let tabs: { type: string; webSocketDebuggerUrl: string }[] = [];
-  for (let i = 0; i < 50 && !tabs.some((t) => t.type === "page"); i++) { try { tabs = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()) as typeof tabs; } catch { /* not up yet */ } if (!tabs.some((t) => t.type === "page")) await sleep(200); }
-  ws = new WebSocket(tabs.find((t) => t.type === "page")!.webSocketDebuggerUrl);
-  await new Promise((r) => { ws!.onopen = r; });
-  let id = 0;
-  const pend = new Map<number, (d: { result: unknown }) => void>();
-  ws.onmessage = (m) => { const d = JSON.parse(String(m.data)); if (d.id && pend.has(d.id)) { pend.get(d.id)!(d); pend.delete(d.id); } };
-  const send = (method: string, params: object = {}) => new Promise<{ result: any }>((r) => { const i = ++id; pend.set(i, r as never); ws!.send(JSON.stringify({ id: i, method, params })); });
-  await send("Page.enable");
-  await send("Emulation.setDeviceMetricsOverride", { width: w, height: h, deviceScaleFactor: 1, mobile: false });
-  const ev = async <T>(expr: string): Promise<T> => {
-    const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true });
-    if (r.result.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails).slice(0, 400));
-    return r.result.result.value as T;
-  };
-  return { send, ev };
-}
 
 describe.skipIf(!CHROME)("cockpit touch, spec 4 (CDP touch events)", () => {
   for (const W of [390, 822]) {
@@ -159,7 +123,6 @@ describe.skipIf(!CHROME)("cockpit touch, spec 4 (CDP touch events)", () => {
       expect(await exp(), "T5 tap minimizes").toBe("false");
       await tch("touchStart", m.x, m.y); await sleep(60); await tch("touchEnd"); await sleep(500);
       expect(await exp(), "T5 tap restores").toBe("true");
-      ws?.close(); proc?.kill("SIGKILL");
     }, 120_000);
   }
 });
