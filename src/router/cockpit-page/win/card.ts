@@ -43,7 +43,7 @@ export type WinTypeDef = {
  *    the last payload when a minimized card is restored and mounts).
  *  - ctx per 4.1: text/attr/cls/html/list skip unchanged values; html is a keyed morph, list a
  *    keyed row list; title(str); status(kind, str) writes the header status slot ("" clears).
- *  - main gets an explicit height; a ResizeObserver on main re-runs layout only when its width changed.
+ *  - main gets an explicit height; a ResizeObserver on main re-runs layout only when its width changed; a card placed at another width re-fits every card to its content (grow and shrink).
  *  - minimize: Win.toggleMin(id) / the – + button; the card shows only its header (HEAD_H), the body
  *    is display:none but its state is kept; saved (debounced 150 ms, one write) with the layout. */
 const WIN_CARD_BODY_JS = String.raw`var Win=(function(){
@@ -207,13 +207,15 @@ function fitReadAll(){
 }
 function refit(){
  W.fitT=0;
+ var re=W.refit;W.refit=false;
  if(!W.auto||!W.main)return;
  var changed=false,id,all=fitReadAll();
  for(id in W.cards){
   var v=all[id];
   if(v===undefined||v===null)continue;
-  // fitted once, when the card first has content; then only grown, so the content never needs an inner scroll
-  if(W.fit[id]===undefined||v>=W.fit[id]+2){W.fit[id]=v;changed=true}
+  // fitted when the card first has content; then only grown (a data update never makes a card jump), so the content never needs an inner scroll.
+  // After a container width change every reading is replaced, shrinking included: the content wrapped differently at the new width.
+  if(W.fit[id]===undefined||v>=W.fit[id]+2||(re&&v!==W.fit[id])){W.fit[id]=v;changed=true}
  }
  if(changed)relayout();
 }
@@ -258,7 +260,8 @@ function mountCard(c){
 function place(c,r){
  var box=Math.round(r.x*100)/100+","+Math.round(r.y*100)/100+","+Math.round(r.w*100)/100+","+Math.round(r.h*100)/100;
  if(c.box!==box){
-  c.box=box;var s=c.el.style;
+  if(W.auto&&c.pw!==undefined&&Math.abs(c.pw-r.w)>=1)W.refit=true; // a card at another width wraps its content differently: re-fit all
+  c.pw=r.w;c.box=box;var s=c.el.style;
   s.left=r.x+"px";s.top=r.y+"px";s.width=r.w+"px";s.height=r.h+"px";
  }
 }

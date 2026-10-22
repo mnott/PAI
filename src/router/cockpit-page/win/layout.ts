@@ -151,7 +151,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
     var lh=0,lo=out.length;
     for(i=l0;i<Math.min(vis.length,l0+gr.k);i++){
      var c=node.ch[vis[i]];
-     var nf=winNar(cfg,box.w)&&!winMin(st,c.id)?winFit(c,gr.cw,st,cfg,kids):null;
+     var nf=cfg.fit&&!winMin(st,c.id)?winFit(c,gr.cw,st,cfg,kids):null;
      var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,gr.cw,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
      out.push({n:c,x:(i-l0)*(gr.cw+gap),y:y,w:gr.cw,h:hh});
      lh=Math.max(lh,hh);
