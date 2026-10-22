@@ -38,7 +38,7 @@ function seam(small = false): PaneSeam & { splits: string[] } {
       return { message: "pane opened", session: `S${splits.length}` };
     },
     verify: async () => {
-      return small ? "window 7 tab 1/1, pane 26x14 SMALL (< 40x6)" : "window 7 tab 1/1, pane 80x20";
+      return small ? "window 7 tab 1/1, pane 26x14" : "window 7 tab 1/1, pane 80x20";
     },
   };
 }
@@ -53,9 +53,9 @@ describe("panes in the host tab", () => {
     expect(s.splits).toEqual(["pane-a", "pane-b", "w-a1", "w-b1"]);
   });
 
-  it("crowded tab: the worker starts in a small pane, never a tab or window", async () => {
+  it("crowded tab: the worker starts in a small pane unmarked, never a tab or window", async () => {
     const s = seam(true);
-    await expect(openVerifiedPane(dir, config, "w-1", TERM, env, ops, s)).resolves.toContain("SMALL");
+    await expect(openVerifiedPane(dir, config, "w-1", TERM, env, ops, s)).resolves.toContain("26x14");
     expect(s.splits).toHaveLength(1);
   });
 

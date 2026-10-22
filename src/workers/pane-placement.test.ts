@@ -2,7 +2,7 @@
  * openVerifiedPane placement fallback: split in the host tab only: a crowded tab is
  * re-split once, never a tab or a window. Every iTerm step is a fake seam; nothing is opened.
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { ledgerPath } from "./paths.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ const config = { pane: { fontSize: 13, autoExitSecs: 10 } } as unknown as Worker
 const UID = "D38D3E5D-19E8-4FE5-A78A-26E8E571FE27";
 const TERM = `w5t0p0:${UID}`;
 const env = { ITERM_SESSION_ID: TERM } as NodeJS.ProcessEnv;
-const SMALL = "window 5322 tab 1/1, pane 26x14 SMALL (< 40x6)";
+const CROWDED = "window 5322 tab 1/1, pane 26x14";
 
 let dir: string;
 let rebalanced: number;
@@ -37,7 +37,7 @@ function seam(opts: { split?: "ok" | "small"; hostSelected?: boolean }): PaneSea
       return { message: "pane opened", session: `S${o.splits}` };
     },
     verify: async () => {
-      if (opts.split === "small") return SMALL;
+      if (opts.split === "small") return CROWDED;
       return "window 7 tab 1/1, pane 80x20";
     },
   });
@@ -63,12 +63,12 @@ describe("openVerifiedPane placement", () => {
     expect(panePlacement("w-split")).toBe("split");
   });
 
-  it("crowded tab: the worker starts in a small pane and the ledger notes it", async () => {
+  it("crowded tab: the worker starts in a small pane, unmarked and un-ledgered", async () => {
     const s = seam({ split: "small" });
-    await expect(open("w-crowd", s)).resolves.toContain("SMALL");
+    await expect(open("w-crowd", s)).resolves.toContain("26x14");
     expect(s.splits).toBe(1);
     expect(panePlacement("w-crowd")).toBe("split");
-    expect(readFileSync(ledgerPath(dir), "utf8")).toMatch(/PANE-SMALL.*w-crowd/);
+    expect(existsSync(ledgerPath(dir))).toBe(false);
   });
 
   it("host tab not selected: still a split of the host tab", async () => {

@@ -7,7 +7,7 @@
  * (auditLaunches: a pane-exec whose child is gone while the pane lives, or the reverse, has its orphan side
  * killed / closed; a running worker that bypassed the launcher is noted) and the pane marks (judged from the
  * pane registry and the iTerm listing: ok, NO PANE, WRONG TAB, HOST UNKNOWN, STILL OPEN, plus the shown-only
- * SMALL / NOT SELECTED / MINIMISED). The daemon runs it every 30 s and writes <logDir>/pane-audit.json for
+ * NOT SELECTED / MINIMISED). The daemon runs it every 30 s and writes <logDir>/pane-audit.json for
  * `ps` and the cockpit.
  */
 
@@ -27,9 +27,9 @@ import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import type { Messenger } from "./run-events.js";
 import { panePolicy } from "./pane-policy.js";
 
-export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "STILL OPEN" | "SMALL" | "NOT SELECTED" | "MINIMISED";
+export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "STILL OPEN" | "NOT SELECTED" | "MINIMISED";
 /** Marks that are shown, never alarmed: the pane runs, only its visibility falls short. */
-export const SHOWN_ONLY: readonly PaneMark[] = ["SMALL", "NOT SELECTED", "MINIMISED"];
+export const SHOWN_ONLY: readonly PaneMark[] = ["NOT SELECTED", "MINIMISED"];
 
 export interface AuditProc {
   id: string;
@@ -98,10 +98,8 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
     const hostTab = tabOf(host);
     if (!hostTab) return { ...v, mark: "HOST UNKNOWN", tab, why: host ? `starting session ${host} is not in the iTerm listing` : `pane ${e.session} has no recorded starting session` };
     if (hostTab !== tab) return { ...v, mark: "WRONG TAB", tab, hostTab, why: `pane ${e.session} sits in ${tab}, the starting session in ${hostTab}` };
+    // pane size is never a violation: only the visibility mark of the listing counts
     const size = sizes?.get(norm(e.session));
-    if (size && (size.cols < panePolicy().minCols || size.rows < panePolicy().minRows)) {
-      return { ...v, mark: "SMALL", tab, hostTab, why: `pane ${e.session} is ${size.cols}x${size.rows}, under ${panePolicy().minCols}x${panePolicy().minRows}` };
-    }
     if (size?.mark) return { ...v, mark: size.mark, tab, hostTab, why: `pane ${e.session} runs, but ${size.mark === "MINIMISED" ? "its window is minimised" : "its tab is not the selected one"}` };
     return { ...v, tab, hostTab };
   });
@@ -188,7 +186,8 @@ const readTold = (logDir: string): Record<string, string> => readJson(toldFile(l
 /**
  * One audit round: judge, persist, and record each new violation once, in the ledger only (PANE-VIOLATION).
  * Since the pane owns the process (pane-exec.ts) a missing pane cannot happen by construction; what is left
- * is a bug detector: the launcher audit (auditLaunches) and the visibility marks. Nothing is sent to a session
+ * is a bug detector: the launcher audit (auditLaunches) and the visibility marks. A small pane is never a
+ * violation: the operator does not care about pane size. Nothing is sent to a session
  * or to PAILot, nothing is reopened.
  */
 export async function auditTick(

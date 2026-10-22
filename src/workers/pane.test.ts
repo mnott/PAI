@@ -444,8 +444,8 @@ describe("fail-closed visibility", () => {
   it.each([
     ["collapsed pane", { rows: 2 }],
     ["narrow pane", { cols: 10 }],
-  ])("a %s is accepted and marked SMALL, never refused", async (_n, over) => {
-    await expect(verify(over)).resolves.toMatch(/ SMALL \(< 40x6\)/);
+  ])("a %s is accepted unmarked: pane size is never a violation", async (_n, over) => {
+    await expect(verify(over)).resolves.toMatch(/^window 7 .*\/dev\/ttys011$/);
   });
 
   it("refuses when the follow command is not running in the pane", async () => {

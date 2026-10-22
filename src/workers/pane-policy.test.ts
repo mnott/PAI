@@ -58,11 +58,11 @@ describe("pane policy from config", () => {
     expect(calls).toBe(3);
   });
 
-  it("minCols and minRows decide the SMALL mark", async () => {
+  it("minCols and minRows mark nothing: a pane under them verifies clean", async () => {
     const run = async () => ({ stdout: paneJson(60, 10), stderr: "" });
-    expect(await verifyPane("h", "p", "w", run, () => true)).not.toContain("SMALL");
+    expect(await verifyPane("h", "p", "w", run, () => true)).not.toMatch(/SMALL|NOT SELECTED|MINIMISED|HIDDEN|OFF SCREEN/);
     userYaml("panes:\n  minCols: 80\n  minRows: 12\n");
-    expect(await verifyPane("h", "p", "w", run, () => true)).toContain("SMALL (< 80x12)");
+    expect(await verifyPane("h", "p", "w", run, () => true)).not.toMatch(/SMALL|NOT SELECTED|MINIMISED|HIDDEN|OFF SCREEN/);
   });
 
   it.each([
