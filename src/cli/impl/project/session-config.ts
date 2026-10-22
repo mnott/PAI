@@ -4,13 +4,11 @@
  * and the name/unname/names commands for curated project shortlists.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold, header, shortenPath, fmtDate, now, renderTable } from "../../lib/utils.js";
 import type { ProjectRow, SessionConfig, ConfigOption } from "./types.js";
 import { resolveIdentifier, requireProject, getProjectAliases, getProject } from "./helpers.js";
-import { paiConfigFilePath } from "../../../daemon/config.js";
+import { paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../../../daemon/config.js";
 import { detectProject } from "../detect.js";
 import { expandMcpNames } from "../../../workers/mcp.js";
 import { readWorkersSection } from "../../../workers/config.js";
@@ -47,26 +45,18 @@ export function getSessionConfig(project: ProjectRow): SessionConfig {
 
 export function getGlobalDefaults(): SessionConfig {
   try {
-    const configPath = paiConfigFilePath();
-    if (existsSync(configPath)) {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      return config.sessionDefaults ?? {};
-    }
+    return (readMainConfigRaw(paiConfigFilePath()).sessionDefaults as SessionConfig | undefined) ?? {};
   } catch { /* ignore */ }
   return {};
 }
 
 export function saveGlobalDefaults(defaults: SessionConfig): void {
   const configPath = paiConfigFilePath();
-  let config: Record<string, unknown> = {};
-  try {
-    if (existsSync(configPath)) {
-      config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    }
-  } catch { /* ignore */ }
+  // Throws, naming the file and the parse error, when the config exists but is unreadable:
+  // writing {sessionDefaults} alone would replace the user's whole config.
+  const config = readMainConfigRaw(configPath);
   config.sessionDefaults = defaults;
-  mkdirSync(dirname(configPath), { recursive: true });
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+  writeMainConfigRaw(config, configPath);
 }
 
 function applyPreset(config: SessionConfig, preset: string): SessionConfig {
