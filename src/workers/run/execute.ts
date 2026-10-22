@@ -351,6 +351,9 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     throw e;
   }
   const proc = spawned;
+  // a spawn failure is emitted on the next tick, before the listener below exists in a headless run
+  let earlyError: Error | null = null;
+  proc.once("error", (e) => (earlyError = e));
   t0 = Date.now();
 
   const fold = emptyCodexResult();
@@ -390,7 +393,9 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   });
 
   const rc = await new Promise<number>((resolve, reject) => {
-    proc.on("error", (e) => void failRun(e).then(() => reject(e), () => reject(e)));
+    const onError = (e: Error) => void failRun(e).then(() => reject(e), () => reject(e));
+    if (earlyError) onError(earlyError);
+    else proc.on("error", onError);
     proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
   });
 

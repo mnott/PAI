@@ -270,6 +270,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     throw e;
   }
   const proc = spawned;
+  // a spawn failure is emitted on the next tick, before the listener below exists in a headless run
+  let earlyError: Error | null = null;
+  proc.once("error", (e) => (earlyError = e));
   t0 = Date.now();
   // claude's stderr: passed through, and the tail kept for a start that dies before any model event
   proc.stderr?.on("data", (d: Buffer) => {
@@ -470,7 +473,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   }
 
   let rc = await new Promise<number>((resolve, reject) => {
-    proc.on("error", (e) => void failRun(e).then(() => reject(e), () => reject(e)));
+    const onError = (e: Error) => void failRun(e).then(() => reject(e), () => reject(e));
+    if (earlyError) onError(earlyError);
+    else proc.on("error", onError);
     proc.on("close", (code) => resolve(code ?? (state.killed ? 143 : 1)));
   });
   if (state.troubleTimer) clearInterval(state.troubleTimer);
