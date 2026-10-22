@@ -40,6 +40,9 @@ html.locked .cgrip,html.locked .cmin,html.locked .cspan,html.locked .wgutter,htm
 .nw{white-space:nowrap}.ltab{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 12px;font-size:12px;text-align:left}.ltab .nw{overflow:hidden;text-overflow:ellipsis}
 .phead{font-weight:600;font-size:12px;margin-bottom:4px}
 .gauge svg{display:block;width:100%;height:auto}
+/* provider card: the gauge row wraps on WIDTH only; a short card scales the dials down (never an inner scrollbar, whose width would force the wrap) */
+.gauges.fit{height:100%;overflow:hidden;container-type:size;align-content:center}.gauges.fit .gauge svg{height:clamp(24px,calc(100cqh - 46px),70px)}
+@container (max-height:110px){.gauges.fit .gauge .s{display:none}.gauges.fit .gauge svg{height:clamp(24px,calc(100cqh - 22px),70px)}}
 .gauge .n{font-weight:600}.gauge .s{color:var(--dim);font-size:12px}
 .tw{max-width:100%}
 /* auto layout: a column is never squeezed under its min-content (a nowrap header or

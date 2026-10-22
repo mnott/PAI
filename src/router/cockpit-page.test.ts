@@ -610,3 +610,13 @@ describe("local server tiles say why they are empty", () => {
     expect(COCKPIT_HTML).toContain("server reports no prefix-cache counter");
   });
 });
+
+describe("provider limits card gauge fit", () => {
+  it("lays gauges out on width only: fit container, no inner scroll, dials scale with height", () => {
+    const html = cockpitHtml();
+    expect(html).toContain('class="gauges fit"');
+    expect(html).toMatch(/\.gauges\.fit\{[^}]*height:100%[^}]*overflow:hidden[^}]*container-type:size/);
+    expect(html).toContain("@container (max-height:110px){.gauges.fit .gauge .s{display:none}");
+    expect(html).not.toMatch(/\.gauges\.fit[^{]*\{[^}]*flex-direction:column/);
+  });
+});
