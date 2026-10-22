@@ -45,3 +45,11 @@ export function fixturePool() {
     offReason: null, message: "up",
   };
 }
+
+/** fixturePool with one slot: the slots card draws a table (an empty pool draws only its note and is fitted to it). */
+export function fixturePoolWithSlot() {
+  return {
+    ...fixturePool(),
+    slots: [{ provider: "anthropic", model: "opus", cwd: "/work/dev/app", state: "idle", task: null, branch: null, firstRequest: "warm", ageSecs: 600, idleSecs: 60, tasks: 1, tokensCarried: 1_200_000, hitRatio: 0.27 }],
+  };
+}

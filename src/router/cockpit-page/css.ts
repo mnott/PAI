@@ -115,6 +115,7 @@ main.win .card.min .chead{border-bottom:0}
 main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto;contain:strict}
 main.win .cbody{scrollbar-width:thin;scrollbar-color:var(--line) transparent}main.win .cbody::-webkit-scrollbar{width:8px;height:8px}main.win .cbody::-webkit-scrollbar-track{background:transparent}main.win .cbody::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 main.win .cbody.cgroup{overflow:hidden}
+main.win .tw>.dim{display:block;padding:6px 10px}
 main.win .card.min .cbody{display:none}
 .wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}
 .wgutter[data-axis=y]{cursor:row-resize}

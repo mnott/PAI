@@ -165,7 +165,11 @@ function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.ty
 function fitCfg(){
  var f={},id,c;
  for(id in W.fit)f[id]=W.fit[id];
- for(id in W.cards){c=W.cards[id];if(f[id]===undefined&&c.base&&(TYPES[c.type]||{}).resize&&!kidsOf(id)&&!fitNarrow(c))f[id]=c.base}
+ for(id in W.cards){
+  c=W.cards[id];
+  if(!c.base||!(TYPES[c.type]||{}).resize||kidsOf(id)||fitNarrow(c)||fitPlain(c))continue;
+  if(f[id]===undefined||c.type==="table")f[id]=c.base; // a table that gained rows leaves its note-sized reading
+ }
  return f;
 }
 /** Auto layout (no saved layout, no user move yet): a default card is as tall as its content when its content first renders (then fixed; it only grows when the content would overflow). The content height of a card is
@@ -173,8 +177,10 @@ function fitCfg(){
  *  draws at the body size (it has resize) or a group has no reading and keeps its default height. */
 /** A stacked (narrow) card that is not a chart is measured by its content like any other, though its type has a resize hook: its first placement is no reading. */
 function fitNarrow(c){return c.type!=="chart"&&c.body.clientWidth>0&&c.body.clientWidth<W.cfg.narrowW}
+/** A table card that draws no table (its note, e.g. "no slots") is measured by its content: it has nothing to size to the body. */
+function fitPlain(c){return c.type==="table"&&c.mounted&&!c.body.querySelector("table")}
 function fitEligible(c){
- return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&(!(TYPES[c.type]||{}).resize||fitNarrow(c))&&c.el.style.display!=="none"&&c.body.clientWidth>0;
+ return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&(!(TYPES[c.type]||{}).resize||fitNarrow(c)||fitPlain(c))&&c.el.style.display!=="none"&&c.body.clientWidth>0;
 }
 /** Content height of every eligible card at once: each card is squeezed to its header (the body box is 0 high), where the
  *  body's scrollHeight is its content; heights and scroll offsets are put back before anything paints. */

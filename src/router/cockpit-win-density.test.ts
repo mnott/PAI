@@ -66,7 +66,7 @@ const PROBE = `<script>setTimeout(function(){
 var out={};Array.prototype.forEach.call(document.querySelectorAll("#win-root .card"),function(c){
  if(c.style.display==="none"||c.classList.contains("min"))return;
  var ty=c.getAttribute("data-type"),def=(Win.cfg().types||{})[ty]||{};
- if(def.resize||c.querySelector(".card"))return;
+ if((def.resize&&c.getAttribute("data-card")!=="pool.slots")||c.querySelector(".card"))return; // the slots table with only its note is fitted by content
  var b=c.querySelector(".cbody").getBoundingClientRect(),max=0;
  Array.prototype.forEach.call(c.querySelectorAll(".cbody *"),function(e){if(e.children.length||!e.getClientRects().length)return;var r=e.getBoundingClientRect();if(r.height>0&&r.bottom-b.top>max)max=r.bottom-b.top});
  out[c.getAttribute("data-card")]={y:Math.round(c.getBoundingClientRect().top),type:ty,h:Math.round(c.getBoundingClientRect().height),content:Math.round(28+max)};
@@ -106,16 +106,20 @@ function run(args: string[]): Promise<string> {
   });
 }
 
+type Probe = { err: string | null; cards: Record<string, { y: number; type: string; h: number; content: number }> };
+async function probe(size: string, shot?: string): Promise<Probe> {
+  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + size)}`, `--window-size=${size}`, "--virtual-time-budget=8000"];
+  const url = `${base}/page`;
+  const dom = await run([...args, "--dump-dom", url]);
+  if (shot) await run([...args, `--screenshot=${shot}`, url]);
+  const m = /data-r="([^"]*)"/.exec(dom);
+  if (!m) throw new Error("no probe result in dump");
+  return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as Probe;
+}
+
 describe.skipIf(!CHROME)("every default card is as tall as its content", () => {
   it(`no card is more than ${SLACK} px taller than its content`, async () => {
-    const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p")}`, "--window-size=1300,5000", "--virtual-time-budget=8000"];
-    const url = `${base}/page`;
-    const dom = await run([...args, "--dump-dom", url]);
-    const shot = process.env.PAI_DENSITY_SHOT;
-    if (shot) await run([...args, `--screenshot=${shot}`, url]);
-    const m = /data-r="([^"]*)"/.exec(dom);
-    if (!m) throw new Error("no probe result in dump");
-    const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as { err: string | null; cards: Record<string, { y: number; type: string; h: number; content: number }> };
+    const r = await probe("1300,5000", process.env.PAI_DENSITY_SHOT);
     expect(r.err).toBeNull();
     const ids = Object.keys(r.cards).filter((i) => i !== "cache.none"); // the empty-data placeholder rides the ring type (min 130)
     expect(ids.length).toBeGreaterThan(15);
@@ -125,4 +129,14 @@ describe.skipIf(!CHROME)("every default card is as tall as its content", () => {
     const off = ids.filter((i) => r.cards[i]!.h - rowContent(i) > SLACK).map((i) => `${i}(${r.cards[i]!.h} vs ${rowContent(i)})`);
     expect(off).toEqual([]);
   }, 120_000);
+
+  for (const w of [1500, 1300]) {
+    it(`${w} px: the slots table showing only "no slots" is at most ${SLACK} px taller than its content`, async () => {
+      const r = await probe(`${w},700`);
+      expect(r.err).toBeNull();
+      const c = r.cards["pool.slots"]!;
+      expect(c, "pool.slots is measured").toBeDefined();
+      expect(c.h, `pool.slots ${c.h} vs content ${c.content}`).toBeLessThanOrEqual(c.content + SLACK);
+    }, 120_000);
+  }
 });

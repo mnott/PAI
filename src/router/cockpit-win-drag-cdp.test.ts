@@ -14,7 +14,7 @@ import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CHROME, closeBrowser, launch, sleep } from "./cdp-browser.js";
 import { cockpitHtml } from "./cockpit-page.js";
-import { fixtureData, fixtureLimits, fixturePool, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
+import { fixtureData, fixtureLimits, fixturePool, fixturePoolWithSlot, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
 
 let server: Server;
 let base = "";
@@ -27,7 +27,7 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
     if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
     if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
-    if (url.startsWith("/cockpit/pool")) return json(fixturePool());
+    if (url.startsWith("/cockpit/pool")) return json(fixturePoolWithSlot());
     if (url.startsWith("/cockpit/")) return json({});
     if (url.startsWith("/page")) { res.setHeader("content-type", "text/html"); return res.end(cockpitHtml()); }
     res.statusCode = 404;

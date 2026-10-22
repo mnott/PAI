@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-import { fixtureData, fixtureLimits, fixturePool, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
+import { fixtureData, fixtureLimits, fixturePool, fixturePoolWithSlot, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
 
 const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 const HEAD = 28;
@@ -33,7 +33,7 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
     if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
     if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
-    if (url.startsWith("/cockpit/pool")) return json(fixturePool());
+    if (url.startsWith("/cockpit/pool")) return json(fixturePoolWithSlot());
     if (url.startsWith("/frame")) {
       const w = /w=(\d+)/.exec(url)?.[1] ?? "822";
       res.setHeader("content-type", "text/html");
