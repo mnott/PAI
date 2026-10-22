@@ -6,7 +6,7 @@
  * restore.ts, via docker exec) is the real backup for that backend.
  */
 
-import { existsSync, copyFileSync, mkdirSync, openSync, readSync, closeSync, rmSync, statSync } from "node:fs";
+import { existsSync, chmodSync, copyFileSync, mkdirSync, openSync, readSync, closeSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import BetterSqlite3 from "better-sqlite3";
