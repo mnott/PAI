@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { tick, isNotReceivedReply, type Prober, type ProbeState } from "./poller.js";
+import { tick, webhookFromStatus, isNotReceivedReply, type Prober, type ProbeState } from "./poller.js";
 import { RUNNING_LABEL } from "./scheduler.js";
 import type { Task } from "./types.js";
 
@@ -1193,5 +1193,55 @@ describe("isNotReceivedReply", () => {
     ]) {
       expect(isNotReceivedReply(no), JSON.stringify(no)).toBe(false);
     }
+  });
+});
+
+describe("per-task isolation", () => {
+  it("a provider failure on one task keeps earlier state and later tasks", async () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), "pai-poller-"));
+    const mk = (id: string): Task => ({ ...dueTask(), id, title: id });
+    const setLabels = vi.fn().mockImplementation(async (id: string) => {
+      if (id === "b") throw new Error("todoist 503");
+    });
+    const provider = {
+      listOpen: vi.fn().mockResolvedValue([mk("a"), mk("b"), mk("c")]),
+      setLabels,
+      comment: vi.fn().mockResolvedValue(undefined),
+    } as never;
+    const stateFile = pathJoin(dir, "state.json");
+    try {
+      const report = await tick({
+        provider,
+        transport: fakeTransport("delivered"),
+        prober: null,
+        autoDispatch: true,
+        dryRun: false,
+        now: NOW,
+        stateFile,
+        webhookActive: true,
+      });
+      const saved = JSON.parse(readFileSync(stateFile, "utf-8"));
+      expect(Object.keys(saved.lastSeenDue).sort()).toEqual(["a", "b", "c"]);
+      expect(setLabels.mock.calls.map((c) => c[0])).toContain("c");
+      expect(report.decisions.some((d) => d.note.startsWith("error: todoist 503"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("webhookFromStatus", () => {
+  it("accepts the positive status", () => {
+    expect(webhookFromStatus("Authorised 2026-08-01T10:00:00Z\nScope: data:read\nOK — the token works right now.\n")).toBe(true);
+  });
+  it.each([
+    "No Todoist authorisation on file — webhooks will not be delivered.",
+    "Not authorized",
+    "unauthorised: run aibroker todoist auth to grant",
+    "grant: missing",
+    "Authorised 2026-08-01T10:00:00Z\nFAILING — 401.",
+    "",
+  ])("rejects %j", (out) => {
+    expect(webhookFromStatus(out)).toBe(false);
   });
 });

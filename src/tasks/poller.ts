@@ -432,10 +432,20 @@ function detectWebhook(bin = "aibroker"): boolean {
     });
     // A grant on file is the only thing that matters; without one the receiver
     // can verify webhooks but cannot resolve them, so no completion lands.
-    return /authoris|authoriz|token on file|grant/i.test(out) && !/no (token|grant)/i.test(out);
+    return webhookFromStatus(out);
   } catch {
     return false;
   }
+}
+
+/**
+ * Read `aibroker todoist status` output. Only an explicit positive line counts:
+ * "Authorised <timestamp>" and no "FAILING" verdict. Negative texts ("No Todoist
+ * authorisation on file", "Not authorized", "grant: missing") and a token that
+ * is on file but rejected both read as no webhook.
+ */
+export function webhookFromStatus(out: string): boolean {
+  return /^Authori[sz]ed\s+\S/m.test(out) && !/^FAILING\b/m.test(out);
 }
 
 /**
@@ -493,6 +503,7 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
   // Resolved once per tick, not per task: it is a property of the machine.
   const webhookActive = opts.webhookActive ?? detectWebhook();
 
+  try {
   for (const task of ordered) {
     // Captured before lastSeenDue is overwritten below — both the trigger
     // detection and the webhook-trigger signature need the PREVIOUS tick's value.
@@ -508,113 +519,122 @@ export async function tick(opts: TickOptions): Promise<TickReport> {
     });
     let note = "";
 
-    // Recorded for every task on every tick, whatever was decided — the next
-    // tick's ability to spot a hand-ticked task depends on it, and skipping the
-    // uninteresting cases is what would leave that blind.
-    if (!opts.dryRun && task.due) state.lastSeenDue[task.id] = task.due;
+    try {
 
-    // Dated on first sight and dropped the moment the claim clears, so the next
-    // claim on the same task is timed from when IT appeared rather than from a
-    // stale entry belonging to a previous run.
-    if (!opts.dryRun) {
-      if (isRunning(task)) {
-        // A claim appearing at the same moment the due date advanced by exactly
-        // one period is the signature of a webhook-triggered run: the user
-        // ticked the box, AIBroker claimed it and dispatched, all before this
-        // tick. Recorded so the occurrence the tick consumed is given back after
-        // the run, the same as for a trigger this poller handled itself.
-        //
-        // Recorded ONLY — the date is not written back now. AIBroker decides
-        // whether the session may release its claim by checking that the due
-        // date has advanced past the occurrence it noted when claiming, so
-        // moving that date mid-run would make a finished run look unfinished
-        // and strand the claim.
-        if (state.claimSeenAt[task.id] === undefined && task.recurrence && prevDue !== undefined) {
-          if (wasTicked(task, prevDue)) {
-            state.triggeredRestore[task.id] = restoreDueString(task.recurrence, prevDue);
+      // Recorded for every task on every tick, whatever was decided — the next
+      // tick's ability to spot a hand-ticked task depends on it, and skipping the
+      // uninteresting cases is what would leave that blind.
+      if (!opts.dryRun && task.due) state.lastSeenDue[task.id] = task.due;
+
+      // Dated on first sight and dropped the moment the claim clears, so the next
+      // claim on the same task is timed from when IT appeared rather than from a
+      // stale entry belonging to a previous run.
+      if (!opts.dryRun) {
+        if (isRunning(task)) {
+          // A claim appearing at the same moment the due date advanced by exactly
+          // one period is the signature of a webhook-triggered run: the user
+          // ticked the box, AIBroker claimed it and dispatched, all before this
+          // tick. Recorded so the occurrence the tick consumed is given back after
+          // the run, the same as for a trigger this poller handled itself.
+          //
+          // Recorded ONLY — the date is not written back now. AIBroker decides
+          // whether the session may release its claim by checking that the due
+          // date has advanced past the occurrence it noted when claiming, so
+          // moving that date mid-run would make a finished run look unfinished
+          // and strand the claim.
+          if (state.claimSeenAt[task.id] === undefined && task.recurrence && prevDue !== undefined) {
+            if (wasTicked(task, prevDue)) {
+              state.triggeredRestore[task.id] = restoreDueString(task.recurrence, prevDue);
+            }
           }
+          state.claimSeenAt[task.id] ??= now;
+        } else {
+          delete state.claimSeenAt[task.id];
         }
-        state.claimSeenAt[task.id] ??= now;
-      } else {
-        delete state.claimSeenAt[task.id];
       }
+
+      switch (d.action) {
+        case "wait":
+          continue; // not worth reporting
+
+        case "triggered": {
+          const r = await handleDispatch(task, 0, opts, state, now);
+          note = `ticked off by hand — ${r.note}`;
+          if (!opts.dryRun) {
+            if (!r.parked) report.dispatched++;
+            if (r.alarm) report.stuck++;
+            note += await restoreSchedule(task, d.restoreTo, opts, state);
+            // Held for the completion, which advances the recurrence again.
+            if (d.restoreTo) state.triggeredRestore[task.id] = d.restoreTo;
+          }
+          break;
+        }
+
+        case "skip":
+          note = d.reason;
+          break;
+
+        case "running":
+          note = `${d.elapsedMinutes}m elapsed`;
+          break;
+
+        case "dispatch": {
+          const r = await handleDispatch(task, d.overdueMinutes, opts, state, now);
+          note = r.note;
+          if (!opts.dryRun) {
+            // A parked task is not dispatched, so it must not be counted as one.
+            // `dispatched: 1, stuck: 1` for a task nothing tried to launch reads
+            // as a dispatch that then went wrong — the opposite of what happened.
+            if (!r.parked) report.dispatched++;
+            if (r.alarm) report.stuck++;
+          }
+          break;
+        }
+
+        case "complete":
+          note = await handleComplete(task, d.durationMinutes, opts, state, now);
+          if (!opts.dryRun) report.completed++;
+          break;
+
+        case "abandoned": {
+          note = `claimed ${d.elapsedMinutes}m ago, past the ${d.thresholdMinutes}m limit — releasing the claim`;
+          if (!opts.dryRun) {
+            await releaseClaim(task, opts.provider, state);
+            // Reported as needing attention: a run that had to be released this
+            // way did not finish, and the next tick re-dispatching it is a repair,
+            // not business as usual.
+            report.stuck++;
+          }
+          break;
+        }
+
+        case "probe":
+        case "orphaned": {
+          const elapsed = d.action === "probe" ? d.elapsedMinutes : null;
+          const result = await handleProbe(task, elapsed, opts, state, now);
+          note = result.note;
+          if (!opts.dryRun) {
+            report.probed++;
+            if (result.stuck) report.stuck++;
+            if (result.dispatched) report.dispatched++;
+          }
+          break;
+        }
+      }
+
+      report.decisions.push({ decision: d, note });
+    } catch (err) {
+      // One task failing must not cost the others their tick, nor lose the
+      // state already changed for earlier ones.
+      report.decisions.push({ decision: d, note: `error: ${err instanceof Error ? err.message : String(err)}` });
     }
-
-    switch (d.action) {
-      case "wait":
-        continue; // not worth reporting
-
-      case "triggered": {
-        const r = await handleDispatch(task, 0, opts, state, now);
-        note = `ticked off by hand — ${r.note}`;
-        if (!opts.dryRun) {
-          if (!r.parked) report.dispatched++;
-          if (r.alarm) report.stuck++;
-          note += await restoreSchedule(task, d.restoreTo, opts, state);
-          // Held for the completion, which advances the recurrence again.
-          if (d.restoreTo) state.triggeredRestore[task.id] = d.restoreTo;
-        }
-        break;
-      }
-
-      case "skip":
-        note = d.reason;
-        break;
-
-      case "running":
-        note = `${d.elapsedMinutes}m elapsed`;
-        break;
-
-      case "dispatch": {
-        const r = await handleDispatch(task, d.overdueMinutes, opts, state, now);
-        note = r.note;
-        if (!opts.dryRun) {
-          // A parked task is not dispatched, so it must not be counted as one.
-          // `dispatched: 1, stuck: 1` for a task nothing tried to launch reads
-          // as a dispatch that then went wrong — the opposite of what happened.
-          if (!r.parked) report.dispatched++;
-          if (r.alarm) report.stuck++;
-        }
-        break;
-      }
-
-      case "complete":
-        note = await handleComplete(task, d.durationMinutes, opts, state, now);
-        if (!opts.dryRun) report.completed++;
-        break;
-
-      case "abandoned": {
-        note = `claimed ${d.elapsedMinutes}m ago, past the ${d.thresholdMinutes}m limit — releasing the claim`;
-        if (!opts.dryRun) {
-          await releaseClaim(task, opts.provider, state);
-          // Reported as needing attention: a run that had to be released this
-          // way did not finish, and the next tick re-dispatching it is a repair,
-          // not business as usual.
-          report.stuck++;
-        }
-        break;
-      }
-
-      case "probe":
-      case "orphaned": {
-        const elapsed = d.action === "probe" ? d.elapsedMinutes : null;
-        const result = await handleProbe(task, elapsed, opts, state, now);
-        note = result.note;
-        if (!opts.dryRun) {
-          report.probed++;
-          if (result.stuck) report.stuck++;
-          if (result.dispatched) report.dispatched++;
-        }
-        break;
-      }
-    }
-
-    report.decisions.push({ decision: d, note });
   }
 
-  if (!opts.dryRun) {
-    reconcileWithDisk(state, stateFile);
-    saveState(state, stateFile);
+  } finally {
+    if (!opts.dryRun) {
+      reconcileWithDisk(state, stateFile);
+      saveState(state, stateFile);
+    }
   }
   return report;
 }
