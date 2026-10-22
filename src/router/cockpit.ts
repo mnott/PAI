@@ -32,6 +32,7 @@ import { endpointRows, selectorChoices, type EndpointRow } from "./cockpit-endpo
 import { workersYamlPath } from "../workers/workers-config.js";
 import { parse as parseYaml } from "yaml";
 import { readLocalStatus } from "../workers/local-status.js";
+import { localTierOrder, pickLocal } from "../workers/local-provider.js";
 import { providerCap, queueRows, reorderQueue, reorderQueueTo } from "../workers/capacity.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { formatWorktreesStats, worktreesStatsCached } from "../workers/worktree.js";
@@ -599,6 +600,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
     registryModels: registryModelsNow(),
     running: (await localRunningInfo())[0] ?? null,
     runningModels: await localRunningInfo(),
+    localDefaultTier: await localDefaultTier(),
     starting: currentStart(),
     // the configured start/stop commands per runtime (models.runtimes) and what PAI itself uses
     runtimeCommands: runtimeCommandsFor(),
@@ -733,6 +735,20 @@ function localInstanceRows(): Array<{ id: string; model: string; port: number; p
     });
   } catch {
     return [];
+  }
+}
+
+/** The tier of the running model local work goes to: the owner's pick (local-provider.ts pickLocal), null when none runs. */
+async function localDefaultTier(): Promise<string | null> {
+  try {
+    const { workers } = readWorkersSection();
+    const logDir = workersLogDir(workers);
+    const st = readLocalStatus(logDir);
+    if (!st?.running.length) return null;
+    const pick = pickLocal(st.running.map((r) => r.provider), logDir, workersYamlPath(), localTierOrder(workers));
+    return Object.values(readLocalConfig(workersYamlPath()).tiers).find((t) => t.provider === pick.name)?.tier ?? null;
+  } catch {
+    return null;
   }
 }
 

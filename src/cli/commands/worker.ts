@@ -163,7 +163,8 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
     kind: "run",
     run: {
       providerFlag: str(o.provider),
-      localFlag: o.local === true ? true : undefined,
+      localFlag: o.local === true || typeof o.local === "string" ? true : undefined,
+      localName: typeof o.local === "string" ? o.local : undefined,
       urgent: o.urgent === true ? true : undefined,
       localOk: o["local-ok"] === true ? true : undefined,
       cloud: o.cloud === true ? true : undefined,
@@ -203,7 +204,7 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   const task = plan.kind === "chain" ? plan.chain.brief : parseRunnerArgs(plan.run.claudeArgs).prompt ?? undefined;
   const label = plan.kind === "run" ? plan.run.label : plan.chain.label;
   // two failed local attempts on this label: the next start goes to the cloud (route-classifier.ts)
-  if (!where && !forceLocal && label && !target.providerFlag && !flag(ctx, "local") && !flag(ctx, "cloud") && !flag(ctx, "local-ok")) {
+  if (!where && !forceLocal && label && !target.providerFlag && !ctx.opts.local && !flag(ctx, "cloud") && !flag(ctx, "local-ok")) {
     try {
       const w = readWorkersSection().workers;
       const n = localFailures(ledgerPath(workersLogDir(w)), label, (p) => {
@@ -219,7 +220,7 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
     }
   }
   if (!where && !now && model !== "fast" && model !== "default") return;
-  if (where && flag(ctx, "local")) throw new Error("--where and --local both name where to run; use one");
+  if (where && ctx.opts.local) throw new Error("--where and --local both name where to run; use one");
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
   if (t.provider) target.providerFlag = t.provider;
@@ -259,7 +260,7 @@ const runCommand: CommandDef = {
     { name: "batch", type: "boolean", summary: "This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min" },
     { name: "now", type: "boolean", summary: "Go ahead of the runs waiting for a slot on the provider" },
     { name: "force-local", type: "boolean", summary: "With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts)" },
-    { name: "local", type: "boolean", summary: "Run on the local model server PAI resolves (the one that answers); never pick a local provider by name" },
+    { name: "local", type: "string", value: "NAME", optionalValue: true, summary: "Run on the local model PAI resolves: the first running one in the class's routing tier order; --local NAME picks a specific running model" },
     { name: "local-ok", type: "boolean", summary: "This run may go to a local provider under the prefer-cloud policy" },
     { name: "cloud", type: "boolean", summary: "This run goes to the cloud under the prefer-local or auto policy" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label shown in ps, follow and the status line" },

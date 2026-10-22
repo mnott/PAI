@@ -130,7 +130,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // "local" is not the mechanism.
   if (opts.localFlag) {
     try {
-      const res = await resolveLocalProvider(config, logDir);
+      const res = await resolveLocalProvider(config, logDir, { className: routeClassOf(opts), name: opts.localName });
       providerFlag = res.name;
       providerWhy = "local";
       // a tier-launched server answers although its provider entry is off; it is running, so this run may use it

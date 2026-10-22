@@ -9,10 +9,12 @@
  * Local providers are those whose url is loopback (127.0.0.1 / localhost /
  * ::1). Each is probed on its port with the same HTTP check (GET /v1/models, 2xx with JSON) `pai setups` uses
  * to list only running local providers (cli/lib/setups.ts — one
- * implementation, imported here). Exactly one up → it. Several up → the one
- * workers.yaml's top-level `local:` key names (like `active:`), else the one
- * most recently started/used (its newest worker status), and the choice says
- * which. None up → an error naming that no local model server is running.
+ * implementation, imported here). Exactly one up → it. Several up → the first
+ * running one in the routing tier order (the tier the worker class maps to, the
+ * T2 worker tier without a class), else the one workers.yaml's top-level
+ * `local:` key names (like `active:`), else the one most recently started/used
+ * (its newest worker status; registry order on a tie), and the choice says
+ * which. `--local <name>` picks a specific running model instead. None up → an error naming that no local model server is running.
  *
  * The value `local` is the mechanism everywhere: `pai worker run --local`,
  * the MCP delegation tools' `local: true`, and a plan's `provider: local`
@@ -47,6 +49,7 @@ import { PORT_TIMEOUT_MS, httpModelsCheck, providerModelIds, type PortCheck } fr
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
+import { classRoute, entryProvider, type TierDef } from "./route-lists.js";
 
 export { PORT_TIMEOUT_MS, httpModelsCheck, type PortCheck, isLocalCandidate, tierProviderNames };
 
@@ -124,7 +127,19 @@ export interface LocalResolution {
 
 export class NoLocalServerError extends WorkersConfigError {}
 
+/** The tier --local without a class uses: the worker tier. */
+export const DEFAULT_LOCAL_TIER = "t2";
+
+/** The providers a tier lists, in order (the tier a class maps to; the worker tier without a class). */
+export function localTierOrder(cfg: { tiers?: TierDef[] }, className?: string): string[] {
+  return classRoute(cfg.tiers ?? [], className ?? DEFAULT_LOCAL_TIER).map(entryProvider);
+}
+
 export interface ResolveLocalOpts {
+  /** The worker class: its tier's list orders the running local models (default: the worker tier). */
+  className?: string;
+  /** A specific running local model (`--local <name>`); an error listing the running ones when it is not running. */
+  name?: string;
   /** Port probe seam (tests inject; default httpModelsCheck, short timeout). */
   check?: PortCheck;
   /** workers.yaml whose `local:` key decides among several up servers. */
@@ -137,7 +152,7 @@ export interface ResolveLocalOpts {
  * running local one.
  */
 export async function resolveLocalProvider(
-  cfg: Pick<WorkersConfig, "providers">,
+  cfg: Pick<WorkersConfig, "providers"> & { tiers?: TierDef[] },
   logDir: string,
   opts: ResolveLocalOpts = {}
 ): Promise<LocalResolution> {
@@ -150,15 +165,21 @@ export async function resolveLocalProvider(
     const p = cfg.providers[r.provider];
     return p && isLocalCandidate(p, r.provider, tp);
   });
-  if (cachedUp.length === (cached?.running.length ?? -1) && cachedUp.length) {
-    // the cache lists every running model, the first being the daemon's pick
-    return { name: cachedUp[0].provider, why: `daemon: ${cachedUp[0].why}` };
-  }
-  const up = Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck, tierProviderNames(opts.yamlPath)))
-    .filter(([, running]) => running)
-    .map(([name]) => name);
+  // the cache lists every running model; the pick is made here, by the tier of this run's class
+  const useCache = cachedUp.length === (cached?.running.length ?? -1) && cachedUp.length > 0;
+  const up = useCache
+    ? cachedUp.map((r) => r.provider)
+    : Object.entries(await probeLoopback(cfg, opts.check ?? httpModelsCheck, tp))
+        .filter(([, running]) => running)
+        .map(([name]) => name);
   if (!up.length) throw new NoLocalServerError(noServerMessage());
-  return pickLocal(up, logDir, opts.yamlPath);
+  if (opts.name !== undefined) {
+    if (!up.includes(opts.name)) {
+      throw new NoLocalServerError(`--local ${opts.name}: not a running local model (running: ${up.join(", ")})`);
+    }
+    return { name: opts.name, why: "--local name" };
+  }
+  return pickLocal(up, logDir, opts.yamlPath, localTierOrder(cfg, opts.className));
 }
 
 function noServerMessage(): string {
@@ -169,8 +190,15 @@ function noServerMessage(): string {
 }
 
 /** Which of the running local providers `--local` runs on. Throws when `local:` names one that is not running. */
-export function pickLocal(up: string[], logDir: string, yamlPath: string = workersYamlPath()): LocalResolution {
+export function pickLocal(
+  up: string[],
+  logDir: string,
+  yamlPath: string = workersYamlPath(),
+  tierOrder: string[] = []
+): LocalResolution {
   if (up.length === 1) return { name: up[0], why: "only local server up" };
+  const byTier = tierOrder.find((n) => up.includes(n));
+  if (byTier !== undefined) return { name: byTier, why: "first running in the routing tier order" };
   const pref = readLocalPreference(yamlPath);
   if (pref !== undefined) {
     if (!up.includes(pref)) {
@@ -209,7 +237,7 @@ export function resolveLocalInstances(
 
 /** Probe every local provider and decide which one `--local` runs on. */
 export async function computeLocalStatus(
-  cfg: Pick<WorkersConfig, "providers">,
+  cfg: Pick<WorkersConfig, "providers"> & { tiers?: TierDef[] },
   logDir: string,
   opts: { check?: PortCheck; yamlPath?: string; now?: Date } = {}
 ): Promise<LocalStatus> {
@@ -225,7 +253,7 @@ export async function computeLocalStatus(
     const entry = (name: string, why: string) => ({ provider: name, model: cfg.providers[name]?.models.default ?? "?", why });
     let pick: LocalResolution;
     try {
-      pick = pickLocal(up, logDir, opts.yamlPath);
+      pick = pickLocal(up, logDir, opts.yamlPath, localTierOrder(cfg));
     } catch {
       // `local:` names a provider that is not up: the first running one leads
       pick = { name: up[0], why: "only running local server" };

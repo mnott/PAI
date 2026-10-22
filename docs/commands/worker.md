@@ -54,7 +54,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--batch` | flag | — | This run is part of a fan-out: session-profile fallback skips targets below the profile's parallel_min |
 | `--now` | flag | — | Go ahead of the runs waiting for a slot on the provider |
 | `--force-local` | flag | — | With --where local: keep the run local even when the route classifier sends it to the cloud (infra/install/device/external tasks, 2 failed local attempts) |
-| `--local` | flag | — | Run on the local model server PAI resolves (the one that answers); never pick a local provider by name |
+| `--local NAME` | string | — | Run on the local model PAI resolves: the first running one in the class's routing tier order; --local NAME picks a specific running model |
 | `--local-ok` | flag | — | This run may go to a local provider under the prefer-cloud policy |
 | `--cloud` | flag | — | This run goes to the cloud under the prefer-local or auto policy |
 | `--label TEXT` | string | — | Short task label shown in ps, follow and the status line |
