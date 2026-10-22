@@ -149,6 +149,11 @@ export function clearBranchCommitsCache(): void {
   branchCommitsCache.clear();
 }
 
+/** Number of memoised branch counts (tests). */
+export function branchCommitsCacheSize(): number {
+  return branchCommitsCache.size;
+}
+
 export function branchCommits(s: Record<string, unknown>, now: number = Date.now()): number | null {
   const cwd = typeof s.cwd === "string" ? s.cwd : undefined;
   const id = typeof s.id === "string" ? s.id : undefined;
@@ -159,6 +164,12 @@ export function branchCommits(s: Record<string, unknown>, now: number = Date.now
   const hit = branchCommitsCache.get(key);
   if (hit && now - hit.at < BRANCH_COMMITS_TTL_MS) return hit.n;
   const n = countBranchCommits(cwd, id, base, typeof s.branch === "string" ? s.branch : "");
+  // entries are re-inserted on refresh, so the Map is ordered by age: drop expired ones from the front
+  branchCommitsCache.delete(key);
+  for (const [k, v] of branchCommitsCache) {
+    if (now - v.at < BRANCH_COMMITS_TTL_MS) break;
+    branchCommitsCache.delete(k);
+  }
   branchCommitsCache.set(key, { at: now, n });
   return n;
 }

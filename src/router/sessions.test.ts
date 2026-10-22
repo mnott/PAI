@@ -395,4 +395,18 @@ describe("branchCommits", () => {
     expect(branchCommits(s, 1000 + 31_000)).toBe(2);
     expect(branchCommits({ ...s, id: "none", branch: "" }, 1000)).toBeNull();
   });
+
+  it("drops expired entries when a new key is stored", async () => {
+    const { branchCommits, branchCommitsCacheSize, clearBranchCommitsCache } = await import("./sessions.js");
+    clearBranchCommitsCache();
+    const run = (id: string) => ({ cwd: tmpdir(), id, worktreeBase: "x", branch: "w" });
+    branchCommits(run("a"), 1000);
+    branchCommits(run("b"), 2000);
+    expect(branchCommitsCacheSize()).toBe(2);
+    branchCommits(run("c"), 31_500);
+    expect(branchCommitsCacheSize()).toBe(2);
+    branchCommits(run("d"), 32_500);
+    expect(branchCommitsCacheSize()).toBe(2);
+    clearBranchCommitsCache();
+  });
 });
