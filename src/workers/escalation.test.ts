@@ -18,7 +18,8 @@ import { parseTiersValue } from "./route-lists.js";
 import { effectiveWorkersYamlRaw, shippedWorkersDefaults } from "../config/shipped-defaults.js";
 import { tryEscalate, type ExecuteArgs } from "./run.js";
 import { parseRunnerArgs } from "./args.js";
-import { saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
+import { ledgerPath } from "./paths.js";
 import { defaultWorkersConfig, parseWorkersConfig } from "./config.js";
 
 const tiers: TierDef[] = [
@@ -40,7 +41,7 @@ describe("tiers from config", () => {
     expect(parseTiersValue((shipped as { tiers?: unknown }).tiers).map((t) => t.id)).toEqual(["t0", "t1", "t2"]);
     expect(parseTiersValue((shipped as { tiers?: unknown }).tiers)[0].session).toBe(true);
     expect(d.escalate).toMatchObject({ enabled: true, contextFraction: 0.7, failures: 2 });
-    expect(d.escalate.triggers).toEqual(["context", "missing-tool", "repeated-failure", "loop-stop"]);
+    expect(d.escalate.triggers).toEqual(["context", "missing-tool", "repeated-failure", "loop-stop", "deadline"]);
   });
   it("parses and rejects bad config", () => {
     expect(parseTiersValue([{ id: "a", models: ["glm"] }])[0].classes).toBeUndefined();
@@ -274,5 +275,76 @@ describe("escalate.cloud", () => {
   it("the shipped workers.yaml carries the same values", () => {
     const e = (effectiveWorkersYamlRaw(join(tmpdir(), "no-such-workers.yaml")).workers as { escalate: { cloud: unknown } }).escalate;
     expect(e.cloud).toEqual(DEFAULT_ESCALATE.cloud);
+  });
+});
+
+describe("escalation end to end (fake runner, fake routing table)", () => {
+  type Seen = { providerFlag?: string; modelFlag?: string; localFlag?: boolean; claudeArgs: string[]; label?: string; w2State?: string };
+  for (const [name, stop, why] of [
+    ["loop-stop", { loopStopped: true }, "loop-guard stop"],
+    ["deadline", { timedOut: true }, "max-minutes"],
+  ] as Array<[string, Partial<WorkerStatus>, string]>) {
+    it(`${name}: a local stopped run with saved work is re-run on the t1 route and tracked`, async () => {
+      const logDir = mkdtempSync(join(tmpdir(), "esc-e2e-"));
+      const st = {
+        id: "w1", pid: -1, label: "job", cwd: logDir, term: "", provider: "gyro-m", model: "qwen-local", state: "failed",
+        started: "2026-10-21 01:00:00", updated: "2026-10-21 01:00:00", turns: 0, tools: 0, last: "", rc: 143, secs: 5,
+        branch: "worker/w1", ...stop,
+      } as WorkerStatus;
+      saveStatus(logDir, st);
+      const seen: Seen[] = [];
+      const a = {
+        logDir,
+        config: { tiers, escalate: DEFAULT_ESCALATE },
+        className: "implement",
+        label: "job",
+        parsed: parseRunnerArgs(["-p", "ORIGINAL TASK"]),
+        opts: { claudeArgs: ["-p", "ORIGINAL TASK"], localFlag: true, localName: "gyro-m", providerFlag: "gyro-m" },
+        runner: async (o: Seen & { onWorkerStart?: (id: string) => void }) => {
+          // the escalated run registers as running before it does anything else
+          saveStatus(logDir, { ...st, id: "w2", state: "running", provider: o.providerFlag ?? "", model: o.modelFlag ?? "", escalated: undefined, escalatedTo: undefined } as WorkerStatus);
+          o.onWorkerStart?.("w2");
+          seen.push({ ...o, w2State: loadStatus(logDir, "w2")?.state });
+          return 0;
+        },
+      } as unknown as ExecuteArgs;
+      // the escalation sees the same inputs the exit path passes: commits on the branch, the fall-through reason
+      const rc = await tryEscalate(a, "w1", st, { result: "~" }, undefined, ["abc salvage: uncommitted edits"], why);
+      expect(rc).toBe(0);
+      expect(seen).toHaveLength(1);
+      // t1's own route, never the local provider
+      expect(seen[0].providerFlag).toBe("anthropic");
+      expect(seen[0].modelFlag).toBe("opus");
+      expect(seen[0].localFlag).toBeUndefined();
+      // the spec opens with the handoff and the merge instruction naming the stopped branch
+      const spec = seen[0].claudeArgs[1];
+      expect(spec.startsWith("[escalated t2→t1")).toBe(true);
+      expect(spec).toContain("Continue, do not restart: first git merge worker/w1");
+      expect(spec.endsWith("ORIGINAL TASK")).toBe(true);
+      // the stopped run points at the escalated one
+      const after = loadStatus(logDir, "w1")!;
+      expect(after.escalated).toMatch(/^escalated t2→t1: /);
+      expect(after.escalatedTo).toBe("w2");
+      // the ledger has the escalation
+      expect(readFileSync(ledgerPath(logDir), "utf8")).toMatch(/WORKER-ESCALATE id=w1 from=t2\/qwen-local to=t1\/anthropic\/opus/);
+      // the escalated run is queued/running, not lost
+      expect(["queued", "running"]).toContain(seen[0].w2State);
+    });
+  }
+
+  it("deadline with nothing saved does not escalate at failure 1 (repeated-failure rule)", () => {
+    expect(detectTrigger({ timedOut: true, commits: [], failures: 1 })).toBeNull();
+    expect(detectTrigger({ timedOut: true, commits: [], failures: 2 })?.kind).toBe("repeated-failure");
+    expect(detectTrigger({ timedOut: true, salvaged: true })?.kind).toBe("deadline");
+  });
+
+  it("a timed-out run kept for review (it committed) still escalates; a loop-stop kept for review does not", () => {
+    expect(planEscalation({ ...base, timedOut: true, failures: 1, failureWhy: "max-minutes", keptForReview: true })?.trigger.kind).toBe("deadline");
+    expect(planEscalation({ ...base, loopStopped: true, failures: 1, keptForReview: true })).toBeNull();
+  });
+
+  it("no deadline trigger in config -> a timed-out run waits for the failures rule", () => {
+    const cfg = { ...DEFAULT_ESCALATE, triggers: DEFAULT_ESCALATE.triggers.filter((t) => t !== "deadline") };
+    expect(planEscalation({ ...base, cfg, timedOut: true, failures: 1 })).toBeNull();
   });
 });
