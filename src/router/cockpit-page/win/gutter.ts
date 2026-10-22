@@ -40,7 +40,10 @@ export type WinResize = (
  *  Sizes are read from the laid-out rects (a split neighbour spans its leaves).
  *  Refused (null): bad path or index, a minimized or ghost neighbour, a row in narrow mode
  *  (stacked), no rects, or a neighbour below its minW/minH (a type's own value wins). */
-export const WIN_GUTTER_JS = String.raw`function winGMinOf(cfg,kids,node,axis){
+/** winLocked() is the one owner of "is the layout locked": the html.locked class, set from pai.cockpit.lock by the page. */
+export const WIN_GUTTER_JS = String.raw`
+function winLocked(){return typeof document!=="undefined"&&!!document.documentElement&&document.documentElement.classList.contains("locked")}
+function winGMinOf(cfg,kids,node,axis){
  var t={};
  if(node.k==="c"){
   var ty=cfg.leafTypes&&cfg.leafTypes[node.id];
@@ -181,6 +184,7 @@ function winGParse(g){
  *  pointercancel restores the start tree. */
 function winGutterDrag(doc,win,opts){
  function down(e){
+  if(winLocked())return;
   var g=e.target&&e.target.closest?e.target.closest(".wgutter"):null;
   var p=g?winGParse(g):null;
   if(!p)return;
@@ -214,6 +218,7 @@ function winGutterDrag(doc,win,opts){
 /** Keyboard: arrows on a focused gutter resize by step px (default 16); one layout
  *  operation per press. Returns true when the key was for a gutter (even if refused). */
 function winGutterKey(e,opts,step){
+ if(winLocked())return false;
  var g=e.target&&e.target.closest?e.target.closest(".wgutter"):null;
  var p=g?winGParse(g):null;
  if(!p)return false;

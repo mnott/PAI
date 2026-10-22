@@ -421,7 +421,7 @@ function crossTabWire(){
  window.addEventListener("pointerup",up,true);window.addEventListener("pointercancel",up,true);
 }
 function toggleMin(id){
- var c=W.cards[id];if(!c)return;
+ var c=W.cards[id];if(!c||winLocked())return;
  W.st[id]=W.st[id]||{};
  W.st[id].min=isMin(id)?0:1;
  relayout();save();

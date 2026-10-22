@@ -144,6 +144,7 @@ function winDragInit(doc,win,opts){
  function onCancel(){if(D){status(D.id,"","");endPointer()}}
  function onEsc(e){if(e.key==="Escape")onCancel()}
  function onDown(e){
+  if(typeof winLocked==="function"&&winLocked())return;
   var g=e.target.closest?e.target.closest(".cgrip"):null;
   if(!g||D||K||(e.button&&e.button!==0))return;
   var card=g.closest(".card");
@@ -190,6 +191,7 @@ function winDragInit(doc,win,opts){
   refocus(id);
  }
  function onKey(e){
+  if(typeof winLocked==="function"&&winLocked()){if(e.target.closest&&e.target.closest(".cgrip")&&(e.key==="Enter"||e.key===" "||DD_ARROW[e.key]))e.preventDefault();return}
   var g=e.target.closest?e.target.closest(".cgrip"):null;
   if(K&&e.key==="Escape"){restore();e.preventDefault();return}
   if(!g)return;

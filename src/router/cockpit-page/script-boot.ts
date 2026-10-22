@@ -46,6 +46,11 @@ function setTheme(t){document.documentElement.dataset.theme=t;var b=$("theme"),l
 $("theme").onclick=function(){var t=document.documentElement.dataset.theme==="dark"?"light":"dark";setTheme(t);try{localStorage.setItem("pai.cockpit.theme",t)}catch(e){}};
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change",function(e){var s=null;try{s=localStorage.getItem("pai.cockpit.theme")}catch(err){}if(!s)setTheme(e.matches?"dark":"light")});
 setTheme(document.documentElement.dataset.theme==="dark"?"dark":"light");
+/** Layout lock: per browser (localStorage, never sent to the router); other tabs follow through the storage event. */
+function setLock(on){document.documentElement.classList.toggle("locked",on);var b=$("lock"),l=on?"unlock layout":"lock layout";b.textContent=on?"🔒":"🔓";b.title=l;b.setAttribute("aria-label",l);b.setAttribute("aria-pressed",on?"true":"false")}
+$("lock").onclick=function(){var on=!document.documentElement.classList.contains("locked");setLock(on);try{localStorage.setItem("pai.cockpit.lock",on?"1":"0")}catch(e){}};
+window.addEventListener("storage",function(e){if(e.key==="pai.cockpit.lock"&&e.storageArea===window.localStorage)setLock(e.newValue==="1")});
+setLock(document.documentElement.classList.contains("locked"));
 tabs();
 /** The reset button drops the saved window layout; the reload draws the defaults. */
 $("reset").onclick=function(){try{localStorage.removeItem(${JSON.stringify(WIN_KEY)})}catch(e){}location.reload()};
