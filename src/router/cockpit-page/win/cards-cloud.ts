@@ -62,7 +62,7 @@ function limStop(l){
 function limNoneView(d){
  if(!d||!d.limits)return null;
  var n=d.limits.filter(function(l){return l.kind!=="local"}).length;
- return{html:'<span class="dim">'+(n?n+" cloud source"+(n===1?"":"s"):"no cloud limit sources")+'</span>'};
+ return{html:'<span class="dim">'+(n?n+" cloud source"+(n===1?"":"s"):"no cloud provider configured")+'</span>'};
 }
 function limDownView(d){
  if(!d||!d.limits)return null;
@@ -91,11 +91,12 @@ function limitsSync(d){
  var a=ls.length&&Win.addCards("limits-local",ls,limRows(lr)),b=cs.length&&Win.addCards("limits-cloud",cs,limRows(cr));
  if(a||b)Win.update("limits",d);
  Win.hide("limits.local.down",!limDown(d).length);
+ Win.hide(LIM_NONE,cs.length>0);
 }
 function limLocalDefaults(){
  return{tree:WinT.leaf("limits-local"),stDefaults:{},cards:[{id:"limits-local",type:"group",title:"Local servers",info:LIML_INFO},{id:"limits.local.down",type:"list",title:"0 local models down",feeds:["limits"],hidden:true,view:limDownView,mount:limDownMount}],kids:{"limits-local":WinT.leaf("limits.local.down")}};
 }
 function limCloudDefaults(){
- return{tree:WinT.leaf("limits-cloud"),stDefaults:{},cards:[{id:"limits-cloud",type:"group",title:"Cloud limits",info:LIMC_INFO},{id:LIM_NONE,type:"list",title:"Cloud sources",feeds:["limits"],view:limNoneView,mount:limDownMount}],kids:{"limits-cloud":WinT.leaf(LIM_NONE)}};
+ return{tree:WinT.leaf("limits-cloud"),stDefaults:{},cards:[{id:"limits-cloud",type:"group",title:"Cloud limits",info:LIMC_INFO},{id:LIM_NONE,type:"list",title:"Cloud sources",feeds:["limits"],hidden:true,view:limNoneView,mount:limDownMount}],kids:{"limits-cloud":WinT.leaf(LIM_NONE)}};
 }
 `;
