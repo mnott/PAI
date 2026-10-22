@@ -3,7 +3,8 @@
  * dump it, and check the dump against the live row counts.
  */
 
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, fstatSync, openSync, readFileSync, readSync, unlinkSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { assertPgName, postgresFullTarget, type PgTarget, type PostgresConfig } from "../../../storage/postgres/config.js";
 
@@ -32,24 +33,52 @@ export function validatePgDump(dump: string): string | null {
   return null;
 }
 
-/** Row counts per table found in COPY blocks of a plain-format pg_dump. */
-export function countDumpRows(sql: string): Map<string, number> {
-  const counts = new Map<string, number>();
-  let current: string | null = null;
-  for (const line of sql.split("\n")) {
-    if (current === null) {
+/** Accumulates per-table row counts from the lines of a plain-format pg_dump, one line at a time. */
+export class DumpRowCounter {
+  readonly counts = new Map<string, number>();
+  private current: string | null = null;
+  push(line: string): void {
+    if (this.current === null) {
       const m = /^COPY (?:\S+\.)?"?(\w+)"? .* FROM stdin;/.exec(line);
       if (m) {
-        current = m[1]!;
-        counts.set(current, 0);
+        this.current = m[1]!;
+        this.counts.set(this.current, 0);
       }
     } else if (line === "\\.") {
-      current = null;
+      this.current = null;
     } else {
-      counts.set(current, counts.get(current)! + 1);
+      this.counts.set(this.current, this.counts.get(this.current)! + 1);
     }
   }
-  return counts;
+}
+
+/** Row counts per table found in COPY blocks of a plain-format pg_dump held in memory (small dumps only). */
+export function countDumpRows(sql: string): Map<string, number> {
+  const c = new DumpRowCounter();
+  for (const line of sql.split("\n")) c.push(line);
+  return c.counts;
+}
+
+/** Last `n` bytes of a file, without reading the rest. */
+export function readFileTail(path: string, n = 2048): string {
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const len = Math.min(n, size);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    return buf.toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Streams a dump file line by line (bounded memory): row counts per table, plus the completion-marker check. */
+export async function scanDumpFile(path: string): Promise<{ counts: Map<string, number>; invalid: string | null }> {
+  const counter = new DumpRowCounter();
+  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8", highWaterMark: 1 << 20 }), crlfDelay: Infinity });
+  for await (const line of rl) counter.push(line);
+  return { counts: counter.counts, invalid: validatePgDump(readFileTail(path)) };
 }
 
 /**
@@ -64,10 +93,8 @@ export async function backupPostgres(
 ): Promise<{ database: string; counts: Record<string, number> }> {
   try {
     const live = await runner.dump(target, destPath);
-    const sql = readFileSync(destPath, "utf8");
-    const invalid = validatePgDump(sql);
+    const { counts: dumped, invalid } = await scanDumpFile(destPath);
     if (invalid) throw new Error(`database "${target.database}" backup failed verification (${invalid})`);
-    const dumped = countDumpRows(sql);
     const counts: Record<string, number> = {};
     const problems: string[] = [];
     for (const table of BACKUP_TABLES) {
