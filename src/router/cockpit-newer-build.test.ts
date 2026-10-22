@@ -7,7 +7,7 @@ import { handleCockpit, setCockpitBuildId } from "./cockpit.js";
 import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const PROBE = `<script>setTimeout(function(){var a=document.getElementById("newer");
-document.body.setAttribute("data-r",JSON.stringify({hidden:a.hidden,shown:a.offsetParent!==null,tag:a.tagName,title:!!a.title,wired:typeof a.onclick==="function",inHeader:!!a.closest("header"),text:a.textContent,err:window.__err||null}))},2000)</script>`;
+document.body.setAttribute("data-r",JSON.stringify({hidden:a.hidden,shown:a.offsetParent!==null,tag:a.tagName,title:!!a.title,wired:typeof a.onclick==="function",inHeader:!!a.closest("header"),below:a.previousElementSibling===document.querySelector("header"),h:Math.round(a.getBoundingClientRect().height),text:a.textContent,err:window.__err||null}))},2000)</script>`;
 
 let server: Server;
 let base = "";
@@ -39,11 +39,12 @@ async function probe() {
 }
 
 describe.skipIf(!CHROME)("newer cockpit build notice", () => {
-  it("poll returns build B for a page served as A: the reload link shows in the header", async () => {
+  it("poll returns build B for a page served as A: the reload bar shows below the header", async () => {
     pollBuild = "B";
     const r = await probe();
     expect(r.err).toBeNull();
-    expect(r).toMatchObject({ hidden: false, shown: true, tag: "A", title: true, wired: true, inHeader: true });
+    expect(r).toMatchObject({ hidden: false, shown: true, tag: "A", title: true, wired: true, inHeader: false, below: true });
+    expect(r.h).toBeLessThan(30);
     expect(r.text).toContain("newer cockpit available");
   }, 30000);
   it("poll returns build A: no notice", async () => {

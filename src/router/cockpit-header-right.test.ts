@@ -7,7 +7,7 @@ import { handleCockpit, setCockpitBuildId } from "./cockpit.js";
 import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const PROBE = `<script>setTimeout(function(){var s=document.getElementById("stamp").getBoundingClientRect(),h=document.querySelector("header").getBoundingClientRect(),n=document.getElementById("newer");
-document.body.setAttribute("data-r",JSON.stringify({gap:Math.round(h.right-s.right),newerShown:n.offsetParent!==null,newerBeforeStamp:n.getBoundingClientRect().right<=s.left}))},2000)</script>`;
+document.body.setAttribute("data-r",JSON.stringify({gap:Math.round(h.right-s.right),newerShown:n.offsetParent!==null,newerBelow:n.previousElementSibling===document.querySelector("header")&&n.offsetTop>=document.querySelector("header").offsetHeight-1,hh:Math.round(h.height),nh:Math.round(n.getBoundingClientRect().height)}))},2000)</script>`;
 
 let server: Server;
 let base = "";
@@ -45,11 +45,13 @@ describe.skipIf(!CHROME)("header right group at 1500 px", () => {
     expect(r.newerShown).toBe(false);
     expect(r.gap).toBeLessThan(120);
   }, 30000);
-  it("newer link shown: it sits left of the stamp and the stamp stays at the right edge", async () => {
+  it("newer link shown: a one-line bar below the header, header stays one line, stamp at the right edge", async () => {
     pollBuild = "B";
     const r = await probe();
     expect(r.newerShown).toBe(true);
-    expect(r.newerBeforeStamp).toBe(true);
+    expect(r.newerBelow).toBe(true);
+    expect(r.hh).toBeLessThan(60);
+    expect(r.nh).toBeLessThan(30);
     expect(r.gap).toBeLessThan(120);
   }, 30000);
 });
