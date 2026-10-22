@@ -27,13 +27,23 @@ export class MainConfigOpsError extends Error {}
 // Dotted-path helpers
 // ---------------------------------------------------------------------------
 
+const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** Refuse segments that would walk into Object.prototype when a path is applied to an object. */
+function assertSafeSegments(segments: string[]): void {
+  const bad = segments.find((s) => UNSAFE_SEGMENTS.has(s));
+  if (bad !== undefined) throw new MainConfigOpsError(`path segment "${bad}" is not allowed`);
+}
+
 export function splitConfigPath(dotted: string): string[] {
   const segments = dotted.split(".").filter((s) => s.length > 0);
   if (!segments.length) throw new MainConfigOpsError("path is required");
+  assertSafeSegments(segments);
   return segments;
 }
 
 function getAtPath(root: unknown, segments: string[]): { value: unknown; found: boolean } {
+  assertSafeSegments(segments);
   let cur: unknown = root;
   for (const seg of segments) {
     if (cur !== null && typeof cur === "object" && !Array.isArray(cur) && seg in (cur as Record<string, unknown>)) {
@@ -46,6 +56,7 @@ function getAtPath(root: unknown, segments: string[]): { value: unknown; found: 
 }
 
 function setAtPath(root: Record<string, unknown>, segments: string[], value: unknown): Record<string, unknown> {
+  assertSafeSegments(segments);
   const clone = structuredClone(root);
   let cur: Record<string, unknown> = clone;
   for (let i = 0; i < segments.length - 1; i++) {
@@ -59,6 +70,7 @@ function setAtPath(root: Record<string, unknown>, segments: string[], value: unk
 }
 
 function deleteAtPath(root: Record<string, unknown>, segments: string[]): Record<string, unknown> {
+  assertSafeSegments(segments);
   const clone = structuredClone(root);
   let cur: Record<string, unknown> = clone;
   for (let i = 0; i < segments.length - 1; i++) {
@@ -266,14 +278,14 @@ export interface SetConfigResult {
 
 /**
  * `pai config set <path> <value>` / `config_set`: parses `value`, validates
- * its type against the shipped defaults (refusable with `force`), converts
+ * its type against the shipped defaults (refusable with `force`; `asString` stores `value` verbatim, no parsing), converts
  * config.json
  * to config.yaml first if neither exists yet, then writes through
  * writeMainConfigRaw (comment-preserving when config.yaml exists).
  */
-export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { force?: boolean } = {}): SetConfigResult {
+export function setConfigValueOp(dottedPath: string, rawValue: string, opts: { force?: boolean; asString?: boolean } = {}): SetConfigResult {
   const segments = splitConfigPath(dottedPath);
-  const value = parseConfigValueString(rawValue);
+  const value = opts.asString ? rawValue : parseConfigValueString(rawValue);
   validateAgainstSchema(segments, value, opts);
 
   const jsonPath = paiConfigFilePath();

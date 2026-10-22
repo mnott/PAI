@@ -182,3 +182,19 @@ describe("type validation refusals", () => {
     expect(r.value).toBe("not-a-number");
   });
 });
+
+describe("prototype-pollution guard", () => {
+  it("set and unset refuse __proto__ / constructor / prototype segments", () => {
+    for (const path of ["__proto__.polluted", "models.labels.__proto__.x", "constructor.prototype.x", "a.prototype"]) {
+      expect(() => setConfigValueOp(path, "v", { force: true }), path).toThrow(/not allowed/);
+      expect(() => unsetConfigValueOp(path), path).toThrow(/not allowed/);
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+
+  it("asString stores the value verbatim", () => {
+    setConfigValueOp("models.labels.zz", "7", { force: true, asString: true });
+    expect(getConfigValueOp("models.labels.zz").value).toBe("7");
+  });
+});

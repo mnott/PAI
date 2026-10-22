@@ -56,7 +56,7 @@ export interface ActionDeps {
   /** `pai worker classes set <class> <provider>`. */
   setClass: (cls: string, target: string) => void;
   /** `pai config set models.labels.<runtime>[/<model>] <label>`. */
-  setLabel: (path: string, value: string, opts?: { force?: boolean }) => void;
+  setLabel: (path: string, value: string, opts?: { force?: boolean; asString?: boolean }) => void;
   /** `pai config unset <path>`. */
   unsetLabel: (path: string) => void;
   /** The ledger file; default <logDir>/ledger.log. */
@@ -554,7 +554,7 @@ export async function runCockpitAction(
         writeLedgerLine(deps, action, path, "removed");
         return { ok: true, message: `label removed (${runtime})` };
       }
-      deps.setLabel(path, label, { force: true });
+      deps.setLabel(path, label, { force: true, asString: true });
       writeLedgerLine(deps, action, path, `set:${label}`);
       return { ok: true, message: `labelled ${runtime}${model ? "/" + model : ""}: ${label}` };
     } catch (e) {

@@ -236,6 +236,21 @@ describe("cockpit actions", () => {
     expect(calls.setLabel).toEqual(['models.labels.ollama={"qwen3:8b":"cheap drafts"}']);
   });
 
+  it("a runtime label is always a string ('7', 'true', '[wip]' stay text); __proto__ targets are refused", async () => {
+    const tmp = newDir();
+    const base = testDeps(tmp, emptyCalls()) as Record<string, unknown>;
+    const real = { ...base, setLabel: (p: string, v: string, o?: { force?: boolean; asString?: boolean }) => void setConfigValueOp(p, v, o), unsetLabel: (p: string) => void unsetConfigValueOp(p) } as never;
+    for (const [rt, label] of [["a", "7"], ["b", "true"], ["c", "[wip]"]] as const) {
+      expect((await runCockpitAction({ action: "model.label", target: rt, value: label }, real)).ok).toBe(true);
+    }
+    expect(readModelLabels()).toEqual({ a: "7", b: "true", c: "[wip]" });
+    const bad = await runCockpitAction({ action: "model.label", target: "__proto__.polluted", value: "x" }, real);
+    expect(bad.ok).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    for (const rt of ["a", "b", "c"]) await runCockpitAction({ action: "model.label", target: rt, value: "" }, real);
+    expect(readModelLabels()).toEqual({});
+  });
+
   it("model labels round-trip for ids with : / . (stored as one map, not nested keys); removing the last one drops the block", async () => {
     const tmp = newDir();
     const calls = emptyCalls();
