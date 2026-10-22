@@ -16,6 +16,9 @@ All notable changes to PAI Knowledge OS are documented here.
 ### Fixed
 
 - **Notification settings:** `pai notifications set` refuses to write when the main config cannot be read, instead of replacing it with only the notifications section; ntfy titles with emoji or non-Latin text are delivered.
+- **Task poller:** one failing task no longer aborts the whole check or loses the state of tasks already handled; only an explicit "Authorised" status counts as an active Todoist webhook, so "Not authorized" no longer suppresses completion detection.
+- **Registry migration:** the old JSON registry is read with one parser, so list-format files are imported and no bogus `projects` or `version` project is created; a folder name without ASCII letters still gets a slug.
+- **Skills audit** follows symlinked commands and plugins; **zettel conversations** cap their link depth and breadth; **communities** are deterministic and numbered by size.
 - **Vault notes:** the vault fixer and the project marker (`Notes/PAI.md`) write notes atomically; query notes write their frontmatter as valid YAML whatever the query contains; valid relative symlinks are no longer removed as broken.
 
 - **Cockpit sessions:** a session with a very large request history no longer breaks the cockpit's data page; an unreadable session or project folder is skipped, and the job-name cache drops expired entries.
