@@ -150,4 +150,36 @@ describe("pool host re-reads its settings", () => {
     expect(host.settings().maxSlots).toBe(1);
     void host.shutdown();
   });
+
+  it("the workers config follows the reload: a provider added later is offered without a restart", () => {
+    const logDir = mkdtempSync(join(tmpdir(), "live-cap-pool-cfg-"));
+    dirs.push(logDir);
+    const withProviders = (providers: WorkersConfig["providers"]): WorkersConfig => ({ ...cfg(1), providers });
+    let stamp = "v1";
+    let live = withProviders({});
+    let t = 1_000_000;
+    const host = createPoolHost({
+      config: live,
+      logDir,
+      configStamp: () => stamp,
+      readConfig: () => {
+        if (stamp === "v2") throw new Error("half-written file");
+        return live;
+      },
+      now: () => new Date(t),
+      noReaper: true,
+      envFor: () => ({}),
+      cmdHead: () => ["fake-claude"],
+    });
+    expect(host.offersModel("newprov", "nm")).toBe(false);
+    live = withProviders({ newprov: { enabled: true, protocol: "anthropic", baseUrl: "https://example.invalid", keyFile: null, models: { default: "nm" }, env: {} } });
+    stamp = "v2";
+    t += 5_000;
+    expect(host.reloadSettings()).toBe(false); // parse failure: the old config stays in force
+    expect(host.offersModel("newprov", "nm")).toBe(false);
+    stamp = "v3";
+    expect(host.reloadSettings(true)).toBe(true);
+    expect(host.offersModel("newprov", "nm")).toBe(true);
+    void host.shutdown();
+  });
 });
