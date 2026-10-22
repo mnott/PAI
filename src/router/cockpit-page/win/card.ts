@@ -164,14 +164,16 @@ function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.ty
 function fitCfg(){
  var f={},id,c;
  for(id in W.fit)f[id]=W.fit[id];
- for(id in W.cards){c=W.cards[id];if(f[id]===undefined&&c.base&&(TYPES[c.type]||{}).resize&&!kidsOf(id))f[id]=c.base}
+ for(id in W.cards){c=W.cards[id];if(f[id]===undefined&&c.base&&(TYPES[c.type]||{}).resize&&!kidsOf(id)&&!fitNarrow(c))f[id]=c.base}
  return f;
 }
 /** Auto layout (no saved layout, no user move yet): a default card is as tall as its content when its content first renders (then fixed; it only grows when the content would overflow). The content height of a card is
  *  its lowest leaf element, measured here; layout() (cfg.fit) turns the readings into band and card heights. A type that
  *  draws at the body size (it has resize) or a group has no reading and keeps its default height. */
+/** A stacked (narrow) card that is not a chart is measured by its content like any other, though its type has a resize hook: its first placement is no reading. */
+function fitNarrow(c){return c.type!=="chart"&&c.body.clientWidth>0&&c.body.clientWidth<W.cfg.narrowW}
 function fitEligible(c){
- return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&!(TYPES[c.type]||{}).resize&&c.el.style.display!=="none"&&c.body.clientWidth>0;
+ return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&(!(TYPES[c.type]||{}).resize||fitNarrow(c))&&c.el.style.display!=="none"&&c.body.clientWidth>0;
 }
 /** Content height of every eligible card at once: each card is squeezed to its header (the body box is 0 high), where the
  *  body's scrollHeight is its content; heights and scroll offsets are put back before anything paints. */
@@ -388,7 +390,7 @@ function init(main,defaults,opts){
  opts=opts||{};
  W.opts={storage:opts.storage||window.localStorage,now:opts.now};
  W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
- W.cfg={HEAD_H:HEAD_H,GAP:8,GUTTER:8,minW:220};
+ W.cfg={HEAD_H:HEAD_H,GAP:8,GUTTER:8,minW:220,narrowW:480};
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];
  var specs=defaults.cards||[],known=[],i;
  for(i=0;i<specs.length;i++){W.cards[specs[i].id]=buildCard(specs[i]);known.push(specs[i].id)}

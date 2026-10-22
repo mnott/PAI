@@ -46,6 +46,8 @@ function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined
 function winMin(st,id){var s=st&&st[id];return!!s&&!!s.min}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
+/** Stacked mode of the auto layout: the box is under cfg.narrowW wide, so heights follow content, not weights or band px. */
+function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 /** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
 function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
 /** The least height a node needs at width w: a card its type's minH (a group HEAD_H plus its kids), a row the tallest
@@ -77,7 +79,7 @@ function winNeed(node,w,st,cfg,kids){
   k=winNeed(node.ch[i],w,st,cfg,kids);
   sum+=k;need=Math.max(need,(node.sz[i]||0)>0?k/((node.sz[i]||0)/t):0);
  }
- return Math.max(sum,need)+(vis.length-1)*gap;
+ return(winNar(cfg,w)?sum:Math.max(sum,need))+(vis.length-1)*gap;
 }
 /** Content-driven height (auto layout only: cfg.fit = {id: card px} measured by the runtime): a card its measured height, a
  *  group HEAD_H plus its kids, a row the tallest child, a column the sum. null when any card in it has no reading (keep the default). */
@@ -90,7 +92,10 @@ function winFit(node,w,st,cfg,kids){
   var kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
   if(kt){k=winFit(kt,w,st,cfg,kids);return k===null?null:cfg.HEAD_H+k}
   if(winPx(st,node.id)!==null)return null;
-  var v=cfg.fit[node.id];
+  var v=cfg.fit[node.id],nar=winNar(cfg,w);
+  // stacked: a chart (draws at the body size) takes an aspect of its width, any other card without a reading its least height
+  if(nar&&winLeafType(kids,node.id,cfg)==="chart")return Math.max(winNeed(node,w,st,cfg,kids),Math.round(w*0.45)+cfg.HEAD_H);
+  if(nar&&v===undefined)return winNeed(node,w,st,cfg,kids);
   return v===undefined?null:Math.max(v,winNeed(node,w,st,cfg,kids));
  }
  var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,r=0,sum=0;
@@ -125,7 +130,8 @@ function winSplit(node,box,bounded,st,cfg,kids){
    var y=0;
    for(i=0;i<vis.length;i++){
     var c=node.ch[vis[i]];
-    var hh=winMin(st,c.id)?cfg.HEAD_H:(bounded?Math.max(h0,winNeed(c,box.w,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
+    var nf=winNar(cfg,box.w)&&!winMin(st,c.id)?winFit(c,box.w,st,cfg,kids):null;
+    var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,box.w,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
     out.push({n:c,x:0,y:y,w:box.w,h:hh});
     y+=hh+gap;
    }
@@ -157,7 +163,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
     var fv=winMin(st,node.ch[vis[i]].id)?0:winFit(node.ch[vis[i]],box.w,st,cfg,kids);
     if(fv===null)fs=null;else{fs.push(fv);fsum+=fv}
    }
-   if(fs&&fsum<=avail+0.5)fh=fs;
+   if(fs&&(winNar(cfg,box.w)||fsum<=avail+0.5))fh=fs;
   }
   var y2=0;
   for(i=0;i<vis.length;i++){

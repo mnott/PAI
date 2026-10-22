@@ -1,0 +1,176 @@
+/**
+ * Narrow (stacked) mode keeps sensible card heights: the real page in headless Chromium at 390 px.
+ * A card is no taller than its content + 24 px, except chart types (they draw at the body size):
+ * those are at most 0.6 * width + header. At 822 px the heights are the wide-mode heights (pinned).
+ * PAI_NARROW_TABLE=<file> writes the height table. Skipped when no Chromium is installed.
+ */
+
+import { execFile, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cockpitHtml } from "./cockpit-page.js";
+import { fixtureData, fixtureLimits, fixturePool, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
+
+const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+const HEAD = 28;
+
+const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll("[data-card]").forEach(function(c){var b=c.querySelector(".cbody"),h=c.getBoundingClientRect();if(!h.height)return;var kids=b?Array.prototype.slice.call(b.children):[],low=0,top=b?b.getBoundingClientRect().top:0;kids.forEach(function(k){var r=k.getBoundingClientRect();if(r.height>0)low=Math.max(low,r.bottom-top)});out.push({id:c.getAttribute("data-card"),type:c.getAttribute("data-type"),h:Math.round(h.height),head:b?Math.round(b.getBoundingClientRect().top-h.top):0,content:Math.round(low),sh:b?b.scrollHeight:0})});parent.postMessage(JSON.stringify({vw:innerWidth,cards:out}),"*")},3500)</script>`;
+
+let server: Server;
+let base = "";
+let tmp = "";
+const browsers = new Set<ChildProcess>();
+
+beforeAll(async () => {
+  tmp = mkdtempSync(join(tmpdir(), "cockpit-narrow-"));
+  server = createServer((req, res) => {
+    const url = req.url ?? "";
+    const json = (o: unknown) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify(o)); };
+    if (url.startsWith("/cockpit/data")) return json(fixtureData());
+    if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
+    if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
+    if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
+    if (url.startsWith("/cockpit/pool")) return json(fixturePool());
+    if (url.startsWith("/frame")) {
+      const w = /w=(\d+)/.exec(url)?.[1] ?? "822";
+      res.setHeader("content-type", "text/html");
+      return res.end(`<body style="margin:0"><iframe src="/page" style="width:${w}px;height:5000px;border:0"></iframe><script>onmessage=function(e){document.body.setAttribute("data-fit",e.data)}</script></body>`);
+    }
+    if (url.startsWith("/page")) {
+      res.setHeader("content-type", "text/html");
+      return res.end(cockpitHtml().replace("</body>", INJECT + "</body>"));
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+});
+afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+
+function run(bin: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const c = execFile(bin, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
+    browsers.add(c);
+  });
+}
+interface Card { id: string; type: string; h: number; head: number; content: number; sh: number }
+async function measure(width: number): Promise<Card[]> {
+  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + width)}`, "--window-size=1000,5200", "--virtual-time-budget=8000"];
+  const dom = await run(CHROME!, [...args, "--dump-dom", `${base}/frame?w=${width}`]);
+  const m = /data-fit="([^"]*)"/.exec(dom);
+  if (!m) throw new Error("no result in dump");
+  const cards = (JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&")) as { cards: Card[] }).cards;
+  const f = process.env.PAI_NARROW_TABLE;
+  if (f) writeFileSync(f.replace(/(\.\w+)?$/, `-${width}$1`), cards.map((c) => `${c.id}\t${c.type}\th=${c.h}\thead=${c.head}\tcontent=${c.content}\tsh=${c.sh}`).join("\n") + "\n");
+  return cards;
+}
+
+/** Card heights at 822 px before the narrow-mode change (main 309bfe95, fixture data). */
+const WIDE_822 = [
+  "kpis:118",
+  "kpis.requests:90",
+  "kpis.input:90",
+  "kpis.output:90",
+  "kpis.cache-read:90",
+  "kpis.cache-write:90",
+  "kpis.errors:90",
+  "pool:1656",
+  "pool.pool:90",
+  "pool.host:90",
+  "pool.tasks:90",
+  "pool.hit:90",
+  "pool.spares:90",
+  "pool.not-pooled:90",
+  "pool.slots:1040",
+  "system:823",
+  "sys-metrics:314",
+  "system.memory:90",
+  "system.swap:90",
+  "system.wired:90",
+  "system.compressed:90",
+  "system.cpu-load:90",
+  "system.gpu-load:90",
+  "system.ane-load:28",
+  "system.soc-temp:90",
+  "system.cpu-w:28",
+  "system.gpu-w:28",
+  "system.ane-w:28",
+  "system.system-w:90",
+  "system.power:90",
+  "system.energy:90",
+  "sys-power:231",
+  "system.power-chart:203",
+  "sys-servers:234",
+  "system.srv:gyro-m/rss:90",
+  "system.srv:gyro-m/e2e:90",
+  "system.srv:gyro-m/decode:90",
+  "system.srv:gyro-m/prefix:90",
+  "system.srv:ollama-local-with-a-long-name/rss:108",
+  "system.srv:ollama-local-with-a-long-name/e2e:108",
+  "system.srv:ollama-local-with-a-long-name/decode:108",
+  "system.srv:ollama-local-with-a-long-name/prefix:108",
+  "memory:356",
+  "memory.kv:80",
+  "memory.index:90",
+  "memory.backend:90",
+  "memory.passes:90",
+  "memory.daemon:90",
+  "routing:76",
+  "routing.flow:48",
+  "limits-local:68",
+  "limits-cloud:390",
+  "limits.cloud.none:212",
+  "limits.cloud:anthropic:142",
+  "limits.cloud:glm:142",
+  "limits.cloud:gyro-m:142",
+  "workers:291",
+  "workers.local:61",
+  "workers.wt:61",
+  "workers.sess:PAI:125",
+  "models:76",
+  "models.endpoints:48",
+  "cache:977",
+  "cache-rings:368",
+  "cache.ring:glm/qwen3.8-flash-next-gyro-m:166",
+  "cache.ring:glm/glm-5.3-flash:166",
+  "cache.ring:anthropic/claude-sonnet-5-5:166",
+  "cache.ring:anthropic/claude-haiku-5-5:166",
+  "cache.ring:anthropic/claude-opus-5-5:166",
+  "cache.low:61",
+  "cache.note:61",
+  "cache.local:91",
+  "cache.providers:227",
+  "tokens:300",
+  "daily:300",
+  "speed:230",
+  "pause:160",
+  "sessions:300",
+  "runs:300",
+  "settings:342",
+  "settings.registry-edit:220",
+  "settings.registry-backups:67",
+];
+
+const CHART = /^chart$/;
+describe.skipIf(!CHROME)("cockpit narrow mode card heights, real layout in Chromium", () => {
+  it("390 px: no card is taller than its content + 24 px, a chart is at most 0.6 * width + header", async () => {
+    const cards = await measure(390);
+    expect(cards.length).toBeGreaterThan(10);
+    for (const c of cards) {
+      // a card with no body (hidden metric, minimized) is just its header; an empty group keeps its type minimum (header + 40)
+      if (c.head <= 0 || c.h <= HEAD) continue;
+      const chart = CHART.test(c.type);
+      if (chart) expect(c.h, `${c.id} (${c.type}) chart ${c.h}px`).toBeLessThanOrEqual(Math.round(0.6 * 390) + HEAD + c.head);
+      else expect(c.h, `${c.id} (${c.type}) ${c.h}px, content ${c.content}px + head ${c.head}px`).toBeLessThanOrEqual(Math.max(c.head + c.content + 24, c.type === "group" ? c.head + 40 : 0));
+    }
+  }, 120_000);
+  it("822 px: wide-mode heights are unchanged", async () => {
+    const cards = await measure(822);
+    expect(cards.length).toBeGreaterThan(10);
+    expect(cards.map((c) => `${c.id}:${c.h}`)).toEqual(WIDE_822);
+  }, 120_000);
+});
