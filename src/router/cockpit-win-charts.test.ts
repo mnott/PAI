@@ -148,3 +148,16 @@ describe("C1 guards: charts", () => {
     expect(pts[1]![1]).toBeCloseTo((pts[0]![1]! + pts[2]![1]!) / 2, 1);
   });
 });
+
+describe("tokens card: ecosystem selection", () => {
+  it("an ecosystem selects exactly its models, a model itself, empty selects none (all)", () => {
+    const f = new Function(`var T={},WCH={},WinT={},WinA={},Win={};\n${WIN_CHARTS_JS}\nreturn{sel:wchSelModels,ecos:wchEcos};`)() as { sel: (d: unknown, m: string[], s: string) => string[]; ecos: (d: unknown, m: string[]) => string[] };
+    const d = { ecosystems: { a: "local", b: "local", c: "glm", d: "anthropic" } };
+    const models = ["a", "b", "c", "d"];
+    expect(f.sel(d, models, "eco:local")).toEqual(["a", "b"]);
+    expect(f.sel(d, models, "eco:glm")).toEqual(["c"]);
+    expect(f.sel(d, models, "c")).toEqual(["c"]);
+    expect(f.sel(d, models, "")).toEqual([]);
+    expect(f.ecos(d, models)).toEqual(["anthropic", "glm", "local"]);
+  });
+});

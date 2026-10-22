@@ -17,7 +17,7 @@ import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSt
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { weightsBytes } from "./cockpit-weights.js";
-import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
@@ -142,6 +142,14 @@ export function foldProviders(rows: UsageRow[], providers: Record<string, { enab
   });
 }
 
+/**
+ * The ecosystem a provider belongs to: "local" for a provider served from this machine (every local tier),
+ * otherwise the provider name itself (anthropic, glm, kimi, ...). The provider is the grouping, no config key.
+ */
+export function providerEcosystem(provider: string, providers: Record<string, { baseUrl?: string }>): string {
+  return isLocalProvider(providers[provider]?.baseUrl ?? "") ? "local" : provider;
+}
+
 const tok = (): Tok => ({ input: 0, output: 0, cacheWrite: 0, cacheRead: 0 });
 const addTok = (t: Tok, r: UsageRow) => {
   t.input += r.input_tokens ?? 0;
@@ -230,6 +238,18 @@ export function buildCockpitData(
   const from = bucketStart(now - span, bucket);
   const rows = allRows.filter((r) => Date.parse(r.ts) >= from);
   const retries = retryRows(rows);
+
+  // ecosystem per model: that of the provider serving most of its requests over the whole log
+  const ecoCount = new Map<string, Map<string, number>>();
+  for (const r of allRows) {
+    const m = canonicalModel(r.model);
+    const c = ecoCount.get(m) ?? new Map<string, number>();
+    const e = providerEcosystem(r.provider, providers);
+    c.set(e, (c.get(e) ?? 0) + 1);
+    ecoCount.set(m, c);
+  }
+  const ecosystems: Record<string, string> = {};
+  for (const [m, c] of ecoCount) ecosystems[m] = [...c.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]![0];
 
   // series: one entry per bucket, per model token parts
   const series: Array<{ t: number; models: Record<string, Tok & { requests: number }> }> = [];
@@ -366,6 +386,7 @@ export function buildCockpitData(
     now,
     totals: { ...withRatio(total), requests: rows.length, errors },
     series,
+    ecosystems,
     byModel: [...byModel.values()].map(withRatio).sort((a, b) => b.requests - a.requests),
     byProvider: [...byProvider.values()].map((p) => ({ ...withRatio(p), avgMs: p.requests ? Math.round(p.ms / p.requests) : 0, ttftP50: percentile(ttftByProvider.get(p.provider) ?? [], 0.5), instances: [...byInstance.values()].filter((i) => i.provider === p.provider).sort((a, b) => a.instance.localeCompare(b.instance, undefined, { numeric: true })).map((i) => ({ ...withRatio(i), avgMs: i.requests ? Math.round(i.ms / i.requests) : 0 })) })),
     bySession: sessionRows,

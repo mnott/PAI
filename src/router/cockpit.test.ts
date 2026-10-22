@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { TOKEN_WEIGHTS, buildCockpitData, cachedRows, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens, withStarting } from "./cockpit.js";
+import { TOKEN_WEIGHTS, providerEcosystem, buildCockpitData, cachedRows, enabledLocalLimits, canonicalModel, cockpitQueue, groupLimits, handleCockpit, pauseBucket, retryRows, systemServers, weightedTokens, withStarting } from "./cockpit.js";
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { clearJobNameCache } from "./sessions.js";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -563,5 +563,30 @@ describe("registryModels (B8a)", () => {
     const one = registryModels(cfg, rows.slice(0, 1));
     expect(one.map((m) => m.state)).toEqual(["running", "stopped", "stopped"]);
     expect(one[2]).toMatchObject({ file: "/s/serve.sh", engine: "script", port: 8034, tier: "coder-next", instances: [], maxInstances: 1 });
+  });
+});
+
+describe("cockpit ecosystems", () => {
+  const providers = {
+    gyro: { enabled: true, baseUrl: "http://127.0.0.1:8010", models: { default: "qwen-gyro" } },
+    codernext4: { enabled: true, baseUrl: "http://localhost:8011", models: { default: "qwen-coder" } },
+    glm: { enabled: true, baseUrl: "https://api.z.ai/api/anthropic", models: { default: "glm-5.3" } },
+    anthropic: { enabled: true, baseUrl: "" },
+  };
+  it("a loopback provider maps to local, any other to its own name; the payload carries one ecosystem per model", () => {
+    const rows = [
+      row(1, { provider: "gyro", model: "qwen-gyro" }),
+      row(2, { provider: "codernext4", model: "qwen-coder" }),
+      row(3, { provider: "glm", model: "glm-5.3" }),
+      row(4, { provider: "anthropic", model: "claude-opus-5-5" }),
+      row(5, { provider: "anthropic", model: "claude-opus-5-5" }),
+    ];
+    const d = buildCockpitData(rows, "1h", NOW, new Map(), null, providers);
+    expect(providerEcosystem("gyro", providers)).toBe("local");
+    expect(d.ecosystems).toEqual({ "qwen-gyro": "local", "qwen-coder": "local", "glm-5.3": "glm", "claude-opus-5-5": "anthropic" });
+  });
+  it("a model served by two ecosystems belongs to the one with most requests", () => {
+    const rows = [row(1, { provider: "glm", model: "x" }), row(2, { provider: "gyro", model: "x" }), row(3, { provider: "gyro", model: "x" })];
+    expect(buildCockpitData(rows, "1h", NOW, new Map(), null, providers).ecosystems).toEqual({ x: "local" });
   });
 });

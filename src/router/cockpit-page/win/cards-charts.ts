@@ -20,13 +20,22 @@ function wchModels(d){
  assignColors(Object.keys(um));
  return models;
 }
+/** The ecosystems of the models, sorted; a select value "eco:<name>" picks one, a plain value one model. */
+function wchEcos(d,models){var e=d.ecosystems||{},u={};models.forEach(function(m){if(e[m])u[e[m]]=1});return Object.keys(u).sort()}
+/** The models a selection stands for: the ecosystem's models, the one model, or [] for all. */
+function wchSelModels(d,models,sel){
+ if(!sel)return[];
+ if(sel.indexOf("eco:")===0){var e=d.ecosystems||{},n=sel.slice(4);return models.filter(function(m){return e[m]===n})}
+ return[sel];
+}
 /** Tokens: {html, cap, legend} for the payload at an explicit width/height (mode and msel are the page globals). */
 function wchTokens(d,models,w,h){
- if(msel&&models.indexOf(msel)<0)msel="";
+ if(msel&&!wchSelModels(d,models,msel).length)msel="";
+ var selm=wchSelModels(d,models,msel);
  var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},wt=mode==="weighted",head=wchHead(w,h),ref={id:"series"};
  var labs=d.series.map(function(b){return label(b.t,d.window)}),r;
  if(msel){
-  var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(m!==msel)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
+  var series=d.series.map(function(b){var o={};KINDS.forEach(function(k){o[k[0]]=0});Object.keys(b.models).forEach(function(m){if(selm.indexOf(m)<0)return;KINDS.forEach(function(k){o[k[0]]+=(b.models[m][k[0]]||0)*(wt?W[k[0]]:1)})});return o});
   r=stackedBarsSvg(ref,w,labs,series,KINDS.map(function(k){return k[0]}),h,head);
  }else{
   var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
@@ -51,7 +60,7 @@ function wchDraw(ctx){
  if(ctx.id==="tokens"){
   var models=wchModels(s.d);o=wchTokens(s.d,models,s.w,h);
   var sel=WCHT.sel;
-  if(sel){sel.setOptions([{value:"",label:"all models"}].concat(models.map(function(m){return{value:m,label:m}})));sel.setValue(msel)}
+  if(sel){var ecos=wchEcos(s.d,models);sel.setOptions([{value:"",label:"all models"}].concat(ecos.map(function(e){return{value:"eco:"+e,label:e,group:"ecosystem"}}),models.map(function(m){return ecos.length?{value:m,label:m,group:"model"}:{value:m,label:m}})));sel.setValue(msel)}
  }else{wchModels(s.d);o=wchDaily(s.d,s.w,h)}
  ctx.html("legend",o.legend);ctx.html("cap",wchCap(o.cap));
  // the legend is never scrolled: the svg takes the height left under the whole legend and the caption
@@ -72,9 +81,9 @@ function wchModeAct(m,label){
 }
 /** The model filter as a card action: a styled Select (A9) built once. */
 function wchSelAct(){
- return{id:"model",label:"model",title:"show one model",
+ return{id:"model",label:"model",title:"show one ecosystem or one model",
   make:function(ctx){
-   WCHT.sel=WinA.Select({options:[{value:"",label:"all models"}],value:msel,ariaLabel:"model filter",onChange:function(v){msel=v;wchDraw(ctx)}});
+   WCHT.sel=WinA.Select({options:[{value:"",label:"all models"}],value:msel,ariaLabel:"ecosystem or model filter",onChange:function(v){msel=v;wchDraw(ctx)}});
    return WCHT.sel;
   }};
 }
