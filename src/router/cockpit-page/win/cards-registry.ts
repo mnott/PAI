@@ -107,6 +107,38 @@ function wrgLabel(S,io,name,label){
  }).catch(function(e){wrgFail(io,e)});
 }
 /** The local_tiers entry names in the text (the first one prefills the duplicate form). */
+/** YAML highlight: one line to HTML spans (classes wrg-c comment, wrg-k key, wrg-s string, wrg-n number, wrg-b bool/null, wrg-d list dash, wrg-a anchor/alias). Pure, per line, no state across lines. */
+function wrgHlLine(l){
+ var o="",i=0,m=/^(\s*)((?:-(?:\s+|$))*)/.exec(l);
+ o+=esc(m[1]);
+ if(m[2])o+=esc(m[2]).replace(/-/g,'<span class="wrg-d">-</span>');
+ i=m[0].length;
+ var k=/^("[^"]*"|'[^']*'|[^\s#:'"\[\]{},&*][^#:]*?)(?=:(?:\s|$))/.exec(l.slice(i));
+ if(k){o+='<span class="wrg-k">'+esc(k[1])+'</span>:';i+=k[1].length+1}
+ var n=l.length,w;
+ while(i<n){
+  var c=l.charAt(i);
+  if(c==="#"&&(i===0||/\s/.test(l.charAt(i-1)))){o+='<span class="wrg-c">'+esc(l.slice(i))+'</span>';break}
+  if(c==='"'||c==="'"){
+   var j=i+1;
+   while(j<n){var d=l.charAt(j);if(c==='"'&&d==="\\"){j+=2;continue}if(d===c){if(c==="'"&&l.charAt(j+1)==="'"){j+=2;continue}break}j++}
+   j=Math.min(j+1,n);o+='<span class="wrg-s">'+esc(l.slice(i,j))+'</span>';i=j;continue;
+  }
+  if(/\s/.test(c)){var e=i;while(e<n&&/\s/.test(l.charAt(e)))e++;o+=esc(l.slice(i,e));i=e;continue}
+  var q=i;
+  while(q<n&&!/[\s"']/.test(l.charAt(q)))q++;
+  w=l.slice(i,q);
+  var p=/^([\[{]*)(.*?)([\],}]*)$/.exec(w),b=p[2],cls="";
+  if(/^[&*][\w-]+$/.test(b))cls="a";
+  else if(/^[-+]?(?:\d[\d_]*(?:\.\d+)?(?:[eE][-+]?\d+)?|0x[0-9a-fA-F]+)$/.test(b))cls="n";
+  else if(/^(?:true|false|null|~)$/.test(b))cls="b";
+  o+=esc(p[1])+(cls?'<span class="wrg-'+cls+'">'+esc(b)+'</span>':esc(b))+esc(p[3]);
+  i=q;
+ }
+ return o;
+}
+/** Highlight a whole text: one output line per input line, plus a trailing newline so the layer is as tall as the textarea. */
+function wrgHl(text){return text.split("\n").map(wrgHlLine).join("\n")+"\n"}
 function wrgTierNames(text){
  var out=[],inT=false,lines=String(text).split("\n"),i,m;
  for(i=0;i<lines.length;i++){
@@ -156,7 +188,7 @@ function wrgTa(){var e=Win.el(WRG_ID);return e?e.querySelector("textarea.wrg-ta"
 /** Repaint both cards from WRG: the textarea only when its text was replaced (setText), the diff slot, the form, the backups, the header buttons. */
 function wrgPaint(setText){
  var ta=wrgTa(),c=Win.ctx(WRG_ID),b=Win.ctx(WRG_BK);
- if(ta&&setText)ta.value=WRG.text;
+ if(ta&&setText){ta.value=WRG.text;wrgHlPaint(Win.el(WRG_ID))}
  if(ta)ta.readOnly=!WRG.loaded;
  if(c){c.text("diff",WRG.diff);c.attr("diff","hidden",WRG.diff?null:"");wrgDupPaint(c)}
  if(b)b.html("l",wrgBackupsHtml(WRG));
@@ -171,15 +203,25 @@ function wrgDupPaint(c){
  var names=wrgTierNames(WRG.text);
  f.innerHTML='<input class="wrg-dn" aria-label="entry to copy" placeholder="entry" value="'+esc(names[0]||"")+'" size="14"> <input class="wrg-dm" aria-label="new name" placeholder="new name (default: name-2)" size="22"> <input class="wrg-dp" aria-label="port" placeholder="port (default: next free)" size="20"> <button type="button" class="cbtn wrg-go">duplicate</button> <button type="button" class="cbtn wrg-no">cancel</button>';
 }
+/** Repaint the highlight layer from the textarea text and align its scroll. */
+function wrgHlPaint(root){
+ var ta=root.querySelector("textarea.wrg-ta"),pre=root.querySelector("pre.wrg-hl");
+ if(ta&&pre){pre.innerHTML=wrgHl(ta.value);wrgHlSync(root)}
+}
+function wrgHlSync(root){
+ var ta=root.querySelector("textarea.wrg-ta"),pre=root.querySelector("pre.wrg-hl");
+ if(ta&&pre){pre.scrollTop=ta.scrollTop;pre.scrollLeft=ta.scrollLeft}
+}
 function wrgIoMake(){
  return{get:wrgGet,post:wrgPost,refresh:function(f){if(WIN_HOST.refresh)WIN_HOST.refresh(f)},status:function(k,t){var c=Win.ctx(WRG_ID);if(c)c.status(k,t)},paint:wrgPaint};
 }
 Win.registerType("editor",{minW:360,minH:220,defaultH:360,fixed:1,
  mount:function(ctx){
-  ctx.body.innerHTML='<div class="wrg" style="display:flex;flex-direction:column;height:100%;gap:4px;padding:4px"><div class="wrg-f" data-k="dup" hidden style="flex:none"></div><textarea class="wrg-ta" spellcheck="false" title="workers.yaml: local_tiers and providers" aria-label="workers.yaml: local_tiers and providers" style="flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;font:12px/1.4 ui-monospace,Menlo,monospace;resize:none;tab-size:2"></textarea><pre class="wrg-diff" data-k="diff" hidden style="flex:0 1 35%;margin:0;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre"></pre></div>';
+  ctx.body.innerHTML='<div class="wrg" style="display:flex;flex-direction:column;height:100%;gap:4px;padding:4px"><div class="wrg-f" data-k="dup" hidden style="flex:none"></div><div class="wrg-wrap"><pre class="wrg-hl" aria-hidden="true"></pre><textarea class="wrg-ta" wrap="off" spellcheck="false" title="workers.yaml: local_tiers and providers" aria-label="workers.yaml: local_tiers and providers"></textarea></div><pre class="wrg-diff" data-k="diff" hidden style="flex:0 1 35%;margin:0;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre"></pre></div>';
   var ta=ctx.body.querySelector("textarea");
-  ta.value=WRG.text;ta.readOnly=!WRG.loaded;
-  ta.addEventListener("input",function(){WRG.text=ta.value;Win.update("registry",WRG)});
+  ta.value=WRG.text;ta.readOnly=!WRG.loaded;wrgHlPaint(ctx.body);
+  ta.addEventListener("input",function(){WRG.text=ta.value;wrgHlPaint(ctx.body);Win.update("registry",WRG)});
+  ta.addEventListener("scroll",function(){wrgHlSync(ctx.body)});
   ctx.body.addEventListener("click",function(ev){
    var t=ev.target,io=wrgIo;
    if(!t||!t.classList||!io)return;
@@ -192,7 +234,7 @@ Win.registerType("editor",{minW:360,minH:220,defaultH:360,fixed:1,
  },
  update:function(ctx,S){
   var ta=ctx.body.querySelector("textarea");
-  if(ta&&ta.value!==S.text)ta.value=S.text;
+  if(ta&&ta.value!==S.text){ta.value=S.text;wrgHlPaint(ctx.body)}
   if(ta)ta.readOnly=!S.loaded;
  }});
 /** The backups card paints from WRG itself, so a card minimized at load fills the moment it mounts (restore). */
