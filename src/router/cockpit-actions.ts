@@ -662,18 +662,27 @@ async function daemonMemoryBusy(): Promise<string | null> {
 
 /** `pai memory embed --all --background` / `pai memory index --direct --background`, detached, output to the run log;
  *  resolves when it exits. The run marks itself in memory-run.json (by=cockpit through PAI_RUN_BY). */
-export function spawnMemoryRun(kind: RunKind, jobId: string, home: string): Promise<{ ok: boolean; message: string }> {
+export function spawnMemoryRun(
+  kind: RunKind,
+  jobId: string,
+  home: string,
+  io: { spawn: typeof spawn; openSync: typeof openSync; closeSync: typeof closeSync } = { spawn, openSync, closeSync },
+): Promise<{ ok: boolean; message: string }> {
   const args = kind === "embed" ? ["memory", "embed", "--all", "--background"] : ["memory", "index", "--direct", "--background"];
   const log = memoryRunLog(home);
   mkdirSync(`${home}/state`, { recursive: true });
-  const fd = openSync(log, "w");
+  const fd = io.openSync(log, "w");
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [process.argv[1] ?? "", ...args], {
-      detached: true,
-      stdio: ["ignore", fd, fd],
-      env: { ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId },
-    });
-    closeSync(fd);
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = io.spawn(process.execPath, [process.argv[1] ?? "", ...args], {
+        detached: true,
+        stdio: ["ignore", fd, fd],
+        env: { ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId },
+      });
+    } finally {
+      io.closeSync(fd);
+    }
     child.on("error", (e) => resolve({ ok: false, message: `cannot start: ${e.message}` }));
     child.on("close", (code, signal) => {
       const tail = logTailSince(log, 0);

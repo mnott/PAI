@@ -8,7 +8,8 @@
  * gone is stale and ignored.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 
@@ -29,6 +30,8 @@ export interface RunState {
   updatedAt: string;
   /** The cockpit job this run belongs to, "" when not started from the cockpit. */
   jobId: string;
+  /** Start time (epoch ms) of `pid`, to tell this run from a later process that reuses the pid; absent in older markers. */
+  pidStart?: number;
 }
 
 /** How a finished run ended. */
@@ -74,11 +77,31 @@ function alive(pid: number): boolean {
   }
 }
 
-/** The running run, null when there is none or its marker is stale (pid gone). */
-export function readRun(home?: string, isAlive: (pid: number) => boolean = alive): RunState | null {
+/** Start time of a process (epoch ms) from `ps`; undefined when unknown. */
+export function processStartMs(pid: number): number | undefined {
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
+    const t = Date.parse(out.trim());
+    return Number.isNaN(t) ? undefined : t;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The running run, null when there is none or its marker is stale (pid gone, or reused by another process). */
+export function readRun(
+  home?: string,
+  isAlive: (pid: number) => boolean = alive,
+  startOf: (pid: number) => number | undefined = processStartMs,
+): RunState | null {
   try {
     const r = JSON.parse(readFileSync(runStateFile(home), "utf8")) as RunState;
-    return r && typeof r.pid === "number" && isAlive(r.pid) ? r : null;
+    if (!r || typeof r.pid !== "number" || !isAlive(r.pid)) return null;
+    if (typeof r.pidStart === "number") {
+      const s = startOf(r.pid);
+      if (s === undefined || Math.abs(s - r.pidStart) > 2000) return null;
+    }
+    return r;
   } catch {
     return null;
   }
@@ -113,10 +136,46 @@ export function acquireRun(
   o: { by?: RunStarter; jobId?: string; backlogStart?: number | null; home?: string; now?: () => number; minGapMs?: number } = {},
 ): RunHandle | null {
   const file = runStateFile(o.home);
-  const held = readRun(o.home);
-  if (held && held.pid !== process.pid) return null;
+  const unlock = lockStart(file);
+  if (!unlock) return null;
+  try {
+    const held = readRun(o.home);
+    if (held && held.pid !== process.pid) return null;
+    return takeMarker(kind, o, file);
+  } finally {
+    unlock();
+  }
+}
+
+/** Exclusive lock around check-and-write of the marker, so two simultaneous starts cannot both pass the check.
+ *  Null when another start holds it (a lock older than 10 s belongs to a start that died). */
+function lockStart(file: string): (() => void) | null {
+  const lock = `${file}.lock`;
+  mkdirSync(dirname(file), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      mkdirSync(lock);
+      return () => {
+        try { rmdirSync(lock); } catch { /* gone */ }
+      };
+    } catch {
+      try {
+        if (Date.now() - statSync(lock).mtimeMs <= 10_000) return null;
+        rmdirSync(lock);
+      } catch { /* raced */ }
+    }
+  }
+  return null;
+}
+
+function takeMarker(
+  kind: RunKind,
+  o: { by?: RunStarter; jobId?: string; backlogStart?: number | null; home?: string; now?: () => number; minGapMs?: number },
+  file: string,
+): RunHandle {
   const now = o.now ?? Date.now;
   const starter = starterFromEnv();
+  const pidStart = processStartMs(process.pid);
   const state: RunState = {
     kind,
     pid: process.pid,
@@ -126,6 +185,7 @@ export function acquireRun(
     done: 0,
     updatedAt: new Date(now()).toISOString(),
     jobId: o.jobId ?? starter.jobId,
+    ...(pidStart !== undefined ? { pidStart } : {}),
   };
   rmSync(finishedRunFile(kind, o.home), { force: true });
   write(file, state);
