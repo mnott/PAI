@@ -6,6 +6,8 @@
 export const WIN_STEPS = [2, 3, 4, 6, 8, 9, 12] as const;
 /** The least body widths a card type is bucketed into (data-mw): a card never gets fewer px than its bucket. */
 export const WIN_MINW = [100, 120, 160, 200, 240, 300, 360] as const;
+/** The least width a top-level section keeps at its stored share, px (below it the section spans the full row). */
+export const WIN_SECTION_MINW = 420;
 /** Gap between cards and padding of a group body, px. */
 export const WIN_GAP = 6;
 /** Header height of a card, px. */
@@ -30,6 +32,8 @@ export function winGridCss(gap: number = WIN_GAP): string {
       }
     }
   }
+  // a top-level section is wider than its bucket: under WIN_SECTION_MINW at its stored share it takes the full row (the stored width stays; widening restores it)
+  for (const n of WIN_STEPS.slice(0, -1)) out.push(`@container (width<${need(WIN_SECTION_MINW, n)}px){main.win .card[data-depth="0"][data-w="${n}"][data-mw]{grid-column:span 12}}`);
   return out.join("\n");
 }
 

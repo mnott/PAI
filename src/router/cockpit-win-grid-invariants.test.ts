@@ -227,6 +227,33 @@ describe.skipIf(!CHROME)("CSS grid invariants", () => {
     expect(Math.abs((await widthOf(b, "cache")) - full), "cache alone: full width").toBeLessThanOrEqual(1);
   }, 120_000);
 
+  it("operator layout: a stored 6+6 pair of sections shares a row at 1020 px, each takes the full row at 550 px, and widening restores 6+6 with the stored units unchanged", async () => {
+    const l = JSON.parse(LAYOUT);
+    for (const id of ["system", "tokens-group"]) l.st[id] = { ...(l.st[id] ?? {}), w: 6, uw: 1, seen: Date.now() };
+    const b = await open(1020, JSON.stringify(l));
+    const units = () => b.ev<string>(`JSON.stringify(["system","tokens-group"].map(function(i){return document.querySelector('#win-root [data-card="'+i+'"]').getAttribute("data-w")}))`);
+    const state = async () => ({
+      root: await b.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`),
+      a: await widthOf(b, "system"), c: await widthOf(b, "tokens-group"), units: await units(),
+    });
+    const wide = await state();
+    expect(wide.a, "system half").toBeLessThan(wide.root * 0.6);
+    expect(wide.c, "tokens half").toBeLessThan(wide.root * 0.6);
+    expect(wide.units).toBe('["6","6"]');
+    await b.send("Emulation.setDeviceMetricsOverride", { width: 550, height: 900, deviceScaleFactor: 1, mobile: false });
+    await sleep(600);
+    const narrow = await state();
+    expect(narrow.a, "system full row").toBeGreaterThanOrEqual(narrow.root * 0.95);
+    expect(narrow.c, "tokens full row").toBeGreaterThanOrEqual(narrow.root * 0.95);
+    expect(narrow.units, "stored units unchanged").toBe('["6","6"]');
+    await b.send("Emulation.setDeviceMetricsOverride", { width: 1020, height: 900, deviceScaleFactor: 1, mobile: false });
+    await sleep(600);
+    const back = await state();
+    expect(back.a, "system half again").toBeLessThan(back.root * 0.6);
+    expect(back.c, "tokens half again").toBeLessThan(back.root * 0.6);
+    expect(back.units).toBe('["6","6"]');
+  }, 120_000);
+
   it("a saved narrower top-level width without the handle mark (an old drop) is repaired to full width on load", async () => {
     const l = JSON.parse(LAYOUT);
     l.st.system = { ...(l.st.system ?? {}), w: 6, seen: Date.now() };
