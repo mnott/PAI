@@ -4,15 +4,13 @@
  * unchanged. Headless Chromium, skipped when none is installed. PAI_WIN_SHOTS=<dir> writes cache-<width>.png.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
 const model = (provider: string, m: string, requests: number, cacheRead: number, cacheWrite: number, input: number) =>
   ({ provider, model: m, requests, cacheRead, cacheWrite, input, output: 1000, errors: 0 });
@@ -44,7 +42,6 @@ document.body.setAttribute("data-r",JSON.stringify(o));
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-cache-"));
   server = createServer((req, res) => {
@@ -63,19 +60,13 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function run(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
 async function open(query: string, width: number, shot?: string) {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, `--window-size=${width},1500`, "--virtual-time-budget=8000"];
+  const o = { width, height: 1500, budgetMs: 8000 };
   const url = `${base}/page${query}`;
-  const dom = await run([...args, "--dump-dom", url]);
-  if (shot) await run([...args, `--screenshot=${shot}`, url]);
+  const dom = await dumpDom(url, o);
+  if (shot) await screenshot(url, shot, o);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));

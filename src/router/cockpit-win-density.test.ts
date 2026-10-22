@@ -5,8 +5,7 @@
  * PAI_DENSITY_SHOT=<png> writes a 1300x5000 screenshot; PAI_DENSITY_TABLE=1 prints the table.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,8 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
 import { WIN_LAYOUT_JS } from "./cockpit-page/win/layout.js";
 import { WIN_TREE_JS } from "./cockpit-page/win/tree.js";
+import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 const SLACK = 24;
 
 type Lay = (t: unknown, k: unknown, box: { w: number; h?: number }, st: unknown, cfg: unknown) => { rects: Record<string, { y: number; h: number }>; height: number };
@@ -87,7 +86,6 @@ document.body.setAttribute("data-r",JSON.stringify({err:window.__err||null,cards
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-density-"));
   server = createServer((req, res) => {
@@ -107,21 +105,15 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
-
-function run(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 type Probe = { err: string | null; bands: Record<string, { h: number; empty: number }>; cards: Record<string, { y: number; type: string; h: number; content: number }> };
 async function probe(size: string, shot?: string): Promise<Probe> {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + size)}`, `--window-size=${size}`, "--virtual-time-budget=8000"];
+  const [width, height] = size.split(",").map(Number);
+  const o = { width: width!, height: height!, budgetMs: 8000 };
   const url = `${base}/page`;
-  const dom = await run([...args, "--dump-dom", url]);
-  if (shot) await run([...args, `--screenshot=${shot}`, url]);
+  const dom = await dumpDom(url, o);
+  if (shot) await screenshot(url, shot, o);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as Probe;

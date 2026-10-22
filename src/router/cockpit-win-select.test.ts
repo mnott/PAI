@@ -4,16 +4,14 @@
  * postMessage like cockpit-page-fit.test.ts. Skipped when no Chromium is installed.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
 import { WIN_SELECT_JS, winSelectCss } from "./cockpit-page/win/select.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 /** The probe script: builds a Select and a Menu, drives them, posts one JSON result. */
 const PROBE = `<script>
@@ -123,14 +121,7 @@ beforeAll(async () => {
 });
 
 /** Every browser started here, so afterAll can kill what a failed test left behind. */
-const browsers = new Set<ChildProcess>();
-function run(bin: string, args: string[], opts: { encoding?: "utf8"; timeout: number; maxBuffer?: number }): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(bin, args, { ...opts, encoding: "utf8" }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve({ stdout }); });
-    browsers.add(c);
-  });
-}
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 interface ProbeResult {
   dbg: {
@@ -153,8 +144,8 @@ function rgbOf(v: string): string {
 }
 
 async function probe(theme: string, tag: string): Promise<ProbeResult> {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "tp-" + tag)}`, "--window-size=1000,800", "--virtual-time-budget=5000"];
-  const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", `${base}/frame?theme=${theme}`], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
+  const o = { width: 1000, height: 800, budgetMs: 5000 };
+  const dom = await dumpDom(`${base}/frame?theme=${theme}`, o);
   const e = /data-err="([^"]*)"/.exec(dom);
   if (e && e[1]) throw new Error(`page error for ${tag}: ${e[1].replace(/&quot;/g, '"')}`);
   const m = /data-probe="([^"]*)"/.exec(dom);

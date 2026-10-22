@@ -5,14 +5,14 @@
  * when none is installed) renders the `settings` group of the real page against a fake server.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
 import { WIN_REGISTRY_JS } from "./cockpit-page/win/cards-registry.js";
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 type Io = { get: (u: string) => Promise<any>; post: (u: string, b: any) => Promise<any>; status: (k: string, t: string) => void; paint: () => void };
 type Api = { WRG: any; wrgCanSave: (S: any) => true | string; wrgLoad: Function; wrgValidate: Function; wrgSave: Function; wrgRestore: Function; wrgDuplicate: Function; wrgTierNames: (t: string) => string[]; wrgBackupsHtml: (S: any) => string };
@@ -166,7 +166,6 @@ describe("registry editor logic (fake fetch)", () => {
   });
 });
 
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 const PROBE = `<script>setTimeout(function(){
 function card(id){return document.querySelector('#win-root [data-card="'+id+'"]')}
 var e=card("settings.registry-edit"),b=card("settings.registry-backups"),o={err:window.__err||null};
@@ -179,7 +178,6 @@ setTimeout(function(){if(e){o.status=e.querySelector(".cstatus").textContent;o.s
 
 describe.skipIf(!CHROME)("B8b-client settings group on the win runtime", () => {
   let server: Server, base = "", tmp = "";
-  const browsers = new Set<ChildProcess>();
   const seen: string[] = [];
   beforeAll(async () => {
     tmp = mkdtempSync(join(tmpdir(), "cockpit-win-registry-"));
@@ -201,18 +199,11 @@ describe.skipIf(!CHROME)("B8b-client settings group on the win runtime", () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   });
-  afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
-
-  function run(args: string[]): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-      browsers.add(c);
-    });
-  }
+  afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
   it("renders the editor and the backups list; Save is disabled before Validate and Validate posts to the fake server", async () => {
-    const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p")}`, "--window-size=1400,1800", "--virtual-time-budget=8000"];
-    const dom = await run([...args, "--dump-dom", `${base}/page`]);
+    const o = { width: 1400, height: 1800, budgetMs: 8000 };
+    const dom = await dumpDom(`${base}/page`, o);
     const m = /data-r="([^"]*)"/.exec(dom);
     if (!m) throw new Error("no probe result in dump");
     const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));

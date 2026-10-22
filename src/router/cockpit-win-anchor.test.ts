@@ -3,15 +3,13 @@
  * placed cards and posts one JSON result like cockpit-win-morph.test.ts. Skipped when no Chromium.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WIN_ANCHOR_JS } from "./cockpit-page/win/anchor.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const PROBE = `<div id="main" style="position:relative;height:3000px"></div>
 <script>
@@ -73,14 +71,7 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 
-const browsers = new Set<ChildProcess>();
-function run(bin: string, args: string[], opts: { timeout: number; maxBuffer: number }): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(bin, args, { ...opts, encoding: "utf8" }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve({ stdout }); });
-    browsers.add(c);
-  });
-}
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 describe("win anchor source", () => {
   it("is ES5 text with the spec names", () => {
@@ -90,8 +81,9 @@ describe("win anchor source", () => {
 
 describe.skipIf(!CHROME)("win anchor (A8, spec 4.3) in Chromium", () => {
   it("content growth leaves scroll and rects; structural add compensates once", async () => {
-    const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", `--user-data-dir=${join(tmp, "tp")}`, "--window-size=800,600", "--virtual-time-budget=8000", "--dump-dom", `${base}/?debug=scroll`];
-    const { stdout: dom } = await run(CHROME!, args, { timeout: 60_000, maxBuffer: 64 << 20 });
+    const o = { width: 800, height: 600, budgetMs: 8000, scrollbars: false };
+    const url = `${base}/?debug=scroll`;
+    const dom = await dumpDom(url, o);
     const e = /data-err="([^"]*)"/.exec(dom);
     if (e && e[1]) throw new Error(`page error: ${e[1]}`);
     const m = /data-probe="([^"]*)"/.exec(dom);

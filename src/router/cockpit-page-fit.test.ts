@@ -5,17 +5,14 @@
  * PAI_FIT_SHOTS=<dir> additionally writes a screenshot per width.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
 import { fixtureData, fixtureLimits, fixturePool, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
-
+import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
 let server: Server;
 let base = "";
@@ -53,16 +50,9 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 /** Every browser started here, so afterAll can kill what a failed test left behind. */
-const browsers = new Set<ChildProcess>();
-function run(bin: string, args: string[], opts: { encoding?: "utf8"; timeout: number; maxBuffer?: number }): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(bin, args, { ...opts, encoding: "utf8" }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve({ stdout }); });
-    browsers.add(c);
-  });
-}
 interface ShootResult {
   main: number; doc: number; vw: number;
   tables: { sec: string; scrollWidth: number; clientWidth: number; tableW: number; rows: number; rowH: number[]; lh: number; stacked: boolean; firstW: number; subs: { lines: number; inside: boolean }[]; thead: boolean }[];
@@ -70,10 +60,10 @@ interface ShootResult {
   ths: { sec: string; label: string; lines: number; height: number }[];
 }
 async function shoot(width: number, main: number | null, shot?: string, probe?: string): Promise<ShootResult> {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + width + "-" + (main ?? 0))}`, "--window-size=1000,3300", "--virtual-time-budget=6000"];
+  const o = { width: 1000, height: 3300, budgetMs: 6000 };
   const url = `${base}/frame?w=${width}${main ? `&main=${main}` : ""}${probe ? `&probe=${probe}` : ""}`;
-  const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", url], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
-  if (shot) await run(CHROME!, [...args, `--screenshot=${shot}`, url], { timeout: 60_000 });
+  const dom = await dumpDom(url, o);
+  if (shot) await screenshot(url, shot, o);
   const m = /data-fit="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no fit result in dump");
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));

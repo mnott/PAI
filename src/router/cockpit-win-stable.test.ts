@@ -7,15 +7,12 @@
  * PAI_STABLE_TABLE=1 prints the movement table.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 
 let phase = "A";
 const LONG = "upstream connect error or disconnect/reset before headers. reset reason: connection termination while talking to a very long provider host name ".repeat(3);
@@ -92,7 +89,6 @@ type Snap = { y: number; cards: Record<string, { top: number; h: number; len: nu
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-stable-"));
   server = createServer((req, res) => {
@@ -114,18 +110,12 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function run(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 90_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
 async function open(query: string) {
   phase = "A";
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, "--window-size=1300,900", "--virtual-time-budget=15000"];
-  const dom = await run([...args, "--dump-dom", `${base}/page${query}`]);
+  const o = { width: 1300, height: 900, budgetMs: 15000 };
+  const dom = await dumpDom(`${base}/page${query}`, o);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as { err: string | null; R: { A: Snap; B: Snap; C: Snap; a0: number; SW: Record<string, number | string> } };
@@ -217,6 +207,7 @@ describe.skipIf(!CHROME)("box stability", () => {
 // ---- C1 restored guard: hold-last-good feeds ----
 import { fnSrc, varSrc } from "./cockpit-page-src.js";
 import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 describe("C1 guards: hold-last-good", () => {
   // w=1 hold-last-good: a failed fetch keeps the last card values; past HOLD_SEC the card shows the error; a good payload clears it.

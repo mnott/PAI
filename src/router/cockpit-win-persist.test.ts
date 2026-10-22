@@ -4,15 +4,13 @@
  * Headless Chromium on the real page with a mock server. Skipped without Chromium.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const data = () => ({
   window: "1h", totals: { requests: 5000, input: 9e6, output: 4e5, cacheWrite: 1e6, cacheRead: 9e7, errors: 0, hitRatio: 0.9 },
@@ -23,7 +21,6 @@ const data = () => ({
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-persist-"));
   server = createServer((req, res) => {
@@ -48,20 +45,13 @@ if(mode==="leave"){window.dispatchEvent(new Event("pagehide"));out()}else setTim
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function open(mode: string): Promise<{ hidden: number; first: string | null }> {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, "--window-size=1400,1400", "--virtual-time-budget=8000", "--dump-dom", `${base}/page?mode=${mode}`];
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 90_000, maxBuffer: 64 << 20 }, (err, stdout) => {
-      browsers.delete(c);
-      if (err) return reject(err);
-      const m = /data-r="([^"]*)"/.exec(stdout);
-      if (!m) return reject(new Error("no probe result"));
-      resolve(JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&")));
-    });
-    browsers.add(c);
-  });
+async function open(mode: string): Promise<{ hidden: number; first: string | null }> {
+  const dom = await dumpDom(`${base}/page?mode=${mode}`, { width: 1400, height: 1400, budgetMs: 8000 });
+  const m = /data-r="([^"]*)"/.exec(dom);
+  if (!m) throw new Error("no probe result");
+  return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
 }
 
 describe.skipIf(!CHROME)("cockpit layout persistence", () => {

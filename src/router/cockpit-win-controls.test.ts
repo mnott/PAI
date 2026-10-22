@@ -5,15 +5,13 @@
  * Headless Chromium, skipped when none is installed.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const data = () => ({
   window: "1h", totals: { requests: 5000, input: 9e6, output: 4e5, cacheWrite: 1e6, cacheRead: 9e7, errors: 0, hitRatio: 0.9 },
@@ -47,7 +45,6 @@ document.body.setAttribute("data-r",JSON.stringify(o))},2500)</script>`;
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-controls-"));
   server = createServer((req, res) => {
@@ -73,17 +70,12 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function run(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
 async function open(theme: string) {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, "--window-size=1300,4600", "--virtual-time-budget=8000", "--dump-dom", `${base}/page?theme=${theme}`];
-  const dom = await run(args);
+  const o = { width: 1300, height: 4600, budgetMs: 8000, scrollbars: false };
+  const url = `${base}/page?theme=${theme}`;
+  const dom = await dumpDom(url, o);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as {

@@ -3,8 +3,7 @@
  * with synthetic PointerEvents/KeyboardEvents; one JSON result like cockpit-win-dragdrop.test.ts.
  * Skipped when no Chromium is installed.
  */
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,8 +16,7 @@ import { WIN_LAYOUT_JS } from "./cockpit-page/win/layout.js";
 import { WIN_MORPH_JS } from "./cockpit-page/win/morph.js";
 import { WIN_STORE_JS } from "./cockpit-page/win/store.js";
 import { WIN_TREE_JS } from "./cockpit-page/win/tree.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
 const cssSrc = readFileSync(fileURLToPath(new URL("./cockpit-page/css.ts", import.meta.url)), "utf8");
 const cm = cssSrc.match(/export const css = \(L: CockpitLayout[^`]*`([\s\S]*?)`;/);
@@ -96,19 +94,13 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 
-const browsers = new Set<ChildProcess>();
-function run(bin: string, args: string[], opts: { timeout: number; maxBuffer: number }): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(bin, args, { ...opts, encoding: "utf8" }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve({ stdout }); });
-    browsers.add(c);
-  });
-}
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 describe.skipIf(!CHROME)("win resize gutters wired (A12, spec 3.3) in Chromium", () => {
   it("drag resizes both neighbours, survives updates and reload, arrows resize, group bodies too", async () => {
-    const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", `--user-data-dir=${join(tmp, "tp")}`, "--window-size=1000,900", "--virtual-time-budget=4000", "--dump-dom", base];
-    const { stdout: dom } = await run(CHROME!, args, { timeout: 60_000, maxBuffer: 64 << 20 });
+    const o = { width: 1000, height: 900, budgetMs: 4000, scrollbars: false };
+    const url = base;
+    const dom = await dumpDom(url, o);
     const e = /data-err="([^"]*)"/.exec(dom);
     if (e && e[1]) throw new Error(`page error: ${e[1]}`);
     const m = /data-probe="([^"]*)"/.exec(dom);

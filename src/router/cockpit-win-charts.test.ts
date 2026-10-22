@@ -4,15 +4,12 @@
  * PAI_WIN_SHOTS=<dir> writes charts-<width>.png.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 
 const models = ["claude-opus", "gyro-m"];
 const bucket = (i: number) => ({ t: 1_700_000_000_000 + i * 600_000, models: { "claude-opus": { requests: 3, input: 1000 * i, output: 500, cacheRead: 9000, cacheWrite: 100 }, "gyro-m": { requests: 2, input: 200 * i, output: 300, cacheRead: 100, cacheWrite: 0 } } });
@@ -40,7 +37,6 @@ document.body.setAttribute("data-r",JSON.stringify(o));
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-charts-"));
   server = createServer((req, res) => {
@@ -58,24 +54,17 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function run(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
 async function open(query: string, width: number, shot?: string) {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, `--window-size=${width},900`, "--virtual-time-budget=6000"];
+  const o = { width, height: 900, budgetMs: 6000 };
   const url = `${base}/page${query}`;
-  const dom = await run([...args, "--dump-dom", url]);
-  if (shot) await run([...args, `--screenshot=${shot}`, url]);
+  const dom = await dumpDom(url, o);
+  if (shot) await screenshot(url, shot, o);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump: " + dom.slice(-600));
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
-
 
 describe.skipIf(!CHROME)("B9 tokens + daily on the win runtime", () => {
   it("draws both charts at the card's pixel size; the toggle, the Select and the update change the svg, never a box", async () => {
@@ -109,6 +98,7 @@ describe.skipIf(!CHROME)("B9 tokens + daily on the win runtime", () => {
 import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
 import { WIN_CHARTS_JS } from "./cockpit-page/win/cards-charts.js";
 import { fnSrc, varSrc } from "./cockpit-page-src.js";
+import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
 const FNS = ["esc", "fmt", "fmtAxis", "padFor", "labelStep", "mergeFactor", "mergeLabels", "mergeSeries", "aggCap", "gapCols", "gapLayout", "gapMark", "barCap", "stackedBarsSvg"];
 const chartLib = () => new Function(`var data={bucketMs:60000};function colorOf(){return"#3b6fe0"}\n${varSrc(PAGE, "MIN_LABEL_GAP_PX")}\n${FNS.map((n) => fnSrc(PAGE, n)).join("\n")}\nreturn{stackedBarsSvg:stackedBarsSvg,MIN_BAR_PX:MIN_BAR_PX,MIN_LABEL_GAP_PX:MIN_LABEL_GAP_PX};`)() as {

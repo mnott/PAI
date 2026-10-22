@@ -4,15 +4,12 @@
  * PAI_WIN_SHOTS=<dir> writes tables-<width>.png.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 
 const sp = (req: number) => ({ requests: req, ttftP50: 800, ttftP90: 2000, writeTps: 40, readTps: 900 });
 const sess = (i: number) => ({ session: "sess" + i + "-abcdefgh", name: "name" + i, models: ["claude-opus", "gyro-m"], requests: 10 + i, input: 1000 * i, output: 500, cacheRead: 9000, cacheWrite: 100, errors: 0, busts: i % 2, hitRatio: 0.9, lastTs: Date.now() - i * 60_000, worker: null, verdict: null });
@@ -42,7 +39,6 @@ document.body.setAttribute("data-r",JSON.stringify(o));
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-win-tables-"));
   server = createServer((req, res) => {
@@ -60,24 +56,17 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function run(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
 async function open(query: string, width: number, shot?: string) {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + Math.random().toString(36).slice(2))}`, `--window-size=${width},900`, "--virtual-time-budget=6000"];
+  const o = { width, height: 900, budgetMs: 6000 };
   const url = `${base}/page${query}`;
-  const dom = await run([...args, "--dump-dom", url]);
-  if (shot) await run([...args, `--screenshot=${shot}`, url]);
+  const dom = await dumpDom(url, o);
+  if (shot) await screenshot(url, shot, o);
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump: " + dom.slice(-600));
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
 }
-
 
 describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", () => {
   it("renders the four cards from the page builders; folds are row-level; a value update moves no box", async () => {
@@ -105,6 +94,7 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
 import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
 import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
 import { fnSrc, varSrc } from "./cockpit-page-src.js";
+import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
 describe("C1 guards: sessions fold", () => {
   // w=6 sessions table: sessions past the top rows fold into one "+N more sessions (X tokens)" row that expands on click and stays expanded across a refresh; the models cell reads "first +N" with all models in its title.

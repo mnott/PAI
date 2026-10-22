@@ -5,16 +5,15 @@
  * PAI_NARROW_TABLE=<file> writes the height table. Skipped when no Chromium is installed.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cockpitHtml } from "./cockpit-page.js";
 import { fixtureData, fixtureLimits, fixturePool, fixturePoolWithSlot, fixtureQueue, fixtureSystem } from "./cockpit-fixtures.js";
+import { CHROME, dumpDom, killChromes } from "./cdp-browser.js";
 
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
 const HEAD = 28;
 
 const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorAll("[data-card]").forEach(function(c){var b=c.querySelector(".cbody"),h=c.getBoundingClientRect();if(!h.height)return;var kids=b?Array.prototype.slice.call(b.children):[],low=0,top=b?b.getBoundingClientRect().top:0;kids.forEach(function(k){var r=k.getBoundingClientRect();if(r.height>0)low=Math.max(low,r.bottom-top)});out.push({id:c.getAttribute("data-card"),type:c.getAttribute("data-type"),h:Math.round(h.height),head:b?Math.round(b.getBoundingClientRect().top-h.top):0,content:Math.round(low),sh:b?b.scrollHeight:0})});parent.postMessage(JSON.stringify({vw:innerWidth,cards:out}),"*")},3500)</script>`;
@@ -22,7 +21,6 @@ const INJECT = `<script>setTimeout(function(){var out=[];document.querySelectorA
 let server: Server;
 let base = "";
 let tmp = "";
-const browsers = new Set<ChildProcess>();
 
 beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "cockpit-narrow-"));
@@ -49,18 +47,12 @@ beforeAll(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
-function run(bin: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(bin, args, { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve(stdout); });
-    browsers.add(c);
-  });
-}
 interface Card { id: string; type: string; h: number; head: number; content: number; sh: number }
 async function measure(width: number): Promise<Card[]> {
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p" + width)}`, "--window-size=1000,5200", "--virtual-time-budget=8000"];
-  const dom = await run(CHROME!, [...args, "--dump-dom", `${base}/frame?w=${width}`]);
+  const o = { width: 1000, height: 5200, budgetMs: 8000 };
+  const dom = await dumpDom(`${base}/frame?w=${width}`, o);
   const m = /data-fit="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no result in dump");
   const cards = (JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&")) as { cards: Card[] }).cards;

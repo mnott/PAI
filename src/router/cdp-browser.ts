@@ -1,10 +1,11 @@
 /**
- * Shared launcher for the real-browser (CDP) cockpit tests. Every launch gets its own fresh user-data-dir (so a DevToolsActivePort left by an
- * earlier Chrome can never be read) and the previous browser is killed and awaited before a new one starts.
+ * Shared headless-Chrome helpers for the cockpit tests, the only place that spawns the browser. `launch` is the CDP launcher: every launch gets
+ * its own fresh user-data-dir (so a DevToolsActivePort left by an earlier Chrome can never be read) and the previous browser is killed and
+ * awaited before a new one starts. `dumpDom` / `screenshot` are the one-shot variants: a fresh profile per call, bounded retry on empty output.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -59,4 +60,35 @@ export async function launch(w: number, h: number) {
     return r.result.result.value as T;
   };
   return { send, ev };
+}
+
+const oneShots = new Set<ChildProcess>();
+
+/** Kill every one-shot Chrome still running. Call from afterAll. */
+export function killChromes(): void { for (const c of oneShots) c.kill("SIGKILL"); }
+
+export interface ShotOpts { width: number; height: number; budgetMs: number; scrollbars?: boolean }
+
+async function oneShot(opts: ShotOpts, extra: string[], ok: (stdout: string) => boolean): Promise<string> {
+  let last: unknown = new Error("chrome produced no output");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const profile = mkdtempSync(join(tmpdir(), "cockpit-shot-"));
+    const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", ...(opts.scrollbars === false ? [] : ["--hide-scrollbars"]), `--user-data-dir=${profile}`, `--window-size=${opts.width},${opts.height}`, `--virtual-time-budget=${opts.budgetMs}`, ...extra];
+    try {
+      const out = await new Promise<string>((resolve, reject) => {
+        const c = execFile(CHROME!, args, { encoding: "utf8", timeout: 90_000, maxBuffer: 64 << 20 }, (err, stdout) => { oneShots.delete(c); err ? reject(err) : resolve(stdout); });
+        oneShots.add(c);
+      });
+      if (ok(out)) return out;
+    } catch (e) { last = e; } finally { rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+  }
+  throw last;
+}
+
+/** The DOM Chrome serialises after the virtual-time budget has run out. */
+export const dumpDom = (url: string, opts: ShotOpts): Promise<string> => oneShot(opts, ["--dump-dom", url], (out) => out.trim() !== "");
+
+/** Writes a PNG of the page to `file`. */
+export async function screenshot(url: string, file: string, opts: ShotOpts): Promise<void> {
+  await oneShot(opts, [`--screenshot=${file}`, url], () => existsSync(file) && statSync(file).size > 0);
 }

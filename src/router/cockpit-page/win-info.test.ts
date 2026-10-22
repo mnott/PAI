@@ -4,14 +4,12 @@
  * Headless Chromium, skipped when none is installed.
  */
 
-import { execFile, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-
-const CHROME = process.env.CHROME_BIN ?? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/usr/bin/google-chrome", "/usr/bin/chromium"].find((p) => existsSync(p));
+import { CHROME, dumpDom, killChromes } from "../cdp-browser.js";
 
 // the module source is the contract: pull WIN_INFO_JS out of it, like win-tree.test.ts
 const src = readFileSync(fileURLToPath(new URL("./win/info.ts", import.meta.url)), "utf8");
@@ -134,13 +132,6 @@ setTimeout(function(){
 </script></body></html>`;
 
 let tmp = "";
-const browsers = new Set<ChildProcess>();
-function run(bin: string, args: string[], opts: { encoding?: "utf8"; timeout: number; maxBuffer?: number }): Promise<{ stdout: string }> {
-  return new Promise((resolve, reject) => {
-    const c = execFile(bin, args, { ...opts, encoding: "utf8" }, (err, stdout) => { browsers.delete(c); err ? reject(err) : resolve({ stdout }); });
-    browsers.add(c);
-  });
-}
 
 interface Snap { why: string; hidden: boolean | null; open: boolean; disp: string; keyed: string; card: string; pop: string; st: string; sl: string; ow: number; oh: number; pos: string; z: string; par: string; op: string; cs: string; ov: string; ct2: string; html: string; body: string; sc: string; fr: string; ih: string; iw: string; sh: string; sw: string; d: string; ds: string; vis: string; rf: string; kids: string; cs2: string; cs3: string; cs4: string; cs5: string; cs6: string; cb: number; ct: number; pt: number; pb: number; at: number; ab: number; ac: number; ad: number; al: number; ar: number; aw: number; ah: number; cw: number; ch: number; pl: number; pr: number; vw: number; vh: number; text: string; inBody: boolean; popTop: number; popLeft: number; popRight: number; cardBottom: number; expanded: string | null; active: string | null }
 interface Clip { why: string; popTop: number; popBottom: number; cardBottom: number; below: string; wh: string; escapes: string; popInCardRect: boolean }
@@ -150,14 +141,14 @@ async function shoot(): Promise<(Snap | Clip)[]> {
   const host = join(tmp, "host.html");
   writeFileSync(host, `<body style="margin:0"><iframe src="page.html" style="width:900px;height:900px;border:0"></iframe><script>onmessage=function(e){document.body.setAttribute("data-info",e.data)}</script></body>`);
   writeFileSync(join(tmp, "page.html"), PAGE);
-  const args = ["--headless=new", "--disable-gpu", "--use-mock-keychain", "--password-store=basic", "--no-first-run", "--hide-scrollbars", `--user-data-dir=${join(tmp, "p")}`, "--window-size=1000,900", "--virtual-time-budget=4000"];
-  const { stdout: dom } = await run(CHROME!, [...args, "--dump-dom", `file://${host}`], { encoding: "utf8", timeout: 60_000, maxBuffer: 64 << 20 });
+  const o = { width: 1000, height: 900, budgetMs: 4000 };
+  const dom = await dumpDom(`file://${host}`, o);
   const r = /data-info="([^"]*)"/.exec(dom);
   if (!r) throw new Error("no info result in dump (dbg: " + (/id="dbg"[^>]*>([^<]*)</.exec(dom)?.[1] ?? "none") + ")");
   return JSON.parse(r[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
 }
 
-afterAll(() => { for (const c of browsers) c.kill("SIGKILL"); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+afterAll(() => { killChromes(); if (tmp) rmSync(tmp, { recursive: true, force: true }); });
 
 describe.skipIf(!CHROME)("win info popover (spec 2.4), real CSS in Chromium", () => {
   it("hover/focus show, Esc hides, click toggles, pointerout hides, popup on body and not clipped by overflow:hidden", async () => {
