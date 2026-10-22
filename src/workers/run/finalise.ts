@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { shortText } from "../args.js";
 import { buildRunEnv } from "../run-env.js";
 import { appendLedger } from "../ledger.js";
-import { decideEndReason, endFields, type EndInfo } from "../endreason.js";
+import { appendStopEvent, decideEndReason, endFields, type EndInfo } from "../endreason.js";
 import { takeLoopStop } from "../loop-stop.js";
 import { eventsPath } from "../paths.js";
 import { type WorkerStatus, saveStatus, UNLABELED } from "../status.js";
@@ -55,6 +55,7 @@ export function fireDeadline(logDir: string, status: WorkerStatus, ledger: strin
   status.last = what;
   saveStatus(logDir, status);
   appendLedger(ledger, "WORKER-DEADLINE", { id: status.id, minutes: limit.minutes, waitedMin: waited });
+  appendStopEvent(logDir, status.id, { killed_by: "deadline", forced: false, reason: `${what} (timer: --max-minutes/--deadline, armed at spawn)` });
   // the deadline stops the run's own process; its sub-workers go with it
   void killTree(logDir, status.id, { skipRoot: true, by: "deadline", reason: `parent worker ${what}` }).catch(() => undefined);
 }
@@ -159,6 +160,11 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   }
   const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop });
   status.endReason = end.reason;
+  // PAI itself stopped the child (not the deadline, not a signal): the report says which timer or check did
+  if (end.reason === "pai-worker-kill" && !f.timedOut && end.killReason && !succeeded) {
+    status.last = shortText(end.killReason, 90);
+    report = { ...(report ?? {}), result: report?.result ?? "-", why: end.killReason, notes: [end.killReason, report?.notes ?? f.fallbackText].filter(Boolean).join("\n") };
+  }
   // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
   status.claimsContinue = report?.result === "~";
   saveStatus(logDir, status);

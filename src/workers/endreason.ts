@@ -64,6 +64,14 @@ export function requestKill(logDir: string, ledger: string, id: string,
   appendLedger(ledger, "WORKER-KILL", { id, by, pid: req.pid, ppid: req.ppid, cwd: req.cwd, ...(forced ? { forced: 1 } : {}), ...(reason ? { reason } : {}) });
 }
 
+function peekMarker(logDir: string, id: string): KillRequest | null {
+  try {
+    return JSON.parse(readFileSync(killMarkerPath(logDir, id), "utf8")) as KillRequest;
+  } catch {
+    return null;
+  }
+}
+
 function readMarker(logDir: string, id: string): KillRequest | null {
   const p = killMarkerPath(logDir, id);
   if (!existsSync(p)) return null;
@@ -118,8 +126,12 @@ export function decideEndReason(a: {
 }): EndInfo {
   if (a.timedOut) return { reason: "deadline" };
   if (a.loopStopped) return { reason: "loop-stopped" };
-  if (!a.signal) return { reason: "exit" };
-  const marker = readMarker(a.logDir, a.id);
+  // a stop PAI made by SIGKILL of the child group (pane audit) leaves a marker but no signal reaches the runner
+  const marker = a.signal || peekMarker(a.logDir, a.id)?.by === "pane audit" ? readMarker(a.logDir, a.id) : null;
+  if (!a.signal && !marker) return { reason: "exit" };
+  if (!a.signal && marker) {
+    return { reason: "pai-worker-kill", by: marker.by, note: `killed by ${marker.by}${marker.reason ? `: ${marker.reason}` : ""}`, ...(marker.reason ? { killReason: marker.reason } : {}), forced: true };
+  }
   if (marker) {
     return {
       reason: "pai-worker-kill",
