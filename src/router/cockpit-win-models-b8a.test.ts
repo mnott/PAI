@@ -4,7 +4,7 @@
  * fake Win; no fetch, no model server is ever touched.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WIN_MODELS_JS } from "./cockpit-page/win/cards-models.js";
 import { WIN_REGISTRY_JS } from "./cockpit-page/win/cards-registry.js";
 
@@ -158,6 +158,28 @@ describe("C1 guards: runtime cards", () => {
     m.inputs[1].listeners.keydown({ key: "Escape", stopPropagation() {} });
     expect(m.labels.length).toBe(1);
     expect(m.slot.firstChild).toBeNull();
+  });
+
+  // a blur that is followed by a refocus inside BLUR_CANCEL_MS keeps the input and the typed alias
+  it("the alias editor survives a blur followed by a refocus, and closes on a blur left alone", () => {
+    vi.useFakeTimers();
+    try {
+      const m = rtLib();
+      m.WMD_SET(rtInv());
+      const alias = m.wmdActs("models.rt:ollama/qwen3:8b").find((a) => a.id === "alias")!;
+      alias.run();
+      const inp = m.inputs[0];
+      inp.value = "Fast";
+      inp.listeners.blur();
+      vi.advanceTimersByTime(300);
+      inp.listeners.focus();
+      vi.advanceTimersByTime(1000);
+      expect(m.slot.firstChild).toBe(inp);
+      expect(inp.value).toBe("Fast");
+      inp.listeners.blur();
+      vi.advanceTimersByTime(1000);
+      expect(m.slot.firstChild).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
 
   // w=3 runtime card content: one card per consumer model, down/idle/slow wording, kind chip, applicable start/stop, stop confirm with requests in flight.

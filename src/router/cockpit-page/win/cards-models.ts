@@ -157,7 +157,7 @@ function wmdActs(id){
    run:function(){wmdEdit(id)}}
  ];
 }
-/** The label-edit control: an input in the card body; Enter saves, Escape or a blur (after BLUR_CANCEL_MS) cancels. */
+/** The label-edit control: an input in the card body; Enter saves, Escape or a blur (after BLUR_CANCEL_MS, unless focus returns first) cancels. */
 function wmdEdit(id){
  var e=wmdEntry(id),c=Win.ctx(id),slot=Win.el(id).querySelector('[data-k="edit"]');
  if(!e||!slot||slot.firstChild)return;
@@ -170,6 +170,7 @@ function wmdEdit(id){
  }
  inp.addEventListener("keydown",function(ev){ev.stopPropagation();if(ev.key==="Enter"){ev.preventDefault();save()}else if(ev.key==="Escape")close()});
  inp.addEventListener("blur",function(){timer=setTimeout(close,BLUR_CANCEL_MS)});
+ inp.addEventListener("focus",function(){if(timer){clearTimeout(timer);timer=null}});
  slot.appendChild(inp);inp.focus({preventScroll:true});
 }
 Win.registerType("runtime",{minW:300,minH:150,defaultH:220,
