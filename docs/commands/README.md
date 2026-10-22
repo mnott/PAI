@@ -28,7 +28,6 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai issue`](issue.md) | Claim and release forge issues for this project |
 | [`pai kg`](kg.md) | Facts extracted from your notes, with the time they were true |
 | [`pai launch`](launch.md) | Start Claude Code on a chosen provider (for scripts) |
-| [`pai lessons`](lessons.md) | Review-gated lessons for agents |
 | [`pai list`](list.md) | List the markdown session notes |
 | [`pai ls`](ls.md) | List sessions, newest first |
 | [`pai mcp`](mcp.md) | Install the PAI tools for Claude Code |
@@ -151,14 +150,6 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai kg query` | Look up facts by subject, predicate, object or date |
 | `pai kg stats` | How many facts and contradictions the graph holds |
 | `pai launch` | Start Claude Code on a chosen provider (for scripts) |
-| `pai lessons` | Review-gated lessons for agents |
-| `pai lessons add` | Add a candidate lesson |
-| `pai lessons approve` | Approve a candidate |
-| `pai lessons list` | List lessons |
-| `pai lessons propose` | Add candidates from a transcript |
-| `pai lessons reject` | Reject a candidate |
-| `pai lessons show` | Show one lesson |
-| `pai lessons supersede` | Replace an approved lesson by another approved one |
 | `pai list` | List the markdown session notes |
 | `pai ls` | List sessions, newest first |
 | `pai mcp` | Install the PAI tools for Claude Code |
