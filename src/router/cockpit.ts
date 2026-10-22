@@ -13,7 +13,7 @@ import { cockpitHtml } from "./cockpit-page.js";
 import { resolveFromModule } from "../module-paths.js";
 import { expandHome, loadConfig, paiConfigFilePath, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
-import { isTimeOrdered, markTimeOrdered, readUsageCached, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
+import { isTimeOrdered, markTimeOrdered, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindows, loadWorkerWindowsSteps, runSliced, withJobNames, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
@@ -466,7 +466,6 @@ export function buildCockpitData(
 }
 
 const USAGE_HEAD_BYTES = 4096;
-const CACHED_ROWS_WINDOW_MS = 7 * 86_400_000;
 
 /** A map keyed by logged names (model, provider): no prototype, so a key such as "__proto__" is an ordinary entry. */
 const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
@@ -475,6 +474,8 @@ const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T
  * The usage log as rows, kept in memory: a log that only grew is read from where the last read
  * stopped (the router appends a row per request, so a full reread of tens of MB on every append
  * would block the event loop); one that shrank or was replaced is read again from the start.
+ * Rows are kept for the router's lifetime because wholeLog aggregates the whole log (14 days of
+ * tokens per day, promptByProvider/promptSince); bounding them needs incremental aggregates.
  */
 export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
   let rows: UsageRow[] = [];
@@ -534,9 +535,6 @@ export function cachedRows(file: string = usageLogFile()): () => UsageRow[] {
         offset += chunk.length;
         ino = st.ino;
         if (head.length < USAGE_HEAD_BYTES) head = nowHead.slice(0, Math.min(offset, USAGE_HEAD_BYTES));
-        // rows older than the window are dropped (a new array, so the memos rebuild); the slack keeps the O(n) trim to once a day
-        const cutoff = lastMs - CACHED_ROWS_WINDOW_MS;
-        if (rows.length && Date.parse(rows[0]!.ts) < cutoff - 86_400_000) fresh(rows.filter((r) => !(Date.parse(r.ts) < cutoff)));
         mtimeMs = st.mtimeMs;
       } finally {
         closeSync(fd);
@@ -1229,7 +1227,7 @@ export function handleCockpit(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   limits: LimitsSource,
-  readRows: () => UsageRow[] = readUsageCached,
+  readRows: () => UsageRow[] = cachedRows(),
   sessionMap: () => Map<string, SessionInfo> = loadSessionMap,
   system?: SystemMonitor,
   workerWindows: () => WorkerWindow[] = loadWorkerWindows,

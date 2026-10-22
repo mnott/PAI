@@ -4,8 +4,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCockpitData } from "./cockpit.js";
-import { readUsageCached, readUsage } from "./usage.js";
+import { buildCockpitData, cachedRows } from "./cockpit.js";
+import { readUsage } from "./usage.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-range-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -17,13 +17,14 @@ const row = (msAgo: number, i: number) =>
 describe("range reads", () => {
   const file = join(dir, "usage.jsonl");
   const N = 50_000;
+  const read = cachedRows(file);
   // 50k rows over 7 days, oldest first like the real log
   writeFileSync(file, Array.from({ length: N }, (_, i) => row(((N - i) / N) * 7 * 86_400_000, i)).join("\n") + "\n");
 
   it("1 hour returns the recent rows only, quickly, once the log is cached", () => {
-    readUsageCached(file);
+    read();
     const t0 = performance.now();
-    const rows = readUsageCached(file);
+    const rows = read();
     const d = buildCockpitData(rows, "1h", NOW);
     const ms = performance.now() - t0;
     expect(rows.length).toBe(N);
@@ -33,20 +34,20 @@ describe("range reads", () => {
   });
 
   it("week still counts every row in it", () => {
-    expect(buildCockpitData(readUsageCached(file), "7d", NOW).totals.requests).toBe(N);
+    expect(buildCockpitData(read(), "7d", NOW).totals.requests).toBe(N);
   });
 
   it("appended rows are read without a re-parse, a torn tail waits, a truncated file is re-read", () => {
-    const before = readUsageCached(file);
+    const before = read();
     appendFileSync(file, row(1000, 1) + "\n" + '{"ts":"torn');
-    const after = readUsageCached(file);
+    const after = read();
     expect(after).toBe(before);
     expect(after.length).toBe(N + 1);
     appendFileSync(file, '"}\n');
-    expect(readUsageCached(file).length).toBe(N + 2); // the finished line is a row now
+    expect(read().length).toBe(N + 2); // the finished line is a row now
     truncateSync(file, 0);
     writeFileSync(file, row(5, 1) + "\n");
-    expect(readUsageCached(file)).toEqual(readUsage(file));
-    expect(readUsageCached(file).length).toBe(1);
+    expect(read()).toEqual(readUsage(file));
+    expect(read().length).toBe(1);
   });
 });

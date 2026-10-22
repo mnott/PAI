@@ -541,13 +541,13 @@ describe("cachedRows identity and replacement", () => {
     writeFileSync(f, line("2026-03-10T10:00:00Z", 7) + line("2026-03-10T10:01:00Z", 8));
     expect(read().map((r) => r.session_id)).toEqual(["s7", "s8"]);
   });
-  it("prunes rows older than 7 days of the newest row", () => {
+  it("keeps a row older than 7 days after appends (wholeLog aggregates the whole log)", () => {
     const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
     writeFileSync(f, line("2026-03-01T00:00:00Z", 1));
     const read = cachedRows(f);
     read();
     appendFileSync(f, line("2026-03-20T00:00:00Z", 2));
-    expect(read().map((r) => r.session_id)).toEqual(["s2"]);
+    expect(read().map((r) => r.session_id)).toEqual(["s1", "s2"]);
   });
   it("an unordered append yields an unmarked array", () => {
     const f = join(mkdtempSync(join(tmpdir(), "pai-rows-")), "usage.jsonl");
