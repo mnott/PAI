@@ -48,10 +48,10 @@ const limits = () => ({
 const MOVE = `<script>
 setTimeout(function(){
  if(location.search.indexOf("mv=1")<0)return;
- var st=Win.state(),t=removeLeaf(st.kids["tokens-group"],"speed",false);
- Win.apply("tokens-group",t.k==="s"?normalize(t,false):t);
+ var st=Win.state(),tk=st.kids["tokens-group"];
+ Win.apply("tokens-group",{k:"s",d:"c",ch:tk.ch.slice(0,2),sz:[0.5,0.5]});
  var sm=st.kids["sys-metrics"];
- Win.apply("sys-metrics",normalize(split("c",[sm,leaf("speed")],[0.8,0.2]),false));
+ Win.apply("sys-metrics",{k:"s",d:"c",ch:[sm,{k:"c",id:"speed"}],sz:[0.8,0.2]});
 },5000);
 </script>`;
 const PROBE = `<script>
@@ -65,6 +65,7 @@ setTimeout(function(){
    trunc:c.classList.contains("chip")?(function(){var t=c.querySelector("*")||c;return c.scrollWidth>c.clientWidth+1})():false});
  });
  document.body.setAttribute("data-r",JSON.stringify(out));
+ document.body.setAttribute("data-e",String(window.__err)+" "+location.search+" "+JSON.stringify(Win.state().kids["tokens-group"]).slice(0,300));
 },9000);
 </script>`;
 let server: Server;
@@ -96,6 +97,7 @@ async function read(width: number, q = "") {
   const dom = await dumpDom(`${base}/page${q}`, { width, height: 900, budgetMs: 15000 });
   const m = /data-r="([^"]*)"/.exec(dom);
   if (!m) throw new Error("no probe result in dump");
+  if (process.env.PAI_GRID) console.log(/data-e="([^"]*)"/.exec(dom)?.[1]);
   return JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")) as Row[];
 }
 const inter = (a: Box, b: Box) => a.x < b.x + b.w - 1 && b.x < a.x + a.w - 1 && a.y < b.y + b.h - 1 && b.y < a.y + a.h - 1;
