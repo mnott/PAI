@@ -1,7 +1,7 @@
 /** cockpit-page/win — B3 `memory`: the Memory index group on the win runtime (spec 7/B3).
  *  Page-scope ES5 (after scriptCore + scriptMemory: esc/fmt/memDur/memAt/memClock/memBound/memLvl/memRunLine in scope),
  *  needs `Win`, `WinT` and `WinA` (the action runner, win/actions.ts). Feed `memory` (/cockpit/memory).
- *  Group `memory`: `kv` card `memory.kv` (pill + reason; the running pill sits in its status slot as ctx.status("run", ...)),
+ *  Group `memory`: `kv` card `memory.kv` (pill + reason; the run progress is a line under the pill, never in a header),
  *  `metric` cards `memory.index|backend|passes|daemon` and one dynamic `metric` card `memory.job:<id>` per job (Win.addCards).
  *  index now / embed backlog / stop are header actions of the group card, disabled with their reason in the title; results go
  *  through WinA.runAction into the group card's status slot. The `kv`/`metric` types are the generic ones of win/types.ts;
@@ -16,10 +16,16 @@ var MEM_ACTS=[
  ["embed","embed backlog","memory.embed",function(m){return!m||!m.daemon?"daemon not answering":memBusy(m)?"a run is in progress":m.counts&&m.counts.backlog===0?"nothing to embed (backlog 0)":true}],
  ["stop","stop","memory.stop",function(m){return m&&m.run&&m.run.stoppable?true:"nothing to stop"}]
 ];
+/** The group header carries only the title and the buttons: a pending run shows no text there (progress lives in the status card). */
+var MEM_HOST=null;
+function memHost(){
+ if(!MEM_HOST){MEM_HOST=Object.create(WIN_HOST);MEM_HOST.setStatus=function(id,k,t){WIN_HOST.setStatus(id,k==="pending"?"":k,k==="pending"?"":t)}}
+ return MEM_HOST;
+}
 function memAction(a){
  return{id:a[0],label:a[1],title:a[0]==="stop"?"stops cleanly; re-run to continue":"",
   enabled:function(){return a[3](WMEM)},
-  run:function(){WinA.runAction("memory",a[2],{},Win.el("memory").querySelector('[data-act="'+a[0]+'"]'),WIN_HOST)}};
+  run:function(){WinA.runAction("memory",a[2],{},Win.el("memory").querySelector('[data-act="'+a[0]+'"]'),memHost())}};
 }
 /** The running pill text (kind, percent, rate, ETA), empty when nothing runs. */
 function memPillText(m){
@@ -28,10 +34,12 @@ function memPillText(m){
  var p=r.kind==="embed"&&r.backlogStart>0?" "+Math.round(100*r.done/r.backlogStart)+"%":"";
  return(r.kind==="embed"?"embedding":"indexing")+p+(r.rate!=null?" · "+r.rate+"/s":"")+(r.etaSec!=null?" · ETA "+memDur(r.etaSec):"")+(r.kind==="index"||r.etaSec==null?" · "+memDur(r.elapsedSec):"");
 }
+/** The status card's run line: the pill text with spaced percent and the rate in chunks/s. */
+function memRunStatus(m){return memPillText(m).replace(/(\d)%/,"$1 %").replace(/\/s\b/," chunks/s")}
 function memKvView(m){
  if(!m)return null;
  var pill=!m.daemon?"daemon down":m.level==="green"?"healthy":m.level==="amber"?"attention":"problem";
- var run=memPillText(m),d={v:'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>',s:esc(m.reason||""),status:[run?"run":"",run]};
+ var run=memRunStatus(m),d={v:'<span class="'+memLvl(m.level)+'">'+esc(pill)+'</span>',s:esc(m.reason||"")+(run?'<span data-part="run" style="display:block">'+esc(run)+'</span>':""),status:["",""]};
  if(m.run)d.t=memRunLine(m.run);
  return d;
 }
@@ -97,10 +105,19 @@ function memMetricView(m,ctx){
  else if(id==="daemon")v=memDaemonView(m);
  else{
   var j=(m.jobs||[]).filter(function(x){return"job:"+x.id===id})[0];
-  if(!j)return{status:["stale","gone"]};
+  if(!j)return null;
   status=["",""];v=memJobView(j,m);
  }
  return{v:v.v==null?"–":v.v,u:v.v==null?"":v.u,s:v.s,x:v.x,cls:{bad:v.tone==="bad"},status:status};
+}
+/** A job that left the payload (finished, or its record is stale) loses its card: only live runs and the Last-run cards show. */
+function memJobPrune(m){
+ var live={},gone=[],id,i,list=(m&&m.jobs)||[];
+ for(i=0;i<list.length;i++)live["memory.job:"+list[i].id]=1;
+ for(id in WMEM_JOBS)if(!live[id])gone.push(id);
+ if(!gone.length)return;
+ for(i=0;i<gone.length;i++)delete WMEM_JOBS[gone[i]];
+ Win.removeCards("memory",gone);
 }
 /** One metric card per job, added by data (a structural change). */
 function memJobSync(m){
@@ -115,7 +132,7 @@ function memJobSync(m){
  if(specs.length&&Win.addCards("memory",specs,rows))Win.update("memory",m);
 }
 /** The memory feed: remember the payload for the actions' enabled(), push it to the cards, then add job cards. */
-function winFeedMemory(m){WMEM=m;Win.update("memory",m);memJobSync(m)}
+function winFeedMemory(m){WMEM=m;if(m)memJobPrune(m);Win.update("memory",m);memJobSync(m)}
 function memDefaults(){
  var cards=[{id:"memory",type:"group",title:"Memory",info:MEM_INFO,feeds:["memory"],actions:MEM_ACTS.map(memAction)}],names=["index","backend","passes","daemon"],ch=[],i;
  cards.push({id:"memory.kv",type:"kv",title:"status",feeds:["memory"],view:memKvView});

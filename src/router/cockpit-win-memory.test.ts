@@ -28,7 +28,7 @@ const memory = () => ({
   binding: { mismatch: true, hint: "re-embed to neutral-b in progress", error: null, bound: { backend: "neutral-a", model: "model-a" }, configured: { backend: "neutral-b", model: "model-b", dims: 8 } },
   backend: { id: "neutral-b", model: "model-b", dims: 8, available: true, reason: "ready", loaded: [], loadedModel: "model-b:1", gpuShare: 0.75, alsoLoaded: [] },
   daemonInfo: { pid: 4321, uptimeSecs: 7300, version: "1.2.3", storage: "neutral-store" },
-  jobs: [{ id: "run-embed", kind: "embed", name: "embed run", phase: "embed", done: 50, total: 100, pct: 50, rate: 2, etaSec: 25, doneAt: NOW + 25_000, lastProgressAt: NOW - 1000, stalled: false, series: [2, 2, 2], by: "cockpit" }],
+  jobs: dropJobs ? [] : [{ id: "run-embed", kind: "embed", name: "embed run", phase: "embed", done: 50, total: 100, pct: 50, rate: 2, etaSec: 25, doneAt: NOW + 25_000, lastProgressAt: NOW - 1000, stalled: false, series: [2, 2, 2], by: "cockpit" }],
   passes: [{ name: "index", state: "ok", lastEnd: NOW - 3_600_000, nextAt: NOW + 3_600_000, failure: null, detail: null }],
   lastIndex: null, lastEmbed: null, schedule: { maintenanceHour: 3, indexIntervalSecs: 86400, embedIntervalSecs: 86400 },
   run: running ? { kind: "embed", by: "cockpit", pid: 1, jobId: "", startedAt: new Date(NOW - 5000).toISOString(), elapsedSec: 5, done: 50, backlogStart: 100, rate: 2, etaSec: 25, tail: "", stoppable: true } : null,
@@ -41,16 +41,17 @@ function vis(){return Array.prototype.filter.call(document.querySelectorAll("#wi
 function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');return c?c.textContent.replace(/\\s+/g," "):null}
 function btn(a){var b=document.querySelector('#win-root [data-card="memory"] [data-act="'+a+'"]');return b?{dis:b.disabled,title:b.title||""}:null}
 function st(id){var c=document.querySelector('#win-root [data-card="'+id+'"] .cstatus');return c?c.getAttribute("data-kind")+"|"+c.textContent:null}
-var o={err:window.__err||null,over:["memory.index","memory.backend","memory.passes","memory.daemon"].map(function(i){var b=document.querySelector('#win-root [data-card="'+i+'"] .cbody');return b?b.scrollHeight-b.clientHeight:-1}),vis:vis(),kv:txt("memory.kv"),kvst:st("memory.kv"),index:txt("memory.index"),backend:txt("memory.backend"),job:txt("memory.job:run-embed"),passes:txt("memory.passes"),daemon:txt("memory.daemon"),
+var o={err:window.__err||null,over:["memory.index","memory.backend","memory.passes","memory.daemon"].map(function(i){var b=document.querySelector('#win-root [data-card="'+i+'"] .cbody');return b?b.scrollHeight-b.clientHeight:-1}),vis:vis(),kv:txt("memory.kv"),kvst:st("memory.kv"),mhead:(document.querySelector('#win-root [data-card="memory"] > .chead')||{}).textContent,gone:Array.prototype.filter.call(document.querySelectorAll("#win-root .cstatus"),function(c){return c.textContent==="gone"}).length,index:txt("memory.index"),backend:txt("memory.backend"),job:txt("memory.job:run-embed"),passes:txt("memory.passes"),daemon:txt("memory.daemon"),
  acts:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="memory"] > .chead [data-act]'),function(b){return b.getAttribute("data-act")}),
  embed:btn("embed"),index2:btn("index"),stop:btn("stop"),oldRt:document.querySelectorAll('#win-root [data-rt="memory"]').length,
  heads:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="memory"] > .chead'),function(h){return Array.prototype.map.call(h.children,function(k){return k.className.split(" ")[0]}).join(",")})};
 document.body.setAttribute("data-r1",JSON.stringify(o));
 var b=document.querySelector('#win-root [data-card="memory"] [data-act="index"]');
 if(b&&!b.disabled)b.click();
-setTimeout(function(){document.body.setAttribute("data-r",JSON.stringify({r1:o,st:st("memory"),posts:window.__posts||0}))},1500);
+setTimeout(function(){document.body.setAttribute("data-r",JSON.stringify({r1:o,jobCard:!!document.querySelector('#win-root [data-card="memory.job:run-embed"]'),gone:Array.prototype.filter.call(document.querySelectorAll("#win-root .cstatus"),function(c){return c.textContent==="gone"}).length,st:st("memory"),posts:window.__posts||0}))},1500);
 },1500)</script>`;
 
+let dropJobs = false; // after an action the next feed carries no jobs: the run card must go
 let server: Server;
 let base = "";
 let tmp = "";
@@ -59,7 +60,7 @@ beforeAll(async () => {
   server = createServer((req, res) => {
     const url = req.url ?? "";
     res.setHeader("content-type", "application/json");
-    if (req.method === "POST" && url.startsWith("/cockpit/action")) return res.end(JSON.stringify({ ok: true, message: "index pass started" }));
+    if (req.method === "POST" && url.startsWith("/cockpit/action")) return dropJobs = true, res.end(JSON.stringify({ ok: true, message: "index pass started" }));
     if (url.startsWith("/cockpit/data")) return res.end(JSON.stringify(data()));
     if (url.startsWith("/cockpit/memory")) return res.end(JSON.stringify(memory()));
     if (url.startsWith("/cockpit/")) return res.end("{}");
@@ -78,6 +79,7 @@ afterAll(() => { killChromes(); server?.close(); if (tmp) rmSync(tmp, { recursiv
 async function open(query: string, width: number, shot?: string) {
   const o = { width, height: 900, budgetMs: 6000 };
   const url = `${base}/page${query}`;
+  dropJobs = false;
   const dom = await dumpDom(url, o);
   if (shot) await screenshot(url, shot, o);
   const m = /data-r="([^"]*)"/.exec(dom);
@@ -95,7 +97,12 @@ describe.skipIf(!CHROME)("B3 memory on the win runtime", () => {
     for (const v of o.over) expect(v).toBeLessThanOrEqual(0);
     expect(o.vis).toEqual(expect.arrayContaining(["memory", "memory.kv", "memory.index", "memory.backend", "memory.job:run-embed", "memory.passes", "memory.daemon"]));
     expect(o.kv).toContain("attention");
-    expect(o.kvst).toMatch(/^run\|embedding 50%/);
+    // was: the run pill sat in the status card header ("run|embedding 50% ..."); now the header carries no run stats and the body has the line
+    expect(o.kvst).toBe("null|");
+    expect(o.kv).toMatch(/embedding 50 % · [\d.]+ chunks\/s · ETA/);
+    expect(o.mhead).toMatch(/Memoryⓘindex nowembed backlogstop/);
+    expect(o.mhead).not.toMatch(/embedding|ETA|backlog ·|%/);
+    expect(o.gone).toBe(0);
     expect(o.index).toContain("93.9");
     expect(o.backend).toContain("neutral-b");
     expect(o.job).toContain("50.0");
@@ -117,6 +124,10 @@ describe.skipIf(!CHROME)("B3 memory on the win runtime", () => {
     expect(r.r1.stop).toEqual({ dis: true, title: "nothing to stop" });
     expect(r.r1.kvst).toBe("null|");
     expect(r.st).toBe("ok|index pass started");
+    // the job left the payload: its card is removed, no card reads "gone"
+    expect(r.r1.vis).toContain("memory.job:run-embed");
+    expect(r.jobCard).toBe(false);
+    expect(r.gone).toBe(0);
   }, 120_000);
 
 });
