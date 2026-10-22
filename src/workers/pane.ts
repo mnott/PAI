@@ -1657,7 +1657,7 @@ function followRunsOn(tty: string, wid: string): boolean {
 /**
  * Check the iTerm pane of a worker. Resolves with a line naming window, tab and size,
  * followed by a mark for each visibility shortfall (NOT SELECTED, MINIMISED, HIDDEN,
- * OFF SCREEN, SMALL); rejects only when the pane does not exist or does not run the
+ * OFF SCREEN); rejects only when the pane does not exist or does not run the
  * worker: gone, other window or tab, or its follow command not running
  * (polled for up to ~7 s while the new session starts it).
  */
@@ -1690,7 +1690,6 @@ export async function verifyPane(
     if (r.miniaturized === true) marks.push("MINIMISED");
     if (r.hidden === true) marks.push("HIDDEN");
     if (r.onScreen !== true) marks.push("OFF SCREEN");
-    if (rows < panePolicy().minRows || cols < panePolicy().minCols) marks.push(`SMALL (< ${panePolicy().minCols}x${panePolicy().minRows})`);
     if (running(String(r.tty), wid)) return marks.length ? `${where} ${marks.join(" ")}` : where;
     last = where;
     await new Promise((res) => setTimeout(res, pollMs));
@@ -1756,10 +1755,6 @@ export async function openVerifiedPane(
   try {
     const where = await verify(hostUid, r.session, wid);
     placements.set(wid, "split");
-    if (/ SMALL /.test(where)) {
-      appendLedger(ledgerPath(logDir), "PANE-SMALL", { id: wid, session: r.session, where });
-      process.stderr.write(`[pai worker] pane: small pane for ${wid}: ${where}\n`);
-    }
     const shown = where.match(/\b(NOT SELECTED|MINIMISED|HIDDEN|OFF SCREEN)\b/g);
     if (shown) {
       appendLedger(ledgerPath(logDir), "PANE-MARK", { id: wid, session: r.session, marks: shown.join(","), where });

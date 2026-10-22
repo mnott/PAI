@@ -338,7 +338,7 @@ models:
       note: idle loads a model on the first request
 # Worker panes (src/workers/pane*.ts; read through src/workers/pane-policy.ts).
 panes:
-  # Smallest pane a worker may be placed in; smaller is flagged SMALL.
+  # Smallest pane a worker may be placed in; guides which pane is split. A small pane is never a violation.
   minCols: 40
   minRows: 6
   # Verify a new pane: attempts and the poll interval between them.

@@ -97,8 +97,9 @@ pai worker pane --close-ended             # close them
 A pane never blocks a start for being badly placed. It is marked instead, and
 each mark says what to do: `NOT SELECTED` (its tab is in the background: click
 the tab), `MINIMISED` (restore the window), `HIDDEN` (show iTerm2),
-`OFF SCREEN` (move the window onto a screen), `SMALL` (enlarge it; the limit is
-`panes.minCols` x `panes.minRows`, default 40 x 6). Marks show in
+`OFF SCREEN` (move the window onto a screen). Pane size is never a mark: a small
+pane is fine, `panes.minCols` x `panes.minRows` only guide which pane is split.
+Marks show in
 `pai worker ps` and the cockpit. A leftover pane of an ended run shows as
 `STILL OPEN`: `pai worker pane --close-ended` closes it.
 
