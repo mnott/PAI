@@ -144,3 +144,27 @@ describe("the original data-loss path, generically", () => {
     expect(readFileSync(FILE, "utf8")).toBe("{ corrupt");
   });
 });
+
+describe("writeJsonAtomic crash safety", () => {
+  it("a crash that leaves a temp file behind keeps the original intact, and the next write succeeds", async () => {
+    const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeJsonAtomic } = await import("./json-store.js");
+    const dir = mkdtempSync(join(tmpdir(), "pai-atomic-"));
+    try {
+      const file = join(dir, "c.json");
+      writeFileSync(file, '{"good":1}\n');
+      writeFileSync(`${file}.tmp-pai-999999`, '{"half'); // writer died before the rename
+      expect(readFileSync(file, "utf8")).toBe('{"good":1}\n');
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+      expect(() => writeJsonAtomic(file, circular)).toThrow();
+      expect(readFileSync(file, "utf8")).toBe('{"good":1}\n');
+      writeJsonAtomic(file, { good: 2 });
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ good: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

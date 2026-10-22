@@ -33,7 +33,7 @@ export function refreshClaudeMd(
   const current = readFileSync(claudeMd, "utf8");
   if (current === newRendered) return { action: "unchanged" };
 
-  if (previousRendered === null || current !== previousRendered) {
+  if (previousRendered === null || current.trimEnd() !== previousRendered.trimEnd()) {
     const newPath = `${claudeMd}.pai-new`;
     writeAtomic(newPath, newRendered);
     return { action: "wrote-beside", newPath };

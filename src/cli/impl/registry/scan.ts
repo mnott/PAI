@@ -1,6 +1,7 @@
 /** Registry scan command: walk ~/.claude/projects/ and populate the registry. */
 
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { readJsonStrict, writeJsonAtomic } from "../../../config/json-store.js";
 import { realpathSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -93,8 +94,9 @@ export function loadScanConfig(): PaiConfig {
 
 export function saveScanConfig(config: PaiConfig): void {
   const file = paiHomePath("registry-scan.json");
-  mkdirSync(paiHomePath(), { recursive: true });
-  writeFileSync(file, JSON.stringify(config, null, 2) + "\n", "utf8");
+  // loadScanConfig reads a damaged file as empty; refuse to persist over those bytes.
+  readJsonStrict(file, file);
+  writeJsonAtomic(file, config as unknown as Record<string, unknown>, { label: file });
 }
 
 /**
