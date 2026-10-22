@@ -76,6 +76,7 @@ function setTitle(c,s){
  c.tt.textContent=s;c.title.setAttribute("title",s);
  c.el.setAttribute("aria-label",s);
  c.grip.setAttribute("aria-label","move "+s);
+ c.handle.setAttribute("aria-label","height of "+s);
 }
 function setStatus(c,kind,s){
  s=String(s==null?"":s);kind=s?String(kind||""):"";
@@ -131,6 +132,10 @@ function buildCard(spec){
  status.addEventListener("click",function(){if(status.getAttribute("data-kind")==="err")setStatus(c,"","")});
  head.appendChild(min);c.min=min;
  e.appendChild(head);e.appendChild(body);
+ // height handle (bottom-right "//"): drag, arrows or double-click change this card's height only; hidden on groups and when locked by CSS
+ var hd=el("div","chandle");hd.tabIndex=0;hd.setAttribute("role","separator");hd.setAttribute("aria-orientation","horizontal");
+ hd.title="drag to change height \u00b7 double-click: fit to content";hd.setAttribute("data-handle",spec.id);
+ e.appendChild(hd);c.handle=hd;
  setTitle(c,spec.title);
  paintActions(c);
  min.title="minimize "+c.titleText;min.setAttribute("aria-label",min.title);
@@ -147,6 +152,7 @@ function layState(){
   if(W.hide&&W.hide[id])o[id]={seen:1};
   else if(!W.cards[id]){o[id]={seen:(W.st[id]&&W.st[id].seen)||1}}
   else if(isMin(id))o[id]={min:1};
+  else if(W.st[id]&&W.st[id].h)o[id]={h:W.st[id].h};
  }
  // a minimized card inside a group leaves its place (a ghost); it shows as a chip in the group's dock
  var dk=dockOf();for(var d in dk)for(i=0;i<dk[d].length;i++)o[dk[d][i]]={seen:1};
@@ -373,6 +379,73 @@ function gutterWire(){
  });
  winGutterDrag(document,window,o);
 }
+/** The tree (root or a group's kids) that holds leaf id, with its key. */
+function treeOf(id){
+ if(W.tree&&ids(W.tree).indexOf(id)>=0)return{key:"",tree:W.tree};
+ for(var g in W.kids)if(W.kids[g]&&W.kids[g].k&&ids(W.kids[g]).indexOf(id)>=0)return{key:g,tree:W.kids[g]};
+ return null;
+}
+/** A card's user height (the card's saved st.h; h null clears it). A row shares its line height: the siblings of the card
+ *  in its row lose their own user height, the whole line takes this one. Content taller than h scrolls inside the card.
+ *  Frozen (non-auto) layouts size a group by band px, so the card's group band grows by the change; a start snapshot
+ *  (tree + rects) makes every move of one drag absolute. */
+function setHeight(id,h,snap,drag){
+ var c=W.cards[id],s=W.st[id]=W.st[id]||{},t=treeOf(id);
+ if(!c||!t)return;
+ if(snap)W.tree=JSON.parse(snap.tree);
+ if(h===null)delete s.h;
+ else{
+  var ty=TYPES[c.type]||{};
+  s.h=Math.max(Math.round(h),ty.minH||W.cfg.minH||0,HEAD_H);
+  var p=parentOf(t.tree,id);
+  if(p&&p.d==="r")for(var i=0;i<p.ch.length;i++)if(p.ch[i].k==="c"&&p.ch[i].id!==id&&W.st[p.ch[i].id])delete W.st[p.ch[i].id].h;
+  if(!W.auto&&t.key&&snap){
+   var keep=W.rects;W.rects=snap.rects;growBand(t.key,s.h-snap.h);W.rects=keep;
+  }
+ }
+ // a drag keeps the pointer on the handle: the anchor must not scroll for the cards below that move with the height
+ if(drag){relayout();if(typeof _ANCHOR!=="undefined"&&_ANCHOR)_ANCHOR.tracked=null}
+ else anchorKeep(relayout);
+}
+function heightWire(){
+ var cur=null;
+ function card(e){var hd=e.target&&e.target.closest?e.target.closest(".chandle"):null;return hd?W.cards[hd.getAttribute("data-handle")]:null}
+ document.addEventListener("pointerdown",function(e){
+  if(winLocked())return;
+  var c=card(e),r=c&&W.rects[c.id];
+  if(!c||!r)return;
+  var hd=c.handle;
+  if(hd.setPointerCapture&&e.pointerId!==undefined)hd.setPointerCapture(e.pointerId);
+  e.preventDefault();
+  var keepSt=JSON.stringify(W.st);
+  var snap={tree:JSON.stringify(W.tree),rects:W.rects,h:r.h};
+  cur={c:c,y:e.clientY,snap:snap,st:keepSt};
+ });
+ document.addEventListener("pointermove",function(e){if(cur)setHeight(cur.c.id,cur.snap.h+e.clientY-cur.y,cur.snap,true)});
+ function end(commit){
+  if(!cur)return;
+  var d=cur;cur=null;
+  if(!commit){W.tree=JSON.parse(d.snap.tree);W.st=JSON.parse(d.st);relayout();return}
+  save();announce("height changed");
+ }
+ document.addEventListener("pointerup",function(){end(true)});
+ document.addEventListener("pointercancel",function(){end(false)});
+ document.addEventListener("keydown",function(e){
+  if(cur&&e.key==="Escape"){end(false);return}
+  var c=card(e);
+  if(!c||winLocked()||(e.key!=="ArrowUp"&&e.key!=="ArrowDown"))return;
+  var r=W.rects[c.id];if(!r)return;
+  e.preventDefault();
+  setHeight(c.id,r.h+(e.key==="ArrowUp"?-16:16),{tree:JSON.stringify(W.tree),rects:W.rects,h:r.h});
+  save();announce("height changed");
+ });
+ document.addEventListener("dblclick",function(e){
+  var c=card(e);
+  if(!c||winLocked())return;
+  W.refit=true;
+  setHeight(c.id,null);save();announce("height fitted");
+ });
+}
 /** The ResizeObserver callback: main's height is set by layout itself, so only a width change relayouts. */
 function sync(){if(W.main.clientWidth!==W.lastW){relayout();return true}return false}
 function kidsOf(id){return!!(W.kids&&W.kids[id]&&W.kids[id].k)}
@@ -416,7 +489,7 @@ function adoptSaved(raw){
 }
 function crossTabWire(){
  window.addEventListener("storage",function(e){if(e.key===WIN_KEY&&e.newValue&&e.storageArea===W.opts.storage)adoptSaved(e.newValue)});
- var dn=function(e){if(e.target&&e.target.closest&&e.target.closest(".cgrip,.wgutter"))W.down=1};
+ var dn=function(e){if(e.target&&e.target.closest&&e.target.closest(".cgrip,.wgutter,.chandle"))W.down=1};
  var up=function(){if(!W.down)return;W.down=0;if(W.pendingRaw)setTimeout(function(){if(!W.down&&W.pendingRaw)adoptSaved(W.pendingRaw)},0)};
  document.addEventListener("pointerdown",dn,true);
  window.addEventListener("pointerup",up,true);window.addEventListener("pointercancel",up,true);
@@ -466,7 +539,7 @@ function init(main,defaults,opts){
  W.auto=!hadSaved&&!opts.noFit;
  W.tree=l.tree;W.kids=l.kids;W.st=l.st;W.defRoot=ids(defaults.tree);
  main.classList.add("win");
- if(!main.__winGut){main.__winGut=1;gutterWire()}
+ if(!main.__winGut){main.__winGut=1;gutterWire();heightWire()}
  if(!main.__winFlush){main.__winFlush=1;
   // a debounced save still pending when the page is left would be lost: write it now
   window.addEventListener("pagehide",function(){api.flush()});

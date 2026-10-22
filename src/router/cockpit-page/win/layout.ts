@@ -48,6 +48,19 @@ function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined
 function winMin(st,id){var s=st&&st[id];return!!s&&s.min===1}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
+/** The user's height (st[id].h, set by a card's height handle) of a node, floored at its type's minH and the header: a leaf its own, a row the tallest of its children's (the line takes the height the user set), a column or group none (null). */
+function winUH(node,st,cfg,kids){
+ var i,m=null,k;
+ if(node.k==="c"){
+  var s=st&&st[node.id];
+  if(!s||s.h===undefined||s.min===1||s.seen!==undefined||(kids&&kids[node.id]&&kids[node.id].k))return null;
+  var ty=winType(cfg,winLeafType(kids,node.id,cfg));
+  return Math.max(s.h,ty.minH!==undefined?ty.minH:(cfg.minH||0),cfg.HEAD_H);
+ }
+ if(node.d!=="r")return null;
+ for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)){k=winUH(node.ch[i],st,cfg,kids);if(k!==null&&(m===null||k>m))m=k}
+ return m;
+}
 /** Stacked mode of the auto layout: the box is under cfg.narrowW wide, so heights follow content, not weights or band px. */
 function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 /** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
@@ -127,6 +140,8 @@ function winFit(node,w,st,cfg,kids){
   if(winMin(st,node.id))return cfg.HEAD_H;
   var kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
   if(kt){k=winFit(kt,w,st,cfg,kids);return k===null?null:cfg.HEAD_H+k-(winSolo(kt,st,kids)?cfg.HEAD_H:0)+winDockH(cfg,node.id,w)}
+  var uh=winUH(node,st,cfg,kids);
+  if(uh!==null)return uh;
   if(winPx(st,node.id)!==null)return null;
   var v=cfg.fit[node.id],nar=winNar(cfg,w);
   // stacked: a chart (draws at the body size) takes an aspect of its width, any other card without a reading its least height
@@ -140,13 +155,16 @@ function winFit(node,w,st,cfg,kids){
  var wide=node.d==="r",g=null;
  if(wide)for(i=0;i<vis.length;i++)if((node.sz[vis[i]]||0)/t*total<winCardMinW(cfg,kids,node.ch[vis[i]].id))wide=false;
  if(node.d==="r"&&!wide)g=winGridK(node,w,st,cfg,kids);
+ // a row line with a card the user gave a height is that tall: its siblings take the line height
+ if(wide){var ru=winUH(node,st,cfg,kids);if(ru!==null)return Math.max(ru,winNeed(node,w,st,cfg,kids,true))}
+ var lu=0;
  for(i=0;i<vis.length;i++){
   k=winFit(node.ch[vis[i]],node.d==="r"?(wide?(node.sz[vis[i]]||0)/t*total:g.cw):w,st,cfg,kids);
   if(k===null)return null;
   r=Math.max(r,k);
-  if(g){ln=Math.max(ln,k);if(++lc===g.k){sum+=ln+gap;ln=0;lc=0}}else sum+=k;
+  if(g){var gu=winUH(node.ch[vis[i]],st,cfg,kids);if(gu!==null)lu=Math.max(lu,gu);ln=Math.max(ln,k);if(++lc===g.k){sum+=(lu>0?lu:ln)+gap;ln=0;lc=0;lu=0}}else sum+=k;
  }
- if(g){if(lc>0)sum+=ln+gap;return Math.max(0,sum-gap)}
+ if(g){if(lc>0)sum+=(lu>0?lu:ln)+gap;return Math.max(0,sum-gap)}
  return node.d==="r"&&wide?r:sum+(vis.length-1)*gap;
 }
 /** Lay out one split into pieces {n,x,y,w,h}. bounded: the container has a fixed h. */
@@ -170,14 +188,16 @@ function winSplit(node,box,bounded,st,cfg,kids){
    var h0=bounded?Math.max(0,(box.h-(nl-1)*gap)/nl):0;
    var y=0;
    for(var l0=0;l0<vis.length;l0+=gr.k){
-    var lh=0,lo=out.length;
+    var lh=0,lo=out.length,lu2=0;
     for(i=l0;i<Math.min(vis.length,l0+gr.k);i++){
      var c=node.ch[vis[i]];
      var nf=cfg.fit&&!winMin(st,c.id)?winFit(c,gr.cw,st,cfg,kids):null;
      var hh=winMin(st,c.id)?cfg.HEAD_H:(nf!==null?nf:bounded?Math.max(h0,winNeed(c,gr.cw,st,cfg,kids)):winDefH(cfg,winLeafType(kids,c.id,cfg)));
      out.push({n:c,x:(i-l0)*(gr.cw+gap),y:y,w:gr.cw,h:hh});
      lh=Math.max(lh,hh);
+     var u2=winUH(c,st,cfg,kids);if(u2!==null)lu2=Math.max(lu2,u2);
     }
+    if(lu2>0)lh=lu2;
     // a line is as tall as its tallest card; a minimized card keeps its header height
     for(i=lo;i<out.length;i++)if(!winMin(st,out[i].n.id))out[i].h=lh;
     y+=lh+gap;
@@ -197,11 +217,13 @@ function winSplit(node,box,bounded,st,cfg,kids){
  }
  // column
  if(bounded){
-  var rest=box.h-(vis.length-1)*gap,m=0,t2=0;
+  var rest=box.h-(vis.length-1)*gap,m=0,t2=0,fxs=0,fx=[];
   for(i=0;i<vis.length;i++){
-   if(winMin(st,node.ch[vis[i]].id))m+=cfg.HEAD_H;else t2+=node.sz[vis[i]]||0;
+   fx.push(winMin(st,node.ch[vis[i]].id)?null:winUH(node.ch[vis[i]],st,cfg,kids));
+   if(winMin(st,node.ch[vis[i]].id))m+=cfg.HEAD_H;else if(fx[i]!==null)fxs+=fx[i];else t2+=node.sz[vis[i]]||0;
   }
-  var avail=rest-m;if(avail<0)avail=0;
+  // cards with a user height are fixed; the others share the rest by weight
+  var avail=rest-m-fxs;if(avail<0)avail=0;
   // auto layout: every card takes its content height when they all fit the box; else the weights
   var fh=null;
   if(cfg.fit){
@@ -210,13 +232,14 @@ function winSplit(node,box,bounded,st,cfg,kids){
     var fv=winMin(st,node.ch[vis[i]].id)?0:winFit(node.ch[vis[i]],box.w,st,cfg,kids);
     if(fv===null)fs=null;else{fs.push(fv);fsum+=fv}
    }
-   if(fs&&(winNar(cfg,box.w)||fsum<=avail+0.5))fh=fs;
+   if(fs&&(winNar(cfg,box.w)||fsum<=avail+fxs+0.5))fh=fs;
   }
   var y2=0;
   for(i=0;i<vis.length;i++){
    var c2=node.ch[vis[i]],h2;
    if(winMin(st,c2.id))h2=cfg.HEAD_H;
    else if(fh)h2=fh[i];
+   else if(fx[i]!==null)h2=fx[i];
    else h2=t2>0?(node.sz[vis[i]]||0)/t2*avail:avail/Math.max(1,vis.length);
    out.push({n:c2,x:0,y:y2,w:box.w,h:h2});
    y2+=h2+gap;
@@ -233,6 +256,8 @@ function winSplit(node,box,bounded,st,cfg,kids){
   // auto layout: a default band shrinks to its content (never above its default px, never below its types' minH)
   var flat=false;
   if(cfg.fit){var fb=winFit(c3,box.w,st,cfg,kids);if(fb!==null){flat=true;sz=Math.max(fb,winNeed(c3,box.w,st,cfg,kids,true))}}
+  var uh=winUH(c3,st,cfg,kids);
+  if(uh!==null)sz=uh;
   var h3;
   if(c3.k==="s"){
    var allMin=true,any=false;
@@ -260,7 +285,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
     h3=Math.max(sz,maxB);
    }
   }else{
-   h3=winMin(st,c3.id)?cfg.HEAD_H:Math.max(winPx(st,c3.id)!==null?winPx(st,c3.id):sz,winNeed(c3,box.w,st,cfg,kids,flat&&winPx(st,c3.id)===null));
+   h3=winMin(st,c3.id)?cfg.HEAD_H:uh!==null?uh:Math.max(winPx(st,c3.id)!==null?winPx(st,c3.id):sz,winNeed(c3,box.w,st,cfg,kids,flat&&winPx(st,c3.id)===null));
    out.push({n:c3,x:0,y:y3,w:box.w,h:h3});
   }
   y3+=h3+gap;
