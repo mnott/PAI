@@ -348,8 +348,8 @@ export function spareStatusLines(state: PoolState, logDir: string): string[] {
   const st = spareStats(text);
   const reasons = Object.entries(st.missReasons).map(([r, n]) => `${r} ${n}`).join(", ");
   lines.push(
-    `claims ${st.hits} hit, ${st.misses} miss${reasons ? ` (${reasons})` : ""} · setup on a hit ${secs(st.meanHitSetupMs)} vs ${secs(st.meanMissSetupMs)} fresh · ` +
-      `mean setup saved ${secs(st.meanSavedMs)}`
+    `claims ${st.hits} hit, ${st.misses} miss${reasons ? ` (${reasons})` : ""} · setup on a hit ${secs(st.meanHitSetupMs)} vs ${secs(st.meanMissSetupMs)} fresh (net of queue wait) · ` +
+      `queue wait ${secs(st.meanHitQueueMs)} on a hit vs ${secs(st.meanMissQueueMs)} fresh · mean setup saved ${secs(st.meanSavedMs)}`
   );
   return lines;
 }

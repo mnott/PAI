@@ -317,6 +317,27 @@ describe("spares", () => {
     expect(hit.pooled).toBe(true);
   });
 
+  it("boot seeding skips a ledger pair whose model the provider does not offer", async () => {
+    const repo = makeRepo();
+    const logDir = mkdtempSync(join(tmpdir(), "pai-spare-host-"));
+    const host = createPoolHost({
+      config: config({ maxSlots: 1 }),
+      logDir,
+      usageLogFile: join(logDir, "none.jsonl"),
+      spawner: () => new FakeSpare(),
+      envFor: () => ({}),
+      cmdHead: () => ["fake-claude"],
+      warmKeys: [
+        { provider: "fakeprov", model: "m1", cwd: repo },
+        { provider: "fakeprov", model: "sonnet", cwd: repo },
+      ],
+      noReaper: true,
+    });
+    live.push(host);
+    await host.settle();
+    expect(host.state().spares!.map((s) => `${s.provider}/${s.model}`)).toEqual(["fakeprov/m1"]);
+  });
+
   it("starts a replacement spare when the task ends; the used process is killed", async () => {
     const repo = makeRepo();
     const h = makeHost(repo);
@@ -358,6 +379,15 @@ describe("spare helpers and the client", () => {
       "2026-10-20 13:56:00 WORKER-START id=d provider=glm mode=interactive model=m cwd=/r label=z",
     ].join("\n");
     expect(recentWarmKeys(text, now)).toEqual([{ provider: "glm", model: "m", cwd: "/r" }]);
+  });
+
+  it("spareStats: queue wait (admissionMs) is netted out of setup on both sides and shown separately", () => {
+    const text = [
+      "2026-10-20 13:00:00 WORKER-END id=a spare=hit setupMs=300800 admissionMs=300000 claimMs=50",
+      "2026-10-20 13:01:00 WORKER-END id=b spare=miss spareMiss=no-spare setupMs=39900 admissionMs=0",
+      "2026-10-20 13:02:00 WORKER-END id=c spare=miss spareMiss=no-spare setupMs=69900 admissionMs=60000",
+    ].join("\n");
+    expect(spareStats(text)).toMatchObject({ meanHitSetupMs: 800, meanMissSetupMs: 24900, meanHitQueueMs: 300000, meanMissQueueMs: 30000 });
   });
 
   it("spareStats: mean setup saved is fresh-miss setup minus hit setup", () => {
