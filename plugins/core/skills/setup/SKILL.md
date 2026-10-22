@@ -61,6 +61,16 @@ pai daemon restart
 
 On Linux without systemd (containers) run `pai daemon serve` in a terminal or process manager instead. If it still fails, read `pai daemon logs`.
 
+## 4a. AIBroker (messaging)
+
+Check: `aibroker doctor` exits 0. AIBroker is a separate package and PAI's messaging layer (messages between sessions, worker reports, terminal tab names, WhatsApp, Telegram, PAILot). PAI runs without it, but those features do not. If `aibroker` is not on the PATH or doctor fails:
+
+```
+npm install -g aibroker
+aibroker setup      # service, MCP registration, Claude Code hooks
+aibroker doctor
+```
+
 ## 5. Workers: first provider
 
 Workers are Claude Code runs on a provider you choose. Setup turns them on with the built-in `anthropic` provider.
@@ -144,5 +154,6 @@ Report each line as pass or fail with the command output:
 7. `pai worker route` shows a model on every tier
 8. Only if phase 7 was done: `pai router status` says running and the cockpit page loads
 9. `pai` opens the session picker (Esc quits)
+10. `aibroker doctor` exits 0
 
 Details: `docs/install/index.md`, `docs/install/first-workers.md`.
