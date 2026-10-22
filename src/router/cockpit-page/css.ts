@@ -187,6 +187,7 @@ main.win .card[data-depth="15"]>.cbody.cgroup{padding:4px;background:transparent
 main.win .tw>.dim{display:block;padding:6px 10px}
 main.win .card.min .cbody{display:none}
 main.win .card.chip .chead{height:22px;border-bottom:0}main.win .card.chip .chead>:not(.ctitle):not(.cmin){display:none}main.win .card.chip .cmin{margin-left:auto}
+main.win .card.nohd>.chead{display:none}main.win .card.nohd>.cbody{top:0}
 .wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}
 .wgutter[data-axis=y]{cursor:row-resize}
 .wgutter:hover,.wgutter:focus-visible{background:var(--acc);opacity:.45;outline:none}

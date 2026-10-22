@@ -168,6 +168,7 @@ function paintMin(c){
  var m=isMin(c.id),r=W.rects&&W.rects[c.id];
  c.el.classList.toggle("min",m);
  c.el.classList.toggle("chip",m&&!!r&&!!r.chip);
+ c.el.classList.toggle("nohd",!!r&&!!r.nohd);
  c.min.textContent=m?"+":"–";
  c.min.setAttribute("aria-expanded",m?"false":"true");
  c.min.setAttribute("aria-label",(m?"restore ":"minimize ")+c.titleText);
