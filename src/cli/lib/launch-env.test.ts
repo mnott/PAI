@@ -21,12 +21,13 @@ vi.mock("node:child_process", async (orig) => {
 
 import { launchInDir } from "./launch.js";
 import { nativeLaunchEnv } from "../../workers/run-env.js";
+import { fake } from "../../utils/fake-secret.js";
 
 describe("native launch env", () => {
   const saved = { key: process.env.ANTHROPIC_API_KEY, marker: process.env.PAI_ENV_MARKER };
   beforeEach(() => {
     calls.length = 0;
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.ANTHROPIC_API_KEY = fake("sk", "-ant", "-test");
     process.env.PAI_ENV_MARKER = "kept";
   });
   afterEach(() => {

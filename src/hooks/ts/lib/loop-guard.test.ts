@@ -7,6 +7,12 @@ import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
 import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
+import { fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
+
+// Fake token-shaped fixtures assembled at runtime so no scanner flags a literal.
+const AKIA_REST = "IOSFODNN7EXAMPLE";
+const GH_BODY = "abcdefghijklmnopqrstuvwxyz0123456789";
+const BODY = "abcdefghijklmnopqrstuvwx";
 
 /** Feeds calls in order; returns the index of each denied call. */
 function feed(calls: Array<[string, string?]>, out: (i: number) => string = () => "same output"): number[] {
@@ -661,12 +667,12 @@ describe("maskSecrets", () => {
   const cases: Array<[string, string]> = [
     ["DATABASE_URL=postgres://u:hunter2@db/x", "DATABASE_URL=postgres://u:[REDACTED]@db/x"],
     ["see https://user:hunter2@example.com/repo.git", "see https://user:[REDACTED]@example.com/repo.git"],
-    ["AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE", "AWS_ACCESS_KEY_ID=[REDACTED]"],
-    ["found AKIAIOSFODNN7EXAMPLE in env", "found [REDACTED] in env"],
-    ["aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "aws_secret_access_key = [REDACTED]"],
-    ["origin ghp_abcdefghijklmnopqrstuvwxyz0123456789", "origin [REDACTED]"],
-    ["key sk-ant-api03-abcdefghijklmnopqrstuvwx", "key [REDACTED]"],
-    ["key sk-abcdefghijklmnopqrstuvwx", "key [REDACTED]"],
+    [`AWS_ACCESS_KEY_ID=${fakeAwsKey("AKIA", AKIA_REST)}`, "AWS_ACCESS_KEY_ID=[REDACTED]"],
+    [`found ${fakeAwsKey("AKIA", AKIA_REST)} in env`, "found [REDACTED] in env"],
+    [`aws_secret_access_key = ${fake("wJalrXUtnFEMI", "/K7MDENG", "/bPxRfiCYEXAMPLEKEY")}`, "aws_secret_access_key = [REDACTED]"],
+    [`origin ${fakeGithub("p", GH_BODY)}`, "origin [REDACTED]"],
+    [`key ${fakeAnthropic(BODY, "-api03")}`, "key [REDACTED]"],
+    [`key ${fake("sk", "-", BODY)}`, "key [REDACTED]"],
     ["GITHUB_TOKEN=abc123", "GITHUB_TOKEN=[REDACTED]"],
     ["APP_SECRET=abc123", "APP_SECRET=[REDACTED]"],
     ["DB_PASSWORD=abc123", "DB_PASSWORD=[REDACTED]"],

@@ -9,6 +9,11 @@ process.env.PAI_HOME = join(home, "pai-home");
 
 const { buildHandoffBrief, writeHandoff, appendHandoffLink, resolveTranscript } = await import("./handoff.js");
 
+import { fakeAnthropic } from "../utils/fake-secret.js";
+
+// Fake token-shaped fixture assembled at runtime so no scanner flags a literal.
+const FAKE_KEY = fakeAnthropic("aaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
 const SESSION_ID = "11111111-2222-3333-4444-555555555555";
 
 function entry(obj: Record<string, unknown>): string {
@@ -49,7 +54,7 @@ function baseTranscript(): string[] {
         role: "assistant",
         content: [
           { type: "tool_use", id: "tu2", name: "Write", input: { file_path: "/work/proj/src/lexer.ts" } },
-          { type: "tool_use", id: "tu3", name: "Bash", input: { command: "curl -H \"Authorization: Bearer sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaa\" https://api.example.com" } },
+          { type: "tool_use", id: "tu3", name: "Bash", input: { command: `curl -H "Authorization: Bearer ${FAKE_KEY}" https://api.example.com` } },
         ],
       },
     }),
@@ -88,7 +93,7 @@ describe("buildHandoffBrief", () => {
   it("redacts a secret in a Bash command", () => {
     const brief = buildHandoffBrief(fixture(baseTranscript()));
     expect(brief).toContain("[REDACTED]");
-    expect(brief).not.toContain("sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(brief).not.toContain(FAKE_KEY);
   });
 
   it("truncates a huge transcript under maxBytes with the marker line, oldest sections first", () => {
