@@ -184,10 +184,13 @@ export const backupTop: CommandDef = {
   name: "backup",
   summary: "Back up the registry, config and Postgres database",
   description: "Copies the registry database and config into a dated folder under PAI_HOME/backups and, unless told not to, dumps the Postgres database from its Docker container.",
-  options: [{ name: "no-postgres", type: "boolean", default: false, summary: "Skip the Postgres dump (faster; registry and config only)" }],
-  examples: ["pai backup", "pai backup --no-postgres"],
+  options: [
+    { name: "no-postgres", type: "boolean", default: false, summary: "Skip the Postgres dump (faster; registry and config only)" },
+    { ...OPT.dryRun, summary: "Print the database that would be dumped, write nothing" },
+  ],
+  examples: ["pai backup", "pai backup --no-postgres", "pai backup --dry-run"],
   seeAlso: ["pai restore"],
-  run: (c) => legacy(() => runBackup({ postgres: c.opts["no-postgres"] !== true })),
+  run: (c) => legacy(() => runBackup({ postgres: c.opts["no-postgres"] !== true, dryRun: c.dryRun })),
 };
 
 export const restoreTop: CommandDef = {

@@ -24,3 +24,12 @@ export function postgresConnectionString(config: PostgresConfig): string {
     `postgresql://${config.user ?? "pai"}:${config.password ?? "pai"}@${config.host ?? "localhost"}:${config.port ?? 5432}/${config.database ?? "pai"}`
   );
 }
+
+/** Database and role the storage backend connects to, read from the same URL it uses. */
+export function postgresTarget(config: PostgresConfig): { database: string; user: string } {
+  const url = new URL(postgresConnectionString(config));
+  return {
+    database: decodeURIComponent(url.pathname.replace(/^\//, "")),
+    user: decodeURIComponent(url.username),
+  };
+}
