@@ -165,6 +165,8 @@ export interface WorkerStatus {
   denialCount?: number;
   /** Per-severity findings of the security scan over the run's transcript (scan.ts); absent when no scan ran or it found nothing to record. */
   findings?: { block: number; confirm: number; warn: number };
+  /** Set when the end-of-run scan was terminated for running over its budget (workers.scanBudgetMs). */
+  scanStopped?: string;
   /**
    * Seconds of the most recent single long sleep observed in a Bash tool_use
    * (see parseSleepSecs), cleared when the command completes. Absent on old

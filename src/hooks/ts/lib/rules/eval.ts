@@ -14,6 +14,7 @@
  * cannot make a pattern run long enough for the hook to time out.
  */
 
+import { Script, createContext } from "node:vm";
 import { splitSegments } from "../worker-git-guard.js";
 import { capContent } from "./cap.js";
 import type { Rule } from "./types.js";
@@ -22,7 +23,33 @@ export { capContent };
 
 export interface RuleHit {
   rule: Rule;
+  /** The rule's regex ran past the time guard; the hit is a fail-closed one. */
+  timedOut?: boolean;
 }
+
+/** Longest a project rule's regex may run per test before it counts as a hit. */
+export const UNTRUSTED_TIMEOUT_MS = 50;
+
+type Tester = (re: RegExp, text: string) => boolean;
+
+const plainTest: Tester = (re, text) => re.test(text);
+
+// One context and one compiled script, reused for every guarded test; a
+// timeout is enforced by the vm watchdog, which interrupts a running regex.
+const guardCtx = createContext({ re: null as RegExp | null, text: "" });
+const guardScript = new Script("re.test(text)");
+
+/** Throws when the regex runs past UNTRUSTED_TIMEOUT_MS. */
+const guardedTest: Tester = (re, text) => {
+  guardCtx.re = re;
+  guardCtx.text = text;
+  try {
+    return guardScript.runInContext(guardCtx, { timeout: UNTRUSTED_TIMEOUT_MS }) === true;
+  } finally {
+    guardCtx.re = null;
+    guardCtx.text = "";
+  }
+};
 
 /** Quoted strings removed: text inside a commit message or echo is not a command. */
 function dropQuoted(segment: string): string {
@@ -55,11 +82,11 @@ function stripHeredocBodies(text: string): string {
 }
 
 /** Confirm rules test one segment: quoted text is inert, except a quoted +refspec on a push and rules marked `quoted`. */
-function confirmHit(rule: Rule, pattern: RegExp, segment: string): boolean {
+function confirmHit(rule: Rule, pattern: RegExp, segment: string, test: Tester): boolean {
   const bare = dropQuoted(segment);
-  if (pattern.test(bare)) return true;
-  if (rule.quoted === true) return pattern.test(segment) || pattern.test(segment.replace(/["']/g, ""));
-  return GIT_PUSH.test(bare) && pattern.test(segment.replace(/["']/g, ""));
+  if (test(pattern, bare)) return true;
+  if (rule.quoted === true) return test(pattern, segment) || test(pattern, segment.replace(/["']/g, ""));
+  return GIT_PUSH.test(bare) && test(pattern, segment.replace(/["']/g, ""));
 }
 
 const regexCache = new Map<string, RegExp>();
@@ -99,16 +126,23 @@ export function evaluateRules(rules: Rule[], toolName: string, content: string):
       if (rule.severity !== severity || !toolMatches(rule, toolName)) continue;
       const re = ruleRegex(rule);
       if (!re) continue;
+      const test = rule.untrusted ? guardedTest : plainTest;
       let hit: boolean;
-      if (severity === "confirm") {
-        let segs = segments;
-        if (rule.text_ok) {
-          textSegments ??= splitSegments(stripHeredocBodies(capped)).filter((seg) => !TEXT_COMMAND.test(seg));
-          segs = textSegments;
+      try {
+        if (severity === "confirm") {
+          let segs = segments;
+          if (rule.text_ok) {
+            textSegments ??= splitSegments(stripHeredocBodies(capped)).filter((seg) => !TEXT_COMMAND.test(seg));
+            segs = textSegments;
+          }
+          hit = segs.some((seg) => confirmHit(rule, re, seg, test));
+        } else {
+          hit = rule.quoted === true ? variants.some((t) => test(re, t)) : test(re, bare);
         }
-        hit = segs.some((seg) => confirmHit(rule, re, seg));
-      } else {
-        hit = rule.quoted === true ? variants.some((t) => re.test(t)) : re.test(bare);
+      } catch {
+        // a project regex that did not finish in time: fail closed for block and confirm
+        if (severity === "warn") continue;
+        return { rule, timedOut: true };
       }
       if (hit) return { rule };
     }

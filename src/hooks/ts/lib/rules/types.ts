@@ -47,6 +47,8 @@ export interface Rule {
   /** Legacy group name shown in deny messages and security events; defaults to the id. */
   category?: string;
   reason: string;
+  /** Set by loadRules on a rule that came from a project dir: eval runs its regex under a time guard. */
+  untrusted?: boolean;
   /** Built-in fixtures: every `match` must hit, every `no_match` must not. For a sequence rule each entry is the list of steps, in step order: a plain string is a Bash-shaped step, an object names the tool a step's content belongs to. */
   tests?: {
     match?: Array<string | string[] | Array<string | { tool?: string; content: string }>>;
