@@ -2,11 +2,11 @@
  *  Page-scope ES5 (after scriptCore/scriptTables: esc/fmt/pct/table/donut/emptyRing/lowChips/localDetail/ageMark/
  *  provHit/ringName/assignColors/LOW_REQ in scope), needs `Win` and `WinT`. Feed `cache` = {data, sys, lim} (the page's
  *  /cockpit/data, /cockpit/system and /cockpit/limits readings, pushed by winFeedCache after every renderDonuts).
- *  Group `cache`, a column of: the group `cache-rings` (one `ring` card per model with enough requests, or the single
- *  big-donut `cache.solo`, or `cache.none`), the `chips` cards `cache.low` and `cache.note`, the `list` card
+ *  Group `cache`, a column of: the group `cache-rings` (one `ring` card per model, the low-request ones small and dimmed, or the single
+ *  big-donut `cache.solo`, or `cache.none`), the `chips` card `cache.note`, the `list` card
  *  `cache.local` ("Local prefix cache") and the `table` card `cache.providers`. */
 
-export const WIN_CACHE_JS = String.raw`var CACHE_INFO="cache_read / (read + write + fresh input), per provider / model.";
+export const WIN_CACHE_JS = String.raw`var CACHE_INFO="cache_read / (read + write + fresh input), per provider / model. Models with fewer than "+LOW_REQ+" requests in the window are shown small and dimmed: their hit ratio is noisy.";
 var CACHE_LOCAL_INFO="Server counters cover the time since that server started; router log rows only since the router restarted, so the two windows differ. A hit skips re-computing the cached prompt part (latency), not money.";
 var CACHE_PROV_INFO="* server counter (prefix cache since server start; this provider reports no cache fields per request). avg ms is end-to-end incl. queueing and prefill, ttft p50 is time to first token.";
 var CACHE_BIG=170,CACHE_RING_ROW=4,CACHE_IDS=null;
@@ -21,13 +21,16 @@ function cacheSolo(ms){
  var mk=Object.keys(ms);
  return mk.length===1&&ms[mk[0]].cacheRead+ms[mk[0]].cacheWrite>0?ms[mk[0]]:null;
 }
-/** Models with at least LOW_REQ requests (the others ride in the low chip), in the default order: provider (routing order, then alphabetical), most requests first. */
+/** True when some model has enough requests: only then the low-request ones are shown small and dimmed. */
+function cacheHasNormal(ms){return Object.keys(ms).some(function(k){return ms[k].requests>=LOW_REQ})}
+/** All models in the default order: provider (routing order, then alphabetical), normal before low-request, most requests first. */
 function cacheRingList(ms,d){
- var list=Object.keys(ms).map(function(k){return ms[k]}).filter(function(m){return m.requests>=LOW_REQ});
+ var list=Object.keys(ms).map(function(k){return ms[k]});
+ function lo(m){return m.requests<LOW_REQ?1:0}
  var ch=(lim&&lim.routing&&lim.routing.choices)||[],rank={};
  ch.forEach(function(c,i){if(rank[c.entry]===undefined)rank[c.entry]=i});
  function r(p){return rank[p]===undefined?1e9:rank[p]}
- list.sort(function(a,b){return r(a.provider)-r(b.provider)||(a.provider<b.provider?-1:a.provider>b.provider?1:0)||b.requests-a.requests||(a.model<b.model?-1:1)});
+ list.sort(function(a,b){return r(a.provider)-r(b.provider)||(a.provider<b.provider?-1:a.provider>b.provider?1:0)||lo(a)-lo(b)||b.requests-a.requests||(a.model<b.model?-1:1)});
  return list;
 }
 function cacheRingId(m){return"cache.ring:"+m.provider+"/"+m.model}
@@ -57,13 +60,13 @@ function cacheRingIds(d){
  return l.length?cacheMerge(l.map(cacheRingId),cacheUserOrder()):["cache.none"];
 }
 /** The ring and caption of one model: its own cache fields, else the local server's prefix-cache counter, else an empty ring. */
-function cacheRingHtml(m,servers,lim0){
+function cacheRingHtml(m,servers,lim0,low){
  var dn=m.cacheRead+m.cacheWrite+m.input,ring,cap="";
  var srv=(servers||[]).filter(function(s){return s.provider===m.provider})[0];
  if(m.cacheRead+m.cacheWrite>0)ring=donut(dn?m.cacheRead/dn:0);
  else if(srv&&srv.prefixCache){ring=donut(srv.prefixCache.hitRate);cap='<div class="s" title="Hit rate of the local server\'s own prefix cache (server counter since server start); this provider reports no cache fields per request.">server prefix cache'+ageMark(srv)+'</div>'}
  else{ring=emptyRing();cap='<div class="s">'+(lim0?"not reported":'<span class="dim" title="loading: first limits poll pending">…</span>')+'</div>'}
- return'<div class="ring">'+ring+'<div class="n">'+esc(ringName(m.model))+'</div><div class="s">'+esc(m.provider)+' · '+m.requests+' req</div>'+cap+'</div>';
+ return'<div class="ring'+(low?' low':'')+'"'+(low?' title="fewer than '+LOW_REQ+' requests in this window: the hit ratio is noisy"':'')+'>'+ring+'<div class="n">'+esc(ringName(m.model))+'</div><div class="s">'+esc(m.provider)+' · '+m.requests+' req'+(low?' · few requests':'')+'</div>'+cap+'</div>';
 }
 function cacheSoloHtml(m,t){
  var dn=m.cacheRead+m.cacheWrite+m.input;
@@ -109,14 +112,13 @@ Win.registerType("ring",{minW:120,minH:130,defaultH:150,
   k=id.slice(11);m=ms[k.replace("/","\u0000")];
   if(!m){ctx.html("r",'<span class="dim">no requests in this window</span>');return}
   ctx.title(ringName(m.model));
-  ctx.html("r",cacheRingHtml(m,(p.sys&&p.sys.servers)||[],p.lim));
+  ctx.html("r",cacheRingHtml(m,(p.sys&&p.sys.servers)||[],p.lim,m.requests<LOW_REQ&&cacheHasNormal(ms)));
  }});
-/** chips: cache.low = the models under LOW_REQ requests, cache.note = overall/continuous/one-shot/pool. */
+/** chips: cache.note = overall/continuous/one-shot/pool. */
 Win.registerType("chips",{minW:160,minH:48,defaultH:60,
  mount:function(ctx){ctx.body.innerHTML='<div class="wm chips" data-k="c"></div>'},
  update:function(ctx,p){
   if(!p||!p.data)return;
-  if(ctx.id==="cache.low"){ctx.html("c",lowChips(cacheModels(p.data))||'<span class="dim">no low-request models</span>');return}
   ctx.html("c",cacheNoteHtml(p.data));
  }});
 function cacheLocalView(p){
@@ -166,10 +168,9 @@ function winFeedCache(){
 function cacheDefaults(){
  var cards=[{id:"cache",type:"group",title:"Cache hit ratio",info:CACHE_INFO},{id:"cache-rings",type:"group",title:"Hit ratio per model"},
   {id:"cache.none",type:"ring",title:"Cache hit ratio",feeds:["cache"]},
-  {id:"cache.low",type:"chips",title:"low-request models",feeds:["cache"]},{id:"cache.note",type:"chips",title:"totals",feeds:["cache"]},
+  {id:"cache.note",type:"chips",title:"totals",feeds:["cache"]},
   {id:"cache.local",type:"list",cls:"wm",title:"Local prefix cache",info:CACHE_LOCAL_INFO,feeds:["cache"],view:cacheLocalView},
   {id:"cache.providers",type:"table",title:"Providers",info:CACHE_PROV_INFO,feeds:["cache"],view:cacheProvidersView,resize:cacheProvidersFit}];
- var chips=WinT.split("r",[WinT.leaf("cache.low"),WinT.leaf("cache.note")],[0.5,0.5]);
- return{tree:WinT.leaf("cache"),kids:{cache:WinT.split("c",[WinT.leaf("cache-rings"),chips,WinT.leaf("cache.local"),WinT.leaf("cache.providers")],[0.32,0.12,0.16,0.4]),"cache-rings":WinT.leaf("cache.none")},stDefaults:{},cards:cards};
+ return{tree:WinT.leaf("cache"),kids:{cache:WinT.split("c",[WinT.leaf("cache-rings"),WinT.leaf("cache.note"),WinT.leaf("cache.local"),WinT.leaf("cache.providers")],[0.32,0.12,0.16,0.4]),"cache-rings":WinT.leaf("cache.none")},stDefaults:{},cards:cards};
 }
 `;

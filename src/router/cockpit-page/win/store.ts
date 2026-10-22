@@ -333,6 +333,8 @@ function nestRoots(tree,kids){
   }else kids[p]=split("c",[leaf(g),body],[0.4,0.6]);
  }
 }
+/** Card ids that were removed from the page (the low-request chip: those models are small rings now). */
+var RETIRED=["cache.low"];
 /** A saved layout that lists a card more than once (root band and a group body, or two bodies) keeps one occurrence: the one the
  *  user placed, i.e. outside the container the default layout holds the card in; else the first. Mutates kids; returns the tree. */
 function dedupeCards(tree,kids,defaults){
@@ -388,6 +390,13 @@ function reconcileSaved(saved,defaults,knownIds,now){
  // speed lived in the Tokens group before it moved to Performance details: a save that still holds it there follows the move
  for(var oc in OLD_HOME)if(kids[GROUP_OF[oc]]&&kids[OLD_HOME[oc]]&&findLeaf(kids[OLD_HOME[oc]],oc)){var rem=removeLeaf(kids[OLD_HOME[oc]],oc,false);if(rem)kids[OLD_HOME[oc]]=rem;else delete kids[OLD_HOME[oc]]}
  tree=dedupeCards(tree,kids,defaults);
+ // cards that no longer exist: a saved layout drops them
+ for(var rc=0;rc<RETIRED.length;rc++){
+  var rid=RETIRED[rc];
+  if(findLeaf(tree,rid))tree=removeLeaf(tree,rid,true)||tree;
+  for(var rg in kids)if(findLeaf(kids[rg],rid)){var rr=removeLeaf(kids[rg],rid,false);if(rr)kids[rg]=rr;else delete kids[rg]}
+  delete st[rid];
+ }
  // a mapped card left at the page root while its group exists goes back into the group (insertMissing below places it)
  for(var mc in GROUP_OF)if(kids[GROUP_OF[mc]]&&findLeaf(tree,mc)&&!(function(){for(var q in kids)if(findLeaf(kids[q],mc))return true;return false})())tree=removeLeaf(tree,mc,true)||tree;
  tree=pruneGhosts(tree,kids,st,knownIds,now);

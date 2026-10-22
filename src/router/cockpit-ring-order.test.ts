@@ -50,6 +50,12 @@ describe("hit ratio rings order", () => {
     const a = mk();
     expect(a.cacheRingIds({ byModel: [row("zed", "z", 9), row("alpha", "x", 9), row("local", "l", 9)] })).toEqual([id("local", "l"), id("alpha", "x"), id("zed", "z")]);
   });
+  it("low-request models (<5) get a ring too, after the normal rings of their provider; all-low data gives the same ids", () => {
+    const a = mk();
+    const d = { byModel: [row("glm", "g-low", 2), row("glm", "g1", 10), row("local", "l-low", 1), row("anthropic", "a1", 50), row("anthropic", "a-low", 4)] };
+    expect(a.cacheRingIds(d)).toEqual([id("local", "l-low"), id("glm", "g1"), id("glm", "g-low"), id("anthropic", "a1"), id("anthropic", "a-low")]);
+    expect(a.cacheRingIds({ byModel: [row("glm", "x", 1), row("glm", "y", 3)] })).toEqual([id("glm", "y"), id("glm", "x")]);
+  });
   it("a stored user order persists across a range switch; new models take their default slot", () => {
     const a = mk();
     a.cacheSetUserOrder([id("anthropic", "a1"), id("glm", "g1"), id("local", "l1"), id("glm", "g2")]);

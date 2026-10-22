@@ -99,7 +99,7 @@ th{color:var(--dim);font-weight:500}th:first-child,td:first-child{text-align:lef
 .lgline{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;width:100%}
 .lgcap{color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.05em}
 .cap{margin-top:4px;font-size:11px}
-.rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(${L.ringMinWidthPx}px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
+.rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(${L.ringMinWidthPx}px,1fr));gap:6px}.ring{text-align:center;min-width:0}.ring .n,.ring .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ring .n{font-weight:600}.ring .s{color:var(--dim);font-size:11px}.ring.low{opacity:.45}.ring.low svg{width:56px;height:56px}.rings h4{grid-column:1/-1;margin:0;font-size:11px;font-weight:400;color:var(--dim)}
 .rings .solo{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:16px;width:100%;flex-wrap:wrap}.bignum{font-size:26px;font-weight:600;text-align:center}.bignum span{display:block;font-size:11px;color:var(--dim);font-weight:400}
 svg text{fill:var(--dim);font-size:10px}
 /* win/info.ts popover (spec 2.4): the popup lives on the body element, so no card clips it */

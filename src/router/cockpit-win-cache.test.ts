@@ -34,9 +34,9 @@ const PROBE = `<script>setTimeout(function(){
 function vis(){return Array.prototype.filter.call(document.querySelectorAll("#win-root .card"),function(c){return c.style.display!=="none"}).map(function(c){return c.getAttribute("data-card")})}
 function txt(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');return c?c.textContent.replace(/\\s+/g," "):null}
 function rc(id){var c=document.querySelector('#win-root [data-card="'+id+'"]');if(!c)return null;var r=c.getBoundingClientRect();return[r.left,r.top,r.right,r.bottom]}
-var o={err:window.__err||null,vis:vis(),rects:["cache.ring:anthropic/claude-opus","cache.ring:glm/glm-5","cache.ring:local/gyro-m","cache.low","cache.note","cache.local","cache.providers"].map(rc),rings:document.querySelectorAll('#win-root [data-card^="cache.ring:"] svg').length,
+var o={err:window.__err||null,vis:vis(),rects:["cache.ring:anthropic/claude-opus","cache.ring:glm/glm-5","cache.ring:local/gyro-m","cache.ring:tiny/t-1","cache.note","cache.local","cache.providers"].map(rc),rings:document.querySelectorAll('#win-root [data-card^="cache.ring:"] svg').length,
  solo:txt("cache.solo"),soloSvg:(document.querySelector('#win-root [data-card="cache.solo"] svg')||{getAttribute:function(){return null}}).getAttribute("width"),
- glm:txt("cache.ring:glm/glm-5"),local:txt("cache.ring:local/gyro-m"),low:txt("cache.low"),note:txt("cache.note"),prefix:txt("cache.local"),prov:txt("cache.providers"),
+ glm:txt("cache.ring:glm/glm-5"),local:txt("cache.ring:local/gyro-m"),low:txt("cache.ring:tiny/t-1"),lowCls:(document.querySelector('#win-root [data-card="cache.ring:tiny/t-1"] .ring')||{className:""}).className,lowW:(document.querySelector('#win-root [data-card="cache.ring:tiny/t-1"] svg')||{getBoundingClientRect:function(){return{width:0}}}).getBoundingClientRect().width,note:txt("cache.note"),prefix:txt("cache.local"),prov:txt("cache.providers"),
  none:txt("cache.none"),pcRows:Array.prototype.map.call(document.querySelectorAll('#win-root [data-card="cache.local"] .pcrow'),function(r){return{t:r.textContent.replace(/\\s+/g," "),ratio:r.querySelectorAll(".pcc")[0].querySelectorAll(".bar").length,saved:r.querySelectorAll(".pcc")[1].querySelectorAll(".bar").length}}),};
 document.body.setAttribute("data-r",JSON.stringify(o));
 },2500)</script>`;
@@ -75,18 +75,22 @@ async function open(query: string, width: number, shot?: string) {
 }
 
 describe.skipIf(!CHROME)("B10 cache on the win runtime", () => {
-  it("a ring card per model with enough requests, chips, local prefix cache list and providers table", async () => {
+  it("a ring card per model (the low-request one small and dimmed), chips, local prefix cache list and providers table", async () => {
     solo = false;
     const shots = process.env.PAI_WIN_SHOTS;
     const o = await open("", 1400, shots ? join(shots, "cache-1400.png") : undefined);
     expect(o.err).toBeNull();
-    expect(o.vis).toEqual(expect.arrayContaining(["cache", "cache-rings", "cache.ring:anthropic/claude-opus", "cache.ring:glm/glm-5", "cache.ring:local/gyro-m", "cache.low", "cache.note", "cache.local", "cache.providers"]));
+    expect(o.vis).toEqual(expect.arrayContaining(["cache", "cache-rings", "cache.ring:anthropic/claude-opus", "cache.ring:glm/glm-5", "cache.ring:local/gyro-m", "cache.ring:tiny/t-1", "cache.note", "cache.local", "cache.providers"]));
     expect(o.vis).not.toContain("cache.none");
     expect(o.vis).not.toContain("cache.solo");
-    expect(o.rings).toBe(3);
+    expect(o.rings).toBe(4);
     expect(o.glm).toContain("glm-5");
     expect(o.local).toContain("server prefix cache");
-    expect(o.low).toContain("+1 model");
+    expect(o.vis).not.toContain("cache.low");
+    expect(o.low).toContain("t-1");
+    expect(o.low).toContain("2 req · few requests");
+    expect(o.lowCls).toContain("low");
+    expect(o.lowW).toBeLessThan(80);
     expect(o.note).toContain("overall");
     expect(o.note).toContain("one-shot");
     expect(o.note).toContain("pool");

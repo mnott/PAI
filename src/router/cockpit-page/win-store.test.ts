@@ -139,6 +139,15 @@ describe("win store (spec 6)", () => {
     expect(r.tree.ch.map((c: any) => c.id)).toEqual(["a", "b", "c", "zz"]);
   });
 
+  it("reconcileSaved drops the retired cache.low card and keeps its neighbour", () => {
+    const saved = { tree: split("c", [leaf("a"), leaf("b")], [300, 400]), kids: { g: split("r", [leaf("cache.low"), leaf("cache.note")], [1, 1]) }, st: { "cache.low": { min: 1 } } };
+    const r = reconcileSaved(saved, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
+    expect(ids(r.kids.g)).toEqual(["cache.note"]);
+    expect(r.st["cache.low"]).toBeUndefined();
+    const t = reconcileSaved({ tree: split("c", [leaf("a"), leaf("cache.low"), leaf("b")], [1, 1, 1]), kids: {}, st: {} }, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
+    expect(ids(t.tree)).not.toContain("cache.low");
+  });
+
   it("reconcileSaved inserts a missing static id after its default predecessor", () => {
     const r = reconcileSaved({ tree: split("c", [leaf("a"), leaf("b")], [300, 400]), kids: {}, st: {} }, defaultsNoGroup(), KNOWN_NO_GROUP, NOW);
     expect(ids(r.tree)).toEqual(["a", "b", "c"]);

@@ -15,13 +15,6 @@ function emptyRing(sz){
  var cx=${n(L.donutViewBoxPx)}/2;
  return'<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 '+${n(L.donutViewBoxPx)}+' '+${n(L.donutViewBoxPx)}+'"><circle cx="'+cx+'" cy="'+cx+'" r="${n(L.donutRadiusPx)}" fill="none" stroke="var(--line)" stroke-width="${n(L.donutStrokePx)}"/></svg>';
 }
-/** Models under LOW_REQ requests: one chip line under the grid, details on hover. */
-function lowChips(ms){
- var low=Object.keys(ms).map(function(k){return ms[k]}).filter(function(m){return m.requests<LOW_REQ});
- if(!low.length)return"";
- var tt=low.map(function(m){var dn=m.cacheRead+m.cacheWrite+m.input;return m.provider+" · "+m.model+": "+m.requests+" req"+(dn&&m.cacheRead+m.cacheWrite>0?", hit "+pct(m.cacheRead/dn):"")}).join("\n");
- return'<span class="chip dim" title="'+esc(tt)+'">+'+low.length+' model'+(low.length===1?'':'s')+' with &lt;'+LOW_REQ+' requests</span>';
-}
 /** hit% cell of the providers table: loopback providers report no cache fields, so show the server counter, marked. */
 /** " (Ns old)" when the server counter is a kept reading older than one poll interval (60 s). */
 function ageMark(s){
