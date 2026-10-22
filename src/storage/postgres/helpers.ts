@@ -23,24 +23,18 @@ export function bufferToVector(buf: Buffer): number[] {
  * semantics are too strict for multi-word queries because all terms rarely
  * co-occur in a single chunk.
  *
- * Example: "Synchrotech interview follow-up Gilles"
- *   → "synchrotech | interview | follow | gilles"
+ * The query is reduced to plain words (letters, digits, underscore, any script)
+ * and each word is single-quoted, so no user text can form a tsquery operator
+ * (& | ! < > - * ~ : parentheses, backslash).
+ *
+ * Example: "Acme interview follow-up Alice"
+ *   → "'acme' | 'interview' | 'follow' | 'alice'"
  */
 export function buildPgTsQuery(query: string): string {
-  const tokens = query
-    .toLowerCase()
-    .split(/[\s\p{P}]+/u)
-    .filter(Boolean)
-    .filter((t) => t.length >= 2)
-    .filter((t) => !STOP_WORDS.has(t))
-    // Sanitize: strip tsquery special characters to prevent syntax errors
-    .map((t) => t.replace(/'/g, "''").replace(/[&|!():]/g, ""))
-    .filter(Boolean);
-
-  if (tokens.length === 0) {
-    const raw = query.replace(/[^a-z0-9]/gi, " ").trim().split(/\s+/).filter(Boolean).join(" | ");
-    return raw || "";
-  }
-
-  return tokens.join(" | ");
+  const words = query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [];
+  const long = words.filter((t) => t.length >= 2);
+  const tokens = long.filter((t) => !STOP_WORDS.has(t));
+  // A query made only of stop words still searches for those words.
+  const chosen = tokens.length > 0 ? tokens : long;
+  return chosen.map((t) => `'${t}'`).join(" | ");
 }
