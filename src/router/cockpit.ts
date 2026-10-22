@@ -1064,7 +1064,7 @@ export function handleCockpit(
       .catch(() => ({}))
       .then(async (body) => {
         try {
-          const r = await runCockpitAction(body, { ...defaultDeps(), ...(actionDepsOverride ?? {}) }, actionHooks);
+          const r = await runCockpitAction(body, { ...defaultDeps(), onLocalChange: () => (limits as Partial<LimitsCache>).invalidate?.(), ...(actionDepsOverride ?? {}) }, actionHooks);
           send(200, "application/json", JSON.stringify(r));
         } catch (e) {
           send(500, "application/json", JSON.stringify({ ok: false, message: (e as Error).message }));

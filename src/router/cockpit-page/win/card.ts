@@ -15,6 +15,7 @@ export type WinCtx = {
   list<T>(k: string, items: T[], keyFn: (it: T) => string, makeRow: (it: T) => HTMLElement, updateRow?: (row: HTMLElement, it: T) => void): void;
   title(s: string): void;
   status(kind: string, s: string): void;
+  unstale(): void;
 };
 export type WinCardAction = { id: string; label: string; icon?: string; title?: string; enabled?: (ctx: WinCtx) => boolean | string; run?: (ctx: WinCtx) => void; pressed?: (ctx: WinCtx) => boolean; make?: (ctx: WinCtx) => HTMLElement };
 export type WinCardSpec = { id: string; type: string; title: string; info?: string; actions?: WinCardAction[]; feeds?: string[] };
@@ -67,6 +68,8 @@ function mkCtx(c){
  ctx.list=function(k,items,keyFn,makeRow,updateRow){var e=slot(k);if(e)winList(e,items,keyFn,makeRow,updateRow)};
  ctx.title=function(s){setTitle(c,s)};
  ctx.status=function(kind,s){setStatus(c,kind,s)};
+ // a data repaint ends a "stale" mark only: an action result (pending/ok/err) stays until its own timer or click
+ ctx.unstale=function(){if(c.status.getAttribute("data-kind")==="stale")setStatus(c,"","")};
  return ctx;
 }
 function setTitle(c,s){

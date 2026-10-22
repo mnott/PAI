@@ -81,6 +81,8 @@ export interface ActionDeps {
   runtimeKinds?: Record<string, string>;
   /** Fresh model-inventory probe written over the 30 s cache; called when a runtime job ends. Default: compute + write. */
   refreshInventory?: (runtime: string) => Promise<void>;
+  /** Called when a local start/stop/scale/switch/off ends: the router drops its cached server probe. */
+  onLocalChange?: () => void;
   /** The running index/embed run (memory-run.json); default read from PAI home. */
   readRun?: () => RunState | null;
   /** Why the daemon's own index/embed pass blocks a start, else null; default asks the daemon over IPC. */
@@ -733,7 +735,12 @@ async function finishLocalJob(
           ? () => scaleModel(deps, tier, opts.count ?? 0)
           : () => legacy(kind, tier);
   try {
-    await run();
+    try {
+      await run();
+    } finally {
+      // the server list changed (or the attempt did): the next limits/models read probes afresh, not the cached reading
+      deps.onLocalChange?.();
+    }
     const message = kind === "off" ? "local servers stopped" : kind === "stop" ? `${tier} stopped` : kind === "scale" ? `${tier} at ${opts.count}` : `${tier} up`;
     writeJob(deps.home, { id, kind, tier, state: "done", message, at: new Date().toISOString() });
     writeLedgerLine(deps, action, tier || "-", `job ${id}: done`);

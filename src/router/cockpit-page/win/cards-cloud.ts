@@ -34,7 +34,7 @@ Win.registerType("server",{minW:180,minH:96,defaultH:130,
   if(!d||!d.limits)return;
   var l=limRow(d,ctx.id.slice(17));
   if(!l||(!l.up&&!l.starting)){ctx.status("stale","down");ctx.html("b",'<span class="dim">not running</span>');return}
-  ctx.status("","");
+  if(ctx.unstale)ctx.unstale();else ctx.status("","");
   ctx.html("b",limServerHtml(l));
   var al=l.served&&l.served.length&&ringName(String(l.served[0]))!==shortModel(String(l.served[0]))?ringName(String(l.served[0])):"";
   ctx.title(al||l.provider);
@@ -45,7 +45,7 @@ Win.registerType("provider",{minW:200,minH:140,defaultH:160,
   if(!d||!d.limits)return;
   var l=limRow(d,ctx.id.slice(13));
   if(!l){ctx.status("stale","no longer reported");return}
-  ctx.status("","");
+  if(ctx.unstale)ctx.unstale();else ctx.status("","");
   var age=l.error&&/usage reading /.test(l.error)&&l.fetchedAt&&l.fetchedAt<=Date.now()?ago(new Date(l.fetchedAt).toISOString()):"",h="";
   l.windows.forEach(function(w){h+=gauge(l,w,age)});
   if(!l.windows.length)h+='<div class="gauge"><div class="dim">no reading</div><div class="s">'+esc(l.error||"")+'</div></div>';

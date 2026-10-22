@@ -765,12 +765,25 @@ export class LimitsCache {
     writeLastGood(file, store);
   }
 
+  private gen = 0;
+
+  /** Drops the cached reading: the next get() polls afresh (a local server was started or stopped). A poll already
+   *  in flight started before the change, so its answer is served to its callers but never kept. */
+  invalidate(): void {
+    this.gen++;
+    this.at = -Infinity;
+    this.inflight = undefined;
+  }
+
   get(now: number = Date.now()): Promise<ProviderLimits[]> {
     if (this.value.length && now - this.at < this.ttlMs) return Promise.resolve(this.value);
+    const gen = this.gen;
     this.inflight ??= this.poll(now).then((v) => {
-      this.value = v;
-      this.at = now;
-      this.inflight = undefined;
+      if (gen === this.gen) {
+        this.value = v;
+        this.at = now;
+        this.inflight = undefined;
+      }
       return v;
     });
     return this.inflight;

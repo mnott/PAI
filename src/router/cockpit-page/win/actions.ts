@@ -214,10 +214,10 @@ function winClick(el,cardId,verb,args,host){
 /** The one production verb table: defAction registrations and the page use this, and the
  *  field-contract test iterates it. route is the POST url when it is not /cockpit/action. */
 var WIN_VERBS={
- "local.start":{fields:["target"],build:function(a){return{action:"local.start",target:a.target}}},
- "local.stop":{fields:["target","value"],build:function(a){return{action:"local.stop",target:a.target,value:a.value}},confirm:"stop - click again"},
- "local.scale":{fields:["target","count"],build:function(a){return{action:"local.scale",target:a.target,count:a.count}}},
- "local.off":{fields:[],build:function(){return{action:"local.off"}},confirm:"stop every local - click again"},
+ "local.start":{fields:["target"],build:function(a){return{action:"local.start",target:a.target}},doneRefresh:["limits","models"]},
+ "local.stop":{fields:["target","value"],build:function(a){return{action:"local.stop",target:a.target,value:a.value}},confirm:"stop - click again",doneRefresh:["limits","models"]},
+ "local.scale":{fields:["target","count"],build:function(a){return{action:"local.scale",target:a.target,count:a.count}},doneRefresh:["limits","models"]},
+ "local.off":{fields:[],build:function(){return{action:"local.off"}},confirm:"stop every local - click again",doneRefresh:["limits","models"]},
  "runtime":{fields:["target","value"],build:function(a){return{action:"runtime",target:a.target,value:a.value}}},
  "model.label":{fields:["target","value"],build:function(a){return{action:"model.label",target:a.target,value:a.value}}},
  "route.set":{fields:["target","models"],build:function(a){return{action:"route.set",target:a.target,models:a.models}}},

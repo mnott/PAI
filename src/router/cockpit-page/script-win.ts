@@ -47,11 +47,18 @@ ${WIN_ACTIONS_JS}
 ${WIN_SELECT_JS}
   return{Select:Select,Menu:Menu,runAction:runAction,winClick:winClick};
  })();
- WIN_HOST={fetch:function(u,o){return fetch(u,o)},setStatus:function(id,k,t){var c=Win.ctx(id);if(c)c.status(k,t)},setBusy:function(id,on,el){if(!el)return;if(el.setDisabled)el.setDisabled(on);else el.disabled=!!on},clearStatus:function(id){var c=Win.ctx(id);if(c)c.status("","")},refresh:function(f){if(f&&f.indexOf("memory")>=0&&typeof loadMemory==="function")loadMemory()},announce:function(t){Win.announce(t)}};
+ WIN_HOST={fetch:function(u,o){return fetch(u,o)},setStatus:function(id,k,t){var c=Win.ctx(id);if(c)c.status(k,t)},setBusy:function(id,on,el){if(!el)return;if(el.setDisabled)el.setDisabled(on);else el.disabled=!!on},clearStatus:function(id){var c=Win.ctx(id);if(c)c.status("","")},refresh:winRefresh,announce:function(t){Win.announce(t)}};
+}
+/** The feeds an action touched, refetched at once (not at the next poll): one owner for every host. */
+function winRefresh(f){
+ if(!f)return;
+ if(f.indexOf("memory")>=0&&typeof loadMemory==="function")loadMemory();
+ if(f.indexOf("limits")>=0&&typeof loadLimits==="function")loadLimits();
+ if(f.indexOf("models")>=0&&typeof loadModels==="function")loadModels();
 }
 /** The action runner's host for the routing cards: no section refresh (the limits poll repaints). */
 function winHost(){
- return{fetch:WIN_HOST.fetch,setStatus:WIN_HOST.setStatus,setBusy:WIN_HOST.setBusy,clearStatus:WIN_HOST.clearStatus,refresh:function(){},announce:WIN_HOST.announce};
+ return{fetch:WIN_HOST.fetch,setStatus:WIN_HOST.setStatus,setBusy:WIN_HOST.setBusy,clearStatus:WIN_HOST.clearStatus,refresh:winRefresh,announce:WIN_HOST.announce};
 }
 ${WIN_TYPES_JS}
 ${WIN_KPIS_JS}
