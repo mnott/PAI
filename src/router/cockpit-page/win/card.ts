@@ -182,7 +182,7 @@ function layState(){
   if(W.hide&&W.hide[id])o[id]={seen:1};
   else if(!W.cards[id]){o[id]={seen:(W.st[id]&&W.st[id].seen)||1}}
   else if(isMin(id))o[id]={min:1};
-  else if(W.st[id]&&(W.st[id].h||W.st[id].sp)){o[id]={};if(W.st[id].h)o[id].h=W.st[id].h;if(W.st[id].sp)o[id].sp=W.st[id].sp}
+  else if(W.st[id]&&(W.st[id].h||W.st[id].sp||W.st[id].ub)){o[id]={};if(W.st[id].h)o[id].h=W.st[id].h;if(W.st[id].sp)o[id].sp=W.st[id].sp;if(W.st[id].ub)o[id].ub=1}
  }
  // a minimized card inside a group leaves its place (a ghost); it shows as a chip in the group's dock
  var dk=dockOf();for(var d in dk)for(i=0;i<dk[d].length;i++)o[dk[d][i]]={seen:1};
@@ -211,7 +211,7 @@ function paintMin(c){
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
-function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=W.auto?fitCfg():undefined;W.cfg.content=W.auto?undefined:contentOf();return W.cfg}
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=W.auto?fitCfg():undefined;W.cfg.derive=!W.auto;W.cfg.content=W.auto?undefined:contentOf();return W.cfg}
 /** Frozen layout: the content height of each table/list card, read once per width and set of mounted cards (the layout gives a stack's leftover height to growable cards, never to these). */
 function contentKey(){var n=0,id;for(id in W.cards)if(W.cards[id].mounted)n++;return W.main.clientWidth+":"+n}
 function contentOf(){var k=contentKey();if(!W.content||W.contentKey!==k){W.content=fitReadAll();W.contentKey=k}return W.content}
@@ -322,6 +322,7 @@ function place(c,r){
  }
 }
 /** Apply layout(): positions only. Content never reaches here (spec 3: layout takes no content). */
+var _SHRUNK_LOGGED=false;
 function relayout(){
  var w=W.main.clientWidth;
  if(w<=0)return;
@@ -329,6 +330,8 @@ function relayout(){
  var r=layout(W.tree,W.kids,{w:w},layState(),cfgOf());
  W.main.style.height=r.height+"px";
  W.rects=r.rects;
+ if(W.cfg.shrunk&&!_SHRUNK_LOGGED){_SHRUNK_LOGGED=true;console.info("cockpit layout: "+W.cfg.shrunk+" stored band height(s) above their content were dropped")}
+ W.cfg.shrunk=0;
  scheduleFit();
  for(var i=0;i<W.order.length;i++){
   var c=W.cards[W.order[i]],rect=r.rects[c.id];
@@ -399,11 +402,16 @@ function gutterOpts(){
   getState:function(){return layState()},
   getKids:function(){return W.kids},
   preview:function(t){if(W.gkey)W.kids[W.gkey]=t;else W.tree=t;relayout()},
-  apply:function(t){if(W.gkey)W.kids[W.gkey]=t;else W.tree=t;relayout();save()},
+  apply:function(t){if(!W.gkey)markBands(W.tree,t);if(W.gkey)W.kids[W.gkey]=t;else W.tree=t;relayout();save()},
   announce:announce
  };
  Object.defineProperty(o,"cfg",{get:function(){return W.gcfg||cfgOf()}});
  return o;
+}
+/** A band whose px a gutter drag changed is the user's: it keeps its height (ub), the others follow their content. */
+function markBands(was,now){
+ if(!was||!now||was.k!=="s"||now.k!=="s"||was.d!=="c")return;
+ for(var i=0;i<now.ch.length;i++)if(was.sz[i]!==now.sz[i]){var a=ids(now.ch[i]);for(var j=0;j<a.length;j++)(W.st[a[j]]=W.st[a[j]]||{}).ub=1}
 }
 function gutterWire(){
  var o=gutterOpts();
@@ -631,8 +639,10 @@ function groupPx(group,ch){
  return px;
 }
 function growBand(group,delta){
- var t=W.tree,r=W.rects&&W.rects[group],i,e;
+ var t=W.tree,r=W.rects&&W.rects[group],i,e,g,up=true;
  if(!r||!t||t.k!=="s"||t.d!=="c")return;
+ // a nested group (a group inside a group's body): the root band is the one holding its outermost group
+ while(up){up=false;if(findLeaf(t,group))break;for(g in W.kids)if(W.kids[g]&&W.kids[g].k&&findLeaf(W.kids[g],group)){group=g;up=true;break}}
  for(i=0;i<t.ch.length;i++)if(findLeaf(t.ch[i],group)){
   e=winGExt(t.ch[i],W.rects);
   if(e)t.sz[i]=Math.max(HEAD_H,e.y1-e.y0+delta);

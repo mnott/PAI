@@ -47,6 +47,8 @@ function winMinW(cfg,type){var t=winType(cfg,type);return t.minW!==undefined?t.m
 function winDefH(cfg,type){var t=winType(cfg,type);return t.defaultH!==undefined?t.defaultH:(cfg.defaultH||0)}
 function winMin(st,id){var s=st&&st[id];return!!s&&s.min===1}
 function winGhost(st,id){var s=st&&st[id];return!!s&&s.seen!==undefined}
+/** A root band the user sized (a band gutter drag marks one of its cards ub): its px is authoritative. Any other band's px is derived from its content. */
+function winBandUser(node,st){var a=ids(node),i;for(i=0;i<a.length;i++)if(st&&st[a[i]]&&st[a[i]].ub)return true;return false}
 function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
 /** The user's height (st[id].h, set by a card's height handle) of a node, floored at its type's minH and the header: a leaf its own, a row the tallest of its children's (the line takes the height the user set), a column or group none (null). */
 function winUH(node,st,cfg,kids){
@@ -301,6 +303,8 @@ function winSplit(node,box,bounded,st,cfg,kids){
    // a row with a fixed height (band cell, bounded container): children fill it;
    // a bare root row has no height of its own: children get their defaultH
    var hh2=winMin(st,ch.id)?cfg.HEAD_H:(box.h>0?box.h:winDefH(cfg,winLeafType(kids,ch.id,cfg)));
+   // a group of tiles beside a taller sibling keeps its own height (top aligned): no empty band inside it
+   if(cfg.derive&&box.h>0&&!winMin(st,ch.id)&&kids&&kids[ch.id]&&kids[ch.id].k&&!winGrow(ch,st,cfg,kids))hh2=Math.min(hh2,winNeed(ch,w,st,cfg,kids,true));
    out.push({n:ch,x:x,y:0,w:w,h:hh2});
    x+=w+gap;
   }
@@ -368,6 +372,8 @@ function winSplit(node,box,bounded,st,cfg,kids){
   if(cfg.fit){var fb=winFit(c3,box.w,st,cfg,kids);if(fb!==null){flat=true;sz=Math.max(fb,winNeed(c3,box.w,st,cfg,kids,true))}}
   var uh=winUH(c3,st,cfg,kids);
   if(uh!==null)sz=uh;
+  // a frozen layout's derived band px (baked from what was on screen) follows its content down too: above need + 8 it is need (cfg.derive; a user band or user card height is exempt)
+  if(cfg.derive&&uh===null&&!flat&&winPx(st,c3.id)===null&&!winBandUser(c3,st)){var dn=winNeed(c3,box.w,st,cfg,kids,true);if(sz>dn+8){if(sz>dn+24)cfg.shrunk=(cfg.shrunk||0)+1;sz=dn}}
   var h3;
   if(c3.k==="s"){
    // a band is never shorter than its cards need (a card the user made taller than the band pushes the next band down)
