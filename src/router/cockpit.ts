@@ -10,6 +10,7 @@ import type http from "node:http";
 import type { LimitsCache, ProviderLimits } from "./limits.js";
 import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
+import { resolveFromModule } from "../module-paths.js";
 import { expandHome, loadConfig, paiConfigFilePath, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import { isTimeOrdered, markTimeOrdered, readUsageCached, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
@@ -1117,7 +1118,19 @@ export function cockpitQueue(
   return { now, plans: planRows(loadPlanStatuses(logDir), now), panes: paneRunRows(loadPaneRunStatuses(logDir), now), paneViolations: readAudit(logDir).filter((a) => a.mark !== "ok").map((a) => ({ id: a.id, mark: a.mark, why: a.why })), providers: [...byProvider.values()], sessionMax, builds: cockpitBuilds(now), worktrees: formatWorktreesStats(worktreesStatsCached(logDir, now)), localModel: [localIdleLine(readLocalIdle(logDir), now), sched.text].filter(Boolean).join(" · "), localModelTitle: sched.title };
 }
 
-const BUILD_PLACEHOLDER = "__COCKPIT_BUILD__";
+const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;
+const VERSION_PLACEHOLDER = /__COCKPIT_VERSION__/g;
+let pkgVersion: string | null = null;
+/** The version this router runs: package.json, read once at startup (the one owner of the header's "v<version>"). */
+function cockpitVersion(): string {
+  if (pkgVersion) return pkgVersion;
+  try {
+    pkgVersion = (JSON.parse(readFileSync(resolveFromModule(import.meta.url, "package.json"), "utf8")) as { version?: string }).version ?? "?";
+  } catch {
+    pkgVersion = "?";
+  }
+  return pkgVersion;
+}
 /** Where the page gets the default layout this install serves (null = compose its own). */
 const SAVED_AT_PLACEHOLDER = "0/*__COCKPIT_LAYOUT_SAVED_AT__*/";
 const LAYOUT_PLACEHOLDER = "null/*__COCKPIT_LAYOUT__*/";
@@ -1214,7 +1227,7 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
+      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(VERSION_PLACEHOLDER, cockpitVersion()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
     } catch {
       /* falls through to the 503 */
     }
