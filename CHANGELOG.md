@@ -4,9 +4,21 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
-## [Unreleased]
+## [1.0.2] - 2026-10-22
+
+### Added
+
+- **`pai setup` installs AIBroker**, PAI's messaging layer (session messages, worker reports, tab names, WhatsApp, Telegram, PAILot), without asking; `--no-aibroker` skips it.
+- **Setup step for the router and cockpit:** enable it, choose the port (checked for conflicts) and how far it is reachable (loopback, Tailscale or an address).
+- **Every setup question has a flag**, and `pai setup --questions [--json]` lists them with defaults, so the setup skill asks in chat and runs `pai setup --yes` with the answers.
+- **`pai backup --dry-run`** and **`pai restore --dry-run`** print what they would do; `pai restore --into <db>` and `--no-safety-dump`.
+- **Docs:** a new README opening (local AI, routing, tiers, cockpit, memory), `docs/features.md` with everything PAI does, an architecture diagram (`docs/images/architecture.drawio` / `.svg`), and "Setup questions and flags" in the install guide; the setup skill uses one install route (npm package, marketplace plugin, `pai setup`).
 
 ### Fixed
+
+- **Backup dumped the wrong database:** `pai backup` dumped the empty `pai` database instead of the one PAI uses; backup and restore now resolve the database the same way the running storage does.
+- **Backup of a large database failed** (`Cannot create a string longer than …`): the dump is checked as a stream with bounded memory, and a backup with a failed part reports `Backup INCOMPLETE` and exits 1 instead of "Backup complete".
+- **Restore of a large dump** streams the file into `psql`; the safety dump of the current database is written to a file and verified, and the restore refuses when it fails.
 
 - **Setup router step:** a busy router port no longer aborts setup after the other steps ran; it is listed in the summary with the retry command and every other answer is still written. The router's own port is recognised by the running router (pid file), not by `router.enabled` in the config. `--yes` keeps a saved router bind (tailscale or an explicit address); only `--router-bind` changes it. A non-loopback bind is probed on its own address. Bad `--router-port` / `--router-bind` values are rejected before anything runs, also with `--dry-run`.
 - **Setup AIBroker step:** commands time out after five minutes, `aibroker setup` gets the terminal when interactive, `npm install -g` runs only when `aibroker` is missing (a failing `doctor` just re-runs `setup`), and the package is pinned to `aibroker@^0.62.4`.
