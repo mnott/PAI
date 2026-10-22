@@ -33,16 +33,47 @@ export function percentile(xs: number[], p: number): number | null {
   return s[Math.min(s.length - 1, Math.floor(p * s.length))]!;
 }
 
+/** A local prefill above this is a measurement artefact; such rows are dropped (env PAI_MAX_LOCAL_PREFILL_TPS overrides). */
+export const MAX_PLAUSIBLE_LOCAL_PREFILL_TPS = 20_000;
+let capLogged = false;
+
 /**
- * Prompt tok/s = prompt tokens processed / TTFT. Anthropic semantics: input_tokens
- * excludes cache reads and writes, so cloud rows count all three (a cached prompt
- * would otherwise read ~0). Local usage carries no cache fields: input_tokens already
- * is the whole prompt.
+ * Tokens the server actually had to prefill: input_tokens (which excludes cache reads)
+ * plus cache writes. Null when the row carries no cache counts, so a cached prompt is
+ * never mistaken for a cold one.
  */
-export function readRate(r: UsageRow): number | null {
-  const prompt = (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
-  if (r.ttftMs === undefined || r.ttftMs <= 0 || !prompt) return null;
-  return prompt / (r.ttftMs / 1000);
+function uncachedPrompt(r: UsageRow): number | null {
+  if (r.cache_read_input_tokens === undefined || r.cache_creation_input_tokens === undefined) return null;
+  return (r.input_tokens ?? 0) + r.cache_creation_input_tokens;
+}
+
+/** [uncached prompt tokens, ttft ms] for rows that qualify for the prefill rate, else null. */
+function prefillSample(r: UsageRow, local: boolean): [number, number] | null {
+  const tok = uncachedPrompt(r);
+  if (tok === null || tok <= 0 || r.ttftMs === undefined || r.ttftMs <= 0) return null;
+  const max = Number(process.env.PAI_MAX_LOCAL_PREFILL_TPS) || MAX_PLAUSIBLE_LOCAL_PREFILL_TPS;
+  if (local && tok / (r.ttftMs / 1000) > max) {
+    if (!capLogged) {
+      capLogged = true;
+      console.warn(`[speed] dropping local prefill rows above ${max} tok/s (implausible)`);
+    }
+    return null;
+  }
+  return [tok, r.ttftMs];
+}
+
+/** Prefill tok/s of the uncached prompt tokens over TTFT, aggregated as Σtokens / Σttft. */
+export function prefillRate(rows: UsageRow[], local = true): number | null {
+  let tok = 0;
+  let ms = 0;
+  for (const r of rows) {
+    const s = prefillSample(r, local);
+    if (s) {
+      tok += s[0];
+      ms += s[1];
+    }
+  }
+  return ms > 0 ? tok / (ms / 1000) : null;
 }
 
 /**
@@ -61,13 +92,12 @@ const round = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10
 
 function stats(rows: UsageRow[], local: boolean): SpeedStats {
   const ttft = rows.map((r) => r.ttftMs!);
-  const reads = rows.map(readRate).filter((v): v is number => v !== null);
   const writes = rows.map((r) => writeRate(r, local)).filter((v): v is number => v !== null);
   return {
     requests: rows.length,
     ttftP50: round(percentile(ttft, 0.5)),
     ttftP90: round(percentile(ttft, 0.9)),
-    readTps: round(percentile(reads, 0.5)),
+    readTps: round(prefillRate(rows, local)),
     writeTps: round(percentile(writes, 0.5)),
   };
 }

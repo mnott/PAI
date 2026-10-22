@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSpeed, percentile, readRate, writeRate } from "./speed.js";
+import { buildSpeed, percentile, prefillRate, writeRate } from "./speed.js";
 import { UsageSniffer, type UsageRow } from "./usage.js";
 
 const NOW = Date.parse("2026-10-17T12:00:00Z");
@@ -8,8 +8,8 @@ const row = (o: Partial<UsageRow>): UsageRow =>
 
 describe("speed", () => {
   it("computes read and write rates, skipping short or untimed rows", () => {
-    expect(readRate(row({ input_tokens: 1000, ttftMs: 500 }))).toBe(2000);
-    expect(readRate(row({ input_tokens: 1000 }))).toBeNull();
+    expect(prefillRate([row({ input_tokens: 1000, ttftMs: 500 })])).toBe(2000);
+    expect(prefillRate([row({ input_tokens: 1000 })])).toBeNull();
     expect(writeRate(row({ output_tokens: 100, decodeMs: 2000 }))).toBe(50);
     expect(writeRate(row({ output_tokens: 15, decodeMs: 2000 }))).toBeNull();
     expect(percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.9)).toBe(10);
@@ -29,8 +29,27 @@ describe("speed", () => {
     expect(s!.h24.ttftP50).toBe(300);
     expect(s!.h1.writeTps).toBe(100);
   });
-  it("prompt speed counts cache reads and creation", () => {
-    expect(readRate(row({ input_tokens: 2, cache_read_input_tokens: 497_951, cache_creation_input_tokens: 48, ttftMs: 5000 }))).toBeCloseTo(99_600.2, 0);
+  it("prefill rate counts cache writes but not cache reads", () => {
+    expect(prefillRate([row({ input_tokens: 2, cache_read_input_tokens: 497_951, cache_creation_input_tokens: 48, ttftMs: 5000 })], false)).toBe(10);
+  });
+  it("prefill rate excludes fully cached rows and rows with unknown cache counts", () => {
+    expect(prefillRate([row({ input_tokens: 0, cache_read_input_tokens: 90_000, ttftMs: 500 })])).toBeNull();
+    const unknown = row({ input_tokens: 1000, ttftMs: 500 });
+    delete (unknown as Partial<UsageRow>).cache_read_input_tokens;
+    expect(prefillRate([unknown])).toBeNull();
+  });
+  it("prefill rate is Σuncached / Σttft over mixed rows", () => {
+    const rows = [
+      row({ input_tokens: 100, cache_read_input_tokens: 50_000, ttftMs: 100 }),
+      row({ input_tokens: 300, cache_creation_input_tokens: 100, cache_read_input_tokens: 9000, ttftMs: 300 }),
+      row({ input_tokens: 0, cache_read_input_tokens: 90_000, ttftMs: 5000 }),
+    ];
+    expect(prefillRate(rows)).toBe(1250);
+  });
+  it("local prefill above the plausibility cap is dropped, cloud is not", () => {
+    const fast = row({ input_tokens: 30_000, ttftMs: 1000 });
+    expect(prefillRate([fast], true)).toBeNull();
+    expect(prefillRate([fast], false)).toBe(30_000);
   });
   it("cloud output speed uses the whole reply time, local uses the decode window", () => {
     const burst = row({ output_tokens: 822, ttftMs: 11_447, decodeMs: 2, ms: 11_449 });
