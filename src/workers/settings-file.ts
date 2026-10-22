@@ -9,7 +9,7 @@
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { readWorkersSection } from "./config.js";
 import { workersLogDir } from "./paths.js";
 import { isLive, loadStatuses } from "./status.js";
@@ -32,8 +32,10 @@ export function pinDir(): string {
 
 /** Write a settings object that carries a secret to a fresh 0600 file; returns its path. */
 export function writePinFile(settings: unknown): string {
-  const path = join(pinDir(), `pin-${process.pid}-${randomBytes(6).toString("hex")}${SUFFIX}`);
-  writePrivateFile(path, JSON.stringify(settings));
+  const text = JSON.stringify(settings);
+  // named by content: an identical pin from this process reuses its file
+  const path = join(pinDir(), `pin-${process.pid}-${createHash("sha256").update(text).digest("hex").slice(0, 12)}${SUFFIX}`);
+  writePrivateFile(path, text);
   return path;
 }
 

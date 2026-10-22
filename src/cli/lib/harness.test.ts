@@ -60,7 +60,8 @@ describe("execLine (dry-run)", () => {
     const h = await buildHarness(workers, { provider: "beta", cwd: "/tmp/x y", name: "demo" });
     const line = execLine(h);
     expect(line).not.toContain("beta-key-abcdefghij");
-    expect(line).toContain("****ghij");
+    // the token is in a 0600 file now, so the line names only that file
+    expect(line).toMatch(/--settings \S+\.settings\.json/);
     expect(line.startsWith('cd "/tmp/x y" && claude ')).toBe(true);
   });
 });
