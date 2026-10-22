@@ -181,7 +181,7 @@ describe("worker-guard hook", () => {
   const call = (dir: string, env: Record<string, string>) =>
     spawnSync("node_modules/.bin/tsx", [hook], {
       input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: "src/a.ts" }, cwd: dir }),
-      env: { ...process.env, PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-loop", ...env },
+      env: { ...process.env, PAI_CONFIG_FILE: join(dir, "no-config.json"), PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-loop", ...env },
       encoding: "utf8",
     }).stdout;
   it("worker: stops the session at the 7th Read and records the event; interactive is a no-op", () => {
@@ -214,7 +214,7 @@ describe("worker-guard hook: hard stop signals the worker", () => {
       for (let i = 0; i < 7; i++)
         spawnSync("node_modules/.bin/tsx", ["src/hooks/ts/pre-tool-use/worker-guard.ts"], {
           input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: "src/a.ts" }, cwd: dir }),
-          env: { ...process.env, PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-kill", PAI_WORKER: "1", PAI_LOOP_STOP_PID: String(victim.pid) },
+          env: { ...process.env, PAI_CONFIG_FILE: join(dir, "no-config.json"), PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-kill", PAI_WORKER: "1", PAI_LOOP_STOP_PID: String(victim.pid) },
           encoding: "utf8",
         });
       expect(await exited).toBe("SIGTERM");
