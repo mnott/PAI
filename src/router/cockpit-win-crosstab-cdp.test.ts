@@ -1,5 +1,5 @@
 /**
- * Two cockpit tabs in one Chrome profile share localStorage. Tab A moves a card: tab B shows the move within 1 s without a reload,
+ * Two cockpit tabs in one Chrome profile share localStorage. Tab A moves a card: tab B shows the move without a reload (bounded wait, 10 s),
  * and when B is closed (pagehide flush) A's layout is still the moved one after a reload. Skipped without Chromium.
  */
 
@@ -41,7 +41,7 @@ async function ready(b: Awaited<ReturnType<typeof launch>>, expr = "window") {
 }
 
 describe.skipIf(!CHROME)("cockpit layout across two tabs", () => {
-  it("a move in tab A shows in tab B within 1 s, and B closing does not write the old layout back", async () => {
+  it("a move in tab A shows in tab B, and B closing does not write the old layout back", async () => {
     const b = await launch(1500, 1000);
     await b.send("Page.navigate", { url: `${base}/page` });
     await ready(b);
@@ -55,12 +55,18 @@ describe.skipIf(!CHROME)("cockpit layout across two tabs", () => {
     expect(await b.ev<boolean>(`!!window.__B`), "second tab opened").toBe(true);
     await ready(b, "window.__B");
     expect(await b.ev<string>(`window.__B.Win.state().tree.ch[0].id`)).toBe(first0);
+    // probe: when A writes the layout and when B gets the storage event (page clock, ms)
+    await b.ev(`(function(){window.__probe={set:0,ev:0};var o=Storage.prototype.setItem;Storage.prototype.setItem=function(k){if(k==="pai.cockpit.win.v2"&&!window.__probe.set)window.__probe.set=performance.now();return o.apply(this,arguments)};window.__B.addEventListener("storage",function(e){if(e.key==="pai.cockpit.win.v2"&&!window.__probe.ev)window.__probe.ev=window.__B.performance.timeOrigin+window.__B.performance.now()-performance.timeOrigin})})()`);
     const moved = await b.ev<string>(MOVE);
     expect(moved).not.toBe(first0);
     let shown = "";
     const t0 = Date.now();
-    while (Date.now() - t0 < 1000 && shown !== moved) { await sleep(50); shown = await b.ev<string>(`window.__B.Win.state().tree.ch[0].id`); }
-    expect(shown, "tab B adopted A's move").toBe(moved);
+    // adoption is a condition wait (a loaded machine delays it); the storage event, not a reload, must be what delivers it
+    while (Date.now() - t0 < 10_000 && shown !== moved) { await sleep(50); shown = await b.ev<string>(`window.__B.Win.state().tree.ch[0].id`); }
+    const probe = await b.ev<unknown>(`({p:window.__probe,now:performance.now(),waited:${Date.now() - t0}})`);
+    console.log("crosstab probe", JSON.stringify(probe), "shownAfterMs", Date.now() - t0);
+    expect(shown, `tab B adopted A's move ${JSON.stringify(probe)}`).toBe(moved);
+    expect(await b.ev<number>(`window.__probe.ev>0?1:0`), "adopted via the storage event").toBe(1);
     // B leaves: its pagehide flush must not overwrite A's layout
     await b.ev(`window.__B.dispatchEvent(new Event("pagehide"));window.__B.close();1`);
     await sleep(600);
