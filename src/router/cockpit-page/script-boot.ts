@@ -10,7 +10,9 @@ export const scriptBoot = (L: CockpitLayout, n: Num, q: Str, hex: Str): string =
 /**
  * Hold-last-good: every poll goes through feed(). A failed fetch (network, timeout, non-2xx) or a payload the server marks
  * transient keeps the last good payload on screen; past HOLD_SEC the cards show the error (the degraded payload, else onErr).
- * A good payload is applied at once.
+ * A good payload is applied at once. A poll whose previous fetch (same url) is still out joins it, and at most 4 feeds (feed.out, feed.wait)
+ * are out at once (the rest wait): a browser allows 6 connections per host, and slow polls holding all of them delayed a
+ * click's own POST (registry validate/save) by seconds.
  */
 var HOLD_SEC=${n(L.holdLastGoodSecs)},FEEDS={};
 function feedHeld(F){return F.good!==null&&Date.now()-F.at<HOLD_SEC*1000}
@@ -25,13 +27,20 @@ function feed(key,url,secs,apply,onErr){
   if(!F.err){F.t0=Date.now();F.shown=0}
   F.err=why;F.degraded=j||null;feedState(F);
  }
- return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(function(j){
+ if(F.pend&&F.pendUrl===url)return F.pend;
+ function go(){
+  feed.out=(feed.out||0)+1;
+  return fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(function(j){
   if(j&&j.transient){
    bad(String(j.transient),j);
    if(F.good===null)apply(j);
    return}
   F.good=j;F.at=Date.now();F.err=null;F.degraded=null;F.shown=0;lastOk=F.at;apply(j);
- },function(e){bad(String((e&&e.message)||"fetch failed"),null)}).catch(function(){});
+ },function(e){bad(String((e&&e.message)||"fetch failed"),null)}).catch(function(){}).then(function(){feed.out--;var n=(feed.wait||[]).shift();if(n)n()});
+ }
+ F.pendUrl=url;
+ F.pend=new Promise(function(res){if((feed.out||0)<4)go().then(res);else(feed.wait||(feed.wait=[])).push(function(){go().then(res)})}).then(function(){F.pend=null});
+ return F.pend;
 }
 /** The build this page was served with; a poll carrying another one shows the reload link (once, until the reload). */
 var BUILD=(document.querySelector('meta[name="cockpit-build"]')||{}).content;
