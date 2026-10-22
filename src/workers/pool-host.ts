@@ -362,7 +362,9 @@ export interface PoolHost {
   reapSlots(): number;
   /** The pool settings in force now (re-read when the config file changes). */
   settings(): PoolSettings;
-  /** Re-read the pool settings when the config files changed since the last read; true when they did. Checked at most every 5 s unless `force`. */
+  /** Whether the workers config in force offers this provider's model (follows the config reload). */
+  offersModel(providerName: string, model: string): boolean;
+  /** Re-read the pool settings and the workers config when the config files changed since the last read; true when they did. Checked at most every 5 s unless `force`. */
   reloadSettings(force?: boolean): boolean;
   /** Retire spares idle past workers.pool.idleKillSec. */
   reapSpares(): number;
@@ -421,9 +423,12 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
-  const { workers: config } = opts.config ? { workers: opts.config } : readWorkersSection();
-  const logDir = opts.logDir ?? workersLogDir(config);
-  let settings = poolSettings(config);
+  const { workers: startupConfig } = opts.config ? { workers: opts.config } : readWorkersSection();
+  const logDir = opts.logDir ?? workersLogDir(startupConfig);
+  let settings = poolSettings(startupConfig);
+  // the workers config follows the settings reload: a provider added later is
+  // seen by offersModel/spareCapable without a restart
+  let config = startupConfig;
   // opts.config pins the settings (tests, embedding); otherwise a saved config reaches the running host
   const configStamp = opts.configStamp ?? (opts.config ? null : () => workersConfigStamp());
   const readConfig = opts.readConfig ?? (() => readWorkersSection(undefined, () => {}).workers);
@@ -438,8 +443,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (stamp === seenStamp) return false;
     seenStamp = stamp;
     try {
+      const next = readConfig();
       // running slots are never touched: a lower maxSlots only stops new spawns (pickSlot evicts idle ones when a task needs room)
-      settings = poolSettings(readConfig());
+      settings = poolSettings(next);
+      config = next;
       return true;
     } catch {
       return false; // a half-written file: keep the settings in force, retry on the next change
@@ -776,7 +783,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     return !(p.native && !settings.native);
   };
 
-  /** Whether the provider's model table (what the router resolves from) offers this model; native also takes any claude-* id. */
+  /** Whether the provider's model table (what the router resolves from) offers this model; native also takes any claude-* id. Follows the config reload — a provider added later is seen without a restart. */
   const offersModel = (providerName: string, model: string): boolean => {
     const p = getProviderOrNative(config, providerName);
     if (!p) return false;
@@ -1528,6 +1535,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     shutdown,
     reapSlots,
     settings: () => settings,
+    offersModel,
     reloadSettings,
     reapSpares,
     refreshSpares,
