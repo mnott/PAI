@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addLesson, getLesson, lessonsDir, listLessons, proposeFromTranscript, setState } from "./lessons.js";
+import { parse } from "yaml";
+import { addLesson, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
 
 let home: string;
+let project: string;
 let prev: string | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "pai-lessons-test-"));
+  project = mkdtempSync(join(tmpdir(), "pai-lessons-proj-"));
   prev = process.env.PAI_HOME;
   process.env.PAI_HOME = home;
 });
@@ -16,6 +19,7 @@ afterEach(() => {
   if (prev === undefined) delete process.env.PAI_HOME;
   else process.env.PAI_HOME = prev;
   rmSync(home, { recursive: true, force: true });
+  rmSync(project, { recursive: true, force: true });
 });
 
 const input = (title: string) => ({ title, kind: "gotcha" as const, applies_when: "when testing", body: "Do the thing." });
@@ -72,6 +76,63 @@ describe("lessons", () => {
     const a = addLesson(input("A"));
     setState(a.id, "approved");
     expect(readdirSync(lessonsDir())).toEqual(["a.md"]);
+  });
+});
+
+describe("promoteLesson", () => {
+  const approved = () => {
+    const l = addLesson({ ...input("Run tsc first"), evidence: ["s1", "s2"] });
+    setState(l.id, "approved");
+    return l;
+  };
+  const skillPath = (slug: string) => join(project, ".claude", "skills", slug, "SKILL.md");
+
+  it("writes a skill with valid frontmatter for an approved lesson", () => {
+    const l = approved();
+    const paths = promoteLesson(l.id, { projectDir: project });
+    expect(paths).toEqual([skillPath("run-tsc-first")]);
+    expect(existsSync(paths[0]!)).toBe(true);
+    const text = readFileSync(paths[0]!, "utf8");
+    const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
+    expect(m).not.toBeNull();
+    const f = parse(m![1]!) as Record<string, unknown>;
+    expect(f.name).toBe("run-tsc-first");
+    expect(String(f.description)).toBe("Run tsc first. USE WHEN when testing.");
+    expect(String(f.description).length).toBeLessThan(1024);
+    const prov = f.provenance as Record<string, unknown>;
+    expect(prov.lesson).toBe(l.id);
+    expect(prov.evidence).toEqual(["s1", "s2"]);
+    expect(typeof prov.promoted).toBe("string");
+    expect(m![2]!).toContain("Do the thing.");
+    expect(m![2]!).toContain(`Source: lesson ${l.id}`);
+  });
+
+  it("refuses a candidate", () => {
+    const l = addLesson(input("A"));
+    expect(() => promoteLesson(l.id, { projectDir: project })).toThrow(/approved/);
+    expect(existsSync(skillPath("a"))).toBe(false);
+  });
+
+  it("refuses to overwrite without force, overwrites with force", () => {
+    const l = approved();
+    promoteLesson(l.id, { projectDir: project });
+    expect(() => promoteLesson(l.id, { projectDir: project })).toThrow(/already exists/);
+    const paths = promoteLesson(l.id, { projectDir: project, force: true });
+    expect(paths).toEqual([skillPath("run-tsc-first")]);
+    expect(existsSync(paths[0]!)).toBe(true);
+  });
+
+  it("with agentsDir writes both dirs", () => {
+    const l = approved();
+    const paths = promoteLesson(l.id, { projectDir: project, agentsDir: true });
+    expect(paths).toEqual([skillPath("run-tsc-first"), join(project, ".agents", "skills", "run-tsc-first", "SKILL.md")]);
+    for (const p of paths) expect(existsSync(p)).toBe(true);
+  });
+
+  it("records promoted_to in the lesson", () => {
+    const l = approved();
+    const paths = promoteLesson(l.id, { projectDir: project });
+    expect(getLesson(l.id)?.promoted_to).toEqual(paths);
   });
 });
 

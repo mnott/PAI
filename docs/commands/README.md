@@ -167,6 +167,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai lessons add` | Add a candidate lesson |
 | `pai lessons approve` | Approve a candidate |
 | `pai lessons list` | List lessons |
+| `pai lessons promote` | Promote an approved lesson to a project skill |
 | `pai lessons propose` | Add candidates from a transcript |
 | `pai lessons reject` | Reject a candidate |
 | `pai lessons show` | Show one lesson |

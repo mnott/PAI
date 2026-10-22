@@ -115,6 +115,30 @@ Reject a candidate. Only candidates can be rejectd.
 pai lessons reject my-lesson
 ```
 
+### pai lessons promote
+
+Promote an approved lesson to a project skill
+
+```
+pai lessons promote ID [options]
+```
+
+Writes the lesson as a SKILL.md under <project>/.claude/skills/<slug>/ (and with --agents also <project>/.agents/skills/<slug>/). Refuses to overwrite an existing skill unless --force.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Lesson id (its file name without .md) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--project DIR` | string | — | Project directory (default: this directory) |
+| `--force` | flag | — | Overwrite an existing SKILL.md |
+| `--agents` | flag | — | Also write under .agents/skills |
+
+```sh
+pai lessons promote my-lesson --project ~/code/app --agents
+```
+
 ### pai lessons supersede
 
 Replace an approved lesson by another approved one
@@ -165,6 +189,7 @@ pai lessons propose ./session.jsonl
 | `pai lessons add` | Add a candidate lesson |
 | `pai lessons approve` | Approve a candidate |
 | `pai lessons reject` | Reject a candidate |
+| `pai lessons promote` | Promote an approved lesson to a project skill |
 | `pai lessons supersede` | Replace an approved lesson by another approved one |
 | `pai lessons propose` | Add candidates from a transcript |
 
