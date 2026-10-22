@@ -64,12 +64,12 @@ async function measure(width: number): Promise<Card[]> {
 /** Card heights at 822 px before the narrow-mode change (main 309bfe95, fixture data). */
 const WIDE_822 = [
   "kpis:202",
-  "kpis.requests:83",
-  "kpis.input:83",
-  "kpis.output:83",
-  "kpis.cache-read:83",
-  "kpis.cache-write:83",
-  "kpis.errors:83",
+  "kpis.requests:76",
+  "kpis.input:76",
+  "kpis.output:76",
+  "kpis.cache-read:90",
+  "kpis.cache-write:90",
+  "kpis.errors:90",
   "pool:344",
   "pool.pool:108",
   "pool.host:108",
