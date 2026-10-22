@@ -121,7 +121,9 @@ describe.skipIf(!CHROME)("cockpit touch, spec 4 (CDP touch events)", () => {
       expect(await exp()).toBe("true");
       await tch("touchStart", m.x, m.y); await sleep(60); await tch("touchEnd"); await sleep(500);
       expect(await exp(), "T5 tap minimizes").toBe("false");
-      await tch("touchStart", m.x, m.y); await sleep(60); await tch("touchEnd"); await sleep(500);
+      // the minimized card docks as a chip at the bottom of its container: its restore button moved
+      const m2 = await rect('[data-card="kpis.input"] .cmin');
+      await tch("touchStart", m2.x, m2.y); await sleep(60); await tch("touchEnd"); await sleep(500);
       expect(await exp(), "T5 tap restores").toBe("true");
     }, 120_000);
   }

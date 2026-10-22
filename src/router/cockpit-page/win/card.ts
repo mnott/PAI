@@ -148,18 +148,33 @@ function layState(){
   else if(!W.cards[id]){o[id]={seen:(W.st[id]&&W.st[id].seen)||1}}
   else if(isMin(id))o[id]={min:1};
  }
+ // a minimized card inside a group leaves its place (a ghost); it shows as a chip in the group's dock
+ var dk=dockOf();for(var d in dk)for(i=0;i<dk[d].length;i++)o[dk[d][i]]={seen:1};
  return o;
 }
+/** {group id: [minimized card ids]} in tree order: the cards a group's dock shows as chips. */
+function dockOf(){
+ var o={},g,a,i,id;
+ for(g in W.kids){
+  if(!W.kids[g]||!W.kids[g].k)continue;
+  a=ids(W.kids[g]);
+  for(i=0;i<a.length;i++){id=a[i];if(W.cards[id]&&isMin(id)&&!(W.hide&&W.hide[id])){(o[g]=o[g]||[]).push(id)}}
+ }
+ return o;
+}
+/** A chip's least width: its title plus the restore button. */
+function chipWs(){var o={},id;for(id in W.cards)if(isMin(id))o[id]=Math.min(240,Math.ceil((W.cards[id].titleText||"").length*6.6)+52);return o}
 function paintMin(c){
- var m=isMin(c.id);
+ var m=isMin(c.id),r=W.rects&&W.rects[c.id];
  c.el.classList.toggle("min",m);
+ c.el.classList.toggle("chip",m&&!!r&&!!r.chip);
  c.min.textContent=m?"+":"–";
  c.min.setAttribute("aria-expanded",m?"false":"true");
  c.min.setAttribute("aria-label",(m?"restore ":"minimize ")+c.titleText);
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
-function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.dock=dockOf();W.cfg.chipW=chipWs();W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
 /** Each card's title text width plus header controls, measured once the card is placed (c.tw; the status slot may truncate, so it is not counted); a new reading re-lays out once. */
 /** The title element is stretched by flex, so its natural width is where its last child (text or info icon) ends. */
 function titleText(c){return c.title.lastChild.getBoundingClientRect().right-c.title.getBoundingClientRect().left}
@@ -440,7 +455,7 @@ function init(main,defaults,opts){
  opts=opts||{};
  W.opts={storage:opts.storage||window.localStorage,now:opts.now};
  W.defaults=defaults;W.main=main;W.cards={};W.order=[];W.fed={};W.last={};
- W.cfg={HEAD_H:HEAD_H,GAP:8,GUTTER:8,minW:220,narrowW:480};
+ W.cfg={HEAD_H:HEAD_H,CHIP_H:22,GAP:8,GUTTER:8,minW:220,narrowW:480};
  if(opts.cfg)for(var k in opts.cfg)W.cfg[k]=opts.cfg[k];
  var specs=defaults.cards||[],known=[],i;
  for(i=0;i<specs.length;i++){W.cards[specs[i].id]=buildCard(specs[i]);known.push(specs[i].id)}

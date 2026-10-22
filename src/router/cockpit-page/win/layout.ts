@@ -34,6 +34,8 @@ export type WinLayout = (
  *    in a root band or a row only the leaf itself shrinks, aligned to the top, the band or
  *    row keeps its size and the space below stays empty. If every card of a root band is
  *    minimized the band shrinks to HEAD_H.
+ *  - dock: cfg.dock = {group id: [minimized ids]} (the runtime makes those ghosts in state): they get chip rects ({chip:1}, cfg.CHIP_H tall)
+ *    in rows at the bottom of the group body; the group's kids lay out above, in the rest.
  *  - ghosts (state[id].seen set) take no space: skipped, no rect.
  *  - group recursion: a leaf whose id is in kids lays its kid tree in its body box; kid
  *    rects are relative to the group body.
@@ -61,6 +63,20 @@ function winGridK(node,w,st,cfg,kids){
  k=n>0?Math.ceil(n/Math.ceil(n/kmax)):1;
  return{k:k,cw:(w-(k-1)*gap)/k};
 }
+/** The dock of a group: its minimized cards (cfg.dock = {group id: [ids]}) as title chips in rows at the bottom of the group body, in tree order, wrapping at width w.
+ *  Returns {r:[{id,x,y,w,h}], h: dock height, 0 for none}; cfg.chipW = {id: chip px}. */
+function winDock(cfg,gid,w){
+ var d=cfg.dock&&cfg.dock[gid],r=[],x=0,y=0,i,cw,ch=cfg.CHIP_H||22;
+ if(!d||!d.length)return{r:r,h:0};
+ for(i=0;i<d.length;i++){
+  cw=Math.min(w,(cfg.chipW&&cfg.chipW[d[i]])||120);
+  if(x>0&&x+cw>w){x=0;y+=ch+4}
+  r.push({id:d[i],x:x,y:y,w:cw,h:ch});x+=cw+4;
+ }
+ return{r:r,h:y+ch};
+}
+/** Room a group's dock takes below its kids (the dock and the gap above it), 0 without chips. */
+function winDockH(cfg,gid,w){var h=winDock(cfg,gid,w).h;return h?h+cfg.GAP:0}
 /** The least height a node needs at width w (flat: a fitted band, whose cards take their content height, not a weight share; a column needs only the sum of its cards): a card its type's minH (a group HEAD_H plus its kids), a row the tallest
  *  child (the sum when narrow mode stacks it), a column enough that every child's weight share holds its need. */
 function winNeed(node,w,st,cfg,kids,flat){
@@ -70,7 +86,7 @@ function winNeed(node,w,st,cfg,kids,flat){
   if(winGhost(st,node.id))return 0;
   if(winMin(st,node.id))return cfg.HEAD_H;
   var ty=winType(cfg,winLeafType(kids,node.id,cfg)),mh=ty.minH!==undefined?ty.minH:(cfg.minH||0),kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
-  return kt?Math.max(mh,cfg.HEAD_H+winNeed(kt,w,st,cfg,kids,flat)):mh;
+  return kt?Math.max(mh,cfg.HEAD_H+winNeed(kt,w,st,cfg,kids,flat)+winDockH(cfg,node.id,w)):mh;
  }
  var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,need=0,sum=0,k;
  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id))t+=node.sz[i]||0;
@@ -104,7 +120,7 @@ function winFit(node,w,st,cfg,kids){
   if(winGhost(st,node.id))return 0;
   if(winMin(st,node.id))return cfg.HEAD_H;
   var kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
-  if(kt){k=winFit(kt,w,st,cfg,kids);return k===null?null:cfg.HEAD_H+k}
+  if(kt){k=winFit(kt,w,st,cfg,kids);return k===null?null:cfg.HEAD_H+k+winDockH(cfg,node.id,w)}
   if(winPx(st,node.id)!==null)return null;
   var v=cfg.fit[node.id],nar=winNar(cfg,w);
   // stacked: a chart (draws at the body size) takes an aspect of its width, any other card without a reading its least height
@@ -265,8 +281,11 @@ function layout(tree,kids,box,state,cfg){
    var kt=kids&&kids[n.id]&&kids[n.id].k?kids[n.id]:null;
    if(kt&&!min){
     // bounded: the group body has a fixed box, so its columns lay out by weight
-    var r=layout(kt,kids,{w:it.w,h:Math.max(0,h-cfg.HEAD_H)},state,cfg);
+    var dk=winDock(cfg,n.id,it.w),bh=Math.max(0,h-cfg.HEAD_H),dh=dk.h?dk.h+cfg.GAP:0;
+    var r=layout(kt,kids,{w:it.w,h:Math.max(0,bh-dh)},state,cfg);
     for(var g in r.rects)rects[g]=r.rects[g];
+    // minimized cards of this group: title chips docked at the bottom of its body
+    for(var q=0;q<dk.r.length;q++){var cr=dk.r[q];rects[cr.id]={x:cr.x,y:Math.max(0,bh-dk.h)+cr.y,w:cr.w,h:cr.h,chip:1,body:{w:cr.w,h:0}}}
    }
    continue;
   }
