@@ -153,7 +153,6 @@ export function shouldRetryReport(
   return !validation.ok && validation.validator === "aibroker" && !noReportRetry && hasSession;
 }
 
-/** Context window announced by the init event, when the endpoint sends one. */
 /**
  * An empty model response: the model "answered" without producing anything —
  * no tool ran and the result text is empty. A local model can stop at once with an empty reply;
@@ -182,6 +181,7 @@ export function runSucceeded(
   return resultEvent !== null && !resultEvent.is_error;
 }
 
+/** Context window announced by the init event, when the endpoint sends one. */
 export function initContextWindow(e: StreamEvent): number | null {
   if (typeof e.context_window === "number" && e.context_window > 0) return e.context_window;
   if (e.model_info && typeof e.model_info.context_window === "number" && e.model_info.context_window > 0) {
