@@ -67,11 +67,11 @@ function migrateState(st,groups){
   if(s.w===undefined&&s.sp>0&&!(groups&&groups[id]))s.w=unitsOf(1/s.sp);
   if(WIN_UNITS.indexOf(s.w)<0)delete s.w;
   if(!(s.h>0))delete s.h;
-  for(var k in s)if(k!=="min"&&k!=="h"&&k!=="w"&&k!=="uw"&&k!=="seen")delete s[k];
+  for(var k in s)if(k!=="min"&&k!=="h"&&k!=="w"&&k!=="uw"&&k!=="hu"&&k!=="seen")delete s[k];
  }
 }
 /** Top-level sections take the full page width unless they share a row: a root group that sits alone on its row (the cards of the root
- *  fill rows of 12 units in order) loses any narrower width it carries. Only the root column; nothing inside a section is touched. */
+ *  fill rows of 12 units in order) loses any narrower width it carries (run after a drop; the section's own handle may leave one narrow). Only the root column; nothing inside a section is touched. */
 function normalizeRoot(tree,kids,st){
  if(!tree)return;
  var list=ids(tree),acc=0,row=[],i;
@@ -378,6 +378,8 @@ function reconcileSaved(saved,defaults,knownIds,now){
  migrateState(st,kids);migrateState(defaults.stDefaults);
  var tree=flatTree(saved.tree,st,kids);
  for(var kg in kids){var kt=flatTree(kids[kg],st);if(kt)kids[kg]=kt;else delete kids[kg]}
+ // a height without the handle mark (hu) is an old engine-fitted px height, not the user's: the card is as tall as its content again
+ for(var hid in st)if(st[hid].h&&!st[hid].hu)delete st[hid].h;
  // a section's width is only ever set by its own handle (uw): a narrower width without that mark came from an old drop and goes back to the default
  for(var wg in kids){var ws=st[wg];if(ws&&ws.w<((defaults.stDefaults[wg]||{}).w||12)&&!ws.uw)delete ws.w}
  var mig=groupRoots(tree,kids,defaults);

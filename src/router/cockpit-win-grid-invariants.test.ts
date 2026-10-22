@@ -235,6 +235,47 @@ describe.skipIf(!CHROME)("CSS grid invariants", () => {
     expect(Math.abs((await widthOf(b, "system")) - root)).toBeLessThanOrEqual(1);
   }, 120_000);
 
+  it("operator layout, 1650 px: Cache hit ratio and its child group span the full width, the donut cards sit at least four to a row", async () => {
+    const b = await open(1650, LAYOUT);
+    const root = await b.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`);
+    expect(Math.abs((await widthOf(b, "cache")) - root)).toBeLessThanOrEqual(1);
+    const kid = await widthOf(b, "cache-rings");
+    expect(kid, "child group fills the section").toBeGreaterThan(root - 40);
+    const tops = await b.ev<number[]>(`Array.from(document.querySelectorAll('#win-root [data-card^="cache.ring:"]')).filter(function(e){return e.getBoundingClientRect().width>0}).map(function(e){return Math.round(e.getBoundingClientRect().top)})`);
+    const perRow = Math.max(...[...new Set(tops)].map((t) => tops.filter((x) => Math.abs(x - t) < 3).length));
+    expect(perRow).toBeGreaterThanOrEqual(4);
+  }, 120_000);
+
+  it("operator layout, 1650 px: the handle of a top-level section narrows it, a second narrowed section then sits beside it", async () => {
+    const b = await open(1650, LAYOUT);
+    const full = await widthOf(b, "system");
+    for (const id of ["system", "tokens-group"]) {
+      const [hx, hy] = await b.ev<[number, number]>(`(function(){var e=document.querySelector('#win-root [data-card="${id}"]>.chandle');e.scrollIntoView({block:"center"});var r=e.getBoundingClientRect();return[r.left+r.width/2,r.top+r.height/2]})()`);
+      await b.mouse("mouseMoved", hx, hy); await b.mouse("mousePressed", hx, hy);
+      for (let i = 1; i <= 50; i++) { await b.mouse("mouseMoved", hx - i * 20, hy); await sleep(20); }
+      await b.mouse("mouseReleased", hx - 1000, hy); await sleep(200);
+    }
+    const [a, c] = [await widthOf(b, "system"), await widthOf(b, "tokens-group")];
+    expect(a, "system narrowed").toBeLessThan(full - 100);
+    expect(c, "tokens narrowed").toBeLessThan(full - 100);
+    const sameRow = await b.ev<boolean>(`Math.abs(document.querySelector('#win-root [data-card="system"]').getBoundingClientRect().top-document.querySelector('#win-root [data-card="tokens-group"]').getBoundingClientRect().top)<2`);
+    expect(sameRow, "they share a row").toBe(true);
+  }, 120_000);
+
+  it("operator layout: old engine-fitted heights are dropped on load (cards are as tall as their content), heights set by the handle are kept", async () => {
+    const l = JSON.parse(LAYOUT);
+    expect(l.st["system.memory"].h, "the fixture carries an old px height").toBeGreaterThan(0);
+    l.st["system.compressed"].h = 150; l.st["system.compressed"].hu = 1;
+    const b = await open(900, JSON.stringify(l));
+    const st = JSON.parse(await b.ev<string>(`Win.stJson()`));
+    expect(st["system.memory"].h, "old height dropped").toBeUndefined();
+    expect(st["system.compressed"].h, "handle height kept").toBe(150);
+    const h = await b.ev<number>(`document.querySelector('#win-root [data-card="system.memory"]').getBoundingClientRect().height`);
+    const hc = await b.ev<number>(`document.querySelector('#win-root [data-card="system.compressed"]').getBoundingClientRect().height`);
+    expect(Math.abs(hc - 150), "the user height is the card height").toBeLessThanOrEqual(2);
+    expect(h).toBeGreaterThan(0);
+  }, 120_000);
+
   for (const [w, steps] of [[900, [4, 3]], [530, [4]]] as [number, number[]][]) {
     it(`operator layout, ${w} px: the handle of Compressed narrows it step by step (${steps.join(" -> ")} units)`, async () => {
       const b = await open(w, LAYOUT);

@@ -134,7 +134,7 @@ function buildCard(spec){
  status.addEventListener("click",function(){if(status.getAttribute("data-kind")==="err")setStatus(c,"","")});
  head.appendChild(min);c.min=min;
  e.appendChild(head);e.appendChild(body);
- // height handle (bottom-right "//"): drag, arrows or double-click change this card's height only; hidden on groups and when locked by CSS
+ // height handle (bottom-right "//"): drag, arrows or double-click change this card's height only; on a group it sets the width only; hidden when locked by CSS
  var hd=el("div","chandle");hd.tabIndex=0;hd.setAttribute("role","separator");hd.setAttribute("aria-orientation","horizontal");
  hd.title="drag to resize \u00b7 double-click to reset";hd.setAttribute("data-handle",spec.id);
  e.appendChild(hd);c.handle=hd;
@@ -228,7 +228,6 @@ function syncBodies(){
 /** Apply the tree and the card states to the DOM. The browser lays the cards out (CSS grid). */
 function relayout(){
  W.n++;
- normalizeRoot(W.tree,W.kids,W.st);
  W.order=[];
  var fa=document.activeElement;
  reparent(W.main,W.tree,0,false);
@@ -254,8 +253,8 @@ function relayout(){
 function setHeight(id,h,drag){
  var c=W.cards[id],s=W.st[id]=W.st[id]||{};
  if(!c)return;
- if(h===null)delete s.h;
- else s.h=Math.max(Math.round(h),HEAD_H+40);
+ if(h===null){delete s.h;delete s.hu}
+ else{s.h=Math.max(Math.round(h),HEAD_H+40);s.hu=1}
  // a drag keeps the pointer on the handle: the anchor must not scroll for the cards below that move with the height
  if(drag){relayout();if(typeof _ANCHOR!=="undefined"&&_ANCHOR)_ANCHOR.tracked=null}
  else anchorKeep(relayout);
@@ -279,7 +278,8 @@ function heightWire(){
   if(Math.abs(dx)>=8){var u=stepFor(cur.c.id,cur.w+dx);if(u){var hs=W.st[cur.c.id]=W.st[cur.c.id]||{};hs.w=u;hs.uw=1}}
   var dy=e.clientY-cur.y;
   // a height is stored only once the drag moves vertically: a sideways drag leaves the card as tall as its content
-  if(cur.vy||Math.abs(dy)>=6){cur.vy=1;setHeight(cur.c.id,cur.h+dy,true)}
+  if(kidsOf(cur.c.id))relayout();
+  else if(cur.vy||Math.abs(dy)>=6){cur.vy=1;setHeight(cur.c.id,cur.h+dy,true)}
   else relayout();
  });
  function end(commit){
@@ -451,6 +451,7 @@ function applyAll(tree,kids,sizes,st){
  W.tree=tree;W.kids=kids;
  if(st)W.st=JSON.parse(st);
  for(var id in sizes||{}){var ss=W.st[id]=W.st[id]||{};ss.w=sizes[id];ss.uw=1}
+ normalizeRoot(W.tree,W.kids,W.st); // after a drop a top-level section left alone on its row is full width again
  relayout();save();
 }
 /** The result of dropping dragId at zone of targetId ({tree,kids,sizes}), without applying it; null when the drop changes nothing.
