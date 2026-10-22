@@ -16,7 +16,6 @@
 import {
   existsSync,
   readFileSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -24,6 +23,7 @@ import { packageRoot } from "../../../module-paths.js";
 import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
+import { refreshClaudeMd } from "./claude-md-refresh.js";
 import { resolveDaemonPid } from "../../../daemon/daemon-pid.js";
 
 // ---------------------------------------------------------------------------
@@ -354,14 +354,20 @@ function stepRefreshClaudeMd(repoDir: string, newCommitsLog: string | null): voi
   }
 
   info("CLAUDE.md template was updated in this release.");
-  info("Refreshing ~/.claude/CLAUDE.md (PAI-generated — safe to overwrite)...");
+  const render = (t: string) => t.replace(/\$\{HOME\}/g, homedir());
+  const template = render(readFileSync(templatePath, "utf8"));
+  const previous = capture("git show HEAD~1:templates/claude-md.template.md", repoDir);
+  const outcome = refreshClaudeMd(claudeMd, template, previous === null ? null : render(previous));
 
-  let template = readFileSync(templatePath, "utf8");
-  // Substitute ${HOME} with actual home directory
-  template = template.replace(/\$\{HOME\}/g, homedir());
-  writeFileSync(claudeMd, template, "utf8");
-
-  success("~/.claude/CLAUDE.md refreshed from updated template.");
+  if (outcome.action === "replaced") {
+    info(`Previous version saved to ${outcome.backup}`);
+    success("~/.claude/CLAUDE.md refreshed from updated template.");
+  } else if (outcome.action === "wrote-beside") {
+    warning("~/.claude/CLAUDE.md differs from the previous PAI template (edited, or origin unknown) — left untouched.");
+    info(`  New version written to ${outcome.newPath}; merge it by hand.`);
+  } else {
+    info("~/.claude/CLAUDE.md already matches the new template.");
+  }
 }
 
 /**
