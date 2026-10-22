@@ -6,9 +6,9 @@
  *  winDragInit(doc, win, opts) -> { cancel, grabbed }
  *  opts: { pressMs (touch long-press, default 400) }
  *  Pointer: pointerdown on a .cgrip (mouse arms at once, touch after pressMs); listeners on window;
- *    the drag holds ids, never nodes. Zones come from zoneAt on the live card rects of the same container;
+ *    the drag holds ids, never nodes. Zones come from zoneAt on the live rect of the innermost card under the pointer (any container);
  *    the .dropind bar sits on that edge; a drop always applies and the layout re-arranges afterwards.
- *    Nothing reflows during the drag; pointerup applies once inside anchorKeep.
+ *    Nothing reflows during the drag; pointerup applies once inside anchorKeep (the tree only: order and parent; the grid does the rest).
  *    Esc / pointercancel / blur cancel: the tree was never touched.
  *  Keyboard: Enter/Space on a grip grabs (aria-pressed=true); arrows move the card to the other side of
  *    the nearest neighbour in that direction (applied step by step); Enter/Space drops; Esc restores the
@@ -24,14 +24,6 @@ function ddContainer(id){
  for(var g in s.kids)if(s.kids[g]&&ids(s.kids[g]).indexOf(id)>=0)return{key:g,tree:s.kids[g]};
  return null;
 }
-/** Box handed to dropTry: root = width only (h undefined selects the root-band rule), group = its body. */
-function ddBox(key){
- if(!key)return{w:Win.el(ddFirst()).parentNode.clientWidth};
- var e=Win.el(key);
- var b=e&&e.querySelector(".cbody");
- return b?{w:b.clientWidth,h:b.clientHeight}:{w:10000,h:10000};
-}
-function ddFirst(){var s=Win.state();return ids(s.tree)[0]}
 /** Live rects of the drawn cards of one container, keyed by id. */
 function ddRects(tree,skip){
  var o={},a=ids(tree);
@@ -44,12 +36,9 @@ function ddRects(tree,skip){
  return o;
 }
 function ddTitle(id){var e=Win.el(id);var t=e&&e.querySelector(".ctt");return t?t.textContent:id}
-function ddMove(c,dragId,targetId,zone){
- return dropTry(c.tree,dragId,targetId,zone,{kids:Win.state().kids,state:Win.layState(),cfg:Win.cfg(),box:ddBox(c.key)});
-}
-function ddApply(key,tree){
- if(typeof anchorKeep==="function")anchorKeep(function(){Win.applyFit(key,tree)});
- else Win.applyFit(key,tree);
+function ddApply(tree,kids){
+ if(typeof anchorKeep==="function")anchorKeep(function(){Win.applyAll(tree,kids)});
+ else Win.applyAll(tree,kids);
 }
 /** The edge bar for a zone on rect R (viewport px, position:fixed). */
 function ddBar(R,zone){
@@ -72,28 +61,36 @@ function winDragInit(doc,win,opts){
  function hideInd(){if(ind){ind.remove();ind=null}}
  function status(id,kind,s){var c=Win.ctx(id);if(c)c.status(kind,s)}
  function refocus(id){var e=Win.el(id);var g=e&&e.querySelector(".cgrip");if(g)g.focus()}
- /** The card under the pointer in the dragged card's container, with its zone. */
- function hit(x,y){
-  var c=ddContainer(D.id);
-  if(!c)return null;
-  var rs=ddRects(c.tree,D.id);
-  for(var tid in rs){
-   var R=rs[tid];
-   if(x<R.x||x>=R.x+R.w||y<R.y||y>=R.y+R.h)continue;
-   var z=zoneAt(R,{x:x,y:y});
-   return z==="none"?null:{c:c,tid:tid,zone:z,R:R};
+  /** The innermost drawn card under the pointer (not the dragged card or anything inside it), with its zone: the edges put the card before/after it
+   *  in its container, the header of a group puts it first in that group. */
+  function hit(x,y){
+   var de=Win.el(D.id),els=Win.main().querySelectorAll(".card"),best=null,i,e,r,a;
+   for(i=0;i<els.length;i++){
+    e=els[i];
+    if(e===de||(de&&de.contains(e))||e.style.display==="none")continue;
+    r=e.getBoundingClientRect();
+    if(x<r.left||x>=r.right||y<r.top||y>=r.bottom)continue;
+    a=r.width*r.height;
+    if(!best||a<best.a)best={e:e,r:r,a:a};
+   }
+   if(!best)return null;
+   var R={x:best.r.left,y:best.r.top,w:best.r.width,h:best.r.height},tid=best.e.getAttribute("data-card"),z=zoneAt(R,{x:x,y:y});
+   if(z==="none"){
+    var hd=best.e.querySelector(".chead");
+    if(hd&&Win.isGroup(tid)&&y<hd.getBoundingClientRect().bottom)z="into";
+    else return null;
+   }
+   return{tid:tid,zone:z,R:R};
   }
-  return null;
- }
- function feedback(h){
-  D.drop=null;
-  if(!h){hideInd();status(D.id,"","");return}
-  var t=ddMove(h.c,D.id,h.tid,h.zone).tree;
-  if(t===null||t===h.c.tree){hideInd();status(D.id,"","");return}
-  showInd(h.R,h.zone);
-  status(D.id,"","");
-  if(t!==null)D.drop={c:h.c,tree:t};
- }
+  function feedback(h){
+   D.drop=null;
+   if(!h){hideInd();status(D.id,"","");return}
+   var t=Win.tryMove(D.id,h.tid,h.zone);
+   if(!t){hideInd();status(D.id,"","");return}
+   showInd(h.R,h.zone);
+   status(D.id,"","");
+   D.drop=t;
+  }
  function endPointer(){
   if(!D)return;
   if(D.timer)clearTimeout(D.timer);
@@ -128,8 +125,8 @@ function winDragInit(doc,win,opts){
   if(moved)feedback(hit(e.clientX,e.clientY));
   drop=D.drop;
   endPointer();
-  if(drop&&moved&&drop.tree!==drop.c.tree){
-   ddApply(drop.c.key,drop.tree);
+  if(drop&&moved){
+   ddApply(drop.tree,drop.kids);
    Win.announce("moved "+ddTitle(id));
   }
  }
@@ -159,9 +156,9 @@ function winDragInit(doc,win,opts){
   if(!c)return false;
   var nb=neighbor(ddRects(c.tree),id,dir);
   if(!nb)return false;
-  var r=ddMove(c,id,nb,DD_ZONE[dir]),t=r.tree;
-  if(!t||t===c.tree)return false;
-  ddApply(c.key,t);
+  var t=Win.tryMove(id,nb,DD_ZONE[dir]);
+  if(!t)return false;
+  ddApply(t.tree,t.kids);
   Win.announce("moved "+ddTitle(id)+" "+(dir==="up"?"above":dir==="down"?"below":dir+" of")+" "+ddTitle(nb));
   refocus(id);
   return true;
@@ -176,7 +173,7 @@ function winDragInit(doc,win,opts){
  function restore(){
   if(!K)return;
   var id=K.id,g=grip(id);
-  if(K.moved)ddApply(K.key,K.before);
+  if(K.moved)ddApply(K.before.tree,K.before.kids);
   if(g)g.setAttribute("aria-pressed","false");
   K=null;
   Win.announce("move cancelled");
@@ -194,7 +191,7 @@ function winDragInit(doc,win,opts){
    if(K){drop();return}
    var c=ddContainer(id);
    if(!c)return;
-   K={id:id,key:c.key,before:ddClone(c.tree),moved:false};
+   K={id:id,key:c.key,before:ddClone({tree:Win.state().tree,kids:Win.state().kids}),moved:false};
    g.setAttribute("aria-pressed","true");
    Win.announce("grabbed "+ddTitle(id)+", use arrow keys to move, Enter to drop, Escape to cancel");
    return;

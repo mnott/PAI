@@ -5,7 +5,7 @@
 /** The width steps in units of 12 columns; the page script mirrors them (WIN_UNITS in store.ts). */
 export const WIN_STEPS = [3, 4, 6, 8, 9, 12] as const;
 /** The least body widths a card type is bucketed into (data-mw): a card never gets fewer px than its bucket. */
-export const WIN_MINW = [160, 240, 300, 360] as const;
+export const WIN_MINW = [120, 160, 200, 240, 300, 360] as const;
 /** Gap between cards and padding of a group body, px. */
 export const WIN_GAP = 6;
 /** Header height of a card, px. */

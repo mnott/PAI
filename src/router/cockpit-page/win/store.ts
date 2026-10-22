@@ -263,6 +263,7 @@ function repairOrder(tree,def){
 }
 /** Cards that live in a default top-level group, {cardId: groupId}. A layout saved before a group existed holds
  *  its cards as root bands. */
+var OLD_HOME={speed:"tokens-group"};
 var GROUP_OF={tokens:"tokens-group",daily:"tokens-group",speed:"perf-group",runs:"perf-group",sessions:"perf-group",pause:"perf-group"};
 /** A stored tree whose root holds mapped cards as bands, for a group that is not stored yet: the group is created at
  *  the first of them, they move in with their px heights as the body weights. A card the user put inside some group
@@ -366,6 +367,8 @@ function reconcileSaved(saved,defaults,knownIds,now){
  var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;
  nestRoots(tree,kids);
+ // speed lived in the Tokens group before it moved to Performance details: a save that still holds it there follows the move
+ for(var oc in OLD_HOME)if(kids[GROUP_OF[oc]]&&kids[OLD_HOME[oc]]&&findLeaf(kids[OLD_HOME[oc]],oc)){var rem=removeLeaf(kids[OLD_HOME[oc]],oc,false);if(rem)kids[OLD_HOME[oc]]=rem;else delete kids[OLD_HOME[oc]]}
  tree=dedupeCards(tree,kids,defaults);
  // a mapped card left at the page root while its group exists goes back into the group (insertMissing below places it)
  for(var mc in GROUP_OF)if(kids[GROUP_OF[mc]]&&findLeaf(tree,mc)&&!(function(){for(var q in kids)if(findLeaf(kids[q],mc))return true;return false})())tree=removeLeaf(tree,mc,true)||tree;
