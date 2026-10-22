@@ -60,24 +60,24 @@ function unitsOf(f){
  for(i=0;i<WIN_UNITS.length;i++){d=Math.abs(WIN_UNITS[i]-x);if(d<bd){bd=d;best=WIN_UNITS[i]}}
  return best;
 }
-function migrateState(st){
+function migrateState(st,groups){
  for(var id in st){
   var s=st[id];
   if(!s||typeof s!=="object"){delete st[id];continue}
-  if(s.w===undefined&&s.sp>0)s.w=unitsOf(1/s.sp);
+  if(s.w===undefined&&s.sp>0&&!(groups&&groups[id]))s.w=unitsOf(1/s.sp);
   if(WIN_UNITS.indexOf(s.w)<0)delete s.w;
   if(!(s.h>0))delete s.h;
   for(var k in s)if(k!=="min"&&k!=="h"&&k!=="w"&&k!=="seen")delete s[k];
  }
 }
 /** A container's tree is a flat column of cards (parent + order): a row split of an older save becomes consecutive cards,
- *  each with the width it had, as units in st.w. Returns the flat column (a lone card stays a leaf), null for none. */
-function flatTree(node,st){
+ *  each with the width it had, as units in st.w (groups = the container ids of the root column: a top-level section keeps the full page width). Returns the flat column (a lone card stays a leaf), null for none. */
+function flatTree(node,st,groups){
  if(!node)return null;
  var out=[];
  (function walk(n,f){
   if(n.k==="c"){
-   if(f<0.999){var s=st[n.id]=st[n.id]||{};if(s.w===undefined)s.w=unitsOf(f)}
+   if(f<0.999&&!(groups&&groups[n.id])){var s=st[n.id]=st[n.id]||{};if(s.w===undefined)s.w=unitsOf(f)}
    out.push(leaf(n.id));return;
   }
   var t=0,i;for(i=0;i<n.sz.length;i++)t+=n.sz[i];
@@ -90,7 +90,7 @@ function flatTree(node,st){
 /** The defaults with every container flattened; the widths of their rows land in stDefaults. */
 function flatDefaults(d){
  var o=clone(d),st=o.stDefaults=o.stDefaults||{},g;
- o.tree=flatTree(o.tree,st);
+ o.tree=flatTree(o.tree,st,o.kids||{});
  for(g in o.kids||{})o.kids[g]=flatTree(o.kids[g],st);
  return o;
 }
@@ -361,8 +361,9 @@ function reconcileSaved(saved,defaults,knownIds,now){
  knownIds=knownIds||[];
  defaults=flatDefaults(defaults);
  var st=saved.st&&typeof saved.st==="object"?saved.st:{};
- migrateState(st);migrateState(defaults.stDefaults);
- var tree=flatTree(saved.tree,st),kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
+ var kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
+ migrateState(st,kids);migrateState(defaults.stDefaults);
+ var tree=flatTree(saved.tree,st,kids);
  for(var kg in kids){var kt=flatTree(kids[kg],st);if(kt)kids[kg]=kt;else delete kids[kg]}
  var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;

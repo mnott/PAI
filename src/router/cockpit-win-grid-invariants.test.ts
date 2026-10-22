@@ -26,7 +26,7 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/data")) return json(fixtureData());
     if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
     if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
-    if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
+    if (url.startsWith("/cockpit/limits")) { const o = fixtureLimits(); return json({ ...o, limits: o.limits.map((l) => ({ ...l, windows: [...l.windows, { name: "7d", percent: 60, resetAt: Date.now() + 86_400_000 }] })) }); }
     if (url.startsWith("/cockpit/pool")) return json(fixturePoolWithSlot());
     if (url.startsWith("/cockpit/")) return json({});
     if (url.startsWith("/page")) { res.setHeader("content-type", "text/html"); return res.end(cockpitHtml()); }
@@ -147,6 +147,44 @@ describe.skipIf(!CHROME)("CSS grid invariants", () => {
     const first = kids[0];
     expect(kids.filter((r) => Math.abs(r.y - first.y) < 2).length, "cards on the first line").toBeGreaterThanOrEqual(2);
   }, 120_000);
+
+  for (const [name, saved] of CASES) {
+    for (const w of WIDTHS) {
+      it(`${name} at ${w} px: every top-level section spans the full page width`, async () => {
+        const b = await open(w, saved);
+        const root = await b.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`);
+        const tops = (await b.ev<Row[]>(PROBE)).filter((r) => !r.p && r.group && !r.chip);
+        expect(tops.length).toBeGreaterThan(3);
+        for (const r of tops) expect(Math.abs(r.w - root), `${r.id}: ${Math.round(r.w)} of ${Math.round(root)} px`).toBeLessThanOrEqual(1);
+      }, 120_000);
+    }
+  }
+
+  it("a saved layout from the row-split era (System next to another section) does not narrow System", async () => {
+    const l = JSON.parse(LAYOUT);
+    const [a, b2] = [l.tree.ch.findIndex((c: { id: string }) => c.id === "limits-cloud"), l.tree.ch.findIndex((c: { id: string }) => c.id === "system")];
+    const row = { k: "s", d: "r", ch: [l.tree.ch[a], l.tree.ch[b2]], sz: [1, 1] };
+    l.tree.ch.splice(b2, 1); l.tree.ch[a] = row; l.tree.sz.splice(b2, 1);
+    const br = await open(900, JSON.stringify(l));
+    const root = await br.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`);
+    const tops = (await br.ev<Row[]>(PROBE)).filter((r) => !r.p && (r.id === "system" || r.id === "limits-cloud"));
+    expect(tops.length).toBe(2);
+    for (const r of tops) expect(Math.abs(r.w - root), r.id).toBeLessThanOrEqual(1);
+  }, 120_000);
+
+  for (const w of [530, 900]) {
+    it(`operator layout, ${w} px: the provider cards show both gauges side by side, none clipped`, async () => {
+      const b = await open(w, LAYOUT);
+      const cards = await b.ev<{ id: string; tops: number[]; svgBottom: number[]; bodyBottom: number; bodyH: number }[]>(`Array.from(document.querySelectorAll('#win-root [data-card^="limits.cloud:"]')).filter(function(c){return c.getBoundingClientRect().height>0}).map(function(c){var bb=c.querySelector(".cbody").getBoundingClientRect(),g=Array.from(c.querySelectorAll(".gauge"));return{id:c.dataset.card,tops:g.map(function(x){return Math.round(x.getBoundingClientRect().top)}),svgBottom:g.map(function(x){var s=x.querySelector("svg");return s?s.getBoundingClientRect().bottom:0}),bodyBottom:bb.bottom,bodyH:bb.height}})`);
+      expect(cards.length).toBeGreaterThanOrEqual(2);
+      for (const c of cards) {
+        expect(c.tops.length, c.id).toBe(2);
+        expect(Math.abs(c.tops[0] - c.tops[1]), `${c.id}: gauges on one line`).toBeLessThanOrEqual(1);
+        expect(c.bodyH, `${c.id}: body has height`).toBeGreaterThan(40);
+        for (const sb of c.svgBottom) expect(sb, `${c.id}: dial inside the body`).toBeLessThanOrEqual(c.bodyBottom + 0.5);
+      }
+    }, 120_000);
+  }
 
   for (const [w, steps] of [[900, [4, 3]], [530, [4]]] as [number, number[]][]) {
     it(`operator layout, ${w} px: the handle of Compressed narrows it step by step (${steps.join(" -> ")} units)`, async () => {

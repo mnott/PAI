@@ -471,7 +471,7 @@ var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerT
  state:function(){return{tree:W.tree,kids:W.kids,st:W.st}},stJson:function(){return JSON.stringify(W.st)},
  announce:announce,tryMove:tryMove,applyAll:applyAll,
  /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
- apply:function(key,tree){tree=flatTree(tree,W.st);if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
+ apply:function(key,tree){tree=flatTree(tree,W.st,key?null:W.kids);if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
  /** The layout as it would be saved now (the "save as default" button posts it). */
  snapshot:function(){var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}var o={v:LAYOUT_V,t:Date.now(),tree:W.tree,kids:W.kids,st:st};return o},
  flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;if(!complete())return;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}W.t=saveWin(W.opts.storage,W.tree,W.kids,st)}}};
