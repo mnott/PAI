@@ -4,7 +4,9 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
-## [Unreleased]
+## [1.0.0] - 2026-10-22
+
+The first full release: the cockpit as a responsive card grid, delegation tiers with automatic escalation, a worker pool, local model servers with several instances, and a release-wide review of security, data safety and process lifecycle.
 
 ### Added
 
@@ -40,6 +42,10 @@ All notable changes to PAI Knowledge OS are documented here.
 
 - **Loopback HTTP servers** refuse cross-origin and DNS-rebinding requests.
 - **Worker guard:** a worktree worker's git write aimed at a directory outside its worktree is blocked; worker Chrome never touches the keychain and leftover browsers are reaped; the orphan sweep acts only on a verified process identity.
+- **Claude login token** is sent only to Anthropic's own hosts; with a custom `router.claudeUpstream` the cockpit says usage is unavailable instead of sending the token there.
+- **Provider keys:** a worker's provider token is never put on a command line, where any local user could read it with `ps`; it travels only in owner-only (0600) settings files, which are removed when the run or pool slot ends, and `pai worker gc` sweeps old ones.
+- **Cockpit requests:** a config path through `__proto__`, `constructor` or `prototype` is refused (also in `pai config set`); a malformed POST body is answered with 400 instead of being left unanswered; a queue id must be a plain worker id.
+- **Git guard:** every segment of a chained command is checked, and a git write retargeted with `-C`, `--git-dir`, `--work-tree` or `GIT_DIR` is caught.
 
 ### Changed
 
@@ -73,6 +79,16 @@ All notable changes to PAI Knowledge OS are documented here.
 - **Context meter:** context fill is the largest turn, not the run's token total.
 - **Workers:** a missing or unseen pane never blocks a worker start; pooled runs end and fall through like fresh ones; a pooled worker is alive only while its slot process is; read files are not reported as changes; AG2 shape slips are repaired before validating; the follow view prints plain text and titles only to a terminal.
 - **Panes:** launcher panes show the live status and input lines; one rule decides pane or not, and resume no longer takes `--no-pane`; ended pane runs are not violations.
+- **State files:** the memory run marker, embed passes, last-good usage and the router poll gate are written atomically; two simultaneous memory runs cannot both start, and stopping a run never signals a process that reused its pid.
+- **Build queue:** a stale queue lock is broken by one waiter only, so two builds cannot start together.
+- **Merge:** a worker's diff is applied as bytes, so non-ASCII content is no longer corrupted.
+- **Embedding model download** goes to a partial file and is renamed only after its checksum matches; a corrupt download is deleted and fetched again.
+- **Usage history** notices a log rewritten in place and keeps only the longest range window in memory.
+- **Session profile and plans:** an invalid routing row leaves the stored profile unchanged, and a plan with an invalid unit id is refused before anything is written.
+- **Pool panel:** the "spare claims disabled" notice shows when spares are off.
+- **Worker teardown:** a worker that is killed, or whose model process fails to start, ends the processes it started, closes its files and timers, records the failure and salvages its worktree; a start refused for an oversized preamble or an unknown `--mcp` name no longer leaves a worktree behind.
+- **Models and runtimes:** `pai models add --try` stops the server it launched even when it is still loading; stopping all local servers continues past one that already exited; a runtime's ready probe and stop command time out instead of hanging a cockpit job.
+- **Cockpit actions:** a double click starts a runtime or memory run once; model labels are stored as text, so a label like `7` or `[wip]` shows as typed; saving the registry keeps the file's permissions and refuses a new port another process listens on.
 
 ## [0.72.1] - 2026-10-20
 
