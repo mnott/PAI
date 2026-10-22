@@ -140,23 +140,26 @@ main.win .cbody{position:absolute;left:0;right:0;top:28px;bottom:0;overflow:auto
 main.win .cbody{scrollbar-width:thin;scrollbar-color:var(--line) transparent}main.win .cbody::-webkit-scrollbar{width:8px;height:8px}main.win .cbody::-webkit-scrollbar-track{background:transparent}main.win .cbody::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
 main.win .cbody.cgroup{overflow:hidden}
 /* group levels: a group card carries data-depth (0 = a top-level band); the tint is chosen by the card's position in the DOM */
-main.win .card[data-depth="0"]{--sec:var(--grp-h1)}
-main.win .card[data-depth="0"]>.chead{background:var(--sec);border-bottom:2px solid var(--line);border-left:3px solid var(--sec)}
-main.win .card[data-depth="0"]>.chead .ctitle{font-size:13px;color:var(--fg)}
-main.win .card[data-depth="0"]>.cbody.cgroup{padding:4px;background:color-mix(in srgb,var(--sec) 45%,var(--card))}
-main.win .card[data-depth="0"]:nth-of-type(4n+2){--sec:var(--grp-h2)}
+:root{--sec-1:#2f5fa8;--sec-2:#2f7d4a;--sec-3:#b3641a;--sec-4:#a63d66;--sec-5:#23808c;--sec-6:#6b49a8;--sec-7:#8a7420;--sec-8:#3f7777;--sec-ink:#fff}
+:root[data-theme=dark]{--sec-1:#3b6ab8;--sec-2:#3a8a58;--sec-3:#bd7125;--sec-4:#b44a74;--sec-5:#2c8c99;--sec-6:#7a57b8;--sec-7:#9a8228;--sec-8:#4a8484}
+main.win .card[data-depth="0"]{--sec:var(--sec-1)}
+main.win .card[data-depth="0"]>.chead{background:var(--sec);color:var(--sec-ink);border-bottom:2px solid var(--line)}
+main.win .card[data-depth="0"]>.chead .ctitle{font-size:13px;font-weight:700;color:var(--sec-ink)}
+main.win .card[data-depth="0"]>.chead button,main.win .card[data-depth="0"]>.chead .cbtn,main.win .card[data-depth="0"]>.chead .wctl{background:rgba(255,255,255,.18);color:var(--sec-ink);border-color:rgba(255,255,255,.4)}
+main.win .card[data-depth="0"]>.cbody.cgroup{padding:4px;background:color-mix(in srgb,var(--sec) 12%,var(--card))}
+main.win .card[data-depth="0"]:nth-of-type(4n+2){--sec:var(--sec-2)}
 main.win .card[data-depth="0"]:nth-of-type(4n+2)>.chead{background:var(--sec)}
-main.win .card[data-depth="0"]:nth-of-type(4n+3){--sec:var(--grp-h3)}
+main.win .card[data-depth="0"]:nth-of-type(4n+3){--sec:var(--sec-3)}
 main.win .card[data-depth="0"]:nth-of-type(4n+3)>.chead{background:var(--sec)}
-main.win .card[data-depth="0"]:nth-of-type(4n+4){--sec:var(--grp-h4)}
+main.win .card[data-depth="0"]:nth-of-type(4n+4){--sec:var(--sec-4)}
 main.win .card[data-depth="0"]:nth-of-type(4n+4)>.chead{background:var(--sec)}
-main.win .card[data-depth="0"]:nth-of-type(8n+5){--sec:var(--grp-h5)}
+main.win .card[data-depth="0"]:nth-of-type(8n+5){--sec:var(--sec-5)}
 main.win .card[data-depth="0"]:nth-of-type(8n+5)>.chead{background:var(--sec)}
-main.win .card[data-depth="0"]:nth-of-type(8n+6){--sec:var(--grp-h6)}
+main.win .card[data-depth="0"]:nth-of-type(8n+6){--sec:var(--sec-6)}
 main.win .card[data-depth="0"]:nth-of-type(8n+6)>.chead{background:var(--sec)}
-main.win .card[data-depth="0"]:nth-of-type(8n+7){--sec:var(--grp-h7)}
+main.win .card[data-depth="0"]:nth-of-type(8n+7){--sec:var(--sec-7)}
 main.win .card[data-depth="0"]:nth-of-type(8n+7)>.chead{background:var(--sec)}
-main.win .card[data-depth="0"]:nth-of-type(8n+8){--sec:var(--grp-h8)}
+main.win .card[data-depth="0"]:nth-of-type(8n+8){--sec:var(--sec-8)}
 main.win .card[data-depth="0"]:nth-of-type(8n+8)>.chead{background:var(--sec)}
 main.win .card[data-depth="1"]>.chead{background:var(--grp-h2)}
 main.win .card[data-depth="1"]>.chead .ctitle{color:var(--fg)}
