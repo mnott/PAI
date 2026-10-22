@@ -13,7 +13,7 @@ function tmpDir(): string {
 afterEach(() => { for (const d of tmps.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 describe("restoreConfigWithSafety", () => {
-  it("keeps the current config in a 0600 timestamped file", () => {
+  it("keeps the current config in a 0600 timestamped file", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "old.json"), '{"v":"backup"}');
     writeFileSync(join(d, "config.json"), '{"v":"current"}');
@@ -27,7 +27,7 @@ describe("restoreConfigWithSafety", () => {
 
 const T = { database: "pai", user: "pai" };
 const GOOD = "CREATE TABLE a();\n-- PostgreSQL database dump complete\n";
-interface Call { args: string[]; input?: string }
+interface Call { args: string[]; input?: string | { file: string } }
 
 function stub(overrides: (args: string[]) => { status: number; stderr?: string; stdout?: string } | undefined = () => undefined) {
   const calls: Call[] = [];
@@ -43,28 +43,28 @@ function stub(overrides: (args: string[]) => { status: number; stderr?: string; 
 const sqlOf = (c: Call[]) => c.map((x) => x.args.join(" "));
 
 describe("restorePostgres", () => {
-  it("rejects a truncated dump before touching the database", () => {
+  it("rejects a truncated dump before touching the database", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), "CREATE TABLE a();\nINSERT INTO");
     const { calls, run } = stub();
-    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
+    const r = await restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     expect(calls).toHaveLength(0);
   });
 
-  it("rejects an empty dump", () => {
+  it("rejects an empty dump", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), "");
     const { calls, run } = stub();
-    expect(restorePostgres(join(d, "dump.sql"), d, T, run).ok).toBe(false);
+    expect((await restorePostgres(join(d, "dump.sql"), d, T, run)).ok).toBe(false);
     expect(calls).toHaveLength(0);
   });
 
-  it("never drops the live database when psql fails; staging db is removed", () => {
+  it("never drops the live database when psql fails; staging db is removed", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { calls, run } = stub((a) => (a.includes("ON_ERROR_STOP=1") ? { status: 3, stderr: "boom" } : undefined));
-    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
+    const r = await restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     const all = sqlOf(calls).join("\n");
     expect(all).not.toMatch(/DROP DATABASE IF EXISTS pai;/);
@@ -73,19 +73,19 @@ describe("restorePostgres", () => {
     expect(readdirSync(d).some((f) => f.startsWith("postgres-pai.pre-restore-"))).toBe(true);
   });
 
-  it("aborts without changes when the pre-restore dump fails", () => {
+  it("aborts without changes when the pre-restore dump fails", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { calls, run } = stub((a) => (a[0] === "pg_dump" ? { status: 1, stderr: "connection refused" } : undefined));
-    expect(restorePostgres(join(d, "dump.sql"), d, T, run).ok).toBe(false);
+    expect((await restorePostgres(join(d, "dump.sql"), d, T, run)).ok).toBe(false);
     expect(calls).toHaveLength(1);
   });
 
-  it("restores into a new db and swaps by rename on success", () => {
+  it("restores into a new db and swaps by rename on success", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { calls, run } = stub();
-    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
+    const r = await restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(true);
     expect(r.oldDb).toMatch(/^pai_prerestore_/);
     const all = sqlOf(calls).join("\n");
@@ -94,11 +94,11 @@ describe("restorePostgres", () => {
     expect(all).not.toMatch(/DROP DATABASE IF EXISTS pai;/);
   });
 
-  it("leaves the live db when the rename is refused", () => {
+  it("leaves the live db when the rename is refused", async () => {
     const d = tmpDir();
     writeFileSync(join(d, "dump.sql"), GOOD);
     const { run } = stub((a) => (a.join(" ").includes('RENAME TO "pai_prerestore_') ? { status: 1, stderr: "being accessed by other users" } : undefined));
-    const r = restorePostgres(join(d, "dump.sql"), d, T, run);
+    const r = await restorePostgres(join(d, "dump.sql"), d, T, run);
     expect(r.ok).toBe(false);
     expect(r.message).toMatch(/live database untouched/);
   });

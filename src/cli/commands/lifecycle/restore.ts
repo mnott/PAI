@@ -17,7 +17,8 @@ import {
   statSync,
   copyFileSync,
   mkdirSync,
-  readFileSync,
+  openSync,
+  closeSync,
   chmodSync,
   writeFileSync,
 } from "node:fs";
@@ -32,7 +33,7 @@ import { backupsDirPath } from "./backup.js";
 import { countSql } from "../../../storage/postgres/snapshot.js";
 import { assertPgName, isContainerTarget, quoteIdent, type PgTarget } from "../../../storage/postgres/config.js";
 import {
-  BACKUP_TABLES, RESTORE_DB_MAX_BYTES, configDatabaseMismatch, countDumpRows, planPostgresRestore, readBackupMeta, validatePgDump,
+  BACKUP_TABLES, RESTORE_DB_MAX_BYTES, configDatabaseMismatch, planPostgresRestore, readBackupMeta, scanDumpFile, validatePgDump,
   type BackupMeta,
 } from "./backup-postgres.js";
 
@@ -71,7 +72,7 @@ export function restoreConfigWithSafety(src: string, dest: string): string | nul
 
 export interface PgRunResult { status: number | null; stdout: string; stderr: string }
 /** Runs `psql`/`pg_dump`; args are the program and its arguments (connection options excluded). */
-export type PgRunner = (args: string[], input?: string) => PgRunResult;
+export type PgRunner = (args: string[], input?: string | { file: string }) => PgRunResult;
 
 /**
  * Runner for a target: inside the PAI container when the target is the local PAI server,
@@ -85,14 +86,20 @@ export function makePgRunner(target: PgTarget): PgRunner {
     const argv = inContainer
       ? ["exec", ...(input !== undefined ? ["-i"] : []), DOCKER_CONTAINER, ...args]
       : [...(target.host ? ["-h", target.host] : []), ...(target.port ? ["-p", String(target.port)] : []), ...rest];
-    const r = spawnSync(cmd, argv, {
-      input,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      maxBuffer: 1024 * 1024 * 1024,
-      env: target.password !== undefined ? { ...process.env, PGPASSWORD: target.password } : process.env,
-    });
-    return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    // A file input is handed to the child as its stdin fd: the kernel streams it, nothing is read into this process.
+    const fd = typeof input === "object" ? openSync(input.file, "r") : undefined;
+    try {
+      const r = spawnSync(cmd, argv, {
+        input: typeof input === "string" ? input : undefined,
+        encoding: "utf8",
+        stdio: [fd ?? "pipe", "pipe", "pipe"],
+        maxBuffer: 1024 * 1024 * 1024,
+        env: target.password !== undefined ? { ...process.env, PGPASSWORD: target.password } : process.env,
+      });
+      return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+    }
   };
 }
 
@@ -103,13 +110,13 @@ export interface PgRestoreResult { ok: boolean; message: string; safetyDump?: st
  * validate -> pre-restore dump of live DB -> restore into a NEW database -> swap by rename.
  * Any failure before the swap leaves the live database untouched.
  */
-export function restorePostgres(
+export async function restorePostgres(
   dumpFile: string,
   safetyDir: string,
   target: PgTarget,
   run: PgRunner = makePgRunner(target),
   recordedCounts?: Record<string, number>,
-): PgRestoreResult {
+): Promise<PgRestoreResult> {
   const PG_DATABASE = target.database;
   const PG_USER = target.user;
   try {
@@ -118,8 +125,7 @@ export function restorePostgres(
   } catch (e) {
     return { ok: false, message: `${e instanceof Error ? e.message : String(e)}; live database untouched` };
   }
-  const dump = readFileSync(dumpFile, "utf8");
-  const invalid = validatePgDump(dump);
+  const { counts: dumpCounts, invalid } = await scanDumpFile(dumpFile);
   if (invalid) return { ok: false, message: `${invalid}; live database untouched` };
 
   const stamp = stampNow().replace(/[^0-9A-Za-z]/g, "").toLowerCase();
@@ -150,7 +156,7 @@ export function restorePostgres(
     return { ok: false, message: `could not create staging database: ${firstLine(created)}; live database untouched`, safetyDump };
   }
 
-  const loaded = run(["psql", "-U", PG_USER, "-v", "ON_ERROR_STOP=1", "-d", newDb], dump);
+  const loaded = run(["psql", "-U", PG_USER, "-v", "ON_ERROR_STOP=1", "-d", newDb], { file: dumpFile });
   if (loaded.status !== 0) {
     cleanup();
     return { ok: false, message: `psql failed: ${firstLine(loaded)}; live database untouched`, safetyDump };
@@ -172,7 +178,7 @@ export function restorePostgres(
   const oldDbKept = liveExisted ? oldDb : undefined;
 
   // Verify the main tables against the dump's recorded counts.
-  const expected = recordedCounts ?? Object.fromEntries(countDumpRows(dump));
+  const expected = recordedCounts ?? Object.fromEntries(dumpCounts);
   const counts: NonNullable<PgRestoreResult["counts"]> = {};
   const bad: string[] = [];
   for (const table of BACKUP_TABLES) {
@@ -370,7 +376,7 @@ export async function runRestore(backupPath: string | undefined, opts: { postgre
         });
       }
 
-      const pg = restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE), plan.target, undefined, meta?.counts);
+      const pg = await restorePostgres(join(resolvedDir, "postgres-pai.sql"), dirname(CONFIG_FILE), plan.target, undefined, meta?.counts);
       if (pg.safetyDump) console.log(dim(`  Pre-restore dump of live database: ${pg.safetyDump}`));
       if (pg.oldDb) console.log(dim(`  Previous database kept as '${pg.oldDb}' (drop it when satisfied)`));
       for (const [t, c] of Object.entries(pg.counts ?? {})) {
