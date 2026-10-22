@@ -67,8 +67,21 @@ function migrateState(st,groups){
   if(s.w===undefined&&s.sp>0&&!(groups&&groups[id]))s.w=unitsOf(1/s.sp);
   if(WIN_UNITS.indexOf(s.w)<0)delete s.w;
   if(!(s.h>0))delete s.h;
-  for(var k in s)if(k!=="min"&&k!=="h"&&k!=="w"&&k!=="seen")delete s[k];
+  for(var k in s)if(k!=="min"&&k!=="h"&&k!=="w"&&k!=="uw"&&k!=="seen")delete s[k];
  }
+}
+/** Top-level sections take the full page width unless they share a row: a root group that sits alone on its row (the cards of the root
+ *  fill rows of 12 units in order) loses any narrower width it carries. Only the root column; nothing inside a section is touched. */
+function normalizeRoot(tree,kids,st){
+ if(!tree)return;
+ var list=ids(tree),acc=0,row=[],i;
+ function close(){if(row.length===1&&kids[row[0]]&&st[row[0]])delete st[row[0]].w;row=[];acc=0}
+ for(i=0;i<list.length;i++){
+  var u=(st[list[i]]&&st[list[i]].w)||12;
+  if(acc+u>12)close();
+  row.push(list[i]);acc+=u;
+ }
+ close();
 }
 /** A container's tree is a flat column of cards (parent + order): a row split of an older save becomes consecutive cards,
  *  each with the width it had, as units in st.w (groups = the container ids of the root column: a top-level section keeps the full page width). Returns the flat column (a lone card stays a leaf), null for none. */
@@ -365,6 +378,8 @@ function reconcileSaved(saved,defaults,knownIds,now){
  migrateState(st,kids);migrateState(defaults.stDefaults);
  var tree=flatTree(saved.tree,st,kids);
  for(var kg in kids){var kt=flatTree(kids[kg],st);if(kt)kids[kg]=kt;else delete kids[kg]}
+ // a section's width is only ever set by its own handle (uw): a narrower width without that mark came from an old drop and goes back to the default
+ for(var wg in kids){var ws=st[wg];if(ws&&ws.w<((defaults.stDefaults[wg]||{}).w||12)&&!ws.uw)delete ws.w}
  var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;
  nestRoots(tree,kids);

@@ -6,8 +6,7 @@ export type WinZone = "left" | "right" | "top" | "bottom" | "into" | "none";
 /** zoneAt(rect, p) -> "left"|"right"|"top"|"bottom"|"none": the four edge bands are the
  *  outer 25% of width/height; corners go to the nearer edge by distance; the middle is
  *  "none". moveCard(root, kids, dragId, targetId, zone) -> {tree, kids} (copies), or null for an impossible drop
- *  (onto itself, into its own group, unknown card, zone none): left/top put the card before the target in the target's
- *  container, right/bottom after it, "into" first in the target group's kids. A drop that changes nothing returns null too.
+ *  (onto itself, into its own group, unknown card, zone none, a target outside the card's own container): left/top put the card before the target in the container, right/bottom after it, "into" (the group the card is already in) first in its kids. A drop that changes nothing returns null too.
  *  neighbor(rects,id,dir) -> the id of the nearest visible card in that direction, or null.
  *  No backticks inside the string: the tests extract it up to the closing one. */
 export const WIN_DROP_JS = String.raw`
@@ -58,6 +57,7 @@ function moveCard(root,kids,dragId,targetId,zone){
  if(dragId===targetId||zone==="none"||!zone)return null;
  var from=containerOf(root,kids,dragId),to=containerOf(root,kids,targetId);
  if(from===undefined||to===undefined)return null;
+ if(from!==(zone==="into"?targetId:to))return null; // a card is reordered inside its own section only; moving between sections is not a drag action
  if(kids[dragId]&&kids[dragId].k&&inside(kids,dragId,targetId))return null;
  var lists={"":root?ids(root):[]},g;
  for(g in kids)lists[g]=kids[g]&&kids[g].k?ids(kids[g]):[];

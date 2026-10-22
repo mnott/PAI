@@ -186,6 +186,55 @@ describe.skipIf(!CHROME)("CSS grid invariants", () => {
     }, 120_000);
   }
 
+  /** Real pointer drag of the grip of dragId to the edge of targetId: zone left/right/top/bottom, in viewport px after scrolling the target in. */
+  async function dragTo(b: Page, dragId: string, targetId: string, zone: "left" | "right" | "top" | "bottom") {
+    const [gx, gy] = await b.ev<[number, number]>(`(function(){var e=document.querySelector('#win-root [data-card="${dragId}"]>.chead .cgrip, #win-root [data-card="${dragId}"] .cgrip');e.scrollIntoView({block:"center"});var r=e.getBoundingClientRect();return[r.left+r.width/2,r.top+r.height/2]})()`);
+    await b.mouse("mouseMoved", gx, gy); await b.mouse("mousePressed", gx, gy);
+    await b.mouse("mouseMoved", gx + 12, gy + 12);
+    // bring the target into view without scrolling away from the pressed grip: scroll, then take its rect
+    const [tx, ty] = await b.ev<[number, number]>(`(function(){var e=document.querySelector('#win-root [data-card="${targetId}"]');var r=e.getBoundingClientRect();if(r.top<0||r.bottom>innerHeight){scrollBy(0,r.top-120);r=e.getBoundingClientRect()}var z=${JSON.stringify(zone)},x=r.left+r.width/2,y=r.top+r.height/2;if(z==="left")x=r.left+4;if(z==="right")x=r.right-4;if(z==="top")y=r.top+3;if(z==="bottom")y=r.bottom-3;return[x,y]})()`);
+    await b.mouse("mouseMoved", tx, ty); await sleep(60);
+    await b.mouse("mouseMoved", tx + 1, ty); await sleep(60);
+    await b.mouse("mouseReleased", tx + 1, ty); await sleep(300);
+  }
+  const widthOf = (b: Page, id: string) => b.ev<number>(`document.querySelector('#win-root [data-card="${id}"]').getBoundingClientRect().width`);
+  const orderOf = (b: Page, g: string) => b.ev<string[]>(`Win.state().kids[${JSON.stringify(g)}].ch.map(function(c){return c.id})`);
+
+  it("operator layout, 900 px: a child dragged onto the page root is refused (parent width and trees unchanged); dragged inside its section it reorders", async () => {
+    const b = await open(900, LAYOUT);
+    const before = await b.ev<string>(`JSON.stringify([Win.state().tree,Win.state().kids,Win.state().st])`);
+    const sysW = await widthOf(b, "system");
+    const kid = (await orderOf(b, "system"))[0];
+    await dragTo(b, kid, "cache", "top");
+    expect(await b.ev<string>(`JSON.stringify([Win.state().tree,Win.state().kids,Win.state().st])`), "refused: nothing changed").toBe(before);
+    expect(await widthOf(b, "system")).toBe(sysW);
+    const order = await orderOf(b, "system");
+    await dragTo(b, order[0], order[1], "right");
+    const after = await orderOf(b, "system");
+    expect(after.slice(0, 2), "reordered inside the section").toEqual([order[1], order[0]]);
+    expect(await widthOf(b, "system")).toBe(sysW);
+  }, 120_000);
+
+  it("operator layout, 900 px: two top-level sections dropped side by side share the row; dragged back to its own row, both are full width again", async () => {
+    const b = await open(900, LAYOUT);
+    const full = await widthOf(b, "system");
+    await dragTo(b, "cache", "system", "right");
+    const [a, c] = [await widthOf(b, "system"), await widthOf(b, "cache")];
+    expect(a, "system narrower").toBeLessThan(full - 50);
+    expect(Math.abs(a - c), "the two share the row evenly").toBeLessThanOrEqual(8);
+    await dragTo(b, "cache", "tokens-group", "bottom");
+    expect(Math.abs((await widthOf(b, "system")) - full), "system alone: full width").toBeLessThanOrEqual(1);
+    expect(Math.abs((await widthOf(b, "cache")) - full), "cache alone: full width").toBeLessThanOrEqual(1);
+  }, 120_000);
+
+  it("a saved narrower top-level width without the handle mark (an old drop) is repaired to full width on load", async () => {
+    const l = JSON.parse(LAYOUT);
+    l.st.system = { ...(l.st.system ?? {}), w: 6, seen: Date.now() };
+    const b = await open(900, JSON.stringify(l));
+    const root = await b.ev<number>(`document.querySelector("#win-root").getBoundingClientRect().width`);
+    expect(Math.abs((await widthOf(b, "system")) - root)).toBeLessThanOrEqual(1);
+  }, 120_000);
+
   for (const [w, steps] of [[900, [4, 3]], [530, [4]]] as [number, number[]][]) {
     it(`operator layout, ${w} px: the handle of Compressed narrows it step by step (${steps.join(" -> ")} units)`, async () => {
       const b = await open(w, LAYOUT);

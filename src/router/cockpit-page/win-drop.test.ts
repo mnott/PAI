@@ -48,31 +48,25 @@ describe("win drop (spec 3.3)", () => {
     expect(move(t, {}, "a", "b", "none")).toBe(null);
   });
 
-  it("dropping next to a card of another group changes the parent", () => {
+  it("a card is reordered inside its own section only: a drop next to a card of another container is refused", () => {
     const root = col("g", "h");
     const kids = { g: col("a", "b"), h: col("c", "d") };
-    const r = move(root, kids, "a", "d", "right")!;
-    expect(order(r.kids.g)).toEqual(["b"]);
-    expect(order(r.kids.h)).toEqual(["c", "d", "a"]);
-    expect(order(r.tree)).toEqual(["g", "h"]);
-    // the inputs are untouched
-    expect(order(kids.g)).toEqual(["a", "b"]);
+    expect(move(root, kids, "a", "d", "right")).toBe(null);
+    expect(order(move(root, kids, "a", "b", "right")!.kids.g)).toEqual(["b", "a"]);
   });
 
-  it("'into' puts the card first in the group", () => {
+  it("'into' is refused for a card of another container; a group header keeps its own cards", () => {
     const root = col("a", "g");
     const kids = { g: col("b", "c") };
-    const r = move(root, kids, "a", "g", "into")!;
-    expect(order(r.kids.g)).toEqual(["a", "b", "c"]);
-    expect(order(r.tree)).toEqual(["g"]);
+    expect(move(root, kids, "a", "g", "into")).toBe(null);
+    expect(move(root, kids, "b", "g", "into")).toBe(null); // already first: nothing changes
+    expect(order(move(root, kids, "c", "g", "into")!.kids.g)).toEqual(["c", "b"]);
     expect(move(root, kids, "a", "b", "into")).toBe(null); // b is not a group
   });
 
-  it("the last card of a group leaves an empty group (no kids entry)", () => {
+  it("a card can not leave its group: dropping it on the root is refused", () => {
     const root = col("a", "g");
-    const r = move(root, { g: col("b") }, "b", "a", "left")!;
-    expect(r.kids.g).toBeUndefined();
-    expect(order(r.tree)).toEqual(["b", "a", "g"]);
+    expect(move(root, { g: col("b") }, "b", "a", "left")).toBe(null);
   });
 
   it("a group can not be dropped into itself or a group inside it", () => {

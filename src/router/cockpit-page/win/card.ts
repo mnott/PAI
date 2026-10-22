@@ -228,6 +228,7 @@ function syncBodies(){
 /** Apply the tree and the card states to the DOM. The browser lays the cards out (CSS grid). */
 function relayout(){
  W.n++;
+ normalizeRoot(W.tree,W.kids,W.st);
  W.order=[];
  var fa=document.activeElement;
  reparent(W.main,W.tree,0,false);
@@ -275,7 +276,7 @@ function heightWire(){
   if(!cur)return;
   // the handle also sets the width: snapped to the 12-column steps of the card's group
   var dx=e.clientX-cur.x;
-  if(Math.abs(dx)>=8){var u=stepFor(cur.c.id,cur.w+dx);if(u)(W.st[cur.c.id]=W.st[cur.c.id]||{}).w=u}
+  if(Math.abs(dx)>=8){var u=stepFor(cur.c.id,cur.w+dx);if(u){var hs=W.st[cur.c.id]=W.st[cur.c.id]||{};hs.w=u;hs.uw=1}}
   var dy=e.clientY-cur.y;
   // a height is stored only once the drag moves vertically: a sideways drag leaves the card as tall as its content
   if(cur.vy||Math.abs(dy)>=6){cur.vy=1;setHeight(cur.c.id,cur.h+dy,true)}
@@ -449,7 +450,7 @@ function hide(id,on){W.hide=W.hide||{};if(!!W.hide[id]===!!on)return;W.hide[id]=
 function applyAll(tree,kids,sizes,st){
  W.tree=tree;W.kids=kids;
  if(st)W.st=JSON.parse(st);
- for(var id in sizes||{})(W.st[id]=W.st[id]||{}).w=sizes[id];
+ for(var id in sizes||{}){var ss=W.st[id]=W.st[id]||{};ss.w=sizes[id];ss.uw=1}
  relayout();save();
 }
 /** The result of dropping dragId at zone of targetId ({tree,kids,sizes}), without applying it; null when the drop changes nothing.
