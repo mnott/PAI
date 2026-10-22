@@ -1273,6 +1273,7 @@ const BUILD_PLACEHOLDER = /__COCKPIT_BUILD__/g;
 const VERSION_PLACEHOLDER = /__COCKPIT_VERSION__/g;
 const VERSION_SHORT_PLACEHOLDER = /__COCKPIT_VERSION_SHORT__/g;
 const VERSION_PATCH_PLACEHOLDER = /__COCKPIT_VERSION_PATCH__/g;
+const HOMEPAGE_PLACEHOLDER = /__COCKPIT_HOMEPAGE__/g;
 let pkgVersion: string | null = null;
 /** The version this router runs: package.json, read once at startup (the one owner of the header's "v<version>"). */
 function cockpitVersion(): string {
@@ -1283,6 +1284,19 @@ function cockpitVersion(): string {
     pkgVersion = "?";
   }
   return pkgVersion;
+}
+/** The project homepage from package.json, read once at startup; null when absent (the header title then stays plain text).
+ *  The placeholder stands in for the whole h1 content, so no URL literal is in the page source. */
+let pkgHomepage: string | null | undefined;
+function cockpitHomepage(): string | null {
+  if (pkgHomepage === undefined) {
+    try {
+      pkgHomepage = (JSON.parse(readFileSync(resolveFromModule(import.meta.url, "package.json"), "utf8")) as { homepage?: string }).homepage ?? null;
+    } catch {
+      pkgHomepage = null;
+    }
+  }
+  return pkgHomepage;
 }
 /** Where the page gets the default layout this install serves (null = compose its own). */
 const SAVED_AT_PLACEHOLDER = "0/*__COCKPIT_LAYOUT_SAVED_AT__*/";
@@ -1409,7 +1423,12 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(VERSION_SHORT_PLACEHOLDER, cockpitVersion().split(".").slice(0, 2).join(".")).replace(VERSION_PATCH_PLACEHOLDER, cockpitVersion().split(".").slice(2).map((p) => "." + p).join("")).replace(VERSION_PLACEHOLDER, cockpitVersion()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
+      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(VERSION_SHORT_PLACEHOLDER, cockpitVersion().split(".").slice(0, 2).join(".")).replace(VERSION_PATCH_PLACEHOLDER, cockpitVersion().split(".").slice(2).map((p) => "." + p).join("")).replace(VERSION_PLACEHOLDER, cockpitVersion()).replace(HOMEPAGE_PLACEHOLDER, () => {
+        const home = cockpitHomepage();
+        if (!home) return "";
+        const href = home.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        return `<a class="home" href="${href}" target="_blank" rel="noopener">PAI<span class="hc"> Cockpit</span></a>`;
+      }).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
     } catch {
       /* falls through to the 503 */
     }
