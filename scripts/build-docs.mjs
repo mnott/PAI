@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDistStale } from "./dist-stale.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(ROOT, "dist", "cli", "index.mjs");
@@ -27,6 +28,11 @@ const OUT_DIR = process.env.PAI_DOCS_OUT ?? join(ROOT, "docs", "commands");
 
 if (!existsSync(CLI)) {
   console.error(`✖ ${CLI} not found — run tsdown first.`);
+  process.exit(1);
+}
+
+if (isDistStale(join(ROOT, "src", "cli"), CLI)) {
+  console.error("✖ dist/ is older than src/cli — run `npm run build` (it regenerates the docs)");
   process.exit(1);
 }
 
