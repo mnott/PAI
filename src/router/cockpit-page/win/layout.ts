@@ -54,6 +54,8 @@ function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if
 function winCardMinW(cfg,kids,id){var m=winMinW(cfg,winLeafType(kids,id,cfg)),t=cfg.titleW&&cfg.titleW[id];return t&&t>m?Math.min(t,Math.round(m*1.6)):m}
 /** A card's width share inside its row: st[id].sp is the divisor (4 = 1/4, 3 = 1/3, 2 = 1/2, 1 = the whole row), absent = auto (its weight). */
 function winSp(st,id){var s=st&&st[id];return s&&s.sp>0?s.sp:0}
+/** A share may fall this many px under a card's least width: the title is measured to the pixel, a 1 px rounding of the container must not forbid the step. */
+var MINW_SLACK=2;
 /** The width share (st.sp divisor) a card gets when the user drags its handle to targetW: a container is a 12-unit grid, a card spans
  *  3, 4, 6, 8, 9 or 12 units (1/4 1/3 1/2 2/3 3/4 full): the step nearest to targetW whose width is at least minW (12 when none is);
  *  returns 12 / units, so the full row is 1. */
@@ -61,7 +63,7 @@ function winColSpan(contW,gap,minW,targetW){
  var st=[3,4,6,8,9,12],i,best=12,bd=1e9,w,d;
  for(i=0;i<st.length;i++){
   w=st[i]*(contW+gap)/12-gap;
-  if(st[i]<12&&w<minW)continue;
+  if(st[i]<12&&w+MINW_SLACK<minW)continue;
   d=Math.abs(w-targetW);
   if(d<bd){bd=d;best=st[i]}
  }
@@ -78,7 +80,7 @@ function winFlow(node,w,st,cfg,kids){
  var f=[];
  for(j=0;j<vis.length;j++){
   var id=node.ch[vis[j]].id,sp=winSp(st,id),x=sp?1/sp:(node.sz[vis[j]]||0)/t;
-  if(sp&&x<1&&x*(w+gap)-gap<winCardMinW(cfg,kids,id))x=1;
+  if(sp&&x<1&&x*(w+gap)-gap+MINW_SLACK<winCardMinW(cfg,kids,id))x=1;
   f.push(x);
  }
  // a line holds cards while the sum of their least widths and the gaps fits; a share card's fraction counts against 1 (shares yield below)

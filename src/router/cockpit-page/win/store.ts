@@ -316,6 +316,31 @@ function nestRoots(tree,kids){
   }else kids[p]=split("c",[leaf(g),body],[0.4,0.6]);
  }
 }
+/** A saved layout that lists a card more than once (root band and a group body, or two bodies) keeps one occurrence: the one the
+ *  user placed, i.e. outside the container the default layout holds the card in; else the first. Mutates kids; returns the tree. */
+function dedupeCards(tree,kids,defaults){
+ var where={},order=[],seen={},g,i,a;
+ function note(c,list){for(var j=0;j<list.length;j++){if(!where[list[j]]){where[list[j]]=[];order.push(list[j])}where[list[j]].push(c)}}
+ note("",ids(tree));
+ for(g in kids)note(g,ids(kids[g]));
+ var defAt={};
+ function defNote(c,t){var l=ids(t);for(var j=0;j<l.length;j++)if(defAt[l[j]]===undefined)defAt[l[j]]=c}
+ if(defaults){defNote("",defaults.tree);for(g in defaults.kids||{})defNote(g,defaults.kids[g])}
+ for(i=0;i<order.length;i++){
+  var id=order[i];a=where[id];
+  if(a.length<2)continue;
+  var keep=a[0],k;
+  for(k=0;k<a.length;k++)if(a[k]!==defAt[id]){keep=a[k];break}
+  var done=false;
+  for(k=0;k<a.length;k++){
+   var c=a[k];
+   if(c===keep&&!done){done=true;continue}
+   if(c==="")tree=removeLeaf(tree,id,true)||tree;
+   else{var r=removeLeaf(kids[c],id,false);if(r)kids[c]=r;else delete kids[c]}
+  }
+ }
+ return tree;
+}
 /** True when card id sits in the tree or in any group body. */
 function placedAnywhere(tree,kids,id){
  if(ids(tree).indexOf(id)>=0)return true;
@@ -331,6 +356,7 @@ function reconcileSaved(saved,defaults,knownIds,now){
  var mig=groupRoots(tree,kids,defaults);
  tree=mig.tree;defaults=mig.defaults;
  nestRoots(tree,kids);
+ tree=dedupeCards(tree,kids,defaults);
  var st=saved.st&&typeof saved.st==="object"?saved.st:{};
  tree=pruneGhosts(tree,kids,st,knownIds,now);
  var prevOf=prevOfDefault(defaults);

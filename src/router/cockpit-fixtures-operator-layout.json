@@ -1,0 +1,1205 @@
+{
+ "v": 2,
+ "t": 1792667091995,
+ "tree": {
+  "k": "s",
+  "d": "c",
+  "ch": [
+   {
+    "k": "c",
+    "id": "limits-cloud"
+   },
+   {
+    "k": "c",
+    "id": "system"
+   },
+   {
+    "k": "c",
+    "id": "tokens-group"
+   },
+   {
+    "k": "c",
+    "id": "cache"
+   },
+   {
+    "k": "c",
+    "id": "limits-local"
+   },
+   {
+    "k": "c",
+    "id": "models"
+   },
+   {
+    "k": "c",
+    "id": "kpis"
+   },
+   {
+    "k": "c",
+    "id": "pool"
+   },
+   {
+    "k": "c",
+    "id": "workers"
+   },
+   {
+    "k": "c",
+    "id": "memory"
+   },
+   {
+    "k": "c",
+    "id": "speed"
+   },
+   {
+    "k": "c",
+    "id": "pause"
+   },
+   {
+    "k": "c",
+    "id": "sessions"
+   },
+   {
+    "k": "c",
+    "id": "runs"
+   },
+   {
+    "k": "c",
+    "id": "routing"
+   },
+   {
+    "k": "c",
+    "id": "settings"
+   }
+  ],
+  "sz": [
+   219,
+   1582,
+   871,
+   28,
+   28,
+   28,
+   28,
+   28,
+   28,
+   28,
+   427,
+   148,
+   839,
+   386,
+   443,
+   28
+  ]
+ },
+ "kids": {
+  "kpis": {
+   "k": "s",
+   "d": "r",
+   "ch": [
+    {
+     "k": "c",
+     "id": "kpis.requests"
+    },
+    {
+     "k": "c",
+     "id": "kpis.input"
+    },
+    {
+     "k": "c",
+     "id": "kpis.output"
+    },
+    {
+     "k": "c",
+     "id": "kpis.cache-read"
+    },
+    {
+     "k": "c",
+     "id": "kpis.cache-write"
+    },
+    {
+     "k": "c",
+     "id": "kpis.errors"
+    }
+   ],
+   "sz": [
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666,
+    0.16666666666666666
+   ]
+  },
+  "pool": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "pool.pool"
+      },
+      {
+       "k": "c",
+       "id": "pool.host"
+      },
+      {
+       "k": "c",
+       "id": "pool.tasks"
+      },
+      {
+       "k": "c",
+       "id": "pool.hit"
+      },
+      {
+       "k": "c",
+       "id": "pool.spares"
+      },
+      {
+       "k": "c",
+       "id": "pool.not-pooled"
+      }
+     ],
+     "sz": [
+      0.1,
+      0.1,
+      0.4,
+      0.2,
+      0.1,
+      0.1
+     ]
+    },
+    {
+     "k": "c",
+     "id": "pool.slots"
+    }
+   ],
+   "sz": [
+    0.8833087149187593,
+    0.11669128508124077
+   ]
+  },
+  "system": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "sys-metrics"
+    },
+    {
+     "k": "c",
+     "id": "sys-power"
+    },
+    {
+     "k": "c",
+     "id": "sys-servers"
+    }
+   ],
+   "sz": [
+    850,
+    378,
+    310
+   ]
+  },
+  "sys-metrics": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "system.memory"
+      },
+      {
+       "k": "c",
+       "id": "system.swap"
+      },
+      {
+       "k": "c",
+       "id": "system.wired"
+      },
+      {
+       "k": "c",
+       "id": "system.compressed"
+      }
+     ],
+     "sz": [
+      0.3076923076923077,
+      0.3076923076923077,
+      0.3076923076923077,
+      0.07692307692307693
+     ]
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "system.gpu-load"
+      },
+      {
+       "k": "c",
+       "id": "system.cpu-load"
+      },
+      {
+       "k": "c",
+       "id": "system.soc-temp"
+      },
+      {
+       "k": "c",
+       "id": "system.power"
+      },
+      {
+       "k": "c",
+       "id": "system.energy"
+      },
+      {
+       "k": "c",
+       "id": "system.system-w"
+      },
+      {
+       "k": "c",
+       "id": "system.cpu-w"
+      },
+      {
+       "k": "c",
+       "id": "system.gpu-w"
+      },
+      {
+       "k": "c",
+       "id": "system.ane-load"
+      },
+      {
+       "k": "c",
+       "id": "system.ane-w"
+      }
+     ],
+     "sz": [
+      0.13617021276595745,
+      0.06808510638297872,
+      0.01702127659574468,
+      0.01702127659574468,
+      0.00425531914893617,
+      0.00851063829787234,
+      0.5446808510638298,
+      0.13617021276595745,
+      0.03404255319148936,
+      0.03404255319148936
+     ]
+    }
+   ],
+   "sz": [
+    430,
+    384
+   ]
+  },
+  "sys-power": {
+   "k": "c",
+   "id": "system.power-chart"
+  },
+  "sys-servers": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "system.srv:none"
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "system.srv:gyro-m/rss"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:gyro-m/e2e"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:gyro-m/decode"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:gyro-m/prefix"
+      }
+     ],
+     "sz": [
+      0.25,
+      0.25,
+      0.25,
+      0.25
+     ]
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "system.srv:flashnext-iq3/rss"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:flashnext-iq3/e2e"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:flashnext-iq3/decode"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:flashnext-iq3/prefix"
+      }
+     ],
+     "sz": [
+      0.25,
+      0.25,
+      0.25,
+      0.25
+     ]
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "system.srv:codernext4/rss"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:codernext4/e2e"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:codernext4/decode"
+      },
+      {
+       "k": "c",
+       "id": "system.srv:codernext4/prefix"
+      }
+     ],
+     "sz": [
+      0.16666666666666666,
+      0.3333333333333333,
+      0.16666666666666666,
+      0.3333333333333333
+     ]
+    }
+   ],
+   "sz": [
+    0.25,
+    266,
+    0.25,
+    188
+   ]
+  },
+  "memory": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "memory.kv"
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "memory.backend"
+      },
+      {
+       "k": "c",
+       "id": "memory.passes"
+      },
+      {
+       "k": "c",
+       "id": "memory.daemon"
+      }
+     ],
+     "sz": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+     ]
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "memory.job:job-ollama-f16-reembed"
+      },
+      {
+       "k": "c",
+       "id": "memory.job:last-embed"
+      }
+     ],
+     "sz": [
+      0.5,
+      0.5
+     ]
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "memory.index"
+      },
+      {
+       "k": "c",
+       "id": "memory.job:last-index"
+      }
+     ],
+     "sz": [
+      0.5,
+      0.5
+     ]
+    }
+   ],
+   "sz": [
+    90,
+    298,
+    154,
+    180
+   ]
+  },
+  "routing": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "routing.flow"
+    },
+    {
+     "k": "c",
+     "id": "routing.t0"
+    },
+    {
+     "k": "c",
+     "id": "routing.t1"
+    },
+    {
+     "k": "c",
+     "id": "routing.t2"
+    }
+   ],
+   "sz": [
+    64,
+    77,
+    104,
+    146
+   ]
+  },
+  "limits-local": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "limits.local.down"
+    },
+    {
+     "k": "c",
+     "id": "limits.local.srv:gyro-m"
+    },
+    {
+     "k": "c",
+     "id": "limits.local.srv:flashnext-iq3"
+    },
+    {
+     "k": "c",
+     "id": "limits.local.srv:codernext4"
+    }
+   ],
+   "sz": [
+    0.25,
+    145,
+    0.25,
+    126
+   ]
+  },
+  "limits-cloud": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "limits.cloud.none"
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "limits.cloud:anthropic"
+      },
+      {
+       "k": "c",
+       "id": "limits.cloud:glm"
+      },
+      {
+       "k": "c",
+       "id": "limits.cloud:kimi"
+      }
+     ],
+     "sz": [
+      0.3333333333333333,
+      0.3333333333333333,
+      0.3333333333333333
+     ]
+    }
+   ],
+   "sz": [
+    67,
+    191
+   ]
+  },
+  "workers": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "workers.local"
+    },
+    {
+     "k": "c",
+     "id": "workers.wt"
+    },
+    {
+     "k": "c",
+     "id": "workers.sess:PAI"
+    },
+    {
+     "k": "c",
+     "id": "workers.sess:other"
+    },
+    {
+     "k": "c",
+     "id": "workers.plans"
+    },
+    {
+     "k": "c",
+     "id": "workers.prov:flashnext-iq3"
+    },
+    {
+     "k": "c",
+     "id": "workers.prov:codernext4"
+    }
+   ],
+   "sz": [
+    61,
+    61,
+    365,
+    79,
+    0.14285714285714288,
+    0.14285714285714288,
+    0.14285714285714288
+   ]
+  },
+  "models": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "models.endpoints"
+    },
+    {
+     "k": "c",
+     "id": "models.model:gyro-m"
+    },
+    {
+     "k": "c",
+     "id": "models.model:iq3s"
+    },
+    {
+     "k": "c",
+     "id": "models.model:coder-next"
+    },
+    {
+     "k": "c",
+     "id": "models.rt:ollama/arctic-embed-m-v1.5-f16:latest"
+    },
+    {
+     "k": "c",
+     "id": "models.rt:ollama/qwen3:8b"
+    },
+    {
+     "k": "c",
+     "id": "models.rt:docker-model-runner/huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16"
+    },
+    {
+     "k": "c",
+     "id": "models.rt:docker-model-runner/"
+    }
+   ],
+   "sz": [
+    71,
+    112,
+    22,
+    90,
+    22,
+    22,
+    22,
+    0.125
+   ]
+  },
+  "cache": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "cache-rings"
+    },
+    {
+     "k": "s",
+     "d": "r",
+     "ch": [
+      {
+       "k": "c",
+       "id": "cache.low"
+      },
+      {
+       "k": "c",
+       "id": "cache.note"
+      }
+     ],
+     "sz": [
+      0.5,
+      0.5
+     ]
+    },
+    {
+     "k": "c",
+     "id": "cache.local"
+    },
+    {
+     "k": "c",
+     "id": "cache.providers"
+    }
+   ],
+   "sz": [
+    194,
+    131,
+    82,
+    181
+   ]
+  },
+  "cache-rings": {
+   "k": "c",
+   "id": "cache.ring:anthropic/claude-sonnet-5-5"
+  },
+  "settings": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "settings.registry-backups"
+    },
+    {
+     "k": "c",
+     "id": "settings.registry-edit"
+    }
+   ],
+   "sz": [
+    331,
+    662
+   ]
+  },
+  "tokens-group": {
+   "k": "s",
+   "d": "c",
+   "ch": [
+    {
+     "k": "c",
+     "id": "tokens"
+    },
+    {
+     "k": "c",
+     "id": "daily"
+    }
+   ],
+   "sz": [
+    399,
+    436
+   ]
+  }
+ },
+ "st": {
+  "system.ane-load": {
+   "min": 1,
+   "seen": 1792667091995,
+   "h": 132
+  },
+  "system.cpu-w": {
+   "min": 1,
+   "seen": 1792667091995,
+   "h": 132
+  },
+  "system.gpu-w": {
+   "min": 1,
+   "seen": 1792667091995,
+   "h": 132
+  },
+  "system.ane-w": {
+   "min": 1,
+   "seen": 1792667091995,
+   "h": 132
+  },
+  "memory": {
+   "min": 1,
+   "seen": 1792667091995
+  },
+  "pool": {
+   "min": 0,
+   "seen": 1792667091995
+  },
+  "pool.slots": {
+   "min": 0,
+   "seen": 1792667091995
+  },
+  "system": {
+   "min": 0,
+   "seen": 1792667091995
+  },
+  "sys-metrics": {
+   "min": 0,
+   "seen": 1792667091995
+  },
+  "kpis": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "kpis.requests": {
+   "seen": 1792667091995
+  },
+  "kpis.input": {
+   "seen": 1792667091995
+  },
+  "kpis.output": {
+   "seen": 1792667091995
+  },
+  "kpis.cache-read": {
+   "seen": 1792667091995
+  },
+  "kpis.cache-write": {
+   "seen": 1792667091995
+  },
+  "kpis.errors": {
+   "seen": 1792667091995
+  },
+  "pool.pool": {
+   "seen": 1792667091995
+  },
+  "pool.host": {
+   "seen": 1792667091995
+  },
+  "pool.tasks": {
+   "seen": 1792667091995
+  },
+  "pool.hit": {
+   "seen": 1792667091995
+  },
+  "pool.spares": {
+   "seen": 1792667091995
+  },
+  "pool.not-pooled": {
+   "seen": 1792667091995
+  },
+  "pool.off": {
+   "seen": 1792667091995
+  },
+  "sys-power": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "sys-servers": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "system.srv:none": {
+   "seen": 1792667091995
+  },
+  "system.memory": {
+   "seen": 1792667091995,
+   "h": 139,
+   "sp": 3
+  },
+  "system.swap": {
+   "seen": 1792667091995,
+   "h": 139
+  },
+  "system.wired": {
+   "seen": 1792667091995,
+   "h": 139
+  },
+  "system.compressed": {
+   "seen": 1792667091995,
+   "h": 136,
+   "sp": 3,
+   "min": 0
+  },
+  "system.cpu-load": {
+   "seen": 1792667091995,
+   "h": 160
+  },
+  "system.gpu-load": {
+   "seen": 1792667091995,
+   "h": 160
+  },
+  "system.soc-temp": {
+   "seen": 1792667091995,
+   "h": 200,
+   "min": 1
+  },
+  "system.system-w": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 148
+  },
+  "system.power": {
+   "seen": 1792667091995,
+   "h": 160,
+   "min": 0
+  },
+  "system.energy": {
+   "seen": 1792667091995,
+   "min": 1,
+   "h": 148
+  },
+  "system.power-chart": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 350
+  },
+  "memory.kv": {
+   "seen": 1792667091995
+  },
+  "memory.index": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "memory.backend": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "memory.passes": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "memory.daemon": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "routing": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "routing.flow": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "limits-local": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "limits.local.down": {
+   "seen": 1792667091995
+  },
+  "limits-cloud": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "limits.cloud.none": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "workers": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "workers.local": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "workers.wt": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "models": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "models.endpoints": {
+   "seen": 1792667091995
+  },
+  "cache": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "cache-rings": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "cache.none": {
+   "seen": 1792667091995
+  },
+  "cache.low": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "cache.note": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "cache.local": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "cache.providers": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 173
+  },
+  "tokens": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 399
+  },
+  "daily": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 436
+  },
+  "speed": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 427
+  },
+  "pause": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 148
+  },
+  "sessions": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "runs": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "settings": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "settings.registry-edit": {
+   "seen": 1792667091995,
+   "h": 662,
+   "min": 0
+  },
+  "settings.registry-backups": {
+   "seen": 1792667091995
+  },
+  "cache.solo": {
+   "seen": 1792651389020
+  },
+  "routing.t0": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "routing.t1": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "routing.t2": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 146
+  },
+  "limits.local.srv:gyro-m": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "limits.cloud:anthropic": {
+   "seen": 1792667091995,
+   "h": 161
+  },
+  "limits.cloud:glm": {
+   "seen": 1792667091995,
+   "min": 0,
+   "h": 161
+  },
+  "limits.cloud:kimi": {
+   "seen": 1792667091995,
+   "min": 1,
+   "h": 152
+  },
+  "memory.job:job-ollama-f16-reembed": {
+   "seen": 1792667091995
+  },
+  "memory.job:last-embed": {
+   "seen": 1792667091995
+  },
+  "memory.job:last-index": {
+   "seen": 1792667091995
+  },
+  "models.model:gyro-m": {
+   "seen": 1792667091995
+  },
+  "models.model:iq3s": {
+   "seen": 1792667091995,
+   "min": 1
+  },
+  "models.model:coder-next": {
+   "seen": 1792667091995
+  },
+  "models.rt:ollama/arctic-embed-m-v1.5-f16:latest": {
+   "seen": 1792667091995,
+   "min": 1
+  },
+  "models.rt:ollama/qwen3:8b": {
+   "seen": 1792667091995,
+   "min": 1
+  },
+  "models.rt:docker-model-runner/huggingface.co/keisuke-miyako/multilingual-e5-base-gguf-f16": {
+   "seen": 1792667091995,
+   "min": 1
+  },
+  "system.srv:gyro-m/rss": {
+   "seen": 1792667091995,
+   "h": 129
+  },
+  "system.srv:gyro-m/e2e": {
+   "seen": 1792667091995,
+   "h": 129
+  },
+  "system.srv:gyro-m/decode": {
+   "seen": 1792667091995,
+   "h": 129
+  },
+  "system.srv:gyro-m/prefix": {
+   "seen": 1792667091995,
+   "h": 129
+  },
+  "workers.sess:PAI": {
+   "seen": 1792667091995,
+   "min": 0
+  },
+  "cache.ring:gyro-m/qwen3.8-flash-next-gyro-m": {
+   "seen": 1792666766095
+  },
+  "cache.ring:anthropic/claude-sonnet-5-5": {
+   "seen": 1792667091995
+  },
+  "workers.sess:other": {
+   "seen": 1792666766095
+  },
+  "workers.plans": {
+   "seen": 1792663307768
+  },
+  "limits.local.srv:flashnext-iq3": {
+   "seen": 1792657817033
+  },
+  "workers.prov:flashnext-iq3": {
+   "seen": 1792657243473
+  },
+  "system.srv:flashnext-iq3/rss": {
+   "seen": 1792657817033
+  },
+  "system.srv:flashnext-iq3/e2e": {
+   "seen": 1792657817033
+  },
+  "system.srv:flashnext-iq3/decode": {
+   "seen": 1792657817033
+  },
+  "system.srv:flashnext-iq3/prefix": {
+   "seen": 1792657817033
+  },
+  "cache.ring:flashnext-iq3/qwen3.8-flash-next-iq3_s": {
+   "seen": 1792662249495
+  },
+  "cache.ring:anthropic/claude-opus-5-5": {
+   "seen": 1792662249495
+  },
+  "cache.ring:codernext4/qwen3-coder-next-4bit": {
+   "seen": 1792662347893
+  },
+  "cache.ring:anthropic/claude-haiku-5-5": {
+   "seen": 1792662249495
+  },
+  "cache.ring:glm/glm-5.3": {
+   "seen": 1792662249495
+  },
+  "cache.ring:anthropic/claude-haiku-4-5": {
+   "seen": 1792662249495
+  },
+  "cache.ring:glm/glm-5.3-flash": {
+   "seen": 1792662249495
+  },
+  "cache.ring:local30x8/qwen3-coder-30b-8bit": {
+   "seen": 1792662249495
+  },
+  "cache.ring:local30/qwen3-coder-30b": {
+   "seen": 1792662249495
+  },
+  "cache.ring:coder8/qwen3-coder-30b-8bit": {
+   "seen": 1792662249495
+  },
+  "cache.ring:strata-test/qwen3.8-flash-next-unsloth-ud-q4_k_xl": {
+   "seen": 1792662249495
+  },
+  "cache.ring:kimi/kimi-for-coding": {
+   "seen": 1792662249495
+  },
+  "cache.ring:kimi/k3": {
+   "seen": 1792662249495
+  },
+  "limits.local.srv:codernext4": {
+   "seen": 1792660983712,
+   "min": 0
+  },
+  "system.srv:codernext4/rss": {
+   "seen": 1792660983712
+  },
+  "system.srv:codernext4/e2e": {
+   "seen": 1792660983712
+  },
+  "system.srv:codernext4/decode": {
+   "seen": 1792660983712
+  },
+  "system.srv:codernext4/prefix": {
+   "seen": 1792660983712
+  },
+  "workers.prov:codernext4": {
+   "seen": 1792658824286
+  },
+  "models.rt:docker-model-runner/": {
+   "seen": 1792662848862
+  },
+  "tokens-group": {
+   "seen": 1792667091995
+  }
+ },
+ "auto": 1
+}
