@@ -15,6 +15,7 @@ import { cachedRows, cachedSessionMap, cachedWorkerWindows, handleCockpit, setAc
 import { createEndpointHealth } from "../../workers/endpoint-health.js";
 import { createRuntimeSampler, routerSamplerDeps, runtimeSampleSettings } from "../../router/runtime-samples.js";
 import { LimitsCache } from "../../router/limits.js";
+import { exportDefaultLayout } from "../../router/cockpit-layout-default.js";
 import { cockpitProbeSettings } from "../../router/cockpit-layout.js";
 import { listenRetry } from "../../router/listen.js";
 import { drainServers } from "../../router/drain.js";
@@ -335,4 +336,29 @@ export const routerCommand: CommandDef = {
   examples: ["pai router status", "pai router stats --since 1d"],
   seeAlso: ["pai worker policy", "pai providers"],
   subcommands: [startCommand, stopCommand, restartCommand, statusCommand, runCommand, statsCommand],
+};
+
+const layoutExportCommand: CommandDef = {
+  name: "export",
+  summary: "Write the saved default cockpit layout to the repo's shipped defaults file",
+  description: "Copies the layout the cockpit's \"save as default\" button saved (PAI_HOME/cockpit-layout-default.json) to src/config/defaults/cockpit-layout.json, which ships with the package and is what a new install's devices start from. Only runs on this command; commit the file afterwards.",
+  options: [{ name: "to", type: "string", value: "FILE", summary: "Write here instead of the checkout's shipped file" }],
+  examples: ["pai cockpit layout export"],
+  seeAlso: ["pai router status"],
+  run(ctx) {
+    try {
+      out(ok(`wrote ${exportDefaultLayout({ to: ctx.opts.to ? String(ctx.opts.to) : undefined })}`));
+    } catch (e) {
+      throw new CliError((e as Error).message, "pai cockpit layout export");
+    }
+  },
+};
+
+export const cockpitCommand: CommandDef = {
+  name: "cockpit",
+  summary: "The router's web cockpit: layout export",
+  description: "Maintenance for the cockpit page served by the router.",
+  examples: ["pai cockpit layout export"],
+  seeAlso: ["pai router status"],
+  subcommands: [{ name: "layout", summary: "The cockpit's default window layout", description: "The default layout new devices start from.", examples: ["pai cockpit layout export"], seeAlso: [], subcommands: [layoutExportCommand] }],
 };

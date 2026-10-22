@@ -34,6 +34,13 @@ for (const name of FILES) {
   console.log(`copy-defaults: ${src} → ${join(DIST_DIR, name)}`);
 }
 
+// the saved cockpit layout is optional: it exists once `pai cockpit layout export` has written it
+const LAYOUT = join(SRC_DIR, "cockpit-layout.json");
+if (existsSync(LAYOUT)) {
+  copyFileSync(LAYOUT, join(DIST_DIR, "cockpit-layout.json"));
+  console.log(`copy-defaults: ${LAYOUT} → ${join(DIST_DIR, "cockpit-layout.json")}`);
+}
+
 // esbuild bundles (tests, hooks) emit into directories next to where the
 // loader module sits; a bundle's shippedDefaultsDir() falls back to
 // <cwd>/src/config/defaults, which is SRC_DIR itself — nothing extra needed.

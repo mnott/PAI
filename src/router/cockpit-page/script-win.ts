@@ -83,7 +83,7 @@ ${WIN_CACHE_JS}
    for(k in d.kids)kids[k]=d.kids[k];
    for(k in d.stDefaults)st[k]=d.stDefaults[k];
   }
-  return{tree:WinT.split("c",leaves,px),kids:kids,stDefaults:st,cards:cards};
+  return{tree:WinT.split("c",leaves,px),kids:kids,stDefaults:st,cards:cards,served:window.PAI_LAYOUT_DEFAULT||null};
  }
  (function(){
   var root=document.getElementById("win-root");

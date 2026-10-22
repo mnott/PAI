@@ -5,7 +5,7 @@ import { docCommand, helpCommand } from "./commands/meta.js";
 import { workerCommand } from "./commands/worker.js";
 import { providersCommand } from "./commands/providers.js";
 import { PROVIDER_EDIT_COMMANDS, WORKER_CONFIG_COMMANDS } from "./commands/worker-config.js";
-import { routerCommand } from "./commands/router.js";
+import { cockpitCommand, routerCommand } from "./commands/router.js";
 import { moreCommand, setupsCommand } from "./commands/setups.js";
 import { modelsCommand } from "./commands/models.js";
 import { SESSION_NOTE_COMMANDS, sessionsCommand } from "./commands/session-notes.js";
@@ -61,7 +61,7 @@ export const GROUPS: GroupDef[] = [
     id,
     title: titles[id],
     daily: false,
-    commands: [...(id === "workers" ? [workerGroup, routerCommand] : []), ...(BATCH_B_EXTRA[id] ?? []), ...(BATCH_C[id] ?? [])],
+    commands: [...(id === "workers" ? [workerGroup, routerCommand, cockpitCommand] : []), ...(BATCH_B_EXTRA[id] ?? []), ...(BATCH_C[id] ?? [])],
   })),
 ];
 

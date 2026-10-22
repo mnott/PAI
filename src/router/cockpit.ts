@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
 import { expandHome, loadConfig, paiConfigFilePath, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
-import { readUsage, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
+import { isTimeOrdered, markTimeOrdered, readUsageCached, splitBySessionKind, usageLogFile, type SessionKindSplit, type UsageRow } from "./usage.js";
 import { defaultSources, drain, jobSessionName, loadSessionMap, loadSessionMapSteps, loadWorkerWindows, loadWorkerWindowsSteps, runSliced, withJobNames, withWorkerAttributionSteps, type SessionInfo, type WorkerWindow } from "./sessions.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
@@ -54,6 +54,7 @@ import { paiHomeDir } from "../config/pai-home.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
+import { readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -102,10 +103,15 @@ export function groupLimits<T extends { kind: string }>(limits: T[]): { cloud: T
  * -YYYYMMDD suffix, gateways a provider prefix. Only claude ids are folded;
  * other providers' ids are theirs and stay as served.
  */
+const canonicalMemo = new Map<string, string>();
 export function canonicalModel(id: string): string {
+  const hit = canonicalMemo.get(id);
+  if (hit !== undefined) return hit;
   const m = id.trim().toLowerCase().replace(/^anthropic\//, "");
-  if (!m.startsWith("claude-")) return id;
-  return m.replace(/\[[^\]]*\]$/, "").replace(/-(?:latest|\d{8})$/, "");
+  const out = !m.startsWith("claude-") ? id : m.replace(/\[[^\]]*\]$/, "").replace(/-(?:latest|\d{8})$/, "");
+  // model ids are few; a runaway set of odd ones is not kept
+  if (canonicalMemo.size < 5000) canonicalMemo.set(id, out);
+  return out;
 }
 
 /**
@@ -225,6 +231,71 @@ function tierProviderList(): string[] {
   }
 }
 
+type WholeLog = { days: number[]; daily: Record<string, number[]>; promptByProvider: Record<string, number>; promptSince: Record<string, string>; speed: ReturnType<typeof buildSpeed> };
+const WHOLE_LOG_TTL_MS = 30_000;
+const wholeLogMemo = new WeakMap<UsageRow[], { n: number; at: number; sig: string; out: WholeLog }>();
+
+/** The parts of the cockpit payload that read the whole log whatever the window is. Costly on a big log, so they are kept per log array until it grows or 30 s pass (the speed table moves with the clock). */
+function wholeLog(allRows: UsageRow[], now: number, providers: Record<string, { baseUrl?: string }>): WholeLog {
+  const sig = JSON.stringify(Object.entries(providers).map(([k, v]) => [k, v.baseUrl]));
+  const m = wholeLogMemo.get(allRows);
+  if (m && m.n === allRows.length && m.sig === sig && Math.abs(now - m.at) < WHOLE_LOG_TTL_MS) return m.out;
+  // tokens per day per model: always the last 14 days, whatever the window
+  const dayFrom = bucketStart(now, DAY) - 13 * DAY;
+  const days: number[] = [];
+  for (let t = dayFrom; t <= now; t += DAY) days.push(t);
+  const daily: Record<string, number[]> = {};
+  for (const r of allRows) {
+    const t = Date.parse(r.ts);
+    if (t < dayFrom) continue;
+    const arr = (daily[canonicalModel(r.model)] ??= days.map(() => 0));
+    arr[Math.floor((bucketStart(t, DAY) - dayFrom) / DAY)]! += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
+  }
+
+  // prompt tokens per provider over the whole log: denominator for the local
+  // servers' tokensSaved counter, which the stats endpoint gives no total for
+  const promptByProvider: Record<string, number> = {};
+  // first row per provider: the log (router restart) is younger than a server's own counters
+  const promptSince: Record<string, string> = {};
+  for (const r of allRows) {
+    if (!promptSince[r.provider] || r.ts < promptSince[r.provider]!) promptSince[r.provider] = r.ts;
+    promptByProvider[r.provider] = (promptByProvider[r.provider] ?? 0) + (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
+  }
+
+  const out = { days, daily, promptByProvider, promptSince, speed: buildSpeed(allRows, now, canonicalModel, (p) => isLoopbackUrl(providers[p]?.baseUrl ?? "")) };
+  wholeLogMemo.set(allRows, { n: allRows.length, at: now, sig, out });
+  return out;
+}
+
+/** Folded rows per source array: the fold of the rows seen so far, extended by the ones appended since. */
+const foldMemo = new WeakMap<UsageRow[], { sig: string; n: number; out: UsageRow[] }>();
+
+function foldedRows(allRows: UsageRow[], providers: Record<string, { enabled?: boolean }>): UsageRow[] {
+  const owners = modelOwners(providers as Parameters<typeof modelOwners>[0]);
+  if (!owners.size) return allRows;
+  const sig = JSON.stringify([Object.entries(providers).map(([k, v]) => [k, v.enabled]), [...owners]]);
+  const m = foldMemo.get(allRows);
+  if (m && m.sig === sig && m.n <= allRows.length) {
+    if (m.n < allRows.length) {
+      for (const r of foldProviders(allRows.slice(m.n), providers, owners)) m.out.push(r);
+      m.n = allRows.length;
+    }
+    return m.out;
+  }
+  const out = foldProviders(allRows, providers, owners);
+  foldMemo.set(allRows, { sig, n: allRows.length, out });
+  if (isTimeOrdered(allRows)) markTimeOrdered(out);
+  return out;
+}
+
+/** The rows at or after `from`. A log known to be in time order is scanned from the tail, stopping at the first older row. */
+function windowRows(allRows: UsageRow[], from: number): UsageRow[] {
+  if (!isTimeOrdered(allRows)) return allRows.filter((r) => Date.parse(r.ts) >= from);
+  let i = allRows.length;
+  while (i > 0 && Date.parse(allRows[i - 1]!.ts) >= from) i--;
+  return allRows.slice(i);
+}
+
 export function buildCockpitData(
   allRows: UsageRow[],
   win: CockpitWindow,
@@ -233,10 +304,10 @@ export function buildCockpitData(
   pool: PoolCarry | null = null,
   providers: Record<string, { enabled?: boolean; baseUrl?: string; models?: Record<string, unknown> }> = {}
 ) {
-  allRows = foldProviders(allRows, providers, modelOwners(providers));
   const { span, bucket } = WINDOWS[win];
   const from = bucketStart(now - span, bucket);
-  const rows = allRows.filter((r) => Date.parse(r.ts) >= from);
+  allRows = foldedRows(allRows, providers);
+  const rows = windowRows(allRows, from);
   const retries = retryRows(rows);
 
   // ecosystem per model: that of the provider serving most of its requests over the whole log
@@ -354,27 +425,7 @@ export function buildCockpitData(
     })
     .sort((a, b) => b.input + b.output + b.cacheWrite + b.cacheRead - (a.input + a.output + a.cacheWrite + a.cacheRead));
 
-  // tokens per day per model: always the last 14 days, whatever the window
-  const dayFrom = bucketStart(now, DAY) - 13 * DAY;
-  const days: number[] = [];
-  for (let t = dayFrom; t <= now; t += DAY) days.push(t);
-  const daily: Record<string, number[]> = {};
-  for (const r of allRows) {
-    const t = Date.parse(r.ts);
-    if (t < dayFrom) continue;
-    const arr = (daily[canonicalModel(r.model)] ??= days.map(() => 0));
-    arr[Math.floor((bucketStart(t, DAY) - dayFrom) / DAY)]! += (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0);
-  }
-
-  // prompt tokens per provider over the whole log: denominator for the local
-  // servers' tokensSaved counter, which the stats endpoint gives no total for
-  const promptByProvider: Record<string, number> = {};
-  // first row per provider: the log (router restart) is younger than a server's own counters
-  const promptSince: Record<string, string> = {};
-  for (const r of allRows) {
-    if (!promptSince[r.provider] || r.ts < promptSince[r.provider]!) promptSince[r.provider] = r.ts;
-    promptByProvider[r.provider] = (promptByProvider[r.provider] ?? 0) + (r.input_tokens ?? 0) + (r.cache_read_input_tokens ?? 0) + (r.cache_creation_input_tokens ?? 0);
-  }
+  const { daily, days, promptByProvider, promptSince, speed } = wholeLog(allRows, now, providers);
 
   const withRatio = <T extends Tok>(x: T) => ({ ...x, hitRatio: hitRatio(x) });
   const sessionSplit: SessionKindSplit = splitBySessionKind(rows);
@@ -395,7 +446,7 @@ export function buildCockpitData(
       buckets: PAUSE_BUCKETS.map((label) => ({ label, ...(pm.get(label) ?? { n: 0, hit: 0, write: 0, miss: 0, readTok: 0, writeTok: 0 }) })),
     })),
     bustParts,
-    speed: buildSpeed(allRows, now, canonicalModel, (p) => isLoopbackUrl(providers[p]?.baseUrl ?? "")),
+    speed,
     promptByProvider,
     promptSince,
     workers: sessionRows.filter((s) => s.worker),
@@ -1069,6 +1120,8 @@ export function cockpitQueue(
 }
 
 const BUILD_PLACEHOLDER = "__COCKPIT_BUILD__";
+/** Where the page gets the default layout this install serves (null = compose its own). */
+const LAYOUT_PLACEHOLDER = "null/*__COCKPIT_LAYOUT__*/";
 let buildId: string | null = null;
 /** Test seam: pin the build id the page is stamped with and the poll reports (null = derive again). */
 export function setCockpitBuildId(id: string | null): void {
@@ -1091,7 +1144,7 @@ export function handleCockpit(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   limits: LimitsSource,
-  readRows: () => UsageRow[] = readUsage,
+  readRows: () => UsageRow[] = readUsageCached,
   sessionMap: () => Map<string, SessionInfo> = loadSessionMap,
   system?: SystemMonitor,
   workerWindows: () => WorkerWindow[] = loadWorkerWindows,
@@ -1142,6 +1195,14 @@ export function handleCockpit(
       });
     return true;
   }
+  if (url.pathname === "/cockpit/layout-default" && req.method === "POST") {
+    if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
+    readBody(req).then(
+      (raw) => (saveDefaultLayout(raw) ? send(200, "application/json", '{"ok":true}') : send(400, "application/json", '{"ok":false,"message":"not a layout"}')),
+      (e: Error) => send(400, "application/json", JSON.stringify({ ok: false, message: e.message }))
+    );
+    return true;
+  }
   if (handleRegistryRoute(req, res, url.pathname, registryCtx, { sameOrigin: sameOriginAction, readBody })) return true;
   if (req.method === "GET" && url.pathname === "/cockpit/job") {
     const home = actionDepsOverride?.home ?? paiHomeDir();
@@ -1154,7 +1215,7 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId());
+      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c"));
     } catch {
       /* falls through to the 503 */
     }

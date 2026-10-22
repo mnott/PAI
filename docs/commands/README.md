@@ -13,6 +13,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, doctor |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
+| [`pai cockpit`](cockpit.md) | The router's web cockpit: layout export |
 | [`pai config`](config.md) | PAI settings: show, read, change |
 | [`pai daemon`](daemon.md) | The background service: status, start, stop, restart, logs |
 | [`pai db`](db.md) | Look into the PAI database (read only) |
@@ -93,6 +94,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai build watch` | Internal: kill a build tree when its gate process dies |
 | `pai cd` | Print a project's directory (the shell wrapper changes into it) |
 | `pai clear-names` | Wipe the stored tab names (recovery) |
+| `pai cockpit` | The router's web cockpit: layout export |
+| `pai cockpit layout` | The cockpit's default window layout |
+| `pai cockpit layout export` | Write the saved default cockpit layout to the repo's shipped defaults file |
 | `pai config` | PAI settings: show, read, change |
 | `pai config get` | Print one setting |
 | `pai config list` | Print all settings (secrets hidden) |

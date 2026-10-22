@@ -23,7 +23,8 @@ export const OLD_KEYS = ["pai.cockpit.layout.v1", "pai.cockpit.tiles.v1", "pai.c
 /** defaults: { tree, kids, stDefaults } — the shipped default layout (win-defaults.ts later);
  *  stDefaults holds the default min flags (e.g. the zero-metric cards).
  *  knownIds: every id the registry and the dynamic sources currently know.
- *  loadWin returns { tree, kids, st } — never null; invalid or old data falls back to defaults. */
+ *  loadWin returns { tree, kids, st } — never null; invalid or old data falls back to defaults.
+ *  A device with no layout of its own starts from defaults.served (the install's saved default) when there is one. */
 export const WIN_STORE_JS = String.raw`var WIN_KEY="pai.cockpit.win.v2";
 var LAYOUT_V=2;
 var GHOST_MS=30*24*60*60*1000;
@@ -206,12 +207,18 @@ function prevOfDefault(defaults){
 }
 /** Load the layout: parse, prune ghosts, insert missing static cards, merge default min
  *  flags under the saved state. Invalid or old data -> defaults. Old keys are deleted. */
+/** The layout the router serves as this install's default (a fresh copy), or null: absent, or not a layout of this schema. */
+function servedOf(defaults){
+ var s=defaults&&defaults.served;
+ if(!s||typeof s!=="object"||typeof s.v!=="number"||s.v<LAYOUT_V||!s.tree||typeof s.tree!=="object")return null;
+ return clone(s);
+}
 function loadWin(storage,defaults,knownIds,now){
  now=typeof now==="number"?now:Date.now();
  deleteOldKeys(storage);
  var raw=null;
  try{raw=storage.getItem(WIN_KEY)}catch(e){}
- var obj=parseWin(raw);
+ var obj=parseWin(raw)||servedOf(defaults);
  if(!obj)return defaultsOf(defaults);
  var r=reconcileSaved(obj,defaults,knownIds,now);
  if(obj.auto===1)r.tree=repairOrder(r.tree,defaults.tree);

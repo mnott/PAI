@@ -540,7 +540,7 @@ function init(main,defaults,opts){
  var specs=defaults.cards||[],known=[],i;
  for(i=0;i<specs.length;i++){W.cards[specs[i].id]=buildCard(specs[i]);known.push(specs[i].id)}
  var hadSaved=false;
- try{var sv=parseWin(W.opts.storage.getItem(WIN_KEY));hadSaved=!!sv&&sv.auto!==1}catch(e){}
+ try{var sv=parseWin(W.opts.storage.getItem(WIN_KEY))||servedOf(defaults);hadSaved=!!sv&&sv.auto!==1}catch(e){}
  var l=loadWin(W.opts.storage,defaults,known,W.opts.now);
  W.auto=!hadSaved&&!opts.noFit;
  W.tree=l.tree;W.kids=l.kids;W.st=l.st;W.defRoot=ids(defaults.tree);
@@ -678,6 +678,8 @@ var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerT
  apply:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
  /** A drop: apply the moved tree and re-arrange (content-driven layout): fitted heights re-measure, narrow rows wrap into the grid, containers grow. */
  applyFit:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;W.auto=true;W.refit=true;relayout();save()},
+ /** The layout as it would be saved now (the "save as default" button posts it). */
+ snapshot:function(){var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}var o={v:LAYOUT_V,t:Date.now(),tree:W.tree,kids:W.kids,st:st};if(W.auto)o.auto=1;return o},
  flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;if(!complete())return;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}W.t=saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
 return api;
 })();

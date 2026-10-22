@@ -231,3 +231,35 @@ describe("win store (spec 6)", () => {
     expect(d.tree).toEqual(defaults().tree);
   });
 });
+
+describe("served default layout (a device with no layout of its own)", () => {
+  const served = () => ({ v: 2, t: 1, tree: split("c", [leaf("c"), leaf("b"), leaf("a")], [100, 200, 300]), kids: {}, st: {} });
+
+  it("a fresh device starts from the served default, not the built-in", () => {
+    const s = new MemStorage();
+    const l = loadWin(s, { ...defaultsNoGroup(), served: served() }, KNOWN_NO_GROUP, NOW);
+    expect(ids(l.tree)).toEqual(["c", "b", "a"]);
+  });
+
+  it("a device with its own layout keeps it", () => {
+    const s = new MemStorage();
+    saveWin(s, split("c", [leaf("b"), leaf("a"), leaf("c")], [1, 2, 3]), {}, {}, false);
+    const l = loadWin(s, { ...defaultsNoGroup(), served: served() }, KNOWN_NO_GROUP, NOW);
+    expect(ids(l.tree)).toEqual(["b", "a", "c"]);
+  });
+
+  it("no served default, or an invalid one: the built-in", () => {
+    for (const bad of [undefined, null, { v: 1, tree: {} }, { v: 2 }]) {
+      const l = loadWin(new MemStorage(), { ...defaultsNoGroup(), served: bad }, KNOWN_NO_GROUP, NOW);
+      expect(ids(l.tree)).toEqual(ids(defaultsNoGroup().tree));
+    }
+  });
+
+  it("reset (storage cleared) restores the served default", () => {
+    const s = new MemStorage();
+    const d = { ...defaultsNoGroup(), served: served() };
+    saveWin(s, split("c", [leaf("b"), leaf("a"), leaf("c")], [1, 2, 3]), {}, {}, false);
+    s.removeItem("pai.cockpit.win.v2");
+    expect(ids(loadWin(s, d, KNOWN_NO_GROUP, NOW).tree)).toEqual(["c", "b", "a"]);
+  });
+});

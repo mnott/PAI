@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
 import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 
@@ -306,6 +306,66 @@ export function readUsage(file: string = usageLogFile()): UsageRow[] {
     }
   }
   return rows;
+}
+
+function parseLines(text: string, into: UsageRow[]): void {
+  for (const l of text.split("\n")) {
+    if (!l) continue;
+    try {
+      into.push(JSON.parse(l) as UsageRow);
+    } catch {
+      /* skip torn line */
+    }
+  }
+}
+
+/** Parsed log per file: rows up to byte `end` (a line boundary), the file identity they came from. */
+const usageCache = new Map<string, { ino: number; end: number; rows: UsageRow[]; lastMs: number }>();
+/** Row arrays known to hold their rows in time order (the cached log, while every appended row is not older than the one before). */
+const timeOrdered = new WeakSet<UsageRow[]>();
+export const isTimeOrdered = (rows: UsageRow[]): boolean => timeOrdered.has(rows);
+export const markTimeOrdered = (rows: UsageRow[]): void => void timeOrdered.add(rows);
+
+/**
+ * readUsage for the cockpit's polls and range clicks: the log is append-only, so the rows parsed
+ * last time stay and only the bytes after them are read. A truncated or replaced file is re-read
+ * whole. The returned array is shared — callers must not mutate it.
+ */
+export function readUsageCached(file: string = usageLogFile()): UsageRow[] {
+  if (!existsSync(file)) {
+    usageCache.delete(file);
+    return [];
+  }
+  const fd = openSync(file, "r");
+  try {
+    const st = fstatSync(fd);
+    let c = usageCache.get(file);
+    if (c && (c.ino !== st.ino || st.size < c.end)) c = undefined;
+    if (!c) {
+      c = { ino: st.ino, end: 0, rows: [], lastMs: 0 };
+      timeOrdered.add(c.rows);
+    }
+    if (st.size > c.end) {
+      const buf = Buffer.alloc(st.size - c.end);
+      const n = readSync(fd, buf, 0, buf.length, c.end);
+      let chunk = buf.subarray(0, n);
+      // an unfinished last line (a write in flight) waits for the next read
+      const nl = chunk.lastIndexOf(10);
+      chunk = nl < 0 ? chunk.subarray(0, 0) : chunk.subarray(0, nl + 1);
+      const from = c.rows.length;
+      parseLines(chunk.toString("utf8"), c.rows);
+      for (let i = from; i < c.rows.length; i++) {
+        const t = Date.parse(c.rows[i]!.ts);
+        if (t < c.lastMs) timeOrdered.delete(c.rows);
+        else if (t >= 0) c.lastMs = t;
+      }
+      c.end += chunk.length;
+    }
+    usageCache.set(file, c);
+    return c.rows;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function parseSince(s: string): number {
