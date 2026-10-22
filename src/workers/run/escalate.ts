@@ -79,7 +79,8 @@ export async function tryEscalate(
       const p0 = parseRunnerArgs(a.opts.claudeArgs).prompt;
       let swapped = false;
       return (a.runner ?? runWorker)({
-        ...relaunchOptions(a.opts, {}),
+        // the target tier's own route: a --local run must not drag the local server into the cloud tier
+        ...relaunchOptions(a.opts, { localFlag: undefined, localName: undefined }),
         providerFlag: o.providerFlag,
         modelFlag: o.modelFlag,
         label: o.label,

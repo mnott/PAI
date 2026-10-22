@@ -25,6 +25,7 @@ import {
   describeTool,
   nowStamp,
   parseSleepSecs,
+  selfProcStart,
 } from "../status.js";
 import { certainContextWindow } from "../../utils/model-window.js";
 import { fallThroughReason } from "../policy.js";
@@ -103,6 +104,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     id: wid,
     pid: process.pid,
     runPid: process.pid,
+    procStart: selfProcStart(),
     ...parentInfo(),
     label,
     cwd,

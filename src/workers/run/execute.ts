@@ -13,7 +13,7 @@ import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { endFields, parentInfo } from "../endreason.js";
 import { eventsPath, ledgerPath } from "../paths.js";
-import { type WorkerStatus, newWorkerId, saveStatus, nowStamp, markStartFailed } from "../status.js";
+import { type WorkerStatus, newWorkerId, saveStatus, nowStamp, markStartFailed, selfProcStart } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
 import { runImageCapability } from "../engines/image.js";
 import { resolveHostSession } from "../pane.js";
@@ -72,6 +72,7 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
     id: wid,
     pid: process.pid,
     runPid: process.pid,
+    procStart: selfProcStart(),
     label,
     cwd,
     term,
@@ -198,6 +199,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     id: wid,
     pid: process.pid,
     runPid: process.pid,
+    procStart: selfProcStart(),
     ...parentInfo(),
     label,
     cwd,
