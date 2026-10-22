@@ -188,21 +188,27 @@ export async function runProbed(o: ProbeOptions): Promise<number> {
   };
   const child = spawn("bash", ["-c", o.command], { cwd: o.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   let last = Date.now();
-  let probed = false;
+  let probing = false;
+  let announcedIdle = false;
   let spun = false;
   let pending: Promise<void> = Promise.resolve();
   child.stdout.on("data", (d: Buffer) => ((last = Date.now()), out(d.toString())));
   child.stderr.on("data", (d: Buffer) => ((last = Date.now()), err(d.toString())));
   const timer = setInterval(() => {
-    if (probed || Date.now() - last < idle * 1000 || !child.pid) return;
-    probed = true;
+    // a loaded machine can reach the idle threshold before the loop starts (or before the watchdog thread
+    // is up): keep probing while the run stays silent, until a spinning main thread is found
+    if (probing || spun || Date.now() - last < idle * 1000 || !child.pid) return;
+    probing = true;
     const pids = nodeDescendants(child.pid);
     for (const p of pids) writeFileSync(join(o.reportDir, `probe-${p}`), "");
     pending = collectFrames(o.reportDir, pids, 3000).then((frames) => {
       for (const p of pids) rmQuiet(join(o.reportDir, `probe-${p}`));
-      err(`\n${diagnose(frames, o.cwd, idle)}\n`);
+      const stuck = frames.some((f) => userFrames(f, o.cwd).length > 0);
+      if (stuck || !announcedIdle) err(`\n${diagnose(frames, o.cwd, idle)}\n`);
+      announcedIdle = true;
+      probing = false;
       // a spinning loop never ends: stop the run now so the model gets the diagnosis, not a Bash timeout
-      if (frames.some((f) => userFrames(f, o.cwd).length > 0)) {
+      if (stuck) {
         spun = true;
         for (const p of [...pids, child.pid as number]) killQuiet(p, "SIGTERM");
         setTimeout(() => pids.forEach((p) => killQuiet(p, "SIGKILL")), 2000).unref();

@@ -153,8 +153,12 @@ describe("wrapped commands survive the shell", () => {
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, "pai"), `#!/bin/sh\nexec npx tsx ${resolve("src/cli/index.ts")} "$@"\n`, { mode: 0o755 });
   /** Runs the guard's rewritten string through bash -c, as Claude Code does. */
+  const childEnv = () => {
+    const { PAI_DIR: _legacy, ...env } = process.env; // PAI_DIR makes the CLI print a deprecation notice
+    return { ...env, PATH: `${bin}:${process.env.PATH}` };
+  };
   const viaGuard = (command: string, cwd = tmp) =>
-    spawnSync("bash", ["-c", wrapTestCommand(command)], { cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FOO: "bar" }, encoding: "utf8" });
+    spawnSync("bash", ["-c", wrapTestCommand(command)], { cwd, env: { ...childEnv(), FOO: "bar" }, encoding: "utf8" });
 
   it("runs timeout 5 echo hello", () => {
     const r = viaGuard("timeout 5 echo hello");
@@ -169,7 +173,7 @@ describe("wrapped commands survive the shell", () => {
   }, 60_000);
 
   it("runs words after -- directly", () => {
-    const r = spawnSync("bash", ["-c", "pai worker test-run -- bash -c 'timeout 5 echo hello'"], { cwd: tmp, env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8" });
+    const r = spawnSync("bash", ["-c", "pai worker test-run -- bash -c 'timeout 5 echo hello'"], { cwd: tmp, env: childEnv(), encoding: "utf8" });
     expect(r.stdout.trim()).toBe("hello");
   }, 60_000);
 
