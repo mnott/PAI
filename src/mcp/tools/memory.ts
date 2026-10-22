@@ -311,7 +311,7 @@ export async function toolMemoryGet(
     const content = readFileSync(fullPath, "utf8");
     const allLines = content.split("\n");
 
-    const fromLine = (params.from ?? 1) - 1;
+    const fromLine = Math.max(1, params.from ?? 1) - 1;
     const toLine =
       params.lines != null
         ? Math.min(fromLine + params.lines, allLines.length)

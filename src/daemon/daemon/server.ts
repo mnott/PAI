@@ -56,6 +56,9 @@ function isSocketLive(path: string): Promise<boolean> {
   });
 }
 
+/** Longest accepted IPC request line; a client exceeding it is disconnected. */
+const MAX_IPC_LINE_BYTES = 4 * 1024 * 1024;
+
 /**
  * Start the Unix Domain Socket IPC server.
  */
@@ -78,6 +81,11 @@ async function startIpcServer(socketPath: string): Promise<Server> {
 
     socket.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
+      if (buffer.length > MAX_IPC_LINE_BYTES && buffer.indexOf("\n") === -1) {
+        sendResponse(socket, { id: "?", ok: false, error: "Request line too long" });
+        socket.destroy();
+        return;
+      }
       let nl: number;
       while ((nl = buffer.indexOf("\n")) !== -1) {
         const line = buffer.slice(0, nl);
@@ -112,6 +120,11 @@ async function startIpcServer(socketPath: string): Promise<Server> {
   });
 
   server.listen(socketPath, () => {
+    try {
+      chmodSync(socketPath, 0o600);
+    } catch (e) {
+      process.stderr.write(`[pai-daemon] Could not chmod socket: ${e}\n`);
+    }
     process.stderr.write(
       `[pai-daemon] IPC server listening on ${socketPath}\n`
     );
