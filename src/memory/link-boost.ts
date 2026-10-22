@@ -19,6 +19,7 @@
  */
 
 import type { SearchResult } from "./search.js";
+import { maxOf } from "../utils/min-max.js";
 
 /** A directed link between two note paths, as stored in vault_links. */
 export interface LinkEdge {
@@ -67,7 +68,7 @@ export function applyLinkBoost(
   // Normalise against the most-linked result so the boost is bounded by
   // `weight` regardless of corpus size. Without this, a densely linked project
   // would swamp similarity entirely while a sparse one would see no effect.
-  const maxInbound = Math.max(...inbound.values());
+  const maxInbound = maxOf(inbound.values());
 
   return results
     .map((r) => {

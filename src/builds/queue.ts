@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { minOf } from "../utils/min-max.js";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { DEFAULT_TEST_SLOTS } from "./config.js";
@@ -268,7 +269,7 @@ export async function buildNext(dir: string, idOrLabel: string, d: Partial<Queue
     const t = all.find((x) => x.id === idOrLabel) ?? all.find((x) => x.label === idOrLabel && x.state === "waiting");
     if (!t) throw new Error(`no queued build "${idOrLabel}"`);
     if (t.state !== "waiting") throw new Error(`build ${t.id} is already running`);
-    const lowest = Math.min(...all.filter((x) => x.state === "waiting").map((x) => x.seq));
+    const lowest = minOf(all.filter((x) => x.state === "waiting").map((x) => x.seq));
     writeTicket(dir, { ...t, seq: lowest - 1 });
     return ordered(readTickets(dir)).filter((x) => x.state === "waiting").map((x) => x.id);
   });

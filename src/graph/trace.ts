@@ -6,6 +6,7 @@
  */
 
 import type { StorageBackend } from "../storage/interface.js";
+import { maxOf, minOf } from "../utils/min-max.js";
 
 // ---------------------------------------------------------------------------
 // Public param / result types
@@ -208,8 +209,8 @@ export async function handleGraphTrace(
   // ---------------------------------------------------------------------------
 
   const timestamps = entries.map((e) => e.indexed_at).filter((t) => t > 0);
-  const timeFrom = timestamps.length > 0 ? Math.min(...timestamps) : 0;
-  const timeTo = timestamps.length > 0 ? Math.max(...timestamps) : 0;
+  const timeFrom = timestamps.length > 0 ? minOf(timestamps) : 0;
+  const timeTo = timestamps.length > 0 ? maxOf(timestamps) : 0;
 
   return {
     query,

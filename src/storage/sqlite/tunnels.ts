@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "better-sqlite3";
+import { maxOf, minOf } from "../../utils/min-max.js";
 import { STOP_WORDS } from "../../utils/stop-words.js";
 import type { RegistryBackend } from "../registry-interface.js";
 import type { Tunnel, FindTunnelsOptions, FindTunnelsResult } from "../../memory/tunnels.js";
@@ -108,8 +109,8 @@ async function findTunnelsForSlugMap(
       const projects = rows
         .map((r) => slugMap[r.project_id] ?? String(r.project_id))
         .filter(Boolean);
-      const firstSeen = Math.min(...rows.map((r) => r.first_seen));
-      const lastSeen = Math.max(...rows.map((r) => r.last_seen));
+      const firstSeen = minOf(rows.map((r) => r.first_seen));
+      const lastSeen = maxOf(rows.map((r) => r.last_seen));
 
       tunnels.push({
         concept: term,

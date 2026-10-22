@@ -12,6 +12,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { maxOf } from "../utils/min-max.js";
 import { join } from "node:path";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
@@ -501,6 +502,6 @@ export function errorsTable(groups: ToolErrorGroup[]): string {
   for (const g of [...groups].sort((a, b) => b.count - a.count)) {
     rows.push([g.signature, String(g.count), String(g.workers.length), g.providers.join(","), hhmm(g.first), hhmm(g.last)]);
   }
-  const w = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
+  const w = rows[0].map((_, i) => maxOf(rows.map((r) => r[i].length)));
   return rows.map((r) => r.map((c, i) => c.padEnd(w[i])).join("  ")).join("\n");
 }

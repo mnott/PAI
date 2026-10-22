@@ -9,6 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { minOf } from "../utils/min-max.js";
 import { dirname, join } from "node:path";
 import { parseServers, resolveModelPath, type LocalConfig, type RunningServer } from "./local-tiers.js";
 
@@ -213,7 +214,7 @@ export function pickInstance(
   const ready = running.filter((i) => i.state === "ready");
   if (!ready.length) return null;
   const load = ready.map((i) => busy(instanceEngineKey(i)));
-  const min = Math.min(...load);
+  const min = minOf(load);
   const tied = ready.filter((_, k) => load[k] === min);
   const n = rrCounters.get(model) ?? 0;
   rrCounters.set(model, n + 1);

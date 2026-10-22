@@ -21,6 +21,7 @@
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { minOf } from "../utils/min-max.js";
 import { join } from "node:path";
 
 export interface SchedConfig {
@@ -187,7 +188,7 @@ export class RequestScheduler {
     if (eng.inflight) backlogged.add(eng.inflight.session);
     if (!backlogged.has(session)) {
       const others = [...backlogged].map((s) => ctr.get(s) ?? 0);
-      const floor = others.length ? Math.min(...others) : 0;
+      const floor = others.length ? minOf(others) : 0;
       ctr.set(session, Math.max(ctr.get(session) ?? 0, floor));
     } else if (!ctr.has(session)) ctr.set(session, 0);
     const acct = this.acct(worker, session, engineName);
@@ -230,7 +231,7 @@ export class RequestScheduler {
     let bestAt = Infinity;
     for (const s of sessions) {
       const c = ctr.get(s) ?? 0;
-      const at = Math.min(...eng.waiting.filter((w) => w.session === s).map((w) => w.at));
+      const at = minOf(eng.waiting.filter((w) => w.session === s).map((w) => w.at));
       if (c < bestC || (c === bestC && at < bestAt)) {
         best = s;
         bestC = c;

@@ -10,6 +10,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { maxOf } from "../utils/min-max.js";
 import { eventsPath } from "./paths.js";
 import { loadStatuses, type WorkerStatus } from "./status.js";
 import { isLocalProvider } from "./config.js";
@@ -324,7 +325,7 @@ export function renderUsage(rep: UsageReport, opts: { workers: boolean }): strin
   const body = [...rep.rows.map(cells)];
   const totals = opts.workers ? [cells(rep.cloud), cells(rep.local)] : [cells(rep.cloud)];
   const all = [head, ...body, ...totals];
-  const w = head.map((_, i) => Math.max(...all.map((r) => r[i].length)));
+  const w = head.map((_, i) => maxOf(all.map((r) => r[i].length)));
   const textCols = 2;
   const fmt = (r: string[]) => r.map((c, i) => (i < textCols ? c.padEnd(w[i]) : c.padStart(w[i]))).join("  ");
   return [fmt(head), ...body.map(fmt), fmt(w.map((x) => "-".repeat(x))), ...totals.map(fmt)].join("\n");

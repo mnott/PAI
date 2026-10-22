@@ -30,6 +30,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { minOf } from "../../../utils/min-max.js";
 import { readTailLines, scanIncremental } from "./transcript-scan.js";
 import { paiCacheDir } from "../../../runtime-paths.js";
 import { claudeProjectsDir } from "../../../config/pai-home.js";
@@ -664,7 +665,7 @@ export function measureCompactionTrigger(
     if (admissible.length === 0) return null;
   }
 
-  const trigger = Math.min(...admissible.map((s) => s.preTokens));
+  const trigger = minOf(admissible.map((s) => s.preTokens));
   console.error(
     `[context-fill] measured trigger for ${cwd}: ${trigger} (minimum of ` +
     admissible.map((s) => `${s.preTokens}@${s.timestamp}`).join(", ") + ")"
