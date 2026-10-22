@@ -76,7 +76,7 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
     expect(r.speed.bars).toBe(6); // 2 models x (ttft, write, read)
     expect(r.pause.rows).toBe(2);
     expect(r.pause.cols).toBe(3); // model + the 2 buckets of the fixture
-    expect(r.sessions.rows).toBe(10 + 1); // top rows + the "+N more" row
+    expect(r.sessions.wrows).toBe(10 + 1); // top rows + the "+N more" row
     expect(r.sessions.more).toBe(1);
     expect(r.runs.groups).toBe(2);
     expect(r.runs.wrows).toBe(3);
@@ -84,7 +84,7 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
     expect(r.afterFold.wrows).toBeLessThan(3);
     expect(JSON.parse(r.foldSaved)).toBeTruthy();
     // "+N more" opens every session row
-    expect(r.afterMore.rows).toBe(12 + 1);
+    expect(r.afterMore.wrows).toBe(12 + 1);
     expect(r.moreSaved).toBe("1");
     // a value-only payload moves no box
     expect(r.boxes2).toBe(r.boxes);
@@ -103,19 +103,18 @@ describe("C1 guards: sessions fold", () => {
     const store: Record<string, string> = {};
     const localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
     const updates: string[] = [];
-    const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "table", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
+    const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runRow", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
     const lib = new Function("localStorage", `var U=arguments[1],SESSION_ROWS=50,wrFolded=function(){return{}},WR_FOLD_KEY="k",WCHX={},Win={update:function(){U.push("data")}},data={},fitTables=function(){};\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${fns}\n${WIN_TABLES_JS}\nreturn{html:sessionsHtml,wire:wtWire};`);
     const api = lib(localStorage, updates) as { html: (d: unknown) => string; wire: (c: unknown) => void };
     const sess = (i: number) => ({ session: `s${String(i).padStart(7, "0")}x`, name: `n${i}`, models: i === 0 ? ["m-a", "m-b", "m-c"] : ["m-a"], requests: 1, input: 10, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts: 0, errors: 0, lastTs: new Date().toISOString() });
     const d = { bySession: Array.from({ length: 12 }, (_, i) => sess(i)) };
-    const rows = (h: string) => (h.match(/<tr>/g) ?? []).length - 1;
+    const rows = (h: string) => (h.match(/class="wr-row"/g) ?? []).length;
 
     const folded = api.html(d);
     expect(rows(folded)).toBe(11); // 10 sessions + the fold row
     expect(folded).toMatch(/\+2 more sessions \(\d+ tokens\)/);
     expect(folded).toContain('data-sessmore="1"');
-    expect(folded).toMatch(/m-a <span class="dim">\+2<\/span>/); // first model + N
-    expect(folded).toContain('title="m-a, m-b, m-c"');
+    expect(folded).toContain('title="m-a, m-b, m-c"'); // all models in the chip title
 
     let onClick: ((e: unknown) => void) | undefined;
     api.wire({ body: { addEventListener: (_: string, f: (e: unknown) => void) => { onClick = f; }, contains: () => true } });
@@ -132,16 +131,19 @@ describe("C1 guards: sessions fold", () => {
 });
 
 describe("sessions by tokens compact rows", () => {
-  const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "table", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
+  const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runRow", "sessMore", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
   const lib = new Function("localStorage", `var SESSION_ROWS=50;\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${fns}\nreturn sessionsHtml;`);
   const html = lib({ getItem: () => null }) as (d: unknown) => string;
   const s = (i: number, input: number, errors: number, busts: number) => ({ session: `s${i}abcdefgh`, name: `n${i}`, models: ["m-a"], requests: 2, input, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts, errors, lastTs: new Date().toISOString() });
-  it("one row per session, chips only above zero, the largest tokens bar at 100 percent", () => {
+  it("one wr-row per session like a worker run: one line, detail in the title, chips only above zero, the largest bar at 100 percent", () => {
     const out = html({ bySession: [s(0, 1000, 0, 0), s(1, 500, 2, 1), s(2, 10, 0, 0)] });
-    expect((out.match(/<tr>/g) ?? []).length - 1).toBe(3);
+    expect((out.match(/class="wr-row"/g) ?? []).length).toBe(3);
+    expect(out).not.toContain("<table");
+    for (const c of ["wr-dot", "wr-lab", "badge", "wr-bar", "wr-n", "wr-du"]) expect(out).toContain(`class="${c}`);
     expect((out.match(/chip warn/g) ?? []).length).toBe(1);
     expect((out.match(/chip bad/g) ?? []).length).toBe(1);
-    expect(out.match(/<u style="width:(\d+)%/)?.[1]).toBe("100");
-    expect(html({ bySession: [s(0, 1000, 0, 0)] })).not.toContain("busts");
+    expect(out.match(/<span class="wr-bar"[^>]*><i style="width:(\d+)%/)?.[1]).toBe("100");
+    expect(out).toMatch(/class="wr-row" title="[^"]*s0abcdef[^"]*2 req[^"]*out 5/s);
+    expect(html({ bySession: [s(0, 1000, 0, 0)] })).not.toContain("chip");
   });
 });

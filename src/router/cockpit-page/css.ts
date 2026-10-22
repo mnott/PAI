@@ -57,7 +57,7 @@ td.txt{white-space:normal;overflow-wrap:anywhere}
 /* the non-.txt columns shrink to their content, so the first .txt column takes the free width */
 th:not(.txt),td:not(.txt){width:1%}
 .wr-group{margin-bottom:6px}.wr-head{display:flex;gap:8px;align-items:baseline;padding:2px 0;border-bottom:1px solid var(--line);color:var(--fg);text-decoration:none;white-space:nowrap}.wr-head b{overflow:hidden;text-overflow:ellipsis}.wr-head .dim{margin-left:auto;font-size:11px}.wr-car{color:var(--dim);width:10px}
-.wr-row{display:flex;gap:8px;align-items:center;padding:2px 0 2px 12px;font-size:12px;white-space:nowrap}.wr-lab{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis}.wr-row .badge{max-width:90px;overflow:hidden;text-overflow:ellipsis}
+.wr-row{display:flex;gap:8px;align-items:center;padding:2px 0 2px 12px;font-size:12px;white-space:nowrap}.wr-lab{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis}.wr-row .badge{max-width:90px;overflow:hidden;text-overflow:ellipsis}.wr-row .chip{padding:0 5px;font-size:11px}
 .wr-dot{flex:0 0 8px;height:8px;border-radius:50%;background:var(--dim)}.wr-ok{background:var(--ok)}.wr-bad{background:var(--bad)}.wr-warn{background:var(--warn)}.wr-run{background:var(--acc)}
 .wr-bar{flex:0 0 60px;height:6px;background:var(--line);border-radius:3px;overflow:hidden}.wr-bar i{display:block;height:100%;background:var(--acc)}.wr-n{flex:0 0 46px;text-align:right}.wr-du{flex:0 0 58px;text-align:right;color:var(--dim)}
 

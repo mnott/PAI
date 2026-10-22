@@ -89,22 +89,31 @@ function speedHtml(){
  ((sys&&sys.servers)||[]).forEach(function(s){ls[s.provider]=1});((lim&&lim.limits)||[]).forEach(function(l){if(l.kind==="local")ls[l.provider]=1});
  return sp.length?speedBars(sp,win,ls):'<span class="dim" title="Timing is recorded for streamed replies since the router restart.">no timed requests yet</span>';
 }
-/** Sessions by tokens: name column capped, models as first +N, rows past the top N folded into one expandable row (state in localStorage like folds). */
+/** One row for both Worker runs and Sessions by tokens (one owner): status dot, label, model chip, token bar relative to o.max, number, right-hand cell (duration or age), hit%, optional extra markup; full detail in the row's title.
+ *  o: {st dot state, lab, full tooltip, dot title, model, models, w tokens, max, du, hit ratio|null, extra markup}. */
+function runRow(o){
+ var pc=o.w>0?Math.max(2,Math.round(o.w/o.max*100)):0;
+ return'<div class="wr-row" title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="'+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span>'+(o.extra||"")+'</div>'
+}
+/** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds). */
 var SESS_MORE_KEY="pai.cockpit.sessmore";
 function sessMore(){try{return localStorage.getItem(SESS_MORE_KEY)==="1"}catch(e){return false}}
 function sessionsHtml(d){
- var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore();
- function row(s){var nm=s.name?esc(s.name)+' <span class="dim">· '+esc(s.session.slice(0,8))+'</span>':esc(s.session.slice(0,8));var v=s.worker?' <span class="'+vcls(s.verdict)+'" title="worker '+esc(s.worker||"")+'">'+esc(s.verdict||"worker")+'</span>':'';
-  var ms=s.models||[],mc=ms.length?esc(ms[0])+(ms.length>1?' <span class="dim">+'+(ms.length-1)+'</span>':''):'';
-  var max=all.length?tot(all[0]):0,t=tot(s),pc=max>0?Math.max(t>0?2:0,Math.round(t/max*100)):0;
-  return['<span title="'+esc((s.name?s.name+" · ":"")+s.session)+'">'+nm+v+'</span>','<span title="'+esc(ms.join(", "))+'">'+mc+'</span>',s.requests,'<span class="st-tok"><b>'+fmt(t)+'</b><i class="st-bar" title="tokens relative to the largest session"><u style="width:'+pc+'%"></u></i></span>',fmt(s.input+s.cacheWrite),fmt(s.output),'<span class="'+hitCls(s.hitRatio)+'">'+pct(s.hitRatio)+'</span>',s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'',s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'',ago(s.lastTs)]}
- var shown=open?all:all.slice(0,top),rest=all.slice(top),rows=shown.map(row);
- if(rest.length){
-  var rt=rest.reduce(function(a,s){return a+tot(s)},0),blank=function(){return""};
-  rows.push(['<a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a>'].concat(row(all[0]).slice(1).map(blank)));
+ var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0;
+ function row(s){
+  var ms=s.models||[],t=tot(s),recent=s.lastTs&&Date.now()-new Date(s.lastTs).getTime()<300000;
+  var st=s.errors?"bad":s.worker?vcls(s.verdict):recent?"run":"dim";
+  var lab=s.name||s.session.slice(0,8);
+  var full=lab+" · "+s.session+(s.worker?" · worker "+s.worker+" · "+(s.verdict||"worker"):"")+"\n"+s.requests+" req · fresh in "+fmt(s.input+s.cacheWrite)+" · out "+fmt(s.output)+" · hit "+pct(s.hitRatio)+" · busts "+(s.busts||0)+" · errors "+(s.errors||0)+" · last "+ago(s.lastTs);
+  var ex=(s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'')+(s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'');
+  return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex});
  }
- var cap="width:${n(L.sessionNameMaxPct)}%;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
- return table(["session .txt","models .txt","req","tokens","fresh in","out","hit%","busts","errors","last"],rows,null,{"session":cap,"models":"white-space:nowrap"});
+ var shown=open?all:all.slice(0,top),rest=all.slice(top),h=shown.map(row).join("");
+ if(rest.length){
+  var rt=rest.reduce(function(a,s){return a+tot(s)},0);
+  h+='<div class="wr-row"><a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a></div>';
+ }
+ return'<div class="wr-group">'+h+'</div>';
 }
 /** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
 function workerGroups(ws,W){
@@ -126,9 +135,9 @@ function workersHtml(d){
   if(shut)return'<div class="wr-group">'+head+'</div>';
   return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
    var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
-   var model=(s.models&&s.models[0])||"–",pc=r.w>0?Math.max(2,Math.round(r.w/g.max*100)):0;
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
-   return'<div class="wr-row" title="'+esc(full)+'"><i class="wr-dot wr-'+st+'" title="'+esc(s.verdict||"worker")+'"></i><span class="wr-lab">'+esc(lab)+'</span><span class="badge" title="'+esc((s.models||[]).join(", ")||"no model")+'">'+esc(model)+'</span><span class="wr-bar" title="weighted tokens: '+fmt(r.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(r.w?fmt(r.w):"–")+'</span><span class="wr-du">'+du+'</span><span class="'+hitCls(s.hitRatio)+'" title="cache hit">'+(s.requests?pct(s.hitRatio):"–")+'</span></div>'}).join("")+'</div>'}).join("");
+   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null});
+  }).join("")+'</div>'}).join("");
 }
 /** Cache verdict by pause: one matrix, a row per model with data, a column per pause bucket, cell "hit% (n)" coloured by hitCls, an empty bucket a dim dot.
  *  Narrow card (pauseFit adds .pm-narrow): the n leaves the cell and stays in its tooltip. */
