@@ -239,12 +239,45 @@ function repairOrder(tree,def){
  var fixed={k:"s",d:"c",ch:ch,sz:sz};
  return JSON.stringify(fixed)===JSON.stringify(def)?fixed:tree;
 }
+/** The default "Tokens" group arrived after layouts were saved. A stored tree that has tokens and
+ *  daily as two root bands is wrapped into the group at the first one's place, their px heights
+ *  kept as the body weights. A stored tree without the group and without that shape is the user's:
+ *  it is reconciled against defaults minus the group, so the group is not inserted over its cards.
+ *  Returns { tree, defaults }. */
+function groupTokens(tree,kids,defaults){
+ var G="tokens-group",A="tokens",B="daily";
+ if(!defaults||!defaults.kids||!defaults.kids[G]||kids[G]||findLeaf(tree,G))return{tree:tree,defaults:defaults};
+ var ia=-1,ib=-1,i;
+ if(tree&&tree.k==="s"&&tree.d==="c"){
+  for(i=0;i<tree.ch.length;i++){
+   if(tree.ch[i].k!=="c")continue;
+   if(tree.ch[i].id===A)ia=i;
+   if(tree.ch[i].id===B)ib=i;
+  }
+ }
+ if(ia>=0&&ib>=0){
+  var lo=Math.min(ia,ib),hi=Math.max(ia,ib),slo=tree.sz[lo],shi=tree.sz[hi];
+  kids[G]=split("c",[tree.ch[lo],tree.ch[hi]],[slo/(slo+shi),shi/(slo+shi)]);
+  tree.ch[lo]=leaf(G);tree.sz[lo]=slo+shi;
+  tree.ch.splice(hi,1);tree.sz.splice(hi,1);
+  return{tree:tree,defaults:defaults};
+ }
+ var hit=ids(tree).indexOf(A)>=0||ids(tree).indexOf(B)>=0;
+ for(var g in kids)if(ids(kids[g]).indexOf(A)>=0||ids(kids[g]).indexOf(B)>=0)hit=true;
+ if(!hit)return{tree:tree,defaults:defaults};
+ var d=clone(defaults);
+ d.tree=removeLeaf(d.tree,G,true);
+ delete d.kids[G];
+ return{tree:tree,defaults:d};
+}
 /** Reconcile a parsed saved layout with the defaults: prune ghosts, insert missing static
  *  cards, merge default min flags under the saved state. Returns { tree, kids, st }. */
 function reconcileSaved(saved,defaults,knownIds,now){
  now=typeof now==="number"?now:Date.now();
  knownIds=knownIds||[];
  var tree=saved.tree,kids=saved.kids&&typeof saved.kids==="object"?saved.kids:{};
+ var mig=groupTokens(tree,kids,defaults);
+ tree=mig.tree;defaults=mig.defaults;
  var st=saved.st&&typeof saved.st==="object"?saved.st:{};
  tree=pruneGhosts(tree,kids,st,knownIds,now);
  var prevOf=prevOfDefault(defaults);

@@ -263,3 +263,39 @@ describe("served default layout (a device with no layout of its own)", () => {
     expect(ids(loadWin(s, d, KNOWN_NO_GROUP, NOW).tree)).toEqual(["c", "b", "a"]);
   });
 });
+
+describe("tokens group migration", () => {
+  const tokDefaults = () => ({
+    tree: split("c", [leaf("a"), leaf("tokens-group")], [300, 600]),
+    kids: { "tokens-group": split("c", [leaf("tokens"), leaf("daily")], [0.5, 0.5]) },
+    stDefaults: {},
+  });
+  const K = ["a", "tokens-group", "tokens", "daily"];
+  it("default tree has the group with both cards", () => {
+    const d = tokDefaults();
+    expect(ids(d.tree)).toContain("tokens-group");
+    expect(ids(d.kids["tokens-group"])).toEqual(["tokens", "daily"]);
+  });
+  it("wraps both root-level cards into the group at the first one's place, keeping heights", () => {
+    const saved = { v: 2, tree: split("c", [leaf("a"), leaf("tokens"), leaf("daily")], [300, 200, 400]), kids: {}, st: {} };
+    const r = reconcileSaved(saved, tokDefaults(), K, NOW);
+    expect(ids(r.tree)).toEqual(["a", "tokens-group"]);
+    expect(r.tree.sz).toEqual([300, 600]);
+    expect(ids(r.kids["tokens-group"])).toEqual(["tokens", "daily"]);
+    expect(r.kids["tokens-group"].sz[0]).toBeCloseTo(1 / 3);
+  });
+  it("leaves an already grouped tree alone", () => {
+    const kids = { "tokens-group": split("c", [leaf("daily"), leaf("tokens")], [0.3, 0.7]) };
+    const saved = { v: 2, tree: split("c", [leaf("tokens-group"), leaf("a")], [500, 300]), kids, st: {} };
+    const r = reconcileSaved(saved, tokDefaults(), K, NOW);
+    expect(ids(r.tree)).toEqual(["tokens-group", "a"]);
+    expect(ids(r.kids["tokens-group"])).toEqual(["daily", "tokens"]);
+    expect(r.kids["tokens-group"].sz).toEqual([0.3, 0.7]);
+  });
+  it("does not insert the group over cards the user placed elsewhere", () => {
+    const saved = { v: 2, tree: split("c", [leaf("tokens"), leaf("a")], [200, 300]), kids: { x: leaf("daily") }, st: {} };
+    const r = reconcileSaved(saved, tokDefaults(), K, NOW);
+    expect(ids(r.tree)).toEqual(["tokens", "a"]);
+    expect(r.kids["tokens-group"]).toBeUndefined();
+  });
+});

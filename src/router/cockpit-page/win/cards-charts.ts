@@ -90,6 +90,7 @@ function wchSelAct(){
 function chartsDefaults(){
  var cards=[{id:"tokens",type:"chart",title:"Tokens per bucket by kind",info:WCH_INFO.tokens,feeds:["data"],actions:[wchModeAct("weighted","weighted"),wchModeAct("raw","raw"),wchSelAct()]},
   {id:"daily",type:"chart",title:"Tokens per day per model ("+DAILY_DAYS+" d)",info:WCH_INFO.daily,feeds:["data"]}];
- return{parts:[[{tree:WinT.leaf("tokens"),kids:{},stDefaults:{},cards:[cards[0]]},300],[{tree:WinT.leaf("daily"),kids:{},stDefaults:{},cards:[cards[1]]},300]]};
+ cards.unshift({id:"tokens-group",type:"group",title:"Tokens",info:"token volume by bucket and per day"});
+ return{parts:[[{tree:WinT.leaf("tokens-group"),kids:{"tokens-group":WinT.split("c",[WinT.leaf("tokens"),WinT.leaf("daily")],[0.5,0.5])},stDefaults:{},cards:cards},600]]};
 }
 `;

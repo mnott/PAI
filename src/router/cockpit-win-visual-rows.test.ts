@@ -31,7 +31,7 @@ const ARR = `(function(){var k="pai.cockpit.win.v2",o=JSON.parse(localStorage.ge
  var keep=[],ks=[];
  for(i=0;i<t.ch.length;i++){var n=t.ch[i];
   if(n.id==="daily"||n.id==="speed"||n.id==="pause")continue;
-  if(n.id==="tokens"){keep.push({k:"s",d:"r",ch:[col(["tokens","pause"]),{k:"c",id:"daily"},{k:"c",id:"speed"}],sz:[1/3,1/3,1/3]});ks.push(400);continue}
+  if(n.id==="tokens-group"){delete o.kids["tokens-group"];keep.push({k:"s",d:"r",ch:[col(["tokens","pause"]),{k:"c",id:"daily"},{k:"c",id:"speed"}],sz:[1/3,1/3,1/3]});ks.push(400);continue}
   keep.push(n);ks.push(t.sz[i])}
  t.ch=keep;t.sz=ks;delete o.auto;localStorage.setItem(k,JSON.stringify(o))})()`;
 const sel = (id: string) => `#win-root [data-card="${id}"]`;
