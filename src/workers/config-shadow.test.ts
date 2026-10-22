@@ -39,6 +39,9 @@ describe("workersConfigShadows", () => {
     expect(s.map((x) => x.key)).toEqual(["pool"]);
     expect(s[0]!.message).toContain("unused");
   });
+  it("knows the read keys local and orchestratorModel", () => {
+    expect(workersConfigShadows({}, { local: "x", orchestratorModel: "opus", bogus: 1 }).map((x) => x.key)).toEqual(["bogus"]);
+  });
   it("reports config.yaml routing tables that workers.yaml shadows, only when workers.yaml exists", () => {
     const main = { workers: { providers: { a: {} }, pane: { enabled: true } } };
     expect(workersConfigShadows(main, null)).toEqual([]);
@@ -81,7 +84,7 @@ describe("registry editor", () => {
     writeFileSync(join(dir, "config.yaml"), MAIN);
     writeFileSync(ctx.yamlPath, WYAML);
     const cur = readFileSync(ctx.yamlPath, "utf8");
-    expect(saveRegistry(cur.replace("providers: {}", "providers: {}\norchestratorModel: opus"), hashText(cur), ctx).ok).toBe(false); // orchestratorModel is unused: new key refused
+    expect(saveRegistry(cur.replace("providers: {}", "providers: {}\nbogusKey: opus"), hashText(cur), ctx).ok).toBe(false); // bogusKey is unused: new key refused
     expect(saveRegistry(cur + "\n", hashText(cur), ctx).ok).toBe(true);
   });
 });

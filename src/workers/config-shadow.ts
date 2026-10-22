@@ -22,7 +22,7 @@ import { workersYamlPath } from "./workers-config.js";
 /** Top-level workers.yaml keys the runtime reads from the user file. */
 export const WORKERS_YAML_READ_KEYS: readonly string[] = [
   "providers", "tiers", "capabilities", "active", "classes", "mcp_sets",
-  "local_launcher", "local_tiers", "prices",
+  "local_launcher", "local_tiers", "prices", "local", "orchestratorModel",
 ];
 
 /** config.yaml `workers.<key>` entries that workers.yaml replaces when it exists. */

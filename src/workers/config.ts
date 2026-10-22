@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_FILE, expandHome, homeRel, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { paiHomePath } from "../config/pai-home.js";
-import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults } from "../config/shipped-defaults.js";
+import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults, userWorkersYamlRaw } from "../config/shipped-defaults.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
 import { foldLegacyRoles, migrateClassPins, migrateClassRoutes, migrateLegacyChains, migrateToTiers, parseTiersValue, type TierDef } from "./route-lists.js";
 import {
@@ -214,9 +214,15 @@ export function nativeAnthropicModels(): WorkerProvider["models"] {
   return out;
 }
 
-/** The chat model alias of the built-in login's own orchestrator (workers.yaml orchestratorModel). */
+/** The chat model alias of the built-in login's own orchestrator (workers.yaml orchestratorModel; the user file wins over the shipped alias). */
 export function nativeOrchestratorModel(): string {
-  const m = shippedWorkersDefaults().orchestratorModel;
+  let user: unknown;
+  try {
+    user = userWorkersYamlRaw(workersYamlPath()).orchestratorModel;
+  } catch {
+    // an unreadable user file falls back to the shipped alias
+  }
+  const m = typeof user === "string" && user.trim() ? user.trim() : shippedWorkersDefaults().orchestratorModel;
   if (typeof m !== "string") throw new WorkersConfigError("defaults workers.yaml orchestratorModel is missing");
   return m;
 }

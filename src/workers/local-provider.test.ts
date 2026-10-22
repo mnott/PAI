@@ -8,6 +8,7 @@ import {
   probeLoopback,
   readLocalPreference,
   resolveLocalProvider,
+  pickLocal,
   resolvePlanProvider,
   type PortCheck,
 } from "./local-provider.js";
@@ -75,12 +76,18 @@ describe("resolveLocalProvider", () => {
     expect(r).toEqual({ name: "also", why: "workers.yaml local:" });
   });
 
-  it("a local: key naming a provider that is not running is an error", async () => {
+  it("a local: key naming a provider that is not running falls back to the tier order / recency", async () => {
     const dir = tmp();
     writeFileSync(join(dir, "workers.yaml"), "local: dead\n");
-    await expect(
-      resolveLocalProvider(cfg, dir, { check: bothUp, yamlPath: join(dir, "workers.yaml") })
-    ).rejects.toThrow(/local: names "dead", but it is not a running local provider/);
+    const r = await resolveLocalProvider(cfg, dir, { check: bothUp, yamlPath: join(dir, "workers.yaml") });
+    expect(r.why).toBe("most recently started/used");
+  });
+
+  it("pickLocal: a running local: beats the tier order", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, "workers.yaml"), "local: b\n");
+    expect(pickLocal(["a", "b"], dir, join(dir, "workers.yaml"), ["a", "b"])).toEqual({ name: "b", why: "workers.yaml local:" });
+    expect(pickLocal(["a", "c"], dir, join(dir, "workers.yaml"), ["a", "c"]).name).toBe("a");
   });
 
   it("none up: an error naming that no local model server is running", async () => {
