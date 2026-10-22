@@ -1,9 +1,8 @@
 /** cockpit-page/win — page-wide anchor keeper (spec 4.3): a safety net, not the mechanism.
  *  Pure ES5 inside a string, testable in a page with a `main` holding `.card` elements.
- *  Tracks the topmost card whose top is at or below the viewport top ({id, offset}) on every
+ *  Tracks the topmost card whose top is at or below the viewport top ({id, offset, y}) on every
  *  scroll. A MutationObserver on main (childList, subtree, attributes style/class/hidden)
- *  schedules one check per animation frame (timer fallback when frames are paused): when the user did not scroll in the last 150 ms
- *  and the tracked card's offset drifted by 1 px or more, scrollBy the difference (logged as
+ *  schedules one check per animation frame (timer fallback when frames are paused): when the tracked card's document position (offset + scrollY) drifted by 1 px or more, scrollBy the difference (logged as
  *  "[anchor] drift N px after <mutation>" with ?debug=scroll). anchorKeep(fn) runs a
  *  structural operation, measures before/after the same way and corrects immediately.
  *  ?anchor=off makes anchorKeep run fn bare and installs no observer.
@@ -23,7 +22,7 @@ function anchorPick(main){
  }
  var el=best?best.el:last;
  if(!el)return null;
- return{el:el,id:el.getAttribute("data-card")||el.id||"",offset:el.getBoundingClientRect().top};
+ return{el:el,id:el.getAttribute("data-card")||el.id||"",offset:el.getBoundingClientRect().top,y:main.ownerDocument.defaultView.scrollY};
 }
 function anchorInit(doc,win,main){
  var A={off:anchorFlag(win,"anchor","off"),debug:anchorFlag(win,"debug","scroll"),tracked:null,lastScroll:-1e9,selfY:null,pending:0,reason:"",mo:null,drifts:0};
@@ -33,7 +32,7 @@ function anchorInit(doc,win,main){
  A.drift=function(){
   var t=A.tracked;
   if(!t||!t.el.isConnected)return 0;
-  return t.el.getBoundingClientRect().top-t.offset;
+  return t.el.getBoundingClientRect().top+win.scrollY-t.offset-t.y;
  };
  A.fix=function(why){
   var d=A.drift();
@@ -46,10 +45,9 @@ function anchorInit(doc,win,main){
   A.track();
   return d;
  };
- // mutation-driven safety check: skipped while the user is scrolling
+ // mutation-driven safety check; drift is measured in document space, so a scroll (the user's, or one whose event is still queued) is not drift
  A.check=function(){
   A.pending=0;
-  if(now()-A.lastScroll<150){A.track();return 0}
   return A.fix(A.reason||"mutation");
  };
 // rAF, or a timer when frames are paused (hidden tab): whichever comes first runs the check once
@@ -63,7 +61,7 @@ function anchorInit(doc,win,main){
  };
  A.stop=function(){if(A.mo)A.mo.disconnect();win.removeEventListener("scroll",A.onScroll)};
  // our own scrollBy fires a scroll event too: it is not the user scrolling
- A.onScroll=function(){if(win.scrollY!==A.selfY)A.lastScroll=now();A.selfY=null;A.track()};
+ A.onScroll=function(){A.selfY=null;A.fix("scroll")};
  if(!A.off){
   win.addEventListener("scroll",A.onScroll,{passive:true});
   A.track();
