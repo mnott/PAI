@@ -46,6 +46,9 @@ export function findClaudeBinary(): string | null {
   return "claude";
 }
 
+const KILL_GRACE_MS = 3000;
+const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+
 /**
  * Spawn the claude CLI with a prompt on stdin and return stdout.
  *
@@ -77,44 +80,78 @@ export async function spawnClaude(
 
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
 
     const child = spawn(claudeBin, plan.args, {
       env: plan.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      resolve(value);
+    };
+
+    // SIGTERM first; SIGKILL if the child has not exited after the grace period.
+    const terminate = (): void => {
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => { child.kill("SIGKILL"); }, KILL_GRACE_MS);
+      killTimer.unref();
+    };
+
     let stdout = "";
+    let stdoutBytes = 0;
     let stderr = "";
 
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > MAX_STDOUT_BYTES) {
+        process.stderr.write(`[kg-extraction] ${plan.model} stdout exceeded ${MAX_STDOUT_BYTES} bytes — killing process.\n`);
+        stdout = "";
+        finish(null);
+        terminate();
+        return;
+      }
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderr.length < 4096) stderr += chunk.toString();
+    });
+
+    // EPIPE when the child exits before consuming stdin must not crash the daemon.
+    child.stdin.on("error", (err: Error) => {
+      process.stderr.write(`[kg-extraction] ${plan.model} stdin error: ${err.message}\n`);
+    });
 
     child.on("error", (err: Error) => {
-      if (timer) { clearTimeout(timer); timer = null; }
       process.stderr.write(`[kg-extraction] ${plan.model} spawn error: ${err.message}\n`);
-      resolve(null);
+      finish(null);
     });
 
     child.on("close", (code: number | null) => {
-      if (timer) { clearTimeout(timer); timer = null; }
+      if (killTimer) { clearTimeout(killTimer); killTimer = null; }
+      if (settled) return;
       if (code !== 0) {
         process.stderr.write(
           `[kg-extraction] ${plan.model} exited ${code}: ${stderr.slice(0, 300)}\n`
         );
-        resolve(null);
+        finish(null);
       } else {
-        resolve(stdout.trim() || null);
+        finish(stdout.trim() || null);
       }
     });
 
     timer = setTimeout(() => {
       process.stderr.write(`[kg-extraction] ${plan.model} timed out — killing process.\n`);
-      child.kill("SIGTERM");
-      resolve(null);
+      finish(null);
+      terminate();
     }, plan.timeoutMs);
 
-    child.stdin.write(prompt);
-    child.stdin.end();
+    child.stdin.end(prompt);
   });
 }
 
