@@ -1806,6 +1806,23 @@ export function leftoverWorktrees(logDir: string): number {
   return n;
 }
 
+/**
+ * True only for a directory that is itself a git worktree: its toplevel is the directory
+ * and its repository lists it. A leftover without .git (say, only node_modules) resolves
+ * git to an enclosing repository, which must never be status'ed, stashed or archived.
+ */
+export function isRealWorktree(dir: string): boolean {
+  try {
+    const real = realpathSync(dir);
+    if (realpathSync(git(dir, ["rev-parse", "--show-toplevel"])) !== real) return false;
+    return git(dir, ["worktree", "list", "--porcelain"])
+      .split("\n")
+      .some((l) => l.startsWith("worktree ") && realpathOr(l.slice(9)) === real);
+  } catch {
+    return false;
+  }
+}
+
 const GC_STAMP = "gc-last";
 
 /**
@@ -2107,6 +2124,7 @@ export function gcWorktrees(
   const owned = new Set(statuses.map((s) => ownedTree(s)?.dir).filter((d): d is string => !!d).map((d) => resolve(d)));
   const archive = (id: string, dir: string, branch: string, st: WorkerStatus | null): void => {
     const target = `refs/pai-archive/${id}`;
+    if (!isRealWorktree(dir)) return void out.push({ id, skipped: "not a worktree" });
     const pid = busyPid(dir);
     if (pid) {
       if (!dryRun) appendLedger(ledgerPath(logDir), "WORKER-GC-SKIP", { id, reason: "busy", pid: String(pid) });
@@ -2247,6 +2265,10 @@ export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
   list(join(logDir, "slots"), () => true, (n) => `slot-${n}`);
   for (const { id, dir } of cands) {
     if (owned.has(resolve(dir))) continue;
+    if (!isRealWorktree(dir)) {
+      out.push({ id, skipped: "not a worktree" });
+      continue;
+    }
     const pid = busyPid(dir);
     if (pid) {
       out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
