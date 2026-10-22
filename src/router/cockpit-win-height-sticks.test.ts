@@ -82,41 +82,6 @@ describe.skipIf(!CHROME)("user card height sticks (CDP)", () => {
     console.log("READING " + JSON.stringify(out));
   }, 90000);
 
-  it("a drag sets one height on the whole row; a later drag on a sibling does not undo it; reload keeps it", async () => {
-    const { arrange, load, box, rowOf, drag } = await setup();
-    await arrange(["pause", "daily"]);
-    const row = await rowOf("pause");
-    const sibs = row.filter((id) => id !== "pause");
-    expect(sibs.length, "pause sits in a row").toBeGreaterThan(0);
-    await drag("pause", 90);
-    const h = await box("pause");
-    for (const id of sibs) expect(await box(id), id).toBe(h);
-    await drag(sibs[0], 60);
-    const h2 = await box(sibs[0]);
-    expect(h2).toBe(h + 60);
-    for (const id of row) expect(await box(id), id).toBe(h2);
-    await sleep(400);
-    await load();
-    for (const id of row) expect(await box(id), "after reload " + id).toBe(h2);
-  }, 120000);
-
-  it("a user height survives a width change and a sibling resize in the row", async () => {
-    const { b, arrange, box, rowOf, drag } = await setup();
-    await arrange(["pause", "daily"]);
-    await drag("pause", -100);
-    const h = await box("pause");
-    await drag("daily", 80);
-    const h2 = await box("daily");
-    expect(h2).toBe(h + 80);
-    expect(await box("pause")).toBe(h2);
-    for (const w of [900, 1500, 1100]) {
-      await b.send("Emulation.setDeviceMetricsOverride", { width: w, height: 6000, deviceScaleFactor: 1, mobile: false });
-      await sleep(900);
-      const row = await rowOf("pause");
-      if (row.length > 1) { expect(await box("pause"), "width " + w).toBe(h2); expect(await box("daily"), "width " + w).toBe(h2); }
-    }
-  }, 120000);
-
   it("a card alone in its row is resized alone and keeps the height when another card is resized", async () => {
     const { load, box, rowOf, drag } = await setup();
     await load();

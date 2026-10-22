@@ -107,7 +107,7 @@ describe.skipIf(!CHROME)("win resize gutters wired (A12, spec 3.3) in Chromium",
     if (!m) throw new Error("no probe result");
     const r = JSON.parse(m[1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
     expect(r.attrs, "gutter between a and b carries path/index/axis").toBe("0|0|x");
-    expect(r.count, "root row, root band, group row").toBe(3);
+    expect(r.count, "root row, group row (heights are content-driven: no band gutters)").toBe(2);
     expect(r.dA, `a grew by 80 (${JSON.stringify(r.before)} -> ${JSON.stringify(r.after)})`).toBe(80);
     expect(r.dB, "b shrank by 80").toBe(80);
     expect(r.sameEl, "the gutter element survives the relayout").toBe(true);

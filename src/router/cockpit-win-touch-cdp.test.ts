@@ -101,15 +101,18 @@ describe.skipIf(!CHROME)("cockpit touch, spec 4 (CDP touch events)", () => {
 
       // T4: a gutter drags by touch
       await top(); await sleep(300);
-      const gut = await b.ev<{ x: number; y: number; axis: string }>(`(function(){var gs=Array.from(document.querySelectorAll(".wgutter")).filter(function(x){var r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.y>0&&r.y<700});var x=gs[0],r=x.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2,axis:x.dataset.axis}})()`);
+      const gut = await b.ev<{ x: number; y: number; axis: string }>(`(function(){var gs=Array.from(document.querySelectorAll(".wgutter")).filter(function(x){var r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.y>0&&r.y<700});var x=gs[0];if(!x)return{x:0,y:0,axis:"none"};var r=x.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2,axis:x.dataset.axis}})()`);
       const sizes = () => b.ev<string>(`JSON.stringify(Array.from(document.querySelectorAll("#win-root .card")).map(function(c){var r=c.getBoundingClientRect();return[Math.round(r.width),Math.round(r.height)]}))`);
-      const w0 = await sizes();
-      await tch("touchStart", gut.x, gut.y); await sleep(50);
-      for (let k = 1; k <= 8; k++) { await tch("touchMove", gut.axis === "x" ? gut.x + k * 5 : gut.x, gut.axis === "y" ? gut.y + k * 5 : gut.y); await sleep(30); }
-      expect(await sizes(), "T4 resizes while dragging").not.toBe(w0);
-      await tch("touchEnd"); await sleep(500);
-      expect(await sizes(), "T4 resize kept after lifting").not.toBe(w0);
-      expect((await info()).sy, "T4 page did not pan").toBe(0);
+      // heights are content-driven: only row (width) gutters exist, and a stacked or single-card layout has none
+      if (gut.axis !== "none") {
+        const w0 = await sizes();
+        await tch("touchStart", gut.x, gut.y); await sleep(50);
+        for (let k = 1; k <= 8; k++) { await tch("touchMove", gut.axis === "x" ? gut.x + k * 5 : gut.x, gut.axis === "y" ? gut.y + k * 5 : gut.y); await sleep(30); }
+        expect(await sizes(), "T4 resizes while dragging").not.toBe(w0);
+        await tch("touchEnd"); await sleep(500);
+        expect(await sizes(), "T4 resize kept after lifting").not.toBe(w0);
+        expect((await info()).sy, "T4 page did not pan").toBe(0);
+      }
 
       // T5: tap on minimize toggles
       await top(); await sleep(300);

@@ -62,7 +62,7 @@ function snap(){var o={};Array.prototype.forEach.call(document.querySelectorAll(
 var R={};
 function phaseTo(p){fetch("/test/phase?p="+p)}
 function tab(w){var b=document.querySelector('#tabs button[data-w="'+w+'"]');if(b)b.click()}
-setTimeout(function(){window.scrollTo(0,1400);window.dispatchEvent(new Event("scroll"));R.A=snap();R.a0=window.scrollY;R.auto=Win.auto();R.fitA=JSON.stringify(Win.fit())},3000);
+setTimeout(function(){window.scrollTo(0,1400);window.dispatchEvent(new Event("scroll"));R.A=snap();R.a0=window.scrollY;R.fitA=JSON.stringify(Win.fit())},3000);
 setTimeout(function(){phaseTo("B")},3500);
 function hh(id){return document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().height}
 function ty(id){return document.querySelector('#win-root [data-card="'+id+'"]').getBoundingClientRect().top+window.scrollY}
@@ -140,7 +140,7 @@ describe.skipIf(!CHROME)("box stability", () => {
     expect(r.err).toBeNull();
     const w = r.R.SW as Record<string, number>;
     expect(w.h1!).toBeGreaterThan(w.h0!); // overflow: the card grew
-    expect(w.h2!).toBe(w.h1!); // content gone again: the height stays
+    expect(w.h2!).toBe(w.h0!); // content gone again: the card follows its content back
   }, 120_000);
 
   for (const q of ["", "?anchor=off"]) {
@@ -170,10 +170,8 @@ describe.skipIf(!CHROME)("box stability", () => {
       const gone = Object.keys(A.cards).filter((id) => !B.cards[id]);
       const born = Object.keys(B.cards).filter((id) => !A.cards[id]);
       expect([...gone, ...born].filter((id) => !/^(cache\.|models\.rt:)/.test(id))).toEqual([]);
-      expect(ms.filter((m) => m.h1 < m.h0 - 0.5).map((m) => `${m.id} ${m.h0}->${m.h1}`)).toEqual([]);
-      expect(ms.filter((m) => m.t1 < m.t0 - 0.5).map((m) => `${m.id} ${m.t0}->${m.t1}`)).toEqual([]);
       // a card above the first grown / new / removed card is exactly where it was
-      const grew = ms.filter((m) => m.h1 > m.h0 + 0.5);
+      const grew = ms.filter((m) => Math.abs(m.h1 - m.h0) > 0.5); // a card follows its content up and down
       const firstChangeTop = Math.min(...grew.map((m) => m.t0), ...gone.map((id) => A.cards[id]!.top), ...born.map((id) => B.cards[id]!.top));
       expect(ms.filter((m) => m.t0 < firstChangeTop && (m.t1 !== m.t0 || m.h1 !== m.h0)).map((m) => m.id)).toEqual([]);
       if (q === "") {

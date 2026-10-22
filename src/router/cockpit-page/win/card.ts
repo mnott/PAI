@@ -234,10 +234,10 @@ function fitCfg(){
  for(id in W.cards){c=W.cards[id];if(fitChart(c)&&!kidsOf(id))f[id]=HEAD_H+CHART_BODY}
  return f;
 }
-/** A chart draws at the body size (fixed plot height, no reading); every other card is measured by its content. */
+/** A chart draws at the body size (fixed plot height, no reading), as does a type marked fixed (its body fills the card: the editor); every other card is measured by its content. */
 function fitChart(c){return c.type==="chart"&&c.id!=="speed"}
 function fitEligible(c){
- return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&!fitChart(c)&&c.el.style.display!=="none"&&c.body.clientWidth>0;
+ return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&!fitChart(c)&&!(TYPES[c.type]||{}).fixed&&c.el.style.display!=="none"&&c.body.clientWidth>0;
 }
 /** Content height of every eligible card at once: each card is squeezed to its header (the body box is 0 high), where the
  *  body's scrollHeight is its content; heights and scroll offsets are put back before anything paints. */

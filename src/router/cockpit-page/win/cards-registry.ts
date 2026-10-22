@@ -174,7 +174,7 @@ function wrgDupPaint(c){
 function wrgIoMake(){
  return{get:wrgGet,post:wrgPost,refresh:function(f){if(WIN_HOST.refresh)WIN_HOST.refresh(f)},status:function(k,t){var c=Win.ctx(WRG_ID);if(c)c.status(k,t)},paint:wrgPaint};
 }
-Win.registerType("editor",{minW:360,minH:220,defaultH:360,
+Win.registerType("editor",{minW:360,minH:220,defaultH:360,fixed:1,
  mount:function(ctx){
   ctx.body.innerHTML='<div class="wrg" style="display:flex;flex-direction:column;height:100%;gap:4px;padding:4px"><div class="wrg-f" data-k="dup" hidden style="flex:none"></div><textarea class="wrg-ta" spellcheck="false" title="workers.yaml: local_tiers and providers" aria-label="workers.yaml: local_tiers and providers" style="flex:1 1 auto;min-height:0;width:100%;box-sizing:border-box;font:12px/1.4 ui-monospace,Menlo,monospace;resize:none;tab-size:2"></textarea><pre class="wrg-diff" data-k="diff" hidden style="flex:0 1 35%;margin:0;overflow:auto;font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre"></pre></div>';
   var ta=ctx.body.querySelector("textarea");
