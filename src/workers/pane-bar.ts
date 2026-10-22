@@ -8,6 +8,8 @@
 import { createInterface } from "node:readline";
 import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, chatTickerRow, parseChatLine } from "./chatui.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
+import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
+import { paneExecDir } from "./pane-exec.js";
 import type { WorkerStatus } from "./status.js";
 import { panePolicy } from "./pane-policy.js";
 
@@ -23,6 +25,10 @@ export interface PaneBarDeps {
   columns: () => number | null;
   input?: NodeJS.ReadableStream & { isTTY?: boolean };
   loadStatus?: (logDir: string, id: string) => WorkerStatus | null;
+  /** The caller's queue file (capacity.ts): what the pane shows while the run waits for a slot. */
+  readQueued?: (dir: string, id: string) => QueuedFile | null;
+  /** Queue-file dir (tests); default the pane-exec dir beside the launch record. */
+  queuedDir?: string;
   say?: (logDir: string, id: string, text: string) => Promise<string>;
   now?: () => number;
   tickMs?: number;
@@ -46,6 +52,10 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
   let status: WorkerStatus | null = null;
   const text = (): string => {
     if (d.spec.kind === "run") return paneRunStatusRow(d.spec.label, d.spec.startedMs, new Date(now()));
+    // while the run waits for a provider slot the row is the queue line,
+    // refreshed in place; the command's own row takes over once it starts
+    const queued = (d.readQueued ?? readQueuedFile)(d.queuedDir ?? paneExecDir(), d.spec.id);
+    if (queued) return paneStatusRow(status ?? ({} as WorkerStatus), new Date(now()), d.columns(), queued);
     status = (d.loadStatus ?? (() => null))(d.spec.logDir, d.spec.id) ?? status;
     return status ? paneStatusRow(status, new Date(now()), d.columns()) : d.spec.id;
   };
