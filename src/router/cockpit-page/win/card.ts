@@ -389,19 +389,22 @@ function treeOf(id){
  return null;
 }
 /** A card's user height (the card's saved st.h; h null clears it). A row shares its line height: the siblings of the card
- *  in its row lose their own user height, the whole line takes this one. Content taller than h scrolls inside the card.
+ *  in its row get the same user height, the whole line takes this one. Content taller than h scrolls inside the card.
  *  Frozen (non-auto) layouts size a group by band px, so the card's group band grows by the change; a start snapshot
  *  (tree + rects) makes every move of one drag absolute. */
 function setHeight(id,h,snap,drag){
  var c=W.cards[id],s=W.st[id]=W.st[id]||{},t=treeOf(id);
  if(!c||!t)return;
  if(snap)W.tree=JSON.parse(snap.tree);
- if(h===null)delete s.h;
- else{
+ if(h===null){
+  delete s.h;
+  var p0=parentOf(t.tree,id);
+  if(p0&&p0.d==="r")for(var j=0;j<p0.ch.length;j++)if(p0.ch[j].k==="c"&&W.st[p0.ch[j].id])delete W.st[p0.ch[j].id].h;
+ }else{
   var ty=TYPES[c.type]||{};
   s.h=Math.max(Math.round(h),ty.minH||W.cfg.minH||0,HEAD_H);
   var p=parentOf(t.tree,id);
-  if(p&&p.d==="r")for(var i=0;i<p.ch.length;i++)if(p.ch[i].k==="c"&&p.ch[i].id!==id&&W.st[p.ch[i].id])delete W.st[p.ch[i].id].h;
+  if(p&&p.d==="r")for(var i=0;i<p.ch.length;i++){var sb=p.ch[i];if(sb.k==="c"&&sb.id!==id&&W.cards[sb.id]&&!kidsOf(sb.id)){var sbt=TYPES[W.cards[sb.id].type]||{};(W.st[sb.id]=W.st[sb.id]||{}).h=Math.max(s.h,sbt.minH||W.cfg.minH||0,HEAD_H)}}
   if(!W.auto&&t.key&&snap){
    var keep=W.rects;W.rects=snap.rects;growBand(t.key,s.h-snap.h);W.rects=keep;
   }
