@@ -80,7 +80,7 @@ function syntheticStdin(cwd: string, eventName: string): string {
   });
 }
 
-function runHook(command: string, cwd: string, eventName: string): { stdout: string; error?: string } {
+export function runHook(command: string, cwd: string, eventName: string): { stdout: string; error?: string } {
   const result = spawnSync(command, {
     shell: true,
     cwd,
@@ -93,12 +93,19 @@ function runHook(command: string, cwd: string, eventName: string): { stdout: str
   return { stdout: result.stdout ?? "" };
 }
 
+export const NOT_RUN = "not run (pass --run to execute hooks)";
+
 const AUDITED_EVENTS = ["SessionStart", "UserPromptSubmit"];
 
 /** Seam for tests: a real shell under a 20s wall-clock kill is load-dependent. */
 export type HookRunner = typeof runHook;
 
-export function auditHooks(cwd: string, run: HookRunner = runHook): HooksReport {
+/**
+ * Lists every SessionStart / UserPromptSubmit hook. Without `run` the hooks are only
+ * listed (tokens 0, marked not run): a project's settings.json is untrusted input and
+ * its hooks execute with shell:true. Pass `runHook` (CLI `--run`) to measure them.
+ */
+export function auditHooks(cwd: string, run?: HookRunner): HooksReport {
   const settingsFiles = settingsPaths(cwd);
   const readings: HookReading[] = [];
   const totalsByEvent: Record<string, number> = {};
@@ -116,7 +123,7 @@ export function auditHooks(cwd: string, run: HookRunner = runHook): HooksReport 
         for (const entry of group.hooks ?? []) {
           if (!entry.command) continue;
           const command = expandCommand(entry.command, env);
-          const { stdout, error } = run(command, cwd, eventName);
+          const { stdout, error } = run ? run(command, cwd, eventName) : { stdout: "", error: NOT_RUN };
           const tokens = countTokens(stdout);
           totalsByEvent[eventName] += tokens;
           readings.push({ event: eventName, matcher: group.matcher, command, tokens, error });

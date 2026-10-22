@@ -43,7 +43,7 @@ import { join } from "node:path";
 import { header, ok, warn, err, dim, bold, renderTable, stripAnsi } from "./utils.js";
 import { TOKEN_ENCODING } from "../../audit/tokens.js";
 import { auditFiles, defaultFileSet, type FilesReport } from "../../audit/files.js";
-import { auditHooks, type HooksReport } from "../../audit/hooks.js";
+import { auditHooks, runHook, type HooksReport } from "../../audit/hooks.js";
 import { auditSession, newestSessionLog, sessionHistory, type SessionReportOutput, type SessionHistoryRow } from "../../audit/session.js";
 import { turnBreakdown, type TurnBreakdown } from "../../audit/first-turn.js";
 import { auditSpawn, type SpawnGroupStats, type SpawnReport } from "../../audit/spawn.js";
@@ -94,6 +94,13 @@ async function cmdFiles(paths: string[], opts: { json?: boolean }): Promise<void
 // hooks
 // ---------------------------------------------------------------------------
 
+/** Hooks are executed only on an explicit --run; the settings.json may belong to an untrusted repo. */
+function hookRunner(run: boolean | undefined): typeof runHook | undefined {
+  if (!run) return undefined;
+  console.error(warn("--run executes every SessionStart/UserPromptSubmit hook in ~/.claude/settings.json and ./.claude/settings.json with a shell. Do not use it on a repository you do not trust."));
+  return runHook;
+}
+
 function printHooks(report: HooksReport): void {
   console.log(header(`Hook output (encoding: ${report.encoding})`));
   console.log(dim(`settings.json: ${report.settingsFiles.join(", ") || "none found"}`));
@@ -116,8 +123,8 @@ function printHooks(report: HooksReport): void {
   );
 }
 
-function cmdHooks(opts: { json?: boolean }): void {
-  const report = auditHooks(process.cwd());
+function cmdHooks(opts: { json?: boolean; run?: boolean }): void {
+  const report = auditHooks(process.cwd(), hookRunner(opts.run));
   if (opts.json) return printJson(report);
   printHooks(report);
 }
@@ -713,8 +720,8 @@ export async function auditFilesCmd(paths: string[], opts: { json?: boolean }): 
 }
 
 /** Exported function for audit tokens hooks command */
-export function auditHooksCmd(opts: { json?: boolean }): number {
-  const report = auditHooks(process.cwd());
+export function auditHooksCmd(opts: { json?: boolean; run?: boolean }): number {
+  const report = auditHooks(process.cwd(), hookRunner(opts.run));
   if (opts.json) {
     printJson(report);
     return 0;

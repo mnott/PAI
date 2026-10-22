@@ -12,7 +12,7 @@ const a = (def: Omit<CommandDef, "run">, run: (ctx: RunContext) => Promise<numbe
 const t = (name: string, summary: string, description: string, extra: Partial<CommandDef> = {}) =>
   a({ name, summary, description, examples: [`pai audit tokens ${name}`, `pai audit tokens ${name} --json`], seeAlso: ["pai audit tokens"], ...extra }, (ctx) => {
     if (name === "files") return auditFilesCmd(ctx.args.PATHS as string[] | undefined ?? [], { json: ctx.opts.json === true });
-    if (name === "hooks") return auditHooksCmd({ json: ctx.opts.json === true });
+    if (name === "hooks") return auditHooksCmd({ json: ctx.opts.json === true, run: ctx.opts.run === true });
     if (name === "session") return auditSessionCmd(ctx.args.PATH as string | undefined, { json: ctx.opts.json === true, ctxThreshold: ctx.opts["ctx-threshold"] as string | undefined, history: ctx.opts.history as string | boolean | undefined, turn: ctx.opts.turn as string | undefined });
     if (name === "spawn") return auditSpawnCmd({ json: ctx.opts.json === true, n: ctx.opts.n as string | undefined, detail: ctx.opts.detail === true });
     if (name === "daemon") return auditDaemonCmd({ json: ctx.opts.json === true });
@@ -48,7 +48,10 @@ export const auditCommand: CommandDef = {
           args: [{ name: "PATHS", variadic: true, summary: "Files to count (default: the standard memory set)" } as ArgDef],
           examples: ["pai audit tokens files", "pai audit tokens files ./CLAUDE.md --json"],
         }),
-        t("hooks", "Token cost of every start-up and prompt hook", "Measures what each SessionStart and UserPromptSubmit hook adds to the context."),
+        t("hooks", "Token cost of every start-up and prompt hook", "Lists each SessionStart and UserPromptSubmit hook. With --run it executes them and measures what each adds to the context; without it nothing is executed.", {
+          options: [{ name: "run", type: "boolean", summary: "Execute the hooks to measure their output (runs the repository's own hook commands; trusted repositories only)" }],
+          examples: ["pai audit tokens hooks", "pai audit tokens hooks --run"],
+        }),
         t("session", "Token split for one session transcript", "Shows cache, input and output tokens of a session (default: the newest).", {
           args: [{ name: "PATH", summary: "Session transcript file (default: newest under ~/.claude/projects)" }],
           options: [

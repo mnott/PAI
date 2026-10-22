@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditHooks, type HookRunner } from "./hooks.js";
@@ -102,5 +102,20 @@ describe("auditHooks", () => {
     const report = auditHooks(cwd, scripted({ [`sh /pai-dir/hello.sh ${homedir()}/x`]: { stdout: "hi" } }, seen));
     expect(seen).toEqual([`sh /pai-dir/hello.sh ${homedir()}/x`]);
     expect(report.readings[0].tokens).toBe(countTokens("hi"));
+  });
+});
+
+describe("auditHooks without a runner", () => {
+  it("lists hooks but executes nothing", () => {
+    const cwd = newDir();
+    const marker = join(cwd, "ran");
+    writeSettings(cwd, {
+      SessionStart: [{ hooks: [{ type: "command", command: `touch ${marker}` }] }],
+    });
+    const report = auditHooks(cwd);
+    expect(report.readings).toHaveLength(1);
+    expect(report.readings[0].tokens).toBe(0);
+    expect(report.readings[0].error).toMatch(/not run/);
+    expect(existsSync(marker)).toBe(false);
   });
 });
