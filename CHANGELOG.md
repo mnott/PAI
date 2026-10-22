@@ -6,6 +6,10 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Package:** the repository's build scripts are no longer shipped in the npm package; they only work in a checkout. The README and the cockpit page show current cockpit screenshots.
+
 ### Security
 
 - **macOS notifications:** notification text is passed to `osascript` as arguments instead of being written into the AppleScript, so a message containing quotes can no longer run commands. Present since 0.60.0.
@@ -21,6 +25,7 @@ All notable changes to PAI Knowledge OS are documented here.
 - **TODO.md:** syncing the todo list keeps every other section byte for byte — a `## Continue` checkpoint at the top of the file is no longer deleted — and writes atomically.
 - **Session notes:** text containing `$&` or similar no longer corrupts a note; renaming never overwrites another note; session summaries list only their own session and show the time as HH:MM:SS; session start no longer waits forever on a hung `pai` call, and a new TODO.md uses the same English structure everywhere.
 - **Restore:** `pai restore` first keeps a safety copy of the current config and database, checks the Postgres dump and takes a dump of the live database before restoring into a new database that replaces the live one only after a successful load; `pai session rename` keeps notes inside the Notes folder and never overwrites one; setup keeps every backup under a timestamped name.
+- **Hook sync:** a build that links PAI's hooks into `~/.claude` moves a user's own file of the same name to a timestamped backup instead of deleting it.
 - **Delegation queue:** a damaged queue file is reported and left untouched instead of being replaced by an empty queue, and queue changes from several processes are serialized so none is lost. Plan and queue runs take their run lock exclusively; worker marker and status files are written atomically; a log-folder migration across disks never leaves a half-copied folder that looks complete.
 - **Vault index:** notes deleted or renamed in the vault are removed from the index, unless a scan would remove more than a fifth of the indexed files (or over 500), which points at a partial scan and is skipped with a warning; vault links are grouped in one pass; memory files from Claude's project folder no longer collide with a project's own `memory/` files.
 - **Chunking:** a long paragraph, list, log or CJK text without sentence ends is split to the chunk size instead of becoming one huge chunk; line numbers stay correct after `<private>` blocks, and an unclosed `<private>` keeps the rest of the file private. Existing notes are re-chunked as they change.
