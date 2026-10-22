@@ -143,6 +143,8 @@ function winNeed(node,w,st,cfg,kids,flat){
   if(winGhost(st,node.id))return 0;
   if(winMin(st,node.id))return cfg.HEAD_H;
   var ty=winType(cfg,winLeafType(kids,node.id,cfg)),mh=ty.minH!==undefined?ty.minH:(cfg.minH||0),kt=kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
+  // a derived band is never cut below a table/list card's content reading (the stack holds such a card to it)
+  if(!kt&&cfg.derive&&cfg.content&&!winGrow(node,st,cfg,kids)){var dc=cfg.content[node.id];if(dc!==undefined&&dc!==null)mh=Math.max(mh,dc)}
   return kt?Math.max(mh,cfg.HEAD_H+winNeed(kt,w,st,cfg,kids,flat)-(winSolo(kt,st,kids)?cfg.HEAD_H:0)+winDockH(cfg,node.id,w)):mh;
  }
  var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,t=0,need=0,sum=0,k;
