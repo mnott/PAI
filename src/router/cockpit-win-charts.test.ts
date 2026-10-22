@@ -28,7 +28,7 @@ const PROBE = `<script>setTimeout(function(){try{
 function box(id){var c=document.querySelector('#win-root [data-card="'+id+'"]'),r=c.getBoundingClientRect();return[r.left,r.top,r.width,r.height].map(Math.round).join(",")}
 function info(id){var c=document.querySelector('#win-root [data-card="'+id+'"]'),s=c.querySelector("svg"),b=c.querySelector(".cbody").getBoundingClientRect();
  return{svgW:s?+s.getAttribute("width"):0,svgH:s?+s.getAttribute("height"):0,bodyW:Math.round(b.width),rects:c.querySelectorAll("svg rect").length,cap:c.querySelector('[data-k="cap"]').textContent,legend:c.querySelectorAll('[data-k="legend"] span').length,
-  heads:Array.prototype.map.call(c.querySelectorAll(".chead > *"),function(k){return k.className.split(" ")[0]}),pressed:Array.prototype.map.call(c.querySelectorAll("[aria-pressed]"),function(k){return k.getAttribute("data-act")+"="+k.getAttribute("aria-pressed")}).join(",")}}
+  heads:Array.prototype.map.call(c.querySelectorAll(".chead > *"),function(k){return k.className.split(" ")[0]}),pressed:Array.prototype.map.call(c.querySelectorAll("[aria-pressed][data-act]"),function(k){return k.getAttribute("data-act")+"="+k.getAttribute("aria-pressed")}).join(",")}}
 var o={err:window.__err||null,tokens:info("tokens"),daily:info("daily"),
  selects:document.querySelectorAll("#win-root select").length,boxes:box("tokens")+"|"+box("daily"),rectsTwoTone:0};
 var rawBtn=document.querySelector('#win-root [data-card="tokens"] [data-act="mode-raw"]');rawBtn.click();o.afterRaw=info("tokens");o.modeSaved=localStorage.getItem("cockpitMode");

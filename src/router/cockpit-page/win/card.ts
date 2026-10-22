@@ -110,7 +110,7 @@ function buildCard(spec){
  var e=el("div","card");
  e.setAttribute("data-card",spec.id);e.setAttribute("data-type",spec.type);e.setAttribute("role","group");
  var head=el("div","chead");
- var grip=el("button","cgrip");grip.type="button";grip.textContent="⠿";
+ var grip=el("button","cgrip");grip.type="button";grip.setAttribute("aria-pressed","false");grip.textContent="⠿";
  var title=el("span","ctitle"),tt=el("span","ctt");title.appendChild(tt);
  if(spec.info&&typeof winInfoHtml==="function")title.insertAdjacentHTML("beforeend",winInfoHtml(spec.info));
  var status=el("span","cstatus");status.setAttribute("aria-live","polite");
