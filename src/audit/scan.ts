@@ -29,8 +29,16 @@ export interface Finding {
 
 const EVIDENCE_MAX = 300;
 
-/** A line or tool result larger than this is skipped: rules are not run over megabytes of file reads. */
+/** A text field larger than this is scanned by its head and tail only: rules are not run over megabytes of file reads. */
 const MAX_TEXT_BYTES = 256 * 1024;
+
+/** How much of each end of an oversized text field is scanned. */
+const EDGE_BYTES = 64 * 1024;
+
+/** The text itself, or its first and last EDGE_BYTES when it is oversized (padding must not hide a payload at either end). */
+function clip(text: string): string {
+  return text.length <= MAX_TEXT_BYTES ? text : `${text.slice(0, EDGE_BYTES)}\n${text.slice(-EDGE_BYTES)}`;
+}
 
 /** Regex source for a literal string (a captured filename inserted into a later step's pattern). */
 function escapeRegex(v: string): string {
@@ -279,7 +287,7 @@ export async function scanTranscript(path: string, rules: Rule[]): Promise<Findi
   let lineNo = 0;
   for await (const raw of rl) {
     lineNo++;
-    if (!raw.trim() || raw.length > MAX_TEXT_BYTES) continue;
+    if (!raw.trim()) continue;
     let obj: TranscriptLine;
     try {
       obj = JSON.parse(raw) as TranscriptLine;
@@ -288,8 +296,8 @@ export async function scanTranscript(path: string, rules: Rule[]): Promise<Findi
     }
     const parsed = parseLine(lineNo, obj, toolNames);
     const events = [
-      ...parsed.calls.map((c) => ({ tool: c.tool, text: c.content, result: false })),
-      ...parsed.results.filter((r) => r.text.length <= MAX_TEXT_BYTES).map((r) => ({ tool: r.tool, text: r.text, result: true })),
+      ...parsed.calls.map((c) => ({ tool: c.tool, text: clip(c.content), result: false })),
+      ...parsed.results.map((r) => ({ tool: r.tool, text: clip(r.text), result: true })),
     ];
     for (const ev of events) {
       for (const rule of single) {

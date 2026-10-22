@@ -13,7 +13,7 @@
  * `off` or a downgrade is ignored and reported in `ignored`.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
@@ -94,17 +94,91 @@ function asSequence(raw: Record<string, unknown>, id: string, source: string, er
  * not a reason to complain about it.
  */
 export function userRuleDirs(cwd: string = process.cwd()): string[] {
+  return [homeRulesDir(), ...projectRuleDirs(cwd)];
+}
+
+function homeRulesDir(): string {
   const home = process.env.PAI_HOME
     ? process.env.PAI_HOME
     : !existsSync(join(defaultPaiHomeDir(), "config.yaml")) && existsSync(join(legacyPaiHomeDir(), "config.yaml"))
       ? legacyPaiHomeDir()
       : defaultPaiHomeDir();
-  return [join(home, "rules"), ...projectRuleDirs(cwd)];
+  return join(home, "rules");
 }
 
-/** The repo-local rule directories under cwd: the less trusted ones (see the file header). */
+function realOrResolved(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * The repo-local rule directories under cwd: the less trusted ones (see the
+ * file header). The PAI-home rules dir is never one, even when cwd is $HOME
+ * and PAI_HOME=~/.pai makes both paths the same directory.
+ */
 export function projectRuleDirs(cwd: string = process.cwd()): string[] {
-  return [join(cwd, ".pai", "rules")];
+  const dir = join(cwd, ".pai", "rules");
+  return realOrResolved(dir) === realOrResolved(homeRulesDir()) ? [] : [dir];
+}
+
+/** A project pattern longer than this is not accepted: untrusted input is kept small. */
+const PROJECT_PATTERN_MAX = 512;
+
+/** The quantifier starting at source[i]: its length, whether it repeats, whether it has no upper bound. */
+function quantifierAt(source: string, i: number): { len: number; repeats: boolean; unbounded: boolean } | null {
+  const c = source[i];
+  if (c === "*" || c === "+") return { len: 1, repeats: true, unbounded: true };
+  if (c === "?") return { len: 1, repeats: false, unbounded: false };
+  if (c !== "{") return null;
+  const m = /^\{(\d+)(,(\d*))?\}/.exec(source.slice(i, i + 24));
+  if (!m) return null;
+  const unbounded = m[2] !== undefined && m[3] === "";
+  const max = m[2] === undefined ? Number(m[1]) : unbounded ? Infinity : Number(m[3]);
+  return { len: m[0].length, repeats: max > 1, unbounded };
+}
+
+/**
+ * Why a regex source from a project dir is refused, or null when it may load.
+ * Refused: longer than PROJECT_PATTERN_MAX, or a repeated group (`*`, `+`,
+ * `{n,}`, `{n,m}`) whose body itself contains a `*`, `+` or `{n,}` — the
+ * `(a+)+` shape that backtracks exponentially.
+ */
+export function untrustedPatternProblem(source: string): string | null {
+  if (source.length > PROJECT_PATTERN_MAX) return `pattern longer than ${PROJECT_PATTERN_MAX} chars`;
+  // per open group: whether its body holds an unbounded or repeated quantifier
+  const stack: boolean[] = [];
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") {
+      inClass = true;
+    } else if (c === "(") {
+      stack.push(false);
+    } else if (c === ")") {
+      const inner = stack.pop() ?? false;
+      const q = quantifierAt(source, i + 1);
+      if (q?.repeats && inner) return "nested quantifier (a repeated group whose body is itself repeated)";
+      if (stack.length && (inner || q?.repeats)) stack[stack.length - 1] = true;
+    } else {
+      const q = quantifierAt(source, i);
+      if (q) {
+        if (q.unbounded && stack.length) stack[stack.length - 1] = true;
+        i += q.len - 1;
+      }
+    }
+  }
+  return null;
 }
 
 function asRule(value: unknown, source: string, errors: string[]): Rule | null {
@@ -211,6 +285,17 @@ function loadDir(dir: string, errors: string[]): LoadedRule[] {
   return out;
 }
 
+/** First problem among a project rule's patterns (match and sequence steps), or null. */
+function untrustedRuleProblem(rule: Rule): string | null {
+  const sources = [rule.match, ...(rule.sequence?.steps.map((s) => s.match) ?? [])];
+  for (const src of sources) {
+    if (!src) continue;
+    const p = untrustedPatternProblem(src);
+    if (p) return p;
+  }
+  return null;
+}
+
 const SEVERITY_RANK: Record<RuleSeverity, number> = { off: 0, warn: 1, confirm: 2, block: 3 };
 
 export interface LoadOptions {
@@ -229,8 +314,15 @@ function mergeRules(dirs: string[], opts: LoadOptions): { byId: Map<string, Load
     const isProject = project.has(resolve(dir));
     for (const rule of loadDir(dir, errors)) {
       const existing = byId.get(rule.id);
+      if (isProject) {
+        const problem = untrustedRuleProblem(rule);
+        if (problem) {
+          ignored.push(`${rule.source} (${rule.id}): project rule pattern refused: ${problem}`);
+          continue;
+        }
+      }
       if (!isProject || !existing) {
-        byId.set(rule.id, rule);
+        byId.set(rule.id, isProject ? { ...rule, untrusted: true } : rule);
       } else if (SEVERITY_RANK[rule.severity] > SEVERITY_RANK[existing.severity]) {
         // a raise keeps the existing pattern: a project file may not swap it for a weaker one
         byId.set(rule.id, existing.severity === "off" ? rule : { ...existing, severity: rule.severity, source: rule.source });

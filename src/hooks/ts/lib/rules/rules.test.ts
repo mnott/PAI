@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadRules, listRules } from "./load.js";
+import { loadRules, listRules, projectRuleDirs, userRuleDirs } from "./load.js";
 import { evaluateRules } from "./eval.js";
 import { lintRules } from "./lint.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
@@ -236,5 +236,70 @@ describe("night review: evaluation cost (#11)", () => {
   });
   it("a 180 KB base64 line evaluates in under 200 ms", () => {
     expect(timed("ab/".repeat(60_000) + "_")).toBeLessThan(200);
+  });
+});
+
+describe("project rule guards", () => {
+  const redos = "^(a|aa)+$";
+  const junk = "git push --force origin main\n" + "a".repeat(44) + "!";
+
+  it("refuses project patterns with a nested quantifier or over 512 chars, reports them in ignored", () => {
+    const proj = tempDir();
+    const bodies = ["^(a+)+$", "(.*)*x", "(\\w+\\s?)*$", "(?:a|b+){2,}c", "a".repeat(513)];
+    bodies.forEach((m, i) =>
+      writeRule(proj, `r${i}.rule.yaml`, `id: p${i}\nseverity: block\nmatch: '${m}'\nreason: r\n`)
+    );
+    writeRule(proj, "ok.rule.yaml", "id: ok\nseverity: block\nmatch: '(?:foo|bar)+baz\\s?(x)?'\nreason: r\n");
+    const { rules, ignored } = loadRules([proj], { projectDirs: [proj] });
+    expect(userOnly(rules).map((r) => r.id)).toEqual(["ok"]);
+    expect(ignored.length).toBe(bodies.length);
+    expect(ignored.join("\n")).toContain("nested quantifier");
+    expect(ignored.join("\n")).toContain("longer than 512");
+  });
+
+  it("does not apply the project restrictions to a non-project dir", () => {
+    const dir = writeRule(tempDir(), "n.rule.yaml", "id: n\nseverity: block\nmatch: '^(a+)+$'\nreason: r\n");
+    const { rules } = loadRules([dir]);
+    expect(rules.find((r) => r.id === "n")?.untrusted).toBeUndefined();
+  });
+
+  it("a project regex that backtracks is cut off at the time guard and counts as a hit", () => {
+    const proj = writeRule(tempDir(), "r.rule.yaml", `id: slow\nseverity: block\nmatch: '${redos}'\nflags: m\nreason: r\n`);
+    const { rules } = loadRules([proj], { projectDirs: [proj] });
+    expect(rules.find((r) => r.id === "slow")?.untrusted).toBe(true);
+    const t0 = Date.now();
+    const hit = evaluateRules(rules, "Bash", junk);
+    expect(Date.now() - t0).toBeLessThan(200);
+    expect(hit?.rule.id).toBe("slow");
+    expect(hit?.timedOut).toBe(true);
+  });
+
+  it("the guard adds under 5 ms per call on a normal command", () => {
+    const proj = writeRule(tempDir(), "r.rule.yaml", "id: fine\nseverity: block\nmatch: 'forbidden-word'\nreason: r\n");
+    const { rules } = loadRules([proj], { projectDirs: [proj] });
+    evaluateRules(rules, "Bash", "ls -la"); // warm up
+    const t0 = performance.now();
+    for (let i = 0; i < 100; i++) evaluateRules(rules, "Bash", "git status && npm run build");
+    const perCall = (performance.now() - t0) / 100;
+    const base = rules.filter((r) => !r.untrusted);
+    const t1 = performance.now();
+    for (let i = 0; i < 100; i++) evaluateRules(base, "Bash", "git status && npm run build");
+    const perCallBase = (performance.now() - t1) / 100;
+    expect(perCall - perCallBase).toBeLessThan(5);
+  });
+
+  it("treats the PAI-home rules dir as the user dir even when cwd makes it a project path", () => {
+    const home = tempDir();
+    const prev = process.env.PAI_HOME;
+    process.env.PAI_HOME = join(home, ".pai");
+    try {
+      mkdirSync(join(home, ".pai", "rules"), { recursive: true });
+      expect(projectRuleDirs(home)).toEqual([]);
+      expect(userRuleDirs(home)).toEqual([join(home, ".pai", "rules")]);
+      expect(projectRuleDirs(tempDir()).length).toBe(1);
+    } finally {
+      if (prev === undefined) delete process.env.PAI_HOME;
+      else process.env.PAI_HOME = prev;
+    }
   });
 });
