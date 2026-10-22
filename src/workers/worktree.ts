@@ -24,6 +24,7 @@ import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { invalidatePendingCache } from "./pending.js";
 import { readPoolState } from "./pool.js";
+import { loadConfig } from "../daemon/config.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
 export function isSlotWorktree(dir: string): boolean { return basename(dirname(resolve(dir))) === "slots"; }
@@ -1096,7 +1097,111 @@ export function adoptDetachedHead(dir: string, branch: string): string | null {
   }
 }
 
-export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boolean; verify?: string } = {}): string {
+/** Merge-conflict auto-resolution settings (config keys workers.merge.generated / workers.merge.regenerate). */
+export interface MergeSettings {
+  generated: string[];
+  regenerate: string;
+}
+
+function mergeSettings(): MergeSettings {
+  const m = loadConfig().workers?.merge;
+  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "" };
+}
+
+/** Glob to RegExp: `**` crosses directories, `*` and `?` stay inside one. */
+function globToRegExp(glob: string): RegExp {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") {
+      re += ".*";
+      i++;
+      if (glob[i + 1] === "/") i++;
+    } else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/** Does the diff from `base` to `side` only add lines (nothing removed or changed)? */
+function onlyAdds(dir: string, base: string, side: string): boolean {
+  const r = spawnSync("git", ["diff", "--no-index", "--numstat", "--", base, side], { cwd: dir, encoding: "utf8" });
+  const m = /^(\d+)\t(\d+)\t/.exec(r.stdout ?? "");
+  return !m || m[2] === "0";
+}
+
+/**
+ * Resolve the conflicts of a merge in progress when every one is either in a
+ * generated path (take ours, regenerate, add) or a pure-addition clash (both
+ * sides only added lines: union, ours then theirs). Returns a note on success,
+ * null when anything else conflicts (merge left in progress for the caller to
+ * abort); throws after aborting when regeneration fails.
+ */
+function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): string | null {
+  const res = cfg.generated.map(globToRegExp);
+  const isGen = (f: string): boolean => res.some((r) => r.test(f));
+  const gen = files.filter(isGen);
+  const rest = files.filter((f) => !isGen(f));
+  const tmp = mkdtempSync(join(tmpdir(), "pai-union-"));
+  const unions: Array<{ file: string; content: string }> = [];
+  try {
+    for (const f of rest) {
+      const stage = (n: number, name: string): string | null => {
+        const r = spawnSync("git", ["show", `:${n}:${f}`], { cwd, encoding: "buffer" });
+        if (r.status !== 0) return null;
+        writeFileSync(join(tmp, name), r.stdout);
+        return join(tmp, name);
+      };
+      const base = stage(1, "base");
+      const ours = stage(2, "ours");
+      const theirs = stage(3, "theirs");
+      if (!base || !ours || !theirs || !onlyAdds(cwd, base, ours) || !onlyAdds(cwd, base, theirs)) return null;
+      const m = spawnSync("git", ["merge-file", "-p", "--union", ours, base, theirs], { cwd, encoding: "buffer" });
+      if (m.status !== 0) return null;
+      unions.push({ file: f, content: m.stdout.toString("utf8") });
+    }
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+  const notes: string[] = [];
+  if (gen.length) {
+    for (const f of gen) {
+      try {
+        git(cwd, ["checkout", "--ours", "--", f]);
+      } catch {
+        git(cwd, ["rm", "-q", "--cached", "--ignore-unmatch", "--", f]);
+      }
+    }
+  }
+  for (const u of unions) {
+    writeFileSync(join(cwd, u.file), u.content, "utf8");
+    git(cwd, ["add", "--", u.file]);
+  }
+  if (gen.length) {
+    const r = spawnSync("sh", ["-c", cfg.regenerate], { cwd, encoding: "utf8" });
+    if (!cfg.regenerate || r.status !== 0) {
+      git(cwd, ["merge", "--abort"]);
+      throw new Error(
+        `git refused the merge: conflicts in generated paths (${gen.join(", ")}) and regeneration ` +
+          (cfg.regenerate ? `\`${cfg.regenerate}\` failed (exit ${r.status}): ${(r.stderr || r.stdout || "").trim().slice(-400)}` : "is not configured (workers.merge.regenerate)") +
+          "; the merge was aborted"
+      );
+    }
+    const specs = cfg.generated.map((g) => `:(glob)${g}`);
+    git(cwd, ["add", "-A", "--", ...specs]);
+    const count = git(cwd, ["ls-files", "--", ...specs]).split("\n").filter(Boolean).length;
+    notes.push(`regenerated ${cfg.generated.filter((g) => gen.some((f) => globToRegExp(g).test(f))).map((g) => g.replace(/\/?\*\*$/, "")).join(", ")} (${count} files)`);
+  }
+  for (const u of unions) notes.push(`union-merged ${u.file}`);
+  return notes.join("; ");
+}
+
+export function mergeWorker(
+  logDir: string,
+  id: string,
+  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings } = {}
+): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, opts.verify);
@@ -1127,6 +1232,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   const [scanFrom, scanTo] = reapply ? [`${reapply.merge}^1`, reapply.merge] : [mergeBase, st.branch!];
   assertStaticScans(st.cwd, scanFrom, scanTo);
   const oldHead = git(st.cwd, ["rev-parse", "HEAD"]);
+  let autoNote: string | null = null;
   try {
     if (reapply) git(st.cwd, ["revert", "--no-edit", reapply.revert]);
     else git(st.cwd, ["merge", "--no-ff", st.branch!, "-m", `merge worker ${id} (${st.label})`]);
@@ -1139,18 +1245,24 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
     } catch {
       /* fall through to the generic message */
     }
-    if (inProgress) {
+    if (inProgress && files.length) {
+      autoNote = autoResolveMerge(st.cwd, files, opts.merge ?? mergeSettings());
+      if (autoNote !== null) git(st.cwd, ["commit", "-q", "-m", `merge worker ${id} (${st.label})`]);
+    }
+    if (inProgress && autoNote === null) {
       git(st.cwd, ["merge", "--abort"]);
       if (git(st.cwd, ["rev-parse", "HEAD"]) !== oldHead || git(st.cwd, ["status", "--porcelain", "--untracked-files=no"])) {
         throw new Error(`worker ${id}: git merge --abort left ${st.cwd} not at ${oldHead}; inspect it before retrying`);
       }
     }
+    if (autoNote === null) {
     const msg =
       `worker ${id}: git refused the merge of ${st.branch}` +
         (files.length
           ? ` — conflict in ${files.join(", ")}: merge main into the worker branch in its kept worktree (${st.worktreeDir}), resolve, then re-run pai worker merge ${id}`
           : ` — ${(e as Error).message}. The worktree ${st.worktreeDir} was kept: resolve the problem, then re-run pai worker merge ${id}`);
     throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
+    }
   }
   const verifyLine = gateLines(
     st.cwd,
@@ -1193,6 +1305,7 @@ export function mergeWorker(logDir: string, id: string, opts: { noCommit?: boole
   if (salvage.skipped.length) {
     notes.push(`skipped ${salvage.skipped.join(", ")}`);
   }
+  if (autoNote) notes.unshift(`auto-resolved conflicts: ${autoNote}`);
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
   return withGate(verifyLine, merged);
 }

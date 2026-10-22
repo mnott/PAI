@@ -132,6 +132,16 @@ sessions:
     minContextTokens: 20000
     # The exact word typed into the session.
     prompt: keepalive
+# Worker settings.
+workers:
+  merge:
+    # Globs of generated files. When a `pai worker merge` conflicts only in
+    # these (plus pure-addition clashes, which are union-merged), the merge
+    # takes our side, runs `regenerate`, stages these paths and completes.
+    generated:
+      - "docs/commands/**"
+    # Shell command, run in the target checkout, that rewrites the generated files.
+    regenerate: "npm run build"
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:
