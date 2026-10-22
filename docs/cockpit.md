@@ -43,6 +43,8 @@ Answers: where does a delegated worker go now. One line per delegation tier from
 
 Answers: what is running and what is queued behind a provider's capacity cap. Per provider, a table of running and waiting workers with their position, and for waiting ones the buttons **next** (runs next, without interrupting the running worker) and **up** (one place up). Where the queue is serial, rows can also be dragged by their grip to reorder.
 
+The same panes show a waiting worker's queue position instead of staying empty.
+
 ### Worker pool (`pool`)
 
 Answers: is the worker pool healthy. Its status as the pool reports it, refreshed every `poolPollMs`. The text is provider-neutral. When the pool is off, the panel gives the reason (for example config disabled, host down, or claims disabled because a terminal pane is required) next to how to turn it on.
@@ -50,6 +52,8 @@ Answers: is the worker pool healthy. Its status as the pool reports it, refreshe
 ### Models — runtimes (`models`)
 
 Answers: which local model runtimes exist, what uses them and how they are doing. One foldable card per consumer, with the model's purpose as the title (the consumer's label, else the model name) and the model id in grey beside it. Metric tiles show memory, speed, users, workers (running, queued, slots, spares) and the conversation cache, with a short sparkline of the sampler's last five minutes (`router.samples`). A value the runtime does not report shows `–`.
+
+**Parallel runs.** A card whose provider has a concurrency cap shows `parallel N` (with the server's slot count when known) and a **−** and **+** button. Each click changes the provider's `maxConcurrent` in `workers.yaml` by one, within `concurrencyMin` and `concurrencyMax`. The change takes effect for the next admission without restarting anything. Above the server's slot count the number turns to a warning: the extra runs queue at the server. A provider with no cap has no buttons.
 
 Controls:
 
@@ -105,6 +109,8 @@ Answers: did the cache expire between turns. Per model, hits grouped by the paus
 ### Sessions by tokens (`sessions`)
 
 Answers: which sessions cost the most. The top `sessionsRows` sessions with models, requests, tokens, fresh input, output, hit percentage, cache busts, errors and last activity. A worker session carries its verdict.
+
+**Session drill-down.** Click a row to open that session's detail panel. It shows the working directory, the models used, the last `sessionDetailTurns` turns (the true turn count is shown beside them), the files changed with edit counts and approximate lines changed, the skills invoked, MCP servers with call and failure counts, and the tool calls the security guard denied. The panel is read from the session's transcript when you open it; nothing is stored.
 
 ![Performance details: Cache verdict by pause and Sessions by tokens](images/cockpit-05-performance.jpg)
 
@@ -169,6 +175,7 @@ An empty list shows every section. Unknown ids are ignored, and if all are unkno
 | `dailyDays` | 14 | Days in Tokens per day per model |
 | `sessionsRows` | 20 | Rows in Sessions by tokens |
 | `sessionsTopRows` | 10 | Sessions shown before the rest collapse into one "+N more sessions" row |
+| `concurrencyMin`, `concurrencyMax` | 1, 16 | Range of the parallel − and + buttons on a model card |
 | `sessionDetailTurns` | 200 | Turns kept in the per-session drill-down (click a session row) |
 | `sessionNameMaxPct` | 35 | Session-name column cap, percent of the table width |
 | `workerRows` | 15 | Rows in Worker runs |
