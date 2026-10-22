@@ -177,3 +177,16 @@ describe("proposeFromTranscript", () => {
     expect(out[0].body).not.toContain("hunter2");
   });
 });
+
+describe("lesson id confinement", () => {
+  it("ignores a frontmatter id that is not a slug; nothing is written outside lessons/", () => {
+    mkdirSync(lessonsDir(), { recursive: true });
+    writeFileSync(join(lessonsDir(), "legit.md"), `---\nid: ../../../escaped\ntitle: t\nstate: candidate\nkind: gotcha\n---\n\nbody\n`);
+    expect(getLesson("legit")?.id).toBe("legit");
+    setState("legit", "approved");
+    expect(existsSync(join(home, "..", "escaped.md"))).toBe(false);
+    expect(existsSync(join(home, "escaped.md"))).toBe(false);
+    expect(getLesson("legit")?.state).toBe("approved");
+    expect(readdirSync(lessonsDir())).toEqual(["legit.md"]);
+  });
+});

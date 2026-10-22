@@ -69,6 +69,12 @@ describe("session max_parallel", () => {
     expect(h.elapsed()).toBeGreaterThanOrEqual(3000);
   });
 
+  it("keeps waiting for the holder when no provider capOf reaches the scope gate", async () => {
+    const h = harness((ms) => [st("a", { sessionKey: "s1", state: ms >= 20000 ? "done" : "running" }), st("b", { sessionKey: "s1" })], st("b", { sessionKey: "s1" }), "s1", 1);
+    await capacityGate(h.opts);
+    expect(h.elapsed()).toBeGreaterThanOrEqual(20000);
+  });
+
   it("does not hold another session's worker", async () => {
     const h = harness(() => [st("a", { sessionKey: "s1" }), st("c", { sessionKey: "s2" })], st("c", { sessionKey: "s2" }), "s2", 1);
     expect(await capacityGate(h.opts)).toBeNull();

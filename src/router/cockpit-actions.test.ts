@@ -497,6 +497,8 @@ describe("cockpit action endpoint", () => {
       const post = (name: string, body: unknown, headers: Record<string, string> = {}) => ask(srv, `/cockpit/providers/${name}/concurrency`, "POST", JSON.stringify(body), headers);
       const cap = () => readWorkersSection().workers.providers.capped!.maxConcurrent;
 
+      expect((await post("%zz", { delta: 1 })).status).toBe(400);
+
       const up = await post("capped", { delta: 1 });
       expect(up.status).toBe(200);
       expect(JSON.parse(up.body)).toMatchObject({ ok: true, provider: "capped", maxConcurrent: 3, min: 1, max: 16 });
