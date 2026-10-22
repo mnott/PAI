@@ -123,7 +123,7 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
   console.log(dim(`Creating backup: ${backupDir}`));
   mkdirSync(backupDir, { recursive: true });
 
-  const results: { label: string; path: string; size: string; status: string }[] = [];
+  const results: { label: string; path: string; size: string; status: string; failed?: boolean }[] = [];
   const config = loadConfig();
 
   // ------------------------------------------------------------------
@@ -137,6 +137,7 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
       size: r.status === "ok" ? fileSize(r.path) : "-",
       status:
         r.status === "ok" ? ok("ok") : r.status === "skipped" ? warn("not found — skipped") : err(`failed: ${r.error}`),
+      failed: r.status !== "ok" && r.status !== "skipped",
     });
   }
 
@@ -151,7 +152,7 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
       chmodSync(dest, 0o600);
       results.push({ label: "Config", path: dest, size: fileSize(dest), status: ok("ok") });
     } catch (e) {
-      results.push({ label: "Config", path: dest, size: "-", status: err(`failed: ${e}`) });
+      results.push({ label: "Config", path: dest, size: "-", status: err(`failed: ${e}`), failed: true });
     }
   } else {
     results.push({ label: "Config", path: CONFIG_FILE, size: "-", status: warn("not found — skipped") });
@@ -171,7 +172,7 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
       results.push({ label: "Postgres DB", path: sqlDest, size: fileSize(sqlDest), status: ok("ok (verified)") });
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
-      results.push({ label: "Postgres DB", path: sqlDest, size: "-", status: err(`failed: ${msg}`) });
+      results.push({ label: "Postgres DB", path: sqlDest, size: "-", status: err(`failed: ${msg}`), failed: true });
       console.log(warn(`  Postgres backup failed; no dump was kept. Is the server reachable (Docker container '${DOCKER_CONTAINER}' for a local database, pg_dump on PATH for an external one)?`));
     }
   } else {
@@ -182,7 +183,8 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
   // Summary
   // ------------------------------------------------------------------
 
-  console.log(`\n${bold("Backup complete:")} ${backupDir}\n`);
+  const failed = results.filter((r) => r.failed);
+  console.log(`\n${failed.length === 0 ? bold("Backup complete:") : bold(err("Backup INCOMPLETE:"))} ${backupDir}\n`);
 
   const labelWidth = Math.max(...results.map((r) => r.label.length)) + 2;
   for (const r of results) {
@@ -191,5 +193,10 @@ export async function runBackup(opts: { postgres: boolean; dryRun?: boolean }): 
   }
 
   console.log(`\n  ${dim("Path:")} ${backupDir}`);
+  if (failed.length > 0) {
+    console.error(err(`Backup failed: ${failed.map((r) => r.label).join(", ")}`));
+    process.exitCode = 1;
+    return;
+  }
   console.log(`  ${dim("To restore:")} pai restore ${backupDir}\n`);
 }
