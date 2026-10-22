@@ -28,6 +28,7 @@ export const OLD_KEYS = ["pai.cockpit.layout.v1", "pai.cockpit.tiles.v1", "pai.c
 export const WIN_STORE_JS = String.raw`var WIN_KEY="pai.cockpit.win.v2";
 var LAYOUT_V=2;
 var GHOST_MS=30*24*60*60*1000;
+var SEEN_KEY="pai.cockpit.win.defaultSeen";
 var OLD_KEYS=["pai.cockpit.layout.v1","pai.cockpit.tiles.v1","pai.cockpit.collapsed"];
 function clone(o){return o===undefined||o===null?o:JSON.parse(JSON.stringify(o))}
 function defaultsOf(defaults){return{tree:clone(defaults.tree),kids:clone(defaults.kids||{}),st:clone(defaults.stDefaults||{})}}
@@ -217,12 +218,26 @@ function servedOf(defaults){
  if(!s||typeof s!=="object"||typeof s.v!=="number"||s.v<LAYOUT_V||!s.tree||typeof s.tree!=="object")return null;
  return clone(s);
 }
+/** The savedAt (server ms) of the served default, 0 when it has none (the shipped one). */
+function servedAt(defaults){return defaults&&typeof defaults.savedAt==="number"?defaults.savedAt:0}
+/** The savedAt of the default this device last adopted. */
+function seenAt(storage){var n=0;try{n=Number(storage.getItem(SEEN_KEY))}catch(e){}return n>0?n:0}
+/** A saved default newer than the one this device adopted exists (served with the page or reported by a poll as at). */
+function defaultPending(storage,at){return typeof at==="number"&&at>seenAt(storage)}
+/** Take the newer default: forget the local layout and the seen stamp; the next loadWin adopts the served one. */
+function adoptDefault(storage){try{storage.removeItem(WIN_KEY);storage.removeItem(SEEN_KEY)}catch(e){}}
 function loadWin(storage,defaults,knownIds,now){
  now=typeof now==="number"?now:Date.now();
  deleteOldKeys(storage);
  var raw=null;
  try{raw=storage.getItem(WIN_KEY)}catch(e){}
- var obj=parseWin(raw)||servedOf(defaults);
+ var own=parseWin(raw),sv=servedOf(defaults),at=servedAt(defaults);
+ // a newer saved default replaces a layout this device has not edited since it was saved; a device edited after it keeps its own (the page offers the default)
+ if(own&&sv&&defaultPending(storage,at)&&!(typeof own.t==="number"&&own.t>=at)){
+  own=null;try{storage.removeItem(WIN_KEY)}catch(e){}
+ }
+ if(!own&&sv&&at>0){try{storage.setItem(SEEN_KEY,String(at))}catch(e){}}
+ var obj=own||sv;
  if(!obj)return defaultsOf(defaults);
  var r=reconcileSaved(obj,defaults,knownIds,now);
  if(obj.auto===1)r.tree=repairOrder(r.tree,defaults.tree);

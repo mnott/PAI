@@ -37,7 +37,7 @@ var Win=null,WinT=null,WinA=null,WIN_HOST=null;
 {
  WinT=(function(){
 ${WIN_RUNTIME_JS}
-  return{Win:Win,leaf:leaf,split:split,anchorInit:anchorInit,dragInit:winDragInit};
+  return{Win:Win,leaf:leaf,split:split,anchorInit:anchorInit,dragInit:winDragInit,sync:{pending:defaultPending,adopt:adoptDefault,at:servedAt}};
  })();
  Win=WinT.Win;window.Win=Win;
 }
@@ -83,7 +83,7 @@ ${WIN_CACHE_JS}
    for(k in d.kids)kids[k]=d.kids[k];
    for(k in d.stDefaults)st[k]=d.stDefaults[k];
   }
-  return{tree:WinT.split("c",leaves,px),kids:kids,stDefaults:st,cards:cards,served:window.PAI_LAYOUT_DEFAULT||null};
+  return{tree:WinT.split("c",leaves,px),kids:kids,stDefaults:st,cards:cards,served:window.PAI_LAYOUT_DEFAULT||null,savedAt:window.PAI_LAYOUT_SAVED_AT||0};
  }
  (function(){
   var root=document.getElementById("win-root");

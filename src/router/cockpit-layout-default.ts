@@ -8,7 +8,7 @@
  * is only ever written by `pai cockpit layout export`, never automatically.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paiHomePath } from "../config/pai-home.js";
@@ -61,6 +61,15 @@ function readLayout(file: string | null): StoredLayout | null {
 /** The default a fresh device starts from; null = the page's built-in layout. */
 export function readDefaultLayout(stateFile: string = stateLayoutFile(), shippedFile: string | null = shippedLayoutFile()): StoredLayout | null {
   return readLayout(stateFile) ?? readLayout(shippedFile);
+}
+
+/** When the saved default was written (server ms, the state file's mtime); 0 for none or the shipped one, which a device never has to re-adopt. */
+export function defaultSavedAt(stateFile: string = stateLayoutFile()): number {
+  try {
+    return Math.floor(statSync(stateFile).mtimeMs);
+  } catch {
+    return 0;
+  }
 }
 
 /** Write the posted layout as this install's default; false when it is not a layout. */

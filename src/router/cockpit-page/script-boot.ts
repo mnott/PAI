@@ -44,7 +44,10 @@ function feed(key,url,secs,apply,onErr){
 }
 /** The build this page was served with; a poll carrying another one shows the reload link (once, until the reload). */
 var BUILD=(document.querySelector('meta[name="cockpit-build"]')||{}).content;
-function newerCheck(j){var a=$("newer");if(j&&j.build&&BUILD&&BUILD.charAt(0)!=="_"&&j.build!==BUILD&&a.hidden)a.hidden=false}
+function newerCheck(j){var a=$("newer");if(j&&j.build&&BUILD&&BUILD.charAt(0)!=="_"&&j.build!==BUILD&&a.hidden)a.hidden=false;if(j&&WinT.sync.pending(localStorage,j.layoutSavedAt))$("newdef").hidden=false}
+/** A saved default newer than this device's layout: the notice on load (the page carries the default) and on the poll; one click takes it. */
+if(WinT.sync.pending(localStorage,window.PAI_LAYOUT_SAVED_AT))$("newdef").hidden=false;
+$("newdef").onclick=function(e){e.preventDefault();WinT.sync.adopt(localStorage);location.reload()};
 $("newer").onclick=function(e){e.preventDefault();location.reload()};
 function loadQueue(){feed("queue","/cockpit/queue",["workers"],function(j){winFeedQueue(j)})}
 function loadModels(){feed("models","/cockpit/models",["models"],function(j){mdl=j;winFeedModels(mdl)})}

@@ -54,7 +54,7 @@ import { paiHomeDir } from "../config/pai-home.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
-import { readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
+import { defaultSavedAt, readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
 export type CockpitWindow = "1h" | "24h" | "7d";
@@ -1119,6 +1119,7 @@ export function cockpitQueue(
 
 const BUILD_PLACEHOLDER = "__COCKPIT_BUILD__";
 /** Where the page gets the default layout this install serves (null = compose its own). */
+const SAVED_AT_PLACEHOLDER = "0/*__COCKPIT_LAYOUT_SAVED_AT__*/";
 const LAYOUT_PLACEHOLDER = "null/*__COCKPIT_LAYOUT__*/";
 let buildId: string | null = null;
 /** Test seam: pin the build id the page is stamped with and the poll reports (null = derive again). */
@@ -1213,7 +1214,7 @@ export function handleCockpit(
     // never a 200 with an empty body: a poll that swaps it in blanks the page (and moves the view); 503 keeps the old one
     let html = "";
     try {
-      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c"));
+      html = cockpitHtml().replace(BUILD_PLACEHOLDER, cockpitBuildId()).replace(LAYOUT_PLACEHOLDER, () => JSON.stringify(readDefaultLayout()).replace(/</g, "\\u003c")).replace(SAVED_AT_PLACEHOLDER, String(defaultSavedAt()));
     } catch {
       /* falls through to the 503 */
     }
@@ -1226,7 +1227,7 @@ export function handleCockpit(
   else if (url.pathname === "/cockpit/data") {
     try {
       const rows = readRows();
-      send(200, "application/json", JSON.stringify({ ...buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool(), configuredProviders()), build: cockpitBuildId() }));
+      send(200, "application/json", JSON.stringify({ ...buildCockpitData(rows, parseWindow(url.searchParams.get("window")), Date.now(), namedSessionMap(rows, sessionMap, workerWindows), readPool(), configuredProviders()), build: cockpitBuildId(), layoutSavedAt: defaultSavedAt() }));
     } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
     }
