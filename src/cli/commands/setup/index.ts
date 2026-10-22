@@ -20,6 +20,7 @@ import {
   stepDaName,
   stepSettings,
   stepDaemon,
+  stepAibroker,
   stepMcp,
   stepDirectories,
   stepTaskBus,
@@ -38,6 +39,10 @@ async function step<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
 }
 
 export async function runSetup(): Promise<void> {
+  if (setupOptions.dryRun) {
+    stepAibroker();
+    return;
+  }
   const rl = createRl();
 
   try {
@@ -99,6 +104,9 @@ export async function runSetup(): Promise<void> {
     // Step 9: Daemon
     const daemonInstalled = await step("stepDaemon", () => stepDaemon(rl));
 
+    // Step 9b: AIBroker (a failure is listed in the summary; setup continues)
+    const aibroker = await step("stepAibroker", () => stepAibroker());
+
     // Step 10: MCP
     const mcpRegistered = await step("stepMcp", () => stepMcp(rl));
 
@@ -134,6 +142,8 @@ export async function runSetup(): Promise<void> {
       daName,
       daemonInstalled,
       mcpRegistered,
+      process.platform,
+      aibroker,
     );
 
   } finally {
