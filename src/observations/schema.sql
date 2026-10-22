@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS pai_observations (
   files_modified JSONB DEFAULT '[]'::jsonb,
   concepts JSONB DEFAULT '[]'::jsonb,
   content_hash TEXT,
+  source TEXT,
+  fidelity TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

@@ -9,13 +9,14 @@
 
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
-import { appendRawCapture, redactDeep } from '../lib/raw-capture.js';
+import { appendRawCapture, captureEventId, redactDeep } from '../lib/raw-capture.js';
 
 interface ToolUseData {
   tool_name: string;
   tool_input: Record<string, any>;
   tool_response: Record<string, any>;
   session_id: string;
+  tool_use_id?: string;
   timestamp: string;
 }
 
@@ -51,12 +52,21 @@ async function main() {
 
     // Format output as JSONL (one JSON object per line)
     const captureFile = join(dateDir, `${today}_tool-outputs.jsonl`);
+    const timestamp = data.timestamp || now.toISOString();
     const captureEntry = JSON.stringify({
-      timestamp: data.timestamp || now.toISOString(),
+      timestamp,
       tool: data.tool_name,
       input: redactDeep(data.tool_input),
       output: redactDeep(data.tool_response),
-      session: data.session_id
+      session: data.session_id,
+      source: 'hook',
+      fidelity: 'observed',
+      eventId: captureEventId({
+        sessionId: data.session_id,
+        toolUseId: data.tool_use_id,
+        event: 'PostToolUse',
+        ts: timestamp
+      })
     }) + '\n';
 
     // Append to daily log

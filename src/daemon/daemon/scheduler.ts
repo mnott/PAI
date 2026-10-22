@@ -787,6 +787,8 @@ export function startCacheKeepalive(opts: {
         files_read: [],
         files_modified: [],
         concepts: [],
+        source: 'daemon',
+        fidelity: 'inferred',
       });
     } catch (e) {
       // a failed observation must never fail the beat

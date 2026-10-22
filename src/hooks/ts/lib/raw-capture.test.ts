@@ -1,9 +1,31 @@
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { dirname, join as pathJoin } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendRawCapture, redactDeep } from "./raw-capture.js";
+import { appendRawCapture, captureEventId, redactDeep } from "./raw-capture.js";
 import { analyzeSession, formatSessionDocument } from "./session-summary.js";
+
+describe("captureEventId", () => {
+  it("is stable for equal input and 16 hex chars", () => {
+    const a = captureEventId({ sessionId: "s1", toolUseId: "t1", event: "PostToolUse", ts: "2026-10-22T00:00:00Z" });
+    const b = captureEventId({ sessionId: "s1", toolUseId: "t1", event: "PostToolUse", ts: "2026-10-22T00:00:00Z" });
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("differs when toolUseId differs", () => {
+    const a = captureEventId({ sessionId: "s1", toolUseId: "t1", event: "PostToolUse", ts: "T" });
+    const b = captureEventId({ sessionId: "s1", toolUseId: "t2", event: "PostToolUse", ts: "T" });
+    expect(a).not.toBe(b);
+  });
+
+  it("uses empty strings for missing parts", () => {
+    expect(captureEventId({})).toBe(captureEventId({ sessionId: "", toolUseId: "", event: "", ts: "" }));
+  });
+});
 
 describe("redactDeep", () => {
   it("masks secret lines in nested tool I/O and keeps the rest", () => {
@@ -41,6 +63,50 @@ describe("appendRawCapture", () => {
     appendRawCapture(file, root, "eeee\n", 12);
     expect(readdirSync(root).sort()).toEqual(["x.jsonl", "x.jsonl.1"]);
     expect(readFileSync(`${file}.1`, "utf-8")).toBe("cccc\ndddd\n");
+  });
+});
+
+describe("capture hook provenance fields", () => {
+  const repoRoot = pathJoin(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+
+  function runHook(script: string, args: string[], stdin: string, home: string) {
+    return spawnSync("npx", ["tsx", pathJoin(repoRoot, script), ...args], {
+      input: stdin,
+      encoding: "utf-8",
+      env: { ...process.env, PAI_HOME: home, ADAPTER_DIR: pathJoin(home, "adapter") },
+      timeout: 60_000,
+    });
+  }
+
+  it("tool-output capture carries source, fidelity and eventId", () => {
+    const home = mkdtempSync(join(tmpdir(), "cap-hook-"));
+    const stdin = JSON.stringify({
+      session_id: "s1", tool_use_id: "tu1", tool_name: "Bash",
+      tool_input: { command: "ls" }, tool_response: { stdout: "ok" },
+      timestamp: "2026-10-22T00:00:00Z",
+    });
+    runHook("src/hooks/ts/post-tool-use/capture-tool-output.ts", [], stdin, home);
+    const ym = "2026-10";
+    const file = join(home, "History", "raw-outputs", ym, `2026-10-22_tool-outputs.jsonl`);
+    const entry = JSON.parse(readFileSync(file, "utf-8").trim());
+    expect(entry.source).toBe("hook");
+    expect(entry.fidelity).toBe("observed");
+    expect(entry.eventId).toMatch(/^[0-9a-f]{16}$/);
+    expect(entry.eventId).toBe(captureEventId({
+      sessionId: "s1", toolUseId: "tu1", event: "PostToolUse", ts: "2026-10-22T00:00:00Z",
+    }));
+  });
+
+  it("all-events capture carries source, fidelity and eventId", () => {
+    const home = mkdtempSync(join(tmpdir(), "cap-hook-"));
+    const stdin = JSON.stringify({ session_id: "s1", tool_use_id: "tu1" });
+    runHook("src/hooks/ts/capture-all-events.ts", ["--event-type", "PreToolUse"], stdin, home);
+    const day = new Date().toISOString().substring(0, 10);
+    const dir = join(home, "History", "raw-outputs", day.substring(0, 7));
+    const entry = JSON.parse(readFileSync(join(dir, `${day}_all-events.jsonl`), "utf-8").trim());
+    expect(entry.source).toBe("hook");
+    expect(entry.fidelity).toBe("observed");
+    expect(entry.eventId).toMatch(/^[0-9a-f]{16}$/);
   });
 });
 
