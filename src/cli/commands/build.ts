@@ -10,7 +10,7 @@ import { beginBuildWait, endBuildWait } from "../../workers/active-time.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
-import { doctor } from "../../builds/doctor.js";
+import { doctor, hookEventFindings } from "../../builds/doctor.js";
 import { inVisiblePane } from "../../workers/pane.js";
 import { runCommandInPane } from "./pane.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
@@ -122,15 +122,22 @@ const nextCmd: CommandDef = {
 
 const doctorCmd: CommandDef = {
   name: "doctor",
-  summary: "Check the project's registered build doors",
-  description: "Reads .pai/builds.yaml above the current directory and flags every door that is missing or never calls `pai build lock`, which would bypass the queue.",
+  summary: "Check the project's registered build doors and hook events",
+  description: "Reads .pai/builds.yaml above the current directory and flags every door that is missing or never calls `pai build lock`, which would bypass the queue. Also prints one line per hook event: observed (a capture proves it ran) or configured-but-never-observed (warning — the hook may silently not be running).",
   examples: ["pai build doctor"],
-  run: (ctx) => {
+  run: async (ctx) => {
     void ctx;
     const r = doctor(process.cwd());
-    if (!r.root) return out("no .pai/builds.yaml here: no doors registered"), 0;
-    for (const f of r.findings) out(`${f.ok ? "ok  " : "FAIL"} ${f.door}${f.problem ? ` — ${f.problem}` : ""}`);
-    if (!r.findings.length) out("no doors registered");
+    if (!r.root) out("no .pai/builds.yaml here: no doors registered");
+    else {
+      for (const f of r.findings) out(`${f.ok ? "ok  " : "FAIL"} ${f.door}${f.problem ? ` — ${f.problem}` : ""}`);
+      if (!r.findings.length) out("no doors registered");
+    }
+    const sinceHours = 24;
+    for (const h of await hookEventFindings(process.cwd(), { sinceHours })) {
+      if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ?? ""}`.trimEnd());
+      else if (h.configured) out(`WARN ${h.event}: configured, never observed in ${sinceHours}h`);
+    }
     return r.findings.every((f) => f.ok) ? 0 : 1;
   },
 };

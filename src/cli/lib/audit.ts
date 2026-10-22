@@ -43,7 +43,7 @@ import { join } from "node:path";
 import { header, ok, warn, err, dim, bold, renderTable, stripAnsi } from "./utils.js";
 import { TOKEN_ENCODING } from "../../audit/tokens.js";
 import { auditFiles, defaultFileSet, type FilesReport } from "../../audit/files.js";
-import { auditHooks, runHook, type HooksReport } from "../../audit/hooks.js";
+import { auditHooks, runHook, DEFAULT_SINCE_HOURS, type HooksReport } from "../../audit/hooks.js";
 import { auditSession, newestSessionLog, sessionHistory, type SessionReportOutput, type SessionHistoryRow } from "../../audit/session.js";
 import { turnBreakdown, type TurnBreakdown } from "../../audit/first-turn.js";
 import { auditSpawn, type SpawnGroupStats, type SpawnReport } from "../../audit/spawn.js";
@@ -101,17 +101,23 @@ function hookRunner(run: boolean | undefined): typeof runHook | undefined {
   return runHook;
 }
 
-function printHooks(report: HooksReport): void {
+function printHooks(report: HooksReport, sinceHours: number): void {
   console.log(header(`Hook output (encoding: ${report.encoding})`));
   console.log(dim(`settings.json: ${report.settingsFiles.join(", ") || "none found"}`));
   const rows = report.readings.map((r) => [
     r.event,
     r.matcher ?? "",
+    r.state,
+    r.lastSeen ?? "",
     String(r.tokens),
     r.error ? err(r.error) : "",
     r.command,
   ]);
-  console.log(renderTable(["event", "matcher", "tokens", "error", "command"], rows));
+  console.log(renderTable(["event", "matcher", "state", "last seen", "tokens", "error", "command"], rows));
+  for (const r of report.readings) {
+    if (r.state === "missing-script") console.log(err(`  RED: ${r.event} hook script does not exist: ${r.command}`));
+    else if (r.state === "configured") console.log(warn(`  AMBER: ${r.event} hook configured, never observed in ${sinceHours}h — it may not be running`));
+  }
   for (const [event, total] of Object.entries(report.totalsByEvent)) {
     console.log(bold(`${event} total: ${total} tokens`));
   }
@@ -123,10 +129,11 @@ function printHooks(report: HooksReport): void {
   );
 }
 
-function cmdHooks(opts: { json?: boolean; run?: boolean }): void {
-  const report = auditHooks(process.cwd(), hookRunner(opts.run));
+function cmdHooks(opts: { json?: boolean; run?: boolean; since?: string }): void {
+  const sinceHours = opts.since ? parseInt(opts.since, 10) : DEFAULT_SINCE_HOURS;
+  const report = auditHooks(process.cwd(), { run: hookRunner(opts.run), sinceHours });
   if (opts.json) return printJson(report);
-  printHooks(report);
+  printHooks(report, sinceHours);
 }
 
 // ---------------------------------------------------------------------------
@@ -558,7 +565,7 @@ export interface CombinedData {
 async function gatherCombined(): Promise<CombinedData> {
   const cwd = process.cwd();
   const files = auditFiles(defaultFileSet(cwd));
-  const hooks = auditHooks(cwd);
+  const hooks = auditHooks(cwd, { sinceHours: DEFAULT_SINCE_HOURS });
   // No threshold override here: auditSession derives window+trigger from the
   // session's own transcript (see context-trigger.ts) instead of rating
   // every session against a fixed 200k — DEFAULT_CTX_THRESHOLD is only the
@@ -597,7 +604,7 @@ function captureOutput(fn: () => void): string {
 function combinedSectionOutputs(data: CombinedData): { name: string; text: string }[] {
   const sections: { name: string; text: string }[] = [];
   sections.push({ name: "files", text: captureOutput(() => printFiles(data.files)) });
-  sections.push({ name: "hooks", text: captureOutput(() => printHooks(data.hooks)) });
+  sections.push({ name: "hooks", text: captureOutput(() => printHooks(data.hooks, DEFAULT_SINCE_HOURS)) });
   if (data.session) sections.push({ name: "session", text: captureOutput(() => printSession(data.session!)) });
   sections.push({ name: "spawn", text: captureOutput(() => printSpawn(data.spawn)) });
   sections.push({ name: "daemon", text: captureOutput(() => printDaemon(data.daemon)) });
@@ -720,13 +727,14 @@ export async function auditFilesCmd(paths: string[], opts: { json?: boolean }): 
 }
 
 /** Exported function for audit tokens hooks command */
-export function auditHooksCmd(opts: { json?: boolean; run?: boolean }): number {
-  const report = auditHooks(process.cwd(), hookRunner(opts.run));
+export function auditHooksCmd(opts: { json?: boolean; run?: boolean; since?: string }): number {
+  const sinceHours = opts.since ? parseInt(opts.since, 10) : DEFAULT_SINCE_HOURS;
+  const report = auditHooks(process.cwd(), { run: hookRunner(opts.run), sinceHours });
   if (opts.json) {
     printJson(report);
     return 0;
   }
-  printHooks(report);
+  printHooks(report, sinceHours);
   return 0;
 }
 
