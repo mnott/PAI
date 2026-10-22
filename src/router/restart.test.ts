@@ -1,9 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { restartRouter } from './restart.js';
 
-// Simple test without vi mocks to avoid TypeScript issues
 describe('restartRouter', () => {
-  it('should pass TypeScript compilation', () => {
-    // This test just ensures the file compiles correctly
-    expect(true).toBe(true);
+  it('readyMs includes the time spent spawning', async () => {
+    let t = 0;
+    const r = await restartRouter({
+      oldPid: undefined,
+      spawnNew: () => { t += 700; return 42; },
+      isUp: async () => true,
+      now: () => t,
+    });
+    expect(r.newPid).toBe(42);
+    expect(r.readyMs).toBe(700);
   });
 });

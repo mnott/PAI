@@ -22,7 +22,8 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
   const timeoutMs = d.timeoutMs || 30000;
   const sleep = d.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
 
-  // Start the new router first
+  // Start the new router first; readyMs counts from here, spawn time included
+  const startTime = now();
   const handed = d.oldPid !== undefined ? d.handover?.(d.oldPid) ?? null : null;
   const newPid = handed ? await handed : d.spawnNew(d.oldPid);
 
@@ -30,12 +31,9 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
   let signalTime: number | undefined = undefined;
   let firstFailureTime: number | undefined = undefined;
   let firstSuccessTime: number | undefined = undefined;
-  let consecutiveFailures = 0;
   let maxGapMs = 0;
 
-  if (oldPid !== undefined) signalTime = now();
-
-  const startTime = now();
+  if (oldPid !== undefined) signalTime = startTime;
 
   // Poll until the new router is ready
   while (true) {
@@ -57,9 +55,8 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
         firstFailureTime = now();
       }
 
-      // Track consecutive failures to calculate gap
+      // Track the longest gap
       if (firstFailureTime !== undefined) {
-        consecutiveFailures++;
         const currentGap = now() - firstFailureTime;
         if (currentGap > maxGapMs) {
           maxGapMs = currentGap;
@@ -75,8 +72,8 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
     await sleep(pollMs);
   }
 
-  // Calculate readyMs as time from signal (or spawn when no old) to first success
-  const readyMs = firstSuccessTime !== undefined ? firstSuccessTime - (signalTime || startTime) : 0;
+  // Calculate readyMs as time from before the spawn to first success
+  const readyMs = firstSuccessTime !== undefined ? firstSuccessTime - startTime : 0;
 
   // gapMs is undefined when oldPid was undefined, 0 if no failures, otherwise the gap
   const gapMs = oldPid === undefined ? undefined :
