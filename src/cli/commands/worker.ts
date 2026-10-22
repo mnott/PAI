@@ -36,7 +36,7 @@ import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
 import { endProcesses, findWorktreeOrphans } from "../../workers/reap.js";
 import { gcSettingsFiles } from "../../workers/settings-file.js";
-import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, leftoverWorktrees, mergeWorker, verifyWorker } from "../../workers/worktree.js";
+import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -737,6 +737,7 @@ const mergeCommand: CommandDef = {
     { name: "patch", type: "boolean", summary: "Same as --no-commit" },
     { name: "verify", type: "string", value: "CMD", summary: "Run CMD after the merge; revert the merge when it fails (default: workers.yaml merge.verify)" },
     { name: "no-verify", type: "boolean", summary: "Skip the configured merge.verify default (prints a warning)" },
+    { name: "no-verify-tests", type: "boolean", summary: "Skip the related-tests check (config workers.merge.verify) for this merge" },
   ],
   examples: [
     "pai worker merge w-20260101-abc",
@@ -753,7 +754,12 @@ const mergeCommand: CommandDef = {
           if (configured) out(`warning: --no-verify skips the configured merge.verify gate (${configured})`);
         } else verify = configured;
       }
-      out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify }));
+      try {
+        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, verifyTests: !flag(ctx, "no-verify-tests") }));
+      } catch (e) {
+        if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);
+        throw e;
+      }
     }),
 };
 
