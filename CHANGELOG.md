@@ -4,6 +4,28 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.6] - 2026-10-23
+
+### Added
+
+- **Value-level secret redaction** (`src/utils/redact.ts`), shared by every writer: a secret keeps its label and loses only its value (`token=[REDACTED]`, `Authorization: Bearer [REDACTED]`, `https://user:[REDACTED]@host`), with provider token prefixes, JWTs, PEM blocks (also truncated) and `--password X` flags. Raw captures, the loop guard, session notes and the session-summary prompt use it.
+- **Security rules as files:** the PreToolUse validator's patterns are `*.rule.yaml` files with embedded match / no-match fixtures (built-ins plus `<PAI home>/rules` and `.pai/rules`; same id overrides, `severity: off` disables). New built-ins: pipe-to-shell downloads, base64-to-shell, sudoers NOPASSWD, crontab/launchd persistence, world-writable chmod, credential-file reads. `pai rules list`, `pai rules lint`.
+- **Lessons:** a short, review-gated memory layer (candidate → approved / rejected / superseded) stored as Markdown under `<PAI home>/lessons` and indexed by memory search; `pai lessons` (add, propose from a transcript, approve, reject, supersede, promote to a project skill) and the MCP tool `memory_lessons`.
+- **`pai handoff export`:** a bounded (48 KiB), redacted brief of a session for another session, provider or worker, written 0600; a `[pai-handoff from=<id>]` marker links the sessions.
+- **`pai git setup`:** a post-commit hook writes a git note (`refs/notes/pai`) naming the session and worker that edited the commit's files; `pai git notes`.
+- **Hook health:** `pai audit tokens hooks` and `pai build doctor` show whether each hook event was actually observed in the raw captures, not only configured.
+- **Harness adapters:** `pai harness list|sessions` reads sessions from Claude Code and Codex CLI through one adapter interface (`harness.adapters` in config).
+- **Cockpit:** the title links to the project homepage.
+- **Worker panes** that wait for a provider slot show their queue position instead of staying empty.
+- **`pai worker merge`** resolves conflicts that are only in generated files (regenerates them) or only additions on both sides (union), configured by `workers.merge`.
+
+### Fixed
+
+- **Escalation of a local run kept the local provider** with the next tier's model; it now takes the target tier's own route, and the escalated run is no longer reported lost.
+- **A waiting worker crashed** when another run's queue ticket vanished.
+- **Small panes are no longer reported as a violation.**
+- **`scripts/build-docs.mjs` refuses a stale `dist/`** instead of regenerating the command pages from an old build.
+
 ## [1.0.5] - 2026-10-22
 
 ### Fixed
