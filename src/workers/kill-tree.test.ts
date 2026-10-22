@@ -295,3 +295,25 @@ describe("stop reason through the kill marker and the loop guard", () => {
     appendStopEvent(dir, "w8", { killed_by: "gc", forced: false, reason: "r" });
   });
 });
+
+describe("a queued run whose id is older than its process (escalation re-run in the same process)", () => {
+  it("is live and kill stops its waiting caller", async () => {
+    const { spawn } = await import("node:child_process");
+    const { isLive } = await import("./status.js");
+    const dir = mkdtempSync(join(tmpdir(), "kill-queued-"));
+    const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 300));
+    const old = new Date(Date.now() - 20 * 60_000);
+    const p = (n: number) => String(n).padStart(2, "0");
+    const id = `${old.getFullYear()}${p(old.getMonth() + 1)}${p(old.getDate())}-${p(old.getHours())}${p(old.getMinutes())}${p(old.getSeconds())}-${child.pid}`;
+    // the escalated run: fresh id/started stamp, process started minutes before
+    mk(dir, id, child.pid!, { state: "queued", id, procStart: Date.now() - 500, started: nowStamp() });
+    const s = loadStatus(dir, id)!;
+    expect(isLive(s)).toBe(true);
+    const exited = new Promise<void>((r) => child.on("exit", () => r()));
+    const lines = await killTree(dir, id, { deps: { graceMs: 200 } });
+    await exited;
+    expect(lines.join("\n")).toContain("SIGTERM");
+    expect(loadStatus(dir, id)!.state).toBe("killed");
+  });
+});

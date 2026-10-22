@@ -233,6 +233,32 @@ describe("loop-stop trigger", () => {
     expect(seen[0].claudeArgs[1]).toContain("Continue, do not restart: first git merge worker/w1");
     expect(st.escalatedTo).toBe("w2");
   });
+
+  it("a --local run escalates to the next tier's own route: the local flag is not carried over", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "esc-local-"));
+    const st = {
+      id: "w1", pid: -1, label: "job", cwd: logDir, term: "", provider: "gyro-m", model: "m", state: "failed",
+      started: "2026-10-21 01:00:00", updated: "2026-10-21 01:00:00", turns: 0, tools: 0, last: "", rc: 143, secs: 5,
+      loopStopped: true, branch: "worker/w1",
+    } as WorkerStatus;
+    saveStatus(logDir, st);
+    const seen: Array<{ providerFlag?: string; modelFlag?: string; localFlag?: boolean; localName?: string; label?: string }> = [];
+    const a = {
+      logDir,
+      config: { tiers, escalate: DEFAULT_ESCALATE },
+      className: "implement",
+      label: "job",
+      parsed: parseRunnerArgs(["-p", "ORIGINAL TASK"]),
+      opts: { claudeArgs: ["-p", "ORIGINAL TASK"], localFlag: true, localName: "gyro-m", providerFlag: "gyro-m" },
+      runner: async (o: { onWorkerStart?: (id: string) => void }) => (seen.push(o as never), o.onWorkerStart?.("w2"), 0),
+    } as unknown as ExecuteArgs;
+    await tryEscalate(a, "w1", st, { result: "~" }, undefined, ["abc salvage"], "loop-guard stop");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].localFlag).toBeUndefined();
+    expect(seen[0].localName).toBeUndefined();
+    expect(seen[0].providerFlag).toBe("anthropic");
+    expect(seen[0].label).toContain("escalated");
+  });
 });
 
 describe("escalate.cloud", () => {

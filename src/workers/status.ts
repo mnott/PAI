@@ -37,6 +37,8 @@ export interface WorkerStatus {
   pid: number;
   /** pid of the `pai worker run` client process; `pid` may differ (host/child pid). */
   runPid?: number;
+  /** Start time (ms epoch) of the process `pid` names, when that is the writing process; a re-run in the same process (escalation) mints a later id than the process start. */
+  procStart?: number;
   label: string;
   /** Latest `pai worker goal` / `say --goal` note to the worker; never replaces the label. */
   note?: string;
@@ -509,7 +511,7 @@ export function alive(pid: number | null | undefined): boolean {
  * status file's own `started` stamp; a reused pid almost never starts within
  * 120s of the original, so a wider drift means "different process".
  */
-export type OwnerFields = Pick<WorkerStatus, "pid" | "started"> & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
+export type OwnerFields = Pick<WorkerStatus, "pid" | "started" | "procStart"> & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
 
 /**
  * Process creation time encoded in a worker id (`YYYYMMDD-HHMMSS-<pid>`), only
@@ -532,6 +534,11 @@ function parentPidOf(pid: number): number | undefined {
   }
 }
 
+/** Start time (ms epoch) of this process, for a status it writes about itself (procStart). */
+export function selfProcStart(): number {
+  return Math.round(Date.now() - process.uptime() * 1000);
+}
+
 export function ownsPid(status: OwnerFields): boolean {
   // A worker served by a pool spare: its claude was started before the worker had an id or a
   // `started` stamp, so the start-time check cannot apply. It lives only while the slot's claude
@@ -544,7 +551,7 @@ export function ownsPid(status: OwnerFields): boolean {
       env: { ...process.env, LC_ALL: "C" },
     }).trim();
     const psStart = Date.parse(out);
-    const started = spawnTimeOf(status) ?? Date.parse(status.started.replace(" ", "T"));
+    const started = status.procStart ?? spawnTimeOf(status) ?? Date.parse(status.started.replace(" ", "T"));
     if (Number.isNaN(psStart) || Number.isNaN(started)) return alive(status.pid);
     return Math.abs(psStart - started) <= 120_000;
   } catch {

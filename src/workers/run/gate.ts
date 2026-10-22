@@ -24,6 +24,7 @@ import {
   saveStatus,
   markStartFailed,
   nowStamp,
+  selfProcStart,
 } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
 import { committedFallThrough, fallThroughReason } from "../policy.js";
@@ -449,6 +450,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     id: wid,
     pid: process.pid,
     runPid: process.pid,
+    procStart: selfProcStart(),
     label: a.label,
     cwd: a.cwd ?? process.cwd(),
     term: "",
