@@ -58,6 +58,7 @@ import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
+import { SESSION_ID_RE, sessionDetail } from "./session-detail.js";
 import { defaultSavedAt, readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
@@ -1307,11 +1308,21 @@ export function handleCockpit(
   readPoolPanel: typeof sharedPoolPanel = sharedPoolPanel,
   queueLogDir: (workers: WorkersConfig) => string = workersLogDir): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
+  const detail = url.pathname.match(/^\/api\/session\/([^/]*)\/detail$/);
+  if (!detail && url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
     res.writeHead(status, { "content-type": type, "cache-control": "no-store", "content-length": Buffer.byteLength(body) });
     res.end(body);
   };
+  if (detail) {
+    if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
+    if (!SESSION_ID_RE.test(detail[1]!)) return send(400, "application/json", '{"error":"invalid session id"}'), true;
+    sessionDetail(detail[1]!).then(
+      (d) => (d ? send(200, "application/json", JSON.stringify(d)) : send(404, "application/json", '{"error":"no such session"}')),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
+    return true;
+  }
   if (req.method === "POST" && (url.pathname === "/cockpit/queue/next" || url.pathname === "/cockpit/queue/front" || url.pathname === "/cockpit/queue/up" || url.pathname === "/cockpit/queue/move")) {
     if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
     readJsonObject(readBody, req).then((b) => {

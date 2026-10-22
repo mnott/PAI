@@ -152,7 +152,7 @@ export function cockpitTokenOk(
 export type CockpitHandler = (req: http.IncomingMessage, res: http.ServerResponse) => boolean;
 
 export function isCockpitPath(path: string): boolean {
-  return path === "/cockpit" || path.startsWith("/cockpit/");
+  return path === "/cockpit" || path.startsWith("/cockpit/") || path.startsWith("/api/session/");
 }
 
 /**

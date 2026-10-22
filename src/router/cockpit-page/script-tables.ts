@@ -90,7 +90,7 @@ function runHead(timeLab){
 }
 function runRow(o){
  var pc=o.w>0?Math.max(2,Math.round(o.w/o.max*100)):0;
- return'<div class="wr-row" title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+'</span></div>'
+ return'<div class="wr-row"'+(o.sid?' data-sess="'+esc(o.sid)+'"':'')+' title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+'</span></div>'
 }
 /** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds). */
 var SESS_MORE_KEY="pai.cockpit.sessmore";
@@ -103,14 +103,38 @@ function sessionsHtml(d){
   var lab=s.name||s.session.slice(0,8);
   var full=lab+" · "+s.session+(s.worker?" · worker "+s.worker+" · "+(s.verdict||"worker"):"")+"\n"+s.requests+" req · fresh in "+fmt(s.input+s.cacheWrite)+" · out "+fmt(s.output)+" · hit "+pct(s.hitRatio)+" · busts "+(s.busts||0)+" · errors "+(s.errors||0)+" · last "+ago(s.lastTs);
   var ex=(s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'')+(s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'');
-  return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex});
+  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex});
  }
  var shown=open?all:all.slice(0,top),rest=all.slice(top),h=shown.map(row).join("");
  if(rest.length){
   var rt=rest.reduce(function(a,s){return a+tot(s)},0);
   h+='<div class="wr-row wr-span"><a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a></div>';
  }
- return'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
+ return'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>'+(typeof sessDetailHtml==="function"?sessDetailHtml():"");
+}
+/** Session drill-down state: the opened id, its tab and the fetched detail (survives the poll redraw; the panel is part of the sessions html). */
+var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null;
+/** One tab of the opened session's detail, drawn with table(). */
+function sessDetailBody(d,tab){
+ if(tab==="files")return table(["file","edits .n","~lines .n"],d.filesChanged.map(function(f){return[esc(f.path),f.edits,f.approxLinesChanged]}));
+ if(tab==="skills")return table(["skill","time"],d.skills.map(function(k){return[esc(k.name),esc(ago(k.ts))]}));
+ if(tab==="mcp")return table(["server","calls .n","failures .n"],d.mcp.map(function(m){return[esc(m.server),m.calls,m.failures]}));
+ if(tab==="denials")return table(["time","tool","reason"],d.denials.map(function(x){return[esc(ago(x.ts)),esc(x.tool),esc(x.reason)]}));
+ return table(["#  .n","time","prompt","tools","edits","cmds .n"],d.turns.map(function(t){return[t.idx+1,esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
+}
+/** The detail panel under the sessions table: tabs Timeline / Files / Skills / MCP / Denials and a close button; empty when no session is open. */
+function sessDetailHtml(){
+ if(!SESS_OPEN)return"";
+ var d=SESS_DET&&SESS_DET.id===SESS_OPEN?SESS_DET:null,tabs=[["timeline","Timeline"],["files","Files"],["skills","Skills"],["mcp","MCP"],["denials","Denials"]];
+ var head='<div class="sd-h"><b title="'+esc(SESS_OPEN)+'">'+esc(SESS_OPEN.slice(0,8))+'</b>'+tabs.map(function(t){return'<a href="#" data-sesstab="'+t[0]+'"'+(t[0]===SESS_TAB?' class="on"':'')+'>'+t[1]+(d&&t[0]!=="timeline"?" ("+(t[0]==="files"?d.filesChanged:t[0]==="skills"?d.skills:t[0]==="mcp"?d.mcp:d.denials).length+")":"")+'</a>'}).join("")+'<a href="#" class="dim sd-x" data-sessclose="1" title="close">close ✕</a></div>';
+ var meta=d?'<div class="dim">'+esc(d.cwd)+(d.models.length?" · "+esc(d.models.join(", ")):"")+(d.turnCount>d.turns.length?" · last "+d.turns.length+" of "+d.turnCount+" turns":"")+'</div>':"";
+ return'<div class="sd" data-sd="'+esc(SESS_OPEN)+'">'+head+meta+(d?sessDetailBody(d,SESS_TAB):'<span class="dim">'+(SESS_DET&&SESS_DET.error?esc(SESS_DET.error):"loading…")+'</span>')+'</div>';
+}
+/** Opens (or closes, on a second click) a session's detail and fetches it; the panel redraws with the sessions card. */
+function sessDetailOpen(id,redraw){
+ if(SESS_OPEN===id){SESS_OPEN=null;redraw();return}
+ SESS_OPEN=id;SESS_DET=null;redraw();
+ fetch("/api/session/"+encodeURIComponent(id)+"/detail",{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(SESS_OPEN===id){SESS_DET=j;redraw()}},function(e){if(SESS_OPEN===id){SESS_DET={id:id,error:String(e.message||e)};redraw()}});
 }
 /** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
 function workerGroups(ws,W){

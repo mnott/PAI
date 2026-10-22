@@ -112,6 +112,7 @@ const SHIPPED = {
   dailyDays: 14,
   sessionsRows: 20,
   sessionsTopRows: 10,
+  sessionDetailTurns: 200,
   sessionNameMaxPct: 35,
   workerRows: 15,
   lowRequestMin: 5,
@@ -177,6 +178,8 @@ export interface CockpitLayout {
   /** table row limits. */
   sessionsRows: number;
   sessionsTopRows: number;
+  /** turns kept in a session drill-down (the last N). */
+  sessionDetailTurns: number;
   sessionNameMaxPct: number;
   workerRows: number;
   /** models under this many requests are chips, not rings. */
@@ -273,6 +276,7 @@ export function cockpitLayout(): CockpitLayout {
     dailyDays: num(s, "dailyDays", SHIPPED.dailyDays),
     sessionsRows: num(s, "sessionsRows", SHIPPED.sessionsRows),
     sessionsTopRows: num(s, "sessionsTopRows", SHIPPED.sessionsTopRows),
+    sessionDetailTurns: num(s, "sessionDetailTurns", SHIPPED.sessionDetailTurns),
     sessionNameMaxPct: num(s, "sessionNameMaxPct", SHIPPED.sessionNameMaxPct),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),
     lowRequestMin: numZ(s, "lowRequestMin", SHIPPED.lowRequestMin),

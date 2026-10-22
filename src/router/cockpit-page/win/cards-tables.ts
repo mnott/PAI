@@ -15,12 +15,16 @@ WCHX.speed={
  resize:function(){}
 };
 function wtFit(ctx){fitTables(ctx.body)}
-/** Row-level disclosures: a click on a fold or "+N more" row stores its state and re-feeds the page's data. */
+/** Row-level disclosures: a click on a fold or "+N more" row stores its state and re-feeds the page's data; a click on a session row opens its detail panel (SESS_OPEN), a tab or close button changes it. */
 function wtWire(ctx){
  ctx.body.addEventListener("click",function(e){
-  var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore]"):null;
+  var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore],[data-sess],[data-sesstab],[data-sessclose]"):null;
   if(!t||!ctx.body.contains(t))return;
   e.preventDefault();
+  var redraw=function(){Win.update("data",data)};
+  if(t.hasAttribute("data-sess"))return sessDetailOpen(t.getAttribute("data-sess"),redraw);
+  if(t.hasAttribute("data-sesstab")){SESS_TAB=t.getAttribute("data-sesstab");return redraw()}
+  if(t.hasAttribute("data-sessclose")){SESS_OPEN=null;return redraw()}
   if(t.hasAttribute("data-wrfold")){var f=wrFolded(),k=t.getAttribute("data-wrfold");if(f[k])delete f[k];else f[k]=1;try{localStorage.setItem(WR_FOLD_KEY,JSON.stringify(f))}catch(x){}}
   else{try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(x){}}
   Win.update("data",data);

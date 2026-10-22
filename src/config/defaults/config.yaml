@@ -217,6 +217,8 @@ router:
       # sessions beyond the top N by tokens collapse into one expandable row;
       # the session-name column is capped at this percent of the table width.
       sessionsTopRows: 10
+      # turns kept in the per-session drill-down (the last N).
+      sessionDetailTurns: 200
       sessionNameMaxPct: 35
       workerRows: 15
       # models under this many requests render as chips, not rings.
