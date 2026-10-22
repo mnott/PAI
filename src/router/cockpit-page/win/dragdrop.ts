@@ -108,6 +108,7 @@ function winDragInit(doc,win,opts){
   if(!D)return;
   if(D.timer)clearTimeout(D.timer);
   win.removeEventListener("pointermove",onMove);
+  win.removeEventListener("touchmove",onTouchMove);
   win.removeEventListener("pointerup",onUp);
   win.removeEventListener("pointercancel",onCancel);
   win.removeEventListener("blur",onCancel);
@@ -129,6 +130,8 @@ function winDragInit(doc,win,opts){
   feedback(hit(e.clientX,e.clientY));
   if(e.cancelable)e.preventDefault();
  }
+ /** Armed touch: the finger drags the card, so the page must not pan under it. Unarmed, the browser pans and sends pointercancel. */
+ function onTouchMove(e){if(D&&D.armed&&e.cancelable)e.preventDefault()}
  function onUp(e){
   if(!D)return;
   var id=D.id,drop=D.drop,moved=D.moved;
@@ -149,6 +152,7 @@ function winDragInit(doc,win,opts){
   if(!card)return;
   D={id:card.getAttribute("data-card"),moved:false,armed:false,timer:null,drop:null,x0:e.clientX,y0:e.clientY};
   win.addEventListener("pointermove",onMove);
+  win.addEventListener("touchmove",onTouchMove,{passive:false});
   win.addEventListener("pointerup",onUp);
   win.addEventListener("pointercancel",onCancel);
   win.addEventListener("blur",onCancel);

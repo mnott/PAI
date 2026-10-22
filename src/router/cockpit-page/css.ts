@@ -119,7 +119,7 @@ main.win .card.min .cbody{display:none}
 .wgutter{position:absolute;z-index:2;touch-action:none;border-radius:3px;cursor:col-resize}
 .wgutter[data-axis=y]{cursor:row-resize}
 .wgutter:hover,.wgutter:focus-visible{background:var(--acc);opacity:.45;outline:none}
-.cgrip{background:none;border:0;padding:0 2px;color:var(--dim);cursor:grab;font:inherit;line-height:1;touch-action:none}
+.cgrip{background:none;border:0;padding:0 2px;color:var(--dim);cursor:grab;font:inherit;line-height:1;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .cgrip:hover,.cgrip:focus-visible{color:var(--acc);outline:none}
 .dropind{position:fixed;z-index:50;pointer-events:none;background:var(--acc);border-radius:2px}
 .dropind.bad{background:none;outline:2px dashed var(--bad);outline-offset:1px}
