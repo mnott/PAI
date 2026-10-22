@@ -71,36 +71,39 @@ function winFlow(node,w,st,cfg,kids){
  var f=[];
  for(j=0;j<vis.length;j++){
   var id=node.ch[vis[j]].id,sp=winSp(st,id),x=sp?1/sp:(node.sz[vis[j]]||0)/t;
-  if(x<1&&(sp?x*(w+gap)-gap:x*(w-(vis.length-1)*gap))<winCardMinW(cfg,kids,id))x=1;
+  if(sp&&x<1&&x*(w+gap)-gap<winCardMinW(cfg,kids,id))x=1;
   f.push(x);
  }
- // the widths a line would get: a share card its fraction, the autos the rest by weight; every one must hold its least width
- var fits=function(c){
-  var u=0,a=0,k,q,r;
-  for(k=0;k<c.length;k++){q=c[k];if(winSp(st,node.ch[vis[q]].id)||f[q]>=1)u+=f[q]>=1?w:f[q]*(w+gap)-gap;else a+=node.sz[vis[q]]||0}
-  r=w-u-(c.length-1)*gap;
-  for(k=0;k<c.length;k++){
-   q=c[k];if(f[q]>=1||winSp(st,node.ch[vis[q]].id))continue;
-   if(a>0&&r*(node.sz[vis[q]]||0)/a<winCardMinW(cfg,kids,node.ch[vis[q]].id))return false;
-  }
-  return true;
- };
+ // a line holds cards while the sum of their least widths and the gaps fits; a share card's fraction counts against 1 (shares yield below)
+ var mn=function(q){return winCardMinW(cfg,kids,node.ch[vis[q]].id)};
+ var fits=function(c){var s=(c.length-1)*gap,k;for(k=0;k<c.length;k++)s+=mn(c[k]);return s<=w+0.0001};
  for(j=0;j<vis.length;j++){
-  if(cur.length&&(fr+f[j]>1.0001||!fits(cur.concat([j])))){lines.push(cur);cur=[];fr=0}
-  cur.push(j);fr+=f[j];
+  var sj=winSp(st,node.ch[vis[j]].id)>0&&f[j]<1;
+  if(cur.length&&((sj&&fr+f[j]>1.0001)||!fits(cur.concat([j])))){lines.push(cur);cur=[];fr=0}
+  cur.push(j);if(sj)fr+=f[j];
   if(f[j]>=1){lines.push(cur);cur=[];fr=0}
  }
  if(cur.length)lines.push(cur);
  var out=[];
  for(i=0;i<lines.length;i++){
-  ln=lines[i];var used=0,aw=0,m=ln.length,res=[],x0=0;
-  for(j=0;j<m;j++){var q=ln[j],qid=node.ch[vis[q]].id;if(winSp(st,qid)||f[q]>=1)used+=f[q]>=1?w:f[q]*(w+gap)-gap;else aw+=node.sz[vis[q]]||0}
-  var rest=w-used-(m-1)*gap;
+  ln=lines[i];var fs=0,aw=0,m=ln.length,res=[],x0=0,d=[],p=[],mt=0,ok=true;
+  for(j=0;j<m;j++){var q=ln[j];mt+=mn(q);if(f[q]>=1)continue;if(winSp(st,node.ch[vis[q]].id))fs+=f[q];else aw+=node.sz[vis[q]]||0}
+  var rest=w-(m-1)*gap;
+  for(j=0;j<m;j++){var q2=ln[j];if(f[q2]<1&&winSp(st,node.ch[vis[q2]].id))rest-=f[q2]*(w+gap)-gap}
   for(j=0;j<m;j++){
-   var p=ln[j],pid=node.ch[vis[p]].id,pw;
-   if(f[p]>=1)pw=w;else if(winSp(st,pid))pw=f[p]*(w+gap)-gap;else pw=aw>0?rest*(node.sz[vis[p]]||0)/aw:0;
-   res.push({i:vis[p],x:x0,w:pw});x0+=pw+gap;
+   var p0=ln[j],pid=node.ch[vis[p0]].id;
+   if(f[p0]>=1){d.push(w);p.push(1)}
+   else if(winSp(st,pid)){d.push(f[p0]*(w+gap)-gap);p.push(f[p0])}
+   else{var az=aw>0?(node.sz[vis[p0]]||0)/aw:1/m;d.push(rest*az);p.push(Math.max(1-fs,0.05)*az)}
+   if(d[j]<mn(p0)-0.0001)ok=false;
   }
+  // the preferred widths do not all hold their least width: the shares yield, every card gets its least plus a part of the slack
+  if(!ok&&m>1){
+   var sl=w-(m-1)*gap-mt,ps=0;
+   for(j=0;j<m;j++)ps+=p[j];
+   for(j=0;j<m;j++)d[j]=mn(ln[j])+Math.max(0,sl)*p[j]/ps;
+  }
+  for(j=0;j<m;j++){res.push({i:vis[ln[j]],x:x0,w:d[j]});x0+=d[j]+gap}
   out.push(res);
  }
  return{lines:out};
