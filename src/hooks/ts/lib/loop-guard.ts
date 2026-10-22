@@ -22,6 +22,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
+import { redactSecrets } from "../../../utils/redact.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 export const LOOP_MAX_REPEATS = 4;
@@ -401,12 +402,9 @@ function resultsSimilar(a: string | null | undefined, b: string | null | undefin
   return inter / (x.size + y.size - inter) >= SIMILARITY;
 }
 
-const SECRET_LINE = /pass(?:word|wd)|secret|token|api[_-]?key|credential|authorization|bearer|private key|^\s*(?:export\s+)?[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASS\w*|CRED\w*|AUTH\w*)\s*=|\b(?:sk|ghp|gho|xox[bap])[-_][A-Za-z0-9_-]{16,}|\b[A-Za-z0-9+]{40,}={0,2}(?![\w/])|\b[a-z][a-z0-9+.-]*:\/\/[^\s\/:@]+:[^\s\/@]+@|\b(?:AKIA|ASIA|AGPA|AIDA|AROA)[A-Z0-9]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}/i;
-const MASKED_LINE = "[line masked: looks like a secret]";
-
-/** Result text with lines that look like secrets replaced by a marker. */
+/** Result text with secret values replaced by [REDACTED] (labels kept); see src/utils/redact.ts. */
 export function maskSecrets(text: string): string {
-  return text.split("\n").map((l) => (SECRET_LINE.test(l) ? MASKED_LINE : l)).join("\n");
+  return redactSecrets(text);
 }
 
 function rawText(response: unknown): string {
