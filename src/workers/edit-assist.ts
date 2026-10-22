@@ -114,7 +114,7 @@ export function editAssist(i: EditAssistInput): string | null {
  * Computes similarity between two strings based on longest common prefix and suffix.
  * Similarity = (length of longest common prefix + length of longest common suffix) / max(length of both strings)
  */
-function computeSimilarity(s1: string, s2: string): number {
+export function computeSimilarity(s1: string, s2: string): number {
   if (s1 === s2) return 1;
   if (s1.length === 0 || s2.length === 0) return 0;
 
@@ -141,8 +141,10 @@ function computeSimilarity(s1: string, s2: string): number {
     }
   }
 
+  // prefix and suffix must not overlap, or the sum can exceed the length
+  const overlapCap = minLength - prefixLength;
   const totalLength = Math.max(s1.length, s2.length);
-  return totalLength > 0 ? (prefixLength + suffixLength) / totalLength : 0;
+  return (prefixLength + Math.min(suffixLength, overlapCap)) / totalLength;
 }
 
 /**

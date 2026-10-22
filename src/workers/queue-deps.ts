@@ -3,7 +3,7 @@
  * plan runner's launchWorker / mergeBranch; git and shell calls run as children.
  */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { capture, launchWorker, mergeBranch, realCommitsAhead, stopLaunchedWorkers } from "./plan-deps.js";
@@ -12,13 +12,17 @@ import type { QueueDeps } from "./queue-runner.js";
 import { resolveRunnerProvider } from "./local-provider.js";
 
 export function realQueueDeps(logDir: string, repo: string): QueueDeps {
-  const dir = mkdtempSync(join(tmpdir(), "pai-queue-"));
   const git = async (repo: string, ...a: string[]) => (await capture("git", a, repo)).out;
   return {
     async startWorker(req) {
-      const specFile = join(dir, `${req.itemId}-${req.attempt}.txt`);
-      writeFileSync(specFile, req.spec, "utf8");
-      return launchWorker(req, specFile, repo, logDir);
+      const dir = mkdtempSync(join(tmpdir(), "pai-queue-"));
+      try {
+        const specFile = join(dir, `${req.itemId}-${req.attempt}.txt`);
+        writeFileSync(specFile, req.spec, "utf8");
+        return await launchWorker(req, specFile, repo, logDir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
     async inspect(repo, id) {
       const base = (await git(repo, "merge-base", "HEAD", `worker/${id}`)).trim();

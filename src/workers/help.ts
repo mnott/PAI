@@ -176,13 +176,23 @@ export function renderHelpReport(entries: HelpEntry[]): string {
   return lines.join("\n");
 }
 
+/** Paths from `git status --porcelain -z`: NUL-separated, unquoted; a rename entry is followed by its source path. */
+export function parsePorcelainZ(out: string): string[] {
+  const parts = out.split("\0").filter(Boolean);
+  const files: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const e = parts[i];
+    files.push(e.slice(3));
+    if (e[0] === "R" || e[0] === "C" || e[1] === "R" || e[1] === "C") i++;
+  }
+  return files;
+}
+
 /** Real changed-file lister: git porcelain paths, empty outside git. */
 export function gitChangedFiles(cwd: string): string[] {
   try {
-    return execFileSync("git", ["status", "--porcelain"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => l.slice(3));
+    const out = execFileSync("git", ["status", "--porcelain", "-z"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return parsePorcelainZ(out);
   } catch {
     return [];
   }

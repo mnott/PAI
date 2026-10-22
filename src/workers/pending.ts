@@ -5,7 +5,8 @@
  * status line and the prepublish gate so an unmerged fix cannot be forgotten.
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { join } from "node:path";
 import { isLive, loadStatuses } from "./status.js";
 import { statusPath } from "./paths.js";
@@ -113,7 +114,7 @@ export function pendingCountCached(logDir: string, cwd: string, ttlMs = 60_000, 
   if (hit && now - hit.at < ttlMs) return hit.n;
   const n = pendingResults(logDir, cwd, now).length;
   try {
-    writeFileSync(file, JSON.stringify({ ...cache, [cwd]: { at: now, n } }));
+    writeFileAtomic(file, JSON.stringify({ ...cache, [cwd]: { at: now, n } }));
   } catch {
     // read-only log dir: recompute next time
   }
@@ -140,7 +141,7 @@ export function invalidatePendingCache(logDir: string, repoRoot: string): void {
   }
   if (!changed) return;
   try {
-    writeFileSync(file, JSON.stringify(cache));
+    writeFileAtomic(file, JSON.stringify(cache));
   } catch {
     // read-only log dir: best effort
   }

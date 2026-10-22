@@ -4,10 +4,11 @@
  * workers, git and the clock live in queue-runner.ts / queue-deps.ts.
  */
 
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { breakStaleMutex } from "../builds/queue.js";
 import { paiHomePath } from "../config/pai-home.js";
 
 export type ItemState = "pending" | "running" | "ready" | "too-big" | "needs-decision" | "cloud" | "accepted" | "rejected";
@@ -105,21 +106,59 @@ export class QueueStore {
     private now: () => number = Date.now,
   ) {}
 
+  /** A missing file is an empty queue; anything unreadable is refused so the next write cannot replace it. */
   private read(): StateFile {
     if (!existsSync(this.path)) return { next: 1, items: [] };
+    let s: StateFile;
     try {
-      const s = JSON.parse(readFileSync(this.path, "utf8")) as StateFile;
-      return { next: s.next ?? s.items.length + 1, items: s.items ?? [] };
-    } catch {
-      return { next: 1, items: [] };
+      s = JSON.parse(readFileSync(this.path, "utf8")) as StateFile;
+      if (!s || !Array.isArray(s.items)) throw new Error("no items array");
+    } catch (e) {
+      throw new Error(`queue file ${this.path} is unreadable (${(e as Error).message}); fix or remove it by hand, it was left untouched`);
     }
+    return { next: s.next ?? s.items.length + 1, items: s.items };
   }
 
   private write(s: StateFile): void {
     mkdirSync(dirname(this.path), { recursive: true });
-    const tmp = `${this.path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n", "utf8");
-    renameSync(tmp, this.path);
+    const tmp = `${this.path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n", "utf8");
+      renameSync(tmp, this.path);
+    } catch (e) {
+      rmSync(tmp, { force: true });
+      throw e;
+    }
+  }
+
+  /** The one mutation path: read, apply `fn`, write, all under a cross-process mkdir lock. */
+  private mutate<T>(fn: (s: StateFile) => T): T {
+    mkdirSync(dirname(this.path), { recursive: true });
+    const m = `${this.path}.mutex`;
+    const t0 = Date.now();
+    for (;;) {
+      try {
+        mkdirSync(m);
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        breakStaleMutex(m, 10_000);
+        if (Date.now() - t0 > 30_000) throw new Error(`queue file ${this.path} is locked by another process`);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5 + Math.floor(Math.random() * 15));
+      }
+    }
+    try {
+      const s = this.read();
+      const r = fn(s);
+      this.write(s);
+      return r;
+    } finally {
+      try {
+        rmdirSync(m);
+      } catch {
+        /* gone */
+      }
+    }
   }
 
   list(): QueueItem[] {
@@ -131,32 +170,32 @@ export class QueueStore {
   }
 
   add(text: string, repo: string, opts: { files?: string[]; image?: string } = {}): QueueItem {
-    const s = this.read();
-    const item: QueueItem = {
-      id: `q${s.next}`,
-      text: text.trim(),
-      repo,
-      files: opts.files ?? [],
-      ...(opts.image ? { image: opts.image } : {}),
-      created: new Date(this.now()).toISOString(),
-      state: "pending",
-      rounds: 0,
-      notes: [],
-    };
-    s.next++;
-    s.items.push(item);
-    this.write(s);
-    return item;
+    return this.mutate((s) => {
+      const item: QueueItem = {
+        id: `q${s.next}`,
+        text: text.trim(),
+        repo,
+        files: opts.files ?? [],
+        ...(opts.image ? { image: opts.image } : {}),
+        created: new Date(this.now()).toISOString(),
+        state: "pending",
+        rounds: 0,
+        notes: [],
+      };
+      s.next++;
+      s.items.push(item);
+      return item;
+    });
   }
 
   /** Apply `patch` to one item; throws on an unknown id. */
   update(id: string, patch: Partial<QueueItem>): QueueItem {
-    const s = this.read();
-    const i = s.items.findIndex((x) => x.id === id);
-    if (i < 0) throw new Error(`no queue item ${id}`);
-    s.items[i] = { ...s.items[i], ...patch };
-    this.write(s);
-    return s.items[i];
+    return this.mutate((s) => {
+      const i = s.items.findIndex((x) => x.id === id);
+      if (i < 0) throw new Error(`no queue item ${id}`);
+      s.items[i] = { ...s.items[i], ...patch };
+      return s.items[i];
+    });
   }
 }
 

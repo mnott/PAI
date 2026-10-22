@@ -5,7 +5,8 @@
  * runner can tell their stops from an external one.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { eventsPath } from "./paths.js";
@@ -59,7 +60,7 @@ export function requestKill(logDir: string, ledger: string, id: string,
     ...(forced ? { forced } : {}),
     ...(reason ? { reason } : {}),
   };
-  writeFileSync(killMarkerPath(logDir, id), JSON.stringify(req));
+  writeFileAtomic(killMarkerPath(logDir, id), JSON.stringify(req));
   appendLedger(ledger, "WORKER-KILL", { id, by, pid: req.pid, ppid: req.ppid, cwd: req.cwd, ...(forced ? { forced: 1 } : {}), ...(reason ? { reason } : {}) });
 }
 

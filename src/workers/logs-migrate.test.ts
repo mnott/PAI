@@ -28,7 +28,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...actual,
     renameSync: (oldPath: string, newPath: string) => {
-      if (state.forceExdev && !String(newPath).includes(".migrated-")) {
+      if (state.forceExdev && !String(newPath).includes(".migrated-") && !String(oldPath).endsWith(".partial")) {
         const e = new Error("cross-device link not permitted") as NodeJS.ErrnoException;
         e.code = "EXDEV";
         throw e;
@@ -156,6 +156,22 @@ describe("migrateWorkerLogs — EXDEV fallback (copy + verify + rename-aside)", 
     const r = migrateWorkerLogs(oldPath, newPath, { dryRun: true });
     expect(r.dryRun).toBe(true);
     expect(existsSync(newPath)).toBe(false);
+  });
+
+  it("copies into newPath.partial: a leftover partial copy is discarded and newPath appears only when complete", () => {
+    state.forceExdev = true;
+    const dir = newDir();
+    const oldPath = join(dir, "old-logs");
+    const newPath = join(dir, "new-logs");
+    writeStatus(oldPath, "done-1", { state: "done", origin: "spawn", label: "task", turns: 5 });
+    mkdirSync(`${newPath}.partial`, { recursive: true });
+    writeFileSync(join(`${newPath}.partial`, "junk"), "x", "utf8");
+
+    const r = migrateWorkerLogs(oldPath, newPath);
+    expect(r.filesMoved).toBe(1);
+    expect(existsSync(`${newPath}.partial`)).toBe(false);
+    expect(existsSync(join(newPath, "junk"))).toBe(false);
+    expect(existsSync(join(newPath, "done-1.status"))).toBe(true);
   });
 
   it("copies the whole tree when nothing is RUNNING, verifies the file count, and renames the old dir aside", () => {

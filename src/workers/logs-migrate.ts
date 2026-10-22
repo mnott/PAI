@@ -12,7 +12,7 @@
  * volumes and the rename itself fails with EXDEV.
  */
 
-import { existsSync, mkdirSync, cpSync, renameSync, symlinkSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, cpSync, renameSync, rmSync, symlinkSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadStatuses, isChatPane, isLive } from "./status.js";
 
@@ -95,17 +95,22 @@ export function migrateWorkerLogs(
   }
 
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-  cpSync(oldPath, newPath, { recursive: true });
+  // copy aside and rename at the end: an interrupted copy never looks like a finished migration
+  const partial = `${newPath}.partial`;
+  rmSync(partial, { recursive: true, force: true });
+  cpSync(oldPath, partial, { recursive: true });
 
   const fromCount = totalFileCount(oldPath);
-  const toCount = totalFileCount(newPath);
+  const toCount = totalFileCount(partial);
   if (fromCount !== toCount) {
+    rmSync(partial, { recursive: true, force: true });
     throw new WorkerLogsMigrationError(
       `${newPath}: copy produced ${toCount} files, expected ${fromCount} from ${oldPath} — ` +
         `aborting, old directory left in place`
     );
   }
 
+  renameSync(partial, newPath);
   renameSync(oldPath, `${oldPath}.migrated-${stamp}`);
   return { fromPath: oldPath, toPath: newPath, dryRun: false, filesMoved: toCount };
 }

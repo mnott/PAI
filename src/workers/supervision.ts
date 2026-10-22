@@ -52,7 +52,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { dirname, join } from "node:path";
 import { alive, isChatPane, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
 import { readWorkersSection } from "./config.js";
@@ -362,11 +363,7 @@ export function loadSupervisionState(path: string): { state: SupervisionState; f
 }
 
 export function saveSupervisionState(path: string, state: SupervisionState): void {
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state), "utf8");
-  renameSync(tmp, path);
+  writeFileAtomic(path, JSON.stringify(state));
 }
 
 /**

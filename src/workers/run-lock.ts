@@ -53,10 +53,28 @@ export interface LockDeps {
 export async function withRunLock<T>(path: string | undefined, what: string, fn: () => Promise<T>, deps: LockDeps = {}): Promise<T> {
   if (!path) return fn();
   const pid = deps.pid ?? process.pid;
-  const held = readRunLock(path, deps.isAlive);
-  if (held && held.pid !== pid) throw new RunLockedError(what, held);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ pid, startedAt: (deps.now ?? Date.now)() } satisfies RunLock), "utf8");
+  const body = JSON.stringify({ pid, startedAt: (deps.now ?? Date.now)() } satisfies RunLock);
+  for (let attempt = 0; ; attempt++) {
+    const held = readRunLock(path, deps.isAlive);
+    if (held && held.pid !== pid) throw new RunLockedError(what, held);
+    try {
+      // exclusive create: of two racing runs only one gets the file
+      writeFileSync(path, body, { encoding: "utf8", flag: held ? "w" : "wx" });
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      // a stale (dead-pid / unreadable) lock is in the way: clear it and retry once
+      if (attempt >= 2) throw e;
+      if (!readRunLock(path, deps.isAlive)) {
+        try {
+          unlinkSync(path);
+        } catch {
+          /* raced */
+        }
+      }
+    }
+  }
   const release = (): void => {
     try {
       const l = JSON.parse(readFileSync(path, "utf8")) as RunLock;

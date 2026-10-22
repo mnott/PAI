@@ -7,7 +7,8 @@
  * signals the worker's own claude process.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { join } from "node:path";
 import { appendStopEvent } from "./endreason.js";
 import { loadStatus, saveStatus } from "./status.js";
@@ -52,7 +53,7 @@ export function requestLoopStop(logDir: string, id: string, reason: string, deps
   const { kill = (pid, sig) => process.kill(pid, sig), claudePid = defaultClaudePid } = deps;
   try {
     const m: LoopStopMarker = { ts: new Date().toISOString(), reason };
-    writeFileSync(loopStopMarkerPath(logDir, id), JSON.stringify(m));
+    writeFileAtomic(loopStopMarkerPath(logDir, id), JSON.stringify(m));
   } catch {
     // the signal below still ends the run
   }
