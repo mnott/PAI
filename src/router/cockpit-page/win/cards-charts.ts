@@ -39,6 +39,8 @@ function wchTokens(d,models,w,h){
   r=stackedBarsSvg(ref,w,labs,series,KINDS.map(function(k){return k[0]}),h,head);
  }else{
   var buckets=d.series.map(function(b){var arr=[];models.forEach(function(m){var v=b.models[m];if(!v)return;var o={model:m,requests:v.requests||0};KINDS.forEach(function(k){o[k[0]]=(v[k[0]]||0)*(wt?W[k[0]]:1)});o.total=tot(o);if(o.total>0)arr.push(o)});return arr});
+  var present={};buckets.forEach(function(a){a.forEach(function(s){present[s.model]=1})});
+  models=models.filter(function(m){return present[m]});
   r=twoToneSvg(ref,w,labs,buckets,models,h,head);
  }
  var kinds=KINDS.map(function(k){return'<span><i style="background:'+k[2]+'"></i>'+k[1]+(wt?' x'+W[k[0]]:'')+'</span>'}).join("");

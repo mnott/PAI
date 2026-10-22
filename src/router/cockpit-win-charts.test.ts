@@ -171,3 +171,40 @@ describe("tokens card: ecosystem selection", () => {
     expect(f.ecos(d, models)).toEqual(["anthropic", "glm", "local"]);
   });
 });
+
+describe("tokens card: bucket layout", () => {
+  const lib = () => new Function(`var data={bucketMs:60000},KINDS=[["input","i","#111"],["output","o","#222"]],mode="raw",msel="";function colorOf(){return"#3b6fe0"}function assignColors(){}\n${varSrc(PAGE, "MIN_LABEL_GAP_PX")}\n${[...FNS.filter((n) => n !== "stackedBarsSvg"), "mergeModelBuckets", "niceCeil", "twoToneLayout", "twoToneSvg", "label", "tot", "legendLine", "ringName"].map((n) => fnSrc(PAGE, n)).join("\n")}\n${varSrc(PAGE, "MAX_BAR_PX")}\nreturn{layout:twoToneLayout,svg:twoToneSvg,nice:niceCeil};`)() as {
+    layout: (b: unknown[][]) => { max: number; slots: number };
+    svg: (ref: unknown, cw: number, labels: string[], buckets: unknown[][], models: string[], h: number, head: string) => { html: string };
+    nice: (v: number) => number;
+  };
+  const row = (model: string, total: number) => ({ model, total, cacheRead: 0, requests: 1, input: total, output: 0 });
+
+  it("y max is the tallest drawn bar rounded up, not the sum over models", () => {
+    const L = lib();
+    const b = [[row("a", 280e6), row("b", 270e6), row("c", 184e6)], [row("a", 10e6)]];
+    expect(L.layout(b).max).toBe(300e6);
+    expect(L.nice(280e6)).toBe(300e6);
+    expect(L.nice(300e6)).toBe(300e6);
+  });
+
+  it("a bucket draws one slot per model with data, centred, with a capped width", () => {
+    const L = lib();
+    const widths = (b: unknown[][]) => [...L.svg({ id: "series" }, 600, b.map((_, i) => `b${i}`), b, ["a", "b", "c", "d"], 200, "<svg>").html.matchAll(/fill-opacity="\.25"/g)].length;
+    expect(L.layout([[row("a", 5)]]).slots).toBe(1);
+    expect(L.layout([[row("a", 5), row("b", 5), row("c", 5), row("d", 5)], [row("a", 5)]]).slots).toBe(4);
+    expect(widths([[row("a", 5)], [row("a", 5), row("b", 5), row("c", 5), row("d", 5)]])).toBe(5);
+    const html = L.svg({ id: "series" }, 600, ["x"], [[row("d", 5)]], ["a", "b", "c", "d"], 200, "<svg>").html;
+    const w = Number(/<rect [^>]*width="([\d.]+)"/.exec(html)![1]);
+    expect(w).toBeLessThanOrEqual(28);
+  });
+
+  it("the legend lists only models present in the window", () => {
+    const f = new Function(`var T={},WCH={},WinT={},WinA={},Win={},KINDS=[["input","i","#111"]],mode="raw",msel="";function esc(s){return s}function legendLine(c,i){return i}function colorOf(m){return m}function ringName(m){return m}function label(){return"x"}function tot(o){return o.input}\nvar captured;function twoToneSvg(r,w,l,b,m){captured=m;return{html:"",cap:false}}\n${WIN_CHARTS_JS}\nreturn function(d,models){var r=wchTokens(d,models,400,200);return{lg:r.legend,m:captured}}`)() as (d: unknown, m: string[]) => { lg: string; m: string[] };
+    const d = { weights: { input: 1 }, window: "7d", series: [{ t: 1, models: { a: { input: 5 } } }, { t: 2, models: { a: { input: 3 }, c: { input: 1 } } }] };
+    const r = f(d, ["a", "b", "c"]);
+    expect(r.m).toEqual(["a", "c"]);
+    expect(r.lg).toContain("a");
+    expect(r.lg).not.toContain("<i style=\"background:b\"");
+  });
+});
