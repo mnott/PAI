@@ -279,9 +279,11 @@ describe("night review scan fixes (#3, #11)", () => {
     expect(hits.length).toBe(1);
   });
 
-  it("skips a line over 256 KB", async () => {
+  it("scans a line over 256 KB by its head", async () => {
     const path = writeTranscript([bash("cat ~/.ssh/id_rsa " + "x".repeat(300 * 1024), at(0))]);
-    expect(await scanTranscript(path, [credRule])).toEqual([]);
+    const found = await scanTranscript(path, [credRule]);
+    expect(found.length).toBe(1);
+    expect(found[0].evidence.length).toBeLessThanOrEqual(300);
   });
 
   it("a 180 KB rm -rf a;-dense Bash call scans in under a second", async () => {
@@ -298,5 +300,20 @@ describe("night review scan fixes (#3, #11)", () => {
     });
     const path = writeTranscript([bash("aaa", at(0)), bash("bbb", at(100))]);
     expect(await scanTranscript(path, [rule])).toEqual([]);
+  });
+});
+
+describe("oversized transcript lines", () => {
+  const rmRoot = BUILTIN_RULES.filter((r) => r.id === "rm-recursive-root");
+
+  it("scans the head and tail of a 300 KB Write instead of skipping the line", async () => {
+    const pad = "x".repeat(150 * 1024);
+    for (const content of [`rm -rf /\n${pad}${pad}`, `${pad}${pad}\nrm -rf /`]) {
+      const path = writeTranscript([
+        { type: "assistant", timestamp: at(0), message: { content: [{ type: "tool_use", name: "Write", input: { file_path: "/tmp/x.sh", content } }] } },
+      ]);
+      const findings = await scanTranscript(path, rmRoot);
+      expect(findings.map((f) => f.ruleId)).toEqual(["rm-recursive-root"]);
+    }
   });
 });

@@ -11,12 +11,39 @@
  * message stays inert while a quoted `+main` refspec still counts.
  */
 
+import { Script, createContext } from "node:vm";
 import { splitSegments } from "../worker-git-guard.js";
 import type { Rule } from "./types.js";
 
 export interface RuleHit {
   rule: Rule;
+  /** The rule's regex ran past the time guard; the hit is a fail-closed one. */
+  timedOut?: boolean;
 }
+
+/** Longest a project rule's regex may run per test before it counts as a hit. */
+export const UNTRUSTED_TIMEOUT_MS = 50;
+
+type Tester = (re: RegExp, text: string) => boolean;
+
+const plainTest: Tester = (re, text) => re.test(text);
+
+// One context and one compiled script, reused for every guarded test; a
+// timeout is enforced by the vm watchdog, which interrupts a running regex.
+const guardCtx = createContext({ re: null as RegExp | null, text: "" });
+const guardScript = new Script("re.test(text)");
+
+/** Throws when the regex runs past UNTRUSTED_TIMEOUT_MS. */
+const guardedTest: Tester = (re, text) => {
+  guardCtx.re = re;
+  guardCtx.text = text;
+  try {
+    return guardScript.runInContext(guardCtx, { timeout: UNTRUSTED_TIMEOUT_MS }) === true;
+  } finally {
+    guardCtx.re = null;
+    guardCtx.text = "";
+  }
+};
 
 /** Quoted strings removed: text inside a commit message or echo is not a command. */
 function dropQuoted(segment: string): string {
@@ -24,10 +51,10 @@ function dropQuoted(segment: string): string {
 }
 
 /** A quoted +refspec is still a forced push, so push segments also test with only the quote marks removed. */
-function gitPatternHit(pattern: RegExp, segment: string): boolean {
+function gitPatternHit(pattern: RegExp, segment: string, test: Tester): boolean {
   const bare = dropQuoted(segment);
-  if (pattern.test(bare)) return true;
-  return /\bgit\b.*\spush\b/.test(bare) && pattern.test(segment.replace(/["']/g, ''));
+  if (test(pattern, bare)) return true;
+  return /\bgit\b.*\spush\b/.test(bare) && test(pattern, segment.replace(/["']/g, ''));
 }
 
 const regexCache = new Map<string, RegExp>();
@@ -65,10 +92,18 @@ export function evaluateRules(rules: Rule[], toolName: string, content: string):
       if (rule.severity !== severity || !toolMatches(rule, toolName)) continue;
       const re = ruleRegex(rule);
       if (!re) continue;
-      const hit =
-        severity === "confirm"
-          ? segments.some((seg) => gitPatternHit(re, seg))
-          : re.test(bare) || (rule.quoted === true && (re.test(content) || re.test(unquoted)));
+      const test = rule.untrusted ? guardedTest : plainTest;
+      let hit: boolean;
+      try {
+        hit =
+          severity === "confirm"
+            ? segments.some((seg) => gitPatternHit(re, seg, test))
+            : test(re, bare) || (rule.quoted === true && (test(re, content) || test(re, unquoted)));
+      } catch {
+        // a project regex that did not finish in time: fail closed for block and confirm
+        if (severity === "warn") continue;
+        return { rule, timedOut: true };
+      }
       if (hit) return { rule };
     }
   }

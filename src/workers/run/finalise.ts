@@ -124,7 +124,7 @@ export function applyLoopStop(
   return { ...(report ?? {}), result: "-", why: reason, notes: [reason, report?.notes ?? fallbackText].filter(Boolean).join("\n") };
 }
 
-/** Race the end-of-run scan against its budget (workers.scanBudgetMs, default 5000): a slow scan is skipped, not waited for. */
+/** The end-of-run scan under its budget (workers.scanBudgetMs, default 5000): a scan over budget is terminated, not waited for. */
 async function scanWithinBudget(logDir: string, status: WorkerStatus, ledger: string): Promise<void> {
   let budgetMs = 5000;
   try {
@@ -132,23 +132,8 @@ async function scanWithinBudget(logDir: string, status: WorkerStatus, ledger: st
   } catch {
     // unreadable config: the default budget
   }
-  let timer: NodeJS.Timeout | undefined;
-  const over = new Promise<"over">((resolve) => {
-    timer = setTimeout(() => resolve("over"), budgetMs);
-    timer.unref();
-  });
-  try {
-    const done = await Promise.race([scanWorkerRun(logDir, status).catch(() => undefined), over]);
-    if (done === "over") {
-      appendLedger(ledger, "WORKER-SCAN-SKIPPED", { id: status.id, reason: "scan skipped: over budget", budgetMs });
-      if (!status.last) {
-        status.last = "scan skipped: over budget";
-        saveStatus(logDir, status);
-      }
-    }
-  } finally {
-    clearTimeout(timer);
-  }
+  const done = await scanWorkerRun(logDir, status, { budgetMs }).catch(() => undefined);
+  if (done === "over") appendLedger(ledger, "WORKER-SCAN-STOPPED", { id: status.id, reason: "scan stopped: over budget", budgetMs });
 }
 
 export async function finaliseRun(f: FinaliseArgs): Promise<number> {
