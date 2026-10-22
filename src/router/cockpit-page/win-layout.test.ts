@@ -216,3 +216,37 @@ describe("win layout: content-driven heights", () => {
     expect(layout(tree, kids, root(1200), {}, cfg)).toEqual(r1);
   });
 });
+
+describe("win layout: dock and line invariants", () => {
+  const rectsHit = (a: any, b: any) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  it("a group's dock is a flow row after its last line: below every card, wrapping to more rows when chips do not fit", () => {
+    const kids = { grp: split("r", [leaf("k1"), leaf("k2"), leaf("m1"), leaf("m2"), leaf("m3")], [1, 1, 1, 1, 1]) };
+    const st = { m1: { seen: 1 }, m2: { seen: 1 }, m3: { seen: 1 } };
+    const dock = { grp: ["m1", "m2", "m3"] };
+    const c = { ...fit({ k1: 90, k2: 60 }), dock, chipW: { m1: 120, m2: 120, m3: 120 } };
+    const wide = layout(leaf("grp"), kids, root(500), st, c).rects;
+    const last = Math.max(wide.k1.y + wide.k1.h, wide.k2.y + wide.k2.h);
+    expect(Math.min(wide.m1.y, wide.m2.y, wide.m3.y)).toBeGreaterThanOrEqual(last);
+    expect(wide.m1.y).toBe(wide.m3.y); // 3 x 120 + gaps fit one row of 500
+    expect(wide.grp.h).toBe(cfg.HEAD_H + last + cfg.GAP + 22); // the group ends at the dock: no empty space
+    const narrow = layout(leaf("grp"), kids, root(300), st, c).rects;
+    expect(narrow.m3.y).toBeGreaterThan(narrow.m1.y); // 300 px: two rows of chips
+    expect(narrow.grp.h).toBe(cfg.HEAD_H + (narrow.m3.y + 22));
+    const none = layout(leaf("grp"), kids, root(500), st, { ...fit({ k1: 90, k2: 60 }), dock: {} }).rects;
+    expect(none.grp.h).toBe(cfg.HEAD_H + 90); // no chips: no dock area
+  });
+
+  it("no two cards intersect, at any width, with mixed heights, shares and a user height", () => {
+    const t = split("c", [split("r", [leaf("a"), leaf("b"), leaf("c"), leaf("d")], [1, 1, 1, 1]), split("r", [leaf("e"), leaf("f")], [1, 1])], [1, 1]);
+    const st = { b: { sp: 2 }, e: { h: 200 } };
+    for (const w of [200, 360, 540, 900, 1100]) {
+      const { rects, height } = layout(t, {}, root(w), st, fit({ a: 60, b: 150, c: 80, d: 90, e: 70, f: 110 }));
+      const all = Object.values(rects) as any[];
+      for (let i = 0; i < all.length; i++) {
+        expect(all[i].x + all[i].w).toBeLessThanOrEqual(w + 0.001);
+        expect(all[i].y + all[i].h).toBeLessThanOrEqual(height);
+        for (let j = i + 1; j < all.length; j++) expect(rectsHit(all[i], all[j])).toBe(false);
+      }
+    }
+  });
+});
