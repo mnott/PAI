@@ -141,8 +141,10 @@ workers:
     failures: 2
     # Which triggers are on: context, missing-tool, repeated-failure, and
     # loop-stop (a loop-guard stop that left committed or salvaged work
-    # escalates at once, without waiting for `failures`).
-    triggers: [context, missing-tool, repeated-failure, loop-stop]
+    # escalates at once, without waiting for `failures`), and deadline (the
+    # same for a run stopped by --max-minutes / --deadline). With nothing saved
+    # both fall back to the repeated-failure rule.
+    triggers: [context, missing-tool, repeated-failure, loop-stop, deadline]
     # Where an escalated plan/queue part runs (--escalate takes `tier`) and the
     # default provider/model of `pai worker help`: tier label, provider name
     # (a key of providers, or the built-in anthropic), model alias or id.

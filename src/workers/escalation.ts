@@ -9,7 +9,9 @@
  * (c) it failed `escalate.failures` times on the same task (loop-guard stop,
  * invalid report, failed checks), or (d) the loop guard stopped it after it
  * left committed or salvaged work: that escalates at once, without waiting for
- * a second failure (trigger `loop-stop`, off by removing it from the list). t2 -> t1 re-runs the task on the tier above
+ * a second failure (trigger `loop-stop`, off by removing it from the list); the
+ * same holds for a run stopped by its time limit (--max-minutes / --deadline;
+ * trigger `deadline`). t2 -> t1 re-runs the task on the tier above
  * with a handoff summary prepended and the salvage merge instruction first —
  * the ended run's commits stay on its branch and the escalated run merges
  * them ("Continue, do not restart: first git merge <branch>"); t1 -> t0
@@ -21,7 +23,7 @@
 import { appendLedger } from "./ledger.js";
 import type { TierDef } from "./route-lists.js";
 
-export type TriggerKind = "context" | "missing-tool" | "repeated-failure" | "loop-stop";
+export type TriggerKind = "context" | "missing-tool" | "repeated-failure" | "loop-stop" | "deadline";
 export type { TierDef };
 
 export type Tier = string;
@@ -44,7 +46,7 @@ export interface CloudTarget {
   model: string;
 }
 
-const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop"];
+const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop", "deadline"];
 
 /** Fallbacks of the escalate block when workers.yaml omits a key; the shipped defaults file carries the policy values. */
 export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" } };
@@ -85,6 +87,8 @@ export interface TriggerInput {
   /** Failed attempts of this task so far, this one included. */
   failures?: number;
   loopStopped?: boolean;
+  /** The run was stopped by its time limit (--max-minutes / --deadline). */
+  timedOut?: boolean;
   /** Commit lines the run left on its branch (salvage commits included). */
   commits?: string[];
   /** Uncommitted edits were salvaged into a commit on exit. */
@@ -102,7 +106,7 @@ export function contextPercentOf(tokens: number | null | undefined, window: numb
   return Math.round((tokens / window) * 100);
 }
 
-/** First trigger that applies, in order: context, missing tool, loop stop with saved work, repeated failure; null when none. */
+/** First trigger that applies, in order: context, missing tool, loop stop or time limit with saved work, repeated failure; null when none. */
 export function detectTrigger(i: TriggerInput): Trigger | null {
   const cfg = i.cfg ?? DEFAULT_ESCALATE;
   const frac = cfg.contextFraction;
@@ -120,8 +124,11 @@ export function detectTrigger(i: TriggerInput): Trigger | null {
   if (on("loop-stop") && i.loopStopped && ((i.commits?.length ?? 0) > 0 || i.salvaged)) {
     return { kind: "loop-stop", reason: "loop-guard stop with saved work" };
   }
+  if (on("deadline") && i.timedOut && ((i.commits?.length ?? 0) > 0 || i.salvaged)) {
+    return { kind: "deadline", reason: "time limit reached with saved work" };
+  }
   if (on("repeated-failure") && (i.failures ?? 0) >= cfg.failures) {
-    const what = i.loopStopped ? "loop-guard stop" : i.reportValid === false ? "invalid report" : i.checksFailed ? "failed checks" : "failed run";
+    const what = i.loopStopped ? "loop-guard stop" : i.timedOut ? "time limit" : i.reportValid === false ? "invalid report" : i.checksFailed ? "failed checks" : "failed run";
     return { kind: "repeated-failure", reason: `${what}, ${i.failures} failures` };
   }
   return null;
@@ -273,10 +280,12 @@ export interface EscalationPlan {
 export function planEscalation(i: PlanInput): EscalationPlan | null {
   // a run kept for review (it committed, its report was invalid) stays: no
   // re-run upstairs either — the commits are the result to review
-  if (i.keptForReview) return null;
+  // — except a run stopped by its time limit: it is kept for review only because
+  // it committed, and that is exactly the saved work the deadline trigger hands up
   const tier = tierOf(i.tiers, i.className);
   const base = detectTrigger({ ...i, failures: i.failures });
-  const trigger = (base?.kind === "repeated-failure" || base?.kind === "loop-stop") && i.failureWhy ? { ...base, reason: `${i.failureWhy}` } : base;
+  if (i.keptForReview && base?.kind !== "deadline") return null;
+  const trigger = (base?.kind === "repeated-failure" || base?.kind === "loop-stop" || base?.kind === "deadline") && i.failureWhy ? { ...base, reason: `${i.failureWhy}` } : base;
   const action = decideEscalation(i.tiers, tier, trigger, i.state, i.cfg);
   if (action.action === "none" || !trigger || !tier) return null;
   const summary = escalationSummary({ id: i.id, label: i.label, from: action.from, to: action.to.id, trigger, done: i.done, commits: i.commits, branch: i.branch });

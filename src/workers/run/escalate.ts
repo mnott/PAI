@@ -59,6 +59,7 @@ export async function tryEscalate(
     toolErrors: harnessToolErrorTexts(readToolErrors(logDir).filter((r) => r.worker === wid)),
     failures: failed ? localFailures(ledgerPath(logDir), label, (p) => { const c = getProviderOrNative(config, p); return !!c && isLoopbackProvider(c); }) + (st.rc === 0 ? 1 : 0) : 0,
     loopStopped: st.loopStopped,
+    timedOut: st.timedOut,
     reportValid: st.reportValid,
     failureWhy: failureWhy ?? undefined,
     keptForReview,
