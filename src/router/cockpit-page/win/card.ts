@@ -569,6 +569,8 @@ var api={init:init,addCards:addCards,removeCards:removeCards,hide:hide,registerT
  cfg:cfgOf,announce:announce,layState:layState,
  /** Replace the root tree (key "") or a group's kids (key = group id), relayout once and save (A7). */
  apply:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;relayout();save()},
+ /** A drop: apply the moved tree and re-arrange (content-driven layout): fitted heights re-measure, narrow rows wrap into the grid, containers grow. */
+ applyFit:function(key,tree){if(key)W.kids[key]=tree;else W.tree=tree;W.auto=true;W.refit=true;relayout();save()},
  flush:function(){if(W.timer){clearTimeout(W.timer);W.timer=null;if(!complete())return;var st={},id,now=W.opts.now||Date.now();for(id in W.st)st[id]=W.st[id];for(id in W.cards){st[id]=st[id]||{};st[id].seen=now}W.t=saveWin(W.opts.storage,W.tree,W.kids,st,W.auto)}}};
 return api;
 })();

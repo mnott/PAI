@@ -16,17 +16,15 @@ export type WinDrop = (
 /** zoneAt(rect, p) -> "left"|"right"|"top"|"bottom"|"none": the four edge bands are the
  *  outer 25% of width/height; corners go to the nearer edge by distance; the middle is
  *  "none". moveCard(tree,dragId,targetId,zone,{kids,state,cfg}) -> the new tree per 3.3
- *  (remove + normalize, insert by zone, normalize), or null when the resulting box of any
- *  card would be below its minW/minH (refusal; narrow mode never refuses a row split).
- *  dropTry(...) -> {tree,why}: moveCard with the refusal reason ("no room: <card> would be <w> px, needs <minW>").
- *  A drop that would leave a card below its minW/minH, or that newly makes a row stack, is refused;
- *  a row already stacked before the drop (narrow container) stays allowed.
+ *  (remove + normalize, insert by zone, normalize), or null only for an impossible drop (onto itself,
+ *  unknown card, zone none). A drop is never refused for room: the layout re-arranges afterwards
+ *  (refit of fitted heights, narrow rows wrap into the balanced grid).
+ *  dropTry(...) -> {tree,why}: moveCard; why is always "".
  *  neighbor(rects,id,dir) -> the id of the nearest visible card in that direction, or null.
- *  canDrop(tree,kids,state,cfg,dragId,targetId,zone,box) -> true|false: the drop runs on a
- *  copy and is refused exactly as moveCard would refuse it.
+ *  canDrop(tree,kids,state,cfg,dragId,targetId,zone,box) -> true|false: moveCard would not return null.
  *  A drop that yields the identical tree returns the tree unchanged (no-op).
  *  No backticks inside the string: the tests extract it up to the closing one. */
-export const WIN_DROP_JS = String.raw`function winMinH(cfg,type){var t=winType(cfg,type);return t.minH!==undefined?t.minH:cfg.minH||0}
+export const WIN_DROP_JS = String.raw`
 function winClone(n){
  if(!n)return null;
  if(n.k==="c")return{k:"c",id:n.id};
@@ -51,61 +49,7 @@ function zoneAt(R,p){
  if(hx)return L<ew?"left":"right";
  return T<eh?"top":"bottom";
 }
-/** Why the tree does not fit, or "": the first card whose box is below its minW/minH. A row that
- *  stacks (layout's rule: a visible child's share is under its minW) is exempt, so existing trees
- *  still lay out; winStackedRows lets moveCard refuse a drop that newly causes the stacking. */
-function winWhy(tree,kids,state,cfg,box){
- var r=layout(tree,kids,box,state,cfg);
- for(var id in r.rects){
-  var rc=r.rects[id],tp=winLeafType(kids,id,cfg);
-  var mw=winMinW(cfg,tp),mh=winMinH(cfg,tp);
-  var rowStack=false;
-  var P=parentOf(tree,id);
-  if(P&&P.d==="r"){
-   var t=0,vis=0;
-   for(var i=0;i<P.ch.length;i++)if(!winGhost(state,P.ch[i].id)){t+=P.sz[i]||0;vis++}
-   if(t>0&&vis>1&&(P.sz[0]/t)*(box.w-(vis-1)*cfg.GAP)<winMinW(cfg,winLeafType(kids,P.ch[0].id,cfg)))rowStack=true;
-  }
-  if(!rowStack&&rc.w<mw)return"no room: "+id+" would be "+Math.round(rc.w)+" px, needs "+mw;
-  if(!rowStack&&rc.h<mh)return"no room: "+id+" would be "+Math.round(rc.h)+" px tall, needs "+mh;
- }
- return"";
-}
-/** The rows that lay out stacked at container width w: {key: reason}, key = the row's leaf ids sorted.
- *  Same rule as layout: a visible child whose weight share is under its minW stacks the whole row. */
-function winStackedRows(node,w,kids,state,cfg,out){
- if(!node||node.k==="c"){
-  var kt=node&&kids&&kids[node.id]&&kids[node.id].k?kids[node.id]:null;
-  if(kt&&!winMin(state,node.id))winStackedRows(kt,w,kids,state,cfg,out);
-  return out;
- }
- var vis=[],i,t=0;
- for(i=0;i<node.ch.length;i++)if(!winGhost(state,node.ch[i].id)){vis.push(i);t+=node.sz[i]||0}
- if(t<=0)t=1;
- var gap=vis.length>1?cfg.GAP:0,total=w-(vis.length-1)*gap,stack=false,why="";
- if(node.d==="r"){
-  for(i=0;i<vis.length;i++){
-   var ch=node.ch[vis[i]],cw=(node.sz[vis[i]]||0)/t*total,need=winMinW(cfg,winLeafType(kids,ch.id,cfg));
-   if(cw<need){stack=true;why="no room: "+(ch.k==="c"?ch.id:ids(ch)[0])+" would be "+Math.round(cw)+" px, needs "+need;break}
-  }
-  if(stack)out[ids(node).sort().join("|")]=why;
- }
- for(i=0;i<vis.length;i++)winStackedRows(node.ch[vis[i]],node.d==="r"&&!stack?(node.sz[vis[i]]||0)/t*total:w,kids,state,cfg,out);
- return out;
-}
-/** Does the dropped tree stack a row the original did not (a row of the original, with or without the dragged card, that laid out wide)? Returns the reason or "". */
-function winNewStack(before,after,dragId,kids,state,cfg,box){
- var b=winStackedRows(before,box.w,kids,state,cfg,{}),a=winStackedRows(after,box.w,kids,state,cfg,{});
- for(var k in a){
-  if(b[k]!==undefined)continue;
-  var rest=k.split("|").filter(function(x){return x!==dragId}).join("|");
-  if(b[rest]!==undefined)continue;
-  return a[k];
- }
- return"";
-}
-/** moveCard with the refusal reason: {tree,why}; tree is null when refused (why says why, "" for a
- *  structurally impossible drop). */
+/** The drop result per 3.3: {tree,why:""}; tree is null only for a structurally impossible drop (onto itself, unknown card, zone none). Never refused for room. */
 function dropTry(tree,dragId,targetId,zone,opts){
  opts=opts||{};
  var kids=opts.kids||{},st=opts.state||{},cfg=opts.cfg||{HEAD_H:28,GAP:8,minW:220,types:{}};
@@ -148,13 +92,10 @@ function dropTry(tree,dragId,targetId,zone,opts){
   for(var q=0;q<tree.ch.length;q++)if(findLeaf(tree.ch[q],targetId))bi=q;
   t=split("c",[t],[tree.sz[bi]]);
  }
- // refusal: a card below its minW/minH, or a row the drop newly makes stack (an existing stacked row is fine)
- var why=winWhy(t,kids,st,cfg,box)||winNewStack(tree,t,dragId,kids,st,cfg,box);
- if(why)return{tree:null,why:why};
  // no-op: the identical tree comes back unchanged
  return{tree:same(tree,t)?tree:t,why:""};
 }
-/** The drop result per 3.3, or null on refusal. */
+/** The drop result per 3.3, or null for an impossible drop. */
 function moveCard(tree,dragId,targetId,zone,opts){return dropTry(tree,dragId,targetId,zone,opts).tree}
 function same(a,b){
  if(a===b)return true;

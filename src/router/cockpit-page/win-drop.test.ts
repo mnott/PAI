@@ -108,33 +108,24 @@ describe("win drop (spec 3.3)", () => {
     expect(api.ids(nt)).toEqual(["b", "z", "a"]);
   });
 
-  it("refusal below minW/minH returns null; canDrop agrees", () => {
-    // bounded row 400x600: drop right of a -> each cell (392)/2 = 196 < chart minW 300
+  it("a drop is never refused for room; only impossible drops return null; canDrop agrees", () => {
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const t = split("c", [row], [600]);
     const kids = { a: { type: "chart" }, b: { type: "chart" } };
-    // (minW never refuses a row split: narrow mode stacks it, see the next test)
-    // minH: bounded column 300 tall, drop top of b -> each (292)/2 = 146 < chart minH 150
+    // bounded column 300 tall, drop top of b: each would be 146 < chart minH 150, still applied
     const col = split("c", [leaf("a"), leaf("b")], [0.5, 0.5]);
     const t2 = split("c", [col], [600]);
     const short = { w: 1000, h: 300 };
-    expect(moveCard(t2, "a", "b", "top", opts(kids, {}, short))).toBe(null);
-    expect(api.canDrop(t2, kids, {}, cfg, "a", "b", "top", short)).toBe(false);
-    // the same drop with metric types (minW 120, minH 80) is accepted
-    const kids2 = { a: { type: "metric" }, b: { type: "metric" } };
-    expect(moveCard(t, "a", "b", "right", opts(kids2, {}, wide))).not.toBe(null);
-    expect(api.canDrop(t, kids2, {}, cfg, "a", "b", "right", wide)).toBe(true);
+    expect(moveCard(t2, "a", "b", "top", opts(kids, {}, short))).not.toBe(null);
+    expect(api.canDrop(t2, kids, {}, cfg, "a", "b", "top", short)).toBe(true);
+    // a 196 px cell for a chart (minW 300), still applied
+    expect(moveCard(t, "a", "b", "right", opts(kids, {}, { w: 400, h: 1000 }))).not.toBe(null);
+    // impossible drops
+    expect(moveCard(t, "a", "a", "right", opts(kids, {}, wide))).toBe(null);
+    expect(moveCard(t, "a", "b", "none", opts(kids, {}, wide))).toBe(null);
+    expect(api.canDrop(t, kids, {}, cfg, "a", "a", "right", wide)).toBe(false);
   });
 
-  it("a narrow-stacking row is not refused (row splits stack)", () => {
-    // container 400 wide: after the split each cell is 196 < chart minW 300 -> stacks
-    const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
-    const t = split("c", [row], [600]);
-    const kids = { a: { type: "chart" }, b: { type: "chart" } };
-    const nt = moveCard(t, "a", "b", "right", opts(kids, {}, { w: 400, h: 1000 }));
-    expect(nt).not.toBe(null);
-    expect(api.canDrop(t, kids, {}, cfg, "a", "b", "right", { w: 400, h: 1000 })).toBe(true);
-  });
 
   it("no-op returns the same tree object", () => {
     const row = split("r", [leaf("a"), leaf("b")], [0.5, 0.5]);
@@ -230,17 +221,17 @@ describe("win drop (spec 3.3)", () => {
   });
 });
 
-describe("win drop: refuse a drop that leaves a card without room", () => {
-  it("a drop that newly makes a row stack is refused with the reason; the same row already stacked stays allowed", () => {
+describe("win drop: a drop that leaves a card narrow is applied, then the layout wraps it", () => {
+  it("a third chart in a 700 px row is applied; afterwards no visible card is below its minW", () => {
     const t = split("c", [split("r", [leaf("a"), leaf("b")], [0.5, 0.5]), leaf("c")], [300, 200]);
     const kids = { a: { type: "chart" }, b: { type: "chart" }, c: { type: "chart" } };
-    const box = { w: 700, h: 1000 }; // a,b are 346 px each (>= 300); a third card in the row would be 225 < 300
+    const box = { w: 700, h: 1000 };
     const r = api.dropTry(t, "c", "b", "right", opts(kids, {}, box));
-    expect(r.tree).toBe(null);
-    expect(r.why).toMatch(/^no room: \w+ would be \d+ px, needs 300$/);
-    expect(moveCard(t, "c", "b", "right", opts(kids, {}, box))).toBe(null);
-    expect(api.canDrop(t, kids, {}, cfg, "c", "b", "right", box)).toBe(false);
-    // a roomy box takes the same drop
-    expect(moveCard(t, "c", "b", "right", opts(kids, {}, { w: 1400, h: 1000 }))).not.toBe(null);
+    expect(r.tree).not.toBe(null);
+    expect(r.why).toBe("");
+    expect(api.canDrop(t, kids, {}, cfg, "c", "b", "right", box)).toBe(true);
+    expect(api.ids(r.tree).sort()).toEqual(["a", "b", "c"]);
+    const lay = api.layout(r.tree, kids, box, {}, cfg);
+    for (const id of ["a", "b", "c"]) expect(lay.rects[id].w, id).toBeGreaterThanOrEqual(300);
   });
 });

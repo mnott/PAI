@@ -7,8 +7,8 @@
  *  opts: { pressMs (touch long-press, default 400) }
  *  Pointer: pointerdown on a .cgrip (mouse arms at once, touch after pressMs); listeners on window;
  *    the drag holds ids, never nodes. Zones come from zoneAt on the live card rects of the same container;
- *    the .dropind bar sits on that edge (class "bad" when moveCard refuses, with the reason in the grabbed
- *    card's status). Nothing reflows during the drag; pointerup applies once inside anchorKeep.
+ *    the .dropind bar sits on that edge; a drop always applies and the layout re-arranges afterwards.
+ *    Nothing reflows during the drag; pointerup applies once inside anchorKeep.
  *    Esc / pointercancel / blur cancel: the tree was never touched.
  *  Keyboard: Enter/Space on a grip grabs (aria-pressed=true); arrows move the card to the other side of
  *    the nearest neighbour in that direction (applied step by step); Enter/Space drops; Esc restores the
@@ -24,7 +24,7 @@ function ddContainer(id){
  for(var g in s.kids)if(s.kids[g]&&ids(s.kids[g]).indexOf(id)>=0)return{key:g,tree:s.kids[g]};
  return null;
 }
-/** Box used for the refusal check: root = width only, group = its body. */
+/** Box handed to dropTry: root = width only (h undefined selects the root-band rule), group = its body. */
 function ddBox(key){
  if(!key)return{w:Win.el(ddFirst()).parentNode.clientWidth};
  var e=Win.el(key);
@@ -56,8 +56,8 @@ function ddMove(c,dragId,targetId,zone){
  return dropTry(c.tree,dragId,targetId,zone,{kids:Win.state().kids,state:ddState(dragId),cfg:Win.cfg(),box:ddBox(c.key)});
 }
 function ddApply(key,tree){
- if(typeof anchorKeep==="function")anchorKeep(function(){Win.apply(key,tree)});
- else Win.apply(key,tree);
+ if(typeof anchorKeep==="function")anchorKeep(function(){Win.applyFit(key,tree)});
+ else Win.applyFit(key,tree);
 }
 /** The edge bar for a zone on rect R (viewport px, position:fixed). */
 function ddBar(R,zone){
@@ -71,13 +71,11 @@ function winDragInit(doc,win,opts){
  opts=opts||{};
  var PRESS=opts.pressMs===undefined?400:opts.pressMs;
  var D=null,ind=null,K=null;
- function showInd(R,zone,bad,why){
+ function showInd(R,zone){
   if(!ind){ind=doc.createElement("div");ind.className="dropind";doc.body.appendChild(ind)}
   var b=ddBar(R,zone),s=ind.style;
   s.left=b.x+"px";s.top=b.y+"px";s.width=b.w+"px";s.height=b.h+"px";
   ind.setAttribute("data-zone",zone);
-  ind.classList.toggle("bad",!!bad);
-  if(bad&&why)ind.setAttribute("title",why);else ind.removeAttribute("title");
  }
  function hideInd(){if(ind){ind.remove();ind=null}}
  function status(id,kind,s){var c=Win.ctx(id);if(c)c.status(kind,s)}
@@ -98,11 +96,11 @@ function winDragInit(doc,win,opts){
  function feedback(h){
   D.drop=null;
   if(!h){hideInd();status(D.id,"","");return}
-  var r=ddMove(h.c,D.id,h.tid,h.zone),t=r.tree;
-  var bad=t===null;
-  showInd(h.R,h.zone,bad,r.why);
-  if(bad){status(D.id,"err",r.why||"target too small to split")}
-  else{status(D.id,"","");D.drop={c:h.c,tree:t}}
+  var t=ddMove(h.c,D.id,h.tid,h.zone).tree;
+  if(t===null||t===h.c.tree){hideInd();status(D.id,"","");return}
+  showInd(h.R,h.zone);
+  status(D.id,"","");
+  if(t!==null)D.drop={c:h.c,tree:t};
  }
  function endPointer(){
   if(!D)return;
@@ -169,7 +167,7 @@ function winDragInit(doc,win,opts){
   var nb=neighbor(ddRects(c.tree),id,dir);
   if(!nb)return false;
   var r=ddMove(c,id,nb,DD_ZONE[dir]),t=r.tree;
-  if(!t||t===c.tree){if(r.why)Win.announce(r.why);return false}
+  if(!t||t===c.tree)return false;
   ddApply(c.key,t);
   Win.announce("moved "+ddTitle(id)+" "+(dir==="up"?"above":dir==="down"?"below":dir+" of")+" "+ddTitle(nb));
   refocus(id);

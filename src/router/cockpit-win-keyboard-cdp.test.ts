@@ -79,8 +79,7 @@ describe.skipIf(!CHROME)("cockpit keyboard and accessibility, spec 5.3 (CDP key 
     await key("ArrowRight"); await key("ArrowLeft"); const a2b = await st();
     await key("ArrowDown");
     const a3 = await st();
-    expect(a3.live, "K2 a refused move announces the reason").toMatch(/^no room: /);
-    expect(a3.tree, "refused move leaves the tree").toBe(a2b.tree);
+    expect(a3.live, "K2 a move below is never refused for room").not.toMatch(/^no room/);
     await key("Escape");
     const a4 = await st();
     expect(a4.tree, "K2 Esc restores the tree from before the grab").toBe(a0.tree);
