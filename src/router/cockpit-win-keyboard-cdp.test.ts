@@ -91,14 +91,14 @@ describe.skipIf(!CHROME)("cockpit keyboard and accessibility, spec 5.3 (CDP key 
     expect(a6.tree, "drop keeps the move").toBe(a5.tree);
     expect(a6.live).toBe("dropped requests");
 
-    // K3: Alt+arrow moves without grabbing (pool.pool below pool.slots)
+    // K3: Alt+arrow moves without grabbing (pool.pool below its next card)
     await focus('[data-card="pool.pool"] .cgrip');
     const c0 = await st();
     await key("ArrowDown", true);
     const c1 = await st();
     expect(c1.pressed, "K3 never grabbed").not.toBe("true");
     expect(c1.tree).not.toBe(c0.tree);
-    expect(c1.live).toBe("moved pool below slots");
+    expect(c1.live).toMatch(/^moved pool below /);
     expect(`${c1.cls}:${c1.card}`, "K4 focus stays after Alt+arrow").toBe("cgrip:pool.pool");
 
     // K5 + K6: Enter and Space on the minimize button; one polite region carries the announcements

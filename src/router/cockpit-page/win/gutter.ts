@@ -13,6 +13,7 @@ export type WinGutterCfg = {
   /** true when the tree is a group body: a column at splitPath [] holds weights, not band px */
   bounded?: boolean;
   leafTypes?: { [id: string]: string };
+  titleW?: { [id: string]: number };
   types: { [name: string]: { minW?: number; minH?: number } };
 };
 export type WinResize = (
@@ -104,7 +105,7 @@ function winGNarrowRow(s,rects,state,cfg){
  var total=x1-x0-(vis.length-1)*cfg.GAP;
  for(i=0;i<vis.length;i++){
   var n=s.ch[vis[i]];
-  if((s.sz[vis[i]]||0)/t*total<winMinW(cfg,winLeafType(cfg.kids,n.id,cfg)))return true;
+  if((s.sz[vis[i]]||0)/t*total<winCardMinW(cfg,cfg.kids,n.id))return true;
  }
  return false;
 }

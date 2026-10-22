@@ -50,11 +50,15 @@ function winPx(st,id){var s=st&&st[id];return s&&s.px!==undefined?s.px:null}
 function winNar(cfg,w){return!!cfg.fit&&!!cfg.narrowW&&w<cfg.narrowW}
 /** A leaf's card type: cfg.leafTypes (id -> type, set by the card runtime), else a group for a leaf with kids. */
 function winLeafType(kids,id,cfg){var t=cfg&&cfg.leafTypes&&cfg.leafTypes[id];if(t)return t;var k=kids&&kids[id];return k&&k.type?k.type:(k?"group":"leaf")}
-/** Narrow row: children per line (as many as fit at the largest minW, at least 1) and their equal width. */
+/** A card's least width in a grid: its type's minW, or its title's text width plus header controls (cfg.titleW, measured by the runtime) when that is wider. */
+function winCardMinW(cfg,kids,id){var m=winMinW(cfg,winLeafType(kids,id,cfg)),t=cfg.titleW&&cfg.titleW[id];return t&&t>m?t:m}
+/** Narrow row: children per line and their equal width. At most as many as fit at the largest least width; the lines are balanced:
+ *  lines = ceil(n / kMax), per line = ceil(n / lines), so earlier lines are never shorter than later ones. */
 function winGridK(node,w,st,cfg,kids){
- var i,n=0,m=0,gap=cfg.GAP,k;
- for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)){n++;m=Math.max(m,winMinW(cfg,winLeafType(kids,node.ch[i].id,cfg)))}
- k=Math.max(1,Math.min(n,Math.floor((w+gap)/(m+gap))));
+ var i,n=0,m=0,gap=cfg.GAP,k,kmax;
+ for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)){n++;m=Math.max(m,winCardMinW(cfg,kids,node.ch[i].id))}
+ kmax=Math.max(1,Math.min(n,Math.floor((w+gap)/(m+gap))));
+ k=n>0?Math.ceil(n/Math.ceil(n/kmax)):1;
  return{k:k,cw:(w-(k-1)*gap)/k};
 }
 /** The least height a node needs at width w (flat: a fitted band, whose cards take their content height, not a weight share; a column needs only the sum of its cards): a card its type's minH (a group HEAD_H plus its kids), a row the tallest
@@ -73,7 +77,7 @@ function winNeed(node,w,st,cfg,kids,flat){
  if(t<=0)t=1;
  if(node.d==="r"){
   var wide=true,g=null,ln=0,lc=0;
-  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&(node.sz[i]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[i].id,cfg)))wide=false;
+  for(i=0;i<node.ch.length;i++)if(!winGhost(st,node.ch[i].id)&&(node.sz[i]||0)/t*total<winCardMinW(cfg,kids,node.ch[i].id))wide=false;
   if(!wide)g=winGridK(node,w,st,cfg,kids);
   for(i=0;i<node.ch.length;i++){
    if(winGhost(st,node.ch[i].id))continue;
@@ -112,7 +116,7 @@ function winFit(node,w,st,cfg,kids){
  for(i=0;i<vis.length;i++)t+=node.sz[vis[i]]||0;
  if(t<=0)t=1;
  var wide=node.d==="r",g=null;
- if(wide)for(i=0;i<vis.length;i++)if((node.sz[vis[i]]||0)/t*total<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
+ if(wide)for(i=0;i<vis.length;i++)if((node.sz[vis[i]]||0)/t*total<winCardMinW(cfg,kids,node.ch[vis[i]].id))wide=false;
  if(node.d==="r"&&!wide)g=winGridK(node,w,st,cfg,kids);
  for(i=0;i<vis.length;i++){
   k=winFit(node.ch[vis[i]],node.d==="r"?(wide?(node.sz[vis[i]]||0)/t*total:g.cw):w,st,cfg,kids);
@@ -136,7 +140,7 @@ function winSplit(node,box,bounded,st,cfg,kids){
    ws.push(node.sz[i]/t*total);
   }
   var wide=true;
-  for(i=0;i<vis.length;i++)if(ws[vis[i]]<winMinW(cfg,winLeafType(kids,node.ch[vis[i]].id,cfg)))wide=false;
+  for(i=0;i<vis.length;i++)if(ws[vis[i]]<winCardMinW(cfg,kids,node.ch[vis[i]].id))wide=false;
   if(!wide){
    // narrow mode: stack; root gives each child its defaultH, bounded an equal share
    // a grid: as many children per line as fit at their minW, equal widths, lines stacked

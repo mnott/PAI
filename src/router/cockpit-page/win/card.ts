@@ -49,7 +49,7 @@ export type WinTypeDef = {
 const WIN_CARD_BODY_JS = String.raw`var Win=(function(){
 var HEAD_H=28,SAVE_MS=150,FIT_MAX=360;
 var TYPES={group:{accepts:["*"],minW:220,minH:HEAD_H+40,defaultH:300}};
-var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null,auto:false,fit:{},fitT:0,defRoot:[]};
+var W={main:null,cards:{},order:[],tree:null,kids:null,st:null,cfg:null,store:null,opts:null,lastW:-1,n:0,last:{},timer:null,live:null,fed:{},rects:{},gut:{},gkey:"",gcfg:null,auto:false,fit:{},fitT:0,defRoot:[],tm:0};
 function registerType(name,def){TYPES[name]=def||{}}
 function el(tag,cls){var e=document.createElement(tag);if(cls)e.className=cls;return e}
 function mkCtx(c){
@@ -71,7 +71,7 @@ function mkCtx(c){
 }
 function setTitle(c,s){
  s=String(s==null?"":s);
- if(c.titleText===s)return;
+ if(c.titleText===s)return;c.tw=undefined;
  c.titleText=s;
  c.tt.textContent=s;c.title.setAttribute("title",s);
  c.el.setAttribute("aria-label",s);
@@ -159,7 +159,19 @@ function paintMin(c){
  c.min.title=(m?"restore ":"minimize ")+c.titleText;
 }
 /** cfg for layout: the registered types and each card's type by id (a metric is not laid out with the default minW). */
-function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
+function cfgOf(){var lt={},id;for(id in W.cards)lt[id]=W.cards[id].type;W.cfg.types=TYPES;W.cfg.leafTypes=lt;W.cfg.titleW=titleWs();W.cfg.fit=W.auto?fitCfg():undefined;return W.cfg}
+/** Each card's title text width plus header controls, measured once the card is placed (c.tw; the status slot may truncate, so it is not counted); a new reading re-lays out once. */
+/** The title element is stretched by flex, so its natural width is where its last child (text or info icon) ends. */
+function titleText(c){return c.title.lastChild.getBoundingClientRect().right-c.title.getBoundingClientRect().left}
+function measureTitles(){
+ var id,c,n=0;
+ for(id in W.cards){
+  c=W.cards[id];
+  if(c.tw===undefined&&c.mounted&&c.head.clientWidth>0&&c.title.clientWidth>0){c.tw=Math.ceil(titleText(c)+c.head.clientWidth-c.title.clientWidth-(c.status.offsetWidth?c.status.offsetWidth+6:0));n++}
+ }
+ return n;
+}
+function titleWs(){var o={},id;for(id in W.cards)if(W.cards[id].tw!==undefined)o[id]=W.cards[id].tw;return o}
 /** The fit readings for layout(): a type that draws at the body size (it has resize) has none; it keeps the height of its first
  *  placement, so its siblings still take their content height and nothing overflows. */
 function fitCfg(){
@@ -178,7 +190,7 @@ function fitCfg(){
 /** A stacked (narrow) card that is not a chart is measured by its content like any other, though its type has a resize hook: its first placement is no reading. */
 function fitNarrow(c){return c.type!=="chart"&&c.body.clientWidth>0&&c.body.clientWidth<W.cfg.narrowW}
 /** A table or list card is measured by its content when it draws no table (a note, plain html, chips) or its spec's resize only re-flows the table to the width (fitTables): neither has anything to size to the body. */
-function fitPlain(c){return c.mounted&&(c.type==="table"||c.type==="list")&&(!c.body.querySelector("table")||!!c.spec.resize)}
+function fitPlain(c){return c.mounted&&(c.type==="table"||c.type==="list")&&(!c.body.querySelector("table")||!!c.spec.resize||(c.type==="table"&&c.body.querySelectorAll("tbody tr").length<=1))}
 function fitEligible(c){
  return c.mounted&&!isMin(c.id)&&!kidsOf(c.id)&&(!(TYPES[c.type]||{}).resize||fitNarrow(c)||fitPlain(c))&&c.el.style.display!=="none"&&c.body.clientWidth>0;
 }
@@ -273,6 +285,7 @@ function relayout(){
    if(c.mounted&&def.resize)def.resize(c.ctx,rect.body.w,rect.body.h);
   }
  } paintGutters();
+ if(measureTitles()&&W.tm<3){W.tm++;relayout();W.tm--}
 }
 /** Gutters (spec 3.3): one .wgutter in the GAP between siblings of every split, in the container that holds the
  *  split (main for the root tree, a group's body for its kids). Elements are kept by key so focus survives. */

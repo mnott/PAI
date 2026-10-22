@@ -27,7 +27,7 @@ beforeAll(async () => {
     if (url.startsWith("/cockpit/system")) return json(fixtureSystem());
     if (url.startsWith("/cockpit/queue")) return json(fixtureQueue());
     if (url.startsWith("/cockpit/limits")) return json(fixtureLimits());
-    if (url.startsWith("/cockpit/pool")) return json(fixturePoolWithSlot());
+    if (url.startsWith("/cockpit/pool")) { const p = fixturePoolWithSlot(); return json({ ...p, slots: [0, 1, 2, 3, 4].map(() => p.slots[0]) }); }
     if (url.startsWith("/cockpit/")) return json({});
     if (url.startsWith("/page")) { res.setHeader("content-type", "text/html"); return res.end(cockpitHtml()); }
     res.statusCode = 404;
@@ -84,7 +84,7 @@ describe.skipIf(!CHROME)("cockpit drag and drop with real pointer events (CDP)",
     expect(s1.r["kpis.input"]![1]).toBe(s1.r["kpis.requests"]![1]); // same row
     expect(Math.abs(s1.r["kpis.input"]![0] + s1.r["kpis.input"]![2] - s1.r["kpis.requests"]![0]) < 20 || Math.abs(s1.r["kpis.requests"]![0] + s1.r["kpis.requests"]![2] - s1.r["kpis.input"]![0]) < 20).toBe(true); // side by side
 
-    // E2: pool.hit under pool.slots (the pool group body is tall enough for two cards in a column)
+    // E2: pool.hit under pool.slots (the slots table has several rows, so its card is tall enough for two cards in a column; a table with one row is fitted to it)
     const e2 = await drag("pool.hit", "pool.slots", 0.5, 0.95);
     const s2 = await snap();
     expect(e2.ind?.cls, "E2 indicator is not the refused state: " + e2.ind?.title).toBe("dropind");
