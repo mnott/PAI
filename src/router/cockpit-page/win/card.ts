@@ -266,6 +266,7 @@ function relayout(){
  var w=W.main.clientWidth;
  if(w<=0)return;
  W.lastW=w;W.n++;
+ reparent(W.main,W.tree);
  var r=layout(W.tree,W.kids,{w:w},layState(),cfgOf());
  W.main.style.height=r.height+"px";
  W.rects=r.rects;
@@ -487,6 +488,16 @@ function attach(parent,node,d){
   if(!c)continue;
   parent.appendChild(c.el);W.order.push(c.id);
   if(kidsOf(c.id)){c.el.setAttribute("data-depth",String(d));c.body.style.overflow="hidden";c.body.classList.add("cgroup");attach(c.body,W.kids[c.id],d+1)}
+ }
+}
+/** Every card element sits in the body of the group whose kid tree holds it (the root tree: main): a drop or a stored layout moves cards between groups, and a rect is relative to its tree parent. */
+function reparent(parent,node){
+ var order=ids(node),i,c;
+ for(i=0;i<order.length;i++){
+  c=W.cards[order[i]];
+  if(!c)continue;
+  if(c.el.parentNode!==parent)parent.appendChild(c.el);
+  if(kidsOf(c.id)){c.body.classList.add("cgroup");c.body.style.overflow="hidden";reparent(c.body,W.kids[c.id])}
  }
 }
 function init(main,defaults,opts){
