@@ -143,3 +143,13 @@ describe("scope", () => {
     expect(hits.sort()).toEqual(["src/cli/impl/issue.ts", "src/daemon/stale-pass.ts", "src/session/checkpoint-block.ts", "src/session/issue-claims.ts", "src/session/project-setup.ts", "src/workers/status.ts"]);
   });
 });
+
+describe("buildCurlConfig", () => {
+  it("rejects newlines and escapes quotes", async () => {
+    const { buildCurlConfig } = await import("./forge-sink.js");
+    expect(() => buildCurlConfig("GET", "http://h/\nurl = x", "t", 1000)).toThrow();
+    const cfg = buildCurlConfig("GET", 'http://h/a"b\\c', "t", 1000).split("\n");
+    expect(cfg).toHaveLength(7);
+    expect(cfg[0]).toBe('url = "http://h/a\\"b\\\\c"');
+  });
+});

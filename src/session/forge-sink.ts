@@ -87,16 +87,26 @@ function resolveToken(): string | undefined {
 }
 
 /** Real transport: curl; the token goes in on stdin so it never shows in ps. */
-export const curlHttp: Http = (method, url, token, body, timeoutMs) => {
-  const cfg = [
-    `url = "${url}"`,
-    `request = "${method}"`,
-    `header = "Authorization: token ${token}"`,
+/** Escape a value for a double-quoted curl config string; newlines would inject directives. */
+function curlQuote(v: string): string {
+  if (/[\r\n]/.test(v)) throw new ForgeError("refusing newline in curl config value");
+  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+export function buildCurlConfig(method: string, url: string, token: string, timeoutMs: number): string {
+  return [
+    `url = "${curlQuote(url)}"`,
+    `request = "${curlQuote(method)}"`,
+    `header = "Authorization: token ${curlQuote(token)}"`,
     `header = "Content-Type: application/json"`,
     `max-time = ${Math.max(0.5, timeoutMs / 1000)}`,
     `silent`,
     `write-out = "\\n%{http_code}"`,
   ].join("\n");
+}
+
+export const curlHttp: Http = (method, url, token, body, timeoutMs) => {
+  const cfg = buildCurlConfig(method, url, token, timeoutMs);
   const argv = body !== undefined ? ["-K", "-", "--data-raw", body] : ["-K", "-"];
   const r = spawnSync("curl", argv, { input: cfg, encoding: "utf8", timeout: timeoutMs + 500, maxBuffer: 16 * 1024 * 1024 });
   if (r.error || r.status !== 0) throw new ForgeError(`curl failed (${r.error?.message ?? `exit ${r.status}`})`);
