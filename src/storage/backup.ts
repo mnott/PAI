@@ -70,6 +70,14 @@ function restoreDb(src: string, dest: string): void {
     throw new Error(`${dest} is held open by another process (the daemon?) — stop it first (pai daemon stop), then restore`);
   }
   mkdirSync(dirname(dest), { recursive: true });
+  if (existsSync(dest)) {
+    // Safety copy of the current db (WAL pages included) so the restore can be undone.
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    let safety = `${dest}.pre-restore-${stamp}`;
+    for (let i = 1; existsSync(safety); i++) safety = `${dest}.pre-restore-${stamp}-${i}`;
+    copyDb(dest, safety);
+    chmodSync(safety, 0o600);
+  }
   for (const suffix of ["-wal", "-shm"]) rmSync(`${dest}${suffix}`, { force: true });
   copyFileSync(src, dest);
 }
