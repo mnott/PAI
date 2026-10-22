@@ -32,12 +32,6 @@ You burn your premium tokens on work a local model could do. You hit the weekly 
 
 Everything PAI does: [docs/features.md](docs/features.md)
 
-**How it fits together**
-
-![PAI architecture: Claude Code sessions with PAI hooks and skills on top; PAI core (CLI, daemon, storage, notes, router on port 8790 with tiers t0, t1, t2 and the cockpit, workers) side by side with AIBroker (messaging hub, session control, inbound channels with prefixes); ingress from Todoist, GitHub issues, PAILot, WhatsApp and Telegram feeding AIBroker; model providers Anthropic, other cloud and local models behind the router; an operating system layer with iTerm2 and tmux for worker panes and session tabs, launchd or systemd services, and git worktrees](docs/images/architecture.svg)
-
-*Source: [docs/images/architecture.drawio](docs/images/architecture.drawio), editable in draw.io.*
-
 `pai` starts or resumes a session in the current project. `pai pause` and `pai end` save your place. Memory works on its own; the router, workers and cockpit join when you want them. Terms are explained in the [glossary](docs/README.md#words-used-in-these-docs).
 
 **Install it in one sentence: tell Claude Code "Clone https://github.com/mnott/PAI and set it up for me".** [Jump to install](#install).
@@ -57,6 +51,12 @@ Everything PAI does: [docs/features.md](docs/features.md)
 ![Cockpit: settings with the model registry editor and its backups](docs/images/cockpit-07-settings-registry.jpg)
 
 *The router cockpit (`http://127.0.0.1:8790/cockpit`). See [the cockpit page](docs/cockpit.md).*
+
+## How it fits together
+
+![PAI architecture: Claude Code sessions with PAI hooks and skills on top; PAI core (CLI, daemon, storage, notes, router on port 8790 with tiers t0, t1, t2 and the cockpit, workers) side by side with AIBroker (messaging hub, session control, inbound channels with prefixes); ingress from Todoist, GitHub issues, PAILot, WhatsApp and Telegram feeding AIBroker; model providers Anthropic, other cloud and local models behind the router; an operating system layer with iTerm2 and tmux for worker panes and session tabs, launchd or systemd services, and git worktrees](docs/images/architecture.svg)
+
+*Source: [docs/images/architecture.drawio](docs/images/architecture.drawio), editable in draw.io.*
 
 ## Install
 
