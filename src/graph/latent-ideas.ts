@@ -11,8 +11,8 @@
  * and returns its content so the plugin can open it immediately.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
 import { TITLE_STOP_WORDS } from "../utils/stop-words.js";
 import type { StorageBackend } from "../storage/interface.js";
 import { zettelThemes } from "../zettelkasten/themes.js";
@@ -339,8 +339,25 @@ export function handleIdeaMaterialize(
   const vault_path = relFolder ? `${relFolder}/${fileName}` : fileName;
 
   // Absolute filesystem path
-  const absPath = join(vaultPath, vault_path);
+  const absPath = resolve(vaultPath, vault_path);
   const absDir = dirname(absPath);
+
+  // The target must stay inside the vault (lexically and after symlinks), and
+  // an existing note is never overwritten.
+  const vaultReal = realpathSync(vaultPath);
+  const lexRel = relative(resolve(vaultPath), absPath);
+  if (lexRel === "" || lexRel.startsWith("..") || isAbsolute(lexRel)) {
+    throw new Error(`idea_materialize: folder "${folder}" escapes the vault`);
+  }
+  let probe = absDir;
+  while (!existsSync(probe)) probe = dirname(probe);
+  const probeRel = relative(vaultReal, realpathSync(probe));
+  if (probeRel === ".." || probeRel.startsWith(".." + sep) || isAbsolute(probeRel)) {
+    throw new Error(`idea_materialize: folder "${folder}" escapes the vault`);
+  }
+  if (existsSync(absPath)) {
+    throw new Error(`idea_materialize: note already exists: ${vault_path}`);
+  }
 
   // Build wikilinks from source_paths
   const wikilinks = source_paths
@@ -372,7 +389,7 @@ export function handleIdeaMaterialize(
 
   // Write the file (create parent directories as needed)
   mkdirSync(absDir, { recursive: true });
-  writeFileSync(absPath, content, "utf-8");
+  writeFileSync(absPath, content, { encoding: "utf-8", flag: "wx" });
 
   return {
     vault_path,
