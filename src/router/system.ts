@@ -44,6 +44,10 @@ const MACTOP_CANDIDATES = ["mactop", "/opt/homebrew/bin/mactop", "/opt/local/bin
 /** absolute: `top` is aliased to htop in some shells and PATH order is luck */
 const TOP_CMD = "/usr/bin/top";
 
+/** a SoC total above this is a probe fault (mactop derives watts from energy deltas and can emit a bogus delta) */
+export const MAX_PLAUSIBLE_SOC_W = 1000;
+let implausibleLogged = false;
+
 /** One reading; undefined = this source did not report the metric. */
 export interface SystemSample {
   t: number;
@@ -84,8 +88,20 @@ export function parseMactopSample(stdout: string, t: number = Date.now()): Syste
   const mem = (s.memory ?? {}) as Record<string, unknown>;
   const notes: string[] = [];
   // some SoCs fold the CPU rail into system_power; say so instead of a bare 0
-  const cpuW = num(soc.cpu_power);
-  const systemW = num(soc.system_power);
+  let cpuW = num(soc.cpu_power);
+  let gpuW = num(soc.gpu_power);
+  let aneW = num(soc.ane_power);
+  let systemW = num(soc.system_power);
+  let totalW = num(soc.total_power);
+  const rails = [cpuW, gpuW, aneW, systemW, totalW];
+  if (rails.some((w) => w !== undefined && (w < 0 || w > MAX_PLAUSIBLE_SOC_W))) {
+    if (!implausibleLogged) {
+      implausibleLogged = true;
+      console.error(`[system] mactop power reading dropped as implausible: ${JSON.stringify(rails)}`);
+    }
+    cpuW = gpuW = aneW = systemW = totalW = undefined;
+    notes.push("power reading from mactop was implausible and dropped");
+  }
   if (cpuW === 0 && systemW && systemW > 1) notes.push("CPU rail reads 0 W on this SoC; it is part of the system rail");
   return {
     t,
@@ -95,10 +111,10 @@ export function parseMactopSample(stdout: string, t: number = Date.now()): Syste
     gpuFreqMhz: num(soc.gpu_freq_mhz),
     socTemp: num(soc.soc_temp) ?? num(soc.cpu_temp),
     cpuW,
-    gpuW: num(soc.gpu_power),
-    aneW: num(soc.ane_power),
+    gpuW,
+    aneW,
     systemW,
-    totalW: num(soc.total_power),
+    totalW,
     memTotal: num(mem.total),
     memUsed: num(mem.used),
     swapTotal: num(mem.swap_total),
@@ -182,6 +198,17 @@ export interface SystemSeries {
   coveredMin: Record<SystemWindow, number>;
 }
 
+const POWER_KEYS = ["cpuW", "gpuW", "aneW", "systemW", "totalW"] as const;
+const implausibleW = (w: number | undefined): boolean => w !== undefined && (w < 0 || w > MAX_PLAUSIBLE_SOC_W);
+
+/** History written before the probe check holds bogus watts; ignore them on read, the data file stays as is. */
+function withoutImplausiblePower(s: SystemSample): SystemSample {
+  if (!POWER_KEYS.some((k) => implausibleW(s[k]))) return s;
+  const c = { ...s };
+  for (const k of POWER_KEYS) delete c[k];
+  return c;
+}
+
 const AVG_KEYS = ["cpu", "gpu", "ane", "socTemp", "totalW", "systemW", "gpuW", "cpuW", "aneW"] as const;
 
 /**
@@ -199,7 +226,8 @@ export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, no
   const coveredMin: Record<SystemWindow, number> = { "1h": 0, "24h": 0, "7d": 0 };
   const spans: Record<SystemWindow, number> = { "1h": 3_600_000, "24h": DAY, "7d": 7 * DAY };
 
-  for (const s of samples) {
+  for (const raw of samples) {
+    const s = withoutImplausiblePower(raw);
     const b = Math.floor((bucketStart(s.t, bucket) - from) / bucket);
     if (b >= 0 && b < series.length) {
       const acc = sums[b]!;

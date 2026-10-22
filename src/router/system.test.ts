@@ -104,6 +104,36 @@ describe("system parsers", () => {
     expect(s.notes?.[0]).toContain("system rail");
   });
 
+  it("drops an implausible mactop power frame (counter-delta fault: cpu_power 39529 W)", () => {
+    const frame = JSON.parse(MACTOP_FIXTURE)[0];
+    const bad = (soc: Record<string, number | undefined>) =>
+      parseMactopSample(JSON.stringify([{ ...frame, soc_metrics: { ...frame.soc_metrics, ...soc } }]), NOW);
+    for (const soc of [{ cpu_power: 39529.26, total_power: 44708.19 }, { total_power: -5 }, { total_power: 1000.5 }]) {
+      const s = bad(soc);
+      expect(s.totalW).toBeUndefined();
+      expect(s.cpuW).toBeUndefined();
+      expect(s.systemW).toBeUndefined();
+      expect(s.gpu).toBe(6.546877187534572);
+      expect(s.notes?.join()).toContain("implausible");
+    }
+    expect(bad({ total_power: 999 }).totalW).toBe(999);
+  });
+
+  it("ignores an old implausible power point when reading history (chart, sparkline, Wh)", () => {
+    const d = buildSystemSeries(
+      [
+        { t: min(10), source: "mactop", totalW: 50, cpuW: 10, cpu: 20 },
+        { t: min(5), source: "mactop", totalW: 44708.19, cpuW: 39529.26, cpu: 30 },
+      ],
+      "1h",
+      NOW,
+    );
+    expect(Math.max(...d.series.map((b) => b.totalW ?? 0))).toBe(50);
+    expect(Math.max(...d.series.map((b) => b.cpuW ?? 0))).toBe(10);
+    expect(d.wh["1h"]).toBe(Math.round((50 / 60) * 10) / 10);
+    expect(d.series.reduce((n, b) => n + b.n, 0)).toBe(2);
+  });
+
   it("count-2 mactop frames resolve to the last interval, not the first", () => {
     const s = parseMactopSample(MACTOP_COUNT2, NOW);
     expect(s.cpu).toBe(49.59570411579888); // not frame 0's 58.81
