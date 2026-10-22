@@ -27,7 +27,7 @@ const PROBE = `<script>setTimeout(function(){try{
 function q(id){return document.querySelector('#win-root [data-card="'+id+'"]')}
 function box(id){var r=q(id).getBoundingClientRect();return[r.left,r.top,r.width,r.height].map(Math.round).join(",")}
 function info(id){var c=q(id);return{rows:c.querySelectorAll("tbody tr").length,types:c.getAttribute("data-type"),bars:c.querySelectorAll(".sp-t").length,heads:c.querySelectorAll(".chead .ctitle").length,
- groups:c.querySelectorAll(".wr-group").length,wrows:c.querySelectorAll(".wr-row").length,folds:c.querySelectorAll("[data-wrfold]").length,more:c.querySelectorAll("[data-sessmore]").length,text:c.querySelector(".cbody").textContent.length}}
+ cols:c.querySelectorAll("thead th").length,groups:c.querySelectorAll(".wr-group").length,wrows:c.querySelectorAll(".wr-row").length,folds:c.querySelectorAll("[data-wrfold]").length,more:c.querySelectorAll("[data-sessmore]").length,text:c.querySelector(".cbody").textContent.length}}
 var ids=["speed","pause","sessions","runs"],o={err:window.__err||null,boxes:ids.map(box).join("|")};
 ids.forEach(function(i){o[i]=info(i)});
 q("runs").querySelector("[data-wrfold]").click();o.afterFold=info("runs");o.foldSaved=localStorage.getItem("pai.cockpit.wrfold");
@@ -75,6 +75,7 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
     expect(r.err).toBeNull();
     expect(r.speed.bars).toBe(6); // 2 models x (ttft, write, read)
     expect(r.pause.rows).toBe(2);
+    expect(r.pause.cols).toBe(3); // model + the 2 buckets of the fixture
     expect(r.sessions.rows).toBe(10 + 1); // top rows + the "+N more" row
     expect(r.sessions.more).toBe(1);
     expect(r.runs.groups).toBe(2);

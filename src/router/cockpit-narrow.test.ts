@@ -138,7 +138,7 @@ const WIDE_822 = [
   "tokens:300",
   "daily:300",
   "speed:365",
-  "pause:143",
+  "pause:138",
   "sessions:334",
   "runs:194",
   "settings:323",

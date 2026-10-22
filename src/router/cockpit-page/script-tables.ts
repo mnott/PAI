@@ -129,13 +129,20 @@ function workersHtml(d){
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
    return'<div class="wr-row" title="'+esc(full)+'"><i class="wr-dot wr-'+st+'" title="'+esc(s.verdict||"worker")+'"></i><span class="wr-lab">'+esc(lab)+'</span><span class="badge" title="'+esc((s.models||[]).join(", ")||"no model")+'">'+esc(model)+'</span><span class="wr-bar" title="weighted tokens: '+fmt(r.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(r.w?fmt(r.w):"–")+'</span><span class="wr-du">'+du+'</span><span class="'+hitCls(s.hitRatio)+'" title="cache hit">'+(s.requests?pct(s.hitRatio):"–")+'</span></div>'}).join("")+'</div>'}).join("");
 }
-/** Cache verdict by pause: one row per model, hit% and request count per pause bucket. */
+/** Cache verdict by pause: one matrix, a row per model with data, a column per pause bucket, cell "hit% (n)" coloured by hitCls, an empty bucket a dim dot.
+ *  Narrow card (pauseFit adds .pm-narrow): the n leaves the cell and stays in its tooltip. */
 function pauseHtml(d){
- var ph=d.cachePause.map(function(cm){
-  return[esc(cm.model)].concat(cm.buckets.map(function(b){if(!b.n)return'<span class="dim">-</span>';var hr=b.hit/b.n;return'<span class="'+hitCls(hr)+'">'+Math.round(hr*100)+'%</span> <span class="dim">'+b.n+'</span>'}));
- });
- return ph.length?table(["model (hit% n) .nm"].concat(d.cachePause[0].buckets.map(function(b){return b.label})),ph):'<span class="dim">no data</span>';
+ var ms=d.cachePause.filter(function(cm){return cm.buckets.some(function(b){return b.n})});
+ if(!ms.length)return'<span class="dim">no data</span>';
+ var st='<style>.pm{width:100%;border-collapse:collapse;font-size:12px}.pm th{color:var(--dim);font-weight:400;text-align:right;padding:2px 6px;white-space:nowrap}.pm td{text-align:right;padding:2px 6px;white-space:nowrap}.pm .pm-m{text-align:left;max-width:0;width:28%;overflow:hidden;text-overflow:ellipsis}.pm-narrow .pm-n{display:none}</style>';
+ return'<div class="pm-w">'+st+'<table class="pm"><thead><tr><th class="pm-m">model</th>'+ms[0].buckets.map(function(b){return'<th>'+esc(b.label)+'</th>'}).join("")+'</tr></thead><tbody>'+ms.map(function(cm){
+  return'<tr><td class="pm-m" title="'+esc(cm.model)+'">'+esc(cm.model)+'</td>'+cm.buckets.map(function(b){
+   if(!b.n)return'<td class="dim">·</td>';
+   var hr=b.hit/b.n;
+   return'<td title="'+esc(cm.model+" · "+b.label+": "+Math.round(hr*100)+"% hit, "+b.n+" requests")+'"><span class="'+hitCls(hr)+'">'+Math.round(hr*100)+'%</span><span class="pm-n dim"> ('+b.n+')</span></td>'}).join("")+'</tr>'}).join("")+'</tbody></table></div>';
 }
+/** Below ~420 px the pause matrix drops the n from its cells. */
+function pauseFit(ctx){var w=ctx.body.querySelector(".pm-w");if(w)w.classList.toggle("pm-narrow",ctx.body.clientWidth<420)}
 function load(){
  feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){newerCheck(j);data=j;Win.update("data",j);winFeedCache()});
 }
