@@ -257,6 +257,40 @@ describe("router host/origin perimeter", () => {
       up.close();
     }
   });
+
+  it("loopback perimeter: cockpit GET with Host evil.example is 403, with Host 127.0.0.1:<port> passes; a proxy POST with no Origin passes", async () => {
+    const r = createRouter(() => ({}), "http://127.0.0.1:1", () => {}, undefined, undefined, {
+      hosts: { bind: "loopback", extraHosts: [] },
+    });
+    const port = await listen(r);
+    const get = (path: string, headers: http.OutgoingHttpHeaders) =>
+      new Promise<number>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path, headers }, (x) => {
+          x.resume();
+          x.on("end", () => resolve(x.statusCode ?? 0));
+        });
+        q.end();
+      });
+    try {
+      // a rebinding browser GETs the cockpit page with the attacker's Host
+      expect(await get("/cockpit", { host: "evil.example:8790" })).toBe(403);
+      expect(await get("/cockpit", { host: `127.0.0.1:${port}` })).not.toBe(403);
+      // proxy traffic: POST /v1/messages, Host localhost:<port>, no Origin
+      const q = await new Promise<number>((resolve) => {
+        const req = http.request(
+          { port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { host: `localhost:${port}`, "content-type": "application/json" } },
+          (x) => {
+            x.resume();
+            x.on("end", () => resolve(x.statusCode ?? 0));
+          }
+        );
+        req.end(JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 1, messages: [] }));
+      });
+      expect(q).not.toBe(403);
+    } finally {
+      r.close();
+    }
+  });
 });
 
 describe("duplicate model ids", () => {
