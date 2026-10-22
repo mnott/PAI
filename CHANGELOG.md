@@ -4,6 +4,16 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.3] - 2026-10-22
+
+### Fixed
+
+- **`pai daemon install` registered the PAI MCP server twice** when the same repository is reached through two paths (a symlink): entries are now compared by their real file, a matching entry is updated in place, and a `-legacy` entry is kept only for a genuinely different server.
+
+### Added
+
+- **Docs:** the architecture diagram also as PNG (`docs/images/architecture.png`).
+
 ## [1.0.2] - 2026-10-22
 
 ### Added
