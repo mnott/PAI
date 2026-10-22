@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { COCKPIT_HTML } from "./cockpit-page.js";
+import { WIN_CACHE_JS } from "./cockpit-page/win/cards-cache.js";
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const body = COCKPIT_HTML.match(/function speedBars[\s\S]*?\n\}/)![0];
-const speedBars = new Function("esc", `${body}\nreturn speedBars;`)(esc) as (sp: unknown[], w: string, loc: Record<string, number>) => string;
+const lim = { routing: { choices: [{ entry: "local" }, { entry: "glm" }, { entry: "anthropic" }] } };
+const cmp = WIN_CACHE_JS.match(/function providerModelCmp[\s\S]*?\n\}/)![0];
+const speedBars = new Function("esc", "lim", "LOW_REQ", `${cmp}\n${body}\nreturn speedBars;`)(esc, lim, 5) as (sp: unknown[], w: string, loc: Record<string, number>) => string;
 
 const st = (requests: number, ttftP50: number | null, ttftP90: number | null, readTps: number | null, writeTps: number | null) => ({ requests, ttftP50, ttftP90, readTps, writeTps });
 const SP = [
@@ -41,5 +44,15 @@ describe("speed per model bars", () => {
     const html = speedBars(SP, "1h", { glm: 1 });
     expect(html).toContain(">LOCAL<");
     expect(html).toContain(">CLOUD<");
+  });
+
+  it("rows come out in provider order (routing, then alphabetical), requests descending within a provider, the same comparator as the rings", () => {
+    const m = (provider: string, model: string, n: number) => ({ provider, model, h1: st(n, 1, 1, 1, 1), h24: st(n, 1, 1, 1, 1) });
+    const sp = [m("anthropic", "a1", 50), m("zed", "z", 99), m("glm", "g1", 10), m("glm", "g2", 30), m("local", "l1", 6), m("anthropic", "a2", 90)];
+    const names = (html: string) => [...html.matchAll(/class="sp-n[^"]*" title="([^"]+?) \/ ([^"]+?) ·/g)].map((x) => x[1] + "/" + x[2]);
+    const want = ["local/l1", "glm/g2", "glm/g1", "anthropic/a2", "anthropic/a1", "zed/z"];
+    expect(names(speedBars(sp, "1h", {}))).toEqual(want);
+    const ring = new Function("lim", "LOW_REQ", `${cmp}\nreturn providerModelCmp;`)(lim, 5) as (a: unknown, b: unknown) => number;
+    expect(sp.map((x) => ({ provider: x.provider, model: x.model, requests: x.h1.requests })).sort(ring).map((x) => x.provider + "/" + x.model)).toEqual(want);
   });
 });

@@ -23,14 +23,18 @@ function cacheSolo(ms){
 }
 /** True when some model has enough requests: only then the low-request ones are shown small and dimmed. */
 function cacheHasNormal(ms){return Object.keys(ms).some(function(k){return ms[k].requests>=LOW_REQ})}
-/** All models in the default order: provider (routing order, then alphabetical), normal before low-request, most requests first. */
-function cacheRingList(ms,d){
- var list=Object.keys(ms).map(function(k){return ms[k]});
- function lo(m){return m.requests<LOW_REQ?1:0}
+/** THE order of per-model rows (hit rings and speed rows): provider (routing order, then alphabetical), normal before low-request, most requests first, then model name. x: {provider, model, requests}. */
+function providerModelCmp(a,b){
  var ch=(lim&&lim.routing&&lim.routing.choices)||[],rank={};
  ch.forEach(function(c,i){if(rank[c.entry]===undefined)rank[c.entry]=i});
  function r(p){return rank[p]===undefined?1e9:rank[p]}
- list.sort(function(a,b){return r(a.provider)-r(b.provider)||(a.provider<b.provider?-1:a.provider>b.provider?1:0)||lo(a)-lo(b)||b.requests-a.requests||(a.model<b.model?-1:1)});
+ function lo(m){return(m.requests||0)<LOW_REQ?1:0}
+ return r(a.provider)-r(b.provider)||(a.provider<b.provider?-1:a.provider>b.provider?1:0)||lo(a)-lo(b)||(b.requests||0)-(a.requests||0)||(a.model<b.model?-1:a.model>b.model?1:0);
+}
+/** All models in the default order: provider (routing order, then alphabetical), normal before low-request, most requests first. */
+function cacheRingList(ms,d){
+ var list=Object.keys(ms).map(function(k){return ms[k]});
+ list.sort(providerModelCmp);
  return list;
 }
 function cacheRingId(m){return"cache.ring:"+m.provider+"/"+m.model}

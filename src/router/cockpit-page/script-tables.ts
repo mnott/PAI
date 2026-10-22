@@ -60,7 +60,7 @@ function vcls(v){return v==null?"dim":String(v).indexOf("ok")===0?"ok":String(v)
  *  localSet: provider names served by a local server. Pure (no DOM) so the tests can run it. */
 function speedBars(sp,w,localSet){
  var k=w==="1h"?"h1":"h24",span=w==="1h"?"last hour":"last 24 h",num=function(v){return v!=null&&isFinite(v)};
- var rows=sp.map(function(r){return{r:r,s:r[k]||{}}}).sort(function(a,b){return(b.s.requests||0)-(a.s.requests||0)});
+ var rows=sp.map(function(r){return{r:r,s:r[k]||{}}}).sort(function(a,b){return providerModelCmp({provider:a.r.provider,model:a.r.model,requests:a.s.requests},{provider:b.r.provider,model:b.r.model,requests:b.s.requests})});
  function mx(f){var m=0;rows.forEach(function(x){var v=f(x.s);if(num(v)&&v>m)m=v});return m}
  var mT=mx(function(s){return num(s.ttftP90)?s.ttftP90:s.ttftP50}),mW=mx(function(s){return s.writeTps}),mR=mx(function(s){return s.readTps});
  function sec(ms){return(ms/1000).toFixed(1)+" s"}
