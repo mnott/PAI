@@ -1081,15 +1081,27 @@ export async function stopInstance(cfg: LocalConfig, target: string, opts: { cou
   return picked;
 }
 
-/** Requests in flight per instance id, read from the scheduler the cockpit path reads (this process's). */
-export async function cliInflight(cfg: LocalConfig, deps: Pick<StartDeps, "startDir" | "servers"> = {}): Promise<(id: string) => number> {
-  const [{ engineInflight }, { sharedScheduler }, { instanceEngineKey }] = await Promise.all([
+/** A router snapshot older than this no longer says what is running now. */
+const SCHED_FRESH_MS = 10_000;
+
+/**
+ * Requests in flight per instance id, from the snapshot the router mirrors to its log dir (the scheduler lives in
+ * the router process, not here). A missing, unreadable or stale snapshot cannot be checked: the lookup throws so
+ * the stop is refused unless confirmed.
+ */
+export async function cliInflight(cfg: LocalConfig, deps: Pick<StartDeps, "startDir" | "servers"> & { now?: number } = {}): Promise<(id: string) => number> {
+  const [{ engineInflight }, { readSchedFile }, { instanceEngineKey }] = await Promise.all([
     import("../../router/cockpit-actions.js"),
     import("../../router/scheduler.js"),
     import("../../workers/local-instances.js"),
   ]);
+  const now = deps.now ?? Date.now();
+  const snap = readSchedFile(deps.startDir ?? logDir(), now);
   const keys = new Map(currentInstances(cfg, deps).map((r) => [r.id, instanceEngineKey(r)]));
-  return (id) => engineInflight(sharedScheduler().snapshot(), keys.get(id) ?? id);
+  return (id) => {
+    if (!snap || now - snap.at > SCHED_FRESH_MS) throw new LocalTierError(`${id}: in-flight requests could not be checked (no fresh router snapshot); confirm to stop anyway (--yes)`);
+    return engineInflight(snap, keys.get(id) ?? id);
+  };
 }
 
 /** Stop every local server PAI knows (the instances, then anything left on a catalogue port), then wait until the ports are free. */

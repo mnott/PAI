@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { parseLocalConfig, type RunningServer } from "../../workers/local-tiers.js";
 import { localStartView, readLocalStart, readLocalStarts } from "../../workers/local-start.js";
 import { readInstances } from "../../workers/local-instances.js";
-import { sharedScheduler } from "../../router/scheduler.js";
+import { RequestScheduler } from "../../router/scheduler.js";
 import { instanceEngineKey } from "../../workers/local-instances.js";
 import { cliInflight, serverLine, startInstance, stopInstance, type StartDeps } from "./worker-config.js";
 
@@ -143,14 +143,34 @@ describe("startInstance / stopInstance", () => {
   });
 
   it("stop from the CLI sees the requests in flight and refuses; confirm overrides", async () => {
-    const { cfg, deps } = mk();
+    const { d, cfg, deps } = mk();
     const inst = await startInstance(cfg, "one", deps());
-    void sharedScheduler().acquire(instanceEngineKey(inst), "s1", "w1");
+    const s = new RequestScheduler();
+    void s.acquire(instanceEngineKey(inst), "s1", "w1");
+    const write = (at: number) => writeFileSync(join(d, "router-sched.json"), JSON.stringify({ ...s.snapshot(), at }));
+    write(Date.now());
     const inflight = await cliInflight(cfg, deps());
     expect(inflight(inst.id)).toBe(1);
     const kill = async () => {};
     await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight, kill })).rejects.toThrow(/1 request\(s\) in flight.*--yes/);
     await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight, kill, confirm: true })).resolves.toHaveLength(1);
+  });
+
+  it("stop refuses when the router snapshot is missing or stale, confirm overrides, idle fresh allows", async () => {
+    const { d, cfg, deps } = mk();
+    const kill = async () => {};
+    const inst = await startInstance(cfg, "one", deps());
+    const missing = await cliInflight(cfg, deps());
+    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: missing, kill })).rejects.toThrow(/could not be checked.*--yes/);
+    const s = new RequestScheduler();
+    writeFileSync(join(d, "router-sched.json"), JSON.stringify({ ...s.snapshot(), at: Date.now() - 60_000 }));
+    const stale = await cliInflight(cfg, deps());
+    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: stale, kill })).rejects.toThrow(/could not be checked/);
+    writeFileSync(join(d, "router-sched.json"), JSON.stringify({ ...s.snapshot(), at: Date.now() }));
+    const idle = await cliInflight(cfg, deps());
+    await expect(stopInstance(cfg, inst.id, {}, { ...deps(), inflight: stale, kill, confirm: true })).resolves.toHaveLength(1);
+    const inst2 = await startInstance(cfg, "big", deps());
+    await expect(stopInstance(cfg, inst2.id, {}, { ...deps(), inflight: idle, kill })).resolves.toHaveLength(1);
   });
 
   it("labels a server that no tier or provider claims", () => {
