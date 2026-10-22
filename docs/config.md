@@ -1,5 +1,7 @@
 # config.yaml
 
+The router and cockpit answers (`router.enabled`, `router.port`, `router.bind`) are asked by `pai setup`; the questions and their flags are listed in [Setup questions and flags](install/index.md#setup-questions-and-flags).
+
 The main PAI config: search defaults, storage backend, notifications, task bus, identity, the non-provider `workers` settings, the router and cockpit, plus whatever else a writer has stashed in the file. `pai config list|get|set|unset` and the matching `config_*` MCP tools read and change it whether the file is YAML or JSON; `pai config yaml` converts an old `config.json` to commented YAML; `pai config migrate` moves old per-user files into the PAI home.
 
 ## Shipped defaults and precedence

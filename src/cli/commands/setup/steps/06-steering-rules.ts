@@ -37,7 +37,7 @@ export async function stepAiSteeringRules(rl: Rl): Promise<boolean> {
     }
     line();
 
-    const overwrite = await promptYesNo(rl, "Update ~/.claude/skills/PAI/AI-STEERING-RULES.md with the latest rules?", isGenerated);
+    const overwrite = await promptYesNo(rl, "Update ~/.claude/skills/PAI/AI-STEERING-RULES.md with the latest rules?", isGenerated, "steering-rules");
     if (!overwrite) {
       console.log(c.dim("  Keeping existing AI-STEERING-RULES.md unchanged."));
       return false;

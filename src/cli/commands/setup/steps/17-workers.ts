@@ -28,7 +28,7 @@ export async function stepWorkers(rl: Rl): Promise<Record<string, unknown>> {
   line("  the Agent tool is denied and rewritten to it while workers are on.");
   line();
 
-  const wanted = await promptYesNo(rl, "Turn workers on now with the built-in anthropic provider?", true);
+  const wanted = await promptYesNo(rl, "Turn workers on now with the built-in anthropic provider?", true, "workers");
   if (!wanted) {
     line();
     console.log(c.ok("Skipping workers."));

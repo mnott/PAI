@@ -57,6 +57,7 @@ export async function stepSkillStubs(rl: Rl): Promise<boolean> {
     rl,
     `Symlink ${skillNames.length} PAI skill stubs to ~/.claude/skills/?`,
     true,
+    "skill-stubs",
   );
   if (!install) {
     console.log(c.dim("  Skipping skill stub installation."));

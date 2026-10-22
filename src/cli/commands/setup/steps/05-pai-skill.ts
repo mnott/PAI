@@ -42,7 +42,7 @@ export async function stepPaiSkill(rl: Rl): Promise<boolean> {
     }
     line();
 
-    const overwrite = await promptYesNo(rl, "Update ~/.claude/skills/PAI/SKILL.md with the latest PAI skill?", isGenerated);
+    const overwrite = await promptYesNo(rl, "Update ~/.claude/skills/PAI/SKILL.md with the latest PAI skill?", isGenerated, "skill");
     if (!overwrite) {
       console.log(c.dim("  Keeping existing SKILL.md unchanged."));
       return false;

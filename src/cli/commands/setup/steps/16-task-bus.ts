@@ -28,7 +28,7 @@ export async function stepTaskBus(rl: Rl): Promise<Record<string, unknown>> {
   line("  PAI works fully without this. Skip it unless you want cross-session tasks.");
   line();
 
-  const wanted = await promptYesNo(rl, "Enable the task bus (requires a Todoist account)?", false);
+  const wanted = await promptYesNo(rl, "Enable the task bus (requires a Todoist account)?", false, "task-bus");
   if (!wanted) {
     line();
     console.log(c.ok("Skipping the task bus."));

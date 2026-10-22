@@ -1,6 +1,6 @@
 /** Step 3: Embedding model selection for semantic search. */
 
-import { c, line, section, type Rl, promptMenu, promptYesNo, readConfigRaw } from "../utils.js";
+import { c, line, section, type Rl, promptMenu, promptYesNo, readConfigRaw, setupOptions } from "../utils.js";
 import { CONFIG_FILE } from "../../../../daemon/config.js";
 import { detectBackends, OLLAMA_ID, OLLAMA_DEFAULT_MODEL, ollamaDefaultUrl } from "../../../../memory/backends/index.js";
 
@@ -18,11 +18,14 @@ async function stepBackend(rl: Rl, fresh: boolean): Promise<Record<string, unkno
     console.log(c.dim(`  Recommended: ${recommended}. Switch with \`pai memory backend use ${recommended}\` + \`pai memory reembed\`.`));
     return {};
   }
-  if (recommended === OLLAMA_ID && (await promptYesNo(rl, "Use Ollama (GPU, several times faster)?", true))) {
+  if (recommended === OLLAMA_ID && (await promptYesNo(rl, "Use Ollama (GPU, several times faster)?", true, "ollama"))) {
     return { embedding: { backend: OLLAMA_ID, model: OLLAMA_DEFAULT_MODEL, ollama: { baseUrl: ollamaDefaultUrl() } } };
   }
   return {};
 }
+
+/** `--embedding` value to menu index (ollama = Arctic through the Ollama backend). */
+export const EMBEDDING_FLAG_CHOICE: Record<string, number> = { ollama: 0, snowflake: 0, bge: 1, nomic: 2, none: 3 };
 
 export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
   section("Step 3: Embedding Model");
@@ -38,7 +41,9 @@ export async function stepEmbedding(rl: Rl): Promise<Record<string, unknown>> {
   line("  Models are downloaded from HuggingFace on first use.");
   line();
 
-  const choice = await promptMenu(rl, [
+  const flagged = setupOptions.embedding === undefined ? undefined : EMBEDDING_FLAG_CHOICE[setupOptions.embedding];
+  if (setupOptions.embedding === "ollama") setupOptions.answers.ollama = true;
+  const choice = flagged ?? await promptMenu(rl, [
     {
       label: "Snowflake Arctic Embed m v1.5",
       description: "768 dims, ~118MB download. Best retrieval quality per MB (MTEB score 55.14). Asymmetric retrieval — different handling for queries vs documents. Best for most users.",

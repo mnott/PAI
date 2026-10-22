@@ -24,7 +24,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai home`](home.md) | Where PAI keeps its files; move them out of ~/.claude |
 | [`pai hooks-db`](hooks-db.md) | Registry updates for the stop and pre-compact hooks |
 | [`pai identity`](identity.md) | Say who you are, so mail to you can be told from mail to others |
-| [`pai install`](install.md) | First-time setup: storage, search, hooks, daemon |
+| [`pai install`](install.md) | First-time setup: storage, search, hooks, daemon, router |
 | [`pai issue`](issue.md) | Claim and release forge issues for this project |
 | [`pai kg`](kg.md) | Facts extracted from your notes, with the time they were true |
 | [`pai launch`](launch.md) | Start Claude Code on a chosen provider (for scripts) |
@@ -55,7 +55,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai router`](router.md) | Local model router: start, stop, restart, status, run, stats |
 | [`pai session`](session.md) | Work with sessions: list, open, new, rename |
 | [`pai sessions`](sessions.md) | Old plural session commands (use `ls` and `session`) |
-| [`pai setup`](setup.md) | First-time setup: storage, search, hooks, daemon |
+| [`pai setup`](setup.md) | First-time setup: storage, search, hooks, daemon, router |
 | [`pai setups`](setups.md) | Orchestrator + worker combinations (save your own) |
 | [`pai shell-init`](shell-init.md) | Print the shell integration code |
 | [`pai skill`](skill.md) | How your skills are used |
@@ -137,7 +137,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai identity remove` | Stop treating an address as yours |
 | `pai identity set-delivery` | Choose where digests and "mail me" messages go |
 | `pai identity show` | Show your addresses and where mail is delivered |
-| `pai install` | First-time setup: storage, search, hooks, daemon |
+| `pai install` | First-time setup: storage, search, hooks, daemon, router |
 | `pai issue` | Claim and release forge issues for this project |
 | `pai issue claim` | Mark issue N as yours (assignee and in-progress label) |
 | `pai issue claims` | List the issues of this project marked in-progress |
@@ -326,7 +326,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai sessions route` | Link a session note to another project |
 | `pai sessions slug` | Suggest a short name for a session note from its transcript |
 | `pai sessions tag` | Show or set the tags of a session note |
-| `pai setup` | First-time setup: storage, search, hooks, daemon |
+| `pai setup` | First-time setup: storage, search, hooks, daemon, router |
 | `pai setups` | Orchestrator + worker combinations (save your own) |
 | `pai setups save` | Save the current combination under a name |
 | `pai shell-init` | Print the shell integration code |

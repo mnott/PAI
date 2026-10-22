@@ -75,6 +75,7 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
   // Unattended: --storage wins, else Postgres only when the default local one answers.
   const forced =
     setupOptions.storage ??
+    (setupOptions.pgUrl ? "postgres" : undefined) ??
     (setupOptions.yes
       ? (await testPostgresConnection(postgresConnectionString({}))) ? "postgres" : "sqlite"
       : undefined);
@@ -94,6 +95,13 @@ export async function stepStorage(rl: Rl): Promise<Record<string, unknown>> {
     line();
     console.log(c.ok("SQLite selected. No additional setup needed."));
     return { storageBackend: "sqlite" };
+  }
+
+  if (setupOptions.pgUrl) {
+    const connStr = setupOptions.pgUrl;
+    const connected = await testPostgresConnection(connStr);
+    console.log(connected ? c.ok("Connection successful!") : c.warn("Connection test failed — check --pg-url and try again later."));
+    return { storageBackend: "postgres", postgres: { connectionString: connStr } };
   }
 
   // PostgreSQL

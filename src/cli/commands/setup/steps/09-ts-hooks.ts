@@ -22,7 +22,7 @@ export async function stepTsHooks(rl: Rl): Promise<boolean> {
   }
   line();
 
-  const install = await promptYesNo(rl, "Install PAI TypeScript hooks to ~/.claude/Hooks/?", true);
+  const install = await promptYesNo(rl, "Install PAI TypeScript hooks to ~/.claude/Hooks/?", true, "ts-hooks");
   if (!install) {
     console.log(c.dim("  Skipping TypeScript hooks installation."));
     return false;

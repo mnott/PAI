@@ -65,7 +65,20 @@ export function createRl() {
 export type Rl = ReturnType<typeof createRl>;
 
 /** Unattended-mode switches (`pai setup --yes --storage …`), set once by the command. */
-export const setupOptions: { yes: boolean; storage?: "sqlite" | "postgres"; noAibroker?: boolean; dryRun?: boolean } = { yes: false };
+/** Answers given as flags (`--no-hooks`, `--router-port 9000`): a question with an entry here is not asked. */
+export interface SetupOptions {
+  yes: boolean;
+  storage?: "sqlite" | "postgres";
+  pgUrl?: string;
+  embedding?: string;
+  daName?: string;
+  router?: { enabled?: boolean; port?: number; bind?: string };
+  noAibroker?: boolean;
+  dryRun?: boolean;
+  /** yes/no components by key (see questions.ts): true/false forced, absent = ask / default. */
+  answers: Record<string, boolean>;
+}
+export const setupOptions: SetupOptions = { yes: false, answers: {} };
 
 /**
  * The one place every wizard question passes through. Under --yes it answers
@@ -127,7 +140,13 @@ export async function promptYesNo(
   rl: Rl,
   question: string,
   defaultYes = true,
+  key?: string,
 ): Promise<boolean> {
+  const forced = key === undefined ? undefined : setupOptions.answers[key];
+  if (forced !== undefined) {
+    console.log(chalk.dim(`  ${question.trim()} -> ${forced ? "yes" : "no"} (flag)`));
+    return forced;
+  }
   const hint = defaultYes ? "[Y/n]" : "[y/N]";
   const answer = await prompt(rl, `  ${question} ${chalk.dim(hint)}: `, "");
 

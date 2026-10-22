@@ -48,16 +48,23 @@ The plugin brings PAI's skills (this one included) and keeps them current with `
 
 ## 3. Run setup
 
+Never run the interactive `pai setup` from a Bash tool: there is no terminal, so it cannot be answered. Ask the user in chat instead:
+
 ```
-pai setup            # interactive
-pai setup --yes --storage sqlite
+pai setup --questions --json
 ```
 
-Tell the user that setup also installs the background daemon as a login service (launchd on macOS, a systemd user unit on Linux), and ask before running it. Setup covers storage, search embeddings, Claude Code hooks and settings, the background daemon and the first index. It is safe to run again. `--yes` takes every default; without `--storage` it picks sqlite unless a local Postgres answers.
+It prints every question setup would ask on this machine, in order, each with `id`, `step`, `question`, `flag`, `default`, `allowed` and, where the machine already has an answer (storage, embedding, router), `current`. Ask the user those questions in chat, grouped by `step`, with each default pre-filled; accept "defaults" for all of them, and skip questions that have a `current` value unless the user wants to change it. Then run setup once with the matching flags (omit a flag to take its default):
+
+```
+pai setup --yes --storage sqlite --embedding none --router-port 9000 --router-bind loopback --no-hooks
+```
+
+Tell the user that setup also installs the background daemon as a login service (launchd on macOS, a systemd user unit on Linux) and AIBroker, and that the cockpit is reachable from other devices when its reach is not `loopback`. Setup covers storage, search embeddings, Claude Code hooks and settings, the background daemon, the router and cockpit, and the first index. It is safe to run again. Without `--storage`, `--yes` picks sqlite unless a local Postgres answers.
 
 Storage choice, ask the user:
 - **sqlite**: keyword search, no extra software. Right for most people and for small machines.
-- **postgres**: keyword plus semantic search. Needs Docker; setup starts a `pai-pgvector` container itself. On a small machine export `PAI_PG_SHARED_BUFFERS=256MB` first.
+- **postgres**: keyword plus semantic search. Needs Docker; setup starts a `pai-pgvector` container itself (or pass `--pg-url`). On a small machine export `PAI_PG_SHARED_BUFFERS=256MB` first.
 
 Verify: setup ends without an error and `pai memory search "test"` runs (it prints hits or no results, but no error; results appear once the first index is done). If it stops, fix the named cause and run `pai setup` again.
 
@@ -120,15 +127,16 @@ Verify: the table shows a model you have access to on every row. If a row names 
 
 ## 7. Optional: router and cockpit
 
-Skip unless the user wants the cockpit. The router is off by default. It gives usage accounting, the local-model scheduler and the cockpit page.
+The router and cockpit are asked in phase 3 (`router`, `router-port`, `router-bind` in `pai setup --questions`; flags `--router`/`--no-router`, `--router-port`, `--router-bind`), so this phase only confirms them, or changes them later. Default port 8790, reach `loopback`; `tailscale` or an address makes the cockpit reachable from other devices, so say so before choosing it. It gives usage accounting, the local-model scheduler and the cockpit page.
 
 ```
-pai config set router.enabled true
+pai config set router.enabled true    # only if phase 3 left it off
+pai config set router.port 9000       # only to change the port
 pai reload
 pai router status
 ```
 
-Then open `http://127.0.0.1:8790/cockpit` in a browser.
+Then open `http://127.0.0.1:<port>/cockpit` (8790 unless changed) in a browser.
 
 Verify: `pai router status` says running and the page loads. If not, `pai router start`, then check that nothing else uses port 8790.
 
