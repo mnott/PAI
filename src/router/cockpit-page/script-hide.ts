@@ -58,10 +58,9 @@ function hideHeadAction(list){
  }};
 }
 function hidePaintHeads(){
- HIDE_HEADS=HIDE_HEADS.filter(function(h){return document.contains(h.el)||!h.painted});
+ HIDE_HEADS=HIDE_HEADS.filter(function(h){if(document.contains(h.el))h.seen=true;return!h.seen||document.contains(h.el)});
  HIDE_HEADS.forEach(function(h){
-  var n=HIDE_N[h.list]+(h.list==="sessions"?0:0),on=!!hideShown()[h.list],t=n+" hidden";
-  h.painted=true;
+  var n=HIDE_N[h.list],on=!!hideShown()[h.list],t=n+" hidden";
   if(h.a.textContent!==t)h.a.textContent=t;
   h.a.setAttribute("aria-pressed",on?"true":"false");
   var ti=n?(on?"hidden rows are shown dimmed: click to hide them":"click to show the "+n+" hidden "+HIDE_TXT[h.list]+" rows dimmed"):"no row is hidden";
@@ -99,6 +98,7 @@ function hideWire(ctx,card){
   var act=t.getAttribute("data-act");
   if(act==="hideshow"&&t.closest(".chead"))return;
   e.preventDefault();e.stopImmediatePropagation();
+  if(t.blur)t.blur(); // a focused control is never removed by the morph: the one that closes its own panel must let go
   if(act==="hide"){var l=t.getAttribute("data-hl");HIDE_P={card:card,list:l,pat:t.getAttribute("data-ht"),in:[l]};HIDE_ED=null;HIDE_ERR="";return hideRedraw()}
   if(act==="hidelist"){var k=t.getAttribute("data-hl"),i=HIDE_P.in.indexOf(k);if(i>=0)HIDE_P.in.splice(i,1);else HIDE_P.in.push(k);return hideRedraw()}
   if(act==="hidecancel"){HIDE_P=null;HIDE_ERR="";return hideRedraw()}
