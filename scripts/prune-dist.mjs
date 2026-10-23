@@ -28,8 +28,17 @@
  * nothing in that graph names. dist/hooks/ and dist/skills/ are never touched —
  * they are not part of this graph and are rewritten by their own build steps.
  *
- * LIVE ROUTER: chunks reachable from the previous build's entries are kept for one more build (manifest below);
- * older generations are deleted. Source maps are pruned with their module; they are excluded from the npm package.
+ * LIVE PROCESS GRACE
+ * ------------------
+ * A PAI MCP server (`dist/daemon-mcp/index.mjs`) is started per Claude Code
+ * session and lives for HOURS, lazily importing hashed chunks as it goes.
+ * Keeping only the previous generation (the old rule) killed it after two
+ * rebuilds: "Cannot find module 'dist/aibroker-client-<hash>.mjs'". So the
+ * manifest records every generation (build time + chunk list, bounded history)
+ * and prune keeps the chunks of every generation built at or after the one that
+ * was current when the OLDEST live process touching this dist/ started — found
+ * via `ps` (start time of any process whose command line names this dist dir).
+ * No live process → current + previous, as before. `ps` fails → prune NOTHING.
  *
  * Deliberately conservative in both directions:
  *   - only files directly in dist/ are considered, never subdirectories;
@@ -41,97 +50,179 @@
 
 import { readdirSync, readFileSync, writeFileSync, statSync, unlinkSync, existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 import { reachableFrom } from "./lib/dist-reachable.mjs";
 
-const DIST = resolve(process.argv[2] ?? "dist");
-
-/** The same entry list as tsdown.config.ts, as built output paths. */
-const ENTRIES = [
-  "index.mjs",
-  "cli/index.mjs",
-  "daemon/index.mjs",
-  "daemon-mcp/index.mjs",
-].map((p) => join(DIST, p));
-
 /**
- * An unreferenced chunk is kept until it is this old. A long-running process (a `pai worker run` that outlives a
- * rebuild) lazily imports chunks of the build it started from; deleting them immediately made it die with
- * ERR_MODULE_NOT_FOUND. Rebuilding rewrites referenced chunks, so mtime is when a build last wrote the file.
+ * Without a generation manifest (first run) an unreferenced chunk is kept until it is this old.
+ * With a manifest the generation rules below decide instead — mtime is unreliable because every
+ * build rewrites referenced chunks and frequent builds keep stale chunks younger than any age cap.
  */
 const MAX_AGE_MS = Number(process.env.PRUNE_DIST_MAX_AGE_MS ?? 24 * 3600_000);
+
+/** Manifest history is bounded; a process older than the whole window is past its grace anyway. */
+const MAX_GENERATIONS = 30;
 
 /** Extensions this script is allowed to delete. */
 const PRUNABLE = [".mjs", ".mjs.map", ".d.mts", ".d.mts.map"];
 
-const missingEntries = ENTRIES.filter((e) => !existsSync(e)).map((e) => relative(DIST, e));
-const reachable = reachableFrom(ENTRIES);
+/**
+ * `lstart` is the absolute start time in a fixed-width, locale-dependent weekday/month format
+ * ("Fri Oct 23 16:45:33 2026") — exactly 5 fields, then the command. `etimes` (seconds since
+ * start) is GNU-only — BSD/macOS ps rejects it — and is tried as a fallback.
+ * Returns [{ startedAt, command }].
+ */
+export function parsePsOutput(out, nowMs) {
+  const procs = [];
+  for (const line of out.split("\n")) {
+    if (!line.trim()) continue;
+    // lstart: 5 date fields then the command (keep the whitespace after the date).
+    const lstart = line.match(/^(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+(\S.*)$/);
+    if (lstart) {
+      const startedAt = Date.parse(lstart[1]);
+      if (!Number.isNaN(startedAt)) {
+        procs.push({ startedAt, command: lstart[2] });
+        continue;
+      }
+    }
+    // etimes fallback: "<seconds> <command>".
+    const etimes = line.match(/^(\d+)\s+(\S.*)$/);
+    if (etimes) procs.push({ startedAt: nowMs - Number(etimes[1]) * 1000, command: etimes[2] });
+  }
+  return procs;
+}
 
 /**
- * Generation manifest: basenames reachable from the current and the previous build. A chunk survives while it is in
- * either, so a running process (started from the previous build) keeps its lazy imports, and anything older goes —
- * regardless of mtime, because with frequent builds every stale chunk is younger than MAX_AGE_MS and the age rule alone
- * never deletes anything (measured: 4219 files / 436 MB). Without a manifest (first run) the age rule applies.
+ * Oldest start time (ms) among processes whose command line references `distDir`, or null when none.
+ * `{ error }` when the process list cannot be obtained — callers must then prune nothing.
+ * PRUNE_DIST_PROCESSES injects the list as JSON (tests); never point it at the real dist.
  */
-const MANIFEST = join(DIST, ".prune-manifest.json");
-const names = (set) => [...set].map((p) => relative(DIST, p)).sort();
-let manifest = null;
-try {
-  manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
-} catch {
-  /* none yet */
+export function oldestLiveStartMs(distDir, { nowMs = Date.now() } = {}) {
+  let procs;
+  try {
+    procs = process.env.PRUNE_DIST_PROCESSES !== undefined
+      ? JSON.parse(process.env.PRUNE_DIST_PROCESSES)
+      : parsePsOutput(
+          execFileSync("ps", ["-eo", "lstart=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }),
+          nowMs
+        );
+  } catch {
+    return { error: "process list unavailable" };
+  }
+  if (!Array.isArray(procs)) return { error: "process list unavailable" };
+  const needle = resolve(distDir);
+  let oldest = null;
+  for (const p of procs) {
+    if (!p.command.includes(needle)) continue;
+    if (oldest === null || p.startedAt < oldest) oldest = p.startedAt;
+  }
+  return { oldest };
 }
-if (missingEntries.length > 0) {
-  // A partial graph is indistinguishable from "almost everything is dead".
-  console.error(
-    `prune-dist: entry point(s) missing (${missingEntries.join(", ")}) — pruning nothing.`
+
+/**
+ * Prune `distDir` (absolute or relative to cwd). Exports for tests; the CLI runs it at the bottom.
+ * Generation manifest: `{ stamp, generations: [{ builtAt, chunks }] }`, newest first, bounded to
+ * MAX_GENERATIONS. A chunk survives while it belongs to a generation still needed by a live
+ * process (see LIVE PROCESS GRACE above); without a manifest (first run) the age rule applies.
+ */
+export function pruneDist(distDir) {
+  const DIST = resolve(distDir);
+  /** The same entry list as tsdown.config.ts, as built output paths. */
+  const ENTRIES = [
+    "index.mjs",
+    "cli/index.mjs",
+    "daemon/index.mjs",
+    "daemon-mcp/index.mjs",
+  ].map((p) => join(DIST, p));
+  const MANIFEST = join(DIST, ".prune-manifest.json");
+  const names = (set) => [...set].map((p) => relative(DIST, p)).sort();
+
+  const missingEntries = ENTRIES.filter((e) => !existsSync(e)).map((e) => relative(DIST, e));
+  if (missingEntries.length > 0) {
+    // A partial graph is indistinguishable from "almost everything is dead".
+    console.error(
+      `prune-dist: entry point(s) missing (${missingEntries.join(", ")}) — pruning nothing.`
+    );
+    return;
+  }
+  const reachable = reachableFrom(ENTRIES);
+
+  let manifest = null;
+  try {
+    manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
+  } catch {
+    /* none yet */
+  }
+
+  const current = names(reachable);
+  // Entries are rewritten by every build, so their mtimes identify the build; re-running prune on one build must not rotate.
+  const stamp = ENTRIES.map((e) => statSync(e).mtimeMs).join(",");
+  const sameBuild = manifest && manifest.stamp === stamp;
+  const history = sameBuild ? manifest.generations ?? [] : [...(manifest?.generations ?? [])];
+
+  const { oldest, error } = oldestLiveStartMs(DIST);
+  if (error) {
+    console.error(`prune-dist: cannot list processes (${error}) — pruning nothing this run.`);
+    return;
+  }
+
+  // Generations to keep: the newest one built at or before the oldest live process's start, and every
+  // generation newer than it (that process may have lazy imports from any build since it started).
+  // Without a live process: current + previous only, as before.
+  const keepGenerations = new Set();
+  if (oldest !== null) {
+    const anchor = history.filter((g) => g.builtAt <= oldest)[0]; // newest-first, so [0] is the newest match
+    for (const g of history) {
+      if (g === anchor || g.builtAt > oldest) for (const c of g.chunks) keepGenerations.add(c);
+    }
+  } else {
+    for (const g of history.slice(0, 1)) for (const c of g.chunks) keepGenerations.add(c);
+  }
+
+  let removed = 0;
+  let freed = 0;
+  let kept = 0;
+  for (const name of readdirSync(DIST)) {
+    const p = join(DIST, name);
+    let st;
+    try {
+      st = statSync(p);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue; // never recurse: dist/hooks, dist/skills are off-limits
+    if (!PRUNABLE.some((ext) => name.endsWith(ext))) continue;
+
+    // A sourcemap or declaration lives or dies with the module it belongs to.
+    const owner = p.replace(/\.map$/, "").replace(/\.d\.mts$/, ".mjs");
+    if (reachable.has(p) || reachable.has(owner)) continue;
+    if (keepGenerations.has(relative(DIST, owner))) continue;
+
+    if (history.length === 0 && Date.now() - st.mtimeMs < MAX_AGE_MS) {
+      kept += 1;
+      continue;
+    }
+
+    try {
+      unlinkSync(p);
+      removed += 1;
+      freed += st.size;
+    } catch {
+      /* leave it; a file we cannot remove is not worth failing a build over */
+    }
+  }
+
+  const generations = [{ builtAt: Date.now(), chunks: current }, ...history].slice(0, MAX_GENERATIONS);
+  writeFileSync(MANIFEST, JSON.stringify({ stamp, generations }));
+
+  console.log(
+    removed > 0
+      ? `✔ Pruned ${removed} unreferenced bundle file(s) from dist/ (${(freed / 1e6).toFixed(1)} MB), ${reachable.size} reachable, ${kept} recent kept.`
+      : `✔ dist/ has no stale unreferenced bundle files (${reachable.size} reachable, ${kept} recent kept).`
   );
-  process.exit(0);
 }
 
-const current = names(reachable);
-// Entries are rewritten by every build, so their mtimes identify the build; re-running prune on one build must not rotate.
-const stamp = ENTRIES.map((e) => statSync(e).mtimeMs).join(",");
-const sameBuild = manifest && manifest.stamp === stamp;
-const previous = manifest ? (sameBuild ? manifest.previous : manifest.current) : null;
-const keep = new Set([...current, ...(previous ?? [])]);
-
-let removed = 0;
-let freed = 0;
-let kept = 0;
-for (const name of readdirSync(DIST)) {
-  const p = join(DIST, name);
-  let st;
-  try {
-    st = statSync(p);
-  } catch {
-    continue;
-  }
-  if (!st.isFile()) continue; // never recurse: dist/hooks, dist/skills are off-limits
-  if (!PRUNABLE.some((ext) => name.endsWith(ext))) continue;
-
-  // A sourcemap or declaration lives or dies with the module it belongs to.
-  const owner = p.replace(/\.map$/, "").replace(/\.d\.mts$/, ".mjs");
-  if (reachable.has(p) || reachable.has(owner)) continue;
-  if (previous && keep.has(name.replace(/\.map$/, "").replace(/\.d\.mts$/, ".mjs"))) continue;
-
-  if (!previous && Date.now() - st.mtimeMs < MAX_AGE_MS) {
-    kept += 1;
-    continue;
-  }
-
-  try {
-    unlinkSync(p);
-    removed += 1;
-    freed += st.size;
-  } catch {
-    /* leave it; a file we cannot remove is not worth failing a build over */
-  }
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  pruneDist(process.argv[2] ?? "dist");
 }
-
-writeFileSync(MANIFEST, JSON.stringify({ stamp, current: sameBuild ? manifest.current : current, previous: previous ?? [] }));
-
-console.log(
-  removed > 0
-    ? `✔ Pruned ${removed} unreferenced bundle file(s) from dist/ (${(freed / 1e6).toFixed(1)} MB), ${reachable.size} reachable, ${kept} recent kept.`
-    : `✔ dist/ has no stale unreferenced bundle files (${reachable.size} reachable, ${kept} recent kept).`
-);
