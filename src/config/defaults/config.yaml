@@ -206,6 +206,11 @@ router:
   # Read at page build time; a user config.yaml/json override changes the served page. Pure
   # styling (fonts, colours from the theme mapping) stays in the page's CSS.
   cockpit:
+    # Rows the operator never wants to see (edited from the cockpit's "hide" controls and
+    # "Hidden" editor). A rule: match = case-insensitive substring or /regex/; in = lists it
+    # applies to (sessions, runs, timeline, search; default all); note = why. Example:
+    #   - { match: keepalive, in: [sessions, runs, timeline, search], note: cache keepalive beats }
+    hide: []
     # "Sessions by tokens" prompt search: the raw-transcript scan covers only transcripts modified
     # in the last recentHours hours (newest first, fast); older sessions come from PAI's memory index.
     search:

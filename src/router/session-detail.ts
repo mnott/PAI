@@ -249,7 +249,7 @@ export interface SessionSearch {
  */
 export async function searchSessions(
   q: string,
-  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean; /** only transcripts modified at or after this epoch ms */ sinceMs?: number } = {}
+  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean; /** only transcripts modified at or after this epoch ms */ sinceMs?: number; /** a matching prompt this accepts as hidden is no hit: the scan goes on to the session's next prompt */ skip?: (text: string) => boolean } = {}
 ): Promise<SessionSearch> {
   const projectsDir = opts.projectsDir ?? claudeProjectsDir();
   const needle = q.trim().toLowerCase();
@@ -308,7 +308,7 @@ export async function searchSessions(
       if (obj.type !== "user" || !isRealUserPrompt(obj)) continue;
       const text = maskSecrets(cleanPromptText(extractUserPromptText(obj)));
       const at = text.toLowerCase().indexOf(needle);
-      if (at >= 0) {
+      if (at >= 0 && !opts.skip?.(text)) {
         const from = Math.max(0, at - 40);
         const turn = await promptsBefore(f.file, lineNo);
         hits.push({ id: f.id, cwd, turn, ts: obj.timestamp ?? "", snippet: text.slice(from, from + SNIPPET_CHARS), mtime: f.mtime });

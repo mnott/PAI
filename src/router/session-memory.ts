@@ -161,7 +161,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 /** Recent transcript hits first, then memory hits not already among them. Never rejects on a memory failure. */
 export async function combinedSearch(
   q: string,
-  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean; hours?: number; now?: number; memorySearch?: MemorySearchFn } = {}
+  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean; hours?: number; now?: number; memorySearch?: MemorySearchFn; /** the operator's hide rules for the search list */ hidden?: (text: string) => boolean } = {}
 ): Promise<CombinedSearch> {
   const now = opts.now ?? Date.now();
   const t0 = Date.now();
@@ -171,6 +171,7 @@ export async function combinedSearch(
     budgetMs: opts.budgetMs,
     cancelled: opts.cancelled,
     sinceMs: now - (opts.hours ?? recentHours()) * 3600_000,
+    skip: opts.hidden,
   });
   const recentMs = Date.now() - t0;
   const out: CombinedSearch = { hits: recent.hits.map((h) => ({ ...h, source: "recent" as const })), memory: [], partial: recent.partial, timing: { recentMs, memoryMs: 0 } };
@@ -183,6 +184,7 @@ export async function combinedSearch(
     const seen = new Set(recent.hits.map((h) => h.id));
     const seenNote = new Set<string>();
     for (const r of raw) {
+      if (opts.hidden?.(r.snippet)) continue;
       const id =
         (`${r.path}\n${r.snippet}`.match(UUID_G) ?? []).map((u) => u.toLowerCase()).find((u) => known.has(u)) ??
         (await noteHitSession(r, projectsDir, known).catch(() => ""));

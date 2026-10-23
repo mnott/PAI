@@ -132,7 +132,7 @@ describe.skipIf(!CHROME)("B11 speed, pause, sessions, runs on the win runtime", 
 // ---- C1 restored guard: the sessions table fold ----
 import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
 import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
-import { fnSrc, varSrc } from "./cockpit-page-src.js";
+import { fnSrc, hideLib, varSrc } from "./cockpit-page-src.js";
 import { CHROME, dumpDom, killChromes, screenshot } from "./cdp-browser.js";
 
 describe("C1 guards: sessions fold", () => {
@@ -142,7 +142,8 @@ describe("C1 guards: sessions fold", () => {
     const localStorage = { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
     const updates: string[] = [];
     const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessQ", "sessHitsHtml", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
-    const lib = new Function("localStorage", `var U=arguments[1],SESSION_ROWS=50,wrFolded=function(){return{}},WR_FOLD_KEY="k",WCHX={},Win={update:function(){U.push("data")}},data={},fitTables=function(){};\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${varSrc(PAGE, "SESS_OPEN")}\n${varSrc(PAGE, "SESS_Q")}\n${fns}\n${WIN_TABLES_JS}\nreturn{html:sessionsHtml,wire:wtWire};`);
+    const lib = new Function("localStorage", `var U=arguments[1],SESSION_ROWS=50,wrFolded=function(){return{}},WR_FOLD_KEY="k",WCHX={},Win={update:function(){U.push("data")}},data={},fitTables=function(){};\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${varSrc(PAGE, "SESS_OPEN")}\n${varSrc(PAGE, "SESS_Q")}
+${hideLib(PAGE)}\n${fns}\n${WIN_TABLES_JS}\nreturn{html:sessionsHtml,wire:wtWire};`);
     const api = lib(localStorage, updates) as { html: (d: unknown) => string; wire: (c: unknown) => void };
     const sess = (i: number) => ({ session: `s${String(i).padStart(7, "0")}x`, name: `n${i}`, models: i === 0 ? ["m-a", "m-b", "m-c"] : ["m-a"], requests: 1, input: 10, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts: 0, errors: 0, lastTs: new Date().toISOString() });
     const d = { bySession: Array.from({ length: 12 }, (_, i) => sess(i)) };
@@ -170,7 +171,8 @@ describe("C1 guards: sessions fold", () => {
 
 describe("sessions by tokens compact rows", () => {
   const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessQ", "sessHitsHtml", "sessionsHtml"].map((n) => fnSrc(PAGE, n)).join("\n");
-  const lib = new Function("localStorage", `var SESSION_ROWS=50;\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${varSrc(PAGE, "SESS_OPEN")}\n${varSrc(PAGE, "SESS_Q")}\n${fns}\nreturn sessionsHtml;`);
+  const lib = new Function("localStorage", `var SESSION_ROWS=50;\n${varSrc(PAGE, "SESS_MORE_KEY")}\n${varSrc(PAGE, "HIT_WARN")}\n${varSrc(PAGE, "SESS_OPEN")}\n${varSrc(PAGE, "SESS_Q")}
+${hideLib(PAGE)}\n${fns}\nreturn sessionsHtml;`);
   const html = lib({ getItem: () => null }) as (d: unknown) => string;
   const s = (i: number, input: number, errors: number, busts: number) => ({ session: `s${i}abcdefgh`, name: `n${i}`, models: ["m-a"], requests: 2, input, output: 5, cacheRead: 100, cacheWrite: 0, hitRatio: 0.9, busts, errors, lastTs: new Date().toISOString() });
   it("one wr-row per session like a worker run: one line, detail in the title, chips only above zero, the largest bar at 100 percent", () => {

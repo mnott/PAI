@@ -15,3 +15,9 @@ export function varSrc(html: string, name: string): string {
   if (!m) throw new Error(`var ${name} not in the page`);
   return m[0];
 }
+
+/** The hide-rule helpers of the page (script-hide.ts) a table renderer needs: their functions and state vars, for a node harness. */
+export function hideLib(html: string): string {
+  const fns = ["hideRe", "hideRuleHits", "hideText", "hideIs", "hideShown", "hideFilter", "hideSuggest", "hideBtn", "hideRedraw", "hidePost", "hideHeadAction", "hidePaintHeads", "hideNote", "hideLists", "hidePanelHtml", "hideWire"];
+  return [varSrc(html, "HIDE_LISTS"), varSrc(html, "HIDE_P"), varSrc(html, "HIDE_TXT"), ...fns.map((n) => fnSrc(html, n))].join("\n");
+}

@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
 import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
-import { fnSrc, varSrc } from "./cockpit-page-src.js";
+import { fnSrc, hideLib, varSrc } from "./cockpit-page-src.js";
 import { WIN_MORPH_JS } from "./cockpit-page/win/morph.js";
 
 const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml", "table", "sessDetailBody", "sessDetailHtml", "sessDetailOpen", "sessQ", "sessLabel", "sessHitsHtml", "sessSearch"].map((n) => fnSrc(PAGE, n)).join("\n");
@@ -29,6 +29,7 @@ ${varSrc(PAGE, "SESS_MORE_KEY")}
 ${varSrc(PAGE, "HIT_WARN")}
 ${varSrc(PAGE, "SESS_OPEN")}
 ${varSrc(PAGE, "SESS_Q")}
+${hideLib(PAGE)}
 ${fns}
 ${WIN_TABLES_JS}
 return{html:sessionsHtml,wire:wtWire,run:function(c){return eval(c)},set:function(k,v){if(k==="det")SESS_DET=v},get:function(){return{open:SESS_OPEN,tab:SESS_TAB}}};`;
