@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { parsePsOutput, pruneDist } from "./prune-dist.mjs";
+import { parsePsOutput, oldestLiveStartMs, pruneDist } from "./prune-dist.mjs";
 
 function fixture(): string {
   const dist = mkdtempSync(join(tmpdir(), "prune-dist-"));
@@ -153,5 +153,61 @@ describe("prune-dist", () => {
     expect(lstart[0].command).toBe("node /tmp/dist/daemon-mcp/index.mjs");
     const etimes = parsePsOutput("7200 node /tmp/dist/daemon-mcp/index.mjs\n", now);
     expect(etimes[0].startedAt).toBe(now - 7_200_000);
+  });
+
+  it("localized lstart (German locale) -> treated as a ps failure: nothing deleted, one warning", () => {
+    const dist = fixture();
+    const prev = process.env.PRUNE_DIST_PROCESSES;
+    try {
+      writeFileSync(join(dist, ".prune-manifest.json"), JSON.stringify({
+        stamp: "never-matches",
+        generations: [{ builtAt: Date.now() - 1_000, chunks: ["chunk-old.mjs"] }],
+      }));
+      writeFileSync(join(dist, "chunk-old.mjs"), "");
+      const old = new Date(Date.now() - 25 * 3600_000);
+      utimesSync(join(dist, "chunk-old.mjs"), old, old);
+      // ps printed a live process, but with localized weekday/month names Date.parse rejects.
+      const localized = "Mi. 21 Okt. 16:22:01 2026 node /x/dist/daemon-mcp/index.mjs\n";
+      const calls: { args: unknown[]; opts: { env?: Record<string, string> } }[] = [];
+      const exec = (cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
+        calls.push({ args, opts });
+        return localized; // the C-locale call still produced localized output (mocked failure)
+      };
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        pruneDist(dist, { exec });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(existsSync(join(dist, "chunk-old.mjs"))).toBe(true); // live generations must survive
+      expect(existsSync(join(dist, "chunk-new.mjs"))).toBe(true);
+      const warnings = spy.mock.calls.map((c) => String(c[0]));
+      expect(warnings.length).toBe(1); // exactly one warning
+      expect(warnings[0]).toContain("pruning nothing");
+    } finally {
+      if (prev === undefined) delete process.env.PRUNE_DIST_PROCESSES;
+      else process.env.PRUNE_DIST_PROCESSES = prev;
+      rmSync(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("the ps invocation runs with LC_ALL=C and LANG=C so lstart is English", () => {
+    const dist = fixture();
+    const prev = process.env.PRUNE_DIST_PROCESSES;
+    try {
+      const calls: { args: string[]; opts: { env?: Record<string, string> } }[] = [];
+      const exec = (_cmd: string, args: string[], opts: { env?: Record<string, string> }) => {
+        calls.push({ args, opts });
+        return "Fri Oct 23 10:00:00 2026    node /tmp/dist/daemon-mcp/index.mjs\n";
+      };
+      oldestLiveStartMs(dist, { exec });
+      expect(calls.length).toBe(1);
+      expect(calls[0].opts.env?.LC_ALL).toBe("C");
+      expect(calls[0].opts.env?.LANG).toBe("C");
+    } finally {
+      if (prev === undefined) delete process.env.PRUNE_DIST_PROCESSES;
+      else process.env.PRUNE_DIST_PROCESSES = prev;
+      rmSync(dist, { recursive: true, force: true });
+    }
   });
 });
