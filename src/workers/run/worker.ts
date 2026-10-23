@@ -319,6 +319,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         systemWaiver: opts.systemWaiver,
         noStagger: opts.noStagger,
         noQueue: opts.noQueue,
+        queuePriority: opts.queuePriority,
         priority: opts.priority,
         mcpFlag: opts.mcpFlag,
         cwd: opts.cwd,

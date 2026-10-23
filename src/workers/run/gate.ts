@@ -5,7 +5,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { isLocalProvider, readWorkersCached, type WorkerProvider, type WorkersConfig } from "../config.js";
+import { isLocalProvider, readWorkersCached, type PriorityConfig, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
 import {
   httpModelsCheck,
@@ -311,6 +311,11 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   return rc;
 }
 
+/** Priority of a run's queue ticket: the --priority flag, else its named session's workers.priority entry, else normal. */
+export function queuePriorityOf(flag: QueuePriority | undefined, status: Pick<WorkerStatus, "sessionKey">, config: { priority?: PriorityConfig }): QueuePriority {
+  return flag ?? (status.sessionKey ? config.priority?.sessions[status.sessionKey] : undefined) ?? "normal";
+}
+
 /** The pane's queue file content from a gate poll: the run's place in line, its label last. */
 function queuedOf(q: QueuedFile, label: string | undefined): QueuedFile {
   return label ? { ...q, label } : q;
@@ -340,6 +345,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
     config: config.capacity,
     disabled: a.noQueue,
     priority: a.priority,
+    tier: queuePriorityOf(a.queuePriority, status, config),
     log: (line) => {
       process.stderr.write(`${line}\n`);
     },
@@ -362,6 +368,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
           queued: w.queued,
           ...(w.behind ? { behind: w.behind } : {}),
           sinceMs: w.sinceMs,
+          ...(w.priority ? { priority: w.priority } : {}),
         };
         status.last = queuedText(w);
       } else {

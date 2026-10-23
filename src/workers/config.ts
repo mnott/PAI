@@ -337,6 +337,28 @@ export interface CapacityConfig {
   agingMs: number;
 }
 
+/** Queue admission priority of a run: higher is admitted first (capacity.ts). */
+export type QueuePriority = "high" | "normal" | "low";
+export const QUEUE_PRIORITIES: readonly QueuePriority[] = ["high", "normal", "low"];
+
+/** Queue priority sources (workers.priority); the `--priority` flag overrides them. */
+export interface PriorityConfig {
+  /** Named session -> priority of every run it starts; sessions not listed are normal. */
+  sessions: Record<string, QueuePriority>;
+}
+
+/** workers.priority.sessions: a map of session name -> high|normal|low. */
+function prioritySessions(v: unknown, bad: (path: string, msg: string) => never): Record<string, QueuePriority> {
+  if (v === undefined || v === null) return {};
+  if (typeof v !== "object" || Array.isArray(v)) bad(".priority.sessions", "must be a map of session name to high, normal or low");
+  const out: Record<string, QueuePriority> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (!QUEUE_PRIORITIES.includes(x as QueuePriority)) bad(`.priority.sessions.${k}`, "must be high, normal or low");
+    out[k] = x as QueuePriority;
+  }
+  return out;
+}
+
 /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
 export interface LocalIdleConfig {
   enabled: boolean;
@@ -572,6 +594,8 @@ export interface WorkersConfig {
   stagger: StaggerConfig;
   /** Per-provider concurrency cap (workers.capacity); see capacity.ts. */
   capacity: CapacityConfig;
+  /** Queue admission priority per session (workers.priority); see capacity.ts. */
+  priority?: PriorityConfig;
   /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
   localIdle: LocalIdleConfig;
   /** Escalation one tier up (workers.escalate); see escalation.ts. */
@@ -626,6 +650,7 @@ export function defaultWorkersConfig(): WorkersConfig {
   const pool = obj(w.pool);
   const stagger = obj(w.stagger);
   const capacity = obj(w.capacity);
+  const prio = obj(w.priority);
   const localIdle = obj(w.localIdle);
   const escalate = parseEscalate(w.escalate, (path, msg) => {
     throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`);
@@ -692,6 +717,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       heartbeatMs: num(capacity.heartbeatMs, 60_000),
       agingMs: num(capacity.agingMs, 15 * 60_000),
     },
+    priority: { sessions: prioritySessions(prio.sessions, (path, msg) => { throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`); }) },
     localIdle: {
       enabled: bool(localIdle.enabled, true),
       gpuBelowPct: num(localIdle.gpuBelowPct, 10),
@@ -1411,6 +1437,11 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       capacity[k] = t[k] as number;
     }
   }
+  const priority: PriorityConfig = { sessions: { ...(d.priority?.sessions ?? {}) } };
+  if (w.priority !== undefined) {
+    if (typeof w.priority !== "object" || w.priority === null || Array.isArray(w.priority)) bad(".priority", "must be an object");
+    Object.assign(priority.sessions, prioritySessions((w.priority as Record<string, unknown>).sessions, bad));
+  }
   const localIdle = { ...d.localIdle };
   if (w.localIdle !== undefined) {
     if (typeof w.localIdle !== "object" || w.localIdle === null || Array.isArray(w.localIdle)) {
@@ -1521,6 +1552,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     scanBudgetMs,
     stagger,
     capacity,
+    priority,
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
     loopGuard,
@@ -1682,6 +1714,7 @@ export function writeWorkersSection(
         scanBudgetMs: workers.scanBudgetMs,
         stagger: workers.stagger,
         capacity: workers.capacity,
+        priority: workers.priority,
         localIdle: workers.localIdle,
         escalate: workers.escalate,
         loopGuard: workers.loopGuard,

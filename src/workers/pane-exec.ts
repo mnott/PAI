@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
-import { queuedPaneLine, queuedFilePath, readQueued, removeQueued, writeQueued, type QueuedFile } from "./capacity.js";
+import { queueLineWriter, queuedFilePath, readQueued, removeQueued, writeQueued, type QueuedFile } from "./capacity.js";
 import { startPaneBar, type PaneBar, type PaneBarDeps, type StatusLineSpec } from "./pane-bar.js";
 import { panePolicy } from "./pane-policy.js";
 
@@ -218,18 +218,10 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   // the pane is opened before the caller's slot-queue wait: show the queue line
   // in place (one line, refreshed) until the start frame arrives or the wrapper ends
   const qdir = d.queuedDir ?? paneExecDir();
-  let qShown: string | null = null;
+  const qline = queueLineWriter({ write: err, tty: d.tty ?? process.stderr.isTTY === true, columns: () => process.stderr.columns });
   const drawQueued = (clear = false): void => {
-    const q = readQueued(qdir, id);
-    const line = q ? queuedPaneLine(q) : null;
-    if (clear) {
-      if (qShown === null) return; // nothing was ever shown: nothing to clear
-      err("\r\x1b[K");
-      return;
-    }
-    if (line === qShown) return; // an idle pane stays silent, like the follow ticker
-    qShown = line;
-    err(line ? `\r\x1b[K${line}` : "\r\x1b[K");
+    if (clear) return qline.clear(); // nothing was ever shown: nothing to clear
+    qline.show(readQueued(qdir, id));
   };
   const queuedWatch = setInterval(() => drawQueued(), d.queuedPollMs ?? 2000);
   queuedWatch.unref();

@@ -6,7 +6,7 @@
 
 import { type SystemJob } from "../pane-waiver.js";
 import { parseRunnerArgs } from "../args.js";
-import { readWorkersSection } from "../config.js";
+import { readWorkersSection, type QueuePriority } from "../config.js";
 import { type PortCheck } from "../local-provider.js";
 import { type WorkerStatus } from "../status.js";
 import { type RouteInfo } from "../policy.js";
@@ -28,6 +28,8 @@ export interface RunOptions {
   noStagger?: boolean;
   /** --no-queue: skip the per-provider concurrency cap. */
   noQueue?: boolean;
+  /** --priority: queue admission priority of this run (overrides workers.priority.sessions). */
+  queuePriority?: QueuePriority;
   /** --now: wait at the front of the provider's queue (capacity.ts). */
   priority?: "front";
   /** --model fast without a provider: the routed provider's fast model. */
@@ -214,6 +216,8 @@ export interface ExecuteArgs {
   systemWaiver?: SystemJob;
   noStagger?: boolean;
   noQueue?: boolean;
+  /** --priority: queue admission priority of this run (overrides workers.priority.sessions). */
+  queuePriority?: QueuePriority;
   priority?: "front";
   mcpFlag?: string;
   cwd?: string;

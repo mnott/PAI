@@ -10,7 +10,7 @@ import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
+import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
@@ -91,6 +91,13 @@ const out = (s: string) => process.stdout.write(s + "\n");
  * Pure apart from reading the spec/agent files, so the argv it produces can be
  * compared with the old command's.
  */
+/** `--priority high|normal|low`; anything else is an error, not a silent normal. */
+function queuePriorityOf(v: unknown): QueuePriority | undefined {
+  if (v === undefined || v === false) return undefined;
+  if (!QUEUE_PRIORITIES.includes(v as QueuePriority)) throw new Error(`--priority must be high, normal or low (got ${String(v)})`);
+  return v as QueuePriority;
+}
+
 export type RunPlan =
   | { kind: "chain"; chain: Parameters<typeof runChain>[0] }
   | { kind: "run"; run: RunOptions };
@@ -177,6 +184,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       cwd,
       noStagger: o["no-stagger"] === true ? true : undefined,
       noQueue: o["no-queue"] === true ? true : undefined,
+      queuePriority: queuePriorityOf(o.priority),
       worktreeFlag: o["no-worktree"] === true ? false : o.worktree === true ? true : undefined,
       maxMinutes: num(o["max-minutes"]),
       deadline: str(o.deadline),
@@ -269,6 +277,7 @@ const runCommand: CommandDef = {
     { name: "cwd", type: "string", value: "DIR", summary: "Directory the worker runs in (default: here)" },
     { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
     { name: "no-pane", type: "boolean", summary: "Ignored: every start needs a visible pane" },
+    { name: "priority", type: "string", value: "high|normal|low", summary: "Queue admission priority when the provider is full (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker" },
     { name: "no-queue", type: "boolean", summary: "Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent)" },
     { name: "no-stagger", type: "boolean", summary: "Do not wait for an earlier run on the same provider to warm its prompt cache" },
     { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
@@ -1195,7 +1204,8 @@ const queueCommand: CommandDef = {
           out(
             `  ${r.position}. ${r.id}` +
               (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${r.since === undefined ? ageOf(s.updated) : ageOf(nowStamp(new Date(r.since)))}` : "") +
-              `  position ${r.position} of ${r.queued}`
+              `  position ${r.position} of ${r.queued}` +
+              (r.priority && r.priority !== "normal" ? `  ${r.priority} priority` : "")
           );
         }
         for (const l of schedulerLines(schedulerView(dir, workers))) out(l);

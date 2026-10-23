@@ -122,7 +122,7 @@ export interface WorkerStatus {
    */
   warmup?: { for: string; provider: string; elapsedSec: number; limitSec: number };
   /** Set while the capacity gate queues this run behind the provider cap (capacity.ts); `last` carries the line. */
-  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number; queued?: number; behind?: string; sinceMs?: number };
+  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number; queued?: number; behind?: string; sinceMs?: number; priority?: "high" | "normal" | "low" };
   /** Where the routing policy sent this run and why (policy.ts); absent without a policy. */
   route?: { policy: string; reason: string; local: boolean };
   /** "provider/model (session: launched on glm)" — how the provider was chosen; set at spawn. */
@@ -515,7 +515,7 @@ export function alive(pid: number | null | undefined): boolean {
  * status file's own `started` stamp; a reused pid almost never starts within
  * 120s of the original, so a wider drift means "different process".
  */
-export type OwnerFields = Pick<WorkerStatus, "pid" | "started" | "procStart"> & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
+export type OwnerFields = Pick<WorkerStatus, "pid" | "started" | "procStart"> & { label?: string } & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
 
 /**
  * Process creation time encoded in a worker id (`YYYYMMDD-HHMMSS-<pid>`), only
@@ -543,27 +543,63 @@ export function selfProcStart(): number {
   return Math.round(Date.now() - process.uptime() * 1000);
 }
 
-export function ownsPid(status: OwnerFields): boolean {
-  // A worker served by a pool spare: its claude was started before the worker had an id or a
-  // `started` stamp, so the start-time check cannot apply. It lives only while the slot's claude
-  // does, verified as a child of the pool host that spawned it; the host alone never keeps it alive.
-  if (status.pool) return status.pid > 0 && alive(status.pid) && parentPidOf(status.pid) === status.pool.hostPid;
-  if (status.pid <= 0 || !alive(status.pid)) return false;
-  try {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(status.pid)], {
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C" },
-    }).trim();
-    const psStart = Date.parse(out);
-    const started = status.procStart ?? spawnTimeOf(status) ?? Date.parse(status.started.replace(" ", "T"));
-    if (Number.isNaN(psStart) || Number.isNaN(started)) return alive(status.pid);
-    return Math.abs(psStart - started) <= 120_000;
-  } catch {
-    // pid exited between the alive() check and the ps call, or ps failed for
-    // another reason — the pid-existence check is still better than nothing.
-    return alive(status.pid);
-  }
+/** The process facts ownership reads; tests inject a fake table. */
+export interface ProcTable {
+  alive: (pid: number) => boolean;
+  /** Start time (ms epoch) of the process; undefined when it cannot be read. */
+  startMs: (pid: number) => number | undefined;
+  /** Full command line of the process; "" when it cannot be read. */
+  command: (pid: number) => string;
+  parentPid: (pid: number) => number | undefined;
 }
+
+const psOut = (args: string[]): string =>
+  execFileSync("ps", args, { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } }).trim();
+
+export const realProcTable: ProcTable = {
+  alive,
+  startMs: (pid) => {
+    try {
+      const t = Date.parse(psOut(["-o", "lstart=", "-p", String(pid)]));
+      return Number.isNaN(t) ? undefined : t;
+    } catch {
+      return undefined;
+    }
+  },
+  command: (pid) => {
+    try {
+      return psOut(["-ww", "-o", "command=", "-p", String(pid)]);
+    } catch {
+      return "";
+    }
+  },
+  parentPid: parentPidOf,
+};
+
+/**
+ * ownsPid over a process table. A start time that disagrees with the status
+ * is not yet "another process": a run that waited in the capacity queue was
+ * spawned long before its `started` stamp, so the process is also accepted when
+ * its command line names the worker (id, or its own label as `pai worker run`
+ * was given it).
+ */
+export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
+  return (status) => {
+    // A worker served by a pool spare: its claude was started before the worker had an id or a
+    // `started` stamp, so the start-time check cannot apply. It lives only while the slot's claude
+    // does, verified as a child of the pool host that spawned it; the host alone never keeps it alive.
+    if (status.pool) return status.pid > 0 && t.alive(status.pid) && t.parentPid(status.pid) === status.pool.hostPid;
+    if (status.pid <= 0 || !t.alive(status.pid)) return false;
+    const psStart = t.startMs(status.pid);
+    const started = status.procStart ?? spawnTimeOf(status) ?? Date.parse(status.started.replace(" ", "T"));
+    if (psStart === undefined || Number.isNaN(started)) return t.alive(status.pid);
+    if (Math.abs(psStart - started) <= 120_000) return true;
+    const cmd = t.command(status.pid);
+    return (!!status.id && cmd.includes(status.id)) || (!!status.label && status.label.length >= 8 && cmd.includes(status.label));
+  };
+}
+
+export const ownsPid = makeOwnsPid(realProcTable);
 
 const ownsCache = new Map<string, number>();
 /** How long a verified pid ownership is trusted by the daemon's periodic tasks. */
