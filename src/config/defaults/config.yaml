@@ -415,3 +415,9 @@ panes:
     startGraceSecs: 30
     endGraceSecs: 60
     launchGraceSecs: 15
+
+# Release steps (src/builds/mirror-sync.ts, npm-auth.ts).
+release:
+  # Name of the environment variable holding the forge (Gitea/Forgejo) token
+  # for `pai build mirror-sync`. The token itself is never stored or printed.
+  forgeTokenEnv: AIBROKER_FORGE_TOKEN
