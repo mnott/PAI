@@ -156,6 +156,29 @@ pai session info my-project latest
 
 See also: `pai session tag`, `pai session list`
 
+### pai session repair-registry
+
+Point registry rows at the note files they belong to
+
+```
+pai session repair-registry [options]
+```
+
+For each session whose note file cannot be found, matches by number and date in the project's Notes folder and updates title and filename. Never deletes rows. A real run backs up the database first.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--project SLUG` | string | — | Only this project |
+| `--all` | flag | — | Every project |
+| `--dry-run` | flag | — | Report counts, change nothing |
+
+```sh
+pai session repair-registry --all --dry-run
+pai session repair-registry --project caseleaf
+```
+
+See also: `pai session cleanup`, `pai session info`
+
 ### pai session slug
 
 Suggest a short name for a session note from its transcript
@@ -508,7 +531,7 @@ See also: `pai session info`
 Reattribute a registry session to another project
 
 ```
-pai session move SESSION_ID [options]
+pai session move [SESSION_ID] [options]
 ```
 
 Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates. Rows with no Claude id are addressed by `--project` plus `--number` (or `--numbers` for a batch), or by their numeric registry row id.
@@ -544,6 +567,7 @@ See also: `pai session route`, `pai project info`
 | `pai session new` | Start a new session in a new or existing folder |
 | `pai session rename` | Give a session a new name |
 | `pai session info` | Show everything known about one session note |
+| `pai session repair-registry` | Point registry rows at the note files they belong to |
 | `pai session slug` | Suggest a short name for a session note from its transcript |
 | `pai session tag` | Show or set the tags of a session note |
 | `pai session route` | Link a session note to another project |

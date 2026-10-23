@@ -341,6 +341,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai session pause` | Save a checkpoint before leaving (same as `pai pause`) |
 | `pai session recent` | Named sessions with their resume status, live ones first |
 | `pai session rename` | Give a session a new name |
+| `pai session repair-registry` | Point registry rows at the note files they belong to |
 | `pai session restore` | Make displaced transcripts resumable again |
 | `pai session route` | Link a session note to another project |
 | `pai session slug` | Suggest a short name for a session note from its transcript |
