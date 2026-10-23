@@ -370,11 +370,11 @@ describe("draftFromTranscript", () => {
     // (mocked module), so the refusal does not depend on whether a local model runs.
     describe("with local resolution failing", () => {
       const quote = "it must be IMPOSSIBLE to start any command not in a pane";
-      const resolveLocalProvider = vi.fn(async () => {
+      const resolveLocalProvider = vi.fn(async (..._a: unknown[]) => {
         throw new Error("no local model server is running");
       });
       const spawnClaude = vi.fn<(...args: [prompt: string, tier?: string]) => Promise<string>>();
-      const panesItem = item("Commands only in panes", quote, 4);
+      const panesItem = item({ strength: 4 });
       const panesReply: string = JSON.stringify([panesItem]);
       spawnClaude.mockImplementation((async () => panesReply) as () => Promise<string>);
 
