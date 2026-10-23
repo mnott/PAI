@@ -158,11 +158,50 @@ function sessDetailBody(d,tab){
  var hf=hideFilter("timeline",turns,function(t){return t.prompt}),hn=hideNote("timeline");
  return(hn?'<div class="s">'+hn+'</div>':"")+table(["#  .n","time","prompt","tools","edits","cmds .n"," .hd"],hf.slice().reverse().map(function(x){var t=x.it,pr=esc(t.prompt);return['<button type="button" class="lnk" data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</button>',esc(ago(t.ts)),(x.hidden?'<span class="wr-hid">'+pr+'</span>':pr),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands,hideBtn("timeline",t.prompt,hideSuggest("timeline",t.prompt))]}));
 }
+function md(src){
+ var BT=String.fromCharCode(96),fence=BT+BT+BT; // BT is the backtick, from its char code: a literal one would cut this raw template
+ var lines=String(src==null?"":src).split("\n"),out=[],i=0;
+ var inl=function(s){
+  s=s.replace(new RegExp(BT+"([^"+BT+"]+)"+BT,"g"),function(m,c){return'<code>'+c+'</code>'});
+  s=s.replace(/\*\*([^*]+)\*\*/g,function(m,c){return'<b>'+c+'</b>'});
+  s=s.replace(/\*([^*\n]+)\*/g,function(m,c){return'<i>'+c+'</i>'});
+  return s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,function(m,tx,u){return'<a href="'+u+'" rel="noopener" target="_blank">'+tx+'</a>'});
+ };
+ var item=function(s,ol){return'<div class="md-li'+(ol?" md-ol":"")+'">'+s+'</div>'};
+ while(i<lines.length){
+  var ln=lines[i];
+  if(new RegExp("^\\s*"+fence).test(ln)){
+   var buf=[];i++;
+   while(i<lines.length&&!new RegExp("^\\s*"+fence).test(lines[i])){buf.push(esc(lines[i]));i++}
+   i++;
+   out.push('<pre class="md-fence">'+buf.join("\n")+'</pre>');
+   continue;
+  }
+  var hm=ln.match(/^\s*#{1,6}\s+(.*)$/);
+  if(hm){out.push('<div class="md-h"><b>'+inl(esc(hm[1]))+'</b></div>');i++;continue}
+  if(/^\s*[-*]\s+/.test(ln)){
+   var ul=[];
+   while(i<lines.length&&/^\s*[-*]\s+/.test(lines[i])){ul.push(item(inl(esc(lines[i].replace(/^\s*[-*]\s+/,""))),0));i++}
+   out.push('<div class="md-ul">'+ul.join("")+'</div>');
+   continue;
+  }
+  if(/^\s*\d+[.)]\s+/.test(ln)){
+   var ol2=[];
+   while(i<lines.length&&/^\s*\d+[.)]\s+/.test(lines[i])){ol2.push(item(inl(esc(lines[i].replace(/^\s*\d+[.)]\s+/,""))),1));i++}
+   out.push('<div class="md-ol">'+ol2.join("")+'</div>');
+   continue;
+  }
+  if(!ln.trim()){i++;continue}
+  out.push('<div class="md-p">'+inl(esc(ln))+'</div>');
+  i++;
+ }
+ return out.join("");
+}
 /** One turn in full: "turn N of M" with prev / next / back, the prompt, the steps (a collapsed "N steps" link, click to expand — the page's fold pattern, no details element) and the reply. */
 function sessTurnHtml(t){
  var head='<div class="sd-h"><b>turn '+(t.idx+1)+' of '+t.turnCount+'</b>'+(t.idx>0?'<button type="button" class="lnk" data-turnprev="1">← prev</button>':"")+(t.idx+1<t.turnCount?'<button type="button" class="lnk" data-turnnext="1">next →</button>':"")+'<button type="button" class="lnk dim" data-turnback="1">back to timeline</button></div>';
  var steps='<div class="sd-st"><button type="button" class="lnk dim" data-steps="'+(SESS_STEPS_OPEN?"0":"1")+'" aria-expanded="'+(SESS_STEPS_OPEN?"true":"false")+'">'+(SESS_STEPS_OPEN?"▾":"▸")+' '+t.steps.length+' step'+(t.steps.length===1?"":"s")+'</button>'+(SESS_STEPS_OPEN?t.steps.map(function(s){return'<div class="sd-step"><b>'+esc(s.kind==="tool"?(s.name||"tool"):"text")+'</b> <span>'+esc(s.summary)+'</span></div>'}).join(""):"")+'</div>';
- return head+'<div class="sd-prompt">'+esc(t.prompt)+(t.promptTruncated?" …[truncated]":"")+'</div>'+steps+'<div class="sd-reply">'+esc(t.reply||"—")+(t.replyTruncated?" …[truncated]":"")+'</div>';
+ return head+'<div class="sd-prompt">'+md(t.prompt)+(t.promptTruncated?" …[truncated]":"")+'</div>'+steps+'<div class="sd-reply">'+md(t.reply||"—")+(t.replyTruncated?" …[truncated]":"")+'</div>';
 }
 /** The detail panel (an expanded row under its session): tabs Timeline / Files / Skills / MCP / Denials and a close button; the turn view replaces the body while a turn is open. Empty when no session is open. */
 function sessDetailHtml(){
