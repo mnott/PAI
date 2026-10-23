@@ -269,6 +269,9 @@ router:
       sessionDetailTurns: 200
       sessionNameMaxPct: 35
       workerRows: 15
+      # least width (px) of the scan-findings column of the runs table; the
+      # compact form ("1b 2c 3w") fits it, the full text rides in the cell's title.
+      runsFindingsMinWidthPx: 72
       # models under this many requests render as chips, not rings.
       lowRequestMin: 5
       # saved model colours (browser storage) older than this many days are
