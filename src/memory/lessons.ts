@@ -259,8 +259,8 @@ export type ModelClient = (prompt: string) => Promise<string | null>;
 export interface DraftOpts {
   /** Model seam (tests inject); default: the running local model, else the routed default. */
   client?: ModelClient;
-  /** Max characters of user text per model call. */
-  chunkChars?: number;
+  /** Override of config lessons.draft.batchMessages (messages per model call). */
+  batchMessages?: number;
   /** Refuse the cloud fallback: fail when no local model is running. */
   localOnly?: boolean;
   /** Override of config lessons.draft.maxChunks (model calls per transcript). */
@@ -273,7 +273,8 @@ export interface DraftOpts {
 const MIN_STRENGTH = 3;
 const CONTEXT_CHARS = 300;
 const USER_CHARS = 1500;
-const CHUNK_CHARS = 12000;
+/** Messages per model call: small batches so a short correction gets attention. */
+const BATCH_MESSAGES = 8;
 
 interface Turn {
   user: string;
@@ -320,12 +321,42 @@ export async function extractTurns(transcriptPath: string): Promise<Turn[]> {
   return turns;
 }
 
+/** A correction signal anywhere in the message. */
+const CORRECTION_SIGNALS = [
+  /^\s*no\b/i, /\bdon'?t\b/i, /\bnever\b/i, /\bstop\b/i, /\bwrong\b/i, /\bthat'?s not\b/i,
+  /\bnein\b/i, /\bnicht\b/i, /\bfalsch\b/i, /\bwarum\b/i, /\bwhy did you\b/i,
+];
+/** A complaint about the assistant's behaviour, quoted in the message. */
+const COMPLAINTS = [/\byou keep\b/i, /\bagain\b/i, /\bi told you\b/i];
+/** A correction signal must sit in the first 30 chars, like the regex heuristic. */
+const SIGNAL_WINDOW = 30;
+
+/**
+ * Deterministic pre-filter: does this user message look like a correction or a
+ * standing rule? True on rule wording (the same words `deterministicScore`
+ * boosts), a correction signal in the first 30 chars, or a quoted complaint
+ * about assistant behaviour.
+ */
+export function looksLikeCorrection(text: string): boolean {
+  const head = text.slice(0, SIGNAL_WINDOW);
+  return RULE_WORDS.some((re) => re.test(text)) || CORRECTION_SIGNALS.some((re) => re.test(head)) || COMPLAINTS.some((re) => re.test(text));
+}
+
+/**
+ * The turns worth drafting from, oldest first: pre-filtered to correction/rule
+ * messages, capped at `max` (newest kept when the transcript has more).
+ */
+export function selectCandidateTurns(turns: Turn[], max: number): Turn[] {
+  const candidates = turns.filter((t) => looksLikeCorrection(t.user));
+  return candidates.slice(Math.max(0, candidates.length - max));
+}
+
 function draftPrompt(chunk: Turn[]): string {
   const msgs = chunk
     .map((t, i) => `[${i + 1}]${t.before ? `\nassistant before: ${t.before}` : ""}\nuser: ${t.user}`)
     .join("\n\n");
   return (
-    "You review a coding-assistant session for durable lessons. Below are the user's messages, each with the assistant text just before it.\n" +
+    "You review a coding-assistant session for durable lessons. Below are the user's messages that look like corrections or standing rules, each with the assistant text just before it. Check every message on its own; a short message can carry the strongest rule.\n" +
     'Return ONLY a JSON array (no prose) of lessons, each {"title","kind","applies_when","body","evidence_quote","strength","standing"}.\n' +
     `kind is one of ${LESSON_KINDS.join("|")}. evidence_quote is copied verbatim from the user message.\n` +
     "standing is true when the user states a rule for all future work, false for an instruction about the current task only. " +
@@ -344,7 +375,7 @@ function draftMax(): number {
 }
 
 /** A positive integer under `lessons.draft` of the effective config (shipped defaults carry every key). */
-function draftNumber(key: "max" | "maxChunks" | "timeoutSec"): number {
+function draftNumber(key: "max" | "maxChunks" | "timeoutSec" | "batchMessages"): number {
   const l = effectiveMainConfig(paiConfigFilePath())["lessons"];
   const d = l && typeof l === "object" ? (l as Record<string, unknown>)["draft"] : undefined;
   const m = d && typeof d === "object" ? (d as Record<string, unknown>)[key] : undefined;
@@ -485,10 +516,17 @@ export interface RankedDraft {
 /**
  * Candidate lessons drafted by a model from the user's corrections and standing
  * rules in a transcript. Adds nothing. A failing model or unparseable reply
- * yields no candidates for that chunk. Turns are redacted before they are sent
- * to any model client, so output is redacted too; it is grounded in a real
+ * yields no candidates for that batch. A deterministic pre-filter
+ * (`selectCandidateTurns`) first keeps only messages with rule wording, a
+ * correction signal in the first 30 chars or a complaint about assistant
+ * behaviour — at most `lessons.draft.maxChunks` × 4 of them, the newest — so
+ * short strong
+ * corrections are not drowned among long task instructions. The rest is sent in
+ * batches of `lessons.draft.batchMessages` messages, each with its assistant
+ * context, so every message gets attention. Turns are redacted before they are
+ * sent to any model client, so output is redacted too; it is grounded in a real
  * user message (validated against the redacted text), and deduped against
- * existing lessons and itself. Every chunk is
+ * existing lessons and itself. Every batch is
  * drafted first; non-standing and weak (strength < 3) items are dropped, near
  * duplicates merged (counting occurrences), then ranked by strength plus a
  * deterministic score of the evidence quote (`deterministicScore`), ties on the
@@ -497,25 +535,14 @@ export interface RankedDraft {
 export async function draftRankedFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<RankedDraft[]> {
   const sessionId = basename(transcriptPath, ".jsonl");
   const turns = await extractTurns(transcriptPath);
-  const limit = opts.chunkChars ?? CHUNK_CHARS;
+  const maxChunks = opts.maxChunks ?? draftNumber("maxChunks");
+  const candidates = selectCandidateTurns(turns, maxChunks * 4);
+  const batchSize = opts.batchMessages ?? draftNumber("batchMessages");
   const chunks: Turn[][] = [];
-  let cur: Turn[] = [];
-  let size = 0;
-  for (const t of turns) {
-    const n = t.user.length + t.before.length;
-    if (cur.length && size + n > limit) {
-      chunks.push(cur);
-      cur = [];
-      size = 0;
-    }
-    cur.push(t);
-    size += n;
-  }
-  if (cur.length) chunks.push(cur);
+  for (let i = 0; i < candidates.length; i += batchSize) chunks.push(candidates.slice(i, i + batchSize));
   if (chunks.length === 0) return [];
 
   const max = draftMax();
-  const maxChunks = opts.maxChunks ?? draftNumber("maxChunks");
   const timeoutMs = (opts.timeoutSec ?? draftNumber("timeoutSec")) * 1000;
   const client = opts.client ?? (await defaultClient(opts.localOnly));
   const known = listLessons();

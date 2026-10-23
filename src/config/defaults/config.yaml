@@ -178,6 +178,8 @@ lessons:
     # model calls per transcript, and total seconds for all of them
     maxChunks: 40
     timeoutSec: 600
+    # user messages per model call after the correction pre-filter
+    batchMessages: 8
 # Harness session ingestion (src/harness): names from the adapter registry
 # (claude-code, codex). Read-only; an adapter whose store is absent never runs.
 harness:
