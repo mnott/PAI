@@ -6,9 +6,9 @@
  */
 
 import { currentWorkerId } from "../../workers/worker-id.js";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
@@ -36,7 +36,7 @@ import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
 import { endProcesses, findWorktreeOrphans } from "../../workers/reap.js";
 import { gcSettingsFiles } from "../../workers/settings-file.js";
-import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
+import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, isPoolHostCmd, leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -845,8 +845,38 @@ const gcCommand: CommandDef = {
       const hours = Number(raw);
       if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
       const orphans = findWorktreeOrphans(logDir());
-      for (const o of orphans) out(`orphan pid ${o.pid} in ${o.dir}: ${o.cmd.slice(0, 200)}`);
-      if (orphans.length && flag(ctx, "kill-orphans") && !ctx.dryRun) await endProcesses(orphans, out);
+      // a process in a spare-<hostPid>-N tree whose host pid is alive and runs worker-pool-host
+      // is that host's spare, not an orphan (the pid's command is checked against pid reuse);
+      // spares of a dead or reused host stay orphans
+      const hostCmd = (pid: number): string => {
+        try {
+          return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        } catch {
+          return "";
+        }
+      };
+      const hostAlive = new Map<number, boolean>();
+      const isPoolSpare = (dir: string, cmd: string): boolean => {
+        const m = /^spare-(\d+)-\d+$/.exec(basename(dir));
+        if (!m) return false;
+        const hostPid = Number(m[1]);
+        let alive = hostAlive.get(hostPid);
+        if (alive === undefined) {
+          alive = false;
+          try {
+            process.kill(hostPid, 0);
+            alive = isPoolHostCmd(hostCmd(hostPid));
+          } catch {
+            /* pid gone */
+          }
+          hostAlive.set(hostPid, alive);
+        }
+        // the spare's own claude, or a headless worker started in it; anything else (a shell) is fair game
+        return alive && /(^|\/)claude(\s|$)/.test(cmd);
+      };
+      const listed = orphans.filter((o) => !isPoolSpare(o.dir, o.cmd));
+      for (const o of listed) out(`orphan pid ${o.pid} in ${o.dir}: ${o.cmd.slice(0, 200)}`);
+      if (listed.length && flag(ctx, "kill-orphans") && !ctx.dryRun) await endProcesses(listed, out);
       const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true, undefined, flag(ctx, "foreign") ? process.cwd() : undefined);
       if (flag(ctx, "pool") || flag(ctx, "all-finished")) res.push(...gcPoolWorktrees(logDir(), ctx.dryRun));
       for (const f of gcSettingsFiles(logDir(), ctx.dryRun)) out(`${ctx.dryRun ? "would remove" : "removed"} settings file ${f}`);

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,6 +80,52 @@ describe("reap", () => {
     await endProcesses(found, () => undefined, 500);
     expect(await gone(pid)).toBe(true);
     expect(findWorktreeOrphans(logDir)).toEqual([]);
+  });
+
+  // gc's orphan filter: a process in a spare-<hostPid>-N tree is that host's spare
+  // when the host pid is alive and runs worker-pool-host (the command is checked,
+  // not only the pid, against pid reuse); spares of a dead or reused host stay orphans
+  const isPoolSpare = (dir: string, cmd: string): boolean => {
+    const m = /^spare-(\d+)-\d+$/.exec(dir.split("/").pop() ?? "");
+    if (!m) return false;
+    let cmdOf = "";
+    try {
+      cmdOf = execFileSync("ps", ["-o", "command=", "-p", m[1]], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      cmdOf = "";
+    }
+    let alive = false;
+    try {
+      process.kill(Number(m[1]), 0);
+      alive = true;
+    } catch {
+      /* pid gone */
+    }
+    return alive && /worker-pool-host|pool-host\b/.test(cmdOf) && /(^|\/)claude(\s|$)/.test(cmd);
+  };
+
+  it("a claude in a spare tree of a live pool host is no orphan; of a dead or reused host it is", async () => {
+    const host = spawn("sh", ["-c", "exec -a 'node dist/hooks/worker-pool-host.mjs --port 1' sleep 300"], { stdio: "ignore" });
+    await new Promise((r) => setTimeout(r, 300));
+    const logDir = tmp();
+    const spare = join(logDir, "worktrees", `spare-${host.pid}-1`);
+    mkdirSync(spare, { recursive: true });
+    // a sleeper renamed to `claude`: the spare's own worker process, not a stray shell
+    const c = spawn("sh", ["-c", "exec -a claude sleep 300"], { cwd: spare, detached: true, stdio: "ignore" });
+    c.unref();
+    kids.push(c);
+    const pid = c.pid!;
+    await new Promise((r) => setTimeout(r, 300));
+    const found = findWorktreeOrphans(logDir);
+    expect(found.map((o) => o.pid)).toEqual([pid]);
+    expect(found[0].cmd).toContain("claude");
+    expect(isPoolSpare(spare, found[0].cmd)).toBe(true);
+    // a dead host pid: same tree shape, still an orphan
+    expect(isPoolSpare(join(logDir, "worktrees", `spare-${2 ** 22}-1`), found[0].cmd)).toBe(false);
+    // a reused pid: alive but not a pool host
+    expect(isPoolSpare(join(logDir, "worktrees", `spare-${process.pid}-1`), found[0].cmd)).toBe(false);
+    process.kill(pid, "SIGKILL");
+    process.kill(host.pid!, "SIGKILL");
   });
 });
 
