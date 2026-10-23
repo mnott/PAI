@@ -4,6 +4,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.22] - 2026-10-23
+
+### Fixed
+
+- **Cockpit lessons card:** the per-state counts wrap as whole chips instead of splitting a count onto its own line in a narrow card.
+
 ## [1.0.21] - 2026-10-23
 
 ### Added
