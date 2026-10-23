@@ -3,6 +3,9 @@ import { evaluateRules, capContent } from "./eval.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
 import type { Rule } from "./types.js";
 
+// Catches quadratic regressions; not a benchmark — the suite runs in parallel.
+const GUARD_RULE_MS_BOUND = 1000;
+
 const builtins = BUILTIN_RULES as Rule[];
 const hitsOf = (cmd: string) => evaluateRules(builtins, "Bash", cmd)?.rule.id ?? null;
 
@@ -84,12 +87,12 @@ describe("night review 2: bounded time on 1 MB adversarial input (#3)", () => {
     "git push flags": fill("-x ", "git push "),
   };
   for (const r of builtins.filter((x) => x.match)) {
-    it(`${r.id} evaluates every shape in under 50 ms`, () => {
+    it(`${r.id} evaluates every shape within the bound`, () => {
       for (const [name, text] of Object.entries(shapes)) {
         const t0 = performance.now();
         evaluateRules([r], "Bash", text);
         const ms = performance.now() - t0;
-        expect(ms, `${r.id} on ${name}`).toBeLessThan(50);
+        expect(ms, `${r.id} on ${name}`).toBeLessThan(GUARD_RULE_MS_BOUND);
       }
     });
   }

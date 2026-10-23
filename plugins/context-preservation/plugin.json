@@ -2,6 +2,6 @@
   "name": "pai-context-preservation",
   "displayName": "PAI Context Preservation",
   "description": "Context compression and relay across compaction cycles",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "hooks": "./hooks/hooks.json"
 }

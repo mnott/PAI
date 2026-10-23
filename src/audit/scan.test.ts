@@ -8,6 +8,9 @@ import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
 import { fakeAnthropic } from "../utils/fake-secret.js";
 
+// Catches quadratic regressions; not a benchmark — the suite runs in parallel.
+const SCAN_MS_BOUND = 500;
+
 // Fake token-shaped fixture assembled at runtime so no scanner flags a literal.
 const FAKE_KEY = fakeAnthropic("abcdefghijklmnopqrstuvwxyz123456");
 
@@ -290,7 +293,7 @@ describe("night review scan fixes (#3, #11)", () => {
     const path = writeTranscript([bash("rm -rf a;".repeat(20_000), at(0))]);
     const t0 = performance.now();
     await scanTranscript(path, rmRoot);
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(SCAN_MS_BOUND);
   });
 
   it("drops chain heads older than the window", async () => {

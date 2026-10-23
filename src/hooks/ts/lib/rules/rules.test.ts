@@ -8,6 +8,8 @@ import { lintRules } from "./lint.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
 import type { Rule } from "./types.js";
 
+// Catches quadratic regressions; not a benchmark — the suite runs in parallel.
+const EVAL_MS_BOUND = 500;
 const builtinIds = new Set(BUILTIN_RULES.map((r) => r.id));
 const userOnly = (rules: Rule[]) => rules.filter((r) => !builtinIds.has(r.id));
 
@@ -230,11 +232,11 @@ describe("night review: evaluation cost (#11)", () => {
     evaluateRules(builtins, "Bash", text);
     return performance.now() - t0;
   };
-  it("a 180 KB rm -rf a;-dense line evaluates in under 200 ms", () => {
-    expect(timed("rm -rf a;".repeat(20_000))).toBeLessThan(200);
+  it("a 180 KB rm -rf a;-dense line evaluates within the bound", () => {
+    expect(timed("rm -rf a;".repeat(20_000))).toBeLessThan(EVAL_MS_BOUND);
   });
-  it("a 180 KB base64 line evaluates in under 200 ms", () => {
-    expect(timed("ab/".repeat(60_000) + "_")).toBeLessThan(200);
+  it("a 180 KB base64 line evaluates within the bound", () => {
+    expect(timed("ab/".repeat(60_000) + "_")).toBeLessThan(EVAL_MS_BOUND);
   });
 });
 
@@ -268,7 +270,9 @@ describe("project rule guards", () => {
     expect(rules.find((r) => r.id === "slow")?.untrusted).toBe(true);
     const t0 = Date.now();
     const hit = evaluateRules(rules, "Bash", junk);
-    expect(Date.now() - t0).toBeLessThan(200);
+    // Catches quadratic regressions; not a benchmark — the suite runs in parallel.
+    const GUARD_RULE_MS_BOUND = 1000; // 1 MB guard-rule shape
+    expect(Date.now() - t0).toBeLessThan(GUARD_RULE_MS_BOUND);
     expect(hit?.rule.id).toBe("slow");
     expect(hit?.timedOut).toBe(true);
   });

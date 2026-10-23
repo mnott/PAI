@@ -4,6 +4,20 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.10] - 2026-10-23
+
+### Added
+
+- **`pai worker merge` runs the related tests** (every test that imports a changed file, `workers.merge.verify`, default `npx vitest related --run {files}`) and prints the result; on a failure the merge is kept, the command exits 3 and names the failing files and the revert command. `--no-verify-tests` skips it once.
+- **Escalation on a time limit:** a local run stopped by `--max-minutes`/`--deadline` that left committed or salvaged work escalates to the next tier at once, like a loop stop (`deadline` in `workers.escalate.triggers`).
+- **`pai audit tokens mcp`** shows calls and last use per MCP server in the window (`--since HOURS`).
+
+### Fixed
+
+- **Raw captures lost events on busy days:** a second rotation overwrote the earlier backup; up to five rotated backups are kept and every reader includes them.
+- **Tool-output captures were named by the UTC date** while the other captures used the local date; both use the local date.
+- **The pool host** reloads the provider catalogue with its settings, so a provider added later is warmed without a restart.
+
 ## [1.0.9] - 2026-10-23
 
 ### Fixed

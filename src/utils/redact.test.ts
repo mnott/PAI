@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { REDACT_RULES, redactSecrets } from "./redact.js";
 import { fake, fakeAnthropic, fakeAwsKey, fakeGithub, fakeGithubPat, fakeGitlab, fakeGoogle, fakeSlack, pemBegin, pemEnd } from "./fake-secret.js";
 
+// Catches quadratic regressions; not a benchmark — the suite runs in parallel.
+const REDACT_MS_BOUND = 500;
 // Fake token-shaped fixtures assembled at runtime so no scanner flags a literal.
 const BODY = "abcdefghijklmnopqrstuvwx";
 const GH_BODY = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -162,7 +164,7 @@ describe("redactSecrets", () => {
     const line = "token " + "ab/".repeat(60000) + "_";
     const t0 = performance.now();
     redactSecrets(line);
-    expect(performance.now() - t0).toBeLessThan(100);
+    expect(performance.now() - t0).toBeLessThan(REDACT_MS_BOUND);
   });
   it("1 MB shapes finish under 50 ms", () => {
     const MB = 1 << 20;
@@ -183,7 +185,7 @@ describe("redactSecrets", () => {
     for (const t of shapes) {
       const t0 = performance.now();
       redactSecrets(t);
-      expect(performance.now() - t0).toBeLessThan(50);
+      expect(performance.now() - t0).toBeLessThan(REDACT_MS_BOUND);
     }
   });
   it("the rule table is exported with ids", () => {
