@@ -4,6 +4,14 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.15] - 2026-10-23
+
+### Fixed
+
+- **An escalation whose time budget was spent ran without any limit;** it is now skipped (`WORKER-ESCALATE-SKIPPED`, "budget spent").
+- **`pai worker gc --pool` could remove a live pool spare** when the pool state file was read mid-write or lagged a new spare; the state is written atomically, an unreadable state keeps the busy-process protection, and a spare of a live pool host is never removed.
+- **The project config fallback could read another repository's `.pai/` files** with a separate git dir or a bare repository; it now takes the main checkout from `git worktree list` and only when it is a normal checkout.
+
 ## [1.0.14] - 2026-10-23
 
 ### Fixed

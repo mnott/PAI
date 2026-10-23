@@ -2,7 +2,7 @@
   "name": "@tekmidian/pai",
   "displayName": "PAI Knowledge OS",
   "description": "Personal AI Infrastructure — persistent memory and session continuity",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "author": "Matthias Nott",
   "license": "MIT",
   "homepage": "https://github.com/mnott/PAI",
