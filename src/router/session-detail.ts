@@ -5,7 +5,7 @@
  * line by line. Prompt text is secret-masked.
  */
 
-import { createReadStream, existsSync, readdirSync } from "node:fs";
+import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { claudeProjectsDir } from "../config/pai-home.js";
@@ -201,4 +201,79 @@ export async function sessionDetail(
   out.filesChanged = [...files].map(([path, f]) => ({ path, ...f })).sort((a, b) => b.approxLinesChanged - a.approxLinesChanged);
   out.mcp = [...mcp].map(([server, m]) => ({ server, ...m })).sort((a, b) => b.calls - a.calls);
   return out;
+}
+
+export interface SessionHit {
+  id: string;
+  cwd: string;
+  /** turn index as in SessionDetail.turns[].idx */
+  turn: number;
+  ts: string;
+  snippet: string;
+  mtime: number;
+}
+
+const SNIPPET_CHARS = 160;
+/** Most sessions one search returns. */
+export const SESSION_SEARCH_MAX = 50;
+
+/**
+ * Sessions whose user prompts contain `q` (case-insensitive), newest transcript first, at most `limit`:
+ * one hit per session (its first matching prompt) with the turn index the detail endpoint uses and a masked snippet.
+ */
+export async function searchSessions(
+  q: string,
+  opts: { projectsDir?: string; limit?: number } = {}
+): Promise<SessionHit[]> {
+  const projectsDir = opts.projectsDir ?? claudeProjectsDir();
+  const needle = q.trim().toLowerCase();
+  const limit = Math.max(1, opts.limit ?? 50);
+  if (!needle || !existsSync(projectsDir)) return [];
+  const files: { id: string; file: string; mtime: number }[] = [];
+  for (const d of readdirSync(projectsDir)) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(join(projectsDir, d));
+    } catch {
+      continue;
+    }
+    for (const n of names) {
+      if (!n.endsWith(".jsonl") || !SESSION_ID_RE.test(n.slice(0, -6))) continue;
+      const file = join(projectsDir, d, n);
+      try {
+        files.push({ id: n.slice(0, -6), file, mtime: statSync(file).mtimeMs });
+      } catch {
+        /* vanished */
+      }
+    }
+  }
+  files.sort((a, b) => b.mtime - a.mtime);
+  const hits: SessionHit[] = [];
+  for (const f of files) {
+    if (hits.length >= limit) break;
+    const rl = createInterface({ input: createReadStream(f.file, { encoding: "utf8" }), crlfDelay: Infinity });
+    let cwd = "";
+    let turn = 0;
+    for await (const raw of rl) {
+      if (!raw) continue;
+      let obj: Line;
+      try {
+        obj = JSON.parse(raw) as Line;
+      } catch {
+        continue;
+      }
+      if (!cwd && typeof obj.cwd === "string") cwd = obj.cwd;
+      if (obj.type !== "user" || !isRealUserPrompt(obj)) continue;
+      const text = maskSecrets(cleanPromptText(extractUserPromptText(obj)));
+      const at = text.toLowerCase().indexOf(needle);
+      if (at >= 0) {
+        const from = Math.max(0, at - 40);
+        hits.push({ id: f.id, cwd, turn, ts: obj.timestamp ?? "", snippet: text.slice(from, from + SNIPPET_CHARS), mtime: f.mtime });
+        rl.close();
+        break;
+      }
+      turn++;
+    }
+  }
+  return hits;
 }

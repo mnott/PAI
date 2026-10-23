@@ -8,7 +8,7 @@ import http from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sessionDetail } from "./session-detail.js";
+import { searchSessions, sessionDetail } from "./session-detail.js";
 import { handleCockpit } from "./cockpit.js";
 import { withCockpitToken } from "./cockpit-auth.js";
 import { fakeAnthropic } from "../utils/fake-secret.js";
@@ -174,6 +174,80 @@ describe("GET /api/session/<id>/detail", () => {
     try {
       expect((await ask(port, `/api/session/${ID}/detail`)).status).toBe(401);
       expect((await ask(port, `/api/session/${ID}/detail`, { authorization: "Bearer tok" })).status).toBe(200);
+    } finally {
+      s.close();
+    }
+  });
+});
+
+describe("searchSessions", () => {
+  it("finds the first matching prompt with its turn index, masked and case-insensitive", async () => {
+    const hits = await searchSessions("THIRD prompt", { projectsDir: projects });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ id: ID, cwd: "/work/proj", turn: 2, snippet: "third prompt" });
+    const slash = await searchSessions("Sync PAI", { projectsDir: projects });
+    expect(slash[0]).toMatchObject({ turn: 3, snippet: "/Sync PAI" });
+    const masked = await searchSessions("[REDACTED]", { projectsDir: projects });
+    expect(masked[0].snippet).not.toContain(FAKE_KEY.slice(0, 35));
+  });
+
+  it("ignores assistant and tool text, hidden reminder blocks, and empty queries", async () => {
+    expect(await searchSessions("hidden note", { projectsDir: projects })).toEqual([]);
+    expect(await searchSessions("pong", { projectsDir: projects })).toEqual([]);
+    expect(await searchSessions("  ", { projectsDir: projects })).toEqual([]);
+  });
+
+  it("caps the number of sessions", async () => {
+    const p2 = join(dir, "projects2", "-w");
+    mkdirSync(p2, { recursive: true });
+    for (let i = 0; i < 5; i++) writeFileSync(join(p2, `cap0000${i}-0000-4000-8000-000000000001.jsonl`), JSON.stringify(user("needle here", "2026-01-01T00:00:01Z")) + "\n");
+    expect(await searchSessions("needle", { projectsDir: join(dir, "projects2"), limit: 3 })).toHaveLength(3);
+  });
+});
+
+describe("GET /api/sessions/search", () => {
+  const ask = (port: number, path: string, headers: http.OutgoingHttpHeaders = {}) =>
+    new Promise<{ status: number; body: string }>((resolve) => {
+      http.request({ port, host: "127.0.0.1", path, headers }, (r) => {
+        let b = "";
+        r.on("data", (c) => (b += c));
+        r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
+      }).end();
+    });
+  const serve = async (token?: string) => {
+    const inner = (req: http.IncomingMessage, res: http.ServerResponse) => handleCockpit(req, res, { get: async () => [] });
+    const h = token ? withCockpitToken(token, inner) : inner;
+    const s = http.createServer((req, res) => {
+      if (!h(req, res)) {
+        res.writeHead(418);
+        res.end();
+      }
+    });
+    const port = await new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+    return { s, port };
+  };
+
+  it("200 with hits, 400 for a short or missing q", async () => {
+    const { s, port } = await serve();
+    try {
+      const ok = await ask(port, "/api/sessions/search?q=second%20prompt");
+      expect(ok.status).toBe(200);
+      expect(JSON.parse(ok.body)).toMatchObject({ q: "second prompt", hits: [{ id: ID, turn: 1 }] });
+      expect((await ask(port, "/api/sessions/search?q=a")).status).toBe(400);
+      expect((await ask(port, "/api/sessions/search")).status).toBe(400);
+    } finally {
+      s.close();
+    }
+  });
+
+  it("refuses a foreign Host or Origin and needs the cockpit token", async () => {
+    const { s, port } = await serve("tok");
+    try {
+      expect((await ask(port, "/api/sessions/search?q=second")).status).toBe(401);
+      const auth = { authorization: "Bearer tok" };
+      expect((await ask(port, "/api/sessions/search?q=second", auth)).status).toBe(200);
+      expect((await ask(port, "/api/sessions/search?q=second", { ...auth, host: "evil.example.com" })).status).toBe(403);
+      expect((await ask(port, "/api/sessions/search?q=second", { ...auth, origin: "http://evil.example.com" })).status).toBe(403);
     } finally {
       s.close();
     }

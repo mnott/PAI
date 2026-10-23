@@ -60,7 +60,7 @@ import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
-import { SESSION_ID_RE, sessionDetail } from "./session-detail.js";
+import { SESSION_ID_RE, SESSION_SEARCH_MAX, searchSessions, sessionDetail } from "./session-detail.js";
 import { defaultSavedAt, readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
@@ -1335,11 +1335,23 @@ export function handleCockpit(
   queueLogDir: (workers: WorkersConfig) => string = workersLogDir): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   const detail = url.pathname.match(/^\/api\/session\/([^/]*)\/detail$/);
-  if (!detail && url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
+  const search = url.pathname === "/api/sessions/search";
+  if (!detail && !search && url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
     res.writeHead(status, { "content-type": type, "cache-control": "no-store", "content-length": Buffer.byteLength(body) });
     res.end(body);
   };
+  if (search) {
+    if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
+    if (loopbackRefusal(req, { allowHost: isTailnetOrLocalName, guardSafeMethods: true })) return send(403, "application/json", '{"error":"cross-origin request refused"}'), true;
+    const q = (url.searchParams.get("q") ?? "").trim();
+    if (q.length < 2 || q.length > 200) return send(400, "application/json", '{"error":"q must be 2-200 characters"}'), true;
+    searchSessions(q, { limit: SESSION_SEARCH_MAX }).then(
+      (hits) => send(200, "application/json", JSON.stringify({ q, hits })),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
+    return true;
+  }
   if (detail) {
     if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
     if (!SESSION_ID_RE.test(detail[1]!)) return send(400, "application/json", '{"error":"invalid session id"}'), true;

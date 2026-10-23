@@ -18,10 +18,11 @@ function wtFit(ctx){fitTables(ctx.body)}
 /** Row-level disclosures: a click on a fold or "+N more" row stores its state and re-feeds the page's data; a click on a session row opens its detail panel (SESS_OPEN), a tab or close button changes it. */
 function wtWire(ctx){
  ctx.body.addEventListener("click",function(e){
-  var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore],[data-sess],[data-sesstab],[data-sessclose]"):null;
+  var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore],[data-sess],[data-hit],[data-sesstab],[data-sessclose]"):null;
   if(!t||!ctx.body.contains(t))return;
   e.preventDefault();
   var redraw=function(){Win.update("data",data)};
+  if(t.hasAttribute("data-hit"))return sessDetailOpen(t.getAttribute("data-hit"),redraw,Number(t.getAttribute("data-turn")));
   if(t.hasAttribute("data-sess"))return sessDetailOpen(t.getAttribute("data-sess"),redraw);
   if(t.hasAttribute("data-sesstab")){SESS_TAB=t.getAttribute("data-sesstab");return redraw()}
   if(t.hasAttribute("data-sessclose")){SESS_OPEN=null;return redraw()}
@@ -30,11 +31,33 @@ function wtWire(ctx){
   Win.update("data",data);
  });
 }
-function wtView(build){return function(d){return d&&d.bySession?{html:build(d),after:wtFit}:null}}
+/** After a sessions redraw: scroll the turn a search hit opened into view once its detail is drawn. */
+function wtSessAfter(ctx){
+ wtFit(ctx);
+ if(!SESS_SCROLL)return;
+ var el=ctx.body.querySelector(".sd-hl");
+ if(el){SESS_SCROLL=false;el.scrollIntoView({block:"center"})}
+ else if(SESS_DET&&SESS_DET.id===SESS_OPEN)SESS_SCROLL=false;
+}
+/** The sessions card's header search: a box (name / id / model of the rows) with a mode toggle to search prompt text instead (server hits, plus the open timeline). */
+function wtSessSearch(){
+ return{id:"search",label:"search",title:"filter sessions, or search prompts",make:function(ctx){
+  var w=document.createElement("span");w.className="wsearch";
+  var inp=document.createElement("input");inp.type="search";inp.className="cbtn";inp.placeholder="search sessions";inp.setAttribute("aria-label","search sessions");inp.value=SESS_Q;
+  var mode=document.createElement("button");mode.type="button";mode.className="cbtn";mode.setAttribute("aria-pressed",SESS_MODE==="prompts"?"true":"false");mode.textContent="prompts";mode.title="search inside the prompts of all sessions";
+  var redraw=function(){Win.update("data",data)},tm=0;
+  var run=function(){clearTimeout(tm);SESS_HITS=null;redraw();tm=setTimeout(function(){sessSearch(redraw)},250)};
+  inp.addEventListener("input",function(){SESS_Q=inp.value;run()});
+  mode.addEventListener("click",function(){SESS_MODE=SESS_MODE==="prompts"?"sessions":"prompts";mode.setAttribute("aria-pressed",SESS_MODE==="prompts"?"true":"false");inp.placeholder=SESS_MODE==="prompts"?"search prompts":"search sessions";run()});
+  w.appendChild(inp);w.appendChild(mode);
+  return w;
+ }};
+}
+function wtView(build,after){return function(d){return d&&d.bySession?{html:build(d),after:after||wtFit}:null}}
 function tablesDefaults(){
  var f=["data"],cards=[{id:"perf-group",type:"group",title:"Performance details",info:"per-pause cache verdicts, sessions and worker runs"},
   {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,view:wtView(workersHtml),mount:wtWire,resize:wtFit},
-  {id:"sessions",type:"list",cls:"wm",title:"Sessions by tokens",feeds:f,view:wtView(sessionsHtml),mount:wtWire,resize:wtFit},
+  {id:"sessions",type:"list",cls:"wm",title:"Sessions by tokens",feeds:f,actions:[wtSessSearch()],view:wtView(sessionsHtml,wtSessAfter),mount:wtWire,resize:wtFit},
   {id:"pause",type:"table",title:"Cache verdict by pause",info:WT_INFO.pause,feeds:f,view:function(d){return d&&d.bySession?{html:pauseHtml(d),after:pauseFit}:null},resize:pauseFit}];
  return{parts:[[{tree:WinT.leaf("perf-group"),kids:{"perf-group":WinT.split("c",[WinT.leaf("speed"),WinT.leaf("runs"),WinT.leaf("sessions"),WinT.leaf("pause")],[0.25,0.25,0.25,0.25])},stDefaults:{},cards:cards},760]]};
 }

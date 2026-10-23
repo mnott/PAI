@@ -100,49 +100,80 @@ function runRow(o){
  var pc=o.w>0?Math.max(2,Math.round(o.w/o.max*100)):0;
  return'<div class="wr-row"'+(o.sid?' data-sess="'+esc(o.sid)+'"':'')+' title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+'</span></div>'
 }
-/** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds). */
+/** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds).
+ *  The opened session's detail panel is an expanded row directly under its row (kept visible when the row is behind "+N more"); the header search filters the rows by name / id / model, or in prompts mode lists the sessions whose prompts match. */
 var SESS_MORE_KEY="pai.cockpit.sessmore";
 function sessMore(){try{return localStorage.getItem(SESS_MORE_KEY)==="1"}catch(e){return false}}
+/** Search state: the query, its mode ("sessions" filters the rows, "prompts" searches prompt text), the server hits of the query and the turn a hit opened (scrolled to once the detail is drawn). */
+var SESS_Q="",SESS_MODE="sessions",SESS_HITS=null,SESS_FOCUS=-1,SESS_SCROLL=false;
+function sessQ(){return SESS_Q.trim().toLowerCase()}
+function sessLabel(id){var s=(typeof data!=="undefined"&&data&&data.bySession||[]).filter(function(x){return x.session===id})[0];return s&&s.name?s.name:id.slice(0,8)}
+/** Prompt hits of the server search: one button per session with its matching prompt snippet and turn number. */
+function sessHitsHtml(){
+ var q=sessQ();
+ if(SESS_MODE!=="prompts"||!q)return"";
+ if(q.length<2)return'<div class="dim sh-n">type 2+ characters to search prompts</div>';
+ if(!SESS_HITS||SESS_HITS.q!==q)return'<div class="dim sh-n">searching…</div>';
+ if(SESS_HITS.error)return'<div class="bad sh-n">'+esc(SESS_HITS.error)+'</div>';
+ if(!SESS_HITS.hits.length)return'<div class="dim sh-n">no session has a prompt containing “'+esc(SESS_Q.trim())+'”</div>';
+ return'<div class="sh-l">'+SESS_HITS.hits.map(function(h){return'<button type="button" class="sh" data-hit="'+esc(h.id)+'" data-turn="'+h.turn+'" title="'+esc(h.id+(h.cwd?" · "+h.cwd:""))+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim"> #'+(h.turn+1)+' · '+esc(ago(h.ts))+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>'}).join("")+'</div>';
+}
 function sessionsHtml(d){
- var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0;
+ var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0,q=sessQ();
+ if(q&&SESS_MODE==="sessions"){open=true;all=all.filter(function(s){return((s.name||"")+" "+s.session+" "+(s.models||[]).join(" ")).toLowerCase().indexOf(q)>=0})}
  function row(s){
   var ms=s.models||[],t=tot(s),recent=s.lastTs&&Date.now()-new Date(s.lastTs).getTime()<300000;
   var st=s.errors?"bad":s.worker?vcls(s.verdict):recent?"run":"dim";
   var lab=s.name||s.session.slice(0,8);
   var full=lab+" · "+s.session+(s.worker?" · worker "+s.worker+" · "+(s.verdict||"worker"):"")+"\n"+s.requests+" req · fresh in "+fmt(s.input+s.cacheWrite)+" · out "+fmt(s.output)+" · hit "+pct(s.hitRatio)+" · busts "+(s.busts||0)+" · errors "+(s.errors||0)+" · last "+ago(s.lastTs);
   var ex=(s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'')+(s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'');
-  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex});
+  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex})+(s.session===SESS_OPEN?'<div class="wr-row wr-span">'+sessDetailHtml()+'</div>':"");
  }
- var shown=open?all:all.slice(0,top),rest=all.slice(top),h=shown.map(row).join("");
+ var shown=all.filter(function(s,i){return open||i<top||s.session===SESS_OPEN}),rest=all.filter(function(s){return shown.indexOf(s)<0}),h=shown.map(row).join("");
+ if(SESS_OPEN&&!all.some(function(s){return s.session===SESS_OPEN}))h+='<div class="wr-row wr-span">'+sessDetailHtml()+'</div>';
  if(rest.length){
   var rt=rest.reduce(function(a,s){return a+tot(s)},0);
-  h+='<div class="wr-row wr-span"><a href="#" class="dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</a></div>';
+  h+='<div class="wr-row wr-span"><button type="button" class="lnk dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</button></div>';
  }
- return'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>'+(typeof sessDetailHtml==="function"?sessDetailHtml():"");
+ if(q&&SESS_MODE==="sessions"&&!all.length)h+='<div class="wr-row wr-span"><span class="dim sh-n">no session matches “'+esc(SESS_Q.trim())+'”</span></div>';
+ return sessHitsHtml()+'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
 }
 /** Session drill-down state: the opened id, its tab and the fetched detail (survives the poll redraw; the panel is part of the sessions html). */
 var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null;
-/** One tab of the opened session's detail, drawn with table(); time-ordered tabs list the newest first. */
+/** One tab of the opened session's detail, drawn with table(); time-ordered tabs list the newest first. In prompts mode the timeline keeps the turns whose prompt contains the query; the turn a hit opened is marked. */
 function sessDetailBody(d,tab){
  if(tab==="files")return table(["file","edits .n","~lines .n"],d.filesChanged.map(function(f){return[esc(f.path),f.edits,f.approxLinesChanged]}));
  if(tab==="skills")return table(["skill","time"],d.skills.slice().reverse().map(function(k){return[esc(k.name),esc(ago(k.ts))]}));
  if(tab==="mcp")return table(["server","calls .n","failures .n"],d.mcp.map(function(m){return[esc(m.server),m.calls,m.failures]}));
  if(tab==="denials")return table(["time","tool","reason"],d.denials.slice().reverse().map(function(x){return[esc(ago(x.ts)),esc(x.tool),esc(x.reason)]}));
- return table(["#  .n","time","prompt","tools","edits","cmds .n"],d.turns.slice().reverse().map(function(t){return[t.idx+1,esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
+ var q=SESS_MODE==="prompts"?sessQ():"",turns=q?d.turns.filter(function(t){return t.prompt.toLowerCase().indexOf(q)>=0||t.idx===SESS_FOCUS}):d.turns;
+ return table(["#  .n","time","prompt","tools","edits","cmds .n"],turns.slice().reverse().map(function(t){return['<span data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</span>',esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
 }
-/** The detail panel under the sessions table: tabs Timeline / Files / Skills / MCP / Denials and a close button; empty when no session is open. */
+/** The detail panel (an expanded row under its session): tabs Timeline / Files / Skills / MCP / Denials and a close button; empty when no session is open. */
 function sessDetailHtml(){
  if(!SESS_OPEN)return"";
  var d=SESS_DET&&SESS_DET.id===SESS_OPEN?SESS_DET:null,tabs=[["timeline","Timeline"],["files","Files"],["skills","Skills"],["mcp","MCP"],["denials","Denials"]];
- var head='<div class="sd-h"><b title="'+esc(SESS_OPEN)+'">'+esc(SESS_OPEN.slice(0,8))+'</b>'+tabs.map(function(t){return'<a href="#" data-sesstab="'+t[0]+'"'+(t[0]===SESS_TAB?' class="on"':'')+'>'+t[1]+(d&&t[0]!=="timeline"?" ("+(t[0]==="files"?d.filesChanged:t[0]==="skills"?d.skills:t[0]==="mcp"?d.mcp:d.denials).length+")":"")+'</a>'}).join("")+'<a href="#" class="dim sd-x" data-sessclose="1" title="close">close ✕</a></div>';
- var meta=d?'<div class="dim">'+esc(d.cwd)+(d.models.length?" · "+esc(d.models.join(", ")):"")+(d.turnCount>d.turns.length?" · last "+d.turns.length+" of "+d.turnCount+" turns":"")+'</div>':"";
+ var head='<div class="sd-h"><b title="'+esc(SESS_OPEN)+'">'+esc(SESS_OPEN.slice(0,8))+'</b>'+tabs.map(function(t){return'<button type="button" class="lnk" data-sesstab="'+t[0]+'"'+(t[0]===SESS_TAB?' aria-current="true"':'')+'>'+t[1]+(d&&t[0]!=="timeline"?" ("+(t[0]==="files"?d.filesChanged:t[0]==="skills"?d.skills:t[0]==="mcp"?d.mcp:d.denials).length+")":"")+'</button>'}).join("")+'<button type="button" class="lnk dim sd-x" data-sessclose="1" title="close">close ✕</button></div>';
+ var old=d&&SESS_FOCUS>=0&&d.turns.length&&SESS_FOCUS<d.turns[0].idx;
+ var meta=d?'<div class="dim">'+esc(d.cwd)+(d.models.length?" · "+esc(d.models.join(", ")):"")+(d.turnCount>d.turns.length?" · last "+d.turns.length+" of "+d.turnCount+" turns":"")+(old?" · turn "+(SESS_FOCUS+1)+" is older than the loaded timeline":"")+'</div>':"";
  return'<div class="sd" data-sd="'+esc(SESS_OPEN)+'">'+head+meta+(d?sessDetailBody(d,SESS_TAB):'<span class="dim">'+(SESS_DET&&SESS_DET.error?esc(SESS_DET.error):"loading…")+'</span>')+'</div>';
 }
-/** Opens (or closes, on a second click) a session's detail and fetches it; the panel redraws with the sessions card. */
-function sessDetailOpen(id,redraw){
- if(SESS_OPEN===id){SESS_OPEN=null;redraw();return}
- SESS_OPEN=id;SESS_DET=null;redraw();
+/** Opens (or closes, on a second click) a session's detail and fetches it; the panel redraws with the sessions card. A hit passes its turn: it opens the timeline there (and stays open when already open). */
+function sessDetailOpen(id,redraw,turn){
+ var hit=turn!=null;
+ SESS_FOCUS=hit?turn:-1;SESS_SCROLL=hit;
+ if(SESS_OPEN===id){
+  if(hit){SESS_TAB="timeline";redraw();return}
+  SESS_OPEN=null;redraw();return;
+ }
+ SESS_OPEN=id;SESS_DET=null;if(hit)SESS_TAB="timeline";redraw();
  fetch("/api/session/"+encodeURIComponent(id)+"/detail",{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(SESS_OPEN===id){SESS_DET=j;redraw()}},function(e){if(SESS_OPEN===id){SESS_DET={id:id,error:String(e.message||e)};redraw()}});
+}
+/** Server search of prompt text for the current query (prompts mode, 2+ chars); the answer is kept with its query so a stale one is ignored. */
+function sessSearch(redraw){
+ var q=sessQ();
+ if(SESS_MODE!=="prompts"||q.length<2)return;
+ fetch("/api/sessions/search?q="+encodeURIComponent(q),{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(sessQ()===q){SESS_HITS={q:q,hits:j.hits};redraw()}},function(e){if(sessQ()===q){SESS_HITS={q:q,error:String(e.message||e)};redraw()}});
 }
 /** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
 function workerGroups(ws,W){
