@@ -1693,6 +1693,37 @@ See also: `pai worker providers`
 | `pai worker controls` | Hand the desktop controls to a worker, or take them back |
 | `pai worker bench` | Compare providers on a set of real tasks |
 
+## Examples
+
+```bash
+# Where do workers run? One persistent switch (stored in <logDir>/routing-policy.json)
+pai worker policy                 # show the policy and the route a plain run takes now
+pai worker policy prefer-local    # local first, cloud when local is down or its report fails
+pai worker policy cloud-only --for 2h   # on the road: never local, back to normal after 2 h
+pai worker policy clear           # no policy: class/active routing as before
+
+# Per run (--provider still beats the policy)
+pai worker run --urgent --class implement --spec task.txt    # fast turnaround -> cloud
+pai worker run --cloud ...        # this run to the cloud under prefer-local/auto
+pai worker run --local-ok ...     # this run may go local under prefer-cloud
+```
+
+**Routing policy.** `cloud-only` never uses a local provider; `local-only` never uses the cloud
+and fails when no local server answers; `prefer-local` tries the first enabled loopback provider
+(one `/v1/models` ping, 4 s: a busy server answers slowly) and uses the cloud when none answers or none is configured;
+`prefer-cloud` uses the cloud and goes local only when the cloud is in cooldown or over its quota
+(or on `--local-ok`); `auto` is `prefer-local`, but cloud on battery (`pmset -g batt`) and for an
+`--urgent` run. The chosen route and its reason (`policy prefer-local`, `battery`, `urgent`,
+`local down`, `no local provider`, `fall-through (…)`) are stored in the worker status and shown
+by `pai worker ps`.
+
+**Fall-through.** Under every policy but `local-only`, a local run whose report is invalid, was
+downgraded by the proof check (`claimed proof not run`), is `r=-` or `r=!`, ended without a
+report, or hit its max-minutes is repeated once on the cloud as a new worker labelled
+`… (fall-through)`. The two statuses link each other (`fell through to <id>`, `fall-through of
+<id>`). Local models are right when the spec names cause and owner; for diagnosis from symptoms
+use `--cloud` or `--provider`.
+
 ## See also
 
 [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai zettel`](zettel.md)
