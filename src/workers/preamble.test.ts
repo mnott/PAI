@@ -85,3 +85,33 @@ describe("system prompt assembly", () => {
     expect(text).not.toContain(p!.hash);
   });
 });
+
+describe("projectConfigFile fallback never crosses repos", () => {
+  it("--separate-git-dir: a sibling .pai in the shared git-dir parent is not read", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "pai-sep-")));
+    dirs.push(base);
+    mkdirSync(join(base, "gitdirs", ".pai"), { recursive: true });
+    writeFileSync(join(base, "gitdirs", ".pai", "worker.md"), "foreign rules");
+    mkdirSync(join(base, "repoA"));
+    execFileSync("git", ["init", "-q", "--separate-git-dir", join(base, "gitdirs", "repoA"), join(base, "repoA")]);
+    execFileSync("git", ["-c", "user.email=t@e.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i"], { cwd: join(base, "repoA") });
+    execFileSync("git", ["worktree", "add", "-q", join(base, "wtA"), "-b", "w"], { cwd: join(base, "repoA") });
+    expect(loadPreamble(join(base, "wtA"))).toEqual({ preamble: null });
+  });
+
+  it("bare repo + worktree: nothing from the bare repo's parent; a normal main checkout still works", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "pai-bare-")));
+    dirs.push(base);
+    mkdirSync(join(base, ".pai"));
+    writeFileSync(join(base, ".pai", "worker.md"), "foreign rules");
+    execFileSync("git", ["init", "-q", "--bare", join(base, "repo.git")]);
+    execFileSync("git", ["worktree", "add", "-q", "--orphan", "-b", "m", join(base, "wt")], { cwd: join(base, "repo.git") });
+    expect(loadPreamble(join(base, "wt"))).toEqual({ preamble: null });
+
+    const main = repo("own rules");
+    execFileSync("git", ["-c", "user.email=t@e.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "i"], { cwd: main });
+    execFileSync("git", ["worktree", "add", "-q", join(base, "wt2"), "-b", "w2"], { cwd: main });
+    const r = loadPreamble(join(base, "wt2"));
+    expect("preamble" in r && r.preamble?.text).toBe("own rules");
+  });
+});

@@ -43,13 +43,16 @@ export function projectConfigFile(cwd: string, rel: string): string {
   const local = join(root, rel);
   if (existsSync(local)) return local;
   try {
-    const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    // the main checkout is the first `git worktree list` entry, and only when it is a normal
+    // checkout: dirname(git-common-dir) would hit a shared parent for --separate-git-dir or a bare repo
+    const list = execFileSync("git", ["worktree", "list", "--porcelain"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const main = dirname(common);
-    if (main !== root) {
+    });
+    const first = list.split(/\n\s*\n/)[0].split("\n");
+    const main = first.find((l) => l.startsWith("worktree "))?.slice("worktree ".length);
+    if (main && !first.includes("bare") && main !== root) {
       const inMain = join(main, rel);
       if (existsSync(inMain)) return inMain;
     }

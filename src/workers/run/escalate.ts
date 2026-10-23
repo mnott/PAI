@@ -75,6 +75,11 @@ export async function tryEscalate(
     return null;
   }
   const remaining = limit && !limit.absolute ? Math.ceil((limit.deadlineAt - now) / 60_000) : undefined;
+  if (remaining !== undefined && remaining <= 0) {
+    process.stderr.write(`pai worker: ${wid} escalation not started — the --max-minutes budget is spent\n`);
+    appendLedger(ledgerPath(logDir), "WORKER-ESCALATE-SKIPPED", { id: wid, reason: "budget spent" });
+    return null;
+  }
   const out = await runEscalation(plan, a.escalatedFrom ?? [], {
     ledger: ledgerPath(logDir),
     id: wid,
@@ -94,7 +99,7 @@ export async function tryEscalate(
         ...relaunchOptions(a.opts, {
           localFlag: undefined,
           localName: undefined,
-          ...(remaining !== undefined ? { maxMinutes: Math.max(0, remaining), deadline: undefined } : {}),
+          ...(remaining !== undefined ? { maxMinutes: remaining, deadline: undefined } : {}),
         }),
         providerFlag: o.providerFlag,
         modelFlag: o.modelFlag,
