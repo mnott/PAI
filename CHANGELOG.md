@@ -4,6 +4,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.14] - 2026-10-23
+
+### Fixed
+
+- **Project config files from a worktree:** `.pai/worker.md` (worker preamble) and `.pai/checks.yaml` (local worker checks) are gitignored and so absent in a worktree; they are now found in the main checkout when the worktree has none.
+
 ## [1.0.13] - 2026-10-23
 
 ### Fixed

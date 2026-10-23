@@ -2,5 +2,5 @@
   "name": "pai-zettelkasten",
   "displayName": "PAI Zettelkasten Intelligence",
   "description": "Luhmann-inspired vault intelligence with graph operations and Obsidian integration",
-  "version": "1.0.13"
+  "version": "1.0.14"
 }
