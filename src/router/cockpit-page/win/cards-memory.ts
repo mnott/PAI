@@ -91,11 +91,11 @@ function memPassesView(m){
  if(sc)x+=memLine("dim",sc.maintenanceHour!=null?"nightly maintenance at "+String(sc.maintenanceHour).padStart(2,"0")+":00 (index, then embed)":"index every "+memDur(sc.indexIntervalSecs)+", embed every "+memDur(sc.embedIntervalSecs));
  return{v:ps.length?(bad?"failed":"ok"):null,u:"",s:ps.length+" scheduled",x:x,tone:bad?"bad":""};
 }
-/** Lessons card: a count per state and the newest candidates (title + age) waiting for review; read-only. */
+/** Lessons card: a count per state (whole chips that wrap) and the newest candidates (title + age) waiting for review; read-only. */
 function memLessonsView(m){
  var l=m.lessons;
  if(!l)return{v:null,u:"",s:"not known",x:""};
- var c=l.counts||{},x=memLine("",["approved","candidate","rejected","superseded"].map(function(k){return'<span data-part="'+k+'">'+(c[k]||0)+' '+k+'</span>'}).join(" · "));
+ var c=l.counts||{},x='<div class="chips" data-part="counts">'+["approved","candidate","rejected","superseded"].map(function(k){return'<span class="chip" data-part="'+k+'"><b>'+(c[k]||0)+'</b> '+k+'</span>'}).join("")+'</div>';
  (l.candidates||[]).forEach(function(k){x+=memLine("dim",esc(k.title)+(k.ageSec==null?"":" · "+memDur(k.ageSec)+" ago"))});
  return{v:String(c.candidate||0),u:"",s:"awaiting review",x:x};
 }
