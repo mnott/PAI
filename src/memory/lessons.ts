@@ -249,3 +249,199 @@ export function proposeFromTranscript(transcriptPath: string): LessonInput[] {
   }
   return out;
 }
+
+/** Sends one prompt to a model and returns its text; null when no model answered. */
+export type ModelClient = (prompt: string) => Promise<string | null>;
+
+export interface DraftOpts {
+  /** Model seam (tests inject); default: the running local model, else the routed default. */
+  client?: ModelClient;
+  /** Max characters of user text per model call. */
+  chunkChars?: number;
+}
+
+export const DRAFT_MAX_LESSONS = 10;
+const CONTEXT_CHARS = 300;
+const USER_CHARS = 1500;
+const CHUNK_CHARS = 12000;
+
+interface Turn {
+  user: string;
+  before: string;
+}
+
+function stripNoise(text: string): string {
+  return text
+    .replace(/<(system-reminder|local-command-stdout|local-command-stderr|command-[a-z]+|task-notification|tool_use_error)>[\s\S]*?<\/\1>/g, "")
+    .replace(/<\/?[a-z][a-z-]*>/g, "")
+    .trim();
+}
+
+/** The real user messages of a transcript, each with the assistant text just before it (truncated). */
+export function extractTurns(transcriptPath: string): Turn[] {
+  const turns: Turn[] = [];
+  let lastAssistant = "";
+  for (const line of readFileSync(transcriptPath, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    let ev: { type?: string; isMeta?: boolean; message?: { content?: unknown } };
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (ev.type === "assistant") {
+      const t = userText(ev.message?.content).trim();
+      if (t) lastAssistant = t;
+    } else if (ev.type === "user" && !ev.isMeta) {
+      const text = stripNoise(userText(ev.message?.content));
+      if (!text) continue;
+      turns.push({ user: text.slice(0, USER_CHARS), before: lastAssistant.replace(/\s+/g, " ").slice(0, CONTEXT_CHARS) });
+      lastAssistant = "";
+    }
+  }
+  return turns;
+}
+
+function draftPrompt(chunk: Turn[]): string {
+  const msgs = chunk
+    .map((t, i) => `[${i + 1}]${t.before ? `\nassistant before: ${t.before}` : ""}\nuser: ${t.user}`)
+    .join("\n\n");
+  return (
+    "You review a coding-assistant session for durable lessons. Below are the user's messages, each with the assistant text just before it.\n" +
+    `Return ONLY a JSON array (no prose) of at most ${DRAFT_MAX_LESSONS} lessons, each {"title","kind","applies_when","body","evidence_quote"}.\n` +
+    `kind is one of ${LESSON_KINDS.join("|")}. evidence_quote is copied verbatim from the user message.\n` +
+    "Include a lesson ONLY where the user corrects the assistant's behaviour or states a standing rule for future work. " +
+    "Return nothing for one-off task instructions, questions, approvals or chatter. If there is none, return [].\n\n" +
+    msgs
+  );
+}
+
+const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+function tokens(s: string): Set<string> {
+  return new Set(norm(s).split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+}
+
+function nearIdentical(a: string, b: string): boolean {
+  const x = tokens(a);
+  const y = tokens(b);
+  if (x.size === 0 || y.size === 0) return false;
+  let both = 0;
+  for (const w of x) if (y.has(w)) both++;
+  return both / (x.size + y.size - both) >= 0.8;
+}
+
+/** Parse the model's reply into valid lesson items; anything malformed is dropped. */
+function parseDraft(reply: string): Array<Record<string, string>> {
+  const s = reply.indexOf("[");
+  const e = reply.lastIndexOf("]");
+  if (s < 0 || e <= s) return [];
+  let arr: unknown;
+  try {
+    arr = JSON.parse(reply.slice(s, e + 1));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(arr)) return [];
+  const out: Array<Record<string, string>> = [];
+  for (const it of arr) {
+    if (!it || typeof it !== "object") continue;
+    const o = it as Record<string, unknown>;
+    const ok = ["title", "kind", "applies_when", "body", "evidence_quote"].every((k) => typeof o[k] === "string" && (o[k] as string).trim());
+    if (!ok || !LESSON_KINDS.includes(o.kind as LessonKind)) continue;
+    out.push(o as Record<string, string>);
+  }
+  return out;
+}
+
+/** The default model client: the running local model's endpoint, else the routed default (a headless claude spawn). */
+async function defaultClient(): Promise<ModelClient> {
+  try {
+    const cfgMod = await import("../workers/config.js");
+    const { resolveLocalProvider } = await import("../workers/local-provider.js");
+    const { workersLogDir } = await import("../workers/paths.js");
+    const { workers } = cfgMod.readWorkersSection();
+    const { name } = await resolveLocalProvider(workers, workersLogDir(workers));
+    const p = workers.providers[name]!;
+    const model = cfgMod.resolveModelCapability(p, "default");
+    const base = p.baseUrl.replace(/\/+$/, "");
+    const openai = p.protocol === "openai";
+    return async (prompt) => {
+      const res = await fetch(openai ? `${base}/chat/completions` : `${base}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer local", "x-api-key": "local", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model, max_tokens: 4096, temperature: 0, messages: [{ role: "user", content: prompt }] }),
+        signal: AbortSignal.timeout(300_000),
+      });
+      if (!res.ok) throw new Error(`model endpoint ${res.status}`);
+      const j = (await res.json()) as { choices?: Array<{ message?: { content?: string } }>; content?: Array<{ type: string; text?: string }> };
+      if (openai) return j.choices?.[0]?.message?.content ?? null;
+      return (j.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("") || null;
+    };
+  } catch {
+    const { spawnClaude } = await import("./kg-extraction.js");
+    return (prompt) => spawnClaude(prompt, "sonnet");
+  }
+}
+
+/**
+ * Candidate lessons drafted by a model from the user's corrections and standing
+ * rules in a transcript. Adds nothing. A failing model or unparseable reply
+ * yields no candidates for that chunk. Output is redacted, grounded in a real
+ * user message, and deduped against existing lessons and itself.
+ */
+export async function draftFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<LessonInput[]> {
+  const sessionId = basename(transcriptPath, ".jsonl");
+  const turns = extractTurns(transcriptPath);
+  const limit = opts.chunkChars ?? CHUNK_CHARS;
+  const chunks: Turn[][] = [];
+  let cur: Turn[] = [];
+  let size = 0;
+  for (const t of turns) {
+    const n = t.user.length + t.before.length;
+    if (cur.length && size + n > limit) {
+      chunks.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(t);
+    size += n;
+  }
+  if (cur.length) chunks.push(cur);
+  if (chunks.length === 0) return [];
+
+  const client = opts.client ?? (await defaultClient());
+  const known = listLessons();
+  const slugs = new Set(known.map((l) => l.id));
+  const bodies = known.map((l) => l.body);
+  const all = norm(turns.map((t) => t.user).join("\n"));
+  const out: LessonInput[] = [];
+  for (const chunk of chunks) {
+    let reply: string | null = null;
+    try {
+      reply = await client(draftPrompt(chunk));
+    } catch {
+      continue;
+    }
+    if (!reply) continue;
+    for (const it of parseDraft(reply)) {
+      if (out.length >= DRAFT_MAX_LESSONS) return out;
+      const quote = it.evidence_quote.trim();
+      if (!all.includes(norm(quote))) continue;
+      const title = redactSecrets(it.title.replace(/\s+/g, " ")).slice(0, 120);
+      const body = redactSecrets(it.body.trim());
+      const slug = slugify(title);
+      if (slugs.has(slug) || bodies.some((b) => nearIdentical(b, body))) continue;
+      slugs.add(slug);
+      bodies.push(body);
+      out.push({
+        title,
+        kind: it.kind as LessonKind,
+        applies_when: redactSecrets(it.applies_when.trim()),
+        evidence: [sessionId, redactSecrets(quote)],
+        body,
+      });
+    }
+  }
+  return out;
+}

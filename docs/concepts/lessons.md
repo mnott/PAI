@@ -39,6 +39,7 @@ pai lessons promote ID [--project DIR] [--force] [--agents]
 - `--kind` is one of `workflow`, `correction`, `debugging`, `gotcha`, `convention`.
 - `--project` is a project slug, default `global`.
 - `propose` reads a transcript (default: the newest of this directory) and adds candidates from user messages that start with a correction. It makes no model call.
+- `propose --draft` has a model draft the candidates instead: it reads the user messages (system reminders, command tags and tool output stripped, with the assistant text before each as context), and returns at most 10 lessons where the user corrected the assistant or stated a standing rule, each with a title, kind, applies-when, body and the quoted user text as evidence. The model is the running local model (the one `--local` workers use); with none running it falls back to the routed default. Invalid output is dropped, secrets are redacted, and lessons matching an existing title or near-identical body are skipped. `--dry-run` prints the candidates without writing.
 - `promote` writes the lesson as `<project>/.claude/skills/<slug>/SKILL.md`. With `--agents` it also writes under `.agents/skills`. It refuses to overwrite an existing skill unless you pass `--force`.
 - `supersede` needs the replacement given with `--by` to exist and be approved.
 
