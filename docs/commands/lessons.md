@@ -166,18 +166,23 @@ pai lessons supersede old-lesson --by new-lesson
 Add candidates from a transcript
 
 ```
-pai lessons propose [TRANSCRIPT]
+pai lessons propose [TRANSCRIPT] [options]
 ```
 
-Finds user messages that correct the assistant (no model call) and adds each as a candidate to review.
+Finds user messages that correct the assistant and adds each as a candidate to review. By default a regex heuristic (no model call); with --draft a model reads the user messages and drafts titled lessons with an applies-when and the quoted evidence (at most 10).
 
 | Argument | Required | Description |
 |---|---|---|
 | `TRANSCRIPT` | no | Transcript file (default: newest of this directory) |
 
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--draft` | flag | — | Draft candidates with a model (running local model, else the routed default) instead of the regex heuristic |
+
 ```sh
 pai lessons propose
 pai lessons propose ./session.jsonl
+pai lessons propose --draft --dry-run
 ```
 
 ## Subcommands

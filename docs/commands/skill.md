@@ -48,22 +48,6 @@ See also: `pai audit skills`
 |---|---|
 | `pai skill telemetry` | Which skills were used, when, and where |
 
-## Examples
-
-```bash
-# Which skills have actually been triggered, most-used first
-pai skill telemetry
-
-# Only skills still in trial (quarantined, not yet promoted)
-pai skill telemetry --status trial
-
-# Machine-readable output for dashboards
-pai skill telemetry --json
-```
-
-See `Notes/swarm/skills-self-educating.md` for the full self-educating loop
-(discovery, sandbox trial, telemetry, adaptation).
-
 ## See also
 
 [`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai topic`](topic.md) · [`pai update`](update.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
