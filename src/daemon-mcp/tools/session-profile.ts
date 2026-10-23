@@ -83,6 +83,13 @@ async function nameOf(args: SessionProfileArgs, deps: SessionProfileDeps): Promi
   return args.name?.trim() || (await detectSessionName(deps.env));
 }
 
+/** The same lines `session_profile_get` returns, for the CLI (`pai session profile`). */
+export async function sessionProfileText(args: Pick<SessionProfileArgs, "name">, deps: SessionProfileDeps): Promise<string> {
+  const name = await nameOf(args, deps);
+  if (!name) throw new Error("this session has no name; pass --name (the session's persistent name)");
+  return describeProfile(name, getProfile(name, deps.path), deps);
+}
+
 export async function sessionProfileGet(args: Pick<SessionProfileArgs, "name">, deps: SessionProfileDeps): Promise<WorkerToolResult> {
   try {
     const name = await nameOf(args, deps);

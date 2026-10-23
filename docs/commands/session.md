@@ -2,7 +2,7 @@
 
 # pai session
 
-Work with sessions: list, open, new, rename
+Work with sessions: list, open, new, rename, profile
 
 ```
 pai session <command>
@@ -14,6 +14,7 @@ Everything about sessions lives under `pai session`; the daily verbs also exist 
 pai session list
 pai session open my-session
 pai session new --provider glm
+pai session profile
 ```
 
 See also: `pai ls`, `pai open`, `pai new`
@@ -133,6 +134,36 @@ pai session rename my-project 12 fix-login-bug
 ```
 
 See also: `pai ls`, `pai open`
+
+### pai session profile
+
+Show or change this session's model profile (chat, workers)
+
+```
+pai session profile [VERB] [options]
+```
+
+`pai session profile` shows the profile and where the next worker spawn runs. `set --workers <provider> [--model <m>]` pins where this session's workers run (an explicit choice; beats global routing). `clear --workers` removes the pin so spawns follow global routing again. `repair` clears the workers pin launches wrote implicitly (the setup's provider stored as a standing pin), but only for this folder's named session; other sessions are listed and left alone. `--name` takes another session; default: this session. Same store and resolver as the MCP session_profile tools.
+
+| Argument | Required | Description |
+|---|---|---|
+| `VERB` | no | show (default), set, clear or repair |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--workers PROVIDER` | string | — | With set: the worker provider (with --model: default, fast or a model id); with clear: bare --workers clears the pin |
+| `--model ID` | string | — | Worker model for --workers: default, fast or a model id |
+| `--name SESSION` | string | — | Session name (default: this session) |
+
+```sh
+pai session profile
+pai session profile set --workers kimi --model fast
+pai session profile clear --workers
+pai session profile show --name job-search
+pai session profile repair
+```
+
+See also: `pai worker route`, `pai setups`
 
 ### pai session info
 
@@ -566,6 +597,7 @@ See also: `pai session route`, `pai project info`
 | `pai session open` | Reopen a session (on its own provider unless --provider is given) |
 | `pai session new` | Start a new session in a new or existing folder |
 | `pai session rename` | Give a session a new name |
+| `pai session profile` | Show or change this session's model profile (chat, workers) |
 | `pai session info` | Show everything known about one session note |
 | `pai session repair-registry` | Point registry rows at the note files they belong to |
 | `pai session slug` | Suggest a short name for a session note from its transcript |

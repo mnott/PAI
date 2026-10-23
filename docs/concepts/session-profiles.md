@@ -31,8 +31,9 @@ worker run. The cockpit Routing section lists sessions that override a tier.
 ## Resolution of a worker spawn
 
 1. explicit target (`--where`, `--provider`, `--model`)
-2. the profile's `workers`
-3. `PAI_SESSION_WORKER_PROVIDER` from a setup launch
+2. the profile's `workers` — only when it is an explicit choice; a pin a
+   launch wrote (`workers_implicit: true`) never routes, global stands
+3. `PAI_SESSION_WORKER_PROVIDER` from a setup launch (this launch only)
 4. the global tier table / class map / `active`
 
 If the chosen provider is exhausted (budget at its wall or a quota cooldown),
@@ -50,8 +51,18 @@ shown in `pai worker ps` and the cockpit. It is independent of the provider cap
 
 ## Changing a profile
 
+- CLI: `pai session profile` (show), `set --workers <provider> [--model <m>]`,
+  `clear --workers`, `repair`, `--name <session>`. Same store and resolver as
+  the MCP tools, so it works while the daemon is down.
 - MCP: `session_profile_get` and `session_profile_set` (fields `chat`,
   `workers`, `fallback`, `parallel_min`, `max_parallel`, `routes`; `apply_now`
   sends `/model` into the running session).
 - Launch: choosing a setup on the launch screen writes that session's profile
-  only, never the global config.
+  only, never the global config. The workers part of that write is marked
+  `workers_implicit`: a setup pins workers for its launch (through
+  `PAI_SESSION_WORKER_PROVIDER`), it is not the operator's standing choice, so
+  later spawns keep global routing. An explicit `set` replaces the implicit
+  pin and clears the marker.
+- `pai session profile repair` clears a launch-written workers pin left by
+  older launches, but only for this folder's named session; other sessions are
+  listed and left alone (`clear --workers` takes them deliberately).

@@ -132,12 +132,13 @@ export function plainTable(rows: SessionRow[], st: Style): string {
   return renderTable(o.headers, rows.map(o.cells), st);
 }
 
-/** Setup that reproduces how a session last ran, workers as configured now. */
+/** Setup that reproduces how a session last ran, workers as configured now. A launch-written profile pin (workers_implicit) is not a choice and never seeds workers: that is how an implicit pin used to propagate itself on every relaunch. */
 export function lastSetup(row: SessionRow | null, cfg: Pick<WorkersConfig, "active">, profile: SessionProfile | null = row ? getProfile(row.name) : null): Setup {
-  const workers = profile?.workers?.provider ?? (cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE);
+  const pinned = profile?.workers && !profile.workers_implicit ? profile.workers : undefined;
+  const workers = pinned?.provider ?? (cfg.active && cfg.active !== "auto" ? cfg.active : ANTHROPIC_NATIVE);
   // the session's own default chat model (its profile) wins over whatever it last ran on
   const orch = profile?.chat ? { provider: profile.chat.provider, model: profile.chat.model } : row && row.provider !== "—" ? { provider: row.provider, model: row.model } : { provider: workers };
-  const workersModel = profile?.workers?.provider === workers ? profile.workers.model : undefined;
+  const workersModel = pinned?.provider === workers ? pinned.model : undefined;
   return { name: "Last time", orchestrator: orch, workers, ...(workersModel ? { workersModel } : {}), kind: "last" };
 }
 
@@ -268,7 +269,9 @@ export async function startSession(a: StartArgs): Promise<number> {
   if (resume && resume.provider !== "—" && (resume.provider !== harness.provider || shortModel(resume.model) !== shortModel(harness.model))) {
     out(`Conversation history carries over to ${shortModel(harness.model)}.`);
   }
-  // the setup's workers apply to this session only; the global provider and class map are never written
+  // the setup's workers apply to this launch only (the env pin dies with the
+  // session); the global provider and class map are never written, and the
+  // profile pin is marked implicit so later spawns keep global routing
   harness.env[SESSION_WORKER_PROVIDER_ENV] = setup.workers;
   harness.env[SESSION_NAME_ENV] = name;
   out(`Workers run on ${setup.workers} for this session only.`);

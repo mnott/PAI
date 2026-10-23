@@ -38,9 +38,11 @@ export async function buildHarness(
 ): Promise<Harness> {
   const extra = [...(opts.resume ? ["--resume", opts.resume] : []), ...nameArgs(opts.name, opts.named)];
   const plan: LaunchPlan = await buildLaunchPlan(workers, opts.provider, opts.model, extra, workersLogDir(workers));
-  // the session's name lets worker spawns find its profile; its worker provider follows the profile
+  // the session's name lets worker spawns find its profile; only an explicit
+  // workers pin (not a launch-written one) pins this launch's workers
   plan.env[SESSION_NAME_ENV] = opts.name;
-  const wp = getProfile(opts.name)?.workers?.provider;
+  const p = getProfile(opts.name);
+  const wp = p?.workers && !p.workers_implicit ? p.workers.provider : undefined;
   if (wp) plan.env[SESSION_WORKER_PROVIDER_ENV] = wp;
   return { cmd: "claude", argv: plan.argv, env: plan.env, cwd: opts.cwd, provider: plan.providerName, model: plan.model, route: plan.route };
 }
