@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { observedHookEvents, observedMcpServers, auditHooks, DEFAULT_SINCE_HOURS } from "./hooks.js";
 import { localCaptureDate } from "../hooks/ts/lib/raw-capture.js";
@@ -148,6 +148,56 @@ describe("auditHooks observed state", () => {
 
     const report = auditHooks(cwd, { captureDir: join(root, "raw-outputs"), now });
     expect(report.readings[0].state).toBe("missing-script");
+    expect(report.readings[0].missingPath).toBe(join(cwd, "gone.sh"));
+  });
+
+  it("finds the script after node/sh/bash, not the interpreter", () => {
+    const cwd = newDir();
+    const root = newDir();
+    const month = captureDir(root);
+    const now = Date.now();
+    writeFileSync(join(month, `${today}_all-events.jsonl`), eventLine("SessionStart", now), "utf8");
+    writeSettings(cwd, {
+      SessionStart: [
+        { hooks: [{ type: "command", command: `node ${join(cwd, "gone.mjs")}` }] },
+        { hooks: [{ type: "command", command: `sh ${join(cwd, "gone.sh")}` }] },
+      ],
+    });
+
+    const report = auditHooks(cwd, { captureDir: join(root, "raw-outputs"), now });
+    expect(report.readings.map((r) => r.state)).toEqual(["missing-script", "missing-script"]);
+    expect(report.readings[0].missingPath).toBe(join(cwd, "gone.mjs"));
+    expect(report.readings[1].missingPath).toBe(join(cwd, "gone.sh"));
+  });
+
+  it("expands ${ADAPTER_DIR} and ~ before checking the script exists", () => {
+    const cwd = newDir();
+    const root = newDir();
+    captureDir(root);
+    mkdirSync(join(cwd, "Hooks"), { recursive: true });
+    writeFileSync(join(cwd, "Hooks", "present.mjs"), "", "utf8");
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    writeFileSync(
+      join(cwd, ".claude", "settings.json"),
+      JSON.stringify({
+        env: { ADAPTER_DIR: cwd },
+        hooks: {
+          SessionStart: [
+            { hooks: [{ type: "command", command: "${ADAPTER_DIR}/Hooks/present.mjs" }] },
+            { hooks: [{ type: "command", command: "${ADAPTER_DIR}/Hooks/gone.mjs" }] },
+            { hooks: [{ type: "command", command: `~/Hooks/gone.mjs` }] },
+          ],
+        },
+      }),
+      "utf8"
+    );
+
+    const report = auditHooks(cwd, { captureDir: join(root, "raw-outputs"), now: Date.now() });
+    expect(report.readings[0].state).toBe("configured");
+    expect(report.readings[1].state).toBe("missing-script");
+    expect(report.readings[1].missingPath).toBe(join(cwd, "Hooks", "gone.mjs"));
+    expect(report.readings[2].state).toBe("missing-script");
+    expect(report.readings[2].missingPath).toBe(join(homedir(), "Hooks", "gone.mjs"));
   });
 
   it("keeps the legacy HookRunner signature working", () => {

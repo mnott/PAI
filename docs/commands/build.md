@@ -107,7 +107,7 @@ Check the project's registered build doors and hook events
 pai build doctor
 ```
 
-Reads .pai/builds.yaml above the current directory and flags every door that is missing or never calls `pai build lock`, which would bypass the queue. Also prints one line per hook event: observed (a capture proves it ran) or configured-but-never-observed (warning — the hook may silently not be running).
+Reads .pai/builds.yaml above the current directory and flags every door that is missing or never calls `pai build lock`, which would bypass the queue. Also prints one line per hook event: observed (a capture proves it ran), configured-but-never-observed (warning — the hook may silently not be running), or a configured hook whose script no longer exists (Stop: script missing — the hook never runs).
 
 ```sh
 pai build doctor
