@@ -10,7 +10,7 @@ import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
 import { fnSrc, hideLib, varSrc } from "./cockpit-page-src.js";
 import { WIN_MORPH_JS } from "./cockpit-page/win/morph.js";
 
-const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml", "table", "sessDetailBody", "sessDetailHtml", "sessDetailOpen", "sessTurnHtml", "sessTurnOpen", "sessQ", "sessLabel", "sessHitsHtml", "sessSearch"].map((n) => fnSrc(PAGE, n)).join("\n");
+const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml", "table", "sessDetailBody", "sessDetailHtml", "sessDetailOpen", "md", "sessTurnHtml", "sessTurnOpen", "sessQ", "sessLabel", "sessHitsHtml", "sessSearch"].map((n) => fnSrc(PAGE, n)).join("\n");
 
 const detail = {
   id: "s0000000x", cwd: "/work/proj", models: ["m-a"], turnCount: 1,
@@ -234,6 +234,47 @@ describe("turn view", () => {
     click({ "data-steps": "0" });
     expect(api.get().stepsOpen).toBe(false);
     expect(api.html(d)).not.toContain("thinking out loud");
+  });
+
+  it("renders the markdown subset of the reply and prompt", () => {
+    const { api, click } = wired();
+    click({ "data-sess": "s0000000x" });
+    api.set("det", detail);
+    click({ "data-turn": "0" });
+    api.set("turnDet", {
+      ...turn(0, 1),
+      prompt: "**go** now",
+      reply: "hi **bold** *it* `x`\n\n- one\n- two\n\n1. first\n2. second\n\n# head\n\n```js\nlet a = 1;\n```\nsee [docs](https://example.com/d)",
+    });
+    const v = api.html(d);
+    expect(v).toContain("<b>bold</b>");
+    expect(v).toContain("<i>it</i>");
+    expect(v).toContain("<code>x</code>");
+    expect(v).toMatch(/<div class="md-ul"><div class="md-li">one<\/div><div class="md-li">two<\/div><\/div>/);
+    expect(v).toMatch(/<div class="md-ol"><div class="md-li md-ol">first<\/div><div class="md-li md-ol">second<\/div><\/div>/);
+    expect(v).toContain('<pre class="md-fence">let a = 1;</pre>');
+    expect(v).toContain('<div class="md-h"><b>head</b></div>');
+    expect(v).toContain('<a href="https://example.com/d" rel="noopener" target="_blank">docs</a>');
+    expect(v).toContain("<b>go</b> now"); // the prompt goes through md too
+  });
+
+  it("keeps markup from the transcript escaped and does not link a javascript: target", () => {
+    const { api, click } = wired();
+    click({ "data-sess": "s0000000x" });
+    api.set("det", detail);
+    click({ "data-turn": "0" });
+    api.set("turnDet", {
+      ...turn(0, 1),
+      reply: '<script>alert(1)</script> <img onerror="x"> [c](javascript:alert(1)) [d](http://example.com)',
+    });
+    const v = api.html(d);
+    expect(v).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(v).toContain("&lt;img onerror=&quot;x&quot;&gt;");
+    expect(v).not.toContain("<script");
+    expect(v).not.toContain("<img");
+    expect(v).not.toContain('href="javascript:');
+    expect(v).toContain("[c](javascript:alert(1))"); // a non-http target stays plain text
+    expect(v).toContain('<a href="http://example.com" rel="noopener" target="_blank">d</a>');
   });
 
   it("prev / next step the turn and re-fetch; back returns to the timeline", () => {
