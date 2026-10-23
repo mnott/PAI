@@ -43,6 +43,7 @@ import {
   extractAndStoreTriples as kgExtractAndStoreTriples,
 } from "../memory/kg-extraction.js";
 import { getRegistryBackend } from "../storage/factory.js";
+import { drainRenameQueue } from "../storage/session-note-registry.js";
 import { storageBackend, daemonConfig } from "./daemon/state.js";
 import { recordSystemJobStart } from "../workers/pane-waiver.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
@@ -1102,6 +1103,9 @@ export async function handleSessionSummary(payload: SessionSummaryPayload): Prom
       `[session-summary] Session note written: ${basename(notePath)}\n`
     );
   }
+
+  // Registry rows follow the renames made above (and any queued by hooks).
+  await drainRenameQueue(getRegistryBackend).catch(() => undefined);
 
   // -------------------------------------------------------------------------
   // Step 6: Best-effort KG triple extraction (Postgres only)

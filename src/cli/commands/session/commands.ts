@@ -2,6 +2,8 @@
  * Session CRUD commands: list, info, rename, slug, tag, route, active, auto-route.
  */
 
+import { findAllNotesDirs } from "../session-cleanup/scanner.js";
+import { resolveSessionNote } from "../../../storage/session-note-registry.js";
 import {
   existsSync,
   readdirSync,
@@ -136,6 +138,8 @@ export async function cmdInfo(
   console.log(`  ${bold("Date:")}        ${session.date}`);
   console.log(`  ${bold("Status:")}      ${statusColor(session.status)}`);
   console.log(`  ${bold("Filename:")}    ${session.filename}`);
+  const notePath = resolveSessionNote(findAllNotesDirs({ claude_notes_dir: null, ...project }), session);
+  console.log(`  ${bold("File:")}        ${notePath ?? dim("not found (run `pai session repair-registry`)")}`);
   console.log(`  ${bold("Slug:")}        ${session.slug}`);
   if (session.claude_session_id) {
     console.log(
@@ -215,7 +219,7 @@ async function cmdRenameWith(
   }
   const titleSlug = toTitleCase(newSlug);
   const newFilename = formatFilename(session.number, session.date, titleSlug);
-  const oldPath = join(notesDir, session.filename);
+  const oldPath = resolveSessionNote([notesDir, ...findAllNotesDirs({ claude_notes_dir: null, ...project })], session) ?? join(notesDir, session.filename);
   let newPath: string;
   try {
     newPath = checkedRenameTarget(notesDir, oldPath, newFilename);

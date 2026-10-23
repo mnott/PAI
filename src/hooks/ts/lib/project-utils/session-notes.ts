@@ -2,8 +2,9 @@
  * Session note creation, editing, checkpointing, renaming, and finalization.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'fs';
 import { join, basename } from 'path';
+import { homedir } from 'os';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -304,8 +305,35 @@ export function extractMeaningfulName(noteContent: string, summary: string): str
   return '';
 }
 
+/** One note rename waiting to be applied to the session registry. */
+export interface RegistryRenameEntry {
+  notesDir: string;
+  oldFilename: string;
+  newFilename: string;
+  number: number;
+  date: string;
+  title: string;
+}
+
+/** Where hooks (no DB access) leave renames for the daemon / `pai session repair-registry` to apply. */
+export function registryRenameQueuePath(): string {
+  return process.env.PAI_RENAME_QUEUE || join(homedir(), '.cache', 'pai', 'registry-rename-queue.jsonl');
+}
+
+/** Append a rename to the queue. Never throws: a rename must not fail because bookkeeping did. */
+function queueRegistryRename(entry: RegistryRenameEntry): void {
+  try {
+    const q = registryRenameQueuePath();
+    mkdirSync(join(q, '..'), { recursive: true });
+    appendFileSync(q, JSON.stringify(entry) + '\n');
+  } catch (error) {
+    console.error(`Could not queue registry rename: ${error}`);
+  }
+}
+
 /**
  * Rename a session note with a meaningful name.
+ * The rename is queued for the registry (applied by drainRenameQueue in storage/session-note-registry.ts).
  * Always uses "NNNN - YYYY-MM-DD - Description.md" format.
  * Returns the new path, or original path if rename fails.
  */
@@ -346,6 +374,7 @@ export function renameSessionNote(notePath: string, meaningfulName: string): str
   try {
     renameSync(notePath, newPath);
     console.error(`Renamed note: ${oldFilename} → ${newFilename}`);
+    queueRegistryRename({ notesDir: dir, oldFilename, newFilename, number: Number(noteNumber), date, title: titleCaseName });
     return newPath;
   } catch (error) {
     console.error(`Could not rename note: ${error}`);

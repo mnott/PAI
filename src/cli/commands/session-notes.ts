@@ -8,6 +8,7 @@ import { OPT, type CommandDef, type OptDef, type RunContext } from "../define.js
 import { cmdActive, cmdAutoRoute, cmdInfo, cmdRename, cmdRoute, cmdSlug, cmdTag } from "./session/commands.js";
 import { cmdBackfillIds } from "./session/backfill-ids.js";
 import { cmdMove } from "./session/move.js";
+import { cmdRepairRegistry } from "./session/repair-registry.js";
 import { cmdAutosave } from "./session/autosave.js";
 import { cmdCheckpoint } from "./session/checkpoint.js";
 import { cmdClearNames } from "./session/clear-names.js";
@@ -306,9 +307,24 @@ const moveCmd: CommandDef = {
   run: (c) => legacy(() => cmdMove({ id: c.args.SESSION_ID as string | undefined, project: c.opts.project as string | undefined, number: c.opts.number as number | undefined, numbers: c.opts.numbers as string | undefined, to: c.opts.to as string | undefined, dryRun: c.dryRun })),
 };
 
+export const repairRegistryCmd: CommandDef = {
+  name: "repair-registry",
+  summary: "Point registry rows at the note files they belong to",
+  description:
+    "For each session whose note file cannot be found, matches by number and date in the project's Notes folder and updates title and filename. Never deletes rows. A real run backs up the database first.",
+  options: [
+    { name: "project", type: "string", value: "SLUG", summary: "Only this project" },
+    { name: "all", type: "boolean", default: false, summary: "Every project" },
+    { ...OPT.dryRun, summary: "Report counts, change nothing" },
+  ],
+  examples: ["pai session repair-registry --all --dry-run", "pai session repair-registry --project caseleaf"],
+  seeAlso: ["pai session cleanup", "pai session info"],
+  run: (c) => legacy(() => cmdRepairRegistry({ project: c.opts.project as string | undefined, all: c.opts.all === true, dryRun: c.dryRun })),
+};
+
 /** Subcommands added to `pai session` (list/open/new/rename are the foundation's). */
 export const SESSION_NOTE_COMMANDS: CommandDef[] = [
-  infoCmd, slugCmd, tagCmd, routeCmd, handoverCmd, checkpointCmd, autosaveCmd, activeCmd,
+  infoCmd, repairRegistryCmd, slugCmd, tagCmd, routeCmd, handoverCmd, checkpointCmd, autosaveCmd, activeCmd,
   recentCmd, gotoCmd, pauseCmd, autoRouteCmd, cleanupCmd, restoreCmd, backfillIdsCmd, moveCmd,
 ];
 
