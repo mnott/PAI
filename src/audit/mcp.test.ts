@@ -136,6 +136,77 @@ describe("auditMcp", () => {
     expect(stale).toBeUndefined();
   });
 
+  it("counts capture-window calls per server and marks never-seen ones configured", async () => {
+    const { home, cwd } = makeTmp();
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({ mcpServers: { alpha: { command: "alpha-bin" }, idle: { command: "idle-bin" } } })
+    );
+    const root = join(tmp, "captures");
+    const month = join(root, "raw-outputs", "2026-10");
+    mkdirSync(month, { recursive: true });
+    const now = Date.now();
+    writeFileSync(
+      join(month, "2026-10-22_all-events.jsonl"),
+      JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 5_000, payload: { tool_name: "mcp__alpha__do_thing" } }) +
+        "\n" +
+        JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 1_000, payload: { tool_name: "mcp__alpha__other" } }) +
+        "\n",
+      "utf8"
+    );
+
+    const report = await auditMcp({
+      cwd,
+      homeDir: home,
+      projectsDbPath: join(tmp, "no-registry.db"),
+      captureDir: join(root, "raw-outputs"),
+      now,
+    });
+
+    const alpha = report.servers.find((s) => s.server === "alpha");
+    expect(alpha?.callsWindow).toBe(2);
+    expect(alpha?.lastSeen).toBe(new Date(now - 1_000).toISOString());
+    expect(alpha?.state).toBe("observed");
+
+    const idle = report.servers.find((s) => s.server === "idle");
+    expect(idle?.callsWindow).toBe(0);
+    expect(idle?.lastSeen).toBeUndefined();
+    expect(idle?.state).toBe("configured");
+  });
+
+  it("drops capture calls outside the --since window", async () => {
+    const { home, cwd } = makeTmp();
+    writeFileSync(
+      join(home, ".claude.json"),
+      JSON.stringify({ mcpServers: { alpha: { command: "alpha-bin" } } })
+    );
+    const root = join(tmp, "captures");
+    const month = join(root, "raw-outputs", "2026-10");
+    mkdirSync(month, { recursive: true });
+    const now = Date.now();
+    const file = join(month, "2026-10-22_all-events.jsonl");
+    writeFileSync(
+      file,
+      JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 30 * 3_600_000, payload: { tool_name: "mcp__alpha__do_thing" } }) + "\n",
+      "utf8"
+    );
+    const stale = new Date(now - 30 * 3_600_000);
+    utimesSync(file, stale, stale);
+
+    const report = await auditMcp({
+      cwd,
+      homeDir: home,
+      projectsDbPath: join(tmp, "no-registry.db"),
+      captureDir: join(root, "raw-outputs"),
+      sinceHours: 24,
+      now,
+    });
+
+    const alpha = report.servers.find((s) => s.server === "alpha");
+    expect(alpha?.callsWindow).toBe(0);
+    expect(alpha?.state).toBe("configured");
+  });
+
   it("does not throw end-to-end and returns an array of servers", async () => {
     const { home, cwd } = makeTmp();
     writeFileSync(join(home, ".claude.json"), JSON.stringify({}));

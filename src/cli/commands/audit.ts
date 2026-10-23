@@ -20,7 +20,7 @@ const t = (name: string, summary: string, description: string, extra: Partial<Co
     if (name === "schedule") return auditScheduleCmd({ json: ctx.opts.json === true });
     if (name === "skills") return auditSkillsCmd({ json: ctx.opts.json === true, top: ctx.opts.top as string | undefined });
     if (name === "subagents") return auditSubagentsCmd({ json: ctx.opts.json === true });
-    if (name === "mcp") return auditMcpCmd({ json: ctx.opts.json === true, connect: ctx.opts.connect === true });
+    if (name === "mcp") return auditMcpCmd({ json: ctx.opts.json === true, connect: ctx.opts.connect === true, since: ctx.opts.since as string | undefined });
     if (name === "ladder") return auditLadderCmd({ json: ctx.opts.json === true, live: ctx.opts.live === true, model: ctx.opts.model as string | undefined, mcpConfig: ctx.opts["mcp-config"] as string | undefined });
     return 0;
   });
@@ -79,9 +79,12 @@ export const auditCommand: CommandDef = {
           examples: ["pai audit tokens skills", "pai audit tokens skills --top 5"],
         }),
         t("subagents", "Token cost of subagent definitions", "Sizes each Claude Code subagent definition and shows how its model is pinned."),
-        t("mcp", "MCP servers: configured, pinned, loaded, used", "Compares what is configured, what is pinned, what a live session loaded and what was used in the last 30 days.", {
-          options: [{ name: "connect", type: "boolean", summary: "Actually connect to every stdio server to count its tools (has side effects)" }],
-          examples: ["pai audit tokens mcp", "pai audit tokens mcp --connect"],
+        t("mcp", "MCP servers: configured, pinned, loaded, used", "Compares what is configured, what is pinned, what a live session loaded, what was used in the last 30 days, and what the capture hook saw in the observation window (a server with 0 calls there is configured, not used).", {
+          options: [
+            { name: "connect", type: "boolean", summary: "Actually connect to every stdio server to count its tools (has side effects)" },
+            { name: "since", type: "number", value: "HOURS", summary: "Observation window for the calls and last seen columns (default 24h)" },
+          ],
+          examples: ["pai audit tokens mcp", "pai audit tokens mcp --connect", "pai audit tokens mcp --since 48"],
         }),
         a({
           name: "usage",

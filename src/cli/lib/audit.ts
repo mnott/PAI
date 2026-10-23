@@ -519,8 +519,8 @@ function cmdSubagents(opts: { json?: boolean }): void {
 // mcp
 // ---------------------------------------------------------------------------
 
-function printMcp(report: McpReport): void {
-  console.log(header("MCP servers: configured vs. loaded vs. used"));
+function printMcp(report: McpReport, sinceHours: number): void {
+  console.log(header(`MCP servers: configured vs. loaded vs. used (window: ${sinceHours}h)`));
   const rows = report.servers.map((s) => [
     s.server + (s.disabled ? dim(" (disabled)") : ""),
     s.configuredIn.join(", ") || dim("-"),
@@ -529,20 +529,33 @@ function printMcp(report: McpReport): void {
     String(s.toolsExposed),
     String(s.toolsUsed30d),
     String(s.calls30d),
+    s.state === "observed" ? String(s.callsWindow) : dim("configured, not used"),
+    s.lastSeen ?? dim("-"),
   ]);
   console.log(
     renderTable(
-      ["server", "configured-in", "pinned", "loaded-live", "tools-exposed", "tools-used-30d", "calls-30d"],
+      [
+        "server",
+        "configured-in",
+        "pinned",
+        "loaded-live",
+        "tools-exposed",
+        "tools-used-30d",
+        "calls-30d",
+        `calls (${sinceHours}h)`,
+        "last seen",
+      ],
       rows
     )
   );
   console.log(dim(`live claude processes: ${report.liveProcesses.length}`));
 }
 
-async function cmdMcp(opts: { json?: boolean; connect?: boolean }): Promise<void> {
-  const report = await auditMcp({ cwd: process.cwd(), homeDir: homedir(), connect: opts.connect });
+async function cmdMcp(opts: { json?: boolean; connect?: boolean; since?: string }): Promise<void> {
+  const sinceHours = opts.since ? parseInt(opts.since, 10) : DEFAULT_SINCE_HOURS;
+  const report = await auditMcp({ cwd: process.cwd(), homeDir: homedir(), connect: opts.connect, sinceHours });
   if (opts.json) return printJson(report);
-  printMcp(report);
+  printMcp(report, sinceHours);
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +629,7 @@ function combinedSectionOutputs(data: CombinedData): { name: string; text: strin
   sections.push({ name: "schedule", text: captureOutput(() => printSchedule(data.schedule)) });
   sections.push({ name: "skills", text: captureOutput(() => printSkills(data.skills, 15)) });
   sections.push({ name: "subagents", text: captureOutput(() => printSubagents(data.subagents)) });
-  sections.push({ name: "mcp", text: captureOutput(() => printMcp(data.mcp)) });
+  sections.push({ name: "mcp", text: captureOutput(() => printMcp(data.mcp, DEFAULT_SINCE_HOURS)) });
   return sections;
 }
 
@@ -922,13 +935,14 @@ export function auditSubagentsCmd(opts: { json?: boolean }): number {
 }
 
 /** Exported function for audit tokens mcp command */
-export async function auditMcpCmd(opts: { json?: boolean; connect?: boolean }): Promise<number> {
-  const report = await auditMcp({ cwd: process.cwd(), homeDir: homedir(), connect: opts.connect });
+export async function auditMcpCmd(opts: { json?: boolean; connect?: boolean; since?: string }): Promise<number> {
+  const sinceHours = opts.since ? parseInt(opts.since, 10) : DEFAULT_SINCE_HOURS;
+  const report = await auditMcp({ cwd: process.cwd(), homeDir: homedir(), connect: opts.connect, sinceHours });
   if (opts.json) {
     printJson(report);
     return 0;
   }
-  printMcp(report);
+  printMcp(report, sinceHours);
   return 0;
 }
 

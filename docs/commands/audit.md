@@ -256,16 +256,18 @@ MCP servers: configured, pinned, loaded, used
 pai audit tokens mcp [options]
 ```
 
-Compares what is configured, what is pinned, what a live session loaded and what was used in the last 30 days.
+Compares what is configured, what is pinned, what a live session loaded, what was used in the last 30 days, and what the capture hook saw in the observation window (a server with 0 calls there is configured, not used).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--connect` | flag | — | Actually connect to every stdio server to count its tools (has side effects) |
+| `--since HOURS` | number | — | Observation window for the calls and last seen columns (default 24h) |
 | `--json` | flag | — | Print JSON instead of a table |
 
 ```sh
 pai audit tokens mcp
 pai audit tokens mcp --connect
+pai audit tokens mcp --since 48
 ```
 
 See also: `pai audit tokens`
