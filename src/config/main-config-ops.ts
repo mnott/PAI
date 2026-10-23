@@ -18,7 +18,7 @@ import {
 import { readWorkersSection, defaultWorkersConfig, maskKey } from "../workers/config.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { userWorkersYamlRaw } from "./shipped-defaults.js";
-import { migrateMainConfigToYaml } from "./main-config.js";
+import { MAIN_CONFIG_SECTION_COMMENTS, migrateMainConfigToYaml } from "./main-config.js";
 import { writeYamlFileAtomic } from "./yaml-store.js";
 
 export class MainConfigOpsError extends Error {}
@@ -189,10 +189,18 @@ function effectiveConfigRoot(): Record<string, unknown> {
 function validateAgainstSchema(segments: string[], value: unknown, opts: { force?: boolean }): void {
   const schema = schemaRoot();
   const topKey = segments[0];
-  if (!(topKey in schema) && !opts.force) {
+  // Known keys: the shipped defaults plus every documented key (optional
+  // fields such as maintenanceHour have no default but are real).
+  const known = new Set([...Object.keys(schema), ...Object.keys(MAIN_CONFIG_SECTION_COMMENTS)]);
+  if (!known.has(topKey) && !opts.force) {
     throw new MainConfigOpsError(
-      `unknown top-level config key "${topKey}" (known: ${Object.keys(schema).sort().join(", ")}) — pass --force to set it anyway`
+      `unknown top-level config key "${topKey}" (known: ${[...known].sort().join(", ")}) — pass --force to set it anyway`
     );
+  }
+  if (segments.length === 1 && topKey === "maintenanceHour" && !opts.force) {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 23) {
+      throw new MainConfigOpsError(`maintenanceHour: expected an integer hour 0-23 (pass --force to override)`);
+    }
   }
   const { value: expected, found } = getAtPath(schema, segments);
   if (found && expected !== null && expected !== undefined) {

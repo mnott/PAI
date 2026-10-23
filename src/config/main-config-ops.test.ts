@@ -163,6 +163,24 @@ describe("secret masking", () => {
 });
 
 describe("type validation refusals", () => {
+  it("accepts maintenanceHour (documented, no default) and rejects out-of-range values", () => {
+    setConfigValueOp("maintenanceHour", "8", {});
+    expect(getConfigValueOp("maintenanceHour").value).toBe(8);
+    expect(() => setConfigValueOp("maintenanceHour", "24", {})).toThrow(MainConfigOpsError);
+    expect(() => setConfigValueOp("maintenanceHour", "-1", {})).toThrow(MainConfigOpsError);
+  });
+
+  it("accepts every key of the documented map without --force", async () => {
+    const { MAIN_CONFIG_SECTION_COMMENTS } = await import("./main-config.js");
+    for (const key of Object.keys(MAIN_CONFIG_SECTION_COMMENTS)) {
+      try {
+        setConfigValueOp(key, key === "maintenanceHour" ? "3" : "1", {});
+      } catch (e) {
+        expect((e as Error).message).not.toMatch(/unknown top-level/);
+      }
+    }
+  });
+
   it("refuses an unknown top-level key without --force", () => {
     expect(() => setConfigValueOp("notARealTopLevelKey", "1", {})).toThrow(MainConfigOpsError);
     expect(getConfigValueOp("notARealTopLevelKey").found).toBe(false);
