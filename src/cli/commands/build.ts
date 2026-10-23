@@ -11,6 +11,7 @@ import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor, hookEventFindings } from "../../builds/doctor.js";
+import { checkNpmAuth, publishablePackage } from "../../builds/npm-auth.js";
 import { fmtSeenLocal } from "../../utils/fmt-age.js";
 import { inVisiblePane } from "../../workers/pane.js";
 import { runCommandInPane } from "./pane.js";
@@ -143,7 +144,35 @@ const doctorCmd: CommandDef = {
       } else if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ? fmtSeenLocal(h.lastSeen) : ""}`.trimEnd());
       else if (h.configured) out(`WARN ${h.event}: configured, never observed in ${sinceHours}h`);
     }
-    return r.findings.every((f) => f.ok) && missingScripts === 0 ? 0 : 1;
+    const pkg = publishablePackage(process.cwd());
+    let authRejected = false;
+    if (pkg) {
+      const a = checkNpmAuth(pkg.name);
+      if (a.state === "ok") out(`npm publish auth: ok (${a.user})`);
+      else if (a.state === "rejected") {
+        authRejected = true;
+        out("npm publish auth: REJECTED — see the renewal steps");
+        out(a.message);
+      } else out(`npm publish auth: unknown (${a.detail})`);
+    }
+    return r.findings.every((f) => f.ok) && missingScripts === 0 && !authRejected ? 0 : 1;
+  },
+};
+
+const npmAuthCmd: CommandDef = {
+  name: "npm-auth",
+  summary: "Check the npm publish credential before `npm publish`",
+  description: "Runs `npm whoami` against the public registry (10 s timeout). Exits 1 with the token renewal steps when npm rejects the credential; a timeout or network error is reported but does not fail. Used by prepublishOnly.",
+  examples: ["pai build npm-auth"],
+  seeAlso: ["pai build doctor"],
+  run: async () => {
+    const a = checkNpmAuth(publishablePackage(process.cwd())?.name);
+    if (a.state === "rejected") {
+      process.stderr.write(a.message + "\n");
+      return 1;
+    }
+    out(a.state === "ok" ? `npm publish auth: ok (${a.user})` : `npm publish auth: unknown (${a.detail})`);
+    return 0;
   },
 };
 
@@ -164,10 +193,10 @@ const watchCmd: CommandDef = {
 
 export const buildCommand: CommandDef = {
   name: "build",
-  summary: "One machine-wide build queue: run, lock, queue, next, doctor",
+  summary: "One machine-wide build queue: run, lock, queue, next, doctor, npm-auth",
   description:
     "Heavy builds (xcodebuild, swift/gradle/cargo build or test) run machine-wide through builds.slots slots, simulator/device test runs through their own builds.testSlots slots, FIFO, at low priority, deltas by default. " +
     "Raw builders are denied in Bash by the PreToolUse guard unless they go through `pai build run` or a door registered in the project's .pai/builds.yaml (`doors: [tools/build.sh]`, `patterns: [...]`). See docs/builds.md.",
   examples: ["pai build run -- xcodebuild -scheme App build", "pai build queue"],
-  subcommands: [runCmd, lockCmd, queueCmd, nextCmd, doctorCmd, watchCmd],
+  subcommands: [runCmd, lockCmd, queueCmd, nextCmd, doctorCmd, npmAuthCmd, watchCmd],
 };

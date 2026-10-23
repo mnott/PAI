@@ -63,7 +63,7 @@
     "dev": "tsdown --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "bun run build && node dist/cli/index.mjs worker pending --gate"
+    "prepublishOnly": "bun run build && node dist/cli/index.mjs worker pending --gate && node dist/cli/index.mjs build npm-auth"
   },
   "author": "Matthias Nott",
   "license": "MIT",

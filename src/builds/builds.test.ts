@@ -9,6 +9,7 @@ import { buildNext, enqueue, listBuilds, patchTicket, releaseBuildsOf, renderBui
 import { poolSlots, slotsFor } from "./config.js";
 import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
 import { hookEventFindings } from "./doctor.js";
+import { checkNpmAuth, publishablePackage, tokensUrl, type WhoamiResult, type WhoamiRunner } from "./npm-auth.js";
 import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
 
 let dir: string;
@@ -302,5 +303,33 @@ describe("compiler reaping", () => {
     const table = [row(41, 1, 1, `swift-frontend -c ${process.cwd()}/x.swift`)];
     await runBuild({ ...base, dir, slots: 1, command: ["true"], reap: { ...r, table } });
     expect(r.sent[0]).toEqual([41, "SIGTERM"]);
+  });
+});
+
+describe("npm publish auth", () => {
+  const run = (o: Partial<WhoamiResult>): WhoamiRunner => () => ({ status: 0, stdout: "", stderr: "", timedOut: false, ...o });
+  it("exit 0 is ok with the user", () => {
+    expect(checkNpmAuth("@acme/x", run({ stdout: "someone\n" }))).toEqual({ state: "ok", user: "someone" });
+  });
+  it("401 is rejected with the renewal message and scope URL", () => {
+    const a = checkNpmAuth("@acme/x", run({ status: 1, stderr: "npm error code E401\nnpm error 401 Unauthorized" }));
+    expect(a.state).toBe("rejected");
+    if (a.state === "rejected") {
+      expect(a.message).toContain("whoami: 401");
+      expect(a.message).toContain("https://www.npmjs.com/settings/acme/tokens");
+    }
+  });
+  it("unscoped package gets the generic tokens URL", () => {
+    expect(tokensUrl("plain")).toBe("https://www.npmjs.com/settings/~/tokens");
+  });
+  it("timeout is unknown, not a failure", () => {
+    expect(checkNpmAuth("x", run({ status: null, timedOut: true }))).toEqual({ state: "unknown", detail: "timeout" });
+  });
+  it("private or missing package.json is skipped", () => {
+    expect(publishablePackage(dir)).toBeNull();
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", private: true }));
+    expect(publishablePackage(dir)).toBeNull();
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p" }));
+    expect(publishablePackage(dir)).toEqual({ name: "p" });
   });
 });
