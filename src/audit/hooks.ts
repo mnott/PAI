@@ -125,7 +125,7 @@ export function defaultCaptureDir(): string {
 }
 
 /** Live capture file or a rotated backup (`<day>_all-events.jsonl.1`, `.2`, ...). */
-const CAPTURE_FILE = /\.jsonl(\.\d+)?$/;
+const CAPTURE_FILE = /\.jsonl(\.\d+(-\d+)?)?$/;
 
 /**
  * Counts hook events in the raw-capture JSONL files modified since `sinceMs`

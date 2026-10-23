@@ -53,6 +53,12 @@ What happens then depends on the tier the run was on:
 - **t1 to t0**: nothing is re-run. The owning session gets one message saying what
   was tried and why it stopped, and decides. It never goes to PAILot.
 
+The re-run's time budget follows the original's. With `--deadline`, an escalation
+is not started once that time has passed (stderr and the ledger say why
+`WORKER-ESCALATE-SKIPPED`); a deadline still ahead carries over unchanged. With
+`--max-minutes` (or the default), the re-run gets the remaining minutes of the
+original budget, and no limit when none is left. It never gets a fresh budget.
+
 A task escalates out of a tier once. A local run that committed and is kept for
 review is not escalated: its commits are the result to review.
 
