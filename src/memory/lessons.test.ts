@@ -223,6 +223,24 @@ describe("draftFromTranscript", () => {
     expect(JSON.stringify(out)).not.toContain(ANTHROPIC);
   });
 
+  it("never sends a secret to the model client", async () => {
+    const prompts: string[] = [];
+    const out = await draftFromTranscript(fixture(), { client: async (prompt) => { prompts.push(prompt); return JSON.stringify(good); } });
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const p of prompts) expect(p).not.toContain(ANTHROPIC);
+    // the correction with the secret still yields a candidate whose quote is redacted
+    const withSecret = out.find((l) => l.title === "Instrument, do not trust memory")!;
+    expect(withSecret.evidence![1]).toContain("[REDACTED]");
+    expect(withSecret.evidence![1]).not.toContain(ANTHROPIC);
+  });
+
+  it("keeps a quote the model echoes back verbatim from the redacted text", async () => {
+    const echoed = [{ ...good[0]!, evidence_quote: "memory is unreliable, it needs to be instrumented. deterministic. token [REDACTED]" }];
+    const out = await draftFromTranscript(fixture(), { client: async () => JSON.stringify(echoed) });
+    expect(out.map((l) => l.title)).toEqual(["Instrument, do not trust memory"]);
+    expect(out[0]!.evidence![1]).toBe("memory is unreliable, it needs to be instrumented. deterministic. token [REDACTED]");
+  });
+
   const item = (title: string, quote: string, strength: number, standing = true) =>
     ({ title, kind: "convention", applies_when: "always", body: `${title} body text`, evidence_quote: quote, strength, standing });
   const bigFixture = () => {

@@ -280,7 +280,12 @@ function stripNoise(text: string): string {
     .trim();
 }
 
-/** The real user messages of a transcript, each with the assistant text just before it (truncated). */
+/**
+ * The real user messages of a transcript, each with the assistant text just
+ * before it (truncated). Both sides are redacted here, so nothing secret ever
+ * reaches a model client — the default client falls back to the routed cloud
+ * model when no local model is running.
+ */
 export function extractTurns(transcriptPath: string): Turn[] {
   const turns: Turn[] = [];
   let lastAssistant = "";
@@ -298,7 +303,7 @@ export function extractTurns(transcriptPath: string): Turn[] {
     } else if (ev.type === "user" && !ev.isMeta) {
       const text = stripNoise(userText(ev.message?.content));
       if (!text) continue;
-      turns.push({ user: text.slice(0, USER_CHARS), before: lastAssistant.replace(/\s+/g, " ").slice(0, CONTEXT_CHARS) });
+      turns.push({ user: redactSecrets(text.slice(0, USER_CHARS)), before: redactSecrets(lastAssistant.replace(/\s+/g, " ").slice(0, CONTEXT_CHARS)) });
       lastAssistant = "";
     }
   }
@@ -442,8 +447,10 @@ export interface RankedDraft {
 /**
  * Candidate lessons drafted by a model from the user's corrections and standing
  * rules in a transcript. Adds nothing. A failing model or unparseable reply
- * yields no candidates for that chunk. Output is redacted, grounded in a real
- * user message, and deduped against existing lessons and itself. Every chunk is
+ * yields no candidates for that chunk. Turns are redacted before they are sent
+ * to any model client, so output is redacted too; it is grounded in a real
+ * user message (validated against the redacted text), and deduped against
+ * existing lessons and itself. Every chunk is
  * drafted first; non-standing and weak (strength < 3) items are dropped, near
  * duplicates merged (counting occurrences), then ranked by strength plus a
  * deterministic score of the evidence quote (`deterministicScore`), ties on the
@@ -487,7 +494,9 @@ export async function draftRankedFromTranscript(transcriptPath: string, opts: Dr
     const seen = new Set<RankedDraft>();
     for (const it of parseDraft(reply)) {
       if (!it.standing || it.strength < MIN_STRENGTH) continue;
-      const quote = it.evidence_quote.trim();
+      // The quote is checked against the redacted user text: the model only ever
+      // sees redacted text, so a verbatim quote can carry no secret.
+      const quote = redactSecrets(it.evidence_quote.trim());
       if (!all.includes(norm(quote))) continue;
       const title = redactSecrets(it.title.replace(/\s+/g, " ")).slice(0, 120);
       const body = redactSecrets(it.body.trim());
