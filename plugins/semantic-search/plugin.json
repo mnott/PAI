@@ -2,5 +2,5 @@
   "name": "pai-semantic-search",
   "displayName": "PAI Semantic Search",
   "description": "Vector search with pgvector, cross-encoder reranking, hybrid mode, recency boost",
-  "version": "1.0.16"
+  "version": "1.0.17"
 }

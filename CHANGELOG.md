@@ -4,6 +4,17 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.17] - 2026-10-23
+
+### Fixed
+
+- **`pai worker merge` runs the always-run guard tests also on a docs-only or test-only merge** (`vitest related` is skipped when no source changed, the guard tests are not).
+- **`pai build doctor` and the audit reports show local time and age** ("observed 05:55 (3 min ago)") instead of raw UTC; JSON output keeps ISO.
+
+### Added
+
+- **Docs:** the merge test step and its `workers.merge.*` keys, escalation on loop stop and time limit, the lessons draft pipeline and `pai audit tokens mcp` usage are in the feature map and the concept pages.
+
 ## [1.0.16] - 2026-10-23
 
 ### Fixed
