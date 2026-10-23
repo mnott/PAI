@@ -263,14 +263,14 @@ describe("loop-stop trigger", () => {
       await tryEscalate(a, "w1", st, { result: "~" }, undefined, ["abc salvage"], "deadline");
       expect(seen[0].deadline).toBe("03:00");
     });
-    it("--max-minutes: the re-run gets the remaining minutes, none when spent", async () => {
+    it("--max-minutes: the re-run gets the remaining minutes, no escalation when spent", async () => {
       const left = mk({ deadlineAt: Date.now() + 20 * 60_000, minutes: 60 }, { maxMinutes: 60 });
       await tryEscalate(left.a, "w1", left.st, { result: "~" }, undefined, ["abc salvage"], "deadline");
       expect(left.seen[0].maxMinutes).toBeGreaterThanOrEqual(19);
       expect(left.seen[0].maxMinutes).toBeLessThanOrEqual(20);
       const spent = mk({ deadlineAt: Date.now() - 1000, minutes: 60 }, { maxMinutes: 60 });
       await tryEscalate(spent.a, "w1", spent.st, { result: "~" }, undefined, ["abc salvage"], "deadline");
-      expect(spent.seen[0].maxMinutes).toBe(0);
+      expect(spent.seen).toHaveLength(0);
     });
   });
 

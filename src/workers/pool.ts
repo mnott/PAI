@@ -48,6 +48,7 @@ import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js"
 import type { WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
 import { parseLedger } from "./ledger.js";
+import { writeFileAtomic } from "../config/atomic-file.js";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 
 // ---------------------------------------------------------------------------
@@ -225,7 +226,7 @@ export function readPoolState(logDir: string): PoolState | null {
 export function writePoolState(state: PoolState, path: string): void {
   try {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(state, null, 2), "utf8");
+    writeFileAtomic(path, JSON.stringify(state, null, 2));
   } catch {
     /* status is best effort */
   }

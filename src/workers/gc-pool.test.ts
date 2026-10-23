@@ -136,4 +136,34 @@ describe("no reserve worktrees", () => {
     expect(kept.find((e) => e.id === "spare-9-1")?.archive).toBeUndefined();
     expect(existsSync(live)).toBe(true);
   }, 30_000);
+
+  it("gc --pool keeps a live host's spare the state does not list, and (torn state) protects a busy spare", async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    // spare-<hostpid>-N, state file lists nothing of it
+    const mine = join(worktreesDir(logDir), `spare-${host.pid}-1`);
+    git(repo, ["worktree", "add", mine, "-b", `spare/spare-${host.pid}-1`, "main"]);
+    writePoolState(stateFor(host.pid!, "spare-other", join(logDir, "nowhere")), poolStatePath(logDir));
+    const res = gcPoolWorktrees(logDir, false);
+    expect(res.find((e) => e.id === `spare-${host.pid}-1`)?.skipped).toMatch(/live pool host/);
+    expect(existsSync(mine)).toBe(true);
+
+    // torn state: unknown, so a spare with a process inside stays; an idle one goes
+    const busy = join(worktreesDir(logDir), "spare-8-1");
+    const idle = join(worktreesDir(logDir), "spare-8-2");
+    git(repo, ["worktree", "add", busy, "-b", "spare/spare-8-1", "main"]);
+    git(repo, ["worktree", "add", idle, "-b", "spare/spare-8-2", "main"]);
+    writeFileSync(poolStatePath(logDir), '{"hostPid": 12');
+    const child = spawn("sleep", ["30"], { cwd: busy, stdio: "ignore" });
+    try {
+      await new Promise<void>((ok, fail) => { child.once("spawn", ok); child.once("error", fail); });
+      for (const until = Date.now() + 5000; Date.now() < until && !busyPid(busy); ) await new Promise((r) => setTimeout(r, 50));
+      const torn = gcPoolWorktrees(logDir, false);
+      expect(torn.find((e) => e.id === "spare-8-1")?.skipped).toMatch(/busy/);
+      expect(existsSync(busy)).toBe(true);
+      expect(torn.find((e) => e.id === "spare-8-2")?.archive).toBeDefined();
+      expect(existsSync(idle)).toBe(false);
+    } finally {
+      child.kill();
+    }
+  }, 30_000);
 });

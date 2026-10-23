@@ -23,7 +23,7 @@ import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerSta
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
-import { readPoolState } from "./pool.js";
+import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 
@@ -2389,7 +2389,22 @@ export function gcWorktrees(
 
 /** True when `cmd` is a pool host process (the bundled worker-pool-host or the pool-host module). */
 export function isPoolHostCmd(cmd: string): boolean {
-  return /worker-pool-host|pool-host\b/.test(cmd);
+  return /(^|[/\s])(worker-pool-host\.mjs|pool-host\.(m?js|ts))(\s|$)/.test(cmd);
+}
+
+/** True when `pid` is alive and its command is a pool host (a reused pid is not). */
+function isLivePoolHost(pid: number): boolean {
+  if (!(pid > 0)) return false;
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return isPoolHostCmd(execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+  } catch {
+    return false;
+  }
 }
 
 /** Pid of the pool host recorded in the state file, 0 when none. */
@@ -2409,18 +2424,7 @@ function livePoolSpareDirs(logDir: string): Set<string> {
   if (!st) return new Set();
   const hostPid = st.hostPid && st.hostPid > 0 ? st.hostPid : 0;
   if (!hostPid) return new Set();
-  try {
-    process.kill(hostPid, 0);
-  } catch {
-    return new Set(); // host gone: its spares are leftovers
-  }
-  let cmd = "";
-  try {
-    cmd = execFileSync("ps", ["-o", "command=", "-p", String(hostPid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-  } catch {
-    cmd = "";
-  }
-  if (!isPoolHostCmd(cmd)) return new Set(); // pid reused by something else
+  if (!isLivePoolHost(hostPid)) return new Set(); // host gone, or its pid reused by something else
   const out = new Set<string>();
   for (const s of st.spares ?? []) if (s.dir) out.add(resolve(s.dir));
   for (const slot of st.slots) if (slot.busyWith) out.add(resolve(slot.cwd));
@@ -2448,6 +2452,8 @@ export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
   );
   const poolHostPid = poolHostPidOf(logDir);
   const poolSpares = livePoolSpareDirs(logDir);
+  // a state file that exists but does not parse (torn write) says nothing: protect by busyPid as before
+  const stateUnknown = existsSync(poolStatePath(logDir)) && !readPoolState(logDir);
   const cands: { id: string; dir: string }[] = [];
   const list = (root: string, keep: (n: string) => boolean, idOf: (n: string) => string): void => {
     if (!existsSync(root)) return;
@@ -2463,13 +2469,20 @@ export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
       out.push({ id, skipped: `pool spare of live host pid ${poolHostPid}` });
       continue;
     }
+    // spare-<pid>-N of a live pool host is never an orphan, listed in the state or not (it may be
+    // between addSpareWorktree and the first persist)
+    const hostOfSpare = /^spare-(\d+)-\d+$/.exec(id);
+    if (hostOfSpare && isLivePoolHost(Number(hostOfSpare[1]))) {
+      out.push({ id, skipped: `spare of live pool host pid ${hostOfSpare[1]}` });
+      continue;
+    }
     if (!isRealWorktree(dir)) {
       out.push({ id, skipped: "not a worktree" });
       continue;
     }
     // A spare-* tree named by no live pool state is an orphan even when a process sits in it:
     // a host that died without cleanup leaves its spare's claude parked in the tree.
-    if (!id.startsWith("spare-")) {
+    if (!id.startsWith("spare-") || stateUnknown) {
       const pid = busyPid(dir);
       if (pid) {
         out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
