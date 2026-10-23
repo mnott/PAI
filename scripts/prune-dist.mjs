@@ -74,9 +74,11 @@ const MAX_GENERATIONS = 30;
 const PRUNABLE = [".mjs", ".mjs.map", ".d.mts", ".d.mts.map"];
 
 /**
- * `lstart` is the absolute start time in a fixed-width, locale-dependent weekday/month format
- * ("Fri Oct 23 16:45:33 2026") — exactly 5 fields, then the command. `etimes` (seconds since
- * start) is GNU-only — BSD/macOS ps rejects it — and is tried as a fallback.
+ * `lstart` is the absolute start time in a fixed-width weekday/month format
+ * ("Fri Oct 23 16:45:33 2026") — exactly 5 fields, then the command. The names are
+ * LOCALE-DEPENDENT: under a German locale ps prints "Mi. 21 Okt. 16:22:01 2026", which
+ * Date.parse rejects — so ps is always run with LC_ALL/LANG=C (see oldestLiveStartMs).
+ * `etimes` (seconds since start) is GNU-only — BSD/macOS ps rejects it — and is tried as a fallback.
  * Returns [{ startedAt, command }].
  */
 export function parsePsOutput(out, nowMs) {
@@ -123,18 +125,34 @@ export function distDirTokens(command) {
  * string match would then miss them and rotate generations they still need. So a process counts as
  * live when any "/dist/" token in its command line stats to the SAME device+inode as `distDir`
  * (the string match is kept only as a fast path). `stat` injects the stat implementation (tests).
+ * `exec` injects the ps runner (tests). ps runs with LC_ALL/LANG=C so `lstart` prints English
+ * weekday/month names — under e.g. a German locale Date.parse rejects "Mi. 21 Okt. …" and every
+ * line parses to nothing, which must be treated as a ps failure, not as "no live process"
+ * (that is how 9 chunks live processes still needed got deleted).
  * PRUNE_DIST_PROCESSES injects the list as JSON (tests); never point it at the real dist.
  * PRUNE_DIST_DEBUG=1 prints each matched command.
  */
-export function oldestLiveStartMs(distDir, { nowMs = Date.now(), stat = statSync } = {}) {
+export function oldestLiveStartMs(distDir, { nowMs = Date.now(), stat = statSync, exec = execFileSync } = {}) {
   let procs;
   try {
-    procs = process.env.PRUNE_DIST_PROCESSES !== undefined
-      ? JSON.parse(process.env.PRUNE_DIST_PROCESSES)
-      : parsePsOutput(
-          execFileSync("ps", ["-eo", "lstart=,command="], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }),
-          nowMs
-        );
+    if (process.env.PRUNE_DIST_PROCESSES !== undefined) {
+      procs = JSON.parse(process.env.PRUNE_DIST_PROCESSES);
+    } else {
+      const out = exec("ps", ["-eo", "lstart=,command="], {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, LC_ALL: "C", LANG: "C" },
+      });
+      procs = parsePsOutput(out, nowMs);
+      // Non-empty ps output that parsed to (almost) nothing means the format changed on us
+      // (a locale we did not force away, a ps we misread) — treat it like a ps failure so we
+      // prune nothing rather than conclude "no live process" and delete live generations.
+      const lines = out.split("\n").filter((l) => l.trim());
+      const distLines = lines.filter((l) => l.includes("/dist/")).length;
+      if (lines.length > 0 && (procs.length === 0 || procs.length < distLines / 2)) {
+        return { error: "process list unavailable" };
+      }
+    }
   } catch {
     return { error: "process list unavailable" };
   }
@@ -176,9 +194,9 @@ export function oldestLiveStartMs(distDir, { nowMs = Date.now(), stat = statSync
  * Generation manifest: `{ stamp, generations: [{ builtAt, chunks }] }`, newest first, bounded to
  * MAX_GENERATIONS. A chunk survives while it belongs to a generation still needed by a live
  * process (see LIVE PROCESS GRACE above); without a manifest (first run) the age rule applies.
- * `stat` injects the stat implementation (tests); defaults to statSync.
+ * `stat` injects the stat implementation, `exec` the ps runner (tests).
  */
-export function pruneDist(distDir, { stat = statSync } = {}) {
+export function pruneDist(distDir, { stat = statSync, exec = execFileSync } = {}) {
   const DIST = resolve(distDir);
   /** The same entry list as tsdown.config.ts, as built output paths. */
   const ENTRIES = [
@@ -213,7 +231,7 @@ export function pruneDist(distDir, { stat = statSync } = {}) {
   const sameBuild = manifest && manifest.stamp === stamp;
   const history = sameBuild ? manifest.generations ?? [] : [...(manifest?.generations ?? [])];
 
-  const { oldest, error } = oldestLiveStartMs(DIST, { stat });
+  const { oldest, error } = oldestLiveStartMs(DIST, { stat, exec });
   if (error) {
     console.error(`prune-dist: cannot list processes (${error}) — pruning nothing this run.`);
     return;
