@@ -4,6 +4,13 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.13] - 2026-10-23
+
+### Fixed
+
+- **`pai worker gc` no longer treats live pool spares as orphans** (it would have killed ready spares); spares of a dead pool host still count as orphans.
+- **Lessons draft recall:** correction-like user messages are selected first and drafted in small batches (`lessons.draft.batchMessages`), so short, strong corrections are no longer drowned among long instructions.
+
 ## [1.0.12] - 2026-10-23
 
 ### Fixed
