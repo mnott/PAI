@@ -38,7 +38,13 @@
  * and prune keeps the chunks of every generation built at or after the one that
  * was current when the OLDEST live process touching this dist/ started — found
  * via `ps` (start time of any process whose command line names this dist dir).
+ * The same repo can be reachable under two different paths (two directory
+ * entries for one directory), and the long-running MCP servers may have been
+ * started from the other one, so a process counts as live when any "/dist/"
+ * token in its command line stats to the same device+inode as this dist dir —
+ * the string match alone would miss them.
  * No live process → current + previous, as before. `ps` fails → prune NOTHING.
+ * PRUNE_DIST_DEBUG=1 prints each matched live process command.
  *
  * Deliberately conservative in both directions:
  *   - only files directly in dist/ are considered, never subdirectories;
@@ -49,7 +55,7 @@
  */
 
 import { readdirSync, readFileSync, writeFileSync, statSync, unlinkSync, existsSync } from "node:fs";
-import { join, resolve, relative } from "node:path";
+import { join, resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { reachableFrom } from "./lib/dist-reachable.mjs";
@@ -94,11 +100,33 @@ export function parsePsOutput(out, nowMs) {
 }
 
 /**
+ * Every absolute path token in `command` that contains a "/dist/" segment, each cut at that segment
+ * so it names the dist DIR rather than a file inside it. Tokens are whitespace-separated; a path
+ * with spaces in it is not recoverable from `ps` output anyway.
+ */
+export function distDirTokens(command) {
+  const dirs = new Set();
+  for (const token of command.split(/\s+/)) {
+    if (!token.startsWith("/")) continue;
+    const idx = token.indexOf("/dist/");
+    if (idx === -1) continue;
+    dirs.add(token.slice(0, idx + "/dist".length));
+  }
+  return [...dirs];
+}
+
+/**
  * Oldest start time (ms) among processes whose command line references `distDir`, or null when none.
  * `{ error }` when the process list cannot be obtained — callers must then prune nothing.
+ * The same repo can be reachable under two different paths (two directory entries for one
+ * directory), and long-running MCP servers may have been started from the other one — a plain
+ * string match would then miss them and rotate generations they still need. So a process counts as
+ * live when any "/dist/" token in its command line stats to the SAME device+inode as `distDir`
+ * (the string match is kept only as a fast path). `stat` injects the stat implementation (tests).
  * PRUNE_DIST_PROCESSES injects the list as JSON (tests); never point it at the real dist.
+ * PRUNE_DIST_DEBUG=1 prints each matched command.
  */
-export function oldestLiveStartMs(distDir, { nowMs = Date.now() } = {}) {
+export function oldestLiveStartMs(distDir, { nowMs = Date.now(), stat = statSync } = {}) {
   let procs;
   try {
     procs = process.env.PRUNE_DIST_PROCESSES !== undefined
@@ -112,9 +140,32 @@ export function oldestLiveStartMs(distDir, { nowMs = Date.now() } = {}) {
   }
   if (!Array.isArray(procs)) return { error: "process list unavailable" };
   const needle = resolve(distDir);
+  const debug = process.env.PRUNE_DIST_DEBUG === "1";
+  let thisDir;
+  try {
+    thisDir = stat(needle);
+  } catch {
+    thisDir = null;
+  }
   let oldest = null;
   for (const p of procs) {
-    if (!p.command.includes(needle)) continue;
+    let uses = p.command.includes(needle); // fast path: the exact path appears verbatim
+    if (!uses && thisDir) {
+      for (const token of distDirTokens(p.command)) {
+        let st;
+        try {
+          st = stat(token);
+        } catch {
+          continue; // a path we cannot stat is not this dist
+        }
+        if (st.dev === thisDir.dev && st.ino === thisDir.ino) {
+          uses = true;
+          break;
+        }
+      }
+    }
+    if (!uses) continue;
+    if (debug) console.log(`prune-dist: live process (started ${new Date(p.startedAt).toISOString()}): ${p.command}`);
     if (oldest === null || p.startedAt < oldest) oldest = p.startedAt;
   }
   return { oldest };
@@ -125,8 +176,9 @@ export function oldestLiveStartMs(distDir, { nowMs = Date.now() } = {}) {
  * Generation manifest: `{ stamp, generations: [{ builtAt, chunks }] }`, newest first, bounded to
  * MAX_GENERATIONS. A chunk survives while it belongs to a generation still needed by a live
  * process (see LIVE PROCESS GRACE above); without a manifest (first run) the age rule applies.
+ * `stat` injects the stat implementation (tests); defaults to statSync.
  */
-export function pruneDist(distDir) {
+export function pruneDist(distDir, { stat = statSync } = {}) {
   const DIST = resolve(distDir);
   /** The same entry list as tsdown.config.ts, as built output paths. */
   const ENTRIES = [
@@ -161,7 +213,7 @@ export function pruneDist(distDir) {
   const sameBuild = manifest && manifest.stamp === stamp;
   const history = sameBuild ? manifest.generations ?? [] : [...(manifest?.generations ?? [])];
 
-  const { oldest, error } = oldestLiveStartMs(DIST);
+  const { oldest, error } = oldestLiveStartMs(DIST, { stat });
   if (error) {
     console.error(`prune-dist: cannot list processes (${error}) — pruning nothing this run.`);
     return;
