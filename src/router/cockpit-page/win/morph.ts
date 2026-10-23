@@ -6,9 +6,10 @@ export type WinHtml = (slot: Element & { __html?: string }, html: string) => boo
 export type WinList = <T>(slot: Element, items: T[], keyFn: (it: T) => string, makeRow: (it: T) => HTMLElement, updateRow?: (row: HTMLElement, it: T) => void) => void;
 
 /** morph(slot, html): children match by data-k, else by order and tag; unchanged nodes are not touched;
- *  the focused element and anything with __keep is never replaced or removed. */
+ *  the focused element (links excepted: a clicked disclosure link must not pin the panel it closes) and anything with __keep is never replaced or removed. */
 export const WIN_MORPH_JS = String.raw`function _mkey(n){return n.nodeType===1?n.getAttribute("data-k"):null}
-function _mkeep(n){return n.nodeType===1&&(n.__keep||n===document.activeElement||n.contains(document.activeElement))}
+function _mact(){var a=document.activeElement;return a&&a.nodeName!=="A"?a:null}
+function _mkeep(n){return n.nodeType===1&&(n.__keep||(_mact()&&(n===_mact()||n.contains(_mact()))))}
 function _msame(a,b){return a.nodeType===b.nodeType&&a.nodeName===b.nodeName}
 function _mattrs(a,b){
  var i,n;

@@ -122,13 +122,13 @@ function sessionsHtml(d){
 }
 /** Session drill-down state: the opened id, its tab and the fetched detail (survives the poll redraw; the panel is part of the sessions html). */
 var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null;
-/** One tab of the opened session's detail, drawn with table(). */
+/** One tab of the opened session's detail, drawn with table(); time-ordered tabs list the newest first. */
 function sessDetailBody(d,tab){
  if(tab==="files")return table(["file","edits .n","~lines .n"],d.filesChanged.map(function(f){return[esc(f.path),f.edits,f.approxLinesChanged]}));
- if(tab==="skills")return table(["skill","time"],d.skills.map(function(k){return[esc(k.name),esc(ago(k.ts))]}));
+ if(tab==="skills")return table(["skill","time"],d.skills.slice().reverse().map(function(k){return[esc(k.name),esc(ago(k.ts))]}));
  if(tab==="mcp")return table(["server","calls .n","failures .n"],d.mcp.map(function(m){return[esc(m.server),m.calls,m.failures]}));
- if(tab==="denials")return table(["time","tool","reason"],d.denials.map(function(x){return[esc(ago(x.ts)),esc(x.tool),esc(x.reason)]}));
- return table(["#  .n","time","prompt","tools","edits","cmds .n"],d.turns.map(function(t){return[t.idx+1,esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
+ if(tab==="denials")return table(["time","tool","reason"],d.denials.slice().reverse().map(function(x){return[esc(ago(x.ts)),esc(x.tool),esc(x.reason)]}));
+ return table(["#  .n","time","prompt","tools","edits","cmds .n"],d.turns.slice().reverse().map(function(t){return[t.idx+1,esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
 }
 /** The detail panel under the sessions table: tabs Timeline / Files / Skills / MCP / Denials and a close button; empty when no session is open. */
 function sessDetailHtml(){
