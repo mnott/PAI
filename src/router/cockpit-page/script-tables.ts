@@ -84,6 +84,13 @@ function speedHtml(){
 }
 /** One row for both Worker runs and Sessions by tokens (one owner): status dot, label, model chip, token bar relative to o.max, number, right-hand cell (duration or age), hit%, optional extra markup; full detail in the row's title.
  *  o: {st dot state, lab, full tooltip, dot title, model, models, w tokens, max, du, hit ratio|null, extra markup}. */
+/** Scan findings cell: empty when all zero, else "1 block · 2 confirm · 3 warn" coloured by the highest severity (block red, confirm and warn amber). */
+function findingsCell(f){
+ if(!f)return"";
+ var parts=["block","confirm","warn"].filter(function(k){return f[k]>0}).map(function(k){return f[k]+" "+k});
+ if(!parts.length)return"";
+ return'<span class="'+(f.block>0?"bad":"warn")+'" title="end-of-run security scan findings">'+parts.join(" · ")+'</span>';
+}
 function runHead(timeLab){
  function h(full,ab,cls,tip){return'<span class="wr-h '+cls+'" title="'+esc(tip||full)+'"><span class="wr-hf">'+esc(full)+'</span><span class="wr-ha">'+ab+'</span></span>'}
  return'<div class="wr-hd"><i></i>'+h("session/run","S","","session / run")+h("model","M","","model")+'<span></span>'+h("tokens","T","wr-r","tokens (weighted)")+h(timeLab,"A","wr-r",timeLab==="age"?"age since last request":"run duration")+h("hit","H","wr-r","cache hit")+h("!","!","wr-c","cache busts / errors")+'</div>'
@@ -157,7 +164,7 @@ function workersHtml(d){
   return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
    var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
-   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null});
+   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null,extra:findingsCell(s.workerFindings)});
   }).join("")+'</div>'}).join("")+'</div></div>';
 }
 /** Cache verdict by pause: one matrix, a row per model with data, a column per pause bucket, cell "hit% (n)" coloured by hitCls, an empty bucket a dim dot.

@@ -146,6 +146,7 @@ const SHIPPED = {
   memoryCoverageWarn: 0.99,
   memoryCoverageBad: 0.5,
   memoryStartGraceSecs: 120,
+  memoryLessonsTop: 5,
   memoryStallSecs: 300,
   memoryHistoryLen: 120,
   memoryRingPx: 76,
@@ -223,6 +224,8 @@ export interface CockpitLayout {
   memoryCoverageWarn: number;
   memoryCoverageBad: number;
   memoryStartGraceSecs: number;
+  /** Lessons card: how many of the newest candidates it lists. */
+  memoryLessonsTop: number;
   /** A job with no progress for this long (s) is STALLED; the rate sparkline keeps at most memoryHistoryLen samples. */
   memoryStallSecs: number;
   memoryHistoryLen: number;
@@ -309,6 +312,7 @@ export function cockpitLayout(): CockpitLayout {
     memoryCoverageWarn: numZ(s, "memoryCoverageWarn", SHIPPED.memoryCoverageWarn),
     memoryCoverageBad: numZ(s, "memoryCoverageBad", SHIPPED.memoryCoverageBad),
     memoryStartGraceSecs: numZ(s, "memoryStartGraceSecs", SHIPPED.memoryStartGraceSecs),
+    memoryLessonsTop: num(s, "memoryLessonsTop", SHIPPED.memoryLessonsTop),
     memoryStallSecs: num(s, "memoryStallSecs", SHIPPED.memoryStallSecs),
     memoryHistoryLen: num(s, "memoryHistoryLen", SHIPPED.memoryHistoryLen),
     memoryRingPx: num(s, "memoryRingPx", SHIPPED.memoryRingPx),

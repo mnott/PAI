@@ -110,6 +110,7 @@ const WIDE_822 = [
   "memory.index:90",
   "memory.backend:90",
   "memory.passes:90",
+  "memory.lessons:90",
   "memory.daemon:90",
   "routing:76",
   "routing.flow:48",
