@@ -7,14 +7,16 @@
  *
  * Directories are read in order; a later rule with the same id replaces an
  * earlier one (user rules override built-ins), and `severity: off` disables
- * that id entirely. Project directories (`<cwd>/.pai/rules`, shipped by
- * whatever repo is checked out) are less trusted: they may only add rules or
+ * that id entirely. Project directories (`.pai/rules` at or above the cwd,
+ * up to the repo root, shipped by whatever repo is checked out) are less
+ * trusted: they may only add rules or
  * raise the severity of an existing id (the existing pattern stays); an
  * `off` or a downgrade is ignored and reported in `ignored`.
  */
 
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, parse as parsePath, resolve } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
@@ -88,7 +90,8 @@ function asSequence(raw: Record<string, unknown>, id: string, source: string, er
 }
 
 /**
- * The user rule directories: PAI_HOME/rules and .pai/rules under the cwd.
+ * The user rule directories: PAI_HOME/rules and the project rules dir found
+ * at or above the cwd.
  * PAI_HOME is resolved like paiHomeDir() but without its stderr migration
  * notice — a hook's stderr is machinery, and reading a rules directory is
  * not a reason to complain about it.
@@ -115,13 +118,27 @@ function realOrResolved(p: string): string {
 }
 
 /**
- * The repo-local rule directories under cwd: the less trusted ones (see the
- * file header). The PAI-home rules dir is never one, even when cwd is $HOME
- * and PAI_HOME=~/.pai makes both paths the same directory.
+ * The repo-local rule directory: the first `.pai/rules` found walking up from
+ * cwd to the nearest directory containing `.git` (file or dir), so a session
+ * started in a repo subdirectory still sees the repo's rules; closest wins.
+ * The walk never goes above $HOME or past the filesystem root, and without a
+ * `.git` ancestor it stops at $HOME. The PAI-home rules dir is never one,
+ * even when cwd is $HOME and PAI_HOME=~/.pai makes both paths the same
+ * directory.
  */
 export function projectRuleDirs(cwd: string = process.cwd()): string[] {
-  const dir = join(cwd, ".pai", "rules");
-  return realOrResolved(dir) === realOrResolved(homeRulesDir()) ? [] : [dir];
+  const home = realOrResolved(homedir());
+  const homeRules = realOrResolved(homeRulesDir());
+  let dir = realOrResolved(cwd);
+  for (;;) {
+    const rules = join(dir, ".pai", "rules");
+    // never above $HOME: the stop runs before the rules dir is looked at, but
+    // $HOME itself may be the repo root, so its rules dir is checked first
+    if (dir === parsePath(dir).root) return [];
+    if (existsSync(rules)) return realOrResolved(rules) === homeRules ? [] : [rules];
+    if (dir === home || existsSync(join(dir, ".git"))) return [];
+    dir = parsePath(dir).dir;
+  }
 }
 
 /** A project pattern longer than this is not accepted: untrusted input is kept small. */
