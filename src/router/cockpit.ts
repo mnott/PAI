@@ -19,6 +19,7 @@ import { paiHomePath } from "../config/pai-home.js";
 import { poolCarry, poolMetricsPath, readPoolMetrics, type PoolCarry } from "../workers/pool.js";
 import { weightsBytes } from "./cockpit-weights.js";
 import { setProviderCap } from "../workers/providers.js";
+import { HideRuleError, hideMatcher, parseHideRules, readHideRules, writeHideRules } from "./cockpit-hide.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
@@ -1350,7 +1351,7 @@ export function handleCockpit(
     if (q.length < 2 || q.length > 200) return send(400, "application/json", '{"error":"q must be 2-200 characters"}'), true;
     let gone = false;
     res.on("close", () => (gone = true));
-    combinedSearch(q, { cancelled: () => gone, ...searchDeps }).then(
+    combinedSearch(q, { cancelled: () => gone, hidden: ((m) => (t: string) => m("search", t))(hideMatcher(readHideRules())), ...searchDeps }).then(
       (r) => send(200, "application/json", JSON.stringify({ q, ...r })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
@@ -1386,6 +1387,22 @@ export function handleCockpit(
         send(409, "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message }));
       }
     }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message, error: (e as Error).message })));
+    return true;
+  }
+  if (url.pathname === "/cockpit/hide") {
+    if (req.method === "GET") return send(200, "application/json", JSON.stringify({ rules: readHideRules() })), true;
+    if (req.method !== "POST") return send(405, "text/plain", "GET or POST only"), true;
+    if (!sameOriginAction(req)) return send(403, "application/json", JSON.stringify({ ok: false, message: "cross-origin action refused" })), true;
+    if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) return send(415, "application/json", JSON.stringify({ ok: false, message: "content-type must be application/json" })), true;
+    readJsonObject(readBody, req).then((b) => {
+      try {
+        const rules = parseHideRules((b as { rules?: unknown }).rules);
+        writeHideRules(rules);
+        send(200, "application/json", JSON.stringify({ ok: true, rules }));
+      } catch (e) {
+        send(e instanceof HideRuleError ? 400 : 409, "application/json", JSON.stringify({ ok: false, message: (e as Error).message }));
+      }
+    }).catch((e: unknown) => send(bodyErrorStatus(e), "application/json", JSON.stringify({ ok: false, message: (e as Error).message })));
     return true;
   }
   const concurrency = req.method === "POST" ? /^\/cockpit\/providers\/([^/]+)\/concurrency$/.exec(url.pathname) : null;

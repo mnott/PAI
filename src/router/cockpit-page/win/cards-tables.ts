@@ -17,6 +17,7 @@ WCHX.speed={
 function wtFit(ctx){fitTables(ctx.body)}
 /** Row-level disclosures: a click on a fold or "+N more" row stores its state and re-feeds the page's data; a click on a session row opens its detail panel (SESS_OPEN), a tab or close button changes it. */
 function wtWire(ctx){
+ hideWire(ctx,ctx.id==="runs"?"runs":"sessions");
  ctx.body.addEventListener("click",function(e){
   var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore],[data-sess],[data-hit],[data-sesstab],[data-sessclose]"):null;
   if(!t||!ctx.body.contains(t))return;
@@ -56,8 +57,8 @@ function wtSessSearch(){
 function wtView(build,after){return function(d){return d&&d.bySession?{html:build(d),after:after||wtFit}:null}}
 function tablesDefaults(){
  var f=["data"],cards=[{id:"perf-group",type:"group",title:"Performance details",info:"per-pause cache verdicts, sessions and worker runs"},
-  {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,view:wtView(workersHtml),mount:wtWire,resize:wtFit},
-  {id:"sessions",type:"list",cls:"wm",title:"Sessions by tokens",feeds:f,actions:[wtSessSearch()],view:wtView(sessionsHtml,wtSessAfter),mount:wtWire,resize:wtFit},
+  {id:"runs",type:"list",cls:"wm",title:"Worker runs",feeds:f,actions:[hideHeadAction("runs")],view:wtView(workersHtml),mount:wtWire,resize:wtFit},
+  {id:"sessions",type:"list",cls:"wm",title:"Sessions by tokens",feeds:f,actions:[wtSessSearch(),hideHeadAction("sessions")],view:wtView(sessionsHtml,wtSessAfter),mount:wtWire,resize:wtFit},
   {id:"pause",type:"table",title:"Cache verdict by pause",info:WT_INFO.pause,feeds:f,view:function(d){return d&&d.bySession?{html:pauseHtml(d),after:pauseFit}:null},resize:pauseFit}];
  return{parts:[[{tree:WinT.leaf("perf-group"),kids:{"perf-group":WinT.split("c",[WinT.leaf("speed"),WinT.leaf("runs"),WinT.leaf("sessions"),WinT.leaf("pause")],[0.25,0.25,0.25,0.25])},stDefaults:{},cards:cards},760]]};
 }

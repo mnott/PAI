@@ -98,7 +98,7 @@ function runHead(timeLab){
 }
 function runRow(o){
  var pc=o.w>0?Math.max(2,Math.round(o.w/o.max*100)):0;
- return'<div class="wr-row"'+(o.sid?' data-sess="'+esc(o.sid)+'"':'')+' title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+'</span></div>'
+ return'<div class="wr-row'+(o.hidden?' wr-hid':'')+'"'+(o.sid?' data-sess="'+esc(o.sid)+'"':'')+' title="'+esc(o.full)+'"><i class="wr-dot wr-'+o.st+'" title="'+esc(o.dotTitle)+'"></i><span class="wr-lab">'+esc(o.lab)+'</span><span class="badge" title="'+esc((o.models||[]).join(", ")||"no model")+'">'+esc(o.model)+'</span><span class="wr-bar" title="tokens: '+fmt(o.w)+'"><i style="width:'+pc+'%"></i></span><span class="wr-n">'+(o.w?fmt(o.w):"–")+'</span><span class="wr-du">'+o.du+'</span><span class="wr-hit '+hitCls(o.hit)+'" title="cache hit">'+(o.hit==null?"–":pct(o.hit))+'</span><span class="wr-fl">'+(o.extra||"")+(o.hide?hideBtn(o.hide,o.lab,hideSuggest(o.hide,o.lab)):"")+'</span></div>'
 }
 /** Sessions by tokens: one runRow per session (dot: error red, worker verdict colour, active in the last 5 min blue, else dim), rows past the top N folded into one expandable row (state in localStorage like folds).
  *  The opened session's detail panel is an expanded row directly under its row (kept visible when the row is behind "+N more"); the header search filters the rows by name / id / model, or in prompts mode lists the sessions whose prompts match. */
@@ -118,12 +118,16 @@ function sessHitsHtml(){
  var part=SESS_HITS.partial?'<div class="dim sh-n">search stopped early: only the most recent sessions were read</div>':"";
  var mem=SESS_HITS.memory||[],note=SESS_HITS.note?'<div class="dim sh-n">'+esc(SESS_HITS.note)+'</div>':"";
  if(!SESS_HITS.hits.length&&!mem.length)return'<div class="dim sh-n">no session has a prompt containing “'+esc(SESS_Q.trim())+'”</div>'+note+part;
- var rec=SESS_HITS.hits.map(function(h){return'<button type="button" class="sh" data-hit="'+esc(h.id)+'" data-turn="'+h.turn+'" title="'+esc(h.id+(h.cwd?" · "+h.cwd:""))+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim"> #'+(h.turn+1)+' · '+esc(ago(h.ts))+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>'}).join("");
- var mh=mem.map(function(h){var age=h.updatedAt?" · "+esc(ago(new Date(h.updatedAt).toISOString())):"",tt=esc((h.id||"")+" "+h.path);return h.id?'<button type="button" class="sh sh-m" data-hit="'+esc(h.id)+'" data-turn="'+Math.max(0,h.turn)+'" title="'+tt+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim">'+(h.turn>=0?" #"+(h.turn+1):"")+age+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>':'<div class="sh sh-m sh-nb" title="'+tt+'"><b>'+esc(h.projectSlug||"note")+'</b><span class="dim"> '+esc(h.path.split("/").pop()||"")+age+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></div>'}).join("");
- return'<div class="sh-l">'+rec+(mem.length?'<div class="dim sh-n sh-div">from memory</div>'+mh:"")+'</div>'+note+part;
+ var hf=hideFilter("search",SESS_HITS.hits.concat(mem),function(h){return(h.id?sessLabel(h.id)+" ":"")+h.snippet}),hn=hideNote("search");
+ function hw(x,inner){var h=x.it;return'<div class="sh-w'+(x.hidden?' wr-hid':'')+'">'+inner+hideBtn("search",h.snippet,hideSuggest("search",h.snippet))+'</div>'}
+ var rec=hf.filter(function(x){return SESS_HITS.hits.indexOf(x.it)>=0}).map(function(x){var h=x.it;return hw(x,'<button type="button" class="sh" data-hit="'+esc(h.id)+'" data-turn="'+h.turn+'" title="'+esc(h.id+(h.cwd?" · "+h.cwd:""))+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim"> #'+(h.turn+1)+' · '+esc(ago(h.ts))+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>')}).join("");
+ var mh=hf.filter(function(x){return SESS_HITS.hits.indexOf(x.it)<0}).map(function(x){var h=x.it,age=h.updatedAt?" · "+esc(ago(new Date(h.updatedAt).toISOString())):"",tt=esc((h.id||"")+" "+h.path);return h.id?hw(x,'<button type="button" class="sh sh-m" data-hit="'+esc(h.id)+'" data-turn="'+Math.max(0,h.turn)+'" title="'+tt+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim">'+(h.turn>=0?" #"+(h.turn+1):"")+age+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>'):'<div class="sh sh-m sh-nb" title="'+tt+'"><b>'+esc(h.projectSlug||"note")+'</b><span class="dim"> '+esc(h.path.split("/").pop()||"")+age+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></div>'}).join("");
+ return(hn?'<div class="sh-n">'+hn+'</div>':"")+'<div class="sh-l">'+rec+(mh?'<div class="dim sh-n sh-div">from memory</div>'+mh:"")+'</div>'+note+part;
 }
 function sessionsHtml(d){
- var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0,q=sessQ();
+ var hf=hideFilter("sessions",d.bySession.slice(0,SESSION_ROWS),function(s){return s.name||s.session.slice(0,8)}),hmap={};
+ hf.forEach(function(x){hmap[x.it.session]=x.hidden});
+ var all=hf.map(function(x){return x.it}).sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0,q=sessQ();
  if(q&&SESS_MODE==="sessions"){open=true;all=all.filter(function(s){return((s.name||"")+" "+s.session+" "+(s.models||[]).join(" ")).toLowerCase().indexOf(q)>=0})}
  function row(s){
   var ms=s.models||[],t=tot(s),recent=s.lastTs&&Date.now()-new Date(s.lastTs).getTime()<300000;
@@ -131,7 +135,7 @@ function sessionsHtml(d){
   var lab=s.name||s.session.slice(0,8);
   var full=lab+" · "+s.session+(s.worker?" · worker "+s.worker+" · "+(s.verdict||"worker"):"")+"\n"+s.requests+" req · fresh in "+fmt(s.input+s.cacheWrite)+" · out "+fmt(s.output)+" · hit "+pct(s.hitRatio)+" · busts "+(s.busts||0)+" · errors "+(s.errors||0)+" · last "+ago(s.lastTs);
   var ex=(s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'')+(s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'');
-  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex})+(s.session===SESS_OPEN?'<div class="wr-row wr-span">'+sessDetailHtml()+'</div>':"");
+  return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex,hide:"sessions",hidden:hmap[s.session]})+(s.session===SESS_OPEN?'<div class="wr-row wr-span">'+sessDetailHtml()+'</div>':"");
  }
  var shown=all.filter(function(s,i){return open||i<top||s.session===SESS_OPEN}),rest=all.slice(top),h=shown.map(row).join("");
  if(SESS_OPEN&&!all.some(function(s){return s.session===SESS_OPEN}))h+='<div class="wr-row wr-span">'+sessDetailHtml()+'</div>';
@@ -140,7 +144,7 @@ function sessionsHtml(d){
   h+='<div class="wr-row wr-span"><button type="button" class="lnk dim" data-sessmore="'+(open?"0":"1")+'">'+(open?"show fewer sessions":"+"+rest.length+" more sessions ("+fmt(rt)+" tokens)")+'</button></div>';
  }
  if(q&&SESS_MODE==="sessions"&&!all.length)h+='<div class="wr-row wr-span"><span class="dim sh-n">no session matches “'+esc(SESS_Q.trim())+'”</span></div>';
- return sessHitsHtml()+'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
+ return hidePanelHtml("sessions")+sessHitsHtml()+'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
 }
 /** Session drill-down state: the opened id, its tab and the fetched detail (survives the poll redraw; the panel is part of the sessions html). */
 var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null;
@@ -151,7 +155,8 @@ function sessDetailBody(d,tab){
  if(tab==="mcp")return table(["server","calls .n","failures .n"],d.mcp.map(function(m){return[esc(m.server),m.calls,m.failures]}));
  if(tab==="denials")return table(["time","tool","reason"],d.denials.slice().reverse().map(function(x){return[esc(ago(x.ts)),esc(x.tool),esc(x.reason)]}));
  var q=SESS_MODE==="prompts"?sessQ():"",turns=q?d.turns.filter(function(t){return t.prompt.toLowerCase().indexOf(q)>=0||t.idx===SESS_FOCUS}):d.turns;
- return table(["#  .n","time","prompt","tools","edits","cmds .n"],turns.slice().reverse().map(function(t){return['<span data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</span>',esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
+ var hf=hideFilter("timeline",turns,function(t){return t.prompt}),hn=hideNote("timeline");
+ return(hn?'<div class="s">'+hn+'</div>':"")+table(["#  .n","time","prompt","tools","edits","cmds .n"," .hd"],hf.slice().reverse().map(function(x){var t=x.it,pr=esc(t.prompt);return['<span data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</span>',esc(ago(t.ts)),(x.hidden?'<span class="wr-hid">'+pr+'</span>':pr),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands,hideBtn("timeline",t.prompt,hideSuggest("timeline",t.prompt))]}));
 }
 /** The detail panel (an expanded row under its session): tabs Timeline / Files / Skills / MCP / Denials and a close button; empty when no session is open. */
 function sessDetailHtml(){
@@ -192,15 +197,17 @@ var WR_FOLD_KEY="pai.cockpit.wrfold";
 function wrFolded(){try{return JSON.parse(localStorage.getItem(WR_FOLD_KEY)||"{}")||{}}catch(e){return{}}}
 /** Worker runs: one row per run (status dot, label with the full text in the tooltip, model chip, token bar + number, duration, cache hit%), grouped per spawning session with a fold header. */
 function workersHtml(d){
- if(!d.workers.length)return'<span class="dim">no worker sessions in this window</span>';
- var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},g=workerGroups(d.workers.slice(0,WORKER_ROWS),W),fold=wrFolded(),now=Date.now();
- return'<div class="wr-cq"><div class="wr-tbl">'+g.groups.map(function(grp,gi){
+ if(!d.workers.length)return hidePanelHtml("runs")+'<span class="dim">no worker sessions in this window</span>';
+ var hf=hideFilter("runs",d.workers.slice(0,WORKER_ROWS),function(s){return s.name||s.worker}),hmap={};
+ hf.forEach(function(x){hmap[x.it.worker]=x.hidden});
+ var W=d.weights||{input:1,cacheWrite:1.25,cacheRead:.1,output:5},g=workerGroups(hf.map(function(x){return x.it}),W),fold=wrFolded(),now=Date.now();
+ return hidePanelHtml("runs")+(g.groups.length?"":'<span class="dim">every worker run in this window is hidden</span>')+'<div class="wr-cq"><div class="wr-tbl">'+g.groups.map(function(grp,gi){
   var shut=!!fold[grp.name],head='<a href="#" class="wr-head" data-wrfold="'+esc(grp.name)+'" title="'+esc(grp.name+" · "+grp.runs.length+(grp.runs.length===1?" run":" runs")+" · "+fmt(grp.total)+" weighted tokens")+'"><span class="wr-car">'+(shut?"▸":"▾")+'</span><b>'+esc(grp.name)+'</b><span class="dim">'+grp.runs.length+(grp.runs.length===1?" run · ":" runs · ")+fmt(grp.total)+'</span></a>'+(gi?"":runHead("time"));
   if(shut)return'<div class="wr-group">'+head+'</div>';
   return'<div class="wr-group">'+head+grp.runs.map(function(r){var s=r.s,st=String(s.verdict).indexOf("running")===0?"run":vcls(s.verdict);
    var lab=s.name||s.worker,full=lab+" · run "+s.worker+" · "+(s.workerProvider||"-")+" · "+(s.verdict||"worker");
    var du=s.workerStart?dur(((s.workerEnd||now)-s.workerStart)):"–";
-   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null,extra:findingsCell(s.workerFindings)});
+   return runRow({st:st,lab:lab,full:full,dotTitle:s.verdict||"worker",model:(s.models&&s.models[0])||"–",models:s.models,w:r.w,max:g.max,du:du,hit:s.requests?s.hitRatio:null,extra:findingsCell(s.workerFindings),hide:"runs",hidden:hmap[s.worker]});
   }).join("")+'</div>'}).join("")+'</div></div>';
 }
 /** Cache verdict by pause: one matrix, a row per model with data, a column per pause bucket, cell "hit% (n)" coloured by hitCls, an empty bucket a dim dot.
@@ -218,6 +225,7 @@ function pauseHtml(d){
 /** Below ~420 px the pause matrix drops the n from its cells. */
 function pauseFit(ctx){var w=ctx.body.querySelector(".pm-w");if(w)w.classList.toggle("pm-narrow",ctx.body.clientWidth<420)}
 function load(){
+ if(!HIDE_LOADED&&!load.h){load.h=1;hideLoad()}
  feed("data","/cockpit/data?window="+win,["kpis","tokens","cache","speed","pause","sessions","runs","daily"],function(j){newerCheck(j);data=j;Win.update("data",j);winFeedCache()});
 }
 function loadSystem(){feed("system","/cockpit/system?window="+win,["system","tokens","cache","cloud"],function(j){sys=j;winFeedSystem(j);winFeedCache()})}
