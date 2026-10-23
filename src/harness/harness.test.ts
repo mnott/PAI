@@ -112,6 +112,19 @@ describe("claude-code adapter", () => {
     expect(claudeCodeAdapter.listSessions({ cwd: "/tmp/other" })).toEqual([]);
   });
 
+  it("an unparsable updatedAt sorts as oldest (0) instead of NaN, and drops out of sinceMs", () => {
+    const dir = join(home, ".claude", "projects", ENCODED);
+    mkdirSync(dir, { recursive: true });
+    const line = (ts: string) => JSON.stringify({ type: "user", timestamp: ts, cwd: CWD });
+    writeFileSync(join(dir, "bad.jsonl"), line("not-a-date") + "\n");
+    writeFileSync(join(dir, "good.jsonl"), line(new Date(Date.now() + 60_000).toISOString()) + "\n");
+    const sessions = claudeCodeAdapter.listSessions({ cwd: CWD });
+    expect(sessions.map((s) => s.id).filter((id) => id === "good" || id === "bad")).toEqual(["good", "bad"]);
+    expect(claudeCodeAdapter.listSessions({ cwd: CWD, sinceMs: 3_600_000 }).map((s) => s.id)).toEqual(["good"]);
+    rmSync(join(dir, "bad.jsonl"));
+    rmSync(join(dir, "good.jsonl"));
+  });
+
   it("detect() is false when the projects dir is missing", () => {
     process.env.CLAUDE_CONFIG_DIR = join(newDir(), ".claude");
     expect(claudeCodeAdapter.detect()).toBe(false);
@@ -157,6 +170,19 @@ describe("codex adapter", () => {
       expect(e.source).toBe("transcript");
       expect(e.fidelity).toBe("observed");
     }
+  });
+
+  it("an unparsable updatedAt sorts as oldest (0) instead of NaN, and drops out of sinceMs", () => {
+    const dir = join(codexHome, "sessions", "2026", "10", "23");
+    mkdirSync(dir, { recursive: true });
+    const line = (ts: string) => JSON.stringify({ type: "message", timestamp: ts, payload: { type: "message", role: "user", content: "hi" } });
+    writeFileSync(join(dir, "rollout-bad.jsonl"), line("not-a-date") + "\n");
+    writeFileSync(join(dir, "rollout-good.jsonl"), line(new Date(Date.now() + 60_000).toISOString()) + "\n");
+    const sessions = codexAdapter.listSessions();
+    expect(sessions.map((s) => s.id).filter((id) => id === "rollout-good" || id === "rollout-bad")).toEqual(["rollout-good", "rollout-bad"]);
+    expect(codexAdapter.listSessions({ sinceMs: 3_600_000 }).map((s) => s.id)).toEqual(["rollout-good"]);
+    rmSync(join(dir, "rollout-bad.jsonl"));
+    rmSync(join(dir, "rollout-good.jsonl"));
   });
 
   it("detect() is false when the sessions dir is missing", () => {

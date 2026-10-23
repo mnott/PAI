@@ -1381,6 +1381,8 @@ export function handleCockpit(
     } catch {
       return send(400, "application/json", JSON.stringify({ ok: false, message: "malformed provider name" })), true;
     }
+    // a form or text/plain POST cannot become a JSON body here
+    if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) return send(415, "application/json", JSON.stringify({ ok: false, message: "content-type must be application/json" })), true;
     readJsonObject(readBody, req).then((b) => {
       const { delta } = b as { delta?: unknown };
       if (delta !== 1 && delta !== -1) return send(400, "application/json", JSON.stringify({ ok: false, message: "delta must be +1 or -1" }));
@@ -1388,7 +1390,9 @@ export function handleCockpit(
         const cur = readWorkersSection().workers.providers[name]?.maxConcurrent;
         if (cur === undefined) return send(404, "application/json", JSON.stringify({ ok: false, message: `provider "${name}" has no concurrency cap` }));
         const { concurrencyMin, concurrencyMax } = cockpitLayout();
-        const next = Math.min(concurrencyMax, Math.max(concurrencyMin, cur + delta));
+        // a stored cap above max stays there: "+" must not lower it, only "-" steps down
+        const aboveMax = cur > concurrencyMax;
+        const next = aboveMax ? (delta === 1 ? cur : cur + delta) : Math.min(concurrencyMax, Math.max(concurrencyMin, cur + delta));
         if (next !== cur) setProviderCap(name, next);
         send(200, "application/json", JSON.stringify({ ok: true, provider: name, maxConcurrent: next, min: concurrencyMin, max: concurrencyMax, clamped: next !== cur + delta }));
       } catch (e) {

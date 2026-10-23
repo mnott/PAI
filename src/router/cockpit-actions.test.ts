@@ -513,13 +513,31 @@ describe("cockpit action endpoint", () => {
       setProviderCap("capped", 16);
       expect(JSON.parse((await post("capped", { delta: 1 })).body)).toMatchObject({ maxConcurrent: 16, clamped: true });
       expect(cap()).toBe(16);
-      setProviderCap("capped", 2);
+      // above max (a hand-edited config): "+" leaves it alone (clamped:true), "-" steps down by one
+      const yamlPath = process.env.PAI_WORKERS_YAML!;
+      const setCap = (v: number) => writeWorkersYamlText(yamlPath, readFileSync(yamlPath, "utf8").replace(/maxConcurrent: \d+/, `maxConcurrent: ${v}`));
+      setCap(20);
+      expect(cap()).toBe(20);
+      expect(JSON.parse((await post("capped", { delta: 1 })).body)).toMatchObject({ maxConcurrent: 20, clamped: true });
+      expect(cap()).toBe(20);
+      expect(JSON.parse((await post("capped", { delta: -1 })).body)).toMatchObject({ maxConcurrent: 19, clamped: false });
+      expect(cap()).toBe(19);
+      setCap(2);
 
       // bad input, unknown / uncapped provider
       expect((await post("capped", { delta: 5 })).status).toBe(400);
       expect((await post("capped", {})).status).toBe(400);
       expect((await post("nope", { delta: 1 })).status).toBe(404);
       expect((await post("uncapped", { delta: 1 })).status).toBe(404);
+
+      // content-type: only application/json; a form or text/plain POST is refused, nothing written
+      const form = await ask(srv, "/cockpit/providers/capped/concurrency", "POST", JSON.stringify({ delta: 1 }), { "content-type": "application/x-www-form-urlencoded" });
+      expect(form.status).toBe(415);
+      expect(cap()).toBe(2);
+      // no content-type at all is refused too
+      const noCt = await ask(srv, "/cockpit/providers/capped/concurrency", "POST", JSON.stringify({ delta: 1 }), { "content-type": "" });
+      expect(noCt.status).toBe(415);
+      expect(cap()).toBe(2);
 
       // cross-origin and rebinding: refused, nothing written
       expect((await post("capped", { delta: 1 }, { origin: "https://evil.example" })).status).toBe(403);
