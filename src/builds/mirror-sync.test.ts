@@ -127,6 +127,20 @@ describe("mirror sync", () => {
     }
   });
 
+  it("default config reader: the env var named by the shipped default is found, and the name is printed verbatim", async () => {
+    const saved = process.env.AIBROKER_FORGE_TOKEN;
+    const opts = { fetch: scripted([], []).fetch, originUrl: "https://forge.example/acme/app.git", now: (() => { let t = 0; return () => (t += 3000); })(), sleep: async () => {} };
+    try {
+      delete process.env.AIBROKER_FORGE_TOKEN;
+      await expect(syncMirrors(".", opts)).rejects.toThrow("set AIBROKER_FORGE_TOKEN (or");
+      process.env.AIBROKER_FORGE_TOKEN = "dummy";
+      await expect(syncMirrors(".", opts)).resolves.toBeDefined();
+    } finally {
+      if (saved === undefined) delete process.env.AIBROKER_FORGE_TOKEN;
+      else process.env.AIBROKER_FORGE_TOKEN = saved;
+    }
+  });
+
   it("config release.forgeTokenEnv names the env var; the default is AIBROKER_FORGE_TOKEN", () => {
     expect(forgeTokenEnvName(() => ({ release: { forgeTokenEnv: "MY_FORGE_TOKEN" } }))).toBe("MY_FORGE_TOKEN");
     expect(forgeTokenEnvName(() => ({}))).toBe("AIBROKER_FORGE_TOKEN");

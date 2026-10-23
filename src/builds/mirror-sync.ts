@@ -9,7 +9,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { shippedMainDefaults } from "../config/shipped-defaults.js";
+import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 
 export interface MirrorError {
   reason: string;
@@ -72,12 +72,11 @@ export function deriveForge(originUrl: string): { baseUrl: string; repo: string 
 /** Reads the main config (shipped defaults under the user's file); injected in tests. */
 export type ConfigReader = () => Record<string, unknown>;
 
-/** Shipped defaults merged under the user's main config, resolved at call time. */
+/** Shipped defaults merged under the user's main config (unmasked: the value is an env var NAME). */
 async function defaultConfigReader(): Promise<ConfigReader> {
   // imported lazily: daemon/config.ts resolves config paths at module load
-  const { getConfigValueOp } = await import("../config/main-config-ops.js");
-  const v = getConfigValueOp("release.forgeTokenEnv").value;
-  return () => ({ release: { forgeTokenEnv: v } });
+  const { readMainConfigRaw } = await import("../daemon/config.js");
+  return () => deepMergeConfig(shippedMainDefaults(), readMainConfigRaw());
 }
 
 /** The env var holding the forge token: config `release.forgeTokenEnv`, else the shipped default name. */
