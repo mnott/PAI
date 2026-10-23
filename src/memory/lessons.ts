@@ -332,6 +332,33 @@ function draftMax(): number {
   return m;
 }
 
+/** Words that state a rule for all future work (English and German), case-insensitive, word boundaries. */
+const RULE_WORDS = [
+  /\balways\b/i, /\bnever\b/i, /\bmust\b/i, /\bmust\s+not\b/i, /\bimpossible\b/i, /\bevery\s+time\b/i,
+  /\bno\s+exception\b/i, /\bfrom\s+now\s+on\b/i, /\bimmer\b/i, /\bnie\b/i, /\bniemals\b/i, /\bmuss\b/i, /\bdarf\s+nicht\b/i,
+];
+/** A concrete file, button, section or document to change right now. */
+const NOW_TARGETS = [
+  /\breadme\b/i, /\bbutton\b/i, /\btile\b/i, /\bsection\b/i, /\bdocument\b/i, /\bsvg\b/i, /\bpng\b/i, /\bcockpit\b/i,
+  /[./][\w/-]*\.[a-z0-9]{1,5}\b/i, /\bfile\b/i,
+];
+
+/**
+ * Deterministic score of an evidence quote (the user's own words), added to the
+ * model's strength: +2 rule words, +1 emphasis (an ALL-CAPS word of 4+ letters,
+ * "!"), +1 drafted from 2+ chunks, -2 a concrete now-change target (path,
+ * README, button, tile, svg, cockpit) with no rule word.
+ */
+export function deterministicScore(quote: string, count: number): number {
+  const hasRule = RULE_WORDS.some((re) => re.test(quote));
+  let score = 0;
+  if (hasRule) score += 2;
+  if (/(^|\s)[A-Z]{4,}(\s|$)/.test(quote) || /\/[^\s/]+\//.test(quote) || quote.includes("!")) score += 1;
+  if (count >= 2) score += 1;
+  if (!hasRule && NOW_TARGETS.some((re) => re.test(quote))) score -= 2;
+  return score;
+}
+
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
 
 function tokens(s: string): Set<string> {
@@ -406,6 +433,8 @@ async function defaultClient(): Promise<ModelClient> {
 export interface RankedDraft {
   lesson: LessonInput;
   strength: number;
+  /** Deterministic score of the evidence quote; final rank = strength + this. */
+  evidenceScore: number;
   /** In how many chunks the same rule was drafted. */
   count: number;
 }
@@ -416,8 +445,9 @@ export interface RankedDraft {
  * yields no candidates for that chunk. Output is redacted, grounded in a real
  * user message, and deduped against existing lessons and itself. Every chunk is
  * drafted first; non-standing and weak (strength < 3) items are dropped, near
- * duplicates merged (counting occurrences), then ranked by strength and by
- * occurrences and capped at `lessons.draft.max`.
+ * duplicates merged (counting occurrences), then ranked by strength plus a
+ * deterministic score of the evidence quote (`deterministicScore`), ties on the
+ * final rank by occurrences, and capped at `lessons.draft.max`.
  */
 export async function draftRankedFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<RankedDraft[]> {
   const sessionId = basename(transcriptPath, ".jsonl");
@@ -474,13 +504,15 @@ export async function draftRankedFromTranscript(transcriptPath: string, opts: Dr
       const d: RankedDraft = {
         lesson: { title, kind: it.kind as LessonKind, applies_when: redactSecrets(it.applies_when.trim()), evidence: [sessionId, redactSecrets(quote)], body },
         strength,
+        evidenceScore: deterministicScore(quote, 1),
         count: 1,
       };
       seen.add(d);
       found.push(d);
     }
   }
-  return found.sort((a, b) => b.strength - a.strength || b.count - a.count).slice(0, max);
+  for (const d of found) d.evidenceScore = deterministicScore(d.lesson.evidence?.[1] ?? "", d.count);
+  return found.sort((a, b) => b.strength + b.evidenceScore - (a.strength + a.evidenceScore) || b.count - a.count).slice(0, max);
 }
 
 export async function draftFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<LessonInput[]> {
