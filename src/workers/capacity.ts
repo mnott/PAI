@@ -431,7 +431,19 @@ export interface QueueLineWriter {
  * newline and a fresh line started only when the position or the run ahead
  * changes. Off a terminal (a log) a line is written only on such a change.
  */
-export function queueLineWriter(o: { write: (s: string) => void; tty: boolean; columns?: () => number | null | undefined }): QueueLineWriter {
+export function queueLineWriter(o: {
+  write: (s: string) => void;
+  tty: boolean;
+  columns?: () => number | null | undefined;
+  /**
+   * Whether the destination understands in-place redraw (\r + clear-line).
+   * Default: `tty`. A wrapper that polls a queue file into plain strings
+   * (pane-exec) passes true even off a terminal — the line is still one line
+   * refreshed in place — while a plain log keeps whole newline-terminated lines.
+   */
+  inplace?: boolean;
+}): QueueLineWriter {
+  const inplace = o.inplace ?? o.tty;
   let key: string | null = null;
   let shown = false;
   let last = "";
@@ -440,22 +452,22 @@ export function queueLineWriter(o: { write: (s: string) => void; tty: boolean; c
       if (!q) return this.clear();
       const k = queueStateKey(q);
       const full = queuedPaneLine(q);
-      if (!o.tty) {
+      if (!inplace) {
         if (k === key) return;
         key = k;
         o.write(`${full}\n`);
         return;
       }
       const cols = o.columns?.();
-      const line = cols && cols > 1 ? ellipsize(full, cols - 1) : full;
+      const line = o.tty && cols && cols > 1 ? ellipsize(full, cols - 1) : full;
       if (k === key && line === last) return;
-      o.write(`${shown && k !== key ? "\n" : ""}\r\x1b[K${line}`);
+      o.write(`${shown && k !== key ? "\n" : ""}\r\x1b[K${line}${o.tty ? "" : "\n"}`);
       key = k;
       last = line;
       shown = true;
     },
     clear() {
-      if (o.tty && shown) o.write("\r\x1b[K");
+      if (inplace && shown) o.write("\r\x1b[K");
       shown = false;
       key = null;
       last = "";

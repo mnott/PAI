@@ -515,7 +515,7 @@ export function alive(pid: number | null | undefined): boolean {
  * status file's own `started` stamp; a reused pid almost never starts within
  * 120s of the original, so a wider drift means "different process".
  */
-export type OwnerFields = Pick<WorkerStatus, "pid" | "started" | "procStart"> & { label?: string } & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
+export type OwnerFields = Pick<WorkerStatus, "pid" | "started" | "procStart"> & { label?: string; origin?: WorkerStatus["origin"] } & { id?: string; pool?: Pick<NonNullable<WorkerStatus["pool"]>, "hostPid"> };
 
 /**
  * Process creation time encoded in a worker id (`YYYYMMDD-HHMMSS-<pid>`), only
@@ -581,7 +581,9 @@ export const realProcTable: ProcTable = {
  * is not yet "another process": a run that waited in the capacity queue was
  * spawned long before its `started` stamp, so the process is also accepted when
  * its command line names the worker (id, or its own label as `pai worker run`
- * was given it).
+ * was given it). A status with no `started` stamp at all (a hand-written or
+ * legacy file) cannot be checked against ps: a live pid then counts as owned,
+ * as before the command-line check existed.
  */
 export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
   return (status) => {
@@ -591,7 +593,7 @@ export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
     if (status.pool) return status.pid > 0 && t.alive(status.pid) && t.parentPid(status.pid) === status.pool.hostPid;
     if (status.pid <= 0 || !t.alive(status.pid)) return false;
     const psStart = t.startMs(status.pid);
-    const started = status.procStart ?? spawnTimeOf(status) ?? Date.parse(status.started.replace(" ", "T"));
+    const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? Date.parse(status.started.replace(" ", "T")) : NaN);
     if (psStart === undefined || Number.isNaN(started)) return t.alive(status.pid);
     if (Math.abs(psStart - started) <= 120_000) return true;
     const cmd = t.command(status.pid);
