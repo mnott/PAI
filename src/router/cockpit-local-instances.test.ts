@@ -7,7 +7,7 @@ const gbm = (m: number) => (m / 1024).toFixed(1);
 const GB = 1024 ** 3;
 const fn = (name: string) => WIN_CLOUD_JS.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))![0];
 const residentOf = new Function("gbm", `${fn("limResident")}\nreturn limResident;`)(gbm);
-const server = new Function("esc", "gbm", "shortModel", "limResident", `${fn("limServerHtml")}\nreturn limServerHtml;`)(esc, gbm, (s: string) => s, residentOf) as (l: unknown) => string;
+const server = new Function("esc", "gbm", "shortModel", "limResident", `${fn("limEngineHtml")}\n${fn("limServerHtml")}\nreturn limServerHtml;`)(esc, gbm, (s: string) => s, residentOf) as (l: unknown) => string;
 
 const inst = (n: number, pid: number, rssMb: number, inflight = 0) => ({ id: `gyro-m#${n}`, port: 8034 + n, pid, state: "ready", inflight, rssMb });
 const card = (instances: unknown[]) => ({ provider: "gyro-m", kind: "local", up: true, rssMb: 4800, weightsBytes: 87 * GB, tokensPerSec: 30, served: ["m"], instances });
@@ -26,6 +26,17 @@ describe("local servers card lists each instance", () => {
     expect(h).toContain("30 tok/s");
     expect(h.match(/shared, mapped/g)).toHaveLength(1);
     expect(h).toContain("87.0 GB (shared, mapped)");
+  });
+
+  it("engine version: a dim line under the model, with and without a version; also on the instance rows", () => {
+    const withEng = server({ ...card([]), engineVersion: "0.1.48-metal", engineDir: "strata-pr" });
+    expect(withEng).toContain('<div class="dim nw">engine 0.1.48-metal · strata-pr</div>');
+    expect(withEng.indexOf("engine 0.1.48-metal")).toBeGreaterThan(withEng.indexOf("gyro-m"));
+    expect(server(card([]))).not.toContain("engine ");
+    const instEng = server({ ...card([inst(1, 88106, 4800)]), engineVersion: "0.1.49-metal", engineDir: "build-gyro3" });
+    expect(instEng).toContain('<div class="dim nw">engine 0.1.49-metal · build-gyro3</div>');
+    expect(instEng).toContain("87.0 GB (shared, mapped)");
+    expect(instEng.indexOf("engine 0.1.49-metal")).toBeLessThan(instEng.indexOf("pid 88106"));
   });
 
   it("no instance rows: the aggregated entry as before", () => {

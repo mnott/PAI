@@ -14,14 +14,14 @@
  */
 
 import { execFile, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { paiHomePath } from "../config/pai-home.js";
 import { loadConfig } from "../daemon/config.js";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { resolveProviderKey, type ProviderUsage, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { processTreeRssMb } from "../workers/model-inventory.js";
 import { vllmLogCacheStats } from "./vllm-log-cache.js";
@@ -60,6 +60,10 @@ export interface ProviderLimits {
   decodeTokPerSec?: number;
   /** prefix-cache counters the local server reports itself (undefined = server does not report them) */
   prefixCache?: PrefixCacheStats;
+  /** engine build of the local server's engine binary, e.g. "0.1.48-metal" (`<bin> --version`); undefined = not a Strata engine or the version could not be read */
+  engineVersion?: string;
+  /** directory name two levels above the engine binary (its build dir, e.g. "strata-pr"), shown beside the version */
+  engineDir?: string;
   /** age of `prefixCache` when it is the last good reading kept over a failed poll; absent = fresh */
   prefixCacheAgeSec?: number;
   error?: string;
@@ -519,7 +523,7 @@ export async function localLimits(
   rows: UsageRow[],
   now: number,
   background?: (stats: Promise<PrefixCacheStats | undefined>) => void,
-  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined> } = {}
+  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined>; engineInfo?: (port: number) => Promise<{ engineVersion?: string; engineDir?: string }> } = {}
 ): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
@@ -551,8 +555,10 @@ export async function localLimits(
   }
   let rssMb: number | undefined;
   let prefixCache: PrefixCacheStats | undefined;
+  let engine: { engineVersion?: string; engineDir?: string } = {};
   if (up) {
     rssMb = await (opts.listenerRssMb ?? listenerRssMb)(port);
+    engine = await (opts.engineInfo ?? engineInfoOf)(port);
     if (background) background(prefixCacheStats(u, p, name));
     else prefixCache = await prefixCacheStats(u, p, name);
   }
@@ -565,10 +571,77 @@ export async function localLimits(
     ...(rssMb ? { rssMb } : {}),
     ...(served ? { served } : {}),
     ...(prefixCache ? { prefixCache } : {}),
+    ...engine,
     ...tokensPerSec(rows, name, now),
     ...decodeTokPerSec(rows, name, now),
     fetchedAt: now,
   };
+}
+
+/** `"<name> <version>"` (e.g. "strata 0.1.48-metal"); a bare version line is taken as is. */
+export function parseEngineVersion(out: string): string | undefined {
+  const line = out.trim().split("\n")[0]?.trim();
+  if (!line) return undefined;
+  const m = /\s(\S+)$/.exec(line);
+  return m ? m[1] : line;
+}
+
+/** The engine binary of the process listening on `port`: the first descendant whose command line is "<path> --serve ..." (a Strata engine child); undefined for vllm-mlx / ollama, which run none. */
+async function engineBinOf(port: number): Promise<string | undefined> {
+  const pid = (await sh("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"])).split("\n")[0];
+  if (!pid) return undefined;
+  const out = await sh("ps", ["-axo", "pid=,ppid=,command="]);
+  if (!out) return undefined;
+  const kids = new Map<string, string[]>();
+  for (const line of out.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (!m) continue;
+    kids.set(m[2], [...(kids.get(m[2]) ?? []), `${m[1]} ${m[3]}`]);
+  }
+  const seen = new Set<string>([pid]);
+  const stack = [pid];
+  while (stack.length) {
+    for (const k of kids.get(stack.pop()!) ?? []) {
+      const [cp, cmd] = [k.slice(0, k.indexOf(" ")), k.slice(k.indexOf(" ") + 1)];
+      if (seen.has(cp)) continue; // a reparented cycle must not loop forever
+      seen.add(cp);
+      const exe = /^(\S+) --serve\b/.exec(cmd)?.[1];
+      if (exe) return exe;
+      stack.push(cp);
+    }
+  }
+  return undefined;
+}
+
+/** `<bin> --version` once per binary path+mtime (a rebuild changes the mtime); 3 s, failures read as no version. */
+const engineVersionCache = new Map<string, { mtimeMs: number; version?: string }>();
+
+async function engineVersionOf(bin: string): Promise<string | undefined> {
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(bin).mtimeMs;
+  } catch {
+    return undefined;
+  }
+  const hit = engineVersionCache.get(bin);
+  if (hit && hit.mtimeMs === mtimeMs) return hit.version;
+  const version = parseEngineVersion(await shTimeout(bin, ["--version"], 3000));
+  engineVersionCache.set(bin, { mtimeMs, version });
+  return version;
+}
+
+/** execFile with a timeout; any failure (missing binary, timeout) is "". */
+function shTimeout(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve) => execFile(cmd, args, { timeout: timeoutMs }, (_e, out) => resolve(String(out ?? "").trim())));
+}
+
+/** The engine build line of the server on `port`: version and build dir, empty when it runs no engine binary. */
+async function engineInfoOf(port: number): Promise<{ engineVersion?: string; engineDir?: string }> {
+  const bin = await engineBinOf(port);
+  if (!bin) return {};
+  const version = await engineVersionOf(bin);
+  const dir = basename(dirname(dirname(bin)));
+  return { ...(version ? { engineVersion: version } : {}), ...(dir ? { engineDir: dir } : {}) };
 }
 
 /** RSS of the process tree behind the listener on `port`, in MB; undefined when it cannot be read. */
@@ -719,7 +792,7 @@ export interface LimitsDeps {
   /** Replaces the anthropic keychain + https fetch (tests). */
   fetchAnthropic?: () => Promise<string>;
   /** Local probe policy (router.cockpit.probe); defaults to the shipped values. */
-  probe?: { timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined> };
+  probe?: { timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined>; engineInfo?: (port: number) => Promise<{ engineVersion?: string; engineDir?: string }> };
 }
 
 /**
