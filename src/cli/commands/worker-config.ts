@@ -18,6 +18,7 @@ import { CONFIG_FILE } from "../../daemon/config.js";
 import {
   ANTHROPIC_NATIVE,
   PROVIDER_TAGS,
+  QUEUE_PRIORITIES,
   WorkersConfigError,
   expandHome,
   getProviderOrNative,
@@ -25,6 +26,7 @@ import {
   nativeAnthropicProvider,
   readWorkersSection,
   type ClassTarget,
+  type QueuePriority,
   type WorkerProvider,
   type WorkersConfig,
 } from "../../workers/config.js";
@@ -39,9 +41,11 @@ import {
   migrateWorkersToYaml,
   needsWorkersYamlRelocation,
   parseWorkersYamlDocument,
+  readPrioritySessions,
   relocateWorkersYaml,
   workersYamlLegacyNotice,
   workersYamlPath,
+  writePrioritySessions,
 } from "../../workers/workers-config.js";
 import { testProvider } from "../../workers/run.js";
 import { currentLocalStatus, probeLoopback } from "../../workers/local-provider.js";
@@ -1308,6 +1312,101 @@ export const workerPolicyCommand: CommandDef = {
 };
 
 // ---------------------------------------------------------------------------
+// priority (workers.priority.sessions: queue priority per named session)
+// ---------------------------------------------------------------------------
+
+/** `high|normal|low`; anything else is refused with the valid list. */
+function parseQueuePriority(v: string): QueuePriority {
+  if (!(QUEUE_PRIORITIES as readonly string[]).includes(v)) {
+    throw new WorkersConfigError(`priority must be high, normal or low, got "${v}"`);
+  }
+  return v as QueuePriority;
+}
+
+const priorityListCommand: CommandDef = {
+  name: "list",
+  summary: "List the sessions with a queue priority",
+  description: "Shows every session with a workers.priority entry and its priority. Sessions not listed run at normal.",
+  examples: ["pai worker priority list", "pai worker priority"],
+  seeAlso: ["pai worker priority set", "pai worker queue"],
+  run() {
+    try {
+      const sessions = readPrioritySessions();
+      for (const [name, p] of Object.entries(sessions)) out(`  ${name}  ${p}`);
+      out(dim("  default: normal"));
+    } catch (e) {
+      fail(e, "pai worker config check");
+    }
+  },
+};
+
+const prioritySetCommand: CommandDef = {
+  name: "set",
+  summary: "Give a named session a queue priority (high, normal, low)",
+  description:
+    "Every run the session starts then queues at that priority: when a provider is full, high runs are admitted before normal before low (running workers are never preempted). " +
+    "`pai worker run --priority` overrides it for one run. `normal` is the default every session gets, so setting it removes the entry. " +
+    "The session name need not be running — the entry waits for it.",
+  args: [
+    { name: "SESSION", required: true, summary: "Session name, as `pai worker ps` shows it" },
+    { name: "PRIORITY", required: true, summary: "high, normal or low" },
+  ],
+  examples: ["pai worker priority set Jobs high", "pai worker priority set Background low", "pai worker priority set Jobs normal"],
+  seeAlso: ["pai worker priority clear", "pai worker queue"],
+  run(ctx) {
+    try {
+      const name = ctx.args.SESSION as string;
+      const priority = parseQueuePriority(ctx.args.PRIORITY as string);
+      const sessions = readPrioritySessions();
+      if (priority === "normal") delete sessions[name];
+      else sessions[name] = priority;
+      writePrioritySessions(sessions);
+      out(
+        priority === "normal"
+          ? ok(`${name}: back to the default (normal)`)
+          : ok(`${name}: ${priority} priority for every run it starts`)
+      );
+    } catch (e) {
+      fail(e, "pai worker priority");
+    }
+  },
+};
+
+const priorityClearCommand: CommandDef = {
+  name: "clear",
+  summary: "Remove a session's queue priority (it goes back to normal)",
+  description: "Deletes the session's workers.priority entry. Runs it starts queue at normal again, like every unlisted session.",
+  args: [{ name: "SESSION", required: true, summary: "Session name to remove" }],
+  examples: ["pai worker priority clear Jobs", "pai worker priority"],
+  seeAlso: ["pai worker priority set"],
+  run(ctx) {
+    try {
+      const name = ctx.args.SESSION as string;
+      const sessions = readPrioritySessions();
+      if (!(name in sessions)) throw new WorkersConfigError(`no priority entry for session "${name}" (see: pai worker priority)`);
+      delete sessions[name];
+      writePrioritySessions(sessions);
+      out(ok(`${name}: priority removed (normal)`));
+    } catch (e) {
+      fail(e, "pai worker priority");
+    }
+  },
+};
+
+export const workerPriorityCommand: CommandDef = {
+  name: "priority",
+  summary: "Queue priority per session: list, set, clear",
+  description:
+    "workers.yaml `workers.priority.sessions`: the queue priority of every run a named session starts, without editing workers.yaml by hand. " +
+    "When a provider is full, queued runs are admitted high before normal before low; running workers are never preempted. " +
+    "Without a subcommand, lists the entries.",
+  examples: ["pai worker priority", "pai worker priority set Jobs high", "pai worker priority clear Jobs"],
+  seeAlso: ["pai worker queue", "pai worker run"],
+  subcommands: [priorityListCommand, prioritySetCommand, priorityClearCommand],
+  run: (ctx: RunContext, io?: Io) => priorityListCommand.run!(ctx, io),
+};
+
+// ---------------------------------------------------------------------------
 // fallback, pool, proxy, mcp, on, off, install, controls
 // ---------------------------------------------------------------------------
 
@@ -1570,6 +1669,7 @@ export const WORKER_CONFIG_COMMANDS: CommandDef[] = [
   workerRolesCommand,
   workerConfigCommand,
   workerPolicyCommand,
+  workerPriorityCommand,
   workerRouteCommand,
   workerLocalCommand,
   workerFallbackCommand,

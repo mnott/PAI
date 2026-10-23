@@ -434,6 +434,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker pending` | Finished workers whose work is not merged yet |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |
+| `pai worker priority` | Queue priority per session: list, set, clear |
+| `pai worker priority clear` | Remove a session's queue priority (it goes back to normal) |
+| `pai worker priority list` | List the sessions with a queue priority |
+| `pai worker priority set` | Give a named session a queue priority (high, normal, low) |
 | `pai worker providers` | Providers workers can run on: list, add, remove, use, enable, disable, test |
 | `pai worker providers add` | Add a provider (the first one also turns workers on) |
 | `pai worker providers cap` | Show or set how many workers run in parallel on a provider |

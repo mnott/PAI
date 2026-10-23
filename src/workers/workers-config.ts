@@ -33,6 +33,7 @@ import {
 import {
   ANTHROPIC_NATIVE,
   nativeAnthropicModels,
+  QUEUE_PRIORITIES,
   WorkersConfigError,
   expandHome,
   isLocalProvider,
@@ -44,6 +45,7 @@ import {
   parseProvider,
   parseWorkersConfig,
   type ClassTarget,
+  type QueuePriority,
   type WorkerProvider,
 } from "./config.js";
 
@@ -598,6 +600,63 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
       };
   const rawTiers = existsSync(yamlPath) ? effectiveWorkersYamlRaw(yamlPath).tiers : undefined;
   syncWorkersYamlDocument(doc, before, after, Array.isArray(rawTiers) ? rawTiers : []);
+  writeWorkersYamlText(yamlPath, String(doc));
+}
+
+// ---------------------------------------------------------------------------
+// workers.priority.sessions (queue priority per named session)
+// ---------------------------------------------------------------------------
+
+/**
+ * The user file's `workers.priority.sessions` map exactly as written — `{}`
+ * when the file or the key is missing. The shipped defaults' `{}` is not a
+ * user entry: a session the user never named stays normal, and a write-back
+ * must not copy the defaults block into the file.
+ */
+export function readPrioritySessions(yamlPath: string = workersYamlPath()): Record<string, QueuePriority> {
+  const w = userWorkersYamlRaw(yamlPath).workers;
+  const prio = typeof w === "object" && w !== null && !Array.isArray(w) ? (w as Record<string, unknown>).priority : undefined;
+  const sessions = typeof prio === "object" && prio !== null && !Array.isArray(prio) ? (prio as Record<string, unknown>).sessions : undefined;
+  if (sessions === undefined || sessions === null) return {};
+  if (typeof sessions !== "object" || Array.isArray(sessions)) {
+    throw new WorkersConfigError(`${yamlPath}: workers.priority.sessions must be a map of session name to high, normal or low`);
+  }
+  const out: Record<string, QueuePriority> = {};
+  for (const [k, x] of Object.entries(sessions as Record<string, unknown>)) {
+    if (!QUEUE_PRIORITIES.includes(x as QueuePriority)) {
+      throw new WorkersConfigError(`${yamlPath}: workers.priority.sessions.${k} must be high, normal or low`);
+    }
+    out[k] = x as QueuePriority;
+  }
+  return out;
+}
+
+/**
+ * Write the session priority map into workers.yaml, comment-preserving: only
+ * the entries that actually changed are touched (the same Document diff the
+ * providers writers use), and the file is re-validated before committing.
+ * `normal` is the default every unlisted session gets, so it is stored as no
+ * entry at all — `set <session> normal` removes the entry.
+ */
+export function writePrioritySessions(sessions: Record<string, QueuePriority>, yamlPath: string = workersYamlPath()): void {
+  for (const [name, p] of Object.entries(sessions)) {
+    if (!QUEUE_PRIORITIES.includes(p)) {
+      throw new WorkersConfigError(`priority of session "${name}" must be high, normal or low (got "${p}")`);
+    }
+  }
+  const before = readPrioritySessions(yamlPath);
+  const after: Record<string, QueuePriority> = { ...sessions };
+  for (const [name, p] of Object.entries(after)) if (p === "normal") delete after[name];
+  const doc = existsSync(yamlPath) ? parseDocument(readFileSync(yamlPath, "utf8")) : new Document({});
+  if (doc.errors.length) {
+    throw new WorkersConfigError(`${yamlPath}: ${doc.errors[0].message}`);
+  }
+  for (const [name, p] of Object.entries(after)) {
+    if (before[name] !== p) doc.setIn(["workers", "priority", "sessions", name], p);
+  }
+  for (const name of Object.keys(before)) {
+    if (!(name in after)) doc.deleteIn(["workers", "priority", "sessions", name]);
+  }
   writeWorkersYamlText(yamlPath, String(doc));
 }
 
