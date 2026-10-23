@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { searchSessions, sessionDetail } from "./session-detail.js";
 import { handleCockpit } from "./cockpit.js";
+import { combinedSearch, type MemorySearchFn } from "./session-memory.js";
+import { utimesSync } from "node:fs";
 import { withCockpitToken } from "./cockpit-auth.js";
 import { fakeAnthropic } from "../utils/fake-secret.js";
 
@@ -142,8 +144,10 @@ describe("GET /api/session/<id>/detail", () => {
         r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
       }).end();
     });
-  const serve = async (token?: string) => {
-    const inner = (req: http.IncomingMessage, res: http.ServerResponse) => handleCockpit(req, res, { get: async () => [] });
+  const noMem: MemorySearchFn = async () => [];
+  const serve = async (token?: string, memorySearch: MemorySearchFn = noMem) => {
+    const inner = (req: http.IncomingMessage, res: http.ServerResponse) =>
+      handleCockpit(req, res, { get: async () => [] }, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { memorySearch });
     const h = token ? withCockpitToken(token, inner) : inner;
     const s = http.createServer((req, res) => {
       if (!h(req, res)) {
@@ -224,8 +228,10 @@ describe("GET /api/sessions/search", () => {
         r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
       }).end();
     });
-  const serve = async (token?: string) => {
-    const inner = (req: http.IncomingMessage, res: http.ServerResponse) => handleCockpit(req, res, { get: async () => [] });
+  const noMem: MemorySearchFn = async () => [];
+  const serve = async (token?: string, memorySearch: MemorySearchFn = noMem) => {
+    const inner = (req: http.IncomingMessage, res: http.ServerResponse) =>
+      handleCockpit(req, res, { get: async () => [] }, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { memorySearch });
     const h = token ? withCockpitToken(token, inner) : inner;
     const s = http.createServer((req, res) => {
       if (!h(req, res)) {
@@ -260,6 +266,67 @@ describe("GET /api/sessions/search", () => {
       expect((await ask(port, "/api/sessions/search?q=second", { ...auth, origin: "http://evil.example.com" })).status).toBe(403);
     } finally {
       s.close();
+    }
+  });
+});
+
+describe("combined search: recent transcripts first, memory after", () => {
+  const OLD = "abcd1234-0000-4000-8000-0000000000aa";
+  const cdir = join(dir, "combined");
+  const proj = join(cdir, "p");
+  beforeAll(() => {
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, `${ID}.jsonl`), JSON.stringify(user("zebra crossing now", "2026-01-01T00:00:01Z")) + "\n");
+    writeFileSync(join(proj, `${OLD}.jsonl`), JSON.stringify(user("zebra crossing long ago", "2025-01-01T00:00:01Z")) + "\n");
+    const old = new Date(Date.now() - 100 * 3600_000);
+    utimesSync(join(proj, `${OLD}.jsonl`), old, old);
+  });
+  const mem: MemorySearchFn = async () => [
+    { path: `Notes/${ID}.md`, snippet: "zebra duplicate of the recent hit", updatedAt: 1, projectSlug: "p" },
+    { path: `Notes/x.md`, snippet: `zebra note naming ${OLD}`, updatedAt: 2, projectSlug: "p" },
+    { path: `Notes/y.md`, snippet: "zebra plain note", updatedAt: 3, projectSlug: "p" },
+  ];
+
+  it("recent window limits the scan, memory dedups by session and maps a named transcript", async () => {
+    const r = await combinedSearch("zebra", { projectsDir: cdir, hours: 48, memorySearch: mem });
+    expect(r.hits.map((h) => [h.id, h.source])).toEqual([[ID, "recent"]]);
+    expect(r.memory.map((m) => [m.id, m.path, m.source])).toEqual([
+      [OLD, "Notes/x.md", "memory"],
+      ["", "Notes/y.md", "memory"],
+    ]);
+    expect(r.note).toBeUndefined();
+  });
+
+  it("memory down: recent only plus a note, no error", async () => {
+    const r = await combinedSearch("zebra", { projectsDir: cdir, hours: 48, memorySearch: async () => { throw new Error("backend down"); } });
+    expect(r.hits).toHaveLength(1);
+    expect(r.memory).toEqual([]);
+    expect(r.note).toContain("memory search unavailable");
+  });
+
+  it("the endpoint returns hits then memory, and 200 with a note when memory is down", async () => {
+    const ask = (port: number, path: string) =>
+      new Promise<{ status: number; body: string }>((resolve) => {
+        http.request({ port, host: "127.0.0.1", path }, (res) => {
+          let b = "";
+          res.on("data", (c) => (b += c));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body: b }));
+        }).end();
+      });
+    for (const down of [false, true]) {
+      const fn: MemorySearchFn = down ? async () => { throw new Error("nope"); } : mem;
+      const s = http.createServer((req, res) => {
+        handleCockpit(req, res, { get: async () => [] }, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { projectsDir: cdir, memorySearch: fn });
+      });
+      const port = await new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+      try {
+        const j = JSON.parse((await ask(port, "/api/sessions/search?q=zebra")).body);
+        expect(j.hits.map((h: { id: string }) => h.id)).toEqual([ID]);
+        expect(down ? j.memory : j.memory.length).toEqual(down ? [] : 2);
+        expect(Boolean(j.note)).toBe(down);
+      } finally {
+        s.close();
+      }
     }
   });
 });

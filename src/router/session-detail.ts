@@ -249,7 +249,7 @@ export interface SessionSearch {
  */
 export async function searchSessions(
   q: string,
-  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean } = {}
+  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean; /** only transcripts modified at or after this epoch ms */ sinceMs?: number } = {}
 ): Promise<SessionSearch> {
   const projectsDir = opts.projectsDir ?? claudeProjectsDir();
   const needle = q.trim().toLowerCase();
@@ -271,7 +271,8 @@ export async function searchSessions(
       if (!n.endsWith(".jsonl") || !SESSION_ID_RE.test(n.slice(0, -6))) continue;
       const file = join(projectsDir, d, n);
       try {
-        files.push({ id: n.slice(0, -6), file, mtime: statSync(file).mtimeMs });
+        const mtime = statSync(file).mtimeMs;
+        if (mtime >= (opts.sinceMs ?? 0)) files.push({ id: n.slice(0, -6), file, mtime });
       } catch {
         /* vanished */
       }

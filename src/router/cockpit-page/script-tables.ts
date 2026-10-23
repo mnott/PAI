@@ -116,8 +116,11 @@ function sessHitsHtml(){
  if(!SESS_HITS||SESS_HITS.q!==q)return'<div class="dim sh-n">searching…</div>';
  if(SESS_HITS.error)return'<div class="bad sh-n">'+esc(SESS_HITS.error)+'</div>';
  var part=SESS_HITS.partial?'<div class="dim sh-n">search stopped early: only the most recent sessions were read</div>':"";
- if(!SESS_HITS.hits.length)return'<div class="dim sh-n">no session has a prompt containing “'+esc(SESS_Q.trim())+'”</div>'+part;
- return'<div class="sh-l">'+SESS_HITS.hits.map(function(h){return'<button type="button" class="sh" data-hit="'+esc(h.id)+'" data-turn="'+h.turn+'" title="'+esc(h.id+(h.cwd?" · "+h.cwd:""))+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim"> #'+(h.turn+1)+' · '+esc(ago(h.ts))+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>'}).join("")+'</div>'+part;
+ var mem=SESS_HITS.memory||[],note=SESS_HITS.note?'<div class="dim sh-n">'+esc(SESS_HITS.note)+'</div>':"";
+ if(!SESS_HITS.hits.length&&!mem.length)return'<div class="dim sh-n">no session has a prompt containing “'+esc(SESS_Q.trim())+'”</div>'+note+part;
+ var rec=SESS_HITS.hits.map(function(h){return'<button type="button" class="sh" data-hit="'+esc(h.id)+'" data-turn="'+h.turn+'" title="'+esc(h.id+(h.cwd?" · "+h.cwd:""))+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim"> #'+(h.turn+1)+' · '+esc(ago(h.ts))+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>'}).join("");
+ var mh=mem.map(function(h){var age=h.updatedAt?" · "+esc(ago(new Date(h.updatedAt).toISOString())):"",tt=esc((h.id||"")+" "+h.path);return h.id?'<button type="button" class="sh sh-m" data-hit="'+esc(h.id)+'" data-turn="'+Math.max(0,h.turn)+'" title="'+tt+'"><b>'+esc(sessLabel(h.id))+'</b><span class="dim">'+(h.turn>=0?" #"+(h.turn+1):"")+age+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></button>':'<div class="sh sh-m sh-nb" title="'+tt+'"><b>'+esc(h.projectSlug||"note")+'</b><span class="dim"> '+esc(h.path.split("/").pop()||"")+age+'</span> <span class="sh-s">'+esc(h.snippet)+'</span></div>'}).join("");
+ return'<div class="sh-l">'+rec+(mem.length?'<div class="dim sh-n sh-div">from memory</div>'+mh:"")+'</div>'+note+part;
 }
 function sessionsHtml(d){
  var all=d.bySession.slice(0,SESSION_ROWS).slice().sort(function(a,b){return tot(b)-tot(a)}),top=${n(L.sessionsTopRows)},open=sessMore(),max=all.length?tot(all[0]):0,q=sessQ();
@@ -174,7 +177,7 @@ function sessDetailOpen(id,redraw,turn){
 function sessSearch(redraw){
  var q=sessQ();
  if(SESS_MODE!=="prompts"||q.length<2)return;
- fetch("/api/sessions/search?q="+encodeURIComponent(q),{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(sessQ()===q){SESS_HITS={q:q,hits:j.hits,partial:!!j.partial};redraw()}},function(e){if(sessQ()===q){SESS_HITS={q:q,error:String(e.message||e)};redraw()}});
+ fetch("/api/sessions/search?q="+encodeURIComponent(q),{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(sessQ()===q){SESS_HITS={q:q,hits:j.hits||[],memory:j.memory||[],note:j.note||"",partial:!!j.partial};redraw()}},function(e){if(sessQ()===q){SESS_HITS={q:q,error:String(e.message||e)};redraw()}});
 }
 /** Worker runs grouped under the spawning session: newest run first, groups by their newest run; weighted tokens per run on one scale shared by all rows. */
 function workerGroups(ws,W){

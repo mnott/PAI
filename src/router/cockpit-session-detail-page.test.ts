@@ -195,6 +195,24 @@ describe("session search", () => {
   });
 });
 
+describe("prompt search: from memory divider", () => {
+  it("renders recent hits, then the divider and memory hits with age; note and mapped/unmapped hits", () => {
+    const { api } = wired();
+    const dd = many(3);
+    api.run('SESS_MODE="prompts";SESS_Q="thing"');
+    api.run('SESS_HITS={q:"thing",hits:[{id:"sess-2xxxxx",cwd:"/w",turn:1,ts:new Date().toISOString(),snippet:"recent one"}],memory:[{id:"sess-1xxxxx",turn:-1,path:"Notes/a.md",snippet:"mapped <m>",updatedAt:Date.now()-86400000*5},{id:"",turn:-1,path:"Notes/2026/b.md",projectSlug:"proj",snippet:"plain note",updatedAt:0}],note:"memory search unavailable (x)"}');
+    const h = api.html(dd);
+    expect(h.indexOf("recent one")).toBeLessThan(h.indexOf("from memory"));
+    expect(h.indexOf("from memory")).toBeLessThan(h.indexOf("mapped &lt;m&gt;"));
+    expect(h).toContain('data-hit="sess-1xxxxx" data-turn="0"');
+    expect(h).toContain("plain note");
+    expect(h.match(/data-hit="/g)).toHaveLength(2);
+    expect(h).toContain("memory search unavailable");
+    api.run('SESS_HITS={q:"thing",hits:[],memory:[],note:""}');
+    expect(api.html(dd)).not.toContain("from memory");
+  });
+});
+
 describe("morph and a focused link", () => {
   // A clicked <a href="#"> keeps focus; the redraw it triggers must still be able to remove the panel holding it.
   const keep = (focused: { nodeName: string }, node: { nodeType: number; contains: (x: unknown) => boolean }) =>

@@ -60,7 +60,8 @@ import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
-import { SESSION_ID_RE, SESSION_SEARCH_MAX, searchSessions, sessionDetail } from "./session-detail.js";
+import { SESSION_ID_RE, sessionDetail } from "./session-detail.js";
+import { combinedSearch, type MemorySearchFn } from "./session-memory.js";
 import { defaultSavedAt, readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
 
@@ -1332,7 +1333,8 @@ export function handleCockpit(
   workerWindows: () => WorkerWindow[] = loadWorkerWindows,
   readPool: () => PoolCarry | null = cachedPoolCarry(),
   readPoolPanel: typeof sharedPoolPanel = sharedPoolPanel,
-  queueLogDir: (workers: WorkersConfig) => string = workersLogDir): boolean {
+  queueLogDir: (workers: WorkersConfig) => string = workersLogDir,
+  searchDeps: { projectsDir?: string; memorySearch?: MemorySearchFn } = {}): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   const detail = url.pathname.match(/^\/api\/session\/([^/]*)\/detail$/);
   const search = url.pathname === "/api/sessions/search";
@@ -1348,7 +1350,7 @@ export function handleCockpit(
     if (q.length < 2 || q.length > 200) return send(400, "application/json", '{"error":"q must be 2-200 characters"}'), true;
     let gone = false;
     res.on("close", () => (gone = true));
-    searchSessions(q, { limit: SESSION_SEARCH_MAX, cancelled: () => gone }).then(
+    combinedSearch(q, { cancelled: () => gone, ...searchDeps }).then(
       (r) => send(200, "application/json", JSON.stringify({ q, ...r })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
