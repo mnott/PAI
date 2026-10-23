@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
 import type { WorkerProvider } from "./config.js";
-import { projectRoot } from "./preamble.js";
+import { projectConfigFile } from "./preamble.js";
 import { isLoopbackProvider } from "./run-env.js";
 
 export const CHECKS_REL = ".pai/checks.yaml";
@@ -23,7 +23,7 @@ export interface Checks {
 
 /** Missing or malformed file: no checks (the contract then names none). */
 export function loadChecks(cwd: string): Checks {
-  const path = join(projectRoot(cwd), CHECKS_REL);
+  const path = projectConfigFile(cwd, CHECKS_REL);
   if (!existsSync(path)) return {};
   try {
     const raw = yamlParse(readFileSync(path, "utf8")) as Record<string, unknown> | null;

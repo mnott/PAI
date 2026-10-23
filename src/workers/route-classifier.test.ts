@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -128,6 +129,21 @@ describe("local worker contract", () => {
     expect(c.split(/\s+/).length).toBeLessThan(120);
     expect(withLocalContract("TASK", dir).endsWith("\n\nTASK")).toBe(true);
   });
+
+  it("a worktree without its own .pai/ reads the main checkout's checks; the worktree's own wins", () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), "chk-wt-")));
+    execFileSync("git", ["init", "-q"], { cwd: d });
+    mkdirSync(join(d, ".pai"), { recursive: true });
+    writeFileSync(join(d, ".pai/checks.yaml"), "fast: main-fast\ntest_one: main-one {class}\n");
+    execFileSync("git", ["add", "."], { cwd: d });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], { cwd: d });
+    const wt = join(d, "wt");
+    execFileSync("git", ["worktree", "add", "-q", wt], { cwd: d });
+    expect(loadChecks(wt)).toEqual({ fast: "main-fast", testOne: "main-one {class}" });
+    mkdirSync(join(wt, ".pai"), { recursive: true });
+    writeFileSync(join(wt, ".pai/checks.yaml"), "fast: wt-fast\n");
+    expect(loadChecks(wt)).toEqual({ fast: "wt-fast" });
+  });
 });
 
 describe("contract only for local workers", () => {
@@ -139,7 +155,6 @@ describe("contract only for local workers", () => {
   });
 });
 
-import { mkdirSync } from "node:fs";
 function execSyncMkdir(dir: string) {
   mkdirSync(join(dir, ".pai"), { recursive: true });
 }
