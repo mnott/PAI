@@ -206,6 +206,10 @@ router:
   # Read at page build time; a user config.yaml/json override changes the served page. Pure
   # styling (fonts, colours from the theme mapping) stays in the page's CSS.
   cockpit:
+    # "Sessions by tokens" prompt search: the raw-transcript scan covers only transcripts modified
+    # in the last recentHours hours (newest first, fast); older sessions come from PAI's memory index.
+    search:
+      recentHours: 48
     layout:
       # cloud/local gauge tiles (flex row): base width, cap.
       gaugeMinWidthPx: 110
