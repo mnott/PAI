@@ -13,7 +13,7 @@ import { basename, join } from "node:path";
 import { escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
-import { LocalProviderRefusedError, PoolRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
+import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
 import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
 import { runChain } from "../../workers/chain.js";
 import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../../workers/wait-on.js";
@@ -73,7 +73,6 @@ async function guard(next: string, fn: () => Promise<number | void> | number | v
     // a down or disabled local provider is a usage mistake, not a failure:
     // exit 2, the message plain, the fix (--local) named
     if (e instanceof LocalProviderRefusedError) throw new CliError(e.message, LOCAL_MECHANISM_LINE, 2);
-    if (e instanceof PoolRefusedError) throw new CliError(e.message, "pai worker run --no-pool ...", 2);
     throw new CliError(msgOf(e), next);
   }
 }
@@ -276,7 +275,7 @@ const runCommand: CommandDef = {
     { name: "no-worktree", type: "boolean", summary: "Work in place, no worktree" },
     { name: "max-minutes", type: "number", value: "N", summary: "Stop after N minutes and keep the work (0 = no limit; default from the config, 60)" },
     { name: "deadline", type: "string", value: "HH:MM", summary: "Stop at this local time (tomorrow if already past); not with --max-minutes" },
-    { name: "no-pool", type: "boolean", summary: "Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) is refused with exit 2" },
+    { name: "no-pool", type: "boolean", summary: "Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) runs unpooled anyway and says so on stderr" },
     { name: "browser", type: "boolean", summary: "Allow browser tools" },
     { name: "no-browser", type: "boolean", summary: "Remove every browser tool from this worker" },
     { name: "print-cmd", type: "boolean", summary: "Print the claude command as JSON and exit without starting anything" },

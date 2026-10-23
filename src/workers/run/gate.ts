@@ -50,7 +50,6 @@ import { ownerOf } from "../local-idle.js";
 import {
   poolIneligibleReason,
   poolSettings,
-  SLOT_TOOLS,
   postTaskToPool,
   reloadInProgress,
 } from "../pool.js";
@@ -127,35 +126,11 @@ export function recordPoolSkip(
     ...(extra.key ? { key: extra.key } : {}),
     ...(extra.grant ? { grant: extra.grant } : {}),
   });
-  if (!a.quiet) process.stderr.write(`[pai worker] pool: not pooled (${reason}) — spawning fresh\n`);
+  if (!a.quiet) process.stderr.write(`pai worker: not pooled (${reason}); running unpooled\n`);
 }
-
-/** The caller's own flags keep the run out of the pool; `pai worker run` refuses these unless --no-pool. */
-const CALLER_CAUSED: ReadonlySet<string> = new Set(["tools", "mcp", "system-prompt", "stream-json", "browser"]);
-
-/** A `pai worker run` start refused because its flags keep it out of the pool (exit 2). */
-export class PoolRefusedError extends Error {}
 
 const grantText = (allowedTools: string[]): string =>
   allowedTools.flatMap((e) => e.split(",")).map((x) => x.trim()).filter((x) => x && x !== "ToolSearch" && !x.startsWith("mcp__")).join(",");
-
-function refusalText(reason: string, a: ExecuteArgs): string {
-  const fix = "or pass --no-pool";
-  if (reason === "tools") {
-    const names = grantText(a.parsed.allowedTools).split(",").filter(Boolean);
-    const adds = names.filter((n) => !SLOT_TOOLS.includes(n));
-    const lacks = SLOT_TOOLS.filter((n) => !names.includes(n));
-    const detail = [adds.length ? `grant adds ${adds.join(",")}` : "", lacks.length ? `grant lacks ${lacks.join(",")}` : ""].filter(Boolean).join("; ");
-    return `pai worker: not pooled (tools: ${detail}); use the slot set ${SLOT_TOOLS.join(",")} ${fix}`;
-  }
-  const how: Record<string, string> = {
-    mcp: "MCP servers or an MCP config; drop --mcp / mcp__ grants",
-    "system-prompt": "a caller system prompt; drop --system-prompt / --append-system-prompt",
-    "stream-json": "stream-json output; use --output-format json or text",
-    browser: "a browser grant; add --no-browser",
-  };
-  return `pai worker: not pooled (${reason}: ${how[reason] ?? reason}); change that ${fix}`;
-}
 
 /** Why this run is not pooled before any host is asked, or null when the pool may take it. */
 function poolPreReason(a: ExecuteArgs): { reason: string | null; claim: boolean; cwd: string } {
@@ -185,17 +160,6 @@ function poolPreReason(a: ExecuteArgs): { reason: string | null; claim: boolean;
     cwd,
   });
   return { reason, claim, cwd };
-}
-
-/**
- * Every headless start (runWorker is the one call site: CLI, chains, MCP worker_run, planner, reruns): when the
- * pool is on and the caller's own flags keep the run out of it, refuse before anything starts unless opts.noPool — nothing is recorded, nothing spawns. Reasons the caller does not
- * control (pool off, host down, no spare, dirty checkout, resume, worktree, interactive, native, engine) never refuse.
- */
-export function assertPoolPolicy(a: ExecuteArgs): void {
-  if (a.opts?.noPool || !a.parsed.headless || a.printCmd) return;
-  const { reason } = poolPreReason(a);
-  if (reason && CALLER_CAUSED.has(reason)) throw new PoolRefusedError(refusalText(reason, a));
 }
 
 /**
