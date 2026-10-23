@@ -158,13 +158,7 @@ function sessDetailBody(d,tab){
  var hf=hideFilter("timeline",turns,function(t){return t.prompt}),hn=hideNote("timeline");
  return(hn?'<div class="s">'+hn+'</div>':"")+table(["#  .n","time","prompt","tools","edits","cmds .n"," .hd"],hf.slice().reverse().map(function(x){var t=x.it,pr=esc(t.prompt);return['<button type="button" class="lnk" data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</button>',esc(ago(t.ts)),(x.hidden?'<span class="wr-hid">'+pr+'</span>':pr),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands,hideBtn("timeline",t.prompt,hideSuggest("timeline",t.prompt))]}));
 }
-/** Safe markdown subset for prompt and reply: everything is escaped with esc() first, so no HTML from the
- *  transcript gets through; the subset is then applied to the escaped text — paragraphs and line breaks,
- *  bold, italic, inline code, fenced code blocks (pre, no highlighting), "- " and "1. " lists,
- *  "#"-headings as bold lines, [text](http(s) url) links (rel="noopener", target="_blank"; any other
- *  target stays text). Backtick markers are built in the page from char codes — a literal backtick
- *  sequence would cut this module's raw template. */
-export const scriptMd = (): string => String.raw`function md(src){
+function md(src){
  var BT=String.fromCharCode(96),fence=BT+BT+BT; // BT is the backtick, from its char code: a literal one would cut this raw template
  var lines=String(src==null?"":src).split("\n"),out=[],i=0;
  var inl=function(s){
@@ -173,12 +167,12 @@ export const scriptMd = (): string => String.raw`function md(src){
   s=s.replace(/\*([^*\n]+)\*/g,function(m,c){return'<i>'+c+'</i>'});
   return s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,function(m,tx,u){return'<a href="'+u+'" rel="noopener" target="_blank">'+tx+'</a>'});
  };
- var item=function(s,ol){return'<div class="md-li'+(ol?" md-ol":"")+'">'+inl(s)+'</div>'};
+ var item=function(s,ol){return'<div class="md-li'+(ol?" md-ol":"")+'">'+s+'</div>'};
  while(i<lines.length){
   var ln=lines[i];
-  if(/^\s*${fence}/.test(ln)){
+  if(new RegExp("^\\s*"+fence).test(ln)){
    var buf=[];i++;
-   while(i<lines.length&&!/^\s*${fence}/.test(lines[i])){buf.push(esc(lines[i]));i++}
+   while(i<lines.length&&!new RegExp("^\\s*"+fence).test(lines[i])){buf.push(esc(lines[i]));i++}
    i++;
    out.push('<pre class="md-fence">'+buf.join("\n")+'</pre>');
    continue;
@@ -202,7 +196,7 @@ export const scriptMd = (): string => String.raw`function md(src){
   i++;
  }
  return out.join("");
-}`;
+}
 /** One turn in full: "turn N of M" with prev / next / back, the prompt, the steps (a collapsed "N steps" link, click to expand — the page's fold pattern, no details element) and the reply. */
 function sessTurnHtml(t){
  var head='<div class="sd-h"><b>turn '+(t.idx+1)+' of '+t.turnCount+'</b>'+(t.idx>0?'<button type="button" class="lnk" data-turnprev="1">← prev</button>':"")+(t.idx+1<t.turnCount?'<button type="button" class="lnk" data-turnnext="1">next →</button>':"")+'<button type="button" class="lnk dim" data-turnback="1">back to timeline</button></div>';

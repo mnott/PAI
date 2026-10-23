@@ -15,7 +15,7 @@ import { scriptModels } from "./cockpit-page/script-models.js";
 import { scriptMemory } from "./cockpit-page/script-memory.js";
 import { scriptCharts } from "./cockpit-page/script-charts.js";
 import { scriptHide } from "./cockpit-page/script-hide.js";
-import { scriptMd, scriptTables } from "./cockpit-page/script-tables.js";
+import { scriptTables } from "./cockpit-page/script-tables.js";
 import { scriptBoot } from "./cockpit-page/script-boot.js";
 
 export { COCKPIT_FAVICON_SVG, COCKPIT_FAVICON_DATA_URI };
@@ -42,7 +42,7 @@ function buildHtml(L: CockpitLayout): string {
     if (typeof v !== "string" || !/^#[0-9a-fA-F]{6}$/.test(v)) throw new Error(`cockpit layout: ${JSON.stringify(v)} is not a #rrggbb colour`);
     return JSON.stringify(v);
   };
-  const parts = [shellHead, css, shellBody, scriptCore, scriptHide, scriptWin, scriptModels, scriptMemory, scriptCharts, scriptMd, scriptTables, scriptBoot];
+  const parts = [shellHead, css, shellBody, scriptCore, scriptHide, scriptWin, scriptModels, scriptMemory, scriptCharts, scriptTables, scriptBoot];
   return parts.map((p) => p(L, n, q, hex)).join("");
 }
 
