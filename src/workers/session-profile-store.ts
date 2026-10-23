@@ -23,6 +23,8 @@ export interface ProfileTarget {
 export interface SessionProfile {
   chat?: ProfileTarget;
   workers?: ProfileTarget;
+  /** True when the workers pin was written by a launch (a setup choice), not by the operator. resolveWorkers ignores it: a pin must come from an explicit choice. */
+  workers_implicit?: boolean;
   fallback?: ProfileTarget[];
   parallel_min?: number;
   /** Most workers of this session running at once, on any provider (1 = one after the other). */
@@ -51,7 +53,10 @@ function cleanProfile(v: unknown): SessionProfile {
   const chat = cleanTarget(r.chat);
   const workers = cleanTarget(r.workers);
   if (chat) out.chat = chat;
-  if (workers) out.workers = workers;
+  if (workers) {
+    out.workers = workers;
+    if (r.workers_implicit === true) out.workers_implicit = true;
+  }
   if (Array.isArray(r.fallback)) {
     const list = r.fallback.map(cleanTarget).filter((t): t is ProfileTarget => !!t);
     if (list.length) out.fallback = list;
@@ -130,6 +135,8 @@ export function getProfile(name: string | null | undefined, path: string = profi
 export interface ProfilePatch {
   chat?: ProfileTarget | null;
   workers?: ProfileTarget | null;
+  /** Written with a launch's workers pin; an explicit workers set clears it (updateProfile). */
+  workers_implicit?: boolean | null;
   fallback?: ProfileTarget[] | null;
   parallel_min?: number | null;
   max_parallel?: number | null;
@@ -140,10 +147,12 @@ export interface ProfilePatch {
 export function updateProfile(name: string, patch: ProfilePatch, path: string = profilesPath()): SessionProfile {
   const profiles = readProfiles(path);
   const next: SessionProfile = { ...(profiles[name] ?? {}) };
-  for (const k of ["chat", "workers", "fallback", "parallel_min", "max_parallel", "routes", "route_notes"] as const) {
+  for (const k of ["chat", "workers", "workers_implicit", "fallback", "parallel_min", "max_parallel", "routes", "route_notes"] as const) {
     if (!(k in patch)) continue;
     const v = patch[k];
     if (v === null || v === undefined) delete next[k];
+    // an explicit workers pin is the operator's choice: it replaces any launch-written one
+    else if (k === "workers") { delete next.workers_implicit; (next as Record<string, unknown>)[k] = v; }
     else (next as Record<string, unknown>)[k] = v;
   }
   profiles[name] = cleanProfile(next);

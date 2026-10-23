@@ -58,7 +58,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai resume`](resume.md) | Open a session by name or id (same as `pai open`) |
 | [`pai router`](router.md) | Local model router: start, stop, restart, status, run, stats |
 | [`pai rules`](rules.md) | Security rules: list them, lint their fixtures |
-| [`pai session`](session.md) | Work with sessions: list, open, new, rename |
+| [`pai session`](session.md) | Work with sessions: list, open, new, rename, profile |
 | [`pai sessions`](sessions.md) | Old plural session commands (use `ls` and `session`) |
 | [`pai setup`](setup.md) | First-time setup: storage, search, hooks, daemon, router |
 | [`pai setups`](setups.md) | Orchestrator + worker combinations (save your own) |
@@ -324,7 +324,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai rules` | Security rules: list them, lint their fixtures |
 | `pai rules lint` | Run every rule's fixtures; exit 1 on a failure or load error |
 | `pai rules list` | Every rule with severity, source and enabled state |
-| `pai session` | Work with sessions: list, open, new, rename |
+| `pai session` | Work with sessions: list, open, new, rename, profile |
 | `pai session active` | Sessions that were active in the last hour |
 | `pai session auto-route` | Find out which project the current directory belongs to |
 | `pai session autosave` | Refresh the "Continue" block from the transcript (for hooks) |
@@ -339,6 +339,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai session new` | Start a new session in a new or existing folder |
 | `pai session open` | Reopen a session (on its own provider unless --provider is given) |
 | `pai session pause` | Save a checkpoint before leaving (same as `pai pause`) |
+| `pai session profile` | Show or change this session's model profile (chat, workers) |
 | `pai session recent` | Named sessions with their resume status, live ones first |
 | `pai session rename` | Give a session a new name |
 | `pai session repair-registry` | Point registry rows at the note files they belong to |

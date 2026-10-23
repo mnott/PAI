@@ -95,7 +95,8 @@ export function resolveWorkers(args: ResolveArgs, ctx: ResolveCtx): WorkersResol
 
   const profile = ctx.profile;
   const envProvider = ctx.env[SESSION_WORKER_PROVIDER_ENV]?.trim();
-  let chosen: ProfileTarget | undefined = profile?.workers;
+  // a launch-written pin (workers_implicit) is not a choice: it never overrides global routing
+  let chosen: ProfileTarget | undefined = profile?.workers && !profile.workers_implicit ? profile.workers : undefined;
   let source: WorkersSource = "profile";
   if (!chosen && envProvider) {
     chosen = { provider: envProvider };

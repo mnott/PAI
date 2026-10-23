@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nativeAnthropicModels, type WorkersConfig } from "../../workers/config.js";
-import { getProfile, updateProfile } from "../../workers/session-profile.js";
+import { getProfile, resolveWorkers, updateProfile } from "../../workers/session-profile.js";
 import { makeStyle } from "../help.js";
 import type { Setup } from "../lib/setups.js";
 import { withSessionProfile } from "../impl/project/session-config.js";
@@ -56,10 +56,38 @@ describe("session profile at launch", () => {
     expect(getProfile("job-search")).toEqual({
       chat: { provider: "anthropic", model: "opus" },
       workers: { provider: "kimi", model: "fast" },
+      workers_implicit: true,
       fallback: [{ provider: "glm" }],
     });
     expect(launched[0].env).toMatchObject({ PAI_SESSION_NAME: "job-search", PAI_SESSION_WORKER_PROVIDER: "kimi" });
     expect(readdirSync(home).sort()).toEqual(["session-profiles.yaml"]);
+  });
+
+  it("a launch-written workers pin never routes: after the launch a spawn keeps global routing", async () => {
+    const setup: Setup = { name: "x", orchestrator: { provider: "anthropic", model: "opus" }, workers: "anthropic", kind: "builtin" };
+    await startSession({ workers, setup, name: "PAI", cwd: home, dryRun: false, term: term() });
+    const p = getProfile("PAI");
+    expect(p?.workers).toEqual({ provider: "anthropic" });
+    expect(p?.workers_implicit).toBe(true);
+    // the launch env pin is gone with the launch; the implicit profile pin must not route
+    const r = resolveWorkers({}, { cfg: workers, profile: p, env: {}, budgets: {}, routing: { cooldowns: {} } as never });
+    expect(r.source).toBe("global");
+    expect(r.description).toBe("global routing");
+  });
+
+  it("a launch overwrites the workers pin with the setup's (implicit); an explicit set restores routing", async () => {
+    updateProfile("PAI", { workers: { provider: "kimi" } });
+    const setup: Setup = { name: "x", orchestrator: { provider: "anthropic", model: "opus" }, workers: "glm", kind: "builtin" };
+    await startSession({ workers, setup, name: "PAI", cwd: home, dryRun: false, term: term() });
+    const p = getProfile("PAI");
+    // the launch overwrote the pin with the setup's (glm, its "fast" worker model), marked implicit
+    expect(p?.workers).toEqual({ provider: "glm", model: "fast" });
+    expect(p?.workers_implicit).toBe(true);
+    // the operator's explicit choice is restored and routes again
+    updateProfile("PAI", { workers: { provider: "kimi" } });
+    const r = resolveWorkers({}, { cfg: workers, profile: getProfile("PAI"), env: {}, budgets: {}, routing: { cooldowns: {} } as never });
+    expect(r.source).toBe("profile");
+    expect(r.provider).toBe("kimi");
   });
 
   it("a dry run writes nothing", async () => {
@@ -74,5 +102,12 @@ describe("session profile at launch", () => {
     expect(e.env).toEqual({ IS_SANDBOX: "1", PAI_SESSION_NAME: "job-search", PAI_SESSION_WORKER_PROVIDER: "kimi" });
     expect(e.flags).toBe("--dangerously-skip-permissions --model opus");
     expect(withSessionProfile({ flags: "x" }, ["nobody"])).toEqual({ flags: "x" });
+  });
+
+  it("a launch-written (implicit) workers pin is not exported to the session env", () => {
+    updateProfile("job-search", { chat: { provider: "anthropic", model: "opus" }, workers: { provider: "anthropic" }, workers_implicit: true });
+    const e = withSessionProfile({ flags: "x" }, ["job-search"]);
+    expect(e.env).toEqual({ PAI_SESSION_NAME: "job-search" });
+    expect(e.flags).toBe("x --model opus");
   });
 });

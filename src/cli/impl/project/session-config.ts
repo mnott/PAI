@@ -240,7 +240,8 @@ export function withSessionProfile(effective: SessionConfig, names: string[], pr
   const name = names.find((n) => profiles[n]);
   if (!name) return effective;
   const p = profiles[name];
-  const env = { ...(effective.env ?? {}), [SESSION_NAME_ENV]: name, ...(p.workers ? { [SESSION_WORKER_PROVIDER_ENV]: p.workers.provider } : {}) };
+  // only an explicit workers pin (not a launch-written one) pins the session's workers
+  const env = { ...(effective.env ?? {}), [SESSION_NAME_ENV]: name, ...(p.workers && !p.workers_implicit ? { [SESSION_WORKER_PROVIDER_ENV]: p.workers.provider } : {}) };
   const model = p.chat && p.chat.provider === 'anthropic' && p.chat.model && !/\s/.test(p.chat.model) ? p.chat.model : undefined;
   const flags = model && !/(^|\s)--model\b/.test(effective.flags ?? '') ? `${effective.flags ?? ''} --model ${model}`.trim() : effective.flags;
   return { ...effective, env, ...(flags !== undefined ? { flags } : {}) };

@@ -44,7 +44,7 @@ import { staggerGate } from "../stagger.js";
 import { detectSessionName } from "../session-name.js";
 import { getProfile, isBatchEnv, resolveWorkers, type ResolveCtx } from "../session-profile.js";
 import { currentSessionName } from "../session-profile-store.js";
-import { detectSessionProvider } from "../session-provider.js";
+import { detectSessionProvider, SESSION_WORKER_PROVIDER_ENV } from "../session-provider.js";
 import { escalatedLine, escalationSummary, tierAbove, tierOf } from "../escalation.js";
 import { readRoutingState } from "../routing.js";
 import { parseEntry } from "../route-lists.js";
@@ -590,14 +590,21 @@ export async function resolveClaimProvider(a: ExecuteArgs): Promise<string> {
     if (routed?.providerFlag) return routed.providerFlag;
   }
   if (!opts._route && currentSessionName()) {
-    const ctx: ResolveCtx = { cfg: config, profile: getProfile(currentSessionName()), env: nativeLaunchEnv(), budgets: {}, routing: readRoutingState(a.logDir) };
+    const profile = getProfile(currentSessionName());
+    // a launch-written pin (workers_implicit) is not a choice: it neither routes
+    // here nor lets the inherited launch env decide below
+    const env = nativeLaunchEnv();
+    if (profile?.workers_implicit) delete env[SESSION_WORKER_PROVIDER_ENV];
+    const ctx: ResolveCtx = { cfg: config, profile, env, budgets: {}, routing: readRoutingState(a.logDir) };
     const r = resolveWorkers(
       { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
       ctx
     );
     if (r.provider) return r.provider;
   }
-  const session = detectSessionProvider(config, { env: nativeLaunchEnv(), cwd: a.cwd ?? process.cwd(), logDir: a.logDir, side: "workers" });
+  const env = nativeLaunchEnv();
+  if (getProfile(currentSessionName())?.workers_implicit) delete env[SESSION_WORKER_PROVIDER_ENV];
+  const session = detectSessionProvider(config, { env, cwd: a.cwd ?? process.cwd(), logDir: a.logDir, side: "workers" });
   if (session) return session.name;
   return a.target.providerName;
 }

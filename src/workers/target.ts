@@ -19,12 +19,12 @@ import { ANTHROPIC_NATIVE, getProviderOrNative, readWorkersSection, type Workers
 import { probeLoopback, resolveLocalProvider, type ResolveLocalOpts } from "./local-provider.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 import { isLoopbackProvider } from "./run-env.js";
-import { detectSessionProvider } from "./session-provider.js";
+import { detectSessionProvider, SESSION_WORKER_PROVIDER_ENV } from "./session-provider.js";
 import { workersLogDir } from "./paths.js";
 import { classifyRoute, localFailures, routeLine } from "./route-classifier.js";
 import { ledgerPath } from "./paths.js";
 import { detectSessionName } from "./session-name.js";
-import { liveResolveCtx, resolveWorkers, type ResolveCtx } from "./session-profile.js";
+import { getProfile, liveResolveCtx, resolveWorkers, type ResolveCtx } from "./session-profile.js";
 
 export interface TargetArgs {
   where?: string;
@@ -121,10 +121,20 @@ export async function resolveTarget(args: TargetArgs, deps: TargetDeps = liveTar
   const cfg = deps.workers;
 
   if (!where) {
-    // the session's own profile (or its fallback) decides before today's routing does
+    // the session's own profile (or its fallback) decides before today's routing does;
+    // a launch-written pin (workers_implicit) is not a choice and never decides here
     const env = deps.env ?? process.env;
-    const r = deps.profileCtx || (await detectSessionName(env))
-      ? resolveWorkers({ explicit: { model: modelArg }, batch: args.batch }, await (deps.profileCtx ?? (() => liveResolveCtx(env)))())
+    const name = deps.profileCtx ? undefined : await detectSessionName(env);
+    const profile = deps.profileCtx ? undefined : getProfile(name);
+    // a launch env written for a session whose stored pin is implicit is not a choice either
+    const launchEnvPinned = !profile?.workers_implicit && !!env[SESSION_WORKER_PROVIDER_ENV]?.trim();
+    const r = deps.profileCtx || profile || launchEnvPinned
+      ? resolveWorkers(
+          { explicit: { model: modelArg }, batch: args.batch },
+          deps.profileCtx
+            ? await deps.profileCtx()
+            : { ...(await liveResolveCtx(env)), profile: profile ?? null }
+        )
       : undefined;
     if (r?.source === "none") throw new CliError(r.description, "pai session profile: session_profile_set fallback / parallel_min");
     if (r?.provider && (r.source === "profile" || r.source === "fallback")) {

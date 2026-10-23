@@ -68,6 +68,10 @@ describe("resolveWorkers precedence", () => {
   it("an explicit model alone applies to the profile's provider", () => {
     expect(resolveWorkers({ explicit: { model: "default" } }, ctx())).toMatchObject({ provider: "kimi", model: "default" });
   });
+  it("a launch-written pin (workers_implicit) does not route: global stands, an explicit pin still does", () => {
+    expect(resolveWorkers({}, ctx({ profile: { workers: PROFILE.workers, workers_implicit: true } }))).toMatchObject({ source: "global", description: "global routing" });
+    expect(resolveWorkers({}, ctx({ profile: { workers: PROFILE.workers } }))).toMatchObject({ source: "profile", provider: "kimi" });
+  });
 });
 
 describe("resolveWorkers budget fallback", () => {
@@ -113,6 +117,14 @@ describe("profile store", () => {
     updateProfile("job", { fallback: null, parallel_min: null });
     expect(getProfile("job")).toEqual({ chat: PROFILE.chat, workers: PROFILE.workers });
     expect(existsSync(profilesPath())).toBe(true);
+  });
+  it("an explicit workers set clears the implicit marker; a launch patch keeps it", () => {
+    updateProfile("job", { workers: { provider: "anthropic" }, workers_implicit: true });
+    expect(getProfile("job")).toEqual({ workers: { provider: "anthropic" }, workers_implicit: true });
+    updateProfile("job", { workers: { provider: "kimi" } });
+    expect(getProfile("job")).toEqual({ workers: { provider: "kimi" } });
+    updateProfile("job", { workers: { provider: "glm" }, workers_implicit: true });
+    expect(getProfile("job")).toEqual({ workers: { provider: "glm" }, workers_implicit: true });
   });
   it("migrates session-workers.json into the one store and drops it", () => {
     const legacy = join(home, "session-workers.json");

@@ -73,13 +73,19 @@ export function setupWorkersLabel(cfg: Cfg, s: Setup): string {
   return s.local ? `${s.workers} (local)` : workersLabel(cfg, s.workers, s.workersModel);
 }
 
-/** The profile a chosen setup writes: exactly the provider and model its row displays, for chat and workers. */
-export function setupProfile(cfg: Cfg, s: Setup): { chat: { provider: string; model?: string }; workers: { provider: string; model?: string } } {
+/**
+ * The profile a chosen setup writes: exactly the provider and model its row
+ * displays, for chat and workers. The workers pin is marked implicit: a setup
+ * pins workers for the launch, it is not the operator's standing choice, and
+ * the resolver (session-profile.ts) never routes on an implicit pin.
+ */
+export function setupProfile(cfg: Cfg, s: Setup): { chat: { provider: string; model?: string }; workers: { provider: string; model?: string }; workers_implicit: true } {
   const chatModel = s.orchestrator.model ?? getProviderOrNative(cfg, s.orchestrator.provider)?.models.default;
   const wModel = s.workersModel ?? workersModel(cfg, s.workers);
   return {
     chat: { provider: s.orchestrator.provider, ...(chatModel ? { model: chatModel } : {}) },
     workers: { provider: s.workers, ...(wModel ? { model: wModel } : {}) },
+    workers_implicit: true,
   };
 }
 

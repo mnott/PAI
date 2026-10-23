@@ -104,6 +104,10 @@ describe("setups", () => {
     expect(s.orchestrator).toEqual({ provider: "kimi", model: "k3" });
     expect(s.workers).toBe("glm");
   });
+  it("Last time keeps an explicit profile pin, not a launch-written one", () => {
+    expect(lastSetup(row({ name: "s" }), cfg, { workers: { provider: "kimi" } }).workers).toBe("kimi");
+    expect(lastSetup(row({ name: "s" }), cfg, { workers: { provider: "anthropic" }, workers_implicit: true }).workers).toBe("glm");
+  });
   it("saves, loads and finds by name or unique prefix (temp file)", () => {
     const path = join(mkdtempSync(join(tmpdir(), "pai-setups-")), "setups.json");
     saveSetup({ name: "my mix", orchestrator: { provider: "kimi" }, workers: "glm" }, path);

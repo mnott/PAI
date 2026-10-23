@@ -486,16 +486,84 @@ const renameCommand: CommandDef = {
 };
 
 // ---------------------------------------------------------------------------
+// profile
+// ---------------------------------------------------------------------------
+
+/**
+ * `pai session profile [show|set --workers <provider>|clear --workers]` — the CLI
+ * side of the per-session model profile, the same implementation the MCP tools
+ * use (daemon-mcp/tools/session-profile.ts), so it works when the MCP server is
+ * down. A workers pin set here is explicit; a launch-written one is implicit and
+ * never routes (session-profile.ts).
+ */
+const profileCommand: CommandDef = {
+  name: "profile",
+  summary: "Show or change this session's model profile (chat, workers)",
+  description:
+    "`pai session profile` shows the profile and where the next worker spawn runs. " +
+    "`set --workers <provider> [--model <m>]` pins where this session's workers run (an explicit choice; beats global routing). " +
+    "`clear --workers` removes the pin so spawns follow global routing again. " +
+    "`repair` clears the workers pin launches wrote implicitly (the setup's provider stored as a standing pin), but only for this folder's named session; other sessions are listed and left alone. " +
+    "`--name` takes another session; default: this session. Same store and resolver as the MCP session_profile tools.",
+  args: [{ name: "VERB", summary: "show (default), set, clear or repair" }],
+  options: [
+    { name: "workers", type: "string", value: "PROVIDER", optionalValue: true, summary: "With set: the worker provider (with --model: default, fast or a model id); with clear: bare --workers clears the pin" },
+    { ...OPT.model, summary: "Worker model for --workers: default, fast or a model id" },
+    { name: "name", type: "string", value: "SESSION", summary: "Session name (default: this session)" },
+  ],
+  examples: [
+    "pai session profile",
+    "pai session profile set --workers kimi --model fast",
+    "pai session profile clear --workers",
+    "pai session profile show --name job-search",
+    "pai session profile repair",
+  ],
+  seeAlso: ["pai worker route", "pai setups"],
+  async run(ctx) {
+    const verb = (ctx.args.VERB as string | undefined) ?? "show";
+    const name = ctx.opts.name as string | undefined;
+    const { sessionProfileText, sessionProfileSet, realSessionProfileDeps } = await import("../../daemon-mcp/tools/session-profile.js");
+    const deps = await realSessionProfileDeps();
+    if (verb === "show") {
+      out(await sessionProfileText({ name }, deps));
+      return;
+    }
+    const workers = typeof ctx.opts.workers === "string" ? ctx.opts.workers : undefined;
+    if (verb === "set") {
+      if (!workers) throw new CliError("set needs --workers <provider>", "pai session profile set --workers kimi --model fast");
+      const model = ctx.opts.model as string | undefined;
+      const r = await sessionProfileSet({ name, workers: { provider: workers, ...(model ? { model } : {}) } }, deps);
+      if (r.isError) throw new CliError(r.content[0].text, "pai session profile");
+      return void out(r.content[0].text);
+    }
+    if (verb === "clear") {
+      // `--workers` alone (no value) reads as true: that is the clear form
+      if (workers !== "workers" && ctx.opts.workers !== true) throw new CliError("clear needs --workers", "pai session profile clear --workers");
+      const r = await sessionProfileSet({ name, workers: null }, deps);
+      if (r.isError) throw new CliError(r.content[0].text, "pai session profile");
+      return void out(r.content[0].text);
+    }
+    if (verb === "repair") {
+      const { repairSessionProfile, repairReport } = await import("../../workers/profile-implicit-pin.js");
+      const { readProfiles } = await import("../../workers/session-profile-store.js");
+      const cleared = await repairSessionProfile(process.cwd(), name, deps.path);
+      return void out(repairReport(cleared, readProfiles(deps.path)));
+    }
+    throw new CliError(`unknown verb "${verb}" (expected show, set, clear or repair)`, "pai session profile");
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Exports: the group and its daily shortcuts
 // ---------------------------------------------------------------------------
 
 export const sessionCommand: CommandDef = {
   name: "session",
-  summary: "Work with sessions: list, open, new, rename",
+  summary: "Work with sessions: list, open, new, rename, profile",
   description: "Everything about sessions lives under `pai session`; the daily verbs also exist as short top-level commands.",
-  examples: ["pai session list", "pai session open my-session", "pai session new --provider glm"],
+  examples: ["pai session list", "pai session open my-session", "pai session new --provider glm", "pai session profile"],
   seeAlso: ["pai ls", "pai open", "pai new"],
-  subcommands: [listCommand, openCommand, newCommand, renameCommand],
+  subcommands: [listCommand, openCommand, newCommand, renameCommand, profileCommand],
 };
 
 export const lsCommand: CommandDef = { ...listCommand, name: "ls", aliasOf: "session list", daily: true };
