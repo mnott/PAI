@@ -153,6 +153,13 @@ workers:
     # merge and exits 3. Empty string = off; `--no-verify-tests` skips one merge.
     verify: "npx vitest related --run {files}"
     verifyTimeoutSec: 600
+    # Repo-guard tests appended to every related-tests run: they guard the
+    # whole repo and import nothing a branch changes, so `vitest related`
+    # never selects them. Paths or globs; missing entries are skipped.
+    alwaysTests:
+      - "src/utils/no-token-literals.test.ts"
+      - "src/cli/docs-sync.test.ts"
+      - "src/cli/docs-keys.test.ts"
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:

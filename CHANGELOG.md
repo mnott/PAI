@@ -4,6 +4,21 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.11] - 2026-10-23
+
+### Added
+
+- **Cockpit:** the worker runs table shows each run's scan findings ("1 block · 2 warn", coloured by the highest severity); the memory section has a lessons card (counts per state and the newest candidates waiting for review).
+- **`pai lessons propose --draft`:** the running local model (fallback: the routed default) drafts lesson candidates from a transcript; items are validated against the quoted user text, redacted, de-duplicated, ranked by strength and recurrence and capped at `lessons.draft.max`. `--dry-run` prints without writing.
+
+### Fixed
+
+- **Project rule files are found from a repo subdirectory** (walk up to the nearest `.git`, never above the home folder).
+- **Session drill-down** shows slash commands as `/name args` instead of raw markup.
+- **Cockpit concurrency:** "+" no longer lowers a stored value above the maximum; the endpoint requires `application/json`.
+- **Harness adapters:** a session with an unreadable timestamp no longer breaks the sort.
+- **`pai worker merge`** also runs repo-wide guard tests on every merge (`workers.merge.alwaysTests`: the token-literal guard and the docs checks), which `vitest related` never selects.
+
 ## [1.0.10] - 2026-10-23
 
 ### Added

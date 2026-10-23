@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { addLesson, draftFromTranscript, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
+import { fakeAnthropic } from "../utils/fake-secret.js";
 
 let home: string;
 let project: string;
@@ -193,12 +194,14 @@ describe("lesson id confinement", () => {
 
 describe("draftFromTranscript", () => {
   const ev = (type: string, text: string) => JSON.stringify({ type, message: { content: [{ type: "text", text }] } });
+  // Fake token-shaped fixture assembled at runtime so no scanner flags a literal.
+  const ANTHROPIC = fakeAnthropic("abcdefghijklmnopqrstuvwxyz0123456789", "-api03");
   const fixture = () => {
     const p = join(project, "sess-1.jsonl");
     writeFileSync(p, [
       ev("user", "<system-reminder>ignore me</system-reminder>add a flag to the CLI"),
       ev("assistant", "Done, I used memory to remember the port."),
-      ev("user", "memory is unreliable, it needs to be instrumented. deterministic. token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"),
+      ev("user", `memory is unreliable, it needs to be instrumented. deterministic. token ${ANTHROPIC}`),
       ev("user", "now run the tests"),
       ev("user", "it must be IMPOSSIBLE to start any command not in a pane"),
       ev("user", "please rename the file"),
@@ -207,7 +210,7 @@ describe("draftFromTranscript", () => {
     return p;
   };
   const good = [
-    { title: "Instrument, do not trust memory", kind: "correction", applies_when: "relying on recall", body: "Make it deterministic.", evidence_quote: "memory is unreliable, it needs to be instrumented. deterministic. token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789", strength: 5, standing: true },
+    { title: "Instrument, do not trust memory", kind: "correction", applies_when: "relying on recall", body: "Make it deterministic.", evidence_quote: `memory is unreliable, it needs to be instrumented. deterministic. token ${ANTHROPIC}`, strength: 5, standing: true },
     { title: "Commands only in panes", kind: "convention", applies_when: "starting commands", body: "Starting outside a pane must be impossible.", evidence_quote: "it must be IMPOSSIBLE to start any command not in a pane", strength: 4, standing: true },
     { title: "Invented", kind: "gotcha", applies_when: "x", body: "never said", evidence_quote: "not in the transcript" },
     { title: "bad kind", kind: "nope", applies_when: "x", body: "y", evidence_quote: "now run the tests" },
@@ -217,7 +220,7 @@ describe("draftFromTranscript", () => {
     const out = await draftFromTranscript(fixture(), { client: async () => JSON.stringify(good) });
     expect(out.map((l) => l.title)).toEqual(["Instrument, do not trust memory", "Commands only in panes"]);
     expect(out[0]!.evidence![0]).toBe("sess-1");
-    expect(JSON.stringify(out)).not.toContain("sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(JSON.stringify(out)).not.toContain(ANTHROPIC);
   });
 
   const item = (title: string, quote: string, strength: number, standing = true) =>

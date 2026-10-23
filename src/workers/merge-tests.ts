@@ -7,7 +7,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
@@ -16,6 +16,8 @@ export interface RelatedSettings {
   /** Command template with `{files}`; empty = off. */
   verify: string;
   verifyTimeoutSec: number;
+  /** Repo-guard test paths/globs (config `workers.merge.alwaysTests`), appended to every run. */
+  alwaysTests?: string[];
 }
 
 export interface RelatedResult {
@@ -44,6 +46,58 @@ const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 /** The template with `{files}` replaced by the shell-quoted file list. */
 export function buildRelatedCommand(template: string, files: string[]): string {
   return template.replace(/\{files\}/g, files.map(shq).join(" "));
+}
+
+/** A config glob matched against repo-relative paths (`**` crosses directories). */
+function globMatches(glob: string, path: string): boolean {
+  let re = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === "*" && glob[i + 1] === "*") { re += ".*"; i++; continue; }
+    if (c === "*") { re += "[^/]*"; continue; }
+    if (c === "?") { re += "[^/]"; continue; }
+    re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`).test(path);
+}
+
+/**
+ * The always-tests entries expanded against the checkout: literal paths that
+ * exist, globs matched against every tracked `*.test.*`. Deduped, sorted;
+ * entries matching nothing are skipped (the caller notes them).
+ */
+export function resolveAlwaysTests(cwd: string, entries: string[]): { files: string[]; missing: string[] } {
+  const files = new Set<string>();
+  const missing: string[] = [];
+  let testFiles: string[] | null = null;
+  const allTestFiles = (): string[] => {
+    if (testFiles === null) testFiles = trackedTestFiles(cwd);
+    return testFiles;
+  };
+  for (const raw of entries) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    if (!entry.includes("*") && !entry.includes("?")) {
+      if (existsSync(join(cwd, entry))) files.add(entry);
+      else missing.push(entry);
+      continue;
+    }
+    const hits = allTestFiles().filter((f) => globMatches(entry, f));
+    if (hits.length) hits.forEach((f) => files.add(f));
+    else missing.push(entry);
+  }
+  return { files: [...files].sort(), missing };
+}
+
+/** Every tracked `*.test.*` file in the repo at `cwd`, repo-relative; [] if git fails. */
+function trackedTestFiles(cwd: string): string[] {
+  try {
+    const r = spawnSync("git", ["ls-files", "--", "*.test.ts", "*.test.tsx", "*.test.mjs"], { cwd, encoding: "utf8", timeout: 15_000 });
+    if (r.status !== 0) return [];
+    return r.stdout.split("\n").filter(Boolean).sort();
+  } catch {
+    return [];
+  }
 }
 
 /** Does the repo at `cwd` declare vitest in its devDependencies? */
@@ -90,10 +144,13 @@ export function runRelatedTests(
     return skip(`cannot list changed files: ${(e as Error).message.split("\n")[0]}`);
   }
   if (!files.length) return skip("no source files changed");
+  const always = resolveAlwaysTests(cwd, settings.alwaysTests ?? []);
+  const run = [...files, ...always.files];
+  const note = always.missing.length ? ` (always-tests skipped: ${always.missing.join(", ")})` : "";
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
-  const r = spawnSync("sh", ["-c", buildRelatedCommand(settings.verify, files)], {
+  const r = spawnSync("sh", ["-c", buildRelatedCommand(settings.verify, run)], {
     cwd,
     env,
     encoding: "utf8",
@@ -105,11 +162,12 @@ export function runRelatedTests(
     return { status: "failed", line: `related tests: timed out after ${timeoutSec}s`, failing: [] };
   }
   if (r.status === 0) {
-    return { status: "passed", line: `related tests: ${passSummary(output) ?? `${files.length} source files, passed`}`, failing: [] };
+    const counts = always.files.length ? `${files.length} source files + ${always.files.length} always-tests, passed` : `${files.length} source files, passed`;
+    return { status: "passed", line: `related tests: ${passSummary(output) ?? counts}${note}`, failing: [] };
   }
   const failing = failingFiles(output);
   const why = failing.length ? `failed: ${failing.join(", ")}` : `failed (exit ${r.status ?? 1})`;
-  return { status: "failed", line: `related tests: ${why}`, failing };
+  return { status: "failed", line: `related tests: ${why}${note}`, failing };
 }
 
 /** The shipped default template; a repo without vitest skips only when running this one. */

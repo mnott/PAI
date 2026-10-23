@@ -1105,11 +1105,12 @@ export interface MergeSettings {
   union: string[];
   verify: string;
   verifyTimeoutSec: number;
+  alwaysTests: string[];
 }
 
 function mergeSettings(): MergeSettings {
   const m = loadConfig().workers?.merge;
-  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [], verify: m?.verify ?? DEFAULT_VERIFY, verifyTimeoutSec: m?.verifyTimeoutSec ?? DEFAULT_VERIFY_TIMEOUT_SEC };
+  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [], verify: m?.verify ?? DEFAULT_VERIFY, verifyTimeoutSec: m?.verifyTimeoutSec ?? DEFAULT_VERIFY_TIMEOUT_SEC, alwaysTests: m?.alwaysTests ?? [] };
 }
 
 /** Glob to RegExp: `**` crosses directories, `*` and `?` stay inside one. */

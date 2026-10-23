@@ -269,6 +269,8 @@ export interface PaiDaemonConfig {
       verify?: string;
       /** Seconds before the related-tests command is stopped. */
       verifyTimeoutSec?: number;
+      /** Test paths/globs appended to every related-tests run (repo guards `vitest related` never selects). */
+      alwaysTests?: string[];
     };
   };
 }

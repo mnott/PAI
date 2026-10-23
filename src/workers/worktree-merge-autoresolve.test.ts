@@ -11,6 +11,7 @@ const settings: MergeSettings = {
   union: ["reg.ts"],
   verify: "",
   verifyTimeoutSec: 600,
+  alwaysTests: [],
   regenerate: `node -e "require('fs').writeFileSync('gen/index.md', 'see: ' + require('fs').readdirSync('gen').filter(f => f !== 'index.md').sort().join(',') + '\\n')"`,
 };
 
