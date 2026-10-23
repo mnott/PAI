@@ -28,6 +28,7 @@ import { buildWakeupContext } from '../../../memory/wakeup.js';
 import { readContinueCheckpoint } from '../../../session/checkpoint-block.js';
 import { applyHandoverBudget } from '../lib/handover-budget.js';
 import { sessionRoutingPath } from '../lib/pai-paths.js';
+import { addNoteSession } from '../../../session/note-sessions.js';
 import {
   findNotesDir,
   getProjectDir,
@@ -341,6 +342,8 @@ async function main() {
       }
     }
   }
+
+  if (activeNotePath) addNoteSession(activeNotePath, hookInput?.session_id);
 
   // 6. Show TODO.md preview
   if (existsSync(todoPath)) {

@@ -33,6 +33,7 @@ import { realpathSync } from "node:fs";
 import chalk from "chalk";
 import type { RegistryBackend } from "../../../storage/registry-interface.js";
 import type { ProjectRow, SessionRow } from "./types.js";
+import { addNoteSession } from "../../../session/note-sessions.js";
 import {
   applyContinue,
   appendCheckpointToNote,
@@ -314,6 +315,7 @@ export async function cmdPause(opts: PauseOptions): Promise<void> {
         body,
         timestamp
       );
+      addNoteSession(notePath, opts.sessionId);
       if (appended) {
         console.log(
           chalk.green("  Checkpoint appended to note: ") +

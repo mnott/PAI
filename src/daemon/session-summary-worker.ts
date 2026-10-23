@@ -48,6 +48,7 @@ import { recordSystemJobStart } from "../workers/pane-waiver.js";
 import { planLlmSpawn, type ModelTier } from "../workers/daemon-llm.js";
 import { claudeProjectsDir, legacyConfigDir, paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
 import { findClaudeBinary } from "../memory/kg-extraction.js";
+import { addNoteSession } from "../session/note-sessions.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -862,6 +863,7 @@ ${aiBody}
 `;
 
     writeFileSync(notePath, redactSecrets(finalContent), "utf-8");
+    addNoteSession(notePath, sessionId);
     process.stderr.write(`[session-summary] Created AI-powered note: ${noteFilename}\n`);
     return notePath;
   } catch (e) {

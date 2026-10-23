@@ -4,16 +4,19 @@
  *
  * The memory index holds session NOTES (source notes / tier session), not raw transcripts, and a chunk
  * carries no session id. A memory hit therefore gets a session id only when the chunk text or path
- * names a transcript that exists (a UUID of a .jsonl under the projects dir); otherwise it is a note
- * hit with an empty id, which the page shows without opening a session.
+ * names a transcript that exists (a UUID of a .jsonl under the projects dir), or else when the note
+ * file's frontmatter `sessions: [...]` lists one (read at query time, so no reindex is needed).
+ * Otherwise it is a note hit with an empty id, which the page shows without opening a session.
  */
 
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { claudeProjectsDir } from "../config/pai-home.js";
 import { paiConfigFilePath } from "../daemon/config.js";
 import { effectiveMainConfig } from "../config/shipped-defaults.js";
 import { maskSecrets } from "../hooks/ts/lib/loop-guard.js";
+import { parseNoteSessions } from "../session/note-sessions.js";
+import { transcriptSpans } from "../session/note-sessions-backfill.js";
 import { SESSION_ID_RE, SESSION_SEARCH_MAX, searchSessions, type SessionHit } from "./session-detail.js";
 
 export interface MemoryHit {
@@ -29,7 +32,9 @@ export interface MemoryHit {
   updatedAt: number;
 }
 
-export type MemorySearchFn = (q: string, limit: number) => Promise<Omit<MemoryHit, "id" | "turn">[]>;
+/** A raw memory hit; `roots` are the directories the index path may be relative to (to find the note file). */
+export type RawMemoryHit = Omit<MemoryHit, "id" | "turn"> & { roots?: string[] };
+export type MemorySearchFn = (q: string, limit: number) => Promise<RawMemoryHit[]>;
 
 export interface CombinedSearch {
   /** recent transcript hits (source "recent") */
@@ -85,11 +90,14 @@ export const memoryIndexSearch: MemorySearchFn = async (q, limit) => {
   }
   const registry = await (await import("../storage/factory.js")).getRegistryBackend();
   const slugs = new Map<number, string>();
+  const roots = new Map<number, string[]>();
   for (const id of new Set(results.map((r) => r.projectId))) {
     const p = await registry.getProjectById(id).catch(() => null);
-    if (p) slugs.set(id, p.slug);
+    if (!p) continue;
+    slugs.set(id, p.slug);
+    roots.set(id, [p.root_path, join(claudeProjectsDir(), p.encoded_dir), ...(p.claude_notes_dir ? [p.claude_notes_dir, join(p.claude_notes_dir, "..")] : [])]);
   }
-  return results.map((r) => ({ path: r.path, projectSlug: slugs.get(r.projectId), snippet: r.snippet, updatedAt: r.updatedAt ?? 0 }));
+  return results.map((r) => ({ path: r.path, projectSlug: slugs.get(r.projectId), snippet: r.snippet, updatedAt: r.updatedAt ?? 0, roots: roots.get(r.projectId) }));
 };
 
 const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -105,6 +113,42 @@ function transcriptIds(projectsDir: string): Set<string> {
     }
   }
   return ids;
+}
+
+const STAMP = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
+
+/**
+ * The session a note hit most likely belongs to, from the `sessions:` frontmatter of its note file:
+ * the only one; else the one whose transcript time range contains the nearest checkpoint stamp at or
+ * before the snippet in the note body; else the latest recorded. "" when the note has none.
+ */
+export async function noteHitSession(hit: RawMemoryHit, projectsDir: string, known: Set<string>): Promise<string> {
+  const file = isAbsolute(hit.path) ? [hit.path] : (hit.roots ?? []).map((r) => join(r, hit.path));
+  for (const f of file) {
+    let text: string;
+    try {
+      text = readFileSync(f, "utf8");
+    } catch {
+      continue;
+    }
+    const ids = parseNoteSessions(text).filter((i) => known.has(i));
+    if (ids.length <= 1) return ids[0] ?? "";
+    const probe = hit.snippet.replace(/\s+/g, " ").trim().slice(0, 40);
+    const at = probe ? text.replace(/\s+/g, " ").indexOf(probe) : -1;
+    if (at >= 0) {
+      const before = text.replace(/\s+/g, " ").slice(0, at).match(STAMP);
+      const t = before ? Date.parse(before[before.length - 1]) : NaN;
+      if (Number.isFinite(t)) {
+        let dir: string | undefined;
+        for (const d of readdirSync(projectsDir)) if (existsSync(join(projectsDir, d, `${ids[0]}.jsonl`))) dir = join(projectsDir, d);
+        const spans = dir ? await transcriptSpans(dir) : [];
+        const inside = ids.filter((i) => spans.some((s) => s.id === i && t >= s.startMs && t <= s.endMs));
+        if (inside.length) return inside[inside.length - 1];
+      }
+    }
+    return ids[ids.length - 1];
+  }
+  return "";
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -134,16 +178,20 @@ export async function combinedSearch(
   const t1 = Date.now();
   try {
     const raw = await withTimeout((opts.memorySearch ?? memoryIndexSearch)(q, MEMORY_LIMIT), MEMORY_TIMEOUT_MS);
-    const known = transcriptIds(opts.projectsDir ?? claudeProjectsDir());
+    const projectsDir = opts.projectsDir ?? claudeProjectsDir();
+    const known = transcriptIds(projectsDir);
     const seen = new Set(recent.hits.map((h) => h.id));
     const seenNote = new Set<string>();
     for (const r of raw) {
-      const id = (`${r.path}\n${r.snippet}`.match(UUID_G) ?? []).map((u) => u.toLowerCase()).find((u) => known.has(u)) ?? "";
+      const id =
+        (`${r.path}\n${r.snippet}`.match(UUID_G) ?? []).map((u) => u.toLowerCase()).find((u) => known.has(u)) ??
+        (await noteHitSession(r, projectsDir, known).catch(() => ""));
       if (id && seen.has(id)) continue; // same session as a recent hit (those carry one hit per session)
       const key = id || `${r.path}`;
       if (seenNote.has(key)) continue;
       seenNote.add(key);
-      out.memory.push({ ...r, id, turn: -1, snippet: maskSecrets(r.snippet.trim()).slice(0, SNIPPET_CHARS), source: "memory" });
+      const { roots: _roots, ...rest } = r;
+      out.memory.push({ ...rest, id, turn: -1, snippet: maskSecrets(r.snippet.trim()).slice(0, SNIPPET_CHARS), source: "memory" });
     }
   } catch (e) {
     out.note = `memory search unavailable (${(e as Error).message.slice(0, 80)}); showing recent sessions only`;
