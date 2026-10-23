@@ -7,6 +7,7 @@ import { defaultDeps, memoryRunRefusal, readCockpitJob, runCockpitAction, type A
 import { COCKPIT_HTML } from "./cockpit-page.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { WIN_MEMORY_JS } from "./cockpit-page/win/cards-memory.js";
+import { lessonsDir, serializeLesson, type LessonState } from "../memory/lessons.js";
 import { acquireRun, readFinishedRun, readRun, runStateFile, type RunState } from "../memory/run-state.js";
 
 let home = "";
@@ -246,10 +247,10 @@ function pageFns() {
   };
   return {
     /** Every memory card's text: the status card, the four metric cards and one per job. */
-    memHtml: (m: any) => {
+    memHtml: (m: any, only?: string[]) => {
       const kv = fns.memKvView(m);
       const parts = [kv.v, kv.s, kv.t ?? "", kv.status.join(" ")];
-      for (const id of ["index", "backend", "passes", "daemon", ...(m.jobs ?? []).map((j: any) => "job:" + j.id)]) {
+      for (const id of only ?? ["index", "backend", "passes", "lessons", "daemon", ...(m.jobs ?? []).map((j: any) => "job:" + j.id)]) {
         const v = fns.memMetricView(m, { id: "memory." + id });
         parts.push(v.v, v.u, v.s, v.x, ...(v.status ?? []));
       }
@@ -504,5 +505,52 @@ describe("transient marker on a failing source", () => {
     const bf = (failures: number, since: number) => daemon({ status: status({ index: { ...(status() as any).index, bindingFailure: { failures, since, reason: "connection timeout" } } }) });
     const p = (await cockpitMemoryPayload(deps({ daemon: async () => bf(1, NOW) }))) as Record<string, any>;
     expect(p).toMatchObject({ transient: "binding check failed: connection timeout", failures: 1 });
+  });
+});
+
+describe("cockpit Lessons card", () => {
+  let prev: string | undefined;
+  beforeEach(() => {
+    prev = process.env.PAI_HOME;
+    process.env.PAI_HOME = home;
+    mkdirSync(lessonsDir(), { recursive: true });
+    const put = (id: string, state: LessonState, ageH: number) =>
+      writeFileSync(join(lessonsDir(), `${id}.md`), serializeLesson({
+        id, title: `Title ${id}`, state, kind: "gotcha", applies_when: "always", project: "", evidence: [],
+        created: new Date(NOW - ageH * 3600_000).toISOString(), updated: new Date(NOW).toISOString(), body: "b",
+      }));
+    for (let i = 1; i <= 7; i++) put(`cand-${i}`, "candidate", i); // cand-1 newest
+    put("appr-1", "approved", 50);
+    put("appr-2", "approved", 60);
+    put("rej-1", "rejected", 70);
+    put("sup-1", "superseded", 80);
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.PAI_HOME;
+    else process.env.PAI_HOME = prev;
+  });
+
+  it("payload: counts per state and the 5 newest candidates with their age", async () => {
+    const p = (await cockpitMemoryPayload(deps())) as Record<string, any>;
+    expect(p.lessons.counts).toEqual({ candidate: 7, approved: 2, rejected: 1, superseded: 1 });
+    expect(p.lessons.candidates.map((c: any) => c.id)).toEqual(["cand-1", "cand-2", "cand-3", "cand-4", "cand-5"]);
+    expect(p.lessons.candidates[0]).toEqual({ id: "cand-1", title: "Title cand-1", ageSec: 3600 });
+  });
+
+  it("payload: no lessons gives zero counts and no candidates", async () => {
+    const p = (await cockpitMemoryPayload(deps({ lessons: () => [] }))) as Record<string, any>;
+    expect(p.lessons).toEqual({ counts: { candidate: 0, approved: 0, rejected: 0, superseded: 0 }, candidates: [] });
+  });
+
+  it("page: the card renders the counts and candidate titles through the real renderer", async () => {
+    const p = await cockpitMemoryPayload(deps());
+    const html = pageFns().memHtml({ ...(p as object), jobs: [] }, ["lessons"]);
+    expect(html).toContain("awaiting review");
+    expect(html).toContain("7 candidate");
+    expect(html).toContain("2 approved");
+    expect(html).toContain("1 rejected");
+    expect(html).toContain("1 superseded");
+    expect(html).toContain("Title cand-1 · 60 m 00 s ago");
+    expect(html).not.toContain("Title cand-6");
   });
 });

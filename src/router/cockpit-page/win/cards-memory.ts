@@ -91,6 +91,14 @@ function memPassesView(m){
  if(sc)x+=memLine("dim",sc.maintenanceHour!=null?"nightly maintenance at "+String(sc.maintenanceHour).padStart(2,"0")+":00 (index, then embed)":"index every "+memDur(sc.indexIntervalSecs)+", embed every "+memDur(sc.embedIntervalSecs));
  return{v:ps.length?(bad?"failed":"ok"):null,u:"",s:ps.length+" scheduled",x:x,tone:bad?"bad":""};
 }
+/** Lessons card: a count per state and the newest candidates (title + age) waiting for review; read-only. */
+function memLessonsView(m){
+ var l=m.lessons;
+ if(!l)return{v:null,u:"",s:"not known",x:""};
+ var c=l.counts||{},x=memLine("",["approved","candidate","rejected","superseded"].map(function(k){return'<span data-part="'+k+'">'+(c[k]||0)+' '+k+'</span>'}).join(" · "));
+ (l.candidates||[]).forEach(function(k){x+=memLine("dim",esc(k.title)+(k.ageSec==null?"":" · "+memDur(k.ageSec)+" ago"))});
+ return{v:String(c.candidate||0),u:"",s:"awaiting review",x:x};
+}
 function memDaemonView(m){
  var d=m.daemonInfo;
  if(!d)return{v:null,u:"",s:m.daemon?"status not sampled yet":"daemon not answering",x:""};
@@ -103,6 +111,7 @@ function memMetricView(m,ctx){
  else if(id==="backend")v=memBackendView(m);
  else if(id==="passes")v=memPassesView(m);
  else if(id==="daemon")v=memDaemonView(m);
+ else if(id==="lessons")v=memLessonsView(m);
  else{
   var j=(m.jobs||[]).filter(function(x){return"job:"+x.id===id})[0];
   if(!j)return null;
@@ -134,10 +143,10 @@ function memJobSync(m){
 /** The memory feed: remember the payload for the actions' enabled(), push it to the cards, then add job cards. */
 function winFeedMemory(m){WMEM=m;if(m)memJobPrune(m);Win.update("memory",m);memJobSync(m)}
 function memDefaults(){
- var cards=[{id:"memory",type:"group",title:"Memory",info:MEM_INFO,feeds:["memory"],actions:MEM_ACTS.map(memAction)}],names=["index","backend","passes","daemon"],ch=[],i;
+ var cards=[{id:"memory",type:"group",title:"Memory",info:MEM_INFO,feeds:["memory"],actions:MEM_ACTS.map(memAction)}],names=["index","backend","passes","lessons","daemon"],ch=[],i;
  cards.push({id:"memory.kv",type:"kv",title:"status",feeds:["memory"],view:memKvView});
  for(i=0;i<names.length;i++){
-  cards.push({id:"memory."+names[i],type:"metricm",title:names[i]==="index"?"Index":names[i]==="backend"?"Backend":names[i]==="passes"?"Passes":"Daemon",feeds:["memory"],view:memMetricView});
+  cards.push({id:"memory."+names[i],type:"metricm",title:names[i]==="index"?"Index":names[i]==="backend"?"Backend":names[i]==="passes"?"Passes":names[i]==="lessons"?"Lessons":"Daemon",feeds:["memory"],view:memMetricView});
   ch.push(WinT.leaf("memory."+names[i]));
  }
  var row=WinT.split("r",ch,ch.map(function(){return 1/ch.length}));

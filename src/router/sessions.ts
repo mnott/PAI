@@ -34,6 +34,8 @@ export interface SessionInfo {
   /** worker runs: start and end (ms; a running run ends null) */
   startMs?: number;
   endMs?: number | null;
+  /** worker runs: end-of-run scan findings per severity (absent when none recorded) */
+  findings?: { block: number; confirm: number; warn: number };
 }
 
 export interface SessionSources {
@@ -198,6 +200,13 @@ function countBranchCommits(cwd: string, id: string, base: string, branch: strin
   return null;
 }
 
+function workerFindings(s: Record<string, unknown>): SessionInfo["findings"] {
+  const f = s.findings as Record<string, unknown> | undefined;
+  if (!f || typeof f !== "object") return undefined;
+  const c = (k: string): number => (typeof f[k] === "number" && f[k] > 0 ? (f[k] as number) : 0);
+  return { block: c("block"), confirm: c("confirm"), warn: c("warn") };
+}
+
 function workerVerdict(s: Record<string, unknown>): string {
   // a run parked at the capacity gate waits for a provider slot
   if (s.state === "queued") return "queued (provider cap)";
@@ -330,6 +339,7 @@ export function* loadSessionMapSteps(src: SessionSources = defaultSources()): Ge
         spawner: typeof s.spawnerSession === "string" && s.spawnerSession ? s.spawnerSession : undefined,
         startMs: parseLocalTs(s.started),
         endMs: s.state === "running" || s.state === "queued" ? null : (parseLocalTs(s.updated) ?? null),
+        findings: workerFindings(s),
       });
     }
   }

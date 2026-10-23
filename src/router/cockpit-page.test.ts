@@ -651,3 +651,25 @@ describe("provider limits card gauge fit", () => {
     expect(html).not.toMatch(/\.gauges\.fit[^{]*\{[^}]*flex-direction:column/);
   });
 });
+
+describe("worker runs: scan findings cell", () => {
+  const cell = new Function(`${COCKPIT_HTML.match(/function findingsCell\([\s\S]*?\n\}\n/)![0]}; return findingsCell;`)() as (f: unknown) => string;
+
+  it("is empty when nothing was found or recorded", () => {
+    expect(cell(null)).toBe("");
+    expect(cell({ block: 0, confirm: 0, warn: 0 })).toBe("");
+  });
+
+  it("lists the non-zero severities, red when any block, else amber", () => {
+    const a = cell({ block: 1, confirm: 0, warn: 2 });
+    expect(a).toContain("1 block · 2 warn");
+    expect(a).toContain('class="bad"');
+    const b = cell({ block: 0, confirm: 1, warn: 3 });
+    expect(b).toContain("1 confirm · 3 warn");
+    expect(b).toContain('class="warn"');
+  });
+
+  it("is wired into the worker run row from the polled runs JSON", () => {
+    expect(COCKPIT_HTML).toContain("extra:findingsCell(s.workerFindings)");
+  });
+});

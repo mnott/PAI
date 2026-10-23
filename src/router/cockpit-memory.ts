@@ -12,6 +12,7 @@ import type { DashboardState } from "../daemon/dashboard.js";
 import { PaiClient } from "../daemon/ipc-client.js";
 import { loadConfig } from "../daemon/config.js";
 import { paiHomeDir } from "../config/pai-home.js";
+import { listLessons, LESSON_STATES, type Lesson, type LessonState } from "../memory/lessons.js";
 import { readFinishedRun, readRun, type FinishedRun, type RunState } from "../memory/run-state.js";
 import { readEmbedPasses, type EmbedPassLogEntry } from "../memory/embed-pass.js";
 import { cockpitLayout } from "./cockpit-layout.js";
@@ -45,6 +46,21 @@ export interface MemoryDeps {
   deadRun?: () => RunState | null;
   /** The last finished run of a kind (run-state); defaults to the marker kept under the PAI home. */
   finished?: (kind: "embed" | "index") => FinishedRun | null;
+  /** All lessons; defaults to the lesson files under the PAI home. */
+  lessons?: () => Lesson[];
+}
+
+/** Lessons card: a count per state and the newest candidates (what waits for review), with their age. */
+export function lessonsSummary(all: Lesson[], nowMs: number, top: number): { counts: Record<LessonState, number>; candidates: { id: string; title: string; ageSec: number | null }[] } {
+  const counts = Object.fromEntries(LESSON_STATES.map((s) => [s, 0])) as Record<LessonState, number>;
+  for (const l of all) counts[l.state]++;
+  const at = (l: Lesson): number => Date.parse(l.created);
+  const candidates = all
+    .filter((l) => l.state === "candidate")
+    .sort((a, b) => (at(b) || 0) - (at(a) || 0))
+    .slice(0, top)
+    .map((l) => ({ id: l.id, title: l.title, ageSec: Number.isNaN(at(l)) ? null : Math.max(0, Math.round((nowMs - at(l)) / 1000)) }));
+  return { counts, candidates };
 }
 
 /** The run's log file (the cockpit starts a run with its output here). */
@@ -354,6 +370,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
       : null,
     schedule: d ? { maintenanceHour: d.maintenanceHour, indexIntervalSecs: d.indexIntervalSecs, embedIntervalSecs: d.embedIntervalSecs } : null,
     run: progress,
+    lessons: lessonsSummary((deps.lessons ?? (() => listLessons()))(), now, L.memoryLessonsTop),
     // the cockpit job that has not produced its run marker yet: the card is busy from the click
     starting: starting ? { jobId: starting.id } : null,
     lastRun: job && job.state !== "running" ? { op: job.what ?? "", ok: job.state === "done", message: job.message, at: job.at } : null,

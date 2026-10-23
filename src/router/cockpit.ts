@@ -481,6 +481,7 @@ export function buildCockpitData(
         workerParent: info?.parent ?? (info?.spawner ? (sessions.get(info.spawner)?.name ?? info.spawner.slice(0, 8)) : null),
         workerStart: info?.startMs ?? null,
         workerEnd: info?.endMs ?? null,
+        workerFindings: info?.findings ?? null,
       };
     })
     .sort((a, b) => b.input + b.output + b.cacheWrite + b.cacheRead - (a.input + a.output + a.cacheWrite + a.cacheRead));

@@ -438,3 +438,15 @@ describe("post-release fixes", () => {
     expect(jobSessionName("aaaaaaaa", d, 100_001)).toBe("new");
   });
 });
+
+describe("worker scan findings", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sess-find-"));
+  writeFileSync(join(dir, "f1.status"), JSON.stringify({ id: "f1", state: "done", rc: 0, claudeSession: "c-f1", findings: { block: 1, confirm: 0, warn: 2 } }));
+  writeFileSync(join(dir, "f2.status"), JSON.stringify({ id: "f2", state: "done", rc: 0, claudeSession: "c-f2" }));
+  const map = loadSessionMap({ workerDirs: [dir], agentSessionsFile: join(dir, "none.json") });
+
+  it("carries the recorded counts; absent when the run recorded none", () => {
+    expect(map.get("c-f1")?.findings).toEqual({ block: 1, confirm: 0, warn: 2 });
+    expect(map.get("c-f2")?.findings).toBeUndefined();
+  });
+});
