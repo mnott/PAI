@@ -115,7 +115,7 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     for (const id of ["system", "sys-metrics", "sys-power", "sys-servers", "system.power-chart", "system.memory", "system.energy", "system.ane-load", "system.cpu-w", "system.gpu-w", "system.ane-w"]) expect(r.ids).toContain(id);
     expect(r.ids.filter((i: string) => /^system\.srv:gyro-m\//.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/e2e", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
     expect(r.syshid).toBe(false);
-    for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl)*$/);
+    for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl|,wsearch)*$/);
     expect(r.vals).toContain("system.memory=8.0 / of 36 GB · pressure 20%");
     expect(r.vals).toContain("system.cpu-load=10 / all clusters");
     // the four zero metrics start minimized (unmounted until restored); restoring shows 0 and the reason

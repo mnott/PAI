@@ -130,7 +130,7 @@ function sessionsHtml(d){
   var ex=(s.busts?'<span class="chip warn" title="cache busts">'+s.busts+'</span>':'')+(s.errors?'<span class="chip bad" title="errors">'+s.errors+'</span>':'');
   return runRow({sid:s.session,st:st,lab:lab,full:full,dotTitle:s.verdict||(recent?"active":"idle"),model:ms[0]||"–",models:ms,w:t,max:max,du:ago(s.lastTs),hit:s.requests?s.hitRatio:null,extra:ex})+(s.session===SESS_OPEN?'<div class="wr-row wr-span">'+sessDetailHtml()+'</div>':"");
  }
- var shown=all.filter(function(s,i){return open||i<top||s.session===SESS_OPEN}),rest=all.filter(function(s){return shown.indexOf(s)<0}),h=shown.map(row).join("");
+ var shown=all.filter(function(s,i){return open||i<top||s.session===SESS_OPEN}),rest=all.slice(top),h=shown.map(row).join("");
  if(SESS_OPEN&&!all.some(function(s){return s.session===SESS_OPEN}))h+='<div class="wr-row wr-span">'+sessDetailHtml()+'</div>';
  if(rest.length){
   var rt=rest.reduce(function(a,s){return a+tot(s)},0);
