@@ -1,3 +1,4 @@
+import { fakeUrl } from "../../../utils/fake-secret.js";
 import { describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,19 +35,19 @@ const dest = () => join(mkdtempSync(join(tmpdir(), "pai-bk-")), "x.sql");
 
 describe("backup database choice", () => {
   it("uses the daemon's per-user database, not the bare default", () => {
-    const cfg = { connectionString: "postgresql://pai:pai@localhost:5432/pai_alice" };
+    const cfg = { connectionString: fakeUrl("postgresql", "pai", "pai", "localhost:5432/pai_alice") };
     expect(resolveBackupTarget(cfg)).toMatchObject({ database: "pai_alice", user: "pai", host: "localhost", port: 5432 });
   });
   it("keeps the external server of the connection string and routes it away from the container", () => {
-    const t = resolveBackupTarget({ connectionString: "postgresql://u:p%40w@db.example:6543/pai" });
+    const t = resolveBackupTarget({ connectionString: fakeUrl("postgresql", "u", "p%40w", "db.example:6543/pai") });
     expect(t).toMatchObject({ host: "db.example", port: 6543, password: "p@w" });
     expect(isContainerTarget(t)).toBe(false);
     expect(isContainerTarget(resolveBackupTarget({}))).toBe(true);
-    expect(isContainerTarget(resolveBackupTarget({ connectionString: "postgresql://u:p@[::1]:5432/pai" }))).toBe(true);
+    expect(isContainerTarget(resolveBackupTarget({ connectionString: fakeUrl("postgresql", "u", "p", "[::1]:5432/pai") }))).toBe(true);
   });
   it("rejects a database name that would be an option or too long", () => {
-    expect(() => resolveBackupTarget({ connectionString: "postgresql://u:p@h/-x" })).toThrow(/invalid/);
-    expect(() => resolveBackupTarget({ connectionString: `postgresql://u:p@h/${"a".repeat(64)}` })).toThrow(/longer/);
+    expect(() => resolveBackupTarget({ connectionString: fakeUrl("postgresql", "u", "p", "h/-x") })).toThrow(/invalid/);
+    expect(() => resolveBackupTarget({ connectionString: fakeUrl("postgresql", "u", "p", `h/${"a".repeat(64)}`) })).toThrow(/longer/);
   });
 });
 
@@ -90,7 +91,7 @@ describe("backup self-check", () => {
   });
   it("hands the runner the full target (external host)", async () => {
     const seen: unknown[] = [];
-    const ext = resolveBackupTarget({ connectionString: "postgresql://u:p@db.example:5432/pai" });
+    const ext = resolveBackupTarget({ connectionString: fakeUrl("postgresql", "u", "p", "db.example:5432/pai") });
     await backupPostgres(ext, dest(), runner(DUMP, { pai_files: 2, sessions: 1 }, seen));
     expect(seen[0]).toMatchObject({ host: "db.example" });
   });
@@ -100,7 +101,7 @@ describe("config mismatch after restore", () => {
   it("reports a backup config.json naming another database", () => {
     const d = mkdtempSync(join(tmpdir(), "pai-bk-"));
     const f = join(d, "config.json");
-    writeFileSync(f, JSON.stringify({ postgres: { connectionString: "postgresql://u:p@localhost/pai" } }));
+    writeFileSync(f, JSON.stringify({ postgres: { connectionString: fakeUrl("postgresql", "u", "p", "localhost/pai") } }));
     expect(configDatabaseMismatch(f, { database: "pai2" })).toMatch(/"pai".*"pai2"/);
     expect(configDatabaseMismatch(f, { database: "pai" })).toBeNull();
   });

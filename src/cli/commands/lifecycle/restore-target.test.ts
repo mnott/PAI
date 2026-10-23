@@ -1,3 +1,4 @@
+import { fakeUrl } from "../../../utils/fake-secret.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ const DUMP = [
 ].join("\n");
 
 const daemonPg = { database: "paidata", user: "paiuser" };
-const pgCfg = { connectionString: "postgresql://paiuser:x@localhost:5432/paidata" };
+const pgCfg = { connectionString: fakeUrl("postgresql", "paiuser", "x", "localhost:5432/paidata") };
 
 describe("planPostgresRestore", () => {
   it("targets the daemon database and accepts a matching source", async () => {

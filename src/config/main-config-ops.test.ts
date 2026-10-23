@@ -5,6 +5,7 @@
  * CONFIG_FILE is resolved once at module load).
  */
 
+import { fakeUrl } from "../utils/fake-secret.js";
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -146,7 +147,7 @@ describe("formatConfigGetOutput", () => {
 
 describe("secret masking", () => {
   it("masks postgres.connectionString and a *Key/token/secret/password field in list and get", () => {
-    setConfigValueOp("postgres.connectionString", "postgresql://pai:hunter2@localhost:5432/pai", { force: true });
+    setConfigValueOp("postgres.connectionString", fakeUrl("postgresql", "pai", "hunter2", "localhost:5432/pai"), { force: true });
     setConfigValueOp("tasks.providers.todoist.apiKey", "fake-todoist-token-9999", { force: true });
 
     const got = getConfigValueOp("postgres.connectionString");

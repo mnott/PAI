@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REDACT_RULES, redactSecrets } from "./redact.js";
-import { fake, fakeAnthropic, fakeAwsKey, fakeGithub, fakeGithubPat, fakeGitlab, fakeGoogle, fakeSlack, pemBegin, pemEnd } from "./fake-secret.js";
+import { fakeUrl, fake, fakeAnthropic, fakeAwsKey, fakeGithub, fakeGithubPat, fakeGitlab, fakeGoogle, fakeSlack, pemBegin, pemEnd } from "./fake-secret.js";
 
 // Catches quadratic regressions; not a benchmark — the suite runs in parallel.
 const REDACT_MS_BOUND = 500;
@@ -39,7 +39,7 @@ describe("redactSecrets", () => {
     ["tool --passwd=abc123", "tool --passwd=[REDACTED]"],
     // URL credentials: user and host survive
     ["DATABASE_URL=postgres://u:[REDACTED]@db/x", "DATABASE_URL=postgres://u:[REDACTED]@db/x"],
-    ["see https://user:hunter2@example.com/repo.git", "see https://user:[REDACTED]@example.com/repo.git"],
+    ["see " + fakeUrl("https", "user", "hunter2", "example.com/repo.git"), "see https://user:[REDACTED]@example.com/repo.git"],
     // token prefixes
     [`key ${fakeAnthropic(BODY, "-api03")}`, "key [REDACTED]"],
     [`key ${fake("sk", "-", BODY)}`, "key [REDACTED]"],
@@ -173,7 +173,7 @@ describe("redactSecrets", () => {
       "word ".repeat(210000),
       "token " + "x".repeat(MB),
       "Cookie: " + "a=b; ".repeat(210000),
-      "https://u:p@h/".repeat(75000),
+      fakeUrl("https", "u", "p", "h/").repeat(75000),
       "http://".repeat(150000),
       "key=".repeat(260000),
       "curl ".repeat(210000),

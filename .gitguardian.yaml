@@ -1,0 +1,8 @@
+version: 2
+
+secret:
+  ignored_paths:
+    - "src/**/*.test.ts"
+    - "src/utils/fake-secret.ts"
+    - "CHANGELOG.md"
+    - "docs/**"

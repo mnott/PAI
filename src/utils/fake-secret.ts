@@ -34,3 +34,7 @@ export const pemBegin = (type = ""): string => fake("-----", "BEGIN", type ? ` $
 
 /** PEM block end marker line: -----END <type> PRIVATE KEY----- (type "" = plain). */
 export const pemEnd = (type = ""): string => fake("-----", "END", type ? ` ${type}` : "", " PRIVATE KEY", "-----");
+
+/** Fake credentialed URL: scheme://user:pass@host (scanners flag literal user:pass@ URLs). */
+export const fakeUrl = (scheme: string, user: string, pass: string, host: string): string =>
+  fake(scheme, "://", user, ":", pass, "@", host);

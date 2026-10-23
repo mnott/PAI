@@ -1,3 +1,4 @@
+import { fakeUrl } from "../utils/fake-secret.js";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -42,7 +43,7 @@ describe("deriveRepo", () => {
     expect(deriveRepo("https://host/git/APPS/Repo.git\n")).toEqual({ apiBase: "https://host/git/api/v1", repo: "APPS/Repo" });
   });
   it("handles unprefixed and credentialed URLs", () => {
-    expect(deriveRepo("https://u:p@host/O/R")).toEqual({ apiBase: "https://host/api/v1", repo: "O/R" });
+    expect(deriveRepo(fakeUrl("https", "u", "p", "host/O/R"))).toEqual({ apiBase: "https://host/api/v1", repo: "O/R" });
   });
   it("rejects non-http origins", () => {
     expect(() => deriveRepo("git@host:O/R.git")).toThrow(ForgeError);

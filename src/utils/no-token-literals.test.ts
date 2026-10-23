@@ -18,6 +18,10 @@ const PATTERNS: Array<[string, RegExp]> = [
   ["gitlab", new RegExp(fake("gl", "pat-"))],
   ["aws", new RegExp(fake("AK", "IA[A-Z0-9]{16}"))],
   ["google", new RegExp(fake("AI", "za[A-Za-z0-9_-]{30}"))],
+  ["google-35", new RegExp(fake("AI", "za[A-Za-z0-9_-]{35}"))],
+  ["slack-any", new RegExp(fake("xo", "x[abposr]-"))],
+  // scheme://user:pass with a real (non-redacted) password
+  ["url-creds", new RegExp(fake("[a-z]+://", "[^\\s/:\"'`@\\[]+:", "[^\\s/@\"'`\\[]+@"))],
   ["pem", new RegExp(fake("-----", "BEGIN ", "[A-Z ]*PRIVATE KEY"))],
 ];
 
