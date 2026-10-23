@@ -292,15 +292,18 @@ const backfillIdsCmd: CommandDef = {
 const moveCmd: CommandDef = {
   name: "move",
   summary: "Reattribute a registry session to another project",
-  description: "Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates.",
-  args: [{ name: "SESSION_ID", required: true, summary: "Claude session id or its first characters" }],
+  description: "Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates. Rows with no Claude id are addressed by `--project` plus `--number` (or `--numbers` for a batch), or by their numeric registry row id.",
+  args: [{ name: "SESSION_ID", summary: "Claude session id or its first characters, or a bare numeric registry row id" }],
   options: [
+    { name: "project", type: "string", value: "SLUG", summary: "Project the session is registered under (with --number/--numbers)" },
+    { name: "number", type: "number", value: "N", summary: "Note number of the session within --project, as `pai session list` shows it" },
+    { name: "numbers", type: "string", value: "N1,N2,...", summary: "Batch: several note numbers within --project, one result line per row" },
     { name: "to", type: "string", value: "PROJECT", summary: "Slug of the project to move the session to" },
     { ...OPT.dryRun, summary: "Show what would move, change nothing" },
   ],
-  examples: ["pai session move cdd93e8d --to pai", "pai session move cdd93e8d --to pai --dry-run"],
+  examples: ["pai session move cdd93e8d --to pai", "pai session move cdd93e8d --to pai --dry-run", "pai session move 4711 --to pai", "pai session move --project caseleaf --number 12 --to pai", "pai session move --project caseleaf --numbers 12,15,40 --to pai"],
   seeAlso: ["pai session route", "pai project info"],
-  run: (c) => legacy(() => cmdMove({ id: c.args.SESSION_ID as string, to: c.opts.to as string | undefined, dryRun: c.dryRun })),
+  run: (c) => legacy(() => cmdMove({ id: c.args.SESSION_ID as string | undefined, project: c.opts.project as string | undefined, number: c.opts.number as number | undefined, numbers: c.opts.numbers as string | undefined, to: c.opts.to as string | undefined, dryRun: c.dryRun })),
 };
 
 /** Subcommands added to `pai session` (list/open/new/rename are the foundation's). */

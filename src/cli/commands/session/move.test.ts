@@ -68,3 +68,28 @@ describe("moveSession", () => {
     await expect(moveSession(backend, "cdd9", "a")).rejects.toThrow(/already belongs/);
   });
 });
+
+describe("moveSession selectors", () => {
+  it("moves by project + number when the row has no Claude id", async () => {
+    const a = await project("a");
+    const b = await project("b");
+    const s = await backend.createSession({ projectId: a.id, number: 7, date: "2026-10-14", slug: "x", title: "No id", filename: "7.md", createdAt: 1 });
+    const r = await moveSession(backend, { project: "a", number: 7 }, "b");
+    expect(r).toMatchObject({ title: "No id", from: "a", to: "b", number: 1 });
+    expect((await backend.getSessionById(s.id))?.project_id).toBe(b.id);
+  });
+
+  it("moves by bare numeric registry row id", async () => {
+    const a = await project("a");
+    const b = await project("b");
+    const s = await backend.createSession({ projectId: a.id, number: 3, date: "2026-10-14", slug: "x", title: "By row", filename: "3.md", createdAt: 1 });
+    await moveSession(backend, String(s.id), "b");
+    expect((await backend.getSessionById(s.id))?.project_id).toBe(b.id);
+  });
+
+  it("errors on an unknown number", async () => {
+    await project("a");
+    await project("b");
+    await expect(moveSession(backend, { project: "a", number: 99 }, "b")).rejects.toThrow(/No session #99/);
+  });
+});
