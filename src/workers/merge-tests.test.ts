@@ -63,6 +63,22 @@ describe("merge related tests", () => {
     expect(passSummary(" Test Files  14 passed (14)\n      Tests  212 passed (212)\n")).toBe("14 files, 212 passed");
   });
 
+  it("sums summaries across chunked runs", () => {
+    const out =
+      " Test Files  100 passed (100)\n      Tests  500 passed (500)\n" +
+      " Test Files  100 passed (100)\n      Tests  500 passed (500)\n" +
+      " Test Files  50 passed (50)\n      Tests  250 passed (250)\n";
+    expect(passSummary(out)).toBe("250 files, 1250 passed");
+  });
+
+  it("a background process holding stdout does not delay a passing run", () => {
+    const t0 = Date.now();
+    const r = runRelatedTests(tmp(), "x", cfg('sh -c "sleep 30 >/dev/null 2>&1 & echo ok" {files}'), git(["a.ts"]), 50);
+    expect(r.status).toBe("passed");
+    expect(r.line).not.toContain("timed out");
+    expect(Date.now() - t0).toBeLessThan(5_000);
+  });
+
   it("skips when verify is empty", () => {
     const r = runRelatedTests(tmp(), "x", cfg(""), git(["a.ts"]));
     expect(r.status).toBe("skipped");

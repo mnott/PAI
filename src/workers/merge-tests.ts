@@ -60,10 +60,14 @@ export const FILES_PER_COMMAND = 100;
  * command gets its own process group; on timeout the whole group is killed,
  * so the test tree (npx, node, workers) cannot outlive the check. Stops at
  * the first command that does not exit 0. Input arrives on stdin (it can be
- * larger than an env var or argv allows).
+ * larger than an env var or argv allows). A command is done on `exit`, not
+ * `close`: a background process still holding the pipes would otherwise pin
+ * a passing run until the timeout; after a short grace for the last output
+ * the pipes are destroyed and the group killed.
  */
 const RUNNER = `
 const { spawn } = require("node:child_process");
+const GRACE_MS = process.env.PAI_VERIFY_PIPE_GRACE_MS ? Number(process.env.PAI_VERIFY_PIPE_GRACE_MS) : 500;
 let raw = "";
 process.stdin.on("data", (d) => (raw += d));
 process.stdin.on("end", async () => {
@@ -81,7 +85,14 @@ process.stdin.on("end", async () => {
       c.stdout.on("data", (d) => (output += d));
       c.stderr.on("data", (d) => (output += d));
       c.on("error", (e) => { clearTimeout(t); done({ code: 1, signal: null, to, error: String(e.message || e) }); });
-      c.on("close", (code, signal) => { clearTimeout(t); try { process.kill(-c.pid, "SIGKILL"); } catch {} done({ code, signal, to, error: null }); });
+      c.on("exit", (code, signal) => {
+        clearTimeout(t);
+        setTimeout(() => {
+          c.stdout.destroy(); c.stderr.destroy();
+          try { process.kill(-c.pid, "SIGKILL"); } catch {}
+          done({ code, signal, to, error: null });
+        }, GRACE_MS);
+      });
     });
     if (r.to) { res.timedOut = true; break; }
     if (r.error) { res.error = r.error; res.code = 1; break; }
@@ -99,10 +110,10 @@ interface RunOutcome {
   output: string;
 }
 
-function runCommands(cwd: string, env: NodeJS.ProcessEnv, cmds: string[], timeoutSec: number): RunOutcome {
+function runCommands(cwd: string, env: NodeJS.ProcessEnv, cmds: string[], timeoutSec: number, pipeGraceMs?: number): RunOutcome {
   const r = spawnSync(process.execPath, ["-e", RUNNER], {
     cwd,
-    env,
+    env: pipeGraceMs ? { ...env, PAI_VERIFY_PIPE_GRACE_MS: String(pipeGraceMs) } : env,
     input: JSON.stringify({ cmds, timeoutMs: timeoutSec * 1000 }),
     encoding: "utf8",
     timeout: timeoutSec * 1000 + 30_000, // backstop; the runner enforces the real limit
@@ -186,12 +197,20 @@ export function failingFiles(output: string): string[] {
   return [...set];
 }
 
-/** "14 files, 212 passed" from vitest's summary lines, or null. */
+/** "14 files, 212 passed" summed over every vitest summary line (chunked runs print one per command), or null. */
 export function passSummary(output: string): string | null {
   const text = stripAnsi(output);
-  const files = /Test Files\s+(?:.*?,\s*)?(\d+) passed/.exec(text) ?? /Test Files\s+(\d+)/.exec(text);
-  const tests = /Tests\s+(?:.*?,\s*)?(\d+) passed/.exec(text);
-  return files && tests ? `${files[1]} files, ${tests[1]} passed` : null;
+  let files = 0;
+  let tests = 0;
+  let seen = false;
+  for (const m of text.matchAll(/Test Files\s+(?:.*?,\s*)?(\d+) passed/g)) { files += Number(m[1]); seen = true; }
+  for (const m of text.matchAll(/Tests\s+(?:.*?,\s*)?(\d+) passed/g)) { tests += Number(m[1]); seen = true; }
+  if (!seen) {
+    const f = /Test Files\s+(\d+)/.exec(text);
+    if (f) return `${f[1]} files`;
+    return null;
+  }
+  return `${files} files, ${tests} passed`;
 }
 
 /** Run the related tests for the merge `oldHead..HEAD`; never throws. */
@@ -199,7 +218,9 @@ export function runRelatedTests(
   cwd: string,
   oldHead: string,
   settings: RelatedSettings,
-  git: (cwd: string, args: string[]) => string
+  git: (cwd: string, args: string[]) => string,
+  /** Test hook: shorten the runner's pipe-drain grace. */
+  pipeGraceMs?: number
 ): RelatedResult {
   const skip = (why: string): RelatedResult => ({ status: "skipped", line: `related tests: skipped (${why})`, failing: [] });
   if (!settings.verify.trim()) return skip("workers.merge.verify is empty");
@@ -219,7 +240,7 @@ export function runRelatedTests(
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
   const cmds: string[] = [];
   for (let i = 0; i < run.length; i += FILES_PER_COMMAND) cmds.push(buildRelatedCommand(settings.verify, run.slice(i, i + FILES_PER_COMMAND)));
-  const r = runCommands(cwd, env, cmds, timeoutSec);
+  const r = runCommands(cwd, env, cmds, timeoutSec, pipeGraceMs);
   const output = r.output;
   if (r.timedOut) {
     return { status: "failed", line: `related tests: timed out after ${timeoutSec}s`, failing: [] };
