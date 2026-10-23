@@ -4,6 +4,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.19] - 2026-10-23
+
+### Fixed
+
+- **A hook whose script file does not exist is reported** as `missing-script` in `pai audit tokens hooks` and as a warning in `pai build doctor` (found by the acceptance run of the eleven new features).
+
 ## [1.0.18] - 2026-10-23
 
 ### Fixed
