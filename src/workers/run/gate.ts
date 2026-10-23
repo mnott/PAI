@@ -407,9 +407,7 @@ function cloudEscalationTarget(config: WorkersConfig, className: string | undefi
   const tiers = config.tiers ?? [];
   const tier = tierOf(tiers, className);
   const above = tier ? tierAbove(tiers, tier) : null;
-  const entry = above?.session || !above?.models.length ? config.escalate.cloud.tier : above?.models[0];
-  if (!entry) return null;
-  const { provider: name, model } = parseEntry(entry);
+  const { provider: name, model } = above && !above.session && above.models.length ? parseEntry(above.models[0]) : config.escalate.cloud;
   const p = getProviderOrNative(config, name);
   if (!p || !p.enabled || isLoopbackProvider(p)) return null;
   // the native login needs no model pin: the subscription's default answers
@@ -439,12 +437,14 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
   const trigger = { kind: "repeated-failure" as const, reason: `pool host ended the run (${why})` };
   const commits = st?.worktreeDir && st?.worktreeBase ? commitLines(st.worktreeDir, st.worktreeBase) : [];
   const branch = st?.branch ?? undefined;
-  const rerunOpts = (o: { providerFlag: string; modelFlag?: string; label: string; escalatedFrom: string[]; onStarted: (id: string) => void }): Promise<number> =>
+  const p0 = a.parsed.prompt;
+  let swapped = false;
+  const rerunOpts = (o: { providerFlag: string; modelFlag?: string; prompt: string; label: string; escalatedFrom: string[]; onStarted: (id: string) => void }): Promise<number> =>
     (a.runner ?? runWorker)({
       providerFlag: o.providerFlag,
       modelFlag: o.modelFlag,
       label: o.label,
-      claudeArgs: a.claudeArgs,
+      claudeArgs: a.claudeArgs.map((x) => (!swapped && x === p0 ? ((swapped = true), o.prompt) : x)),
       _escalatedFrom: o.escalatedFrom,
       _route: undefined,
       onWorkerStart: (id2) => {
@@ -468,7 +468,9 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
   };
   // the tier above, when escalation is on and that tier is not the session
   // and this task has not already escalated out of `from` (no ping-pong)
-  if (config.escalate.enabled && from && above && !above.session && above.models.length && !already.includes(from)) {
+  // escalation and the cloud fall-through are a local run's; a cloud run re-runs on its own target
+  const localRun = !!a.route?.local || isLoopbackProvider(a.target.provider);
+  if (localRun && config.escalate.enabled && from && above && !above.session && above.models.length && !already.includes(from)) {
     const out = await runEscalation(
       {
         action: { action: "rerun", from, to: above },
@@ -484,7 +486,7 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
   const target = cloudEscalationTarget(config, a.className);
   // the fall-through rule is a local run's: a cloud run that died in the host
   // re-runs fresh on its own target, not once more on the cloud
-  if (target && a.route?.local) {
+  if (localRun && target && a.route) {
     appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: `pool host ended the run (${why})` });
     process.stderr.write(`pai worker: ${wid} on ${a.target.providerName} ended in the pool host (${why}) — re-running on the cloud\n`);
     return (a.runner ?? runWorker)({
