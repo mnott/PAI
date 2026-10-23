@@ -164,6 +164,10 @@ vaultIndex:
 # Index <PAI home>/lessons (review-gated lessons) for memory search.
 lessonsIndex:
   enabled: true
+# `pai lessons propose --draft`: candidates kept after ranking by strength.
+lessons:
+  draft:
+    max: 10
 # Harness session ingestion (src/harness): names from the adapter registry
 # (claude-code, codex). Read-only; an adapter whose store is absent never runs.
 harness:
