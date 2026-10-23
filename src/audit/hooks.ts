@@ -124,6 +124,9 @@ export function defaultCaptureDir(): string {
   return join(paiHomePath("History"), "raw-outputs");
 }
 
+/** Live capture file or a rotated backup (`<day>_all-events.jsonl.1`, `.2`, ...). */
+const CAPTURE_FILE = /\.jsonl(\.\d+)?$/;
+
 /**
  * Counts hook events in the raw-capture JSONL files modified since `sinceMs`
  * (capture-all-events lines carry `hook_event_type` and `timestamp`). Files
@@ -139,7 +142,7 @@ export async function observedHookEvents(captureDir: string, sinceMs: number): P
 
   for (const monthDir of monthDirs) {
     for (const name of readdirSync(monthDir)) {
-      if (!name.endsWith(".jsonl")) continue;
+      if (!CAPTURE_FILE.test(name)) continue;
       const file = join(monthDir, name);
       try {
         if (statSync(file).mtimeMs < sinceMs) continue;
@@ -170,7 +173,7 @@ export async function observedMcpServers(captureDir: string, sinceMs: number): P
 
   for (const monthDir of monthDirs) {
     for (const name of readdirSync(monthDir)) {
-      if (!name.endsWith(".jsonl")) continue;
+      if (!CAPTURE_FILE.test(name)) continue;
       const file = join(monthDir, name);
       try {
         if (statSync(file).mtimeMs < sinceMs) continue;
@@ -300,7 +303,7 @@ function observedHookEventsSync(captureDir: string, sinceMs: number): Map<string
 
   for (const monthDir of monthDirs) {
     for (const name of readdirSync(monthDir)) {
-      if (!name.endsWith(".jsonl")) continue;
+      if (!CAPTURE_FILE.test(name)) continue;
       const file = join(monthDir, name);
       let text: string;
       try {

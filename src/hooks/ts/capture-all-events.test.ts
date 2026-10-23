@@ -3,8 +3,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, mkdtempSync, readdirSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 
 describe('capture-all-events: agent-sessions.json hardening', () => {
@@ -67,5 +69,26 @@ describe('capture-all-events: agent-sessions.json hardening', () => {
     expect(mappings['session1']).toBe('pai');
     expect(mappings['session2']).toBe('designer');
     expect(mappings['session3']).toBe('researcher');
+  });
+});
+
+describe('capture-all-events: MCP tool events', () => {
+  it('writes a PreToolUse event for an mcp__ tool with payload.tool_name intact', () => {
+    const home = mkdtempSync(join(tmpdir(), 'cap-mcp-'));
+    const script = join(dirname(fileURLToPath(import.meta.url)), 'capture-all-events.ts');
+    const payload = { session_id: 's-mcp', tool_name: 'mcp__aibroker__aibroker_receive', tool_input: {}, tool_use_id: 'tu1' };
+    const r = spawnSync('npx', ['tsx', script, '--event-type', 'PreToolUse'], {
+      input: JSON.stringify(payload),
+      encoding: 'utf-8',
+      env: { ...process.env, PAI_HOME: home },
+      timeout: 60_000,
+    });
+    expect(r.status).toBe(0);
+    const dir = join(home, 'History', 'raw-outputs');
+    const month = readdirSync(dir)[0];
+    const file = join(dir, month, readdirSync(join(dir, month))[0]);
+    const event = JSON.parse(readFileSync(file, 'utf-8').trim());
+    expect(event.hook_event_type).toBe('PreToolUse');
+    expect(event.payload.tool_name).toBe('mcp__aibroker__aibroker_receive');
   });
 });
