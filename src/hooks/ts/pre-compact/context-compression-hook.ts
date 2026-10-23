@@ -37,6 +37,7 @@ import { getContextFill, formatContextFill } from '../lib/context-fill.js';
 import { contentToText, isNoiseFilePath, preferCwdFiles } from '../lib/transcript-text.js';
 import { readContextHandoverCache, judgeHandover } from '../lib/context-handover-cache.js';
 import { bindHandoverEvidence } from '../lib/handover-evidence.js';
+import { addNoteSession } from '../../../session/note-sessions.js';
 
 interface HookInput {
   session_id: string;
@@ -677,6 +678,7 @@ async function main() {
         ? `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.\n\n${state}`
         : `Context compression triggered at ~${tokenDisplay} tokens with ${stats.messageCount} messages.`;
       appendCheckpoint(notePath, checkpointBody);
+      addNoteSession(notePath, hookInput.session_id);
 
       // 2. Write work items to "Work Done" section (uses merged cumulative data)
       if (merged.workItems.length > 0) {

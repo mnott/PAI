@@ -6,6 +6,7 @@
 
 import { OPT, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { cmdActive, cmdAutoRoute, cmdInfo, cmdRename, cmdRoute, cmdSlug, cmdTag } from "./session/commands.js";
+import { cmdBackfillIds } from "./session/backfill-ids.js";
 import { cmdAutosave } from "./session/autosave.js";
 import { cmdCheckpoint } from "./session/checkpoint.js";
 import { cmdClearNames } from "./session/clear-names.js";
@@ -272,10 +273,25 @@ export const restoreCmd: CommandDef = {
     ),
 };
 
+const backfillIdsCmd: CommandDef = {
+  name: "backfill-ids",
+  summary: "Record the Claude session ids in existing session notes",
+  description:
+    "Maps each session note of a project to the transcripts that overlap its creation-to-last-change window and writes `sessions: [...]` into its frontmatter. Notes with no clear match are left alone and counted as ambiguous or none.",
+  options: [
+    { ...OPT.dryRun, summary: "Report the counts and the planned mapping, write nothing" },
+    { name: "dir", type: "string", value: "PATH", summary: "Project directory whose notes to map (default: the current directory)" },
+    { name: "all", type: "boolean", default: false, summary: "Map the notes of every project" },
+  ],
+  examples: ["pai session backfill-ids --dry-run", "pai session backfill-ids --dir ~/.claude/pai --dry-run", "pai session backfill-ids --all"],
+  seeAlso: ["pai session info"],
+  run: (c) => legacy(() => cmdBackfillIds({ dryRun: c.dryRun, all: c.opts.all === true, dir: c.opts.dir as string | undefined })),
+};
+
 /** Subcommands added to `pai session` (list/open/new/rename are the foundation's). */
 export const SESSION_NOTE_COMMANDS: CommandDef[] = [
   infoCmd, slugCmd, tagCmd, routeCmd, handoverCmd, checkpointCmd, autosaveCmd, activeCmd,
-  recentCmd, gotoCmd, pauseCmd, autoRouteCmd, cleanupCmd, restoreCmd,
+  recentCmd, gotoCmd, pauseCmd, autoRouteCmd, cleanupCmd, restoreCmd, backfillIdsCmd,
 ];
 
 // ---------------------------------------------------------------------------
