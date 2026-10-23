@@ -4,6 +4,16 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.21] - 2026-10-23
+
+### Added
+
+- **npm publish credential check:** `npm publish` (prepublishOnly) and `pai build doctor` test the npm token first (`pai build npm-auth`); a rejected token stops with the renewal steps and the token page link instead of an E404 during the upload.
+
+### Fixed
+
+- **Lessons draft:** a test covers the `--local-only` refusal when no local model is running (no cloud call).
+
 ## [1.0.20] - 2026-10-23
 
 ### Fixed
