@@ -79,6 +79,12 @@ function eventsOfEntry(sessionId: string, e: Entry): HarnessEvent[] {
 
 const NAME = "codex";
 
+/** Sort/filter time of an updatedAt stamp; an unparsable one counts as 0 (oldest). */
+function sortMs(updatedAt: string): number {
+  const ms = Date.parse(updatedAt);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
 /** rollout-*.jsonl under `dir`, recursing into subdirectories. */
 function rolloutFiles(dir: string): string[] {
   const out: string[] = [];
@@ -132,8 +138,8 @@ export const codexAdapter: HarnessAdapter = {
     const out = rolloutFiles(root).map(toSession);
     const since = opts.sinceMs !== undefined ? Date.now() - opts.sinceMs : undefined;
     return out
-      .filter((s) => since === undefined || Date.parse(s.updatedAt) >= since)
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      .filter((s) => since === undefined || sortMs(s.updatedAt) >= since)
+      .sort((a, b) => sortMs(b.updatedAt) - sortMs(a.updatedAt));
   },
   *readEvents(session: HarnessSession): Iterable<HarnessEvent> {
     let text: string;

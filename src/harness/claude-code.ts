@@ -87,6 +87,12 @@ function sessionFiles(dir: string): string[] {
 
 const CHUNK = 64 * 1024;
 
+/** Sort/filter time of an updatedAt stamp; an unparsable one counts as 0 (oldest). */
+function sortMs(updatedAt: string): number {
+  const ms = Date.parse(updatedAt);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
 /** Parsed lines of `text`; the first and last may be cut by the chunk edge, so `partialFirst`/`partialLast` drop them. */
 function parseLines(text: string, partialFirst: boolean, partialLast: boolean): Line[] {
   const lines = text.split("\n");
@@ -163,8 +169,8 @@ export const claudeCodeAdapter: HarnessAdapter = {
     }
     const since = opts.sinceMs !== undefined ? Date.now() - opts.sinceMs : undefined;
     return out
-      .filter((s) => since === undefined || Date.parse(s.updatedAt) >= since)
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      .filter((s) => since === undefined || sortMs(s.updatedAt) >= since)
+      .sort((a, b) => sortMs(b.updatedAt) - sortMs(a.updatedAt));
   },
   *readEvents(session: HarnessSession): Iterable<HarnessEvent> {
     let text: string;
