@@ -301,8 +301,13 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       return escalateAfterPoolUnreachable(a, wid, why);
     }
     // the host was busy: a local run must not fall through to a fresh spawn
-    // on the same busy local server — it escalates one tier up instead
-    if ("miss" in outcome && outcome.miss === "busy") {
+    // on the same busy local server — it escalates one tier up instead. Only
+    // when the run actually started in the host (a live status): a busy
+    // answer with no status means the task never ran, so it takes the plain
+    // skip path and the fresh spawn, gated exactly once like any other miss
+    // (2026-10-23: a declined busy attempt was gated again by the respawn and
+    // the escalation re-ran a task that never started)
+    if ("miss" in outcome && outcome.miss === "busy" && a.spawnT0 !== undefined) {
       return escalateAfterBusy(a, wid);
     }
     recordPoolSkip(a, a.target.providerName, why, { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
@@ -428,6 +433,9 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
   const { logDir, config } = a;
   const st = loadStatus(logDir, wid);
   if (st?.rc === 143) return 143;
+  // no status at all: the host never took the task, so nothing died — the
+  // task runs fresh on the same target (the plain skip path), not escalated
+  if (!st) return respawnAfterHostDeath(a, wid, why);
   if (statusIsLive(st)) finaliseHostDeath(a, wid, st, why);
   const label = a.label ?? st?.label ?? UNLABELED;
   const tiers = config.tiers ?? [];
@@ -518,10 +526,16 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
  * A run the host finished is reported as it is; a run still marked live died
  * in the host and escalates like any host-error.
  */
-export async function escalateAfterClaimError(a: ExecuteArgs, wid: string, detail: string): Promise<number> {
+export async function escalateAfterClaimError(a: ExecuteArgs, wid: string, detail: string): Promise<number | null> {
   const st = loadStatus(a.logDir, wid);
-  if (!st || isTerminal(st.state)) {
-    const rc = st?.rc ?? 1;
+  // no status: the host never took the task — the plain skip path runs it
+  // fresh, one skip line, no escalation of a run that never started
+  if (!st) {
+    recordPoolSkip(a, a.target.providerName, "claim-error", { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
+    return null;
+  }
+  if (isTerminal(st.state)) {
+    const rc = st.rc ?? 1;
     if (!a.quiet) printResult(a.parsed.outputFormat, null, rc, a.logDir, wid, null);
     return rc;
   }
