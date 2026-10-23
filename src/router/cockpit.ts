@@ -1147,7 +1147,7 @@ export interface QueueProvider {
   /** Engine conversation-cache slots, when configured (slots used = running.length). */
   conversationSlots?: number;
   running: Array<{ id: string; label: string; ageSec: number; now?: string; session: string; model: string }>;
-  waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string }>;
+  waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string; priority?: string }>;
 }
 
 /** Session blocks with a `max_parallel` profile key: group name -> limit. */
@@ -1253,6 +1253,7 @@ export function cockpitQueue(
       position: r.position,
       session: s ? sessionGroup(s) : "other",
       model: s?.model ?? "",
+      priority: r.priority ?? "normal",
     });
   }
   const snap = readSchedFile(logDir, now);

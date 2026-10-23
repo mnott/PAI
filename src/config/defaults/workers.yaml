@@ -118,6 +118,15 @@ workers:
     # A ticket waiting longer than this jumps ahead of newer tickets of any
     # session (milliseconds).
     agingMs: 900000
+  # Queue admission priority. When a provider is full, queued runs are admitted
+  # high before normal before low (oldest first within a priority, sessions
+  # taking turns); running workers are never preempted. A run's priority is
+  # `pai worker run --priority high|normal|low`, else its session's entry here,
+  # else normal.
+  priority:
+    # Named session -> priority of every run it starts, e.g.
+    #   sessions: { "Jobs": high, "Background": low }
+    sessions: {}
   # Local-model idle watcher.
   localIdle:
     enabled: true

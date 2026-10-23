@@ -19,7 +19,7 @@ function wkRow(it,p,waiting,serial){
  var idle=!waiting&&it.ageSec>86400,mdl=p.provider+"/"+(it.model||"?");
  var cells=[waiting?String(it.position):"",(waiting&&serial?'<span class="grip" title="drag to reorder">&#8942;&#8942;</span>':'')+'<span title="'+esc(it.id+" · "+it.label)+'">'+esc(it.label||it.id)+'</span>'];
  cells.push(serial?wkSpan(it.session||"other"):wkSpan(mdl));
- cells.push(waiting?'waiting':idle?'idle session':'running',wkDur(waiting?it.waitedSec:it.ageSec),waiting?'':esc(idle?"":it.now||""),waiting?WK_BTN.split("@").join(esc(it.id)):"");
+ cells.push(waiting?'waiting'+(it.priority&&it.priority!=='normal'?' ('+esc(it.priority)+')':''):idle?'idle session':'running',wkDur(waiting?it.waitedSec:it.ageSec),waiting?'':esc(idle?"":it.now||""),waiting?WK_BTN.split("@").join(esc(it.id)):"");
  var drag=waiting&&serial;
  cells[0]='<span class="'+(idle?'dim':'')+'"'+(drag?' data-qrow="1" data-id="'+esc(it.id)+'" data-prov="'+esc(p.provider)+'" data-pos="'+it.position+'"':"")+'>'+cells[0]+'</span>';
  return cells;

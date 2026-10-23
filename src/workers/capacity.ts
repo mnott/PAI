@@ -19,11 +19,11 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
-import { isLocalProvider, type CapacityConfig } from "./config.js";
+import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
 import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
 
-export type { CapacityConfig };
+export type { CapacityConfig, QueuePriority };
 
 /**
  * The fallback used when the config cannot be read; the policy values live in
@@ -84,6 +84,8 @@ interface QueueEntry {
   rank?: number;
   /** Epoch ms the run started waiting; written once at enqueue, kept across every reorder. */
   since?: number;
+  /** Admission priority; unset = normal. */
+  priority?: QueuePriority;
 }
 
 /** Write a ticket atomically (temp + rename): a poller never reads it half-written. The ".tmp" suffix keeps it out of the listing. */
@@ -94,7 +96,7 @@ function writeTicket(path: string, text: string): void {
 }
 
 const entryText = (e: QueueEntry): string =>
-  `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}`;
+  `${e.pid}${e.front ? " front" : ""}${e.rank === undefined ? "" : ` ${e.rank}`}${e.since === undefined ? "" : ` @${e.since}`}${e.priority && e.priority !== "normal" ? ` p:${e.priority}` : ""}`;
 
 /** A ticket deleted (its run stopped) or written unparsably between the listing and this read is absent, not an error. */
 function readEntry(dir: string, id: string): QueueEntry | null {
@@ -108,12 +110,14 @@ function readEntry(dir: string, id: string): QueueEntry | null {
   const rank = marks.map(Number).find((n) => Number.isInteger(n));
   const at = marks.find((m) => m.startsWith("@"));
   const since = at ? Number(at.slice(1)) : NaN;
+  const prio = marks.find((m) => m.startsWith("p:"))?.slice(2) as QueuePriority | undefined;
   return {
     id,
     pid: Number(p),
     front: marks.includes("front"),
     ...(rank === undefined ? {} : { rank }),
     ...(Number.isFinite(since) ? { since } : {}),
+    ...(prio && QUEUE_PRIORITIES.includes(prio) ? { priority: prio } : {}),
   };
 }
 
@@ -137,7 +141,8 @@ export interface FairInput {
 
 /**
  * Grant order of a provider's waiting tickets: `--now` (front) tickets first,
- * then tickets waiting longer than the aging bound (oldest first), then fair
+ * then by priority (high, normal, low), and within a priority tickets waiting
+ * longer than the aging bound (oldest first), then fair
  * share — the next slot goes to the session with the fewest slots (running +
  * already ordered ahead), ties to the session served least recently, then to
  * the one whose head waited longest, so
@@ -149,32 +154,38 @@ export function fairOrder(i: FairInput): QueueEntry[] {
   const since = (e: QueueEntry): number => e.since ?? i.now;
   const front = i.entries.filter((e) => e.front);
   const rest = i.entries.filter((e) => !e.front);
-  const aged = rest.filter((e) => i.now - since(e) > aging).sort((a, b) => since(a) - since(b));
-  const agedIds = new Set(aged.map((e) => e.id));
-  const per = new Map<string, QueueEntry[]>();
-  for (const e of rest) {
-    if (agedIds.has(e.id)) continue;
-    const k = i.sessionOf(e.id);
-    per.set(k, [...(per.get(k) ?? []), e]);
-  }
   const load = new Map<string, number>();
   for (const k of i.running) load.set(k, (load.get(k) ?? 0) + 1);
-  for (const e of [...front, ...aged]) load.set(i.sessionOf(e.id), (load.get(i.sessionOf(e.id)) ?? 0) + 1);
-  const out: QueueEntry[] = [...front, ...aged];
-  while (per.size) {
-    let best = "";
-    for (const [k, q] of per) {
-      if (!best) best = k;
-      else {
-        const [lb, lk] = [load.get(best) ?? 0, load.get(k) ?? 0];
-        const [sb, sk] = [i.lastServed?.get(best) ?? 0, i.lastServed?.get(k) ?? 0];
-        if (lk < lb || (lk === lb && (sk < sb || (sk === sb && since(q[0]) < since(per.get(best)![0]))))) best = k;
-      }
+  for (const e of front) load.set(i.sessionOf(e.id), (load.get(i.sessionOf(e.id)) ?? 0) + 1);
+  const out: QueueEntry[] = [...front];
+  // higher priority is admitted first; fairness and aging only order tickets of the same priority
+  for (const tier of QUEUE_PRIORITIES) {
+    const mine = rest.filter((e) => (e.priority ?? "normal") === tier);
+    const aged = mine.filter((e) => i.now - since(e) > aging).sort((a, b) => since(a) - since(b));
+    const agedIds = new Set(aged.map((e) => e.id));
+    const per = new Map<string, QueueEntry[]>();
+    for (const e of mine) {
+      if (agedIds.has(e.id)) continue;
+      const k = i.sessionOf(e.id);
+      per.set(k, [...(per.get(k) ?? []), e]);
     }
-    const q = per.get(best)!;
-    out.push(q.shift()!);
-    load.set(best, (load.get(best) ?? 0) + 1);
-    if (!q.length) per.delete(best);
+    for (const e of aged) load.set(i.sessionOf(e.id), (load.get(i.sessionOf(e.id)) ?? 0) + 1);
+    out.push(...aged);
+    while (per.size) {
+      let best = "";
+      for (const [k, q] of per) {
+        if (!best) best = k;
+        else {
+          const [lb, lk] = [load.get(best) ?? 0, load.get(k) ?? 0];
+          const [sb, sk] = [i.lastServed?.get(best) ?? 0, i.lastServed?.get(k) ?? 0];
+          if (lk < lb || (lk === lb && (sk < sb || (sk === sb && since(q[0]) < since(per.get(best)![0]))))) best = k;
+        }
+      }
+      const q = per.get(best)!;
+      out.push(q.shift()!);
+      load.set(best, (load.get(best) ?? 0) + 1);
+      if (!q.length) per.delete(best);
+    }
   }
   return out;
 }
@@ -306,6 +317,8 @@ export interface QueueRow {
   status?: WorkerStatus;
   /** Epoch ms the run started waiting (not the last reorder); undefined for an entry written before this field existed. */
   since?: number;
+  /** Admission priority of the ticket (normal when unset). */
+  priority?: QueuePriority;
 }
 
 /**
@@ -333,6 +346,7 @@ export function queueRows(logDir: string, caps: Record<string, number | undefine
         cap: caps[prov],
         status: loadStatus(logDir, e.id) ?? undefined,
         ...(e.since === undefined ? {} : { since: e.since }),
+        ...(e.priority ? { priority: e.priority } : {}),
       });
     });
   }
@@ -354,6 +368,8 @@ export interface CapacityInfo {
   behind?: string;
   /** Epoch ms this run started waiting. */
   sinceMs: number;
+  /** Admission priority when not normal. */
+  priority?: QueuePriority;
 }
 
 /** The pane / footer line of a waiting run: "queued on p: position 2 of 3, behind <label> — waiting since 18:12". */
@@ -376,14 +392,75 @@ export interface QueuedFile {
   behind?: string;
   /** The run's own label, shown last. */
   label?: string;
+  /** Admission priority when not normal. */
+  priority?: QueuePriority;
 }
 
 /** The pane's queue line, refreshed in place: "queued on gyro-m · position 2 of 5 · waiting 2m10s · <label>". */
 export function queuedPaneLine(q: QueuedFile): string {
   const parts = [`queued on ${q.provider}`, `position ${q.position} of ${q.queued}`, `waiting ${fmtElapsed(q.elapsedSec)}`];
+  if (q.priority && q.priority !== "normal") parts.push(`${q.priority} priority`);
   if (q.behind) parts.push(`behind ${q.behind}`);
   if (q.label) parts.push(q.label.replace(/[\x00-\x1f\x7f-\x9f]/g, ""));
   return parts.join(" · ");
+}
+
+/** Cut `s` to `width` characters at a word boundary with a trailing ellipsis; never mid-word unless one word fills the whole width. */
+export function ellipsize(s: string, width: number): string {
+  if (width <= 0 || s.length <= width) return s;
+  const room = Math.max(1, width - 1);
+  const cut = s.slice(0, room);
+  if (s[room] === " ") return `${cut.trimEnd()}…`;
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > 0 ? cut.slice(0, sp) : cut).trimEnd()}…`;
+}
+
+/** What identifies the place in line: a new line is printed only when this changes (the elapsed time alone does not). */
+const queueStateKey = (q: QueuedFile): string => `${q.provider}|${q.position}|${q.queued}|${q.behind ?? ""}|${q.priority ?? ""}`;
+
+export interface QueueLineWriter {
+  /** Show the queue state; null clears a shown line. */
+  show(q: QueuedFile | null): void;
+  /** Remove the in-place line (TTY only). */
+  clear(): void;
+}
+
+/**
+ * The wrapper's queue line. On a terminal one line is refreshed in place
+ * (\r + clear line, cut to the width with an ellipsis); it is committed with a
+ * newline and a fresh line started only when the position or the run ahead
+ * changes. Off a terminal (a log) a line is written only on such a change.
+ */
+export function queueLineWriter(o: { write: (s: string) => void; tty: boolean; columns?: () => number | null | undefined }): QueueLineWriter {
+  let key: string | null = null;
+  let shown = false;
+  let last = "";
+  return {
+    show(q) {
+      if (!q) return this.clear();
+      const k = queueStateKey(q);
+      const full = queuedPaneLine(q);
+      if (!o.tty) {
+        if (k === key) return;
+        key = k;
+        o.write(`${full}\n`);
+        return;
+      }
+      const cols = o.columns?.();
+      const line = cols && cols > 1 ? ellipsize(full, cols - 1) : full;
+      if (k === key && line === last) return;
+      o.write(`${shown && k !== key ? "\n" : ""}\r\x1b[K${line}`);
+      key = k;
+      last = line;
+      shown = true;
+    },
+    clear() {
+      if (o.tty && shown) o.write("\r\x1b[K");
+      shown = false;
+      key = null;
+      last = "";
+    },
+  };
 }
 
 /**
@@ -437,6 +514,8 @@ export interface CapacityOpts {
   disabled?: boolean;
   /** "front": wait ahead of the provider's other queued runs (--now). */
   priority?: "front";
+  /** Admission priority (high before normal before low); default normal. */
+  tier?: QueuePriority;
   log?: (line: string) => void;
   /** Waited this long (default `config.maxTotalWaitMs`): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
   alarmMs?: number;
@@ -473,7 +552,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
   const t0 = now();
-  writeTicket(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""} @${t0}`);
+  writeTicket(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`);
 
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
@@ -504,6 +583,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       queued: c.queued,
       ...(c.behind ? { behind: c.behind } : {}),
       sinceMs: t0,
+      priority: o.tier ?? "normal",
       line: `queued: ${total} on ${label}, cap ${cap} (position ${c.position})`,
     };
   };
@@ -521,6 +601,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     queued: i.queued,
     elapsedSec: i.elapsedSec,
     ...(c.behind ? { behind: c.behind } : {}),
+    ...(i.priority ? { priority: i.priority } : {}),
   });
   try {
     o.onWait?.(info());

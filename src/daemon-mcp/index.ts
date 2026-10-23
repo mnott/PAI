@@ -1630,6 +1630,7 @@ async function startShim(): Promise<void> {
             const s = r.status;
             lines.push(
               `  ${r.position}. ${r.id}` +
+                (r.priority && r.priority !== "normal" ? `  [${r.priority} priority]` : "") +
                 (s ? `  ${s.label}  ${s.cwd.split("/").pop() ?? s.cwd}  waited ${r.since === undefined ? ageOf(s.updated) : ageOf(nowStamp(new Date(r.since)))}` : "") +
                 `  position ${r.position} of ${r.queued}`
             );
