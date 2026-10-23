@@ -4,6 +4,17 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.12] - 2026-10-23
+
+### Fixed
+
+- **`pai worker merge` related tests:** file names with `$&`/`$'` or a leading `-` reach vitest verbatim; a timeout kills the whole test process tree; long file lists are run in chunks; signal exits are reported as such; names come from `git diff -z`.
+- **Plans:** a child whose related tests fail after its merge counts as merged with a warning, not as a conflict.
+- **Escalated runs:** the old branch cannot be merged (and so deleted) while its escalated run still works from it; a run stopped by an absolute `--deadline` is not escalated past it, and a `--max-minutes` re-run gets only the remaining budget.
+- **Raw-capture rotation is race-free** (one atomic rename to a stamped backup, the newest five kept).
+- **Lessons draft:** transcript text is redacted before it reaches any model; a cloud fallback is announced (`--local-only` refuses it); transcripts are streamed with a chunk and time budget (`lessons.draft.maxChunks`, `lessons.draft.timeoutSec`); quotes must be at least 20 characters; rule wording (always, never, must, …) raises a draft's rank.
+- **Project rule files** are only taken from a repository (a `.git` ancestor at or below the home folder) and never from a directory owned by another user.
+
 ## [1.0.11] - 2026-10-23
 
 ### Added
