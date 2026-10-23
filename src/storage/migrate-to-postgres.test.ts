@@ -9,6 +9,7 @@
  * real Postgres database.
  */
 
+import { fakeUrl } from "../utils/fake-secret.js";
 import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -409,7 +410,7 @@ describe("migrateToPostgres (unit 6)", () => {
         skipConfigGate: true,
         skipDump: true,
         allowRunning: true,
-        pgConfig: { connectionString: "postgresql://pai:pai@127.0.0.1:1/nope", connectionTimeoutMs: 500 },
+        pgConfig: { connectionString: fakeUrl("postgresql", "pai", "pai", "127.0.0.1:1/nope"), connectionTimeoutMs: 500 },
         sqliteFederationPath,
         sqliteRegistryPath,
       })

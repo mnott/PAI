@@ -7,7 +7,7 @@ import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
 import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
-import { fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
+import { fakeUrl, fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
 
 // Fake token-shaped fixtures assembled at runtime so no scanner flags a literal.
 const AKIA_REST = "IOSFODNN7EXAMPLE";
@@ -665,8 +665,8 @@ describe("loop guard: a denied runner re-run gets the end of its last output", (
 
 describe("maskSecrets", () => {
   const cases: Array<[string, string]> = [
-    ["DATABASE_URL=postgres://u:hunter2@db/x", "DATABASE_URL=postgres://u:[REDACTED]@db/x"],
-    ["see https://user:hunter2@example.com/repo.git", "see https://user:[REDACTED]@example.com/repo.git"],
+    ["DATABASE_URL=" + fakeUrl("postgres", "u", "hunter2", "db/x"), "DATABASE_URL=postgres://u:[REDACTED]@db/x"],
+    ["see " + fakeUrl("https", "user", "hunter2", "example.com/repo.git"), "see https://user:[REDACTED]@example.com/repo.git"],
     [`AWS_ACCESS_KEY_ID=${fakeAwsKey("AKIA", AKIA_REST)}`, "AWS_ACCESS_KEY_ID=[REDACTED]"],
     [`found ${fakeAwsKey("AKIA", AKIA_REST)} in env`, "found [REDACTED] in env"],
     [`aws_secret_access_key = ${fake("wJalrXUtnFEMI", "/K7MDENG", "/bPxRfiCYEXAMPLEKEY")}`, "aws_secret_access_key = [REDACTED]"],
