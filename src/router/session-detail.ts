@@ -85,9 +85,24 @@ function changedLines(name: string, input: Record<string, unknown>): number {
   return 0;
 }
 
+/**
+ * Prompt text as the user typed it: a slash command encoded as
+ * `<command-message>/<command-name>/<command-args>` tags renders as
+ * `/Name args` (the original text when the tags are absent or malformed);
+ * `<system-reminder>` and `<local-command-stdout>` blocks are stripped.
+ */
+function cleanPromptText(text: string): string {
+  const cmd = text.match(/<command-message>[^<]*<\/command-message>\s*<command-name>\/([^<\s]+)<\/command-name>(?:\s*<command-args>([^<]*)<\/command-args>)?/);
+  if (cmd) return `/${cmd[1]}${cmd[2] ? ` ${cmd[2]}` : ""}`;
+  return text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/g, "")
+    .trim();
+}
+
 /** Skill name a user line announces ("/name" command tag or "Launching skill: name"), or null. */
 function loadedSkill(text: string): string | null {
-  const cmd = text.match(/<command-name>\/?([^<\s]+)<\/command-name>/);
+  const cmd = text.match(/<command-name>\/([^<\s]+)<\/command-name>/);
   if (cmd) return cmd[1];
   const l = text.match(/^Launching skill: (\S+)/);
   return l ? l[1] : null;
@@ -132,7 +147,7 @@ export async function sessionDetail(
     if (obj.type === "user") {
       if (isRealUserPrompt(obj)) {
         close();
-        const text = extractUserPromptText(obj);
+        const text = cleanPromptText(extractUserPromptText(obj));
         const skill = loadedSkill(text);
         if (skill) out.skills.push({ name: skill, ts });
         cur = { turn: { idx: out.turnCount++, ts, prompt: maskSecrets(text).slice(0, PROMPT_CHARS), tools: [], edits: [], commands: 0 }, tools: new Map(), edits: new Set() };

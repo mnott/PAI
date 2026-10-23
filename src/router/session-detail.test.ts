@@ -45,6 +45,16 @@ const lines = [
     use("t8", "Read", { file_path: "/work/proj/a.ts" }),
   ], "claude-test-2"),
   user("third prompt", "2026-01-01T00:02:00Z"),
+  user(
+    "<command-message>Sync</command-message> <command-name>/Sync</command-name> <command-args>PAI</command-args>",
+    "2026-01-01T00:03:00Z"
+  ),
+  user("<command-message>Go</command-message> <command-name>/Go</command-name>", "2026-01-01T00:04:00Z"),
+  user("<command-name>/Broken</command-name> <command-args>orphan</command-args>", "2026-01-01T00:05:00Z"),
+  user(
+    "plain ask <system-reminder>hidden note</system-reminder> tail <local-command-stdout>scrolled output</local-command-stdout>",
+    "2026-01-01T00:06:00Z"
+  ),
 ];
 
 beforeAll(() => {
@@ -63,8 +73,8 @@ describe("sessionDetail", () => {
     const d = (await sessionDetail(ID, { projectsDir: projects }))!;
     expect(d.cwd).toBe("/work/proj");
     expect(d.models).toEqual(["claude-test-1", "claude-test-2"]);
-    expect(d.turnCount).toBe(3);
-    expect(d.turns.map((t) => t.idx)).toEqual([0, 1, 2]);
+    expect(d.turnCount).toBe(7);
+    expect(d.turns.map((t) => t.idx)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(d.turns[0].commands).toBe(1);
     expect(d.turns[0].edits).toEqual(["/work/proj/a.ts", "/work/proj/b.ts"]);
     expect(d.turns[0].tools).toContainEqual({ name: "mcp__srv__ping", count: 2 });
@@ -82,7 +92,12 @@ describe("sessionDetail", () => {
 
   it("lists skills, MCP failures and the hook denial", async () => {
     const d = (await sessionDetail(ID, { projectsDir: projects }))!;
-    expect(d.skills).toEqual([{ name: "End", ts: "2026-01-01T00:00:02Z" }]);
+    expect(d.skills).toEqual([
+      { name: "End", ts: "2026-01-01T00:00:02Z" },
+      // well-formed command markup renders to "/Name" before skill detection,
+      // so only markup that survives the cleanup still counts as a skill
+      { name: "Broken", ts: "2026-01-01T00:05:00Z" },
+    ]);
     expect(d.mcp).toEqual([{ server: "srv", calls: 2, failures: 1 }]);
     expect(d.denials).toHaveLength(1);
     expect(d.denials[0]).toMatchObject({ tool: "Bash", reason: "rm is not allowed here" });
@@ -96,8 +111,20 @@ describe("sessionDetail", () => {
 
   it("keeps only the last maxTurns turns but reports the total", async () => {
     const d = (await sessionDetail(ID, { projectsDir: projects, maxTurns: 2 }))!;
-    expect(d.turnCount).toBe(3);
-    expect(d.turns.map((t) => t.prompt)).toEqual(["second prompt", "third prompt"]);
+    expect(d.turnCount).toBe(7);
+    expect(d.turns.map((t) => t.prompt)).toEqual([
+      "<command-name>/Broken</command-name> <command-args>orphan</command-args>",
+      "plain ask  tail",
+    ]);
+  });
+
+  it("renders slash-command prompts as /Name args and strips reminder/stdout blocks", async () => {
+    const d = (await sessionDetail(ID, { projectsDir: projects, maxTurns: 100 }))!;
+    expect(d.turns[3].prompt).toBe("/Sync PAI");
+    expect(d.turns[4].prompt).toBe("/Go");
+    // malformed markup (no command-message before command-name) keeps the original text
+    expect(d.turns[5].prompt).toBe("<command-name>/Broken</command-name> <command-args>orphan</command-args>");
+    expect(d.turns[6].prompt).toBe("plain ask  tail");
   });
 
   it("returns null for an unknown id and for an id that is not safe", async () => {
@@ -133,7 +160,7 @@ describe("GET /api/session/<id>/detail", () => {
     try {
       const ok = await ask(port, `/api/session/${ID}/detail`);
       expect(ok.status).toBe(200);
-      expect(JSON.parse(ok.body)).toMatchObject({ id: ID, turnCount: 3 });
+      expect(JSON.parse(ok.body)).toMatchObject({ id: ID, turnCount: 7 });
       expect((await ask(port, "/api/session/ffffffff-0000-4000-8000-000000000000/detail")).status).toBe(404);
       expect((await ask(port, "/api/session/short/detail")).status).toBe(400);
       expect((await ask(port, "/api/session/..%2f..%2fetc%2fpasswd/detail")).status).toBe(400);
