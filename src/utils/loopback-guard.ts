@@ -18,6 +18,8 @@ export interface LoopbackGuardOptions {
   allowHost?: (hostname: string) => boolean;
   /** Refuse a body that is not application/json (415). */
   requireJson?: boolean;
+  /** Apply the Host / Origin checks to GET / HEAD / OPTIONS too (reads of private data, e.g. prompt search). */
+  guardSafeMethods?: boolean;
 }
 
 export interface GuardRefusal {
@@ -29,7 +31,7 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** null = allowed, otherwise the refusal to send. Safe methods always pass. */
 export function loopbackRefusal(req: IncomingMessage, opts: LoopbackGuardOptions = {}): GuardRefusal | null {
-  if (SAFE_METHODS.has((req.method ?? "GET").toUpperCase())) return null;
+  if (!opts.guardSafeMethods && SAFE_METHODS.has((req.method ?? "GET").toUpperCase())) return null;
   const host = req.headers.host;
   if (typeof host !== "string" || !URL.canParse(`http://${host}`)) return { status: 403, message: "host refused" };
   const parsed = new URL(`http://${host}`);
