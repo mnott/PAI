@@ -365,6 +365,57 @@ describe("draftFromTranscript", () => {
         w.mockRestore();
       }
     });
+
+    // Deterministic version of the same path: local resolution is made to fail
+    // (mocked module), so the refusal does not depend on whether a local model runs.
+    describe("with local resolution failing", () => {
+      const quote = "it must be IMPOSSIBLE to start any command not in a pane";
+      const resolveLocalProvider = vi.fn(async (..._a: unknown[]) => {
+        throw new Error("no local model server is running");
+      });
+      const spawnClaude = vi.fn<(...args: [prompt: string, tier?: string]) => Promise<string>>();
+      const panesItem = item({ strength: 4 });
+      const panesReply: string = JSON.stringify([panesItem]);
+      spawnClaude.mockImplementation((async () => panesReply) as () => Promise<string>);
+
+      // defaultClient imports both modules dynamically, so doMock + a fresh
+      // import of lessons.js per call is enough; the static import above stays
+      // unmocked for the rest of the file.
+      async function draftLocal(opts: Parameters<typeof draftRankedFromTranscript>[1] = {}) {
+        resolveLocalProvider.mockClear();
+        spawnClaude.mockClear();
+        vi.resetModules();
+        vi.doMock("../workers/local-provider.js", () => ({ resolveLocalProvider }));
+        vi.doMock("./kg-extraction.js", () => ({ spawnClaude }));
+        try {
+          const { draftFromTranscript } = await import("./lessons.js");
+          return await draftFromTranscript(fixture(), opts);
+        } finally {
+          vi.doUnmock("../workers/local-provider.js");
+          vi.doUnmock("./kg-extraction.js");
+          vi.resetModules();
+        }
+      }
+
+      it("localOnly refuses with a clear message and never calls the cloud fallback", async () => {
+        await expect(draftLocal({ localOnly: true })).rejects.toThrow(/no local model running.*--local-only/);
+        expect(resolveLocalProvider).toHaveBeenCalled();
+        expect(spawnClaude).not.toHaveBeenCalled();
+      });
+
+      it("without localOnly the cloud fallback is called once and the notice is printed", async () => {
+        const err: string[] = [];
+        const w = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown) => (err.push(String(c)), true));
+        try {
+          const out = await draftLocal();
+          expect(spawnClaude).toHaveBeenCalledTimes(1);
+          expect(err.join("")).toContain("drafting with the cloud model");
+          expect(out.map((l) => l.title)).toEqual(["Commands only in panes"]);
+        } finally {
+          w.mockRestore();
+        }
+      });
+    });
   });
 
   describe("pre-filter", () => {
