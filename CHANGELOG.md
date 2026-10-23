@@ -4,6 +4,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.18] - 2026-10-23
+
+### Fixed
+
+- **`pai config validate` no longer warns about the `workers.tiers` mirror** in `config.yaml` while it is identical to the effective `tiers` in `workers.yaml`; it warns, naming both values, only when they differ.
+
 ## [1.0.17] - 2026-10-23
 
 ### Fixed
