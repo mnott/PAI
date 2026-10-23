@@ -660,16 +660,26 @@ describe("worker runs: scan findings cell", () => {
     expect(cell({ block: 0, confirm: 0, warn: 0 })).toBe("");
   });
 
-  it("lists the non-zero severities, red when any block, else amber", () => {
+  it("shows the compact form, red when any block, else amber", () => {
     const a = cell({ block: 1, confirm: 0, warn: 2 });
-    expect(a).toContain("1 block · 2 warn");
+    expect(a).toContain(">1b 2w</span>");
     expect(a).toContain('class="bad"');
     const b = cell({ block: 0, confirm: 1, warn: 3 });
-    expect(b).toContain("1 confirm · 3 warn");
+    expect(b).toContain(">1c 3w</span>");
     expect(b).toContain('class="warn"');
+  });
+
+  it("carries the full text in the cell's title, so the narrow column never clips it", () => {
+    const c = cell({ block: 1, confirm: 2, warn: 3 });
+    expect(c).toContain('title="end-of-run security scan findings: 1 block · 2 confirm · 3 warn"');
+    expect(c).toContain(">1b 2c 3w</span>");
   });
 
   it("is wired into the worker run row from the polled runs JSON", () => {
     expect(COCKPIT_HTML).toContain("extra:findingsCell(s.workerFindings)");
+  });
+
+  it("the findings column has a layout-driven min width, so it is not clipped at the table edge", () => {
+    expect(COCKPIT_HTML).toMatch(/\.wr-tbl\{[^}]*grid-template-columns:[^}]*minmax\(72px,max-content\)/);
   });
 });

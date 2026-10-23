@@ -84,12 +84,13 @@ function speedHtml(){
 }
 /** One row for both Worker runs and Sessions by tokens (one owner): status dot, label, model chip, token bar relative to o.max, number, right-hand cell (duration or age), hit%, optional extra markup; full detail in the row's title.
  *  o: {st dot state, lab, full tooltip, dot title, model, models, w tokens, max, du, hit ratio|null, extra markup}. */
-/** Scan findings cell: empty when all zero, else "1 block · 2 confirm · 3 warn" coloured by the highest severity (block red, confirm and warn amber). */
+/** Scan findings cell: empty when all zero, else the compact form "1b 2c 3w" (the full "1 block · 2 confirm · 3 warn" rides in the cell's title, so the column stays narrow and nothing clips) coloured by the highest severity (block red, confirm and warn amber). */
 function findingsCell(f){
  if(!f)return"";
- var parts=["block","confirm","warn"].filter(function(k){return f[k]>0}).map(function(k){return f[k]+" "+k});
- if(!parts.length)return"";
- return'<span class="'+(f.block>0?"bad":"warn")+'" title="end-of-run security scan findings">'+parts.join(" · ")+'</span>';
+ var AB={block:"b",confirm:"c",warn:"w"};
+ var keys=["block","confirm","warn"].filter(function(k){return f[k]>0});
+ if(!keys.length)return"";
+ return'<span class="'+(f.block>0?"bad":"warn")+'" title="end-of-run security scan findings: '+keys.map(function(k){return f[k]+" "+k}).join(" · ")+'">'+keys.map(function(k){return f[k]+AB[k]}).join(" ")+'</span>';
 }
 function runHead(timeLab){
  function h(full,ab,cls,tip){return'<span class="wr-h '+cls+'" title="'+esc(tip||full)+'"><span class="wr-hf">'+esc(full)+'</span><span class="wr-ha">'+ab+'</span></span>'}

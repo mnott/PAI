@@ -115,6 +115,7 @@ const SHIPPED = {
   sessionDetailTurns: 200,
   sessionNameMaxPct: 35,
   workerRows: 15,
+  runsFindingsMinWidthPx: 72,
   lowRequestMin: 5,
   // saved model colours older than this (days, by their "@ts" stamp) are pruned
   colorPruneDays: 90,
@@ -185,6 +186,8 @@ export interface CockpitLayout {
   sessionDetailTurns: number;
   sessionNameMaxPct: number;
   workerRows: number;
+  /** Runs table: least width of the scan-findings column (the compact form fits). */
+  runsFindingsMinWidthPx: number;
   /** models under this many requests are chips, not rings. */
   lowRequestMin: number;
   /** saved model colours (localStorage) older than this many days are pruned. */
@@ -287,6 +290,7 @@ export function cockpitLayout(): CockpitLayout {
     sessionDetailTurns: num(s, "sessionDetailTurns", SHIPPED.sessionDetailTurns),
     sessionNameMaxPct: num(s, "sessionNameMaxPct", SHIPPED.sessionNameMaxPct),
     workerRows: num(s, "workerRows", SHIPPED.workerRows),
+    runsFindingsMinWidthPx: num(s, "runsFindingsMinWidthPx", SHIPPED.runsFindingsMinWidthPx),
     lowRequestMin: numZ(s, "lowRequestMin", SHIPPED.lowRequestMin),
     colorPruneDays: num(s, "colorPruneDays", SHIPPED.colorPruneDays),
     pollMs: num(s, "pollMs", SHIPPED.pollMs),
