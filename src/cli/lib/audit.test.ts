@@ -189,4 +189,17 @@ describe("last-seen formatting", () => {
     expect(table).toContain("configured, not used");
     expect(table).not.toContain("ago)");
   });
+  it("hooks table flags a missing script as RED with its path", () => {
+    const report: HooksReport = {
+      encoding: "cl100k_base",
+      settingsFiles: [],
+      readings: [{ event: "SessionStart", command: "/hooks/gone.mjs", tokens: 0, state: "missing-script", missingPath: "/hooks/gone.mjs" }],
+      totalsByEvent: { SessionStart: 0 },
+      preToolUseHooks: [],
+      preToolUseRewritesBash: false,
+    };
+    const table = captureStdout(() => printHooks(report, 24, NOW));
+    expect(table).toContain("missing-script");
+    expect(table).toContain("RED: SessionStart hook script does not exist: /hooks/gone.mjs");
+  });
 });

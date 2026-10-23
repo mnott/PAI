@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import { jobPaths, parseEtime, parseTable, reapJob, sweepOrphans, type ProcRow }
 import { buildNext, enqueue, listBuilds, patchTicket, releaseBuildsOf, renderBuildQueue } from "./queue.js";
 import { poolSlots, slotsFor } from "./config.js";
 import { bootedSimulators, shutdownAdded, type Simctl } from "./simulators.js";
+import { hookEventFindings } from "./doctor.js";
 import { buildGateReason } from "../hooks/ts/lib/build-gate.js";
 
 let dir: string;
@@ -193,6 +194,56 @@ describe("simulator cleanup", () => {
     gone = true;
     expect(await r).toBe(129);
     expect(log).toEqual(["ORPHAN"]);
+  });
+});
+
+describe("doctor hook findings", () => {
+  /** Temp HOME for both settings paths (the user one resolves via CLAUDE_CONFIG_DIR). */
+  function tempClaudeHome(): { cwd: string; restore: () => void } {
+    const cwd = mkdtempSync(join(tmpdir(), "pai-doctor-"));
+    mkdirSync(join(cwd, ".claude"), { recursive: true });
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(cwd, ".claude");
+    return {
+      cwd,
+      restore: () => {
+        if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = prev;
+        rmSync(cwd, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it("reports a configured hook whose script does not exist", async () => {
+    const { cwd, restore } = tempClaudeHome();
+    try {
+      writeFileSync(
+        join(cwd, ".claude", "settings.json"),
+        JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: join(cwd, "gone.sh") }] }] } }),
+        "utf8"
+      );
+      const findings = await hookEventFindings(cwd, { captureDir: join(cwd, "no-captures") });
+      const stop = findings.find((f) => f.event === "Stop");
+      expect(stop?.missingScript).toBe(join(cwd, "gone.sh"));
+    } finally {
+      restore();
+    }
+  });
+
+  it("no missingScript for a hook whose script exists", async () => {
+    const { cwd, restore } = tempClaudeHome();
+    try {
+      writeFileSync(join(cwd, "present.sh"), "", "utf8");
+      writeFileSync(
+        join(cwd, ".claude", "settings.json"),
+        JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: join(cwd, "present.sh") }] }] } }),
+        "utf8"
+      );
+      const findings = await hookEventFindings(cwd, { captureDir: join(cwd, "no-captures") });
+      expect(findings.find((f) => f.event === "Stop")?.missingScript).toBeUndefined();
+    } finally {
+      restore();
+    }
   });
 });
 

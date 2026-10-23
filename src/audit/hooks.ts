@@ -22,7 +22,7 @@ interface HookEntry {
   timeout?: number;
 }
 
-interface HookGroup {
+export interface HookGroup {
   matcher?: string;
   hooks?: HookEntry[];
 }
@@ -43,6 +43,8 @@ export interface HookReading {
    *  observed in the window (the hook may silently not be running). */
   state: "configured" | "observed" | "missing-script";
   lastSeen?: string;
+  /** For state "missing-script": the expanded path that does not exist. */
+  missingPath?: string;
 }
 
 export interface HooksReport {
@@ -54,11 +56,12 @@ export interface HooksReport {
   preToolUseRewritesBash: boolean;
 }
 
-function settingsPaths(cwd: string): string[] {
+export function settingsPaths(cwd: string): string[] {
   return [join(claudeHomeDir(), "settings.json"), join(cwd, ".claude", "settings.json")].filter(existsSync);
 }
 
-function readSettings(path: string): SettingsJson {
+/** settings.json parsed leniently: a malformed file reads as empty. */
+export function readSettings(path: string): SettingsJson {
   try {
     return JSON.parse(readFileSync(path, "utf8")) as SettingsJson;
   } catch {
@@ -66,13 +69,15 @@ function readSettings(path: string): SettingsJson {
   }
 }
 
-/** Expand ${PAI_DIR} and $HOME/${HOME} the way settings.json's own hooks do. */
-function expandCommand(command: string, env: Record<string, string>): string {
-  const paiDir = env.PAI_DIR ?? process.env.PAI_DIR ?? claudeHomeDir();
+/** Expand ${ADAPTER_DIR}/${PAI_DIR} and $HOME/${HOME}/~ the way the hooks are installed. */
+export function expandCommand(command: string, env: Record<string, string>): string {
+  const adapterDir = env.ADAPTER_DIR ?? process.env.ADAPTER_DIR ?? env.PAI_DIR ?? process.env.PAI_DIR ?? claudeHomeDir();
   return command
-    .replace(/\$\{PAI_DIR\}/g, paiDir)
+    .replace(/\$\{ADAPTER_DIR\}/g, adapterDir)
+    .replace(/\$\{PAI_DIR\}/g, adapterDir)
     .replace(/\$\{HOME\}/g, homedir())
-    .replace(/\$HOME\b/g, homedir());
+    .replace(/\$HOME\b/g, homedir())
+    .replace(/^~(?=\/|$)/, homedir());
 }
 
 function syntheticStdin(cwd: string, eventName: string): string {
@@ -208,15 +213,30 @@ export async function observedMcpServers(captureDir: string, sinceMs: number): P
   return observed;
 }
 
-/** True when the command references a file path that does not exist (a hook
- *  script that was moved or deleted — the hook silently never runs). */
-function commandHasMissingFile(command: string): boolean {
-  for (const token of command.split(/\s+/)) {
-    if (!token.includes("/")) continue;
-    if (token.includes("$") || token.includes("*")) continue;
-    if (!existsSync(token)) return true;
+/**
+ * The script a hook command points at, or null when it points at none: the
+ * first token when that is a path, else the script following a `node`/`sh`/
+ * `bash` interpreter. Tokens still holding `$` or `*` are unexpanded or
+ * globbed and can't be checked.
+ */
+function commandScript(command: string): string | null {
+  const tokens = command.trim().split(/\s+/);
+  const first = tokens[0];
+  if (first && first.includes("/")) return first.includes("$") || first.includes("*") ? null : first;
+  if (first === "node" || first === "sh" || first === "bash") {
+    const script = tokens[1];
+    if (!script || !script.includes("/")) return null;
+    if (script.includes("$") || script.includes("*")) return null;
+    return script;
   }
-  return false;
+  return null;
+}
+
+/** The missing script path for a hook command, or null when nothing is missing
+ *  (a hook script that was moved or deleted — the hook silently never runs). */
+export function missingScriptPath(command: string): string | null {
+  const script = commandScript(command);
+  return script && !existsSync(script) ? script : null;
 }
 
 /** Seam for tests: a real shell under a 20s wall-clock kill is load-dependent. */
@@ -267,14 +287,16 @@ export function auditHooks(cwd: string, run?: HookRunner | AuditHooksOptions, ma
           const tokens = countTokens(stdout);
           totalsByEvent[eventName] += tokens;
           const seen = observed.get(eventName);
+          const missing = missingScriptPath(command);
           readings.push({
             event: eventName,
             matcher: group.matcher,
             command,
             tokens,
             error,
-            state: commandHasMissingFile(command) ? "missing-script" : seen ? "observed" : "configured",
+            state: missing ? "missing-script" : seen ? "observed" : "configured",
             lastSeen: seen?.last,
+            missingPath: missing ?? undefined,
           });
         }
       }

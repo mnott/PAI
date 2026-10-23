@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadBuildsConfig } from "../hooks/ts/lib/build-gate.js";
-import { auditHooks, observedHookEvents, defaultCaptureDir, DEFAULT_SINCE_HOURS, OBSERVABLE_EVENTS } from "../audit/hooks.js";
+import { auditHooks, expandCommand, missingScriptPath, observedHookEvents, readSettings, settingsPaths, defaultCaptureDir, DEFAULT_SINCE_HOURS, OBSERVABLE_EVENTS, type HookGroup } from "../audit/hooks.js";
 
 export interface DoorFinding {
   door: string;
@@ -20,6 +20,8 @@ export interface HookEventFinding {
   configured: boolean;
   observed: boolean;
   lastSeen?: string;
+  /** A configured hook command whose script does not exist (the hook never runs). */
+  missingScript?: string;
 }
 
 export function doctor(cwd: string): { root: string | null; findings: DoorFinding[] } {
@@ -50,6 +52,22 @@ export async function hookEventFindings(
   const observed = await observedHookEvents(opts.captureDir ?? defaultCaptureDir(), now - sinceHours * 3_600_000);
 
   const configuredEvents = new Set(report.readings.map((r) => r.event));
+  // Every observable event, not just the audited ones: a hook to a deleted
+  // script never fires, so no capture can mark it observed — the missing
+  // script is the only finding that survives.
+  const missingByEvent = new Map<string, string>();
+  for (const path of settingsPaths(cwd)) {
+    const settings = readSettings(path);
+    for (const [event, groups] of Object.entries(settings.hooks ?? {}) as [string, HookGroup[]][]) {
+      for (const group of groups) {
+        for (const entry of group.hooks ?? []) {
+          if (!entry.command) continue;
+          const missing = missingScriptPath(expandCommand(entry.command, settings.env ?? {}));
+          if (missing) missingByEvent.set(event, missing);
+        }
+      }
+    }
+  }
   const findings: HookEventFinding[] = [];
   for (const event of OBSERVABLE_EVENTS) {
     const seen = observed.get(event);
@@ -58,6 +76,7 @@ export async function hookEventFindings(
       configured: configuredEvents.has(event),
       observed: !!seen,
       lastSeen: seen?.last,
+      missingScript: missingByEvent.get(event),
     });
   }
   return findings;

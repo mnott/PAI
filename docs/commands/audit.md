@@ -74,7 +74,7 @@ Token cost and observed state of every start-up and prompt hook
 pai audit tokens hooks [options]
 ```
 
-Lists each SessionStart and UserPromptSubmit hook with its state: observed (a capture for that event exists in the window), configured (never observed — the hook may silently not be running), or missing-script. With --run it executes them and measures what each adds to the context; without it nothing is executed.
+Lists each SessionStart and UserPromptSubmit hook with its state: observed (a capture for that event exists in the window), configured (never observed — the hook may silently not be running), or missing-script (the command's script does not exist on disk — the hook never runs). With --run it executes them and measures what each adds to the context; without it nothing is executed.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

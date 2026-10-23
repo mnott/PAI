@@ -124,7 +124,7 @@ const nextCmd: CommandDef = {
 const doctorCmd: CommandDef = {
   name: "doctor",
   summary: "Check the project's registered build doors and hook events",
-  description: "Reads .pai/builds.yaml above the current directory and flags every door that is missing or never calls `pai build lock`, which would bypass the queue. Also prints one line per hook event: observed (a capture proves it ran) or configured-but-never-observed (warning — the hook may silently not be running).",
+  description: "Reads .pai/builds.yaml above the current directory and flags every door that is missing or never calls `pai build lock`, which would bypass the queue. Also prints one line per hook event: observed (a capture proves it ran), configured-but-never-observed (warning — the hook may silently not be running), or a configured hook whose script no longer exists (Stop: script missing — the hook never runs).",
   examples: ["pai build doctor"],
   run: async (ctx) => {
     void ctx;
@@ -135,11 +135,15 @@ const doctorCmd: CommandDef = {
       if (!r.findings.length) out("no doors registered");
     }
     const sinceHours = 24;
+    let missingScripts = 0;
     for (const h of await hookEventFindings(process.cwd(), { sinceHours })) {
-      if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ? fmtSeenLocal(h.lastSeen) : ""}`.trimEnd());
+      if (h.missingScript) {
+        missingScripts++;
+        out(`Stop: script missing: ${h.missingScript}`);
+      } else if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ? fmtSeenLocal(h.lastSeen) : ""}`.trimEnd());
       else if (h.configured) out(`WARN ${h.event}: configured, never observed in ${sinceHours}h`);
     }
-    return r.findings.every((f) => f.ok) ? 0 : 1;
+    return r.findings.every((f) => f.ok) && missingScripts === 0 ? 0 : 1;
   },
 };
 
