@@ -18,8 +18,10 @@ function fixture(): string {
   writeFileSync(join(dist, "live-c.mjs"), "");
   return dist;
 }
+// Hermetic: inject an empty process list so the real machine's processes (and ps output)
+// cannot influence which generations survive — no live process -> current + previous only.
 const prune = (dist: string) =>
-  spawnSync("node", ["scripts/prune-dist.mjs", dist], { encoding: "utf8", env: { ...process.env, PRUNE_DIST_MAX_AGE_MS: String(24 * 3600_000) } });
+  spawnSync("node", ["scripts/prune-dist.mjs", dist], { encoding: "utf8", env: { ...process.env, PRUNE_DIST_MAX_AGE_MS: String(24 * 3600_000), PRUNE_DIST_PROCESSES: "[]" } });
 
 describe("reachableFrom", () => {
   it("follows static and dynamic imports from entries only; stale chunks importing each other stay unreachable", () => {

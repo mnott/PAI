@@ -227,9 +227,19 @@ export function pruneDist(distDir, { stat = statSync, exec = execFileSync } = {}
 
   const current = names(reachable);
   // Entries are rewritten by every build, so their mtimes identify the build; re-running prune on one build must not rotate.
+  // The manifest's own mtime is part of the stamp: prune writes the manifest on every run, so without it
+  // a second prune of the same build sees a fresh stamp, treats the just-recorded current generation as
+  // "previous", rotates it out, and deletes the chunks it just protected.
+  // Entries are rewritten by every build, so their mtimes identify the build; re-running prune on one
+  // build must not rotate. The manifest is rewritten by every prune, so its mtime must NOT be part of
+  // the stamp — only the entry mtimes change between builds.
   const stamp = ENTRIES.map((e) => statSync(e).mtimeMs).join(",");
   const sameBuild = manifest && manifest.stamp === stamp;
+  // The previous generation is the one before the current build's. On a re-run of the same build the
+  // current generation is already history[0], so the previous is history[1]; taking history[0] here
+  // protects the current generation (already reachable) and deletes the previous one.
   const history = sameBuild ? manifest.generations ?? [] : [...(manifest?.generations ?? [])];
+  const previous = sameBuild ? history.slice(1, 2) : history.slice(0, 1);
 
   const { oldest, error } = oldestLiveStartMs(DIST, { stat, exec });
   if (error) {
@@ -247,7 +257,7 @@ export function pruneDist(distDir, { stat = statSync, exec = execFileSync } = {}
       if (g === anchor || g.builtAt > oldest) for (const c of g.chunks) keepGenerations.add(c);
     }
   } else {
-    for (const g of history.slice(0, 1)) for (const c of g.chunks) keepGenerations.add(c);
+    for (const g of previous) for (const c of g.chunks) keepGenerations.add(c);
   }
 
   let removed = 0;
@@ -283,7 +293,11 @@ export function pruneDist(distDir, { stat = statSync, exec = execFileSync } = {}
     }
   }
 
-  const generations = [{ builtAt: Date.now(), chunks: current }, ...history].slice(0, MAX_GENERATIONS);
+  // On a re-run of the same build, keep the generation's original builtAt: a live process whose start
+  // time predates the build must still anchor it, and re-stamping it to "now" would rotate it out.
+  const generations = sameBuild
+    ? [{ builtAt: history[0]?.builtAt ?? Date.now(), chunks: current }, ...history.slice(1)].slice(0, MAX_GENERATIONS)
+    : [{ builtAt: Date.now(), chunks: current }, ...history].slice(0, MAX_GENERATIONS);
   writeFileSync(MANIFEST, JSON.stringify({ stamp, generations }));
 
   console.log(
