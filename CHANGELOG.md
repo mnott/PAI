@@ -9,6 +9,7 @@ All notable changes to PAI Knowledge OS are documented here.
 ### Fixed
 
 - **`pai worker merge` related tests:** a test command that leaves a background process holding its output is no longer reported as timed out; the result line counts the files and tests of every chunk, not only the first.
+- **`pai worker merge` always-tests:** a docs-only or test-only merge now runs `workers.merge.alwaysTests` instead of skipping the whole check; `vitest related` runs only when source files changed, and nothing runs only when the merge changed nothing. The result line names what ran (`related tests: skipped (no source change); always-tests: 3 files, 12 passed`).
 
 ## [1.0.15] - 2026-10-23
 

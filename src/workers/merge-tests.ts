@@ -35,10 +35,13 @@ export function filterSourceFiles(names: string[]): string[] {
   return names.filter((f) => SOURCE.test(f) && !TEST.test(f));
 }
 
+/** Every file the merge changed (any type), from a `git diff --name-only` listing. */
+export function changedFiles(cwd: string, oldHead: string, git: (cwd: string, args: string[]) => string): string[] {
+  return git(cwd, ["diff", "-z", "--name-only", oldHead, "HEAD"]).split("\0").filter(Boolean);
+}
+
 export function changedSourceFiles(cwd: string, oldHead: string, git: (cwd: string, args: string[]) => string): string[] {
-  return filterSourceFiles(
-    git(cwd, ["diff", "-z", "--name-only", oldHead, "HEAD", "--", "*.ts", "*.tsx", "*.mjs"]).split("\0").filter(Boolean)
-  );
+  return filterSourceFiles(changedFiles(cwd, oldHead, git));
 }
 
 const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -225,15 +228,20 @@ export function runRelatedTests(
   const skip = (why: string): RelatedResult => ({ status: "skipped", line: `related tests: skipped (${why})`, failing: [] });
   if (!settings.verify.trim()) return skip("workers.merge.verify is empty");
   if (!hasVitest(cwd) && settings.verify === DEFAULT_VERIFY) return skip("no vitest in package.json devDependencies");
-  let files: string[];
+  let all: string[];
   try {
-    files = changedSourceFiles(cwd, oldHead, git);
+    all = changedFiles(cwd, oldHead, git);
   } catch (e) {
     return skip(`cannot list changed files: ${(e as Error).message.split("\n")[0]}`);
   }
-  if (!files.length) return skip("no source files changed");
+  if (!all.length) return skip("nothing changed in the merge");
+  // Any change runs the always-tests (a docs-only merge still needs the repo
+  // guards); `vitest related` runs only when source files changed.
+  const files = filterSourceFiles(all);
   const always = resolveAlwaysTests(cwd, settings.alwaysTests ?? []);
+  if (!files.length && !always.files.length) return skip("no source files changed, no always-tests configured");
   const run = [...files, ...always.files];
+  const skipped = files.length ? "" : "related tests: skipped (no source change); always-tests: ";
   const note = always.missing.length ? ` (always-tests skipped: ${always.missing.join(", ")})` : "";
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
@@ -243,16 +251,18 @@ export function runRelatedTests(
   const r = runCommands(cwd, env, cmds, timeoutSec, pipeGraceMs);
   const output = r.output;
   if (r.timedOut) {
-    return { status: "failed", line: `related tests: timed out after ${timeoutSec}s`, failing: [] };
+    return { status: "failed", line: `${skipped}timed out after ${timeoutSec}s`, failing: [] };
   }
   if (r.code === 0 && !r.signal && !r.error) {
     const counts = always.files.length ? `${files.length} source files + ${always.files.length} always-tests, passed` : `${files.length} source files, passed`;
-    return { status: "passed", line: `related tests: ${passSummary(output) ?? counts}${note}`, failing: [] };
+    // No vitest summary (a custom verify command): name the files that ran.
+    const summary = passSummary(output) ?? (files.length ? counts : `${always.files.length} files, passed`);
+    return { status: "passed", line: `${skipped}${summary}${note}`, failing: [] };
   }
   const failing = failingFiles(output);
   const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const why = failing.length ? `failed: ${failing.join(", ")}` : `failed (${exit})`;
-  return { status: "failed", line: `related tests: ${why}${note}`, failing };
+  return { status: "failed", line: `${skipped}${why}${note}`, failing };
 }
 
 /** The shipped default template; a repo without vitest skips only when running this one. */
