@@ -48,7 +48,6 @@ import {
   LocalProviderRefusedError,
   assertLocalProviderAlive,
   tryPoolRun,
-  assertPoolPolicy,
   recordPoolSkip,
   gateStart,
 } from "./gate.js";
@@ -350,7 +349,6 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       };
       // the session pool (workers.pool) gets first crack: an eligible task
       // runs as one more turn of a warm claude instead of a fresh spawn
-      assertPoolPolicy(execArgs);
       await gateStart(execArgs);
       const pooledRc = await tryPoolRun(execArgs);
       if (pooledRc !== null) {

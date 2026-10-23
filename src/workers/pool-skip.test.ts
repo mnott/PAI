@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assertPoolPolicy, PoolRefusedError, tryPoolRun } from "./run.js";
+import { tryPoolRun } from "./run.js";
 import { runChain } from "./chain.js";
 import { rerunOnCloud } from "./run/escalate.js";
 import { workerArgs } from "./plan-deps.js";
@@ -133,52 +133,31 @@ describe("every non-pooled path records exactly one skip line", () => {
     await tryPoolRun(args(d, { quiet: false }, { enabled: false }));
     const out = w.mock.calls.map((c) => String(c[0])).join("");
     w.mockRestore();
-    expect(out).toContain("pool: not pooled (pool-off)");
+    expect(out).toContain("pai worker: not pooled (pool-off); running unpooled");
   });
 });
 
-describe("every headless start refuses caller-caused reasons unless noPool", () => {
-  const strict = (over: Record<string, unknown>, noPool = false) =>
-    args(dir(), { opts: { ...(noPool ? { noPool: true } : {}) }, ...over });
-  const caller: Array<[string, Record<string, unknown>]> = [
-    ["tools", { parsed: parsedOf({ allowedTools: ["Read,Edit,Write,Bash,Grep,Glob,WebFetch"] }) }],
-    ["mcp", { mcpFlag: "pai" }],
-    ["mcp grant", { parsed: parsedOf({ allowedTools: ["mcp__pai__x"] }) }],
-    ["system-prompt", { parsed: parsedOf({ callerSystemPrompt: true }) }],
-    ["stream-json", { parsed: parsedOf({ outputFormat: "stream-json" }) }],
-    ["browser", { noBrowser: false, parsed: parsedOf({ allowedTools: ["mcp__claude-in-chrome__tabs"] }) }],
+describe("a grant that does not fit the pool runs unpooled, never refused", () => {
+  const caller: Array<[string, string, Record<string, unknown>]> = [
+    ["tools", "tools", { parsed: parsedOf({ allowedTools: ["Read,Edit,Write,Bash,Grep,Glob,WebFetch"] }) }],
+    ["fewer tools", "tools", { parsed: parsedOf({ allowedTools: ["Read,Bash"] }) }],
+    ["mcp", "mcp", { mcpFlag: "pai" }],
+    ["system-prompt", "system-prompt", { parsed: parsedOf({ callerSystemPrompt: true }) }],
+    ["stream-json", "stream-json", { parsed: parsedOf({ outputFormat: "stream-json" }) }],
+    ["browser", "browser", { noBrowser: false, parsed: parsedOf({ allowedTools: ["mcp__claude-in-chrome__tabs"] }) }],
   ];
-  for (const [name, over] of caller) {
-    it(`${name}: refused, allowed with --no-pool`, () => {
-      expect(() => assertPoolPolicy(strict(over))).toThrow(PoolRefusedError);
-      expect(() => assertPoolPolicy(strict(over, true))).not.toThrow();
+  for (const [name, reason, over] of caller) {
+    it(`${name}: declines the pool, one stderr note, no throw`, async () => {
+      const d = dir();
+      const w = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const rc = await tryPoolRun(args(d, { quiet: false, ...over }));
+      const out = w.mock.calls.map((c) => String(c[0])).join("");
+      w.mockRestore();
+      expect(rc).toBeNull();
+      expect(out.match(/not pooled/g)).toHaveLength(1);
+      expect(out).toContain(`pai worker: not pooled (${reason}); running unpooled`);
     });
   }
-
-  it("tools message names the fix", () => {
-    expect(() => assertPoolPolicy(strict(caller[0]![1]))).toThrow(/grant adds WebFetch\); use the slot set Read,Edit,Write,Bash,Grep,Glob or pass --no-pool/);
-  });
-
-  const free: Array<[string, Record<string, unknown>, Record<string, unknown>?]> = [
-    ["pool off", { parsed: parsedOf({ allowedTools: ["Read"] }) }, { enabled: false }],
-    ["interactive", { parsed: parsedOf({ headless: false, prompt: null }) }],
-    ["resume", { resumeOf: "w0" }],
-    ["worktree", { worktreeFlag: true }],
-    ["native", { target: { providerName: "anthropic", provider: { models: {}, native: true } } }, { native: false }],
-    ["engine", { target: { providerName: "cx", provider: { models: {}, engine: "codex" } } }],
-    ["no spare", {}],
-  ];
-  for (const [name, over, pool] of free) {
-    it(`${name}: never refused`, () => {
-      expect(() => assertPoolPolicy(args(dir(), { opts: {}, ...over }, pool ?? {}))).not.toThrow();
-    });
-  }
-
-  it("a start that is not headless or only prints its command is never refused", () => {
-    const over = { mcpFlag: "pai" };
-    expect(() => assertPoolPolicy(args(dir(), { ...over, printCmd: true }))).not.toThrow();
-    expect(() => assertPoolPolicy(args(dir(), { ...over, parsed: parsedOf({ headless: false, prompt: null }) }))).not.toThrow();
-  });
 });
 
 describe("noPool is threaded through every entry point", () => {
