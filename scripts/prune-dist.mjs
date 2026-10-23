@@ -194,9 +194,9 @@ export function oldestLiveStartMs(distDir, { nowMs = Date.now(), stat = statSync
  * Generation manifest: `{ stamp, generations: [{ builtAt, chunks }] }`, newest first, bounded to
  * MAX_GENERATIONS. A chunk survives while it belongs to a generation still needed by a live
  * process (see LIVE PROCESS GRACE above); without a manifest (first run) the age rule applies.
- * `stat` injects the stat implementation (tests); defaults to statSync.
+ * `stat` injects the stat implementation, `exec` the ps runner (tests).
  */
-export function pruneDist(distDir, { stat = statSync } = {}) {
+export function pruneDist(distDir, { stat = statSync, exec = execFileSync } = {}) {
   const DIST = resolve(distDir);
   /** The same entry list as tsdown.config.ts, as built output paths. */
   const ENTRIES = [
@@ -231,7 +231,7 @@ export function pruneDist(distDir, { stat = statSync } = {}) {
   const sameBuild = manifest && manifest.stamp === stamp;
   const history = sameBuild ? manifest.generations ?? [] : [...(manifest?.generations ?? [])];
 
-  const { oldest, error } = oldestLiveStartMs(DIST, { stat });
+  const { oldest, error } = oldestLiveStartMs(DIST, { stat, exec });
   if (error) {
     console.error(`prune-dist: cannot list processes (${error}) — pruning nothing this run.`);
     return;

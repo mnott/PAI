@@ -174,14 +174,15 @@ describe("prune-dist", () => {
         return localized; // the C-locale call still produced localized output (mocked failure)
       };
       const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let warnings: string[];
       try {
         pruneDist(dist, { exec });
+        warnings = spy.mock.calls.map((c) => String(c[0]));
       } finally {
         spy.mockRestore();
       }
       expect(existsSync(join(dist, "chunk-old.mjs"))).toBe(true); // live generations must survive
       expect(existsSync(join(dist, "chunk-new.mjs"))).toBe(true);
-      const warnings = spy.mock.calls.map((c) => String(c[0]));
       expect(warnings.length).toBe(1); // exactly one warning
       expect(warnings[0]).toContain("pruning nothing");
     } finally {
