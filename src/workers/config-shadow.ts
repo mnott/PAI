@@ -39,6 +39,9 @@ import { workersYamlPath } from "./workers-config.js";
 export const WORKERS_YAML_READ_KEYS: readonly string[] = [
   "providers", "tiers", "capabilities", "active", "classes", "mcp_sets",
   "local_launcher", "local_tiers", "prices", "local", "orchestratorModel",
+  // workers.priority.sessions: queue admission priority per named session
+  // (readWorkersSection parses it; `pai worker priority` writes it)
+  "workers",
 ];
 
 /** config.yaml `workers.<key>` entries that workers.yaml replaces when it exists. */

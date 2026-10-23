@@ -28,7 +28,7 @@ Selected `workers` keys and their shipped values:
 | `pane.enabled` / `pane.autoExitSecs` | `true` / `5` | Follow pane, and its countdown after the worker ends. |
 | `gcOlderThanHours` / `worktreesMaxGb` | `6` / `20` | Hourly gc archives finished worktrees older than this, or the oldest ones past the size cap. |
 | `stagger.*`, `capacity.*` | on | Start gate and per-provider concurrency cap (local default cap 1, uncapped queue cap 3). |
-| `priority.sessions` | `{}` | Queue priority per named session, `{ "<session>": high\|normal\|low }`. When a provider is full, queued runs are admitted high before normal before low, oldest first within a priority (sessions still take turns); running workers are never preempted. `pai worker run --priority high\|normal\|low` overrides it for one run. `pai worker ps` and the cockpit queue show the priority. |
+| `priority.sessions` | `{}` | Queue priority per named session, `{ "<session>": high\|normal\|low }`. When a provider is full, queued runs are admitted high before normal before low, oldest first within a priority (sessions still take turns); running workers are never preempted. `pai worker run --priority high\|normal\|low` overrides it for one run. `pai worker priority` lists and changes the entries without editing workers.yaml. `pai worker ps` and the cockpit queue show the priority. |
 | `cacheKeepaliveSecs` | `0` | Daemon cache heartbeat; off. See [cache-keepalive.md](cache-keepalive.md). |
 | `reaper` | `true` | Daemon reaper for orphaned worker processes. |
 | `caveman` | `false` | Run native-Anthropic workers through `caveman claude`; off pins them to `api.anthropic.com`. |

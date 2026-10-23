@@ -1377,6 +1377,85 @@ pai worker policy prefer-local --for 2h
 
 See also: `pai worker local`, `pai worker providers`
 
+### pai worker priority
+
+Queue priority per session: list, set, clear
+
+```
+pai worker priority [command]
+```
+
+workers.yaml `workers.priority.sessions`: the queue priority of every run a named session starts, without editing workers.yaml by hand. When a provider is full, queued runs are admitted high before normal before low; running workers are never preempted. Without a subcommand, lists the entries.
+
+```sh
+pai worker priority
+pai worker priority set Jobs high
+pai worker priority clear Jobs
+```
+
+See also: `pai worker queue`, `pai worker run`
+
+#### pai worker priority list
+
+List the sessions with a queue priority
+
+```
+pai worker priority list
+```
+
+Shows every session with a workers.priority entry and its priority. Sessions not listed run at normal.
+
+```sh
+pai worker priority list
+pai worker priority
+```
+
+See also: `pai worker priority set`, `pai worker queue`
+
+#### pai worker priority set
+
+Give a named session a queue priority (high, normal, low)
+
+```
+pai worker priority set SESSION PRIORITY
+```
+
+Every run the session starts then queues at that priority: when a provider is full, high runs are admitted before normal before low (running workers are never preempted). `pai worker run --priority` overrides it for one run. `normal` is the default every session gets, so setting it removes the entry. The session name need not be running — the entry waits for it.
+
+| Argument | Required | Description |
+|---|---|---|
+| `SESSION` | yes | Session name, as `pai worker ps` shows it |
+| `PRIORITY` | yes | high, normal or low |
+
+```sh
+pai worker priority set Jobs high
+pai worker priority set Background low
+pai worker priority set Jobs normal
+```
+
+See also: `pai worker priority clear`, `pai worker queue`
+
+#### pai worker priority clear
+
+Remove a session's queue priority (it goes back to normal)
+
+```
+pai worker priority clear SESSION
+```
+
+Deletes the session's workers.priority entry. Runs it starts queue at normal again, like every unlisted session.
+
+| Argument | Required | Description |
+|---|---|---|
+| `SESSION` | yes | Session name to remove |
+
+```sh
+pai worker priority clear Jobs
+pai worker priority
+```
+
+See also: `pai worker priority set`
+
 ### pai worker route
 
 Print the routing table: per delegation tier the ordered models
@@ -1682,6 +1761,7 @@ See also: `pai worker providers`
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
+| `pai worker priority` | Queue priority per session: list, set, clear |
 | `pai worker route` | Print the routing table: per delegation tier the ordered models |
 | `pai worker local` | Which local models run; the operator starts and stops them |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
