@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { COCKPIT_HTML as PAGE } from "./cockpit-page.js";
 import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
 import { fnSrc, varSrc } from "./cockpit-page-src.js";
+import { WIN_MORPH_JS } from "./cockpit-page/win/morph.js";
 
 const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml", "table", "sessDetailBody", "sessDetailHtml", "sessDetailOpen"].map((n) => fnSrc(PAGE, n)).join("\n");
 
@@ -85,5 +86,40 @@ describe("session drill-down panel", () => {
     onClick!(row);
     onClick!(row);
     expect(api.get().open).toBeNull();
+  });
+
+  it("lists turns, skills and denials newest first, keeping the turn numbers", () => {
+    const { api } = harness();
+    let onClick: ((e: unknown) => void) | undefined;
+    api.wire({ body: { addEventListener: (_: string, f: (e: unknown) => void) => { onClick = f; }, contains: () => true } });
+    onClick!({ target: { closest: () => ({ hasAttribute: (a: string) => a === "data-sess", getAttribute: () => "s0000000x" }) }, preventDefault() {} });
+    const mk = (i: number) => ({ idx: i, ts: new Date().toISOString(), prompt: `prompt-${i}`, tools: [], edits: [], commands: 0 });
+    api.set("det", { ...detail, turns: [mk(0), mk(1)], turnCount: 2, skills: [{ name: "first", ts: "2026-01-01T00:00:00Z" }, { name: "second", ts: "2026-01-02T00:00:00Z" }], denials: [{ ts: "2026-01-01T00:00:00Z", tool: "t-old", reason: "r" }, { ts: "2026-01-02T00:00:00Z", tool: "t-new", reason: "r" }] });
+    expect(api.html(d).indexOf("prompt-1")).toBeLessThan(api.html(d).indexOf("prompt-0"));
+    for (const tab of ["skills", "denials"]) {
+      onClick!({ target: { closest: () => ({ hasAttribute: (a: string) => a === "data-sesstab", getAttribute: () => tab }) }, preventDefault() {} });
+      const h = api.html(d);
+      const [a, b] = tab === "skills" ? ["second", "first"] : ["t-new", "t-old"];
+      expect(h.indexOf(a)).toBeLessThan(h.indexOf(b));
+    }
+  });
+});
+
+describe("morph and a focused link", () => {
+  // A clicked <a href="#"> keeps focus; the redraw it triggers must still be able to remove the panel holding it.
+  const keep = (focused: { nodeName: string }, node: { nodeType: number; contains: (x: unknown) => boolean }) =>
+    new Function("document", `${WIN_MORPH_JS}\nreturn _mkeep;`)({ activeElement: focused })(node) as boolean;
+  const panel = (inner: unknown) => ({ nodeType: 1, contains: (x: unknown) => x === inner });
+
+  it("does not pin the panel or the link that holds focus", () => {
+    const link = { nodeType: 1, nodeName: "A", contains: () => false };
+    expect(keep(link, link)).toBeFalsy();
+    expect(keep(link, panel(link))).toBeFalsy();
+  });
+
+  it("still pins a focused form control and its ancestors", () => {
+    const input = { nodeType: 1, nodeName: "INPUT", contains: () => false };
+    expect(keep(input, input)).toBeTruthy();
+    expect(keep(input, panel(input))).toBeTruthy();
   });
 });
