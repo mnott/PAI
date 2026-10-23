@@ -11,6 +11,14 @@ export const RAW_CAPTURE_MAX_BYTES = 10 * 1024 * 1024;
 /** Rotated backups kept per file; a busy day rotates more than once. */
 export const RAW_CAPTURE_BACKUPS = 5;
 
+/**
+ * Local YYYY-MM-DD for `now` (never toISOString: UTC can name the wrong day
+ * near a timezone boundary). Same local-date rule as getEventsFilePath().
+ */
+export function localCaptureDate(now = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 /** Deterministic 16-hex id for a captured event: sha256 of the joined parts. */
 export function captureEventId(parts: { sessionId?: string; toolUseId?: string; event?: string; ts?: string }): string {
   const joined = `${parts.sessionId ?? ""}|${parts.toolUseId ?? ""}|${parts.event ?? ""}|${parts.ts ?? ""}`;

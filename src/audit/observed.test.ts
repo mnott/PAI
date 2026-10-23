@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, utimesSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { observedHookEvents, observedMcpServers, auditHooks, DEFAULT_SINCE_HOURS } from "./hooks.js";
+import { localCaptureDate } from "../hooks/ts/lib/raw-capture.js";
 
 const dirs: string[] = [];
 function newDir(): string {
@@ -16,10 +17,13 @@ afterEach(() => {
 
 /** One month dir under the capture root, like capture-all-events writes. */
 function captureDir(root: string): string {
-  const month = join(root, "raw-outputs", "2026-10");
+  const month = join(root, "raw-outputs", localCaptureDate().substring(0, 7));
   mkdirSync(month, { recursive: true });
   return month;
 }
+
+/** Today's capture file name, same local-date naming the hooks use. */
+const today = localCaptureDate();
 
 function eventLine(event: string, ts: number): string {
   return JSON.stringify({ hook_event_type: event, timestamp: ts, session_id: "s", source: "hook" }) + "\n";
@@ -30,7 +34,7 @@ describe("observedHookEvents", () => {
     const month = captureDir(newDir());
     const now = Date.now();
     writeFileSync(
-      join(month, "2026-10-22_all-events.jsonl"),
+      join(month, `${today}_all-events.jsonl`),
       eventLine("PreToolUse", now - 5_000) + eventLine("PreToolUse", now - 1_000) + eventLine("Stop", now - 2_000),
       "utf8"
     );
@@ -45,7 +49,7 @@ describe("observedHookEvents", () => {
     const month = captureDir(newDir());
     const now = Date.now();
     writeFileSync(
-      join(month, "2026-10-22_all-events.jsonl"),
+      join(month, `${today}_all-events.jsonl`),
       "{ not json\n" + eventLine("UserPromptSubmit", now) + "\n\n",
       "utf8"
     );
@@ -58,7 +62,7 @@ describe("observedHookEvents", () => {
     const root = newDir();
     const month = captureDir(root);
     const now = Date.now();
-    const old = join(month, "2026-10-01_all-events.jsonl");
+    const old = join(month, `${today}_all-events.jsonl`);
     writeFileSync(old, eventLine("SessionStart", now), "utf8");
     const d = new Date(now - 48 * 3_600_000);
     utimesSync(old, d, d);
@@ -79,7 +83,7 @@ describe("observedMcpServers", () => {
     const month = captureDir(root);
     const now = Date.now();
     writeFileSync(
-      join(month, "2026-10-22_all-events.jsonl"),
+      join(month, `${today}_all-events.jsonl`),
       JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now, payload: { tool_name: "mcp__alpha__do_thing" } }) +
         "\n" +
         JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 1_000, payload: { tool_name: "mcp__alpha__other" } }) +
@@ -89,7 +93,7 @@ describe("observedMcpServers", () => {
       "utf8"
     );
     writeFileSync(
-      join(month, "2026-10-22_tool-outputs.jsonl"),
+      join(month, `${today}_tool-outputs.jsonl`),
       JSON.stringify({ timestamp: new Date(now - 500).toISOString(), tool: "mcp__beta__x" }) + "\n",
       "utf8"
     );
@@ -113,7 +117,7 @@ describe("auditHooks observed state", () => {
     const root = newDir();
     const month = captureDir(root);
     const now = Date.now();
-    writeFileSync(join(month, "2026-10-22_all-events.jsonl"), eventLine("SessionStart", now - 60_000), "utf8");
+    writeFileSync(join(month, `${today}_all-events.jsonl`), eventLine("SessionStart", now - 60_000), "utf8");
     writeSettings(cwd, { SessionStart: [{ hooks: [{ type: "command", command: "true" }] }] });
 
     const report = auditHooks(cwd, { captureDir: join(root, "raw-outputs"), now });
@@ -137,7 +141,7 @@ describe("auditHooks observed state", () => {
     const root = newDir();
     const month = captureDir(root);
     const now = Date.now();
-    writeFileSync(join(month, "2026-10-22_all-events.jsonl"), eventLine("SessionStart", now), "utf8");
+    writeFileSync(join(month, `${today}_all-events.jsonl`), eventLine("SessionStart", now), "utf8");
     writeSettings(cwd, {
       SessionStart: [{ hooks: [{ type: "command", command: join(cwd, "gone.sh") }] }],
     });

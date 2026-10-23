@@ -9,7 +9,7 @@
 
 import { join } from 'path';
 import { historyDir } from '../lib/pai-paths.js';
-import { appendRawCapture, captureEventId, redactDeep } from '../lib/raw-capture.js';
+import { appendRawCapture, captureEventId, localCaptureDate, redactDeep } from '../lib/raw-capture.js';
 
 interface ToolUseData {
   tool_name: string;
@@ -43,9 +43,9 @@ async function main() {
       process.exit(0);
     }
 
-    // Get today's date for organization
+    // Get today's date for organization (local date, never toISOString)
     const now = new Date();
-    const today = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = localCaptureDate(now); // YYYY-MM-DD
     const yearMonth = today.substring(0, 7); // YYYY-MM
 
     const dateDir = join(CAPTURE_DIR, yearMonth);

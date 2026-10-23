@@ -3,6 +3,10 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { auditMcp, shouldScanTranscript, liveProcessLoadsServer } from "./mcp.js";
+import { localCaptureDate } from "../hooks/ts/lib/raw-capture.js";
+
+/** Today's capture file name, same local-date naming the hooks use. */
+const today = localCaptureDate();
 
 let tmp: string;
 
@@ -143,11 +147,11 @@ describe("auditMcp", () => {
       JSON.stringify({ mcpServers: { alpha: { command: "alpha-bin" }, idle: { command: "idle-bin" } } })
     );
     const root = join(tmp, "captures");
-    const month = join(root, "raw-outputs", "2026-10");
+    const month = join(root, "raw-outputs", today.substring(0, 7));
     mkdirSync(month, { recursive: true });
     const now = Date.now();
     writeFileSync(
-      join(month, "2026-10-22_all-events.jsonl"),
+      join(month, `${today}_all-events.jsonl`),
       JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 5_000, payload: { tool_name: "mcp__alpha__do_thing" } }) +
         "\n" +
         JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 1_000, payload: { tool_name: "mcp__alpha__other" } }) +
@@ -178,15 +182,15 @@ describe("auditMcp", () => {
     const { home, cwd } = makeTmp();
     writeFileSync(join(home, ".claude.json"), JSON.stringify({ mcpServers: { alpha: { command: "alpha-bin" } } }));
     const root = join(tmp, "captures");
-    const month = join(root, "raw-outputs", "2026-10");
+    const month = join(root, "raw-outputs", today.substring(0, 7));
     mkdirSync(month, { recursive: true });
     const now = Date.now();
     writeFileSync(
-      join(month, "2026-10-22_all-events.jsonl.1"),
+      join(month, `${today}_all-events.jsonl.1`),
       JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 1_000, payload: { tool_name: "mcp__alpha__do_thing" } }) + "\n",
       "utf8"
     );
-    writeFileSync(join(month, "2026-10-22_all-events.jsonl"), "{}\n", "utf8");
+    writeFileSync(join(month, `${today}_all-events.jsonl`), "{}\n", "utf8");
 
     const report = await auditMcp({ cwd, homeDir: home, projectsDbPath: join(tmp, "no-registry.db"), captureDir: join(root, "raw-outputs"), now });
     expect(report.servers.find((s) => s.server === "alpha")?.callsWindow).toBe(1);
@@ -199,10 +203,10 @@ describe("auditMcp", () => {
       JSON.stringify({ mcpServers: { alpha: { command: "alpha-bin" } } })
     );
     const root = join(tmp, "captures");
-    const month = join(root, "raw-outputs", "2026-10");
+    const month = join(root, "raw-outputs", today.substring(0, 7));
     mkdirSync(month, { recursive: true });
     const now = Date.now();
-    const file = join(month, "2026-10-22_all-events.jsonl");
+    const file = join(month, `${today}_all-events.jsonl`);
     writeFileSync(
       file,
       JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 30 * 3_600_000, payload: { tool_name: "mcp__alpha__do_thing" } }) + "\n",
