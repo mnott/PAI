@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appendRawCapture, captureEventId, redactDeep } from "./raw-capture.js";
+import { appendRawCapture, captureEventId, localCaptureDate, redactDeep } from "./raw-capture.js";
 import { analyzeSession, formatSessionDocument } from "./session-summary.js";
 import { fakeGithub } from "../../../utils/fake-secret.js";
 
@@ -91,8 +91,9 @@ describe("capture hook provenance fields", () => {
       timestamp: "2026-10-22T00:00:00Z",
     });
     runHook("src/hooks/ts/post-tool-use/capture-tool-output.ts", [], stdin, home);
-    const ym = "2026-10";
-    const file = join(home, "History", "raw-outputs", ym, `2026-10-22_tool-outputs.jsonl`);
+    // Same local-date naming as capture-tool-output.ts — never toISOString
+    const day = localCaptureDate();
+    const file = join(home, "History", "raw-outputs", day.substring(0, 7), `${day}_tool-outputs.jsonl`);
     const entry = JSON.parse(readFileSync(file, "utf-8").trim());
     expect(entry.source).toBe("hook");
     expect(entry.fidelity).toBe("observed");
