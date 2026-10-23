@@ -5,8 +5,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { isLocalProvider, readWorkersCached, type PriorityConfig, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../config.js";
-import { isLoopbackProvider } from "../run-env.js";
+import { ANTHROPIC_NATIVE, isLocalProvider, readWorkersCached, resolveModelCapability, type PriorityConfig, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../config.js";
+import { shortText } from "../args.js";
+import { isLoopbackProvider, nativeLaunchEnv } from "../run-env.js";
 import {
   httpModelsCheck,
   LOCAL_MECHANISM_LINE,
@@ -19,6 +20,7 @@ import { appendLedger } from "../ledger.js";
 import { ledgerPath } from "../paths.js";
 import {
   type WorkerStatus,
+  isTerminal,
   newWorkerId,
   loadStatus,
   saveStatus,
@@ -40,9 +42,20 @@ import {
 } from "../capacity.js";
 import { staggerGate } from "../stagger.js";
 import { detectSessionName } from "../session-name.js";
-import { getProfile } from "../session-profile.js";
+import { getProfile, isBatchEnv, resolveWorkers, type ResolveCtx } from "../session-profile.js";
+import { currentSessionName } from "../session-profile-store.js";
+import { detectSessionProvider } from "../session-provider.js";
+import { escalatedLine, escalationSummary, tierAbove, tierOf } from "../escalation.js";
+import { readRoutingState } from "../routing.js";
+import { parseEntry } from "../route-lists.js";
+import { runEscalation } from "../escalate-run.js";
+import { getProviderOrNative } from "../config.js";
+import { resolveLocalProvider } from "../local-provider.js";
+import { routeRun } from "../policy.js";
+import { runWorker } from "./worker-ref.js";
+import { UNLABELED } from "../status.js";
 import { followCommand, resolveHostSession } from "../pane.js";
-import { commitLines, worktreeWanted } from "../worktree.js";
+import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
 import { aibrokerMessenger } from "../run-events.js";
@@ -52,12 +65,14 @@ import {
   poolSettings,
   postTaskToPool,
   reloadInProgress,
+  splitSharedSpec,
 } from "../pool.js";
 import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, spawnOwned } from "./pane-handles.js";
-import { printResult } from "./finalise.js";
+import { SIGNAL_SALVAGE_MS, printResult } from "./finalise.js";
 import { tryEscalate, rerunOnCloud } from "./escalate.js";
+import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
 export class LocalProviderRefusedError extends Error {}
@@ -237,14 +252,18 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   // the socket bounds connect+send only; the answer takes as long as the task
   const timeoutMs = limitMinutes ? limitMinutes * 2 * 60_000 + 120_000 : 7_200_000;
   const postT0 = Date.now();
+  // the claim carries the provider this run actually resolved to: a spare
+  // claimed on another provider would run the task on the wrong model
+  const claimProvider = await resolveClaimProvider(a);
+  const claimModel = claimProvider === a.target.providerName ? a.model : claimModelOf(a.config, claimProvider, a.target.modelAlias ?? null);
   const outcome = await postTaskToPool(
     settings.port,
     {
       id: wid,
       label: a.label,
       prompt: a.parsed.prompt ?? "",
-      provider: a.target.providerName,
-      model: a.model,
+      provider: claimProvider,
+      model: claimModel,
       cwd,
       className: a.className,
       capability: a.capability,
@@ -271,6 +290,21 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     const why = "miss" in outcome ? outcome.miss : outcome.error;
     a.spareMiss = why;
     if (!("miss" in outcome) && outcome.error === "unreachable") void ensurePoolHost(a.logDir).catch(() => undefined);
+    // the answer never arrived or broke mid-task: the task may or may not
+    // have run — the host's status decides, then escalate if it died
+    if (!("miss" in outcome) && outcome.error === "claim-error") {
+      return escalateAfterClaimError(a, wid, outcome.detail);
+    }
+    // the host died mid-task or refused the task outright: the task did not
+    // finish — escalate one tier up (or re-run fresh), never a silent failure
+    if ("miss" in outcome && outcome.miss === "host-error") {
+      return escalateAfterPoolUnreachable(a, wid, why);
+    }
+    // the host was busy: a local run must not fall through to a fresh spawn
+    // on the same busy local server — it escalates one tier up instead
+    if ("miss" in outcome && outcome.miss === "busy") {
+      return escalateAfterBusy(a, wid);
+    }
     recordPoolSkip(a, a.target.providerName, why, { id: wid, key: `${a.target.providerName}/${a.model ?? "-"}` });
     return null;
   }
@@ -286,14 +320,15 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
   // the ending a fresh run has: a failed local run is kept for review when it committed, else re-run once on the cloud
   const st = resp.status ?? loadStatus(a.logDir, wid);
   if (st && a.parsed.headless) {
-    const why = fallThroughReason(a.route, st, report);
-    const commits =
-      st.worktreeDir && st.worktreeBase
-        ? commitLines(st.worktreeDir, st.worktreeBase)
-        : st.branch && st.commits ? [`${st.commits} commit(s) on ${st.branch}`] : [];
+    // the host's slot release may already have dropped the branch and the
+    // worktree fields (a stopped run with nothing committed): salvage first,
+    // then read the commits — without them the loop-stop escalation has no
+    // trigger and the run ends without ever going up a tier (2026-10-23)
+    const commits = st.worktreeDir && st.worktreeBase ? commitLines(st.worktreeDir, st.worktreeBase) : [];
+    const why = fallThroughReason(a.route, st, report) ?? (st.loopStopped ? "loop-guard stop" : st.timedOut ? "max-minutes" : null);
     // kept for review (it committed) stays: no cloud re-run, no escalation
     const reviewed = committedFallThrough(why, commits);
-    const escalated = await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why ?? (st.loopStopped ? "loop-guard stop" : null), !!reviewed);
+    const escalated = await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why, !!reviewed);
     if (escalated !== null) return escalated;
     if (reviewed) {
       process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
@@ -309,6 +344,255 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, report);
   }
   return rc;
+}
+
+/** A status that still names a live process: the host's own record of the run. */
+function statusIsLive(st: WorkerStatus | null): st is WorkerStatus {
+  return !!st && !isTerminal(st.state);
+}
+
+/**
+ * The host's slot died mid-task (crash, kill, deadline) and the client-side
+ * status still names a live process: the run ended in the host's eyes but
+ * `pai worker ps` would keep showing it running forever. Record the host's
+ * end on the status and the ledger, and salvage the slot's worktree onto the
+ * branch before the host drops it.
+ */
+function finaliseHostDeath(a: ExecuteArgs, wid: string, st: WorkerStatus, why: string): void {
+  const logDir = a.logDir;
+  const ledger = ledgerPath(logDir);
+  const salvaged =
+    st.worktreeDir && st.worktreeBase ? salvageOnExit(ledger, wid, st.label || wid, st.worktreeDir, SIGNAL_SALVAGE_MS) : [];
+  if (salvaged.length) st.commits = commitsSince(st.worktreeDir!, st.worktreeBase!);
+  st.state = "failed";
+  st.rc = 1;
+  st.last = shortText(`pool slot died mid-task: ${why}`, 90);
+  st.updated = nowStamp();
+  saveStatus(logDir, st);
+  const started = Date.parse(st.started.replace(" ", "T"));
+  appendLedger(ledger, "WORKER-END", {
+    id: wid,
+    provider: st.provider,
+    mode: "pooled",
+    model: st.model,
+    rc: 1,
+    ...(Number.isFinite(started) ? { secs: Math.max(0, Math.floor((Date.now() - started) / 1000)) } : {}),
+    label: st.label,
+    note: `pool slot died mid-task: ${why}`,
+  });
+}
+
+/**
+ * The fresh-spawn half of a pooled run that died in the host: the task was
+ * never executed, so it runs again as a fresh spawn — the same path a pool
+ * miss takes. The host's end is recorded first so the id is terminal and the
+ * new run owns the id (a queued placeholder status is left as it is: the
+ * fresh run rewrites it at its start).
+ */
+async function respawnAfterHostDeath(a: ExecuteArgs, wid: string, why: string): Promise<number> {
+  const st = loadStatus(a.logDir, wid);
+  if (statusIsLive(st)) finaliseHostDeath(a, wid, st, why);
+  recordPoolSkip(a, a.target.providerName, "host-error", { id: wid });
+  return executeRun(a);
+}
+
+/**
+ * The cloud target an escalation would re-run on: the tier above the run's
+ * tier (escalation.ts), else the escalate.cloud target. A loopback tier is
+ * not an escalation target — the cloud is. null when nothing usable is
+ * configured (the run then stays where it is, like an escalation with no tier
+ * above).
+ */
+function cloudEscalationTarget(config: WorkersConfig, className: string | undefined): { provider: string; model: string } | null {
+  const tiers = config.tiers ?? [];
+  const tier = tierOf(tiers, className);
+  const above = tier ? tierAbove(tiers, tier) : null;
+  const { provider: name, model } = above && !above.session && above.models.length ? parseEntry(above.models[0]) : config.escalate.cloud;
+  const p = getProviderOrNative(config, name);
+  if (!p || !p.enabled || isLoopbackProvider(p)) return null;
+  // the native login needs no model pin: the subscription's default answers
+  if (name === ANTHROPIC_NATIVE || p.native) return { provider: name, model: model ?? "" };
+  return { provider: name, model: model ?? resolveModelCapability(p, "default") };
+}
+
+/**
+ * A local run the pool host could not finish (host-error: the slot died
+ * mid-task, the host refused, or the answer never arrived) must not end as a
+ * silent rc-1 failure: it escalates one tier up whenever escalation is
+ * enabled — with or without commits and with or without a result event — and
+ * otherwise re-runs fresh on the cloud once (the fall-through rule), or runs
+ * the task fresh on the same local target. A killed run (rc 143) is the
+ * operator's call: nothing restarts it.
+ */
+export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: string): Promise<number> {
+  const { logDir, config } = a;
+  const st = loadStatus(logDir, wid);
+  if (st?.rc === 143) return 143;
+  if (statusIsLive(st)) finaliseHostDeath(a, wid, st, why);
+  const label = a.label ?? st?.label ?? UNLABELED;
+  const tiers = config.tiers ?? [];
+  const from = tierOf(tiers, a.className);
+  const above = from ? tierAbove(tiers, from) : null;
+  const already = a.escalatedFrom ?? [];
+  const trigger = { kind: "repeated-failure" as const, reason: `pool host ended the run (${why})` };
+  const commits = st?.worktreeDir && st?.worktreeBase ? commitLines(st.worktreeDir, st.worktreeBase) : [];
+  const branch = st?.branch ?? undefined;
+  const p0 = a.parsed.prompt;
+  let swapped = false;
+  const rerunOpts = (o: { providerFlag: string; modelFlag?: string; prompt: string; label: string; escalatedFrom: string[]; onStarted: (id: string) => void }): Promise<number> =>
+    (a.runner ?? runWorker)({
+      providerFlag: o.providerFlag,
+      modelFlag: o.modelFlag,
+      label: o.label,
+      claudeArgs: a.claudeArgs.map((x) => (!swapped && x === p0 ? ((swapped = true), o.prompt) : x)),
+      _escalatedFrom: o.escalatedFrom,
+      _route: undefined,
+      onWorkerStart: (id2) => {
+        if (st) {
+          st.escalatedTo = id2;
+          saveStatus(logDir, st);
+        }
+        o.onStarted(id2);
+        a.onWorkerStart?.(id2);
+      },
+    });
+  // the task text as the host receives it: the escalation summary prepends to
+  // the unit part, the shared block stays the shared block (the spare's prefix cache)
+  const spec = splitSharedSpec(a.parsed.prompt ?? "").unit;
+  const ledger = ledgerPath(logDir);
+  const markEscalated = (line: string): void => {
+    if (!st) return;
+    st.escalated = line;
+    st.last = line;
+    saveStatus(logDir, st);
+  };
+  // the tier above, when escalation is on and that tier is not the session
+  // and this task has not already escalated out of `from` (no ping-pong)
+  // escalation and the cloud fall-through are a local run's; a cloud run re-runs on its own target
+  const localRun = !!a.route?.local || isLoopbackProvider(a.target.provider);
+  if (localRun && config.escalate.enabled && from && above && !above.session && above.models.length && !already.includes(from)) {
+    const out = await runEscalation(
+      {
+        action: { action: "rerun", from, to: above },
+        trigger,
+        summary: escalationSummary({ id: wid, label, from, to: above.id, trigger, done: st?.last, commits, branch }),
+        line: escalatedLine(from, above.id, trigger.reason),
+      },
+      already,
+      { ledger, id: wid, label, spec, fromModel: st?.model, markEscalated, rerun: rerunOpts, notifySession: async () => undefined }
+    );
+    if (out.kind === "rerun") return out.rc;
+  }
+  const target = cloudEscalationTarget(config, a.className);
+  // the fall-through rule is a local run's: a cloud run that died in the host
+  // re-runs fresh on its own target, not once more on the cloud
+  if (localRun && target && a.route) {
+    appendLedger(ledger, "WORKER-FALLTHROUGH", { id: wid, reason: `pool host ended the run (${why})` });
+    process.stderr.write(`pai worker: ${wid} on ${a.target.providerName} ended in the pool host (${why}) — re-running on the cloud\n`);
+    return (a.runner ?? runWorker)({
+      ...a.opts,
+      id: undefined,
+      // the cloud's own route: a --local run must not drag the local server onto the cloud
+      localFlag: undefined,
+      localName: undefined,
+      providerFlag: target.provider,
+      modelFlag: target.model || undefined,
+      label: `${label} (fall-through)`,
+      _route: { policy: a.route.policy, reason: `fall-through (pool host: ${why})`, local: false },
+      _fallThroughOf: wid,
+      onWorkerStart: (id2) => {
+        if (st) {
+          st.fallThroughTo = id2;
+          saveStatus(logDir, st);
+        }
+        a.onWorkerStart?.(id2);
+      },
+    });
+  }
+  return respawnAfterHostDeath(a, wid, why);
+}
+
+/**
+ * The pool host's answer was unreadable or never arrived: the task may or may
+ * not have run, and the host's status (when it made one) is the authority.
+ * A run the host finished is reported as it is; a run still marked live died
+ * in the host and escalates like any host-error.
+ */
+export async function escalateAfterClaimError(a: ExecuteArgs, wid: string, detail: string): Promise<number> {
+  const st = loadStatus(a.logDir, wid);
+  if (!st || isTerminal(st.state)) {
+    const rc = st?.rc ?? 1;
+    if (!a.quiet) printResult(a.parsed.outputFormat, null, rc, a.logDir, wid, null);
+    return rc;
+  }
+  return escalateAfterHostError(a, wid, `claim-error: ${detail}`);
+}
+
+/**
+ * The pool host answered "busy": the task never ran. A local run must not
+ * silently fall through to a fresh spawn on the same local server (a busy
+ * local machine is busy for a fresh spawn too): it escalates one tier up
+ * instead. A cloud run keeps the fresh-spawn path.
+ */
+export async function escalateAfterBusy(a: ExecuteArgs, wid: string): Promise<number> {
+  if (!a.route?.local) return respawnAfterHostDeath(a, wid, "busy");
+  return escalateAfterHostError(a, wid, "busy");
+}
+
+/**
+ * The host was unreachable or its socket timed out: the task never ran. A
+ * local run escalates one tier up instead of spawning fresh on the same local
+ * server; a cloud run keeps the fresh-spawn path.
+ */
+export async function escalateAfterPoolUnreachable(a: ExecuteArgs, wid: string, why: string): Promise<number> {
+  if (!a.route?.local) return respawnAfterHostDeath(a, wid, why);
+  return escalateAfterHostError(a, wid, why);
+}
+
+/**
+ * The provider a headless run goes out on, the same resolution runWorker
+ * applies (--local, the session profile, the routing policy, the class
+ * tier): the pool host's claim carries a provider name, and a spare claimed
+ * on the wrong provider runs the task on the wrong model (2026-10-23: a
+ * --local run escalated to the cloud was claimed by a local spare and ran on
+ * the local model with the cloud's label).
+ */
+export async function resolveClaimProvider(a: ExecuteArgs): Promise<string> {
+  const config = a.config;
+  const opts = a.opts ?? {};
+  if (opts.localFlag) {
+    const res = await resolveLocalProvider(config, a.logDir, { className: a.className, name: opts.localName });
+    return res.name;
+  }
+  if (opts.providerFlag) return opts.providerFlag;
+  if (opts._route?.local && opts._route.reason.startsWith("routing policy")) {
+    const routed = await routeRun(config, a.logDir, {
+      ...opts,
+      className: a.className,
+      urgent: opts.urgent,
+      localOk: opts.localOk,
+      cloud: opts.cloud,
+    });
+    if (routed?.providerFlag) return routed.providerFlag;
+  }
+  if (!opts._route && currentSessionName()) {
+    const ctx: ResolveCtx = { cfg: config, profile: getProfile(currentSessionName()), env: nativeLaunchEnv(), budgets: {}, routing: readRoutingState(a.logDir) };
+    const r = resolveWorkers(
+      { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
+      ctx
+    );
+    if (r.provider) return r.provider;
+  }
+  const session = detectSessionProvider(config, { env: nativeLaunchEnv(), cwd: a.cwd ?? process.cwd(), logDir: a.logDir, side: "workers" });
+  if (session) return session.name;
+  return a.target.providerName;
+}
+
+/** The model the claimed provider runs the task on: the run's alias, else the provider's default. */
+export function claimModelOf(config: WorkersConfig, name: string, alias: string | null): string {
+  const p = getProviderOrNative(config, name);
+  if (!p) return alias ?? "default";
+  return (alias && p.models[alias] !== undefined ? p.models[alias] : undefined) ?? resolveModelCapability(p, "default");
 }
 
 /** Priority of a run's queue ticket: the --priority flag, else its named session's workers.priority entry, else normal. */
