@@ -6,6 +6,8 @@
  * transcripts or added by hand) only reach agents once approved.
  */
 
+import { effectiveMainConfig } from "../config/shipped-defaults.js";
+import { paiConfigFilePath } from "../daemon/config.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
@@ -260,7 +262,8 @@ export interface DraftOpts {
   chunkChars?: number;
 }
 
-export const DRAFT_MAX_LESSONS = 10;
+/** Minimum strength a drafted lesson needs to be kept. */
+const MIN_STRENGTH = 3;
 const CONTEXT_CHARS = 300;
 const USER_CHARS = 1500;
 const CHUNK_CHARS = 12000;
@@ -308,12 +311,25 @@ function draftPrompt(chunk: Turn[]): string {
     .join("\n\n");
   return (
     "You review a coding-assistant session for durable lessons. Below are the user's messages, each with the assistant text just before it.\n" +
-    `Return ONLY a JSON array (no prose) of at most ${DRAFT_MAX_LESSONS} lessons, each {"title","kind","applies_when","body","evidence_quote"}.\n` +
+    'Return ONLY a JSON array (no prose) of lessons, each {"title","kind","applies_when","body","evidence_quote","strength","standing"}.\n' +
     `kind is one of ${LESSON_KINDS.join("|")}. evidence_quote is copied verbatim from the user message.\n` +
-    "Include a lesson ONLY where the user corrects the assistant's behaviour or states a standing rule for future work. " +
-    "Return nothing for one-off task instructions, questions, approvals or chatter. If there is none, return [].\n\n" +
+    "standing is true when the user states a rule for all future work, false for an instruction about the current task only. " +
+    "strength is 1-5: 5 = a rule for all future work using words like always/never/must/impossible, or a correction the user repeats; 1 = a one-off instruction for the current task.\n" +
+    "Include a lesson ONLY where the user corrects the assistant's behaviour or states a standing rule. " +
+    "Return nothing for questions, approvals or chatter. If there is none, return [].\n" +
+    'Example standing rule: user "never commit before the tests pass" -> {"standing":true,"strength":5}.\n' +
+    'Example one-off instruction: user "change the README teaser to two lines" -> {"standing":false,"strength":1}.\n\n' +
     msgs
   );
+}
+
+/** The cap on drafted lessons: `lessons.draft.max` of the effective config (shipped default in config.yaml). */
+function draftMax(): number {
+  const l = effectiveMainConfig(paiConfigFilePath())["lessons"];
+  const d = l && typeof l === "object" ? (l as Record<string, unknown>)["draft"] : undefined;
+  const m = d && typeof d === "object" ? (d as Record<string, unknown>)["max"] : undefined;
+  if (typeof m !== "number" || !Number.isInteger(m) || m < 1) throw new Error("config lessons.draft.max must be a positive integer");
+  return m;
 }
 
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -332,7 +348,7 @@ function nearIdentical(a: string, b: string): boolean {
 }
 
 /** Parse the model's reply into valid lesson items; anything malformed is dropped. */
-function parseDraft(reply: string): Array<Record<string, string>> {
+function parseDraft(reply: string): Array<Record<string, string> & { strength: number; standing: boolean }> {
   const s = reply.indexOf("[");
   const e = reply.lastIndexOf("]");
   if (s < 0 || e <= s) return [];
@@ -343,13 +359,15 @@ function parseDraft(reply: string): Array<Record<string, string>> {
     return [];
   }
   if (!Array.isArray(arr)) return [];
-  const out: Array<Record<string, string>> = [];
+  const out: Array<Record<string, string> & { strength: number; standing: boolean }> = [];
   for (const it of arr) {
     if (!it || typeof it !== "object") continue;
     const o = it as Record<string, unknown>;
     const ok = ["title", "kind", "applies_when", "body", "evidence_quote"].every((k) => typeof o[k] === "string" && (o[k] as string).trim());
     if (!ok || !LESSON_KINDS.includes(o.kind as LessonKind)) continue;
-    out.push(o as Record<string, string>);
+    const strength = Number(o.strength);
+    if (!Number.isFinite(strength)) continue;
+    out.push({ ...(o as Record<string, string>), strength, standing: o.standing === true } as Record<string, string> & { strength: number; standing: boolean });
   }
   return out;
 }
@@ -384,13 +402,24 @@ async function defaultClient(): Promise<ModelClient> {
   }
 }
 
+/** A drafted lesson with the ranking inputs it was kept for. */
+export interface RankedDraft {
+  lesson: LessonInput;
+  strength: number;
+  /** In how many chunks the same rule was drafted. */
+  count: number;
+}
+
 /**
  * Candidate lessons drafted by a model from the user's corrections and standing
  * rules in a transcript. Adds nothing. A failing model or unparseable reply
  * yields no candidates for that chunk. Output is redacted, grounded in a real
- * user message, and deduped against existing lessons and itself.
+ * user message, and deduped against existing lessons and itself. Every chunk is
+ * drafted first; non-standing and weak (strength < 3) items are dropped, near
+ * duplicates merged (counting occurrences), then ranked by strength and by
+ * occurrences and capped at `lessons.draft.max`.
  */
-export async function draftFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<LessonInput[]> {
+export async function draftRankedFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<RankedDraft[]> {
   const sessionId = basename(transcriptPath, ".jsonl");
   const turns = extractTurns(transcriptPath);
   const limit = opts.chunkChars ?? CHUNK_CHARS;
@@ -410,12 +439,13 @@ export async function draftFromTranscript(transcriptPath: string, opts: DraftOpt
   if (cur.length) chunks.push(cur);
   if (chunks.length === 0) return [];
 
+  const max = draftMax();
   const client = opts.client ?? (await defaultClient());
   const known = listLessons();
   const slugs = new Set(known.map((l) => l.id));
-  const bodies = known.map((l) => l.body);
+  const knownBodies = known.map((l) => l.body);
   const all = norm(turns.map((t) => t.user).join("\n"));
-  const out: LessonInput[] = [];
+  const found: RankedDraft[] = [];
   for (const chunk of chunks) {
     let reply: string | null = null;
     try {
@@ -424,24 +454,35 @@ export async function draftFromTranscript(transcriptPath: string, opts: DraftOpt
       continue;
     }
     if (!reply) continue;
+    const seen = new Set<RankedDraft>();
     for (const it of parseDraft(reply)) {
-      if (out.length >= DRAFT_MAX_LESSONS) return out;
+      if (!it.standing || it.strength < MIN_STRENGTH) continue;
       const quote = it.evidence_quote.trim();
       if (!all.includes(norm(quote))) continue;
       const title = redactSecrets(it.title.replace(/\s+/g, " ")).slice(0, 120);
       const body = redactSecrets(it.body.trim());
       const slug = slugify(title);
-      if (slugs.has(slug) || bodies.some((b) => nearIdentical(b, body))) continue;
-      slugs.add(slug);
-      bodies.push(body);
-      out.push({
-        title,
-        kind: it.kind as LessonKind,
-        applies_when: redactSecrets(it.applies_when.trim()),
-        evidence: [sessionId, redactSecrets(quote)],
-        body,
-      });
+      if (slugs.has(slug) || knownBodies.some((b) => nearIdentical(b, body))) continue;
+      const strength = Math.min(5, it.strength);
+      const dup = found.find((f) => f.lesson.title !== undefined && slugify(f.lesson.title) === slug || nearIdentical(f.lesson.body ?? "", body));
+      if (dup) {
+        if (!seen.has(dup)) dup.count++;
+        seen.add(dup);
+        dup.strength = Math.max(dup.strength, strength);
+        continue;
+      }
+      const d: RankedDraft = {
+        lesson: { title, kind: it.kind as LessonKind, applies_when: redactSecrets(it.applies_when.trim()), evidence: [sessionId, redactSecrets(quote)], body },
+        strength,
+        count: 1,
+      };
+      seen.add(d);
+      found.push(d);
     }
   }
-  return out;
+  return found.sort((a, b) => b.strength - a.strength || b.count - a.count).slice(0, max);
+}
+
+export async function draftFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<LessonInput[]> {
+  return (await draftRankedFromTranscript(transcriptPath, opts)).map((d) => d.lesson);
 }

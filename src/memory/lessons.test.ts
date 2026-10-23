@@ -207,8 +207,8 @@ describe("draftFromTranscript", () => {
     return p;
   };
   const good = [
-    { title: "Instrument, do not trust memory", kind: "correction", applies_when: "relying on recall", body: "Make it deterministic.", evidence_quote: "memory is unreliable, it needs to be instrumented. deterministic. token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789" },
-    { title: "Commands only in panes", kind: "convention", applies_when: "starting commands", body: "Starting outside a pane must be impossible.", evidence_quote: "it must be IMPOSSIBLE to start any command not in a pane" },
+    { title: "Instrument, do not trust memory", kind: "correction", applies_when: "relying on recall", body: "Make it deterministic.", evidence_quote: "memory is unreliable, it needs to be instrumented. deterministic. token sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789", strength: 5, standing: true },
+    { title: "Commands only in panes", kind: "convention", applies_when: "starting commands", body: "Starting outside a pane must be impossible.", evidence_quote: "it must be IMPOSSIBLE to start any command not in a pane", strength: 4, standing: true },
     { title: "Invented", kind: "gotcha", applies_when: "x", body: "never said", evidence_quote: "not in the transcript" },
     { title: "bad kind", kind: "nope", applies_when: "x", body: "y", evidence_quote: "now run the tests" },
   ];
@@ -218,6 +218,43 @@ describe("draftFromTranscript", () => {
     expect(out.map((l) => l.title)).toEqual(["Instrument, do not trust memory", "Commands only in panes"]);
     expect(out[0]!.evidence![0]).toBe("sess-1");
     expect(JSON.stringify(out)).not.toContain("sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+
+  const item = (title: string, quote: string, strength: number, standing = true) =>
+    ({ title, kind: "convention", applies_when: "always", body: `${title} body text`, evidence_quote: quote, strength, standing });
+  const bigFixture = () => {
+    const p = join(project, "sess-2.jsonl");
+    writeFileSync(p, ["alpha rule one", "beta rule two", "gamma rule three", "delta rule four"].map((t) => ev("user", t)).join("\n"));
+    return p;
+  };
+  const perChunk = (replies: unknown[][]) => {
+    let i = 0;
+    return async () => JSON.stringify(replies[i++] ?? []);
+  };
+
+  it("ranks an item repeated across chunks above single ones", async () => {
+    const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([
+      [item("Single alpha", "alpha rule one", 3)],
+      [item("Repeated beta", "beta rule two", 3)],
+      [item("Repeated beta", "beta rule two", 3)],
+      [item("Repeated beta", "beta rule two", 3), item("Single delta", "delta rule four", 3)],
+    ]) });
+    expect(out[0]!.title).toBe("Repeated beta");
+    expect(out).toHaveLength(3);
+  });
+
+  it("keeps a strength-5 item from the last chunk past the cap", async () => {
+    const fill = Array.from({ length: 10 }, (_, i) => item(`Filler ${["apple", "brick", "cedar", "daisy", "ember", "fjord", "gravel", "hazel", "indigo", "jasper"][i]}`, "alpha rule one", 3));
+    const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([fill, [], [], [item("Late strong", "delta rule four", 5)]]) });
+    expect(out).toHaveLength(10);
+    expect(out[0]!.title).toBe("Late strong");
+  });
+
+  it("drops standing:false and weak items", async () => {
+    const out = await draftFromTranscript(bigFixture(), { client: async () => JSON.stringify([
+      item("One off", "alpha rule one", 5, false), item("Weak", "beta rule two", 2), item("Keeper", "gamma rule three", 3),
+    ]) });
+    expect(out.map((l) => l.title)).toEqual(["Keeper"]);
   });
 
   it("yields none on invalid JSON and on a throwing client", async () => {
