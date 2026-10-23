@@ -48,15 +48,17 @@ const POLL_INTERVAL_MS = 3_000;
 /** https://host[/prefix]/OWNER/REPO(.git) or ssh form git@host:[/prefix/]OWNER/REPO(.git) -> forge base + "OWNER/REPO". */
 export function deriveForge(originUrl: string): { baseUrl: string; repo: string } {
   const url = originUrl.trim();
-  const https = url.match(/^(https?):\/\/(?:[^@/]+@)?([^/]+)\/(.*?)\/?$/);
+  const https = url.match(/^(https?|ssh):\/\/(?:[^@/]+@)?([^/]+)\/(.*?)\/?$/);
   if (https) {
     const parts = https[3].replace(/\.git$/, "").split("/");
     if (parts.length >= 2) {
       const prefix = parts.slice(0, -2).join("/");
-      return { baseUrl: `${https[1]}://${https[2]}${prefix ? `/${prefix}` : ""}`, repo: parts.slice(-2).join("/") };
+      const scheme = https[1] === "ssh" ? "https" : https[1];
+      const host = https[1] === "ssh" ? https[2].replace(/:\d+$/, "") : https[2];
+      return { baseUrl: `${scheme}://${host}${prefix ? `/${prefix}` : ""}`, repo: parts.slice(-2).join("/") };
     }
   }
-  const ssh = url.match(/^(?:[^@\s]+@)?([^/\s:]+):(?:\/)?(.*?)\/?$/);
+  const ssh = url.includes("://") ? null : url.match(/^(?:[^@\s]+@)?([^/\s:]+):(?:\/)?(.*?)\/?$/);
   if (ssh) {
     const parts = ssh[2].replace(/\.git$/, "").split("/");
     if (parts.length >= 2) {
@@ -71,15 +73,15 @@ export function deriveForge(originUrl: string): { baseUrl: string; repo: string 
 export type ConfigReader = () => Record<string, unknown>;
 
 /** Shipped defaults merged under the user's main config, resolved at call time. */
-const defaultConfigReader: ConfigReader = () => {
+async function defaultConfigReader(): Promise<ConfigReader> {
   // imported lazily: daemon/config.ts resolves config paths at module load
-  const { getConfigValueOp } = require("../config/main-config-ops.js") as typeof import("../config/main-config-ops.js");
+  const { getConfigValueOp } = await import("../config/main-config-ops.js");
   const v = getConfigValueOp("release.forgeTokenEnv").value;
-  return { release: { forgeTokenEnv: v } };
-};
+  return () => ({ release: { forgeTokenEnv: v } });
+}
 
 /** The env var holding the forge token: config `release.forgeTokenEnv`, else the shipped default name. */
-export function forgeTokenEnvName(readConfig: ConfigReader = defaultConfigReader): string {
+export function forgeTokenEnvName(readConfig: ConfigReader): string {
   try {
     const v = (readConfig().release as { forgeTokenEnv?: unknown } | undefined)?.forgeTokenEnv;
     if (typeof v === "string" && v) return v;
@@ -111,7 +113,7 @@ export function parseMirrors(text: string): MirrorJson[] {
 export function parseMirrorError(lastError: string): MirrorError {
   const unblock = lastError.match(/https?:\/\/[^\s"']*unblock-secret\/[^\s"'\\)]+/)?.[0]?.replace(/\\+$/, "");
   if (/GH013|Push cannot contain secrets/.test(lastError)) {
-    const secret = lastError.match(/secret detection found[^\n"']*/i)?.[0] ?? "push cannot contain secrets";
+    const secret = lastError.match(/found \d+ secrets? on the push[^\n]*?"[^"\n]*"/i)?.[0] ?? "push cannot contain secrets";
     return { reason: "push protection", detail: secret, ...(unblock ? { unblockUrl: unblock } : {}) };
   }
   const rejected = lastError.match(/remote rejected[^\n"']*/i)?.[0];
@@ -148,7 +150,7 @@ export async function syncMirrors(cwd: string, deps: MirrorSyncDeps = {}): Promi
   const fetchImpl = deps.fetch ?? realFetch;
   const now = deps.now ?? (() => Date.now());
   const wait = deps.sleep ?? sleep;
-  const envName = forgeTokenEnvName(deps.readConfig);
+  const envName = forgeTokenEnvName(deps.readConfig ?? (await defaultConfigReader().catch((): ConfigReader => () => ({}))));
   const token = deps.token ?? process.env[envName];
   if (!token) throw new MirrorSyncFailed(`no forge token: set ${envName} (or config release.forgeTokenEnv)`);
   let origin = deps.originUrl;

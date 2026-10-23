@@ -34,8 +34,11 @@ const mirror = (name: string, lastUpdate: string, sha: string, lastError?: strin
   ...(lastError ? { last_error: lastError } : {}),
 });
 
-const run = async (s: { fetch: FetchLike }) =>
-  syncMirrors(".", { fetch: s.fetch, token: "t", originUrl: "https://forge.example/git/acme/app.git", now: () => 0, sleep: async () => {} });
+/** A fake clock that advances 3 s per reading, so the 60 s poll window ends. */
+const run = async (s: { fetch: FetchLike }) => {
+  let t = 0;
+  return syncMirrors(".", { fetch: s.fetch, token: "t", originUrl: "https://forge.example/git/acme/app.git", now: () => (t += 3000), sleep: async () => {} });
+};
 
 describe("forge origin derivation", () => {
   it("https url with a path prefix", () => {
@@ -83,7 +86,7 @@ describe("mirror sync", () => {
     expect(r.mirrors[0]!.ok).toBe(false);
     expect(r.mirrors[0]!.error?.reason).toBe("push protection");
     expect(formatMirror(r.mirrors[0]!)).toBe(
-      'github: REJECTED — push protection: secret detection found 1 secret on the push: "AWS Access Key ID"; unblock: https://github.com/acme/app/unblock-secret/01ABCDEF23456789ABCDEF0123456789ABCD'
+      'github: REJECTED — push protection: found 1 secret on the push: "AWS Access Key ID"; unblock: https://github.com/acme/app/unblock-secret/01ABCDEF23456789ABCDEF0123456789ABCD'
     );
   });
 

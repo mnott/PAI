@@ -10,7 +10,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 |---|---|
 | [`pai audit`](audit.md) | Find out where tokens are being spent |
 | [`pai backup`](backup.md) | Back up the registry, config and Postgres database |
-| [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth |
+| [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
 | [`pai cockpit`](cockpit.md) | The router's web cockpit: layout export |
@@ -91,9 +91,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai audit tokens subagents` | Token cost of subagent definitions |
 | `pai audit tokens usage` | Exact token totals per model for one session transcript |
 | `pai backup` | Back up the registry, config and Postgres database |
-| `pai build` | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth |
+| `pai build` | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync |
 | `pai build doctor` | Check the project's registered build doors and hook events |
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
+| `pai build mirror-sync` | Trigger the forge's push mirror to GitHub and report each mirror |
 | `pai build next` | Give a waiting build the next free slot |
 | `pai build npm-auth` | Check the npm publish credential before `npm publish` |
 | `pai build queue` | Show the running and waiting builds and tests |

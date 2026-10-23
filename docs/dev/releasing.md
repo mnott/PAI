@@ -13,3 +13,7 @@ PAI checks it for you:
 2. Generate New Token (granular): Bypass 2FA, Read and write, All packages, 90 days, named by date.
 3. Replace the `_authToken` line in `~/.npmrc` with the new token.
 4. Check: `pai build npm-auth`.
+
+## Forge push mirror to GitHub
+
+Forge-first repos (origin = Gitea/Forgejo, a push mirror to GitHub) publish with `pai build mirror-sync [--repo DIR] [--json]` instead of a hand-written curl to `push_mirrors-sync`. It derives the forge URL and owner/repo from `origin`, reads the token from the env var named by config `release.forgeTokenEnv` (default `AIBROKER_FORGE_TOKEN`; never printed), triggers the sync and polls `push_mirrors` (60 s, every 3 s) until `last_update` changes. One line per mirror: `github: ok (main at <sha8>)` or `github: REJECTED — push protection: <reason>; unblock: <url>` when GitHub refuses with GH013. Exit 0 only when every mirror is ok.
