@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadRules, listRules, projectRuleDirs, userRuleDirs } from "./load.js";
@@ -296,13 +296,113 @@ describe("project rule guards", () => {
     const prev = process.env.PAI_HOME;
     process.env.PAI_HOME = join(home, ".pai");
     try {
-      mkdirSync(join(home, ".pai", "rules"), { recursive: true });
+      const rulesDir = join(home, ".pai", "rules");
+      mkdirSync(rulesDir, { recursive: true });
       expect(projectRuleDirs(home)).toEqual([]);
+      // the walk reports realpath-normalized paths (/var is a symlink on macOS)
       expect(userRuleDirs(home)).toEqual([join(home, ".pai", "rules")]);
-      expect(projectRuleDirs(tempDir()).length).toBe(1);
+      // a dir with a rules dir of its own is a project dir even without .git
+      const other = tempDir();
+      mkdirSync(join(other, ".pai", "rules"), { recursive: true });
+      expect(projectRuleDirs(other)).toEqual([realpathSync(join(other, ".pai", "rules"))]);
     } finally {
       if (prev === undefined) delete process.env.PAI_HOME;
       else process.env.PAI_HOME = prev;
     }
+  });
+});
+
+describe("project rules found above the cwd", () => {
+  // Temp dirs can sit under the real home (e.g. under ~/.claude/pai/logs), so
+  // HOME is pinned to a fresh temp dir for these tests.
+  const withHome = (fn: (home: string) => void): void => {
+    const prevHome = process.env.HOME;
+    const prevUser = process.env.USER;
+    // realpath: the walk compares realpath(HOME) against the walked path, and
+    // /var is a symlink to /private/var on macOS
+    const home = realpathSync(tempDir());
+    process.env.HOME = home;
+    delete process.env.USER;
+    try {
+      fn(home);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevUser === undefined) delete process.env.USER;
+      else process.env.USER = prevUser;
+    }
+  };
+
+  it("loads repo rules from a session cwd in a repo subdirectory", () => {
+    withHome((home) => {
+      const repo = join(home, "repo");
+      mkdirSync(join(repo, ".git"), { recursive: true });
+      writeRule(join(repo, ".pai", "rules"), "x.rule.yaml", "id: repo-x\nseverity: block\nmatch: foo\nreason: r\n");
+      const cwd = join(repo, "a", "b");
+      mkdirSync(cwd, { recursive: true });
+      expect(projectRuleDirs(cwd)).toEqual([join(repo, ".pai", "rules")]); // repo is under the realpathed home
+      const { rules } = loadRules(userRuleDirs(cwd), { projectDirs: projectRuleDirs(cwd) });
+      expect(rules.some((r) => r.id === "repo-x")).toBe(true);
+    });
+  });
+
+  it("the closest .pai/rules on the way wins", () => {
+    withHome((home) => {
+      const repo = join(home, "repo");
+      mkdirSync(join(repo, ".git"), { recursive: true });
+      writeRule(join(repo, ".pai", "rules"), "x.rule.yaml", "id: outer\nseverity: block\nmatch: foo\nreason: r\n");
+      const mid = join(repo, "a");
+      writeRule(join(mid, ".pai", "rules"), "x.rule.yaml", "id: inner\nseverity: block\nmatch: foo\nreason: r\n");
+      const cwd = join(mid, "b");
+      mkdirSync(cwd, { recursive: true });
+      expect(projectRuleDirs(cwd)).toEqual([join(mid, ".pai", "rules")]);
+    });
+  });
+
+  it("without a .git ancestor the walk stops at HOME and finds nothing", () => {
+    withHome((home) => {
+      const deep = join(home, "a", "b");
+      mkdirSync(deep, { recursive: true });
+      expect(projectRuleDirs(deep)).toEqual([]);
+      // a .pai/rules under HOME is the PAI-home dir, never a project dir
+      mkdirSync(join(home, ".pai", "rules"), { recursive: true });
+      expect(projectRuleDirs(deep)).toEqual([]);
+    });
+  });
+
+  it("a PAI-home rules dir under HOME is not picked as a project dir from a subdir", () => {
+    withHome((home) => {
+      const prev = process.env.PAI_HOME;
+      process.env.PAI_HOME = join(home, ".pai");
+      try {
+        writeRule(join(home, ".pai", "rules"), "x.rule.yaml", "id: home-x\nseverity: block\nmatch: foo\nreason: r\n");
+        const deep = join(home, "a", "b");
+        mkdirSync(deep, { recursive: true });
+        expect(projectRuleDirs(deep)).toEqual([]);
+        expect(userRuleDirs(deep)).toEqual([join(home, ".pai", "rules")]);
+      } finally {
+        if (prev === undefined) delete process.env.PAI_HOME;
+        else process.env.PAI_HOME = prev;
+      }
+    });
+  });
+
+  it("a repo whose root is the home dir keeps its project rules", () => {
+    withHome((home) => {
+      const prev = process.env.PAI_HOME;
+      process.env.PAI_HOME = join(home, "pai-home"); // elsewhere, so HOME/.pai/rules is a project dir
+      mkdirSync(join(home, ".git"), { recursive: true });
+      writeRule(join(home, ".pai", "rules"), "x.rule.yaml", "id: home-repo-x\nseverity: block\nmatch: foo\nreason: r\n");
+      const deep = join(home, "a", "b");
+      mkdirSync(deep, { recursive: true });
+      try {
+        expect(projectRuleDirs(deep)).toEqual([join(home, ".pai", "rules")]);
+        const { rules } = loadRules(userRuleDirs(deep), { projectDirs: projectRuleDirs(deep) });
+        expect(rules.some((r) => r.id === "home-repo-x")).toBe(true);
+      } finally {
+        if (prev === undefined) delete process.env.PAI_HOME;
+        else process.env.PAI_HOME = prev;
+      }
+    });
   });
 });
