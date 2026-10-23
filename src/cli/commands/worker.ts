@@ -5,6 +5,7 @@
  * exit codes are the ones hooks, prompts, skills and shims already call.
  */
 
+import { isCi } from "../../utils/ci.js";
 import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -803,6 +804,7 @@ const pendingCommand: CommandDef = {
     guard("pai worker ps", () => {
       const res = pendingResults(logDir(), flag(ctx, "all") ? undefined : process.cwd());
       if (flag(ctx, "gate")) {
+        if (isCi()) return 0; // CI has no worker state; the release gate is the operator's
         const g = pendingGate(res);
         if (g.message) process.stderr.write(g.message + "\n");
         return g.code;

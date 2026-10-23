@@ -121,7 +121,7 @@ Check the npm publish credential before `npm publish`
 pai build npm-auth
 ```
 
-Runs `npm whoami` against the public registry (10 s timeout). Exits 1 with the token renewal steps when npm rejects the credential; a timeout or network error is reported but does not fail. Used by prepublishOnly.
+Runs `npm whoami` against the public registry (10 s timeout). Exits 1 with the token renewal steps when npm rejects the credential; a timeout or network error is reported but does not fail. Used by prepublishOnly. A no-op when CI=true or GITHUB_ACTIONS=true (trusted publishing needs no token).
 
 ```sh
 pai build npm-auth

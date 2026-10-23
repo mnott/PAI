@@ -11,6 +11,7 @@ import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor, hookEventFindings } from "../../builds/doctor.js";
+import { isCi } from "../../utils/ci.js";
 import { checkNpmAuth, publishablePackage } from "../../builds/npm-auth.js";
 import { formatMirror, syncMirrors, MirrorSyncFailed } from "../../builds/mirror-sync.js";
 import { fmtSeenLocal } from "../../utils/fmt-age.js";
@@ -163,10 +164,14 @@ const doctorCmd: CommandDef = {
 const npmAuthCmd: CommandDef = {
   name: "npm-auth",
   summary: "Check the npm publish credential before `npm publish`",
-  description: "Runs `npm whoami` against the public registry (10 s timeout). Exits 1 with the token renewal steps when npm rejects the credential; a timeout or network error is reported but does not fail. Used by prepublishOnly.",
+  description: "Runs `npm whoami` against the public registry (10 s timeout). Exits 1 with the token renewal steps when npm rejects the credential; a timeout or network error is reported but does not fail. Used by prepublishOnly. A no-op when CI=true or GITHUB_ACTIONS=true (trusted publishing needs no token).",
   examples: ["pai build npm-auth"],
   seeAlso: ["pai build doctor"],
   run: async () => {
+    if (isCi()) {
+      out("npm publish auth: skipped (CI; trusted publishing)");
+      return 0;
+    }
     const a = checkNpmAuth(publishablePackage(process.cwd())?.name);
     if (a.state === "rejected") {
       process.stderr.write(a.message + "\n");
