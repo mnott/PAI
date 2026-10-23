@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -84,9 +84,9 @@ describe("merge related tests", () => {
     expect(r.status).toBe("skipped");
   });
 
-  it("skips the default command without vitest, and when no source changed", () => {
+  it("skips the default command without vitest, and when nothing changed", () => {
     expect(runRelatedTests(tmp({}), "x", cfg("npx vitest related --run {files}"), git(["a.ts"])).line).toContain("no vitest");
-    expect(runRelatedTests(tmp(), "x", cfg("true"), git(["a.md"])).line).toContain("no source files");
+    expect(runRelatedTests(tmp(), "x", cfg("true"), git([])).line).toContain("nothing changed");
   });
 
   it("passes on exit 0", () => {
@@ -97,7 +97,7 @@ describe("merge related tests", () => {
   it("fails on a failing command", () => {
     const r = runRelatedTests(tmp(), "x", cfg(`node -e "process.exit(1)"`), git(["a.ts"]));
     expect(r.status).toBe("failed");
-    expect(r.line).toBe("related tests: failed (exit 1)");
+    expect(r.line).toBe("failed (exit 1)");
   });
 
   it("names failing files from the output", () => {
@@ -133,6 +133,24 @@ describe("merge related tests", () => {
     const r = runRelatedTests(d, "x", { verify: "true {files}", verifyTimeoutSec: 30, alwaysTests: ["src/nope.test.ts", "src/utils/guard.test.ts", "src/utils/guard.test.ts"] }, git(["src/work/a.ts"]));
     expect(r.line).toContain("always-tests skipped: src/nope.test.ts");
     expect(r.line).toContain("1 source files + 1 always-tests, passed");
+  });
+
+  it("a docs-only change runs the always-tests and skips related", () => {
+    const d = repo(["src/cli/docs-sync.test.ts", "src/cli/docs-keys.test.ts", "src/utils/no-token-literals.test.ts"]);
+    let cmd = "";
+    const r = runRelatedTests(d, "x", { verify: `sh -c 'printf "%s\\n" "$*" > captured.txt; echo " Test Files  3 passed (3)"; echo "      Tests  12 passed (12)"' x {files}`, verifyTimeoutSec: 30, alwaysTests: ["src/cli/docs-*.test.ts", "src/utils/no-token-literals.test.ts"] }, git(["docs/concepts/workers.md"]));
+    cmd = readFileSync(join(d, "captured.txt"), "utf8").trim();
+    expect(r.status).toBe("passed");
+    expect(cmd.split(" ")).toEqual(["src/cli/docs-keys.test.ts", "src/cli/docs-sync.test.ts", "src/utils/no-token-literals.test.ts"]);
+    expect(r.line).toBe("related tests: skipped (no source change); always-tests: 3 files, 12 passed");
+  });
+
+  it("an empty merge runs nothing", () => {
+    const d = repo(["src/utils/guard.test.ts"]);
+    const r = runRelatedTests(d, "x", { verify: "true {files}", verifyTimeoutSec: 30, alwaysTests: ["src/utils/guard.test.ts"] }, git([]));
+    expect(r.status).toBe("skipped");
+    expect(r.line).toContain("nothing changed");
+    expect(existsSync(join(d, "captured.txt"))).toBe(false);
   });
 
   it("resolveAlwaysTests: literal paths, globs, missing entries", () => {

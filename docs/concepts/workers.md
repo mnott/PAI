@@ -27,11 +27,13 @@ pai worker gc                 # archive old worktrees under refs/pai-archive/ID
   `WORKER-SALVAGE`; the ledger is PAI's log of worker events) so nothing is lost. A loop stop or a time limit with saved work escalates one tier up at once. See [escalation](escalation.md).
 - **Merge.** `merge` runs the `--verify` command (or `merge.verify` from
   `workers.yaml`) on the merged tree; non-zero exit reverts the merge and keeps
-  the branch. A stub scan always runs. Then it runs the related tests
-  (`workers.merge.verify`, default `npx vitest related --run {files}`, stopped
-  after `workers.merge.verifyTimeoutSec`) plus the repo guards in
-  `workers.merge.alwaysTests`; a failure keeps the merge, exits 3 and prints the
-  failing files and the revert command (`--no-verify-tests` skips it once).
+  the branch. A stub scan always runs. Then it runs the repo guards in
+  `workers.merge.alwaysTests` whenever the merge changed any file, plus the
+  related tests (`workers.merge.verify`, default `npx vitest related --run
+  {files}`, stopped after `workers.merge.verifyTimeoutSec`) when source files
+  changed; nothing runs only when the merge changed nothing. A failure keeps
+  the merge, exits 3 and prints the failing files and the revert command
+  (`--no-verify-tests` skips it once).
   Conflicts only in generated files are regenerated (`workers.merge.generated`,
   `workers.merge.regenerate`), add-only clashes in `workers.merge.union` files
   are union-merged. `discard` throws a branch away.
