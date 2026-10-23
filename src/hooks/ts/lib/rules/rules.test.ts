@@ -301,10 +301,10 @@ describe("project rule guards", () => {
       expect(projectRuleDirs(home)).toEqual([]);
       // the walk reports realpath-normalized paths (/var is a symlink on macOS)
       expect(userRuleDirs(home)).toEqual([join(home, ".pai", "rules")]);
-      // a dir with a rules dir of its own is a project dir even without .git
+      // a rules dir outside any .git repo under $HOME is never a project dir
       const other = tempDir();
       mkdirSync(join(other, ".pai", "rules"), { recursive: true });
-      expect(projectRuleDirs(other)).toEqual([realpathSync(join(other, ".pai", "rules"))]);
+      expect(projectRuleDirs(other)).toEqual([]);
     } finally {
       if (prev === undefined) delete process.env.PAI_HOME;
       else process.env.PAI_HOME = prev;
@@ -367,6 +367,15 @@ describe("project rules found above the cwd", () => {
       // a .pai/rules under HOME is the PAI-home dir, never a project dir
       mkdirSync(join(home, ".pai", "rules"), { recursive: true });
       expect(projectRuleDirs(deep)).toEqual([]);
+    });
+  });
+
+  it("a repo outside HOME gets no project rules (e.g. /tmp/.pai/rules planted by another user)", () => {
+    withHome(() => {
+      const outside = realpathSync(tempDir());
+      mkdirSync(join(outside, ".git"), { recursive: true });
+      writeRule(join(outside, ".pai", "rules"), "x.rule.yaml", "id: planted\nseverity: block\nmatch: foo\nreason: r\n");
+      expect(projectRuleDirs(outside)).toEqual([]);
     });
   });
 

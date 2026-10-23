@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -234,13 +234,13 @@ describe("draftFromTranscript", () => {
     expect(withSecret.evidence![1]).not.toContain(ANTHROPIC);
   });
 
-  it("a secret straddling the truncation boundary is not partly present", () => {
+  it("a secret straddling the truncation boundary is not partly present", async () => {
     // The token starts 10 chars before USER_CHARS, so slicing first would leave
     // only 10 chars of it — too short for the token rules — and send the rest.
     const p = join(project, "sess-boundary.jsonl");
     const filler = "x".repeat(1490);
     writeFileSync(p, ev("user", `${filler} token ${ANTHROPIC}`));
-    const turn = extractTurns(p)[0]!;
+    const turn = (await extractTurns(p))[0]!;
     expect(turn.user).toContain("[REDACTED]");
     expect(turn.user).not.toContain(ANTHROPIC.slice(0, 12));
     expect(turn.user).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
@@ -257,7 +257,7 @@ describe("draftFromTranscript", () => {
     ({ title, kind: "convention", applies_when: "always", body: `${title} body text`, evidence_quote: quote, strength, standing });
   const bigFixture = () => {
     const p = join(project, "sess-2.jsonl");
-    writeFileSync(p, ["alpha rule one", "beta rule two", "gamma rule three", "delta rule four"].map((t) => ev("user", t)).join("\n"));
+    writeFileSync(p, ["alpha rule one for all future work", "beta rule two for all future work", "gamma rule three for all future work", "delta rule four for all future work"].map((t) => ev("user", t)).join("\n"));
     return p;
   };
   const perChunk = (replies: unknown[][]) => {
@@ -267,25 +267,25 @@ describe("draftFromTranscript", () => {
 
   it("ranks an item repeated across chunks above single ones", async () => {
     const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([
-      [item("Single alpha", "alpha rule one", 3)],
-      [item("Repeated beta", "beta rule two", 3)],
-      [item("Repeated beta", "beta rule two", 3)],
-      [item("Repeated beta", "beta rule two", 3), item("Single delta", "delta rule four", 3)],
+      [item("Single alpha", "alpha rule one for all future work", 3)],
+      [item("Repeated beta", "beta rule two for all future work", 3)],
+      [item("Repeated beta", "beta rule two for all future work", 3)],
+      [item("Repeated beta", "beta rule two for all future work", 3), item("Single delta", "delta rule four for all future work", 3)],
     ]) });
     expect(out[0]!.title).toBe("Repeated beta");
     expect(out).toHaveLength(3);
   });
 
   it("keeps a strength-5 item from the last chunk past the cap", async () => {
-    const fill = Array.from({ length: 10 }, (_, i) => item(`Filler ${["apple", "brick", "cedar", "daisy", "ember", "fjord", "gravel", "hazel", "indigo", "jasper"][i]}`, "alpha rule one", 3));
-    const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([fill, [], [], [item("Late strong", "delta rule four", 5)]]) });
+    const fill = Array.from({ length: 10 }, (_, i) => item(`Filler ${["apple", "brick", "cedar", "daisy", "ember", "fjord", "gravel", "hazel", "indigo", "jasper"][i]}`, "alpha rule one for all future work", 3));
+    const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([fill, [], [], [item("Late strong", "delta rule four for all future work", 5)]]) });
     expect(out).toHaveLength(10);
     expect(out[0]!.title).toBe("Late strong");
   });
 
   it("drops standing:false and weak items", async () => {
     const out = await draftFromTranscript(bigFixture(), { client: async () => JSON.stringify([
-      item("One off", "alpha rule one", 5, false), item("Weak", "beta rule two", 2), item("Keeper", "gamma rule three", 3),
+      item("One off", "alpha rule one for all future work", 5, false), item("Weak", "beta rule two for all future work", 2), item("Keeper", "gamma rule three for all future work", 3),
     ]) });
     expect(out.map((l) => l.title)).toEqual(["Keeper"]);
   });
@@ -318,6 +318,53 @@ describe("draftFromTranscript", () => {
     expect(out.map((d) => d.lesson.title)).toEqual(["Panes only", "Instrument memory", "Svg as png", "Catchy readme"]);
     expect(out[0]).toMatchObject({ strength: 4, evidenceScore: 3 });
     expect(out[1]).toMatchObject({ strength: 4, evidenceScore: 0 });
+  });
+
+  describe("hardening", () => {
+    const quote = "it must be IMPOSSIBLE to start any command not in a pane";
+    const item = (o: Record<string, unknown> = {}) => ({ title: "Commands only in panes", kind: "convention", applies_when: "starting commands", body: "Outside a pane must be impossible.", evidence_quote: quote, strength: 5, standing: true, ...o });
+    const run = (reply: string, extra: Record<string, unknown> = {}) => draftFromTranscript(fixture(), { client: async () => reply, ...extra });
+
+    it("skips sidechain user events", async () => {
+      const p = join(project, "sess-side.jsonl");
+      writeFileSync(p, JSON.stringify({ type: "user", isSidechain: true, message: { content: [{ type: "text", text: quote }] } }));
+      expect(await extractTurns(p)).toEqual([]);
+    });
+    it("rejects an evidence quote shorter than 20 characters", async () => {
+      expect(await run(JSON.stringify([item({ evidence_quote: "must be" })]))).toEqual([]);
+    });
+    it("caps body and applies_when at 2000 characters", async () => {
+      const out = await run(JSON.stringify([item({ body: "b".repeat(5000), applies_when: "a".repeat(5000) })]));
+      expect(out[0]!.body).toHaveLength(2000);
+      expect(out[0]!.applies_when).toHaveLength(2000);
+    });
+    it("parses a reply with prose brackets before the array, and a fenced block", async () => {
+      expect((await run(`See [1] and then:\n${JSON.stringify([item()])}`)).map((l) => l.title)).toEqual(["Commands only in panes"]);
+      expect((await run("thinking [a]\n```json\n" + JSON.stringify([item()]) + "\n```\nbye [2]")).map((l) => l.title)).toEqual(["Commands only in panes"]);
+    });
+    it("dedupes against the slugified title of an existing lesson, not only its id", async () => {
+      addLesson({ title: "Commands only in panes", kind: "convention", applies_when: "x", body: "something unrelated entirely", evidence: ["s"] });
+      addLesson({ title: "Commands only in panes", kind: "convention", applies_when: "x", body: "another unrelated thing here", evidence: ["s"] }); // id gets -2
+      expect(await run(JSON.stringify([item()]))).toEqual([]);
+    });
+    it("caps chunks and stops at the total deadline", async () => {
+      const calls: number[] = [];
+      await draftFromTranscript(fixture(), { chunkChars: 1, maxChunks: 2, client: async () => (calls.push(1), "[]") });
+      expect(calls).toHaveLength(2);
+      const timed: number[] = [];
+      await draftFromTranscript(fixture(), { chunkChars: 1, timeoutSec: 1, client: async () => (timed.push(1), await new Promise((r) => setTimeout(r, 1100)), "[]") });
+      expect(timed).toHaveLength(1);
+    });
+    it("--local-only refuses the cloud when no local model runs; the default prints one stderr line", async () => {
+      const err: string[] = [];
+      const w = vi.spyOn(process.stderr, "write").mockImplementation((c: unknown) => (err.push(String(c)), true));
+      try {
+        await expect(draftFromTranscript(fixture(), { localOnly: true })).rejects.toThrow(/--local-only/);
+        expect(err.join("")).not.toContain("drafting with the cloud model");
+      } finally {
+        w.mockRestore();
+      }
+    });
   });
 });
 

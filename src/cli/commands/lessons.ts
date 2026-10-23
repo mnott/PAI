@@ -162,13 +162,14 @@ export const lessonsCommand: CommandDef = {
       args: [{ name: "TRANSCRIPT", summary: "Transcript file (default: newest of this directory)" }],
       options: [
         { name: "draft", type: "boolean", summary: "Draft candidates with a model (running local model, else the routed default) instead of the regex heuristic" },
+        { name: "local-only", type: "boolean", summary: "With --draft: fail rather than fall back to the cloud model when no local model is running" },
       ],
       examples: ["pai lessons propose", "pai lessons propose ./session.jsonl", "pai lessons propose --draft --dry-run"],
       run: async (ctx) => {
         const path = (ctx.args.TRANSCRIPT as string | undefined) ?? newestTranscriptOfCwd();
         if (!path) throw new CliError("no transcript found for this directory");
         const dry = ctx.dryRun;
-        const found = ctx.opts.draft === true ? await draftFromTranscript(path).catch((e) => { throw new CliError(e instanceof Error ? e.message : String(e)); }) : wrap(() => proposeFromTranscript(path));
+        const found = ctx.opts.draft === true ? await draftFromTranscript(path, { localOnly: ctx.opts["local-only"] === true }).catch((e) => { throw new CliError(e instanceof Error ? e.message : String(e)); }) : wrap(() => proposeFromTranscript(path));
         if (found.length === 0) console.log("No corrections found.");
         if (dry) {
           for (const l of found) console.log(`would add [${l.kind}]  ${l.title}\n  applies when: ${l.applies_when || "(not set)"}\n  ${l.body}\n  evidence: ${(l.evidence ?? []).join(" | ")}`);

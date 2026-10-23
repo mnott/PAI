@@ -178,6 +178,7 @@ Finds user messages that correct the assistant and adds each as a candidate to r
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--draft` | flag | — | Draft candidates with a model (running local model, else the routed default) instead of the regex heuristic |
+| `--local-only` | flag | — | With --draft: fail rather than fall back to the cloud model when no local model is running |
 
 ```sh
 pai lessons propose

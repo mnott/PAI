@@ -8,7 +8,8 @@
 
 import { effectiveMainConfig } from "../config/shipped-defaults.js";
 import { paiConfigFilePath } from "../daemon/config.js";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { basename, dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { paiHomePath } from "../config/pai-home.js";
@@ -260,6 +261,12 @@ export interface DraftOpts {
   client?: ModelClient;
   /** Max characters of user text per model call. */
   chunkChars?: number;
+  /** Refuse the cloud fallback: fail when no local model is running. */
+  localOnly?: boolean;
+  /** Override of config lessons.draft.maxChunks (model calls per transcript). */
+  maxChunks?: number;
+  /** Override of config lessons.draft.timeoutSec (total seconds for all model calls). */
+  timeoutSec?: number;
 }
 
 /** Minimum strength a drafted lesson needs to be kept. */
@@ -286,17 +293,20 @@ function stripNoise(text: string): string {
  * reaches a model client — the default client falls back to the routed cloud
  * model when no local model is running.
  */
-export function extractTurns(transcriptPath: string): Turn[] {
+export async function extractTurns(transcriptPath: string): Promise<Turn[]> {
   const turns: Turn[] = [];
   let lastAssistant = "";
-  for (const line of readFileSync(transcriptPath, "utf8").split("\n")) {
+  const rl = createInterface({ input: createReadStream(transcriptPath, "utf8"), crlfDelay: Infinity });
+  for await (const line of rl) {
     if (!line.trim()) continue;
-    let ev: { type?: string; isMeta?: boolean; message?: { content?: unknown } };
+    let ev: { type?: string; isMeta?: boolean; isSidechain?: boolean; message?: { content?: unknown } };
     try {
       ev = JSON.parse(line);
     } catch {
       continue;
     }
+    // a subagent's prompt is written by the orchestrating assistant, not the user
+    if (ev.isSidechain) continue;
     if (ev.type === "assistant") {
       const t = userText(ev.message?.content).trim();
       if (t) lastAssistant = t;
@@ -330,12 +340,22 @@ function draftPrompt(chunk: Turn[]): string {
 
 /** The cap on drafted lessons: `lessons.draft.max` of the effective config (shipped default in config.yaml). */
 function draftMax(): number {
+  return draftNumber("max");
+}
+
+/** A positive integer under `lessons.draft` of the effective config (shipped defaults carry every key). */
+function draftNumber(key: "max" | "maxChunks" | "timeoutSec"): number {
   const l = effectiveMainConfig(paiConfigFilePath())["lessons"];
   const d = l && typeof l === "object" ? (l as Record<string, unknown>)["draft"] : undefined;
-  const m = d && typeof d === "object" ? (d as Record<string, unknown>)["max"] : undefined;
-  if (typeof m !== "number" || !Number.isInteger(m) || m < 1) throw new Error("config lessons.draft.max must be a positive integer");
+  const m = d && typeof d === "object" ? (d as Record<string, unknown>)[key] : undefined;
+  if (typeof m !== "number" || !Number.isInteger(m) || m < 1) throw new Error(`config lessons.draft.${key} must be a positive integer`);
   return m;
 }
+
+/** Longest body / applies_when kept from a drafted lesson. */
+const FIELD_MAX = 2000;
+/** Shortest evidence quote accepted (normalised characters). */
+const QUOTE_MIN = 20;
 
 /** Words that state a rule for all future work (English and German), case-insensitive, word boundaries. */
 const RULE_WORDS = [
@@ -379,19 +399,11 @@ function nearIdentical(a: string, b: string): boolean {
   return both / (x.size + y.size - both) >= 0.8;
 }
 
-/** Parse the model's reply into valid lesson items; anything malformed is dropped. */
-function parseDraft(reply: string): Array<Record<string, string> & { strength: number; standing: boolean }> {
-  const s = reply.indexOf("[");
-  const e = reply.lastIndexOf("]");
-  if (s < 0 || e <= s) return [];
-  let arr: unknown;
-  try {
-    arr = JSON.parse(reply.slice(s, e + 1));
-  } catch {
-    return [];
-  }
+type DraftItem = Record<string, string> & { strength: number; standing: boolean };
+
+function validItems(arr: unknown): DraftItem[] {
   if (!Array.isArray(arr)) return [];
-  const out: Array<Record<string, string> & { strength: number; standing: boolean }> = [];
+  const out: DraftItem[] = [];
   for (const it of arr) {
     if (!it || typeof it !== "object") continue;
     const o = it as Record<string, unknown>;
@@ -399,13 +411,37 @@ function parseDraft(reply: string): Array<Record<string, string> & { strength: n
     if (!ok || !LESSON_KINDS.includes(o.kind as LessonKind)) continue;
     const strength = Number(o.strength);
     if (!Number.isFinite(strength)) continue;
-    out.push({ ...(o as Record<string, string>), strength, standing: o.standing === true } as Record<string, string> & { strength: number; standing: boolean });
+    out.push({ ...(o as Record<string, string>), strength, standing: o.standing === true } as DraftItem);
   }
   return out;
 }
 
+/**
+ * Parse the model's reply into valid lesson items; anything malformed is dropped.
+ * A fenced ```json block is tried first, then every `[` as a start (prose such as
+ * "[1] ..." before the real array does not hide it); the first start that yields
+ * items wins.
+ */
+function parseDraft(reply: string): DraftItem[] {
+  const texts: string[] = [];
+  for (const m of reply.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) texts.push(m[1]!);
+  texts.push(reply);
+  for (const t of texts) {
+    const e = t.lastIndexOf("]");
+    for (let s = t.indexOf("["); s >= 0 && s < e; s = t.indexOf("[", s + 1)) {
+      try {
+        const items = validItems(JSON.parse(t.slice(s, e + 1)));
+        if (items.length) return items;
+      } catch {
+        /* not an array from this start */
+      }
+    }
+  }
+  return [];
+}
+
 /** The default model client: the running local model's endpoint, else the routed default (a headless claude spawn). */
-async function defaultClient(): Promise<ModelClient> {
+async function defaultClient(localOnly = false): Promise<ModelClient> {
   try {
     const cfgMod = await import("../workers/config.js");
     const { resolveLocalProvider } = await import("../workers/local-provider.js");
@@ -429,6 +465,8 @@ async function defaultClient(): Promise<ModelClient> {
       return (j.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("") || null;
     };
   } catch {
+    if (localOnly) throw new Error("no local model running — refusing to draft with the cloud model (--local-only)");
+    process.stderr.write("no local model running — drafting with the cloud model\n");
     const { spawnClaude } = await import("./kg-extraction.js");
     return (prompt) => spawnClaude(prompt, "sonnet");
   }
@@ -458,7 +496,7 @@ export interface RankedDraft {
  */
 export async function draftRankedFromTranscript(transcriptPath: string, opts: DraftOpts = {}): Promise<RankedDraft[]> {
   const sessionId = basename(transcriptPath, ".jsonl");
-  const turns = extractTurns(transcriptPath);
+  const turns = await extractTurns(transcriptPath);
   const limit = opts.chunkChars ?? CHUNK_CHARS;
   const chunks: Turn[][] = [];
   let cur: Turn[] = [];
@@ -477,13 +515,17 @@ export async function draftRankedFromTranscript(transcriptPath: string, opts: Dr
   if (chunks.length === 0) return [];
 
   const max = draftMax();
-  const client = opts.client ?? (await defaultClient());
+  const maxChunks = opts.maxChunks ?? draftNumber("maxChunks");
+  const timeoutMs = (opts.timeoutSec ?? draftNumber("timeoutSec")) * 1000;
+  const client = opts.client ?? (await defaultClient(opts.localOnly));
   const known = listLessons();
-  const slugs = new Set(known.map((l) => l.id));
+  const slugs = new Set(known.flatMap((l) => [l.id, slugify(l.title)]));
   const knownBodies = known.map((l) => l.body);
   const all = norm(turns.map((t) => t.user).join("\n"));
   const found: RankedDraft[] = [];
-  for (const chunk of chunks) {
+  const startedAt = Date.now();
+  for (const chunk of chunks.slice(0, maxChunks)) {
+    if (Date.now() - startedAt > timeoutMs) break;
     let reply: string | null = null;
     try {
       reply = await client(draftPrompt(chunk));
@@ -497,9 +539,9 @@ export async function draftRankedFromTranscript(transcriptPath: string, opts: Dr
       // The quote is checked against the redacted user text: the model only ever
       // sees redacted text, so a verbatim quote can carry no secret.
       const quote = redactSecrets(it.evidence_quote.trim());
-      if (!all.includes(norm(quote))) continue;
+      if (norm(quote).length < QUOTE_MIN || !all.includes(norm(quote))) continue;
       const title = redactSecrets(it.title.replace(/\s+/g, " ")).slice(0, 120);
-      const body = redactSecrets(it.body.trim());
+      const body = redactSecrets(it.body.trim()).slice(0, FIELD_MAX);
       const slug = slugify(title);
       if (slugs.has(slug) || knownBodies.some((b) => nearIdentical(b, body))) continue;
       const strength = Math.min(5, it.strength);
@@ -511,7 +553,7 @@ export async function draftRankedFromTranscript(transcriptPath: string, opts: Dr
         continue;
       }
       const d: RankedDraft = {
-        lesson: { title, kind: it.kind as LessonKind, applies_when: redactSecrets(it.applies_when.trim()), evidence: [sessionId, redactSecrets(quote)], body },
+        lesson: { title, kind: it.kind as LessonKind, applies_when: redactSecrets(it.applies_when.trim()).slice(0, FIELD_MAX), evidence: [sessionId, redactSecrets(quote)], body },
         strength,
         evidenceScore: deterministicScore(quote, 1),
         count: 1,
