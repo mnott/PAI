@@ -581,13 +581,15 @@ function syncWorkersYamlDocument(doc: Document, before: WorkersYamlData, after: 
  * on disk, not a stale in-memory copy) and re-validates the result before
  * committing; on failure the previous bytes are left untouched.
  */
-export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void {
+export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData, baseline?: WorkersYamlData): void {
   // The Document is the RAW user file: setIn/deleteIn only ever touch user
   // entries, so the shipped defaults are never written into the user's file.
   // `before` is the effective (defaults-merged) data: a class or set the user
   // never named already equals its shipped value, so the diff leaves it alone.
   const doc = existsSync(yamlPath) ? parseDocument(readFileSync(yamlPath, "utf8")) : new Document({});
-  const before: WorkersYamlData = existsSync(yamlPath)
+  const before: WorkersYamlData = baseline
+    ? baseline
+    : existsSync(yamlPath)
     ? parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath)
     : {
         active: null,
@@ -599,7 +601,10 @@ export function writeWorkersYaml(yamlPath: string, after: WorkersYamlData): void
         nativeModels: { ...nativeAnthropicModels() },
       };
   const rawTiers = existsSync(yamlPath) ? effectiveWorkersYamlRaw(yamlPath).tiers : undefined;
+  const original = existsSync(yamlPath) ? String(parseDocument(readFileSync(yamlPath, "utf8"))) : "";
   syncWorkersYamlDocument(doc, before, after, Array.isArray(rawTiers) ? rawTiers : []);
+  // nothing the caller changed: the file is not rewritten (no reformat, no new mtime)
+  if (existsSync(yamlPath) && String(doc) === original) return;
   writeWorkersYamlText(yamlPath, String(doc));
 }
 
@@ -651,12 +656,14 @@ export function writePrioritySessions(sessions: Record<string, QueuePriority>, y
   if (doc.errors.length) {
     throw new WorkersConfigError(`${yamlPath}: ${doc.errors[0].message}`);
   }
+  const original = existsSync(yamlPath) ? String(parseDocument(readFileSync(yamlPath, "utf8"))) : "";
   for (const [name, p] of Object.entries(after)) {
     if (before[name] !== p) doc.setIn(["workers", "priority", "sessions", name], p);
   }
   for (const name of Object.keys(before)) {
     if (!(name in after)) doc.deleteIn(["workers", "priority", "sessions", name]);
   }
+  if (existsSync(yamlPath) && String(doc) === original) return;
   writeWorkersYamlText(yamlPath, String(doc));
 }
 
