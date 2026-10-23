@@ -10,6 +10,7 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { claudeProjectsDir } from "../config/pai-home.js";
 import { extractUserPromptText, isRealUserPrompt, type AssistantLine } from "../audit/session-usage.js";
+import { redactSecrets } from "../utils/redact.js";
 import { maskSecrets } from "../hooks/ts/lib/loop-guard.js";
 import { parseDenialText } from "../workers/denials.js";
 import { cockpitLayout } from "./cockpit-layout.js";
@@ -200,6 +201,126 @@ export async function sessionDetail(
   out.models = [...models];
   out.filesChanged = [...files].map(([path, f]) => ({ path, ...f })).sort((a, b) => b.approxLinesChanged - a.approxLinesChanged);
   out.mcp = [...mcp].map(([server, m]) => ({ server, ...m })).sort((a, b) => b.calls - a.calls);
+  return out;
+}
+
+/** prompt / reply of the turn view: at most this many characters each. */
+const TURN_TEXT_CHARS = 20_000;
+/** A tool step's summary: tool name + the first this many characters of its input. */
+const STEP_INPUT_CHARS = 120;
+/** An intermediate assistant text step shortened to this many characters. */
+const STEP_TEXT_CHARS = 200;
+
+export interface SessionTurnView {
+  id: string;
+  idx: number;
+  /** the true total number of turns in the session */
+  turnCount: number;
+  ts: string;
+  prompt: string;
+  /** true when `prompt` was cut at TURN_TEXT_CHARS */
+  promptTruncated: boolean;
+  /** the assistant's final text blocks of the turn, joined */
+  reply: string;
+  /** true when `reply` was cut at TURN_TEXT_CHARS */
+  replyTruncated: boolean;
+  /** one line per tool call (name + shortened input) and per intermediate assistant text */
+  steps: { kind: "tool" | "text"; name?: string; summary: string }[];
+}
+
+/** First `max` characters of a redacted value, shortened with an ellipsis. */
+function short(s: string, max: number): string {
+  const t = redactSecrets(s);
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/** One tool_use line: the tool name + the first 120 chars of its input. */
+function toolSummary(name: string, input: Record<string, unknown>): string {
+  return `${name}: ${short(JSON.stringify(input) || "{}", STEP_INPUT_CHARS)}`;
+}
+
+/**
+ * One turn in full: the user prompt and everything up to the next user prompt
+ * (the same turn notion sessionDetail counts), read from the transcript. The
+ * reply is the assistant text after the turn's last tool call; everything
+ * before it is a step. Prompt, reply and summaries are secret-redacted; prompt
+ * and reply are capped at 20k chars each with a truncated flag.
+ * null when the id has no transcript or `idx` is not a turn of it.
+ */
+export async function sessionTurnView(
+  id: string,
+  idx: number,
+  opts: { projectsDir?: string } = {}
+): Promise<SessionTurnView | null> {
+  if (!Number.isInteger(idx) || idx < 0) return null;
+  const file = findTranscript(id, opts.projectsDir);
+  if (!file) return null;
+  let turnCount = 0;
+  let out: SessionTurnView | null = null; // the wanted turn, kept after it ends
+  let cur: SessionTurnView | null = null; // the turn being accumulated (null once it ended)
+  let texts: string[] = []; // assistant texts after the current turn's last tool call (its reply)
+  let replyTexts: string[] = []; // the wanted turn's reply texts, kept after it ends
+  let textSteps: { kind: "text"; summary: string }[] = []; // text steps before the turn's last tool call; the ones after it are the reply
+  const closeTurn = () => {
+    if (cur) {
+      cur.steps = cur.steps.filter((s) => s.kind === "tool" || textSteps.some((t) => t === s));
+      if (cur === out) replyTexts = texts; // the wanted turn's reply survives the close
+    }
+    cur = null;
+    texts = [];
+    textSteps = [];
+  };
+  const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+  for await (const raw of rl) {
+    if (!raw) continue;
+    let obj: Line;
+    try {
+      obj = JSON.parse(raw) as Line;
+    } catch {
+      continue;
+    }
+    const content = obj.message?.content as string | Block[] | undefined;
+    if (obj.type === "user") {
+      if (isRealUserPrompt(obj)) {
+        closeTurn(); // the prompt ends the previous turn; counting continues for the total
+        const wanted = turnCount === idx;
+        cur = wanted
+          ? (out = { id, idx, turnCount: 0, ts: obj.timestamp ?? "", prompt: "", promptTruncated: false, reply: "", replyTruncated: false, steps: [] })
+          : null;
+        if (cur) {
+          const text = redactSecrets(cleanPromptText(extractUserPromptText(obj)));
+          cur.prompt = text.slice(0, TURN_TEXT_CHARS);
+          cur.promptTruncated = text.length > TURN_TEXT_CHARS;
+        }
+        turnCount++;
+        continue;
+      }
+      if (!cur) continue;
+      for (const b of Array.isArray(content) ? content : []) {
+        if (b.type === "tool_result") texts = []; // the assistant continues after the result: its text is intermediate again
+      }
+      continue;
+    }
+    if (obj.type !== "assistant" || !cur || !Array.isArray(content)) continue;
+    for (const b of content) {
+      if (b.type === "tool_use" && b.name) {
+        texts = [];
+        cur.steps.push({ kind: "tool", name: b.name, summary: toolSummary(b.name, b.input ?? {}) });
+      } else if (b.type === "text" && typeof b.text === "string" && b.text) {
+        texts.push(b.text);
+        const step = { kind: "text" as const, summary: short(b.text, STEP_TEXT_CHARS) };
+        cur.steps.push(step);
+        if (cur.steps.length === textSteps.length + 1) textSteps.push(step); // no tool call since the last text: this one is intermediate
+      }
+    }
+  }
+  rl.close();
+  closeTurn();
+  if (!out) return null;
+  out.turnCount = turnCount;
+  const reply = redactSecrets(replyTexts.join("\n\n"));
+  out.reply = reply.slice(0, TURN_TEXT_CHARS);
+  out.replyTruncated = reply.length > TURN_TEXT_CHARS;
   return out;
 }
 

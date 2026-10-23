@@ -61,7 +61,7 @@ import { bodyErrorStatus, readJsonObject } from "./cockpit-body.js";
 import { defaultDeps, readCockpitJob, readLabels, runCockpitAction, runningRuntimeJobs, runtimeJobProgress, type ActionDeps, type ActionHooks } from "./cockpit-actions.js";
 import type { SystemMonitor } from "./system.js";
 import { defaultRegistryCtx, handleRegistryRoute, type RegistryCtx } from "./cockpit-registry.js";
-import { SESSION_ID_RE, sessionDetail } from "./session-detail.js";
+import { SESSION_ID_RE, sessionDetail, sessionTurnView } from "./session-detail.js";
 import { combinedSearch, type MemorySearchFn } from "./session-memory.js";
 import { defaultSavedAt, readDefaultLayout, saveDefaultLayout } from "./cockpit-layout-default.js";
 import { cockpitMemoryPayload, memoryJobProgress, liveMemoryDeps, type MemoryDeps } from "./cockpit-memory.js";
@@ -1339,8 +1339,9 @@ export function handleCockpit(
   searchDeps: { projectsDir?: string; memorySearch?: MemorySearchFn } = {}): boolean {
   const url = new URL(req.url ?? "/", "http://localhost");
   const detail = url.pathname.match(/^\/api\/session\/([^/]*)\/detail$/);
+  const turn = url.pathname.match(/^\/api\/session\/([^/]*)\/turn\/([^/]*)$/);
   const search = url.pathname === "/api/sessions/search";
-  if (!detail && !search && url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
+  if (!detail && !turn && !search && url.pathname !== "/cockpit" && !url.pathname.startsWith("/cockpit/")) return false;
   const send = (status: number, type: string, body: string) => {
     res.writeHead(status, { "content-type": type, "cache-control": "no-store", "content-length": Buffer.byteLength(body) });
     res.end(body);
@@ -1354,6 +1355,16 @@ export function handleCockpit(
     res.on("close", () => (gone = true));
     combinedSearch(q, { cancelled: () => gone, hidden: ((m) => (t: string) => m("search", t))(hideMatcher(readHideRules())), ...searchDeps }).then(
       (r) => send(200, "application/json", JSON.stringify({ q, ...r })),
+      (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
+    );
+    return true;
+  }
+  if (turn) {
+    if (req.method !== "GET") return send(405, "text/plain", "GET only"), true;
+    if (loopbackRefusal(req, { allowHost: isTailnetOrLocalName, guardSafeMethods: true })) return send(403, "application/json", '{"error":"cross-origin request refused"}'), true;
+    if (!SESSION_ID_RE.test(turn[1]!)) return send(400, "application/json", '{"error":"invalid session id"}'), true;
+    sessionTurnView(turn[1]!, Number(turn[2])).then(
+      (t) => (t ? send(200, "application/json", JSON.stringify(t)) : send(404, "application/json", '{"error":"no such turn"}')),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
     return true;
