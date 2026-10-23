@@ -15,17 +15,21 @@ WCHX.speed={
  resize:function(){}
 };
 function wtFit(ctx){fitTables(ctx.body)}
-/** Row-level disclosures: a click on a fold or "+N more" row stores its state and re-feeds the page's data; a click on a session row opens its detail panel (SESS_OPEN), a tab or close button changes it. */
+/** Row-level disclosures: a click on a fold or "+N more" row stores its state and re-feeds the page's data; a click on a session row opens its detail panel (SESS_OPEN), a tab or close button changes it, a turn number opens that turn's view (prev / next step it). */
 function wtWire(ctx){
  ctx.body.addEventListener("click",function(e){
-  var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore],[data-sess],[data-hit],[data-sesstab],[data-sessclose]"):null;
+  var t=e.target&&e.target.closest?e.target.closest("[data-wrfold],[data-sessmore],[data-sess],[data-hit],[data-sesstab],[data-sessclose],[data-turn],[data-turnprev],[data-turnnext],[data-turnback]"):null;
   if(!t||!ctx.body.contains(t))return;
   e.preventDefault();
   var redraw=function(){Win.update("data",data)};
   if(t.hasAttribute("data-hit"))return sessDetailOpen(t.getAttribute("data-hit"),redraw,Number(t.getAttribute("data-turn")));
   if(t.hasAttribute("data-sess"))return sessDetailOpen(t.getAttribute("data-sess"),redraw);
-  if(t.hasAttribute("data-sesstab")){SESS_TAB=t.getAttribute("data-sesstab");return redraw()}
-  if(t.hasAttribute("data-sessclose")){SESS_OPEN=null;return redraw()}
+  if(t.hasAttribute("data-turn"))return sessTurnOpen(Number(t.getAttribute("data-turn")),redraw);
+  if(t.hasAttribute("data-turnprev"))return sessTurnOpen(SESS_TURN-1,redraw);
+  if(t.hasAttribute("data-turnnext"))return sessTurnOpen(SESS_TURN+1,redraw,SESS_TDET&&SESS_TDET.turnCount);
+  if(t.hasAttribute("data-turnback")){SESS_TURN=-1;SESS_TDET=null;return redraw()}
+  if(t.hasAttribute("data-sesstab")){SESS_TURN=-1;SESS_TDET=null;SESS_TAB=t.getAttribute("data-sesstab");return redraw()}
+  if(t.hasAttribute("data-sessclose")){SESS_OPEN=null;SESS_TURN=-1;SESS_TDET=null;return redraw()}
   if(t.hasAttribute("data-wrfold")){var f=wrFolded(),k=t.getAttribute("data-wrfold");if(f[k])delete f[k];else f[k]=1;try{localStorage.setItem(WR_FOLD_KEY,JSON.stringify(f))}catch(x){}}
   else{try{localStorage.setItem(SESS_MORE_KEY,t.getAttribute("data-sessmore"))}catch(x){}}
   Win.update("data",data);

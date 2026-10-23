@@ -142,36 +142,49 @@ function sessionsHtml(d){
  if(q&&SESS_MODE==="sessions"&&!all.length)h+='<div class="wr-row wr-span"><span class="dim sh-n">no session matches “'+esc(SESS_Q.trim())+'”</span></div>';
  return sessHitsHtml()+'<div class="wr-cq"><div class="wr-tbl">'+runHead("age")+'<div class="wr-group">'+h+'</div></div></div>';
 }
-/** Session drill-down state: the opened id, its tab and the fetched detail (survives the poll redraw; the panel is part of the sessions html). */
-var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null;
-/** One tab of the opened session's detail, drawn with table(); time-ordered tabs list the newest first. In prompts mode the timeline keeps the turns whose prompt contains the query; the turn a hit opened is marked. */
+/** Session drill-down state: the opened id, its tab, the fetched detail and the open turn view (survives the poll redraw; the panel is part of the sessions html). */
+var SESS_OPEN=null,SESS_TAB="timeline",SESS_DET=null,SESS_TURN=-1,SESS_TDET=null;
+/** One tab of the opened session's detail, drawn with table(); time-ordered tabs list the newest first. In prompts mode the timeline keeps the turns whose prompt contains the query; the turn a hit opened is marked. A row's number opens that turn's full view. */
 function sessDetailBody(d,tab){
  if(tab==="files")return table(["file","edits .n","~lines .n"],d.filesChanged.map(function(f){return[esc(f.path),f.edits,f.approxLinesChanged]}));
  if(tab==="skills")return table(["skill","time"],d.skills.slice().reverse().map(function(k){return[esc(k.name),esc(ago(k.ts))]}));
  if(tab==="mcp")return table(["server","calls .n","failures .n"],d.mcp.map(function(m){return[esc(m.server),m.calls,m.failures]}));
  if(tab==="denials")return table(["time","tool","reason"],d.denials.slice().reverse().map(function(x){return[esc(ago(x.ts)),esc(x.tool),esc(x.reason)]}));
  var q=SESS_MODE==="prompts"?sessQ():"",turns=q?d.turns.filter(function(t){return t.prompt.toLowerCase().indexOf(q)>=0||t.idx===SESS_FOCUS}):d.turns;
- return table(["#  .n","time","prompt","tools","edits","cmds .n"],turns.slice().reverse().map(function(t){return['<span data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</span>',esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
+ return table(["#  .n","time","prompt","tools","edits","cmds .n"],turns.slice().reverse().map(function(t){return['<button type="button" class="lnk" data-turn="'+t.idx+'"'+(t.idx===SESS_FOCUS?' class="sd-hl"':'')+'>'+(t.idx+1)+'</button>',esc(ago(t.ts)),esc(t.prompt),esc(t.tools.map(function(x){return x.name+"×"+x.count}).join(", ")),esc(t.edits.join(", ")),t.commands]}));
 }
-/** The detail panel (an expanded row under its session): tabs Timeline / Files / Skills / MCP / Denials and a close button; empty when no session is open. */
+/** One turn in full: "turn N of M" with prev / next / back, the prompt, the steps (a collapsed count, click to expand) and the reply. */
+function sessTurnHtml(t){
+ var head='<div class="sd-h"><b>turn '+(t.idx+1)+' of '+t.turnCount+'</b>'+(t.idx>0?'<button type="button" class="lnk" data-turnprev="1">← prev</button>':"")+(t.idx+1<t.turnCount?'<button type="button" class="lnk" data-turnnext="1">next →</button>':"")+'<button type="button" class="lnk dim" data-turnback="1">back to timeline</button></div>';
+ var steps='<details class="sd-st"><summary>'+t.steps.length+' step'+(t.steps.length===1?"":"s")+'</summary>'+t.steps.map(function(s){return'<div class="sd-step"><b>'+esc(s.kind==="tool"?(s.name||"tool"):"text")+'</b> <span>'+esc(s.summary)+'</span></div>'}).join("")+'</details>';
+ return head+'<div class="sd-prompt">'+esc(t.prompt)+(t.promptTruncated?" …[truncated]":"")+'</div>'+steps+'<div class="sd-reply">'+esc(t.reply||"—")+(t.replyTruncated?" …[truncated]":"")+'</div>';
+}
+/** The detail panel (an expanded row under its session): tabs Timeline / Files / Skills / MCP / Denials and a close button; the turn view replaces the body while a turn is open. Empty when no session is open. */
 function sessDetailHtml(){
  if(!SESS_OPEN)return"";
  var d=SESS_DET&&SESS_DET.id===SESS_OPEN?SESS_DET:null,tabs=[["timeline","Timeline"],["files","Files"],["skills","Skills"],["mcp","MCP"],["denials","Denials"]];
  var head='<div class="sd-h"><b title="'+esc(SESS_OPEN)+'">'+esc(SESS_OPEN.slice(0,8))+'</b>'+tabs.map(function(t){return'<button type="button" class="lnk" data-sesstab="'+t[0]+'"'+(t[0]===SESS_TAB?' aria-current="true"':'')+'>'+t[1]+(d&&t[0]!=="timeline"?" ("+(t[0]==="files"?d.filesChanged:t[0]==="skills"?d.skills:t[0]==="mcp"?d.mcp:d.denials).length+")":"")+'</button>'}).join("")+'<button type="button" class="lnk dim sd-x" data-sessclose="1" title="close">close ✕</button></div>';
  var old=d&&SESS_FOCUS>=0&&d.turns.length&&SESS_FOCUS<d.turns[0].idx;
  var meta=d?'<div class="dim">'+esc(d.cwd)+(d.models.length?" · "+esc(d.models.join(", ")):"")+(d.turnCount>d.turns.length?" · last "+d.turns.length+" of "+d.turnCount+" turns":"")+(old?" · turn "+(SESS_FOCUS+1)+" is older than the loaded timeline":"")+'</div>':"";
- return'<div class="sd" data-sd="'+esc(SESS_OPEN)+'">'+head+meta+(d?sessDetailBody(d,SESS_TAB):'<span class="dim">'+(SESS_DET&&SESS_DET.error?esc(SESS_DET.error):"loading…")+'</span>')+'</div>';
+ var body=SESS_TURN>=0?(SESS_TDET&&SESS_TDET.id===SESS_OPEN&&SESS_TDET.idx===SESS_TURN?sessTurnHtml(SESS_TDET):'<span class="dim">'+(SESS_TDET&&SESS_TDET.error?esc(SESS_TDET.error):"loading…")+'</span>'):d?sessDetailBody(d,SESS_TAB):'<span class="dim">'+(SESS_DET&&SESS_DET.error?esc(SESS_DET.error):"loading…")+'</span>';
+ return'<div class="sd" data-sd="'+esc(SESS_OPEN)+'">'+head+meta+body+'</div>';
 }
 /** Opens (or closes, on a second click) a session's detail and fetches it; the panel redraws with the sessions card. A hit passes its turn: it opens the timeline there (and stays open when already open). */
 function sessDetailOpen(id,redraw,turn){
  var hit=turn!=null;
- SESS_FOCUS=hit?turn:-1;SESS_SCROLL=hit;
+ SESS_FOCUS=hit?turn:-1;SESS_SCROLL=hit;SESS_TURN=-1;SESS_TDET=null;
  if(SESS_OPEN===id){
   if(hit){SESS_TAB="timeline";redraw();return}
   SESS_OPEN=null;redraw();return;
  }
  SESS_OPEN=id;SESS_DET=null;if(hit)SESS_TAB="timeline";redraw();
  fetch("/api/session/"+encodeURIComponent(id)+"/detail",{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(SESS_OPEN===id){SESS_DET=j;redraw()}},function(e){if(SESS_OPEN===id){SESS_DET={id:id,error:String(e.message||e)};redraw()}});
+}
+/** Opens one turn's full view (prev / next step it); the view fetches its own endpoint and redraws with the sessions card. total bounds it: the timeline's turnCount, or the open turn view's own. */
+function sessTurnOpen(idx,redraw,total){
+ if(SESS_OPEN===null||idx<0||idx>=(total!==undefined?total:(SESS_DET&&SESS_DET.turnCount)||0))return;
+ SESS_TURN=idx;SESS_TDET=null;redraw();
+ fetch("/api/session/"+encodeURIComponent(SESS_OPEN)+"/turn/"+idx,{cache:"no-store"}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||"HTTP "+r.status);return j})}).then(function(j){if(SESS_OPEN&&SESS_TURN===idx){SESS_TDET=j;redraw()}},function(e){if(SESS_OPEN&&SESS_TURN===idx){SESS_TDET={id:SESS_OPEN,idx:idx,error:String(e.message||e)};redraw()}});
 }
 /** Server search of prompt text for the current query (prompts mode, 2+ chars); the answer is kept with its query so a stale one is ignored. */
 function sessSearch(redraw){
