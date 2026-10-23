@@ -915,3 +915,39 @@ describe("provider characteristics (registered endpoints)", () => {
     expect(() => load(["    characteristics:", "      speed: 3"])).toThrow(/unknown key speed/);
   });
 });
+
+describe("workers.yaml writers touch only what they were asked to change", () => {
+  const seed = (yamlPath: string): string => {
+    // deliberately not in the serialiser's normal form (leading blank line, odd spacing)
+    const text = "\nproviders:\n  glm:   # my note\n    enabled: true\n    url: http://x.invalid/v1\n    models: {default: m}\n  other:\n    enabled: false\n    url: http://y.invalid/v1\n    models: {default: n}\nactive: glm\n";
+    writeFileSync(yamlPath, text);
+    return text;
+  };
+
+  it("a write that changes nothing leaves the file byte-identical", () => {
+    const dir = newDir();
+    const yamlPath = isolateYaml(dir);
+    const jsonPath = join(dir, "config.json");
+    const text = seed(yamlPath);
+    const { raw, workers } = readWorkersSection(jsonPath, () => {});
+    const before = statSync(yamlPath).mtimeMs;
+    writeWorkersSection(raw, workers, jsonPath);
+    expect(readFileSync(yamlPath, "utf8")).toBe(text);
+    expect(statSync(yamlPath).mtimeMs).toBe(before);
+  });
+
+  it("a stale read does not revert keys changed on disk meanwhile", () => {
+    const dir = newDir();
+    const yamlPath = isolateYaml(dir);
+    const jsonPath = join(dir, "config.json");
+    seed(yamlPath);
+    const { raw, workers } = readWorkersSection(jsonPath, () => {});
+    // someone else flips `other` on after this read
+    writeFileSync(yamlPath, readFileSync(yamlPath, "utf8").replace("enabled: false", "enabled: true"));
+    workers.active = "other";
+    writeWorkersSection(raw, workers, jsonPath);
+    const out = readFileSync(yamlPath, "utf8");
+    expect(out).toMatch(/other:\n\s+enabled: true/);
+    expect(out).toMatch(/active: other/);
+  });
+});

@@ -1571,6 +1571,9 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
 // Read / write
 // ---------------------------------------------------------------------------
 
+/** The workers.yaml data each readWorkersSection result was built from (deep copy, before the caller edits). */
+const yamlBaselines = new WeakMap<WorkersConfig, WorkersYamlData>();
+
 function workersYamlDataOf(workers: WorkersConfig): WorkersYamlData {
   return {
     active: workers.active,
@@ -1620,6 +1623,8 @@ export function readWorkersSection(
   const yaml = existsSync(workersYamlPath()) ? effectiveWorkersYamlData(workersYamlPath()) : null;
   const workers = parseWorkersConfig(merged.workers, yaml?.providers);
   if (yaml) {
+    // what this read saw on disk: the write diffs against it, so it changes only what the caller changed
+    yamlBaselines.set(workers, structuredClone(yaml));
     workers.active = yaml.active;
     workers.providers = yaml.providers;
     workers.tiers = yaml.tiers;
@@ -1695,7 +1700,7 @@ export function writeWorkersSection(
   const yamlPath = workersYamlPath();
   const usingYaml = existsSync(yamlPath);
   if (usingYaml) {
-    writeWorkersYaml(yamlPath, workersYamlDataOf(workers));
+    writeWorkersYaml(yamlPath, workersYamlDataOf(workers), yamlBaselines.get(workers));
   }
   const jsonWorkers = usingYaml
     ? {
