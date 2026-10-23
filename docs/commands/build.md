@@ -2,7 +2,7 @@
 
 # pai build
 
-One machine-wide build queue: run, lock, queue, next, doctor
+One machine-wide build queue: run, lock, queue, next, doctor, npm-auth
 
 ```
 pai build <command>
@@ -113,6 +113,22 @@ Reads .pai/builds.yaml above the current directory and flags every door that is 
 pai build doctor
 ```
 
+### pai build npm-auth
+
+Check the npm publish credential before `npm publish`
+
+```
+pai build npm-auth
+```
+
+Runs `npm whoami` against the public registry (10 s timeout). Exits 1 with the token renewal steps when npm rejects the credential; a timeout or network error is reported but does not fail. Used by prepublishOnly.
+
+```sh
+pai build npm-auth
+```
+
+See also: `pai build doctor`
+
 ### pai build watch
 
 Internal: kill a build tree when its gate process dies
@@ -141,6 +157,7 @@ pai build watch DIR ID
 | `pai build queue` | Show the running and waiting builds and tests |
 | `pai build next` | Give a waiting build the next free slot |
 | `pai build doctor` | Check the project's registered build doors and hook events |
+| `pai build npm-auth` | Check the npm publish credential before `npm publish` |
 | `pai build watch` | Internal: kill a build tree when its gate process dies |
 
 ## See also
