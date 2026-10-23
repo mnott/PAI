@@ -30,6 +30,20 @@ function task(n: number, over: Partial<PlannerTask> = {}): PlannerTask {
   return { title: `task ${n}`, brief: `do thing ${n}`, ...over };
 }
 
+const mergeHook = vi.hoisted(() => ({ failTests: false }));
+vi.mock("./worktree.js", async (orig) => {
+  const actual = await orig<typeof import("./worktree.js")>();
+  return {
+    ...actual,
+    // real merge, then the CLI's post-merge failure when the flag is set
+    mergeWorker: (...a: Parameters<typeof actual.mergeWorker>) => {
+      const text = actual.mergeWorker(...a);
+      if (mergeHook.failTests) throw new actual.RelatedTestsFailedError(`${text}\nrelated tests: failed: src/q.test.ts\n  revert with: git revert`);
+      return text;
+    },
+  };
+});
+
 describe("validatePlan", () => {
   it("accepts a full plan and trims it to the known fields", () => {
     const tasks = validatePlan({
@@ -326,5 +340,30 @@ describe("runPlanner: merging children into the planner's own worktree", () => {
     logSpy.mockRestore();
     const openLines: string[] = payload.report.open;
     expect(openLines.some((l) => l.includes(secondId) && l.includes("shared.txt"))).toBe(true);
+  });
+
+  it("counts a child whose related tests failed after the merge as merged, with a warning, not as a conflict", async () => {
+    const repo = initRepo();
+    const mock = mockGitStage(repo, [task(1)], (wtDir, idx) => {
+      writeFileSync(join(wtDir, `file${idx}.txt`), "x\n", "utf8");
+    });
+    mergeHook.failTests = true;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    let rc: number;
+    try {
+      rc = await runPlanner(
+        { claudeArgs: ["-p", "the goal", "--output-format", "json"] },
+        { runStage: mock.runStage, logDir: dir, maxChildren: 1 }
+      );
+    } finally {
+      mergeHook.failTests = false;
+    }
+    const payload = JSON.parse(logSpy.mock.calls[0][0] as string);
+    logSpy.mockRestore();
+    expect(rc).toBe(0);
+    expect(loadStatus(dir, mock.childIds[0])?.merged).toBe(true);
+    const openLines: string[] = payload.report.open;
+    expect(openLines.some((l) => l.startsWith("merged, related tests failed:") && l.includes("src/q.test.ts"))).toBe(true);
+    expect(openLines.some((l) => l.startsWith("conflict:"))).toBe(false);
   });
 });

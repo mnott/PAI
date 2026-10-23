@@ -29,7 +29,7 @@ import { loadStatus, newWorkerId } from "./status.js";
 import { parseRunnerArgs, shortText } from "./args.js";
 import { swapPromptArg } from "./chain.js";
 import { runWorker, printResult, type RunOptions, type StreamEvent } from "./run.js";
-import { git, MergeConflictError, mergeWorker } from "./worktree.js";
+import { git, MergeConflictError, mergeWorker, RelatedTestsFailedError } from "./worktree.js";
 import type { WorkerReport } from "./report.js";
 
 /** Where a planner run's plan file lives: <logDir>/plans/<planner id>.json. */
@@ -251,6 +251,8 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
   // merge is aborted by mergeWorker so the planner's branch stays clean and the
   // next child still gets a try; the child's branch is left intact either way.
   const merged: string[] = [];
+  /** merged children whose related tests failed: id -> the failure line. */
+  const testsFailed = new Map<string, string>();
   const conflicted: { id: string; branch: string; paths: string[] }[] = [];
   if (plannerWorktreeDir) {
     for (const r of results) {
@@ -261,6 +263,12 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
         mergeWorker(logDir, r.id);
         merged.push(r.id);
       } catch (e) {
+        if (e instanceof RelatedTestsFailedError) {
+          // thrown after the merge commit and the state change: the work is merged
+          merged.push(r.id);
+          testsFailed.set(r.id, e.message.split("\n").filter((l) => l.startsWith("related tests:")).join(" ") || e.message.split("\n")[0]);
+          continue;
+        }
         // mergeWorker already restored the checkout; a conflict carries its paths
         const paths = e instanceof MergeConflictError ? e.paths : [];
         conflicted.push({ id: r.id, branch: st.branch, paths });
@@ -277,7 +285,7 @@ export async function runPlanner(opts: RunOptions, deps: PlannerDeps = {}): Prom
     merged: merged.length,
     conflicted: conflicted.length,
   });
-  printPlannerSummary(logDir, plannerId, results, merged, conflicted, parsed.outputFormat, opts.quiet === true);
+  printPlannerSummary(logDir, plannerId, results, merged, conflicted, parsed.outputFormat, opts.quiet === true, testsFailed);
   return failed || conflicted.length ? 1 : 0;
 }
 
@@ -289,7 +297,8 @@ function printPlannerSummary(
   merged: string[],
   conflicted: { id: string; branch: string; paths: string[] }[],
   fmt: "text" | "json" | "stream-json",
-  quiet: boolean
+  quiet: boolean,
+  testsFailed: Map<string, string> = new Map()
 ): void {
   const ok = results.filter((r) => r.rc === 0).length;
   const attempted = new Set([...merged, ...conflicted.map((c) => c.id)]);
@@ -310,7 +319,7 @@ function printPlannerSummary(
     ...(merged.length || conflicted.length || stillOpen.length
       ? {
           open: [
-            ...merged.map((id) => `merged: ${id}`),
+            ...merged.map((id) => (testsFailed.has(id) ? `merged, related tests failed: ${testsFailed.get(id)} (${id})` : `merged: ${id}`)),
             ...conflicted.map(
               (c) =>
                 `conflict: pai worker merge ${c.id} (${c.branch})` +
@@ -323,6 +332,7 @@ function printPlannerSummary(
     notes:
       `${ok}/${results.length} sub-tasks ok` +
       (merged.length ? `; ${merged.length} merged` : "") +
+      (testsFailed.size ? ` (${testsFailed.size} with related tests failing)` : "") +
       (conflicted.length ? `; ${conflicted.length} conflict(s)` : "") +
       (stillOpen.length ? `; ${stillOpen.length} branch(es) to merge` : ""),
   };
@@ -332,6 +342,7 @@ function printPlannerSummary(
     type: "result",
     result: [
       `planner ${plannerId}: ${report.notes}`,
+      ...[...testsFailed].map(([id, why]) => `  merged, related tests failed: ${why} (${id})`),
       ...(conflicted.length ? ["conflicts:"] : []),
       ...conflicted.map(
         (c) =>

@@ -8,7 +8,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { join } from "node:path";
-import { isLive, loadStatuses } from "./status.js";
+import { isLive, loadStatus, loadStatuses } from "./status.js";
 import { statusPath } from "./paths.js";
 import { adoptDetachedHead, git, uncommittedPaths } from "./worktree.js";
 import { fmtAge } from "../utils/fmt-age.js";
@@ -24,6 +24,19 @@ export interface PendingResult {
   commits: number;
   /** uncommitted paths in the worktree, node_modules excluded. */
   dirty: number;
+  /** the run this one was escalated to, when it has not finished merging (see `escalation`). */
+  escalatedTo?: string;
+  /** "running": the escalated run works from this branch; "superseded": its work is merged. */
+  escalation?: "running" | "superseded";
+}
+
+/** State of the run `st` was escalated to, or null when it was not escalated or the target is neither live nor merged. */
+export function escalationState(logDir: string, st: { escalatedTo?: string }): "running" | "superseded" | null {
+  if (!st.escalatedTo) return null;
+  const target = loadStatus(logDir, st.escalatedTo);
+  if (!target) return null;
+  if (isLive(target)) return "running";
+  return target.merged ? "superseded" : null;
 }
 
 /** Stale after this long: `pai worker gc` (archive) instead of merge. */
@@ -67,7 +80,11 @@ export function pendingResults(logDir: string, repoRoot?: string, now = Date.now
     } catch {
       // status vanished mid-scan: age unknown, keep the entry
     }
-    out.push({ id: st.id, label: st.label, repo, ageMs, age: fmtAge(ageMs, { dayAfterHours: 48 }), commits, dirty });
+    const escalation = escalationState(logDir, st);
+    out.push({
+      id: st.id, label: st.label, repo, ageMs, age: fmtAge(ageMs, { dayAfterHours: 48 }), commits, dirty,
+      ...(escalation ? { escalatedTo: st.escalatedTo, escalation } : {}),
+    });
   }
   return out;
 }
@@ -76,7 +93,10 @@ export function pendingResults(logDir: string, repoRoot?: string, now = Date.now
 export function formatPending(results: PendingResult[], showRepo = false): string {
   return results
     .map((r) => {
-      const next = r.ageMs > STALE_HOURS * 3_600_000 ? "pai worker gc" : `pai worker merge ${r.id}`;
+      const next =
+        r.escalation === "running" ? `escalated run ${r.escalatedTo} is working from this branch; do not merge`
+        : r.escalation === "superseded" ? `superseded by merged ${r.escalatedTo}; pai worker discard ${r.id}`
+        : r.ageMs > STALE_HOURS * 3_600_000 ? "pai worker gc" : `pai worker merge ${r.id}`;
       const repo = showRepo ? `  ${r.repo}` : "";
       return `${r.id}  ${r.age}  ${r.commits} commit(s), ${r.dirty} dirty  ${r.label}${repo}  -> ${next}`;
     })

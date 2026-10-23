@@ -37,15 +37,82 @@ export function filterSourceFiles(names: string[]): string[] {
 
 export function changedSourceFiles(cwd: string, oldHead: string, git: (cwd: string, args: string[]) => string): string[] {
   return filterSourceFiles(
-    git(cwd, ["diff", "--name-only", oldHead, "HEAD", "--", "*.ts", "*.tsx", "*.mjs"]).split("\n").filter(Boolean)
+    git(cwd, ["diff", "-z", "--name-only", oldHead, "HEAD", "--", "*.ts", "*.tsx", "*.mjs"]).split("\0").filter(Boolean)
   );
 }
 
 const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The template with `{files}` replaced by the shell-quoted file list. */
+/** A name starting with `-` would reach the test runner as an option. */
+const operand = (f: string): string => (f.startsWith("-") ? `./${f}` : f);
+
+/** The template with `{files}` replaced by the shell-quoted file list (verbatim: `$&` in a name is not a replacement pattern). */
 export function buildRelatedCommand(template: string, files: string[]): string {
-  return template.replace(/\{files\}/g, files.map(shq).join(" "));
+  const list = files.map((f) => shq(operand(f))).join(" ");
+  return template.replace(/\{files\}/g, () => list);
+}
+
+/** Files per command line, far below any argv limit (E2BIG). */
+export const FILES_PER_COMMAND = 100;
+
+/**
+ * Runs shell commands in order and prints one JSON result on stdout. Each
+ * command gets its own process group; on timeout the whole group is killed,
+ * so the test tree (npx, node, workers) cannot outlive the check. Stops at
+ * the first command that does not exit 0. Input arrives on stdin (it can be
+ * larger than an env var or argv allows).
+ */
+const RUNNER = `
+const { spawn } = require("node:child_process");
+let raw = "";
+process.stdin.on("data", (d) => (raw += d));
+process.stdin.on("end", async () => {
+  const { cmds, timeoutMs } = JSON.parse(raw);
+  const deadline = Date.now() + timeoutMs;
+  let output = "";
+  const res = { code: 0, signal: null, timedOut: false, error: null };
+  for (const cmd of cmds) {
+    const left = deadline - Date.now();
+    if (left <= 0) { res.timedOut = true; break; }
+    const r = await new Promise((done) => {
+      const c = spawn("sh", ["-c", cmd], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      let to = false;
+      const t = setTimeout(() => { to = true; try { process.kill(-c.pid, "SIGKILL"); } catch {} }, left);
+      c.stdout.on("data", (d) => (output += d));
+      c.stderr.on("data", (d) => (output += d));
+      c.on("error", (e) => { clearTimeout(t); done({ code: 1, signal: null, to, error: String(e.message || e) }); });
+      c.on("close", (code, signal) => { clearTimeout(t); try { process.kill(-c.pid, "SIGKILL"); } catch {} done({ code, signal, to, error: null }); });
+    });
+    if (r.to) { res.timedOut = true; break; }
+    if (r.error) { res.error = r.error; res.code = 1; break; }
+    if (r.code !== 0) { res.code = r.code; res.signal = r.signal; break; }
+  }
+  process.stdout.write(JSON.stringify({ ...res, output }));
+});
+`;
+
+interface RunOutcome {
+  code: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  error: string | null;
+  output: string;
+}
+
+function runCommands(cwd: string, env: NodeJS.ProcessEnv, cmds: string[], timeoutSec: number): RunOutcome {
+  const r = spawnSync(process.execPath, ["-e", RUNNER], {
+    cwd,
+    env,
+    input: JSON.stringify({ cmds, timeoutMs: timeoutSec * 1000 }),
+    encoding: "utf8",
+    timeout: timeoutSec * 1000 + 30_000, // backstop; the runner enforces the real limit
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  try {
+    return JSON.parse(r.stdout) as RunOutcome;
+  } catch {
+    return { code: 1, signal: r.signal, timedOut: false, error: r.error?.message ?? `runner exited ${r.status}`, output: `${r.stdout ?? ""}\n${r.stderr ?? ""}` };
+  }
 }
 
 /** A config glob matched against repo-relative paths (`**` crosses directories). */
@@ -150,23 +217,20 @@ export function runRelatedTests(
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
-  const r = spawnSync("sh", ["-c", buildRelatedCommand(settings.verify, run)], {
-    cwd,
-    env,
-    encoding: "utf8",
-    timeout: timeoutSec * 1000,
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
-  if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+  const cmds: string[] = [];
+  for (let i = 0; i < run.length; i += FILES_PER_COMMAND) cmds.push(buildRelatedCommand(settings.verify, run.slice(i, i + FILES_PER_COMMAND)));
+  const r = runCommands(cwd, env, cmds, timeoutSec);
+  const output = r.output;
+  if (r.timedOut) {
     return { status: "failed", line: `related tests: timed out after ${timeoutSec}s`, failing: [] };
   }
-  if (r.status === 0) {
+  if (r.code === 0 && !r.signal && !r.error) {
     const counts = always.files.length ? `${files.length} source files + ${always.files.length} always-tests, passed` : `${files.length} source files, passed`;
     return { status: "passed", line: `related tests: ${passSummary(output) ?? counts}${note}`, failing: [] };
   }
   const failing = failingFiles(output);
-  const why = failing.length ? `failed: ${failing.join(", ")}` : `failed (exit ${r.status ?? 1})`;
+  const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
+  const why = failing.length ? `failed: ${failing.join(", ")}` : `failed (${exit})`;
   return { status: "failed", line: `related tests: ${why}${note}`, failing };
 }
 
