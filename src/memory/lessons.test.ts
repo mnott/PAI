@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { addLesson, draftFromTranscript, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
+import { addLesson, deterministicScore, draftFromTranscript, draftRankedFromTranscript, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
 import { fakeAnthropic } from "../utils/fake-secret.js";
 
 let home: string;
@@ -218,7 +218,7 @@ describe("draftFromTranscript", () => {
 
   it("yields the two corrections, redacted, with session evidence", async () => {
     const out = await draftFromTranscript(fixture(), { client: async () => JSON.stringify(good) });
-    expect(out.map((l) => l.title)).toEqual(["Instrument, do not trust memory", "Commands only in panes"]);
+    expect(out.map((l) => l.title)).toEqual(["Commands only in panes", "Instrument, do not trust memory"]);
     expect(out[0]!.evidence![0]).toBe("sess-1");
     expect(JSON.stringify(out)).not.toContain(ANTHROPIC);
   });
@@ -269,5 +269,69 @@ describe("draftFromTranscript", () => {
     addLesson({ title: "Commands only in panes", kind: "gotcha", applies_when: "x" });
     const out = await draftFromTranscript(fixture(), { client: async () => JSON.stringify(good) });
     expect(out.map((l) => l.title)).toEqual(["Instrument, do not trust memory"]);
+  });
+
+  it("ranks rule quotes above one-off now-change quotes", async () => {
+    const p = join(project, "sess-3.jsonl");
+    writeFileSync(p, [
+      ev("user", "put the architecture svg as png next to here"),
+      ev("user", "the README top should be catchy"),
+      ev("user", "memory is unreliable, it needs to be instrumented. deterministic."),
+      ev("user", "it must be IMPOSSIBLE to start any command not in a pane"),
+    ].join("\n"));
+    const out = await draftRankedFromTranscript(p, { client: async () => JSON.stringify([
+      item("Svg as png", "put the architecture svg as png next to here", 5),
+      item("Catchy readme", "the README top should be catchy", 5),
+      item("Instrument memory", "memory is unreliable, it needs to be instrumented. deterministic.", 4),
+      item("Panes only", "it must be IMPOSSIBLE to start any command not in a pane", 4),
+    ]) });
+    expect(out.map((d) => d.lesson.title)).toEqual(["Panes only", "Instrument memory", "Svg as png", "Catchy readme"]);
+    expect(out[0]).toMatchObject({ strength: 4, evidenceScore: 3 });
+    expect(out[1]).toMatchObject({ strength: 4, evidenceScore: 0 });
+  });
+});
+
+describe("deterministicScore", () => {
+  it("+2 rule words, English and German", () => {
+    expect(deterministicScore("memory is unreliable, it needs to be instrumented. deterministic.", 1)).toBe(0);
+    expect(deterministicScore("it must be IMPOSSIBLE to start any command not in a pane", 1)).toBe(3);
+    expect(deterministicScore("always run tsc first", 1)).toBe(2);
+    expect(deterministicScore("NEVER commit before the tests pass", 1)).toBe(3);
+    expect(deterministicScore("from now on, no exception", 1)).toBe(2);
+    expect(deterministicScore("immer die tests zuerst, das darf nicht passieren", 1)).toBe(2);
+    expect(deterministicScore("nie etwas ohne review", 1)).toBe(2);
+  });
+
+  it("+1 emphasis: ALL-CAPS word, /word/, exclamation", () => {
+    expect(deterministicScore("EVERY output must be redacted", 1)).toBe(3);
+    expect(deterministicScore("never touch /settings/", 1)).toBe(3);
+    expect(deterministicScore("never do that!", 1)).toBe(3);
+    expect(deterministicScore("run the build", 1)).toBe(0);
+  });
+
+  it("+1 when drafted from 2+ chunks", () => {
+    expect(deterministicScore("always run tsc first", 2)).toBe(3);
+    expect(deterministicScore("run the build", 3)).toBe(1);
+  });
+
+  it("-2 for a concrete now-change target without a rule word", () => {
+    expect(deterministicScore("put the architecture svg as png next to here", 1)).toBe(-2);
+    expect(deterministicScore("the README top should be catchy", 1)).toBe(-2);
+    expect(deterministicScore("in the cockpit put a button for it", 1)).toBe(-2);
+    expect(deterministicScore("update src/memory/lessons.ts now", 1)).toBe(-2);
+    // a rule word cancels the penalty
+    expect(deterministicScore("never edit the README by hand", 1)).toBe(2);
+  });
+
+  it("the two strongest corrections outrank the one-off quotes", () => {
+    const strong = [
+      deterministicScore("memory is unreliable, it needs to be instrumented. deterministic.", 1),
+      deterministicScore("it must be IMPOSSIBLE to start any command not in a pane", 1),
+    ];
+    const weak = [
+      deterministicScore("put the architecture svg as png next to here", 1),
+      deterministicScore("the README top should be catchy", 1),
+    ];
+    for (const s of strong) for (const w of weak) expect(s).toBeGreaterThan(w);
   });
 });
