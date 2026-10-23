@@ -4,6 +4,26 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.23] - 2026-10-23
+
+### Added
+
+- **Cockpit session search:** the Sessions card has a search box; "prompts" searches recent transcripts first, then PAI memory, and a hit opens its session at that turn.
+- **Cockpit turn view:** click a turn number in a session's timeline to see the full prompt, the steps (folded) and the reply, rendered as a safe markdown subset, with previous/next.
+- **Cockpit hide rules:** "hide like this" on rows of sessions, worker runs, timeline and prompt search; rules live in `router.cockpit.hide`, with an "N hidden" count and an editor.
+- **Queue priority:** `pai worker run --priority high|normal|low` and `workers.priority.sessions`; `pai worker priority list|set|clear` changes it. Higher priority is admitted first; running workers are never preempted.
+- **Session registry tools:** `pai session move` (by id, project and note number, or a batch), `pai session repair-registry` (points rows back at renamed notes, with a backup first), `pai session backfill-ids` (session ids in note frontmatter), `pai session profile show|set|clear`.
+- **Release tooling:** `pai build mirror-sync` (forge push mirror with a readable push-protection reason) and an npm Trusted Publishing workflow.
+
+### Fixed
+
+- **Session registry:** renaming a session note updates its registry row, so session lists no longer point at old file names.
+- **Escalation:** a local run stopped by the loop guard or its deadline is handed to the cloud tier once, pooled or not, with or without saved work.
+- **Workers:** a grant that does not fit the pool runs unpooled instead of failing; `pai worker kill` stops runs that waited in the queue; the queue line in a pane redraws in place; launches no longer pin workers to the chat provider.
+- **Builds:** a rebuild keeps the dist chunks that running processes still use (also under another path to the same folder and under a non-English locale), so a running MCP server keeps working.
+- **Cockpit:** the session detail's close and tab links work and keep the scroll position; the timeline lists newest first.
+- **Security scanning:** test fixtures that look like secrets are built at runtime; a GitGuardian config skips test files.
+
 ## [1.0.22] - 2026-10-23
 
 ### Fixed
