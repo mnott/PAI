@@ -303,7 +303,7 @@ export function extractTurns(transcriptPath: string): Turn[] {
     } else if (ev.type === "user" && !ev.isMeta) {
       const text = stripNoise(userText(ev.message?.content));
       if (!text) continue;
-      turns.push({ user: redactSecrets(text.slice(0, USER_CHARS)), before: redactSecrets(lastAssistant.replace(/\s+/g, " ").slice(0, CONTEXT_CHARS)) });
+      turns.push({ user: redactSecrets(text).slice(0, USER_CHARS), before: redactSecrets(lastAssistant.replace(/\s+/g, " ")).slice(0, CONTEXT_CHARS) });
       lastAssistant = "";
     }
   }
