@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRelatedCommand,
+  changedSourceFiles,
   failingFiles,
   filterSourceFiles,
   hasVitest,
@@ -23,7 +24,7 @@ const tmp = (pkg?: object): string => {
 };
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })));
 
-const git = (files: string[]) => () => files.join("\n");
+const git = (files: string[]) => () => files.join("\0");
 const cfg = (verify: string, verifyTimeoutSec = 30): RelatedSettings => ({ verify, verifyTimeoutSec });
 
 /** A git repo with committed test files, so always-test globs resolve. */
@@ -124,5 +125,47 @@ describe("merge related tests", () => {
       files: ["src/cli/docs-keys.test.ts", "src/cli/docs-sync.test.ts", "src/utils/guard.test.ts"],
       missing: ["src/gone.test.ts"],
     });
+  });
+
+  it("keeps $& and $' in names literal and guards names starting with -", () => {
+    expect(buildRelatedCommand("t {files}", ["x$&y.ts", "it$'s.ts", "a$$b.ts"])).toBe(`t 'x$&y.ts' 'it$'\\''s.ts' 'a$$b.ts'`);
+    expect(buildRelatedCommand("t {files}", ["-x.ts"])).toBe("t './-x.ts'");
+  });
+
+  it("lists changed files with -z so odd names are not quoted", () => {
+    const d = repo([]);
+    const r = spawnSync("git", ["init"], { cwd: d });
+    writeFileSync(join(d, "é ü.ts"), "x");
+    spawnSync("git", ["add", "-A"], { cwd: d });
+    spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "n"], { cwd: d });
+    const real = (cwd: string, args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" }).stdout;
+    expect(r.status).toBe(0);
+    expect(changedSourceFiles(d, "HEAD~1", real)).toEqual(["é ü.ts"]);
+  });
+
+  it("kills the whole process tree on timeout", () => {
+    const d = tmp();
+    const t0 = Date.now();
+    const r = runRelatedTests(d, "x", cfg(`sh -c 'sleep 31 & echo $! > pid.txt; sleep 31' x {files}`, 1), git(["a.ts"]));
+    expect(r.line).toContain("timed out after 1s");
+    expect(Date.now() - t0).toBeLessThan(15_000);
+    const pid = Number(readFileSync(join(d, "pid.txt"), "utf8").trim());
+    let alive = true;
+    try { process.kill(pid, 0); } catch { alive = false; }
+    expect(alive).toBe(false);
+  });
+
+  it("reports a signal exit as such", () => {
+    const r = runRelatedTests(tmp(), "x", cfg("kill -9 $$"), git(["a.ts"]));
+    expect(r.status).toBe("failed");
+    expect(r.line).toContain("killed by SIGKILL");
+  });
+
+  it("chunks long file lists so argv stays small", () => {
+    const d = tmp();
+    const names = Array.from({ length: 450 }, (_, i) => `src/${"d".repeat(100)}/f${i}.ts`);
+    const r = runRelatedTests(d, "x", cfg(`sh -c 'echo "$#" >> counts.txt' x {files}`), git(names));
+    expect(r.status).toBe("passed");
+    expect(readFileSync(join(d, "counts.txt"), "utf8").trim().split("\n").map(Number)).toEqual([100, 100, 100, 100, 50]);
   });
 });

@@ -22,7 +22,7 @@ import { tmpdir, platform } from "node:os";
 import { isLive, loadStatus, loadStatuses, saveStatus, UNLABELED, type WorkerStatus } from "./status.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath, statusPath } from "./paths.js";
-import { invalidatePendingCache } from "./pending.js";
+import { escalationState, invalidatePendingCache } from "./pending.js";
 import { readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
@@ -881,7 +881,9 @@ function mergeSnapshotWorker(
     throw new Error(
       `worker ${id}: branch ${branch} has no commits beyond its snapshot to merge. ` +
         `The worktree ${worktreeDir} was NOT removed — uncommitted work there would be destroyed. ` +
-        `Commit it yourself, or drop everything with: pai worker discard ${id}`
+        (st.escalatedTo && escalationState(logDir, st) === "superseded"
+          ? `It was superseded by the merged escalated run ${st.escalatedTo}; drop it with: pai worker discard ${id}`
+          : `Commit it yourself, or drop everything with: pai worker discard ${id}`)
     );
   }
   const changedPaths = git(st.cwd, ["diff", "--name-only", snapshot, branch]).split("\n").filter(Boolean);
@@ -1211,6 +1213,12 @@ export function mergeWorker(
 ): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
+  if (st.escalatedTo && escalationState(logDir, st) === "running") {
+    throw new Error(
+      `worker ${id}: escalated to ${st.escalatedTo}, which is still running from branch ${st.branch}; ` +
+        `merging now would delete that branch under it. Merge ${st.escalatedTo} when it finishes.`
+    );
+  }
   if (st.worktreeSnapshot) return mergeSnapshotWorker(logDir, id, st, opts.noCommit, opts.verify);
   const adopted = adoptDetachedHead(st.worktreeDir!, st.branch!);
   if (adopted) console.log(`worker ${id}: adopted detached HEAD ${adopted.slice(0, 7)} into ${st.branch}`);
