@@ -83,7 +83,7 @@ Claude can call `memory_search`, `memory_get`, `memory_outline` (section-aware r
 
 ### Lessons
 
-`pai lessons` keeps a short, review-gated memory: add or propose a lesson, approve or reject it, supersede it, or promote an approved one to a project skill. Claude reads them with `memory_lessons`. See [lessons](concepts/lessons.md), [`pai lessons`](commands/lessons.md).
+`pai lessons` keeps a short, review-gated memory: add or propose a lesson, approve or reject it, supersede it, or promote an approved one to a project skill. `pai lessons propose --draft` has the running local model draft candidates from a transcript (`--local-only` refuses a cloud fallback, `--dry-run` prints without writing, items are ranked by strength and recurrence). Claude reads them with `memory_lessons`. See [lessons](concepts/lessons.md), [`pai lessons`](commands/lessons.md).
 
 ### Observations
 
@@ -209,7 +209,11 @@ On a model card in the cockpit, **+** and **−** change the provider's `maxConc
 
 ### Merge a worker, with auto-resolve
 
-`pai worker merge ID` brings a worker's branch back. Conflicts only in generated files are regenerated, and add-only clashes in the configured files are union-merged (`workers.merge.generated`, `regenerate`, `union`). See [workers](concepts/workers.md), [`pai worker`](commands/worker.md).
+`pai worker merge ID` brings a worker's branch back. After the merge it runs the tests related to the changed files plus `workers.merge.alwaysTests`; on a failure the merge stands, the command exits 3, names the failing files and prints the revert command (`--no-verify-tests` skips the check once). Conflicts only in generated files are regenerated, and add-only clashes in the configured files are union-merged (`workers.merge.generated`, `regenerate`, `union`). See [workers](concepts/workers.md), [`pai worker`](commands/worker.md).
+
+### Escalation on a stop
+
+A run stopped by a loop stop or its time limit (`--max-minutes`, `--deadline`) that left committed or salvaged work escalates one tier up at once. See [escalation](concepts/escalation.md).
 
 ### Check the workers settings
 
@@ -310,6 +314,10 @@ Secrets are redacted by value: the label stays, the value becomes `[REDACTED]` (
 ### Hook health
 
 `pai audit tokens hooks` and `pai build doctor` show whether each hook event was observed in the raw captures or is only configured. A hook that is configured but never observed may not be running. See [`pai audit`](commands/audit.md), [`pai build`](commands/build.md).
+
+### MCP use per server
+
+`pai audit tokens mcp` shows calls and last seen per MCP server in the window (`--since HOURS`). See [`pai audit`](commands/audit.md).
 
 ## Images, art and sharing
 

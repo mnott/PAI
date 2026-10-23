@@ -39,7 +39,7 @@ pai lessons promote ID [--project DIR] [--force] [--agents]
 - `--kind` is one of `workflow`, `correction`, `debugging`, `gotcha`, `convention`.
 - `--project` is a project slug, default `global`.
 - `propose` reads a transcript (default: the newest of this directory) and adds candidates from user messages that start with a correction. It makes no model call.
-- `propose --draft` has a model draft the candidates instead: it reads the user messages (system reminders, command tags and tool output stripped, with the assistant text before each as context), and returns lessons where the user corrected the assistant or stated a standing rule, each with a title, kind, applies-when, body and the quoted user text as evidence. The model is the running local model (the one `--local` workers use); with none running it falls back to the routed default. Invalid output is dropped, secrets are redacted, and lessons matching an existing title or near-identical body are skipped. The model rates each item `strength` 1-5 and `standing` true or false. All chunks of the transcript are drafted first; items that are not standing or have strength below 3 are dropped, near-duplicates are merged and counted, and the list is sorted by strength, then by how often the rule recurred, and capped at `lessons.draft.max` only at the end. `--dry-run` prints the candidates without writing.
+- `propose --draft` has a model draft the candidates instead: it reads the user messages (system reminders, command tags and tool output stripped, with the assistant text before each as context), and returns lessons where the user corrected the assistant or stated a standing rule, each with a title, kind, applies-when, body and the quoted user text as evidence. The model is the running local model (the one `--local` workers use); with none running it falls back to the routed default, which `--local-only` refuses. A deterministic pre-filter keeps only messages with rule wording, a correction signal in the first 30 chars or a complaint about assistant behaviour (at most `lessons.draft.maxChunks` × 4, the newest), so short strong corrections are not drowned among long instructions; the rest is sent in batches of `lessons.draft.batchMessages` messages, at most `lessons.draft.maxChunks` calls, all under `lessons.draft.timeoutSec` seconds in total. Transcript text is redacted before it reaches any model; each item is validated against the redacted user text (the quote must appear verbatim, at least 20 characters), redacted again, and skipped when it matches an existing title or near-identical body. Non-standing and strength-below-3 items are dropped, near-duplicates are merged and counted, and the list is ranked by strength plus a deterministic score of the evidence quote (rule wording raises it), ties on how often the rule recurred, and capped at `lessons.draft.max` only at the end. `--dry-run` prints the candidates without writing.
 - `promote` writes the lesson as `<project>/.claude/skills/<slug>/SKILL.md`. With `--agents` it also writes under `.agents/skills`. It refuses to overwrite an existing skill unless you pass `--force`.
 - `supersede` needs the replacement given with `--by` to exist and be approved.
 
@@ -49,6 +49,9 @@ Claude reads lessons through the MCP tool `memory_lessons`.
 
 - `lessonsIndex.enabled`: index `<PAI home>/lessons` for memory search. Default `true`.
 - `lessons.draft.max`: the most candidates `propose --draft` returns after ranking. Default `10`.
+- `lessons.draft.batchMessages`: user messages per model call. Default `8`.
+- `lessons.draft.maxChunks`: model calls per transcript. Default `40`.
+- `lessons.draft.timeoutSec`: total seconds for all model calls. Default `600`.
 
 ## Worked example
 
