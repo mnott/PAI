@@ -2,7 +2,7 @@
 
 # pai build
 
-One machine-wide build queue: run, lock, queue, next, doctor, npm-auth
+One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync
 
 ```
 pai build <command>
@@ -129,6 +129,28 @@ pai build npm-auth
 
 See also: `pai build doctor`
 
+### pai build mirror-sync
+
+Trigger the forge's push mirror to GitHub and report each mirror
+
+```
+pai build mirror-sync [options]
+```
+
+For forge-first repos (origin = a Gitea/Forgejo forge, a push mirror to GitHub): POSTs push_mirrors-sync, then polls push_mirrors (60 s, every 3 s) until each mirror's last_update changes, and prints one line per mirror. A GitHub push-protection refusal (GH013) comes out as the short reason plus the unblock URL. Exits 0 when every mirror is ok. Token: the env var named by config release.forgeTokenEnv (default AIBROKER_FORGE_TOKEN); never printed.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--repo DIR` | string | — | Repo directory (default: this directory) |
+| `--json` | flag | — | Print the parsed result as JSON |
+
+```sh
+pai build mirror-sync
+pai build mirror-sync --repo ~/code/app --json
+```
+
+See also: `pai build npm-auth`
+
 ### pai build watch
 
 Internal: kill a build tree when its gate process dies
@@ -158,6 +180,7 @@ pai build watch DIR ID
 | `pai build next` | Give a waiting build the next free slot |
 | `pai build doctor` | Check the project's registered build doors and hook events |
 | `pai build npm-auth` | Check the npm publish credential before `npm publish` |
+| `pai build mirror-sync` | Trigger the forge's push mirror to GitHub and report each mirror |
 | `pai build watch` | Internal: kill a build tree when its gate process dies |
 
 ## See also

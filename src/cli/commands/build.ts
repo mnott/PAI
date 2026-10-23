@@ -12,6 +12,7 @@ import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor, hookEventFindings } from "../../builds/doctor.js";
 import { checkNpmAuth, publishablePackage } from "../../builds/npm-auth.js";
+import { formatMirror, syncMirrors, MirrorSyncFailed } from "../../builds/mirror-sync.js";
 import { fmtSeenLocal } from "../../utils/fmt-age.js";
 import { inVisiblePane } from "../../workers/pane.js";
 import { runCommandInPane } from "./pane.js";
@@ -176,6 +177,33 @@ const npmAuthCmd: CommandDef = {
   },
 };
 
+const mirrorSyncCmd: CommandDef = {
+  name: "mirror-sync",
+  summary: "Trigger the forge's push mirror to GitHub and report each mirror",
+  description:
+    "For forge-first repos (origin = a Gitea/Forgejo forge, a push mirror to GitHub): POSTs push_mirrors-sync, then polls push_mirrors (60 s, every 3 s) until each mirror's last_update changes, and prints one line per mirror. " +
+    "A GitHub push-protection refusal (GH013) comes out as the short reason plus the unblock URL. Exits 0 when every mirror is ok. " +
+    "Token: the env var named by config release.forgeTokenEnv (default AIBROKER_FORGE_TOKEN); never printed.",
+  options: [
+    { name: "repo", type: "string", value: "DIR", summary: "Repo directory (default: this directory)" },
+    { name: "json", type: "boolean", summary: "Print the parsed result as JSON" },
+  ],
+  examples: ["pai build mirror-sync", "pai build mirror-sync --repo ~/code/app --json"],
+  seeAlso: ["pai build npm-auth"],
+  run: async (ctx) => {
+    const dir = typeof ctx.opts.repo === "string" ? ctx.opts.repo : process.cwd();
+    try {
+      const r = await syncMirrors(dir);
+      if (ctx.opts.json === true) out(JSON.stringify(r));
+      else for (const m of r.mirrors) out(formatMirror(m));
+      return r.mirrors.length && r.mirrors.every((m) => m.ok) ? 0 : 1;
+    } catch (e) {
+      if (e instanceof MirrorSyncFailed) throw new CliError(e.message, "pai build mirror-sync");
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+  },
+};
+
 const watchCmd: CommandDef = {
   name: "watch",
   summary: "Internal: kill a build tree when its gate process dies",
@@ -193,10 +221,10 @@ const watchCmd: CommandDef = {
 
 export const buildCommand: CommandDef = {
   name: "build",
-  summary: "One machine-wide build queue: run, lock, queue, next, doctor, npm-auth",
+  summary: "One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync",
   description:
     "Heavy builds (xcodebuild, swift/gradle/cargo build or test) run machine-wide through builds.slots slots, simulator/device test runs through their own builds.testSlots slots, FIFO, at low priority, deltas by default. " +
     "Raw builders are denied in Bash by the PreToolUse guard unless they go through `pai build run` or a door registered in the project's .pai/builds.yaml (`doors: [tools/build.sh]`, `patterns: [...]`). See docs/builds.md.",
   examples: ["pai build run -- xcodebuild -scheme App build", "pai build queue"],
-  subcommands: [runCmd, lockCmd, queueCmd, nextCmd, doctorCmd, npmAuthCmd, watchCmd],
+  subcommands: [runCmd, lockCmd, queueCmd, nextCmd, doctorCmd, npmAuthCmd, mirrorSyncCmd, watchCmd],
 };
