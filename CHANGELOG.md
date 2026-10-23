@@ -4,6 +4,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.20] - 2026-10-23
+
+### Fixed
+
+- **Cockpit:** the scan-findings cell in the worker runs table is no longer cut off at the table's right edge; the full text is in its tooltip.
+
 ## [1.0.19] - 2026-10-23
 
 ### Fixed

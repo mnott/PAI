@@ -2,6 +2,6 @@
   "name": "pai-observability",
   "displayName": "PAI Observability Suite",
   "description": "Automatic observation capture, classification, session summaries, and search history",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "hooks": "./hooks/hooks.json"
 }
