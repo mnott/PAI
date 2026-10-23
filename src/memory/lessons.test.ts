@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { addLesson, deterministicScore, draftFromTranscript, draftRankedFromTranscript, extractTurns, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
+import { addLesson, deterministicScore, draftFromTranscript, draftRankedFromTranscript, extractTurns, getLesson, lessonsDir, listLessons, looksLikeCorrection, promoteLesson, proposeFromTranscript, selectCandidateTurns, setState } from "./lessons.js";
 import { fakeAnthropic } from "../utils/fake-secret.js";
 
 let home: string;
@@ -257,7 +257,7 @@ describe("draftFromTranscript", () => {
     ({ title, kind: "convention", applies_when: "always", body: `${title} body text`, evidence_quote: quote, strength, standing });
   const bigFixture = () => {
     const p = join(project, "sess-2.jsonl");
-    writeFileSync(p, ["alpha rule one for all future work", "beta rule two for all future work", "gamma rule three for all future work", "delta rule four for all future work"].map((t) => ev("user", t)).join("\n"));
+    writeFileSync(p, ["alpha rule one for all future work, never skip it", "beta rule two for all future work, never skip it", "gamma rule three for all future work, never skip it", "delta rule four for all future work, never skip it"].map((t) => ev("user", t)).join("\n"));
     return p;
   };
   const perChunk = (replies: unknown[][]) => {
@@ -265,27 +265,27 @@ describe("draftFromTranscript", () => {
     return async () => JSON.stringify(replies[i++] ?? []);
   };
 
-  it("ranks an item repeated across chunks above single ones", async () => {
-    const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([
-      [item("Single alpha", "alpha rule one for all future work", 3)],
-      [item("Repeated beta", "beta rule two for all future work", 3)],
-      [item("Repeated beta", "beta rule two for all future work", 3)],
-      [item("Repeated beta", "beta rule two for all future work", 3), item("Single delta", "delta rule four for all future work", 3)],
+  it("ranks an item repeated across batches above single ones", async () => {
+    const out = await draftFromTranscript(bigFixture(), { batchMessages: 1, client: perChunk([
+      [item("Single alpha", "alpha rule one for all future work, never skip it", 3)],
+      [item("Repeated beta", "beta rule two for all future work, never skip it", 3)],
+      [item("Repeated beta", "beta rule two for all future work, never skip it", 3)],
+      [item("Repeated beta", "beta rule two for all future work, never skip it", 3), item("Single delta", "delta rule four for all future work, never skip it", 3)],
     ]) });
     expect(out[0]!.title).toBe("Repeated beta");
     expect(out).toHaveLength(3);
   });
 
   it("keeps a strength-5 item from the last chunk past the cap", async () => {
-    const fill = Array.from({ length: 10 }, (_, i) => item(`Filler ${["apple", "brick", "cedar", "daisy", "ember", "fjord", "gravel", "hazel", "indigo", "jasper"][i]}`, "alpha rule one for all future work", 3));
-    const out = await draftFromTranscript(bigFixture(), { chunkChars: 1, client: perChunk([fill, [], [], [item("Late strong", "delta rule four for all future work", 5)]]) });
+    const fill = Array.from({ length: 10 }, (_, i) => item(`Filler ${["apple", "brick", "cedar", "daisy", "ember", "fjord", "gravel", "hazel", "indigo", "jasper"][i]}`, "alpha rule one for all future work, never skip it", 3));
+    const out = await draftFromTranscript(bigFixture(), { batchMessages: 1, client: perChunk([fill, [], [], [item("Late strong", "delta rule four for all future work, never skip it", 5)]]) });
     expect(out).toHaveLength(10);
     expect(out[0]!.title).toBe("Late strong");
   });
 
   it("drops standing:false and weak items", async () => {
     const out = await draftFromTranscript(bigFixture(), { client: async () => JSON.stringify([
-      item("One off", "alpha rule one for all future work", 5, false), item("Weak", "beta rule two for all future work", 2), item("Keeper", "gamma rule three for all future work", 3),
+      item("One off", "alpha rule one for all future work, never skip it", 5, false), item("Weak", "beta rule two for all future work, never skip it", 2), item("Keeper", "gamma rule three for all future work, never skip it", 3),
     ]) });
     expect(out.map((l) => l.title)).toEqual(["Keeper"]);
   });
@@ -347,12 +347,12 @@ describe("draftFromTranscript", () => {
       addLesson({ title: "Commands only in panes", kind: "convention", applies_when: "x", body: "another unrelated thing here", evidence: ["s"] }); // id gets -2
       expect(await run(JSON.stringify([item()]))).toEqual([]);
     });
-    it("caps chunks and stops at the total deadline", async () => {
+    it("caps batches and stops at the total deadline", async () => {
       const calls: number[] = [];
-      await draftFromTranscript(fixture(), { chunkChars: 1, maxChunks: 2, client: async () => (calls.push(1), "[]") });
-      expect(calls).toHaveLength(2);
+      await draftFromTranscript(fixture(), { batchMessages: 1, maxChunks: 1, client: async () => (calls.push(1), "[]") });
+      expect(calls).toHaveLength(1);
       const timed: number[] = [];
-      await draftFromTranscript(fixture(), { chunkChars: 1, timeoutSec: 1, client: async () => (timed.push(1), await new Promise((r) => setTimeout(r, 1100)), "[]") });
+      await draftFromTranscript(fixture(), { batchMessages: 1, maxChunks: 4, timeoutSec: 1, client: async () => (timed.push(1), await new Promise((r) => setTimeout(r, 1100)), "[]") });
       expect(timed).toHaveLength(1);
     });
     it("--local-only refuses the cloud when no local model runs; the default prints one stderr line", async () => {
@@ -364,6 +364,70 @@ describe("draftFromTranscript", () => {
       } finally {
         w.mockRestore();
       }
+    });
+  });
+
+  describe("pre-filter", () => {
+    const correction1 = "memory is unreliable, it needs to be instrumented. deterministic.";
+    const correction2 = "it must be IMPOSSIBLE to start any command not in a pane";
+    // correction1 has no rule word, so the pre-filter needs it to state a rule explicitly
+    const rule1 = `${correction1} never trust memory again.`;
+
+    it("looksLikeCorrection: rule words, correction signals, complaints", () => {
+      expect(looksLikeCorrection(correction2)).toBe(true);
+      expect(looksLikeCorrection(rule1)).toBe(true);
+      expect(looksLikeCorrection("always run tsc first")).toBe(true);
+      expect(looksLikeCorrection("No, don't use var here")).toBe(true);
+      expect(looksLikeCorrection("stop that")).toBe(true);
+      expect(looksLikeCorrection("that's not what I asked")).toBe(true);
+      expect(looksLikeCorrection("Das ist falsch, nimm die andere Datei")).toBe(true);
+      expect(looksLikeCorrection("warum hast du das geändert")).toBe(true);
+      expect(looksLikeCorrection("why did you touch the lockfile")).toBe(true);
+      expect(looksLikeCorrection("you keep inventing APIs")).toBe(true);
+      expect(looksLikeCorrection("I told you twice already")).toBe(true);
+      expect(looksLikeCorrection("again the build is red")).toBe(true);
+      expect(looksLikeCorrection("please rename the file")).toBe(false);
+      expect(looksLikeCorrection("what does this do?")).toBe(false);
+    });
+
+    it("selectCandidateTurns keeps only candidates, newest when capped", () => {
+      const turn = (user: string) => ({ user, before: "" });
+      const kept = selectCandidateTurns([turn("please rename the file"), turn(rule1), turn("what does this do?"), turn(correction2)], 10);
+      expect(kept.map((t) => t.user)).toEqual([rule1, correction2]);
+      const capped = selectCandidateTurns([turn(rule1), turn(correction2), turn(correction2 + " again")], 2);
+      expect(capped.map((t) => t.user)).toEqual([correction2, correction2 + " again"]);
+    });
+
+    it("short corrections survive 30 long instructions: both are sent and come back", async () => {
+      const p = join(project, "sess-drown.jsonl");
+      const instruction = (i: number) =>
+        `task instruction number ${i}: ` +
+        "rework the dashboard layout so the header shows the project name and the sidebar lists every active session with its status badge, " +
+        "then move the settings panel into a modal dialog that opens on click and closes on escape, keeping the existing keyboard shortcuts intact. " +
+        `Please keep the visual style of the current design and change the color palette and the font sizes used in the header area. (${i})`.repeat(4);
+      const lines: string[] = [];
+      for (let i = 0; i < 15; i++) {
+        lines.push(ev("user", instruction(i)), ev("assistant", `worked on instruction ${i}`));
+        lines.push(ev("user", instruction(i + 15)), ev("assistant", `worked on instruction ${i + 15}`));
+      }
+      lines.push(ev("assistant", "all instructions done"), ev("user", correction2), ev("user", rule1));
+      writeFileSync(p, lines.join("\n"));
+      const prompts: string[] = [];
+      const out = await draftRankedFromTranscript(p, {
+        client: async (prompt) => {
+          prompts.push(prompt);
+          const items = [];
+          if (prompt.includes(rule1)) items.push(item("Instrument memory", rule1, 4));
+          if (prompt.includes(correction2)) items.push(item("Panes only", correction2, 4));
+          return JSON.stringify(items);
+        },
+      });
+      // the instructions are filtered out: only the two corrections reach the model
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain(rule1);
+      expect(prompts[0]).toContain(correction2);
+      expect(prompts[0]).not.toContain("task instruction number");
+      expect(out.map((d) => d.lesson.title)).toEqual(["Panes only", "Instrument memory"]);
     });
   });
 });
