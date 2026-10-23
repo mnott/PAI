@@ -24,21 +24,27 @@ function limResident(rssMb,weightsBytes){
  if(!weightsBytes)return{txt:gbm(rssMb)+" GB",note:""};
  var y=weightsBytes/1048576;
  return{txt:"resident "+gbm(rssMb)+" GB of "+gbm(y)+" GB",note:rssMb<y/2?"partly paged out — next request slower":""}}
+/** The engine build line under the model: "engine 0.1.48-metal · strata-pr" (the binary's build dir two levels up); nothing when the server reports no engine version. */
+function limEngineHtml(l){
+ if(!l.engineVersion)return"";
+ return'<div class="dim nw">engine '+esc(l.engineVersion)+(l.engineDir?" · "+esc(l.engineDir):"")+'</div>';
+}
 function limServerHtml(l){
  if(l.up){
   var m=l.served&&l.served.length?String(l.served[0]):"";
   function r(k,v,t){return'<span class="dim">'+k+'</span><span class="nw"'+(t?' title="'+esc(t)+'"':"")+'>'+v+'</span>'}
   var res=limResident(l.rssMb,l.weightsBytes);
+  var eng=limEngineHtml(l);
   var ins=l.instances||[];
   if(ins.length>0){
    var w=l.weightsBytes?r("weights",esc(gbm(l.weightsBytes/1048576)+" GB (shared, mapped)")):"";
    var sp=l.tokensPerSec?" · "+Math.round(l.tokensPerSec)+" tok/s":"";
    var ih=ins.map(function(i){
     return'<div class="rtsess"><span class="'+(i.state==="ready"?"ok":"warn")+'">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+(i.rssMb?" · resident "+gbm(i.rssMb)+" GB":"")+sp+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b" data-stop="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+'">stop</button></div>'}).join("");
-   return'<div class="phead"><span class="ok nw">● up</span></div>'+(w?'<div class="ltab">'+w+(m?r("model",esc(shortModel(m)),m):"")+'</div>':"")+ih;
+   return'<div class="phead"><span class="ok nw">● up</span></div>'+(w||m||eng?'<div class="ltab">'+w+(m?r("model",esc(shortModel(m)),m):"")+eng+'</div>':"")+ih;
   }
   var rows=(l.rssMb?r("memory",esc(res.txt))+(res.note?'<span class="dim"></span><span class="dim nw">'+esc(res.note)+"</span>":""):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+" tok/s"):"")+(m?r("model",esc(shortModel(m)),m):"");
-  return'<div class="phead"><span class="ok nw">● up</span></div>'+(rows?'<div class="ltab">'+rows+'</div>':"");
+  return'<div class="phead"><span class="ok nw">● up</span></div>'+(rows||eng?'<div class="ltab">'+rows+eng+'</div>':"");
  }
  var s=l.starting,failed=s.state==="failed";
  return'<div class="phead"><span class="'+(failed?"bad":"warn")+'" title="'+esc(s.log)+'">'+(failed?esc(s.message):"starting · loading "+s.sinceSec+" s")+'</span></div>';

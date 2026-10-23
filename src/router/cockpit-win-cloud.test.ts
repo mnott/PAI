@@ -19,7 +19,7 @@ const win = (name: string, percent: number) => ({ name, percent, resetAt: Date.n
 const limits = () => ({
   activeLocal: "gyro", runningLocal: ["gyro", "iq3s", "coder"],
   limits: [
-    { provider: "gyro", kind: "local", up: true, rssMb: 20480, tokensPerSec: 41, served: ["org/gyro-m"], windows: [] },
+    { provider: "gyro", kind: "local", up: true, rssMb: 20480, tokensPerSec: 41, served: ["org/gyro-m"], engineVersion: gyroEngine, windows: [] },
     { provider: "iq3s", kind: "local", up: false, starting: { state: "loading", sinceSec: 12, message: "", log: "" }, windows: [] },
     { provider: "coder", kind: "local", up: coderUp, windows: [] },
     { provider: "glm", kind: "cloud", windows: [win("5h", 30), win("week", 60)] },
@@ -28,6 +28,7 @@ const limits = () => ({
   routing: { flow: "", endpoints: [], choices: [], rows: [] },
 });
 let coderUp = false;
+let gyroEngine: string | undefined = "0.1.48-metal";
 const posts: { [k: string]: unknown }[] = [];
 
 /** Reads the cards, then drives the stop (confirm) of the gyro server and the start of the down coder model. */
@@ -96,6 +97,7 @@ describe.skipIf(!CHROME)("B7 cloud on the win runtime", () => {
     expect(r.vis).toEqual(expect.arrayContaining(["limits-local", "limits.local.srv:gyro", "limits.local.srv:iq3s", "limits.local.down", "limits-cloud", "limits.cloud:glm", "limits.cloud:claude"]));
     expect(r.gyro).toContain("up");
     expect(r.gyro).toContain("gyro-m");
+    expect(r.gyro).toContain("engine 0.1.48-metal");
     expect(r.iq3s).toContain("starting");
     expect(r.down).toContain("1 local model down");
     expect(r.down).toContain("coder");
@@ -153,5 +155,21 @@ describe("C1 guards: local server card", () => {
     expect(a.html).toContain('<span class="nw">41 tok/s</span>');
     expect(a.html).toContain('<span class="nw" title="org/gyro-m">gyro-m</span>');
     expect(run(["org/other"]).title).toBe("gyro"); // no alias: the provider name
+  });
+
+  // the engine build line: shown under the model when the payload carries a version, absent without one
+  it("shows the engine version under the model line, and nothing when the server reports none", () => {
+    const stubs = `var T={},mdl=arguments[0],Win={registerType:function(n,d){T[n]=d}},WinT={},WinA={};function ago(){return""};function gauge(){return""}\n${["esc", "gbm", "shortModel", "ringName"].map((n) => fnSrc(PAGE, n)).join("\n")}`;
+    const T = new Function("mdl", `${stubs}\n${WIN_CLOUD_JS}\nreturn T;`)({ runtimes: [] }) as Record<string, { update: Function }>;
+    const run = (extra: Record<string, unknown>) => {
+      const out: Record<string, string> = {};
+      const ctx = { id: "limits.local.srv:gyro", status() {}, html: (_: string, h: string) => { out.html = h; }, title: () => {} };
+      T.server!.update(ctx, { limits: [{ provider: "gyro", kind: "local", up: true, rssMb: 20480, served: ["org/gyro-m"], windows: [], ...extra }] });
+      return out.html;
+    };
+    const withV = run({ engineVersion: "0.1.48-metal", engineDir: "strata-pr" });
+    expect(withV).toContain('<div class="dim nw">engine 0.1.48-metal · strata-pr</div>');
+    expect(withV.indexOf("engine 0.1.48-metal")).toBeGreaterThan(withV.indexOf("gyro-m"));
+    expect(run({})).not.toContain("engine ");
   });
 });

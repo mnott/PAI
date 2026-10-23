@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import net from "node:net";
 import { vi } from "vitest";
 import {
@@ -14,6 +15,7 @@ import {
   anthropicShared,
   humanMinutes,
   localLimits,
+  parseEngineVersion,
   modelServed,
   parsePrefixCacheStats,
   parseStrataCacheStats,
@@ -414,6 +416,79 @@ describe("local server up/down and prefix cache", () => {
     await close(srv);
     expect(r.up).toBe(true);
     expect(r.prefixCache).toBeUndefined();
+  });
+
+  describe("engine version of the server's engine child", () => {
+    it("parseEngineVersion: name + version, a bare version, first line only, empty is nothing", () => {
+      expect(parseEngineVersion("strata 0.1.48-metal\n")).toBe("0.1.48-metal");
+      expect(parseEngineVersion("0.1.48-metal")).toBe("0.1.48-metal");
+      expect(parseEngineVersion("strata 0.1.48-metal\n(unknown build)")).toBe("0.1.48-metal");
+      expect(parseEngineVersion("")).toBeUndefined();
+    });
+
+    it("up server with an engine child: version and build dir; the binary is run once per path+mtime", async () => {
+      const srv = http.createServer((_q, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+      });
+      const port = await listen(srv);
+      const dir = mkdtempSync(join(tmpdir(), "eng-"));
+      const bin = join(dir, "strata-pr", "engine", "strata");
+      mkdirSync(dirname(bin), { recursive: true });
+      writeFileSync(bin, "#!/bin/sh\necho strata 0.1.48-metal\n", { mode: 0o755 });
+      // fake exec: the binary is run once per path+mtime; a failed run caches "no version" too
+      let runs = 0;
+      const run = (cmd: string, args: string[]): Promise<string | null> =>
+        new Promise((r) => execFile(cmd, args, { timeout: 3000 }, (e, o) => r(e ? null : String(o ?? ""))));
+      const cache = new Map<string, { mtimeMs: number; version?: string }>();
+      const info = async (p: number) => {
+        if (p !== port) return {};
+        const mtimeMs = statSync(bin).mtimeMs;
+        const c = cache.get(bin);
+        if (c && c.mtimeMs === mtimeMs) return c.version ? { engineVersion: c.version, engineDir: "strata-pr" } : {};
+        runs++;
+        const version = parseEngineVersion((await run(bin, ["--version"])) ?? "");
+        cache.set(bin, { mtimeMs, version });
+        return version ? { engineVersion: version, engineDir: "strata-pr" } : {};
+      };
+      const mk = () => localLimits("eng", local(port), [], Date.now(), undefined, { listenerRssMb: noRss, engineInfo: info });
+      const r = await mk();
+      expect(r.engineVersion).toBe("0.1.48-metal");
+      expect(r.engineDir).toBe("strata-pr");
+      const again = await mk();
+      expect(again.engineVersion).toBe("0.1.48-metal");
+      expect(runs).toBe(1); // the second poll took the cache, no second run
+      // a rebuild (new mtime) re-runs the binary
+      writeFileSync(bin, "#!/bin/sh\necho strata 0.1.49-metal\n", { mode: 0o755 });
+      expect((await mk()).engineVersion).toBe("0.1.49-metal");
+      expect(runs).toBe(2);
+      await close(srv);
+    });
+
+    it("no engine child (vllm-mlx, ollama): no engine fields at all", async () => {
+      const srv = http.createServer((_q, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+      });
+      const port = await listen(srv);
+      const r = await localLimits("v", local(port), [], Date.now(), undefined, { listenerRssMb: noRss, engineInfo: async () => ({}) });
+      await close(srv);
+      expect(r.up).toBe(true);
+      expect(r.engineVersion).toBeUndefined();
+      expect(r.engineDir).toBeUndefined();
+    });
+
+    it("a version run that fails reads as no version, the dir still shows", async () => {
+      const srv = http.createServer((_q, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{ id: "m-served" }] }));
+      });
+      const port = await listen(srv);
+      const r = await localLimits("e", local(port), [], Date.now(), undefined, { listenerRssMb: noRss, engineInfo: async () => ({ engineDir: "build-gyro3" }) });
+      await close(srv);
+      expect(r.engineVersion).toBeUndefined();
+      expect(r.engineDir).toBe("build-gyro3");
+    });
   });
 
   it("failing stats poll after a good one keeps the reading with its age; older than 10 min it is unknown", async () => {
