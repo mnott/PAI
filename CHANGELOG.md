@@ -4,6 +4,12 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [1.0.16] - 2026-10-23
+
+### Fixed
+
+- **`pai worker merge` related tests:** a test command that leaves a background process holding its output is no longer reported as timed out; the result line counts the files and tests of every chunk, not only the first.
+
 ## [1.0.15] - 2026-10-23
 
 ### Fixed

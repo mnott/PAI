@@ -2,7 +2,7 @@
   "name": "pai-productivity",
   "displayName": "PAI Productivity",
   "description": "Planning, journaling, reviewing, research, sharing, and cross-session task routing",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "hooks": "./hooks/hooks.json",
   "skills": ["./skills/"]
 }
