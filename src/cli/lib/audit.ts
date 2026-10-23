@@ -62,6 +62,7 @@ import { auditMcp, type McpReport } from "../../audit/mcp.js";
 import { shortenPath } from "./utils.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { workersLogDir, eventsPath } from "../../workers/paths.js";
+import { fmtSeenLocal } from "../../utils/fmt-age.js";
 
 function severityColor(sev: Severity, text: string): string {
   if (sev === "RED") return err(text);
@@ -105,14 +106,15 @@ function hookRunner(run: boolean | undefined): typeof runHook | undefined {
   return runHook;
 }
 
-function printHooks(report: HooksReport, sinceHours: number): void {
+/** Exported for tests: the hooks table, `last seen` in local time with age. */
+export function printHooks(report: HooksReport, sinceHours: number, now: number = Date.now()): void {
   console.log(header(`Hook output (encoding: ${report.encoding})`));
   console.log(dim(`settings.json: ${report.settingsFiles.join(", ") || "none found"}`));
   const rows = report.readings.map((r) => [
     r.event,
     r.matcher ?? "",
     r.state,
-    r.lastSeen ?? "",
+    r.lastSeen ? fmtSeenLocal(r.lastSeen, now) : "",
     String(r.tokens),
     r.error ? err(r.error) : "",
     r.command,
@@ -519,7 +521,8 @@ function cmdSubagents(opts: { json?: boolean }): void {
 // mcp
 // ---------------------------------------------------------------------------
 
-function printMcp(report: McpReport, sinceHours: number): void {
+/** Exported for tests: the mcp table, `last seen` in local time with age. */
+export function printMcp(report: McpReport, sinceHours: number, now: number = Date.now()): void {
   console.log(header(`MCP servers: configured vs. loaded vs. used (window: ${sinceHours}h)`));
   const rows = report.servers.map((s) => [
     s.server + (s.disabled ? dim(" (disabled)") : ""),
@@ -530,7 +533,7 @@ function printMcp(report: McpReport, sinceHours: number): void {
     String(s.toolsUsed30d),
     String(s.calls30d),
     s.state === "observed" ? String(s.callsWindow) : dim("configured, not used"),
-    s.lastSeen ?? dim("-"),
+    s.lastSeen ? fmtSeenLocal(s.lastSeen, now) : dim("-"),
   ]);
   console.log(
     renderTable(

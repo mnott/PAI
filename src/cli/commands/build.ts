@@ -11,6 +11,7 @@ import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { runBuild, watchTicket } from "../../builds/gate.js";
 import { doctor, hookEventFindings } from "../../builds/doctor.js";
+import { fmtSeenLocal } from "../../utils/fmt-age.js";
 import { inVisiblePane } from "../../workers/pane.js";
 import { runCommandInPane } from "./pane.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
@@ -135,7 +136,7 @@ const doctorCmd: CommandDef = {
     }
     const sinceHours = 24;
     for (const h of await hookEventFindings(process.cwd(), { sinceHours })) {
-      if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ?? ""}`.trimEnd());
+      if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ? fmtSeenLocal(h.lastSeen) : ""}`.trimEnd());
       else if (h.configured) out(`WARN ${h.event}: configured, never observed in ${sinceHours}h`);
     }
     return r.findings.every((f) => f.ok) ? 0 : 1;
