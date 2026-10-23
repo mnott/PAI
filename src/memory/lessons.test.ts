@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { addLesson, deterministicScore, draftFromTranscript, draftRankedFromTranscript, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
+import { addLesson, deterministicScore, draftFromTranscript, draftRankedFromTranscript, extractTurns, getLesson, lessonsDir, listLessons, promoteLesson, proposeFromTranscript, setState } from "./lessons.js";
 import { fakeAnthropic } from "../utils/fake-secret.js";
 
 let home: string;
@@ -232,6 +232,18 @@ describe("draftFromTranscript", () => {
     const withSecret = out.find((l) => l.title === "Instrument, do not trust memory")!;
     expect(withSecret.evidence![1]).toContain("[REDACTED]");
     expect(withSecret.evidence![1]).not.toContain(ANTHROPIC);
+  });
+
+  it("a secret straddling the truncation boundary is not partly present", () => {
+    // The token starts 10 chars before USER_CHARS, so slicing first would leave
+    // only 10 chars of it — too short for the token rules — and send the rest.
+    const p = join(project, "sess-boundary.jsonl");
+    const filler = "x".repeat(1490);
+    writeFileSync(p, ev("user", `${filler} token ${ANTHROPIC}`));
+    const turn = extractTurns(p)[0]!;
+    expect(turn.user).toContain("[REDACTED]");
+    expect(turn.user).not.toContain(ANTHROPIC.slice(0, 12));
+    expect(turn.user).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
   });
 
   it("keeps a quote the model echoes back verbatim from the redacted text", async () => {
