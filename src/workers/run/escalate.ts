@@ -65,6 +65,16 @@ export async function tryEscalate(
     keptForReview,
   });
   if (!plan) return null;
+  // Budget rule (docs/concepts/escalation.md): an absolute --deadline that has passed starts nothing;
+  // --max-minutes hands the re-run what is left of the original budget, none when it is spent.
+  const limit = a.limit ?? null;
+  const now = Date.now();
+  if (limit?.absolute && limit.deadlineAt <= now) {
+    process.stderr.write(`pai worker: ${wid} escalation not started — the --deadline has passed\n`);
+    appendLedger(ledgerPath(logDir), "WORKER-ESCALATE-SKIPPED", { id: wid, reason: "deadline passed" });
+    return null;
+  }
+  const remaining = limit && !limit.absolute ? Math.ceil((limit.deadlineAt - now) / 60_000) : undefined;
   const out = await runEscalation(plan, a.escalatedFrom ?? [], {
     ledger: ledgerPath(logDir),
     id: wid,
@@ -81,7 +91,11 @@ export async function tryEscalate(
       let swapped = false;
       return (a.runner ?? runWorker)({
         // the target tier's own route: a --local run must not drag the local server into the cloud tier
-        ...relaunchOptions(a.opts, { localFlag: undefined, localName: undefined }),
+        ...relaunchOptions(a.opts, {
+          localFlag: undefined,
+          localName: undefined,
+          ...(remaining !== undefined ? { maxMinutes: Math.max(0, remaining), deadline: undefined } : {}),
+        }),
         providerFlag: o.providerFlag,
         modelFlag: o.modelFlag,
         label: o.label,

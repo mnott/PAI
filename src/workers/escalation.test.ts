@@ -235,6 +235,45 @@ describe("loop-stop trigger", () => {
     expect(st.escalatedTo).toBe("w2");
   });
 
+  describe("budget of the escalated re-run", () => {
+    const mk = (limit: { deadlineAt: number; minutes: number; absolute?: true } | null, extra: Record<string, unknown> = {}) => {
+      const logDir = mkdtempSync(join(tmpdir(), "esc-budget-"));
+      const st = {
+        id: "w1", pid: -1, label: "job", cwd: logDir, term: "", provider: "p", model: "m", state: "failed",
+        started: "2026-10-21 01:00:00", updated: "2026-10-21 01:00:00", turns: 0, tools: 0, last: "", rc: 143, secs: 5,
+        loopStopped: true, branch: "worker/w1",
+      } as WorkerStatus;
+      saveStatus(logDir, st);
+      const seen: Array<{ maxMinutes?: number; deadline?: string }> = [];
+      const a = {
+        logDir, config: { tiers, escalate: DEFAULT_ESCALATE }, className: "implement", label: "job", limit,
+        parsed: parseRunnerArgs(["-p", "ORIGINAL TASK"]),
+        opts: { claudeArgs: ["-p", "ORIGINAL TASK"], ...extra },
+        runner: async (o: { onWorkerStart?: (id: string) => void }) => (seen.push(o as never), o.onWorkerStart?.("w2"), 0),
+      } as unknown as ExecuteArgs;
+      return { a, st, seen };
+    };
+    it("a passed absolute --deadline starts no escalation", async () => {
+      const { a, st, seen } = mk({ deadlineAt: Date.now() - 1000, minutes: 60, absolute: true }, { deadline: "03:00" });
+      expect(await tryEscalate(a, "w1", st, { result: "~" }, undefined, ["abc salvage"], "deadline")).toBeNull();
+      expect(seen).toHaveLength(0);
+    });
+    it("an absolute --deadline still ahead is carried over", async () => {
+      const { a, st, seen } = mk({ deadlineAt: Date.now() + 600_000, minutes: 10, absolute: true }, { deadline: "03:00" });
+      await tryEscalate(a, "w1", st, { result: "~" }, undefined, ["abc salvage"], "deadline");
+      expect(seen[0].deadline).toBe("03:00");
+    });
+    it("--max-minutes: the re-run gets the remaining minutes, none when spent", async () => {
+      const left = mk({ deadlineAt: Date.now() + 20 * 60_000, minutes: 60 }, { maxMinutes: 60 });
+      await tryEscalate(left.a, "w1", left.st, { result: "~" }, undefined, ["abc salvage"], "deadline");
+      expect(left.seen[0].maxMinutes).toBeGreaterThanOrEqual(19);
+      expect(left.seen[0].maxMinutes).toBeLessThanOrEqual(20);
+      const spent = mk({ deadlineAt: Date.now() - 1000, minutes: 60 }, { maxMinutes: 60 });
+      await tryEscalate(spent.a, "w1", spent.st, { result: "~" }, undefined, ["abc salvage"], "deadline");
+      expect(spent.seen[0].maxMinutes).toBe(0);
+    });
+  });
+
   it("a --local run escalates to the next tier's own route: the local flag is not carried over", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "esc-local-"));
     const st = {

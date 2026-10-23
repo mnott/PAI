@@ -175,6 +175,9 @@ lessonsIndex:
 lessons:
   draft:
     max: 10
+    # model calls per transcript, and total seconds for all of them
+    maxChunks: 40
+    timeoutSec: 600
 # Harness session ingestion (src/harness): names from the adapter registry
 # (claude-code, codex). Read-only; an adapter whose store is absent never runs.
 harness:

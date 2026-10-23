@@ -55,19 +55,34 @@ describe("appendRawCapture", () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
-  it("rotates at the cap and shifts older backups instead of overwriting them", () => {
+  it("rotates at the cap into stamped backups and keeps all of them up to the limit", () => {
     const root = mkdtempSync(join(tmpdir(), "rawcap-"));
     const file = join(root, "x.jsonl");
     appendRawCapture(file, root, "aaaa\n", 12);
     appendRawCapture(file, root, "bbbb\n", 12);
     appendRawCapture(file, root, "cccc\n", 12);
     expect(readFileSync(file, "utf-8")).toBe("cccc\n");
-    expect(readFileSync(`${file}.1`, "utf-8")).toBe("aaaa\nbbbb\n");
-    appendRawCapture(file, root, "dddd\n", 12);
-    appendRawCapture(file, root, "eeee\n", 12);
-    expect(readdirSync(root).sort()).toEqual(["x.jsonl", "x.jsonl.1", "x.jsonl.2"]);
-    expect(readFileSync(`${file}.1`, "utf-8")).toBe("cccc\ndddd\n");
-    expect(readFileSync(`${file}.2`, "utf-8")).toBe("aaaa\nbbbb\n");
+    const backups = readdirSync(root).filter((n) => /^x\.jsonl\.\d+-\d+$/.test(n));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(root, backups[0]), "utf-8")).toBe("aaaa\nbbbb\n");
+  });
+
+  it("two stale-stat rotations lose no file and prune to the newest 5 (legacy .N included)", () => {
+    const root = mkdtempSync(join(tmpdir(), "rawcap-"));
+    const file = join(root, "x.jsonl");
+    writeFileSync(`${file}.1`, "old1\n");
+    writeFileSync(`${file}.2`, "old2\n");
+    writeFileSync(file, "live-aaaa\n");
+    // second process saw a stale size: its rename finds the file gone, must not throw or clobber
+    appendRawCapture(file, root, "x\n", 5);
+    appendRawCapture(file, root, "y\n", 5);
+    const all = readdirSync(root).map((n) => readFileSync(join(root, n), "utf-8")).join("");
+    expect(all).toContain("live-aaaa");
+    expect(all).toContain("old1");
+    for (let i = 0; i < 8; i++) appendRawCapture(file, root, `line-${i}-padding\n`, 5);
+    const left = readdirSync(root).filter((n) => n !== "x.jsonl");
+    expect(left).toHaveLength(5);
+    expect(left.some((n) => n === "x.jsonl.1" || n === "x.jsonl.2")).toBe(false);
   });
 });
 

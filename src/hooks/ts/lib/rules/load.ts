@@ -14,9 +14,9 @@
  * `off` or a downgrade is ignored and reported in `ignored`.
  */
 
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, parse as parsePath, resolve } from "node:path";
+import { join, parse as parsePath, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
@@ -121,24 +121,35 @@ function realOrResolved(p: string): string {
  * The repo-local rule directory: the first `.pai/rules` found walking up from
  * cwd to the nearest directory containing `.git` (file or dir), so a session
  * started in a repo subdirectory still sees the repo's rules; closest wins.
- * The walk never goes above $HOME or past the filesystem root, and without a
- * `.git` ancestor it stops at $HOME. The PAI-home rules dir is never one,
+ * The walk needs a `.git` ancestor at or below $HOME (none: no project rules)
+ * and stops at a directory owned by another uid. The PAI-home rules dir is never one,
  * even when cwd is $HOME and PAI_HOME=~/.pai makes both paths the same
  * directory.
  */
 export function projectRuleDirs(cwd: string = process.cwd()): string[] {
   const home = realOrResolved(homedir());
   const homeRules = realOrResolved(homeRulesDir());
-  let dir = realOrResolved(cwd);
-  for (;;) {
-    const rules = join(dir, ".pai", "rules");
-    // never above $HOME: the stop runs before the rules dir is looked at, but
-    // $HOME itself may be the repo root, so its rules dir is checked first
-    if (dir === parsePath(dir).root) return [];
-    if (existsSync(rules)) return realOrResolved(rules) === homeRules ? [] : [rules];
-    if (dir === home || existsSync(join(dir, ".git"))) return [];
-    dir = parsePath(dir).dir;
+  const uid = process.getuid?.();
+  const ownedByOther = (d: string): boolean => {
+    try { return uid !== undefined && statSync(d).uid !== uid; } catch { return false; }
+  };
+  const inHome = (d: string): boolean => d === home || d.startsWith(home.endsWith(sep) ? home : home + sep);
+  // the repo root must exist at or below $HOME and be reached without crossing a directory of another uid:
+  // otherwise /tmp/.pai/rules or /Users/Shared/.pai/rules, written by another user, would be picked up
+  const start = realOrResolved(cwd);
+  const chain: string[] = [];
+  let root: string | null = null;
+  for (let dir = start; dir !== parsePath(dir).root; dir = parsePath(dir).dir) {
+    if (!inHome(dir) || ownedByOther(dir)) return [];
+    chain.push(dir);
+    if (existsSync(join(dir, ".git"))) { root = dir; break; }
   }
+  if (!root) return [];
+  for (const dir of chain) {
+    const rules = join(dir, ".pai", "rules");
+    if (existsSync(rules)) return realOrResolved(rules) === homeRules ? [] : [rules];
+  }
+  return [];
 }
 
 /** A project pattern longer than this is not accepted: untrusted input is kept small. */
