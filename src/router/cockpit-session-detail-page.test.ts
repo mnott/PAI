@@ -10,7 +10,7 @@ import { WIN_TABLES_JS } from "./cockpit-page/win/cards-tables.js";
 import { fnSrc, hideLib, varSrc } from "./cockpit-page-src.js";
 import { WIN_MORPH_JS } from "./cockpit-page/win/morph.js";
 
-const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml", "table", "sessDetailBody", "sessDetailHtml", "sessDetailOpen", "sessQ", "sessLabel", "sessHitsHtml", "sessSearch"].map((n) => fnSrc(PAGE, n)).join("\n");
+const fns = ["esc", "fmt", "pct", "tot", "ago", "cls", "hitCls", "vcls", "runHead", "runRow", "sessMore", "sessionsHtml", "table", "sessDetailBody", "sessDetailHtml", "sessDetailOpen", "sessTurnHtml", "sessTurnOpen", "sessQ", "sessLabel", "sessHitsHtml", "sessSearch"].map((n) => fnSrc(PAGE, n)).join("\n");
 
 const detail = {
   id: "s0000000x", cwd: "/work/proj", models: ["m-a"], turnCount: 1,
@@ -32,9 +32,9 @@ ${varSrc(PAGE, "SESS_Q")}
 ${hideLib(PAGE)}
 ${fns}
 ${WIN_TABLES_JS}
-return{html:sessionsHtml,wire:wtWire,run:function(c){return eval(c)},set:function(k,v){if(k==="det")SESS_DET=v},get:function(){return{open:SESS_OPEN,tab:SESS_TAB}}};`;
+return{html:sessionsHtml,wire:wtWire,run:function(c){return eval(c)},set:function(k,v){if(k==="det")SESS_DET=v;if(k==="turnDet")SESS_TDET=v},get:function(){return{open:SESS_OPEN,tab:SESS_TAB,turn:SESS_TURN,stepsOpen:SESS_STEPS_OPEN}}};`;
   const api = new Function(src)
-    .call(null, updates, fetched) as { html: (d: unknown) => string; wire: (c: unknown) => void; set: (k: string, v: unknown) => void; get: () => { open: string | null; tab: string }; run: (c: string) => unknown };
+    .call(null, updates, fetched) as { html: (d: unknown) => string; wire: (c: unknown) => void; set: (k: string, v: unknown) => void; get: () => { open: string | null; tab: string; turn: number; stepsOpen: boolean }; run: (c: string) => unknown };
   // Function() ignores call args for `arguments` of the outer wrapper: pass them explicitly
   return { api, updates, fetched };
 }
@@ -186,13 +186,96 @@ describe("session search", () => {
     const mk = (i: number) => ({ idx: i, ts: new Date().toISOString(), prompt: i === 4 ? "do the thing" : `other-${i}`, tools: [], edits: [], commands: 0 });
     api.set("det", { ...detail, id: "sess-2xxxxx", turns: [0, 1, 2, 3, 4, 5].map(mk), turnCount: 6 });
     const open = api.html(dd);
-    expect(open).toMatch(/<span data-turn="4" class="sd-hl">5<\/span>/);
+    expect(open).toMatch(/<button type="button" class="lnk" data-turn="4" class="sd-hl">5<\/button>/);
     expect(open).not.toContain("other-1"); // timeline filtered to the prompts matching the query
     expect(open).toContain("do the thing");
     expect(api.run("SESS_SCROLL")).toBe(true);
     // a second hit on the open session keeps it open
     click({ "data-hit": "sess-2xxxxx", "data-turn": "4" });
     expect(api.get().open).toBe("sess-2xxxxx");
+  });
+});
+
+describe("turn view", () => {
+  const turn = (idx: number, turnCount: number) => ({
+    id: "s0000000x", idx, turnCount, ts: new Date().toISOString(),
+    prompt: "the full prompt", promptTruncated: false,
+    reply: "the full reply", replyTruncated: false,
+    steps: [{ kind: "tool", name: "Edit", summary: 'Edit: {"file_path":"/a"}' }, { kind: "text", summary: "thinking out loud" }],
+  });
+
+  it("a timeline row's number opens the turn view inside the detail panel and fetches the turn endpoint", () => {
+    const { api, click, fetched } = wired();
+    click({ "data-sess": "s0000000x" });
+    api.set("det", detail);
+    const h = api.html(d);
+    expect(h).toContain('data-turn="0"');
+    click({ "data-turn": "0" });
+    expect(fetched).toContain("/api/session/s0000000x/turn/0");
+    expect(api.get().turn).toBe(0);
+    api.set("turnDet", turn(0, 3));
+    const v = api.html(d);
+    expect(v).toContain("turn 1 of 3");
+    expect(v).toContain("the full prompt");
+    expect(v).toContain("the full reply");
+    expect(v).toContain("2 steps");
+    expect(v).not.toContain("<details"); // the page's fold pattern, not a details element
+    expect(v).not.toContain("Edit: {&quot;file_path&quot;:&quot;/a&quot;}"); // steps collapsed until opened
+    expect(v).toContain("data-turnnext");
+    expect(v).not.toContain("data-turnprev"); // turn 1 has no previous
+    expect(v).toContain("back to timeline");
+    expect(v).not.toContain('href="#"');
+    // the "N steps" link expands the steps, a second click collapses them again
+    click({ "data-steps": "1" });
+    expect(api.get().stepsOpen).toBe(true);
+    const open = api.html(d);
+    expect(open).toContain("Edit: {&quot;file_path&quot;:&quot;/a&quot;}");
+    expect(open).toContain("thinking out loud");
+    click({ "data-steps": "0" });
+    expect(api.get().stepsOpen).toBe(false);
+    expect(api.html(d)).not.toContain("thinking out loud");
+  });
+
+  it("prev / next step the turn and re-fetch; back returns to the timeline", () => {
+    const { api, click, fetched } = wired();
+    click({ "data-sess": "s0000000x" });
+    api.set("det", detail);
+    click({ "data-turn": "0" });
+    api.set("turnDet", turn(0, 3));
+    click({ "data-turnnext": "1" });
+    expect(api.get().turn).toBe(1);
+    expect(fetched).toContain("/api/session/s0000000x/turn/1");
+    api.set("turnDet", turn(1, 3));
+    const v = api.html(d);
+    expect(v).toContain("turn 2 of 3");
+    expect(v).toContain("data-turnprev");
+    expect(v).toContain("data-turnnext");
+    click({ "data-turnprev": "1" });
+    expect(api.get().turn).toBe(0);
+    expect(fetched).toContain("/api/session/s0000000x/turn/0");
+    click({ "data-turnback": "1" });
+    expect(api.get().turn).toBe(-1);
+    expect(api.html(d)).toContain("do the thing"); // the timeline is back
+  });
+
+  it("a tab switch or close leaves the turn view; a prompt-search hit opens the timeline, not the turn view", () => {
+    const { api, click } = wired();
+    click({ "data-sess": "s0000000x" });
+    api.set("det", detail);
+    click({ "data-turn": "0" });
+    api.set("turnDet", turn(0, 3));
+    click({ "data-sesstab": "files" });
+    expect(api.get().turn).toBe(-1);
+    expect(api.html(d)).toContain("/work/proj/a.ts");
+    click({ "data-turn": "0" });
+    click({ "data-sessclose": "1" });
+    expect(api.get().turn).toBe(-1);
+    expect(api.get().open).toBeNull();
+    // a search hit on the open session opens the timeline at the turn, not the turn view
+    click({ "data-turn": "0" });
+    click({ "data-hit": "s0000000x", "data-turn": "0" });
+    expect(api.get().turn).toBe(-1);
+    expect(api.get().open).toBe("s0000000x");
   });
 });
 

@@ -8,12 +8,12 @@ import http from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { searchSessions, sessionDetail } from "./session-detail.js";
+import { searchSessions, sessionDetail, sessionTurnView } from "./session-detail.js";
 import { handleCockpit } from "./cockpit.js";
 import { combinedSearch, type MemorySearchFn } from "./session-memory.js";
 import { utimesSync } from "node:fs";
 import { withCockpitToken } from "./cockpit-auth.js";
-import { fakeAnthropic } from "../utils/fake-secret.js";
+import { fakeAnthropic, fakeSlack } from "../utils/fake-secret.js";
 
 // Fake token-shaped fixture assembled at runtime so no scanner flags a literal.
 const FAKE_KEY = fakeAnthropic("abcdefghijklmnopqrstuvwxyz0123456789", "-api03");
@@ -135,6 +135,69 @@ describe("sessionDetail", () => {
   });
 });
 
+describe("sessionTurnView", () => {
+  const tdir = join(dir, "turns");
+  const TID = "turn0000-0000-4000-8000-000000000001";
+  const SECRET = fakeSlack("xb", "1234567890", "abcdefghijklmnopqrst");
+  beforeAll(() => {
+    mkdirSync(join(tdir, "-w"), { recursive: true });
+    writeFileSync(
+      join(tdir, "-w", `${TID}.jsonl`),
+      [
+        user("fix the parser", "2026-01-01T00:00:01Z"),
+        asst("2026-01-01T00:00:02Z", [{ type: "text", text: "let me look" }, use("u1", "Read", { file_path: "/w/a.ts" })]),
+        result("u1", "contents"),
+        asst("2026-01-01T00:00:03Z", [use("u2", "Edit", { file_path: "/w/a.ts", old_string: "x", new_string: "y" })]),
+        result("u2", "ok"),
+        asst("2026-01-01T00:00:04Z", [{ type: "text", text: `done — the key was ${SECRET}` }]),
+        user("next ask", "2026-01-01T00:01:00Z"),
+      ]
+        .map((l) => JSON.stringify(l))
+        .join("\n") + "\n"
+    );
+  });
+
+  it("reads one turn: prompt, steps (tool calls and intermediate text) and the final reply", async () => {
+    const t = (await sessionTurnView(TID, 0, { projectsDir: tdir }))!;
+    expect(t).toMatchObject({ id: TID, idx: 0, turnCount: 2, ts: "2026-01-01T00:00:01Z", prompt: "fix the parser", promptTruncated: false, replyTruncated: false });
+    expect(t.steps).toEqual([
+      { kind: "text", summary: "let me look" },
+      { kind: "tool", name: "Read", summary: 'Read: {"file_path":"/w/a.ts"}' },
+      { kind: "tool", name: "Edit", summary: 'Edit: {"file_path":"/w/a.ts","old_string":"x","new_string":"y"}' },
+    ]);
+    expect(t.reply).toBe(`done — the key was [REDACTED]`);
+  });
+
+  it("redacts a token-shaped string in the reply", async () => {
+    const t = (await sessionTurnView(TID, 0, { projectsDir: tdir }))!;
+    expect(t.reply).not.toContain(SECRET);
+    expect(t.reply).toContain("[REDACTED]");
+  });
+
+  it("the last turn has no reply and no steps; idx out of range and an unknown id read null", async () => {
+    const last = (await sessionTurnView(TID, 1, { projectsDir: tdir }))!;
+    expect(last).toMatchObject({ idx: 1, turnCount: 2, prompt: "next ask", reply: "", steps: [] });
+    expect(await sessionTurnView(TID, 2, { projectsDir: tdir })).toBeNull();
+    expect(await sessionTurnView(TID, -1, { projectsDir: tdir })).toBeNull();
+    expect(await sessionTurnView("ffffffff-0000-4000-8000-000000000000", 0, { projectsDir: tdir })).toBeNull();
+  });
+
+  it("caps prompt and reply at 20k chars with a truncated flag", async () => {
+    const CID = "cap00000-0000-4000-8000-000000000001";
+    writeFileSync(
+      join(tdir, "-w", `${CID}.jsonl`),
+      [user("x".repeat(25_000), "2026-01-01T00:00:01Z"), asst("2026-01-01T00:00:02Z", [{ type: "text", text: "y".repeat(25_000) }])]
+        .map((l) => JSON.stringify(l))
+        .join("\n") + "\n"
+    );
+    const t = (await sessionTurnView(CID, 0, { projectsDir: tdir }))!;
+    expect(t.prompt).toHaveLength(20_000);
+    expect(t.promptTruncated).toBe(true);
+    expect(t.reply).toHaveLength(20_000);
+    expect(t.replyTruncated).toBe(true);
+  });
+});
+
 describe("GET /api/session/<id>/detail", () => {
   const ask = (port: number, path: string, headers: http.OutgoingHttpHeaders = {}) =>
     new Promise<{ status: number; body: string }>((resolve) => {
@@ -178,6 +241,53 @@ describe("GET /api/session/<id>/detail", () => {
     try {
       expect((await ask(port, `/api/session/${ID}/detail`)).status).toBe(401);
       expect((await ask(port, `/api/session/${ID}/detail`, { authorization: "Bearer tok" })).status).toBe(200);
+    } finally {
+      s.close();
+    }
+  });
+});
+
+describe("GET /api/session/<id>/turn/<idx>", () => {
+  const ask = (port: number, path: string, headers: http.OutgoingHttpHeaders = {}) =>
+    new Promise<{ status: number; body: string }>((resolve) => {
+      http.request({ port, host: "127.0.0.1", path, headers }, (r) => {
+        let b = "";
+        r.on("data", (c) => (b += c));
+        r.on("end", () => resolve({ status: r.statusCode ?? 0, body: b }));
+      }).end();
+    });
+  const serve = async (token?: string) => {
+    const inner = (req: http.IncomingMessage, res: http.ServerResponse) => handleCockpit(req, res, { get: async () => [] });
+    const h = token ? withCockpitToken(token, inner) : inner;
+    const s = http.createServer((req, res) => {
+      if (!h(req, res)) {
+        res.writeHead(418);
+        res.end();
+      }
+    });
+    const port = await new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+    return { s, port };
+  };
+
+  it("200 with the turn, 404 for a turn out of range, 400 for a malformed id", async () => {
+    const { s, port } = await serve();
+    try {
+      const ok = await ask(port, `/api/session/${ID}/turn/1`);
+      expect(ok.status).toBe(200);
+      expect(JSON.parse(ok.body)).toMatchObject({ id: ID, idx: 1, turnCount: 7, prompt: "second prompt" });
+      expect((await ask(port, `/api/session/${ID}/turn/99`)).status).toBe(404);
+      expect((await ask(port, `/api/session/${ID}/turn/abc`)).status).toBe(404); // not a turn path: the cockpit answers it with its own 404
+      expect((await ask(port, "/api/session/short/turn/0")).status).toBe(400);
+    } finally {
+      s.close();
+    }
+  });
+
+  it("needs the cockpit token like the other cockpit routes", async () => {
+    const { s, port } = await serve("tok");
+    try {
+      expect((await ask(port, `/api/session/${ID}/turn/0`)).status).toBe(401);
+      expect((await ask(port, `/api/session/${ID}/turn/0`, { authorization: "Bearer tok" })).status).toBe(200);
     } finally {
       s.close();
     }
