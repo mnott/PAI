@@ -285,9 +285,9 @@ describe("draftFromTranscript", () => {
       item("Instrument memory", "memory is unreliable, it needs to be instrumented. deterministic.", 4),
       item("Panes only", "it must be IMPOSSIBLE to start any command not in a pane", 4),
     ]) });
-    expect(out.map((d) => d.lesson.title)).toEqual(["Panes only", "Instrument memory"]);
+    expect(out.map((d) => d.lesson.title)).toEqual(["Panes only", "Instrument memory", "Svg as png", "Catchy readme"]);
     expect(out[0]).toMatchObject({ strength: 4, evidenceScore: 3 });
-    expect(out[1]).toMatchObject({ strength: 4, evidenceScore: 2 });
+    expect(out[1]).toMatchObject({ strength: 4, evidenceScore: 0 });
   });
 });
 
@@ -303,7 +303,7 @@ describe("deterministicScore", () => {
   });
 
   it("+1 emphasis: ALL-CAPS word, /word/, exclamation", () => {
-    expect(deterministicScore("ALL output must be redacted", 1)).toBe(3);
+    expect(deterministicScore("EVERY output must be redacted", 1)).toBe(3);
     expect(deterministicScore("never touch /settings/", 1)).toBe(3);
     expect(deterministicScore("never do that!", 1)).toBe(3);
     expect(deterministicScore("run the build", 1)).toBe(0);

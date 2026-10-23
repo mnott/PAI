@@ -353,7 +353,7 @@ export function deterministicScore(quote: string, count: number): number {
   const hasRule = RULE_WORDS.some((re) => re.test(quote));
   let score = 0;
   if (hasRule) score += 2;
-  if (/(^|\s)[A-Z]{4,}(\s|$)/.test(quote) || /\/[^\s/]+\//.test(quote) || quote.includes("!")) score += 1;
+  if (/(^|\s)(?!README\b)[A-Z]{4,}(\s|$)/.test(quote) || /(^|\s)\/[^\s/]+\/(?=\s|$|[.,;:!?])/.test(quote) || quote.includes("!")) score += 1;
   if (count >= 2) score += 1;
   if (!hasRule && NOW_TARGETS.some((re) => re.test(quote))) score -= 2;
   return score;
