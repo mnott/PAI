@@ -217,18 +217,48 @@ const SNIPPET_CHARS = 160;
 /** Most sessions one search returns. */
 export const SESSION_SEARCH_MAX = 50;
 
+/** Real user prompts on the lines before `lineNo` (1-based): the turn index of the prompt on that line, as sessionDetail numbers turns. */
+async function promptsBefore(file: string, lineNo: number): Promise<number> {
+  const rl = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+  let n = 0;
+  let at = 0;
+  for await (const raw of rl) {
+    if (++at >= lineNo) break;
+    if (!raw.includes('"type":"user"')) continue;
+    try {
+      const obj = JSON.parse(raw) as Line;
+      if (obj.type === "user" && isRealUserPrompt(obj)) n++;
+    } catch {
+      /* skipped like sessionDetail does */
+    }
+  }
+  rl.close();
+  return n;
+}
+
+export interface SessionSearch {
+  hits: SessionHit[];
+  /** true when the time budget (or the caller) stopped the scan before every transcript was read */
+  partial: boolean;
+}
+
 /**
  * Sessions whose user prompts contain `q` (case-insensitive), newest transcript first, at most `limit`:
  * one hit per session (its first matching prompt) with the turn index the detail endpoint uses and a masked snippet.
+ * The scan stops after `budgetMs` (the transcripts can add up to many GB) and reports `partial`.
  */
 export async function searchSessions(
   q: string,
-  opts: { projectsDir?: string; limit?: number } = {}
-): Promise<SessionHit[]> {
+  opts: { projectsDir?: string; limit?: number; budgetMs?: number; cancelled?: () => boolean } = {}
+): Promise<SessionSearch> {
   const projectsDir = opts.projectsDir ?? claudeProjectsDir();
   const needle = q.trim().toLowerCase();
   const limit = Math.max(1, opts.limit ?? 50);
-  if (!needle || !existsSync(projectsDir)) return [];
+  if (!needle || !existsSync(projectsDir)) return { hits: [], partial: false };
+  // a plain needle must appear verbatim in the raw line of a matching prompt: skip JSON.parse for lines without it
+  const plain = /^[\x20-\x7e]+$/.test(needle) && !/["\\]/.test(needle) ? new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null;
+  const deadline = Date.now() + (opts.budgetMs ?? 8000);
+  let partial = false;
   const files: { id: string; file: string; mtime: number }[] = [];
   for (const d of readdirSync(projectsDir)) {
     let names: string[] = [];
@@ -251,11 +281,22 @@ export async function searchSessions(
   const hits: SessionHit[] = [];
   for (const f of files) {
     if (hits.length >= limit) break;
+    if (Date.now() > deadline || opts.cancelled?.()) {
+      partial = true;
+      break;
+    }
     const rl = createInterface({ input: createReadStream(f.file, { encoding: "utf8" }), crlfDelay: Infinity });
     let cwd = "";
-    let turn = 0;
+    let lineNo = 0;
     for await (const raw of rl) {
+      lineNo++;
       if (!raw) continue;
+      const user = raw.includes('"type":"user"');
+      if (!cwd && !user) {
+        const c = raw.match(/"cwd":"([^"\\]*)"/);
+        if (c) cwd = c[1]!;
+      }
+      if (!user || (plain && !plain.test(raw) && !raw.includes("<command-name>"))) continue;
       let obj: Line;
       try {
         obj = JSON.parse(raw) as Line;
@@ -268,12 +309,12 @@ export async function searchSessions(
       const at = text.toLowerCase().indexOf(needle);
       if (at >= 0) {
         const from = Math.max(0, at - 40);
+        const turn = await promptsBefore(f.file, lineNo);
         hits.push({ id: f.id, cwd, turn, ts: obj.timestamp ?? "", snippet: text.slice(from, from + SNIPPET_CHARS), mtime: f.mtime });
         rl.close();
         break;
       }
-      turn++;
     }
   }
-  return hits;
+  return { hits, partial };
 }

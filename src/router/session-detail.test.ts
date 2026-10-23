@@ -182,26 +182,36 @@ describe("GET /api/session/<id>/detail", () => {
 
 describe("searchSessions", () => {
   it("finds the first matching prompt with its turn index, masked and case-insensitive", async () => {
-    const hits = await searchSessions("THIRD prompt", { projectsDir: projects });
+    const { hits } = await searchSessions("THIRD prompt", { projectsDir: projects });
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({ id: ID, cwd: "/work/proj", turn: 2, snippet: "third prompt" });
-    const slash = await searchSessions("Sync PAI", { projectsDir: projects });
+    const slash = (await searchSessions("Sync PAI", { projectsDir: projects })).hits;
     expect(slash[0]).toMatchObject({ turn: 3, snippet: "/Sync PAI" });
-    const masked = await searchSessions("[REDACTED]", { projectsDir: projects });
+    const masked = (await searchSessions("first prompt with", { projectsDir: projects })).hits;
     expect(masked[0].snippet).not.toContain(FAKE_KEY.slice(0, 35));
+    expect(masked[0].snippet).toContain("[REDACTED]");
+  });
+
+  it("matches text a plain needle cannot find in the raw line (escapes, quotes) too", async () => {
+    const p3 = join(dir, "projects3", "-w");
+    mkdirSync(p3, { recursive: true });
+    writeFileSync(join(p3, "esc00000-0000-4000-8000-000000000001.jsonl"), JSON.stringify(user('say "hi" there\nnext line', "2026-01-01T00:00:01Z")) + "\n");
+    expect((await searchSessions('"hi"', { projectsDir: join(dir, "projects3") })).hits).toHaveLength(1);
+    expect((await searchSessions("hi\" there\nnext", { projectsDir: join(dir, "projects3") })).hits).toHaveLength(1);
   });
 
   it("ignores assistant and tool text, hidden reminder blocks, and empty queries", async () => {
-    expect(await searchSessions("hidden note", { projectsDir: projects })).toEqual([]);
-    expect(await searchSessions("pong", { projectsDir: projects })).toEqual([]);
-    expect(await searchSessions("  ", { projectsDir: projects })).toEqual([]);
+    expect((await searchSessions("hidden note", { projectsDir: projects })).hits).toEqual([]);
+    expect((await searchSessions("pong", { projectsDir: projects })).hits).toEqual([]);
+    expect((await searchSessions("  ", { projectsDir: projects })).hits).toEqual([]);
   });
 
   it("caps the number of sessions", async () => {
     const p2 = join(dir, "projects2", "-w");
     mkdirSync(p2, { recursive: true });
     for (let i = 0; i < 5; i++) writeFileSync(join(p2, `cap0000${i}-0000-4000-8000-000000000001.jsonl`), JSON.stringify(user("needle here", "2026-01-01T00:00:01Z")) + "\n");
-    expect(await searchSessions("needle", { projectsDir: join(dir, "projects2"), limit: 3 })).toHaveLength(3);
+    expect((await searchSessions("needle", { projectsDir: join(dir, "projects2"), limit: 3 })).hits).toHaveLength(3);
+    expect((await searchSessions("needle", { projectsDir: join(dir, "projects2"), budgetMs: -1 })).partial).toBe(true);
   });
 });
 

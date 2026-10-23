@@ -43,10 +43,10 @@ function wtSessAfter(ctx){
 function wtSessSearch(){
  return{id:"search",label:"search",title:"filter sessions, or search prompts",make:function(ctx){
   var w=document.createElement("span");w.className="wsearch";
-  var inp=document.createElement("input");inp.type="search";inp.className="cbtn";inp.placeholder="search sessions";inp.setAttribute("aria-label","search sessions");inp.value=SESS_Q;
+  var inp=document.createElement("input");inp.type="search";inp.className="cbtn";inp.placeholder="search sessions";inp.setAttribute("aria-label","search sessions");inp.value=SESS_Q||"";
   var mode=document.createElement("button");mode.type="button";mode.className="cbtn";mode.setAttribute("aria-pressed",SESS_MODE==="prompts"?"true":"false");mode.textContent="prompts";mode.title="search inside the prompts of all sessions";
   var redraw=function(){Win.update("data",data)},tm=0;
-  var run=function(){clearTimeout(tm);SESS_HITS=null;redraw();tm=setTimeout(function(){sessSearch(redraw)},250)};
+  var run=function(){clearTimeout(tm);SESS_HITS=null;redraw();tm=setTimeout(function(){sessSearch(redraw)},400)};
   inp.addEventListener("input",function(){SESS_Q=inp.value;run()});
   mode.addEventListener("click",function(){SESS_MODE=SESS_MODE==="prompts"?"sessions":"prompts";mode.setAttribute("aria-pressed",SESS_MODE==="prompts"?"true":"false");inp.placeholder=SESS_MODE==="prompts"?"search prompts":"search sessions";run()});
   w.appendChild(inp);w.appendChild(mode);

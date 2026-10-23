@@ -1346,8 +1346,10 @@ export function handleCockpit(
     if (loopbackRefusal(req, { allowHost: isTailnetOrLocalName, guardSafeMethods: true })) return send(403, "application/json", '{"error":"cross-origin request refused"}'), true;
     const q = (url.searchParams.get("q") ?? "").trim();
     if (q.length < 2 || q.length > 200) return send(400, "application/json", '{"error":"q must be 2-200 characters"}'), true;
-    searchSessions(q, { limit: SESSION_SEARCH_MAX }).then(
-      (hits) => send(200, "application/json", JSON.stringify({ q, hits })),
+    let gone = false;
+    res.on("close", () => (gone = true));
+    searchSessions(q, { limit: SESSION_SEARCH_MAX, cancelled: () => gone }).then(
+      (r) => send(200, "application/json", JSON.stringify({ q, ...r })),
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );
     return true;
