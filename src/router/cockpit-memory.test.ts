@@ -546,10 +546,12 @@ describe("cockpit Lessons card", () => {
     const p = await cockpitMemoryPayload(deps());
     const html = pageFns().memHtml({ ...(p as object), jobs: [] }, ["lessons"]);
     expect(html).toContain("awaiting review");
-    expect(html).toContain("7 candidate");
-    expect(html).toContain("2 approved");
-    expect(html).toContain("1 rejected");
-    expect(html).toContain("1 superseded");
+    expect(html).toContain('<span class="chip" data-part="candidate"><b>7</b> candidate</span>');
+    expect(html).toContain('<span class="chip" data-part="approved"><b>2</b> approved</span>');
+    expect(html).toContain('<span class="chip" data-part="rejected"><b>1</b> rejected</span>');
+    expect(html).toContain('<span class="chip" data-part="superseded"><b>1</b> superseded</span>');
+    expect(html).toContain('class="chips" data-part="counts"');
+    expect(html).not.toContain("approved ·");
     expect(html).toContain("Title cand-1 · 60 m 00 s ago");
     expect(html).not.toContain("Title cand-6");
   });
