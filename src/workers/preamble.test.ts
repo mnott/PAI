@@ -49,6 +49,16 @@ describe("loadPreamble", () => {
     expect("preamble" in r && r.preamble?.text).toBe("worktree rule");
   });
 
+  it("a worktree without its own .pai/ falls back to the main checkout's", () => {
+    const d = repo("main rule\n");
+    execFileSync("git", ["add", "."], { cwd: d });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], { cwd: d });
+    const wt = join(d, "wt");
+    execFileSync("git", ["worktree", "add", "-q", wt], { cwd: d });
+    const r = loadPreamble(wt);
+    expect("preamble" in r && r.preamble?.text).toBe("main rule");
+  });
+
   it("refuses an oversize file with the reason", () => {
     const r = loadPreamble(repo("x".repeat(PREAMBLE_MAX_BYTES + 1)));
     expect("refused" in r && r.refused).toMatch(/over the 16384 byte limit/);

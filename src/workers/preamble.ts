@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export const PREAMBLE_REL = ".pai/worker.md";
 export const PREAMBLE_MAX_BYTES = 16 * 1024;
@@ -33,9 +33,35 @@ export function projectRoot(cwd: string): string {
   }
 }
 
+/**
+ * A gitignored project config file (`.pai/…`): the one under projectRoot(cwd) if it
+ * exists, else the main checkout's — a linked worktree has no `.pai/`, so without the
+ * fallback its standing rules and checks would vanish there.
+ */
+export function projectConfigFile(cwd: string, rel: string): string {
+  const root = projectRoot(cwd);
+  const local = join(root, rel);
+  if (existsSync(local)) return local;
+  try {
+    const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const main = dirname(common);
+    if (main !== root) {
+      const inMain = join(main, rel);
+      if (existsSync(inMain)) return inMain;
+    }
+  } catch {
+    // not a git repo (or an old git without --path-format): the root path stands
+  }
+  return local;
+}
+
 /** Missing or empty file: no preamble. Over PREAMBLE_MAX_BYTES: refused, never truncated. */
 export function loadPreamble(cwd: string): PreambleResult {
-  const path = join(projectRoot(cwd), PREAMBLE_REL);
+  const path = projectConfigFile(cwd, PREAMBLE_REL);
   if (!existsSync(path)) return { preamble: null };
   const size = statSync(path).size;
   if (size > PREAMBLE_MAX_BYTES) {
