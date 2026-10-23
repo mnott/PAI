@@ -218,7 +218,9 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   // the pane is opened before the caller's slot-queue wait: show the queue line
   // in place (one line, refreshed) until the start frame arrives or the wrapper ends
   const qdir = d.queuedDir ?? paneExecDir();
-  const qline = queueLineWriter({ write: err, tty: d.tty ?? process.stderr.isTTY === true, columns: () => process.stderr.columns });
+  // the wrapper polls the queue file into plain strings: the line is redrawn in
+  // place (\r + clear-line) even off a terminal, so clear() can erase it again
+  const qline = queueLineWriter({ write: err, tty: d.tty ?? process.stderr.isTTY === true, inplace: true, columns: () => process.stderr.columns });
   const drawQueued = (clear = false): void => {
     if (clear) return qline.clear(); // nothing was ever shown: nothing to clear
     qline.show(readQueued(qdir, id));
