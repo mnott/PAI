@@ -7,6 +7,7 @@
 import { OPT, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { cmdActive, cmdAutoRoute, cmdInfo, cmdRename, cmdRoute, cmdSlug, cmdTag } from "./session/commands.js";
 import { cmdBackfillIds } from "./session/backfill-ids.js";
+import { cmdMove } from "./session/move.js";
 import { cmdAutosave } from "./session/autosave.js";
 import { cmdCheckpoint } from "./session/checkpoint.js";
 import { cmdClearNames } from "./session/clear-names.js";
@@ -288,10 +289,24 @@ const backfillIdsCmd: CommandDef = {
   run: (c) => legacy(() => cmdBackfillIds({ dryRun: c.dryRun, all: c.opts.all === true, dir: c.opts.dir as string | undefined })),
 };
 
+const moveCmd: CommandDef = {
+  name: "move",
+  summary: "Reattribute a registry session to another project",
+  description: "Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates.",
+  args: [{ name: "SESSION_ID", required: true, summary: "Claude session id or its first characters" }],
+  options: [
+    { name: "to", type: "string", value: "PROJECT", summary: "Slug of the project to move the session to" },
+    { ...OPT.dryRun, summary: "Show what would move, change nothing" },
+  ],
+  examples: ["pai session move cdd93e8d --to pai", "pai session move cdd93e8d --to pai --dry-run"],
+  seeAlso: ["pai session route", "pai project info"],
+  run: (c) => legacy(() => cmdMove({ id: c.args.SESSION_ID as string, to: c.opts.to as string | undefined, dryRun: c.dryRun })),
+};
+
 /** Subcommands added to `pai session` (list/open/new/rename are the foundation's). */
 export const SESSION_NOTE_COMMANDS: CommandDef[] = [
   infoCmd, slugCmd, tagCmd, routeCmd, handoverCmd, checkpointCmd, autosaveCmd, activeCmd,
-  recentCmd, gotoCmd, pauseCmd, autoRouteCmd, cleanupCmd, restoreCmd, backfillIdsCmd,
+  recentCmd, gotoCmd, pauseCmd, autoRouteCmd, cleanupCmd, restoreCmd, backfillIdsCmd, moveCmd,
 ];
 
 // ---------------------------------------------------------------------------

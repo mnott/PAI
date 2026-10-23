@@ -479,6 +479,56 @@ pai session restore --promised --execute
 
 See also: `pai session cleanup`
 
+### pai session backfill-ids
+
+Record the Claude session ids in existing session notes
+
+```
+pai session backfill-ids [options]
+```
+
+Maps each session note of a project to the transcripts that overlap its creation-to-last-change window and writes `sessions: [...]` into its frontmatter. Notes with no clear match are left alone and counted as ambiguous or none.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--dry-run` | flag | — | Report the counts and the planned mapping, write nothing |
+| `--dir PATH` | string | — | Project directory whose notes to map (default: the current directory) |
+| `--all` | flag | — | Map the notes of every project |
+
+```sh
+pai session backfill-ids --dry-run
+pai session backfill-ids --dir ~/.claude/pai --dry-run
+pai session backfill-ids --all
+```
+
+See also: `pai session info`
+
+### pai session move
+
+Reattribute a registry session to another project
+
+```
+pai session move SESSION_ID [options]
+```
+
+Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates.
+
+| Argument | Required | Description |
+|---|---|---|
+| `SESSION_ID` | yes | Claude session id or its first characters |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--to PROJECT` | string | — | Slug of the project to move the session to |
+| `--dry-run` | flag | — | Show what would move, change nothing |
+
+```sh
+pai session move cdd93e8d --to pai
+pai session move cdd93e8d --to pai --dry-run
+```
+
+See also: `pai session route`, `pai project info`
+
 ## Subcommands
 
 | Command | Description |
@@ -501,6 +551,8 @@ See also: `pai session cleanup`
 | `pai session auto-route` | Find out which project the current directory belongs to |
 | `pai session cleanup` | Tidy session notes: drop empty ones, name, file and renumber |
 | `pai session restore` | Make displaced transcripts resumable again |
+| `pai session backfill-ids` | Record the Claude session ids in existing session notes |
+| `pai session move` | Reattribute a registry session to another project |
 
 ## See also
 

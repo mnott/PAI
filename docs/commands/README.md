@@ -328,12 +328,14 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai session active` | Sessions that were active in the last hour |
 | `pai session auto-route` | Find out which project the current directory belongs to |
 | `pai session autosave` | Refresh the "Continue" block from the transcript (for hooks) |
+| `pai session backfill-ids` | Record the Claude session ids in existing session notes |
 | `pai session checkpoint` | Add a timestamped line to the active session note |
 | `pai session cleanup` | Tidy session notes: drop empty ones, name, file and renumber |
 | `pai session goto` | Open a session by name or id (same as `pai open`) |
 | `pai session handover` | Write the "Continue" block of a project's TODO.md |
 | `pai session info` | Show everything known about one session note |
 | `pai session list` | List sessions, newest first |
+| `pai session move` | Reattribute a registry session to another project |
 | `pai session new` | Start a new session in a new or existing folder |
 | `pai session open` | Reopen a session (on its own provider unless --provider is given) |
 | `pai session pause` | Save a checkpoint before leaving (same as `pai pause`) |
