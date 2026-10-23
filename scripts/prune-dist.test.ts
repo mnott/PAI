@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { parsePsOutput } from "./prune-dist.mjs";
+import { parsePsOutput, pruneDist } from "./prune-dist.mjs";
 
 function fixture(): string {
   const dist = mkdtempSync(join(tmpdir(), "prune-dist-"));
@@ -104,6 +104,40 @@ describe("prune-dist", () => {
       expect(existsSync(join(dist, "chunk-new.mjs"))).toBe(true);
       expect(r.stderr).toContain("pruning nothing");
     } finally {
+      rmSync(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("a process started from a different path to the SAME dist dir (same dev+ino) counts as live", () => {
+    const dist = fixture();
+    const prev = process.env.PRUNE_DIST_PROCESSES;
+    try {
+      // Two generations; the live process started between them, so gen-1 is the anchor and must survive.
+      const now = Date.now();
+      writeFileSync(join(dist, ".prune-manifest.json"), JSON.stringify({
+        stamp: "never-matches",
+        generations: [
+          { builtAt: now - 1_000, chunks: ["chunk-gen2.mjs"] },
+          { builtAt: now - 3_000, chunks: ["chunk-gen1.mjs"] },
+        ],
+      }));
+      writeFileSync(join(dist, "chunk-gen2.mjs"), "");
+      writeFileSync(join(dist, "chunk-gen1.mjs"), "");
+      // The repo is also reachable under an alias path; the MCP server was started from there,
+      // so the command line never contains `dist` as a string. The injected stat resolves the
+      // alias to the same device+inode as the real dist dir.
+      const alias = "/alias-root/dist";
+      const realStat = statSync;
+      const stat = (p: string) => (p === alias ? realStat(dist) : realStat(p));
+      process.env.PRUNE_DIST_PROCESSES = JSON.stringify([
+        { startedAt: now - 2_000, command: `node ${alias}/daemon-mcp/index.mjs` },
+      ]);
+      pruneDist(dist, { stat });
+      expect(existsSync(join(dist, "chunk-gen1.mjs"))).toBe(true); // anchor generation kept
+      expect(existsSync(join(dist, "chunk-gen2.mjs"))).toBe(true); // newer generation kept
+    } finally {
+      if (prev === undefined) delete process.env.PRUNE_DIST_PROCESSES;
+      else process.env.PRUNE_DIST_PROCESSES = prev;
       rmSync(dist, { recursive: true, force: true });
     }
   });
