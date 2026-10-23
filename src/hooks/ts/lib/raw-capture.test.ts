@@ -55,7 +55,7 @@ describe("appendRawCapture", () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
-  it("rotates at the cap and keeps one backup", () => {
+  it("rotates at the cap and shifts older backups instead of overwriting them", () => {
     const root = mkdtempSync(join(tmpdir(), "rawcap-"));
     const file = join(root, "x.jsonl");
     appendRawCapture(file, root, "aaaa\n", 12);
@@ -65,8 +65,9 @@ describe("appendRawCapture", () => {
     expect(readFileSync(`${file}.1`, "utf-8")).toBe("aaaa\nbbbb\n");
     appendRawCapture(file, root, "dddd\n", 12);
     appendRawCapture(file, root, "eeee\n", 12);
-    expect(readdirSync(root).sort()).toEqual(["x.jsonl", "x.jsonl.1"]);
+    expect(readdirSync(root).sort()).toEqual(["x.jsonl", "x.jsonl.1", "x.jsonl.2"]);
     expect(readFileSync(`${file}.1`, "utf-8")).toBe("cccc\ndddd\n");
+    expect(readFileSync(`${file}.2`, "utf-8")).toBe("aaaa\nbbbb\n");
   });
 });
 

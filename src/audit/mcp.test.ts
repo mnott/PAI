@@ -174,6 +174,24 @@ describe("auditMcp", () => {
     expect(idle?.state).toBe("configured");
   });
 
+  it("counts calls in rotated capture backups", async () => {
+    const { home, cwd } = makeTmp();
+    writeFileSync(join(home, ".claude.json"), JSON.stringify({ mcpServers: { alpha: { command: "alpha-bin" } } }));
+    const root = join(tmp, "captures");
+    const month = join(root, "raw-outputs", "2026-10");
+    mkdirSync(month, { recursive: true });
+    const now = Date.now();
+    writeFileSync(
+      join(month, "2026-10-22_all-events.jsonl.1"),
+      JSON.stringify({ hook_event_type: "PostToolUse", timestamp: now - 1_000, payload: { tool_name: "mcp__alpha__do_thing" } }) + "\n",
+      "utf8"
+    );
+    writeFileSync(join(month, "2026-10-22_all-events.jsonl"), "{}\n", "utf8");
+
+    const report = await auditMcp({ cwd, homeDir: home, projectsDbPath: join(tmp, "no-registry.db"), captureDir: join(root, "raw-outputs"), now });
+    expect(report.servers.find((s) => s.server === "alpha")?.callsWindow).toBe(1);
+  });
+
   it("drops capture calls outside the --since window", async () => {
     const { home, cwd } = makeTmp();
     writeFileSync(

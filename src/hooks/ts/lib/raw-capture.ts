@@ -8,6 +8,8 @@ import { maskSecrets } from './loop-guard.js';
 import { sha256 } from '../../../utils/hash.js';
 
 export const RAW_CAPTURE_MAX_BYTES = 10 * 1024 * 1024;
+/** Rotated backups kept per file; a busy day rotates more than once. */
+export const RAW_CAPTURE_BACKUPS = 5;
 
 /** Deterministic 16-hex id for a captured event: sha256 of the joined parts. */
 export function captureEventId(parts: { sessionId?: string; toolUseId?: string; event?: string; ts?: string }): string {
@@ -29,12 +31,18 @@ export function redactDeep<T>(value: T): T {
 
 /**
  * Append one JSON line to `file` (directory 0700, file 0600). When the file
- * would exceed `maxBytes` it is rotated to `<file>.1` (one backup kept).
+ * would exceed `maxBytes` it is rotated to `<file>.1`, older backups shifting up to `.N` (the oldest is dropped).
  */
 export function appendRawCapture(file: string, dir: string, line: string, maxBytes = RAW_CAPTURE_MAX_BYTES): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   try {
-    if (statSync(file).size + Buffer.byteLength(line) > maxBytes) renameSync(file, `${file}.1`);
+    if (statSync(file).size + Buffer.byteLength(line) > maxBytes) {
+      // A single .1 was overwritten by the second rotation of a busy day, losing its events
+      for (let i = RAW_CAPTURE_BACKUPS - 1; i >= 1; i--) {
+        if (existsSync(`${file}.${i}`)) renameSync(`${file}.${i}`, `${file}.${i + 1}`);
+      }
+      renameSync(file, `${file}.1`);
+    }
   } catch {
     // no file yet
   }
