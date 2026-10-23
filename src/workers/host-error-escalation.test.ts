@@ -16,6 +16,7 @@ import { ledgerPath } from "./paths.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 import { escalateAfterHostError, resolveClaimProvider, type ExecuteArgs } from "./run.js";
 import * as executeMod from "./run/execute.js";
+import { tryEscalate } from "./run/escalate.js";
 import { NoLocalServerError } from "./local-provider.js";
 
 vi.mock("./pane.js", async (importOriginal) => {
@@ -200,5 +201,51 @@ describe("the pool claim names the run's own provider", () => {
     vi.stubEnv("PAI_SESSION_WORKER_PROVIDER", "gyro-m");
     const a = baseArgs(logDir, async () => 0, { opts: { claudeArgs: ["-p", "ORIGINAL TASK"] } });
     expect(await resolveClaimProvider(a)).toBe("gyro-m");
+  });
+});
+
+describe("an unpooled local run stopped by the loop guard escalates (tryEscalate, no result event)", () => {
+  for (const rc of [143, 1]) {
+    it(`rc ${rc}, no commits: rerunOnCloud-side re-run once with the escalated prompt`, async () => {
+      const logDir = mkdtempSync(join(tmpdir(), "pai-unpooled-"));
+      const st = failedStatus(logDir, { rc });
+      const seen: Seen[] = [];
+      const a = baseArgs(logDir, async (o) => (seen.push(o as Seen), o.onWorkerStart?.("w2"), 0));
+      const out = await tryEscalate(a, "w1", st, { result: "-", why: "loop-stopped: x" } as never, undefined, [], "loop-guard stop");
+      expect(out).toBe(0);
+      expect(seen).toHaveLength(1);
+      expect(seen[0].providerFlag).toBe("anthropic");
+      expect(seen[0].claudeArgs[1].startsWith("[escalated t2→t1")).toBe(true);
+      expect(seen[0]._escalatedFrom).toEqual(["t2"]);
+    });
+  }
+
+  it("a deadline-stopped run with nothing saved escalates too", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-unpooled-dl-"));
+    const st = failedStatus(logDir, { rc: 143, loopStopped: undefined, timedOut: true });
+    const seen: Seen[] = [];
+    const a = baseArgs(logDir, async (o) => (seen.push(o as Seen), 0));
+    expect(await tryEscalate(a, "w1", st, null, undefined, [], "max-minutes")).toBe(0);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("a cloud run is not escalated", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-unpooled-cloud-"));
+    const st = failedStatus(logDir, { provider: "anthropic", rc: 143 });
+    const seen: Seen[] = [];
+    const a = baseArgs(logDir, async (o) => (seen.push(o as Seen), 0), { className: "orchestrate" });
+    // t1 has a tier above only through the session: no re-run
+    await tryEscalate(a, "w1", st, null, undefined, [], "loop-guard stop");
+    expect(seen).toHaveLength(0);
+  });
+
+  it("disabled by config, or already escalated out of the tier: no re-run", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-unpooled-off-"));
+    const st = failedStatus(logDir, { rc: 143 });
+    const seen: Seen[] = [];
+    const run = async (o: Seen) => (seen.push(o), 0);
+    await tryEscalate(baseArgs(logDir, run, { config: { ...config(), escalate: { ...DEFAULT_ESCALATE, enabled: false } } }), "w1", st, null, undefined, [], "loop-guard stop");
+    await tryEscalate(baseArgs(logDir, run, { escalatedFrom: ["t2"] }), "w1", st, null, undefined, [], "loop-guard stop");
+    expect(seen).toHaveLength(0);
   });
 });

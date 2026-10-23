@@ -65,8 +65,8 @@ describe("triggers", () => {
     expect(detectTrigger({ reportText: "needs-tool: browser" })?.reason).toBe("missing tool browser");
   });
   it("repeated failure at the configured count", () => {
-    expect(detectTrigger({ failures: 1, loopStopped: true })).toBeNull();
-    expect(detectTrigger({ failures: 2, loopStopped: true })?.reason).toContain("loop-guard stop");
+    expect(detectTrigger({ failures: 1, reportValid: false })).toBeNull();
+    expect(detectTrigger({ failures: 2, reportValid: false })?.reason).toContain("invalid report");
     expect(detectTrigger({ failures: 2, cfg: { ...DEFAULT_ESCALATE, triggers: ["context"] } })).toBeNull();
   });
   it("old 2-local-failures rule is this rule", () => {
@@ -198,10 +198,10 @@ describe("loop-stop trigger", () => {
     expect(detectTrigger({ loopStopped: true, salvaged: true })?.kind).toBe("loop-stop");
   });
 
-  it("a loop stop without saved work has no loop-stop trigger and follows the failures rule", () => {
-    expect(detectTrigger({ loopStopped: true, commits: [], failures: 1 })).toBeNull();
-    expect(planEscalation({ ...stopped, commits: [] })).toBeNull();
-    expect(detectTrigger({ loopStopped: true, commits: [], failures: 2 })?.kind).toBe("repeated-failure");
+  it("a loop stop without saved work escalates at once too", () => {
+    expect(detectTrigger({ loopStopped: true, commits: [], failures: 1 })?.kind).toBe("loop-stop");
+    expect(planEscalation({ ...stopped, commits: [] })?.trigger.kind).toBe("loop-stop");
+    expect(detectTrigger({ loopStopped: true, commits: [], failures: 2 })?.kind).toBe("loop-stop");
   });
 
   it("no loop-stop trigger in config -> no escalation at failures 1", () => {
@@ -371,15 +371,15 @@ describe("escalation end to end (fake runner, fake routing table)", () => {
     });
   }
 
-  it("deadline with nothing saved does not escalate at failure 1 (repeated-failure rule)", () => {
-    expect(detectTrigger({ timedOut: true, commits: [], failures: 1 })).toBeNull();
-    expect(detectTrigger({ timedOut: true, commits: [], failures: 2 })?.kind).toBe("repeated-failure");
+  it("deadline with nothing saved escalates at once too", () => {
+    expect(detectTrigger({ timedOut: true, commits: [], failures: 1 })?.kind).toBe("deadline");
+    expect(detectTrigger({ timedOut: true, commits: [], failures: 2 })?.kind).toBe("deadline");
     expect(detectTrigger({ timedOut: true, salvaged: true })?.kind).toBe("deadline");
   });
 
-  it("a timed-out run kept for review (it committed) still escalates; a loop-stop kept for review does not", () => {
+  it("a timed-out run kept for review (it committed) still escalates; a loop-stop kept for review does too", () => {
     expect(planEscalation({ ...base, timedOut: true, failures: 1, failureWhy: "max-minutes", keptForReview: true })?.trigger.kind).toBe("deadline");
-    expect(planEscalation({ ...base, loopStopped: true, failures: 1, keptForReview: true })).toBeNull();
+    expect(planEscalation({ ...base, loopStopped: true, failures: 1, keptForReview: true })?.trigger.kind).toBe("loop-stop");
   });
 
   it("no deadline trigger in config -> a timed-out run waits for the failures rule", () => {

@@ -121,11 +121,11 @@ export function detectTrigger(i: TriggerInput): Trigger | null {
   for (const e of on("missing-tool") ? (i.toolErrors ?? []) : []) {
     if (TOOL_MISSING.test(e)) return { kind: "missing-tool", reason: `missing tool: ${e.replace(/\s+/g, " ").slice(0, 80)}` };
   }
-  if (on("loop-stop") && i.loopStopped && ((i.commits?.length ?? 0) > 0 || i.salvaged)) {
-    return { kind: "loop-stop", reason: "loop-guard stop with saved work" };
+  if (on("loop-stop") && i.loopStopped) {
+    return { kind: "loop-stop", reason: (i.commits?.length ?? 0) > 0 || i.salvaged ? "loop-guard stop with saved work" : "loop-guard stop" };
   }
-  if (on("deadline") && i.timedOut && ((i.commits?.length ?? 0) > 0 || i.salvaged)) {
-    return { kind: "deadline", reason: "time limit reached with saved work" };
+  if (on("deadline") && i.timedOut) {
+    return { kind: "deadline", reason: (i.commits?.length ?? 0) > 0 || i.salvaged ? "time limit reached with saved work" : "time limit reached" };
   }
   if (on("repeated-failure") && (i.failures ?? 0) >= cfg.failures) {
     const what = i.loopStopped ? "loop-guard stop" : i.timedOut ? "time limit" : i.reportValid === false ? "invalid report" : i.checksFailed ? "failed checks" : "failed run";
@@ -284,7 +284,7 @@ export function planEscalation(i: PlanInput): EscalationPlan | null {
   // it committed, and that is exactly the saved work the deadline trigger hands up
   const tier = tierOf(i.tiers, i.className);
   const base = detectTrigger({ ...i, failures: i.failures });
-  if (i.keptForReview && base?.kind !== "deadline") return null;
+  if (i.keptForReview && base?.kind !== "deadline" && base?.kind !== "loop-stop") return null;
   const trigger = (base?.kind === "repeated-failure" || base?.kind === "loop-stop" || base?.kind === "deadline") && i.failureWhy ? { ...base, reason: `${i.failureWhy}` } : base;
   const action = decideEscalation(i.tiers, tier, trigger, i.state, i.cfg);
   if (action.action === "none" || !trigger || !tier) return null;
