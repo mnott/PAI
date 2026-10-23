@@ -11,9 +11,9 @@ const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&
 const gbm = (m: number) => (m / 1024).toFixed(1);
 const GB = 1024 ** 3;
 import { WIN_CLOUD_JS } from "./cockpit-page/win/cards-cloud.js";
-const fn = (name: string) => (name === "limResident" || name === "limServerHtml" ? WIN_CLOUD_JS : COCKPIT_HTML).match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))![0];
+const fn = (name: string) => (name === "limResident" || name === "limServerHtml" || name === "limEngineHtml" ? WIN_CLOUD_JS : COCKPIT_HTML).match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`))![0];
 const residentOf = new Function("gbm", `${fn("limResident")}\nreturn limResident;`)(gbm) as (r: number | null, w?: number) => { txt: string; note: string };
-const server = new Function("esc", "gbm", "shortModel", "limResident", `${fn("limServerHtml")}\nreturn limServerHtml;`)(esc, gbm, (s: string) => s, residentOf) as (l: unknown) => string;
+const server = new Function("esc", "gbm", "shortModel", "limResident", `${fn("limEngineHtml")}\n${fn("limServerHtml")}\nreturn limServerHtml;`)(esc, gbm, (s: string) => s, residentOf) as (l: unknown) => string;
 
 const NOTE = "partly paged out";
 const up = (rssMb: number, weightsBytes: number) => ({ provider: "p", kind: "local", up: true, rssMb, weightsBytes, served: ["m"] });
