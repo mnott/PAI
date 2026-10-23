@@ -16,6 +16,7 @@ import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { findClaudePids, extractMcpConfigArg, readProcessEnvLine } from "./env.js";
+import { defaultCaptureDir, observedMcpServers, DEFAULT_SINCE_HOURS } from "./hooks.js";
 import { projectLaunchConfig } from "../workers/project-config.js";
 
 export interface McpLiveProcess {
@@ -39,6 +40,12 @@ export interface McpServerRow {
   toolsExposed: number | "UNKNOWN";
   toolsUsed30d: number;
   calls30d: number;
+  /** MCP calls counted in the capture window (--since, default 24h). */
+  callsWindow: number;
+  /** ISO timestamp of the newest capture call, undefined when never seen. */
+  lastSeen?: string;
+  /** "observed": a capture call in the window; "configured": never seen (configured, not used). */
+  state: "configured" | "observed";
 }
 
 export interface McpReport {
@@ -306,14 +313,24 @@ export async function auditMcp(opts: {
   connect?: boolean;
   projectsDbPath?: string;
   transcriptsDir?: string;
+  /** Capture directory for the observed window (default: PAI_HOME/History/raw-outputs). */
+  captureDir?: string;
+  /** Observation window in hours (default 24). */
+  sinceHours?: number;
+  /** "Now" for the window; injectable for tests. */
+  now?: number;
 }): Promise<McpReport> {
   const cwd = opts.cwd;
   const homeDir = opts.homeDir;
   const transcriptsDir = opts.transcriptsDir ?? join(homeDir, ".claude", "projects");
+  const captureDir = opts.captureDir ?? defaultCaptureDir();
+  const now = opts.now ?? Date.now();
+  const sinceHours = opts.sinceHours ?? DEFAULT_SINCE_HOURS;
 
   const { configuredIn, disabled, serverDefs } = gatherConfiguredSources(cwd, homeDir);
   const liveProcesses = gatherLiveProcesses(homeDir);
-  const usage = await gatherUsage(transcriptsDir, Date.now());
+  const usage = await gatherUsage(transcriptsDir, now);
+  const observed = await observedMcpServers(captureDir, now - sinceHours * 3_600_000);
   // `projectsDbPath` predates the storage-layer conversion, when this call opened
   // a sqlite file by path; `projectLaunchConfig` now takes an injectable
   // RegistryBackend instead, and no caller has passed one since, so it can only
@@ -327,6 +344,7 @@ export async function auditMcp(opts: {
   for (const name of allNames) {
     const liveMatches = liveProcesses.filter((p) => liveProcessLoadsServer(p, name, allConfiguredNames));
     const serverUsage = usage.get(name);
+    const seen = observed.get(name);
     rows.push({
       server: name,
       configuredIn: [...(configuredIn.get(name) ?? new Set())],
@@ -336,6 +354,9 @@ export async function auditMcp(opts: {
       toolsExposed: "UNKNOWN",
       toolsUsed30d: serverUsage?.distinctTools ?? 0,
       calls30d: serverUsage?.calls ?? 0,
+      callsWindow: seen?.count ?? 0,
+      lastSeen: seen?.last,
+      state: seen ? "observed" : "configured",
     });
   }
 
