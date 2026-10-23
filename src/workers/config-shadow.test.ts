@@ -8,6 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { workersConfigShadows, liveWorkersConfigShadows, logWorkersConfigShadowsOnce, resetWorkersConfigShadowLogForTest } from "./config-shadow.js";
+import { parseTiersValue } from "./route-lists.js";
 import { hashText, saveRegistry, validateRegistry, validateRequest, type RegistryCtx } from "../router/cockpit-registry.js";
 
 let dir: string;
@@ -46,6 +47,23 @@ describe("workersConfigShadows", () => {
     const main = { workers: { providers: { a: {} }, pane: { enabled: true } } };
     expect(workersConfigShadows(main, null)).toEqual([]);
     expect(workersConfigShadows(main, {}).map((x) => `${x.file}:${x.key}`)).toEqual(["config.yaml:workers.providers"]);
+  });
+  it("an identical mirror of workers.yaml in config.yaml is not a shadow", () => {
+    const yamlPath = join(dir, "workers.yaml");
+    writeFileSync(yamlPath, "tiers:\n  - id: t2\n    models: [anthropic/sonnet]\n    default: true\n");
+    // the mirror writeWorkersSection writes: the parsed (effective) tiers
+    const mirror = parseTiersValue([{ id: "t2", models: ["anthropic/sonnet"], default: true }], "workers.tiers");
+    expect(workersConfigShadows({ workers: { tiers: mirror } }, { tiers: [{ id: "t2", models: ["anthropic/sonnet"], default: true }] }, yamlPath)).toEqual([]);
+  });
+  it("a config.yaml routing value differing from workers.yaml warns and names both values", () => {
+    const yamlPath = join(dir, "workers.yaml");
+    writeFileSync(yamlPath, "tiers:\n  - id: t2\n    models: [anthropic/sonnet]\n    default: true\n");
+    const stale = parseTiersValue([{ id: "t2", models: ["glm/glm-5.3-flash"], default: true }], "workers.tiers");
+    const s = workersConfigShadows({ workers: { tiers: stale } }, { tiers: [{ id: "t2", models: ["anthropic/sonnet"], default: true }] }, yamlPath);
+    expect(s.map((x) => `${x.file}:${x.key}`)).toEqual(["config.yaml:workers.tiers"]);
+    expect(s[0]!.message).toContain("workers.yaml:tiers is effective");
+    expect(s[0]!.message).toContain("glm/glm-5.3-flash");
+    expect(s[0]!.message).toContain("anthropic/sonnet");
   });
   it("live reader and daemon log read the files", () => {
     writeFileSync(join(dir, "config.yaml"), MAIN);
