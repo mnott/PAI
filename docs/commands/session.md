@@ -511,20 +511,26 @@ Reattribute a registry session to another project
 pai session move SESSION_ID [options]
 ```
 
-Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates.
+Finds the session by the first characters of its Claude id and moves it to the target project, numbered after that project's last session. An ambiguous prefix lists the candidates. Rows with no Claude id are addressed by `--project` plus `--number` (or `--numbers` for a batch), or by their numeric registry row id.
 
 | Argument | Required | Description |
 |---|---|---|
-| `SESSION_ID` | yes | Claude session id or its first characters |
+| `SESSION_ID` | no | Claude session id or its first characters, or a bare numeric registry row id |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--project SLUG` | string | — | Project the session is registered under (with --number/--numbers) |
+| `--number N` | number | — | Note number of the session within --project, as `pai session list` shows it |
+| `--numbers N1,N2,...` | string | — | Batch: several note numbers within --project, one result line per row |
 | `--to PROJECT` | string | — | Slug of the project to move the session to |
 | `--dry-run` | flag | — | Show what would move, change nothing |
 
 ```sh
 pai session move cdd93e8d --to pai
 pai session move cdd93e8d --to pai --dry-run
+pai session move 4711 --to pai
+pai session move --project caseleaf --number 12 --to pai
+pai session move --project caseleaf --numbers 12,15,40 --to pai
 ```
 
 See also: `pai session route`, `pai project info`
