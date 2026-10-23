@@ -2387,11 +2387,54 @@ export function gcWorktrees(
   return out;
 }
 
+/** True when `cmd` is a pool host process (the bundled worker-pool-host or the pool-host module). */
+export function isPoolHostCmd(cmd: string): boolean {
+  return /worker-pool-host|pool-host\b/.test(cmd);
+}
+
+/** Pid of the pool host recorded in the state file, 0 when none. */
+function poolHostPidOf(logDir: string): number {
+  const st = readPoolState(logDir);
+  return st?.hostPid && st.hostPid > 0 ? st.hostPid : 0;
+}
+
+/**
+ * Spare trees the pool state lists as a spare or a claimed slot of a host that is
+ * still alive: the host may claim or serve one right now, so gc must not touch it.
+ * The host pid is checked against its command (`ps`), not only its existence — a
+ * pid reused by an unrelated process is a dead host, and its spares stay leftovers.
+ */
+function livePoolSpareDirs(logDir: string): Set<string> {
+  const st = readPoolState(logDir);
+  if (!st) return new Set();
+  const hostPid = st.hostPid && st.hostPid > 0 ? st.hostPid : 0;
+  if (!hostPid) return new Set();
+  try {
+    process.kill(hostPid, 0);
+  } catch {
+    return new Set(); // host gone: its spares are leftovers
+  }
+  let cmd = "";
+  try {
+    cmd = execFileSync("ps", ["-o", "command=", "-p", String(hostPid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    cmd = "";
+  }
+  if (!isPoolHostCmd(cmd)) return new Set(); // pid reused by something else
+  const out = new Set<string>();
+  for (const s of st.spares ?? []) if (s.dir) out.add(resolve(s.dir));
+  for (const slot of st.slots) if (slot.busyWith) out.add(resolve(slot.cwd));
+  return out;
+}
+
 /**
  * gc --pool: the pool keeps no reserve worktrees, so every spare-* tree under
  * worktrees/ and every slots/* tree that no worker status owns and no process
  * sits in is a leftover. Same removal path as discard: commits archived under
  * refs/pai-archive/<id>, gitignored notes salvaged, then tree and branch go.
+ * A spare the pool state lists under a live pool host is not a leftover: its
+ * claude may sit in the worktree with an empty cwd (lsof sees nothing) and a
+ * run may claim it at any moment.
  */
 export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
   const out: GcEntry[] = [];
@@ -2403,6 +2446,8 @@ export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
       .filter((d): d is string => !!d)
       .map((d) => resolve(d))
   );
+  const poolHostPid = poolHostPidOf(logDir);
+  const poolSpares = livePoolSpareDirs(logDir);
   const cands: { id: string; dir: string }[] = [];
   const list = (root: string, keep: (n: string) => boolean, idOf: (n: string) => string): void => {
     if (!existsSync(root)) return;
@@ -2414,14 +2459,22 @@ export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
   list(join(logDir, "slots"), () => true, (n) => `slot-${n}`);
   for (const { id, dir } of cands) {
     if (owned.has(resolve(dir))) continue;
+    if (poolSpares.has(resolve(dir))) {
+      out.push({ id, skipped: `pool spare of live host pid ${poolHostPid}` });
+      continue;
+    }
     if (!isRealWorktree(dir)) {
       out.push({ id, skipped: "not a worktree" });
       continue;
     }
-    const pid = busyPid(dir);
-    if (pid) {
-      out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
-      continue;
+    // A spare-* tree named by no live pool state is an orphan even when a process sits in it:
+    // a host that died without cleanup leaves its spare's claude parked in the tree.
+    if (!id.startsWith("spare-")) {
+      const pid = busyPid(dir);
+      if (pid) {
+        out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
+        continue;
+      }
     }
     let branch = "";
     try {
