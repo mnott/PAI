@@ -9,8 +9,10 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { redactHome, recordCombinedReport, type CombinedData } from "./audit.js";
+import { redactHome, recordCombinedReport, printHooks, printMcp, type CombinedData } from "./audit.js";
 import type { Finding } from "../../audit/severity.js";
+import type { HooksReport } from "../../audit/hooks.js";
+import type { McpReport } from "../../audit/mcp.js";
 
 const dirs: string[] = [];
 function newDir(): string {
@@ -106,5 +108,85 @@ describe("recordCombinedReport", () => {
       const content = readFileSync(join(dir, f), "utf8");
       expect(content.includes(homedir())).toBe(false);
     }
+  });
+});
+
+// The table printers format `last seen` in local time with a relative age;
+// --json keeps the raw ISO value. Fixed instants keep the assertions valid in
+// any timezone.
+const NOW = new Date(2026, 9, 23, 5, 55, 0).getTime(); // 2026-10-23 05:55 local
+const iso = (y: number, mo: number, day: number, h: number, min: number) =>
+  new Date(y, mo - 1, day, h, min, 0).toISOString();
+
+function captureStdout(fn: () => unknown): string {
+  const original = console.log;
+  const lines: string[] = [];
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map((a) => String(a)).join(" "));
+  };
+  try {
+    fn();
+  } finally {
+    console.log = original;
+  }
+  return lines.join("\n");
+}
+
+function hooksReport(lastSeen: string): HooksReport {
+  return {
+    encoding: "cl100k_base",
+    settingsFiles: [],
+    readings: [{ event: "SessionStart", command: "echo", tokens: 1, state: "observed", lastSeen }],
+    totalsByEvent: { SessionStart: 1 },
+    preToolUseHooks: [],
+    preToolUseRewritesBash: false,
+  };
+}
+
+function mcpReport(lastSeen: string): McpReport {
+  return {
+    servers: [
+      {
+        server: "srv",
+        configuredIn: ["~/.claude.json"],
+        disabled: false,
+        pinned: null,
+        loadedLive: "yes",
+        toolsExposed: 2,
+        toolsUsed30d: 1,
+        calls30d: 1,
+        callsWindow: 1,
+        lastSeen,
+        state: "observed",
+      },
+    ],
+    liveProcesses: [],
+  };
+}
+
+describe("last-seen formatting", () => {
+  it("hooks table prints the last seen column as local time with age", () => {
+    const seen = iso(2026, 10, 23, 5, 53);
+    const table = captureStdout(() => printHooks(hooksReport(seen), 24, NOW));
+    expect(table).toContain("observed");
+    expect(table).toContain("05:53 (2 min ago)");
+    expect(table).not.toContain(seen);
+  });
+  it("hooks table shows an hour age for an older stamp", () => {
+    const seen = iso(2026, 10, 22, 21, 44);
+    const table = captureStdout(() => printHooks(hooksReport(seen), 24, NOW));
+    expect(table).toContain("2026-10-22 21:44 (8 h ago)");
+    expect(table).not.toContain(seen);
+  });
+  it("mcp table prints the last seen column as local time with age", () => {
+    const seen = iso(2026, 10, 23, 5, 53);
+    const table = captureStdout(() => printMcp(mcpReport(seen), 24, NOW));
+    expect(table).toContain("05:53 (2 min ago)");
+    expect(table).not.toContain(seen);
+  });
+  it("mcp table keeps a dash for a never-seen server", () => {
+    const table = captureStdout(() => printMcp({ servers: [{ ...mcpReport("").servers[0], lastSeen: undefined, state: "configured" }], liveProcesses: [] }, 24, NOW));
+    expect(table).toContain("configured, not used");
+    expect(table).not.toContain("ago)");
   });
 });

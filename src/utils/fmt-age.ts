@@ -7,3 +7,21 @@ export function fmtAge(ms: number, opts: { dayAfterHours: number; months?: boole
   const day = Math.floor(hr / 24);
   return opts.months && day >= 30 ? `${Math.floor(day / 30)}mo` : `${day}d`;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * Local-time stamp of an instant with its relative age: `05:53 (2 min ago)`
+ * when it happened today, `2026-10-22 21:44 (8 h ago)` when it did not.
+ */
+export function fmtSeenLocal(iso: string, now: number = Date.now()): string {
+  const d = new Date(iso);
+  const ageMin = Math.max(0, Math.floor((now - d.getTime()) / 60_000));
+  const age = ageMin < 60 ? `${ageMin} min` : `${Math.floor(ageMin / 60)} h`;
+  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const sameDay =
+    d.getFullYear() === new Date(now).getFullYear() &&
+    d.getMonth() === new Date(now).getMonth() &&
+    d.getDate() === new Date(now).getDate();
+  return sameDay ? `${time} (${age} ago)` : `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${time} (${age} ago)`;
+}
