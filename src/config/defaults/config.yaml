@@ -20,6 +20,8 @@ obsidianSyncIntervalSecs: 1800
 embedOnStartup: false
 # Wall-clock budget of one embed pass in minutes; the backlog continues next cycle.
 embedMaxMinutes: 60
+# Embed batches in flight at once; Ollama runs them in parallel up to OLLAMA_NUM_PARALLEL.
+embedConcurrency: 3
 # Total window of one anchored cycle's embed phase: passes repeat until the
 # backlog is empty or this many minutes are spent.
 embedCycleMaxMinutes: 300

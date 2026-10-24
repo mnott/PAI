@@ -55,6 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_pc_project       ON pai_chunks (project_id);
 CREATE INDEX IF NOT EXISTS idx_pc_source        ON pai_chunks (project_id, source);
 CREATE INDEX IF NOT EXISTS idx_pc_tier          ON pai_chunks (tier);
 CREATE INDEX IF NOT EXISTS idx_pc_path          ON pai_chunks (project_id, path);
+CREATE INDEX IF NOT EXISTS idx_pc_unembedded    ON pai_chunks (project_id, id) WHERE embedding IS NULL;
 
 -- GIN index for full-text search (tsvector)
 CREATE INDEX IF NOT EXISTS idx_pc_fts           ON pai_chunks USING GIN (fts_vector);

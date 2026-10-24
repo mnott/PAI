@@ -268,6 +268,12 @@ export class PostgresBackend implements StorageBackend {
       await pool.query("ALTER TABLE pai_chunks ADD COLUMN last_accessed_at BIGINT");
       process.stderr.write("[pai-postgres] Migration: added last_accessed_at column to pai_chunks\n");
     }
+
+    // The embed pass pages the backlog by (project_id, id). Without this partial
+    // index that is a scan of the whole table per page (~15 s on 3M chunks).
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_pc_unembedded ON pai_chunks (project_id, id) WHERE embedding IS NULL"
+    );
   }
 
   constructor(config: PostgresConfig) {
@@ -505,8 +511,9 @@ export class PostgresBackend implements StorageBackend {
       sql += ` AND project_id = $${params.length}`;
     }
     if (after) {
-      params.push(after.projectId, after.projectId, after.id);
-      sql += ` AND (project_id > $${params.length - 2} OR (project_id = $${params.length - 1} AND id > $${params.length}))`;
+      // Row comparison, not OR: the btree seeks straight to the cursor.
+      params.push(after.projectId, after.id);
+      sql += ` AND (project_id, id) > ($${params.length - 1}::int, $${params.length}::text)`;
     }
     sql += " ORDER BY project_id, id";
     if (limit !== undefined) {
@@ -523,6 +530,15 @@ export class PostgresBackend implements StorageBackend {
     await this.pool.query(
       "UPDATE pai_chunks SET embedding = $1::vector WHERE id = $2",
       [vecStr, chunkId]
+    );
+  }
+
+  async updateEmbeddings(items: Array<{ id: string; embedding: Buffer }>): Promise<void> {
+    if (items.length === 0) return;
+    await this.pool.query(
+      `UPDATE pai_chunks c SET embedding = v.e::vector
+         FROM unnest($1::text[], $2::text[]) AS v(id, e) WHERE c.id = v.id`,
+      [items.map((i) => i.id), items.map((i) => "[" + bufferToVector(i.embedding).join(",") + "]")],
     );
   }
 

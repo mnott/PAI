@@ -203,6 +203,8 @@ export interface PaiDaemonConfig {
   embedResumeMinutes?: number;
   /** Load average (1 min) above which an embed pass yields (default 8). */
   embedMaxLoad?: number;
+  /** Embed batches in flight at once (default 3). Ollama serves them in parallel up to OLLAMA_NUM_PARALLEL. */
+  embedConcurrency?: number;
 
   /** Local hour (0-23) to anchor the recurring index/embed cycle to. When unset,
    *  the cycle is anchored to daemon start, so a daytime restart pins every

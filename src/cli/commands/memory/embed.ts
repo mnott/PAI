@@ -6,6 +6,7 @@ import { dim, bold, ok, err } from "../../lib/utils.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
 import { DEFAULT_EMBED_MAX_MINUTES } from "../../../memory/embed-pass.js";
+import { configuredEmbedConcurrency, runEmbedPipeline } from "../../../memory/embed-pipeline.js";
 import { CliError } from "../../define.js";
 import { jobProgressFromEnv, type ProgressWriter } from "../../../memory/job-progress.js";
 import { acquireRun, readRun, type RunHandle, type RunOutcome } from "../../../memory/run-state.js";
@@ -62,42 +63,26 @@ export async function runEmbed(
   run?.setBacklog(backlog);
   jobProgress?.update({ phase: "embed", unit: "chunks", done: 0, total: backlog });
 
-  let done = 0;
-  let budgetHit = false;
-  let stopped = false;
-  const deadline = maxMillis === undefined ? Infinity : Date.now() + maxMillis;
-  let after: { projectId: number; id: string } | null = null;
-
-  while (true) {
-    const page = await retryTransient(() => backend.getUnembeddedChunkIds(projectId, pageSize, after));
-    if (page.length === 0) break;
-
-    for (let i = 0; i < page.length; i += batchSize) {
-      if (shouldStop?.()) {
-        stopped = true;
-        break;
-      }
-      if (Date.now() >= deadline) {
-        budgetHit = true;
-        break;
-      }
-      const batch = page.slice(i, i + batchSize);
-      const vecs = await retryTransient(() => embedder.embed(batch.map((r) => r.text)));
-      await Promise.all(
-        batch.map((row, j) =>
-          retryTransient(() => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
-        )
-      );
-      done += batch.length;
-      run?.progress(done);
-      jobProgress?.update({ done });
-      process.stdout.write(`\r  ${embedProgressLine(done, backlog)}`);
-    }
-
-    if (budgetHit || stopped) break;
-    const last = page[page.length - 1];
-    after = { projectId: last.project_id, id: last.id };
-  }
+  const concurrency = configuredEmbedConcurrency();
+  const r = await runEmbedPipeline<{ id: string; text: string; project_id: number; path: string }>({
+    fetchPage: (last) =>
+      retryTransient(() => backend.getUnembeddedChunkIds(projectId, pageSize, last ? { projectId: last.project_id, id: last.id } : null)),
+    embed: (texts) => retryTransient(() => embedder.embed(texts)),
+    write: (batch, vecs) =>
+      retryTransient(() => backend.updateEmbeddings(batch.map((row, j) => ({ id: row.id, embedding: serializeEmbedding(vecs[j]) })))),
+    batchSize,
+    concurrency,
+    shouldStop,
+    deadline: maxMillis === undefined ? undefined : Date.now() + maxMillis,
+    onBatch: (_, n) => {
+      run?.progress(n);
+      jobProgress?.update({ done: n });
+      process.stdout.write(`\r  ${embedProgressLine(n, backlog)}`);
+    },
+  });
+  const done = r.done;
+  const budgetHit = r.end === "budget";
+  const stopped = r.end === "stopped";
 
   jobProgress?.finish();
   process.stdout.write("\r");
