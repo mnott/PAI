@@ -132,19 +132,13 @@ export function defaultCaptureDir(): string {
 /** Live capture file or a rotated backup (`<day>_all-events.jsonl.1`, `.2`, ...). */
 const CAPTURE_FILE = /\.jsonl(\.\d+(-\d+)?)?$/;
 
-/**
- * Counts hook events in the raw-capture JSONL files modified since `sinceMs`
- * (capture-all-events lines carry `hook_event_type` and `timestamp`). Files
- * are read line by line; malformed lines are skipped.
- */
-export async function observedHookEvents(captureDir: string, sinceMs: number): Promise<Map<string, { count: number; last: string }>> {
-  const observed = new Map<string, { count: number; last: string }>();
-  if (!existsSync(captureDir)) return observed;
-
+/** Capture files (in the YYYY-MM month directories) modified since `sinceMs`. */
+function captureFilesSince(captureDir: string, sinceMs: number): string[] {
+  if (!existsSync(captureDir)) return [];
+  const files: string[] = [];
   const monthDirs = readdirSync(captureDir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && /^\d{4}-\d{2}$/.test(d.name))
     .map((d) => join(captureDir, d.name));
-
   for (const monthDir of monthDirs) {
     for (const name of readdirSync(monthDir)) {
       if (!CAPTURE_FILE.test(name)) continue;
@@ -154,11 +148,28 @@ export async function observedHookEvents(captureDir: string, sinceMs: number): P
       } catch {
         continue;
       }
-      const rl = createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
-      for await (const raw of rl) {
-        foldObservedLine(raw, observed);
-      }
+      files.push(file);
     }
+  }
+  return files;
+}
+
+/** Every line of the capture files modified since `sinceMs`, streamed file by file. */
+async function* captureLinesSince(captureDir: string, sinceMs: number): AsyncGenerator<string> {
+  for (const file of captureFilesSince(captureDir, sinceMs)) {
+    yield* createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
+  }
+}
+
+/**
+ * Counts hook events in the raw-capture JSONL files modified since `sinceMs`
+ * (capture-all-events lines carry `hook_event_type` and `timestamp`). Files
+ * are read line by line; malformed lines are skipped.
+ */
+export async function observedHookEvents(captureDir: string, sinceMs: number): Promise<Map<string, { count: number; last: string }>> {
+  const observed = new Map<string, { count: number; last: string }>();
+  for await (const raw of captureLinesSince(captureDir, sinceMs)) {
+    foldObservedLine(raw, observed);
   }
   return observed;
 }
@@ -170,44 +181,26 @@ export async function observedHookEvents(captureDir: string, sinceMs: number): P
  */
 export async function observedMcpServers(captureDir: string, sinceMs: number): Promise<Map<string, { count: number; last: string }>> {
   const observed = new Map<string, { count: number; last: string }>();
-  if (!existsSync(captureDir)) return observed;
-
-  const monthDirs = readdirSync(captureDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && /^\d{4}-\d{2}$/.test(d.name))
-    .map((d) => join(captureDir, d.name));
-
-  for (const monthDir of monthDirs) {
-    for (const name of readdirSync(monthDir)) {
-      if (!CAPTURE_FILE.test(name)) continue;
-      const file = join(monthDir, name);
-      try {
-        if (statSync(file).mtimeMs < sinceMs) continue;
-      } catch {
-        continue;
-      }
-      const rl = createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
-      for await (const raw of rl) {
-        if (!raw.includes("mcp__")) continue;
-        let parsed: { payload?: { tool_name?: string }; tool?: string; timestamp?: number | string };
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          continue;
-        }
-        const toolName = parsed.payload?.tool_name ?? parsed.tool;
-        if (!toolName || !toolName.startsWith("mcp__")) continue;
-        const server = toolName.split("__")[1];
-        if (!server) continue;
-        const ts = typeof parsed.timestamp === "number" ? parsed.timestamp : Date.parse(String(parsed.timestamp ?? ""));
-        const last = new Date(Number.isNaN(ts) ? Date.now() : ts).toISOString();
-        const entry = observed.get(server);
-        if (entry) {
-          entry.count += 1;
-          if (last > entry.last) entry.last = last;
-        } else {
-          observed.set(server, { count: 1, last });
-        }
-      }
+  for await (const raw of captureLinesSince(captureDir, sinceMs)) {
+    if (!raw.includes("mcp__")) continue;
+    let parsed: { payload?: { tool_name?: string }; tool?: string; timestamp?: number | string };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const toolName = parsed.payload?.tool_name ?? parsed.tool;
+    if (!toolName || !toolName.startsWith("mcp__")) continue;
+    const server = toolName.split("__")[1];
+    if (!server) continue;
+    const ts = typeof parsed.timestamp === "number" ? parsed.timestamp : Date.parse(String(parsed.timestamp ?? ""));
+    const last = new Date(Number.isNaN(ts) ? Date.now() : ts).toISOString();
+    const entry = observed.get(server);
+    if (entry) {
+      entry.count += 1;
+      if (last > entry.last) entry.last = last;
+    } else {
+      observed.set(server, { count: 1, last });
     }
   }
   return observed;
@@ -317,26 +310,15 @@ export function auditHooks(cwd: string, run?: HookRunner | AuditHooksOptions, ma
 /** Sync variant used by auditHooks; same folding as observedHookEvents. */
 function observedHookEventsSync(captureDir: string, sinceMs: number): Map<string, { count: number; last: string }> {
   const observed = new Map<string, { count: number; last: string }>();
-  if (!existsSync(captureDir)) return observed;
-
-  const monthDirs = readdirSync(captureDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && /^\d{4}-\d{2}$/.test(d.name))
-    .map((d) => join(captureDir, d.name));
-
-  for (const monthDir of monthDirs) {
-    for (const name of readdirSync(monthDir)) {
-      if (!CAPTURE_FILE.test(name)) continue;
-      const file = join(monthDir, name);
-      let text: string;
-      try {
-        if (statSync(file).mtimeMs < sinceMs) continue;
-        text = readFileSync(file, "utf8");
-      } catch {
-        continue;
-      }
-      for (const raw of text.split("\n")) {
-        foldObservedLine(raw, observed);
-      }
+  for (const file of captureFilesSince(captureDir, sinceMs)) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const raw of text.split("\n")) {
+      foldObservedLine(raw, observed);
     }
   }
   return observed;

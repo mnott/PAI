@@ -1,17 +1,1 @@
-[
-  "src/audit/hooks.ts | src/audit/hooks.ts | 5932cd0892b5",
-  "src/audit/hooks.ts | src/audit/hooks.ts | b15d852602b0",
-  "src/audit/skills.ts | src/audit/subagents.ts | adf9f49f8759",
-  "src/audit/spawn.ts | src/audit/spawn.ts | 525f7f3f7a9c",
-  "src/config/main-config.ts | src/config/main-config.ts | d3d3520ff9c5",
-  "src/daemon-mcp/tools/delegation.ts | src/daemon-mcp/tools/delegation.ts | 1e2e0ffe6336",
-  "src/daemon-mcp/tools/delegation.ts | src/daemon-mcp/tools/delegation.ts | 2578fb620f81",
-  "src/daemon-mcp/tools/delegation.ts | src/daemon-mcp/tools/worker-capability.ts | c9620da879d6",
-  "src/daemon-mcp/tools/ops.ts | src/daemon-mcp/tools/worker-model.ts | 330a28293f33",
-  "src/daemon-mcp/tools/worker-capability.ts | src/daemon-mcp/tools/worker-model.ts | 2dbf88ba1894",
-  "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | 0387f6bd92ed",
-  "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | 89133fb4f493",
-  "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | ecd239421970",
-  "src/daemon/topic-detect-worker.ts | src/daemon/work-queue-worker.ts | a805de07723c",
-  "src/harness/claude-code.ts | src/harness/codex.ts | c049b04059ef"
-]
+[]

@@ -4,10 +4,11 @@
  * spelling is the one PAI already uses everywhere (encodeDir, src/cli/lib/utils.ts).
  */
 
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
 import { encodeDir } from "../cli/lib/utils.js";
+import { jsonlRecords, newestFirst } from "./jsonl.js";
 import type { HarnessAdapter, HarnessEvent, HarnessSession } from "./types.js";
 
 interface Block {
@@ -87,12 +88,6 @@ function sessionFiles(dir: string): string[] {
 
 const CHUNK = 64 * 1024;
 
-/** Sort/filter time of an updatedAt stamp; an unparsable one counts as 0 (oldest). */
-function sortMs(updatedAt: string): number {
-  const ms = Date.parse(updatedAt);
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
 /** Parsed lines of `text`; the first and last may be cut by the chunk edge, so `partialFirst`/`partialLast` drop them. */
 function parseLines(text: string, partialFirst: boolean, partialLast: boolean): Line[] {
   const lines = text.split("\n");
@@ -167,28 +162,10 @@ export const claudeCodeAdapter: HarnessAdapter = {
         if (sess) out.push(sess);
       }
     }
-    const since = opts.sinceMs !== undefined ? Date.now() - opts.sinceMs : undefined;
-    return out
-      .filter((s) => since === undefined || sortMs(s.updatedAt) >= since)
-      .sort((a, b) => sortMs(b.updatedAt) - sortMs(a.updatedAt));
+    return newestFirst(out, opts.sinceMs);
   },
   *readEvents(session: HarnessSession): Iterable<HarnessEvent> {
-    let text: string;
-    try {
-      text = readFileSync(session.path, "utf8");
-    } catch {
-      return;
-    }
-    for (const raw of text.split("\n")) {
-      if (!raw.trim()) continue;
-      let obj: Line;
-      try {
-        obj = JSON.parse(raw) as Line;
-      } catch {
-        continue;
-      }
-      yield* eventsOfLine(this.name, session.id, obj);
-    }
+    for (const obj of jsonlRecords<Line>(session.path)) yield* eventsOfLine(this.name, session.id, obj);
   },
 };
 

@@ -17,6 +17,7 @@
  * thrown (not swallowed) so the work queue retry logic handles them.
  */
 
+import { contentToText } from "./content-text.js";
 import { deferIfQuiet } from "./quiet.js";
 import {
   existsSync,
@@ -308,24 +309,6 @@ function extractFromJsonl(jsonlPath: string, tier: ModelTier = "sonnet"): Extrac
   }
 
   return result;
-}
-
-/** Convert Claude content (string or content block array) to plain text. */
-export function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c) => {
-        if (typeof c === "string") return c;
-        const block = c as Record<string, unknown>;
-        if (block?.text) return String(block.text);
-        if (block?.content) return String(block.content);
-        return "";
-      })
-      .join(" ")
-      .trim();
-  }
-  return "";
 }
 
 /** Filter out noise entries that shouldn't be included in the summary. */

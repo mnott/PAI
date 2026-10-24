@@ -13,7 +13,7 @@ import {
   setCapabilityPreference,
   unsetCapabilityPreference,
 } from "../../workers/providers.js";
-import type { WorkerToolResult } from "./worker-model.js";
+import { error, text, type WorkerToolResult } from "./tool-result.js";
 
 export interface WorkerCapabilityArgs {
   action?: "list" | "set" | "unset";
@@ -22,12 +22,6 @@ export interface WorkerCapabilityArgs {
   /** Preference list, first usable one wins. Required for set. */
   providers?: string[];
 }
-
-const text = (s: string): WorkerToolResult => ({ content: [{ type: "text", text: s }] });
-const error = (e: unknown): WorkerToolResult => ({
-  content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-  isError: true,
-});
 
 /**
  * list (default): every capability preference and what it resolves to right

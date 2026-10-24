@@ -27,8 +27,8 @@ import {
   findLatestJsonl,
   getGitContext,
   spawnSummarizer,
-  contentToText,
 } from "./session-summary-worker.js";
+import { contentToText } from "./content-text.js";
 import { NonRetryableError } from "./work-queue.js";
 import { buildContextHandoverPrompt } from "./templates/context-handover-prompt.js";
 import {

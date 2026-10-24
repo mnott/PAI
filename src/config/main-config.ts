@@ -31,6 +31,21 @@ export function resolvedMainConfigPath(jsonPath: string, yamlPath: string = yaml
   return existsSync(yamlPath) ? yamlPath : jsonPath;
 }
 
+/** Parse config.yaml into a Document; unreadable or syntactically damaged files throw MainConfigError. */
+function parseYamlConfig(yamlPath: string): Document {
+  let text: string;
+  try {
+    text = readFileSync(yamlPath, "utf8");
+  } catch (e) {
+    throw new MainConfigError(`Could not read ${yamlPath}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const doc = parseDocument(text);
+  if (doc.errors.length) {
+    throw new MainConfigError(`${yamlPath}: ${doc.errors[0].message}`);
+  }
+  return doc;
+}
+
 /**
  * Read the raw main config: config.yaml if it exists, else config.json
  * (readJsonStrict — missing is `{}`, damaged throws), matching
@@ -38,16 +53,7 @@ export function resolvedMainConfigPath(jsonPath: string, yamlPath: string = yaml
  */
 export function readDualFormatConfigRaw(jsonPath: string, yamlPath: string = yamlSiblingPath(jsonPath)): Record<string, unknown> {
   if (existsSync(yamlPath)) {
-    let text: string;
-    try {
-      text = readFileSync(yamlPath, "utf8");
-    } catch (e) {
-      throw new MainConfigError(`Could not read ${yamlPath}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    const doc = parseDocument(text);
-    if (doc.errors.length) {
-      throw new MainConfigError(`${yamlPath}: ${doc.errors[0].message}`);
-    }
+    const doc = parseYamlConfig(yamlPath);
     const parsed = doc.toJS();
     if (parsed === null || parsed === undefined) return {};
     if (typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -74,16 +80,7 @@ export function writeDualFormatConfigRaw(
   yamlPath: string = yamlSiblingPath(jsonPath)
 ): void {
   if (existsSync(yamlPath)) {
-    let text: string;
-    try {
-      text = readFileSync(yamlPath, "utf8");
-    } catch (e) {
-      throw new MainConfigError(`Could not read ${yamlPath}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-    const doc = parseDocument(text);
-    if (doc.errors.length) {
-      throw new MainConfigError(`${yamlPath}: ${doc.errors[0].message}`);
-    }
+    const doc = parseYamlConfig(yamlPath);
     const before = (doc.toJS() ?? {}) as Record<string, unknown>;
     syncPlainObjectIntoYamlDoc(doc, before, raw);
     try {
