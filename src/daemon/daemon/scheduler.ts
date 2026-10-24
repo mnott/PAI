@@ -28,6 +28,8 @@ import { restartRouter } from "../../router/restart.js";
 import { routerRestartDeps } from "../../router/service-control.js";
 import { checkUpstream, readUpstreamHealth } from "../../router/preflight.js";
 import { cliEntry } from "../pass-priority.js";
+import { cockpitJobRunning } from "../../router/cockpit-job-recovery.js";
+import { paiHomeDir } from "../../config/pai-home.js";
 import { createDistWatch, distBuildId, DIST_POLL_MS } from "../dist-watch.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
@@ -1009,7 +1011,7 @@ export function startDistWatch(): void {
   const tick = createDistWatch({
     readId: () => distBuildId(cliEntry()),
     now: Date.now,
-    busy: () => indexInProgress || embedInProgress || vaultIndexInProgress,
+    busy: () => indexInProgress || embedInProgress || vaultIndexInProgress || cockpitJobRunning(paiHomeDir()),
     restart: () => void process.kill(process.pid, "SIGTERM"),
     log: (l) => process.stderr.write(`[pai-daemon] ${l}\n`),
   });

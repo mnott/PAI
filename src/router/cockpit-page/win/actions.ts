@@ -127,7 +127,7 @@ function winPollJobEnd(host,jobId,onTick,pollMs){
     return r.text().catch(function(){return""}).then(function(t){
      var j=null;try{j=JSON.parse(t)}catch(e){j=null}
      if(!j||typeof j!=="object"||j.id===undefined)return"gone"; // {"error":"no such job"}
-     if(j.state==="done"||j.state==="failed")return j;
+     if(j.state==="done"||j.state==="failed"||j.state==="interrupted")return j;
      if(onTick)onTick(j);
      return null;
     });
@@ -149,6 +149,7 @@ function winPollJobEnd(host,jobId,onTick,pollMs){
 function jobResult(job){
  if(job&&job.state==="done")return{ok:true,message:job.message||"done"};
  if(job&&job.state==="failed")return{ok:false,message:job.message||"failed"};
+ if(job&&job.state==="interrupted")return{ok:false,message:job.message||"interrupted"};
  return{ok:false,message:"no result after "+Math.round(JOB_TRIES*JOB_POLL/1000)+" s"};
 }
 var pendingEl={}; // cardId -> the control with a run in flight
