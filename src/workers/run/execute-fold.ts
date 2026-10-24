@@ -515,7 +515,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
     const rep = repairAndValidateAg2(resultEvent.result);
     const v = rep.validation;
-    if (rep.repairs.length) {
+    if (rep.normalised) status.reportNormalised = true;
+    if (rep.repairs.length || rep.normalised) {
       resultEvent.result = rep.text;
       state.resultReport = parseWorkerReport(rep.text);
       if (state.resultReport?.notes) status.last = shortText(state.resultReport.notes, 90);

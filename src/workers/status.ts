@@ -148,6 +148,8 @@ export interface WorkerStatus {
   reportFormat?: "json" | "ag2";
   /** Whether the final AG2 report passed `aibroker agentish check`; unset for json reports or when no validator ran. */
   reportValid?: boolean;
+  /** The final AG2 report had a form slip (R: / one-line / bullets) that was normalised before validation. */
+  reportNormalised?: boolean;
   /** Validation error messages, when reportValid is false. */
   reportErrors?: string[];
   /** Whether the headless prompt got the end-of-turn "final message must be…" trailer line. */
