@@ -250,3 +250,16 @@ Section types draw the page's own parts: `group`, `chart`, `ring`, `chips`, `ser
 - *Duplicate* copies a `local_tiers` entry under a new name on the next free port, other fields identical.
 
 Mutations are POST-only, same-origin and written to the cockpit action ledger.
+
+## Actions and their CLI / MCP twins
+
+Every cockpit action runs the code the CLI already has; the MCP tools call it too.
+
+| Cockpit action | CLI | MCP |
+|---|---|---|
+| `runtime` start / stop | `pai models start\|stop RUNTIME [--model M]` | `model_runtime` |
+| `memory.embed`, `memory.index`, `memory.stop` | `pai memory embed --all`, `pai memory index --direct` | `memory_run` |
+| `worker.priority`, `worker.pause`, `worker.resume` | `pai worker priority\|pause\|resume` | `worker_priority`, `worker_pause`, `worker_resume` |
+| `local.start`, `local.stop`, `local.switch`, `local.off` | `pai worker local ...` | `local_status` (read-only), `worker_run` with `local` |
+
+A reading the cockpit could not refresh (a slow probe, a failed usage read) shows the last good value, marked as held, until it has failed several times in a row.

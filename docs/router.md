@@ -33,6 +33,19 @@ record nothing, for second instances) and `--wait-bind SECONDS` (used by
 spans like `30m`, `1h`, `2d`. A port other than the default never touches the
 pid file.
 
+Over MCP, `router_service` takes `action` status, start, stop or restart and calls the same functions (`src/router/service-control.ts`).
+
 Concept overview (scheduler, parking, sampler): [concepts/router.md](concepts/router.md).
 
 Full reference: [commands/router.md](commands/router.md).
+
+## Daemon service
+
+```
+pai daemon status                # running? uptime, index state
+pai daemon start                 # load the service (launchd / systemd user)
+pai daemon stop                  # unload it; stays stopped until `start`
+pai daemon restart
+```
+
+While the daemon is stopped, scheduler passes and router supervision do not run. `pai help` lists these under Services. MCP: `daemon_service` with the same four actions.

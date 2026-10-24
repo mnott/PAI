@@ -31,7 +31,7 @@ import { workersLogDir } from "../../workers/paths.js";
 import { loadConfig } from "../../daemon/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
-import { restartRouter } from "../../router/restart.js";
+import { routerRestartText, routerStartText, routerStatusText, routerStopText } from "../../router/service-control.js";
 import { LOOPBACK_HOST } from "../../utils/loopback.js";
 
 const out = (s: string) => void process.stdout.write(s + "\n");
@@ -43,10 +43,7 @@ const startCommand: CommandDef = {
   examples: ["pai router start", "pai router status"],
   seeAlso: ["pai router stop", "pai router status"],
   run() {
-    const pid = routerRunningPid();
-    if (pid) return void out(ok(`router already running (pid ${pid})`));
-    const started = spawnRouter(process.argv[1]!);
-    out(ok(`router starting on ${LOOPBACK_HOST}:${routerPort()} (pid ${started}), log ${routerLogFile()}`));
+    out(ok(routerStartText(process.argv[1]!)));
   },
 };
 
@@ -57,15 +54,8 @@ const stopCommand: CommandDef = {
   examples: ["pai router stop", "pai router status"],
   seeAlso: ["pai router start"],
   run() {
-    const pid = routerRunningPid();
-    if (!pid) return void out(dim("router not running"));
-    process.kill(pid, "SIGTERM");
-    try {
-      unlinkSync(routerPidFile());
-    } catch {
-      /* already gone */
-    }
-    out(ok(`router stopped (pid ${pid})`));
+    const text = routerStopText();
+    out(text === "router not running" ? dim(text) : ok(text));
   },
 };
 
@@ -76,10 +66,8 @@ const statusCommand: CommandDef = {
   examples: ["pai router status", "pai router start"],
   seeAlso: ["pai router start", "pai router stop"],
   run() {
-    const pid = routerRunningPid();
-    const managed = loadConfig().router.enabled;
-    const note = managed ? "daemon-managed: restarted if down" : "not daemon-managed (router.enabled is false)";
-    out(pid ? ok(`router running (pid ${pid}, port ${routerPort()}); ${note}`) : dim(`router not running; ${note}`));
+    const text = routerStatusText();
+    out(text.startsWith("router running") ? ok(text) : dim(text));
   },
 };
 
@@ -326,15 +314,7 @@ const restartCommand: CommandDef = {
   examples: ["pai router restart", "pai router status"],
   seeAlso: ["pai router start", "pai router stop"],
   async run() {
-    const result = await restartRouter({
-      oldPid: routerRunningPid() ?? undefined,
-      spawnNew: (old) => spawnRouter(process.argv[1]!, routerSwapArgs(old)),
-      handover: (old) => startHandover(old),
-      isUp: () => probeRouter(routerPort(), 500)
-    });
-    const st = result.oldPid !== undefined ? readHandoverStatus(result.oldPid) : undefined;
-    const finishing = st?.state === "draining" && st.inflight ? `, old router still finishing ${st.inflight} in-flight request(s)` : "";
-    out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms${finishing})`));
+    out(ok(await routerRestartText(process.argv[1]!)));
   },
 };
 

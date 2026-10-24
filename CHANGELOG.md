@@ -4,6 +4,21 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **MCP parity:** `daemon_service`, `router_service` (status, start, stop, restart), `model_runtime` (start, stop, status), `memory_run` (embed, index, stop, status), `worker_kill`, `worker_gc` (dry run by default) and `pool_status`, each calling the function the CLI and cockpit use. `worker_priority`, `worker_pause` and `worker_resume` were already there.
+- **Worker priority and pause:** `pai worker priority set`, `pai worker pause|resume` and the cockpit worker row change a running worker's place at the local engine.
+- **Local engine in the cockpit:** the local servers card shows the engine build of each running server; the system ring is sampled by a router timer.
+
+### Fixed
+
+- **Workers:** `pai worker kill` stops pooled workers through the pool host; a pooled run's pane keeps its status line and input line; the worker environment keeps USER, LOGNAME and HOME (OAuth keychain).
+- **Limits:** the usage reader looks the keychain token up by login account and holds the last good reading when a read fails.
+- **Config:** `pai config set` accepts every documented key (`maintenanceHour`, range 0-23); `workers.yaml` writers skip no-op writes.
+- **Build:** native modules stay external in every bundle.
+
 ## [1.0.23] - 2026-10-23
 
 ### Added

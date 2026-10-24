@@ -26,7 +26,8 @@ import { setWorkerPaused } from "../../workers/engine-control.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
-import { killTree } from "../../workers/kill-tree.js";
+import { killWorker } from "../../workers/kill-tree.js";
+import { runWorkerGc } from "../../workers/gc-run.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
@@ -36,9 +37,7 @@ import { setMuted } from "../../workers/local-idle.js";
 import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
-import { endProcesses, findWorktreeOrphans } from "../../workers/reap.js";
-import { gcSettingsFiles } from "../../workers/settings-file.js";
-import { discardWorker, formatKnowledge, gcPoolWorktrees, gcWorktrees, isPoolHostCmd, leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
+import { discardWorker, leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -876,66 +875,7 @@ const gcCommand: CommandDef = {
       const raw = str(ctx.opts["older-than"]) ?? "24";
       const hours = Number(raw);
       if (!Number.isFinite(hours) || hours < 0) throw new Error(`bad --older-than "${raw}"`);
-      const orphans = findWorktreeOrphans(logDir());
-      // a process in a spare-<hostPid>-N tree whose host pid is alive and runs worker-pool-host
-      // is that host's spare, not an orphan (the pid's command is checked against pid reuse);
-      // spares of a dead or reused host stay orphans
-      const hostCmd = (pid: number): string => {
-        try {
-          return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-        } catch {
-          return "";
-        }
-      };
-      const hostAlive = new Map<number, boolean>();
-      const isPoolSpare = (dir: string, cmd: string): boolean => {
-        const m = /^spare-(\d+)-\d+$/.exec(basename(dir));
-        if (!m) return false;
-        const hostPid = Number(m[1]);
-        let alive = hostAlive.get(hostPid);
-        if (alive === undefined) {
-          alive = false;
-          try {
-            process.kill(hostPid, 0);
-            alive = isPoolHostCmd(hostCmd(hostPid));
-          } catch {
-            /* pid gone */
-          }
-          hostAlive.set(hostPid, alive);
-        }
-        // the spare's own claude, or a headless worker started in it; anything else (a shell) is fair game
-        return alive && /(^|\/)claude(\s|$)/.test(cmd);
-      };
-      const listed = orphans.filter((o) => !isPoolSpare(o.dir, o.cmd));
-      for (const o of listed) out(`orphan pid ${o.pid} in ${o.dir}: ${o.cmd.slice(0, 200)}`);
-      if (listed.length && flag(ctx, "kill-orphans") && !ctx.dryRun) await endProcesses(listed, out);
-      const res = gcWorktrees(logDir(), flag(ctx, "all-finished") ? 0 : hours, ctx.dryRun, Date.now(), true, undefined, flag(ctx, "foreign") ? process.cwd() : undefined);
-      if (flag(ctx, "pool") || flag(ctx, "all-finished")) res.push(...gcPoolWorktrees(logDir(), ctx.dryRun));
-      for (const f of gcSettingsFiles(logDir(), ctx.dryRun)) out(`${ctx.dryRun ? "would remove" : "removed"} settings file ${f}`);
-      const verb = ctx.dryRun ? "would archive" : "archived";
-      for (const r of res) {
-        out(
-          r.branch
-            ? r.skipped
-              ? `branch ${r.id} [${r.repoName}]: ${r.skipped}`
-              : `${ctx.dryRun ? "would delete" : "deleted"} branch ${r.id} [${r.repoName}] (archive ${r.archive})`
-            : r.skipped
-              ? `skipped ${r.id}: ${r.skipped}`
-              : `${verb} ${r.id} -> ${r.archive}`
-        );
-        if (r.adopted) out(`  adopted detached HEAD ${r.adopted.slice(0, 7)}`);
-        if (ctx.dryRun && r.knowledge) {
-          const k = formatKnowledge(r.knowledge);
-          for (const l of k.length ? k : ["carries nothing"]) out(`  ${l}`);
-        }
-      }
-      const done = res.filter((r) => r.archive);
-      const kept = res.filter((r) => r.skipped);
-      const files = done.reduce((n, r) => n + (r.salvaged?.filter((l) => l.startsWith("salvaged ")).length ?? 0), 0);
-      out(
-        `${done.length} ${ctx.dryRun ? "would be archived" : "archived"}, salvaged ${files} file(s), kept ${kept.length}` +
-          (kept.length ? ` (${kept.map((r) => `${r.id}${r.repoName ? ` [${r.repoName}]` : ""}: ${r.skipped}`).join("; ")})` : "")
-      );
+      await runWorkerGc(logDir(), { olderThanHours: hours, allFinished: flag(ctx, "all-finished"), pool: flag(ctx, "pool"), foreign: flag(ctx, "foreign"), repo: process.cwd(), killOrphans: flag(ctx, "kill-orphans"), dryRun: ctx.dryRun }, out);
     }),
 };
 
@@ -953,14 +893,7 @@ const killCommand: CommandDef = {
   seeAlso: ["pai worker ps"],
   run: (ctx) =>
     guard("pai worker ps", async () => {
-      const id = ctx.args.ID as string;
-      const dir = logDir();
-      const status = loadStatus(dir, id);
-      if (!status) throw new Error(`no worker named "${id}"`);
-      if (status.state !== "running" && status.state !== "queued")
-        throw new Error(`worker ${id} is not running (state: ${status.state})`);
-      if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
-      for (const line of await killTree(dir, id, { only: ctx.opts.only === true, caller: { env: process.env, force: ctx.opts.force === true }, reason: typeof ctx.opts.reason === "string" ? ctx.opts.reason : undefined })) out(line);
+      for (const line of await killWorker(logDir(), ctx.args.ID as string, { only: ctx.opts.only === true, caller: { env: process.env, force: ctx.opts.force === true }, reason: typeof ctx.opts.reason === "string" ? ctx.opts.reason : undefined })) out(line);
     }),
 };
 
