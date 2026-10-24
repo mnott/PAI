@@ -95,6 +95,14 @@ export async function spawnOwned(
   return proc;
 }
 
+/**
+ * Spawn options of the pane command that follows a pooled run. The wrapper pipes the follow's output, so
+ * the status line and the input line are pinned by the wrapper (statusLine), not by the follow view.
+ */
+export function pooledFollowSpawn(wid: string, label: string | undefined, logDir: string, cwd: string): Parameters<typeof spawnOwned>[2] & { cwd: string } {
+  return { env: process.env, cwd, stdio: ["ignore", "pipe", "pipe"], title: `${label ?? wid} (pooled)`, statusLine: { kind: "worker", id: wid, logDir } };
+}
+
 /** status.last for a claude start that died before any model event: its stderr, not a bare "starting". */
 export function preEventFailure(rc: number, turns: number, stderrTail: string): string | null {
   if (rc === 0 || turns > 0 || !stderrTail.trim()) return null;

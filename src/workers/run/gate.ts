@@ -69,7 +69,7 @@ import {
 } from "../pool.js";
 import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
-import { requireVisiblePane, announcePane, spawnOwned } from "./pane-handles.js";
+import { requireVisiblePane, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult } from "./finalise.js";
 import { tryEscalate, rerunOnCloud } from "./escalate.js";
 import { executeRun } from "./execute.js";
@@ -237,7 +237,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     following ??= panePending.then(async () => {
       if (!paneHandles.has(wid)) return; // no pane owns this run (no terminal, hidden run allowed)
       const argv = [...followCommand(wid).split(" "), "--auto-exit"];
-      const proc = await spawnOwned(wid, argv, { env: process.env, cwd, stdio: ["ignore", "pipe", "pipe"], title: `${a.label ?? wid} (pooled)` });
+      const proc = await spawnOwned(wid, argv, pooledFollowSpawn(wid, a.label, a.logDir, cwd));
       proc.on("error", () => undefined);
       // the host owns the status file; the pane that follows this run is its registered pane
       const st = loadStatus(a.logDir, wid);
