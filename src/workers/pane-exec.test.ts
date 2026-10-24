@@ -81,6 +81,30 @@ describe("the pane owns the process", () => {
     expect(listRecords().find((x) => x.id === "t-order")?.child).toBe(proc.pid);
   }, 15_000);
 
+  it("a held pane (report retry ahead) stays open, with no exit file, until the run releases it", async () => {
+    const r = rig("t-hold");
+    const pane = await r.pane;
+    const proc = await pane.start({ argv: ["sh", "-c", "echo first attempt"], render: "plain", stdin: "ignore", hold: true });
+    expect(await closed(proc)).toBe(0);
+    await new Promise((res) => setTimeout(res, 400)); // the retry runs now: the pane must not close
+    expect(r.events).not.toContain("pane-close");
+    expect(existsSync(exitFilePath("t-hold"))).toBe(false); // an exit file marks the pane ended for the audit and the daemon
+    proc.release();
+    expect(await r.wrapper).toBe(0);
+    expect(r.events.at(-1)).toBe("pane-close");
+    expect(JSON.parse(readFileSync(exitFilePath("t-hold"), "utf8")).code).toBe(0);
+  }, 15_000);
+
+  it("a held pane closes when the caller goes away without releasing it", async () => {
+    const r = rig("t-hold-gone");
+    const pane = await r.pane;
+    const proc = await pane.start({ argv: ["sh", "-c", "exit 0"], render: "plain", stdin: "ignore", hold: true });
+    await closed(proc);
+    (proc as unknown as { sock: { destroy(): void } }).sock.destroy();
+    expect(await r.wrapper).toBe(0);
+    expect(r.events.at(-1)).toBe("pane-close");
+  }, 15_000);
+
   it("the child sees its pane-exec id in the environment", async () => {
     const r = rig("t-env");
     const proc = await (await r.pane).start({ argv: ["sh", "-c", "echo $PAI_PANE_EXEC"], env: { PATH: process.env.PATH } });

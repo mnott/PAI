@@ -164,6 +164,11 @@ export interface StartSpec {
   statusLine?: StatusLineSpec;
   /** Seconds the pane stays after the child ended (0: closes with it). */
   linger?: number;
+  /**
+   * The run goes on after this child (a report retry): the pane, its exit file and its registry entry stay
+   * until the caller sends the release frame (OwnedProc.release) or goes away.
+   */
+  hold?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +256,8 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   let callerGone = false;
   let cancelled = false;
   let childEnded: Promise<void> | null = null;
+  let release!: () => void;
+  const released = new Promise<void>((r) => (release = r));
 
   const killGroup = (sig: NodeJS.Signals): void => {
     if (!child?.pid) return;
@@ -273,6 +280,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
           resolve();
         } else if (f.t === "i") child?.stdin?.write(f.p);
         else if (f.t === "I") child?.stdin?.end();
+        else if (f.t === "D") release();
         else if (f.t === "K") {
           const sig = (JSON.parse(f.p.toString("utf8")) as { sig?: NodeJS.Signals }).sig ?? "SIGTERM";
           killGroup(sig);
@@ -281,6 +289,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
     });
     const gone = (): void => {
       callerGone = true;
+      release();
       resolve();
       stop?.("caller gone");
     };
@@ -405,6 +414,14 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   showErr(`\n[exit ${code}${stopReason ? ` (${stopReason})` : ""} after ${took}s]\n`);
   bar?.stop();
   const rec: Omit<ExitRecord, "id" | "endedMs"> = { code, ...(stopReason ? { reason: stopReason } : {}), ...(spawnError ? { reason: (spawnError as Error).message } : {}) };
+  if (sp.hold) {
+    // the run continues in the caller (report retry): no exit file (it would mark the pane ended) and
+    // the socket stays open until the caller releases the pane; finish() then writes the exit file
+    send("X", JSON.stringify({ code }));
+    await released;
+    await new Promise<void>((r) => (sock.destroyed ? r() : sock.end(() => r())));
+    return finish(rec, sp.linger);
+  }
   writeJson(exitFilePath(id), { id, endedMs: now(), ...rec } satisfies ExitRecord);
   send("X", JSON.stringify({ code }));
   await new Promise<void>((r) => (sock.destroyed ? r() : sock.end(() => r())));
@@ -480,7 +497,7 @@ export class OwnedProc extends EventEmitter {
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
   readonly stdin: Writable | null;
-  constructor(private readonly sock: Socket, stdin: boolean, private readonly onKill: (sig: NodeJS.Signals) => void) {
+  constructor(private readonly sock: Socket, stdin: boolean, private readonly onKill: (sig: NodeJS.Signals) => void, private readonly onRelease: () => void = () => undefined) {
     super();
     this.stdin = stdin
       ? new Writable({
@@ -498,6 +515,10 @@ export class OwnedProc extends EventEmitter {
   kill(sig: NodeJS.Signals | number = "SIGTERM"): boolean {
     this.onKill(typeof sig === "number" ? "SIGTERM" : sig);
     return true;
+  }
+  /** The run is over: a pane held open for a report retry (StartSpec.hold) may now close. No-op without hold. */
+  release(): void {
+    this.onRelease();
   }
   asChild(): ChildProcess {
     return this as unknown as ChildProcess;
@@ -580,6 +601,7 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   let proc: OwnedProc | null = null;
   let pidWaiter: { ok: (p: OwnedProc) => void; bad: (e: Error) => void } | null = null;
   let ended = false;
+  let holding = false;
   let startedAt = 0;
   const openedAt = Date.now();
   const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, session, openedMs: openedAt, startedMs: startedAt || openedAt, ...extra } satisfies LaunchRecord);
@@ -596,7 +618,8 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
       proc.emit("exit", code, signal ?? null);
       proc.emit("close", code, signal ?? null);
     } else pidWaiter?.bad(new Error("the pane's wrapper ended before the command started"));
-    s.destroy();
+    if (holding) s.unref();
+    else s.destroy();
   };
   // a wrapper that vanished without its X frame: read the exit file, else the command died with it
   const lost = (): void => {
@@ -642,9 +665,20 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
       new Promise<OwnedProc>((ok, bad) => {
         if (ended) return bad(new Error("the pane's wrapper has ended"));
         startedAt = Date.now();
-        proc = new OwnedProc(s, spec.stdin === "pipe", (sig) => {
-          if (!s.destroyed) s.write(frame("K", JSON.stringify({ sig })));
-        });
+        holding = spec.hold === true;
+        proc = new OwnedProc(
+          s,
+          spec.stdin === "pipe",
+          (sig) => {
+            if (!s.destroyed) s.write(frame("K", JSON.stringify({ sig })));
+          },
+          () => {
+            holding = false;
+            if (s.destroyed) return;
+            s.write(frame("D"));
+            s.end();
+          }
+        );
         pidWaiter = { ok, bad };
         s.write(frame("S", JSON.stringify(spec)));
       }),
