@@ -52,7 +52,7 @@ function memSegBar(m){
   memLine("",(m.reembedding?"new "+fmt(g.fresh)+" · old, to replace "+fmt(g.old):"embedded "+fmt(g.old))+" · missing "+fmt(g.missing));
 }
 /** m:ss (h:mm:ss from an hour) for the progress lines. */
-function memClock(s){s=Math.max(0,Math.round(s||0));var h=Math.floor(s/3600),mi=Math.floor(s%3600/60),se=String(s%60).padStart(2,"0");return h?h+":"+String(mi).padStart(2,"0")+":"+se:mi+":"+se}
+function memRunClock(s){s=Math.max(0,Math.round(s||0));var h=Math.floor(s/3600),mi=Math.floor(s%3600/60),se=String(s%60).padStart(2,"0");return h?h+":"+String(mi).padStart(2,"0")+":"+se:mi+":"+se}
 /** The bar and line of a live run record (m.runs[kind]); "" when none runs. Index: "120/254 projects · 1:40"; embed: "embedding: N/M this run · R/min · ETA". */
 function memRunProgress(r){
  if(!r)return"";
@@ -60,8 +60,8 @@ function memRunProgress(r){
  var pct=r.total>0?Math.min(100,100*r.done/r.total):null,stall=r.stalledSec!=null?" · no progress for "+memDur(r.stalledSec):"";
  var bar='<div data-part="runbar-'+r.kind+'" style="height:6px;border-radius:3px;overflow:hidden;background:var(--line)"><i style="display:block;height:100%;width:'+(pct==null?0:pct.toFixed(1))+'%;background:var(--acc)"></i></div>';
  var txt=r.kind==="embed"
-  ?"embedding: "+fmt(r.done)+"/"+(r.total>0?fmt(r.total):"?")+" this run"+(r.ratePerMin!=null?" · "+fmt(r.ratePerMin)+"/min":"")+(r.etaSec!=null?" · ETA "+memClock(r.etaSec):"")
-  :"indexing: "+fmt(r.done)+"/"+(r.total>0?fmt(r.total):"?")+" "+esc(r.unit)+" · "+memClock(r.elapsedSec)+(r.etaSec!=null?" · ETA "+memClock(r.etaSec):"")+(r.current?" · "+esc(r.current):"");
+  ?"embedding: "+fmt(r.done)+"/"+(r.total>0?fmt(r.total):"?")+" this run"+(r.ratePerMin!=null?" · "+fmt(r.ratePerMin)+"/min":"")+(r.etaSec!=null?" · ETA "+memRunClock(r.etaSec):"")
+  :"indexing: "+fmt(r.done)+"/"+(r.total>0?fmt(r.total):"?")+" "+esc(r.unit)+" · "+memRunClock(r.elapsedSec)+(r.etaSec!=null?" · ETA "+memRunClock(r.etaSec):"")+(r.current?" · "+esc(r.current):"");
  return bar+memLine(r.stalledSec!=null?"warn":"",txt+stall);
 }
 /** What each memory card shows: {v, u, s, x(html)}; v null = no value. */
