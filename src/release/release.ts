@@ -63,6 +63,23 @@ export interface ReleaseResult {
 
 class StepFailed extends Error {}
 
+/** Lockfile-faithful dependency install for a checkout: npm ci, bun's frozen install, or plain npm install. */
+function installCommand(dir: string): string[] {
+  if (existsSync(join(dir, "package-lock.json")) || existsSync(join(dir, "npm-shrinkwrap.json"))) return ["npm", "ci"];
+  if (existsSync(join(dir, "bun.lock")) || existsSync(join(dir, "bun.lockb"))) return ["bun", "install", "--frozen-lockfile"];
+  return ["npm", "install"];
+}
+
+/** Filename, packed size and file count from `npm pack --json`; null when the output is not that. */
+function parsePackJson(out: string): { filename: string; size: number; entryCount: number } | null {
+  try {
+    const j = JSON.parse(out)?.[0];
+    return j?.filename ? { filename: String(j.filename), size: Number(j.size) || 0, entryCount: Number(j.entryCount) || 0 } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Env without terminal-session variables, so a test run does not talk to the user's terminal. */
 function cleanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -140,7 +157,7 @@ export function planRelease(repo: string, opts: { bump?: string } = {}): string[
     `tag: v${next}`,
     `push: git push origin main --tags`,
     `mirror: forge push-mirror sync; wait for v${next} on GitHub${gh ? ` (${gh.owner}/${gh.repo})` : ""}`,
-    `pack: npm pack -> ${stable} + versioned`,
+    `pack: clean worktree of v${next} (install, build) -> npm pack -> ${stable} + versioned`,
     `release: gh release create v${next} ${stable}${gh ? ` --repo ${gh.owner}/${gh.repo}` : ""}`,
   ];
 }
@@ -273,12 +290,35 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
     // 9. pack
     step = "pack";
     const dir = (deps.packDir ?? (() => mkdtempSync(join(tmpdir(), "pai-release-"))))();
-    const packed = (await sh("npm", ["pack", "--pack-destination", dir])).trim().split("\n").pop()?.trim() || versionedAssetName(pkg.name, version);
+    // Pack from a clean build of the tag, never the live dist (it accumulates stale chunks).
+    const work = mkdtempSync(join(tmpdir(), "pai-pack-"));
+    const tree = join(work, "tree");
+    const shIn = async (cwd: string, cmd: string, args: string[]): Promise<string> => {
+      const r = await run(cmd, args, { cwd });
+      if (r.code !== 0) throw new StepFailed(`${[cmd, ...args].join(" ")} exited ${r.code}: ${tail(r.stderr || r.stdout)}`);
+      return r.stdout;
+    };
+    let packed: string;
+    let facts = "";
+    try {
+      await shIn(repo, "git", ["worktree", "add", "--detach", tree, tag]);
+      const [icmd, ...iargs] = installCommand(tree);
+      await shIn(tree, icmd, iargs);
+      if (pkg.scripts?.build) await shIn(tree, "npm", ["run", "build"]);
+      const out = await shIn(tree, "npm", ["pack", "--pack-destination", dir, "--json"]);
+      const info = parsePackJson(out);
+      packed = info?.filename ?? (out.trim().split("\n").pop()?.trim() || versionedAssetName(pkg.name, version));
+      if (info) facts = ` (${(info.size / 1048576).toFixed(1)} MB packed, ${info.entryCount} files)`;
+    } finally {
+      try { await run("git", ["worktree", "remove", "--force", tree], { cwd: repo }); } catch { /* best effort */ }
+      try { rmSync(work, { recursive: true, force: true }); } catch { /* temp dir */ }
+      try { await run("git", ["worktree", "prune"], { cwd: repo }); } catch { /* best effort */ }
+    }
     const versioned = join(dir, packed);
     const stable = join(dir, stableAssetName(pkg.name));
     if (!existsSync(versioned)) throw new StepFailed(`npm pack reported ${packed} but it is not in ${dir}`);
     copyFileSync(versioned, stable);
-    print(`pack: ${stableAssetName(pkg.name)} + ${packed}`);
+    print(`pack: ${stableAssetName(pkg.name)} + ${packed}${facts}`);
 
     // 10. release
     step = "release";

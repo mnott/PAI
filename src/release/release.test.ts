@@ -17,16 +17,19 @@ function tmpRepo(extra: Record<string, unknown> = {}): string {
 
 interface Fake {
   calls: string[];
+  cwds: string[];
   run: RunFn;
 }
 
 /** Fake git/npm/gh: answers by command line; `fail` makes the first matching command exit 1. */
 function fake(dir: string, o: { dirty?: boolean; branch?: string; fail?: string; tagVisibleAfter?: number } = {}): Fake {
   const calls: string[] = [];
+  const cwds: string[] = [];
   let lsRemote = 0;
-  const run: RunFn = async (cmd, args) => {
+  const run: RunFn = async (cmd, args, opts) => {
     const line = [cmd, ...args].join(" ");
     calls.push(line);
+    cwds.push(`${line} @ ${opts?.cwd ?? ""}`);
     const ok = (stdout = ""): { code: number; stdout: string; stderr: string } => ({ code: 0, stdout, stderr: "" });
     if (o.fail && line.startsWith(o.fail)) return { code: 1, stdout: "", stderr: "boom" };
     if (line === "git status --porcelain") return ok(o.dirty ? " M a.ts\n" : "");
@@ -39,12 +42,12 @@ function fake(dir: string, o: { dirty?: boolean; branch?: string; fail?: string;
       const d = args[args.indexOf("--pack-destination") + 1];
       mkdirSync(d, { recursive: true });
       writeFileSync(join(d, "acme-tool-1.2.4.tgz"), "tgz");
-      return ok("acme-tool-1.2.4.tgz\n");
+      return ok(JSON.stringify([{ filename: "acme-tool-1.2.4.tgz", size: 2097152, entryCount: 7 }]));
     }
     if (line.startsWith("git log")) return ok("- fix: a\n- feat: b\n");
     return ok();
   };
-  return { calls, run };
+  return { calls, cwds, run };
 }
 
 const mirrorOk = async (): Promise<MirrorSyncResult> => ({ repo: "APPS/tool", mirrors: [{ name: "github", ok: true, commitSha: "abc12345" }] });
@@ -62,6 +65,23 @@ describe("planRelease", () => {
 });
 
 describe("runRelease", () => {
+  it("packs from a temp worktree of the tag, not the live checkout, and removes it", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir);
+    const lines: string[] = [];
+    const r = await runRelease({ repo: dir }, { ...common, run: f.run, syncMirrors: mirrorOk, out: (l) => lines.push(l) });
+    expect(r.ok).toBe(true);
+    const add = f.calls.find((c) => c.startsWith("git worktree add --detach"))!;
+    const tree = add.split(" ")[4];
+    expect(add.endsWith(" v1.2.4")).toBe(true);
+    const at = (p: string): string => f.cwds.find((c) => c.startsWith(p))!.split(" @ ")[1];
+    expect(at("npm install")).toBe(tree);
+    expect(f.cwds.filter((c) => c.startsWith("npm run build")).map((c) => c.split(" @ ")[1])).toEqual([dir, tree]);
+    expect(at("npm pack")).toBe(tree);
+    expect(f.calls.some((c) => c === `git worktree remove --force ${tree}`)).toBe(true);
+    expect(lines.find((l) => l.startsWith("pack:"))).toBe("pack: tool.tgz + acme-tool-1.2.4.tgz (2.0 MB packed, 7 files)");
+  });
+
   it("runs every step in order and creates the release with stable + versioned assets", async () => {
     const dir = tmpRepo();
     const f = fake(dir);
