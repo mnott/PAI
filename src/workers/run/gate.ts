@@ -71,7 +71,7 @@ import {
 import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
-import { SIGNAL_SALVAGE_MS, printResult } from "./finalise.js";
+import { SIGNAL_SALVAGE_MS, printResult, identityExtras } from "./finalise.js";
 import { tryEscalate, rerunOnCloud, ranLocal } from "./escalate.js";
 import { executeRun } from "./execute.js";
 
@@ -374,7 +374,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     }
   }
   if (!a.quiet) {
-    printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, report);
+    printResult(a.parsed.outputFormat, resp.resultEvent ?? null, rc, a.logDir, wid, report, identityExtras(wid, a.priorIds, st ?? { provider: a.target.providerName }));
   }
   return rc;
 }
@@ -482,6 +482,7 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
       label: o.label,
       claudeArgs: a.claudeArgs.map((x) => (!swapped && x === p0 ? ((swapped = true), o.prompt) : x)),
       _escalatedFrom: o.escalatedFrom,
+      _priorIds: [...(a.priorIds ?? []), wid],
       _route: undefined,
       onWorkerStart: (id2) => {
         if (st) {
@@ -536,6 +537,7 @@ export async function escalateAfterHostError(a: ExecuteArgs, wid: string, why: s
       label: `${label} (fall-through)`,
       _route: { policy: a.route.policy, reason: `fall-through (pool host: ${why})`, local: false },
       _fallThroughOf: wid,
+      _priorIds: [...(a.priorIds ?? []), wid],
       onWorkerStart: (id2) => {
         if (st) {
           st.fallThroughTo = id2;
@@ -564,7 +566,7 @@ export async function escalateAfterClaimError(a: ExecuteArgs, wid: string, detai
   }
   if (isTerminal(st.state)) {
     const rc = st.rc ?? 1;
-    if (!a.quiet) printResult(a.parsed.outputFormat, null, rc, a.logDir, wid, null);
+    if (!a.quiet) printResult(a.parsed.outputFormat, null, rc, a.logDir, wid, null, identityExtras(wid, a.priorIds, st ?? { provider: a.target.providerName }));
     return rc;
   }
   return escalateAfterHostError(a, wid, `claim-error: ${detail}`);

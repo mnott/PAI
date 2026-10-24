@@ -106,6 +106,7 @@ export async function tryEscalate(
         label: o.label,
         claudeArgs: a.opts.claudeArgs.map((x) => (!swapped && x === p0 ? ((swapped = true), o.prompt) : x)),
         _escalatedFrom: o.escalatedFrom,
+        _priorIds: [...(a.priorIds ?? []), wid],
         _route: undefined,
         onWorkerStart: (id2) => {
           st.escalatedTo = id2;
@@ -155,6 +156,7 @@ export function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: Worke
     className: a.className,
     _route: { policy: a.route!.policy, reason: `fall-through (${why})`, local: false },
     _fallThroughOf: wid,
+    _priorIds: [...(a.priorIds ?? []), wid],
     onWorkerStart: (id2) => {
       st.fallThroughTo = id2;
       saveStatus(logDir, st);

@@ -80,6 +80,7 @@ import {
   finaliseRun,
   relaunchOptions,
   worktreeExtras,
+  identityExtras,
   reaskAg2Report,
   printResult,
 } from "./finalise.js";
@@ -633,7 +634,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         return rerunOnCloud(a, wid, why, st);
       }
       if (headless && !a.quiet) {
-        printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
+        printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
       }
 
     // Empty response: one automatic re-launch of the same spec in the same cwd.
@@ -644,6 +645,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
           providerFlag: target.providerName,
           onWorkerStart: a.onWorkerStart,
           _emptyRetried: true,
+          _priorIds: [...(a.priorIds ?? []), wid],
         })
       );
     }

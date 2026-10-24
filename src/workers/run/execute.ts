@@ -48,6 +48,7 @@ import {
   recordSignalEnd,
   finaliseRun,
   worktreeExtras,
+  identityExtras,
   printResult,
 } from "./finalise.js";
 import { spawn } from "node:child_process";
@@ -451,7 +452,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     worktree,
     timedOut: status.timedOut ? a.limit?.minutes : undefined,
     beforeHandoff: (st, rep) => {
-      if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, worktreeExtras(st));
+      if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
     },
   });
 }

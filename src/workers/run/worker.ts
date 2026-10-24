@@ -347,6 +347,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         routeWhy,
         fallThroughOf: opts._fallThroughOf,
         escalatedFrom: opts._escalatedFrom,
+        priorIds: opts._priorIds,
         printCmd: opts.printCmd,
         reportFormat,
         noReportRetry: opts.noReportRetry ?? false,
