@@ -91,6 +91,21 @@ describe("the pane owns the process", () => {
     expect(out.trim()).toBe("t-env");
   }, 15_000);
 
+  it("the child keeps USER/LOGNAME/HOME even when the start spec's env lacks them", async () => {
+    // a spec env replaces process.env entirely; Claude Code names its keychain
+    // OAuth account by USER/LOGNAME, so the wrapper must fill them back in
+    const r = rig("t-identity");
+    const proc = await (await r.pane).start({ argv: ["sh", "-c", 'echo "$USER|$LOGNAME|$HOME"'], env: { PATH: process.env.PATH } });
+    let out = "";
+    proc.stdout.on("data", (c: Buffer) => (out += c));
+    await closed(proc);
+    await r.wrapper;
+    const [user, logname, home] = out.trim().split("|");
+    expect(user).toBeTruthy();
+    expect(logname).toBeTruthy();
+    expect(home).toBeTruthy();
+  }, 15_000);
+
   it("a child that crashes ends the wrapper with a nonzero code and the pane closes", async () => {
     const r = rig("t-crash");
     const proc = await (await r.pane).start({ argv: ["sh", "-c", "kill -9 $$"] });

@@ -8,6 +8,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -122,12 +123,39 @@ export function pinWorkersYamlCopy(env: NodeJS.ProcessEnv, root: string = WORKER
   }
 }
 
+/**
+ * Login identity Claude Code needs to find its OAuth credentials: on macOS the
+ * keychain item is named by USER/LOGNAME, and HOME locates the config dir. A
+ * spawn environment without them fails at start with "Failed to authenticate:
+ * OAuth session expired and could not be refreshed" (2026-10-24: every native
+ * worker died this way when its spawn environment lacked USER/LOGNAME).
+ * Whatever the caller's env carries wins; a missing one is filled from the
+ * real account (os.userInfo / os.homedir), so the guarantee holds even when
+ * the parent process itself was launched without them.
+ */
+export function withLoginIdentity(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!env.USER || !env.LOGNAME || !env.HOME) {
+    let name = "";
+    let home = "";
+    try {
+      name = userInfo().username;
+      home = homedir();
+    } catch {
+      /* no account info available: leave whatever the env carried */
+    }
+    if (!env.USER && name) env.USER = name;
+    if (!env.LOGNAME && name) env.LOGNAME = name;
+    if (!env.HOME && home) env.HOME = home;
+  }
+  return env;
+}
+
 /** Caller's env minus ANTHROPIC_API_KEY: a spawned claude must bill the
  *  subscription, never an API key left in the user's shell. */
 export function nativeLaunchEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
-  return env;
+  return withLoginIdentity(env);
 }
 
 /**
