@@ -14,7 +14,7 @@ import { parseCommand } from "./worker-guard.js";
 export const SLOT_GIT_REASON =
   "slot worktrees are used by running local units: do not check out, switch, reset, clean or stash in them; inspect with `git -C <slot> diff --stat` or `pai worker replay <id>`";
 export const AD_HOC_REMOVAL_REASON =
-  "do not remove worktrees or worker branches by hand: use `pai worker discard <id>` / `pai worker gc` (they salvage gitignored notes and archive commits first)";
+  "do not remove worktrees or worker branches by hand: use `pai worker discard <id>`, `pai worker discard --worktree <path>` (any linked worktree, any repo) or `pai worker gc` (they salvage gitignored notes and archive commits first)";
 
 const SLOT_MUTATING = new Set(["checkout", "switch", "reset", "clean", "stash"]);
 const inSlots = (p: string): boolean => /(^|\/)workers\/slots(\/|$)/.test(p);

@@ -8,6 +8,8 @@ All notable changes to PAI Knowledge OS are documented here.
 
 ### Added
 
+- **`pai worker discard --worktree PATH [--force]`:** removes any linked worktree (any repo) through the salvage-and-archive path; refuses the main tree and a dirty tree without `--force`. The git guard names it.
+
 - **Docs and MCP parity:** concept pages for the battery guard, the router lockout guard, provider hold, merge gates and the pane audit rows; MCP `worker_merge` (same function and gates as `pai worker merge`) and `battery_status`.
 - **MCP parity:** `daemon_service`, `router_service` (status, start, stop, restart), `model_runtime` (start, stop, status), `memory_run` (embed, index, stop, status), `worker_kill`, `worker_gc` (dry run by default) and `pool_status`, each calling the function the CLI and cockpit use. `worker_priority`, `worker_pause` and `worker_resume` were already there.
 - **Worker priority and pause:** `pai worker priority set`, `pai worker pause|resume` and the cockpit worker row change a running worker's place at the local engine.

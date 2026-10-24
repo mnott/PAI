@@ -37,7 +37,7 @@ import { setMuted } from "../../workers/local-idle.js";
 import { auditPanes, listItermTabs, renderPaneAudit, runningProcs } from "../../workers/pane-audit.js";
 import { loadRegistry } from "../../workers/pane.js";
 import { followPlanLog, planLogTail, planRunEnded } from "../../workers/plan-status.js";
-import { discardWorker, leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
+import { discardWorker, discardWorktree,leftoverWorktrees, mergeWorker, RelatedTestsFailedError, verifyWorker } from "../../workers/worktree.js";
 import { formatPending, pendingGate, pendingResults } from "../../workers/pending.js";
 import { runWait } from "../../workers/wait.js";
 import { commandToRun, DEFAULT_IDLE_SECS, runProbed } from "../../workers/hang-probe.js";
@@ -880,11 +880,21 @@ const discardCommand: CommandDef = {
   name: "discard",
   summary: "Throw away a worker's branch and worktree",
   description: "Removes the worktree and branch of a worker and keeps nothing. Use `verify` first if you are unsure.",
-  args: [{ name: "ID", required: true, summary: "Worker id" }],
-  examples: ["pai worker discard w-20260101-abc", "pai worker verify w-20260101-abc && pai worker discard w-20260101-abc"],
+  args: [{ name: "ID", required: false, summary: "Worker id (omit with --worktree)" }],
+  options: [
+    { name: "worktree", type: "string", value: "PATH", summary: "Discard any linked git worktree of any repo (not a worker): salvages ignored notes, archives its commits and dirty state under refs/pai-archive/<branch>, removes it, deletes the branch once archived. Refuses the main working tree and a dirty tree without --force" },
+    { name: "force", type: "boolean", summary: "With --worktree: archive a dirty tree's uncommitted state instead of refusing" },
+  ],
+  examples: ["pai worker discard w-20260101-abc", "pai worker verify w-20260101-abc && pai worker discard w-20260101-abc", "pai worker discard --worktree ~/.cache/pai/some-port --force"],
   seeAlso: ["pai worker verify", "pai worker merge", "pai worker gc"],
   run: (ctx) =>
     guard("pai worker pending", () => {
+      const wt = str(ctx.opts.worktree);
+      if (wt) {
+        out(discardWorktree(logDir(), wt, flag(ctx, "force")));
+        return;
+      }
+      if (!ctx.args.ID) throw new Error("give a worker id, or --worktree PATH");
       out(discardWorker(logDir(), ctx.args.ID as string));
     }),
 };
