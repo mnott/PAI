@@ -19,11 +19,9 @@ import { runImageCapability } from "../engines/image.js";
 import { resolveHostSession } from "../pane.js";
 import { paneTitle } from "../pane-title.js";
 import {
-  addWorktree,
   salvageOnExit,
   recordWorktree,
   worktreeSystemPrompt,
-  worktreeRefusesStart,
   worktreeWanted,
   type WorktreeInfo,
 } from "../worktree.js";
@@ -53,7 +51,7 @@ import {
 } from "./finalise.js";
 import { spawn } from "node:child_process";
 import { reapRunTree } from "./lifecycle.js";
-import { prepareRun } from "./execute-prepare.js";
+import { prepareRun, createRunWorktree } from "./execute-prepare.js";
 import { foldRun } from "./execute-fold.js";
 
 export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof readWorkersSection>["workers"] }): Promise<number> {
@@ -174,18 +172,9 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
 
   let worktree: WorktreeInfo | null = null;
   if (worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })) {
-    try {
-      worktree = addWorktree(logDir, wid, cwd);
-      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
-    } catch (e) {
-      const why = (e as Error).message;
-      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
-        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
-        return 1;
-      }
-      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
-      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
-    }
+    const made = createRunWorktree(logDir, wid, cwd, parsed.allowedTools);
+    if (made === "refused") return 1;
+    worktree = made;
   }
   env.PAI_WORKER_ID = wid;
   const scratch = applyScratchEnv(env, wid);
