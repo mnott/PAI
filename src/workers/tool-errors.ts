@@ -131,6 +131,14 @@ export function lastCommand(command: string): { name: string; segment: string; c
   return name ? { name, segment, compound: segs.length > 1 } : null;
 }
 
+/** A loop whose last statement is `[ … ] && echo …` (or `test … && …`): it ends 1 when that last test is false. */
+function endsInFalseTest(command: string): boolean {
+  const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q").trim();
+  const body = bare.match(/^(?:for|while|until)\b[\s\S]*?\bdo\b([\s\S]*)\bdone$/)?.[1];
+  const stmt = body?.split(/;|\n/).map((x) => x.trim()).filter(Boolean).pop();
+  return !!stmt && /^(?:test|\[)\s[^|]*?&&\s*echo\b/.test(stmt);
+}
+
 /**
  * Bash exits that are the tool's normal answer, matched on exit code AND
  * command shape AND output marker: search no-match (exit 1, empty output),
@@ -156,6 +164,7 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   const emptyOut = out === "" || /^(\(?no (output|matches)\)?|<no output>)$/i.test(out);
   if (SEARCH_CMDS.has(last.name)) return emptyOut;
   if (last.name === "test" || last.name === "[") return emptyOut;
+  if (last.name === "done" && endsInFalseTest(cmd)) return !/error|No such file|Permission denied|not found/i.test(out);
   if (last.name === "diff" || last.name === "cmp") return !/No such file|Permission denied|usage:|invalid option/i.test(out);
   if (last.name === "ls" && /\bsleep\b/.test(cmd)) return /No such file or directory/i.test(out);
   if (/\bvitest\b/.test(cmd) && /\b(run|--run)\b|^npx vitest/.test(cmd)) {

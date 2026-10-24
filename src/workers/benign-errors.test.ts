@@ -23,6 +23,7 @@ describe("benign tool exits", () => {
     ["cmp differs", "Exit code 1 a b differ: byte 1, line 1", "cmp a b"],
     ["test false", "Exit code 1", "test -f nope"],
     ["[ false", "Exit code 1", "[ -d nope ]"],
+    ["loop ending in a false test", "Exit code 1 a 1", "for f in a b; do c=$(grep -c x $f); [ \"$c\" -le 1 ] && echo $f $c; done"],
     ["vitest red before the fix", "Exit code 1 FAIL src/a.test.ts > x AssertionError: expected 1 to be 2", "npx vitest run src/a.test.ts"],
     ["echo === separator", "(eval):1: === not found", "echo === && ls"],
     ["echo == separator", "(eval):1: == not found", "echo == && ls"],
@@ -54,6 +55,7 @@ describe("benign tool exits", () => {
     ["exit 124 without timeout", "Exit code 124", "make all"],
     ["=== not found without echo", "(eval):1: === not found", "ls"],
     ["wait-file exit 2", "Exit code 2 bad usage", "pai worker wait-file b0.json"],
+    ["loop ending in a false test with an error", "Exit code 1 grep: a: No such file or directory", "for f in a b; do c=$(grep -c x $f); [ \"$c\" -le 1 ] && echo $f $c; done"],
     ["unrelated exit 3 not yet", "Exit code 3 not yet", "make all"],
   ];
   for (const [name, raw, input] of real) {
