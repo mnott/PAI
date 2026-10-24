@@ -358,7 +358,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     // then read the commits — without them the loop-stop escalation has no
     // trigger and the run ends without ever going up a tier (2026-10-23)
     const commits = st.worktreeDir && st.worktreeBase ? commitLines(st.worktreeDir, st.worktreeBase) : [];
-    const why = fallThroughReason(a.route, st, report) ?? (st.loopStopped ? "loop-guard stop" : st.timedOut ? "max-minutes" : null);
+    const why = fallThroughReason(a.route, st, report, a.label) ?? (st.loopStopped ? "loop-guard stop" : st.timedOut ? "max-minutes" : null);
     // kept for review (it committed) stays: no cloud re-run, no escalation
     const reviewed = committedFallThrough(why, commits);
     const escalated = await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why, !!reviewed);

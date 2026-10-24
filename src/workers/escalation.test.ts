@@ -127,6 +127,12 @@ describe("escalation run", () => {
     });
   }
 
+  it("a benchmark-labelled run is never escalated; the same run unlabelled is", () => {
+    const bad = { ...base, failures: 2, reportValid: false };
+    expect(planEscalation({ ...bad, label: "hold probe3 bench" })).toBeNull();
+    expect(planEscalation({ ...bad, label: "refactor the parser" })).not.toBeNull();
+  });
+
   it("a run kept for review is not escalated", () => {
     expect(planEscalation({ ...base, contextTokens: 90, contextWindow: 100, keptForReview: true })).toBeNull();
     expect(planEscalation({ ...base, failures: 2, reportValid: false, keptForReview: true })).toBeNull();

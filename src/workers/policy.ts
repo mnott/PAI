@@ -23,6 +23,7 @@ import {
   isLocalProvider,
   type WorkersConfig,
 } from "./config.js";
+import { isBenchmarkLabel } from "../daemon/battery-guard.js";
 import { budgetCache } from "./budget.js";
 import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
 import { classRoute, entryProvider } from "./route-lists.js";
@@ -300,14 +301,17 @@ export interface EndedRun {
  * Reads the stored result: an invalid report (reportValid false covers a
  * failed AG2 check and the proof-check downgrade), r=- or r=!, a timeout, a
  * crash with no report. A killed run (rc 143) is the operator's call, not a
- * model failure.
+ * model failure. A benchmark-labelled run never falls through: its own
+ * result, invalid report included, is the measurement.
  */
 export function fallThroughReason(
   route: RouteInfo | undefined,
   status: EndedRun,
-  report: { result?: string } | null
+  report: { result?: string } | null,
+  label?: string
 ): string | null {
   if (!route?.local || route.policy === "local-only") return null;
+  if (isBenchmarkLabel(label)) return null;
   if (status.timedOut) return "max-minutes";
   if (status.rc === 143) return null;
   if (status.reportValid === false) return "invalid report";
