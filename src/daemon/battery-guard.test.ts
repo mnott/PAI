@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -36,6 +36,8 @@ const {
   localKillTargets,
   stopLocalWork,
   batteryGuardTick,
+  liveBenchmarkMarker,
+  rotateTelemetry,
   BATTERY_GUARD_DEFAULTS,
 } = await import("./battery-guard.js");
 const { runWorker } = await import("../workers/run.js");
@@ -646,6 +648,7 @@ describe("benchmark stop pass and gate", () => {
   });
 
   it("the tick: a paused battery leaves benchmark admission open; the 15 % stop closes it, records telemetry, and stops once", async () => {
+    rmSync(join(home, "battery-telemetry.jsonl"), { force: true });
     const state = { current: emptyBatteryState() };
     let t = Date.now();
     let pct = 24;
@@ -675,5 +678,114 @@ describe("benchmark stop pass and gate", () => {
     const tel = readFileSync(join(home, "battery-telemetry.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     expect(tel.length).toBe(3);
     expect(tel[1]).toMatchObject({ pct: 15, systemLoadW: 31.5, batteryW: -31.5 });
+  });
+});
+
+describe("benchmark marker (a plain script, not a pai worker)", () => {
+  const marker = join(home, "state", "benchmark-run.json");
+  const writeMarker = (pid: number): void => {
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(marker, JSON.stringify({ pid, label: "strata-bench r3", startedAt: "2026-10-24T20:00:00Z" }));
+  };
+  const providers = { localA: { baseUrl: "http://127.0.0.1:11434" } };
+
+  it("marker with a live pid: the benchmark rules apply (warn, stop) with no worker status at all", async () => {
+    writeMarker(process.pid);
+    expect(liveBenchmarkMarker()?.label).toBe("strata-bench r3");
+    const empty = join(root, "marker-logs");
+    mkdirSync(empty, { recursive: true });
+    const state = { current: emptyBatteryState() };
+    const t = 1_760_000_300_000;
+    const stops: string[] = [];
+    await batteryGuardTick(empty, { providers }, cfg, {
+      read: async () => r(t, 15, "battery"),
+      now: () => t,
+      stop: async () => [],
+      readPower: async () => null,
+      benchStop: async (_d, _p, why) => (stops.push(why), []),
+    }, state);
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toContain("benchmarkStopBelowPct 15");
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it("benchmark stop SIGTERMs the marker pid first and waits for it to exit, then stops the runtimes", async () => {
+    writeMarker(4242);
+    let alive = true;
+    const order: string[] = [];
+    let clock = 1_760_000_000_000;
+    const lines = await stopLocalWork(join(root, "marker-logs"), providers, "battery at 15 %", {
+      saveMs: 120_000,
+      now: () => clock,
+      pidAlive: () => alive,
+      signalPid: (pid) => order.push(`term ${pid}`),
+      sleep: async (ms) => {
+        clock += ms;
+        order.push("wait");
+        if (order.filter((o) => o === "wait").length === 3) alive = false;
+      },
+      killWorker: async () => [],
+      runtimesToStop: () => ["ollama"],
+      stopRuntime: async (n) => (order.push(`stop ${n}`), { ok: true, message: "stopped" }),
+    });
+    expect(order).toEqual(["term 4242", "wait", "wait", "wait", "stop ollama"]);
+    expect(lines[0]).toContain("sent SIGTERM to benchmark script strata-bench r3 (pid 4242)");
+    expect(lines[1]).toContain("exited");
+  });
+
+  it("a pid that never exits is waited on for the save window only", async () => {
+    writeMarker(4243);
+    let clock = 0;
+    let waits = 0;
+    const lines = await stopLocalWork(join(root, "marker-logs"), providers, "x", {
+      saveMs: 120_000,
+      now: () => clock,
+      pidAlive: () => true,
+      signalPid: () => {},
+      sleep: async (ms) => ((clock += ms), waits++, undefined),
+      killWorker: async () => [],
+      runtimesToStop: () => [],
+    });
+    expect(waits).toBe(120);
+    expect(lines[1]).toContain("still running");
+  });
+
+  it("marker with a dead pid is ignored and removed", () => {
+    writeMarker(999_998);
+    expect(liveBenchmarkMarker((pid) => pid !== 999_998)).toBeNull();
+    expect(existsSync(marker)).toBe(false);
+    expect(liveBenchmarkMarker()).toBeNull(); // no file: still null
+  });
+});
+
+describe("battery telemetry", () => {
+  const file = join(home, "battery-telemetry.jsonl");
+
+  it("a normal tick (no benchmark, 80 % on AC) records one line", async () => {
+    rmSync(file, { force: true });
+    const t = Date.now();
+    await batteryGuardTick(logDir, { providers: {} }, cfg, {
+      read: async () => r(t, 80, "ac", "charged"),
+      now: () => t,
+      stop: async () => [],
+      benchmarkLive: () => {
+        throw new Error("status scan on a plain tick");
+      },
+      readPower: async (at) => ({ at, adapterWatts: 100, systemPowerInW: 41.2, systemLoadW: 40.9, batteryW: 0, pct: 80 }),
+    }, { current: emptyBatteryState() });
+    const lines = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ pct: 80, source: "ac", adapterWatts: 100, systemPowerInW: 41.2, systemLoadW: 40.9 });
+    expect(lines[0].at).toBe(new Date(t).toISOString());
+  });
+
+  it("rotation drops lines older than 14 days, keeps the rest", () => {
+    const now = Date.parse("2026-10-24T12:00:00Z");
+    const day = 24 * 3600_000;
+    const line = (ms: number): string => JSON.stringify({ at: new Date(ms).toISOString(), pct: 50 });
+    writeFileSync(file, [line(now - 20 * day), line(now - 14 * day - 1000), line(now - 13 * day), line(now - 1000), "garbage"].join("\n") + "\n");
+    expect(rotateTelemetry(file, now)).toBe(3);
+    const left = readFileSync(file, "utf8").trim().split("\n");
+    expect(left).toEqual([line(now - 13 * day), line(now - 1000)]);
   });
 });

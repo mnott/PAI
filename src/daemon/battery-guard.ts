@@ -24,16 +24,20 @@
  * Admission resumes only above pauseBelowPct + hysteresisPct (default 10), so
  * a battery hovering at the threshold never opens and closes the gate.
  * Benchmark / performance runs (strata-bench, the night queue runner, any run
- * labelled benchmark) are exempt from pause and the normal stop: a paused
- * machine would corrupt the measurement. For them the guard records telemetry
- * once a minute (battery-telemetry.jsonl: adapter watts, SystemPowerIn,
- * SystemLoad, battery watts, percent, from `ioreg -rn AppleSmartBattery`) and
- * warns at pauseBelowPct. Their last-resort stop leaves time to save: at or
+ * labelled benchmark, or a plain script that holds the marker file
+ * <PAI home>/state/benchmark-run.json {pid, label, startedAt} while its pid is
+ * alive) are exempt from pause and the normal stop: a paused machine would
+ * corrupt the measurement. The guard records telemetry every tick, benchmark
+ * or not (battery-telemetry.jsonl: adapter watts, SystemPowerIn, SystemLoad,
+ * battery watts, percent, from `ioreg -rn AppleSmartBattery`; lines older than
+ * 14 days are dropped once a day or when the file passes 5 MB) and, for a
+ * benchmark, warns at pauseBelowPct. Their last-resort stop leaves time to save: at or
  * below benchmarkStopBelowPct (default 15), or earlier when the drain rate over
  * the last drainWindowReadings readings projects benchmarkProjectFloorPct
  * (default 10) within benchmarkProjectMins (default 20). No new benchmark item
  * starts; the running item gets SIGTERM and up to benchmarkSaveSecs (default
- * 120) to write its result/progress files; then PAI-started runtimes stop.
+ * 120) to write its result/progress files; then PAI-started runtimes stop. A
+ * marker pid gets the SIGTERM first and is waited on up to that long.
  *
  * Cloud workers and the operator's interactive sessions are never touched:
  * only headless runs on loopback providers are refused or stopped, and chat
@@ -45,7 +49,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
@@ -500,7 +504,49 @@ export function localKillTargets(
   return [...ids].sort((a, b) => depth(b) - depth(a));
 }
 
+// ---------------------------------------------------------------------------
+// The benchmark marker (a plain script that is not a pai worker)
+// ---------------------------------------------------------------------------
+
+export interface BenchmarkMarker {
+  pid: number;
+  label: string;
+  startedAt: string;
+}
+
+const markerFile = (): string => paiHomePath("state", "benchmark-run.json");
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** The marker of a live benchmark script; a stale file (dead pid, unreadable) is removed and gives null. */
+export function liveBenchmarkMarker(alive: (pid: number) => boolean = pidAlive): BenchmarkMarker | null {
+  let m: BenchmarkMarker;
+  try {
+    m = JSON.parse(readFileSync(markerFile(), "utf8")) as BenchmarkMarker;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+    rmSync(markerFile(), { force: true });
+    return null;
+  }
+  if (Number.isInteger(m?.pid) && m.pid > 0 && alive(m.pid)) return m;
+  rmSync(markerFile(), { force: true });
+  return null;
+}
+
 export interface BatteryStopDeps {
+  /** Benchmark stop: SIGTERM the marker pid (default process.kill). */
+  signalPid?: (pid: number) => void;
+  /** Liveness of the marker pid (default kill -0). */
+  pidAlive?: (pid: number) => boolean;
+  /** Wait step while the marker pid exits (default setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
   /** End one worker through the `pai worker kill` path (salvage as on any stop). */
   killWorker?: (logDir: string, id: string) => Promise<string[]>;
   /** Stop a runtime PAI started, through its configured stop command. */
@@ -539,6 +585,22 @@ export async function stopLocalWork(
       }));
   const lines: string[] = [];
   const stopEvent = benchmark ? "BATTERY-BENCH-STOP" : "BATTERY-STOP";
+  if (benchmark) {
+    const alive = deps.pidAlive ?? pidAlive;
+    const marker = liveBenchmarkMarker(alive);
+    if (marker) {
+      try {
+        (deps.signalPid ?? ((pid) => process.kill(pid, "SIGTERM")))(marker.pid);
+        lines.push(`sent SIGTERM to benchmark script ${marker.label} (pid ${marker.pid})`);
+        const sleep = deps.sleep ?? ((ms) => new Promise<void>((res) => setTimeout(res, ms)));
+        const deadline = now() + (deps.saveMs ?? 0);
+        while (alive(marker.pid) && now() < deadline) await sleep(1000);
+        lines.push(alive(marker.pid) ? `benchmark script pid ${marker.pid} still running after the save window` : `benchmark script pid ${marker.pid} exited`);
+      } catch (e) {
+        lines.push(`benchmark script pid ${marker.pid}: battery stop failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
   for (const id of localKillTargets(logDir, providers, benchmark)) {
     try {
       lines.push(...(await kill(logDir, id)));
@@ -581,7 +643,7 @@ export interface BatteryTickDeps {
   /** Daemon shutdown in progress: no stops, no pause moves. */
   shutdown?: () => boolean;
   stop?: (logDir: string, providers: Record<string, { baseUrl: string }>, why: string) => Promise<string[]>;
-  /** A benchmark run is live (telemetry is recorded and the benchmark rules apply). Default: scan the status files. */
+  /** A benchmark run is live (the benchmark rules apply). Default: the marker file, then the status files. Only asked when a warn/stop is due. */
   benchmarkLive?: (logDir: string) => boolean;
   /** The benchmark last-resort stop: SIGTERM + save window, then the runtimes. */
   benchStop?: (logDir: string, providers: Record<string, { baseUrl: string }>, why: string, saveMs: number, facts: string) => Promise<string[]>;
@@ -590,7 +652,50 @@ export interface BatteryTickDeps {
 }
 
 function liveBenchmark(logDir: string): boolean {
+  if (liveBenchmarkMarker()) return true;
   return loadStatuses(logDir).some((s) => !isChatPane(s) && isLive(s) && isBenchmarkLabel(s.label));
+}
+
+const TELEMETRY_KEEP_MS = 14 * 24 * 3600_000;
+const TELEMETRY_MAX_BYTES = 5 << 20;
+const DAY_MS = 24 * 3600_000;
+const telemetryFile = (): string => paiHomePath("battery-telemetry.jsonl");
+let lastTelemetryRotate = 0;
+
+/** Drop telemetry lines older than 14 days (an unparsable line goes too). Returns how many were dropped. */
+export function rotateTelemetry(path: string, now: number): number {
+  try {
+    const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+    const keep = lines.filter((l) => {
+      try {
+        const at = (JSON.parse(l) as { at?: number | string }).at;
+        const ms = typeof at === "number" ? at : Date.parse(String(at));
+        return Number.isFinite(ms) && ms >= now - TELEMETRY_KEEP_MS;
+      } catch {
+        return false;
+      }
+    });
+    if (keep.length !== lines.length) writeFileSync(path, keep.length ? keep.join("\n") + "\n" : "", "utf8");
+    return lines.length - keep.length;
+  } catch {
+    return 0;
+  }
+}
+
+/** Once a day, or at over 5 MB (at most hourly): rotate. */
+function maybeRotateTelemetry(now: number): void {
+  const due = now - lastTelemetryRotate >= DAY_MS || (now - lastTelemetryRotate >= 3600_000 && fileSize(telemetryFile()) > TELEMETRY_MAX_BYTES);
+  if (!due) return;
+  lastTelemetryRotate = now;
+  rotateTelemetry(telemetryFile(), now);
+}
+
+function fileSize(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
 }
 
 /** Append one telemetry line (jsonl) next to the guard's other state files. */
@@ -598,8 +703,8 @@ function recordTelemetry(t: PowerTelemetry | null, r: BatteryReading, drainRate:
   try {
     mkdirSync(paiHomePath("."), { recursive: true });
     appendFileSync(
-      paiHomePath("battery-telemetry.jsonl"),
-      JSON.stringify({ at: new Date(r.at).toISOString(), pct: r.pct, source: r.source, ...t, drainPctPerMin: drainRate, at_ms: undefined }) + "\n",
+      telemetryFile(),
+      JSON.stringify({ pct: r.pct, source: r.source, ...t, at: new Date(r.at).toISOString(), drainPctPerMin: drainRate }) + "\n",
       "utf8"
     );
   } catch {
@@ -638,14 +743,16 @@ export async function batteryGuardTick(
         : pauseReason(pct, cfg, v.state.phase === "stopped"),
   };
   // benchmark rules ride the same state: warn / last-resort stop (never a pause)
-  const benchLive = (deps.benchmarkLive ?? liveBenchmark)(logDir);
   const bv = !(deps.shutdown ?? (() => false))() ? evaluateBenchmark(v.state, r, cfg) : null;
+  // the status-file scan (~100 ms on a big log dir) only when a warn/stop is actually due
+  const benchLive = !!(bv?.warn || bv?.stop) && (deps.benchmarkLive ?? liveBenchmark)(logDir);
   if (bv) {
     state.current = bv.state;
     gate.benchStop = bv.state.benchStopped;
     gate.benchReason = bv.state.benchStopped ? (bv.reason ?? readBatteryGate()?.benchReason ?? "battery low") : null;
   }
-  if (benchLive) recordTelemetry(await (deps.readPower ?? readPowerTelemetry)(now).catch(() => null), r, bv?.drainRate ?? null);
+  maybeRotateTelemetry(now);
+  recordTelemetry(await (deps.readPower ?? readPowerTelemetry)(now).catch(() => null), r, bv?.drainRate ?? null);
   writeJson(gateFile(), gate);
   writeJson(cockpitFile(), {
     at: new Date(r.at).toISOString(),
@@ -670,7 +777,7 @@ export async function batteryGuardTick(
     appendLedger(ledgerPath(logDir), "BATTERY-RESUME", { pct }, new Date(r.at));
   }
   if (bv?.warn && benchLive) {
-    process.stderr.write(`[pai-daemon] battery guard: benchmark run in progress at ${pct} % — not paused, telemetry recorded.\n`);
+    process.stderr.write(`[pai-daemon] battery guard: benchmark run in progress at ${pct} % — not paused.\n`);
     appendLedger(ledgerPath(logDir), "BATTERY-BENCH-WARN", { pct, drainPctPerMin: bv.drainRate?.toFixed(2) }, new Date(r.at));
   }
   if (bv?.stop && benchLive) {
