@@ -109,6 +109,25 @@ export async function cmdList(
   console.log(dim(`  ${rows.length} session(s) shown (limit: ${limit})`));
 }
 
+/** The registry backend, the project and its resolved session; null (after reporting) when the project is unknown. */
+async function openSession(
+  projectSlug: string,
+  numberOrLatest: string,
+): Promise<{ registryBackend: RegistryBackend; project: ProjectRow; session: SessionRow } | null> {
+  const { getRegistryBackend } = await import("../../../storage/factory.js");
+  const registryBackend = await getRegistryBackend();
+
+  const project = await getProject(registryBackend, projectSlug);
+  if (!project) {
+    console.error(err(`Project not found: ${projectSlug}`));
+    process.exitCode = 1;
+    return null;
+  }
+
+  const session = await resolveSession(registryBackend, project, numberOrLatest);
+  return { registryBackend, project, session };
+}
+
 // ---------------------------------------------------------------------------
 // info
 // ---------------------------------------------------------------------------
@@ -117,17 +136,9 @@ export async function cmdInfo(
   projectSlug: string,
   sessionNumber: string
 ): Promise<void> {
-  const { getRegistryBackend } = await import("../../../storage/factory.js");
-  const registryBackend = await getRegistryBackend();
-
-  const project = await getProject(registryBackend, projectSlug);
-  if (!project) {
-    console.error(err(`Project not found: ${projectSlug}`));
-    process.exitCode = 1;
-    return;
-  }
-
-  const session = await resolveSession(registryBackend, project, sessionNumber);
+  const opened = await openSession(projectSlug, sessionNumber);
+  if (!opened) return;
+  const { registryBackend, project, session } = opened;
 
   console.log();
   console.log(header(`  Session #${session.number}: ${session.title}`));
@@ -294,17 +305,9 @@ export async function cmdSlug(
   numberOrLatest: string,
   opts: { apply?: boolean }
 ): Promise<void> {
-  const { getRegistryBackend } = await import("../../../storage/factory.js");
-  const registryBackend = await getRegistryBackend();
-
-  const project = await getProject(registryBackend, projectSlug);
-  if (!project) {
-    console.error(err(`Project not found: ${projectSlug}`));
-    process.exitCode = 1;
-    return;
-  }
-
-  const session = await resolveSession(registryBackend, project, numberOrLatest);
+  const opened = await openSession(projectSlug, numberOrLatest);
+  if (!opened) return;
+  const { registryBackend, project, session } = opened;
   const transcriptPath = findLatestTranscript(project.encoded_dir);
 
   if (!transcriptPath) {
@@ -342,17 +345,9 @@ export async function cmdTag(
   sessionNumber: string,
   rawTags: string[]
 ): Promise<void> {
-  const { getRegistryBackend } = await import("../../../storage/factory.js");
-  const registryBackend = await getRegistryBackend();
-
-  const project = await getProject(registryBackend, projectSlug);
-  if (!project) {
-    console.error(err(`Project not found: ${projectSlug}`));
-    process.exitCode = 1;
-    return;
-  }
-
-  const session = await resolveSession(registryBackend, project, sessionNumber);
+  const opened = await openSession(projectSlug, sessionNumber);
+  if (!opened) return;
+  const { registryBackend, project, session } = opened;
 
   if (rawTags.length === 0) {
     const current = await getSessionTags(registryBackend, session.id);
@@ -425,17 +420,9 @@ export async function cmdRoute(
   targetProjectSlug: string,
   opts: { type?: string }
 ): Promise<void> {
-  const { getRegistryBackend } = await import("../../../storage/factory.js");
-  const registryBackend = await getRegistryBackend();
-
-  const project = await getProject(registryBackend, projectSlug);
-  if (!project) {
-    console.error(err(`Project not found: ${projectSlug}`));
-    process.exitCode = 1;
-    return;
-  }
-
-  const session = await resolveSession(registryBackend, project, sessionNumber);
+  const opened = await openSession(projectSlug, sessionNumber);
+  if (!opened) return;
+  const { registryBackend, project, session } = opened;
 
   const targetProject = await getProject(registryBackend, targetProjectSlug);
 
