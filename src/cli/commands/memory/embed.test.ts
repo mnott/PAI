@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorageBackend } from "../../../storage/interface.js";
+import { sha256 } from "../../../utils/hash.js";
+
+const embedSpy = vi.fn();
 
 vi.mock("../../../memory/embeddings.js", () => ({
   serializeEmbedding: vi.fn((v: Float32Array) => Buffer.from(v.buffer)),
@@ -7,12 +10,12 @@ vi.mock("../../../memory/embeddings.js", () => ({
 vi.mock("../../../memory/embedding-gate.js", () => ({
   gateBackend: vi.fn(async () => ({
     ok: true,
-    backend: { embed: async (texts: string[]) => texts.map(() => new Float32Array([1, 2, 3])) },
+    backend: { embed: async (texts: string[]) => embedSpy(texts) ?? texts.map(() => new Float32Array([1, 2, 3])) },
   })),
 }));
 
 /** Fake backend backed by an in-memory row set, paginating exactly like the real backends. */
-function makeFakeBackend(rowCount: number) {
+function makeFakeBackend(rowCount: number, twins: Map<string, Buffer> = new Map()) {
   const rows = Array.from({ length: rowCount }, (_, i) => ({
     id: String(i).padStart(6, "0"),
     text: `chunk ${i}`,
@@ -23,7 +26,10 @@ function makeFakeBackend(rowCount: number) {
 
   let maxRowsInFlight = 0;
 
-  const backend: Pick<StorageBackend, "getUnembeddedChunkIds" | "updateEmbedding" | "updateEmbeddings" | "getStats" | "getProjectStats" | "countUnembeddedChunks"> = {
+  const backend: Pick<StorageBackend, "getUnembeddedChunkIds" | "updateEmbedding" | "updateEmbeddings" | "getStats" | "getProjectStats" | "countUnembeddedChunks" | "getEmbeddingsByHash"> = {
+    async getEmbeddingsByHash(hashes) {
+      return new Map(hashes.filter((h) => twins.has(h)).map((h) => [h, twins.get(h)!]));
+    },
     async getUnembeddedChunkIds(_projectId, limit, after) {
       const pending = rows.filter((r) => !r.embedded);
       const start = after ? pending.findIndex((r) => r.id > after.id) : 0;
@@ -108,5 +114,28 @@ describe("runEmbed progress and stop", () => {
     // a re-run continues where it stopped
     const again = await runEmbed(backend, undefined, undefined, 50, 100);
     expect(again.done).toBe(200);
+  });
+});
+
+describe("runEmbed carry-over", () => {
+  beforeEach(() => {
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    embedSpy.mockReset();
+  });
+
+  it("carries a chunk whose text already has a vector: not sent to the model, counted as carried", async () => {
+    const twins = new Map([[sha256("chunk 0"), Buffer.from([9, 9, 9])]]);
+    const { backend, rows } = makeFakeBackend(3, twins);
+    const sent: string[] = [];
+    embedSpy.mockImplementation((texts: string[]) => { sent.push(...texts); return undefined; });
+    const { runEmbed } = await import("./embed.js");
+    const carried: number[] = [];
+    const progress = { update: (u: { carried?: number }) => { if (u.carried !== undefined) carried.push(u.carried); }, finish: () => {} };
+    const r = await runEmbed(backend, undefined, undefined, 50, 100, undefined, undefined, undefined, progress as never);
+    expect(r.done).toBe(3);
+    expect(rows.every((x) => x.embedded)).toBe(true);
+    expect(sent).toEqual(["chunk 1", "chunk 2"]);
+    expect(carried.at(-1)).toBe(1);
   });
 });
