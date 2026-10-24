@@ -20,6 +20,7 @@
  * per task, so nothing ping-pongs. Every threshold is config
  * (workers.escalate), never a code constant.
  */
+import { isBenchmarkLabel } from "../daemon/battery-guard.js";
 import { appendLedger } from "./ledger.js";
 import type { TierDef } from "./route-lists.js";
 
@@ -282,6 +283,8 @@ export function planEscalation(i: PlanInput): EscalationPlan | null {
   // re-run upstairs either — the commits are the result to review
   // — except a run stopped by its time limit: it is kept for review only because
   // it committed, and that is exactly the saved work the deadline trigger hands up
+  // a benchmark-labelled run is never escalated: the local result is the measurement
+  if (isBenchmarkLabel(i.label)) return null;
   const tier = tierOf(i.tiers, i.className);
   const base = detectTrigger({ ...i, failures: i.failures });
   if (i.keptForReview && base?.kind !== "deadline" && base?.kind !== "loop-stop") return null;

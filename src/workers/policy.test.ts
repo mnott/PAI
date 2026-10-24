@@ -127,6 +127,12 @@ describe("findLocal", () => {
 
 describe("fallThroughReason", () => {
   const local = { policy: "prefer-local" as const, reason: "policy prefer-local", local: true };
+  it("a benchmark-labelled run never falls through; unlabelled is unchanged", () => {
+    const bad = { reportValid: false, rc: 0 };
+    expect(fallThroughReason(local, bad, { result: "-" }, "hold probe3 bench")).toBeNull();
+    expect(fallThroughReason(local, bad, { result: "-" }, "refactor the parser")).toBe("invalid report");
+    expect(fallThroughReason(local, bad, { result: "-" })).toBe("invalid report");
+  });
   it("good report stays", () => {
     expect(fallThroughReason(local, { reportValid: true, state: "done", rc: 0 }, { result: "+" })).toBeNull();
     expect(fallThroughReason(local, { state: "done", rc: 0 }, { result: "~" })).toBeNull();

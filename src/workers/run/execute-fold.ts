@@ -612,7 +612,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     fallbackText: resultEvent?.result,
     worktree,
     timedOut: status.timedOut ? limit?.minutes : undefined,
-    fallThroughWhy: (st, rep) => (headless ? fallThroughReason(a.route, st, rep) : null),
+    fallThroughWhy: (st, rep) => (headless ? fallThroughReason(a.route, st, rep, label) : null),
     onReviewed: () => {
       reviewed = true;
     },
@@ -621,12 +621,12 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       // (unless it committed: finaliseRun keeps that one for review — and a run
       // kept for review is not escalated either; escalation starts from the
       // salvaged branch instead).
-      const failWhy = headless ? fallThroughReason(a.route, st, rep) ?? (st.loopStopped ? "loop-guard stop" : null) : null;
+      const failWhy = headless ? fallThroughReason(a.route, st, rep, label) ?? (st.loopStopped ? "loop-guard stop" : null) : null;
       const escalated = headless
         ? await tryEscalate(a, wid, st, rep, resultEvent?.result, worktree ? commitLines(worktree.dir, worktree.base) : [], failWhy, reviewed)
         : null;
       if (escalated !== null) return escalated;
-      const why = headless && !reviewed ? fallThroughReason(a.route, st, rep) : null;
+      const why = headless && !reviewed ? fallThroughReason(a.route, st, rep, label) : null;
       if (why && a.route && !st.escalated) {
         return rerunOnCloud(a, wid, why, st);
       }
