@@ -593,7 +593,7 @@ describe("router: malformed local tool call", () => {
   const msg = (content: object[], stop: string) => JSON.stringify({ type: "message", role: "assistant", content, stop_reason: stop, usage: { input_tokens: 1, output_tokens: 1 } });
   const GOOD = msg([{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }], "tool_use");
   const BAD = msg([{ type: "text", text: DAMAGED }], "end_turn");
-  const run = async (answers: string[], retry = true) => {
+  const run = async (answers: string[], retry = true, userText = "hi") => {
     const seen: string[] = [];
     const up = http.createServer((req, res) => {
       const bits: Buffer[] = [];
@@ -615,7 +615,7 @@ describe("router: malformed local tool call", () => {
         x.on("data", (c) => bits.push(c));
         x.on("end", () => resolve(Buffer.concat(bits).toString()));
       });
-      q.end(JSON.stringify({ model: "gyro-m", messages: [{ role: "user", content: "hi" }] }));
+      q.end(JSON.stringify({ model: "gyro-m", messages: [{ role: "user", content: userText }] }));
     });
     r.close();
     up.close();
@@ -638,6 +638,24 @@ describe("router: malformed local tool call", () => {
     expect(JSON.parse(out).content[0].text).toBe(DAMAGED);
     expect(seen).toHaveLength(2);
     expect(logs.some((l) => l.includes("malformed-tool-call retried provider=gyro again"))).toBe(true);
+  });
+
+  it("degenerate answer on a long task: retried once with the nudge", async () => {
+    const COMMA = msg([{ type: "text", text: "," }], "end_turn");
+    const { out, seen, logs } = await run([COMMA, GOOD], true, "x".repeat(300));
+    expect(JSON.parse(out).content[0].type).toBe("tool_use");
+    expect(seen).toHaveLength(2);
+    const msgs = JSON.parse(seen[1]).messages;
+    expect(msgs[1]).toMatchObject({ role: "assistant", content: "," });
+    expect(msgs[2].content).toMatch(/empty of content/);
+    expect(logs.some((l) => l.includes("degenerate-answer retried provider=gyro ok"))).toBe(true);
+  });
+
+  it("short answer to a short task: delivered, no retry", async () => {
+    const COMMA = msg([{ type: "text", text: "," }], "end_turn");
+    const { out, seen } = await run([COMMA, GOOD]);
+    expect(JSON.parse(out).content[0].text).toBe(",");
+    expect(seen).toHaveLength(1);
   });
 
   it("switch off: no retry", async () => {

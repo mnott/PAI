@@ -4,7 +4,7 @@
  * response (JSON or SSE) and builds the one retry request that follows.
  */
 
-import { hasMalformedToolCall, MALFORMED_RETRY_TEXT } from "../workers/malformed-toolcall.js";
+import { DEGENERATE_RETRY_TEXT, hasMalformedToolCall, isDegenerateAnswer, MALFORMED_RETRY_TEXT } from "../workers/malformed-toolcall.js";
 
 export interface Answer {
   text: string;
@@ -46,14 +46,33 @@ export function isDamaged(a: Answer): boolean {
   return a.stopReason === "end_turn" && !a.toolUse && hasMalformedToolCall(a.text);
 }
 
-/** The same request plus the damaged answer and the one extra user message. */
-export function retryBody(body: Buffer, damagedText: string): Buffer {
+/** Text of the last user message of a request body ("" when unreadable). */
+function lastUserText(body: Buffer): string {
+  try {
+    const msgs = JSON.parse(body.toString("utf8")).messages;
+    const c = Array.isArray(msgs) ? msgs[msgs.length - 1]?.content : undefined;
+    if (typeof c === "string") return c;
+    return Array.isArray(c) ? c.map((b: { text?: string }) => b?.text ?? "").join("\n") : "";
+  } catch {
+    return "";
+  }
+}
+
+/** A turn ended with a stray token (≤ 3 chars) and no tool call, on a request with a non-trivial user message. */
+export function isDegenerate(a: Answer, body: Buffer): boolean {
+  return a.stopReason === "end_turn" && !a.toolUse && isDegenerateAnswer(a.text, 0, lastUserText(body));
+}
+
+/** The same request plus the bad answer and the one extra user message. */
+export function retryBody(body: Buffer, badText: string, nudge: string = MALFORMED_RETRY_TEXT): Buffer {
   const j = JSON.parse(body.toString("utf8"));
   const messages = Array.isArray(j.messages) ? j.messages : [];
   return Buffer.from(
     JSON.stringify({
       ...j,
-      messages: [...messages, { role: "assistant", content: damagedText }, { role: "user", content: MALFORMED_RETRY_TEXT }],
+      messages: [...messages, { role: "assistant", content: badText.trim() || "…" }, { role: "user", content: nudge }],
     })
   );
 }
+
+export { DEGENERATE_RETRY_TEXT };

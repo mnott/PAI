@@ -117,7 +117,7 @@ import {
 import { usageLogFile } from "../router/usage.js";
 import { reapNewSince, snapshotWorkerPids } from "./reap.js";
 import { LOOPBACK_HOST, loopbackUrl } from "../utils/loopback.js";
-import { hasMalformedToolCall, MALFORMED_TOOL_CALL } from "./malformed-toolcall.js";
+import { DEGENERATE_ANSWER, hasMalformedToolCall, isDegenerateAnswer, MALFORMED_TOOL_CALL } from "./malformed-toolcall.js";
 
 // ---------------------------------------------------------------------------
 // Slot process (real spawn)
@@ -1355,6 +1355,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     status.secs = secs;
     if (status.timedOut) status.endReason = "deadline";
     else if (!status.endReason && hasMalformedToolCall(resultEvent?.result)) status.endReason = MALFORMED_TOOL_CALL;
+    else if (!status.endReason && resultEvent && isDegenerateAnswer(resultEvent.result, status.tools, task.prompt)) status.endReason = DEGENERATE_ANSWER;
     saveStatus(logDir, status);
     appendLedger(ledger, "WORKER-END", {
       id: wid,
@@ -1373,7 +1374,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       ...(claimMs !== undefined ? { claimMs } : {}),
       ...(timing.firstAt !== null ? { firstAnswerMs: timing.firstAt - readyAt } : {}),
       ...(status.timedOut ? { timedOut: 1 } : {}),
-      ...(status.endReason === MALFORMED_TOOL_CALL ? { instrument: MALFORMED_TOOL_CALL } : {}),
+      ...(status.endReason === MALFORMED_TOOL_CALL || status.endReason === DEGENERATE_ANSWER ? { instrument: status.endReason } : {}),
     });
     closeSync(eventsFd);
 
