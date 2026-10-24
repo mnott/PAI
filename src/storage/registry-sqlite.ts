@@ -11,7 +11,10 @@
 
 import type { Database } from "better-sqlite3";
 import { planMerge, applyMerge } from "./sqlite/registry-merge.js";
+import { backupTableName, backupsToPrune, logRegistryReset } from "./registry-reset.js";
 import type {
+  OrphanCounts,
+  OrphanRepairReport,
   RegistryBackend,
   Project,
   ProjectWithSessionStats,
@@ -56,8 +59,16 @@ export class SQLiteRegistryBackend implements RegistryBackend {
     }
   }
 
-  async resetRegistry(): Promise<void> {
+  async resetRegistry(): Promise<{ backupTable: string | null; projects: number }> {
+    const projects = (this.db.prepare("SELECT COUNT(*) AS n FROM projects").get() as { n: number }).n;
+    let backupTable: string | null = null;
     const run = this.db.transaction(() => {
+      if (projects > 0) {
+        backupTable = backupTableName(Date.now());
+        this.db.exec(`CREATE TABLE ${backupTable} AS SELECT * FROM projects`);
+        const names = (this.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map((r) => r.name);
+        for (const old of backupsToPrune(names)) this.db.exec(`DROP TABLE ${old}`);
+      }
       this.db.prepare("DELETE FROM links").run();
       this.db.prepare("DELETE FROM compaction_log").run();
       this.db.prepare("DELETE FROM session_tags").run();
@@ -67,7 +78,21 @@ export class SQLiteRegistryBackend implements RegistryBackend {
       this.db.prepare("DELETE FROM tags").run();
       this.db.prepare("DELETE FROM projects").run();
     });
+    logRegistryReset(`projects=${projects} backup=${backupTable ?? "none"}`);
     run();
+    return { backupTable, projects };
+  }
+
+  /** Chunks live in the federation DB, not beside the registry: nothing to orphan here. */
+  async countOrphanedChunks(): Promise<OrphanCounts> {
+    return { orphaned: 0, total: 0 };
+  }
+
+  async repairOrphans(opts: { dryRun: boolean }): Promise<OrphanRepairReport> {
+    return {
+      orphanChunks: 0, orphanFiles: 0, mappedIds: 0, unmappedIds: 0, repointedChunks: 0, repointedFiles: 0,
+      droppedDuplicateChunks: 0, droppedDuplicateFiles: 0, deletedTwinChunks: 0, dryRun: opts.dryRun,
+    };
   }
 
   // -------------------------------------------------------------------------

@@ -31,6 +31,8 @@ export interface DaemonMemory {
   embedMaxMinutes: number | null;
   lastIndexPass: { at: number; durationMs: number; projects: number; files: number; chunks: number } | null;
   lastEmbedPass: { at: number; durationMs?: number; outcome: string; embedded: number; reason?: string } | null;
+  /** Set when more than 1 % of the chunks belong to no project (daemon/orphan-check.ts). */
+  orphans?: { orphaned: number; total: number; message: string } | null;
 }
 
 export interface MemoryDeps {
@@ -393,7 +395,9 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   const stalled = jobs.find((j) => j.stalled);
   // Degraded = serving last-good data over a failing source. The payload says so (transient) and reads red; the page's
   // hold-last-good keeps its previous good payload on screen for holdLastGoodSecs and only then shows this one.
-  const level: Level = fail ? "red" : s?.level ?? (d ? "amber" : "red");
+  const orphans = d?.orphans ?? null;
+  const baseLevel: Level = fail ? "red" : s?.level ?? (d ? "amber" : "red");
+  const level: Level = orphans && baseLevel === "green" ? "amber" : baseLevel;
   return {
     at: now,
     ...(fail ? { transient: fail.reason } : {}),
@@ -401,9 +405,10 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     failures: fail?.failures ?? 0,
     title: L.memoryTitle,
     daemon: fresh !== null,
+    orphans,
     level: stalled && level === "green" ? "red" : level,
     reason: fail ? (d === null ? fail.reason : `${fail.reason} since ${hhmmss(fail.since)}`)
-      : stalled && level === "green" ? `job ${stalled.name} stalled` : s?.reason ?? (d ? "status not sampled yet" : "daemon not answering"),
+      : stalled && level === "green" ? `job ${stalled.name} stalled` : orphans && baseLevel === "green" ? orphans.message : s?.reason ?? (d ? "status not sampled yet" : "daemon not answering"),
     stallSecs: L.memoryStallSecs,
     counts: { files, chunks, embedded: embeddedNow, backlog, coverage, coverageLevel, exact: s?.index.countsExact ?? false },
     segments: s?.index.segments ?? (embedded !== null && backlog !== null ? { fresh: 0, old: embedded, missing: backlog } : null),
