@@ -891,11 +891,18 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   /** One pooled task, end to end. */
   /** Tasks being served right now, spare-served ones included (they hold no slot): a reload waits for them. */
   let inflight = 0;
+  /** Running tasks by worker id: aborting one ends its slot process through the client-gone path (`POST /task/<id>/stop`). */
+  const stoppers = new Map<string, AbortController>();
   const runTask = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
     inflight++;
+    const stop = new AbortController();
+    clientGone?.addEventListener("abort", () => stop.abort(), { once: true });
+    if (clientGone?.aborted) stop.abort();
+    if (task.id) stoppers.set(task.id, stop);
     try {
-      return await runTaskInner(task, clientGone);
+      return await runTaskInner(task, stop.signal);
     } finally {
+      if (task.id && stoppers.get(task.id) === stop) stoppers.delete(task.id);
       inflight--;
     }
   };
@@ -1330,6 +1337,13 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (req.method === "GET" && url.pathname === "/status") {
       persist();
       sendJson(res, 200, { ...state, carry: poolCarry(readPoolMetrics(poolMetricsPath(logDir))) });
+      return;
+    }
+    const stopRoute = req.method === "POST" ? /^\/task\/([^/]+)\/stop$/.exec(url.pathname) : null;
+    if (stopRoute) {
+      const stop = stoppers.get(decodeURIComponent(stopRoute[1]!));
+      stop?.abort();
+      sendJson(res, stop ? 200 : 404, { stopped: !!stop });
       return;
     }
     if (req.method === "POST" && url.pathname === "/shutdown") {
