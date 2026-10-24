@@ -4,7 +4,16 @@
  * client as the answer. That is an instrument defect, never a model failure.
  */
 
-const DAMAGED = /<tool_call>[\s\S]{0,200}?(?:<parameter=|<\/function>)/;
+/**
+ * The one detector, shared by the router retry (isDamaged) and the worker
+ * classification (pool-host / finalise): an assistant turn that shows a tool
+ * call the server never parsed into a tool_use. The tags must open a line —
+ * only whitespace may precede them — so prose that merely mentions `tool_call`
+ * mid-sentence stays a real answer. A bare `<tool_call>` is damage on its own,
+ * whatever follows: local models truncate calls mid-stream, so no
+ * `<parameter=` or `</function>` is required any more.
+ */
+const DAMAGED = /(?:(^\s*)<tool_call\b)|(?:(^\s*)<function=)|(?:(^\s*)<parameter=)/m;
 
 export function hasMalformedToolCall(text: string | null | undefined): boolean {
   return !!text && DAMAGED.test(text);

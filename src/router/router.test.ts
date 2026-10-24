@@ -633,6 +633,21 @@ describe("router: malformed local tool call", () => {
     expect(logs.some((l) => l.includes("malformed-tool-call retried provider=gyro ok"))).toBe(true);
   });
 
+  it("truncated call with no <parameter= or </function>: retried once", async () => {
+    const TRUNC = "<tool_call>\n<\n</";
+    const { out, seen, logs } = await run([msg([{ type: "text", text: TRUNC }], "end_turn"), GOOD]);
+    expect(JSON.parse(out).content[0].type).toBe("tool_use");
+    expect(seen).toHaveLength(2);
+    expect(logs.some((l) => l.includes("malformed-tool-call retried provider=gyro ok"))).toBe(true);
+  });
+
+  it("prose that merely mentions tool_call in backticks: delivered, no retry", async () => {
+    const PROSE = "Ship it — the `tool_call` block was fine, then done.";
+    const { out, seen } = await run([msg([{ type: "text", text: PROSE }], "end_turn"), GOOD]);
+    expect(JSON.parse(out).content[0].text).toBe(PROSE);
+    expect(seen).toHaveLength(1);
+  });
+
   it("damaged twice: passed through unchanged after one retry", async () => {
     const { out, seen, logs } = await run([BAD, BAD]);
     expect(JSON.parse(out).content[0].text).toBe(DAMAGED);
