@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import net from "node:net";
 import { vi } from "vitest";
@@ -29,10 +29,46 @@ import {
   tokensPerSec,
   fetchAnthropicUsage,
   isAnthropicHost,
+  keychainCredentialArgs,
+  anthropicToken,
 } from "./limits.js";
 import type { WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
 import { parse } from "yaml";
+
+describe("keychain credential lookup", () => {
+  it("always selects the item by explicit account, from the passwd entry", () => {
+    // USER unset: the account must still be the login user (os.userInfo), not ""
+    delete process.env.USER;
+    const args = keychainCredentialArgs();
+    expect(args).toEqual(["find-generic-password", "-s", "Claude Code-credentials", "-a", userInfo().username, "-w"]);
+    expect(args).toContain("-a");
+    expect(args[args.indexOf("-a") + 1]).toBe(userInfo().username);
+  });
+
+  it("anthropicToken reads with -a <username> and works with USER unset", async () => {
+    delete process.env.USER;
+    delete process.env.LOGNAME;
+    const username = userInfo().username;
+    const seen: string[][] = [];
+    // limits.ts calls execFile off the live module namespace, so patching the
+    // binding intercepts the keychain read without a cache-busting re-import.
+    const real = execFile as unknown as (...a: unknown[]) => void;
+    (execFile as unknown as (...a: unknown[]) => void) = (...a: unknown[]) => {
+      const [cmd, args, , cb] = a as [string, string[], unknown, (e: unknown, out: string) => void];
+      seen.push([cmd, ...args]);
+      const out = args.includes("-a") && args[args.indexOf("-a") + 1] === username ? JSON.stringify({ claudeAiOauth: { accessToken: "tok-abc" } }) : "";
+      cb(null, out);
+    };
+    try {
+      await expect(anthropicToken()).resolves.toBe("tok-abc");
+    } finally {
+      (execFile as unknown as (...a: unknown[]) => void) = real;
+    }
+    expect(seen.length).toBe(1);
+    expect(seen[0]).toEqual(["security", "find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"]);
+  });
+});
 
 describe("modelServed", () => {
   it("decides by served model id, not by the shared port", () => {

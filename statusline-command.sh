@@ -625,15 +625,12 @@ _fetch_usage() {
     local token=""
     # More than one keychain item can carry this service name: the real one is
     # stored under the login user account, and a stub with empty tokens has
-    # been seen under acct "unknown". Without -a the first match wins, so ask
-    # for the user item first and only then fall back to an unqualified read.
+    # been seen under acct "unknown" (deleted 2026-10-24). Without -a the first
+    # match wins, so always ask for the user item; id -un reads the passwd
+    # entry, not $USER, and works without USER/LOGNAME in the environment.
     local raw
     raw=$(security find-generic-password -s "Claude Code-credentials" -a "$(id -un)" -w 2>/dev/null)
     token=$(printf '%s' "$raw" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-    if [ -z "$token" ]; then
-        raw=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null)
-        token=$(printf '%s' "$raw" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null)
-    fi
 
     mkdir -p "$pai_cache_dir"
     if [ -z "$token" ]; then

@@ -15,6 +15,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { userInfo } from "node:os";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import http from "node:http";
 import https from "node:https";
@@ -356,15 +357,24 @@ function sh(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve) => execFile(cmd, args, { timeout: 4000 }, (_e, out) => resolve(String(out ?? "").trim())));
 }
 
+/**
+ * The args that select the real "Claude Code-credentials" keychain item: always
+ * with an explicit `-a <login user>`. Several items can carry the service name
+ * (a stub under account "unknown" was seen), and without `-a` the first match
+ * wins — the router runs under launchd with no USER in its environment, so the
+ * account comes from the passwd entry (os.userInfo), never from env.
+ */
+export function keychainCredentialArgs(username: string = userInfo().username): string[] {
+  return ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"];
+}
+
 export async function anthropicToken(): Promise<string | undefined> {
-  for (const args of [["-a", process.env.USER ?? ""], []]) {
-    const raw = await sh("security", ["find-generic-password", "-s", "Claude Code-credentials", ...args, "-w"]);
-    try {
-      const t = (JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken;
-      if (t) return t;
-    } catch {
-      /* try next */
-    }
+  const raw = await sh("security", keychainCredentialArgs());
+  try {
+    const t = (JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken;
+    if (t) return t;
+  } catch {
+    /* unreadable item */
   }
   return undefined;
 }
