@@ -24,6 +24,7 @@ import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
 import { routerSwapArgs, startHandover, routerHandoverFile, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { engineControlReader } from "../../workers/engine-control.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
 import { workersLogDir } from "../../workers/paths.js";
 import { loadConfig } from "../../daemon/config.js";
@@ -147,6 +148,8 @@ const runCommand: CommandDef = {
       }
     };
     sharedParker().sweep();
+    // per-worker priority and pause: read from the worker's status file at every admission
+    sharedScheduler().control ??= engineControlReader(() => workersLogDir(readWorkersSection().workers));
     if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
     // local-server probe policy (router.cockpit.probe), re-read per poll like the other config sources
     const limits = new LimitsCache({

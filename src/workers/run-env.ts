@@ -273,13 +273,15 @@ export const ANTHROPIC_FIRST_PARTY_URL = "https://api.anthropic.com";
  * the worker (per-worker queue-wait accounting). Appended to the headers
  * buildRunEnv set; a no-op when the run does not go through the router.
  */
-export function addSchedulingHeaders(env: NodeJS.ProcessEnv, ids: { session?: string | null; worker?: string | null }): void {
+export function addSchedulingHeaders(env: NodeJS.ProcessEnv, ids: { session?: string | null; worker?: string | null; priority?: string | null }): void {
   const base = env.ANTHROPIC_CUSTOM_HEADERS;
   if (!base || !base.includes("x-pai-provider")) return;
   const clean = (v: string) => v.replace(/[\r\n:]+/g, " ").trim().slice(0, 80);
   const extra: string[] = [];
   if (ids.session && clean(ids.session)) extra.push(`x-pai-session: ${clean(ids.session)}`);
   if (ids.worker && clean(ids.worker)) extra.push(`x-pai-worker: ${clean(ids.worker)}`);
+  // announced at spawn only; the router reads the worker's current priority from its status file
+  if (ids.priority && /^(high|normal|low)$/.test(ids.priority)) extra.push(`x-pai-priority: ${ids.priority}`);
   if (extra.length) env.ANTHROPIC_CUSTOM_HEADERS = [base, ...extra].join("\n");
 }
 

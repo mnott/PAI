@@ -478,6 +478,27 @@ describe("cockpitQueue grouping", () => {
   });
 });
 
+describe("cockpitQueue engine controls", () => {
+  it("a running row carries priority, paused and the seconds its request waits at the engine", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "pai-cockpit-ec-"));
+    const logDir = join(tmp, "logs");
+    const mk = (id: string, over: Partial<WorkerStatus>): WorkerStatus => ({
+      id, pid: process.pid, label: `label ${id}`, cwd: "/work/p", term: "", provider: "local", model: "m",
+      state: "running", started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null, ...over,
+    });
+    saveStatus(logDir, mk("e1", { priority: "low", paused: true }));
+    saveStatus(logDir, mk("e2", {}));
+    const now = Date.now();
+    writeFileSync(join(logDir, "router-sched.json"), JSON.stringify({ at: now, engines: {}, workers: { e2: { waitingSince: now - 42_000 } } }));
+    const workers = { providers: { local: { url: "http://127.0.0.1:1", maxConcurrent: 1, models: { default: "m" } } }, nativeModels: {} } as unknown as WorkersConfig;
+    const run = cockpitQueue(logDir, workers, now, () => true).providers.find((p) => p.provider === "local")!.running;
+    const e1 = run.find((r) => r.id === "e1")!;
+    const e2 = run.find((r) => r.id === "e2")!;
+    expect([e1.priority, e1.paused, e1.engineWaitSec]).toEqual(["low", true, undefined]);
+    expect([e2.priority, e2.paused, e2.engineWaitSec]).toEqual(["normal", undefined, 42]);
+  });
+});
+
 describe("enabledLocalLimits", () => {
   it("drops local readings of disabled or unconfigured providers, keeps cloud and enabled ones", () => {
     const ls = [

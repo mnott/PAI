@@ -414,6 +414,16 @@ describe("addSchedulingHeaders", () => {
     expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: gyro\nx-pai-session: my session x-evil  1\nx-pai-worker: 20261020-1");
   });
 
+  it("announces the spawn priority; anything but high/normal/low is dropped", async () => {
+    const { addSchedulingHeaders } = await import("./run-env.js");
+    const env: NodeJS.ProcessEnv = { ANTHROPIC_CUSTOM_HEADERS: "x-pai-provider: gyro" };
+    addSchedulingHeaders(env, { worker: "w", priority: "low" });
+    expect(env.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: gyro\nx-pai-worker: w\nx-pai-priority: low");
+    const bad: NodeJS.ProcessEnv = { ANTHROPIC_CUSTOM_HEADERS: "x-pai-provider: gyro" };
+    addSchedulingHeaders(bad, { worker: "w", priority: "urgent\nx: 1" });
+    expect(bad.ANTHROPIC_CUSTOM_HEADERS).toBe("x-pai-provider: gyro\nx-pai-worker: w");
+  });
+
   it("leaves a run that does not go through the router alone", async () => {
     const { addSchedulingHeaders } = await import("./run-env.js");
     const env: NodeJS.ProcessEnv = {};

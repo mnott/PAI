@@ -49,6 +49,9 @@ Keys under `router.scheduling`:
 | `sessionWeights` | `{}` | Per-session weight overrides; unnamed sessions weigh 1. |
 | `warmMs` | `300000` | A worker whose last turn ended under this long ago counts as warm (prefix cached). |
 | `pingMs` | `15000` | Ping interval of a queued stream. |
+| `lowAgingSec` | `900` | A low-priority request waiting longer than this gets one turn although higher ones wait. |
+
+Worker priority and pause: every worker has an engine priority (`high`, `normal`, `low`; set with `pai worker run --priority`, changed live with `pai worker priority <id> <level>`). At a serial engine the next request admitted is the oldest of the highest level waiting (inside a level the session-fair order above); `low` waits for every `high`/`normal` request unless it passed `lowAgingSec`. `pai worker pause <id>` parks the worker's next request in the router (the one in flight finishes; streams keep their ping) until `pai worker resume <id>`. The router reads both from the worker's status file at every admission, so a change applies to the next request. The cockpit Workers section has a selector and a pause button per running worker.
 
 The queue is visible in the cockpit and in `pai worker ps`.
 

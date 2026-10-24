@@ -100,6 +100,7 @@ import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
+import { setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../workers/scheduler.js";
 import { providerCaps } from "../cli/commands/worker.js";
@@ -1377,6 +1378,7 @@ async function startShim(): Promise<void> {
               className: args.class,
               label: args.label,
               ...(args.no_pool ? { noPool: true } : {}),
+              ...(args.priority ? { queuePriority: args.priority } : {}),
               mcpFlag: args.mcp,
               specPath,
               brief: promptText,
@@ -1391,6 +1393,7 @@ async function startShim(): Promise<void> {
             capabilityFlag: args.capability,
             label: args.label,
             ...(args.no_pool ? { noPool: true } : {}),
+            ...(args.priority ? { queuePriority: args.priority } : {}),
             mcpFlag: args.mcp,
             specPath,
             claudeArgs,
@@ -1725,21 +1728,64 @@ async function startShim(): Promise<void> {
   );
 
   server.tool(
+    "worker_priority",
+    [
+      "Change a RUNNING worker's priority (high, normal, low) at the local engine.",
+      "",
+      "The router admits high before normal before low at a serial engine and reads the level at every request, so the change applies to the worker's next request. Nothing is interrupted.",
+    ].join("\n"),
+    {
+      id: z.string().describe("Worker id (as shown by worker_ps)."),
+      level: z.enum(["high", "normal", "low"]).describe("The new priority."),
+    },
+    async (args) => {
+      try {
+        const from = setWorkerPriority(workersLogDir(readWorkersSection().workers), args.id, args.level, "mcp");
+        return workerText(`${args.id}: ${from} -> ${args.level}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "worker_pause",
+    [
+      "Pause a RUNNING worker's engine requests: its next request to the local engine parks in the router until worker_resume (without text). The request in flight finishes; nothing is killed.",
+    ].join("\n"),
+    { id: z.string().describe("Worker id (as shown by worker_ps).") },
+    async (args) => {
+      try {
+        const changed = setWorkerPaused(workersLogDir(readWorkersSection().workers), args.id, true, "mcp");
+        return workerText(changed ? `${args.id}: paused` : `${args.id}: already paused`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
     "worker_resume",
     [
       "Continue a FINISHED worker with a follow-up message: claude --resume on the",
       "same provider, same Claude session, context intact.",
       "",
       "Returns the new worker id. Not for running workers — say to those instead.",
+      "",
+      "Without text it releases a worker paused with worker_pause instead.",
     ].join("\n"),
     {
       id: z.string().describe("Worker id of the finished run (as shown by worker_ps)."),
-      text: z.string().min(1).describe("The follow-up message."),
+      text: z.string().min(1).optional().describe("The follow-up message (omit to release a paused worker)."),
     },
     async (args) => {
       try {
         const { workers } = readWorkersSection();
         const logDir = workersLogDir(workers);
+        if (args.text === undefined) {
+          return workerText(setWorkerPaused(logDir, args.id, false, "mcp") ? `${args.id}: resumed` : `${args.id}: was not paused`);
+        }
+        const text = args.text;
         const old = loadStatus(logDir, args.id);
         if (!old) return workerError(new Error(`no worker named "${args.id}"`));
         if (old.state === "running" || old.state === "queued") {
@@ -1760,7 +1806,7 @@ async function startShim(): Promise<void> {
           providerFlag: old.provider,
           modelFlag: old.model,
           label: `↩ ${old.label}`,
-          claudeArgs: ["--resume", old.claudeSession, "-p", args.text],
+          claudeArgs: ["--resume", old.claudeSession, "-p", text],
           resumeOf: args.id,
           onWorkerStart: (wid) => {
             newId = wid;

@@ -42,6 +42,10 @@ export interface WorkerStatus {
   label: string;
   /** Latest `pai worker goal` / `say --goal` note to the worker; never replaces the label. */
   note?: string;
+  /** Engine admission priority (the router's local-engine queue reads it per request); unset = normal. Set at spawn, changed by `pai worker priority <id> <level>`. */
+  priority?: "high" | "normal" | "low";
+  /** `pai worker pause`: the router parks this worker's next engine request until `resume`. */
+  paused?: boolean;
   /** Notes not yet handed to the worker; the PostToolUse hook drains them (note-delivery.ts). */
   notePending?: string[];
   /** When the last pending notes reached the worker (nowStamp). */
@@ -339,6 +343,9 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (onDisk.note !== undefined) status.note = onDisk.note;
     if (onDisk.notePending !== undefined) status.notePending = onDisk.notePending;
     if (onDisk.noteDeliveredAt !== undefined) status.noteDeliveredAt = onDisk.noteDeliveredAt;
+    // Written by `pai worker priority|pause|resume` (another process); the runner's copy only seeds the priority.
+    if (onDisk.priority !== undefined) status.priority = onDisk.priority;
+    if (onDisk.paused !== undefined) status.paused = onDisk.paused;
     // Written by `pai worker wait-on` (another process); the runner's in-memory copy never knows it.
     if (status.waitingOn === undefined && onDisk.waitingOn) status.waitingOn = onDisk.waitingOn;
     // Recorded by `pai issue claim` (another process).

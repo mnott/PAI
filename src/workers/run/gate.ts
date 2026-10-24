@@ -634,6 +634,12 @@ function queuedOf(q: QueuedFile, label: string | undefined): QueuedFile {
 export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
   const { logDir, target, config } = a;
   const saved = status.last;
+  const tier = queuePriorityOf(a.queuePriority, status, config);
+  // the same level orders this run's requests at a serial local engine (the router reads it from the status file)
+  if (!status.priority) {
+    status.priority = tier;
+    saveStatus(logDir, status);
+  }
   const gate: CapacityOpts = {
     logDir,
     self: { id: wid, provider: target.providerName },
@@ -650,7 +656,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
     config: config.capacity,
     disabled: a.noQueue,
     priority: a.priority,
-    tier: queuePriorityOf(a.queuePriority, status, config),
+    tier,
     log: (line) => {
       process.stderr.write(`${line}\n`);
     },

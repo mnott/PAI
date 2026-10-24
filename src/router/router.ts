@@ -759,6 +759,7 @@ export function routerHandler(
           sched.idleHook ??= (e, w, n) => sharedParker().maybePark(e, w, n);
           const sess = headerValue(req.headers["x-pai-session"], 80) || "anon";
           const worker = headerValue(req.headers["x-pai-worker"], 80) || `conn:${sessionId?.slice(0, 8) ?? req.socket.remotePort ?? "?"}`;
+          const hint = ["high", "normal", "low"].find((l) => l === headerValue(req.headers["x-pai-priority"], 10)) as "high" | "normal" | "low" | undefined;
           const streaming = safeBody(up.body)?.stream === true;
           let gone = false;
           let pings: NodeJS.Timeout | undefined;
@@ -783,7 +784,7 @@ export function routerHandler(
                   gone = true;
                   cb();
                 }),
-            })
+            }, hint)
             .then(
               (ticket) => {
                 stopPings();

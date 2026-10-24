@@ -115,6 +115,8 @@ export interface ChainOptions {
   label?: string;
   /** --no-pool: every stage runs fresh and is never refused for flags that keep it out of the pool. */
   noPool?: boolean;
+  /** --priority: queue/engine priority of every stage. */
+  queuePriority?: "high" | "normal" | "low";
   mcpFlag?: string;
   /** --spec value, resolved for display/recording ("-" for stdin). */
   specPath?: string;
@@ -177,6 +179,7 @@ export async function runChain(opts: ChainOptions, deps: ChainDeps = {}): Promis
       modelFlag: opts.modelFlag,
       label: `${baseLabel} · ${stage}`,
       noPool: opts.noPool,
+      queuePriority: opts.queuePriority,
       mcpFlag: opts.mcpFlag,
       specPath: opts.specPath,
       claudeArgs: swapPromptArg(opts.claudeArgs, prompt),

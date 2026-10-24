@@ -20,9 +20,9 @@ const data = () => ({
 });
 const queue = () => ({
   providers: [
-    { provider: "local", cap: 1, conversationSlots: 2, running: [{ id: "w-run", label: "running job", ageSec: 120, now: "editing", session: "PAI", model: "m1" }],
+    { provider: "local", cap: 1, conversationSlots: 2, running: [{ id: "w-run", label: "running job", ageSec: 120, now: "editing", session: "PAI", model: "m1", priority: "normal", engineWaitSec: 42 }],
       waiting: [{ id: "w-a", label: "first waiting", waitedSec: 30, position: 1, session: "PAI", model: "m1" }, { id: "w-b", label: "second waiting", waitedSec: 20, position: 2, session: "PAI", model: "m1" }] },
-    { provider: "glm", cap: 3, running: [{ id: "w-g", label: "glm job", ageSec: 90, now: "", session: "Whazaa", model: "glm-5" }], waiting: [] },
+    { provider: "glm", cap: 3, running: [{ id: "w-g", label: "glm job", ageSec: 90, now: "", session: "Whazaa", model: "glm-5", priority: "low", paused: true }], waiting: [] },
   ],
   panes: [{ label: "pane one", cwd: "/work/x", ageSec: 50, log: "/tmp/l" }], paneViolations: [], plans: [{ job: "plan-1", merged: 1, total: 3, phase: "build", phaseSec: 10, ageSec: 99, running: ["a"] }],
   builds: { slots: 2, testSlots: 1, running: [{ kind: "test", id: "t1", label: "vitest", session: "PAI", ageSec: 5 }], waiting: [] },
@@ -36,10 +36,16 @@ function st(id){var c=document.querySelector('#win-root [data-card="'+id+'"] .cs
 var o={err:window.__err||null,vis:vis(),local:txt("workers.local"),wt:txt("workers.wt"),plans:txt("workers.plans"),prov:txt("workers.prov:local"),sess:txt("workers.sess:Whazaa"),tests:txt("workers.tests"),
  
  drag:document.querySelectorAll('#win-root [data-card="workers.prov:local"] tr[draggable="true"]').length,
- btns:document.querySelectorAll('#win-root [data-card="workers.prov:local"] button[data-q]').length};
+ btns:document.querySelectorAll('#win-root [data-card="workers.prov:local"] button[data-q]').length,
+ ctl:document.querySelectorAll('#win-root [data-card="workers.prov:local"] button[data-wk]').length,seg:document.querySelectorAll('#win-root [data-card="workers.prov:local"] button[data-wp]').length,
+ gpaused:document.querySelectorAll('#win-root [data-card="workers.sess:Whazaa"] button[data-wk="resume"]').length};
 document.body.setAttribute("data-r1",JSON.stringify(o));
 var up=document.querySelector('#win-root [data-card="workers.prov:local"] button[data-q="up"][data-id="w-b"]');
 if(up)up.click();
+var pz=document.querySelector('#win-root [data-card="workers.prov:local"] button[data-wk="pause"][data-id="w-run"]');
+if(pz)pz.click();
+var lo=document.querySelector('#win-root [data-card="workers.prov:local"] button[data-wp="low"][data-id="w-run"]');
+if(lo)lo.click();
 var rows=document.querySelectorAll('#win-root [data-card="workers.prov:local"] tr[draggable="true"]');
 if(rows.length===2){
  var mk=function(t){return new Event(t,{bubbles:true,cancelable:true})};
@@ -61,6 +67,12 @@ beforeAll(async () => {
       let b = "";
       req.on("data", (c) => (b += c));
       req.on("end", () => { posts.push(url + " " + b); res.end(JSON.stringify({ ok: true, id: "w-b", provider: "local", order: [] })); });
+      return;
+    }
+    if (req.method === "POST" && url === "/cockpit/action") {
+      let b = "";
+      req.on("data", (c) => (b += c));
+      req.on("end", () => { posts.push(url + " " + b); res.end(JSON.stringify({ ok: true, message: "done" })); });
       return;
     }
     if (url.startsWith("/cockpit/data")) return res.end(JSON.stringify(data()));
@@ -104,6 +116,13 @@ describe.skipIf(!CHROME)("B5 workers on the win runtime", () => {
     expect(o.tests).toContain("vitest");
     expect(o.drag).toBe(2);
     expect(o.btns).toBe(4);
+    expect(o.ctl).toBe(1); // the running local worker: pause button
+    expect(o.seg).toBe(3); // high / normal / low
+    expect(o.gpaused).toBe(1); // the paused glm worker offers resume
+    expect(o.prov).toContain("waiting for engine 42s");
+    expect(o.sess).toContain("paused");
+    expect(posts).toContain('/cockpit/action {"action":"worker.pause","target":"w-run"}');
+    expect(posts).toContain('/cockpit/action {"action":"worker.priority","target":"w-run","value":"low"}');
     expect(posts).toContain('/cockpit/queue/up {"id":"w-b"}');
     expect(posts).toContain('/cockpit/queue/move {"id":"w-b","position":1}');
     expect(r.st).toMatch(/^ok\|/);

@@ -40,6 +40,9 @@ beforeAll(async () => {
   // writes workers.yaml: seed a temp yaml with one cloud provider so the real writer runs.
   writeFileSync(process.env.PAI_WORKERS_YAML, "providers:\n  glm:\n    url: https://glm.example/api\n    models:\n      default: glm-5.3\n      fast: glm-5.3-flash\n");
   ({ runCockpitAction } = await import("./cockpit-actions.js"));
+  // worker.* verbs act on a running worker's status file next to the ledger
+  const { saveStatus } = await import("../workers/status.js");
+  saveStatus(paiHome, { id: "w1", pid: process.pid, label: "x", cwd: "/", term: "", provider: "p", model: "m", state: "running", started: "2026-01-01 00:00:00", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null } as never);
 });
 
 afterAll(() => {
@@ -74,6 +77,9 @@ const ARGS: { [verb: string]: any } = {
   "memory.embed": {},
   "memory.index": {},
   "memory.stop": {},
+  "worker.priority": { target: "w1", value: "low" },
+  "worker.pause": { target: "w1" },
+  "worker.resume": { target: "w1" },
   "queue.next": { id: "w1" },
   "queue.up": { id: "w1" },
   "queue.front": { id: "w1" },
