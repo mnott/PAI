@@ -447,7 +447,7 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
           maxMillis: maxMinutes * 60_000,
           batchSize: EMBED_PASS_BATCH_SIZE,
           shouldYield: liveYieldCheck(maxLoad),
-          onProgress: (n) => pw?.update({ done: n }),
+          onProgress: (n, carried) => pw?.update({ done: n, carried }),
           onEnd: (r) => {
             pw?.finish();
             ended = { outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}) };

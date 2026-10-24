@@ -67,6 +67,7 @@ function memRunProgress(r){
 /** What each memory card shows: {v, u, s, x(html)}; v null = no value. */
 function memIndexView(m){
  var c=m.counts||{},b=m.binding,x=(m.runs?memRunProgress(m.runs.index)+memRunProgress(m.runs.embed):"")+memSegBar(m);
+ if(m.indexWarning)x+=memLine("bad",esc(m.indexWarning));
  if(b)x+=memLine("",'bound to '+esc(memBound(b.bound))+' · configured '+esc(b.configured.backend+" / "+b.configured.model));
  if(b&&(b.error||b.hint))x+=memLine(b.error||b.mismatch?"bad":"warn",esc(b.error?"binding error: "+b.error:b.hint));
  return{v:c.coverage==null?null:(100*c.coverage).toFixed(1),u:"%",s:(c.embedded==null?"embedded count not known":"embedded of "+fmt(c.chunks)+" chunks"+(c.exact?"":" (est.)"))+(c.files==null?"":" · "+fmt(c.files)+" files"),x:x};

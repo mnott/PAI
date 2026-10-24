@@ -14,6 +14,7 @@ import { loadConfig } from "../daemon/config.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { listLessons, LESSON_STATES, type Lesson, type LessonState } from "../memory/lessons.js";
 import { readFinishedRun, readRun, type FinishedRun, type RunState } from "../memory/run-state.js";
+import { readRewriteWarning } from "../memory/indexer/rewrite-guard.js";
 import { readRunProgress, type JobRunProgress, type RunKind, type RunProgressView } from "../memory/job-progress.js";
 import { readEmbedPasses, type EmbedPassLogEntry } from "../memory/embed-pass.js";
 import { cockpitLayout } from "./cockpit-layout.js";
@@ -428,6 +429,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     schedule: d ? { maintenanceHour: d.maintenanceHour, indexIntervalSecs: d.indexIntervalSecs, embedIntervalSecs: d.embedIntervalSecs } : null,
     run: progress,
     runs,
+    indexWarning: readRewriteWarning(deps.home)?.message ?? null,
     lessons: lessonsSummary((deps.lessons ?? (() => listLessons()))(), now, L.memoryLessonsTop),
     // the cockpit job that has not produced its run marker yet: the card is busy from the click
     starting: starting ? { jobId: starting.id } : null,
