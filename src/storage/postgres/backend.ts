@@ -37,6 +37,7 @@ import { getMemorySourcesReportPostgres } from "./sources.js";
 import { estimateCountsPostgres, exactCountsPostgres, embeddingJobsPostgres } from "./dashboard-queries.js";
 import * as kgTriples from "./kg-triples.js";
 import * as observations from "./observations.js";
+import * as filePaths from "./file-paths.js";
 
 const { Pool: PgPool } = pg;
 
@@ -799,35 +800,9 @@ export class PostgresBackend implements StorageBackend {
   // File-path rename (session cleanup: moving Notes/*.md into YYYY/MM/)
   // -------------------------------------------------------------------------
 
-  async countFilesWithPaths(paths: string[]): Promise<number> {
-    if (paths.length === 0) return 0;
-    const result = await this.pool.query<{ n: string }>(
-      "SELECT COUNT(*)::text AS n FROM pai_files WHERE path = ANY($1)",
-      [paths]
-    );
-    return parseInt(result.rows[0]?.n ?? "0", 10);
-  }
+  async countFilesWithPaths(paths: string[]): Promise<number> { return filePaths.countFilesWithPaths(this.pool, paths); }
 
-  async renameFilePaths(moves: Array<{ oldPath: string; newPath: string }>): Promise<number> {
-    if (moves.length === 0) return 0;
-    const client = await this.pool.connect();
-    let filesUpdated = 0;
-    try {
-      await client.query("BEGIN");
-      for (const { oldPath, newPath } of moves) {
-        const r = await client.query("UPDATE pai_files SET path = $1 WHERE path = $2", [newPath, oldPath]);
-        filesUpdated += r.rowCount ?? 0;
-        await client.query("UPDATE pai_chunks SET path = $1 WHERE path = $2", [newPath, oldPath]);
-      }
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-    return filesUpdated;
-  }
+  async renameFilePaths(moves: Array<{ oldPath: string; newPath: string }>): Promise<number> { return filePaths.renameFilePaths(this.pool, moves); }
 }
 
 /**

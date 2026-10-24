@@ -13,6 +13,7 @@
  */
 
 import type { StorageBackend } from "../storage/interface.js";
+import { generateLabel } from "./themes.js";
 
 export interface CommunityOptions {
   /** Minimum community size to include in results. Default: 3. */
@@ -278,26 +279,6 @@ const STOP_WORDS = new Set([
   "more", "note", "notes", "than", "over",
 ]);
 
-function generateCommunityLabel(titles: Array<string | null>): string {
-  const wordCounts = new Map<string, number>();
-  for (const title of titles) {
-    if (!title) continue;
-    const words = title
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
-    for (const word of words) {
-      wordCounts.set(word, (wordCounts.get(word) ?? 0) + 1);
-    }
-  }
-  const sorted = [...wordCounts.entries()].sort((a, b) => b[1] - a[1]);
-  return sorted
-    .slice(0, 3)
-    .map(([w]) => w)
-    .join(" / ") || "unnamed";
-}
-
 function getTopFolder(path: string): string {
   const slash = path.indexOf("/");
   return slash === -1 ? path : path.slice(0, slash);
@@ -361,7 +342,7 @@ export async function zettelCommunities(
 
     const memberSet = new Set(members);
     const titles = members.map((p) => titleMap.get(p) ?? null);
-    const label = generateCommunityLabel(titles);
+    const label = generateLabel(titles, STOP_WORDS) || "unnamed";
 
     // Compute internal degree per node
     const nodes: CommunityNode[] = members.map((path) => {

@@ -11,6 +11,7 @@
 import { STOP_WORDS } from "../../utils/stop-words.js";
 import type { PgPoolLike } from "../pg-types.js";
 import type { RegistryBackend } from "../registry-interface.js";
+import { rankTunnels, resolveTunnelInputs } from "../../memory/tunnels.js";
 import type { Tunnel, FindTunnelsOptions, FindTunnelsResult } from "../../memory/tunnels.js";
 
 interface ProjectSlugMap {
@@ -112,17 +113,7 @@ async function findTunnelsForSlugMap(
     });
   }
 
-  tunnels.sort((a, b) => {
-    const byProjects = b.projects.length - a.projects.length;
-    if (byProjects !== 0) return byProjects;
-    return b.occurrences - a.occurrences;
-  });
-
-  return {
-    tunnels: tunnels.slice(0, opts.limit),
-    projects_analyzed: projectIds.length,
-    total_concepts_evaluated: candidateTerms.length,
-  };
+  return rankTunnels(tunnels, projectIds.length, candidateTerms.length, opts.limit);
 }
 
 /** Find cross-project concept tunnels against a Postgres federation database. */
@@ -131,17 +122,6 @@ export async function findTunnelsPostgres(
   registry: RegistryBackend,
   options?: FindTunnelsOptions,
 ): Promise<FindTunnelsResult> {
-  const opts: Required<FindTunnelsOptions> = {
-    min_projects: options?.min_projects ?? 2,
-    min_occurrences: options?.min_occurrences ?? 3,
-    limit: options?.limit ?? 20,
-  };
-
-  const projectRows = await registry.listProjects({ excludeArchived: true });
-  const slugMap: ProjectSlugMap = {};
-  for (const { id, slug } of projectRows) {
-    slugMap[id] = slug;
-  }
-
+  const { opts, slugMap } = await resolveTunnelInputs(registry, options);
   return findTunnelsForSlugMap(pool, slugMap, opts);
 }

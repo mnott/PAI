@@ -11,23 +11,18 @@
  * generic (StorageBackend) indexer that Postgres uses.
  */
 
-import { readFileSync, statSync, existsSync } from "node:fs";
-import { join, relative, basename } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import type { Database } from "better-sqlite3";
 import type { RegistryBackend } from "../registry-interface.js";
 import { chunkMarkdown, fileContentHash } from "../../memory/chunker.js";
 import {
-  sha256File,
   chunkId,
-  detectTier,
-  walkMdFiles,
-  walkContentFiles,
-  isPathTooBroadForContentScan,
-  parseSessionTitleChunk,
   yieldToEventLoop,
   INDEX_YIELD_EVERY,
 } from "../../memory/indexer/helpers.js";
 import type { IndexResult } from "../../memory/indexer/types.js";
+import { discoverProjectFiles } from "../../memory/indexer/discover.js";
 
 // ---------------------------------------------------------------------------
 // Single-file indexing
@@ -149,108 +144,20 @@ async function indexProject(
     filesSkipped: 0,
   };
 
-  const filesToIndex: Array<{ absPath: string; rootBase: string; source: string; tier: string }> = [];
-
-  const rootMemoryMd = join(rootPath, "MEMORY.md");
-  if (existsSync(rootMemoryMd)) {
-    filesToIndex.push({ absPath: rootMemoryMd, rootBase: rootPath, source: "memory", tier: "evergreen" });
-  }
-
-  const memoryDir = join(rootPath, "memory");
-  for (const absPath of walkMdFiles(memoryDir)) {
-    const relPath = relative(rootPath, absPath);
-    const tier = detectTier(relPath);
-    filesToIndex.push({ absPath, rootBase: rootPath, source: "memory", tier });
-  }
-
-  const notesDir = join(rootPath, "Notes");
-  for (const absPath of walkMdFiles(notesDir)) {
-    filesToIndex.push({ absPath, rootBase: rootPath, source: "notes", tier: "session" });
-  }
-
-  // Synthetic session-title chunks for Notes files with the standard filename format:
-  // "NNNN - YYYY-MM-DD - Descriptive Title.md"
-  {
-    const titleInsertChunk = db.prepare(`
-      INSERT OR IGNORE INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const titleInsertFts = db.prepare(`
-      INSERT OR IGNORE INTO memory_fts (text, id, project_id, path, source, tier, start_line, end_line)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const updatedAt = Date.now();
-    for (const absPath of walkMdFiles(notesDir)) {
-      const fileName = basename(absPath);
-      const text = parseSessionTitleChunk(fileName);
-      if (!text) continue;
-      const relPath = relative(rootPath, absPath);
-      const syntheticPath = `${relPath}::title`;
-      const id = chunkId(projectId, syntheticPath, 0, 0, 0);
-      const hash = sha256File(text);
-      db.transaction(() => {
-        titleInsertChunk.run(id, projectId, "notes", "session", syntheticPath, 0, 0, hash, text, updatedAt);
-        titleInsertFts.run(text, id, projectId, syntheticPath, "notes", "session", 0, 0);
-      })();
-    }
-  }
-
-  if (!isPathTooBroadForContentScan(rootPath)) {
-    for (const absPath of walkContentFiles(rootPath)) {
-      filesToIndex.push({ absPath, rootBase: rootPath, source: "content", tier: "topic" });
-    }
-  }
-
-  if (claudeNotesDir && claudeNotesDir !== notesDir) {
-    for (const absPath of walkMdFiles(claudeNotesDir)) {
-      filesToIndex.push({ absPath, rootBase: claudeNotesDir, source: "notes", tier: "session" });
-    }
-
-    {
-      const updatedAt = Date.now();
-      const titleInsertChunk2 = db.prepare(`
-        INSERT OR IGNORE INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const titleInsertFts2 = db.prepare(`
-        INSERT OR IGNORE INTO memory_fts (text, id, project_id, path, source, tier, start_line, end_line)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      for (const absPath of walkMdFiles(claudeNotesDir)) {
-        const fileName = basename(absPath);
-        const text = parseSessionTitleChunk(fileName);
-        if (!text) continue;
-        const relPath = relative(claudeNotesDir, absPath);
-        const syntheticPath = `${relPath}::title`;
-        const id = chunkId(projectId, syntheticPath, 0, 0, 0);
-        const hash = sha256File(text);
-        db.transaction(() => {
-          titleInsertChunk2.run(id, projectId, "notes", "session", syntheticPath, 0, 0, hash, text, updatedAt);
-          titleInsertFts2.run(text, id, projectId, syntheticPath, "notes", "session", 0, 0);
-        })();
-      }
-    }
-
-    if (claudeNotesDir.endsWith("/Notes")) {
-      const claudeProjectDir = claudeNotesDir.slice(0, -"/Notes".length);
-      const claudeMemoryDir = join(claudeProjectDir, "memory");
-
-      const claudeMemoryMd = join(claudeProjectDir, "MEMORY.md");
-      if (existsSync(claudeMemoryMd)) {
-        filesToIndex.push({
-          absPath: claudeMemoryMd,
-          rootBase: claudeProjectDir,
-          source: "memory",
-          tier: "evergreen",
-        });
-      }
-
-      for (const absPath of walkMdFiles(claudeMemoryDir)) {
-        const relPath = relative(claudeProjectDir, absPath);
-        const tier = detectTier(relPath);
-        filesToIndex.push({ absPath, rootBase: claudeProjectDir, source: "memory", tier });
-      }
-    }
+  const { files: filesToIndex, titleChunks } = discoverProjectFiles(projectId, rootPath, claudeNotesDir);
+  const titleInsertChunk = db.prepare(`
+    INSERT OR IGNORE INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const titleInsertFts = db.prepare(`
+    INSERT OR IGNORE INTO memory_fts (text, id, project_id, path, source, tier, start_line, end_line)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const { id, path, hash, text, updatedAt } of titleChunks) {
+    db.transaction(() => {
+      titleInsertChunk.run(id, projectId, "notes", "session", path, 0, 0, hash, text, updatedAt);
+      titleInsertFts.run(text, id, projectId, path, "notes", "session", 0, 0);
+    })();
   }
 
   await yieldToEventLoop();

@@ -1,7 +1,7 @@
 /** Memory search command: BM25/semantic/hybrid search across the memory store. */
 
 import chalk from "chalk";
-import { applyRecencyBoost, combineHybridResults, type SearchResult } from "../../../memory/search.js";
+import { applyRecencyBoost, combineHybridResults, populateSlugs, type SearchResult } from "../../../memory/search.js";
 import { dim, bold, ok, warn, err } from "../../lib/utils.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
@@ -18,19 +18,6 @@ function tierColor(tier: string): string {
     case "session":   return chalk.dim(tier);
     default:          return tier;
   }
-}
-
-/** Populate projectSlug on results by looking up the small set of distinct project ids involved. */
-async function populateSlugsFromRegistry(results: SearchResult[]): Promise<SearchResult[]> {
-  if (results.length === 0) return results;
-  const registry = await getRegistryBackend();
-  const ids = [...new Set(results.map((r) => r.projectId))];
-  const slugMap = new Map<number, string>();
-  for (const id of ids) {
-    const project = await registry.getProjectById(id);
-    if (project) slugMap.set(id, project.slug);
-  }
-  return results.map((r) => ({ ...r, projectSlug: slugMap.get(r.projectId) }));
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +113,7 @@ export async function memorySearchCmd(
     results = applyRecencyBoost(results, recencyDays);
   }
 
-  const withSlugs = await populateSlugsFromRegistry(results);
+  const withSlugs = results.length === 0 ? results : await populateSlugs(results, await getRegistryBackend());
   const rerankLabel = opts.rerank !== false ? " +rerank" : "";
   const modeLabel = mode !== "keyword" ? ` [${mode}${rerankLabel}]` : (opts.rerank !== false ? ` [rerank]` : "");
 
