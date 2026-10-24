@@ -37,6 +37,11 @@ const HOOKS_SRC = "src/hooks/ts";
 const HOOKS_OUT = "dist/hooks";
 const doSync = process.argv.includes("--sync");
 
+// Native .node bindings and the embeddings backend can never be bundled;
+// resolve them at runtime like the rest of node_modules (bundles run from
+// dist/, inside the repo).
+const NATIVE_EXTERNALS = ["onnxruntime-node", "@huggingface/transformers"];
+
 // Bundled CJS deps (e.g. yaml) call require() for Node builtins like
 // "process". esbuild's ESM output leaves those calls as a `require` that
 // only exists at runtime if the module defines it — plain .mjs run via node
@@ -100,6 +105,7 @@ for (const entry of entryPoints) {
     outfile: staged,
     sourcemap: true,
     banner: REQUIRE_SHIM,
+    external: NATIVE_EXTERNALS,
   });
 
   chmodSync(staged, 0o755);
@@ -151,7 +157,7 @@ for (const [entry, name] of STANDALONE_ENTRIES) {
     // whose embeddings backend needs the native onnx binding — native .node
     // files can never be bundled; resolve it at runtime like the rest of
     // node_modules (the host runs from dist/, inside the repo)
-    external: ["onnxruntime-node"],
+    external: NATIVE_EXTERNALS,
   });
   chmodSync(staged, 0o755);
   const stagedMap = `${staged}.map`;
