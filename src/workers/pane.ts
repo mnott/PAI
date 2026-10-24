@@ -613,6 +613,12 @@ export function dropPaneEntry(logDir: string, e: PaneEntry, caller: string, reas
 /** Forget an entry (its per-worker file; a legacy list is rewritten without it). */
 function dropEntry(logDir: string, e: PaneEntry, caller: string, reason: string): void {
   process.stderr.write(`[pane-registry] drop caller=${caller} run=${e.worker} session=${e.session} reason=${reason}\n`);
+  // the caller's stderr may be a pane that is gone: the ledger is where the next lost entry stays visible
+  try {
+    appendLedger(ledgerPath(logDir), "PANE-ENTRY-DROP", { run: e.worker, session: e.session, caller, reason });
+  } catch {
+    /* the ledger must never stop a drop */
+  }
   const legacy = join(panesDir(logDir), `${e.scope}.json`);
   rmSync(entryPath(logDir, e), { force: true });
   if (existsSync(legacy)) {
@@ -858,8 +864,9 @@ export async function closeEndedPanes(
   const open = new Set(sessions.map((s) => s.id));
   for (const e of registry) {
     // iTerm answered and the session is gone: a stale entry, forgotten without a close
+    // (a live worker's entry stays: the audit needs it to reopen the pane, and the listing may have missed the session)
     if (sessions.length && !open.has(e.session)) {
-      if (!dryRun) dropEntry(logDir, e, "closeEndedPanes", "stale: session not in iTerm listing");
+      if (!dryRun && ended(e.worker)) dropEntry(logDir, e, "closeEndedPanes", "stale: session not in iTerm listing");
       continue;
     }
     await handle("iterm", e.session, e.worker, e);
@@ -1314,6 +1321,9 @@ export function workerEnded(logDir: string, wid: string): boolean {
     const st = JSON.parse(readFileSync(statusPath(logDir, wid), "utf8")) as { state?: string; pid?: number };
     if (!st.state) return false;
     if (st.state !== "running" && st.state !== "queued") return true;
+    // a pane-exec worker is alive while its wrapper is, whatever pid the status holds (admission waits before the runner pid is its own)
+    const rec = readRecord(wid);
+    if (rec && readExit(wid) === null && pidAlive(rec.wrapper)) return false;
     if (typeof st.pid !== "number" || st.pid <= 0) return false;
     try {
       process.kill(st.pid, 0);
@@ -1432,7 +1442,8 @@ export async function openPaneForWorker(
     );
   }
   const live = new Set(out.slice(0, bar).split(",").filter(Boolean));
-  for (const e of reg) if (!live.has(e.session)) dropEntry(logDir, e, "openPaneForWorker", "stale: session not in split listing");
+  // only an ended worker's entry is forgotten: a live sibling's pane may sit outside this tab's listing
+  for (const e of reg) if (!live.has(e.session) && workerEnded(logDir, e.worker)) dropEntry(logDir, e, "openPaneForWorker", "stale: session not in split listing");
   saveEntry(logDir, {
     session: out.slice(bar + 1),
     worker: wid,

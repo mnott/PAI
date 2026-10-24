@@ -3,7 +3,7 @@
  * child_process is mocked, closing goes through injected PaneOps.
  */
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +35,7 @@ import { closeRegisteredIterm, closeEndedPanes, closeOwnPane, closeSelfPane, wor
 import { saveStatus, type WorkerStatus } from "./status.js";
 import { writePaneRunStatus } from "./pane-run.js";
 import { scopeKey } from "./scope.js";
+import { ledgerPath } from "./paths.js";
 import type { WorkersConfig } from "./config.js";
 
 const config = { pane: { fontSize: 13, autoExitSecs: 10 } } as unknown as WorkersConfig;
@@ -234,8 +235,8 @@ describe("ended workers keep their pane until the next pane replaces it", () => 
     status("20261010-100001-2", "running");
     await openPaneForWorker(dir, config, "20261010-100002-3", TERM, {});
     expect(closed).toEqual(["S-DONE"]);
-    // (the mocked split script reports no live sessions, so it forgets S-RUN itself; only S-DONE was closed)
-    expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["20261010-100002-3"]);
+    // the mocked split script reports no live sessions, yet S-RUN's worker runs: its entry stays
+    expect(loadRegistry(dir).map((e) => e.worker).sort()).toEqual(["20261010-100001-2", "20261010-100002-3"]);
     spy.mockRestore();
   });
 
@@ -326,5 +327,47 @@ describe("closeEndedPanes: pane opened during the iTerm listing", () => {
     });
     await closeEndedPanes(dir, () => true, false, ops);
     expect(existsSync(join(dir, "panes", "SCOPE", "20260929-100077-7.json"))).toBe(true);
+  });
+});
+
+describe("a live worker's entry is never dropped by a sibling", () => {
+  const status = (id: string, state: string, pid: number) =>
+    saveStatus(dir, { id, label: "x", cwd: dir, provider: "p", state, pid } as unknown as WorkerStatus);
+  const seedLive = (worker: string, session: string) => {
+    const scope = scopeKey(TERM);
+    mkdirSync(join(dir, "panes", scope), { recursive: true });
+    writeFileSync(join(dir, "panes", scope, `${worker}.json`), JSON.stringify({ session, worker, opened: "2026-10-24 12:37:25" }));
+  };
+
+  it("49979 (queued behind admission) keeps its entry while 49395 opens and its pane is not in the split listing", async () => {
+    seedLive("20261024-123725-49979", "S-49979");
+    status("20261024-123725-49979", "queued", process.pid);
+    await openPaneForWorker(dir, config, "20261024-123724-49395", TERM, {});
+    expect(loadRegistry(dir).map((e) => e.worker).sort()).toEqual(["20261024-123724-49395", "20261024-123725-49979"]);
+  });
+
+  it("a stale-session sweep keeps a live worker's entry and forgets an ended one", async () => {
+    seedLive("20261024-123725-49979", "S-LIVE");
+    seedLive("20261024-123724-49395", "S-DONE");
+    await closeEndedPanes(dir, (w) => w === "20261024-123724-49395", false, fakeOps({ listIterm: async () => [{ id: "OTHER", name: "zsh" }] }));
+    expect(loadRegistry(dir).map((e) => e.worker)).toEqual(["20261024-123725-49979"]);
+  });
+
+  it("a pane-exec worker with a live wrapper is not ended, whatever pid its status holds", () => {
+    const home = join(dir, "home3");
+    process.env.PAI_HOME = home;
+    mkdirSync(join(home, "state", "pane-exec"), { recursive: true });
+    status("w-adm", "queued", 2 ** 22 + 777);
+    expect(workerEnded(dir, "w-adm")).toBe(true);
+    writeFileSync(join(home, "state", "pane-exec", "w-adm.json"), JSON.stringify({ id: "w-adm", kind: "worker", caller: 1, wrapper: process.pid, startedMs: 1 }));
+    expect(workerEnded(dir, "w-adm")).toBe(false);
+  });
+
+  it("every drop is ledgered PANE-ENTRY-DROP with run, session, caller and reason", async () => {
+    seedLive("20261024-123724-49395", "S-DONE");
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await closePaneForWorker(dir, "20261024-123724-49395", fakeOps());
+    const ledger = readFileSync(ledgerPath(dir), "utf8");
+    expect(ledger).toMatch(/PANE-ENTRY-DROP.*run=20261024-123724-49395.*session=S-DONE.*caller=closePaneForWorker.*reason=/);
   });
 });

@@ -14,10 +14,10 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptJxa, type PaneEntry } from "./pane.js";
+import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptJxa, saveEntry, type PaneEntry } from "./pane.js";
 import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
-import { itermUuid } from "./scope.js";
+import { itermUuid, scopeKey } from "./scope.js";
 import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
@@ -203,6 +203,8 @@ export async function auditTick(
     running?: (wid: string) => boolean;
     /** Launcher audit seam (default: the real pane-exec records and processes). */
     launches?: () => Promise<unknown>;
+    /** The pane session a worker itself recorded (status.pane.session, else its pane-exec launch record), "" when none. */
+    ownSession?: (wid: string) => string;
     /** Stops a worker through the normal end path (kill-tree: SIGTERM, the runner salvages and ends). */
     stop?: (wid: string, why: string) => Promise<unknown>;
     /** Opens a new follow pane for a running worker whose pane vanished; rejects when it cannot (default: split in a live host tab). */
@@ -229,6 +231,16 @@ export async function auditTick(
       const s = loadStatus(logDir, wid);
       return !s || isLive(s, ownsPid);
     });
+  // NO PANE for want of a registry entry, yet the worker's own recorded pane is in the listing: the entry was lost, the pane is not. Re-register, never kill.
+  for (const v of verdicts) {
+    if (v.kind !== "worker" || v.mark !== "NO PANE" || v.session) continue;
+    const own = (deps.ownSession ?? ((wid) => ownPaneSession(logDir, wid)))(v.id);
+    if (!own || !tabs.has(norm(own))) continue;
+    const host = v.host ?? own;
+    saveEntry(logDir, { session: norm(own), worker: v.id, opened: now.toISOString().replace("T", " ").slice(0, 19), scope: scopeKey(host), host: v.host });
+    appendLedger(ledgerPath(logDir), "PANE-REREGISTERED", { id: v.id, session: norm(own) }, now);
+    Object.assign(v, { mark: "ok", session: norm(own), tab: tabs.get(norm(own)), why: "entry lost, pane alive: re-registered" });
+  }
   for (const v of verdicts) {
     if (v.kind !== "worker" || v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue;
     const proc = procs.find((p) => p.id === v.id);
@@ -264,6 +276,11 @@ export async function auditTick(
   }
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
   return verdicts;
+}
+
+/** The pane session the worker recorded itself: status.pane.session, else its pane-exec launch record. */
+function ownPaneSession(logDir: string, wid: string): string {
+  return loadStatus(logDir, wid)?.pane?.session || readRecord(wid)?.session || "";
 }
 
 const reopenFile = (logDir: string): string => join(logDir, "pane-audit-reopen.json");
