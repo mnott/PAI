@@ -65,6 +65,7 @@
     "dev": "tsdown --watch",
     "test": "vitest",
     "lint": "tsc --noEmit",
+    "check:duplicates": "node scripts/check-duplicates.mjs",
     "prepublishOnly": "bun run build && node dist/cli/index.mjs worker pending --gate && node dist/cli/index.mjs build npm-auth"
   },
   "author": "Matthias Nott",
