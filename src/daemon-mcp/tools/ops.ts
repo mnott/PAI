@@ -236,9 +236,19 @@ export async function workerMerge(args: WorkerMergeArgs): Promise<WorkerToolResu
 }
 
 /** The battery guard's state: last reading, gate (pause/stop, benchmark stop) and the benchmark marker. */
-export async function batteryStatus(): Promise<WorkerToolResult> {
+export async function batteryStatus(args: { window_hours?: number } = {}): Promise<WorkerToolResult> {
   try {
     const g = await import("../../daemon/battery-guard.js");
+    const hours = Math.min(Math.max(args.window_hours ?? 12, 1 / 60), 14 * 24);
+    const tel = g.summarizeTelemetry(hours * 3600_000);
+    const w = (s: { max: number; avg: number } | null): string => (s ? `max ${s.max} W, avg ${s.avg} W` : "no data");
+    const w0 = (v: number | null | undefined): string => (typeof v === "number" ? `${v} W` : "n/a");
+    const telLines = tel
+      ? [
+          `latest telemetry (${tel.ageS} s ago): adapter ${w0(tel.latest.adapterWatts)}, system power in ${w0(tel.latest.systemPowerInW)}, system load ${w0(tel.latest.systemLoadW)}, battery ${w0(tel.latest.batteryW)}, ${tel.latest.pct ?? "n/a"} %`,
+          `last ${hours} h (${tel.samples} samples): system power in ${w(tel.systemPowerInW)}; system load ${w(tel.systemLoadW)}; max battery drain ${tel.maxDrainW === null ? "no data" : `${tel.maxDrainW} W`}; min charge ${tel.minPct === null ? "no data" : `${tel.minPct} %`}`,
+        ]
+      : ["no telemetry yet"];
     const line = g.batteryCockpitLine();
     const gate = g.readBatteryGate();
     const marker = g.liveBenchmarkMarker();
@@ -247,6 +257,7 @@ export async function batteryStatus(): Promise<WorkerToolResult> {
         `battery: ${line || "no recent reading (guard off, not macOS, or daemon not running)"}`,
         `gate: ${gate ? `${gate.phase}${gate.reason ? ` — ${gate.reason}` : ""}${gate.benchStop ? ` · benchmark stop: ${gate.benchReason ?? "battery low"}` : ""}` : "no gate file"}`,
         `benchmark marker: ${marker ? `${marker.label} (pid ${marker.pid})` : "none"}`,
+        ...telLines,
       ].join("\n")
     );
   } catch (e) {

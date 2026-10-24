@@ -38,11 +38,15 @@ vi.mock("../../workers/gc-run.js", () => m);
 vi.mock("../../workers/pool-cli.js", () => m);
 vi.mock("../../workers/worktree.js", () => m);
 vi.mock("../../workers/workers-config.js", () => m);
-vi.mock("../../daemon/battery-guard.js", () => m);
+vi.mock("../../daemon/battery-guard.js", async (orig) => ({ ...(await orig<object>()), ...m }));
 vi.mock("../../daemon/pass-priority.js", () => ({ cliEntry: () => "/dist/cli/index.mjs" }));
 vi.mock("../../workers/config.js", () => ({ readWorkersSection: () => ({ workers: {} }) }));
 vi.mock("../../workers/paths.js", () => ({ workersLogDir: () => "/logs" }));
 
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { summarizeTelemetry } from "../../daemon/battery-guard.js";
 import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill, workerMerge } from "./ops.js";
 
 const body = (r: { content: Array<{ text: string }> }): string => r.content[0]!.text;
@@ -156,5 +160,47 @@ describe("battery_status", () => {
     expect(t).toMatch(/18 % \(battery\)/);
     expect(t).toMatch(/gate: paused — battery at 18 %/);
     expect(t).toMatch(/strata-bench \(pid 9\)/);
+  });
+});
+
+describe("summarizeTelemetry", () => {
+  const now = Date.parse("2026-10-24T12:00:00Z");
+  const iso = (minAgo: number): string => new Date(now - minAgo * 60_000).toISOString();
+  const dir = mkdtempSync(join(tmpdir(), "bat-"));
+
+  it("latest line and window stats; old lines fall outside the window", () => {
+    const f = join(dir, "t.jsonl");
+    const row = (minAgo: number, inW: number, load: number, bat: number, pct: number): string =>
+      JSON.stringify({ at: iso(minAgo), adapterWatts: 100, systemPowerInW: inW, systemLoadW: load, batteryW: bat, pct, source: "AC" });
+    writeFileSync(f, [row(2000, 99, 99, -99, 5), row(10, 26, 20, 0, 90), row(5, 38, 40, -2.5, 80), "garbage", row(1, 30, 25, 1, 85)].join("\n") + "\n");
+    const s = summarizeTelemetry(12 * 3600_000, now, f)!;
+    expect(s.ageS).toBe(60);
+    expect(s.latest.pct).toBe(85);
+    expect(s.samples).toBe(3);
+    expect(s.systemPowerInW).toEqual({ max: 38, avg: 31.33 });
+    expect(s.systemLoadW).toEqual({ max: 40, avg: 28.33 });
+    expect(s.maxDrainW).toBe(2.5);
+    expect(s.minPct).toBe(80);
+  });
+  it("missing or empty file gives null", () => {
+    expect(summarizeTelemetry(1000, now, join(dir, "none.jsonl"))).toBeNull();
+    const e = join(dir, "e.jsonl");
+    writeFileSync(e, "");
+    expect(summarizeTelemetry(1000, now, e)).toBeNull();
+  });
+});
+
+describe("battery_status telemetry", () => {
+  it("says no telemetry yet when there is no file", async () => {
+    const home = mkdtempSync(join(tmpdir(), "bat-home-"));
+    const prev = process.env.PAI_HOME;
+    process.env.PAI_HOME = home;
+    try {
+      const t = body(await batteryStatus({ window_hours: 1 }));
+      expect(t).toContain("no telemetry yet");
+    } finally {
+      if (prev === undefined) delete process.env.PAI_HOME;
+      else process.env.PAI_HOME = prev;
+    }
   });
 });
