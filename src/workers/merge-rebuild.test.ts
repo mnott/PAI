@@ -48,7 +48,7 @@ describe("merge rebuilds dist", () => {
     const b = okBuild();
     const out = mergeWorker(logDir, "r1", { verifyTests: false, build: b.run, cliRoot: repo });
     expect(b.calls).toHaveLength(1);
-    expect(out).toContain("build: ok (dist rebuilt; router/daemon pick it up)");
+    expect(out).toContain("build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)");
     expect(readFileSync(ledgerPath(logDir), "utf8")).toMatch(/WORKER-MERGE-BUILD.*r1.*true/);
   });
 
