@@ -18,6 +18,7 @@ import { runLaunch } from "./lifecycle/launch.js";
 import { runRestore } from "./lifecycle/restore.js";
 import { runUpdate } from "./lifecycle/update.js";
 import { clearNamesCmd } from "./session-notes.js";
+import { updateCmd } from "./release.js";
 
 const bodyOpts: CommandDef["options"] = [
   { name: "body-file", type: "string", value: "FILE", summary: "File holding the checkpoint text to save ('-' reads standard input). Required unless --no-body" },
@@ -211,12 +212,8 @@ export const restoreTop: CommandDef = {
 };
 
 export const updateTop: CommandDef = {
-  name: "update",
-  summary: "Update PAI to the latest version",
-  description: "Pulls the latest source, rebuilds and restarts the daemon. Your local customisations are kept.",
-  examples: ["pai update", "pai update && pai daemon status"],
-  seeAlso: ["pai daemon status"],
-  run: () => legacy(() => runUpdate()),
+  ...updateCmd,
+  run: async (ctx, io) => (ctx.opts.source === true ? legacy(() => runUpdate()) : updateCmd.run!(ctx, io)),
 };
 
 export { clearNamesCmd };

@@ -2,24 +2,31 @@
 
 # pai update
 
-Update PAI to the latest version
+Update PAI (or another package) to the latest GitHub Release
 
 ```
-pai update
+pai update [options]
 ```
 
-Pulls the latest source, rebuilds and restarts the daemon. Your local customisations are kept.
+Reads the installed version, asks the GitHub API for the latest release of the package's repository (package.json `repository`) and, when it is newer, runs `npm i -g <release package url>`. `--check` only reports. `--package aibroker` does the same for AIBroker or any other package installed with `npm i -g` from a release. Run `pai reload` afterwards. `--source` is the old behaviour for a source checkout: pull, rebuild, restart the daemon.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--check` | flag | — | Only report whether a newer release exists |
+| `--package NAME` | string | — | Package to update (default: pai) |
+| `--source` | flag | — | Update a source checkout (git pull, build, restart the daemon) |
 
 ```sh
+pai update --check
 pai update
-pai update && pai daemon status
+pai update --package aibroker
 ```
 
-See also: `pai daemon status`
+See also: `pai reload`, `pai release`
 
 ## See also
 
-[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai topic`](topic.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
+[`pai audit`](audit.md) · [`pai backup`](backup.md) · [`pai build`](build.md) · [`pai cd`](cd.md) · [`pai clear-names`](clear-names.md) · [`pai cockpit`](cockpit.md) · [`pai config`](config.md) · [`pai daemon`](daemon.md) · [`pai db`](db.md) · [`pai doc`](doc.md) · [`pai end`](end.md) · [`pai find`](find.md) · [`pai git`](git.md) · [`pai handoff`](handoff.md) · [`pai harness`](harness.md) · [`pai help`](help.md) · [`pai home`](home.md) · [`pai hooks-db`](hooks-db.md) · [`pai identity`](identity.md) · [`pai install`](install.md) · [`pai issue`](issue.md) · [`pai kg`](kg.md) · [`pai launch`](launch.md) · [`pai lessons`](lessons.md) · [`pai list`](list.md) · [`pai ls`](ls.md) · [`pai mcp`](mcp.md) · [`pai memory`](memory.md) · [`pai models`](models.md) · [`pai more`](more.md) · [`pai new`](new.md) · [`pai notes`](notes.md) · [`pai notify`](notify.md) · [`pai observation`](observation.md) · [`pai obsidian`](obsidian.md) · [`pai open`](open.md) · [`pai pane`](pane.md) · [`pai pause`](pause.md) · [`pai plan`](plan.md) · [`pai project`](project.md) · [`pai projects`](projects.md) · [`pai providers`](providers.md) · [`pai queue`](queue.md) · [`pai registry`](registry.md) · [`pai release`](release.md) · [`pai reload`](reload.md) · [`pai rename`](rename.md) · [`pai restore`](restore.md) · [`pai resume`](resume.md) · [`pai router`](router.md) · [`pai rules`](rules.md) · [`pai session`](session.md) · [`pai sessions`](sessions.md) · [`pai setup`](setup.md) · [`pai setups`](setups.md) · [`pai shell-init`](shell-init.md) · [`pai skill`](skill.md) · [`pai task`](task.md) · [`pai tasks`](tasks.md) · [`pai topic`](topic.md) · [`pai worker`](worker.md) · [`pai zettel`](zettel.md)
 
 Run `pai help <command>` to read any of these in the terminal.
 

@@ -78,9 +78,16 @@ Or install it as a plugin, then say **"set up PAI"**:
 Setup also installs [AIBroker](https://github.com/mnott/AIBroker), a separate project that is PAI's messaging layer: messages between sessions, worker reports to the session that started them, terminal tab names, and WhatsApp, Telegram and PAILot all go through it. PAI starts without it, but none of that works until it is there. To install it by hand:
 
 ```bash
-npm install -g aibroker@^0.62.4
+npm i -g https://github.com/<owner>/<aibroker-repo>/releases/latest/download/aibroker.tgz
 aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor     # every check green, or it says exactly what to fix
+```
+
+Install the package from the latest GitHub Release (no npm registry) and update it with `pai update`:
+
+```bash
+npm i -g https://github.com/<owner>/<repo>/releases/latest/download/pai.tgz
+pai update          # later: install the newest release; --check only reports
 ```
 
 Without the plugin, from a clone, or for a one-session plugin load: [docs/install/index.md](docs/install/index.md). Memory works as soon as setup is done; workers are optional ([First workers](docs/install/first-workers.md)).

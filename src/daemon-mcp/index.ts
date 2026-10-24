@@ -31,7 +31,7 @@ import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
-import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill, workerMerge } from "./tools/ops.js";
+import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, release, routerService, workerGc, workerKill, updateCheck, workerMerge } from "./tools/ops.js";
 import { dropItermBundleId } from "../utils/env.js";
 
 dropItermBundleId();
@@ -1887,6 +1887,24 @@ async function startShim(): Promise<void> {
     "The worker pool (`pai worker pool status`): config, host, slots, carry and why recent runs were not pooled.",
     {},
     async () => poolStatus()
+  );
+
+  server.tool(
+    "release",
+    "Cut a release of a repo (`pai release`): refuses a dirty tree or a branch other than main; bumps, builds, runs unit tests, commits `chore: release <v>`, tags, pushes to the forge, syncs the push mirror, waits for the tag on GitHub, then creates a GitHub Release with the packed package attached. Pass dry_run=true to get the plan only. A real run pushes and publishes: only call it when the user asked for a release.",
+    {
+      repo: z.string().optional().describe("Repository path (default: the daemon's working directory)."),
+      bump: z.string().optional().describe("patch (default), minor, major or an explicit x.y.z."),
+      dry_run: z.boolean().optional().describe("Print the plan, change nothing."),
+    },
+    async (args) => release(args)
+  );
+
+  server.tool(
+    "update_check",
+    "Whether a newer GitHub Release exists for an installed package (`pai update --check`). Installs nothing.",
+    { package: z.string().optional().describe("Package name (default: pai), e.g. aibroker.") },
+    async (args) => updateCheck(args)
   );
 
   server.tool(
