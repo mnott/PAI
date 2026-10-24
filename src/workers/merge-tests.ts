@@ -9,6 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { saveFlakyLog } from "./flaky-log.js";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
 
@@ -18,6 +19,8 @@ export interface RelatedSettings {
   verifyTimeoutSec: number;
   /** Repo-guard test paths/globs (config `workers.merge.alwaysTests`), appended to every run. */
   alwaysTests?: string[];
+  /** Where batch output of load-only flakes is kept; unset = not kept. */
+  flakyDir?: string;
 }
 
 export interface RelatedResult {
@@ -25,6 +28,8 @@ export interface RelatedResult {
   /** The one line printed and recorded in the ledger. */
   line: string;
   failing: string[];
+  /** Paths of the saved batch output of each flaky file. */
+  flakyLogs?: string[];
 }
 
 const SOURCE = /\.(ts|tsx|mjs)$/;
@@ -280,7 +285,11 @@ export function runRelatedTests(
     const again = runner(cwd, env, [buildRelatedCommand(serial, failing)], timeoutSec, pipeGraceMs);
     if (again.code === 0 && !again.signal && !again.error && !again.timedOut) {
       const summary = passSummary(again.output) ?? `${failing.length} files, passed`;
-      return { status: "flaky", line: `${skipped}${summary}; flaky under load (passed alone): ${failing.join(", ")}${note}`, failing: [] };
+      const at = new Date();
+      const flakyLogs = settings.flakyDir
+        ? failing.map((f) => saveFlakyLog(settings.flakyDir!, f, output, { files: run.length, at })).filter((p): p is string => !!p)
+        : [];
+      return { status: "flaky", line: `${skipped}${summary}; flaky under load (passed alone): ${failing.join(", ")}${note}`, failing: [], flakyLogs };
     }
     const still = failingFiles(again.output).filter((f) => failing.includes(f));
     if (still.length) failing = still;
