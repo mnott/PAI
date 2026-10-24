@@ -7,6 +7,7 @@ import { decideEndReason } from "./endreason.js";
 import { launchPidFresh, closeFinishedPanes, auditLaunches, auditPanes, auditTick, listItermTabs, markOf, readAudit, renderPaneAudit, type TabMap } from "./pane-audit.js";
 import type { LaunchRecord } from "./pane-exec.js";
 import { loadRegistry, saveEntry, type PaneEntry } from "./pane.js";
+import { markPaneClosedBy } from "./pane-bar.js";
 import type { Messenger } from "./run-events.js";
 
 const H = "D38D3E5D-19E8-4FE5-A78A-26E8E571FE27";
@@ -208,6 +209,17 @@ describe("auditTick", () => {
       await tick(60);
       expect(ledger()).toMatch(/PANE-REOPENED/);
       expect(stopped).toEqual([]);
+    });
+    it("a pane the operator closed itself (/quit): the audit leaves it closed, never reopens or kills", async () => {
+      const reopened: string[] = [];
+      const stopped: string[] = [];
+      const tick = mk({ reopen: async (id: string) => void reopened.push(id), stop: async (id: string) => void stopped.push(id) });
+      markPaneClosedBy(dir, "w-1");
+      expect((await tick(0)).find((x) => x.id === "w-1")).toMatchObject({ mark: "ok", why: "pane closed by the operator" });
+      expect((await tick(30)).find((x) => x.id === "w-1")?.mark).toBe("ok");
+      expect(reopened).toEqual([]);
+      expect(stopped).toEqual([]);
+      expect(existsSync(join(dir, "ledger.log"))).toBe(false); // nothing alarmed at all
     });
   });
   it("a worker running without its pane is stopped through the normal end path, ledgered PANE-STOPPED, once", async () => {
