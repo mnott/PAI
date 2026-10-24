@@ -20,6 +20,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 
+import { contentToText } from "./content-text.js";
 import { detectTopicShift } from "../topics/detector.js";
 import { registryBackend, storageBackend } from "./daemon/state.js";
 import {
@@ -87,24 +88,6 @@ function extractRecentContext(jsonlPath: string): string {
   } catch {
     return "";
   }
-}
-
-/** Convert Claude content (string or content block array) to plain text. */
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c) => {
-        if (typeof c === "string") return c;
-        const block = c as Record<string, unknown>;
-        if (block?.text) return String(block.text);
-        if (block?.content) return String(block.content);
-        return "";
-      })
-      .join(" ")
-      .trim();
-  }
-  return "";
 }
 
 // ---------------------------------------------------------------------------
