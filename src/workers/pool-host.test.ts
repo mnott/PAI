@@ -25,6 +25,7 @@ import { parseLedger } from "./ledger.js";
 import { routerPort } from "../router/router.js";
 import { git } from "./worktree.js";
 import { readToolErrors } from "./tool-errors.js";
+import { checkLoops, CUT_NOTE, LOOP_NOTE } from "./loop-watch.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -334,32 +335,43 @@ describe("pooled task lifecycle", () => {
     { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `e${n}`, is_error: true, content: text }] } },
   ];
 
-  it("a pooled job records its tool errors under the job id and corrects the 3rd identical failure once", async () => {
+  const loopNotes = async (h: ReturnType<typeof makeHost>, id: string): Promise<string[]> => {
+    const said: string[] = [];
+    await checkLoops(
+      h.host.logDir,
+      [{ id, state: "running", provider: "local", pid: 1 } as any],
+      {},
+      { say: async (_d, _i, t) => said.push(t), kill: () => undefined, killChildren: async () => undefined }
+    );
+    return said;
+  };
+
+  it("a pooled job records its tool errors under the job id; 3 identical failures get exactly one correction in total", async () => {
     const h = makeHost();
     liveHosts.push(h.host);
     const err = "Error: something broke identically";
-    h.script([[...failEdit(1, err), ...failEdit(2, err), ...failEdit(3, err), ...failEdit(4, err), resultEvt(R_PLAIN_1)]]);
+    h.script([[...failEdit(1, err), ...failEdit(2, err), ...failEdit(3, err), resultEvt(R_PLAIN_1)]]);
     await h.host.runTask(task({ id: "wt1", prompt: "fail thrice" }));
     const recs = readToolErrors(h.host.logDir).filter((r) => r.worker === "wt1");
-    expect(recs.length).toBe(4);
+    expect(recs.length).toBe(3);
     expect(recs.every((r) => r.tool === "Edit")).toBe(true);
-    const corrections = h.slots[0]!.fedTexts.filter((t) => t.startsWith("[harness]"));
-    expect(corrections.length).toBe(1);
-    expect(corrections[0]).toContain("3 times in a row");
+    const injected = h.slots[0]!.fedTexts.filter((t) => t.startsWith("[harness]") && t.includes("times in a row"));
+    const said = await loopNotes(h, "wt1");
+    expect(injected.length + said.length).toBe(1);
+    expect(said).toEqual([LOOP_NOTE]);
   });
 
-  it("a pooled job whose Edit JSON was cut off gets the split-it correction", async () => {
+  it("a pooled job whose Edit JSON was cut off gets the split-it correction once", async () => {
     const h = makeHost();
     liveHosts.push(h.host);
     const cut = "InputValidationError: Edit was called with input that could not be parsed as JSON (first 200 of 16640 bytes)";
     h.script([[...failEdit(1, cut), ...failEdit(2, cut), ...failEdit(3, cut), resultEvt(R_PLAIN_1)]]);
     await h.host.runTask(task({ id: "wt2", prompt: "cut off" }));
-    expect(readToolErrors(h.host.logDir).filter((r) => r.worker === "wt2").length).toBe(3);
-    const corrections = h.slots[0]!.fedTexts.filter((t) => t.startsWith("[harness]"));
-    expect(corrections.length).toBe(1);
-    expect(corrections[0]).toContain("output limit");
-    expect(corrections[0]).toContain("Split");
-    expect(corrections[0]).not.toContain("old_string is wrong");
+    const said = await loopNotes(h, "wt2");
+    expect(said).toEqual([CUT_NOTE]);
+    expect(said[0]).toContain("output limit");
+    expect(said[0]).not.toContain("old_string is wrong");
+    expect(h.slots[0]!.fedTexts.filter((t) => t.includes("output limit")).length).toBe(0);
   });
 
   it("a bash run within the task's turn satisfies the proof claim", async () => {

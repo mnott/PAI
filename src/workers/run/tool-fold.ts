@@ -1,29 +1,14 @@
 /**
  * The part of a worker's stream fold that every run shares, fresh or pooled:
- * tool-error records, the identical-failure correction, the Edit hint, the
+ * tool-error records, the Edit hint, the
  * Bash accounting the proof check reads, and the proof check itself. One copy.
  */
 import { appendLedger } from "../ledger.js";
 import { editHintFor } from "../edit-assist.js";
-import { normalizeError, recordToolError } from "../tool-errors.js";
+import { recordToolError } from "../tool-errors.js";
 import { checkProof, newUntracked, parseWorkerReport, type BashRun, type WorkerReport } from "../report.js";
 import { shortText } from "../args.js";
 import { bashCommand, toolResultFailed, toolResultText } from "./stream.js";
-
-/** Identical consecutive failures that earn the worker a correction. */
-export const REPEAT_FAIL_AT = 3;
-
-/** The call's JSON never arrived whole: the model hit its output limit mid-call. */
-export const JSON_CUT_RE = /could not be parsed as JSON/i;
-
-export const JSON_CUT_CORRECTION =
-  `[harness] this tool call failed ${REPEAT_FAIL_AT} times in a row because its input was cut off at your output limit (the JSON never completed). ` +
-  "The old_string is not the problem. Split the change into small Edits or Writes (each under ~2 KB) and do not resend the large call.";
-
-export function repeatFailureCorrection(tool: string, text: string): string {
-  if (JSON_CUT_RE.test(text)) return JSON_CUT_CORRECTION;
-  return `[harness] ${tool} failed ${REPEAT_FAIL_AT} times in a row with the same error. Stop repeating it: read the error, change the approach, or report the blocker.`;
-}
 
 export interface ToolFoldOpts {
   logDir: string;
@@ -47,8 +32,6 @@ export interface ToolFold {
 export function createToolFold(o: ToolFoldOpts): ToolFold {
   const uses = new Map<string, { name: string; input: unknown }>();
   const bashRuns: BashRun[] = [];
-  let streakSig = "";
-  let streak = 0;
   return {
     uses,
     bashRuns,
@@ -69,17 +52,10 @@ export function createToolFold(o: ToolFoldOpts): ToolFold {
           input: use?.input,
           granted: o.granted,
         });
-        const sig = normalizeError(tool, text);
-        streak = sig === streakSig ? streak + 1 : 1;
-        streakSig = sig;
-        if (streak === REPEAT_FAIL_AT) o.inject(repeatFailureCorrection(tool, text));
         if (use?.name === "Edit") {
           const hint = editHintFor(use.input, text, o.cwd);
           if (hint) o.inject(`[harness] ${hint}`);
         }
-      } else {
-        streak = 0;
-        streakSig = "";
       }
       if (use?.name === "Bash") bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block), output: text.slice(-400) });
     },
