@@ -118,7 +118,7 @@ describe("merge related tests", () => {
     cmd = readFileSync(join(d, "captured.txt"), "utf8").trim();
     expect(r.status).toBe("passed");
     expect(cmd.split(" ")).toEqual(["src/work/a.ts", "src/cli/docs.test.ts", "src/utils/guard.test.ts"]);
-    expect(r.line).toContain("1 source files + 2 always-tests, passed");
+    expect(r.line).toContain("3 files, passed");
   });
 
   it("an empty alwaysTests list changes nothing", () => {
@@ -132,7 +132,31 @@ describe("merge related tests", () => {
     const d = repo(["src/utils/guard.test.ts"]);
     const r = runRelatedTests(d, "x", { verify: "true {files}", verifyTimeoutSec: 30, alwaysTests: ["src/nope.test.ts", "src/utils/guard.test.ts", "src/utils/guard.test.ts"] }, git(["src/work/a.ts"]));
     expect(r.line).toContain("always-tests skipped: src/nope.test.ts");
-    expect(r.line).toContain("1 source files + 1 always-tests, passed");
+    expect(r.line).toContain("2 files, passed");
+  });
+
+  it("a test-only diff runs exactly that test file", () => {
+    const d = repo(["src/work/kill-tree.test.ts", "src/utils/guard.test.ts"]);
+    const r = runRelatedTests(d, "x", cfg(`sh -c 'printf "%s\\n" "$*" > captured.txt' x {files}`), git(["src/work/kill-tree.test.ts"]));
+    expect(r.status).toBe("passed");
+    expect(readFileSync(join(d, "captured.txt"), "utf8").trim()).toBe("src/work/kill-tree.test.ts");
+    expect(r.line).toBe("related tests: skipped (no source change); always-tests: 1 files, passed");
+  });
+
+  it("a docs-only diff with no always-tests stays skipped", () => {
+    const d = repo(["src/utils/guard.test.ts"]);
+    const r = runRelatedTests(d, "x", cfg("true {files}"), git(["docs/concepts/workers.md"]));
+    expect(r.status).toBe("skipped");
+    expect(r.line).toContain("no source files changed");
+    expect(existsSync(join(d, "captured.txt"))).toBe(false);
+  });
+
+  it("a source + test diff runs the union once, no duplicates", () => {
+    const d = repo(["src/work/kill-tree.test.ts", "src/utils/guard.test.ts"]);
+    const r = runRelatedTests(d, "x", { verify: `sh -c 'printf "%s\\n" "$*" > captured.txt' x {files}`, verifyTimeoutSec: 30, alwaysTests: ["src/work/kill-tree.test.ts", "src/utils/guard.test.ts"] }, git(["src/work/a.ts", "src/work/kill-tree.test.ts"]));
+    expect(r.status).toBe("passed");
+    expect(readFileSync(join(d, "captured.txt"), "utf8").trim().split(" ")).toEqual(["src/work/a.ts", "src/work/kill-tree.test.ts", "src/utils/guard.test.ts"]);
+    expect(r.line).not.toContain("skipped");
   });
 
   it("a docs-only change runs the always-tests and skips related", () => {
