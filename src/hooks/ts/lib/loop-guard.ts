@@ -44,7 +44,10 @@ export const DEFAULT_ECHO = { echoLines: 40, echoChars: 3000, echoRunnerLines: 4
 export type EchoConfig = { echoLines: number; echoChars: number; echoRunnerLines?: number };
 
 const SELF = "If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
-export const LOOP_DENY_REASON = `loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
+const STOP_LEAD = "Stop. Write your R report now (r=~ if something is unverified, list it in x=).";
+/** Non-blocking note after the 2nd identical repeat. */
+export const LOOP_NUDGE = "Same result as before. If your change is complete and its checks passed, stop checking: commit and write your R report now.";
+export const LOOP_DENY_REASON = `${STOP_LEAD} loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
 
 const HANG_SUFFIX = " This command hung before (see the hang probe line in its output for where); running it unchanged will hang again. Fix the code at that location first.";
 
@@ -56,7 +59,7 @@ function hungBefore(state: LoopState, idx: number[]): boolean {
 export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string {
   return tool === "Bash"
     ? LOOP_DENY_REASON
-    : `loop guard: you called ${tool} with similar input ${count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. ${SELF}`;
+    : `${STOP_LEAD} loop guard: you called ${tool} with similar input ${count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. ${SELF}`;
 }
 
 export interface LoopState {
@@ -495,6 +498,8 @@ export interface LoopStep {
   count?: number;
   /** Deny message when it differs from loopDenyReason (the no-progress rule). */
   reason?: string;
+  /** Non-blocking advisory (the call is allowed): the 2nd identical repeat with an unchanged result. */
+  note?: string;
   /** True when this call is a nudge-prefixed repeat of a command the guard already blocked (LOOP-GUARD-EVASION). */
   evasion?: boolean;
 }
@@ -619,9 +624,28 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
       count: LOOP_MAX_REPEATS + denials[head],
     };
   }
+  const nudge = idx.length >= 2 && resultsSimilar(outs[idx[idx.length - 2]], outs[idx[idx.length - 1]]);
   const window = [...state.window, key];
   const nextOuts = [...outs];
   while (nextOuts.length < state.window.length) nextOuts.push(null);
   nextOuts.push(null);
-  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false };
+  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: LOOP_NUDGE } : {}) };
+}
+
+/**
+ * PostToolUseFailure: counts a failed call. A call that fails input validation may never reach PreToolUse,
+ * so when Pre did not record this call (no pending window entry) the call is stepped here first.
+ * `deny` then means the 4th identical failure: hand `reason` back as context and stop the session if `stop`.
+ */
+export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string): LoopStep {
+  const key = callKey(tool, input);
+  if (key === null || EDIT_TOOLS.has(tool)) return { state, deny: false };
+  const last = state.window.length - 1;
+  const seenByPre = last >= 0 && state.window[last] === key && (state.outs?.[last] ?? null) === null;
+  let step: LoopStep = { state, deny: false };
+  if (!seenByPre) {
+    step = stepLoopGuard(state, tool, input, null, now, cwd);
+    if (step.deny) return { ...step, reason: step.reason ?? loopDenyReason(tool, step.count) };
+  }
+  return { ...step, state: recordLoopResult(step.state, tool, input, `error: ${resultSig(error)}`, now) };
 }

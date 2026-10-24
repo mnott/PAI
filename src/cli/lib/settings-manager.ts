@@ -26,6 +26,7 @@ const SETTINGS_FILE = join(CLAUDE_DIR, "settings.json");
 
 export type HookType =
   | "PreCompact"
+  | "PostToolUseFailure"
   | "Stop"
   | "SessionStart"
   | "SessionEnd"

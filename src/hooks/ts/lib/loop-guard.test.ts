@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
-import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 import { fakeUrl, fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
 
@@ -706,5 +706,47 @@ describe("worktreeFingerprint on large untracked files", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("loop guard: every tool, errors, and the report nudge", () => {
+  const ERR = "InputValidationError: Grep failed: `-n` type is expected as `boolean` but provided as `string`";
+  const bad = (pattern = "x") => ({ pattern, "-n": "true" });
+  it("Grep failures that never reach PreToolUse are counted and denied at the 4th repeat", () => {
+    let s: LoopState = emptyLoopState();
+    const steps = [];
+    for (let i = 0; i < 5; i++) {
+      const r = recordLoopFailure(s, "Grep", bad(), ERR);
+      s = r.state;
+      steps.push(r);
+    }
+    expect(steps.map((r) => r.deny)).toEqual([false, false, false, false, true]);
+    expect(steps[4].reason).toMatch(/^Stop\. Write your R report now/);
+  });
+  it("a different input resets the count", () => {
+    let s: LoopState = emptyLoopState();
+    for (let i = 0; i < 3; i++) s = recordLoopFailure(s, "Grep", bad("a"), ERR).state;
+    for (let i = 0; i < 3; i++) s = recordLoopFailure(s, "Grep", bad("zzzz other"), ERR).state;
+    expect(recordLoopFailure(s, "Grep", bad("a"), ERR).deny).toBe(false);
+  });
+  it("a failure Pre already saw is not counted twice", () => {
+    let s: LoopState = emptyLoopState();
+    s = stepLoopGuard(s, "Grep", bad()).state;
+    s = recordLoopFailure(s, "Grep", bad(), ERR).state;
+    expect(s.window.length).toBe(1);
+    expect(s.outs?.[0]).toContain("InputValidationError");
+  });
+  it("the 2nd repeat is an advisory note, the 5th call a block led by the report order", () => {
+    let s: LoopState = emptyLoopState();
+    const rs = [];
+    for (let i = 0; i < 5; i++) {
+      const r = stepLoopGuard(s, "Bash", { command: "git status --short" }.command);
+      s = recordLoopResult(r.state, "Bash", "git status --short", "same");
+      rs.push(r);
+    }
+    expect(rs.map((r) => r.note)).toEqual([undefined, undefined, LOOP_NUDGE, LOOP_NUDGE, undefined]);
+    expect(rs[2].deny).toBe(false);
+    expect(rs[4].deny).toBe(true);
+    expect(loopDenyReason()).toMatch(/^Stop\. Write your R report now \(r=~ if something is unverified, list it in x=\)\./);
   });
 });

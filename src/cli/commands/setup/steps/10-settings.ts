@@ -42,6 +42,8 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/update-tab-on-action.mjs" },
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/pai-session-autosave.sh" },
     { hookType: "PostToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
+    // Failures that never reach PreToolUse (input validation) are counted by the loop guard here.
+    { hookType: "PostToolUseFailure", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-note.mjs" },
     { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/stop-hook.mjs" },
     { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/capture-all-events.mjs --event-type Stop" },
     { hookType: "Stop", command: "${ADAPTER_DIR}/Hooks/pai-session-stop.sh" },
