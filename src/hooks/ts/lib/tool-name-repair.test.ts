@@ -224,12 +224,12 @@ describe("pre-tool-use/worker-tool-name-repair entrypoint", () => {
 
   it("maps Read path to file_path end-to-end and logs a [model] line", () => {
     const stdout = runHook(
-      { tool_name: "Read", cwd: "/tmp/w", tool_input: { path: "/x" } },
+      { tool_name: "Read", cwd: "/tmp/w", tool_input: { path: "/etc/hosts" } },
       { PAI_WORKER: "1", PAI_WORKER_ID: "w1" },
     );
     const out = JSON.parse(stdout).hookSpecificOutput;
     expect(out.permissionDecision).toBe("allow");
-    expect(out.updatedInput).toEqual({ file_path: "/x" });
+    expect(out.updatedInput).toEqual({ file_path: "/etc/hosts" });
 
     const log = join(home, ".pai", "logs", "workers", "tool-repair.log");
     expect(existsSync(log)).toBe(true);
@@ -250,7 +250,7 @@ describe("pre-tool-use/worker-tool-name-repair entrypoint", () => {
 
   it("stays silent for correct parameters", () => {
     const stdout = runHook(
-      { tool_name: "Read", tool_input: { file_path: "/x" } },
+      { tool_name: "Read", tool_input: { file_path: "/etc/hosts" } },
       { PAI_WORKER: "1" },
     );
     expect(stdout).toBe("");
