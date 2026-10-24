@@ -888,13 +888,13 @@ const killCommand: CommandDef = {
   options: [
     { name: "only", type: "boolean", summary: "Kill only this worker, leave its children running" },
     { name: "force", type: "boolean", summary: "Kill another session's worker (operator's terminal only, not from a worker); logged as forced" },
-    { name: "reason", type: "string", value: "TEXT", summary: "Why it is stopped; recorded in the worker's event log and end status, required with --force on another session's worker" },
+    { name: "reason", type: "string", value: "TEXT", summary: "Why it is stopped; recorded in the worker's event log and end status. Required when stdin is not a terminal (agents, scripts) and with --force on another session's worker" },
   ],
   examples: ["pai worker kill w-20260101-abc", 'pai worker kill w-20260101-abc --force --reason "stuck loop"', "pai worker ps   (find the id first)"],
   seeAlso: ["pai worker ps"],
   run: (ctx) =>
     guard("pai worker ps", async () => {
-      for (const line of await killWorker(logDir(), ctx.args.ID as string, { only: ctx.opts.only === true, caller: { env: process.env, force: ctx.opts.force === true }, reason: typeof ctx.opts.reason === "string" ? ctx.opts.reason : undefined })) out(line);
+      for (const line of await killWorker(logDir(), ctx.args.ID as string, { only: ctx.opts.only === true, interactive: process.stdin.isTTY === true, caller: { env: process.env, force: ctx.opts.force === true }, reason: typeof ctx.opts.reason === "string" ? ctx.opts.reason : undefined })) out(line);
     }),
 };
 

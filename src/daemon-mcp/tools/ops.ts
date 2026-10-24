@@ -145,7 +145,7 @@ export interface WorkerKillArgs {
   id: string;
   only?: boolean;
   force?: boolean;
-  reason?: string;
+  reason: string;
 }
 
 /** pai worker kill (pooled workers stop through the pool host). */

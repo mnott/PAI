@@ -596,7 +596,7 @@ Stops the worker and every live descendant (the tree `pai worker ps` draws), lea
 |---|---|---|---|
 | `--only` | flag | — | Kill only this worker, leave its children running |
 | `--force` | flag | — | Kill another session's worker (operator's terminal only, not from a worker); logged as forced |
-| `--reason TEXT` | string | — | Why it is stopped; recorded in the worker's event log and end status, required with --force on another session's worker |
+| `--reason TEXT` | string | — | Why it is stopped; recorded in the worker's event log and end status. Required when stdin is not a terminal (agents, scripts) and with --force on another session's worker |
 
 ```sh
 pai worker kill w-20260101-abc
