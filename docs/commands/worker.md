@@ -469,6 +469,7 @@ Merges branch worker/ID into the original checkout, then removes the worktree an
 | `--verify CMD` | string | — | Run CMD after the merge; revert the merge when it fails (default: workers.yaml merge.verify) |
 | `--no-verify` | flag | — | Skip the configured merge.verify default (prints a warning) |
 | `--no-verify-tests` | flag | — | Skip the related-tests check (config workers.merge.verify) for this merge |
+| `--no-build` | flag | — | Do not rebuild dist/ after merging into the running PAI checkout (config workers.merge.rebuild) |
 
 ```sh
 pai worker merge w-20260101-abc

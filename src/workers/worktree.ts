@@ -1209,7 +1209,7 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
 export function mergeWorker(
   logDir: string,
   id: string,
-  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean } = {}
+  opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null } = {}
 ): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
@@ -1338,9 +1338,69 @@ export function mergeWorker(
   if (autoNote) notes.unshift(`auto-resolved conflicts: ${autoNote}`);
   const merged = notes.length ? `${base}; ${notes.join("; ")}` : base;
   const text = withGate(verifyLine, merged);
-  if (!related) return text;
+  if (!related) return withBuild(text, rebuildDist(logDir, id, st.cwd, opts));
   if (related.status === "failed") throw new RelatedTestsFailedError([text, related.line, ...failureHints(related, mergeCommit)].join("\n"));
-  return `${text}\n${related.line}`;
+  return withBuild(`${text}\n${related.line}`, rebuildDist(logDir, id, st.cwd, opts));
+}
+
+const withBuild = (text: string, build: string | null): string => (build ? `${text}\n${build}` : text);
+
+export interface BuildResult { ok: boolean; ms: number; tail: string }
+/** Runs `npm run build` in a directory; injectable for tests. */
+export type BuildRunner = (cwd: string) => BuildResult;
+
+/** Environment keys a build needs; everything else (tokens, API keys) stays out. */
+const BUILD_ENV_KEYS = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "NODE_ENV", "NODE_OPTIONS", "TERM"];
+
+function defaultBuild(cwd: string): BuildResult {
+  const env: NodeJS.ProcessEnv = {};
+  for (const k of BUILD_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k];
+  const t0 = Date.now();
+  const r = spawnSync("npm", ["run", "build"], { cwd, env, encoding: "utf8", timeout: 300_000, maxBuffer: 32 * 1024 * 1024 });
+  const tail = `${r.stdout ?? ""}\n${r.stderr ?? ""}${r.error ? `\n${r.error.message}` : ""}`.trim().split("\n").filter((l) => l.trim()).slice(-3).join(" | ").slice(-400);
+  return { ok: r.status === 0 && !r.error, ms: Date.now() - t0, tail };
+}
+
+/** Package root of the running CLI (dist/cli/index.mjs two levels up), symlinks resolved; null when unknown. */
+function runningCliRoot(): string | null {
+  try {
+    const entry = process.argv[1];
+    return entry ? dirname(dirname(dirname(realpathSync(entry)))) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A merge into the repo the running `pai` comes from leaves dist/ stale: the installed CLI, daemon and router keep
+ * running old code. Rebuild it. Returns the line to print, or null when no build applies (other repo, opt-out).
+ * A failed build never reverts the merge.
+ */
+function rebuildDist(
+  logDir: string,
+  id: string,
+  target: string,
+  opts: { rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null }
+): string | null {
+  if (opts.rebuild === false || loadConfig().workers?.merge?.rebuild === false) return null;
+  let same = false;
+  try {
+    const root = opts.cliRoot === undefined ? runningCliRoot() : opts.cliRoot;
+    same = !!root && realpathSync(root) === realpathSync(target);
+  } catch {
+    same = false;
+  }
+  if (!same) return null;
+  let res: BuildResult;
+  try {
+    res = (opts.build ?? defaultBuild)(target);
+  } catch (e) {
+    res = { ok: false, ms: 0, tail: (e as Error).message };
+  }
+  appendLedger(ledgerPath(logDir), "WORKER-MERGE-BUILD", { id, ok: String(res.ok), ms: res.ms, tail: res.tail.replace(/\s+/g, " ").slice(-300) });
+  if (res.ok) return "build: ok (dist rebuilt; router/daemon pick it up)";
+  const last = res.tail.split(/\s*\|\s*|\n/).filter(Boolean).pop() ?? "no output";
+  return `build: FAILED — dist unchanged: ${last}`;
 }
 
 /** The merge stands but its related tests failed; the CLI exits 3 with the message (merge summary, result, hints). */
