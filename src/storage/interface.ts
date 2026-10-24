@@ -400,6 +400,9 @@ export interface StorageBackend {
    */
   updateEmbedding(chunkId: string, embedding: Buffer): Promise<void>;
 
+  /** Store the embeddings of many chunks in one statement (one transaction on SQLite). */
+  updateEmbeddings(items: Array<{ id: string; embedding: Buffer }>): Promise<void>;
+
   /**
    * The embedding backend that produced this index's vectors, or null for an
    * index with no vectors yet. An index that holds vectors but no recorded

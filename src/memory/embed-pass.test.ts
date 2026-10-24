@@ -81,7 +81,7 @@ describe("embed pass budget", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const storage = makeStorage(100);
     configured.backend = fakeEmbedder(20);
-    const r = await runEmbed(storage, undefined, undefined, 10, 50, 80);
+    const r = await runEmbed(storage, undefined, undefined, 10, 50, 30);
     expect(r.budgetHit).toBe(true);
     expect(r.done).toBeLessThan(100);
     const rest = await runEmbed(storage, undefined, undefined, 10, 50, undefined);

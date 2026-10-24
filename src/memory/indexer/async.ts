@@ -16,6 +16,7 @@ import type { RegistryBackend } from "../../storage/registry-interface.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
 // throws "Cannot find module" (prune-dist.mjs deletes superseded chunks).
 import { serializeEmbedding } from "../embeddings.js";
+import { configuredEmbedConcurrency, runEmbedPipeline } from "../embed-pipeline.js";
 import { gateBackend } from "../embedding-gate.js";
 import { chunkMarkdown, fileContentHash } from "../chunker.js";
 import {
@@ -282,83 +283,58 @@ export async function embedChunksWithBackend(
   let currentProjectId = -1;
   let projectEmbedded = 0;
 
-  for (let i = 0; i < rows.length; i += batchSize) {
-    // Check cancellation between every batch before touching the pool again
-    if (shouldStop?.()) {
-      process.stderr.write(
-        `[pai-daemon] Embed pass cancelled after ${embedded}/${total} chunks (shutdown requested)\n`
-      );
-      break;
-    }
-
-    // Yield the daemon back to the indexer rather than run past the deadline.
-    // The remaining rows are simply picked up by the next scheduled pass.
-    if (Date.now() >= deadline) {
-      process.stderr.write(
-        `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${maxMillis}ms budget spent); resuming next pass\n`
-      );
-      outcome = "budget";
-      break;
-    }
-
-    const why = options?.shouldYield?.() ?? null;
-    if (why) {
-      process.stderr.write(
-        `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${why}); resuming next pass\n`
-      );
-      outcome = "yielded";
-      yieldReason = why;
-      break;
-    }
-
-    const batch = rows.slice(i, i + batchSize);
-
-    // Keep IPC responsive: the forward pass below is synchronous inside the
-    // model, so yield before entering it rather than between chunks.
-    await yieldToEventLoop();
-
-    const vecs = await gate.backend.embed(batch.map((r) => r.text));
-    // Issue the writes together rather than one round-trip at a time. Measured
-    // on this machine the model embeds 40-67 chunks/s in isolation while the
-    // daemon managed ~5/s: the difference was one sequential UPDATE per chunk,
-    // so the pass spent most of its budget waiting on the network, not working.
-    // Concurrency is bounded by the batch size, which the pool handles; the
-    // SQLite backend is synchronous and simply ignores the difference.
-    await Promise.all(
-      batch.map((row, j) =>
-        retryTransient(() => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
-      )
-    );
-
-    // Attribute the batch to projects only after it is durably stored, and walk
-    // it in order so a batch straddling a project boundary credits each side
-    // correctly. Rows arrive ordered by project, so a boundary is a real
-    // transition, not the per-chunk flapping this logging used to produce.
-    for (const { project_id, path } of batch) {
-      if (project_id !== currentProjectId) {
-        if (currentProjectId !== -1) {
+  // The rows are already fetched (bounded by maxChunks): one page, then end.
+  let served = false;
+  const r = await runEmbedPipeline({
+    fetchPage: async () => (served ? [] : ((served = true), rows)),
+    embed: (texts) => gate.backend.embed(texts),
+    // One bulk statement per batch; a per-row UPDATE was most of the pass's time.
+    write: (batch, vecs) =>
+      retryTransient(() => backend.updateEmbeddings(batch.map((row, j) => ({ id: row.id, embedding: serializeEmbedding(vecs[j]) })))),
+    batchSize,
+    concurrency: configuredEmbedConcurrency(),
+    shouldStop,
+    deadline,
+    shouldYield: options?.shouldYield,
+    onBatch: (batch, n) => {
+      // Attribute the batch to projects only after it is durably stored. Rows
+      // arrive ordered by project, so a boundary is a real transition.
+      for (const { project_id, path } of batch) {
+        if (project_id !== currentProjectId) {
+          if (currentProjectId !== -1) {
+            process.stderr.write(`[pai-daemon] Finished ${pName(currentProjectId)}: ${projectEmbedded} chunks embedded\n`);
+          }
+          const info = projectChunkCounts.get(project_id);
           process.stderr.write(
-            `[pai-daemon] Finished ${pName(currentProjectId)}: ${projectEmbedded} chunks embedded\n`
+            `[pai-daemon] Embedding ${pName(project_id)} (${info?.count ?? "?"} chunks, starting at ${path})\n`
           );
+          currentProjectId = project_id;
+          projectEmbedded = 0;
         }
-        const info = projectChunkCounts.get(project_id);
-        process.stderr.write(
-          `[pai-daemon] Embedding ${pName(project_id)} (${info?.count ?? "?"} chunks, starting at ${path})\n`
-        );
-        currentProjectId = project_id;
-        projectEmbedded = 0;
+        projectEmbedded++;
       }
-      projectEmbedded++;
-    }
-
-    embedded += batch.length;
-    options?.onProgress?.(embedded);
-
-    // Log progress with current file path for context
-    const lastChunk = batch[batch.length - 1];
+      embedded = n;
+      options?.onProgress?.(n);
+      const lastChunk = batch[batch.length - 1];
+      process.stderr.write(
+        `[pai-daemon] Embedded ${n}/${total} chunks (${pName(lastChunk.project_id)}: ${lastChunk.path})\n`
+      );
+    },
+  });
+  embedded = r.done;
+  if (r.end === "stopped") {
+    process.stderr.write(`[pai-daemon] Embed pass cancelled after ${embedded}/${total} chunks (shutdown requested)\n`);
+  } else if (r.end === "budget") {
     process.stderr.write(
-      `[pai-daemon] Embedded ${embedded}/${total} chunks (${pName(lastChunk.project_id)}: ${lastChunk.path})\n`
+      `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${maxMillis}ms budget spent); resuming next pass\n`
     );
+    outcome = "budget";
+  } else if (r.end === "yielded") {
+    process.stderr.write(
+      `[pai-daemon] Embed pass yielding after ${embedded}/${total} chunks (${r.reason}); resuming next pass\n`
+    );
+    outcome = "yielded";
+    yieldReason = r.reason;
   }
 
   // Log final project completion

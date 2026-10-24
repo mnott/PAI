@@ -266,6 +266,13 @@ export class SQLiteBackend implements StorageBackend {
       .run(embedding, chunkId);
   }
 
+  async updateEmbeddings(items: Array<{ id: string; embedding: Buffer }>): Promise<void> {
+    const stmt = this.db.prepare("UPDATE memory_chunks SET embedding = ? WHERE id = ?");
+    this.db.transaction(() => {
+      for (const i of items) stmt.run(i.embedding, i.id);
+    })();
+  }
+
   async getEmbeddingBinding(): Promise<EmbeddingBinding | null> {
     const row = this.db
       .prepare("SELECT backend, model, dims FROM embedding_binding WHERE id = 1")

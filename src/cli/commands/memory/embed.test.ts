@@ -23,10 +23,11 @@ function makeFakeBackend(rowCount: number) {
 
   let maxRowsInFlight = 0;
 
-  const backend: Pick<StorageBackend, "getUnembeddedChunkIds" | "updateEmbedding" | "getStats" | "getProjectStats" | "countUnembeddedChunks"> = {
+  const backend: Pick<StorageBackend, "getUnembeddedChunkIds" | "updateEmbedding" | "updateEmbeddings" | "getStats" | "getProjectStats" | "countUnembeddedChunks"> = {
     async getUnembeddedChunkIds(_projectId, limit, after) {
       const pending = rows.filter((r) => !r.embedded);
       const start = after ? pending.findIndex((r) => r.id > after.id) : 0;
+      if (after && start < 0) return [];
       const page = pending.slice(Math.max(start, 0), Math.max(start, 0) + (limit ?? pending.length));
       maxRowsInFlight = Math.max(maxRowsInFlight, page.length);
       return page.map(({ id, text, project_id, path }) => ({ id, text, project_id, path }));
@@ -34,6 +35,12 @@ function makeFakeBackend(rowCount: number) {
     async updateEmbedding(chunkId) {
       const row = rows.find((r) => r.id === chunkId);
       if (row) row.embedded = true;
+    },
+    async updateEmbeddings(items) {
+      for (const i of items) {
+        const row = rows.find((r) => r.id === i.id);
+        if (row) row.embedded = true;
+      }
     },
     async countUnembeddedChunks() {
       return rows.filter((r) => !r.embedded).length;
