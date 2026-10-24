@@ -30,6 +30,10 @@ import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
 import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
+import { PAUSE_DENY, workerPaused } from "../../../workers/pane-bar.js";
+import { readWorkersSection } from "../../../workers/config.js";
+import { workersLogDir } from "../../../workers/paths.js";
+import { currentWorkerId } from "../../../workers/worker-id.js";
 
 export interface WorkerGuardInput {
   tool_name?: string;
@@ -527,6 +531,19 @@ export function decideWorkerGuard(
   if (env.PAI_WORKER !== "1") return ALLOW;
   const tool = input.tool_name;
   const ti = input.tool_input ?? {};
+
+  // the operator paused this worker from its pane (/pause): it answers and waits for /continue, so its
+  // hands stay off the task — Edit/Write/Bash are denied until the pause clears
+  if (tool === "Edit" || tool === "Write" || tool === "Bash") {
+    let logDir: string;
+    try {
+      logDir = env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
+    } catch {
+      logDir = ""; // unresolvable logDir: no pause to read, work goes on
+    }
+    const wid = logDir && currentWorkerId(env, logDir);
+    if (wid && workerPaused(logDir, wid)) return deny(PAUSE_DENY);
+  }
 
   if (env.PAI_WORKER_NO_BROWSER === "1" && tool?.startsWith("mcp__") && isBrowserTool(tool)) {
     return deny(`${tool} blocked: this worker runs with --no-browser`);

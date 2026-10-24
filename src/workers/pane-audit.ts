@@ -27,6 +27,7 @@ import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import type { Messenger } from "./run-events.js";
 import { panePolicy } from "./pane-policy.js";
+import { readPaneClosedBy } from "./pane-bar.js";
 
 export type PaneMark = "ok" | "NO PANE" | "WRONG TAB" | "HOST UNKNOWN" | "STILL OPEN" | "NOT SELECTED" | "MINIMISED";
 /** Marks that are shown, never alarmed: the pane runs, only its visibility falls short. */
@@ -224,6 +225,10 @@ export async function auditTick(
   if (tabs.size === 0) return []; // no iTerm (tmux, other platform): nothing to compare against
   const procs = (deps.procs ?? (() => runningProcs(logDir)))();
   const verdicts = auditPanes(procs, (deps.registry ?? (() => loadRegistry(logDir)))(), tabs, nowMs, sizes);
+  // a pane the operator closed itself (pane-bar's /quit, the same way a worker's own end closes its pane):
+  // the deliberate close is the expected end state — the audit leaves it closed, never reopens or kills
+  const closedBy = readPaneClosedBy(logDir);
+  for (const v of verdicts) if (v.kind === "worker" && closedBy[v.id]) Object.assign(v, { mark: "ok", tab: undefined, hostTab: undefined, why: "pane closed by the operator" });
   // re-read the status right before judging: a worker that ended since the listing was taken (its pane closes first) is no violation
   const running =
     deps.running ??

@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { paneStatusFrame, startPaneBar } from "./pane-bar.js";
+import { paneStatusFrame, startPaneBar, readPaneClosedBy, workerPaused, PAUSE_NOTE, CONTINUE_NOTE } from "./pane-bar.js";
+import type { WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 import { paneRunStatusRow } from "./render.js";
 import { openOwnedPane, runPaneExec } from "./pane-exec.js";
 import type { WorkerStatus } from "./status.js";
@@ -88,6 +89,133 @@ describe("pane bar", () => {
     expect(wrote.join("")).toContain("» b — not delivered: worker ended (done)");
     bar.stop();
     vi.useRealTimers();
+  });
+
+  describe("pane commands", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "pai-pcmd-"));
+      writeFileSync(join(dir, "w1.status"), JSON.stringify({ id: "w1", state: "running", label: "cockpit: fix it" }), "utf8");
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+    const mk = (over: Record<string, unknown> = {}) => {
+      const input = Object.assign(new PassThrough(), { isTTY: false });
+      const wrote: string[] = [];
+      const say = vi.fn().mockResolvedValue("ok");
+      const bar = startPaneBar({ spec: { kind: "worker", id: "w1", logDir: dir }, write: (s) => wrote.push(s), rows: () => 24, columns: () => 80, loadStatus: () => st, say, input, ...over });
+      return { input, wrote, say, bar };
+    };
+
+    it("/quit closes this pane only and marks the deliberate close", async () => {
+      const closePane = vi.fn().mockResolvedValue(true);
+      const { input, wrote, say, bar } = mk({ closePane });
+      input.write("/quit\n");
+      await vi.waitFor(() => expect(closePane).toHaveBeenCalled());
+      expect(say).not.toHaveBeenCalled();
+      expect(wrote.join("")).toContain("pane closed, the worker keeps running");
+      expect(wrote.join("")).toContain(`pai worker pane w1`);
+      expect(readPaneClosedBy(dir)).toMatchObject({ w1: "pane command" });
+      bar.stop();
+    });
+
+    it("/exit is /quit", async () => {
+      const closePane = vi.fn().mockResolvedValue(true);
+      const { input, bar } = mk({ closePane });
+      input.write("/exit\n");
+      await vi.waitFor(() => expect(closePane).toHaveBeenCalled());
+      expect(readPaneClosedBy(dir)).toMatchObject({ w1: "pane command" });
+      bar.stop();
+    });
+
+    it("/stop calls the kill path with the reason; without one the default reason", async () => {
+      const kill = vi.fn().mockResolvedValue([]);
+      const { input, wrote, say, bar } = mk({ kill });
+      input.write("/stop operator had second thoughts\n");
+      await vi.waitFor(() => expect(kill).toHaveBeenCalledWith(dir, "w1", "operator had second thoughts"));
+      expect(say).not.toHaveBeenCalled();
+      expect(wrote.join("")).toContain("» stopping w1: operator had second thoughts");
+      input.write("/stop\n");
+      await vi.waitFor(() => expect(kill).toHaveBeenLastCalledWith(dir, "w1", "operator /stop in pane"));
+      bar.stop();
+    });
+
+    it("a kill that fails says so", async () => {
+      const kill = vi.fn().mockRejectedValue(new Error("worker w1 is not running (state: done)"));
+      const { input, wrote, bar } = mk({ kill });
+      input.write("/stop x\n");
+      await vi.waitFor(() => expect(wrote.join("")).toContain("not stopped: worker w1 is not running"));
+      bar.stop();
+    });
+
+    it("an unknown slash command is shown, not forwarded", async () => {
+      const { input, wrote, say, bar } = mk();
+      input.write("/frobnate the widget\n");
+      await vi.waitFor(() => expect(wrote.join("")).toContain("unknown pane command: /frobnate — /help lists them"));
+      expect(say).not.toHaveBeenCalled();
+      bar.stop();
+    });
+
+    it("/help lists the pane commands", async () => {
+      const { input, wrote, say, bar } = mk();
+      input.write("/help\n");
+      await vi.waitFor(() => expect(wrote.join("")).toContain("/quit (or /exit)"));
+      expect(wrote.join("")).toContain("/stop");
+      expect(wrote.join("")).toContain("/pause");
+      expect(wrote.join("")).toContain("/continue");
+      expect(wrote.join("")).toContain("/help");
+      expect(say).not.toHaveBeenCalled();
+      bar.stop();
+    });
+
+    it("normal text is forwarded as today", async () => {
+      const { input, say, bar } = mk();
+      input.write("just a note\n");
+      await vi.waitFor(() => expect(say).toHaveBeenCalledWith(dir, "w1", "just a note"));
+      bar.stop();
+    });
+
+    it("/pause sets the pause, delivers its note; /continue clears and delivers; notes in order", async () => {
+      const { input, wrote, say, bar } = mk();
+      input.write("/pause\n");
+      await vi.waitFor(() => expect(say).toHaveBeenLastCalledWith(dir, "w1", PAUSE_NOTE));
+      expect(workerPaused(dir, "w1")).toBe(true);
+      expect(wrote.join("")).toContain("paused");
+      input.write("/continue\n");
+      await vi.waitFor(() => expect(say).toHaveBeenLastCalledWith(dir, "w1", CONTINUE_NOTE));
+      expect(workerPaused(dir, "w1")).toBe(false);
+      expect(say.mock.calls.map((c) => c[2])).toEqual([PAUSE_NOTE, CONTINUE_NOTE]);
+      bar.stop();
+    });
+
+    it("a paused worker shows paused in the bar", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const { input, wrote, bar } = mk({ tickMs: 10 });
+      input.write("/pause\n");
+      await vi.waitFor(() => expect(workerPaused(dir, "w1")).toBe(true));
+      vi.advanceTimersByTime(10);
+      expect(wrote.join("")).toContain("paused ·");
+      bar.stop();
+      vi.useRealTimers();
+    });
+
+    it("the pause reaches the worker guard: Edit denied while paused, allowed after /continue", async () => {
+      const { decideWorkerGuard } = await import("../hooks/ts/lib/worker-guard.js");
+      const ctx: WorkerGuardContext = { cwd: "/work/wt", home: "/home/u", worktreeRoot: "/work/wt", inWorktree: true, mainCheckout: null, testScript: () => "vitest" };
+      const env = { PAI_WORKER: "1", PAI_WORKER_ID: "w1", PAI_WORKER_LOOP_DIR: dir };
+      const edit = { tool_name: "Edit", tool_input: { file_path: "a.ts" } };
+      expect(decideWorkerGuard(edit, env, () => ctx).decision).toBe("allow");
+      const { input, say, bar } = mk();
+      input.write("/pause\n");
+      await vi.waitFor(() => expect(say).toHaveBeenLastCalledWith(dir, "w1", PAUSE_NOTE));
+      const d = decideWorkerGuard(edit, env, () => ctx);
+      expect(d.decision).toBe("deny");
+      expect((d as { reason: string }).reason).toBe("paused by the operator — answer, then wait for /continue");
+      expect(decideWorkerGuard({ tool_name: "Bash", tool_input: { command: "ls" } }, env, () => ctx).decision).toBe("deny");
+      input.write("/continue\n");
+      await vi.waitFor(() => expect(say).toHaveBeenLastCalledWith(dir, "w1", CONTINUE_NOTE));
+      expect(decideWorkerGuard(edit, env, () => ctx).decision).toBe("allow");
+      bar.stop();
+    });
   });
 });
 

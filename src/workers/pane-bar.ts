@@ -11,14 +11,91 @@ import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
 import { paneExecDir } from "./pane-exec.js";
 import { isLive, type WorkerStatus } from "./status.js";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { appendLedger } from "./ledger.js";
-import { ledgerPath } from "./paths.js";
+import { ledgerPath, statusPath } from "./paths.js";
 import { panePolicy } from "./pane-policy.js";
 
 /** What the wrapper is told to show at the bottom of the pane. */
 export type StatusLineSpec =
   | { kind: "worker"; id: string; logDir: string }
   | { kind: "run"; label: string; startedMs: number };
+
+/**
+ * The deliberate-close marker: a pane the operator closed itself (pane-bar's /quit, the same way a worker's
+ * own end closes its pane) records the worker id here, and the audit leaves that pane closed — it neither
+ * reopens it (pane gone → reopen) nor kills the worker.
+ */
+export const paneClosedByFile = (logDir: string): string => join(logDir, "pane-closed-by.json");
+
+/** Record (and read) the deliberate closes; a damaged file reads empty. */
+export function readPaneClosedBy(logDir: string): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(paneClosedByFile(logDir), "utf8")) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+/** Mark this worker's pane as deliberately closed (idempotent; a missing file is created). */
+export function markPaneClosedBy(logDir: string, id: string, by = "pane command"): void {
+  const all = readPaneClosedBy(logDir);
+  if (all[id]) return;
+  all[id] = by;
+  try {
+    writeFileSync(paneClosedByFile(logDir), JSON.stringify(all), "utf8");
+  } catch {
+    /* the pane is gone anyway: the audit then judges nothing */
+  }
+}
+
+/** The pane's own slash commands, handled here and never forwarded to the model. */
+const PANE_COMMANDS = ["/quit", "/exit", "/stop", "/help"];
+
+/** The pane's own commands, listed by /help. */
+export const PANE_HELP = [
+  "/quit (or /exit)  close this pane only — the worker keeps running, reopen with pai worker pane <id>",
+  "/stop [reason]    stop the worker (as pai worker kill <id> --reason)",
+  "/pause            the worker stops working on its task and only talks; /continue resumes it",
+  "/continue         clear the pause: resume the task where you stopped",
+  "/help             this list",
+];
+
+/** The note a paused worker gets: it answers the operator and waits for /continue. */
+export const PAUSE_NOTE =
+  "The operator paused you. Stop working on the task: no edits, no commands, no further tool calls except to answer the operator. Answer the operator's messages, then wait for /continue.";
+
+/** The note that clears the pause. */
+export const CONTINUE_NOTE = "The operator says continue: resume the task where you stopped.";
+
+/** The pause reason the worker guard answers with. */
+export const PAUSE_DENY = "paused by the operator — answer, then wait for /continue";
+
+/**
+ * The worker's pause, read straight from its status file (the pane bar and the worker guard share it):
+ * `pai worker pause|resume` and /pause|/continue write it, the guard reads it per tool call.
+ */
+export function workerPaused(logDir: string, id: string): boolean {
+  try {
+    const s = JSON.parse(readFileSync(statusPath(logDir, id), "utf8")) as { paused?: boolean };
+    return s.paused === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Write the pause into the status file (a missing worker is left alone). */
+function setWorkerPausedStatus(logDir: string, id: string, paused: boolean): void {
+  try {
+    const path = statusPath(logDir, id);
+    const s = JSON.parse(readFileSync(path, "utf8")) as { paused?: boolean };
+    s.paused = paused;
+    writeFileSync(path, JSON.stringify(s), "utf8");
+  } catch {
+    /* no status: nothing to pause */
+  }
+}
 
 export interface PaneBarDeps {
   spec: StatusLineSpec;
@@ -32,6 +109,14 @@ export interface PaneBarDeps {
   /** Queue-file dir (tests); default the pane-exec dir beside the launch record. */
   queuedDir?: string;
   say?: (logDir: string, id: string, text: string) => Promise<string>;
+  /** Close this pane only (default: the pane-exec wrapper's own close). */
+  closePane?: () => Promise<unknown>;
+  /** Stop the worker the way `pai worker kill` does (default: killWorker with the pane's reason). */
+  kill?: (logDir: string, id: string, reason: string) => Promise<unknown>;
+  /** Record the deliberate close (default: markPaneClosedBy). */
+  markClosed?: (logDir: string, id: string) => void;
+  /** Write the pause into the worker's status (default: its own status file). */
+  setPaused?: (logDir: string, id: string, paused: boolean) => void;
   /** Ledger hook for a delivered pane line (default: WORKER-NOTE-DELIVERED in the logDir's ledger). */
   delivered?: (logDir: string, id: string, count: number) => void;
   /** Whether the worker process still runs (default: status.isLive). */
@@ -90,10 +175,14 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
     if (d.spec.kind === "run") return paneRunStatusRow(d.spec.label, d.spec.startedMs, new Date(now()));
     // while the run waits for a provider slot the row is the queue line,
     // refreshed in place; the command's own row takes over once it starts
-    const queued = (d.readQueued ?? readQueuedFile)(d.queuedDir ?? paneExecDir(), d.spec.id);
+    const { id, logDir } = d.spec;
+    const queued = (d.readQueued ?? readQueuedFile)(d.queuedDir ?? paneExecDir(), id);
     if (queued) return paneStatusRow(status ?? ({} as WorkerStatus), new Date(now()), d.columns(), queued);
-    status = (d.loadStatus ?? (() => null))(d.spec.logDir, d.spec.id) ?? status;
-    return status ? paneStatusRow(status, new Date(now()), d.columns()) : d.spec.id;
+    status = (d.loadStatus ?? (() => null))(logDir, id) ?? status;
+    if (!status) return id;
+    const row = paneStatusRow(status, new Date(now()), d.columns());
+    // the pause shows in the bar whether the status came from disk or from a test seam
+    return (status.paused === true || workerPaused(logDir, id)) ? `paused · ${row}` : row;
   };
   const rl = d.spec.kind === "worker" && d.input ? createInterface({ input: d.input, output: silent(), terminal: d.input.isTTY === true }) : null;
   const prompt = (): void => {
@@ -141,8 +230,55 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
     const { id, logDir } = d.spec;
     rl.on("line", (raw) => {
       const act = parseChatLine(raw);
-      if (act.kind !== "message" || !act.text) return prompt();
       prompt();
+      // pane-local commands: handled here, never forwarded to the model
+      const trimmed = raw.trim();
+      if (trimmed.startsWith("/")) {
+        const [word, ...rest] = trimmed.split(/\s+/);
+        const arg = rest.join(" ");
+        switch (word.toLowerCase()) {
+          case "/quit":
+          case "/exit":
+            line(dim(`» ${id}: pane closed, the worker keeps running — reopen with pai worker pane ${id}`));
+            (d.markClosed ?? markPaneClosedBy)(logDir, id);
+            void (d.closePane?.() ?? Promise.resolve()).catch(() => undefined);
+            return;
+          case "/stop": {
+            const reason = arg || "operator /stop in pane";
+            line(dim(`» stopping ${id}: ${reason}`));
+            const kill =
+              d.kill ??
+              (async (ld, wid, r) => {
+                const { killWorker } = await import("./kill-tree.js");
+                return killWorker(ld, wid, { by: "pane command", reason: r });
+              });
+            void kill(logDir, id, reason).catch((e: Error) => line(`» ${id} — not stopped: ${e.message}`));
+            return;
+          }
+          case "/pause":
+            line(dim("» paused: the worker answers the operator and waits for /continue"));
+            (d.setPaused ?? setWorkerPausedStatus)(logDir, id, true);
+            void (d.say ?? (() => Promise.reject(new Error("no say"))))(logDir, id, PAUSE_NOTE).catch((e: Error) =>
+              line(`» pause note — not delivered: ${e.message}`)
+            );
+            return;
+          case "/continue":
+            line(dim("» continued: the worker resumes the task"));
+            (d.setPaused ?? setWorkerPausedStatus)(logDir, id, false);
+            void (d.say ?? (() => Promise.reject(new Error("no say"))))(logDir, id, CONTINUE_NOTE).catch((e: Error) =>
+              line(`» continue note — not delivered: ${e.message}`)
+            );
+            return;
+          case "/help":
+            for (const h of PANE_HELP) line(dim(h));
+            return;
+          default:
+            if (PANE_COMMANDS.includes(word.toLowerCase())) return;
+            line(dim(`unknown pane command: ${word} — /help lists them`));
+            return;
+        }
+      }
+      if (act.kind !== "message" || !act.text) return;
       const turn = (d.loadStatus ?? (() => null))(logDir, id)?.turns ?? 0;
       (d.say ?? (() => Promise.reject(new Error("no say"))))(logDir, id, act.text).then(
         (reply) => {
