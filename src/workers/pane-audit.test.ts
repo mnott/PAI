@@ -221,6 +221,16 @@ describe("auditTick", () => {
     await tick();
     expect(stopped).toEqual(["w-1"]);
   });
+  it("no entry but the worker's own pane is in the listing: re-registered, not stopped", async () => {
+    const stopped: string[] = [];
+    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2", [P1]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker", host: H }], registry: () => [], running: () => true, ownSession: () => P1, stop: async (id) => void stopped.push(id), ...noLaunches });
+    await tick();
+    await tick();
+    expect(stopped).toEqual([]);
+    expect(loadRegistry(dir).map((e) => [e.worker, e.session])).toEqual([["w-1", P1]]);
+    expect(ledger()).toMatch(/PANE-REREGISTERED/);
+    expect(ledger()).not.toMatch(/PANE-STOPPED/);
+  });
   it("status turned done between the pane check and the report: no violation", async () => {
     let alive = true;
     const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [], running: () => alive, ...noLaunches });
