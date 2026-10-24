@@ -78,7 +78,7 @@ function shortKey(key = ""): string {
 }
 
 /** Per-worker repeat window in <logDir>/loop-guard/<id>.json; deny reason when this call is a loop repeat, else null. */
-function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: string; stopReason?: string } | null {
+function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: string; stopReason?: string } | { note: string } | null {
   const id = currentWorkerId(env, env.PAI_WORKER_LOOP_DIR || undefined);
   if (env.PAI_WORKER !== "1" || !id || !input.tool_name) return null;
   try {
@@ -113,7 +113,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
         input: input.tool_input,
       });
     }
-    if (!r.deny) return null;
+    if (!r.deny) return r.note ? { note: r.note } : null;
     // Claude Code ignores "continue": false from a headless PreToolUse hook: end the worker ourselves
     if (r.stop)
       requestLoopStop(logDir, id, `${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change`, {
@@ -156,6 +156,11 @@ async function main(): Promise<void> {
   }
 
   const loop = loopRepeat(input, process.env);
+  if (loop && "note" in loop) {
+    // advisory: the call goes ahead, the note rides along as context
+    process.stdout.write(renderDecision({ decision: "allow", context: loop.note }) + "\n");
+    return;
+  }
   if (loop) {
     const out = JSON.parse(renderDecision({ decision: "deny", reason: loop.reason }));
     if (loop.stopReason) Object.assign(out, { continue: false, stopReason: loop.stopReason });

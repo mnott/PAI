@@ -116,7 +116,9 @@ export function slimSettings(
     if (kept.length) hooks[event] = kept;
   }
   // Not a user hook: the worker's own channel for `pai worker goal` notes, for every provider.
-  if (noteHook) (hooks.PostToolUse ??= []).push({ matcher: "*", hooks: [{ type: "command", command: noteHook }] });
+  if (noteHook) {
+    for (const ev of ["PostToolUse", "PostToolUseFailure"]) (hooks[ev] ??= []).push({ matcher: "*", hooks: [{ type: "command", command: noteHook }] });
+  }
   out.hooks = hooks;
   // Empty strings switch off Claude Code's Co-Authored-By / "Generated with" lines.
   out.attribution = { commit: "", pr: "" };

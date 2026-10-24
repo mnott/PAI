@@ -13,18 +13,28 @@ import { readWorkersSection } from "../../../workers/config.js";
 import { NOTE_TOKEN_ENV, noteContext, takePendingNotes } from "../../../workers/note-delivery.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
-import { recordLoopResult } from "../lib/loop-guard.js";
+import { recordLoopFailure, recordLoopResult } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
+import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { isWorkerSession } from "../lib/worker-session.js";
 
 /** Feeds the tool result into the loop guard's repeated-result count. */
-function recordResult(raw: string, logDir: string, id: string): void {
+function recordResult(raw: string, logDir: string, id: string): string | undefined {
   try {
-    const j = JSON.parse(raw) as { tool_name?: string; tool_input?: Record<string, unknown>; tool_response?: unknown };
+    const j = JSON.parse(raw) as { hook_event_name?: string; tool_name?: string; tool_input?: Record<string, unknown>; tool_response?: unknown; error?: unknown };
     if (!j.tool_name) return;
     const file = loopStateFile(logDir, id);
     const state = loadLoopState(file);
-    const next = recordLoopResult(state, j.tool_name, j.tool_name === "Bash" ? (j.tool_input?.command as string | undefined) : j.tool_input, j.tool_response);
+    const input = j.tool_name === "Bash" ? (j.tool_input?.command as string | undefined) : j.tool_input;
+    if (j.hook_event_name === "PostToolUseFailure") {
+      // a failure that never reached PreToolUse (input validation) is counted here; the 4th identical one is told to stop
+      const r = recordLoopFailure(state, j.tool_name, input, j.error ?? j.tool_response);
+      if (r.state !== state) saveLoopState(file, r.state);
+      if (!r.deny) return r.note;
+      if (r.stop) requestLoopStop(logDir, id, `${j.tool_name} failed ${r.count} times with the same error`);
+      return r.reason;
+    }
+    const next = recordLoopResult(state, j.tool_name, input, j.tool_response);
     if (next !== state) saveLoopState(file, next);
   } catch {
     // result tracking is best effort
@@ -43,15 +53,15 @@ function main(): void {
   const logDir = process.argv[2] || workersLogDir(readWorkersSection().workers);
   const id = currentWorkerId(process.env, logDir);
   if (!isWorkerSession() || !id) return;
-  recordResult(readStdin(), logDir, id);
+  const raw = readStdin();
+  const loopNote = recordResult(raw, logDir, id);
+  const event = raw.includes('"PostToolUseFailure"') ? "PostToolUseFailure" : "PostToolUse";
   // no token, no delivery: a note is never produced without the run's token (notes stay pending)
   const token = process.env[NOTE_TOKEN_ENV];
-  if (!token) return;
-  const notes = takePendingNotes(logDir, id);
-  if (!notes) return;
-  process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: noteContext(notes, token) } }) + "\n",
-  );
+  const notes = token ? takePendingNotes(logDir, id) : "";
+  const context = [loopNote, notes && token ? noteContext(notes, token) : ""].filter(Boolean).join("\n");
+  if (!context) return;
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } }) + "\n");
 }
 
 try {
