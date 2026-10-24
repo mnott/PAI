@@ -28,6 +28,7 @@ import { forceAddReason, maskedProofReason, tmpScratchReason, nodeOnTypeScriptRe
 import { dropHeredocBodies } from "./heredoc.js";
 import { isScratchRootFile } from "./worker-scratch-name.js";
 import { chromeStartReason } from "./worker-chrome-rules.js";
+import { benchStartReason } from "./worker-bench-rules.js";
 import { raiseWaitTimeout } from "./wait-timeout.js";
 
 export interface WorkerGuardInput {
@@ -52,6 +53,8 @@ export interface WorkerGuardContext {
   testScript: () => string | null;
   /** Whether git ignores this path (git check-ignore); absent = nothing is ignored. */
   isIgnored?: (path: string) => boolean;
+  /** The operator's go for benchmarks and model servers (env PAI_BENCH_GO=1). */
+  benchGo?: boolean;
 }
 
 interface Segment {
@@ -317,6 +320,9 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   const chrome = chromeStartReason(cmd, args);
   if (chrome) return deny(chrome);
 
+  const bench = ctx.benchGo ? null : benchStartReason(cmd, args, st.cwd, st.raw);
+  if (bench) return deny(bench);
+
   if (cmd === "cd") {
     const p = pos[0] ? abs(pos[0], st.cwd, ctx.home) : null;
     if (!p) return ALLOW;
@@ -526,7 +532,7 @@ export function decideWorkerGuard(
     return deny(`${tool} blocked: this worker runs with --no-browser`);
   }
   if (tool === "Bash") {
-    const d = typeof ti.command === "string" ? decideCommand(ti.command, ctx()) : ALLOW;
+    const d = typeof ti.command === "string" ? decideCommand(ti.command, { ...ctx(), benchGo: env.PAI_BENCH_GO === "1" }) : ALLOW;
     if (d.decision === "allow" && typeof ti.command === "string") {
       const cmd = ti.command as string;
       const cfg = parseCommand(cmd).map((sg) => configMutationReason(sg.words, env, ctx().home)).find((r) => r);
