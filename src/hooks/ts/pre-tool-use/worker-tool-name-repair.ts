@@ -14,7 +14,9 @@
 import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { paiHomePath } from "../../../config/pai-home.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { type PathRepairCtx, renderPathDeny, renderPathRepair, repairFilePath } from "../lib/file-path-repair.js";
 import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial, inventedToolDirective, repairParams, renderParamRepair } from "../lib/tool-name-repair.js";
 
 function logRepair(tail: string): void {
@@ -28,6 +30,26 @@ function logRepair(tail: string): void {
   } catch {
     // logging must never block the decision
   }
+}
+
+function git(cwd: string, args: string[]): string {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 });
+  } catch {
+    return "";
+  }
+}
+
+function pathCtx(cwd: string): PathRepairCtx {
+  let tracked: string[] | undefined;
+  return {
+    cwd,
+    tracked: () => (tracked ??= git(cwd, ["ls-files"]).split("\n").filter(Boolean)),
+    mainRoot: () => {
+      const common = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]).trim();
+      return common ? dirname(common) : null;
+    },
+  };
 }
 
 async function main(): Promise<void> {
@@ -62,6 +84,19 @@ async function main(): Promise<void> {
   const repair = repairToolName(input, process.env);
   const next = { ...input, tool_name: repair?.new ?? input.tool_name, tool_input: repair?.updatedInput ?? input.tool_input };
   const params = repairParams(next, process.env);
+
+  const fixed = { ...next, tool_input: params?.updatedInput ?? next.tool_input };
+  const pathFix = repairFilePath(fixed, process.env, pathCtx(input.cwd ?? process.cwd()));
+  if (pathFix?.kind === "deny") {
+    logRepair(`[model]\tpath deny\t${String(fixed.tool_input?.file_path)}`);
+    process.stdout.write(renderPathDeny(pathFix) + "\n");
+    return;
+  }
+  if (pathFix) {
+    logRepair(`path-repair ${pathFix.rule} ${pathFix.from} -> ${pathFix.to}`);
+    process.stdout.write(renderPathRepair(pathFix) + "\n");
+    return;
+  }
 
   if (!repair && !params) return;
 
