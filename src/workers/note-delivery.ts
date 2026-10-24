@@ -34,5 +34,5 @@ export function newNoteToken(): string {
 
 /** The additionalContext text for the delivered notes, each authenticated with the run's token. */
 export function noteContext(notes: string[], token: string): string {
-  return notes.map((n) => `PAI note [${token}]: ${n}`).join("\n");
+  return notes.map((n) => `PAI note [${token}] from your orchestrator: ${n}`).join("\n");
 }

@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { noteTokenSentence } from "./report.js";
 import { appendFileSync, existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -234,6 +235,12 @@ describe("task boundary", () => {
     const t = pooledTaskText(2, "/neutral/dir", "count the files", "TRAILER-TEXT");
     expect(t.startsWith(poolTaskBoundary(2, "/neutral/dir"))).toBe(true);
     expect(t).toContain("count the files");
+    expect(t.trimEnd().endsWith("TRAILER-TEXT")).toBe(true);
+    expect(t).not.toContain("PAI note [");
+  });
+  it("a task fed with the slot's note token carries the contract sentence, trailer still last", () => {
+    const t = pooledTaskText(2, "/neutral/dir", "count the files", "TRAILER-TEXT", "cafe1234");
+    expect(t).toContain(noteTokenSentence("cafe1234"));
     expect(t.trimEnd().endsWith("TRAILER-TEXT")).toBe(true);
   });
 });

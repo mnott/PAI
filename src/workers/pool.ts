@@ -47,7 +47,7 @@ import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
 import type { StreamEvent } from "./run.js";
 import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js";
-import type { WorkerReport } from "./report.js";
+import { noteTokenSentence, type WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
 import { parseLedger } from "./ledger.js";
 import { writeFileAtomic } from "../config/atomic-file.js";
@@ -540,9 +540,11 @@ export function pooledTaskText(
   taskNo: number,
   cwd: string,
   prompt: string,
-  trailer: string
+  trailer: string,
+  noteToken?: string
 ): string {
-  return `${poolTaskBoundary(taskNo, cwd)}\n\n${prompt}${trailer}`;
+  const note = noteToken ? `${noteTokenSentence(noteToken)}\n\n` : "";
+  return `${poolTaskBoundary(taskNo, cwd)}\n\n${prompt}${note}${trailer}`;
 }
 
 // ---------------------------------------------------------------------------

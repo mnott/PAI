@@ -75,7 +75,7 @@ import {
   type SlotPrep,
 } from "./slots.js";
 import { commitsSince, git, isPaiBookkeepingPath, salvageNotes, salvageOnExit, uncommittedPaths, worktreeBranch, worktreeSystemPrompt } from "./worktree.js";
-import { AG2_REASK_TEXT, parseWorkerReport, untrackedPaths } from "./report.js";
+import { AG2_REASK_TEXT, noteTokenSentence, parseWorkerReport, untrackedPaths } from "./report.js";
 import { createToolFold, proofNote, runProofCheck } from "./run/tool-fold.js";
 import {
   appendPoolMetric,
@@ -170,6 +170,8 @@ export class PoolSlotSession {
   readonly record: PoolSlotRecord;
   /** The spec's shared preamble this process carries in its system prompt (null = none). */
   shared: string | null = null;
+  /** The note token in this process's env: the one the worker-note hook stamps on notes. */
+  noteToken = "";
   /** Stable PAI_POOL_SLOT name of this process. */
   slotName = "";
   private proc: SlotProcess;
@@ -570,7 +572,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const slotName = slotNameFor(cwd);
     env[POOL_SLOT_ENV] = slotName;
     // the note hook delivers only with a token; the slot lives across tasks, so one token per slot process
-    env[NOTE_TOKEN_ENV] = newNoteToken();
+    const noteToken = newNoteToken();
+    env[NOTE_TOKEN_ENV] = noteToken;
     let cmd: string[] = [...cmdHead(env)];
     const addendum = loadContractAddendum(providerName, provider.contract);
     cmd.push("--model", model);
@@ -622,6 +625,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     record.pid = proc.pid;
     const session = new PoolSlotSession(record, proc);
     session.slotName = slotName;
+    session.noteToken = noteToken;
     session.shared = shared ?? null;
 
     // the init event announces the session id — when the build emits it at
@@ -1239,8 +1243,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const unitSpec = session.shared && split.shared === session.shared ? split.unit : task.prompt;
     // a spare's task is the whole first turn: no boundary, it has no earlier turns to separate from
     const text = spareEntry
-      ? `${pooledUnitPrompt(unitSpec, wtNote)}${task.trailer}`
-      : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer);
+      ? `${pooledUnitPrompt(unitSpec, wtNote)}${noteTokenSentence(session.noteToken)}\n\n${task.trailer}`
+      : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer, session.noteToken);
     // the slot process and its earlier children outlive the task; whatever the task started does not
     const reapOpts = { rootPid: session.pid, ...(prep ? { dir: prep.dir } : {}) };
     const beforeTask = snapshotWorkerPids(reapOpts);
