@@ -18,8 +18,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { paiHomePath } from '../../../config/pai-home.js';
 import { paiSocketPath } from '../../../runtime-paths.js';
-import { connect } from 'net';
-import { randomUUID } from 'crypto';
+import { readHookInput } from '../lib/read-stdin.js';
+import { enqueueWork, enqueueRegistryScan } from '../lib/socket-request.js';
 import {
   sendNtfyNotification,
   getCurrentNotePath,
@@ -395,47 +395,6 @@ function saveCumulativeState(notesDir: string, data: TranscriptData, notePath: s
 }
 
 // ---------------------------------------------------------------------------
-// Daemon IPC — enqueue registry-scan work item
-// ---------------------------------------------------------------------------
-
-/**
- * Enqueue a registry-scan work item with the daemon.
- * Fire-and-forget — never throws, never blocks the pre-compact hook.
- */
-function enqueueRegistryScan(): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve();
-    }
-
-    const client = connect(DAEMON_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'registry-scan',
-          priority: 5,
-          payload: { cwd: process.cwd() },
-        },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', () => finish());
-    client.on('error', () => finish());
-    client.on('end', () => finish());
-    timer = setTimeout(() => finish(), DAEMON_TIMEOUT_MS);
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Daemon IPC — enqueue session-summary work item
 // ---------------------------------------------------------------------------
 
@@ -449,68 +408,29 @@ function enqueueSessionSummary(payload: {
   sessionId?: string;
   transcriptPath?: string;
 }): Promise<boolean> {
-  return new Promise((resolve) => {
-    let done = false;
-    let buffer = '';
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(ok: boolean): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve(ok);
-    }
-
-    const client = connect(DAEMON_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'session-summary',
-          priority: 4, // lower priority than session-end (2)
-          payload: {
-            cwd: payload.cwd,
-            sessionId: payload.sessionId,
-            transcriptPath: payload.transcriptPath,
-          },
-        },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl);
-      try {
-        const response = JSON.parse(line) as { ok: boolean; error?: string; result?: { id: string } };
-        if (response.ok) {
-          console.error(`PRE-COMPACT: Session summary enqueued with daemon (id=${response.result?.id}).`);
-          finish(true);
-        } else {
-          console.error(`PRE-COMPACT: Daemon rejected session-summary: ${response.error}`);
-          finish(false);
-        }
-      } catch {
-        finish(false);
-      }
-    });
-
-    client.on('error', (e: NodeJS.ErrnoException) => {
+  return enqueueWork<boolean>(DAEMON_SOCKET, DAEMON_TIMEOUT_MS, 'session-summary', 4, { // lower priority than session-end (2)
+    cwd: payload.cwd,
+    sessionId: payload.sessionId,
+    transcriptPath: payload.transcriptPath,
+  }, {
+    onReply: (r) => {
+      if (r.ok) console.error(`PRE-COMPACT: Session summary enqueued with daemon (id=${r.result?.id}).`);
+      else console.error(`PRE-COMPACT: Daemon rejected session-summary: ${r.error}`);
+      return r.ok;
+    },
+    onError: (e) => {
       if (e.code === 'ENOENT' || e.code === 'ECONNREFUSED') {
         console.error('PRE-COMPACT: Daemon not running — skipping session summary.');
       } else {
         console.error(`PRE-COMPACT: Daemon socket error: ${e.message}`);
       }
-      finish(false);
-    });
-
-    timer = setTimeout(() => {
+      return false;
+    },
+    onTimeout: () => {
       console.error('PRE-COMPACT: Daemon IPC timed out — skipping session summary.');
-      finish(false);
-    }, DAEMON_TIMEOUT_MS);
+      return false;
+    },
+    fallback: false,
   });
 }
 
@@ -538,22 +458,9 @@ function lastBoundaryInTranscript(transcriptPath: string): string | null {
 
 /** Ask the daemon for an urgent refresh handover. Fire-and-forget. */
 function enqueueUrgentHandover(p: { cwd: string; sessionId: string; transcriptPath?: string }): Promise<void> {
-  return new Promise((resolve) => {
-    const client = connect(DAEMON_SOCKET, () => {
-      client.write(JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'context-handover',
-          priority: 1,
-          payload: { ...p, threshold: 'refresh', urgent: true },
-        },
-      }) + '\n');
-    });
-    const done = () => { try { client.destroy(); } catch { /* ignore */ } resolve(); };
-    client.on('data', done);
-    client.on('error', done);
-    setTimeout(done, DAEMON_TIMEOUT_MS);
+  const done = () => undefined;
+  return enqueueWork(DAEMON_SOCKET, DAEMON_TIMEOUT_MS, 'context-handover', 1, { ...p, threshold: 'refresh', urgent: true }, {
+    onReply: done, onError: done, onTimeout: done, fallback: undefined,
   });
 }
 
@@ -571,24 +478,7 @@ async function main() {
     process.exit(0);
   }
 
-  let hookInput: HookInput | null = null;
-
-  try {
-    const decoder = new TextDecoder();
-    let input = '';
-    const timeoutPromise = new Promise<void>((resolve) => { setTimeout(resolve, 500); });
-    const readPromise = (async () => {
-      for await (const chunk of process.stdin) {
-        input += decoder.decode(chunk, { stream: true });
-      }
-    })();
-    await Promise.race([readPromise, timeoutPromise]);
-    if (input.trim()) {
-      hookInput = JSON.parse(input) as HookInput;
-    }
-  } catch {
-    // Silently handle input errors
-  }
+  const hookInput = await readHookInput<HookInput>();
 
   const compactType = hookInput?.compact_type || hookInput?.trigger || 'auto';
   let ntfyTokenDisplay: string | null = null;
@@ -868,7 +758,7 @@ async function main() {
   // Enqueue registry-scan so pai session recent stays fresh after compaction
   // -----------------------------------------------------------------------
   try {
-    await enqueueRegistryScan();
+    await enqueueRegistryScan(DAEMON_SOCKET, DAEMON_TIMEOUT_MS);
   } catch { /* non-fatal */ }
 
   // Send ntfy.sh notification
