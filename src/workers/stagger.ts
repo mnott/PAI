@@ -5,6 +5,8 @@
  * same provider to receive its first model response (status.turns >= 1) or
  * for a limit learned from that provider's recent first-response times, then
  * starts. Queued runs release one at a time: run k waits for run k-1 only.
+ * A predecessor must actually be on the engine: a run parked at the capacity
+ * gate (queued, held) or paused never warms a cache, so it is no predecessor.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -71,9 +73,23 @@ export function warmupLimitSec(history: number[] | undefined, local: boolean, cf
 const isActive = (s: WorkerStatus) => isLive(s, (w) => alive(w.pid));
 
 /**
+ * Whether this run is on the engine right now, so it can warm the provider's
+ * prompt cache: live and "running", not parked at the capacity gate (a
+ * "queued" status, a hold), not paused. A run waiting there never sends a
+ * request, so waiting on it warms nothing.
+ */
+const warmsCache = (s: WorkerStatus) =>
+  s.state === "running" && !s.capacity?.held && !s.paused && isActive(s);
+
+/** A predecessor that stopped warming mid-wait (queued, held, paused, gone). */
+const NOT_WARMING = "predecessor not warming the cache";
+
+/**
  * The immediate predecessor: the latest-started live run on this provider
  * before `self`, if it has no model response yet and started within the limit.
- * (A predecessor that already answered, or is gone, means no wait.)
+ * (A predecessor that already answered, or is gone, means no wait.) A run not
+ * actually on the engine — queued, held, paused — is skipped: it warms no
+ * cache, and the search continues to an older run that is.
  */
 export function findPredecessor(
   statuses: WorkerStatus[],
@@ -83,7 +99,7 @@ export function findPredecessor(
 ): WorkerStatus | null {
   let prev: WorkerStatus | null = null;
   for (const s of statuses) {
-    if (s.id >= self.id || s.provider !== self.provider || s.origin === "chat" || !isActive(s)) continue;
+    if (s.id >= self.id || s.provider !== self.provider || s.origin === "chat" || !warmsCache(s)) continue;
     if (!prev || s.id > prev.id) prev = s;
   }
   if (!prev || prev.turns > 0) return null;
@@ -157,22 +173,30 @@ export async function staggerGate(o: StaggerOpts): Promise<StaggerResult | null>
   };
   o.onWait?.(info());
   let release: StaggerRelease = "limit";
-  for (let n = 0; now() - t0 < limitSec * 1000; n++) {
+  let releaseText = RELEASE_TEXT[release];
+  for (let n = 0; ; n++) {
+    // the limit releases at the first check past it, without sleeping there
+    if (now() - t0 >= limitSec * 1000) break;
     await sleep(backoffMs(n));
     const cur = load(o.logDir).find((s) => s.id === pred.id);
     if (cur && cur.turns > 0) {
       release = "answered";
+      releaseText = RELEASE_TEXT[release];
       break;
     }
-    if (!cur || !isActive(cur)) {
+    if (!cur || !warmsCache(cur)) {
       release = "predecessor-ended";
+      // still "running" but parked (a hold) or paused: it stopped warming, it did not end
+      releaseText = cur && (cur.state === "running" || cur.state === "queued") && (cur.capacity?.held || cur.paused)
+        ? NOT_WARMING
+        : RELEASE_TEXT[release];
       break;
     }
     o.onWait?.(info());
   }
   const waitedSec = Math.round((now() - t0) / 100) / 10;
   o.onWait?.(null);
-  o.log?.(`waited ${waitedSec}s for ${pred.id} (${RELEASE_TEXT[release]})`);
+  o.log?.(`waited ${waitedSec}s for ${pred.id} (${releaseText})`);
   return { predecessor: pred.id, waitedSec, limitSec: limitLabel, release };
 }
 

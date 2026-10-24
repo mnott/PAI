@@ -115,6 +115,51 @@ describe("staggerGate", () => {
     expect(await staggerGate(harness(() => [st("a", { started: "2026-10-17 09:00:00" }), st("b")]).base)).toBeNull();
   });
 
+  it("does not wait on a predecessor parked at the capacity gate (queued or held)", async () => {
+    // the live bug: a held plain run still "queued" was picked as predecessor
+    const queued = harness(() => [st("a", { state: "queued", capacity: { provider: "p", cap: 1, total: 2, position: 1, elapsedSec: 5 } }), st("b")]);
+    expect(await staggerGate(queued.base)).toBeNull();
+    expect(queued.lines).toEqual([]);
+    const held = harness(() => [
+      st("a", { state: "queued", capacity: { provider: "p", cap: 1, total: 2, position: 1, elapsedSec: 5, held: "benchmark hold" } }),
+      st("b"),
+    ]);
+    expect(await staggerGate(held.base)).toBeNull();
+    expect(held.lines).toEqual([]);
+  });
+
+  it("does not wait on a paused predecessor", async () => {
+    const h = harness(() => [st("a", { paused: true }), st("b")]);
+    expect(await staggerGate(h.base)).toBeNull();
+    expect(h.lines).toEqual([]);
+  });
+
+  it("skips a queued or held run and waits on the older run actually on the engine", async () => {
+    const h = harness((ms) => [
+      st("a", { turns: ms >= 1500 ? 1 : 0 }),
+      st("b", { state: "queued", capacity: { provider: "p", cap: 1, total: 2, position: 1, elapsedSec: 5, held: "benchmark hold" } }),
+      st("c"),
+    ], "c");
+    const r = await staggerGate(h.base);
+    expect(r?.predecessor).toBe("a");
+    expect(r?.release).toBe("answered");
+  });
+
+  it("releases at once when the predecessor stops warming mid-wait (held or paused)", async () => {
+    const held = harness((ms) => [
+      ms >= 700 ? st("a", { state: "queued", capacity: { provider: "p", cap: 1, total: 2, position: 1, elapsedSec: 5, held: "benchmark hold" } }) : st("a"),
+      st("b"),
+    ]);
+    const r = await staggerGate(held.base);
+    expect(r?.release).toBe("predecessor-ended");
+    expect(held.elapsed()).toBeLessThan(1000);
+    expect(held.lines.at(-1)).toMatch(/predecessor not warming the cache/);
+    const paused = harness((ms) => [ms >= 700 ? st("a", { paused: true }) : st("a"), st("b")]);
+    const rp = await staggerGate(paused.base);
+    expect(rp?.release).toBe("predecessor-ended");
+    expect(paused.lines.at(-1)).toMatch(/predecessor not warming the cache/);
+  });
+
   it("polls with exponential backoff", async () => {
     const h = harness((ms) => [st("a", { turns: ms >= 6000 ? 1 : 0 }), st("b")]);
     await staggerGate(h.base);
