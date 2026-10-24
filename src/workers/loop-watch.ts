@@ -14,6 +14,8 @@ import { ANTHROPIC_NATIVE } from "./config.js";
 
 export const LOOP_NOTE = "you have repeated the same failing call 3 times; the file already contains this text or your old_string is wrong: re-read the file region or move on";
 
+export const CUT_NOTE = "you have repeated the same failing call 3 times because its input was cut off at your output limit (the JSON never completed); old_string is not the problem: split the change into small Edits or Writes (each under ~2 KB) and do not resend the large call";
+
 export const ECHO_NOTE = "you are only echoing success and editing nothing: the task is done or it is not; make the edit, or end the run with your R report";
 
 export interface LoopFinding {
@@ -107,7 +109,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
 
       if (action === "warn" && local) {
         try {
-          await say(logDir, status.id, loop.kind === "echo" ? ECHO_NOTE : LOOP_NOTE);
+          await say(logDir, status.id, loop.kind === "echo" ? ECHO_NOTE : loop.cut ? CUT_NOTE : LOOP_NOTE);
         } catch {
           // errors swallowed
         }

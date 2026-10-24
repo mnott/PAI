@@ -25,6 +25,8 @@ import { parseLedger } from "./ledger.js";
 import { routerPort } from "../router/router.js";
 import { git } from "./worktree.js";
 import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
+import { readToolErrors } from "./tool-errors.js";
+import { checkLoops, CUT_NOTE, LOOP_NOTE } from "./loop-watch.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -100,12 +102,16 @@ class FakeSlot implements SlotProcess {
     this.lineCb?.(JSON.stringify(obj));
   }
   write(text: string): boolean {
-    onFeed?.();
+    let fed = text;
     try {
-      this.fedTexts.push(String(JSON.parse(text).message?.content ?? ""));
+      fed = String(JSON.parse(text).message?.content ?? "");
     } catch {
-      this.fedTexts.push(text);
+      /* raw text */
     }
+    this.fedTexts.push(fed);
+    // a mid-turn harness line is not a new turn: nothing is scripted for it
+    if (fed.startsWith("[harness]")) return true;
+    onFeed?.();
     const group = this.groups.shift() ?? this.fallback();
     for (const obj of group) this.emit(obj);
     return true;
@@ -341,6 +347,50 @@ describe("pooled task lifecycle", () => {
     expect(status.last).toContain("claimed proof not run");
     const lines = parseLedger(readFileSync(ledgerPath(h.host.logDir), "utf8"));
     expect(lines.some((l) => l.event === "REPORT-PROOF-UNVERIFIED" && l.fields.id === "wp1")).toBe(true);
+  });
+
+  const failEdit = (n: number, text: string): Array<Record<string, unknown>> => [
+    { type: "assistant", message: { usage: usage1, content: [{ type: "tool_use", id: `e${n}`, name: "Edit", input: { file_path: "src/x.ts" } }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: `e${n}`, is_error: true, content: text }] } },
+  ];
+
+  const loopNotes = async (h: ReturnType<typeof makeHost>, id: string): Promise<string[]> => {
+    const said: string[] = [];
+    await checkLoops(
+      h.host.logDir,
+      [{ id, state: "running", provider: "local", pid: 1 } as any],
+      {},
+      { say: async (_d, _i, t) => said.push(t), kill: () => undefined, killChildren: async () => undefined }
+    );
+    return said;
+  };
+
+  it("a pooled job records its tool errors under the job id; 3 identical failures get exactly one correction in total", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    const err = "Error: something broke identically";
+    h.script([[...failEdit(1, err), ...failEdit(2, err), ...failEdit(3, err), resultEvt(R_PLAIN_1)]]);
+    await h.host.runTask(task({ id: "wt1", prompt: "fail thrice" }));
+    const recs = readToolErrors(h.host.logDir).filter((r) => r.worker === "wt1");
+    expect(recs.length).toBe(3);
+    expect(recs.every((r) => r.tool === "Edit")).toBe(true);
+    const injected = h.slots[0]!.fedTexts.filter((t) => t.startsWith("[harness]") && t.includes("times in a row"));
+    const said = await loopNotes(h, "wt1");
+    expect(injected.length + said.length).toBe(1);
+    expect(said).toEqual([LOOP_NOTE]);
+  });
+
+  it("a pooled job whose Edit JSON was cut off gets the split-it correction once", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    const cut = "InputValidationError: Edit was called with input that could not be parsed as JSON (first 200 of 16640 bytes)";
+    h.script([[...failEdit(1, cut), ...failEdit(2, cut), ...failEdit(3, cut), resultEvt(R_PLAIN_1)]]);
+    await h.host.runTask(task({ id: "wt2", prompt: "cut off" }));
+    const said = await loopNotes(h, "wt2");
+    expect(said).toEqual([CUT_NOTE]);
+    expect(said[0]).toContain("output limit");
+    expect(said[0]).not.toContain("old_string is wrong");
+    expect(h.slots[0]!.fedTexts.filter((t) => t.includes("output limit")).length).toBe(0);
   });
 
   it("a bash run within the task's turn satisfies the proof claim", async () => {

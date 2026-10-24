@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { checkLoops, LOOP_NOTE } from "./loop-watch.js";
+import { checkLoops, CUT_NOTE, LOOP_NOTE } from "./loop-watch.js";
 import { WorkerStatus } from "./status.js";
 
 const use = (id: string, name: string, input: unknown) => ({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } });
@@ -29,6 +29,15 @@ describe("loop-watch", () => {
     expect(deps.readEvents).toHaveBeenCalledWith("/tmp", "w1");
     expect(deps.say).not.toHaveBeenCalled();
     expect(deps.kill).not.toHaveBeenCalled();
+  });
+
+  it("a cut-off JSON input is warned with the split-it note, not the old_string note", async () => {
+    const statuses = [{ id: "w1", state: "running", pid: 123, provider: "local30x8" } as unknown as WorkerStatus];
+    const events = Array.from({ length: 3 }, (_, i) => [use(`c${i}`, "Edit", { file_path: "a.ts" }), res(`c${i}`, "InputValidationError: Edit was called with input that could not be parsed as JSON", true)]).flat();
+    const deps = { readEvents: vi.fn().mockReturnValue(events), say: vi.fn().mockResolvedValue(undefined), kill: vi.fn() };
+    await checkLoops("/tmp", statuses, {}, deps);
+    expect(deps.say).toHaveBeenCalledTimes(1);
+    expect(deps.say).toHaveBeenCalledWith("/tmp", "w1", CUT_NOTE);
   });
 
   it("returns one warn finding for 3 repeats local", async () => {
