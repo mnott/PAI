@@ -515,16 +515,8 @@ export async function runCockpitAction(
     return { ok: true, message: kind === "embed" ? "embedding the backlog" : "indexing", jobId: id };
   }
   if (action === "memory.stop") {
-    const run = (deps.readRun ?? (() => readRun(deps.home)))();
-    if (!run) return fail("nothing running");
-    if (run.by === "daemon") return fail(`the ${run.kind} run belongs to the daemon's pass (pid ${run.pid}); it ends at its own budget`);
-    try {
-      (deps.killRun ?? ((pid) => process.kill(pid, "SIGTERM")))(run.pid);
-    } catch (e) {
-      return fail(e instanceof Error ? e.message : String(e));
-    }
-    writeLedgerLine(deps, action, run.kind, `pid ${run.pid}: stopping`);
-    return { ok: true, message: `stopping ${run.kind} (re-run to continue)` };
+    const r = stopMemoryRun(deps);
+    return r.ok ? r : fail(r.message);
   }
   if (action === "local.off") {
     const id = randomBytes(6).toString("hex");
@@ -670,6 +662,20 @@ export async function runCockpitAction(
   return fail(`unknown action "${action}"`);
 }
 
+/** Ends the cockpit- or CLI-started memory run (SIGTERM, resumable); the daemon's own pass ends at its budget. Shared by memory.stop and the memory_run MCP tool. */
+export function stopMemoryRun(deps: ActionDeps): { ok: boolean; message: string } {
+  const run = (deps.readRun ?? (() => readRun(deps.home)))();
+  if (!run) return { ok: false, message: "nothing running" };
+  if (run.by === "daemon") return { ok: false, message: `the ${run.kind} run belongs to the daemon's pass (pid ${run.pid}); it ends at its own budget` };
+  try {
+    (deps.killRun ?? ((pid) => process.kill(pid, "SIGTERM")))(run.pid);
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+  writeLedgerLine(deps, "memory.stop", run.kind, `pid ${run.pid}: stopping`);
+  return { ok: true, message: `stopping ${run.kind} (re-run to continue)` };
+}
+
 /** Why an index/embed run must not start now (the duplicate guard), else null: a run's marker (any starter),
  *  a cockpit job still starting, or the daemon's own pass. */
 export async function memoryRunRefusal(deps: ActionDeps, nowMs = Date.now()): Promise<string | null> {
@@ -708,6 +714,7 @@ export function spawnMemoryRun(
   jobId: string,
   home: string,
   io: { spawn: typeof spawn; openSync: typeof openSync; closeSync: typeof closeSync } = { spawn, openSync, closeSync },
+  cliEntry: string = process.argv[1] ?? "",
 ): Promise<{ ok: boolean; message: string }> {
   const args = kind === "embed" ? ["memory", "embed", "--all", "--background"] : ["memory", "index", "--direct", "--background"];
   const log = memoryRunLog(home);
@@ -716,7 +723,7 @@ export function spawnMemoryRun(
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = io.spawn(process.execPath, [process.argv[1] ?? "", ...args], {
+      child = io.spawn(process.execPath, [cliEntry, ...args], {
         detached: true,
         stdio: ["ignore", fd, fd],
         env: { ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId },

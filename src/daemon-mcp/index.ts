@@ -31,6 +31,7 @@ import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
+import { daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill } from "./tools/ops.js";
 import { dropItermBundleId } from "../utils/env.js";
 
 dropItermBundleId();
@@ -1819,6 +1820,71 @@ async function startShim(): Promise<void> {
         return workerError(e);
       }
     }
+  );
+
+  server.tool(
+    "worker_kill",
+    "Stop a RUNNING or queued worker and every live descendant (`pai worker kill`): SIGTERM, then SIGKILL; a pooled worker is stopped through the pool host. A session may only kill workers it started; force=true with a reason overrides.",
+    {
+      id: z.string().describe("Worker id (as shown by worker_ps)."),
+      only: z.boolean().optional().describe("Kill only this worker, leave its children running."),
+      force: z.boolean().optional().describe("Kill another session's worker (needs reason)."),
+      reason: z.string().optional().describe("Why; recorded in the worker's event log."),
+    },
+    async (args) => workerKill(args)
+  );
+
+  server.tool(
+    "worker_gc",
+    "Archive leftover worker worktrees (`pai worker gc`). Dry run by default: pass dry_run=false to change anything. foreign=true also archives merged, clean worktrees of the current repo PAI did not create; pool=true also removes leftover pool reserve worktrees.",
+    {
+      older_than_hours: z.number().min(0).optional().describe("Minimum age of a finished worker (default 24)."),
+      all_finished: z.boolean().optional().describe("Any finished worker regardless of age."),
+      pool: z.boolean().optional().describe("Also remove leftover pool reserve worktrees."),
+      foreign: z.boolean().optional().describe("Also archive merged, clean worktrees PAI did not create."),
+      kill_orphans: z.boolean().optional().describe("End processes sitting in a finished worker's worktree (ignored on a dry run)."),
+      dry_run: z.boolean().optional().describe("Default true: print what would be archived, change nothing."),
+    },
+    async (args) => workerGc(args)
+  );
+
+  server.tool(
+    "pool_status",
+    "The worker pool (`pai worker pool status`): config, host, slots, carry and why recent runs were not pooled.",
+    {},
+    async () => poolStatus()
+  );
+
+  server.tool(
+    "daemon_service",
+    "The PAI daemon service (`pai daemon status|start|stop|restart`). stop leaves it stopped until start: scheduler passes and router supervision do not run meanwhile.",
+    { action: z.enum(["status", "start", "stop", "restart"]).optional().describe("Default: status.") },
+    async (args) => daemonService(args)
+  );
+
+  server.tool(
+    "router_service",
+    "The local model router (`pai router status|start|stop|restart`). restart hands the port over without refusing connections.",
+    { action: z.enum(["status", "start", "stop", "restart"]).optional().describe("Default: status.") },
+    async (args) => routerService(args)
+  );
+
+  server.tool(
+    "model_runtime",
+    "Start or stop a local model runtime through its configured models.runtimes.<runtime> commands (`pai models start|stop`, the cockpit runtime action); status lists runtimes (all, or one) from the inventory. Refuses on short memory or requests in flight.",
+    {
+      runtime: z.string().optional().describe("Runtime name (required for start, stop)."),
+      action: z.enum(["status", "start", "stop"]).optional().describe("Default: status."),
+      model: z.string().optional().describe("start/stop: the model to load or unload (docker model run|unload)."),
+    },
+    async (args) => modelRuntime(args)
+  );
+
+  server.tool(
+    "memory_run",
+    "Memory index maintenance (the cockpit memory.* actions): action=embed computes vectors for the whole backlog, index reads notes and memory files now, stop ends a run started by the cockpit/CLI/this tool (resumable), status shows the run and the embed backlog. Refuses while another run is active.",
+    { action: z.enum(["status", "embed", "index", "stop"]).optional().describe("Default: status.") },
+    async (args) => memoryRun(args)
   );
 
   // -------------------------------------------------------------------------

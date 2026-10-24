@@ -463,3 +463,17 @@ export async function killTree(
   if (order.length > 1) appendLedger(ledgerPath(logDir), "WORKER-KILL-TREE", { id, killed: order.map((s) => s.id).join(",") });
   return lines;
 }
+
+/** `pai worker kill` and the worker_kill MCP tool: refuse a worker that is not running, then killTree. */
+export async function killWorker(
+  logDir: string,
+  id: string,
+  opts: Parameters<typeof killTree>[2] = {},
+): Promise<string[]> {
+  const status = loadStatus(logDir, id);
+  if (!status) throw new Error(`no worker named "${id}"`);
+  if (status.state !== "running" && status.state !== "queued")
+    throw new Error(`worker ${id} is not running (state: ${status.state})`);
+  if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
+  return killTree(logDir, id, opts);
+}

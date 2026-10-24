@@ -157,3 +157,16 @@ The section shows, with green/amber/red status:
 - **Actions**: `embed backlog` (the same as `pai memory embed --all --background`, with chunks done / backlog at start, rate and ETA), `stop` (stops it cleanly; re-run to continue) and `index now` (one index pass). One run at a time: a run started by the CLI, the cockpit or the daemon's pass is detected through `<PAI home>/state/memory-run.json` and shown as "running (started by …)".
 
 Counts come from catalog statistics (`pg_class.reltuples`, `pg_stats`) and are marked "est."; real counts are refreshed in the background at most every 5 min (20 s statement timeout, estimate kept on failure). Nothing is computed per request.
+
+## Embed and index runs
+
+The cockpit Memory card, the CLI and MCP start the same runs:
+
+| Action | CLI | Cockpit | MCP |
+|---|---|---|---|
+| Embed the whole backlog | `pai memory embed --all` | `memory.embed` | `memory_run` action `embed` |
+| Read notes and memory files now | `pai memory index --direct` | `memory.index` | `memory_run` action `index` |
+| End a run (resumable) | SIGTERM the pid in `memory-run.json` | `memory.stop` | `memory_run` action `stop` |
+| Run and backlog | `pai memory status` | Memory card | `memory_run` action `status` |
+
+Only one run at a time: a second start is refused while a run marker is live or the daemon's own pass is busy. The daemon's pass ends at its own budget and cannot be stopped from here.

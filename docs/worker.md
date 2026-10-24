@@ -134,4 +134,18 @@ Line 4 of the status line, prefixed üêù, summarises workers: provider head, `‚ñ
 
 ## MCP
 
-`worker_status`, `worker_providers`, `worker_classes`, `worker_run`, `worker_toggle`, `worker_ps`, `worker_replay`, `worker_say`, `worker_resume`, `worker_handoff`, `worker_fallback`, `worker_capability`, `worker_model` call the same library as the CLI. Headless workers start with no MCP servers; opt in per run with `--mcp NAMES` (server names or `mcp_sets` names; `pai worker mcp list`). Allowlisting any `mcp__claude-in-chrome__*` tool adds `--chrome`.
+`worker_status`, `worker_providers`, `worker_classes`, `worker_run`, `worker_toggle`, `worker_ps`, `worker_replay`, `worker_say`, `worker_resume`, `worker_priority`, `worker_pause`, `worker_kill`, `worker_gc`, `pool_status`, `worker_handoff`, `worker_fallback`, `worker_capability`, `worker_model` call the same library as the CLI. Headless workers start with no MCP servers; opt in per run with `--mcp NAMES` (server names or `mcp_sets` names; `pai worker mcp list`). Allowlisting any `mcp__claude-in-chrome__*` tool adds `--chrome`.
+
+## Control and cleanup
+
+| Action | CLI | Cockpit | MCP |
+|---|---|---|---|
+| Change a running worker's engine priority | `pai worker priority set ID high\|normal\|low` | worker row | `worker_priority` (`worker_run` takes `priority`) |
+| Park / release a worker's next engine request | `pai worker pause ID`, `pai worker resume ID` | worker row | `worker_pause`, `worker_resume` without text |
+| Stop a worker and its descendants | `pai worker kill ID [--only] [--force --reason T]` | - | `worker_kill` |
+| Archive leftover worktrees | `pai worker gc [--all-finished] [--pool] [--foreign] [--kill-orphans] [--dry-run]` | - | `worker_gc` (dry run unless `dry_run=false`) |
+| Pool config, host, slots, skip reasons | `pai worker pool status` | - | `pool_status` |
+
+`kill` stops a pooled worker through the pool host and falls back to the slot's process. A session may only kill workers it started. `gc --foreign` also archives merged, clean worktrees of the current repo that PAI did not create (`refs/pai-archive/BRANCH`); unmerged ones are kept. `gc` keeps pool spares of a live host and lists other processes sitting in a finished worktree as orphans.
+
+A run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) runs unpooled and says so on stderr; `--no-pool` skips the pool on purpose. `pool status` shows why recent runs were not pooled, counted by reason over the last hours.
