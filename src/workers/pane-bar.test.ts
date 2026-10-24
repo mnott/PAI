@@ -168,6 +168,76 @@ describe("pane bar", () => {
       bar.stop();
     });
 
+    it("/help lists /now /cloud /local", async () => {
+      const { input, wrote, bar } = mk();
+      input.write("/help\n");
+      await vi.waitFor(() => expect(wrote.join("")).toContain("/cloud"));
+      expect(wrote.join("")).toContain("/now");
+      expect(wrote.join("")).toContain("/local");
+      bar.stop();
+    });
+
+    it("/now on a queued worker moves it to the front of its provider's queue", async () => {
+      const moveFront = vi.fn();
+      const setPriority = vi.fn();
+      const readQueued = () => ({ provider: "coder-l", position: 2, queued: 6, elapsedSec: 1500 });
+      const { input, wrote, say, bar } = mk({ moveFront, setPriority, readQueued });
+      input.write("/now\n");
+      await vi.waitFor(() => expect(moveFront).toHaveBeenCalledWith(dir, "w1", "coder-l"));
+      expect(setPriority).not.toHaveBeenCalled();
+      expect(say).not.toHaveBeenCalled();
+      expect(wrote.join("")).toContain("first in line on coder-l");
+      bar.stop();
+    });
+
+    it("/now on a running worker sets priority high", async () => {
+      const moveFront = vi.fn();
+      const setPriority = vi.fn();
+      const { input, wrote, bar } = mk({ moveFront, setPriority, readQueued: () => null });
+      input.write("/now\n");
+      await vi.waitFor(() => expect(setPriority).toHaveBeenCalledWith(dir, "w1", "high"));
+      expect(moveFront).not.toHaveBeenCalled();
+      expect(wrote.join("")).toContain("priority high");
+      bar.stop();
+    });
+
+    for (const [cmd, where] of [["/cloud", "cloud"], ["/local", "local"]] as const) {
+      it(`${cmd} calls the one reroute function with where=${where}`, async () => {
+        const reroute = vi.fn().mockResolvedValue({ provider: "p1" });
+        const { input, wrote, say, bar } = mk({ reroute });
+        input.write(`${cmd}\n`);
+        await vi.waitFor(() => expect(reroute).toHaveBeenCalledWith(dir, "w1", where));
+        await vi.waitFor(() => expect(wrote.join("")).toContain("started again on p1"));
+        expect(say).not.toHaveBeenCalled();
+        bar.stop();
+      });
+    }
+
+    it("a reroute that fails says so", async () => {
+      const reroute = vi.fn().mockRejectedValue(new Error("worker w1 already runs on anthropic"));
+      const { input, wrote, bar } = mk({ reroute });
+      input.write("/cloud\n");
+      await vi.waitFor(() => expect(wrote.join("")).toContain("not moved: worker w1 already runs on anthropic"));
+      bar.stop();
+    });
+
+    it("a queued worker's bar row reads queued · position · provider held/cap · waited", () => {
+      const readQueued = () => ({ provider: "coder-l", position: 2, queued: 6, elapsedSec: 1500, held: 3, cap: 3 });
+      const { wrote, bar } = mk({ readQueued, loadStatus: () => null });
+      expect(wrote.join("")).toContain("queued · position 2 of 6 · coder-l 3/3 · waited 25m");
+      bar.stop();
+    });
+
+    it("a reroute mark in the status prints the escalation line once", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const { wrote, bar } = mk({ tickMs: 10, loadStatus: () => ({ ...st, rerouted: "anthropic: queued 16m" }) });
+      vi.advanceTimersByTime(30);
+      const text = wrote.join("");
+      expect(text.split("» escalated to anthropic: queued 16m")).toHaveLength(2);
+      bar.stop();
+      vi.useRealTimers();
+    });
+
     it("normal text is forwarded as today", async () => {
       const { input, say, bar } = mk();
       input.write("just a note\n");

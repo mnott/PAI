@@ -96,6 +96,12 @@ export function bashCommand(input: unknown): string {
   return "";
 }
 
+/** A tool call that counts as progress for the stall escalation: an edit, a write or a git commit. */
+export function isProgressTool(name: string, input: unknown): boolean {
+  if (name === "Edit" || name === "Write" || name === "MultiEdit" || name === "NotebookEdit") return true;
+  return name === "Bash" && /\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(bashCommand(input));
+}
+
 export function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {

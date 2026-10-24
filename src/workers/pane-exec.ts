@@ -227,9 +227,43 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   // the wrapper polls the queue file into plain strings: the line is redrawn in
   // place (\r + clear-line) even off a terminal, so clear() can erase it again
   const qline = queueLineWriter({ write: err, tty: d.tty ?? process.stderr.isTTY === true, inplace: true, columns: () => process.stderr.columns });
+  // a run that waits for a slot gets the pane bar (status row + input line) from the moment it is queued:
+  // the queue file names the log dir, and the bar's row is the queue line itself (/now, /cloud work from here)
+  let queuedBar: PaneBar | null = null;
+  const startBar = async (statusLine: StatusLineSpec): Promise<PaneBar> => {
+    const { loadStatus } = await import("./status.js");
+    const { sayToWorker } = await import("./operator.js");
+    return startPaneBar({
+      spec: statusLine,
+      write: (x) => out(x),
+      rows: () => process.stdout.rows || 24,
+      columns: () => process.stdout.columns || null,
+      input: process.stdin,
+      loadStatus,
+      say: sayToWorker,
+      now,
+      onResize: (cb) => void process.stdout.on("resize", cb),
+      ...d.bar,
+    });
+  };
+  let barStarting = false;
+  let queueOver = false;
   const drawQueued = (clear = false): void => {
-    if (clear) return qline.clear(); // nothing was ever shown: nothing to clear
-    qline.show(readQueued(qdir, id));
+    if (clear) {
+      queueOver = true;
+      queuedBar?.stop();
+      queuedBar = null;
+      return qline.clear(); // nothing was ever shown: nothing to clear
+    }
+    const q = readQueued(qdir, id);
+    if (queuedBar) return;
+    if (q?.logDir && !barStarting && (d.tty ?? process.stdout.isTTY === true)) {
+      barStarting = true;
+      qline.clear();
+      void startBar({ kind: "worker", id, logDir: q.logDir }).then((b) => (queueOver ? b.stop() : (queuedBar = b)), () => (barStarting = false));
+      return;
+    }
+    qline.show(q);
   };
   const queuedWatch = setInterval(() => drawQueued(), d.queuedPollMs ?? 2000);
   queuedWatch.unref();
@@ -333,20 +367,7 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   let show = out;
   let showErr = err;
   if (sp.statusLine && (d.tty ?? process.stdout.isTTY === true)) {
-    const { loadStatus } = await import("./status.js");
-    const { sayToWorker } = await import("./operator.js");
-    const b = startPaneBar({
-      spec: sp.statusLine,
-      write: (x) => out(x),
-      rows: () => process.stdout.rows || 24,
-      columns: () => process.stdout.columns || null,
-      input: process.stdin,
-      loadStatus,
-      say: sayToWorker,
-      now,
-      onResize: (cb) => void process.stdout.on("resize", cb),
-      ...d.bar,
-    });
+    const b = await startBar(sp.statusLine);
     bar = b;
     const lines = (emit: (l: string) => void): ((x: string | Buffer) => void) => {
       let buf = "";

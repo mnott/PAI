@@ -39,6 +39,12 @@ export interface EscalateConfig {
   triggers: TriggerKind[];
   /** The cloud target of a plan/queue escalation and of `pai worker help`: tier label, provider name, model alias. */
   cloud: CloudTarget;
+  /** Time-bound escalation (reroute.ts): minutes a job may wait for a slot before it goes to the fallback provider. */
+  queuedMaxMin: number;
+  /** Minutes a running job may go without a successful Edit/Write/commit. */
+  stallMaxMin: number;
+  /** Failed tool calls in a row that count as a stall. */
+  stallFailedCalls: number;
 }
 
 export interface CloudTarget {
@@ -50,7 +56,7 @@ export interface CloudTarget {
 const ALL_TRIGGERS: TriggerKind[] = ["context", "missing-tool", "repeated-failure", "loop-stop", "deadline"];
 
 /** Fallbacks of the escalate block when workers.yaml omits a key; the shipped defaults file carries the policy values. */
-export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" } };
+export const DEFAULT_ESCALATE: EscalateConfig = { enabled: true, contextFraction: 0.7, failures: 2, triggers: ALL_TRIGGERS, cloud: { tier: "sonnet", provider: "anthropic", model: "sonnet" }, queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 };
 
 /** Failed local attempts that escalate a task (the route classifier's rule, now this one). */
 export const ESCALATE_FAILURES = DEFAULT_ESCALATE.failures;
@@ -243,6 +249,11 @@ export function parseEscalate(v: unknown, bad: Bad): EscalateConfig {
       bad(".escalate.triggers", `must be a list of: ${ALL_TRIGGERS.join(", ")}`);
     }
     out.triggers = t.triggers as TriggerKind[];
+  }
+  for (const k of ["queuedMaxMin", "stallMaxMin", "stallFailedCalls"] as const) {
+    if (t[k] === undefined) continue;
+    if (typeof t[k] !== "number" || !Number.isFinite(t[k]) || (t[k] as number) <= 0) bad(`.escalate.${k}`, "must be a positive number");
+    out[k] = t[k] as number;
   }
   if (t.cloud !== undefined) {
     if (typeof t.cloud !== "object" || t.cloud === null || Array.isArray(t.cloud)) bad(".escalate.cloud", "must be an object");

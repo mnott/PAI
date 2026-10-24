@@ -167,6 +167,14 @@ workers:
       tier: sonnet
       provider: anthropic
       model: sonnet
+    # Time-bound escalation (the supervision tick, reroute.ts): a job that
+    # waits for a slot longer than queuedMaxMin, runs without a successful
+    # Edit/Write/commit for stallMaxMin, or has stallFailedCalls failed tool
+    # calls in a row, moves once to the fallback provider. A job whose provider
+    # was pinned (--provider, --local, the session profile) is never moved.
+    queuedMaxMin: 15
+    stallMaxMin: 10
+    stallFailedCalls: 6
   # Loop guard: a denied repeat of a read-only call (Bash read, Read, Grep,
   # Glob) gets the call's last output back, trimmed to these sizes, so the
   # model stops asking for it again. Secret-looking lines are masked.

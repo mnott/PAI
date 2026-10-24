@@ -136,14 +136,34 @@ export function ranLocal(a: ExecuteArgs, st: WorkerStatus): boolean {
   return p ? isLoopbackProvider(p) : !!a.route?.local;
 }
 
-/** Re-run a failed local run once on the cloud, as a fresh run (never another pool spare of the local key). */
-export function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: WorkerStatus): Promise<number> {
+/** Where a restart goes: the fall-through's cloud, or any provider (reroute, supervision escalation). */
+export interface RerunTarget {
+  provider: string;
+  model?: string;
+}
+
+export const CLOUD: RerunTarget = { provider: ANTHROPIC_NATIVE };
+
+/** The run a restart repeats: an ExecuteArgs, or what a status keeps of one (reroute.ts builds it for a run in another process). */
+export type RerunSource = Pick<ExecuteArgs, "logDir" | "cwd" | "claudeArgs" | "label"> &
+  Partial<Pick<ExecuteArgs, "opts" | "mcpFlag" | "specPath" | "parent" | "stage" | "quiet" | "worktreeFlag" | "className" | "route" | "priorIds" | "runner" | "onWorkerStart">> & {
+    target?: { providerName: string };
+  };
+
+/**
+ * Start the same task again on `to` as a fresh run (never another pool spare of the local key) and link the two runs:
+ * the ledger line, the new run's _fallThroughOf/_priorIds and `st.fallThroughTo`. The one restart path of the
+ * local-to-cloud fall-through (`to` = the cloud) and of reroute / the supervision escalation (any provider).
+ */
+export function rerunOn(a: RerunSource, wid: string, why: string, st: WorkerStatus, to: RerunTarget = CLOUD): Promise<number> {
   const { logDir } = a;
-  appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH", { id: wid, reason: why });
-  process.stderr.write(`pai worker: ${wid} on ${a.target.providerName} ended badly (${why}) — re-running on the cloud\n`);
+  const where = to === CLOUD ? "the cloud" : to.provider;
+  appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH", { id: wid, reason: why, ...(to === CLOUD ? {} : { to: to.provider }) });
+  process.stderr.write(`pai worker: ${wid} on ${a.target?.providerName ?? st.provider} ended badly (${why}) — re-running on ${where}\n`);
   return (a.runner ?? runWorker)({
-    providerFlag: ANTHROPIC_NATIVE,
-    label: `${a.label} (fall-through)`,
+    providerFlag: to.provider,
+    ...(to.model ? { modelFlag: to.model } : {}),
+    label: `${a.label} (${to === CLOUD ? "fall-through" : "rerouted"})`,
     noPool: a.opts?.noPool,
     mcpFlag: a.mcpFlag,
     cwd: a.cwd,
@@ -154,7 +174,7 @@ export function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: Worke
     quiet: a.quiet,
     worktreeFlag: a.worktreeFlag,
     className: a.className,
-    _route: { policy: a.route!.policy, reason: `fall-through (${why})`, local: false },
+    _route: { policy: a.route?.policy ?? "auto", reason: `${to === CLOUD ? "fall-through" : "rerouted"} (${why})`, local: false },
     _fallThroughOf: wid,
     _priorIds: [...(a.priorIds ?? []), wid],
     onWorkerStart: (id2) => {

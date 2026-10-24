@@ -61,6 +61,7 @@ import {
   resetContextTokensOnCompact,
   isCompactBoundary,
   bashCommand,
+  isProgressTool,
   toolResultText,
   toolResultFailed,
   adoptInitModel,
@@ -82,7 +83,7 @@ import {
   reaskAg2Report,
   printResult,
 } from "./finalise.js";
-import { tryEscalate, rerunOnCloud, ranLocal } from "./escalate.js";
+import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
 import type { PreparedRun } from "./execute-prepare.js";
@@ -446,6 +447,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
               if (d) state.trouble?.onDenial(d.hook, d.reason);
             }
             toolFold.onToolResult(block);
+            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+            if (use && !toolResultFailed(block) && isProgressTool(use.name, use.input)) status.progressAt = nowStamp();
           }
           if (sawResult) saveStatus(logDir, status);
         }
@@ -624,7 +627,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       if (escalated !== null) return escalated;
       const why = headless && !reviewed ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) : null;
       if (why && a.route && !st.escalated) {
-        return rerunOnCloud(a, wid, why, st);
+        return rerunOn(a, wid, why, st);
       }
       if (headless && !a.quiet) {
         printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });

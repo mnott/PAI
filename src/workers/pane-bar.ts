@@ -12,6 +12,9 @@ import { PassThrough } from "node:stream";
 import { applyScroll, PANE_ENTER, PANE_LEAVE, parseScrollInput, Viewport } from "./pane-viewport.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
+import { reorderQueue } from "./capacity.js";
+import { setWorkerPriority } from "./engine-control.js";
+import { escalationLine } from "./reroute.js";
 import { paneExecDir } from "./pane-exec.js";
 import { isLive, type WorkerStatus } from "./status.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -54,7 +57,7 @@ export function markPaneClosedBy(logDir: string, id: string, by = "pane command"
 }
 
 /** The pane's own slash commands, handled here and never forwarded to the model. */
-const PANE_COMMANDS = ["/quit", "/exit", "/stop", "/help"];
+const PANE_COMMANDS = ["/quit", "/exit", "/stop", "/help", "/now", "/cloud", "/local"];
 
 /** The pane's own commands, listed by /help. */
 export const PANE_HELP = [
@@ -62,6 +65,9 @@ export const PANE_HELP = [
   "/stop [reason]    stop the worker (as pai worker kill <id> --reason)",
   "/pause            the worker stops working on its task and only talks; /continue resumes it",
   "/continue         clear the pause: resume the task where you stopped",
+  "/now              go first: a queued worker moves to the front of its provider's queue, a running one gets high priority",
+  "/cloud            run this job on the session's cloud provider (a queued job is re-routed, a running one is stopped, its commits kept, and continued there)",
+  "/local            the reverse: run this job on the local model",
   "/help             this list",
   "scrolling         mouse wheel, PageUp/PageDown or Shift+Up/Down; End (or typing) follows the output again",
   "selecting text    mouse reporting is on: hold Option while dragging in iTerm",
@@ -118,6 +124,12 @@ export interface PaneBarDeps {
   closePane?: () => Promise<unknown>;
   /** Stop the worker the way `pai worker kill` does (default: killWorker with the pane's reason). */
   kill?: (logDir: string, id: string, reason: string) => Promise<unknown>;
+  /** Move this worker to the front of its provider's queue (default: reorderQueue, as worker_queue next). */
+  moveFront?: (logDir: string, id: string, provider: string) => unknown;
+  /** Raise a running worker's priority (default: setWorkerPriority, as worker_priority). */
+  setPriority?: (logDir: string, id: string, level: "high") => unknown;
+  /** Move the worker to cloud/local (default: rerouteWorker, as pai worker reroute and worker_reroute). */
+  reroute?: (logDir: string, id: string, where: "cloud" | "local") => Promise<{ provider: string }>;
   /** Record the deliberate close (default: markPaneClosedBy). */
   markClosed?: (logDir: string, id: string) => void;
   /** Write the pause into the worker's status (default: its own status file). */
@@ -229,7 +241,17 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
       } else line(`» ${q.text} — not delivered: worker ended (${st.state}) before its next turn`);
     }
   };
+  // a reroute (the operator's /cloud or the supervision tick's escalation) leaves its mark in the status: say it once
+  let rerouteShown = false;
+  const announceReroute = (): void => {
+    if (rerouteShown || d.spec.kind !== "worker") return;
+    const r = (d.loadStatus ?? (() => null))(d.spec.logDir, d.spec.id)?.rerouted;
+    if (!r || r.startsWith("skipped")) return;
+    rerouteShown = true;
+    line(dim(escalationLine(r)));
+  };
   const tick = (): void => {
+    announceReroute();
     const mark = view.indicator();
     d.write(paneStatusFrame(mark ? `${mark} · ${text()}` : text(), rows, d.columns()));
     settle();
@@ -301,6 +323,37 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
               line(`» continue note — not delivered: ${e.message}`)
             );
             return;
+          case "/now": {
+            const q = (d.readQueued ?? readQueuedFile)(d.queuedDir ?? paneExecDir(), id);
+            try {
+              if (q) {
+                (d.moveFront ?? ((ld, wid, prov) => reorderQueue(ld, prov, wid, "front")))(logDir, id, q.provider);
+                line(dim(`» ${id}: first in line on ${q.provider}`));
+              } else {
+                (d.setPriority ?? ((ld, wid, lvl) => setWorkerPriority(ld, wid, lvl, "pane")))(logDir, id, "high");
+                line(dim(`» ${id}: priority high`));
+              }
+            } catch (e) {
+              line(`» ${id} — /now failed: ${(e as Error).message}`);
+            }
+            return;
+          }
+          case "/cloud":
+          case "/local": {
+            const where = word.toLowerCase() === "/cloud" ? "cloud" : "local";
+            line(dim(`» moving ${id} to ${where}…`));
+            const move =
+              d.reroute ??
+              (async (ld, wid, w) => {
+                const { rerouteWorker } = await import("./reroute.js");
+                return rerouteWorker(wid, w, { logDir: ld, by: "pane command" });
+              });
+            void move(logDir, id, where).then(
+              (r) => line(dim(`» ${id}: started again on ${r.provider}`)),
+              (e: Error) => line(`» ${id} — not moved: ${e.message}`)
+            );
+            return;
+          }
           case "/help":
             for (const h of PANE_HELP) line(dim(h));
             return;

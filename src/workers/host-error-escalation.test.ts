@@ -82,7 +82,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("a pooled local run the host could not finish escalates", () => {
-  it("no result event + loop-stopped + no commits: rerunOnCloud one tier up", async () => {
+  it("no result event + loop-stopped + no commits: rerunOn one tier up", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "pai-hosterr-"));
     failedStatus(logDir);
     const seen: Seen[] = [];
@@ -209,7 +209,7 @@ describe("the pool claim names the run's own provider", () => {
 
 describe("an unpooled local run stopped by the loop guard escalates (tryEscalate, no result event)", () => {
   for (const rc of [143, 1]) {
-    it(`rc ${rc}, no commits: rerunOnCloud-side re-run once with the escalated prompt`, async () => {
+    it(`rc ${rc}, no commits: rerunOn-side re-run once with the escalated prompt`, async () => {
       const logDir = mkdtempSync(join(tmpdir(), "pai-unpooled-"));
       const st = failedStatus(logDir, { rc });
       const seen: Seen[] = [];

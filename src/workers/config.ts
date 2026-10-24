@@ -1948,3 +1948,14 @@ export function escalationCloud(): CloudTarget {
     return DEFAULT_ESCALATE.cloud;
   }
 }
+
+/** The time-bound escalation numbers (workers.escalate.queuedMaxMin/stallMaxMin/stallFailedCalls); the shipped ones when the config cannot be read. */
+export function escalationPolicy(): Pick<EscalateConfig, "queuedMaxMin" | "stallMaxMin" | "stallFailedCalls"> {
+  try {
+    const { queuedMaxMin, stallMaxMin, stallFailedCalls } = readWorkersSection().workers.escalate;
+    return { queuedMaxMin, stallMaxMin, stallFailedCalls };
+  } catch {
+    const { queuedMaxMin, stallMaxMin, stallFailedCalls } = DEFAULT_ESCALATE;
+    return { queuedMaxMin, stallMaxMin, stallFailedCalls };
+  }
+}

@@ -166,6 +166,14 @@ export interface WorkerStatus {
    * reader must treat that as "no signal".
    */
   consecFails?: number | null;
+  /** nowStamp() of the last successful Edit/Write/commit; the supervision tick escalates a run that stops making progress (reroute.ts). */
+  progressAt?: string;
+  /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */
+  promptFile?: string;
+  /** The --class the run was started with. */
+  className?: string;
+  /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
+  rerouted?: string;
   /** Hook/permission denials the run hit (capped list, see denials.ts) and their true total. */
   denials?: Denial[];
   denialCount?: number;

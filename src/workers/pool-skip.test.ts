@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { tryPoolRun } from "./run.js";
 import { runChain } from "./chain.js";
-import { rerunOnCloud } from "./run/escalate.js";
+import { rerunOn } from "./run/escalate.js";
 import { workerArgs } from "./plan-deps.js";
 import { workerRunShape } from "../daemon-mcp/tools/worker-run-args.js";
 import { z } from "zod";
@@ -192,7 +192,7 @@ describe("noPool is threaded through every entry point", () => {
         logDir: dir(), noPane: true, label: "x", route: { policy: "p" }, opts: { noPool }, claudeArgs: ["-p", "x"],
         target: { providerName: "glm" }, runner: async (o: { noPool?: boolean }) => ((got = o.noPool), 0),
       };
-      await rerunOnCloud(a as never, "w1", "why", { fallThroughTo: undefined } as never);
+      await rerunOn(a as never, "w1", "why", { fallThroughTo: undefined } as never);
       expect(got).toBe(noPool);
     }
   });
