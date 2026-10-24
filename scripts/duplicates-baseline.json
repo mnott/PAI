@@ -7,8 +7,6 @@
   "src/cli/commands/session/commands.ts | src/cli/commands/session/commands.ts | 2f1871e1909c",
   "src/cli/commands/session/commands.ts | src/cli/commands/session/commands.ts | 44c0e351c9cb",
   "src/cli/commands/session/commands.ts | src/cli/commands/session/commands.ts | cb4245c5a806",
-  "src/cli/impl/project/session-config.ts | src/cli/impl/project/session-config.ts | 2733c9007cfe",
-  "src/cli/impl/project/session-config.ts | src/cli/impl/project/session-config.ts | 3ece1d66aaff",
   "src/config/main-config.ts | src/config/main-config.ts | d3d3520ff9c5",
   "src/daemon-mcp/tools/delegation.ts | src/daemon-mcp/tools/delegation.ts | 1e2e0ffe6336",
   "src/daemon-mcp/tools/delegation.ts | src/daemon-mcp/tools/delegation.ts | 2578fb620f81",

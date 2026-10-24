@@ -74,6 +74,43 @@ async function currentProject(cwd?: string): Promise<ProjectRow | undefined> {
   return getProject(detected.slug);
 }
 
+/** Apply `key=value` pairs to a session config; bad pairs are reported and skipped. */
+function applySetPairs(config: SessionConfig, pairs: string[]): void {
+  for (const pair of pairs) {
+    const eqIdx = pair.indexOf('=');
+    if (eqIdx === -1) { console.error(err(`Invalid format: "${pair}". Use key=value.`)); continue; }
+    const key = pair.substring(0, eqIdx);
+    const value = pair.substring(eqIdx + 1);
+    if (!CONFIG_OPTIONS.find(o => o.key === key)) { console.error(err(`Unknown key: "${key}". Run: pai project config --options`)); continue; }
+    if (key === 'env') {
+      config.env = { ...(config.env ?? {}), ...(parseConfigValue('env', value) as Record<string, string>) };
+    } else {
+      (config as Record<string, unknown>)[key] = parseConfigValue(key, value);
+    }
+  }
+}
+
+/** The cwd's project and its session config for `pai project mcp|tools`; null (after reporting) when it cannot be resolved. */
+async function pinnedProject(
+  verb: string,
+  names: string[],
+  cwd: string | undefined,
+): Promise<{ project: ProjectRow; config: SessionConfig } | null> {
+  if (names.length) {
+    console.error(err(`use --set <names> to change the pin; \`pai project ${verb}\` shows it`));
+    process.exitCode = 1;
+    return null;
+  }
+  const project = await currentProject(cwd);
+  if (!project) {
+    console.error(err("No registered project matches the current directory."));
+    console.error(dim("  Register it first: pai projects here <name>"));
+    process.exitCode = 1;
+    return null;
+  }
+  return { project, config: getSessionConfig(project) };
+}
+
 async function saveSessionConfig(project: ProjectRow, config: SessionConfig): Promise<void> {
   const backend = await getRegistryBackend();
   await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
@@ -311,18 +348,7 @@ export async function cmdConfig(
     }
 
     if (opts.set?.length) {
-      for (const pair of opts.set) {
-        const eqIdx = pair.indexOf('=');
-        if (eqIdx === -1) { console.error(err(`Invalid format: "${pair}". Use key=value.`)); continue; }
-        const key = pair.substring(0, eqIdx);
-        const value = pair.substring(eqIdx + 1);
-        if (!CONFIG_OPTIONS.find(o => o.key === key)) { console.error(err(`Unknown key: "${key}". Run: pai project config --options`)); continue; }
-        if (key === 'env') {
-          defaults.env = { ...(defaults.env ?? {}), ...(parseConfigValue('env', value) as Record<string, string>) };
-        } else {
-          (defaults as Record<string, unknown>)[key] = parseConfigValue(key, value);
-        }
-      }
+      applySetPairs(defaults, opts.set);
       saveGlobalDefaults(defaults);
       console.log(ok("Global defaults updated."));
     }
@@ -385,18 +411,7 @@ export async function cmdConfig(
   }
 
   if (opts.set?.length) {
-    for (const pair of opts.set) {
-      const eqIdx = pair.indexOf('=');
-      if (eqIdx === -1) { console.error(err(`Invalid format: "${pair}". Use key=value.`)); continue; }
-      const key = pair.substring(0, eqIdx);
-      const value = pair.substring(eqIdx + 1);
-      if (!CONFIG_OPTIONS.find(o => o.key === key)) { console.error(err(`Unknown key: "${key}". Run: pai project config --options`)); continue; }
-      if (key === 'env') {
-        config.env = { ...(config.env ?? {}), ...(parseConfigValue('env', value) as Record<string, string>) };
-      } else {
-        (config as Record<string, unknown>)[key] = parseConfigValue(key, value);
-      }
-    }
+    applySetPairs(config, opts.set);
     await backend.updateProjectSessionConfig(project.id, JSON.stringify(config), now());
     console.log(ok(`Config updated for ${bold(project.slug)}`));
   }
@@ -481,19 +496,9 @@ export async function cmdMcp(
   names: string[],
   opts: { clear?: boolean; set?: string; cwd?: string } = {}
 ): Promise<void> {
-  if (names.length) {
-    console.error(err("use --set <names> to change the pin; `pai project mcp` shows it"));
-    process.exitCode = 1;
-    return;
-  }
-  const project = await currentProject(opts.cwd);
-  if (!project) {
-    console.error(err("No registered project matches the current directory."));
-    console.error(dim("  Register it first: pai projects here <name>"));
-    process.exitCode = 1;
-    return;
-  }
-  const config = getSessionConfig(project);
+  const pinned = await pinnedProject('mcp', names, opts.cwd);
+  if (!pinned) return;
+  const { project, config } = pinned;
 
   if (opts.clear) {
     delete config.mcp;
@@ -524,19 +529,9 @@ export async function cmdTools(
   names: string[],
   opts: { clear?: boolean; set?: string; cwd?: string } = {}
 ): Promise<void> {
-  if (names.length) {
-    console.error(err("use --set <names> to change the pin; `pai project tools` shows it"));
-    process.exitCode = 1;
-    return;
-  }
-  const project = await currentProject(opts.cwd);
-  if (!project) {
-    console.error(err("No registered project matches the current directory."));
-    console.error(dim("  Register it first: pai projects here <name>"));
-    process.exitCode = 1;
-    return;
-  }
-  const config = getSessionConfig(project);
+  const pinned = await pinnedProject('tools', names, opts.cwd);
+  if (!pinned) return;
+  const { project, config } = pinned;
 
   if (opts.clear) {
     delete config.tools;
