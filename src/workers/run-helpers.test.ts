@@ -4,6 +4,7 @@
  * functions — no claude, no osascript.
  */
 
+import { fakeUrl } from "../utils/fake-secret.js";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
@@ -847,7 +848,7 @@ describe("printResult", () => {
 
   it("json: a connection-string password in the result never reaches the record", () => {
     const pw = ["hunter", "2", "xyz"].join("");
-    const dsn = `postgresql://app:${pw}@db.example:5432/main`;
+    const dsn = fakeUrl("postgresql", "app", pw, "db.example:5432/main");
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       printResult("json", { type: "result", result: `connect failed ${dsn}`, is_error: true }, 1, "/log", "w1", null, { cfg: { password: pw } });
