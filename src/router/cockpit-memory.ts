@@ -14,6 +14,7 @@ import { loadConfig } from "../daemon/config.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { listLessons, LESSON_STATES, type Lesson, type LessonState } from "../memory/lessons.js";
 import { readFinishedRun, readRun, type FinishedRun, type RunState } from "../memory/run-state.js";
+import type { JobRunProgress } from "../memory/job-progress.js";
 import { readEmbedPasses, type EmbedPassLogEntry } from "../memory/embed-pass.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { logTailSince, readCockpitJob, type LocalJobState } from "./cockpit-actions.js";
@@ -152,10 +153,22 @@ export function runningMemoryJob(home: string, nowMs: number, graceMs: number): 
 }
 
 /** Progress of a running memory job for /cockpit/job. */
-export function memoryJobProgress(home: string, j: LocalJobState, nowMs = Date.now()): { elapsedSec: number; tail: string } | null {
+export function memoryJobProgress(home: string, j: LocalJobState, nowMs = Date.now()): { elapsedSec: number; tail: string; stalledSec?: number } | null {
   if (j.kind !== "memory" || j.state !== "running") return null;
   const started = Date.parse(j.startedAt ?? j.at);
-  return { elapsedSec: Math.max(0, Math.round((nowMs - (Number.isNaN(started) ? nowMs : started)) / 1000)), tail: logTailSince(memoryRunLog(home), 0) };
+  const stalled = stalledSeconds(j.progress, nowMs);
+  return { elapsedSec: Math.max(0, Math.round((nowMs - (Number.isNaN(started) ? nowMs : started)) / 1000)), tail: logTailSince(memoryRunLog(home), 0), ...(stalled !== null ? { stalledSec: stalled } : {}) };
+}
+
+/** A run whose counters have not moved for longer than this shows "no progress for N s". */
+export const JOB_STALL_SEC = 60;
+
+/** Seconds since the counters last changed when that exceeds JOB_STALL_SEC (server clock, so the page needs no skew guard); null otherwise. */
+export function stalledSeconds(p: JobRunProgress | undefined, nowMs: number): number | null {
+  const moved = p ? Date.parse(p.movedAt) : NaN;
+  if (Number.isNaN(moved)) return null;
+  const sec = Math.round((nowMs - moved) / 1000);
+  return sec > JOB_STALL_SEC ? sec : null;
 }
 
 type Level = "green" | "amber" | "red";

@@ -7,9 +7,9 @@ const src = readFileSync(fileURLToPath(new URL("./win/actions.ts", import.meta.u
 const m = src.match(/export const WIN_ACTIONS_JS = String\.raw`([\s\S]*?)`;/);
 if (!m) throw new Error("WIN_ACTIONS_JS not found in win/actions.ts");
 const api = (new Function(
-  `${m[1]}\nreturn {defAction:defAction,actionDef:actionDef,winBody:winBody,runAction:function(cardId,verb,args,el,host){return runAction(cardId,verb,args,el,host,{pollMs:1})},runActionReal:runAction,winClick:winClick,winPost:winPost,clearStatus:clearStatus,armConfirm:armConfirm,disarmConfirm:disarmConfirm,WIN_VERBS:WIN_VERBS,STATUS_OK_MS:STATUS_OK_MS,JOB_POLL:JOB_POLL,JOB_TRIES:JOB_TRIES};`,
+  `${m[1]}\nreturn {winJobLine:winJobLine,defAction:defAction,actionDef:actionDef,winBody:winBody,runAction:function(cardId,verb,args,el,host){return runAction(cardId,verb,args,el,host,{pollMs:1})},runActionReal:runAction,winClick:winClick,winPost:winPost,clearStatus:clearStatus,armConfirm:armConfirm,disarmConfirm:disarmConfirm,WIN_VERBS:WIN_VERBS,STATUS_OK_MS:STATUS_OK_MS,JOB_POLL:JOB_POLL,JOB_TRIES:JOB_TRIES};`,
 ) as any)();
-const { defAction, actionDef, winBody, runAction, winClick, clearStatus, WIN_VERBS } = api;
+const { winJobLine, defAction, actionDef, winBody, runAction, winClick, clearStatus, WIN_VERBS } = api;
 
 type Call = { url: string; body: any };
 function fakeHost(reply: (c: Call) => unknown) {
@@ -370,5 +370,22 @@ describe("C1 guards: job watcher wording", () => {
       expect(h.busy.at(-1)![1]).toBe(false);
     }
     vi.useRealTimers();
+  });
+});
+
+describe("winJobLine (job progress rendering)", () => {
+  const prog = { phase: "index", done: 120, total: 254, unit: "projects", files: 72, chunks: 5, skipped: 9, current: "", elapsedSec: 100 };
+  it("a progress record reads 'indexing 120/254 projects · 72 files · 1:40' with a bar", () => {
+    const l = winJobLine({ message: "index now", elapsedSec: 100, progress: prog }, "memory.index");
+    expect(l).toBe("indexing 120/254 projects · 72 files · 1:40 ▰▰▰▰▱▱▱▱");
+  });
+  it("an embed record reads chunks over total", () => {
+    expect(winJobLine({ elapsedSec: 125, progress: { ...prog, phase: "embed", unit: "chunks", done: 4500, total: 9000 } }, "x")).toBe("embedding 4500/9000 chunks · 2:05 ▰▰▰▰▱▱▱▱");
+  });
+  it("a stalled record leads with 'no progress for N s'", () => {
+    expect(winJobLine({ elapsedSec: 300, stalledSec: 75, progress: prog }, "x")).toMatch(/^no progress for 75 s · indexing 120\/254/);
+  });
+  it("a job without progress keeps message, seconds and tail", () => {
+    expect(winJobLine({ message: "index now", elapsedSec: 4, tail: "scanning" }, "v")).toBe("index now ... 4 s · scanning");
   });
 });

@@ -10,6 +10,7 @@ import { loadConfig } from "../../../daemon/config.js";
 import { runEmbed } from "./embed.js";
 import { acquireRun, readRun } from "../../../memory/run-state.js";
 import { reexecBackground } from "../../../daemon/pass-priority.js";
+import { jobProgressFromEnv } from "../../../memory/job-progress.js";
 
 /**
  * Index every active project through the StorageBackend. Loops
@@ -23,11 +24,19 @@ async function indexAllProjects(
   const projects = await registry.listProjects({ status: "active" });
 
   const totals: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
+  // progress into the cockpit job (PAI_COCKPIT_JOB), fed from the same totals the final line prints
+  const progress = jobProgressFromEnv();
+  const report = (done: number, current: string): void =>
+    progress?.update({ phase: "index", unit: "projects", done, total: projects.length, files: totals.filesProcessed, chunks: totals.chunksCreated, skipped: totals.filesSkipped, current });
+  report(0, "");
+  let n = 0;
   for (const project of projects) {
+    report(n, project.display_name);
     const r = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
     totals.filesProcessed += r.filesProcessed;
     totals.chunksCreated += r.chunksCreated;
     totals.filesSkipped += r.filesSkipped;
+    report(++n, project.display_name);
   }
   return { projects: projects.length, result: totals };
 }

@@ -36,6 +36,7 @@ import { sharedScheduler, type SchedSnapshot } from "./scheduler.js";
 import { primaryLocal, readLocalStatus } from "../workers/local-status.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
+import type { JobRunProgress } from "../memory/job-progress.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
@@ -150,6 +151,8 @@ export interface LocalJobState {
   /** a runtime job: when it began (ISO) and the size of the runtime log then, so progress shows only its own lines */
   startedAt?: string;
   logOffset?: number;
+  /** a running index/embed job: live counters written by the run itself (memory/job-progress.ts); the final write drops it */
+  progress?: JobRunProgress;
 }
 
 /** What /cockpit/job adds for a running runtime job: seconds since it began and the last log line it wrote. */
