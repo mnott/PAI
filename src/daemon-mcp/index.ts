@@ -85,6 +85,9 @@ import {
   describeProviders,
   removeProvider,
   setProviderCap,
+  holdProvider,
+  releaseProvider,
+  holdText,
   setClass,
   setProviderEnabled,
   setWorkersEnabled,
@@ -1027,7 +1030,7 @@ async function startShim(): Promise<void> {
     ].join("\n"),
     {
       action: z
-        .enum(["list", "add", "update", "remove", "use", "enable", "disable", "test", "cap"])
+        .enum(["list", "add", "update", "remove", "use", "enable", "disable", "test", "cap", "hold", "release"])
         .optional()
         .describe("Default: list."),
       name: z.string().optional().describe("Provider name (required for every action but list)."),
@@ -1046,6 +1049,7 @@ async function startShim(): Promise<void> {
       cost_tier: z.number().int().min(1).max(5).optional().describe("Cost tier 1 (cheapest) … 5 (most expensive). Default 3. (add, update)"),
       tags: z.array(z.enum(["code", "vision", "image-gen", "long-context", "fast", "reasoning"])).optional().describe("Capability tags (add, update)."),
       cap: z.union([z.number().int().min(1), z.literal("default")]).optional().describe("Parallel cap (cap): integer >= 1, or \"default\" to unset. Omit to show."),
+      reason: z.string().optional().describe("Why the provider is held (hold): new work queues, running work continues; benchmark-labelled runs pass."),
       slots: z.union([z.number().int().min(1), z.literal("default")]).optional().describe("Conversation-cache slots of the engine (cap): admitted workers stay one below it; \"default\" unsets."),
     },
     async (args) => {
@@ -1059,6 +1063,15 @@ async function startShim(): Promise<void> {
         if (action === "cap") {
           const { effective } = setProviderCap(args.name, args.cap, undefined, args.slots);
           return workerText(`provider ${args.name}: ${effective}`);
+        }
+        if (action === "hold") {
+          if (!args.reason) return workerError(new Error("hold needs reason"));
+          const p = holdProvider(args.name, args.reason);
+          return workerText(`provider ${args.name}: ${holdText(p.hold!)}`);
+        }
+        if (action === "release") {
+          releaseProvider(args.name);
+          return workerText(`provider ${args.name}: released`);
         }
         if (action === "update") {
           if (args.cost_tier === undefined && args.tags === undefined) {

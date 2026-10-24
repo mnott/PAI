@@ -160,6 +160,8 @@ export interface WorkerProvider {
    * more makes conversations evict each other every turn. Default: maxConcurrent.
    */
   conversationSlots?: number;
+  /** Provider hold (`pai worker providers hold`): new work queues (benchmark-labelled runs excepted), running work continues. */
+  hold?: { since: string; reason: string };
   /** Cost tier 1 (cheapest) … 5 (most expensive); classes cap it via maxCostTier.
    *  Unset falls back to workers.costTier in the shipped defaults file. */
   costTier?: number;
@@ -897,6 +899,14 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     }
   }
 
+  let hold: { since: string; reason: string } | undefined;
+  if (p.hold !== undefined) {
+    const h = p.hold as { since?: unknown; reason?: unknown } | null;
+    if (!h || typeof h !== "object" || typeof h.since !== "string" || typeof h.reason !== "string") {
+      bad(`.providers.${name}.hold`, "must be { since, reason } strings");
+    } else hold = { since: h.since, reason: h.reason };
+  }
+
   const upstreamUrl = str(p.upstreamUrl);
   if (protocol === "openai" && !upstreamUrl) {
     bad(`.providers.${name}.upstreamUrl`, `is required for protocol "openai" (the Chat Completions base, e.g. "https://api.openai.com/v1")`);
@@ -1016,6 +1026,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(thinking !== undefined ? { thinking } : {}),
     ...(p.maxConcurrent !== undefined ? { maxConcurrent: p.maxConcurrent as number } : {}),
     ...(p.conversationSlots !== undefined ? { conversationSlots: p.conversationSlots as number } : {}),
+    ...(hold ? { hold } : {}),
     ...(costTier !== undefined ? { costTier } : {}),
     ...(tags ? { tags } : {}),
     ...(characteristics ? { characteristics } : {}),

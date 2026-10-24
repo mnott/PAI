@@ -147,6 +147,7 @@ export function yamlProviderToRaw(y: Record<string, unknown>): Record<string, un
   else if (y.max_concurrent !== undefined) raw.maxConcurrent = y.max_concurrent;
   if (y.conversationSlots !== undefined) raw.conversationSlots = y.conversationSlots;
   else if (y.conversation_slots !== undefined) raw.conversationSlots = y.conversation_slots;
+  if (y.hold !== undefined) raw.hold = y.hold;
   if (y.tags !== undefined) raw.tags = y.tags;
   if (y.characteristics !== undefined) {
     const c = y.characteristics;
@@ -183,6 +184,7 @@ function providerToYamlPlain(p: WorkerProvider): Record<string, unknown> {
   if (p.thinking !== undefined) y.thinking = p.thinking ? "on" : "off";
   if (p.maxConcurrent !== undefined) y.maxConcurrent = p.maxConcurrent;
   if (p.conversationSlots !== undefined) y.conversationSlots = p.conversationSlots;
+  if (p.hold) y.hold = { since: p.hold.since, reason: p.hold.reason };
   if (p.tags?.length) y.tags = [...p.tags];
   if (p.characteristics) {
     const { contextTokens, ...rest } = p.characteristics;

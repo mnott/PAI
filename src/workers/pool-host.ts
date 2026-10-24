@@ -470,6 +470,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       // running slots are never touched: a lower maxSlots only stops new spawns (pickSlot evicts idle ones when a task needs room)
       settings = poolSettings(next);
       config = next;
+      retireHeldSpares();
       return true;
     } catch {
       return false; // a half-written file: keep the settings in force, retry on the next change
@@ -829,9 +830,23 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     });
   };
 
+  /** A held provider keeps no idle spares (they would start work on it); claimed and busy ones are untouched. */
+  const retireHeldSpares = (): number => {
+    let n = 0;
+    for (const e of [...spares.values()]) {
+      if (!getProviderOrNative(config, e.rec.provider)?.hold) continue;
+      if (e.rec.state === "ready" && e.session && !e.session.busy && !e.session.dead) {
+        e.retiring = true;
+        discardSpare(e, "provider on hold");
+        n++;
+      }
+    }
+    return n;
+  };
+
   const spareCapable = (providerName: string): boolean => {
     const p = getProviderOrNative(config, providerName);
-    if (!p || (p.engine ?? "claude") !== "claude") return false;
+    if (!p || (p.engine ?? "claude") !== "claude" || p.hold) return false;
     return !(p.native && !settings.native);
   };
 
@@ -846,6 +861,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
   /** Bring a key up to workers.pool.spares in the background (nothing stops a key that has none yet). */
   const topUp = (repo: string, providerName: string, model: string): void => {
+    if (getProviderOrNative(config, providerName)?.hold) retireHeldSpares();
     if (settings.spares <= 0 || !spareCapable(providerName)) return;
     const key = spareKey(repo, providerName, model);
     const have = [...spares.values()].filter((e) => !e.retiring && spareKey(e.rec.repo, e.rec.provider, e.rec.model) === key).length;

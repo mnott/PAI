@@ -362,6 +362,8 @@ export interface CapacityInfo {
   position: number;
   elapsedSec: number;
   line: string;
+  /** Why the provider admits nothing (a hold), when it does. */
+  held?: string;
   /** Waiting runs on the queue (M of "position N of M"). */
   queued: number;
   /** Label of a run holding a slot, when one is known. */
@@ -373,9 +375,10 @@ export interface CapacityInfo {
 }
 
 /** The pane / footer line of a waiting run: "queued on p: position 2 of 3, behind <label> — waiting since 18:12". */
-export function queuedText(q: { provider: string; position: number; queued: number; behind?: string; sinceMs: number }): string {
+export function queuedText(q: { provider: string; position: number; queued: number; behind?: string; sinceMs: number; held?: string }): string {
   const d = new Date(q.sinceMs);
   const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (q.held !== undefined) return `queued on ${q.provider}: held: ${q.held} — position ${q.position} of ${q.queued} — waiting since ${hhmm}`;
   return `queued on ${q.provider}: position ${q.position} of ${q.queued}${q.behind ? `, behind ${q.behind}` : ""} — waiting since ${hhmm}`;
 }
 
@@ -520,6 +523,8 @@ export interface CapacityOpts {
   scope?: { key: string; label: string; holds: (s: WorkerStatus) => boolean };
   /** Resolved cap; undefined = unlimited. */
   cap: number | undefined;
+  /** Provider hold reason, re-read on every poll; while set nothing is admitted (the run queues). Not set for benchmark-labelled runs. */
+  holdOf?: () => string | undefined;
   /** Re-read on every poll: a cap raised (or lowered) in the config while the run waits applies at once. Lowering never evicts a holder. */
   capOf?: () => number | undefined;
   config: Partial<CapacityConfig>;
@@ -550,9 +555,10 @@ export interface CapacityResult {
 /** Resolves once fewer than `cap` other runs hold a slot on the provider and this run heads the queue; null when it never had to wait. */
 export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | null> {
   const cfg = capacityOf(o.config);
-  if (o.disabled || !cfg.enabled || o.cap === undefined || o.cap <= 0) return null;
+  let held = o.holdOf?.();
+  if (o.disabled || !cfg.enabled || ((o.cap === undefined || o.cap <= 0) && held === undefined)) return null;
   const { logDir, self } = o;
-  let cap: number = o.cap;
+  let cap: number = o.cap === undefined || o.cap <= 0 ? Number.MAX_SAFE_INTEGER : o.cap;
   const load = o.load ?? ((dir: string) => (reconcileStatuses(dir, new Date(), 0), loadStatuses(dir)));
   const now = o.now ?? Date.now;
   const isAlive = o.isAlive ?? alive;
@@ -580,7 +586,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   };
 
   let c = check();
-  if (c.position === 1 && c.holding < cap) {
+  if (c.position === 1 && c.holding < cap && held === undefined) {
     rmSync(entry, { force: true });
     return null;
   }
@@ -596,7 +602,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       ...(c.behind ? { behind: c.behind } : {}),
       sinceMs: t0,
       priority: o.tier ?? "normal",
-      line: `queued: ${total} on ${label}, cap ${cap} (position ${c.position})`,
+      ...(held !== undefined ? { held } : {}),
+      line: held !== undefined
+        ? `queued: held: ${held} — ${total} on ${label} (position ${c.position})`
+        : `queued: ${total} on ${label}, cap ${cap} (position ${c.position})`,
     };
   };
   o.log?.(info().line);
@@ -622,8 +631,9 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       await sleep(backoffMs(n));
       const fresh = o.capOf?.();
       if (fresh !== undefined && fresh > 0) cap = fresh;
+      held = o.holdOf?.();
       c = check();
-      if (c.position === 1 && c.holding < cap) break;
+      if (c.position === 1 && c.holding < cap && held === undefined) break;
       o.onWait?.(info());
       queued(paneQueued(info()));
       if (!alarmed && o.onAlarm && now() - t0 >= (o.alarmMs ?? cfg.maxTotalWaitMs)) {
