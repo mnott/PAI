@@ -15,9 +15,14 @@ const baselinePath = join(root, "scripts", "duplicates-baseline.json");
 const THRESHOLD = ["--min-lines", "8", "--min-tokens", "70"];
 
 const out = mkdtempSync(join(tmpdir(), "pai-jscpd-"));
+const jscpd = join(root, "node_modules", ".bin", "jscpd");
+if (!existsSync(jscpd)) {
+  console.error("duplicate scan could not run: jscpd is not installed (npm install)");
+  process.exit(2);
+}
 const run = spawnSync(
-  "npx",
-  ["-y", "jscpd@4", ...THRESHOLD, "--reporters", "json", "--output", out, "--ignore", "**/*.test.ts,**/*.d.ts", "src"],
+  jscpd,
+  [...THRESHOLD, "--reporters", "json", "--output", out, "--ignore", "**/*.test.ts,**/*.d.ts", "src"],
   { cwd: root, encoding: "utf8" }
 );
 const reportPath = join(out, "jscpd-report.json");

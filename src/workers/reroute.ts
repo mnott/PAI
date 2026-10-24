@@ -11,7 +11,7 @@
  * two runs (ledger, _fallThroughOf, fallThroughTo).
  *
  * Escalation policy (workers.escalate): queuedMaxMin, stallMaxMin, stallFailedCalls. A job whose
- * provider was pinned (--provider, --local, the session profile) is never escalated, a job is escalated once,
+ * provider was pinned (an explicit per-run --provider or --local; the session profile is not a pin) is never escalated, a job is escalated once,
  * and only to the fallback (`where: cloud`).
  */
 
@@ -25,9 +25,9 @@ export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
 /** The effective policy: workers.escalate, read through the same loader as the rest of the escalation settings. */
 export const reroutePolicy = escalationPolicy;
 
-const PINNED = /\((?:flag: --provider|local|session profile)\)$/;
+const PINNED = /\((?:flag: --provider|local)\)$/;
 
-/** Whether the caller or the session chose this run's provider (status.routeWhy names the source). */
+/** Whether the caller chose this run's provider (status.routeWhy names the source). */
 export function providerPinned(s: Pick<WorkerStatus, "routeWhy">): boolean {
   return PINNED.test(s.routeWhy ?? "");
 }
