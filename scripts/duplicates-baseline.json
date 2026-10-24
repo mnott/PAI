@@ -26,8 +26,6 @@
   "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | ecd239421970",
   "src/daemon/topic-detect-worker.ts | src/daemon/work-queue-worker.ts | a805de07723c",
   "src/harness/claude-code.ts | src/harness/codex.ts | c049b04059ef",
-  "src/hooks/pre-compact.sh | src/hooks/session-stop.sh | e2b1eaa2d27a",
-  "src/hooks/session-autosave.sh | src/hooks/session-stop.sh | ed7d294cc8aa",
   "src/hooks/ts/lib/worker-bash-rules.ts | src/hooks/ts/lib/worker-bash-rules.ts | 443a3b4193fa",
   "src/hooks/ts/lib/worker-bash-rules.ts | src/hooks/ts/lib/worker-bash-rules.ts | 99dd25365e30",
   "src/hooks/ts/lib/worker-bash-rules.ts | src/hooks/ts/lib/worker-bash-rules.ts | 9f9ab4a068d4",

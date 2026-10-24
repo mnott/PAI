@@ -15,6 +15,7 @@
 
 PAI_OS="pai"
 command -v "$PAI_OS" &>/dev/null || exit 0
+. "$(dirname "$0")/pai-hook-lib.sh" 2>/dev/null || exit 0
 
 # ---------------------------------------------------------------------------
 # Shell-side rate limit
@@ -47,25 +48,7 @@ fi
 # session and must be left alone. Without it the comparison falls back to the
 # session note filename, which other stop-hook steps rename underneath us.
 
-CLAUDE_SESSION_UUID=""
-if [ ! -t 0 ]; then
-  if command -v timeout &>/dev/null; then
-    HOOK_INPUT=$(timeout 2 cat 2>/dev/null || true)
-  elif command -v perl &>/dev/null; then
-    # stock macOS has no GNU timeout
-    HOOK_INPUT=$(perl -e 'alarm 2; exec "cat"' 2>/dev/null || true)
-  else
-    HOOK_INPUT=$(cat 2>/dev/null || true)
-  fi
-  if [ -n "$HOOK_INPUT" ]; then
-    if command -v jq &>/dev/null; then
-      CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
-    else
-      CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | python3 -c \
-        "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || true)
-    fi
-  fi
-fi
+pai_read_session_uuid
 
 # ---------------------------------------------------------------------------
 # Detached run

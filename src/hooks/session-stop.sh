@@ -8,6 +8,7 @@
 # NEVER exits non-zero — this must not interrupt Claude Code.
 
 PAI_OS="pai"
+. "$(dirname "$0")/pai-hook-lib.sh" 2>/dev/null || exit 0
 
 # Bail gracefully if pai is not installed
 command -v "$PAI_OS" &>/dev/null || exit 0
@@ -25,25 +26,7 @@ command -v "$PAI_OS" &>/dev/null || exit 0
 #
 # Read non-blocking: when no payload is piped in, carry on without it.
 
-CLAUDE_SESSION_UUID=""
-if [ ! -t 0 ]; then
-  if command -v timeout &>/dev/null; then
-    HOOK_INPUT=$(timeout 2 cat 2>/dev/null || true)
-  elif command -v perl &>/dev/null; then
-    # stock macOS has no GNU timeout
-    HOOK_INPUT=$(perl -e 'alarm 2; exec "cat"' 2>/dev/null || true)
-  else
-    HOOK_INPUT=$(cat 2>/dev/null || true)
-  fi
-  if [ -n "$HOOK_INPUT" ]; then
-    if command -v jq &>/dev/null; then
-      CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
-    else
-      CLAUDE_SESSION_UUID=$(printf '%s' "$HOOK_INPUT" | python3 -c \
-        "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || true)
-    fi
-  fi
-fi
+pai_read_session_uuid
 
 # ---------------------------------------------------------------------------
 # Everything below runs DETACHED. Nothing here is on the critical path.
@@ -69,10 +52,7 @@ fi
 # logic inline: new location, else the pre-2026-09-19 ~/.config/pai one if a
 # fresh lock is already sitting there (an in-flight hook from before this
 # script updated) — never both, that would defeat the mutex.
-PAI_HOME_DIR="${PAI_HOME:-}"
-if [ -z "$PAI_HOME_DIR" ]; then
-    if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then PAI_HOME_DIR="$HOME/.claude/pai"; else PAI_HOME_DIR="$HOME/.pai"; fi
-fi
+pai_resolve_home
 LOCK_DIR="$PAI_HOME_DIR/.session-stop.lock"
 OLD_LOCK_DIR="$HOME/.config/pai/.session-stop.lock"
 mkdir -p "$(dirname "$LOCK_DIR")" 2>/dev/null || true
@@ -101,18 +81,7 @@ mkdir "$LOCK_DIR" 2>/dev/null || exit 0
 # Detect current project
 # ---------------------------------------------------------------------------
 
-DETECT_JSON=$("$PAI_OS" project detect --json 2>/dev/null) || exit 0
-[ -z "$DETECT_JSON" ] && exit 0
-
-# Parse slug — try jq first, fall back to python3
-if command -v jq &>/dev/null; then
-  PROJECT_SLUG=$(echo "$DETECT_JSON" | jq -r '.slug // empty' 2>/dev/null)
-else
-  PROJECT_SLUG=$(echo "$DETECT_JSON" | python3 -c \
-    "import sys,json; d=json.load(sys.stdin); print(d.get('slug',''))" 2>/dev/null) || true
-fi
-
-[ -z "$PROJECT_SLUG" ] && exit 0
+pai_detect_project_slug || exit 0
 
 # ---------------------------------------------------------------------------
 # Mark the latest open/compacted session completed

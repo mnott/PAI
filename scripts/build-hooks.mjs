@@ -259,6 +259,7 @@ if (skipReason) {
     ["src/hooks/pre-compact.sh", "pai-pre-compact.sh"],
     ["src/hooks/session-stop.sh", "pai-session-stop.sh"],
     ["src/hooks/session-autosave.sh", "pai-session-autosave.sh"],
+    ["src/hooks/pai-hook-lib.sh", "pai-hook-lib.sh"],
     ["src/hooks/ztk-auto.sh", "ztk-auto.sh"],
     ["src/hooks/ztk-passthrough.mjs", "ztk-passthrough.mjs"],
   ];

@@ -15,23 +15,13 @@ TAB_COLOR="${ADAPTER_DIR:-${PAI_DIR:-$HOME/.claude}}/tab-color-command.sh"
 
 # Bail gracefully if pai is not installed
 command -v "$PAI_OS" &>/dev/null || exit 0
+. "$(dirname "$0")/pai-hook-lib.sh" 2>/dev/null || exit 0
 
 # ---------------------------------------------------------------------------
 # Detect current project
 # ---------------------------------------------------------------------------
 
-DETECT_JSON=$("$PAI_OS" project detect --json 2>/dev/null) || exit 0
-[ -z "$DETECT_JSON" ] && exit 0
-
-# Parse slug — try jq first, fall back to python3
-if command -v jq &>/dev/null; then
-  PROJECT_SLUG=$(echo "$DETECT_JSON" | jq -r '.slug // empty' 2>/dev/null)
-else
-  PROJECT_SLUG=$(echo "$DETECT_JSON" | python3 -c \
-    "import sys,json; d=json.load(sys.stdin); print(d.get('slug',''))" 2>/dev/null) || true
-fi
-
-[ -z "$PROJECT_SLUG" ] && exit 0
+pai_detect_project_slug || exit 0
 
 # ---------------------------------------------------------------------------
 # Mark the latest open session compacted and log the event
@@ -43,12 +33,9 @@ fi
 # Signal the daemon that the vault is stale (it syncs, throttled and at low priority)
 # ---------------------------------------------------------------------------
 
-_pai_home="${PAI_HOME:-}"
-if [ -z "$_pai_home" ]; then
-    if [ ! -f "$HOME/.pai/config.yaml" ] && [ -f "$HOME/.claude/pai/config.yaml" ]; then _pai_home="$HOME/.claude/pai"; else _pai_home="$HOME/.pai"; fi
-fi
-mkdir -p "$_pai_home" 2>/dev/null || true
-touch "$_pai_home/.obsidian-dirty" 2>/dev/null || true
+pai_resolve_home
+mkdir -p "$PAI_HOME_DIR" 2>/dev/null || true
+touch "$PAI_HOME_DIR/.obsidian-dirty" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Auto-checkpoint before context compression
