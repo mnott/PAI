@@ -7,7 +7,7 @@
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
-import type { LimitsCache, ProviderLimits } from "./limits.js";
+import { tokenFailureCounts, type LimitsCache, type ProviderLimits } from "./limits.js";
 import { createHash } from "node:crypto";
 import { cockpitHtml } from "./cockpit-page.js";
 import { resolveFromModule } from "../module-paths.js";
@@ -1541,7 +1541,7 @@ export function handleCockpit(
       async ([l, routing]) => {
         // a provider whose poll failed keeps its last good reading (limits.ts staleReading) and carries the cause
         const failed = l.find((x) => x.error);
-        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
+        send(200, "application/json", JSON.stringify({ now: Date.now(), limits: await withInstances(withWeights(withStarting(l))), routing, runningLocal: runningLocalProviders(l), activeLocal: activeLocalProvider(l), tokenFailures: tokenFailureCounts(), ...(failed ? { transient: `${failed.provider}: ${failed.error}` } : {}) }));
       },
       (e: Error) => send(500, "application/json", JSON.stringify({ error: e.message }))
     );

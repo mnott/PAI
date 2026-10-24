@@ -15,7 +15,7 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { userInfo } from "node:os";
+import { loginUsername } from "../utils/login-username.js";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import http from "node:http";
 import https from "node:https";
@@ -357,26 +357,48 @@ function sh(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve) => execFile(cmd, args, { timeout: 4000 }, (_e, out) => resolve(String(out ?? "").trim())));
 }
 
+/** Keychain read failures by reason since router start, exposed in /cockpit/limits. */
+const tokenFailures: Record<string, number> = {};
+export function tokenFailureCounts(): Record<string, number> {
+  return { ...tokenFailures };
+}
+export function resetTokenFailures(): void {
+  for (const k of Object.keys(tokenFailures)) delete tokenFailures[k];
+}
+
 /**
  * The args that select the real "Claude Code-credentials" keychain item: always
  * with an explicit `-a <login user>`. Several items can carry the service name
  * (a stub under account "unknown" was seen), and without `-a` the first match
- * wins — the router runs under launchd with no USER in its environment, so the
- * account comes from the passwd entry (os.userInfo), never from env.
+ * wins. The router runs under launchd with no USER in its environment, so the
+ * account comes from loginUsername(), never from env.
  */
-export function keychainCredentialArgs(username: string = userInfo().username): string[] {
+export function keychainCredentialArgs(username: string = loginUsername()): string[] {
   return ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"];
 }
 
-export async function anthropicToken(): Promise<string | undefined> {
-  const raw = await sh("security", keychainCredentialArgs());
-  try {
-    const t = (JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken;
-    if (t) return t;
-  } catch {
-    /* unreadable item */
-  }
+function failToken(reason: string, detail: string): undefined {
+  tokenFailures[reason] = (tokenFailures[reason] ?? 0) + 1;
+  console.error(`[limits] anthropic token read failed: ${reason}${detail ? ` ${detail}` : ""}`);
   return undefined;
+}
+
+export async function anthropicToken(): Promise<string | undefined> {
+  const args = keychainCredentialArgs();
+  const r = await new Promise<{ err: (Error & { code?: unknown; killed?: boolean }) | null; out: string; stderr: string }>((resolve) =>
+    execFile("security", args, { timeout: 4000 }, (err, out, stderr) => resolve({ err, out: String(out ?? "").trim(), stderr: String(stderr ?? "").trim() }))
+  );
+  if (r.err) {
+    const reason = r.err.killed ? "timeout" : `exit ${String(r.err.code ?? "?")}`;
+    return failToken(reason, `(account ${args[4] || "<empty>"}) stderr: ${r.stderr.slice(0, 200)}`);
+  }
+  try {
+    const t = (JSON.parse(r.out) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken;
+    if (t) return t;
+    return failToken("no accessToken", "");
+  } catch {
+    return failToken("unparsable item", "");
+  }
 }
 
 /** What a shared anthropic poll needs; defaults are the live files, tests pass temp ones. */
