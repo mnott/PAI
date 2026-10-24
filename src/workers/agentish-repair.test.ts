@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ag2ToWorkerReport, parseAg2Report, repairAg2, repairAndValidateAg2, validateAg2 } from "./agentish.js";
+import { ag2ToWorkerReport, parseAg2Report, repairAg2, shortenAg2Note, repairAndValidateAg2, validateAg2 } from "./agentish.js";
 
 const FIXTURE = `R
 i=cockpit-metric-tile
@@ -40,5 +40,45 @@ describe("repairAg2", () => {
       { path: "src/router/cockpit-page.test.ts", summary: "4 tests: CSS+attribution" },
     ]);
     expect(report.notes).toContain("repaired: note->z, c pairs, t names");
+  });
+});
+
+describe("shortenAg2Note", () => {
+  const long = `Did the thing well. ${"word ".repeat(120)}`.trim();
+  const msg = (z: string, extra = "") => `R\ni=a\nr=+\nG=+\nc=none\nt=a+\np=x\nz=${z}${extra}`;
+
+  it("keeps the first sentence and moves the full text to details", () => {
+    const r = shortenAg2Note(msg(long));
+    expect(r.details).toBe(long);
+    expect(r.text).toContain("z=Did the thing well.\n".trimEnd());
+    expect(r.text).not.toContain("word word");
+  });
+
+  it("cuts a 600-char sentence-less note at a word boundary with an ellipsis", () => {
+    const z = "alpha ".repeat(100).trim();
+    const r = shortenAg2Note(msg(z));
+    const note = r.text.split("\n").find((l) => l.startsWith("z="))!.slice(2);
+    expect(note.length).toBeLessThanOrEqual(200);
+    expect(note.endsWith("alpha…")).toBe(true);
+    expect(r.details).toBe(z);
+  });
+
+  it("leaves a short note alone", () => {
+    expect(shortenAg2Note(msg("fine"))).toEqual({ text: msg("fine") });
+  });
+
+  it.runIf(hasValidator)("a 600-char note is a valid report with no retry reason", () => {
+    const z = "alpha ".repeat(100).trim();
+    expect(validateAg2(msg(z)).ok).toBe(false);
+    const r = repairAndValidateAg2(msg(z));
+    expect(r.validation.ok).toBe(true);
+    expect(r.details).toBe(z);
+    expect(ag2ToWorkerReport(parseAg2Report(r.text)!).notes!.length).toBeLessThanOrEqual(200);
+  });
+
+  it.runIf(hasValidator)("other invalid reasons are still invalid", () => {
+    const bad = "R\ni=a\nr=+\nG=+\nt=a+\np=x\nz=" + "alpha ".repeat(100);
+    const r = repairAndValidateAg2(bad);
+    expect(r.validation.ok).toBe(false);
   });
 });

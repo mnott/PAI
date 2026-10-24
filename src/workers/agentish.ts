@@ -351,6 +351,42 @@ export function repairAg2(text: string): Ag2Repair {
  */
 export function repairAndValidateAg2(
   text: string,
+): { text: string; validation: Ag2ValidationResult; repairs: string[]; normalised?: boolean; details?: string } {
+  const short = shortenAg2Note(text);
+  if (short.details === undefined) return repairAndValidateShaped(text);
+  const r = repairAndValidateShaped(short.text);
+  // an over-long note alone never makes a report invalid: the full text rides in `details`
+  return { ...r, details: short.details };
+}
+
+const NOTE_MAX = 200;
+
+/**
+ * An over-long `z=` note is shortened, not re-asked: the first sentence, or the first
+ * 199 chars cut at a word boundary + "…", stays as the note; the full text is `details`.
+ */
+export function shortenAg2Note(text: string): { text: string; details?: string } {
+  const src = unwrapAg2(text);
+  if (!/^R\b/.test(src)) return { text };
+  const lines = src.split("\n");
+  const zi = lines.findIndex((l, i) => i > 0 && l.startsWith("z="));
+  if (zi < 0) return { text };
+  const full = lines[zi].slice(2).trim();
+  if (full.length <= NOTE_MAX) return { text };
+  const sentence = /^.*?[.!?](?=\s|$)/.exec(full)?.[0];
+  let note: string;
+  if (sentence && sentence.length <= NOTE_MAX) note = sentence;
+  else {
+    const cut = full.slice(0, NOTE_MAX - 1);
+    const sp = cut.lastIndexOf(" ");
+    note = `${(sp > 0 ? cut.slice(0, sp) : cut).replace(/[\s,;:]+$/, "")}…`;
+  }
+  lines[zi] = `z=${note}`;
+  return { text: lines.join("\n"), details: full };
+}
+
+function repairAndValidateShaped(
+  text: string,
 ): { text: string; validation: Ag2ValidationResult; repairs: string[]; normalised?: boolean } {
   const original = validateAg2(text);
   if (original.ok) return { text, validation: original, repairs: [] };
