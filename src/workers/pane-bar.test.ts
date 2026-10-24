@@ -46,8 +46,48 @@ describe("pane bar", () => {
     const bar = startPaneBar({ spec: { kind: "worker", id: "w1", logDir: "/x" }, write: (s) => wrote.push(s), rows: () => 24, columns: () => 80, loadStatus: () => st, say, input });
     input.write("hello worker\n");
     await vi.waitFor(() => expect(say).toHaveBeenCalledWith("/x", "w1", "hello worker"));
-    await vi.waitFor(() => expect(wrote.join("")).toContain("» hello worker"));
+    await vi.waitFor(() => expect(wrote.join("")).toContain("» hello worker — queued"));
     bar.stop();
+  });
+
+  for (const pooled of [false, true]) {
+    it(`${pooled ? "pooled" : "headless"}: queued line reports delivery at the worker's turn`, async () => {
+      const input = Object.assign(new PassThrough(), { isTTY: false });
+      const wrote: string[] = [];
+      let cur = { ...st, turns: 4, state: "running", notePending: pooled ? ["hi"] : [] } as unknown as WorkerStatus;
+      const delivered = vi.fn();
+      const say = vi.fn().mockResolvedValue(pooled ? "queued: next turn" : "ok");
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const bar = startPaneBar({ spec: { kind: "worker", id: "w1", logDir: "/x" }, write: (s) => wrote.push(s), rows: () => 24, columns: () => 80, loadStatus: () => cur, say, input, delivered, tickMs: 10, live: (w) => w.state === "running" });
+      input.write("hi\n");
+      await vi.waitFor(() => expect(wrote.join("")).toContain("» hi — queued"));
+      vi.advanceTimersByTime(10);
+      expect(wrote.join("")).not.toContain("delivered at turn");
+      cur = { ...cur, turns: 5, notePending: [] } as WorkerStatus;
+      vi.advanceTimersByTime(10);
+      expect(wrote.join("")).toContain("» hi — delivered at turn 5");
+      expect(delivered).toHaveBeenCalledWith("/x", "w1", 1);
+      bar.stop();
+      vi.useRealTimers();
+    });
+  }
+
+  it("reports not delivered when say fails or the worker ends first", async () => {
+    const input = Object.assign(new PassThrough(), { isTTY: false });
+    const wrote: string[] = [];
+    let cur = { ...st, turns: 1, state: "running" } as unknown as WorkerStatus;
+    const say = vi.fn().mockRejectedValueOnce(new Error("stdin closed")).mockResolvedValue("ok");
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const bar = startPaneBar({ spec: { kind: "worker", id: "w1", logDir: "/x" }, write: (s) => wrote.push(s), rows: () => 24, columns: () => 80, loadStatus: () => cur, say, input, tickMs: 10, live: (w) => w.state === "running" });
+    input.write("a\n");
+    await vi.waitFor(() => expect(wrote.join("")).toContain("» a — not delivered: stdin closed"));
+    input.write("b\n");
+    await vi.waitFor(() => expect(wrote.join("")).toContain("» b — queued"));
+    cur = { ...cur, state: "done" } as unknown as WorkerStatus;
+    vi.advanceTimersByTime(10);
+    expect(wrote.join("")).toContain("» b — not delivered: worker ended (done)");
+    bar.stop();
+    vi.useRealTimers();
   });
 });
 

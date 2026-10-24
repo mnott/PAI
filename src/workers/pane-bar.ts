@@ -10,7 +10,9 @@ import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, parseChatLine } fr
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
 import { paneExecDir } from "./pane-exec.js";
-import type { WorkerStatus } from "./status.js";
+import { isLive, type WorkerStatus } from "./status.js";
+import { appendLedger } from "./ledger.js";
+import { ledgerPath } from "./paths.js";
 import { panePolicy } from "./pane-policy.js";
 
 /** What the wrapper is told to show at the bottom of the pane. */
@@ -30,6 +32,10 @@ export interface PaneBarDeps {
   /** Queue-file dir (tests); default the pane-exec dir beside the launch record. */
   queuedDir?: string;
   say?: (logDir: string, id: string, text: string) => Promise<string>;
+  /** Ledger hook for a delivered pane line (default: WORKER-NOTE-DELIVERED in the logDir's ledger). */
+  delivered?: (logDir: string, id: string, count: number) => void;
+  /** Whether the worker process still runs (default: status.isLive). */
+  live?: (s: WorkerStatus) => boolean;
   now?: () => number;
   tickMs?: number;
   paint?: (color: string, s: string) => string;
@@ -93,7 +99,30 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
   const prompt = (): void => {
     if (rl) d.write(chatPromptRow(rows, rl.line, dim, (rl as unknown as { cursor?: number }).cursor));
   };
-  const tick = (): void => d.write(paneStatusFrame(text(), rows, d.columns()));
+  // lines the worker accepted but has not yet answered: delivered once its turn counter moves past the queue-time turn
+  // (headless: the line sits in claude's stdin queue; pooled: the note file is drained by the PostToolUse hook)
+  const queued: { text: string; turn: number; pooled: boolean }[] = [];
+  const settle = (): void => {
+    if (!queued.length || d.spec.kind !== "worker") return;
+    const { id, logDir } = d.spec;
+    const st = (d.loadStatus ?? (() => null))(logDir, id);
+    if (!st) return;
+    const gone = !(d.live ?? isLive)(st);
+    for (let i = queued.length - 1; i >= 0; i--) {
+      const q = queued[i];
+      const done = q.pooled ? !st.notePending?.includes(q.text) : st.turns > q.turn;
+      if (!done && !gone) continue;
+      queued.splice(i, 1);
+      if (done) {
+        line(dim(`» ${q.text} — delivered at turn ${st.turns}`));
+        (d.delivered ?? ((l, w, n) => appendLedger(ledgerPath(l), "WORKER-NOTE-DELIVERED", { id: w, count: n })))(logDir, id, 1);
+      } else line(`» ${q.text} — not delivered: worker ended (${st.state}) before its next turn`);
+    }
+  };
+  const tick = (): void => {
+    d.write(paneStatusFrame(text(), rows, d.columns()));
+    settle();
+  };
   const line = (s: string, keep = true): void => {
     if (keep) {
       retained.push(s);
@@ -114,9 +143,13 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
       const act = parseChatLine(raw);
       if (act.kind !== "message" || !act.text) return prompt();
       prompt();
+      const turn = (d.loadStatus ?? (() => null))(logDir, id)?.turns ?? 0;
       (d.say ?? (() => Promise.reject(new Error("no say"))))(logDir, id, act.text).then(
-        () => line(dim(`» ${act.text}`)),
-        (e: Error) => line(`» ${e.message}`)
+        (reply) => {
+          line(dim(`» ${act.text} — queued`));
+          queued.push({ text: act.text, turn, pooled: reply.startsWith("queued") });
+        },
+        (e: Error) => line(`» ${act.text} — not delivered: ${e.message}`)
       );
     });
     (d.input as NodeJS.ReadableStream).on("keypress", () => {
