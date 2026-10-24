@@ -768,6 +768,7 @@ const mergeCommand: CommandDef = {
     { name: "verify", type: "string", value: "CMD", summary: "Run CMD after the merge; revert the merge when it fails (default: workers.yaml merge.verify)" },
     { name: "no-verify", type: "boolean", summary: "Skip the configured merge.verify default (prints a warning)" },
     { name: "no-verify-tests", type: "boolean", summary: "Skip the related-tests check (config workers.merge.verify) for this merge" },
+    { name: "no-build", type: "boolean", summary: "Do not rebuild dist/ after merging into the running PAI checkout (config workers.merge.rebuild)" },
   ],
   examples: [
     "pai worker merge w-20260101-abc",
@@ -785,7 +786,7 @@ const mergeCommand: CommandDef = {
         } else verify = configured;
       }
       try {
-        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, verifyTests: !flag(ctx, "no-verify-tests") }));
+        out(mergeWorker(logDir(), ctx.args.ID as string, { noCommit: flag(ctx, "no-commit") || flag(ctx, "patch"), verify, verifyTests: !flag(ctx, "no-verify-tests"), rebuild: !flag(ctx, "no-build") }));
       } catch (e) {
         if (e instanceof RelatedTestsFailedError) throw new CliError(e.message, "the merge was kept; fix forward or revert it", 3);
         throw e;
