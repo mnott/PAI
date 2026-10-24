@@ -24,8 +24,13 @@ export interface PipelineDeps<R extends PipelineRow> {
   /** Next page after `last` (null = first page); empty = no more. Called one page ahead. */
   fetchPage: (last: R | null) => Promise<R[]>;
   embed: (texts: string[]) => Promise<Float32Array[]>;
+  /**
+   * Vectors already stored for the same text (by hash), one entry per batch row, null = none.
+   * Those rows skip the model and are written as given.
+   */
+  carry?: (batch: R[]) => Promise<Array<Buffer | null>>;
   /** Store the vectors of one batch durably (one bulk statement). */
-  write: (batch: R[], vecs: Float32Array[]) => Promise<void>;
+  write: (batch: R[], vecs: Array<Float32Array | Buffer>) => Promise<void>;
   batchSize: number;
   /** Batches in flight at once (embed + write each). */
   concurrency: number;
@@ -36,12 +41,15 @@ export interface PipelineDeps<R extends PipelineRow> {
   now?: () => number;
   /** A string ends the run ("yielded") with that reason. */
   shouldYield?: () => string | null;
-  /** After each batch is stored; `done` counts stored chunks. */
-  onBatch?: (batch: R[], done: number) => void;
+  /** After each batch is stored; `done` counts stored chunks, `carried` those of them copied rather than embedded. */
+  onBatch?: (batch: R[], done: number, carried: number) => void;
 }
 
 export interface PipelineResult {
+  /** Chunks stored, carried ones included. */
   done: number;
+  /** Of `done`, the chunks whose vector was carried over from a same-text twin. */
+  carried: number;
   end: PipelineEnd;
   reason?: string;
 }
@@ -51,6 +59,7 @@ export const DEFAULT_EMBED_CONCURRENCY = 3;
 export async function runEmbedPipeline<R extends PipelineRow>(d: PipelineDeps<R>): Promise<PipelineResult> {
   const now = d.now ?? Date.now;
   let done = 0;
+  let carried = 0;
   let end: PipelineEnd = "done";
   let reason: string | undefined;
   let halted = false;
@@ -109,10 +118,13 @@ export async function runEmbedPipeline<R extends PipelineRow>(d: PipelineDeps<R>
       if (!batch) return;
       const b: R[] = batch;
       try {
-        const vecs = await d.embed(b.map((r) => r.text));
-        await d.write(b, vecs);
+        const known = d.carry ? await d.carry(b) : [];
+        const fresh = b.map((_, j) => j).filter((j) => !known[j]);
+        const made = fresh.length > 0 ? await d.embed(fresh.map((j) => b[j].text)) : [];
+        await d.write(b, b.map((_, j) => known[j] ?? made[fresh.indexOf(j)]));
         done += b.length;
-        d.onBatch?.(b, done);
+        carried += b.length - fresh.length;
+        d.onBatch?.(b, done, carried);
       } catch (error) {
         failure ??= { error };
         return;
@@ -123,7 +135,7 @@ export async function runEmbedPipeline<R extends PipelineRow>(d: PipelineDeps<R>
   await Promise.all(Array.from({ length: Math.max(1, d.concurrency) }, worker));
   if (next) (next as Promise<R[]>).catch(() => undefined);
   if (failure) throw (failure as { error: unknown }).error;
-  return { done, end, ...(reason ? { reason } : {}) };
+  return { done, carried, end, ...(reason ? { reason } : {}) };
 }
 
 /** embedConcurrency from the main config, or the default when it is unset or unreadable. */

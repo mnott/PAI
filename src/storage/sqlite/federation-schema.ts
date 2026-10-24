@@ -137,6 +137,11 @@ function runMigrations(db: Database): void {
     "CREATE INDEX IF NOT EXISTS idx_mc_embedding ON memory_chunks(id) WHERE embedding IS NOT NULL",
   );
 
+  // Carry-over lookups find a stored vector by chunk text hash
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_mc_hash_embedded ON memory_chunks(hash) WHERE embedding IS NOT NULL",
+  );
+
   // Migration v4→v5: add last_accessed_at and relevance_score columns (QW2 + MR2)
   const hasLastAccessedAt = columns.some((c) => c.name === "last_accessed_at");
   if (!hasLastAccessedAt) {
