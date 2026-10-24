@@ -121,14 +121,14 @@ function ungrantedTool(r: ToolErrorRecord): boolean {
 const SEARCH_CMDS = new Set(["grep", "egrep", "fgrep", "rg", "ugrep", "ag"]);
 
 /** Last simple command of a pipeline / && / ; chain: command name (path and env prefixes stripped) and the full segment. */
-export function lastCommand(command: string): { name: string; segment: string } | null {
+export function lastCommand(command: string): { name: string; segment: string; compound: boolean } | null {
   const bare = dropHeredocBodies(command).replace(/(["'])(?:\\.|(?!\1).)*\1/g, "Q");
   const segs = bare.split(/\|\|?|&&|;|\n/).map((x) => x.trim()).filter(Boolean);
   const segment = segs[segs.length - 1];
   if (!segment) return null;
   const words = segment.split(/\s+/).filter((w) => !/^[A-Za-z_]\w*=/.test(w));
   const name = (words[0] ?? "").replace(/^.*\//, "");
-  return name ? { name, segment } : null;
+  return name ? { name, segment, compound: segs.length > 1 } : null;
 }
 
 /**
@@ -151,6 +151,8 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   if (last && isExpectedWaitExit(last.segment, code)) return true;
   if (code !== 1) return false;
   if (!last) return false;
+  // In a compound/pipeline the exit status is the last stage's and the output belongs to the earlier ones.
+  if (last.compound && (SEARCH_CMDS.has(last.name) || ["test", "[", "diff", "cmp", "ls", "find"].includes(last.name))) return true;
   const emptyOut = out === "" || /^(\(?no (output|matches)\)?|<no output>)$/i.test(out);
   if (SEARCH_CMDS.has(last.name)) return emptyOut;
   if (last.name === "test" || last.name === "[") return emptyOut;
@@ -181,6 +183,7 @@ const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\
 
 const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | ((r: ToolErrorRecord, isLocal: (provider: string) => boolean) => Classification) }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
+  { test: (r) => /Permission to use \S+ with command .* has been denied/s.test(r.raw), c: { cls: "model", hint: "command refused by the permission layer", loopAt: 3 } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
   { test: (r) => r.tool === "Bash" && /\b(?:ls|cat|tail|head|cd|stat|wc): .*No such file or directory/i.test(r.raw), c: { cls: "model", hint: "Bash on a path that does not exist (model error)", loopAt: 5 } },
   // The sleep-poll gate is a model error and must win over the generic guard rule below.

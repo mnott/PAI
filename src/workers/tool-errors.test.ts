@@ -227,6 +227,24 @@ describe("classification", () => {
     const r2 = inp(rec("w1", NOW, "Exit code 1 ls: /tmp/x.rc: No such file or directory", "Bash"), "ls /tmp/x.rc");
     expect(isBenignBash(r2)).toBe(false);
   });
+  it("permission refusal is a model error", () => {
+    const raw = "Permission to use Bash with command rm -rf /tmp/jc-w && npx -y jscpd@4 src has been denied.";
+    const c = classifyToolError(rec("w1", NOW, raw, "Bash"));
+    expect(c.cls).toBe("model");
+    expect(c.loopAt).toBe(3);
+    expect(c.hint).toBe("command refused by the permission layer");
+  });
+  it("compound whose last stage is a read-only probe exiting 1 is benign", () => {
+    const input = "sed -i 's/a/b/' src/x.ts ; npx tsc --noEmit | tail -3; git diff src | grep '^[+-]' | head -50; ls src/cli/lib/*find* src/cli/lib/*gate* 2>/dev/null";
+    const r = inp(rec("w1", NOW, "Exit code 1\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1 +1 @@\n-a\n+b", "Bash"), input);
+    expect(isBenignBash(r)).toBe(true);
+    expect(classifyToolError(r).cls).toBe("benign");
+  });
+  it("a failing build stays unknown", () => {
+    const r = inp(rec("w1", NOW, "Exit code 1\nsrc/x.ts(1,1): error TS2304: Cannot find name 'q'", "Bash"), "npm run build");
+    expect(isBenignBash(r)).toBe(false);
+    expect(classifyToolError(r).cls).toBe("unknown");
+  });
   it("heredoc bodies do not affect last command", () => {
     const input = ["cat > /tmp/x.txt <<'EOF'", "it's; a b", "other line; it's", "EOF", "pai worker wait-file /tmp/x.rc --max 90"].join("\n");
     const r = inp(rec("w1", NOW, "Exit code 3 missing: /tmp/x.rc not yet: 1 of 1 missing after 90s; call wait-file again", "Bash"), input);
