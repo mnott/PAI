@@ -1299,6 +1299,13 @@ export function mergeWorker(
     mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
     related = runRelatedTests(st.cwd, oldHead, cfg, git);
     appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", { id, status: related.status, result: related.line.replace(/\s+/g, " ").slice(0, 300) });
+    // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
+    if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
+      const files = related.failing.length ? related.failing.join(", ") : related.line;
+      throw new Error(
+        `related tests failed: ${files}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
+      );
+    }
   }
   if (existsSync(st.worktreeDir!) && !slot) assertWorktreeClean(st.worktreeDir!, id);
   // force: assertWorktreeClean already confirmed nothing but a skipped
