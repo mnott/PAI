@@ -1476,7 +1476,8 @@ function gateLines(
   cwd: string,
   verify: string | undefined, revert: () => string,
   findStub: () => string | null,
-  findTestLoss: () => string | null = () => null
+  findTestLoss: () => string | null = () => null,
+  findDuplicates: () => string | null = () => null
 ): string {
   const lines: string[] = [];
   if (verify) {
@@ -1494,6 +1495,14 @@ function gateLines(
     if (loss) {
       throw new Error(
         `test scan failed: ${loss}: reverted ${revert()}; the worker branch is kept (a deliberate removal: re-run the merge with PAI_MERGE_ALLOW_TEST_LOSS=1)`
+      );
+    }
+  }
+  if (process.env.PAI_MERGE_ALLOW_DUPLICATES !== "1") {
+    const dup = findDuplicates();
+    if (dup) {
+      throw new Error(
+        `duplicate-code gate failed: ${dup}: reverted ${revert()}; the worker branch is kept (extract the shared function and re-merge)`
       );
     }
   }
@@ -1571,8 +1580,16 @@ export function scanDiffForTestLoss(diff: string): string | null {
 /** Built-in stub scan after a merge: a hit reverts it exactly like a failed verify. */
 export function stubScan(cwd: string, oldHead: string): string {
   return gateLines(cwd, undefined, () => revertMerge(cwd, oldHead), () => findAddedStub(cwd, oldHead), () =>
-    scanDiffForTestLoss(git(cwd, ["diff", "-U0", "--no-color", "--no-renames", oldHead, "HEAD"]))
+    scanDiffForTestLoss(git(cwd, ["diff", "-U0", "--no-color", "--no-renames", oldHead, "HEAD"])),
+    () => findNewDuplicates(cwd)
   );
+}
+
+/** Run scripts/check-duplicates.mjs in the merged tree: its report when a new clone was added, else null (also null when the repo has no such script). */
+export function findNewDuplicates(cwd: string): string | null {
+  if (!existsSync(join(cwd, "scripts", "check-duplicates.mjs"))) return null;
+  const r = spawnSync("node", ["scripts/check-duplicates.mjs"], { cwd, encoding: "utf8" });
+  return r.status === 0 ? null : (r.stderr || r.stdout).trim().split("\n").join("; ");
 }
 
 /** First repo among the status's worktree, cwd and the invocation cwd that has refs/heads/<branch>. */
