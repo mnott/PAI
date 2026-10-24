@@ -52,6 +52,7 @@ var WIN_METRIC={minW:100,minH:76,defaultH:96,viewed:true,
   if("v" in d)ctx.text("v",d.v);
   if("u" in d)ctx.text("u",d.u);
   if("s" in d)ctx.text("s",d.s);
+  if("tip" in d)ctx.attr("s","title",d.tip);
   if("x" in d)ctx.html("x",d.x);
   if("spark" in d)ctx.html("spark",d.spark);
   if(d.cls)for(var k in d.cls)ctx.cls("v",k,d.cls[k]);

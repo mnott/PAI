@@ -10,7 +10,7 @@ const residentOf = new Function("gbm", `${fn("limResident")}\nreturn limResident
 const server = new Function("esc", "gbm", "shortModel", "limResident", `${fn("limEngineHtml")}\n${fn("limServerHtml")}\nreturn limServerHtml;`)(esc, gbm, (s: string) => s, residentOf) as (l: unknown) => string;
 
 const inst = (n: number, pid: number, rssMb: number, inflight = 0) => ({ id: `gyro-m#${n}`, port: 8034 + n, pid, state: "ready", inflight, rssMb });
-const card = (instances: unknown[]) => ({ provider: "gyro-m", kind: "local", up: true, rssMb: 4800, weightsBytes: 87 * GB, tokensPerSec: 30, served: ["m"], instances });
+const card = (instances: unknown[]) => ({ provider: "gyro-m", kind: "local", up: true, rssMb: 4800, weightsBytes: 87 * GB, speed: { text: "prefill 245 t/s · decode 30 t/s (n=3/2, 1h, measured)", tip: "how" }, served: ["m"], instances });
 
 describe("local servers card lists each instance", () => {
   it("two instances: two rows, each with its own stop target and resident memory; weights once", () => {
@@ -23,7 +23,7 @@ describe("local servers card lists each instance", () => {
     expect(h).toContain("resident 4.7 GB");
     expect(h).toContain("resident 0.9 GB");
     expect(h).toContain("1 in flight");
-    expect(h).toContain("30 tok/s");
+    expect(h).toContain("decode 30 t/s");
     expect(h.match(/shared, mapped/g)).toHaveLength(1);
     expect(h).toContain("87.0 GB (shared, mapped)");
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSpeed, percentile, outputRate, prefillRate, writeRate } from "./speed.js";
+import { buildSpeed, endpointSpeed, strataSpeed, percentile, outputRate, prefillRate, writeRate } from "./speed.js";
 import { UsageSniffer, type UsageRow } from "./usage.js";
 
 const NOW = Date.parse("2026-10-17T12:00:00Z");
@@ -81,5 +81,60 @@ describe("speed", () => {
     expect(sn.firstContentAt).toBeUndefined();
     sn.push(Buffer.from('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}\n\n'));
     expect(sn.firstContentAt).toBeTypeOf("number");
+  });
+});
+
+describe("endpointSpeed / strataSpeed", () => {
+  const NOW = Date.parse("2026-10-24T20:00:00Z");
+  const ts = new Date(NOW - 60_000).toISOString();
+  const base = { ts, model: "m", provider: "coder-l", status: 200, bytes: 1, cache: "none" as const, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+  // the two operator rows: a buffered tool call (decodeMs ~0) and a short answer
+  const rows = [
+    { ...base, input_tokens: 6932, output_tokens: 57, ms: 28344, ttftMs: 28204, decodeMs: 2 },
+    { ...base, input_tokens: 68, output_tokens: 54, ms: 3269, ttftMs: 3269, decodeMs: 0 },
+  ] as unknown as UsageRow[];
+
+  it("computes prefill from ttft and excludes buffered replies from decode", () => {
+    const s = endpointSpeed(rows, "coder-l", NOW)!;
+    expect(s.prefillN).toBe(2);
+    expect(s.prefillTps).toBeCloseTo(7000 / 31.473, 0);
+    expect(s.decodeN).toBe(0);
+    expect(s.decodeTps).toBeNull();
+    expect(s.text).toBe("prefill 222 t/s · decode – (n=2/0, 1h, measured)");
+  });
+
+  it("counts a streamed reply in decode", () => {
+    const s = endpointSpeed([...rows, { ...base, input_tokens: 100, output_tokens: 200, ms: 6000, ttftMs: 1000, decodeMs: 5000 } as unknown as UsageRow], "coder-l", NOW)!;
+    expect(s.decodeN).toBe(1);
+    expect(s.decodeTps).toBe(40);
+  });
+
+  it("prefers server-reported timings", () => {
+    const s = endpointSpeed([{ ...rows[0]!, promptMs: 20000, predictedMs: 1000 }], "coder-l", NOW)!;
+    expect(s.prefillTps).toBe(346.6);
+    expect(s.decodeTps).toBe(57);
+    expect(s.source).toBe("server");
+  });
+
+  it("strataSpeed: decode from the totals delta, prefill from the live field", () => {
+    const body = (out: number, ms: number) => JSON.stringify({ live: { state: "prefill", prefill_tok_s_mean: 572 }, totals: { output_tokens: out, decode_ms: ms } });
+    expect(strataSpeed("k", body(100, 1000))!.decodeTps).toBeNull();
+    const s = strataSpeed("k", body(500, 11000))!;
+    expect(s.decodeTps).toBe(40);
+    expect(s.prefillTps).toBe(572);
+    expect(s.text).toBe("prefill 572 t/s · decode 40 t/s (server)");
+  });
+});
+
+describe("UsageSniffer server timings", () => {
+  it("reads llama-server prompt_ms/predicted_ms and Ollama durations", () => {
+    const a = new UsageSniffer("application/json");
+    a.push(Buffer.from(JSON.stringify({ usage: { input_tokens: 5 }, timings: { prompt_ms: 120, predicted_ms: 800 } })));
+    a.finish();
+    expect(a.serverTimings).toEqual({ promptMs: 120, predictedMs: 800 });
+    const b = new UsageSniffer("application/json");
+    b.push(Buffer.from(JSON.stringify({ usage: {}, timings: { prompt_eval_duration: 2e9, eval_duration: 4e9 } })));
+    b.finish();
+    expect(b.serverTimings).toEqual({ promptMs: 2000, predictedMs: 4000 });
   });
 });

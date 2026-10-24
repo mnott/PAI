@@ -1077,17 +1077,15 @@ function actionLabels(): Record<string, unknown> | null {
 }
 
 /** Local model servers as the SYSTEM panel shows them (from the limits poll). */
-export function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "downReason" | "rssMb" | "tokensPerSec" | "tokensPerSecWindow" | "decodeTokPerSec" | "served" | "prefixCache" | "prefixCacheAgeSec">> {
+export function systemServers(limits: ProviderLimits[]): Array<Pick<ProviderLimits, "provider" | "up" | "downReason" | "rssMb" | "speed" | "served" | "prefixCache" | "prefixCacheAgeSec">> {
   return limits
     .filter((l) => l.kind === "local")
-    .map(({ provider, up, downReason, rssMb, tokensPerSec, tokensPerSecWindow, decodeTokPerSec, served, prefixCache, prefixCacheAgeSec }) => ({
+    .map(({ provider, up, downReason, rssMb, speed, served, prefixCache, prefixCacheAgeSec }) => ({
       provider,
       up,
       ...(up === false && downReason ? { downReason } : {}),
       rssMb,
-      tokensPerSec,
-      tokensPerSecWindow,
-      decodeTokPerSec,
+      speed,
       ...(served ? { served } : {}),
       ...(prefixCache ? { prefixCache } : {}),
       ...(prefixCache && prefixCacheAgeSec ? { prefixCacheAgeSec } : {}),

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { nowStamp, saveStatus, type WorkerStatus } from "../workers/status.js";
 import type { WorkersConfig } from "../workers/config.js";
-import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, tokensPerSec, windowsFromJson } from "./limits.js";
+import { Backoff, LimitsCache, estimateWindows, parseAnthropicUsage, windowsFromJson } from "./limits.js";
 import { isTimeOrdered, type UsageRow } from "./usage.js";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
@@ -151,12 +151,11 @@ describe("limits parsing", () => {
     expect(zai).toEqual([{ name: "5h", percent: 40, resetAt: 1773151200000 }]);
   });
 
-  it("estimated windows count requests against a cap; tokens/s", () => {
+  it("estimated windows count requests against a cap", () => {
     const rows = [row(10, { provider: "glm" }), row(20, { provider: "glm" }), row(60 * 30, { provider: "glm" }), row(5)];
     expect(estimateWindows(rows, "glm", { "5h": 10 }, NOW)).toEqual([
       { name: "5h", percent: 20, resetAt: NOW - 20 * 60_000 + 5 * 3_600_000, estimated: true },
     ]);
-    expect(tokensPerSec(rows, "glm", NOW)).toEqual({ tokensPerSec: 20, tokensPerSecWindow: "1h" });
   });
 });
 

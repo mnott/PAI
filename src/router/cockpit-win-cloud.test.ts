@@ -19,7 +19,7 @@ const win = (name: string, percent: number) => ({ name, percent, resetAt: Date.n
 const limits = () => ({
   activeLocal: "gyro", runningLocal: ["gyro", "iq3s", "coder"],
   limits: [
-    { provider: "gyro", kind: "local", up: true, rssMb: 20480, tokensPerSec: 41, served: ["org/gyro-m"], engineVersion: gyroEngine, windows: [] },
+    { provider: "gyro", kind: "local", up: true, rssMb: 20480, speed: { text: "prefill 245 t/s · decode 38 t/s (n=3/2, 1h, measured)", tip: "how" }, served: ["org/gyro-m"], engineVersion: gyroEngine, windows: [] },
     { provider: "iq3s", kind: "local", up: false, starting: { state: "loading", sinceSec: 12, message: "", log: "" }, windows: [] },
     { provider: "coder", kind: "local", up: coderUp, windows: [] },
     { provider: "glm", kind: "cloud", windows: [win("5h", 30), win("week", 60)] },
@@ -146,13 +146,13 @@ describe("C1 guards: local server card", () => {
     const run = (served: string[]) => {
       const out: Record<string, string> = {};
       const ctx = { id: "limits.local.srv:gyro", status() {}, html: (_: string, h: string) => { out.html = h; }, title: (t: string) => { out.title = t; } };
-      T.server!.update(ctx, { limits: [{ provider: "gyro", kind: "local", up: true, rssMb: 20480, tokensPerSec: 41.4, served, windows: [] }] });
+      T.server!.update(ctx, { limits: [{ provider: "gyro", kind: "local", up: true, rssMb: 20480, speed: { text: "prefill 245 t/s · decode 38 t/s (n=3/2, 1h, measured)", tip: "how" }, served, windows: [] }] });
       return out;
     };
     const a = run(["org/gyro-m"]);
     expect(a.title).toBe("Gyro Medium");
     expect(a.html).toContain('<span class="nw">20.0 GB</span>');
-    expect(a.html).toContain('<span class="nw">41 tok/s</span>');
+    expect(a.html).toContain("prefill 245 t/s · decode 38 t/s (n=3/2, 1h, measured)");
     expect(a.html).toContain('<span class="nw" title="org/gyro-m">gyro-m</span>');
     expect(run(["org/other"]).title).toBe("gyro"); // no alias: the provider name
   });

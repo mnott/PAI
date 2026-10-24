@@ -614,7 +614,7 @@ export function routerHandler(
       const gap = onUsage && !isCount ? gaps.gap(sessionId, started) : undefined;
       const changed =
         onUsage && !isCount ? busts.check(session, fingerprint(JSON.parse(up.body.toString("utf8")))) : [];
-      const record = (status: number, usage: Usage, timing: { ttftMs?: number; decodeMs?: number } = {}) => {
+      const record = (status: number, usage: Usage, timing: { ttftMs?: number; decodeMs?: number; promptMs?: number; predictedMs?: number } = {}) => {
         if (!onUsage || isCount) return;
         const row: UsageRow = {
           ts: new Date().toISOString(),
@@ -783,7 +783,10 @@ export function routerHandler(
             record(
               ures.statusCode ?? 502,
               usage,
-              first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}
+              {
+                ...(first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}),
+                ...sniff?.serverTimings,
+              }
             );
           });
       };

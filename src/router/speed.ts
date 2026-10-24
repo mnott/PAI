@@ -6,6 +6,7 @@
  */
 
 import type { UsageRow } from "./usage.js";
+import { strataEngineMetrics } from "./runtime-samples.js";
 
 /** Fewer output tokens than this make the decode rate noise. */
 export const MIN_DECODE_TOKENS = 16;
@@ -47,19 +48,29 @@ function uncachedPrompt(r: UsageRow): number | null {
   return (r.input_tokens ?? 0) + r.cache_creation_input_tokens;
 }
 
+/** Prefill time: the server's own prompt_ms when reported, else time to first token. */
+const prefillMs = (r: UsageRow): number | undefined => r.promptMs ?? r.ttftMs;
+
+/** Generation time: the server's own predicted_ms when reported, else (local) first content to end or (cloud) the whole reply. */
+function genMs(r: UsageRow, local: boolean): number | undefined {
+  if (r.predictedMs !== undefined) return r.predictedMs;
+  return local ? r.decodeMs : r.ttftMs === undefined ? undefined : r.ms;
+}
+
 /** [uncached prompt tokens, ttft ms] for rows that qualify for the prefill rate, else null. */
 function prefillSample(r: UsageRow, local: boolean): [number, number] | null {
   const tok = uncachedPrompt(r);
-  if (tok === null || tok <= 0 || r.ttftMs === undefined || r.ttftMs <= 0) return null;
+  const ms = prefillMs(r);
+  if (tok === null || tok <= 0 || ms === undefined || ms <= 0) return null;
   const max = Number(process.env.PAI_MAX_LOCAL_PREFILL_TPS) || MAX_PLAUSIBLE_LOCAL_PREFILL_TPS;
-  if (local && tok / (r.ttftMs / 1000) > max) {
+  if (local && tok / (ms / 1000) > max) {
     if (!capLogged) {
       capLogged = true;
       console.warn(`[speed] dropping local prefill rows above ${max} tok/s (implausible)`);
     }
     return null;
   }
-  return [tok, r.ttftMs];
+  return [tok, ms];
 }
 
 /** Prefill tok/s of the uncached prompt tokens over TTFT, aggregated as Σtokens / Σttft. */
@@ -83,7 +94,7 @@ export function prefillRate(rows: UsageRow[], local = true): number | null {
  * its rate is output tokens over the whole reply time: a lower bound, never inflated.
  */
 export function writeRate(r: UsageRow, local = true): number | null {
-  const ms = local ? r.decodeMs : r.ttftMs === undefined ? undefined : r.ms;
+  const ms = genMs(r, local);
   if (ms === undefined || ms <= 0 || (r.output_tokens ?? 0) < MIN_DECODE_TOKENS) return null;
   return r.output_tokens! / (ms / 1000);
 }
@@ -102,7 +113,7 @@ export function outputRate(rows: UsageRow[], local = true): number | null {
   const max = (Number(process.env[local ? "PAI_MAX_LOCAL_OUTPUT_TPS" : "PAI_MAX_CLOUD_OUTPUT_TPS"]) || (local ? MAX_PLAUSIBLE_LOCAL_OUTPUT_TPS : MAX_PLAUSIBLE_CLOUD_OUTPUT_TPS));
   const rates: number[] = [];
   for (const r of rows) {
-    const g = local ? r.decodeMs : r.ttftMs === undefined ? undefined : r.ms;
+    const g = genMs(r, local);
     const n = r.output_tokens ?? 0;
     if (g === undefined || g < MIN_GEN_MS || n < MIN_OUTPUT_TOKENS) continue;
     if (n / (g / 1000) > max) {
@@ -115,6 +126,45 @@ export function outputRate(rows: UsageRow[], local = true): number | null {
     rates.push(n / (g / 1000));
   }
   return percentile(rates, 0.5);
+}
+
+export interface EndpointSpeed {
+  prefillTps: number | null;
+  /** requests the prefill rate averages */
+  prefillN: number;
+  /** p50 over requests with a real generation window; buffered replies (whole answer in one chunk) are excluded, not counted as ~0 ms */
+  decodeTps: number | null;
+  decodeN: number;
+  window: "1h" | "24h";
+  /** where the numbers come from: the server's own accounting, or measured from the router's rows */
+  source: "server" | "measured";
+  /** "prefill 245 t/s · decode 38 t/s (n=12/9, 1h)" */
+  text: string;
+  /** how the two rates are measured, for the tooltip */
+  tip: string;
+}
+
+export const SPEED_TIP =
+  "prefill = uncached prompt tokens / server prompt time (prompt_ms when the server reports it, else time to first token); " +
+  "decode = output tokens / generation time (predicted_ms when reported, else first token to end), p50. " +
+  "Buffered replies (whole answer in one chunk, e.g. tool calls) are excluded from decode, not counted as ~0 ms. n = requests behind each rate.";
+
+const rate = (v: number | null) => (v === null ? "–" : `${v < 10 ? v.toFixed(1) : Math.round(v)} t/s`);
+
+/** Prefill and decode rate of one endpoint over the last hour (else 24 h): the one computation behind the cockpit tile. */
+export function endpointSpeed(rows: UsageRow[], provider: string, now: number, local = true): EndpointSpeed | null {
+  for (const [span, window] of [[3_600_000, "1h"], [86_400_000, "24h"]] as const) {
+    const ok = rows.filter((r) => r.provider === provider && r.status === 200 && Date.parse(r.ts) >= now - span);
+    const prefillN = ok.filter((r) => prefillSample(r, local)).length;
+    const decodeN = ok.filter((r) => outputRate([r], local) !== null).length;
+    if (!prefillN && !decodeN) continue;
+    const prefillTps = round(prefillRate(ok, local));
+    const decodeTps = round(outputRate(ok, local));
+    const source = ok.some((r) => r.promptMs !== undefined || r.predictedMs !== undefined) ? "server" : "measured";
+    const text = `prefill ${rate(prefillTps)} · decode ${rate(decodeTps)} (n=${prefillN}/${decodeN}, ${window}, ${source})`;
+    return { prefillTps, prefillN, decodeTps, decodeN, window, source, text, tip: SPEED_TIP };
+  }
+  return null;
 }
 
 const round = (v: number | null) => (v === null ? null : Math.round(v * 10) / 10);
@@ -151,4 +201,35 @@ export function buildSpeed(allRows: UsageRow[], now: number, canon: (m: string) 
       h24: stats(g.rows, isLocal(g.provider)),
     }))
     .sort((a, b) => b.h24.requests - a.h24.requests);
+}
+
+/** The previous Strata `totals` per endpoint, so decode = Δoutput_tokens / Δdecode_ms between polls. */
+const strataPrev = new Map<string, { out: number; ms: number; decodeTps: number | null }>();
+
+/**
+ * Speed from a Strata GET /metrics body: decode from the totals delta since the last poll (kept over idle polls),
+ * prefill from the running request's prefill_tok_s_mean, else the last request's fresh tokens / prompt_ms.
+ * Null when the body is not Strata's or carries no reading yet.
+ */
+export function strataSpeed(key: string, body: string, window: "1h" | "24h" = "1h"): EndpointSpeed | null {
+  let m: { totals?: { output_tokens?: number; decode_ms?: number } } | null;
+  try {
+    m = JSON.parse(body) as typeof m;
+  } catch {
+    return null;
+  }
+  const eng = strataEngineMetrics(m);
+  if (!eng) return null;
+  const out = m?.totals?.output_tokens;
+  const ms = m?.totals?.decode_ms;
+  const prev = strataPrev.get(key);
+  let decodeTps = prev?.decodeTps ?? null;
+  if (typeof out === "number" && typeof ms === "number") {
+    if (prev && ms > prev.ms && out >= prev.out) decodeTps = (out - prev.out) / ((ms - prev.ms) / 1000);
+    strataPrev.set(key, { out, ms, decodeTps });
+  }
+  const prefillTps = eng.prefill;
+  if (prefillTps === null && decodeTps === null) return null;
+  const r = { prefillTps: round(prefillTps), decodeTps: round(decodeTps) };
+  return { ...r, prefillN: 0, decodeN: 0, window, source: "server", text: `prefill ${rate(r.prefillTps)} · decode ${rate(r.decodeTps)} (server)`, tip: SPEED_TIP };
 }

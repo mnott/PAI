@@ -4,7 +4,7 @@
  *  the server cards also read the `data` feed (speed table) and the page's `lim`/`data` globals.
  *  Cards: group `system` > groups `sys-metrics` (14 + 6 `metric` cards `system.<name>`), `sys-power` (chart card
  *  `system.power-chart`), `sys-servers` (the note card `system.srv:none`, shown while no server is up, plus
- *  dynamic: four `metric` cards `system.srv:<provider>/<rss|e2e|decode|prefix>` per up server, added by data
+ *  dynamic: four `metric` cards `system.srv:<provider>/<rss|prefill|decode|prefix>` per up server, added by data
  *  through Win.addCards). The `metric` type itself is registered in cards-kpis;
  *  their cards carry sysMetricView / sysServerView. */
 
@@ -100,8 +100,6 @@ function sysMetricView(d,ctx){
  var r=sysRead(c,m[1]);
  return sysMetric(r.v==null?"–":m[2](r.v),m[3],(r.age?"~"+r.age+" old · ":"")+(r.v==null?tip:m[4](c,d)),sysSeries(d,m[1],m[5],r.v));
 }
-function srvDecode(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p&&(x.h1.writeTps!=null||x.h24.writeTps!=null)})[0];return r?(r.h1.writeTps!=null?r.h1.writeTps:r.h24.writeTps):null}
-function srvE2eSub(p){var r=((data&&data.speed)||[]).filter(function(x){return x.provider===p})[0];return r&&r.h24.requests?"no requests in the last hour (24 h: "+fmt(r.h24.requests)+(r.h24.ttftP50!=null?", ttft p50 "+(r.h24.ttftP50/1000).toFixed(1)+" s":"")+")":"no requests in the last 24 h"}
 /** A system.srv:<provider>/<what> card; reads the page's sys/data/lim, the payload is only the trigger. */
 function sysServerView(_d,ctx){
  var id=ctx.id.slice(11),k=id.lastIndexOf("/"),p=id.slice(0,k),what=id.slice(k+1),d=sys;
@@ -110,12 +108,11 @@ function sysServerView(_d,ctx){
  if(!s)return{status:["stale","down"]};
  if(s.up===false)return sysMetric("–","", "down",sysSeries(d,"srv:"+p+":"+what,null,null));
 
- var pc=s.prefixCache,tot=pc?pc.hits+pc.misses:0,v,txt,unit,sub;
+ var pc=s.prefixCache,tot=pc?pc.hits+pc.misses:0,v,txt,unit,sub,tipOf;
  if(what==="rss"){v=s.rssMb;txt=gbm;unit="GB";sub="resident memory"}
- else if(what==="e2e"){v=s.tokensPerSec;txt=String;unit="tok/s";sub=v!=null?(s.tokensPerSecWindow==="24h"?"router, 24 h":s.tokensPerSecWindow==="1h"?"router, last hour":"end to end"):data?srvE2eSub(p):"loading"}
- else if(what==="decode"){v=srvDecode(p);txt=fmt;unit="tok/s";sub="decode"}
+ else if(what==="prefill"||what==="decode"){var sp=s.speed;v=sp?(what==="prefill"?sp.prefillTps:sp.decodeTps):null;txt=fmt;unit="t/s";var n=sp?(what==="prefill"?sp.prefillN:sp.decodeN):0;sub=sp?(n?"n="+n+" · ":"")+sp.window+" · "+sp.source:"no requests in the last 24 h";if(sp)tipOf=sp.tip}
  else{v=pc?pc.hitRate:null;txt=function(x){return(x*100).toFixed(1)};unit="%";sub=pc?pc.hits+"/"+tot:lim?"server reports no prefix-cache counter":"loading: first limits poll pending"}
- return Object.assign({status:["",""]},sysMetric(v==null?"–":txt(v),unit,sub,sysSeries(d,"srv:"+p+":"+what,null,v)));
+ return Object.assign({status:["",""]},sysMetric(v==null?"–":txt(v),unit,sub,sysSeries(d,"srv:"+p+":"+what,null,v)),tipOf?{tip:tipOf}:{});
 }
 /** The note shown while no local server is up. */
 function sysSrvNoneView(){return{text:"no local model server is up"}}
@@ -152,7 +149,7 @@ Win.registerType("chart",{minW:260,minH:150,defaultH:270,
  update:function(ctx,d){if(WCHX[ctx.id]){WCHX[ctx.id].update(ctx,d);return}if(!d||!d.series)return;var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.d=d;sysChartDraw(ctx)},
  resize:function(ctx,w,h){if(WCHX[ctx.id]){WCHX[ctx.id].resize(ctx,w,h);return}var s=WCH[ctx.id]||(WCH[ctx.id]={w:0,h:0,d:null});s.w=w;s.h=h;sysChartDraw(ctx)}});
 /** The up servers' four cards per server, added by data (a structural change). */
-var SRV_WHAT=[["rss","RSS"],["e2e","end-to-end"],["decode","decode"],["prefix","prefix cache"]];
+var SRV_WHAT=[["rss","RSS"],["prefill","prefill"],["decode","decode"],["prefix","prefix cache"]];
 function sysServerSync(d){
  var specs=[],rows=[],list=(d&&d.servers)||[],i,j,up=0;
  for(i=0;i<list.length;i++){
