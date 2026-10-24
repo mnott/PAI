@@ -393,6 +393,8 @@ export interface PoolHost {
    * Runs on the credential watch when the login credential changed; tests drive it directly.
    */
   retireSpares(why: string): number;
+  /** Compare the login credential stamp with the last one seen; a change retires the spares. True when it did. */
+  checkCredentials(): boolean;
   /** Resolves when every spare start in flight has finished (tests). */
   settle(): Promise<void>;
 }
@@ -772,6 +774,13 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     return n;
   };
 
+  /** The distinct repo/provider/model keys the current spares serve (what to top up after a retire). */
+  const spareKeysInUse = (): { repo: string; provider: string; model: string }[] => {
+    const seen = new Map<string, { repo: string; provider: string; model: string }>();
+    for (const e of spares.values()) seen.set(spareKey(e.rec.repo, e.rec.provider, e.rec.model), { repo: e.rec.repo, provider: e.rec.provider, model: e.rec.model });
+    return [...seen.values()];
+  };
+
   /** Start one spare: worktree from the repo's HEAD, claude waiting for its first turn. */
   const startSpare = async (repo: string, providerName: string, model: string): Promise<void> => {
     const provider = getProviderOrNative(config, providerName);
@@ -810,6 +819,10 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     rec.pid = session.pid;
     rec.state = "ready";
     persist();
+    if (entry.retiring) {
+      discardSpare(entry, "login changed while starting");
+      return;
+    }
     appendLedger(ledger, "WORKER-POOL-SPARE", { spare: sid, provider: providerName, model, pid: session.pid, cwd: wt.dir, base: wt.base.slice(0, 8) });
     void session.waitExit().then(() => {
       if (rec.state === "ready" && spares.get(rec.id) === entry) discardSpare(entry, "spare process exited");
@@ -834,7 +847,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   /** Bring a key up to workers.pool.spares in the background (nothing stops a key that has none yet). */
   const topUp = (repo: string, providerName: string, model: string): void => {
     if (settings.spares <= 0 || !spareCapable(providerName)) return;
-    const have = (spares.get(spareKey(repo, providerName, model)) ?? []).length;
+    const key = spareKey(repo, providerName, model);
+    const have = [...spares.values()].filter((e) => !e.retiring && spareKey(e.rec.repo, e.rec.provider, e.rec.model) === key).length;
     for (let i = have; i < settings.spares; i++) {
       const p: Promise<void> = startSpare(repo, providerName, model)
         .catch(() => undefined)
@@ -921,7 +935,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       return { reason: "rename-failed" };
     }
     ready.rec.branch = worktreeBranch(task.id);
-    spares.set(key, list.filter((e) => e !== ready));
+    spares.delete(ready.rec.id);
     return { entry: ready };
   };
 
@@ -944,6 +958,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
   };
   const runTaskInner = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
+    if (drainSince !== null) return { pooled: false, reason: "busy" };
     const provider = getProviderOrNative(config, task.provider);
     if (!provider) return { pooled: false, reason: "engine" };
     // the client screens eligibility before shipping the task; the host
@@ -1195,6 +1210,29 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     if (deadTimer) clearTimeout(deadTimer);
     clientGone?.removeEventListener("abort", onClientGone);
 
+    // a spare whose task died on the login ("Failed to authenticate", "Not logged in"): its process
+    // holds a dead OAuth session. Retire it and every sibling, retry the task once on a fresh spawn.
+    if (spareEntry && !clientGoneFired && !deadlineFired && resultEvent?.is_error && looksLikeAuthFailure(resultEvent.result)) {
+      closeSync(eventsFd);
+      release(session);
+      session.kill();
+      removeSpareWorktree(spareEntry.rec.repo, spareEntry.rec.dir, spareEntry.rec.branch);
+      appendLedger(ledger, "WORKER-POOL-SPARE-END", { spare: spareEntry.rec.id, provider: task.provider, note: `auth failure on ${wid}` });
+      appendLedger(ledger, "WORKER-POOL-AUTH-RETRY", {
+        id: wid,
+        provider: task.provider,
+        spare: spareEntry.rec.id,
+        note: opts.retryFresh ? "retried once on a fresh spawn" : "spare retired; client falls back to a fresh spawn",
+      });
+      const keys = spareKeysInUse();
+      retireSpares(`auth failure on ${wid}`);
+      for (const k of keys) topUp(k.repo, k.provider, k.model);
+      topUp(spareEntry.rec.repo, task.provider, task.model);
+      persist();
+      if (opts.retryFresh) return opts.retryFresh({ ...task, spare: false });
+      return { pooled: false, reason: "auth-retry" };
+    }
+
     let rc: number;
     let report = resultEvent ? parseWorkerReport(resultEvent.result ?? "") : null;
 
@@ -1419,7 +1457,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       s.kill();
       slots.delete(k);
     }
-    for (const list of [...spares.values()]) for (const e of [...list]) discardSpare(e, "host shutdown");
+    for (const e of [...spares.values()]) discardSpare(e, "host shutdown");
     persist();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   };
@@ -1438,17 +1476,39 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
   const reapSpares = (): number => {
     let n = 0;
-    for (const list of [...spares.values()]) {
-      for (const e of [...list]) {
-        if (e.rec.state === "ready" && spareShouldRetire(Date.parse(e.rec.createdAt), now().getTime(), settings.idleKillSec)) {
-          discardSpare(e, "idle timeout");
-          n++;
-        }
+    for (const e of [...spares.values()]) {
+      if (e.rec.state === "ready" && spareShouldRetire(Date.parse(e.rec.createdAt), now().getTime(), settings.idleKillSec)) {
+        discardSpare(e, "idle timeout");
+        n++;
       }
     }
     return n;
   };
 
+  let lastCred: string | null | undefined;
+  /** One credential check: a changed stamp retires the spares. The first call records the baseline. */
+  const checkCredentials = (): boolean => {
+    let stamp: string | null;
+    try {
+      stamp = (opts.credStamp ?? (() => credentialChangeStamp()))();
+    } catch {
+      return false;
+    }
+    if (lastCred === undefined) {
+      lastCred = stamp;
+      return false;
+    }
+    if (stamp === lastCred) return false;
+    lastCred = stamp;
+    appendLedger(ledger, "POOL-HOST-CRED-CHANGE", { pid: process.pid, note: "login credential changed: spares retired" });
+    const keys = spareKeysInUse();
+    retireSpares("login credential changed");
+    for (const k of keys) topUp(k.repo, k.provider, k.model);
+    return true;
+  };
+
+  /** Set when a newer build is waiting on running tasks: no new work is accepted until the restart. */
+  let drainSince: number | null = null;
   let reloading = false;
   let seenMtime: number | null = null;
   let seenSince = 0;
@@ -1462,8 +1522,16 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       seenSince = now().getTime();
     }
     if (now().getTime() - seenSince < (opts.bundleStableMs ?? 5000)) return false;
-    // a busy or claimed slot defers the reload until it is idle
-    if (inflight > 0 || claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) return false;
+    // a busy or claimed slot defers the reload until it is idle: drain (hand out nothing new,
+    // let running tasks finish) for at most drainTimeoutSec, then go anyway
+    if (inflight > 0 || claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) {
+      if (drainSince === null) {
+        drainSince = now().getTime();
+        appendLedger(ledger, "POOL-HOST-DRAIN", { pid: process.pid, note: "newer build on disk: draining before restart" });
+      }
+      if (now().getTime() - drainSince < settings.drainTimeoutSec * 1000) return false;
+      appendLedger(ledger, "POOL-HOST-DRAIN", { pid: process.pid, note: `drain timeout after ${settings.drainTimeoutSec}s: restarting with tasks running` });
+    }
     reloading = true;
     writeReloadMarker(logDir);
     appendLedger(ledger, "POOL-HOST-RELOAD", { pid: process.pid, bundle: opts.bundlePath, note: "newer build on disk" });
@@ -1472,7 +1540,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       s.kill();
       slots.delete(k);
     }
-    for (const list of [...spares.values()]) for (const e of [...list]) discardSpare(e, "host reload");
+    for (const e of [...spares.values()]) discardSpare(e, "host reload");
     persist();
     server.close();
     server.closeAllConnections?.();
@@ -1500,11 +1568,17 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     appendLedger(ledger, "POOL-HOST-RELOAD-FAILED", { pid: process.pid, bundle: opts.bundlePath, note: why });
     reloading = false;
     seenMtime = null;
+    drainSince = null;
     return false;
   };
 
   if (!opts.noReaper && opts.bundlePath) {
     const timer = setInterval(() => void checkReload(), 30_000);
+    timer.unref?.();
+  }
+  if (!opts.noReaper && settings.credWatchSec > 0) {
+    checkCredentials(); // the baseline
+    const timer = setInterval(checkCredentials, (opts.credWatchSec ?? settings.credWatchSec) * 1000);
     timer.unref?.();
   }
   if (!opts.noReaper) {
@@ -1591,6 +1665,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     reapSpares,
     refreshSpares,
     checkReload,
+    retireSpares,
+    checkCredentials,
     settle: async () => {
       while (pendingStarts.size) await Promise.all([...pendingStarts]);
     },
@@ -1601,4 +1677,6 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 interface SpareEntry {
   rec: PoolSpareRecord;
   session: PoolSlotSession | null;
+  /** Marked for retirement (the login changed): never handed out; discarded once ready. */
+  retiring?: boolean;
 }

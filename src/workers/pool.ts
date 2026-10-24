@@ -40,7 +40,8 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { request as httpRequest, type IncomingMessage } from "node:http";
-import { dirname, homedir, join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { ANTHROPIC_NATIVE, DEFAULT_POOL_PORT, defaultWorkersConfig, type WorkersConfig, type WorkerProvider } from "./config.js";
 import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
@@ -582,7 +583,7 @@ export interface PoolTaskRequest {
 /** What the host answers: either the finished task or a refusal to pool it. */
 export interface PoolTaskResponse {
   pooled: boolean;
-  reason?: PoolIneligibleReason | SpareMissReason | "busy" | "host-error";
+  reason?: PoolIneligibleReason | SpareMissReason | "busy" | "host-error" | "auth-retry";
   rc?: number;
   resultEvent?: StreamEvent | null;
   report?: WorkerReport | null;
