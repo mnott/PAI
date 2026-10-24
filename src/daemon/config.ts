@@ -206,10 +206,6 @@ export interface PaiDaemonConfig {
   /** Embed batches in flight at once (default 3). Ollama serves them in parallel up to OLLAMA_NUM_PARALLEL. */
   embedConcurrency?: number;
 
-  /** An index pass that rewrites more than this percent of all chunks logs a loud warning and
-   *  flags the cockpit index tile (default 20). */
-  indexRewriteWarnPercent?: number;
-
   /** Local hour (0-23) to anchor the recurring index/embed cycle to. When unset,
    *  the cycle is anchored to daemon start, so a daytime restart pins every
    *  later pass to daytime too — a 24h interval does not by itself mean "at

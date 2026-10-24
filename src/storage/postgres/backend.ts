@@ -25,7 +25,7 @@ import type {
 import type { SearchResult, SearchOptions } from "../../memory/search.js";
 import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./config.js";
 import { LEGACY_EMBEDDING_BINDING } from "../../memory/embedding-binding.js";
-import { bufferToVector, vectorToBuffer } from "./helpers.js";
+import { bufferToVector } from "./helpers.js";
 import { searchKeyword, searchSemantic } from "./search.js";
 import * as vault from "./vault.js";
 import { entityContentId, type KgEntity, type KgEntityUpsertParams } from "../../memory/kg-entity.js";
@@ -119,9 +119,6 @@ export class PostgresBackend implements StorageBackend {
       );
       process.stderr.write("[pai-postgres] Migration: added confidence column to vault_links\n");
     }
-
-    // Migration: carry-over lookups find a vector by chunk text hash
-    await pool.query("CREATE INDEX IF NOT EXISTS idx_pc_hash_embedded ON pai_chunks(hash) WHERE embedding IS NOT NULL");
 
     // Migration: create kg_triples table if it does not exist
     const kgCheck = await pool.query(
@@ -434,10 +431,10 @@ export class PostgresBackend implements StorageBackend {
 
         await client.query(
           `INSERT INTO pai_chunks
-             (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at, fts_vector, embedding)
+             (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at, fts_vector)
            VALUES
              ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-              to_tsvector('simple', $9), $11::vector)
+              to_tsvector('simple', $9))
            ON CONFLICT (id) DO UPDATE SET
              project_id = EXCLUDED.project_id,
              source     = EXCLUDED.source,
@@ -448,14 +445,10 @@ export class PostgresBackend implements StorageBackend {
              hash       = EXCLUDED.hash,
              text       = EXCLUDED.text,
              updated_at = EXCLUDED.updated_at,
-             fts_vector = EXCLUDED.fts_vector,
-             embedding  = CASE WHEN pai_chunks.hash = EXCLUDED.hash
-                               THEN COALESCE(EXCLUDED.embedding, pai_chunks.embedding)
-                               ELSE EXCLUDED.embedding END`,
+             fts_vector = EXCLUDED.fts_vector`,
           [
             c.id, c.projectId, c.source, c.tier, c.path,
             c.startLine, c.endLine, c.hash, safeText, c.updatedAt,
-            c.embedding ? "[" + bufferToVector(Buffer.from(c.embedding.buffer, c.embedding.byteOffset, c.embedding.byteLength)).join(",") + "]" : null,
           ]
         );
       }
@@ -529,19 +522,6 @@ export class PostgresBackend implements StorageBackend {
     }
     const result = await this.pool.query<{ id: string; text: string; project_id: number; path: string }>(sql, params);
     return result.rows;
-  }
-
-  async getEmbeddingsByHash(hashes: string[]): Promise<Map<string, Buffer>> {
-    const out = new Map<string, Buffer>();
-    const uniq = [...new Set(hashes)];
-    for (let i = 0; i < uniq.length; i += 500) {
-      const r = await this.pool.query<{ hash: string; e: string }>(
-        "SELECT DISTINCT ON (hash) hash, embedding::text AS e FROM pai_chunks WHERE hash = ANY($1) AND embedding IS NOT NULL",
-        [uniq.slice(i, i + 500)]
-      );
-      for (const row of r.rows) out.set(row.hash, vectorToBuffer(JSON.parse(row.e) as number[]));
-    }
-    return out;
   }
 
   async updateEmbedding(chunkId: string, embedding: Buffer): Promise<void> {

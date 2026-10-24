@@ -141,8 +141,8 @@ export class SQLiteBackend implements StorageBackend {
     if (chunks.length === 0) return;
 
     const insertChunk = this.db.prepare(
-      `INSERT INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at, embedding)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertFts = this.db.prepare(
       `INSERT INTO memory_fts (text, id, project_id, path, source, tier, start_line, end_line)
@@ -161,8 +161,7 @@ export class SQLiteBackend implements StorageBackend {
           c.endLine,
           c.hash,
           c.text,
-          c.updatedAt,
-          c.embedding ? Buffer.from(c.embedding.buffer, c.embedding.byteOffset, c.embedding.byteLength) : null
+          c.updatedAt
         );
         insertFts.run(
           c.text,
@@ -260,19 +259,6 @@ export class SQLiteBackend implements StorageBackend {
         ORDER BY ${orderBy}${limit !== undefined ? " LIMIT ?" : ""}`)
       .all(...params, ...(limit !== undefined ? [limit] : [])) as Array<{ id: string; text: string; project_id: number; path: string }>;
     return rows;
-  }
-
-  async getEmbeddingsByHash(hashes: string[]): Promise<Map<string, Buffer>> {
-    const out = new Map<string, Buffer>();
-    const uniq = [...new Set(hashes)];
-    for (let i = 0; i < uniq.length; i += 500) {
-      const part = uniq.slice(i, i + 500);
-      const rows = this.db
-        .prepare(`SELECT hash, embedding FROM memory_chunks WHERE embedding IS NOT NULL AND hash IN (${part.map(() => "?").join(",")}) GROUP BY hash`)
-        .all(...part) as Array<{ hash: string; embedding: Buffer }>;
-      for (const r of rows) out.set(r.hash, r.embedding);
-    }
-    return out;
   }
 
   async updateEmbedding(chunkId: string, embedding: Buffer): Promise<void> {

@@ -28,28 +28,9 @@ describe("runEmbedPipeline", () => {
       batchSize: 25,
       concurrency: 3,
     });
-    expect(r).toEqual({ done: 103, carried: 0, end: "done" });
+    expect(r).toEqual({ done: 103, end: "done" });
     expect(written.every((b) => b.length <= 25)).toBe(true);
     expect(written.flat().sort()).toEqual(all.map((x) => x.id).sort());
-  });
-
-  it("carries a stored vector over without calling the model for it", async () => {
-    const all = rows(10);
-    const embedded: string[] = [];
-    const stored = new Map<string, unknown>();
-    const twin = Buffer.from([1, 2]);
-    const r = await runEmbedPipeline({
-      fetchPage: pager(all, 10),
-      embed: async (t) => { embedded.push(...t); return t.map(vec); },
-      carry: async (b) => b.map((x) => (Number(x.id.slice(1)) % 2 === 0 ? twin : null)),
-      write: async (b, v) => { b.forEach((x, j) => stored.set(x.id, v[j])); },
-      batchSize: 4,
-      concurrency: 2,
-    });
-    expect(r).toMatchObject({ done: 10, carried: 5, end: "done" });
-    expect(embedded.sort()).toEqual(["t1", "t3", "t5", "t7", "t9"]);
-    expect(stored.get("c4")).toBe(twin);
-    expect(stored.get("c3")).toBeInstanceOf(Float32Array);
   });
 
   it("prefetches the next page while the current one is embedding", async () => {
@@ -152,7 +133,7 @@ describe("runEmbedPipeline", () => {
       concurrency: 1,
       shouldYield: () => (++calls > 2 ? "load average 9.0 above 8" : null),
     });
-    expect(r).toEqual({ done: 20, carried: 0, end: "yielded", reason: "load average 9.0 above 8" });
+    expect(r).toEqual({ done: 20, end: "yielded", reason: "load average 9.0 above 8" });
   });
 
   it("rejects with the embed error and takes no further batch", async () => {

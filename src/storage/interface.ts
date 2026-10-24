@@ -357,14 +357,6 @@ export interface StorageBackend {
   insertChunks(chunks: ChunkRow[]): Promise<void>;
 
   /**
-   * Stored vectors by chunk text hash, taken from any chunk of any project.
-   * Same text, same vector (the embedder sees only the text), so a re-chunked
-   * file, a moved file or a project that got a new id keeps its vectors instead
-   * of queueing the text for the model again. Hashes with no vector are absent.
-   */
-  getEmbeddingsByHash(hashes: string[]): Promise<Map<string, Buffer>>;
-
-  /**
    * Return all distinct paths stored in memory_chunks for a given project.
    * Used by the indexer to detect stale paths after renames/moves/deletions.
    */

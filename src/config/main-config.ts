@@ -115,7 +115,6 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   embedResumeMinutes: "Minutes to wait before resuming after an embed pass yielded to load or a local worker (default 10).",
   embedConcurrency: "Embed batches in flight at once (default 3); Ollama runs them in parallel up to OLLAMA_NUM_PARALLEL.",
   embedMaxLoad: "Load average above which an embed pass yields (default 8). Also yields while a local-model worker runs.",
-  indexRewriteWarnPercent: "An index pass that rewrites more than this percent of all chunks logs a warning and flags the cockpit index tile (default 20).",
   passPriority: 'Priority of scheduled index/embed passes: "background" (default; low-priority child process) or "normal" (in-process).',
   maintenanceHour: "Local hour (0-23) to anchor the recurring index/embed cycle to, so maintenance runs in a fixed window.",
   quiet: "Quiet mode (`pai daemon quiet on|off`): defer maintenance jobs; { on, until? }.",

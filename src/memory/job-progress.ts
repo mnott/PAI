@@ -27,8 +27,6 @@ export interface JobRunProgress {
   files: number;
   chunks: number;
   skipped: number;
-  /** embed run: of `done`, chunks whose vector was carried over from a same-text twin (no model call) */
-  carried: number;
   /** display name of the project in hand, "" when none */
   current: string;
   elapsedSec: number;
@@ -145,7 +143,7 @@ export function createProgressWriter(
   const now = o.now ?? Date.now;
   const gap = o.minGapMs ?? PROGRESS_GAP_MS;
   const started = now();
-  const cur: JobRunProgress = { phase: "scan", done: 0, total: 0, unit: o.kind === "embed" ? "chunks" : "projects", files: 0, chunks: 0, skipped: 0, carried: 0, current: "", elapsedSec: 0, updatedAt: "", movedAt: new Date(started).toISOString() };
+  const cur: JobRunProgress = { phase: "scan", done: 0, total: 0, unit: o.kind === "embed" ? "chunks" : "projects", files: 0, chunks: 0, skipped: 0, current: "", elapsedSec: 0, updatedAt: "", movedAt: new Date(started).toISOString() };
   let lastWrite = -Infinity;
   let touched = false;
   const key = (): string => JSON.stringify([cur.done, cur.total, cur.files, cur.chunks, cur.skipped, cur.phase]);

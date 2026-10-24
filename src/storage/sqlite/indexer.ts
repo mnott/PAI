@@ -24,7 +24,6 @@ import {
 } from "../../memory/indexer/helpers.js";
 import type { IndexResult } from "../../memory/indexer/types.js";
 import { discoverProjectFiles } from "../../memory/indexer/discover.js";
-import { guardMassRewrite } from "../../memory/indexer/rewrite-guard.js";
 
 // ---------------------------------------------------------------------------
 // Single-file indexing
@@ -67,16 +66,6 @@ function indexFile(
     return false;
   }
 
-  const chunks = chunkMarkdown(content);
-
-  // Vectors of unchanged text survive the rewrite (looked up before the old rows go).
-  const carried = new Map<string, Buffer>();
-  const lookup = db.prepare("SELECT embedding FROM memory_chunks WHERE hash = ? AND embedding IS NOT NULL LIMIT 1");
-  for (const c of chunks) {
-    const row = lookup.get(c.hash) as { embedding: Buffer } | undefined;
-    if (row) carried.set(c.hash, row.embedding);
-  }
-
   const oldChunkIds = db
     .prepare("SELECT id FROM memory_chunks WHERE project_id = ? AND path = ?")
     .all(projectId, relativePath) as Array<{ id: string }>;
@@ -93,9 +82,11 @@ function indexFile(
     deleteChunk.run(projectId, relativePath);
   })();
 
+  const chunks = chunkMarkdown(content);
+
   const insertChunk = db.prepare(`
-    INSERT INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at, embedding)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO memory_chunks (id, project_id, source, tier, path, start_line, end_line, hash, text, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertFts = db.prepare(`
@@ -123,7 +114,6 @@ function indexFile(
       insertChunk.run(
         id, projectId, source, tier, relativePath,
         chunk.startLine, chunk.endLine, chunk.hash, chunk.text, updatedAt,
-        carried.get(chunk.hash) ?? null,
       );
       insertFts.run(
         chunk.text, id, projectId, relativePath, source, tier,
@@ -280,9 +270,6 @@ export async function indexAllSqlite(
     totals.filesSkipped += r.filesSkipped;
     report(++n, project.display_name);
   }
-
-  const { chunks } = db.prepare("SELECT COUNT(*) AS chunks FROM memory_chunks").get() as { chunks: number };
-  guardMassRewrite(totals.chunksCreated, chunks);
 
   return { projects: projects.length, result: totals };
 }
