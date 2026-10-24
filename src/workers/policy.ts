@@ -309,9 +309,12 @@ export function fallThroughReason(
   route: RouteInfo | undefined,
   status: EndedRun,
   report: { result?: string } | null,
-  label?: string
+  label?: string,
+  ranLocal?: boolean
 ): string | null {
   if (!route?.local || route.policy === "local-only") return null;
+  // the provider that actually ran decides, not the route: a cloud run never repeats on the cloud
+  if (ranLocal === false) return null;
   if (isBenchmarkLabel(label)) return null;
   if (status.endReason === "malformed-tool-call") return "instrument fault: malformed tool call";
   if (status.endReason === "degenerate-answer") return "instrument fault: degenerate answer";
@@ -321,6 +324,18 @@ export function fallThroughReason(
   if (report?.result === "-" || report?.result === "!") return `r=${report.result}`;
   if (!report && status.state === "failed") return "no report";
   return null;
+}
+
+/**
+ * A cloud run's invalid report is not repeated: it ends as r=~ carrying the
+ * validation errors. Null when the report is valid or already r=~.
+ */
+export function invalidCloudReport(
+  status: { reportValid?: boolean; reportErrors?: string[] },
+  report: { result?: string } | null
+): { result: "~"; why: string } | null {
+  if (status.reportValid !== false || report?.result === "~") return null;
+  return { result: "~", why: `invalid report: ${status.reportErrors?.join("; ") || "report failed its checks"}` };
 }
 
 /**

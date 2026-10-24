@@ -196,6 +196,17 @@ describe("the pool claim names the run's own provider", () => {
     expect(await resolveClaimProvider(a)).toBe("anthropic");
   });
 
+  it("a routed run claims on the provider its target resolved to, not a second resolution (session said gyro-m, target is the route's)", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-claim-route-"));
+    vi.stubEnv("PAI_SESSION_WORKER_PROVIDER", "gyro-m");
+    const a = baseArgs(logDir, async () => 0, {
+      opts: { claudeArgs: ["-p", "ORIGINAL TASK"] },
+      route: { policy: "prefer-local", reason: "policy prefer-local", local: true },
+      target: { providerName: "anthropic", provider: cloudProvider, modelAlias: null, classMcp: null, via: "class" },
+    });
+    expect(await resolveClaimProvider(a)).toBe("anthropic");
+  });
+
   it("a session-profile run claims on its profile's provider", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "pai-claim-profile-"));
     vi.stubEnv("PAI_SESSION_WORKER_PROVIDER", "gyro-m");

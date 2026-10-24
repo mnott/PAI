@@ -129,6 +129,12 @@ export async function tryEscalate(
   return null;
 }
 
+/** Whether the run ended on a loopback provider: the provider that ran, the route only when the provider is unknown. */
+export function ranLocal(a: ExecuteArgs, st: WorkerStatus): boolean {
+  const p = a.config?.providers ? getProviderOrNative(a.config, st.provider) : undefined;
+  return p ? isLoopbackProvider(p) : !!a.route?.local;
+}
+
 /** Re-run a failed local run once on the cloud, as a fresh run (never another pool spare of the local key). */
 export function rerunOnCloud(a: ExecuteArgs, wid: string, why: string, st: WorkerStatus): Promise<number> {
   const { logDir } = a;
