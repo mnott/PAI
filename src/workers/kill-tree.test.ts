@@ -317,3 +317,40 @@ describe("a queued run whose id is older than its process (escalation re-run in 
     expect(loadStatus(dir, id)!.state).toBe("killed");
   });
 });
+
+describe("killTree pooled worker", () => {
+  const pooled = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-pool-"));
+    mk(dir, "p1", 1, { pool: { task: 1, slotSession: "s", hostPid: 2, clientPid: 3, slot: "/tmp/slot-x" } });
+    return dir;
+  };
+  const base = { request: () => undefined, graceMs: 0, owns: () => false, isAlive: () => false, waitTerminal: async () => null };
+
+  it("asks the host to stop the task and marks it killed", async () => {
+    const dir = pooled();
+    const asked: string[] = [];
+    const lines = await killTree(dir, "p1", {
+      deps: { ...base, signal: () => undefined, stopPooled: async (s) => (asked.push(s.id), true), slotPids: () => [] },
+    });
+    expect(asked).toEqual(["p1"]);
+    expect(lines[0]).not.toContain("not this worker any more");
+    expect(loadStatus(dir, "p1")?.state).toBe("killed");
+  });
+
+  it("falls back to the slot-cwd process when the host is unreachable", async () => {
+    const dir = pooled();
+    const signalled: number[] = [];
+    const lines = await killTree(dir, "p1", {
+      deps: { ...base, signal: (p) => void signalled.push(p), stopPooled: async () => false, slotPids: (slot) => (slot === "/tmp/slot-x" ? [777] : []) },
+    });
+    expect(signalled).toContain(777);
+    expect(lines[0]).not.toContain("not this worker any more");
+    expect(loadStatus(dir, "p1")?.state).toBe("killed");
+  });
+
+  it("marks lost only when neither host nor slot process exists", async () => {
+    const dir = pooled();
+    await killTree(dir, "p1", { deps: { ...base, signal: () => undefined, stopPooled: async () => false, slotPids: () => [] } });
+    expect(loadStatus(dir, "p1")?.state).toBe("lost");
+  });
+});

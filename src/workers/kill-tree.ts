@@ -35,6 +35,10 @@ export interface KillTreeDeps {
   request: (logDir: string, ledger: string, id: string, forced?: boolean, by?: string, reason?: string) => void;
   /** Tell the owning session one of its workers was stopped by someone else. */
   notifyOwner: (ownerSession: string, text: string) => Promise<void>;
+  /** Ask the pool host to end a pooled task; true when it did. */
+  stopPooled: (s: WorkerStatus) => Promise<boolean>;
+  /** Live pids of the pooled slot's claude process(es): cwd = the slot dir. */
+  slotPids: (slot: string) => number[];
   /** Wait after SIGKILL is not needed; this is the grace between SIGTERM and SIGKILL. */
   graceMs: number;
 }
@@ -45,12 +49,53 @@ const defaultDeps = (): KillTreeDeps => ({
   isAlive: (pid) => pidAlive(pid),
   waitTerminal: (dir, id) => waitForTerminalStatus(dir, id),
   request: (dir, ledger, id, forced, by, reason) => requestKill(dir, ledger, id, by ?? callerDescription(), forced === true, reason),
+  stopPooled: async (s) => {
+    const { readWorkersSection } = await import("./config.js");
+    const { poolPort, stopPooledTask } = await import("./pool.js");
+    return stopPooledTask(poolPort(readWorkersSection().workers), s.id);
+  },
+  slotPids: realSlotPids,
   notifyOwner: async (session, text) => {
     const { sendToSession } = await import("../cli/lib/aibroker-client.js");
     await sendToSession(session, text, undefined, { noReply: true });
   },
   graceMs: 1000,
 });
+
+/** Pids whose cwd is `dir` and whose command is claude, via lsof + ps; empty on any failure. */
+function realSlotPids(dir: string): number[] {
+  try {
+    const out = execFileSync("lsof", ["-d", "cwd", "-Fpn", "+c", "0"], { encoding: "utf8", maxBuffer: 64 << 20 });
+    const pids: number[] = [];
+    let cur = 0;
+    for (const line of out.split("\n")) {
+      if (line.startsWith("p")) cur = Number(line.slice(1));
+      else if (line === `n${dir}` && cur > 0) pids.push(cur);
+    }
+    if (!pids.length) return [];
+    const cmds = realCommands(pids);
+    return pids.filter((p) => /claude/.test(cmds.get(p) ?? ""));
+  } catch {
+    return [];
+  }
+}
+
+/** `pids` plus all their descendants (one ps call). */
+function withDescendants(pids: number[]): number[] {
+  try {
+    const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" })
+      .split("\n")
+      .map((l) => l.trim().split(/\s+/).map(Number));
+    const all = new Set(pids);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const [pid, ppid] of rows) if (pid && ppid !== undefined && all.has(ppid) && !all.has(pid)) (all.add(pid), (grew = true));
+    }
+    return [...all];
+  } catch {
+    return pids;
+  }
+}
 
 /** Identities under which a worker's owner session can appear: launching session name/key, spawner Claude session. */
 function ownerIdentities(s: WorkerStatus): string[] {
@@ -221,12 +266,93 @@ interface Stop {
   foreign: boolean;
 }
 
+/**
+ * A pooled task runs in the host's slot process, not in its client: the host is asked to end the task
+ * (POST /task/<id>/stop); a host that does not answer is bypassed by signalling the slot's claude tree
+ * (cwd = the slot dir). Never "lost, nothing signalled" while that slot process lives.
+ */
+async function killPooled(logDir: string, recorded: WorkerStatus, status: WorkerStatus, d: KillTreeDeps, stop: Stop): Promise<string> {
+  const id = recorded.id;
+  d.request(logDir, ledgerPath(logDir), id, stop.forced, stop.by, stop.reason);
+  appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
+  if (stop.foreign) {
+    const owner = recorded.session?.id || recorded.session?.name || recorded.sessionKey;
+    if (owner) await d.notifyOwner(owner, `worker ${id} (${recorded.label}) stopped by ${stop.by}: ${stop.reason}`).catch(() => undefined);
+  }
+  await releaseBuildsOf(buildsDir(), id).catch(() => []);
+  let how = "pool host stop";
+  let hostStopped = await d.stopPooled(recorded).catch(() => false);
+  let fallbackPids: number[] = [];
+  if (!hostStopped) {
+    const slot = recorded.pool?.slot;
+    fallbackPids = slot ? d.slotPids(slot) : [];
+    for (const p of fallbackPids) {
+      try {
+        d.signal(p, "SIGTERM");
+      } catch {
+        /* gone */
+      }
+    }
+    how = fallbackPids.length ? `SIGTERM to slot process ${fallbackPids.join(",")}` : "";
+  }
+  // the client's disconnect is the other way the host ends a task
+  if (status.pid > 0 && status.pid !== recorded.pid && d.owns(status)) {
+    try {
+      d.signal(status.pid, "SIGTERM");
+      hostStopped = hostStopped || fallbackPids.length > 0;
+    } catch {
+      /* client already gone */
+    }
+  }
+  if (!hostStopped && !fallbackPids.length) {
+    const latest = loadStatus(logDir, id) ?? recorded;
+    if (latest.state === "running" || latest.state === "queued") {
+      latest.state = "lost";
+      latest.last = "pool host unreachable and no slot process found; marked lost";
+      latest.rc = null;
+      saveStatus(logDir, latest);
+    }
+    return `worker ${id}: pooled task has no reachable host and no live slot process; marked lost`;
+  }
+  const selfReported = await d.waitTerminal(logDir, id);
+  if (!selfReported && fallbackPids.length) {
+    const tree = withDescendants(fallbackPids);
+    if (tree.some((p) => d.isAlive(p))) {
+      await new Promise((r) => setTimeout(r, d.graceMs));
+      for (const p of tree) {
+        if (!d.isAlive(p)) continue;
+        try {
+          d.signal(p, "SIGKILL");
+          how = "SIGKILL";
+        } catch {
+          /* gone */
+        }
+      }
+    }
+  }
+  if (!selfReported) {
+    const latest = loadStatus(logDir, id) ?? recorded;
+    if (latest.state === "running" || latest.state === "queued") {
+      latest.state = "killed";
+      latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
+      latest.last = latest.last || `killed (${how})`;
+      latest.endReason = "pai-worker-kill";
+      latest.endBy = stop.by;
+      latest.endKillReason = stop.reason;
+      if (stop.forced) latest.endForced = true;
+      saveStatus(logDir, latest);
+    }
+  }
+  return `stopped pooled worker ${id} (${how})`;
+}
+
 async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, stop: Stop): Promise<string> {
   const id = recorded.id;
   // A pooled task's `pid` is the shared slot process; the process to end is its `pai worker run` client,
   // whose disconnect makes the pool host cancel the task and write the terminal status.
   const clientPid = recorded.pool?.clientPid;
   const status: WorkerStatus = clientPid ? { ...recorded, pid: clientPid } : recorded;
+  if (recorded.pool) return killPooled(logDir, recorded, status, d, stop);
   if (!status.pid || status.pid <= 0) return `skipped worker ${id}: no pid recorded`;
   if (!d.owns(status)) {
     recorded.state = "lost";

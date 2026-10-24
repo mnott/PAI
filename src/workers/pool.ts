@@ -611,6 +611,26 @@ export function postTaskToPool(
   });
 }
 
+/** Ask the host to end task `id` (its slot process tree); true when the host knew the task and stopped it. */
+export function stopPooledTask(port: number, id: string, timeoutMs = 3000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = httpRequest(
+      { host: LOOPBACK_HOST, port, path: `/task/${encodeURIComponent(id)}/stop`, method: "POST", timeout: timeoutMs, headers: { "content-type": "application/json", "content-length": 0 } },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode === 200));
+        res.on("error", () => resolve(false));
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on("error", () => resolve(false));
+    req.end();
+  });
+}
+
 /** Answer of one /healthz probe: `timeout` = connected or queued but no answer in time (a busy caller or host), `down` = refused, reset or not 200. */
 export type HostProbe = "up" | "down" | "timeout";
 
