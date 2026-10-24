@@ -22,7 +22,7 @@ interface Fake {
 }
 
 /** Fake git/npm/gh: answers by command line; `fail` makes the first matching command exit 1. */
-function fake(dir: string, o: { dirty?: boolean; branch?: string; fail?: string; tagVisibleAfter?: number } = {}): Fake {
+function fake(dir: string, o: { dirty?: boolean; branch?: string; fail?: string; tagVisibleAfter?: number; headTag?: string } = {}): Fake {
   const calls: string[] = [];
   const cwds: string[] = [];
   let lsRemote = 0;
@@ -36,6 +36,7 @@ function fake(dir: string, o: { dirty?: boolean; branch?: string; fail?: string;
     if (line === "git rev-parse --abbrev-ref HEAD") return ok((o.branch ?? "main") + "\n");
     if (line === "git remote get-url origin") return ok("https://forge.example/git/APPS/tool.git\n");
     if (line === "git remote get-url github") return { code: 2, stdout: "", stderr: "" };
+    if (line === "git tag --points-at HEAD") return ok(o.headTag ? `${o.headTag}\n` : "");
     if (line.startsWith("git tag --list v")) return ok(line.includes("--sort") ? "v1.2.4\nv1.2.3\n" : "");
     if (line.startsWith("git ls-remote")) return ok(++lsRemote > (o.tagVisibleAfter ?? 0) ? "abc\trefs/tags/v1.2.4\n" : "");
     if (line.startsWith("npm pack")) {
@@ -191,6 +192,69 @@ describe("runRelease", () => {
     const off = await runRelease({ repo: dir }, { ...common, run: realRun, syncMirrors: mirrorOk });
     expect(off.message).toContain('"topic"');
     expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).version).toBe("1.2.3");
+  });
+});
+
+describe("runRelease --from / --skip", () => {
+  const mutating = (calls: string[]): string[] => calls.filter((c) => /^(npm version|git (add|commit|tag v|push))/.test(c));
+
+  it("--from pack on a tagged HEAD runs only pack and release", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir, { headTag: "v1.2.4", dirty: true, branch: "feature" });
+    let synced = false;
+    const r = await runRelease({ repo: dir, from: "pack" }, { ...common, run: f.run, syncMirrors: async () => ((synced = true), mirrorOk()) });
+    expect(r.ok).toBe(true);
+    expect(r.lines.map((l) => l.split(":")[0])).toEqual(["check", "pack", "release"]);
+    expect(synced).toBe(false);
+    expect(mutating(f.calls)).toEqual([]);
+    expect(f.calls.some((c) => c.startsWith("gh release create v1.2.4"))).toBe(true);
+    expect(r.state).toMatchObject({ tagged: true, pushed: true, mirrored: true, released: true });
+  });
+
+  it("--from mirror skips the sync when the tag is already on GitHub", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir, { headTag: "v1.2.4" });
+    let synced = false;
+    const r = await runRelease({ repo: dir, from: "mirror" }, { ...common, run: f.run, syncMirrors: async () => ((synced = true), mirrorOk()) });
+    expect(r.ok).toBe(true);
+    expect(synced).toBe(false);
+    expect(r.lines.find((l) => l.startsWith("mirror:"))).toContain("skipped");
+    expect(f.calls.some((c) => c.startsWith("git worktree add"))).toBe(true);
+  });
+
+  it("--from mirror without the tag on GitHub and without a token says what to do", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir, { headTag: "v1.2.4", tagVisibleAfter: 99 });
+    const noToken = async (): Promise<MirrorSyncResult> => {
+      throw new Error("no forge token: set AIBROKER_FORGE_TOKEN (or config release.forgeTokenEnv)");
+    };
+    const r = await runRelease({ repo: dir, from: "mirror", skip: ["mirror"] }, { ...common, run: f.run, syncMirrors: noToken });
+    expect(r.ok).toBe(false);
+    expect(r.failedStep).toBe("mirror");
+    expect(r.lines).toContain("mirror: FAILED — no forge token (set $AIBROKER_FORGE_TOKEN) — sync the push mirror in the forge UI, then run: pai release --from mirror");
+  });
+
+  it("refuses --from after tag when HEAD has no v* tag", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir);
+    const r = await runRelease({ repo: dir, from: "mirror" }, { ...common, run: f.run, syncMirrors: mirrorOk });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("HEAD has no v* tag");
+    expect(f.calls.some((c) => c.startsWith("git push") || c.startsWith("gh "))).toBe(false);
+  });
+
+  it("--from at or before tag still refuses a dirty tree", async () => {
+    const dir = tmpRepo();
+    const r = await runRelease({ repo: dir, from: "tag" }, { ...common, run: fake(dir, { dirty: true }).run, syncMirrors: mirrorOk });
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("not clean");
+  });
+
+  it("--dry-run --from pack shows only the effective plan", async () => {
+    const dir = tmpRepo();
+    const r = await runRelease({ repo: dir, from: "pack", dryRun: true }, { run: fake(dir, { headTag: "v1.2.4" }).run });
+    expect(r.lines.map((l) => l.split(":")[0])).toEqual(["plan pack", "plan release"]);
+    expect(r.lines[1]).toContain("v1.2.4");
   });
 });
 
