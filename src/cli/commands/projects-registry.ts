@@ -59,10 +59,9 @@ const registryRebuildCommand: CommandDef = {
   name: "rebuild",
   summary: "Erase the registry and rebuild it from disk (destructive)",
   description: "Erase the registry and rebuild it from disk (destructive).\n\nErase all registry data and rebuild from the filesystem (destructive)",
-  options: [{ name: "yes", type: "boolean", summary: "Confirm the erase (without it nothing is deleted and the command exits 1)" }],
-  examples: ["pai registry rebuild","pai registry rebuild --yes"],
-  seeAlso: ["pai registry dedupe","pai registry stats","pai memory repair-orphans"],
-  run: (ctx) => registryRebuildCmd({ yes: ctx.opts.yes === true }),
+  examples: ["pai registry rebuild","pai registry stats"],
+  seeAlso: ["pai registry dedupe","pai registry stats"],
+  run: (ctx) => registryRebuildCmd(),
 };
 
 const registryDedupeCommand: CommandDef = {

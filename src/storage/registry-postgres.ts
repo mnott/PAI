@@ -16,12 +16,9 @@
 
 import pg from "pg";
 import { MergeError } from "../registry/merge.js";
-import { backupTableName, backupsToPrune, logRegistryReset, sortBackups } from "./registry-reset.js";
 import type { Pool, PoolClient } from "pg";
 import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
 import type {
-  OrphanCounts,
-  OrphanRepairReport,
   RegistryBackend,
   Project,
   ProjectWithSessionStats,
@@ -123,18 +120,10 @@ export class PostgresRegistryBackend implements RegistryBackend {
     if (this.ownsPool) await this.pool.end();
   }
 
-  async resetRegistry(): Promise<{ backupTable: string | null; projects: number }> {
+  async resetRegistry(): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const projects = Number((await client.query("SELECT COUNT(*) AS n FROM projects")).rows[0].n);
-      let backupTable: string | null = null;
-      if (projects > 0) {
-        backupTable = backupTableName(Date.now());
-        await client.query(`CREATE TABLE ${backupTable} AS SELECT * FROM projects`);
-        for (const old of backupsToPrune(await this.backupTables(client))) await client.query(`DROP TABLE ${old}`);
-      }
-      logRegistryReset(`projects=${projects} backup=${backupTable ?? "none"}`);
       await client.query("DELETE FROM links");
       await client.query("DELETE FROM compaction_log");
       await client.query("DELETE FROM session_tags");
@@ -144,128 +133,12 @@ export class PostgresRegistryBackend implements RegistryBackend {
       await client.query("DELETE FROM tags");
       await client.query("DELETE FROM projects");
       await client.query("COMMIT");
-      return { backupTable, projects };
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
     } finally {
       client.release();
     }
-  }
-
-  /** The projects_backup_<epoch> tables, newest first. */
-  private async backupTables(q: Pick<Pool, "query"> = this.pool): Promise<string[]> {
-    const r = await q.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name LIKE 'projects\\_backup\\_%'"
-    );
-    return sortBackups(r.rows.map((x: { table_name: string }) => x.table_name));
-  }
-
-  /**
-   * The id a (re)registered project at `rootPath` had before a reset, when that
-   * id is free and still owns chunks in pai_chunks; null otherwise. Every
-   * registration path goes through this so a rebuild cannot orphan the index.
-   */
-  private async reusableProjectId(rootPath: string): Promise<number | null> {
-    try {
-      for (const t of await this.backupTables()) {
-        const r = await this.pool.query(
-          `SELECT b.id FROM ${t} b
-           WHERE b.root_path = $1 AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = b.id)
-             AND EXISTS (SELECT 1 FROM pai_chunks c WHERE c.project_id = b.id) LIMIT 1`,
-          [rootPath]
-        );
-        if (r.rows[0]) return Number(r.rows[0].id);
-      }
-    } catch {
-      // no pai_chunks or backups to consult: allocate a fresh id
-    }
-    return null;
-  }
-
-  /** After inserting an explicit id, keep the serial sequence above every id in use. */
-  private async bumpProjectSequence(): Promise<void> {
-    const seq = (await this.pool.query("SELECT pg_get_serial_sequence('projects', 'id') AS s")).rows[0]?.s as string | null;
-    if (!seq) return;
-    await this.pool.query(
-      `SELECT setval($1, GREATEST((SELECT COALESCE(MAX(id), 1) FROM projects), (SELECT last_value FROM ${seq})))`,
-      [seq]
-    );
-  }
-
-  async countOrphanedChunks(): Promise<OrphanCounts> {
-    const r = await this.pool.query(
-      `SELECT (SELECT COUNT(*) FROM pai_chunks c WHERE NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id)) AS orphaned,
-              (SELECT COUNT(*) FROM pai_chunks) AS total`
-    );
-    return { orphaned: Number(r.rows[0].orphaned), total: Number(r.rows[0].total) };
-  }
-
-  async repairOrphans(opts: { dryRun: boolean; deleteTwins?: boolean }): Promise<OrphanRepairReport> {
-    const rep: OrphanRepairReport = {
-      orphanChunks: 0, orphanFiles: 0, mappedIds: 0, unmappedIds: 0, repointedChunks: 0, repointedFiles: 0,
-      droppedDuplicateChunks: 0, droppedDuplicateFiles: 0, deletedTwinChunks: 0, dryRun: opts.dryRun,
-    };
-    const orphan = (t: string) => `NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = ${t}.project_id)`;
-    const ids = (await this.pool.query(
-      `SELECT project_id, SUM(n)::bigint AS n, SUM(f)::bigint AS f FROM (
-         SELECT project_id, COUNT(*) AS n, 0 AS f FROM pai_chunks c WHERE ${orphan("c")} GROUP BY project_id
-         UNION ALL SELECT project_id, 0, COUNT(*) FROM pai_files c WHERE ${orphan("c")} GROUP BY project_id) u
-       GROUP BY project_id`
-    )).rows as { project_id: number; n: string; f: string }[];
-    for (const r of ids) { rep.orphanChunks += Number(r.n); rep.orphanFiles += Number(r.f); }
-
-    const map = new Map<number, number>();
-    for (const t of await this.backupTables()) {
-      const r = await this.pool.query(
-        `SELECT b.id AS old_id, p.id AS new_id FROM ${t} b JOIN projects p ON p.root_path = b.root_path WHERE b.id = ANY($1::int[])`,
-        [ids.map((x) => x.project_id)]
-      );
-      for (const x of r.rows) if (!map.has(x.old_id)) map.set(x.old_id, x.new_id);
-    }
-    rep.mappedIds = map.size;
-    rep.unmappedIds = ids.length - map.size;
-
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      for (const [oldId, newId] of map) {
-        const args = [oldId, newId];
-        // paths whose current project already has vectors: the orphan copy is a twin
-        const twin = "SELECT path FROM pai_chunks WHERE project_id = $2 AND embedding IS NOT NULL";
-        const count = async (table: string, where: string): Promise<number> =>
-          Number((await client.query(`SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`, args)).rows[0].n);
-        const del = async (table: string, where: string): Promise<number> =>
-          opts.dryRun ? count(table, where) : (await client.query(`DELETE FROM ${table} WHERE ${where}`, args)).rowCount ?? 0;
-        const move = async (table: string, where: string): Promise<number> =>
-          opts.dryRun ? count(table, where) : (await client.query(`UPDATE ${table} SET project_id = $2 WHERE ${where}`, args)).rowCount ?? 0;
-        const orphanTwin = `project_id = $1 AND path IN (${twin})`;
-        if (opts.deleteTwins) {
-          rep.deletedTwinChunks += await del("pai_chunks", orphanTwin);
-          await del("pai_files", orphanTwin);
-          continue;
-        }
-        const movable = `project_id = $1 AND path NOT IN (${twin})`;
-        // the newer vectorless copy of a path the orphan owns is the duplicate; the orphan has the vectors
-        rep.droppedDuplicateChunks += await del(
-          "pai_chunks",
-          `project_id = $2 AND embedding IS NULL AND path IN (SELECT path FROM pai_chunks WHERE project_id = $1) AND path NOT IN (${twin})`
-        );
-        rep.droppedDuplicateFiles += await del(
-          "pai_files",
-          `project_id = $2 AND path IN (SELECT path FROM pai_files WHERE project_id = $1) AND path NOT IN (${twin})`
-        );
-        rep.repointedChunks += await move("pai_chunks", movable);
-        rep.repointedFiles += await move("pai_files", movable);
-      }
-      await client.query(opts.dryRun ? "ROLLBACK" : "COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-    return rep;
   }
 
   // -------------------------------------------------------------------------
@@ -490,13 +363,11 @@ export class PostgresRegistryBackend implements RegistryBackend {
   async createProject(input: NewProject): Promise<Project> {
     const type: ProjectType = input.type ?? "local";
     const status: ProjectStatus = input.status ?? "active";
-    const reuse = await this.reusableProjectId(input.rootPath);
     const r = await this.pool.query(
-      `INSERT INTO projects (id, slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
-       VALUES (COALESCE($9::int, nextval(pg_get_serial_sequence('projects', 'id'))), $1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [input.slug, input.displayName, input.rootPath, input.encodedDir, type, status, input.createdAt, input.updatedAt, reuse]
+      `INSERT INTO projects (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [input.slug, input.displayName, input.rootPath, input.encodedDir, type, status, input.createdAt, input.updatedAt]
     );
-    if (reuse !== null) await this.bumpProjectSequence();
     return mapProject(r.rows[0]);
   }
 
@@ -505,18 +376,16 @@ export class PostgresRegistryBackend implements RegistryBackend {
   ): Promise<{ id: number; slug: string; created: boolean }> {
     let slug = input.baseSlug;
     let attempt = 0;
-    const reuse = await this.reusableProjectId(input.rootPath);
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const r = await this.pool.query<{ id: number }>(
-        `INSERT INTO projects (id, slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
-         VALUES (COALESCE($7::int, nextval(pg_get_serial_sequence('projects', 'id'))), $1, $2, $3, $4, 'local', 'active', $5, $6)
+        `INSERT INTO projects (slug, display_name, root_path, encoded_dir, type, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'local', 'active', $5, $6)
          ON CONFLICT DO NOTHING RETURNING id`,
-        [slug, input.displayName, input.rootPath, input.encodedDir, input.createdAt, input.updatedAt, reuse]
+        [slug, input.displayName, input.rootPath, input.encodedDir, input.createdAt, input.updatedAt]
       );
       if (r.rows.length > 0) {
-        if (reuse !== null) await this.bumpProjectSequence();
         return { id: r.rows[0].id, slug, created: true };
       }
 

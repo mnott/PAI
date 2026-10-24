@@ -7,7 +7,6 @@ import { memoryIndexCmd } from "./memory/index-cmd.js";
 import { memoryPassCmd } from "./memory/pass.js";
 import { memorySearchCmd } from "./memory/search.js";
 import { memorySourcesCmd } from "./memory/sources-cmd.js";
-import { memoryRepairOrphansCmd } from "./memory/repair-orphans.js";
 import { memoryStatusCmd, memorySettingsCmd } from "./memory/stats.js";
 
 const background: OptDef = { name: "background", type: "boolean", summary: "Run at low priority so the computer stays responsive" };
@@ -198,23 +197,6 @@ const memoryPassCommand: CommandDef = {
   }),
 };
 
-export const memoryRepairOrphansCommand: CommandDef = {
-  name: "repair-orphans",
-  summary: "Re-attach indexed text left under project ids that no longer exist",
-  description:
-    "A registry rebuild gives every project a new id and strands the indexed text (with its vectors) under the old ones. " +
-    "This maps those chunks to the current project with the same folder (via the projects backup table), moves them over and drops the newer copies that have no vectors. " +
-    "With --delete it instead removes orphans whose current project already has vectors for the same file. Counts only unless --execute is given.",
-  options: [
-    { name: "execute", type: "boolean", summary: "Apply the change (default: print counts only)" },
-    { name: "dry-run", type: "boolean", summary: "Print counts only (the default; wins over --execute)" },
-    { name: "delete", type: "boolean", summary: "Delete orphans that have a vectored twin under the current id instead of moving them" },
-  ],
-  examples: ["pai memory repair-orphans", "pai memory repair-orphans --execute", "pai memory repair-orphans --delete --execute"],
-  seeAlso: ["pai memory status", "pai registry rebuild"],
-  run: (ctx) => memoryRepairOrphansCmd({ execute: ctx.opts.execute === true && ctx.opts["dry-run"] !== true, deleteTwins: ctx.opts.delete === true }),
-};
-
 export const memoryCommand: CommandDef = {
   name: "memory",
   summary: "Search and index your notes and memory files",
@@ -226,7 +208,6 @@ export const memoryCommand: CommandDef = {
     memoryStatusCommand,
     memoryIndexCommand,
     memoryEmbedCommand,
-    memoryRepairOrphansCommand,
     memorySettingsCommand,
     memorySourcesCommand,
     memoryBackendCommand,
