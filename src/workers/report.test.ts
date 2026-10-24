@@ -471,6 +471,21 @@ describe("checkProof", () => {
     expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: true }]).rewritten).toBe(true);
     expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: "sh tools/ab/backfill.sh", failed: false }]).rewritten).toBe(true);
   });
+  it("ignores env prefixes on either side of the proof match", async () => {
+    const { checkProof } = await import("./report.js");
+    const envp = "env -u ITERM_SESSION_ID -u TMUX FOO=1 npx vitest run a.test.ts";
+    const bare = "npx vitest run a.test.ts";
+    for (const [p, cmd] of [[envp, bare], [bare, envp], [`${envp} && npx tsc --noEmit`, `cd /w && ${bare} && env -i npx tsc --noEmit`]]) {
+      expect(checkProof(R.replace("p=npm test", `p=${p}`), [{ command: cmd, failed: false }]).rewritten).toBe(false);
+    }
+    expect(checkProof(R.replace("p=npm test", `p=${envp}`), [{ command: "npx vitest run b.test.ts", failed: false }]).rewritten).toBe(true);
+  });
+  it("tells a prose p= to name the exact command", async () => {
+    const { checkProof } = await import("./report.js");
+    const v = checkProof(R.replace("p=npm test", "p=unittest over 6 modules: 47 tests OK"), [{ command: "python3 -m unittest", failed: false }]);
+    expect(v.rewritten).toBe(true);
+    expect(v.text).toContain("y=p= must be the exact command you ran, not a description");
+  });
   it("still downgrades a different command and a failed matching call", async () => {
     const { checkProof } = await import("./report.js");
     const r = R.replace("p=npm test", "p=cat /tmp/x.md");
