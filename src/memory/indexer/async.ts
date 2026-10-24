@@ -293,7 +293,7 @@ export interface EmbedPassOptions {
   /** Called after every stored batch with the chunks embedded so far. */
   onProgress?: (embedded: number) => void;
   /** Called once when the loop ends: "done" (backlog slice finished), "budget" or "yielded". */
-  onEnd?: (r: { outcome: "done" | "budget" | "yielded"; embedded: number; reason?: string }) => void;
+  onEnd?: (r: { outcome: "done" | "budget" | "yielded" | "failed"; embedded: number; reason?: string }) => void;
 }
 
 /**
@@ -343,6 +343,7 @@ export async function embedChunksWithBackend(
   const gate = await gateBackend(backend, { record: true });
   if (!gate.ok) {
     process.stderr.write(`[pai-daemon] Embed pass paused (${gate.kind}): ${gate.reason}\n`);
+    options?.onEnd?.({ outcome: "failed", embedded: 0, reason: gate.reason });
     return 0;
   }
 

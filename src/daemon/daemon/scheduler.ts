@@ -456,6 +456,10 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
 
     const elapsed = Date.now() - t0;
     setLastEmbedTime(Date.now());
+    if (ended.outcome === "failed") {
+      process.stderr.write(`[pai-daemon] Embed pass FAILED (${elapsed}ms): ${ended.reason ?? "backend unavailable"}\n`);
+      return await recordPass(t0, count, "error", ended.reason);
+    }
     passFailures.delete("embed");
     process.stderr.write(
       `[pai-daemon] Embed pass complete: ${count} chunks embedded (${elapsed}ms)\n`

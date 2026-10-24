@@ -12,6 +12,10 @@
 import { defaults } from "../../daemon/config.js";
 import type { EmbeddingBackend } from "./types.js";
 import { LOCAL_PROBE_TIMEOUT_MS } from "../../utils/timeouts.js";
+import { brokenRunnerReason, EMBED_HEAL_MIN_GAP_MS, liveSelfHeal, type SelfHeal } from "./ollama-self-heal.js";
+
+/** The runtime name under models.runtimes that serves this backend. */
+const OLLAMA_RUNTIME = "ollama";
 
 export const OLLAMA_ID = "ollama-f16";
 export const OLLAMA_DEFAULT_MODEL = "arctic-embed-m-v1.5-f16";
@@ -33,6 +37,8 @@ export interface OllamaDeps {
   fetch?: typeof fetch;
   tokenizer?: () => Promise<Tokenizer>;
   log?: (msg: string) => void;
+  /** restart seam for a broken runner; default restarts models.runtimes.ollama */
+  heal?: SelfHeal;
 }
 
 async function loadTokenizer(): Promise<Tokenizer> {
@@ -96,7 +102,31 @@ export function createOllamaBackend(
   let tok: Tokenizer | undefined;
   const dims = 768;
 
+  const heal = deps.heal ?? liveSelfHeal();
+  const firstLine = (m: string): string => m.split("\n")[0];
+
+  /** One request; on a broken-runner 500 restart the runtime (at most once per 10 min) and retry once. */
   async function post(input: string[]): Promise<number[][]> {
+    try {
+      return await request(input);
+    } catch (e) {
+      const reason = (e as { brokenRunner?: string }).brokenRunner;
+      if (!reason) throw e;
+      const failed = (why: string): Error => new Error(`Ollama embed failed after a runtime restart: ${why}`);
+      if (heal.now() - heal.lastRestart() < EMBED_HEAL_MIN_GAP_MS) throw failed(firstLine((e as Error).message));
+      heal.stamp(heal.now());
+      log(`EMBED-SELF-HEAL runtime=${OLLAMA_RUNTIME} reason=${reason}`);
+      const r = await heal.restart(OLLAMA_RUNTIME, reason);
+      if (!r.ok) throw failed(firstLine(r.message));
+      try {
+        return await request(input);
+      } catch (e2) {
+        throw failed(firstLine((e2 as Error).message));
+      }
+    }
+  }
+
+  async function request(input: string[]): Promise<number[][]> {
     let r: Response;
     try {
       r = await f(`${baseUrl}/api/embed`, {
@@ -109,7 +139,10 @@ export function createOllamaBackend(
       const code = (e as { cause?: { code?: string } }).cause?.code ?? "ECONNREFUSED";
       throw Object.assign(new Error(`Ollama unreachable at ${baseUrl} (${code})`), { code });
     }
-    if (!r.ok) throw new Error(`Ollama /api/embed HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    if (!r.ok) {
+      const text = (await r.text()).slice(0, 200);
+      throw Object.assign(new Error(`Ollama /api/embed HTTP ${r.status}: ${text}`), { brokenRunner: brokenRunnerReason(r.status, text) ?? undefined });
+    }
     const body = (await r.json()) as { embeddings?: number[][] };
     if (!body.embeddings || body.embeddings.length !== input.length) {
       throw new Error(`Ollama returned ${body.embeddings?.length ?? 0} embeddings for ${input.length} inputs`);
