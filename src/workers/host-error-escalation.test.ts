@@ -177,14 +177,6 @@ describe("a pooled local run the host could not finish escalates", () => {
 });
 
 describe("the pool claim names the run's own provider", () => {
-  it("--local resolves the running local provider, not the caller's providerFlag", async () => {
-    const logDir = mkdtempSync(join(tmpdir(), "pai-claim-local-"));
-    const a = baseArgs(logDir, async () => 0, { opts: { claudeArgs: ["-p", "ORIGINAL TASK"], localFlag: true } });
-    // no local server answers in the test env: --local refuses the run — the
-    // claim never goes out on the wrong provider either way
-    await expect(resolveClaimProvider(a)).rejects.toBeInstanceOf(NoLocalServerError);
-  });
-
   it("an escalated cloud run claims on the cloud provider, not the session's local one", async () => {
     const logDir = mkdtempSync(join(tmpdir(), "pai-claim-cloud-"));
     vi.stubEnv("PAI_SESSION_WORKER_PROVIDER", "gyro-m");
@@ -258,5 +250,18 @@ describe("an unpooled local run stopped by the loop guard escalates (tryEscalate
     await tryEscalate(baseArgs(logDir, run, { config: { ...config(), escalate: { ...DEFAULT_ESCALATE, enabled: false } } }), "w1", st, null, undefined, [], "loop-guard stop");
     await tryEscalate(baseArgs(logDir, run, { escalatedFrom: ["t2"] }), "w1", st, null, undefined, [], "loop-guard stop");
     expect(seen).toHaveLength(0);
+  });
+});
+
+describe("the pool claim is the resolved route, never a second resolution", () => {
+  it("a profile-routed run (target coder-l) claims coder-l even when the session itself runs on anthropic", async () => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-claim-target-"));
+    vi.stubEnv("PAI_SESSION_PROVIDER", "anthropic");
+    const a = baseArgs(logDir, async () => 0, {
+      opts: { claudeArgs: ["-p", "ORIGINAL TASK"] },
+      route: undefined,
+      target: { providerName: "gyro-m", provider: localProvider, modelAlias: null, classMcp: null, via: "session" },
+    });
+    expect(await resolveClaimProvider(a)).toBe("gyro-m");
   });
 });
