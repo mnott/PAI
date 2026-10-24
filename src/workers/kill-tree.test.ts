@@ -298,8 +298,11 @@ describe("killWorker requires a reason from a non-interactive caller", () => {
 
   it("no TTY with a reason: recorded as given", async () => {
     const { dir, f } = setup();
-    await killWorker(dir, "w1", { caller: { env, force: false }, reason: "stuck loop", deps: f.deps });
-    expect(loadStatus(dir, "w1")).toMatchObject({ state: "killed", endKillReason: "stuck loop" });
+    const reqs: unknown[][] = [];
+    await killWorker(dir, "w1", { caller: { env, force: false }, reason: "stuck loop", deps: { ...f.deps, request: (...a) => void reqs.push(a) } });
+    // the run's own exit writes endKillReason from the kill request; killWorker hands the reason to that request
+    expect(reqs).toEqual([[expect.anything(), expect.anything(), "w1", false, "owner", "stuck loop"]]);
+    expect(loadStatus(dir, "w1")!.state).toBe("killed");
   });
 
   it("TTY without a reason: allowed", async () => {
