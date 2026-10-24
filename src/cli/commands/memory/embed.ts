@@ -35,7 +35,7 @@ export async function runEmbed(
   /** Checked between batches; true ends the run cleanly (SIGTERM from the cockpit's stop). */
   shouldStop?: () => boolean,
   /** Progress into the cockpit job record (embed command only). */
-  jobProgress?: ProgressWriter | null,
+  progressArg?: ProgressWriter | null,
 ): Promise<{ done: number; budgetHit: boolean; stopped: boolean }> {
   const label = projectSlug ? `project ${projectSlug}` : "all projects";
   console.log(dim(`Generating embeddings for ${label} (this may take a while on first run)...`));
@@ -43,9 +43,11 @@ export async function runEmbed(
   const { serializeEmbedding } = await import("../../../memory/embeddings.js");
   const { gateBackend } = await import("../../../memory/embedding-gate.js");
 
+  const jobProgress = progressArg === undefined ? jobProgressFromEnv("embed") : progressArg;
   const gate = await gateBackend(backend, { record: true });
   if (!gate.ok) {
     console.error(err(gate.reason));
+    jobProgress?.finish();
     process.exitCode = 1;
     return { done: 0, budgetHit: false, stopped: false };
   }
@@ -97,6 +99,7 @@ export async function runEmbed(
     after = { projectId: last.project_id, id: last.id };
   }
 
+  jobProgress?.finish();
   process.stdout.write("\r");
   if (stopped) {
     console.log(ok(`Stopped.`) + `  ${bold(String(done))} chunks embedded; run again to continue`);
@@ -135,7 +138,7 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
     return 1;
   }
   let result: { outcome: RunOutcome; reason?: string } | undefined;
-  const jobProgress = jobProgressFromEnv();
+  const jobProgress = jobProgressFromEnv("embed");
   const settle = (r: { done: number; budgetHit: boolean; stopped: boolean }): void => {
     result = r.stopped ? { outcome: "stopped", reason: "stopped on request" } : r.budgetHit ? { outcome: "budget", reason: "time budget reached" } : process.exitCode === 1 ? { outcome: "failed", reason: "embedding backend not usable" } : { outcome: "done" };
   };
@@ -159,6 +162,7 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
     }
   } finally {
     process.off("SIGTERM", onTerm);
+    jobProgress?.finish();
     run.release(result);
   }
 

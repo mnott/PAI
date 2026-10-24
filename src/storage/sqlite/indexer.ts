@@ -11,6 +11,7 @@
  * generic (StorageBackend) indexer that Postgres uses.
  */
 
+import type { IndexAllProgress } from "../../memory/job-progress.js";
 import { readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { Database } from "better-sqlite3";
@@ -137,6 +138,7 @@ async function indexProject(
   projectId: number,
   rootPath: string,
   claudeNotesDir?: string | null,
+  onFile?: (soFar: IndexResult) => void,
 ): Promise<IndexResult> {
   const result: IndexResult = {
     filesProcessed: 0,
@@ -184,6 +186,7 @@ async function indexProject(
     } else {
       result.filesSkipped++;
     }
+    onFile?.(result);
   }
 
   // Prune stale paths: remove DB entries for files that no longer exist on disk.
@@ -245,6 +248,7 @@ async function indexProject(
 export async function indexAllSqlite(
   db: Database,
   registry: RegistryBackend,
+  onProgress?: (p: IndexAllProgress) => void,
 ): Promise<{ projects: number; result: IndexResult }> {
   const projects = await registry.listProjects({ status: "active" });
 
@@ -254,12 +258,17 @@ export async function indexAllSqlite(
     filesSkipped: 0,
   };
 
+  const report = (done: number, current: string, part?: IndexResult): void =>
+    onProgress?.({ done, total: projects.length, current, files: totals.filesProcessed + (part?.filesProcessed ?? 0), chunks: totals.chunksCreated + (part?.chunksCreated ?? 0), skipped: totals.filesSkipped + (part?.filesSkipped ?? 0) });
+  report(0, "");
+  let n = 0;
   for (const project of projects) {
     await yieldToEventLoop();
-    const r = await indexProject(db, project.id, project.root_path, project.claude_notes_dir);
+    const r = await indexProject(db, project.id, project.root_path, project.claude_notes_dir, (part) => report(n, project.display_name, part));
     totals.filesProcessed += r.filesProcessed;
     totals.chunksCreated += r.chunksCreated;
     totals.filesSkipped += r.filesSkipped;
+    report(++n, project.display_name);
   }
 
   return { projects: projects.length, result: totals };

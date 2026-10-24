@@ -9,6 +9,7 @@
  * due to synchronous transactions).
  */
 
+import type { IndexAllProgress } from "../job-progress.js";
 import { readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { StorageBackend, ChunkRow } from "../../storage/interface.js";
@@ -108,6 +109,7 @@ export async function indexProjectWithBackend(
   projectId: number,
   rootPath: string,
   claudeNotesDir?: string | null,
+  onFile?: (soFar: IndexResult) => void,
 ): Promise<IndexResult> {
   const result: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
 
@@ -147,6 +149,7 @@ export async function indexProjectWithBackend(
       // Skip files that cause backend errors (e.g. null bytes in Postgres)
       result.filesSkipped++;
     }
+    onFile?.(result);
   }
 
   // Prune stale paths
@@ -379,17 +382,23 @@ export async function embedChunksWithBackend(
 export async function indexAllWithBackend(
   backend: StorageBackend,
   registry: RegistryBackend,
+  onProgress?: (p: IndexAllProgress) => void,
 ): Promise<{ projects: number; result: IndexResult }> {
   const projects = await registry.listProjects({ status: "active" });
 
   const totals: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
 
+  const report = (done: number, current: string, part?: IndexResult): void =>
+    onProgress?.({ done, total: projects.length, current, files: totals.filesProcessed + (part?.filesProcessed ?? 0), chunks: totals.chunksCreated + (part?.chunksCreated ?? 0), skipped: totals.filesSkipped + (part?.filesSkipped ?? 0) });
+  report(0, "");
+  let n = 0;
   for (const project of projects) {
     await yieldToEventLoop();
-    const r = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
+    const r = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir, (part) => report(n, project.display_name, part));
     totals.filesProcessed += r.filesProcessed;
     totals.chunksCreated += r.chunksCreated;
     totals.filesSkipped += r.filesSkipped;
+    report(++n, project.display_name);
   }
 
   return { projects: projects.length, result: totals };

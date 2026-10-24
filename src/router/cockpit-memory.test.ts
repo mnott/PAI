@@ -556,3 +556,48 @@ describe("cockpit Lessons card", () => {
     expect(html).not.toContain("Title cand-6");
   });
 });
+
+describe("run-progress tiles", () => {
+  const rec = (over: Record<string, unknown> = {}) => ({
+    kind: "index", pid: 1, startedAt: new Date(NOW - 100_000).toISOString(), phase: "index", done: 120, total: 254, unit: "projects", files: 9, chunks: 30, skipped: 1,
+    current: "proj", elapsedSec: 100, updatedAt: new Date(NOW - 1000).toISOString(), movedAt: new Date(NOW - 5000).toISOString(), ratePerMin: 72, etaSec: 110, state: "running", ...over,
+  }) as any;
+
+  it("the Index tile shows index progress with a bar while a run is active, nothing once finished", async () => {
+    const f = pageFns();
+    const m = (await cockpitMemoryPayload(deps({ runRecord: (k) => (k === "index" ? rec() : null) }))) as any;
+    const h = f.memHtml(m, ["index"]);
+    expect(h).toContain("indexing: 120/254 projects · 1:40");
+    expect(h).toContain('data-part="runbar-index"');
+    expect(h).toContain("width:47.2%");
+    const done = (await cockpitMemoryPayload(deps({ runRecord: () => rec({ state: "finished" }) }))) as any;
+    expect(f.memHtml(done, ["index"])).not.toContain("runbar");
+  });
+
+  it("the embed run shows N/M this run, per-minute rate and ETA, and the coverage follows its counters", async () => {
+    const f = pageFns();
+    const e = rec({ kind: "embed", unit: "chunks", phase: "embed", done: 22_303, total: 122_303, ratePerMin: 1500, etaSec: 4000 });
+    const m = (await cockpitMemoryPayload(deps({ runRecord: (k) => (k === "embed" ? e : null) }))) as any;
+    expect(f.memHtml(m, ["index"])).toContain("embedding: 22.3k/122.3k this run · 1.5k/min · ETA 1:06:40");
+    expect(m.counts.backlog).toBe(100_000);
+    expect(m.counts.coverage).toBeCloseTo(0.95, 4);
+  });
+
+  it("a record whose pid is gone reads ended, and a stalled one names the silent seconds", async () => {
+    const f = pageFns();
+    const gone = (await cockpitMemoryPayload(deps({ runRecord: () => rec({ state: "ended" }) }))) as any;
+    expect(f.memHtml(gone, ["index"])).toContain("run ended without finishing");
+    const stuck = (await cockpitMemoryPayload(deps({ runRecord: (k) => (k === "index" ? rec({ movedAt: new Date(NOW - 200_000).toISOString() }) : null) }))) as any;
+    expect(stuck.runs.index.stalledSec).toBe(200);
+    expect(f.memHtml(stuck, ["index"])).toContain("no progress for");
+  });
+
+  it("a big project that keeps counting files is not stalled in the run tile", async () => {
+    const r = run({ kind: "index", backlogStart: null, done: 0, startedAt: new Date(NOW - 600_000).toISOString() });
+    const p = (await cockpitMemoryPayload(deps({ run: () => r, runRecord: () => rec({ movedAt: new Date(NOW - 3000).toISOString() }) }))) as any;
+    expect(p.jobs.find((j: any) => j.id === "run-index").stalled).toBe(false);
+    resetMemoryStale();
+    const q = (await cockpitMemoryPayload(deps({ run: () => r, runRecord: () => null }))) as any;
+    expect(q.jobs.find((j: any) => j.id === "run-index").stalled).toBe(true);
+  });
+});
