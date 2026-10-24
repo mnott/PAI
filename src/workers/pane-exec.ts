@@ -73,6 +73,8 @@ export interface LaunchRecord {
   openedMs?: number;
   /** When the command was started in the pane (after any slot-queue wait). */
   startedMs: number;
+  /** The run holds the pane past its child (report retry): no exit file yet is expected, the audit leaves it open. */
+  hold?: boolean;
 }
 
 function writeJson(path: string, v: unknown): void {
@@ -625,7 +627,7 @@ export async function openOwnedPane(o: OpenOwnedOptions): Promise<OwnedPane> {
   let holding = false;
   let startedAt = 0;
   const openedAt = Date.now();
-  const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, session, openedMs: openedAt, startedMs: startedAt || openedAt, ...extra } satisfies LaunchRecord);
+  const record = (extra: Partial<LaunchRecord> = {}): void => writeJson(recordPath(o.id), { id: o.id, kind: o.kind, caller: process.pid, wrapper: wrapper || undefined, session, openedMs: openedAt, startedMs: startedAt || openedAt, ...(holding ? { hold: true } : {}), ...extra } satisfies LaunchRecord);
   const settle = (code: number, signal?: string): void => {
     if (ended) return;
     ended = true;
