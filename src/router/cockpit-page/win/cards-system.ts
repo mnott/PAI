@@ -58,7 +58,7 @@ var SYS_EXTRA=[["battery","battery","Battery charge, on AC or battery; the drain
  ["charger","charger","What the connected charger can supply (W), from the adapter details."],
  ["power-in","power in","Power delivered to the machine by the charger (SystemPowerIn, W)."],
  ["battery-w","battery W","Battery power in W: positive = charging, negative = discharging."],
- ["gpu-freq","GPU frequency","Current GPU clock in MHz (mactop probe)."],
+ ["gpu-freq","GPU freq","Current GPU clock in MHz (mactop probe)."],
  ["mem-pressure","memory pressure","normal / warn / critical, from the free-memory level (kern.memorystatus_level: 40% or more free = normal, 20-39 = warn, below 20 = critical)."]];
 var SYS_DEFAULT_EXTRA=["battery","charger","power-in"];
 /** name -> telemetry key of the series (bucketed) for the power cards. */
