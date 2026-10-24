@@ -217,10 +217,11 @@ const runCommand: CommandDef = {
         if (claude.ok) return;
         const oldPid = replace || process.ppid;
         const diag = await diagnoseSuccessor(claude.host);
+        process.stderr.write(`pai: router: preflight trace ${JSON.stringify({ ...claude.trace, processStart: Math.round(Date.now() - process.uptime() * 1000) })}\n`);
         const reason = abortMessage(claude.host, claude.code, oldPid, diag);
         process.stderr.write(`pai: router: ${reason}\n`);
         try {
-          appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-PREFLIGHT-FAIL", { host: claude.host, code: claude.code ?? "unknown", diag: diag.replace(/\s+/g, "_") });
+          appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-PREFLIGHT-FAIL", { host: claude.host, code: claude.code ?? "unknown", diag: diag.replace(/\s+/g, "_"), trace: JSON.stringify({ ...claude.trace, processStart: Math.round(Date.now() - process.uptime() * 1000) }) });
         } catch {
           /* ledger is best effort */
         }
