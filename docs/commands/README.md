@@ -420,6 +420,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker discard` | Throw away a worker's branch and worktree |
 | `pai worker errors` | Tool errors workers hit, grouped by kind |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |
+| `pai worker flaky` | Test files that failed in the merge gate's batch and passed alone |
 | `pai worker follow` | Watch a worker live, or all running workers |
 | `pai worker gc` | Archive leftover worker worktrees |
 | `pai worker goal` | Leave a goal note on a running worker |
