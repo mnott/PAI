@@ -108,7 +108,7 @@ async function open(query: string, width: number, shot?: string, budget = 6000) 
 }
 
 describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
-  it("shows 14 metric cards, the chart and the up server's cards; zero metrics are minimized; updates move no box; a new server adds only its cards", async () => {
+  it("shows 20 metric cards (6 of them extra), the chart and the up server's cards; zero metrics are minimized; updates move no box; a new server adds only its cards", async () => {
     const shots = process.env.PAI_WIN_SHOTS;
     const r = await open("/page", 1400, shots ? join(shots, "system-1400-light.png") : undefined);
     expect(r.err).toBeNull();
@@ -130,8 +130,9 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     // the legend is whole inside the card body at body heights 160 (default) / 180 / 300 / 500
     expect(r.leg.length).toBe(4);
     for (const l of r.leg) expect(l.legBottom, `legend bottom at body ${l.bodyH}`).toBeLessThanOrEqual(l.bodyH);
+    // paths only for series with data: the fixture has none for power in / charger limit / battery discharge
     expect(r.paths).toBe(3);
-    expect(r.legend).toBe(3);
+    expect(r.legend).toBe(6); // 3 original lines + power in, charger limit, battery discharge
     expect(r.spark).toBeGreaterThan(0);
     expect(r.ov ?? []).toEqual([]);expect(r.overlap).toBe(0);
     // a value-only payload changes values, not one box

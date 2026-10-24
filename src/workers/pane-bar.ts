@@ -6,7 +6,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, chatTickerRow, parseChatLine } from "./chatui.js";
+import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, parseChatLine } from "./chatui.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
 import { paneExecDir } from "./pane-exec.js";
@@ -42,6 +42,36 @@ export interface PaneBar {
   stop(): void;
 }
 
+/** Visible-width truncation (ANSI sequences count 0); a cut line ends in "…". */
+function fit(text: string, max: number): string {
+  let out = "";
+  let w = 0;
+  for (let i = 0; i < text.length; ) {
+    const m = /^\x1b\[[0-9;]*m/.exec(text.slice(i));
+    if (m) {
+      out += m[0];
+      i += m[0].length;
+      continue;
+    }
+    const cp = String.fromCodePoint(text.codePointAt(i)!);
+    if (w + 1 > max) return out + "\x1b[0m";
+    if (w + 1 === max && i + cp.length < text.length) return out + "…";
+    out += cp;
+    w += 1;
+    i += cp.length;
+  }
+  return out;
+}
+
+/**
+ * One redraw of the status row: save the cursor, go to the row, clear the whole line, write the text cut to
+ * columns-1 (a write into the last column wraps and scrolls the pane, which stacked every redraw), restore.
+ */
+export function paneStatusFrame(text: string, rows: number, columns: number | null): string {
+  const body = columns ? fit(text, Math.max(1, columns - 1)) : text;
+  return `\x1b7\x1b[${Math.max(1, rows)};1H\x1b[2K${body}\x1b8`;
+}
+
 export function startPaneBar(d: PaneBarDeps): PaneBar {
   const now = d.now ?? Date.now;
   const dim = (s: string): string => (d.paint ? d.paint("dim", s) : s);
@@ -60,11 +90,10 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
     return status ? paneStatusRow(status, new Date(now()), d.columns()) : d.spec.id;
   };
   const rl = d.spec.kind === "worker" && d.input ? createInterface({ input: d.input, output: silent(), terminal: d.input.isTTY === true }) : null;
-  const col = (): number => 3 + Math.min((rl as unknown as { cursor?: number } | null)?.cursor ?? 0, rl?.line.length ?? 0);
   const prompt = (): void => {
     if (rl) d.write(chatPromptRow(rows, rl.line, dim, (rl as unknown as { cursor?: number }).cursor));
   };
-  const tick = (): void => d.write(chatTickerRow(text(), rows, rl ? col() : 1));
+  const tick = (): void => d.write(paneStatusFrame(text(), rows, d.columns()));
   const line = (s: string, keep = true): void => {
     if (keep) {
       retained.push(s);

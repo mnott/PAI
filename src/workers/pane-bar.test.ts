@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startPaneBar } from "./pane-bar.js";
+import { paneStatusFrame, startPaneBar } from "./pane-bar.js";
 import { paneRunStatusRow } from "./render.js";
 import { openOwnedPane, runPaneExec } from "./pane-exec.js";
 import type { WorkerStatus } from "./status.js";
@@ -76,5 +76,27 @@ describe("wrapper draws the bar", () => {
     const all = shown.join("");
     expect(all).toContain("status-test · started");
     expect(all).toContain("hi");
+  });
+});
+
+describe("paneStatusFrame", () => {
+  const long = Array(6).fill("qwen3.8-flash-next-gyro-coder-l · 66k · started 13:50 · 6m 52s · denied").join(" · ");
+  const visible = (f: string): string => f.replace(/\x1b7|\x1b8|\x1b\[[0-9;]*[A-Za-z]/g, "");
+  it("is one line of at most width-1 visible chars that positions and clears first", () => {
+    const f = paneStatusFrame(long, 24, 80);
+    expect(f.startsWith("\x1b7\x1b[24;1H\x1b[2K")).toBe(true);
+    expect(f.endsWith("\x1b8")).toBe(true);
+    expect(visible(f)).not.toContain("\n");
+    expect(visible(f).length).toBeLessThanOrEqual(79);
+    expect(visible(f).endsWith("…")).toBe(true);
+  });
+  it("two frames overwrite: each carries its own clear, none grows", () => {
+    const a = paneStatusFrame(long, 24, 80);
+    const b = paneStatusFrame(long.replace("6m 52s", "6m 53s"), 24, 80);
+    expect((a + b).match(/\x1b\[2K/g)).toHaveLength(2);
+    expect(visible(a + b).length).toBeLessThanOrEqual(2 * 79);
+  });
+  it("a short text is left whole", () => {
+    expect(visible(paneStatusFrame("w1 · 5s", 24, 80))).toBe("w1 · 5s");
   });
 });
