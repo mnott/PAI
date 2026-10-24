@@ -26,6 +26,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { bucketStart, WINDOWS, type CockpitWindow } from "./cockpit.js";
+import { batteryCockpitLine } from "../daemon/battery-guard.js";
 
 export const systemRingFile = (): string => paiHomePath("logs", "router-system.jsonl");
 const MIN = 60_000;
@@ -280,6 +281,12 @@ export interface SystemSnapshot {
   series: SystemSeries;
   /** age in seconds of the mactop-sourced values (gpu/temp/power), when fresh */
   slowAgeS?: number;
+  /**
+   * The battery guard's line for the System section ("87 % (battery) · battery
+   * draining on AC: 62 % → 55 % in 10 min"); "" when the guard has no reading
+   * (non-macOS, or the daemon's guard is off).
+   */
+  battery: string;
 }
 
 export interface SystemDeps {
@@ -530,6 +537,7 @@ export class SystemMonitor {
       unavailable,
       series: buildSystemSeries(this.samples(), win, now),
       ...(slowAge !== undefined && slowAge <= this.staleMs ? { slowAgeS: Math.round(slowAge / 1000) } : {}),
+      battery: batteryCockpitLine(now),
     };
   }
 }

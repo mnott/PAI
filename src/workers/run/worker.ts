@@ -45,8 +45,10 @@ import {
 } from "./model.js";
 import { releasePane } from "./pane-handles.js";
 import {
+  BatteryGuardRefusedError,
   LocalProviderRefusedError,
   assertLocalProviderAlive,
+  batteryGuardRefusal,
   tryPoolRun,
   recordPoolSkip,
   gateStart,
@@ -208,6 +210,11 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // short timeout); the refusal names the running local provider and the
   // fix (--local). Remote providers are untouched.
   await assertLocalProviderAlive(config, logDir, target.providerName, target.provider, opts);
+  // battery guard (src/daemon/battery-guard.ts): while the guard has paused
+  // new local-model work, a run resolved onto a local provider is refused
+  // with the reason; remote providers are untouched.
+  const batteryWhy = batteryGuardRefusal(isLoopbackProvider(target.provider), logDir, target.providerName);
+  if (batteryWhy) throw new BatteryGuardRefusedError(batteryWhy);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
   if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";
   const modelFlag = opts.modelFlag ?? target.modelId ?? (profileModel && profileModel !== "fast" && profileModel !== "default" ? profileModel : undefined);

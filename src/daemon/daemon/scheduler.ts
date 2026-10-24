@@ -18,6 +18,7 @@ import { panePolicy } from "../../workers/pane-policy.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
+import { batteryGuardTick, batteryGuardConfig, batteryPassRefusal, type BatteryGuardConfig } from "../battery-guard.js";
 import { buildsDir, listBuildsSync } from "../../builds/queue.js";
 import { stallMinutes } from "../../builds/config.js";
 import { buildStallTick } from "../../builds/stall.js";
@@ -73,6 +74,7 @@ import {
   setVaultIndexInProgress,
   setLastVaultIndexTime,
   setCacheKeepaliveTimer,
+  setBatteryGuardTimer,
 } from "./state.js";
 
 // ---------------------------------------------------------------------------
@@ -154,6 +156,13 @@ export async function runIndex(): Promise<void> {
     return;
   }
 
+  // battery guard: the scheduled memory passes do not start while local work is paused
+  const held = batteryPassRefusal();
+  if (held) {
+    process.stderr.write(`[pai-daemon] Index run held: ${held}.\n`);
+    return;
+  }
+
   if (embedInProgress) {
     process.stderr.write("[pai-daemon] Embed in progress, deferring index run.\n");
     return;
@@ -205,6 +214,12 @@ async function runLessonsIndex(): Promise<void> {
  * Skips if no vaultPath is configured, or if project index/embed is in progress.
  */
 export async function runVaultIndex(): Promise<void> {
+  // battery guard: no vault/lessons indexing while local work is paused
+  const held = batteryPassRefusal();
+  if (held) {
+    process.stderr.write(`[pai-daemon] Vault index run held: ${held}.\n`);
+    return;
+  }
   await runLessonsIndex();
   if (!daemonConfig.vaultPath || !vaultIndexEnabled()) return;
 
@@ -357,6 +372,13 @@ export function msUntilNextAnchor(hour: number | undefined, intervalMs: number):
 export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
   if (embedInProgress) {
     process.stderr.write("[pai-daemon] Embed already in progress, skipping.\n");
+    return null;
+  }
+
+  // battery guard: the embed pass does not start while local work is paused
+  const held = batteryPassRefusal();
+  if (held) {
+    process.stderr.write(`[pai-daemon] Embed pass held: ${held}.\n`);
     return null;
   }
 
@@ -871,6 +893,47 @@ export function startSessionKeepalive(): void {
   process.stderr.write(
     `[pai-daemon] Session keepalive: every ${SESSION_KEEPALIVE_TICK_MS / 1000}s ` +
       `(idle >= ${config.idleMinutes}min, hours ${config.activeHours}, max ${config.maxBeats} beats/stretch)\n`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Battery guard
+// ---------------------------------------------------------------------------
+
+/**
+ * Start the battery guard (src/daemon/battery-guard.ts): every
+ * power.batteryGuard.intervalSecs one `pmset -g batt` reading driving the
+ * pause/stop state machine. macOS only — elsewhere pmset gives nothing and
+ * the tick is a no-op. Off unless power.batteryGuard.enabled; config changes
+ * need a daemon restart, like every other start* here.
+ */
+export function startBatteryGuard(cfg: BatteryGuardConfig = batteryGuardConfig(daemonConfig.power)): void {
+  if (!cfg.enabled) {
+    process.stderr.write("[pai-daemon] Battery guard: disabled (power.batteryGuard.enabled is false)\n");
+    return;
+  }
+  const tick = () => {
+    let workers: ReturnType<typeof readWorkersSection>["workers"];
+    try {
+      workers = readWorkersSection().workers;
+    } catch {
+      return; // no workers config: nothing local to guard
+    }
+    void timedTask("battery-guard", () =>
+      batteryGuardTick(workersLogDir(workers), workers, cfg, { shutdown: () => shutdownRequested })
+    ).catch((e) => {
+      process.stderr.write(`[pai-daemon] Battery guard tick error: ${e instanceof Error ? e.message : String(e)}\n`);
+    });
+  };
+  tick(); // the first reading lands at once, so the gate knows the battery before the first interval
+  const timer = setInterval(tick, cfg.intervalSecs * 1000);
+  if (timer.unref) timer.unref();
+  setBatteryGuardTimer(timer);
+  process.stderr.write(
+    `[pai-daemon] Battery guard: every ${cfg.intervalSecs}s ` +
+      `(pause <= ${cfg.pauseBelowPct}%, stop <= ${cfg.stopBelowPct}%, resume > ${cfg.pauseBelowPct + cfg.hysteresisPct}%)` +
+      (process.platform === "darwin" ? "" : " (not macOS: no-op)") +
+      "\n"
   );
 }
 
