@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Server } from "node:net";
 import { createOperatorServer, operatorSocketPath, sayToWorker } from "./operator.js";
-import { nowStamp, saveStatus, type WorkerStatus } from "./status.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-operator-test-"));
 let server: Server | null = null;
@@ -170,7 +170,7 @@ describe("say reports ok only on real delivery", () => {
     await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/cannot talk to worker/);
   });
 
-  it("rejects when the socket file is missing and the worker is a pooled task", async () => {
+  it("queues a note when the socket file is missing and the worker is a pooled task", async () => {
     const id = "20260917-100000-893";
     const status: WorkerStatus = {
       id,
@@ -192,7 +192,8 @@ describe("say reports ok only on real delivery", () => {
       pool: { task: 1, slotSession: null, hostPid: process.ppid, slot: "s1" }
     };
     saveStatus(dir, status);
-    await expect(sayToWorker(dir, id, "hi")).rejects.toThrow(/pooled task/);
+    await expect(sayToWorker(dir, id, "hi")).resolves.toMatch(/^queued: delivered at the worker's next turn \(pooled task\)/);
+    expect(loadStatus(dir, id)?.notePending).toContain("hi");
   });
 
   it("rejects when the socket file is missing and the worker is a regular task", async () => {

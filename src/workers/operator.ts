@@ -14,7 +14,7 @@ import { createServer, connect, type Socket } from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { loadStatus, isLive } from "./status.js";
+import { loadStatus, isLive, setWorkerNote } from "./status.js";
 
 export function operatorSocketPath(logDir: string, id: string): string {
   const p = join(logDir, `${id}.sock`);
@@ -92,9 +92,9 @@ export function sayToWorker(logDir: string, id: string, text: string, timeoutMs 
   const path = operatorSocketPath(logDir, id);
   if (!existsSync(path)) {
     if (status.pool) {
-      return Promise.reject(
-        new Error(`worker ${id} is a pooled task (slot ${status.pool.slot ?? "?"}, pool host pid ${status.pool.hostPid}) — it runs in the pool host's slot process and has no operator socket, so say cannot reach it; stop it with: pai worker kill ${id}`)
-      );
+      // a pooled task runs in the pool host's slot process: same note path as `pai worker goal`
+      setWorkerNote(logDir, id, text);
+      return Promise.resolve("queued: delivered at the worker's next turn (pooled task)");
     }
     return Promise.reject(
       new Error(`worker ${id} has no operator socket (${path}) — it may predate this PAI version`)
