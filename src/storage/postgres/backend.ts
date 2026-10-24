@@ -9,7 +9,6 @@
  * Per-user database isolation: each macOS user gets their own database (pai_<username>).
  */
 
-import type { IndexAllProgress } from "../../memory/job-progress.js";
 import pg from "pg";
 import type { Pool, PoolClient } from "pg";
 import { readFileSync } from "node:fs";
@@ -747,8 +746,8 @@ export class PostgresBackend implements StorageBackend {
   // Global indexing
   // -------------------------------------------------------------------------
 
-  async indexAll(registry: RegistryBackend, onProgress?: (p: IndexAllProgress) => void): Promise<{ projects: number; result: IndexResult }> {
-    return indexAllWithBackend(this, registry, onProgress);
+  async indexAll(registry: RegistryBackend): Promise<{ projects: number; result: IndexResult }> {
+    return indexAllWithBackend(this, registry);
   }
 
   // -------------------------------------------------------------------------

@@ -13,7 +13,6 @@
  *   interface so the indexer can write through it.
  */
 
-import type { IndexAllProgress } from "../memory/job-progress.js";
 import type { SearchResult, SearchOptions } from "../memory/search.js";
 import type { KgEntity, KgEntityUpsertParams } from "../memory/kg-entity.js";
 import type { KgTriple, KgAddParams, KgQueryParams, KgContradiction } from "../memory/kg.js";
@@ -594,7 +593,7 @@ export interface StorageBackend {
   // -------------------------------------------------------------------------
 
   /** Index every active registered project (memory/Notes/content scan + chunk + FTS). */
-  indexAll(registry: RegistryBackend, onProgress?: (p: IndexAllProgress) => void): Promise<{ projects: number; result: IndexResult }>;
+  indexAll(registry: RegistryBackend): Promise<{ projects: number; result: IndexResult }>;
 
   // -------------------------------------------------------------------------
   // Cross-project concept tunnels

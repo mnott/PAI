@@ -25,20 +25,19 @@ async function indexAllProjects(
 
   const totals: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
   // progress into the cockpit job (PAI_COCKPIT_JOB), fed from the same totals the final line prints
-  const progress = jobProgressFromEnv("index");
-  const report = (done: number, current: string, part?: IndexResult): void =>
-    progress?.update({ phase: "index", unit: "projects", done, total: projects.length, files: totals.filesProcessed + (part?.filesProcessed ?? 0), chunks: totals.chunksCreated + (part?.chunksCreated ?? 0), skipped: totals.filesSkipped + (part?.filesSkipped ?? 0), current });
+  const progress = jobProgressFromEnv();
+  const report = (done: number, current: string): void =>
+    progress?.update({ phase: "index", unit: "projects", done, total: projects.length, files: totals.filesProcessed, chunks: totals.chunksCreated, skipped: totals.filesSkipped, current });
   report(0, "");
   let n = 0;
   for (const project of projects) {
     report(n, project.display_name);
-    const r = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir, (part) => report(n, project.display_name, part));
+    const r = await indexProjectWithBackend(backend, project.id, project.root_path, project.claude_notes_dir);
     totals.filesProcessed += r.filesProcessed;
     totals.chunksCreated += r.chunksCreated;
     totals.filesSkipped += r.filesSkipped;
     report(++n, project.display_name);
   }
-  progress?.finish();
   return { projects: projects.length, result: totals };
 }
 

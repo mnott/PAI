@@ -8,7 +8,6 @@
  * SQLite or Postgres transparently.
  */
 
-import type { IndexAllProgress } from "../memory/job-progress.js";
 import type { Database } from "better-sqlite3";
 import type {
   StorageBackend, EmbeddingBinding, ChunkRow, FileRow, FederationStats,
@@ -404,8 +403,8 @@ export class SQLiteBackend implements StorageBackend {
   // Global indexing
   // -------------------------------------------------------------------------
 
-  async indexAll(registry: RegistryBackend, onProgress?: (p: IndexAllProgress) => void): Promise<{ projects: number; result: IndexResult }> {
-    return indexAllSqlite(this.db, registry, onProgress);
+  async indexAll(registry: RegistryBackend): Promise<{ projects: number; result: IndexResult }> {
+    return indexAllSqlite(this.db, registry);
   }
 
   // -------------------------------------------------------------------------

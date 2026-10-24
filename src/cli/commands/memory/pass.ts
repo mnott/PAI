@@ -7,7 +7,6 @@
 import { embedChunksWithBackend } from "../../../memory/indexer-backend.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
 import { EMBED_PASS_BATCH_SIZE, DEFAULT_EMBED_MAX_LOAD, DEFAULT_EMBED_MAX_MINUTES, liveYieldCheck } from "../../../memory/embed-pass.js";
-import { indexTick, jobProgressFromEnv } from "../../../memory/job-progress.js";
 import { acquireRun, readRun, type RunHandle, type RunKind, type RunOutcome } from "../../../memory/run-state.js";
 import { reexecBackground, type PassName } from "../../../daemon/pass-priority.js";
 
@@ -34,14 +33,8 @@ async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): P
 async function runMemoryPass(name: PassName, embed: EmbedPassArgs, run: RunHandle): Promise<unknown> {
   const storage = await getStorageBackend();
   const registry = await getRegistryBackend();
-  if (name === "index") {
-    const pw = jobProgressFromEnv("index");
-    try { return await storage.indexAll(registry, pw ? indexTick(pw) : undefined); } finally { pw?.finish(); }
-  }
-  const backlog = await storage.countUnembeddedChunks().catch(() => 0);
-  run.setBacklog(backlog);
-  const pw = jobProgressFromEnv("embed");
-  pw?.update({ phase: "embed", unit: "chunks", done: 0, total: backlog });
+  if (name === "index") return await storage.indexAll(registry);
+  run.setBacklog(await storage.countUnembeddedChunks().catch(() => 0));
   const projectNames = new Map<number, string>();
   try {
     for (const r of await registry.listProjects({ status: "active" })) projectNames.set(r.id, r.slug);
@@ -51,10 +44,9 @@ async function runMemoryPass(name: PassName, embed: EmbedPassArgs, run: RunHandl
     maxMillis: embed.maxMinutes * 60_000,
     batchSize: EMBED_PASS_BATCH_SIZE,
     shouldYield: liveYieldCheck(embed.maxLoad),
-    onProgress: (n) => { run.progress(n); pw?.update({ done: n }); },
+    onProgress: (n) => run.progress(n),
     onEnd: (r) => { end = r; },
   });
-  pw?.finish();
   return { count, ...end };
 }
 

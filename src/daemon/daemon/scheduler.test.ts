@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const embed = vi.hoisted(() => vi.fn());
 vi.mock("../../memory/indexer-backend.js", () => ({ embedChunksWithBackend: embed }));
-// the pass writes its run-progress record; never into a live PAI home
-vi.hoisted(() => { process.env.PAI_HOME = `${process.env.TMPDIR ?? "/tmp"}/pai-scheduler-test-home`; });
 const child = vi.hoisted(() => vi.fn());
 vi.mock("../pass-priority.js", async (orig) => ({
   ...(await orig<typeof import("../pass-priority.js")>()),
