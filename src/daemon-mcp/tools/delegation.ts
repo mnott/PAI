@@ -25,7 +25,7 @@ import { acceptItems } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
 import { reportOriginWithHost, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
 import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
-import type { WorkerToolResult } from "./worker-model.js";
+import { error, text, type WorkerToolResult } from "./tool-result.js";
 
 export type { WorkerToolResult };
 
@@ -82,11 +82,6 @@ export interface DelegationDeps {
   logDir?(): string;
 }
 
-const text = (s: string): WorkerToolResult => ({ content: [{ type: "text", text: s }] });
-const error = (e: unknown): WorkerToolResult => ({
-  content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-  isError: true,
-});
 const fail = (s: string): WorkerToolResult => error(new Error(s));
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
