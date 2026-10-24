@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { isDamaged, readAnswer, retryBody } from "./malformed-retry.js";
+import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody } from "./malformed-retry.js";
 import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
@@ -712,16 +712,19 @@ export function routerHandler(
             respond(src);
           };
           const ans = readAnswer(first.toString("utf8"), ct);
-          if (!isDamaged(ans)) return deliver(200, ures0.headers, first);
+          const degenerate = isDegenerate(ans, up.body);
+          if (!isDamaged(ans) && !degenerate) return deliver(200, ures0.headers, first);
+          const what = degenerate ? "degenerate-answer" : "malformed-tool-call";
           let nb: Buffer;
           try {
-            nb = retryBody(up.body, ans.text);
+            nb = retryBody(up.body, ans.text, degenerate ? DEGENERATE_RETRY_TEXT : undefined);
           } catch {
             return deliver(200, ures0.headers, first);
           }
           again(nb, (status, headers, raw) => {
-            const ok = status === 200 && !isDamaged(readAnswer(raw.toString("utf8"), String(headers["content-type"] ?? "")));
-            log(`${new Date().toISOString()} malformed-tool-call retried provider=${prov} ${ok ? "ok" : "again"}`);
+            const again2 = readAnswer(raw.toString("utf8"), String(headers["content-type"] ?? ""));
+            const ok = status === 200 && !isDamaged(again2) && !isDegenerate(again2, up.body);
+            log(`${new Date().toISOString()} ${what} retried provider=${prov} ${ok ? "ok" : "again"}`);
             if (ok) deliver(status, headers, raw);
             else deliver(200, ures0.headers, first);
           });

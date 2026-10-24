@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasMalformedToolCall } from "./malformed-toolcall.js";
+import { hasMalformedToolCall, isDegenerateAnswer } from "./malformed-toolcall.js";
 import { endLabel } from "./endreason.js";
 import { fallThroughReason } from "./policy.js";
 
@@ -21,5 +21,24 @@ describe("hasMalformedToolCall", () => {
     const run = { rc: 0, state: "done", endReason: "malformed-tool-call" };
     expect(fallThroughReason(local, run, { result: "-" })).toBe("instrument fault: malformed tool call");
     expect(fallThroughReason(local, run, { result: "-" }, "x bench")).toBeNull();
+  });
+});
+
+describe("isDegenerateAnswer", () => {
+  const task = "t".repeat(400);
+  it("flags a stray token with no tools on a real task", () => {
+    expect(isDegenerateAnswer(",", 0, task)).toBe(true);
+    expect(isDegenerateAnswer(" ok ", 0, task)).toBe(true);
+    expect(isDegenerateAnswer("", 0, task)).toBe(true);
+  });
+  it("ignores tools used, a real answer, or a trivial task", () => {
+    expect(isDegenerateAnswer(",", 2, task)).toBe(false);
+    expect(isDegenerateAnswer("PINEAPPLE", 0, task)).toBe(false);
+    expect(isDegenerateAnswer(",", 0, "reply with a comma")).toBe(false);
+  });
+  it("labels and falls through as an instrument fault", () => {
+    expect(endLabel({ endReason: "degenerate-answer" })).toBe("instrument: degenerate answer");
+    const local = { local: true, policy: "auto", reason: "" } as never;
+    expect(fallThroughReason(local, { rc: 0, state: "done", endReason: "degenerate-answer" }, { result: "-" })).toBe("instrument fault: degenerate answer");
   });
 });

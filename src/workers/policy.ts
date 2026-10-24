@@ -314,6 +314,7 @@ export function fallThroughReason(
   if (!route?.local || route.policy === "local-only") return null;
   if (isBenchmarkLabel(label)) return null;
   if (status.endReason === "malformed-tool-call") return "instrument fault: malformed tool call";
+  if (status.endReason === "degenerate-answer") return "instrument fault: degenerate answer";
   if (status.timedOut) return "max-minutes";
   if (status.rc === 143) return null;
   if (status.reportValid === false) return "invalid report";
