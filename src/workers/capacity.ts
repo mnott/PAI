@@ -523,8 +523,10 @@ export interface CapacityOpts {
   scope?: { key: string; label: string; holds: (s: WorkerStatus) => boolean };
   /** Resolved cap; undefined = unlimited. */
   cap: number | undefined;
-  /** Provider hold reason, re-read on every poll; while set nothing is admitted (the run queues). Not set for benchmark-labelled runs. */
+  /** Provider hold reason, re-read on every poll; while set nothing is admitted (the run queues) unless `holdExempt`. */
   holdOf?: () => string | undefined;
+  /** A run the hold does not apply to (benchmark-labelled): it ignores the hold and passes the held runs waiting ahead of it. */
+  holdExempt?: boolean;
   /** Re-read on every poll: a cap raised (or lowered) in the config while the run waits applies at once. Lowering never evicts a holder. */
   capOf?: () => number | undefined;
   config: Partial<CapacityConfig>;
@@ -555,7 +557,8 @@ export interface CapacityResult {
 /** Resolves once fewer than `cap` other runs hold a slot on the provider and this run heads the queue; null when it never had to wait. */
 export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | null> {
   const cfg = capacityOf(o.config);
-  let held = o.holdOf?.();
+  const holdReason = () => (o.holdExempt ? undefined : o.holdOf?.());
+  let held = holdReason();
   if (o.disabled || !cfg.enabled || ((o.cap === undefined || o.cap <= 0) && held === undefined)) return null;
   const { logDir, self } = o;
   let cap: number = o.cap === undefined || o.cap <= 0 ? Number.MAX_SAFE_INTEGER : o.cap;
@@ -570,7 +573,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
   const t0 = now();
-  writeTicket(entry, `${self.pid ?? process.pid}${o.priority === "front" ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`);
+  writeTicket(entry, `${self.pid ?? process.pid}${o.priority === "front" || (o.holdExempt && o.holdOf?.() !== undefined) ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`);
 
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
@@ -631,7 +634,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       await sleep(backoffMs(n));
       const fresh = o.capOf?.();
       if (fresh !== undefined && fresh > 0) cap = fresh;
-      held = o.holdOf?.();
+      held = holdReason();
       c = check();
       if (c.position === 1 && c.holding < cap && held === undefined) break;
       o.onWait?.(info());

@@ -682,7 +682,8 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
       }
     },
     // a hold queues new work; a benchmark-labelled run (the bench harness itself) passes it
-    holdOf: isBenchmarkLabel(a.label) ? undefined : () => {
+    holdExempt: isBenchmarkLabel(a.label),
+    holdOf: () => {
       try {
         return (readWorkersCached().providers[target.providerName] ?? target.provider).hold?.reason;
       } catch {

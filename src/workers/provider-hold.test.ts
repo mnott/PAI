@@ -4,7 +4,7 @@
  * provider; the CLI round-trips the hold through workers.yaml.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { capacityGate, queuedText, type CapacityOpts } from "./capacity.js";
@@ -92,6 +92,34 @@ describe("admission", () => {
     const h = gate(undefined);
     expect(await capacityGate(h.opts)).toBeNull();
     expect(h.elapsed()).toBe(0);
+  });
+
+  it("a benchmark-labelled run is admitted on a held provider even behind a held plain run", async () => {
+    const h = gate(() => "night run");
+    h.opts.holdExempt = true;
+    // a run that wrongly queues fails here instead of polling forever
+    const tick = h.opts.sleep!;
+    h.opts.sleep = async (ms) => {
+      if (h.elapsed() >= 10_000) throw new Error("queued behind the held run");
+      await tick(ms);
+    };
+    // a plain run queued earlier on the same provider (its ticket sorts first)
+    mkdirSync(join(h.opts.logDir, "queue", "locp"), { recursive: true });
+    writeFileSync(join(h.opts.logDir, "queue", "locp", "a-plain"), "300 @0");
+    expect(await capacityGate(h.opts)).toBeNull();
+    expect(h.elapsed()).toBe(0);
+  });
+
+  it("a held plain run queues with the reason, a release admits it", async () => {
+    let held: string | undefined = "night run";
+    const h = gate(() => held);
+    const infos: Array<string | undefined> = [];
+    h.opts.onWait = (i) => {
+      if (i) infos.push(queuedText({ ...i, sinceMs: 0 }));
+      if (h.elapsed() >= 5_000) held = undefined;
+    };
+    expect(await capacityGate(h.opts)).not.toBeNull();
+    expect(infos[0]).toContain("held: night run");
   });
 
   it("the queue line names the hold", () => {
