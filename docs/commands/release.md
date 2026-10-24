@@ -8,16 +8,20 @@ Cut a release: forge commit and tag, GitHub mirror, GitHub Release with the pack
 pai release [options]
 ```
 
-One release flow, no npm registry. In the repo (default: the current directory) it refuses a dirty tree or a branch other than main, then: bumps the version (npm version --no-git-tag-version, plus scripts/sync-versions.mjs when the repo has one), builds, runs the unit tests (never browser suites), commits `chore: release <v>`, tags v<v>, pushes origin main + tags (the forge), triggers the forge push-mirror sync and waits until the tag shows on GitHub, packs the package with `npm pack` and creates the GitHub Release with `gh release create`, attaching `<name>.tgz` (stable name, for `releases/latest/download`) and the versioned file. Notes: the CHANGELOG section for the version, else the commit subjects since the previous tag. Every step prints one line. A failure stops with the step name and a `state:` line saying what is committed, tagged and pushed. The forge token comes from the env var named by config release.forgeTokenEnv; GitHub access is `gh`'s own login.
+One release flow, no npm registry. In the repo (default: the current directory) it refuses a dirty tree or a branch other than main, then: bumps the version (npm version --no-git-tag-version, plus scripts/sync-versions.mjs when the repo has one), builds, runs the unit tests (never browser suites), commits `chore: release <v>`, tags v<v>, pushes origin main + tags (the forge), triggers the forge push-mirror sync and waits until the tag shows on GitHub, packs the package with `npm pack` and creates the GitHub Release with `gh release create`, attaching `<name>.tgz` (stable name, for `releases/latest/download`) and the versioned file. Notes: the CHANGELOG section for the version, else the commit subjects since the previous tag. Every step prints one line. `--from <step>` resumes after a failure (after `tag` it releases the v* tag on HEAD; refused when HEAD has none); `--skip mirror` makes the mirror step a no-op when the tag is already on GitHub, and without a forge token it says to sync the mirror in the forge UI and run `pai release --from mirror`. A failure stops with the step name and a `state:` line saying what is committed, tagged and pushed. The forge token comes from the env var named by config release.forgeTokenEnv; GitHub access is `gh`'s own login.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--repo PATH` | string | — | Repository to release (default: the current directory) |
 | `--bump patch|minor|major|X.Y.Z` | string | patch | Version bump or an explicit version |
+| `--from STEP` | string | — | Resume at STEP (check bump build test commit tag push mirror pack release); after tag the v* tag on HEAD is released |
+| `--skip mirror` | string | — | Skip the mirror step when the tag is already on GitHub |
 | `--dry-run` | flag | — | Print the plan, change nothing |
 
 ```sh
 pai release --dry-run
+pai release --from mirror
+pai release --from pack
 pai release --bump minor
 pai release --repo ~/code/app --bump 2.0.0
 ```
