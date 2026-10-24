@@ -85,19 +85,23 @@ See also: `pai registry rebuild`, `pai registry migrate`
 Erase the registry and rebuild it from disk (destructive)
 
 ```
-pai registry rebuild
+pai registry rebuild [options]
 ```
 
 Erase the registry and rebuild it from disk (destructive).
 
 Erase all registry data and rebuild from the filesystem (destructive)
 
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | flag | — | Confirm the erase (without it nothing is deleted and the command exits 1) |
+
 ```sh
 pai registry rebuild
-pai registry stats
+pai registry rebuild --yes
 ```
 
-See also: `pai registry dedupe`, `pai registry stats`
+See also: `pai registry dedupe`, `pai registry stats`, `pai memory repair-orphans`
 
 ### pai registry dedupe
 
