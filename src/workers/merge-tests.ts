@@ -29,10 +29,19 @@ export interface RelatedResult {
 
 const SOURCE = /\.(ts|tsx|mjs)$/;
 const TEST = /\.test\.[^/]*$/;
+/** A changed test file runs itself, not only the tests related to changed sources. */
+const TEST_FILE = /(\.test\.|\.spec\.)[^/]*$/;
+/** A test-fixtures directory: files here are test inputs, so they run as part of the run set. */
+const FIXTURE_DIR = /(^|\/)test-fixtures\//;
 
 /** Changed source files (ts/tsx/mjs, no tests) from a `git diff --name-only` listing. */
 export function filterSourceFiles(names: string[]): string[] {
   return names.filter((f) => SOURCE.test(f) && !TEST.test(f));
+}
+
+/** Changed test files (`*.test.*` / `*.spec.*`) and files under a test-fixtures dir. */
+export function filterTestFiles(names: string[]): string[] {
+  return names.filter((f) => TEST_FILE.test(f) || FIXTURE_DIR.test(f));
 }
 
 /** Every file the merge changed (any type), from a `git diff --name-only` listing. */
@@ -237,12 +246,15 @@ export function runRelatedTests(
     return skip(`cannot list changed files: ${(e as Error).message.split("\n")[0]}`);
   }
   if (!all.length) return skip("nothing changed in the merge");
-  // Any change runs the always-tests (a docs-only merge still needs the repo
-  // guards); `vitest related` runs only when source files changed.
+  // Changed test files run themselves; changed sources pull the tests related
+  // to them; any change runs the always-tests (a docs-only merge still needs
+  // the repo guards). "skipped (no source change)" only when neither source
+  // nor test files changed (docs-only).
   const files = filterSourceFiles(all);
+  const tests = filterTestFiles(all);
   const always = resolveAlwaysTests(cwd, settings.alwaysTests ?? []);
-  if (!files.length && !always.files.length) return skip("no source files changed, no always-tests configured");
-  const run = [...files, ...always.files];
+  if (!files.length && !tests.length && !always.files.length) return skip("no source files changed, no always-tests configured");
+  const run = [...new Set([...files, ...tests, ...always.files])];
   const skipped = files.length ? "" : "related tests: skipped (no source change); always-tests: ";
   const note = always.missing.length ? ` (always-tests skipped: ${always.missing.join(", ")})` : "";
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
@@ -256,9 +268,8 @@ export function runRelatedTests(
     return { status: "failed", line: `${skipped}timed out after ${timeoutSec}s`, failing: [] };
   }
   if (r.code === 0 && !r.signal && !r.error) {
-    const counts = always.files.length ? `${files.length} source files + ${always.files.length} always-tests, passed` : `${files.length} source files, passed`;
     // No vitest summary (a custom verify command): name the files that ran.
-    const summary = passSummary(output) ?? (files.length ? counts : `${always.files.length} files, passed`);
+    const summary = passSummary(output) ?? `${run.length} files, passed`;
     return { status: "passed", line: `${skipped}${summary}${note}`, failing: [] };
   }
   let failing = failingFiles(output);
