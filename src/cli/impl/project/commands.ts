@@ -737,7 +737,7 @@ export async function cmdConsolidate(
  * Returns the new path on success, or undefined if ambiguous/not found.
  * Prints all messages to stderr (safe for shell-wrapper stdout capture).
  */
-async function tryRecoverMovedProject(project: ProjectRow): Promise<string | undefined> {
+export async function tryRecoverMovedProject(project: ProjectRow): Promise<string | undefined> {
   process.stderr.write(
     warn(`Path not found: ${project.root_path}\n`) +
     dim("  Searching for moved location...\n")

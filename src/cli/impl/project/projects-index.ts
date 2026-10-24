@@ -20,11 +20,9 @@ import {
   cmdConsolidate,
   cmdGo,
   cmdRebind,
-  findMovedPath,
+  tryRecoverMovedProject,
 } from "./commands.js";
 import { existsSync } from "node:fs";
-import { ok, warn, err, dim, bold, shortenPath, encodeDir, now } from "../../lib/utils.js";
-import { basename } from "node:path";
 import { cmdName, cmdUnname, cmdNames, cmdConfig, cmdMcp, cmdTools } from "./session-config.js";
 import { cmdHealth } from "./health.js";
 import { cmdInit } from "./init.js";
@@ -33,7 +31,6 @@ import { cmdHere } from "./here.js";
 import { cmdUnregister } from "./unregister.js";
 import { resolveIdentifier } from "./helpers.js";
 import { pinNotices, projectLaunchConfig } from "../../../workers/project-config.js";
-import { getRegistryBackend } from "../../../storage/factory.js";
 
 export { cmdGo };
 
@@ -62,49 +59,10 @@ export async function projectCdCmd(identifier: string): Promise<number> {
   }
 
   // Path missing — search for moved location
-  process.stderr.write(
-    warn(`Path not found: ${project.root_path}\n`) +
-    dim("  Searching for moved location...\n")
-  );
-
-  const result = findMovedPath(project.root_path);
-
-  if (result.found) {
-    const newPath = result.found;
-    const newEncoded = encodeDir(newPath);
-    const ts = now();
-    const backend = await getRegistryBackend();
-    await backend.updateProjectPath(project.id, { rootPath: newPath, encodedDir: newEncoded }, ts);
-    process.stderr.write(
-      ok(`Project moved: ${shortenPath(project.root_path, 50)}\n`) +
-      dim(`  → ${newPath}\n`) +
-      ok("Registry updated.\n")
-    );
-    process.stdout.write(newPath + "\n");
-    return 0;
-  }
-
-  if (result.ambiguous) {
-    process.stderr.write(
-      warn(`Multiple directories named "${basename(project.root_path)}" found:\n`)
-    );
-    for (const candidate of result.ambiguous) {
-      process.stderr.write(dim(`  ${candidate}\n`));
-    }
-    process.stderr.write(
-      dim(`\n  Disambiguate with: pai projects rebind ${project.slug} <path>\n`)
-    );
-    return 1;
-  }
-
-  process.stderr.write(
-    err(
-      `Project "${project.slug}" root_path "${project.root_path}" does not exist on disk\n` +
-      `  and no folder named "${basename(project.root_path)}" was found in scan dirs.\n`
-    ) +
-    dim(`  Fix with: pai projects rebind ${project.slug} <new-path>\n`)
-  );
-  return 1;
+  const recovered = await tryRecoverMovedProject(project);
+  if (!recovered) return 1;
+  process.stdout.write(recovered + "\n");
+  return 0;
 }
 
 export async function projectAddCmd(rawPath: string, opts: { slug?: string; type?: string; displayName?: string; trust?: boolean }): Promise<number> {
