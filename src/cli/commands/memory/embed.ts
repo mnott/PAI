@@ -7,6 +7,7 @@ import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
 import { DEFAULT_EMBED_MAX_MINUTES } from "../../../memory/embed-pass.js";
 import { configuredEmbedConcurrency, runEmbedPipeline } from "../../../memory/embed-pipeline.js";
+import { sha256 } from "../../../utils/hash.js";
 import { CliError } from "../../define.js";
 import { jobProgressFromEnv, type ProgressWriter } from "../../../memory/job-progress.js";
 import { acquireRun, readRun, type RunHandle, type RunOutcome } from "../../../memory/run-state.js";
@@ -19,8 +20,8 @@ import { acquireRun, readRun, type RunHandle, type RunOutcome } from "../../../m
 const DEFAULT_PAGE_SIZE = 500;
 
 /** The CLI's progress line: chunks embedded so far over the backlog at start. */
-export function embedProgressLine(done: number, backlog: number): string {
-  return `${done} / ${backlog} chunks embedded...`;
+export function embedProgressLine(done: number, backlog: number, carried = 0): string {
+  return carried > 0 ? `${done} / ${backlog} chunks (carried ${carried}, embedded ${done - carried})...` : `${done} / ${backlog} chunks embedded...`;
 }
 
 export async function runEmbed(
@@ -68,16 +69,22 @@ export async function runEmbed(
     fetchPage: (last) =>
       retryTransient(() => backend.getUnembeddedChunkIds(projectId, pageSize, last ? { projectId: last.project_id, id: last.id } : null)),
     embed: (texts) => retryTransient(() => embedder.embed(texts)),
+    // The same text already has a vector (a project that came back under a new id): copy it, skip the model.
+    carry: async (batch) => {
+      const hashes = batch.map((row) => sha256(row.text));
+      const known = await retryTransient(() => backend.getEmbeddingsByHash(hashes));
+      return hashes.map((h) => known.get(h) ?? null);
+    },
     write: (batch, vecs) =>
-      retryTransient(() => backend.updateEmbeddings(batch.map((row, j) => ({ id: row.id, embedding: serializeEmbedding(vecs[j]) })))),
+      retryTransient(() => backend.updateEmbeddings(batch.map((row, j) => ({ id: row.id, embedding: Buffer.isBuffer(vecs[j]) ? vecs[j] : serializeEmbedding(vecs[j] as Float32Array) })))),
     batchSize,
     concurrency,
     shouldStop,
     deadline: maxMillis === undefined ? undefined : Date.now() + maxMillis,
-    onBatch: (_, n) => {
+    onBatch: (_, n, carried) => {
       run?.progress(n);
-      jobProgress?.update({ done: n });
-      process.stdout.write(`\r  ${embedProgressLine(n, backlog)}`);
+      jobProgress?.update({ done: n, carried });
+      process.stdout.write(`\r  ${embedProgressLine(n, backlog, carried)}`);
     },
   });
   const done = r.done;
@@ -91,7 +98,7 @@ export async function runEmbed(
   } else if (budgetHit) {
     console.log(ok(`Time budget reached.`) + `  ${bold(String(done))} chunks embedded; run again to continue (or --all for no limit)`);
   } else {
-    console.log(ok(`Done.`) + `  ${bold(String(done))} chunks embedded`);
+    console.log(ok(`Done.`) + `  ${bold(String(done))} chunks stored` + (r.carried > 0 ? ` (carried ${r.carried}, embedded ${done - r.carried})` : ` (embedded)`));
   }
   return { done, budgetHit, stopped };
 }
