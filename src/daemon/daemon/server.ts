@@ -34,6 +34,7 @@ import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
 import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sync.js";
 import { interruptStaleJobs } from "../../router/cockpit-job-recovery.js";
 import { paiHomeDir } from "../../config/pai-home.js";
+import { startOrphanCheck } from "../orphan-check.js";
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
@@ -41,7 +42,7 @@ import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
-import { batteryGuardTimer } from "./state.js";
+import { batteryGuardTimer, registryBackend } from "./state.js";
 import { startBatteryGuard } from "./scheduler.js";
 import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
@@ -193,6 +194,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Registry scan scheduler only needs the registry DB — safe to start now.
   startRegistryScanScheduler();
+  startOrphanCheck(() => registryBackend.countOrphanedChunks());
 
   // Worker supervision reads the workers ledger off disk and pushes events to
   // owning sessions — no backend dependency, so it starts with the IPC server.

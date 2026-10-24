@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -52,9 +52,19 @@ describe("location resolvers", () => {
   });
 
   it("generated config template does not pin socketPath", () => {
-    process.env.PAI_HOME = root;
-    ensureConfigDir();
-    const text = require("node:fs").readFileSync(paiConfigFilePath(), "utf-8") as string;
-    expect(text).not.toContain("socketPath");
+    // Fresh install: the guard's sandbox config (config.yaml) would make
+    // ensureConfigDir skip writing the template. Remove it from the sandbox
+    // only, then restore it.
+    const file = paiConfigFilePath();
+    const yaml = file.replace(/\.json$/, ".yaml");
+    const savedYaml = existsSync(yaml) ? readFileSync(yaml, "utf-8") : undefined;
+    rmSync(yaml, { force: true });
+    rmSync(file, { force: true });
+    try {
+      ensureConfigDir();
+      expect(readFileSync(file, "utf-8")).not.toContain("socketPath");
+    } finally {
+      if (savedYaml !== undefined) writeFileSync(yaml, savedYaml);
+    }
   });
 });

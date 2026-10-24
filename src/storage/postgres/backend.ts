@@ -11,6 +11,7 @@
 
 import type { IndexAllProgress } from "../../memory/job-progress.js";
 import pg from "pg";
+import { createPgPool } from "../pg-pool.js";
 import type { Pool, PoolClient } from "pg";
 import { readFileSync } from "node:fs";
 import { resolveFromModule } from "../../module-paths.js";
@@ -62,7 +63,7 @@ export class PostgresBackend implements StorageBackend {
 
     const adminUrl = new URL(connStr);
     adminUrl.pathname = "/postgres";
-    const adminPool = new PgPool({
+    const adminPool = createPgPool({
       connectionString: adminUrl.toString(),
       max: 1,
       connectionTimeoutMillis: 5000,
@@ -81,7 +82,7 @@ export class PostgresBackend implements StorageBackend {
       await adminPool.end();
     }
 
-    const targetPool = new PgPool({
+    const targetPool = createPgPool({
       connectionString: connStr,
       max: 1,
       connectionTimeoutMillis: 5000,
@@ -287,7 +288,7 @@ export class PostgresBackend implements StorageBackend {
   constructor(config: PostgresConfig) {
     const connStr = postgresConnectionString(config);
 
-    this.pool = new PgPool({
+    this.pool = createPgPool({
       connectionString: connStr,
       max: config.maxConnections ?? 5,
       connectionTimeoutMillis: config.connectionTimeoutMs ?? DEFAULT_PG_CONNECTION_TIMEOUT_MS,
