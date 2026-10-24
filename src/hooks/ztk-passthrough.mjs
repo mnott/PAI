@@ -11,6 +11,9 @@
  * keep their exact stdout, so they bypass ztk entirely.
  * Git is included because compaction turned a failing git commit into a
  * bare "ok" — its stderr and exit codes are essential and must survive.
+ * grep/rg are included because compaction read the "NNN:" line-number
+ * prefixes of a single-file `grep -n` as file names and dropped every
+ * matching line.
  *
  * Prints "yes" (pass through, skip ztk) or "no" (send to ztk) to stdout.
  */
@@ -21,10 +24,11 @@ const PASSTHROUGH_COMMANDS = new Set([
   "head", "tail", "cat", "jq", "sed", "awk", "sort", "uniq", "tr", "cut",
   "true", "test", "[",
   "git",
+  "grep", "egrep", "fgrep", "rg",
   "python3", "node", "bun",
 ]);
 
-const LAST_STAGE_PASSTHROUGH = new Set(["head", "tail", "wc"]);
+const LAST_STAGE_PASSTHROUGH = new Set(["head", "tail", "wc", "grep", "egrep", "fgrep", "rg"]);
 
 const VAR_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+/;
 const CD_PREFIX = /^cd\s+(?:'[^']*'|"[^"]*"|\S+)\s*&&\s*/;
