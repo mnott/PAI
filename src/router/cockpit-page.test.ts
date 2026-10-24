@@ -629,9 +629,9 @@ describe("donut centre label fits the ring's hole", () => {
 });
 
 describe("local server tiles say why they are empty", () => {
-  it("end-to-end tile carries the window reason and the 24 h counts; prefix cache says the server reports none", () => {
-    expect(COCKPIT_HTML).toContain("no requests in the last hour (24 h: ");
-    expect(COCKPIT_HTML).toContain("ttft p50 ");
+  it("prefill and decode tiles carry n, window and source, and say when empty; prefix cache says the server reports none", () => {
+    expect(COCKPIT_HTML).toContain("no requests in the last 24 h");
+    expect(COCKPIT_HTML).toContain('"n="+n+" · "');
     expect(COCKPIT_HTML).toContain("server reports no prefix-cache counter");
   });
 });
