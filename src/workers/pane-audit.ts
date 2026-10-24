@@ -463,7 +463,7 @@ export async function auditLaunches(logDir: string, d: LaunchAuditDeps = {}, now
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child ended, pane still open" }, now);
       out.push({ id: r.id, kind: "orphan-wrapper", action: "wrapper killed, pane closed" });
-    } else if (!ex && r.child && !childUp && wrapperUp && nowMs - r.startedMs > panePolicy().launchGraceMs) {
+    } else if (!ex && r.child && !childUp && wrapperUp && !(r.hold && alive(r.caller)) && nowMs - r.startedMs > panePolicy().launchGraceMs) {
       kill(r.wrapper!, "SIGKILL", false);
       await (d.closePane ?? defaultClose(logDir))(r.id).catch(() => undefined);
       appendLedger(ledger, "PANE-ORPHAN", { id: r.id, side: "wrapper", why: "child gone without an exit file" }, now);

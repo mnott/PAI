@@ -300,6 +300,16 @@ describe("auditLaunches: the bug detector for the pane-owns-the-process rule", (
     expect(r.closed).toEqual(["w-1"]);
     expect(ledger()).toMatch(/PANE-ORPHAN.*side=wrapper/);
   });
+  it("a held pane (report retry running, caller alive) is not closed when its child is gone; once the caller is gone it is", async () => {
+    const live = rig([100, 1]);
+    expect(await auditLaunches(dir, { ...live.deps, records: () => [rec({ hold: true })], exit: () => null }, NOW)).toEqual([]);
+    expect(live.closed).toEqual([]);
+    expect(live.killed).toEqual([]);
+    const dead = rig([100]);
+    const f = await auditLaunches(dir, { ...dead.deps, records: () => [rec({ hold: true })], exit: () => null }, NOW);
+    expect(f.map((x) => x.kind)).toEqual(["orphan-wrapper"]);
+    expect(dead.closed).toEqual(["w-1"]);
+  });
   it("child ended long ago but the wrapper still holds the pane: closed", async () => {
     const r = rig([100]);
     const f = await auditLaunches(dir, { ...r.deps, records: () => [rec()], exit: () => ({ id: "w-1", code: 0, endedMs: NOW.getTime() - 60_000 }) }, NOW);
