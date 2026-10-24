@@ -39,6 +39,7 @@ import {
 import { modelFlagArgs } from "./model.js";
 import { ensureToolSearch } from "./argv.js";
 import { hasMalformedToolCall, MALFORMED_TOOL_CALL, DEGENERATE_ANSWER } from "../malformed-toolcall.js";
+import { redactSecrets } from "../../utils/redact.js";
 
 /**
  * The finalisation every engine shares: orphaned-children check, state, the
@@ -340,7 +341,7 @@ export function printResult(
     const payload = report
       ? { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), report, ...extras }
       : { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), ...extras };
-    console.log(JSON.stringify(payload));
+    console.log(redactSecrets(JSON.stringify(payload)));
     return;
   }
   if (resultEvent) {
