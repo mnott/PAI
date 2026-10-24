@@ -228,6 +228,52 @@ pai worker providers cap local --slots 4
 
 See also: `pai worker providers`, `pai worker queue`
 
+### pai providers hold
+
+Queue new work on a provider while running work continues
+
+```
+pai providers hold PROVIDER [options]
+```
+
+Writes a hold to workers.yaml: new runs on the provider wait in the queue (their queue line says `held: <reason>`), runs already going finish, the pool keeps no idle spares for it. Benchmark-labelled runs are not held. No fallback to another provider. Lift it with `pai worker providers release`.
+
+| Argument | Required | Description |
+|---|---|---|
+| `PROVIDER` | yes | Provider name |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--reason TEXT` | string | — | Required. Why (shown in the queue line and the provider list) |
+
+```sh
+pai worker providers hold gyro-m --reason "strata-bench night run"
+pai worker providers
+```
+
+See also: `pai worker providers release`, `pai worker queue`
+
+### pai providers release
+
+Lift a provider hold; queued runs start
+
+```
+pai providers release PROVIDER
+```
+
+Removes the hold written by `pai worker providers hold`.
+
+| Argument | Required | Description |
+|---|---|---|
+| `PROVIDER` | yes | Provider name |
+
+```sh
+pai worker providers release gyro-m
+pai worker providers
+```
+
+See also: `pai worker providers hold`
+
 ## Subcommands
 
 | Command | Description |
@@ -240,6 +286,8 @@ See also: `pai worker providers`, `pai worker queue`
 | `pai providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai providers test` | Check a provider answers — without a name, what workers would use now |
 | `pai providers cap` | Show or set how many workers run in parallel on a provider |
+| `pai providers hold` | Queue new work on a provider while running work continues |
+| `pai providers release` | Lift a provider hold; queued runs start |
 
 ## See also
 

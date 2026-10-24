@@ -99,13 +99,14 @@ afterEach(async () => {
   }
 });
 
-function makeHost(repo: string | null, pool: Record<string, unknown> = {}, now?: () => Date) {
+function makeHost(repo: string | null, pool: Record<string, unknown> = {}, now?: () => Date, cfg: WorkersConfig = config(pool), reload?: { stamp: () => string; read: () => WorkersConfig }) {
   const logDir = mkdtempSync(join(tmpdir(), "pai-spare-host-"));
   const procs: FakeSpare[] = [];
   const cwds: string[] = [];
   const argvs: string[][] = [];
   const host = createPoolHost({
-    config: config(pool),
+    config: cfg,
+    ...(reload ? { configStamp: reload.stamp, readConfig: reload.read } : {}),
     logDir,
     usageLogFile: join(logDir, "none.jsonl"),
     spawner: (argv, cwd) => {
@@ -142,6 +143,32 @@ const task = (repo: string, over: Partial<PoolTaskRequest> = {}): PoolTaskReques
 });
 
 const ledgerLines = (logDir: string) => parseLedger(readFileSync(ledgerPath(logDir), "utf8"));
+
+describe("provider hold", () => {
+  const held = (): WorkersConfig => ({ ...config(), providers: { fakeprov: { ...provider, hold: { since: new Date().toISOString(), reason: "night run" } } } });
+
+  it("starts no spare for a held provider", async () => {
+    const repo = makeRepo();
+    const h = makeHost(repo, {}, undefined, held());
+    await h.host.settle();
+    expect(h.host.state().spares).toEqual([]);
+    expect(h.procs).toHaveLength(0);
+  });
+
+  it("retires an idle spare when the hold arrives on a config reload", async () => {
+    const repo = makeRepo();
+    let live = config();
+    let stamp = "a";
+    const h = makeHost(repo, {}, undefined, live, { stamp: () => stamp, read: () => live });
+    await h.host.settle();
+    expect(h.host.state().spares).toHaveLength(1);
+    live = held();
+    stamp = "b";
+    h.host.reloadSettings(true);
+    expect(h.host.state().spares).toEqual([]);
+    expect(h.procs[0]!.killed).toBe(true);
+  });
+});
 
 describe("spares", () => {
   it("starts one task-less spare per warm key: its own worktree, a process, nothing fed", async () => {

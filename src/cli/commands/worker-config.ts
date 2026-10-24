@@ -58,6 +58,9 @@ import {
   removeProvider,
   setClass,
   setProviderCap,
+  holdProvider,
+  releaseProvider,
+  holdText,
   setProviderEnabled,
   setWorkersEnabled,
   unsetClass,
@@ -477,6 +480,46 @@ const providersCapCommand: CommandDef = {
   },
 };
 
+const providersHoldCommand: CommandDef = {
+  name: "hold",
+  summary: "Queue new work on a provider while running work continues",
+  description:
+    "Writes a hold to workers.yaml: new runs on the provider wait in the queue (their queue line says `held: <reason>`), " +
+    "runs already going finish, the pool keeps no idle spares for it. Benchmark-labelled runs are not held. " +
+    "No fallback to another provider. Lift it with `pai worker providers release`.",
+  args: [{ name: "PROVIDER", required: true, summary: "Provider name" }],
+  options: [{ name: "reason", type: "string", value: "TEXT", summary: "Required. Why (shown in the queue line and the provider list)" }],
+  examples: ['pai worker providers hold gyro-m --reason "strata-bench night run"', "pai worker providers"],
+  seeAlso: ["pai worker providers release", "pai worker queue"],
+  run(ctx) {
+    try {
+      const name = ctx.args.PROVIDER as string;
+      const p = holdProvider(name, String(ctx.opts.reason ?? ""));
+      out(ok(`${name}: ${holdText(p.hold!)}`));
+    } catch (e) {
+      fail(e, "pai worker providers");
+    }
+  },
+};
+
+const providersReleaseCommand: CommandDef = {
+  name: "release",
+  summary: "Lift a provider hold; queued runs start",
+  description: "Removes the hold written by `pai worker providers hold`.",
+  args: [{ name: "PROVIDER", required: true, summary: "Provider name" }],
+  examples: ["pai worker providers release gyro-m", "pai worker providers"],
+  seeAlso: ["pai worker providers hold"],
+  run(ctx) {
+    try {
+      const name = ctx.args.PROVIDER as string;
+      releaseProvider(name);
+      out(ok(`${name}: released`));
+    } catch (e) {
+      fail(e, "pai worker providers");
+    }
+  },
+};
+
 export const PROVIDER_EDIT_COMMANDS: CommandDef[] = [
   providersAddCommand,
   providersUpdateCommand,
@@ -485,6 +528,8 @@ export const PROVIDER_EDIT_COMMANDS: CommandDef[] = [
   enableDisable(false),
   providersTestCommand,
   providersCapCommand,
+  providersHoldCommand,
+  providersReleaseCommand,
 ];
 
 export const workerProvidersCommand: CommandDef = {

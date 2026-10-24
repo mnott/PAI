@@ -221,6 +221,37 @@ export function setProviderCap(
   return { workers, effective: capText(p) };
 }
 
+/** Put a provider on hold (new work queues, running work continues) or lift it; written by the same writer as the cap. */
+function writeHold(name: string, hold: { since: string; reason: string } | undefined, configPath?: string): WorkerProvider {
+  const { raw, workers } = readWorkersSection(configPath);
+  const p = workers.providers[name];
+  if (!p) {
+    throw new WorkersConfigError(
+      `no provider named "${name}". Configured: ${Object.keys(workers.providers).join(", ") || "(none)"}`
+    );
+  }
+  if (hold) p.hold = hold;
+  else delete p.hold;
+  writeWorkersSection(raw, workers, configPath);
+  return p;
+}
+
+export function holdProvider(name: string, reason: string, configPath?: string, now: Date = new Date()): WorkerProvider {
+  if (!reason.trim()) throw new WorkersConfigError("a hold needs a reason");
+  return writeHold(name, { since: now.toISOString(), reason: reason.trim() }, configPath);
+}
+
+export function releaseProvider(name: string, configPath?: string): WorkerProvider {
+  return writeHold(name, undefined, configPath);
+}
+
+/** "held since HH:MM: reason" for a provider on hold. */
+export function holdText(h: { since: string; reason: string }): string {
+  const d = new Date(h.since);
+  const hhmm = Number.isNaN(d.getTime()) ? h.since : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `held since ${hhmm}: ${h.reason}`;
+}
+
 export function removeProvider(name: string, configPath?: string): WorkersConfig {
   const { raw, workers } = readWorkersSection(configPath);
   if (!workers.providers[name]) {
@@ -512,6 +543,7 @@ export function describeProviders(
       lines.push(`    engine image (no process spawn — POSTs {url}/images/generations directly)`);
     }
     lines.push(`    ${capText(p)}`);
+    if (p.hold) lines.push(`    ${holdText(p.hold)}`);
     const cls = classesForProvider(workers, name);
     lines.push(`    classes: ${cls.length ? cls.join(", ") : "(none)"}`);
   }

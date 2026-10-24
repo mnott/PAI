@@ -60,7 +60,7 @@ import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
 import { aibrokerMessenger } from "../run-events.js";
 import { ownerOf } from "../local-idle.js";
-import { batteryGateRefusal } from "../../daemon/battery-guard.js";
+import { batteryGateRefusal, isBenchmarkLabel } from "../../daemon/battery-guard.js";
 import {
   poolIneligibleReason,
   poolSettings,
@@ -681,6 +681,14 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
         return undefined;
       }
     },
+    // a hold queues new work; a benchmark-labelled run (the bench harness itself) passes it
+    holdOf: isBenchmarkLabel(a.label) ? undefined : () => {
+      try {
+        return (readWorkersCached().providers[target.providerName] ?? target.provider).hold?.reason;
+      } catch {
+        return target.provider.hold?.reason;
+      }
+    },
     config: config.capacity,
     disabled: a.noQueue,
     priority: a.priority,
@@ -708,6 +716,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
           ...(w.behind ? { behind: w.behind } : {}),
           sinceMs: w.sinceMs,
           ...(w.priority ? { priority: w.priority } : {}),
+          ...(w.held !== undefined ? { held: w.held } : {}),
         };
         status.last = queuedText(w);
       } else {
@@ -727,7 +736,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
   const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
   if (status.sessionKey && max) {
     const key = status.sessionKey;
-    await capacityGate({ ...gate, capOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
+    await capacityGate({ ...gate, capOf: undefined, holdOf: undefined, scope: { key: sessionScopeKey(key), label: `session ${key}`, holds: (s) => s.sessionKey === key }, cap: max });
   }
   await capacityGate(gate);
   await staggerGate({

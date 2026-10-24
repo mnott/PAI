@@ -290,6 +290,8 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai providers cap` | Show or set how many workers run in parallel on a provider |
 | `pai providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai providers enable` | Turn a provider on (also clears its cooldown) |
+| `pai providers hold` | Queue new work on a provider while running work continues |
+| `pai providers release` | Lift a provider hold; queued runs start |
 | `pai providers remove` | Remove a provider and the classes pointing at it |
 | `pai providers test` | Check a provider answers — without a name, what workers would use now |
 | `pai providers update` | Change a provider's cost tier and tags |
@@ -444,7 +446,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker providers cap` | Show or set how many workers run in parallel on a provider |
 | `pai worker providers disable` | Turn a provider off (automatic routing skips it) |
 | `pai worker providers enable` | Turn a provider on (also clears its cooldown) |
+| `pai worker providers hold` | Queue new work on a provider while running work continues |
 | `pai worker providers list` | List providers, their models and whether workers are on |
+| `pai worker providers release` | Lift a provider hold; queued runs start |
 | `pai worker providers remove` | Remove a provider and the classes pointing at it |
 | `pai worker providers test` | Check a provider answers — without a name, what workers would use now |
 | `pai worker providers update` | Change a provider's cost tier and tags |
