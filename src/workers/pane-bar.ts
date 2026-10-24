@@ -1,12 +1,15 @@
 /**
- * pane-bar.ts — the bottom of a launcher pane (`pai pane exec`): the transcript scrolls in a region
- * above a separator, the prompt row and the live status line, the layout `worker follow` had
- * (chatui.ts). One implementation: the status text is renderer's paneStatusRow / paneRunStatusRow,
+ * pane-bar.ts — a launcher pane (`pai pane exec`): the pane switches to the alternate screen and keeps its
+ * own scrollback (pane-viewport.ts); the transcript viewport sits above a separator, the prompt row and the
+ * live status line, which stay on screen however far the operator scrolls (wheel, PageUp/PageDown,
+ * Shift+Up/Down, End to follow). One implementation: the status text is renderer's paneStatusRow / paneRunStatusRow,
  * the typed lines go through makeOperatorInput → sayToWorker like the old follow pane.
  */
 
 import { createInterface } from "node:readline";
-import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, parseChatLine } from "./chatui.js";
+import { cellWidth, chatBlankRow, chatPromptRow, parseChatLine, wrapText } from "./chatui.js";
+import { PassThrough } from "node:stream";
+import { applyScroll, PANE_ENTER, PANE_LEAVE, parseScrollInput, Viewport } from "./pane-viewport.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
 import { paneExecDir } from "./pane-exec.js";
@@ -60,6 +63,8 @@ export const PANE_HELP = [
   "/pause            the worker stops working on its task and only talks; /continue resumes it",
   "/continue         clear the pause: resume the task where you stopped",
   "/help             this list",
+  "scrolling         mouse wheel, PageUp/PageDown or Shift+Up/Down; End (or typing) follows the output again",
+  "selecting text    mouse reporting is on: hold Option while dragging in iTerm",
 ];
 
 /** The note a paused worker gets: it answers the operator and waits for /continue. */
@@ -145,10 +150,11 @@ function fit(text: string, max: number): string {
       continue;
     }
     const cp = String.fromCodePoint(text.codePointAt(i)!);
-    if (w + 1 > max) return out + "\x1b[0m";
-    if (w + 1 === max && i + cp.length < text.length) return out + "…";
+    const cw = cellWidth(cp.codePointAt(0)!);
+    if (w + cw > max) return out + "\x1b[0m";
+    if (w + cw === max && i + cp.length < text.length) return out + "…";
     out += cp;
-    w += 1;
+    w += cw;
     i += cp.length;
   }
   return out;
@@ -167,9 +173,8 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
   const now = d.now ?? Date.now;
   const dim = (s: string): string => (d.paint ? d.paint("dim", s) : s);
   let rows = d.rows();
-  let fill = 0;
   const region = (): number => Math.max(1, rows - 3);
-  const retained: string[] = [];
+  const view = new Viewport(region());
   let status: WorkerStatus | null = null;
   const text = (): string => {
     if (d.spec.kind === "run") return paneRunStatusRow(d.spec.label, d.spec.startedMs, new Date(now()));
@@ -184,7 +189,23 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
     // the pause shows in the bar whether the status came from disk or from a test seam
     return (status.paused === true || workerPaused(logDir, id)) ? `paused · ${row}` : row;
   };
-  const rl = d.spec.kind === "worker" && d.input ? createInterface({ input: d.input, output: silent(), terminal: d.input.isTTY === true }) : null;
+  // stdin goes through a filter: wheel reports and scroll keys move the viewport, the rest feeds readline
+  const src = d.input;
+  const feed = src ? Object.assign(new PassThrough(), { isTTY: src.isTTY === true }) : null;
+  const rawSet = src?.isTTY === true && typeof (src as unknown as { setRawMode?: unknown }).setRawMode === "function";
+  if (rawSet) (src as unknown as { setRawMode: (m: boolean) => void }).setRawMode(true);
+  const onData = (chunk: Buffer | string): void => {
+    const { actions, rest } = parseScrollInput(chunk.toString());
+    for (const a of actions) applyScroll(view, a);
+    if (rest && !view.following) {
+      view.toEnd(); // typing follows the output again
+      actions.push("end");
+    }
+    if (actions.length) redraw();
+    if (rest) feed?.write(rest);
+  };
+  src?.on("data", onData);
+  const rl = d.spec.kind === "worker" && feed ? createInterface({ input: feed, output: silent(), terminal: feed.isTTY }) : null;
   const prompt = (): void => {
     if (rl) d.write(chatPromptRow(rows, rl.line, dim, (rl as unknown as { cursor?: number }).cursor));
   };
@@ -209,19 +230,30 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
     }
   };
   const tick = (): void => {
-    d.write(paneStatusFrame(text(), rows, d.columns()));
+    const mark = view.indicator();
+    d.write(paneStatusFrame(mark ? `${mark} · ${text()}` : text(), rows, d.columns()));
     settle();
   };
-  const line = (s: string, keep = true): void => {
-    if (keep) {
-      retained.push(s);
-      if (retained.length > 500) retained.shift();
-    }
-    const r = chatInsertLine(s, fill, region());
-    d.write(r.seq);
-    fill = r.fill;
+  const line = (s: string): void => {
+    const cols = d.columns();
+    // a row wider than the pane (unrendered command output) folds here; rendered rows already fit
+    for (const row of cols ? wrapText(s, cols) : [s]) view.push(row);
+    if (view.following) d.write(view.frame());
+    else tick(); // the "↑ N lines" count moved
   };
-  d.write(chatEnter(rows, d.columns() ?? 0, dim));
+  const enter = (): string => PANE_ENTER + chatBlankRow(rows, d.columns() ?? 0, dim) + `\x1b[${Math.max(1, rows - 1)};3H`;
+  let left = false;
+  const leave = (): void => {
+    if (left) return;
+    left = true;
+    d.write(PANE_LEAVE);
+  };
+  const redraw = (): void => {
+    d.write(view.frame());
+    tick();
+    prompt();
+  };
+  d.write(enter());
   prompt();
   tick();
   const timer = setInterval(tick, d.tickMs ?? panePolicy().statusTickMs);
@@ -288,25 +320,30 @@ export function startPaneBar(d: PaneBarDeps): PaneBar {
         (e: Error) => line(`» ${act.text} — not delivered: ${e.message}`)
       );
     });
-    (d.input as NodeJS.ReadableStream).on("keypress", () => {
+    feed?.on("keypress", () => {
       prompt();
       tick();
     });
   }
   d.onResize?.(() => {
     rows = d.rows();
-    fill = 0;
-    d.write(chatEnter(rows, d.columns() ?? 0, dim));
-    for (const l of retained.slice(-region())) line(l, false);
-    prompt();
-    tick();
+    view.resize(region());
+    d.write(enter());
+    redraw();
   });
+  process.once("exit", leave);
   return {
     line: (s) => line(s),
     stop: () => {
       clearInterval(timer);
       rl?.close();
-      d.write(chatLeave(rows));
+      src?.off("data", onData);
+      (src as unknown as { pause?: () => void } | undefined)?.pause?.();
+      if (rawSet) (src as unknown as { setRawMode?: (m: boolean) => void }).setRawMode?.(false);
+      process.off("exit", leave);
+      leave();
+      // a one-shot command's output must outlive the alternate screen
+      if (d.spec.kind === "run" && view.length) d.write(view.all().join("\n") + "\n");
     },
   };
 }

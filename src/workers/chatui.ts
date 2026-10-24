@@ -46,17 +46,65 @@ function endOfEscape(s: string, i: number): number {
   return i + 2;
 }
 
-/** Printable columns of `s` — ANSI escape sequences measure zero. */
-export function visibleWidth(s: string): number {
-  let w = 0;
-  let i = 0;
-  while (i < s.length) {
+/** Terminal columns of one code point: 0 for marks/joiners/controls, 2 for East Asian wide and emoji. */
+export function cellWidth(cp: number): number {
+  if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) return 0;
+  if (cp < 0x300) return 1;
+  if (cp === 0x200b || cp === 0x200c || cp === 0x200d || cp === 0x2060 || cp === 0xfeff) return 0;
+  if (cp >= 0xfe00 && cp <= 0xfe0f) return 0;
+  const ch = String.fromCodePoint(cp);
+  if (/\p{M}/u.test(ch)) return 0;
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) || (cp >= 0x2e80 && cp <= 0x303e) || (cp >= 0x3041 && cp <= 0x33ff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0x4e00 && cp <= 0x9fff) || (cp >= 0xa000 && cp <= 0xa4cf) ||
+    (cp >= 0xac00 && cp <= 0xd7a3) || (cp >= 0xf900 && cp <= 0xfaff) || (cp >= 0xfe30 && cp <= 0xfe6f) ||
+    (cp >= 0xff00 && cp <= 0xff60) || (cp >= 0xffe0 && cp <= 0xffe6) || (cp >= 0x20000 && cp <= 0x3fffd)
+  ) {
+    return 2;
+  }
+  return /\p{Emoji_Presentation}/u.test(ch) ? 2 : 1;
+}
+
+/** Replace tabs by spaces up to the next multiple of `stop` columns, ANSI-aware. */
+export function expandTabs(s: string, stop = 8): string {
+  if (!s.includes("\t")) return s;
+  let out = "";
+  let col = 0;
+  for (let i = 0; i < s.length; ) {
     if (s[i] === "\x1b") {
-      i = endOfEscape(s, i);
+      const e = endOfEscape(s, i);
+      out += s.slice(i, e);
+      i = e;
       continue;
     }
-    w += 1;
-    i += 1;
+    const cp = s.codePointAt(i)!;
+    const len = cp > 0xffff ? 2 : 1;
+    if (cp === 9) {
+      const n = stop - (col % stop);
+      out += " ".repeat(n);
+      col += n;
+    } else {
+      out += s.slice(i, i + len);
+      col += cellWidth(cp);
+    }
+    i += len;
+  }
+  return out;
+}
+
+/** Printable columns of `s` — ANSI escape sequences measure zero, wide characters two, tabs expand. */
+export function visibleWidth(s: string): number {
+  const t = expandTabs(s);
+  let w = 0;
+  let i = 0;
+  while (i < t.length) {
+    if (t[i] === "\x1b") {
+      i = endOfEscape(t, i);
+      continue;
+    }
+    const cp = t.codePointAt(i)!;
+    w += cellWidth(cp);
+    i += cp > 0xffff ? 2 : 1;
   }
   return w;
 }
@@ -94,78 +142,74 @@ function sgrStateAt(text: string, upto: number): string[] {
  * keeps its `-`/`+` colour on every continuation row.
  */
 export function wrapText(text: string, width: number): string[] {
+  text = expandTabs(text);
   if (width < 1 || visibleWidth(text) <= width) return [text];
 
-  // visible characters by their index in `text`
+  // visible code points by their index in `text`, with a running column count
   const chars: number[] = [];
-  for (let i = 0; i < text.length; i++) {
+  const cum: number[] = [0];
+  for (let i = 0; i < text.length; ) {
     if (text[i] === "\x1b") {
-      i = endOfEscape(text, i) - 1;
+      i = endOfEscape(text, i);
       continue;
     }
+    const cp = text.codePointAt(i)!;
     chars.push(i);
+    cum.push(cum[cum.length - 1]! + cellWidth(cp));
+    i += cp > 0xffff ? 2 : 1;
   }
+  const span = (a: number, b: number): number => cum[b + 1]! - cum[a]!;
 
   // words as [first, last] indexes into `chars` (escapes ride along later)
-  const words: Array<{ s: number; e: number; w: number }> = [];
+  const words: Array<{ s: number; e: number }> = [];
   {
     let s = -1;
-    let w = 0;
     for (let k = 0; k <= chars.length; k++) {
       const ch = k === chars.length ? " " : text[chars[k]!]!;
       if (ch === " ") {
         if (s >= 0) {
-          words.push({ s, e: k - 1, w });
+          words.push({ s, e: k - 1 });
           s = -1;
-          w = 0;
         }
-      } else {
-        if (s < 0) s = k;
-        w++;
-      }
+      } else if (s < 0) s = k;
     }
   }
   // a leading indent (diff rows) belongs to the first word, width counted
-  if (words.length && words[0]!.s > 0) {
-    words[0] = { s: 0, e: words[0]!.e, w: words[0]!.w + words[0]!.s };
-  }
+  if (words.length && words[0]!.s > 0) words[0] = { s: 0, e: words[0]!.e };
 
-  // chunk spans [start, end] over `chars`, greedy on visible width — the
-  // width of a chunk is simply its span in `chars`, inner spaces included
+  // chunk spans [start, end] over `chars`, greedy on display width
   const spans: Array<[number, number]> = [];
   let cs = -1;
   let ce = -1;
   for (const word of words) {
-    if (word.w > width) {
-      // oversized word: fill the rest of the line, then full-width rows.
-      // `take` is the word's chars that still fit — the gap before the word
-      // eats into the room, and when it eats all of it the word starts fresh
-      const room = cs < 0 ? 0 : width - (ce - cs + 1);
-      const take = room > 0 ? ce + room - word.s + 1 : 0;
-      if (take > 0) spans.push([cs, ce + room]);
-      else if (cs >= 0) spans.push([cs, ce]);
-      let pos = word.s + Math.max(0, take);
-      let remaining = word.w - Math.max(0, take);
-      while (remaining > width) {
-        spans.push([pos, pos + width - 1]);
-        pos += width;
-        remaining -= width;
-      }
-      cs = pos;
-      ce = pos + remaining - 1;
+    if (cs >= 0 && span(cs, word.e) <= width) {
+      ce = word.e;
       continue;
     }
-    if (cs < 0) {
+    if (span(word.s, word.e) <= width) {
+      if (cs >= 0) spans.push([cs, ce]);
       cs = word.s;
       ce = word.e;
       continue;
     }
-    if (word.e - cs + 1 <= width) {
-      ce = word.e;
-      continue;
+    // oversized word: fill the rest of the line, then full-width rows
+    let pos = word.s;
+    if (cs >= 0) {
+      let k = word.s;
+      while (k <= word.e && span(cs, k) <= width) k++;
+      if (k > word.s) {
+        spans.push([cs, k - 1]);
+        pos = k;
+      } else spans.push([cs, ce]);
     }
-    spans.push([cs, ce]);
-    cs = word.s;
+    while (pos <= word.e && span(pos, word.e) > width) {
+      let k = pos;
+      while (k <= word.e && span(pos, k) <= width) k++;
+      if (k === pos) k++; // a wide character wider than the row still takes a row
+      spans.push([pos, k - 1]);
+      pos = k;
+    }
+    cs = pos > word.e ? -1 : pos;
     ce = word.e;
   }
   if (cs >= 0) spans.push([cs, ce]);
@@ -174,7 +218,7 @@ export function wrapText(text: string, width: number): string[] {
   for (const [a, b] of spans) {
     const from = chars[a]!;
     // take trailing escapes up to the next visible char with the chunk
-    let end = chars[b]! + 1;
+    let end = chars[b]! + (text.codePointAt(chars[b]!)! > 0xffff ? 2 : 1);
     while (end < text.length && text[end] === "\x1b") end = endOfEscape(text, end);
     let piece = text.slice(from, end);
     const reopen = sgrStateAt(text, from);
