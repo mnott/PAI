@@ -1829,7 +1829,7 @@ async function startShim(): Promise<void> {
       id: z.string().describe("Worker id (as shown by worker_ps)."),
       only: z.boolean().optional().describe("Kill only this worker, leave its children running."),
       force: z.boolean().optional().describe("Kill another session's worker (needs reason)."),
-      reason: z.string().optional().describe("Why; recorded in the worker's event log."),
+      reason: z.string().min(1).describe("Why; required, recorded in the worker's event log and pai worker ps."),
     },
     async (args) => workerKill(args)
   );

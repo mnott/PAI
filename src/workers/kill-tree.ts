@@ -468,8 +468,11 @@ export async function killTree(
 export async function killWorker(
   logDir: string,
   id: string,
-  opts: Parameters<typeof killTree>[2] = {},
+  opts: Parameters<typeof killTree>[2] & { interactive?: boolean } = {},
 ): Promise<string[]> {
+  // an agent or script kill with no reason leaves the ledger and `pai worker ps` unexplained
+  if (opts.caller && !opts.interactive && !opts.reason?.trim())
+    throw new Error("pai worker kill: --reason is required (it goes into the ledger and pai worker ps)");
   const status = loadStatus(logDir, id);
   if (!status) throw new Error(`no worker named "${id}"`);
   if (status.state !== "running" && status.state !== "queued")

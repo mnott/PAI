@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { killTree, type KillTreeDeps } from "./kill-tree.js";
+import { killTree, killWorker, type KillTreeDeps } from "./kill-tree.js";
 import { endLabel, decideEndReason, requestKill, appendStopEvent } from "./endreason.js";
 import { eventsPath } from "./paths.js";
 import { requestLoopStop } from "./loop-stop.js";
@@ -275,6 +275,37 @@ describe("killTree records who stopped a worker and why", () => {
     const st = loadStatus(dir, "w1")!;
     expect(st).toMatchObject({ endBy: "claude-session:224db3e0", endKillReason: "why", endForced: true });
     expect(endLabel(st)).toBe("pai-worker-kill by claude-session:224db3e0 (forced): why");
+  });
+});
+
+describe("killWorker requires a reason from a non-interactive caller", () => {
+  const env = { PAI_SESSION_NAME: "owner" } as NodeJS.ProcessEnv;
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-kill-reason-"));
+    mk(dir, "w1", 1, { session: { id: "SESS-OWNER", name: "owner" } });
+    return { dir, f: fakes(dir) };
+  };
+
+  it("no TTY and no reason: refused, nothing killed", async () => {
+    const { dir, f } = setup();
+    await expect(killWorker(dir, "w1", { caller: { env, force: false }, deps: f.deps })).rejects.toThrow(
+      "pai worker kill: --reason is required (it goes into the ledger and pai worker ps)"
+    );
+    await expect(killWorker(dir, "w1", { caller: { env, force: false }, reason: "  ", deps: f.deps })).rejects.toThrow(/--reason is required/);
+    expect(f.signalled).toEqual([]);
+    expect(loadStatus(dir, "w1")!.state).toBe("running");
+  });
+
+  it("no TTY with a reason: recorded as given", async () => {
+    const { dir, f } = setup();
+    await killWorker(dir, "w1", { caller: { env, force: false }, reason: "stuck loop", deps: f.deps });
+    expect(loadStatus(dir, "w1")).toMatchObject({ state: "killed", endKillReason: "stuck loop" });
+  });
+
+  it("TTY without a reason: allowed", async () => {
+    const { dir, f } = setup();
+    await killWorker(dir, "w1", { caller: { env, force: false }, interactive: true, deps: f.deps });
+    expect(f.signalled).toEqual(["w1"]);
   });
 });
 

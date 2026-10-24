@@ -244,7 +244,7 @@ describe("worker verbs: output and exit codes (temp PAI_HOME)", () => {
     expect(await runCli(GROUPS, ["worker", "pending", "--gate"], io)).toBe(0);
   });
   it("an unknown worker is exit 1 with one sentence and the next command", async () => {
-    for (const argv of [["verify", "nope"], ["kill", "nope"], ["discard", "nope"], ["say", "nope", "hi"], ["log", "nope"]]) {
+    for (const argv of [["verify", "nope"], ["kill", "nope", "--reason", "test"], ["discard", "nope"], ["say", "nope", "hi"], ["log", "nope"]]) {
       errs.length = 0;
       expect(await runCli(GROUPS, ["worker", ...argv], io), argv.join(" ")).toBe(1);
       expect(errs.join("\n")).toMatch(/pai: .*nope/);
