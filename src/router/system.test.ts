@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import http from "node:http";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -364,5 +364,27 @@ describe("cockpit system http", () => {
     });
     expect(body).toContain("503");
     srv.close();
+  });
+});
+
+describe("SystemMonitor ring without a cockpit page", () => {
+  it("fills the ring across hours nobody polls /cockpit/system (02:00-06:00 local gap)", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-24T00:00:00Z"), toFake: ["setInterval", "clearInterval", "Date"] });
+    const d = dir();
+    try {
+      const file = join(d, "ring.jsonl");
+      const m = new SystemMonitor({ file, run: runner(true).run, now: () => Date.now() });
+      await m.current(); // a page was open at 00:00Z, then closed
+      const rows = () => readFileSync(file, "utf8").trim().split("\n").length;
+      for (let i = 0; i < 120; i++) await vi.advanceTimersByTimeAsync(MIN); // 2 h, no poll
+      expect(rows()).toBe(1); // the gap
+      const stop = m.startRing();
+      for (let i = 0; i < 120; i++) await vi.advanceTimersByTimeAsync(MIN);
+      stop();
+      expect(rows()).toBeGreaterThanOrEqual(100); // one sample a minute
+    } finally {
+      vi.useRealTimers();
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

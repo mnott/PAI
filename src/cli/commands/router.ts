@@ -157,6 +157,7 @@ const runCommand: CommandDef = {
       },
     });
     const system = new SystemMonitor();
+    system.startRing(); // the ring must not depend on an open cockpit page
     // cockpit Models cards: the 5 s ring of live readings per running runtime (runtime-samples.ts)
     const sampler = createRuntimeSampler(
       routerSamplerDeps(() => sharedScheduler().snapshot(), () => sampleCfg().engineStatusTimeoutMs),
