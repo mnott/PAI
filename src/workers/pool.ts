@@ -38,8 +38,9 @@
  */
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, statSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { request as httpRequest, type IncomingMessage } from "node:http";
-import { dirname, join } from "node:path";
+import { dirname, homedir, join } from "node:path";
 import { ANTHROPIC_NATIVE, DEFAULT_POOL_PORT, defaultWorkersConfig, type WorkersConfig, type WorkerProvider } from "./config.js";
 import { grantsChrome, mcpServersFromToolGrants } from "./mcp.js";
 import type { ParsedRunnerArgs } from "./args.js";
@@ -72,6 +73,10 @@ export interface PoolSettings {
   idleKillSec: number;
   /** The old multi-task continuation path; spares are the default use of the pool. */
   continuation: boolean;
+  /** Seconds between login-credential change checks (0 = off): a changed credential retires the spares (2026-10-24: spares kept serving on an expired OAuth session). */
+  credWatchSec: number;
+  /** Seconds a drain (self-restart on a newer build) waits for running tasks before it proceeds anyway (0 = proceed at once). */
+  drainTimeoutSec: number;
 }
 
 /** Pool fallbacks when a config names none — the shipped defaults file
@@ -89,6 +94,8 @@ export function poolSettings(config: WorkersConfig): PoolSettings {
     spares: p?.spares ?? d.spares ?? 0,
     idleKillSec: p?.idleKillSec ?? d.idleKillSec ?? 1800,
     continuation: p?.continuation === true,
+    credWatchSec: p?.credWatchSec ?? d.credWatchSec ?? 30,
+    drainTimeoutSec: p?.drainTimeoutSec ?? d.drainTimeoutSec ?? 120,
   };
 }
 
@@ -158,6 +165,51 @@ export interface PoolState {
 /** True when the bundle on disk is newer than the one the host started from (a build landed since). */
 export function poolHostStale(startedMtimeMs: number | undefined, diskMtimeMs: number | null): boolean {
   return startedMtimeMs !== undefined && diskMtimeMs !== null && diskMtimeMs > startedMtimeMs;
+}
+
+// ---------------------------------------------------------------------------
+// Login credentials — the change stamp spares must not outlive
+// ---------------------------------------------------------------------------
+
+/**
+ * A task result that says the login is gone rather than the task having failed:
+ * the exact strings Claude Code prints when its OAuth session died
+ * ("Failed to authenticate: OAuth session expired and could not be refreshed",
+ * "Not logged in"; 2026-10-24: every Anthropic worker on stale pool spares).
+ */
+export function looksLikeAuthFailure(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return /Failed to authenticate|Not logged in|OAuth session expired/i.test(text);
+}
+
+/**
+ * The login credential's change stamp: the keychain item "Claude Code-credentials"
+ * (its `mdat` attribute) plus the mtime of ~/.claude/.credentials.json when that
+ * file exists. A value that changes means the login changed (re-login, refresh,
+ * the file moved aside) — spares started under the old credential are stale.
+ * null when neither source is readable (a host with no login to watch).
+ */
+export function credentialChangeStamp(
+  home: string = homedir(),
+  username: string = process.env.USER || process.env.LOGNAME || "",
+  run: (cmd: string, args: string[]) => string = (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", timeout: 5000 })
+): string | null {
+  const parts: string[] = [];
+  if (username) {
+    try {
+      const out = run("security", ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-g"]);
+      const m = out.match(/"mdat"\s*=\s*"([^"]*)"/);
+      if (m?.[1]) parts.push(`keychain:${m[1]}`);
+    } catch {
+      /* no keychain item (or no security CLI): the file below still counts */
+    }
+  }
+  try {
+    parts.push(`file:${statSync(join(home, ".claude", ".credentials.json")).mtimeMs}`);
+  } catch {
+    /* no file credential */
+  }
+  return parts.length ? parts.join("|") : null;
 }
 
 /** Local `YYYY-MM-DD HH:MM:SS` of a bundle mtime (ledger style). */

@@ -101,6 +101,8 @@ import {
   writeReloadMarker,
   clearReloadMarker,
   poolHostStale,
+  credentialChangeStamp,
+  looksLikeAuthFailure,
   type PoolSlotRecord,
   type PoolSpareRecord,
   type PoolState,
@@ -346,6 +348,20 @@ export interface PoolHostOptions {
   bundleStableMs?: number;
   /** Called after the replacement answered; production exits the process. */
   onReloaded?: () => void;
+  /**
+   * The login credential's change stamp (keychain mdat + ~/.claude/.credentials.json mtime),
+   * null when there is none to watch. Tests inject; production: credentialChangeStamp().
+   */
+  credStamp?: () => string | null;
+  /** Seconds between credential checks (settings.credWatchSec when unset); 0 = off. */
+  credWatchSec?: number;
+  /**
+   * Start a task on a fresh non-pooled worker (the client's fresh-spawn path).
+   * Called when a spare's task fails with an auth error: the spare is retired
+   * and the task retried once outside the pool. Unset = no retry (the failed
+   * answer stands; the client's own fallback still applies).
+   */
+  retryFresh?: (task: PoolTaskRequest) => Promise<PoolTaskResponse>;
 }
 
 export interface PoolHost {
@@ -372,6 +388,11 @@ export interface PoolHost {
   refreshSpares(): number;
   /** Reload onto a newer bundle when one is on disk and no slot is busy; true when it did. */
   checkReload(): Promise<boolean>;
+  /**
+   * Retire idle spares and mark busy ones for retirement after their task.
+   * Runs on the credential watch when the login credential changed; tests drive it directly.
+   */
+  retireSpares(why: string): number;
   /** Resolves when every spare start in flight has finished (tests). */
   settle(): Promise<void>;
 }
@@ -465,8 +486,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   mkdirSync(logDir, { recursive: true });
 
   const slots = new Map<string, PoolSlotSession>();
-  /** Spares by spareKey(repo, provider, model): pre-started task-less workers, one task each. */
-  const spares = new Map<string, SpareEntry[]>();
+  /** Spares by spare id: pre-started task-less workers, one task each; the spareKey groups them for claims. */
+  const spares = new Map<string, SpareEntry>();
   const pendingStarts = new Set<Promise<void>>();
   let spareSeq = 0;
   const state: PoolState = {
@@ -496,7 +517,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   const persist = (): void => {
     state.updatedAt = nowStamp(now());
     state.slots = [...slots.values()].map((s) => s.record);
-    state.spares = [...spares.values()].flat().map((e) => e.rec);
+    state.spares = [...spares.values()].map((e) => e.rec);
     if (owned) writePoolState(state, poolStatePath(logDir));
   };
 
@@ -722,14 +743,33 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
   };
 
   const discardSpare = (e: SpareEntry, why: string): void => {
-    const key = spareKey(e.rec.repo, e.rec.provider, e.rec.model);
-    const list = (spares.get(key) ?? []).filter((x) => x !== e);
-    if (list.length) spares.set(key, list);
-    else spares.delete(key);
+    if (!spares.delete(e.rec.id)) return;
     if (e.session && !e.session.dead) e.session.kill();
     removeSpareWorktree(e.rec.repo, e.rec.dir, e.rec.branch);
     persist();
     appendLedger(ledger, "WORKER-POOL-SPARE-END", { spare: e.rec.id, provider: e.rec.provider, note: why });
+  };
+
+  /**
+   * Retire spares: idle ones now, busy ones once their task ends (the task
+   * finishes on its way; the entry then goes). Driven by the credential watch
+   * when the login changed — a spare holds the credential its process started
+   * with, and a re-login does not reach it (2026-10-24: stale spares served
+   * every Anthropic task with "Failed to authenticate").
+   */
+  const retireSpares = (why: string): number => {
+    let n = 0;
+    for (const e of [...spares.values()]) {
+      if (e.retiring) continue;
+      e.retiring = true;
+      if (e.rec.state === "ready" && e.session && !e.session.busy && !e.session.dead) {
+        discardSpare(e, why);
+        n++;
+      } else {
+        appendLedger(ledger, "WORKER-POOL-SPARE-RETIRE", { spare: e.rec.id, provider: e.rec.provider, note: why });
+      }
+    }
+    return n;
   };
 
   /** Start one spare: worktree from the repo's HEAD, claude waiting for its first turn. */
@@ -757,8 +797,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       state: "starting",
     };
     const entry: SpareEntry = { rec, session: null };
-    const key = spareKey(repo, providerName, model);
-    spares.set(key, [...(spares.get(key) ?? []), entry]);
+    spares.set(sid, entry);
     persist();
     let session: PoolSlotSession | null = null;
     try {
@@ -773,7 +812,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     persist();
     appendLedger(ledger, "WORKER-POOL-SPARE", { spare: sid, provider: providerName, model, pid: session.pid, cwd: wt.dir, base: wt.base.slice(0, 8) });
     void session.waitExit().then(() => {
-      if (rec.state === "ready" && (spares.get(key) ?? []).includes(entry)) discardSpare(entry, "spare process exited");
+      if (rec.state === "ready" && spares.get(rec.id) === entry) discardSpare(entry, "spare process exited");
     });
   };
 
@@ -819,21 +858,19 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
   const refreshSpares = (): number => {
     let n = 0;
-    for (const list of [...spares.values()]) {
-      for (const e of [...list]) {
-        if (e.rec.state !== "ready" || !e.session || e.session.dead || e.session.busy) continue;
-        let head = "";
-        try {
-          head = git(e.rec.repo, ["rev-parse", "HEAD"]);
-        } catch {
-          continue;
-        }
-        if (head === e.rec.base) continue;
-        if (refreshSpare(e, head)) n++;
-        else {
-          discardSpare(e, "stale: refresh failed");
-          topUp(e.rec.repo, e.rec.provider, e.rec.model);
-        }
+    for (const e of [...spares.values()]) {
+      if (e.rec.state !== "ready" || !e.session || e.session.dead || e.session.busy) continue;
+      let head = "";
+      try {
+        head = git(e.rec.repo, ["rev-parse", "HEAD"]);
+      } catch {
+        continue;
+      }
+      if (head === e.rec.base) continue;
+      if (refreshSpare(e, head)) n++;
+      else {
+        discardSpare(e, "stale: refresh failed");
+        topUp(e.rec.repo, e.rec.provider, e.rec.model);
       }
     }
     return n;
@@ -853,8 +890,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const repo = repoRootOf(task.cwd);
     if (!repo) return { reason: "not-git" };
     const key = spareKey(repo, task.provider, task.model);
-    const list = spares.get(key) ?? [];
-    const ready = list.find((e) => e.rec.state === "ready" && e.session && !e.session.dead && !e.session.busy);
+    const list = [...spares.values()].filter((e) => spareKey(e.rec.repo, e.rec.provider, e.rec.model) === key);
+    const ready = list.find((e) => e.rec.state === "ready" && !e.retiring && e.session && !e.session.dead && !e.session.busy);
     if (!ready) {
       topUp(repo, task.provider, task.model); // the next run of this key finds one
       return { reason: list.length ? "starting" : "no-spare" };
