@@ -153,6 +153,16 @@ power:
     hysteresisPct: 10
     # Readings the draining-on-AC check looks back over (10 × 60 s = 10 min).
     drainWindowReadings: 10
+    # Benchmark runs (strata-bench, the night queue, any run labelled benchmark)
+    # are never paused: telemetry is recorded once a minute and the guard warns.
+    # Last resort, leaving time to save: stop at or below this percent ...
+    benchmarkStopBelowPct: 15
+    # ... or earlier when the drain rate projects this percent ...
+    benchmarkProjectFloorPct: 10
+    # ... within this many minutes.
+    benchmarkProjectMins: 20
+    # A stopped benchmark item gets this long after SIGTERM to write its files.
+    benchmarkSaveSecs: 120
 
 # Worker settings.
 workers:

@@ -92,12 +92,14 @@ export function batteryGuardRefusal(
   logDir: string,
   name: string,
   now: number = Date.now(),
-  refusal: string | null = batteryGateRefusal(now)
+  refusal?: string | null,
+  benchmark = false
 ): string | null {
+  if (refusal === undefined) refusal = batteryGateRefusal(now, benchmark);
   if (!local || !refusal) return null;
   appendLedger(ledgerPath(logDir), "BATTERY-GATE-REFUSED", { provider: name, reason: refusal });
   return (
-    `provider "${name}" is a local (loopback) provider and the battery guard has paused new local-model work: ` +
+    `provider "${name}" is a local (loopback) provider and the battery guard has ${benchmark ? "stopped benchmark runs" : "paused new local-model work"}: ` +
     `${refusal}. This run is refused instead of starting.\n` +
     `Raise power.batteryGuard.pauseBelowPct, or set power.batteryGuard.enabled: false, in config.yaml.`
   );

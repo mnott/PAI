@@ -43,6 +43,7 @@ import {
   stepDownOrchestratorModel,
   routeClassOf,
 } from "./model.js";
+import { isBenchmarkLabel } from "../../daemon/battery-guard.js";
 import { releasePane } from "./pane-handles.js";
 import {
   BatteryGuardRefusedError,
@@ -213,7 +214,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // battery guard (src/daemon/battery-guard.ts): while the guard has paused
   // new local-model work, a run resolved onto a local provider is refused
   // with the reason; remote providers are untouched.
-  const batteryWhy = batteryGuardRefusal(isLoopbackProvider(target.provider), logDir, target.providerName);
+  const batteryWhy = batteryGuardRefusal(isLoopbackProvider(target.provider), logDir, target.providerName, Date.now(), undefined, isBenchmarkLabel(opts.label));
   if (batteryWhy) throw new BatteryGuardRefusedError(batteryWhy);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
   if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";

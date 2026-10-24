@@ -23,6 +23,10 @@ process.env.PAI_WORKERS_YAML = join(home, "workers.yaml");
 
 const {
   parsePmsetBatt,
+  parseIoregPower,
+  evaluateBenchmark,
+  isBenchmarkLabel,
+  drainRatePctPerMin,
   evaluateBattery,
   emptyBatteryState,
   drainLine,
@@ -111,18 +115,18 @@ describe("evaluateBattery", () => {
 
   it("hysteresis: stays paused inside the band, resumes only above pauseBelowPct + hysteresisPct", () => {
     let s = evaluateBattery(emptyBatteryState(), r(0, 25, "battery"), cfg).state;
-    // 30 = pauseBelowPct + hysteresisPct: not above the line yet
-    let v = evaluateBattery(s, r(60_000, 30, "battery"), cfg);
+    // 35 = pauseBelowPct + hysteresisPct: not above the line yet
+    let v = evaluateBattery(s, r(60_000, 35, "battery"), cfg);
     expect(v.resumed).toBe(false);
     expect(v.state.phase).toBe("paused");
-    v = evaluateBattery(v.state, r(120_000, 35, "battery"), cfg);
+    v = evaluateBattery(v.state, r(120_000, 36, "battery"), cfg);
     expect(v.resumed).toBe(true);
     expect(v.state.phase).toBe("ok");
   });
 
   it("a battery hovering at the threshold re-pauses only after a full resume", () => {
     let s = evaluateBattery(emptyBatteryState(), r(0, 25, "battery"), cfg).state;
-    s = evaluateBattery(s, r(60_000, 35, "battery"), cfg).state; // resumed above the line
+    s = evaluateBattery(s, r(60_000, 36, "battery"), cfg).state; // resumed above the line
     const v = evaluateBattery(s, r(120_000, 25, "battery"), cfg); // back at the threshold
     expect(v.paused).toBe(true);
     expect(v.state.phase).toBe("paused");
@@ -145,9 +149,9 @@ describe("evaluateBattery", () => {
     let v = evaluateBattery(s, r(60_000, 12, "battery"), cfg);
     expect(v.stopped).toBe(true);
     expect(v.state.phase).toBe("stopped");
-    v = evaluateBattery(v.state, r(120_000, 30, "battery"), cfg); // exactly the line: still held
+    v = evaluateBattery(v.state, r(120_000, 35, "battery"), cfg); // exactly the line: still held
     expect(v.resumed).toBe(false);
-    v = evaluateBattery(v.state, r(180_000, 31, "battery"), cfg);
+    v = evaluateBattery(v.state, r(180_000, 36, "battery"), cfg);
     expect(v.resumed).toBe(true);
     expect(v.state.phase).toBe("ok");
   });
@@ -277,11 +281,12 @@ describe("the worker gate refuses local work while paused", () => {
   });
 
   it("runWorker onto a local provider: refused while the gate file says paused", async () => {
-    let t = 1_760_000_000_000;
-    const reading = (pct: number): BatteryReading => ({ at: t, pct, source: "battery", charge: "discharging" });
+    let t = Date.now();
+    let pct = 90;
+    const reading = (): BatteryReading => ({ at: t, pct, source: "battery", charge: "discharging" });
     const tick = () =>
       batteryGuardTick(logDir, { providers: { up30: { baseUrl: "http://127.0.0.1:45995" } } }, cfg, {
-        read: async () => reading(t),
+        read: async () => reading(),
         now: () => t,
         stop: async () => [],
       });
@@ -292,6 +297,7 @@ describe("the worker gate refuses local work while paused", () => {
     expect(rc).toBe(0);
 
     t += 60_000; // 20 %: paused
+    pct = 20;
     await tick();
     expect(batteryGateRefusal(t)).toContain("battery at 20 %");
     await expect(
@@ -343,6 +349,7 @@ describe("stopLocalWork", () => {
       rc: null,
       secs: null,
       origin: "spawn",
+      procStart: Date.now(),
     };
     saveStatus(logDir, { ...s, ...over });
   };
@@ -373,7 +380,7 @@ describe("stopLocalWork", () => {
     expect(stopped).toEqual(["ollama"]);
     expect(lines).toEqual(["sent SIGTERM to worker loc-live", "ollama: ollama stopped"]);
     const ledger = readFileSync(join(logDir, "ledger.log"), "utf8");
-    expect(ledger).toContain('BATTERY-STOP reason="battery at 11 %"');
+    expect(ledger).toContain('BATTERY-STOP reason=battery at 11 %');
     expect(ledger).toContain("BATTERY-RUNTIME-STOP runtime=ollama ok=1");
   });
 });
@@ -462,4 +469,211 @@ afterAll(() => {
   } catch {
     // best effort
   }
+});
+
+// ---------------------------------------------------------------------------
+// ioreg power telemetry — real output sample
+// ---------------------------------------------------------------------------
+
+describe("parseIoregPower", () => {
+  // captured from this machine 2026-10-24 (ioreg -rn AppleSmartBattery), the lines the parser reads
+  const IOREG =
+    '+-o AppleSmartBattery  <class AppleSmartBattery>\n' +
+    '  | {\n' +
+    '  |   "AdapterDetails" = {"IsWireless"=No,"AdapterID"=0,"AdapterVoltage"=20000,"Watts"=100,"Current"=4990,"Description"="pd charger"}\n' +
+    '  |   "ExternalConnected" = Yes\n' +
+    '  |   "PowerTelemetryData" = {"SystemEnergyConsumed"=19031,"SystemLoad"=68735,"SystemPowerIn"=68514,"BatteryPower"=18446744073709551395,"PowerTelemetryErrorCount"=0}\n' +
+    '  |   "MaxCapacity" = 100\n' +
+    '  |   "CurrentCapacity" = 100\n' +
+    '  |   "BatteryData" = {"CurrentCapacity"=100,"MaxCapacity"=100}\n' +
+    '  | }\n';
+
+  it("adapter watts, SystemPowerIn, SystemLoad, signed battery watts, percent", () => {
+    expect(parseIoregPower(IOREG, 7)).toEqual({
+      at: 7,
+      adapterWatts: 100,
+      systemPowerInW: 68.51,
+      systemLoadW: 68.74,
+      batteryW: -0.22, // 2^64 wrap: BatteryPower=18446744073709551395 is -221 mW
+      pct: 100,
+    });
+  });
+
+  it("no adapter and no telemetry keys: nulls, still a reading", () => {
+    expect(parseIoregPower('  |   "CurrentCapacity" = 41\n', 8)).toEqual({
+      at: 8,
+      adapterWatts: null,
+      systemPowerInW: null,
+      systemLoadW: null,
+      batteryW: null,
+      pct: 41,
+    });
+  });
+
+  it("unrelated output is no reading", () => {
+    expect(parseIoregPower("", 1)).toBeNull();
+    expect(parseIoregPower("ioreg: no matching service", 1)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Benchmark runs: exempt from pause, last-resort stop with time to save
+// ---------------------------------------------------------------------------
+
+describe("benchmark runs", () => {
+  /** Feed readings through the normal machine, then the benchmark rules, as the tick does. */
+  const feed = (readings: BatteryReading[]) => {
+    let s = emptyBatteryState();
+    let nv = evaluateBattery(s, readings[0], cfg);
+    let bv = evaluateBenchmark(nv.state, readings[0], cfg);
+    const out = { nv, bv, stops: 0, warns: 0, reasons: [] as string[] };
+    s = bv.state;
+    for (const x of readings.slice(1)) {
+      nv = evaluateBattery(s, x, cfg);
+      bv = evaluateBenchmark(nv.state, x, cfg);
+      s = bv.state;
+      out.nv = nv;
+      out.bv = bv;
+      if (bv.stop) {
+        out.stops++;
+        out.reasons.push(bv.reason as string);
+      }
+      if (bv.warn) out.warns++;
+    }
+    return out;
+  };
+  // a slow drain: 0.1 %/min never projects below the floor within 20 min
+  const slow = (from: number, n: number): BatteryReading[] =>
+    Array.from({ length: n }, (_, i) => r(i * 60_000, from - Math.floor(i / 10), "battery"));
+
+  it("labels: strata-bench, night queue and bench/benchmark are benchmark; ordinary work is not", () => {
+    for (const l of ["strata-bench q3", "night queue runner", "night-queue", "benchmark run 4", "bench"]) expect(isBenchmarkLabel(l)).toBe(true);
+    for (const l of ["fix the gate", "benchwarmer", "", undefined]) expect(isBenchmarkLabel(l)).toBe(false);
+  });
+
+  it("exemption: at 24 % the normal machine pauses, a benchmark is only warned (once) and not stopped", () => {
+    const o = feed(slow(30, 60)); // 30 % falling to 25 % over an hour
+    expect(o.nv.state.phase).toBe("paused"); // normal local work is held ...
+    expect(o.stops).toBe(0); // ... a benchmark is not stopped
+    expect(o.warns).toBe(1);
+    expect(o.bv.state.benchStopped).toBe(false);
+  });
+
+  it("benchmark stops at benchmarkStopBelowPct (15) in one move and stays latched", () => {
+    expect(cfg.benchmarkStopBelowPct).toBe(15);
+    const o = feed([r(0, 17, "battery"), r(60_000, 16, "battery"), r(120_000, 15, "battery"), r(180_000, 14, "battery")]);
+    expect(o.stops).toBe(1);
+    expect(o.reasons[0]).toContain("benchmarkStopBelowPct 15");
+    expect(o.bv.state.benchStopped).toBe(true);
+  });
+
+  it("drain-rate early trigger: 1 %/min at 40 % projects 20 % in 20 min (no stop); at 29 % it projects 9 % and stops early", () => {
+    const fall = (from: number, perMin: number) => Array.from({ length: 10 }, (_, i) => r(i * 60_000, from - i * perMin, "battery"));
+    // ends at 31 %: 31 - 1*20 = 11 > 10 → no early stop
+    expect(feed(fall(40, 1)).stops).toBe(0);
+    // reaches 30 % on the ninth reading: 30 - 20 = 10 <= 10 → early stop, well above 15 %
+    const o = feed(fall(38, 1));
+    expect(o.stops).toBe(1);
+    expect(o.reasons[0]).toContain("projects 10 %");
+    expect(o.reasons[0]).toContain("1.00 %/min");
+  });
+
+  it("the latch clears only above benchmarkStopBelowPct + hysteresisPct", () => {
+    let s = feed([r(0, 15, "battery")]).bv.state;
+    expect(s.benchStopped).toBe(true);
+    s = evaluateBenchmark(evaluateBattery(s, r(60_000, 25, "ac", "charging"), cfg).state, r(60_000, 25, "ac", "charging"), cfg).state;
+    expect(s.benchStopped).toBe(true); // 25 = 15 + 10: not above
+    s = evaluateBenchmark(evaluateBattery(s, r(120_000, 26, "ac", "charging"), cfg).state, r(120_000, 26, "ac", "charging"), cfg).state;
+    expect(s.benchStopped).toBe(false);
+  });
+
+  it("drainRatePctPerMin: needs a window, ignores a rising battery", () => {
+    expect(drainRatePctPerMin([r(0, 50, "battery"), r(60_000, 49, "battery")], 10)).toBeNull();
+    expect(drainRatePctPerMin(Array.from({ length: 10 }, (_, i) => r(i * 60_000, 50 + i, "ac", "charging")), 10)).toBeNull();
+  });
+});
+
+describe("benchmark stop pass and gate", () => {
+  const bl = join(root, "bench-logs");
+  const providers = { localA: { baseUrl: "http://127.0.0.1:11434" } };
+  const mk = (id: string, label: string): void =>
+    saveStatus(bl, {
+      id,
+      pid: process.pid,
+      label,
+      cwd: bl,
+      term: "",
+      provider: "localA",
+      model: "m",
+      state: "running",
+      started: "2026-10-24 10:00:00",
+      updated: "2026-10-24 10:00:00",
+      turns: 1,
+      tools: 0,
+      last: "x",
+      rc: null,
+      secs: null,
+      origin: "spawn",
+      procStart: Date.now(),
+    } as WorkerStatus);
+
+  it("normal stop skips benchmark runs and keeps the runtime; benchmark stop takes only benchmark runs, waits the save window, then stops runtimes", async () => {
+    mkdirSync(bl, { recursive: true });
+    mk("ordinary", "fix the gate");
+    mk("bench-1", "strata-bench item 7");
+    expect(localKillTargets(bl, providers)).toEqual(["ordinary"]);
+    expect(localKillTargets(bl, providers, true)).toEqual(["bench-1"]);
+
+    const stopped: string[] = [];
+    const common = { stopRuntime: async (n: string) => (stopped.push(n), { ok: true, message: `${n} stopped` }), runtimesToStop: () => ["ollama"], now: () => 1_760_000_000_000 };
+    const killedA: string[] = [];
+    await stopLocalWork(bl, providers, "battery at 11 %", { ...common, killWorker: async (_d, id) => (killedA.push(id), [`sent SIGTERM to ${id}`]) });
+    expect(killedA).toEqual(["ordinary"]);
+    expect(stopped).toEqual([]); // a live benchmark keeps its model
+
+    const killedB: string[] = [];
+    const lines = await stopLocalWork(bl, providers, "battery at 15 %", {
+      ...common,
+      saveMs: 120_000,
+      facts: "pct=15 drainPctPerMin=0.80",
+      killWorker: async (_d, id) => (killedB.push(id), [`sent SIGTERM to ${id}`]),
+    });
+    expect(killedB).toEqual(["bench-1"]);
+    expect(stopped).toEqual(["ollama"]);
+    expect(lines).toEqual(["sent SIGTERM to bench-1", "ollama: ollama stopped"]);
+    const ledger = readFileSync(join(bl, "ledger.log"), "utf8");
+    expect(ledger).toContain("BATTERY-BENCH-STOP reason=battery at 15 % facts=pct=15 drainPctPerMin=0.80");
+  });
+
+  it("the tick: a paused battery leaves benchmark admission open; the 15 % stop closes it, records telemetry, and stops once", async () => {
+    const state = { current: emptyBatteryState() };
+    let t = Date.now();
+    let pct = 24;
+    const benchStops: string[] = [];
+    const tick = () =>
+      batteryGuardTick(bl, { providers }, cfg, {
+        read: async () => ({ at: t, pct, source: "battery", charge: "discharging" }),
+        now: () => t,
+        stop: async () => [],
+        benchmarkLive: () => true,
+        readPower: async (at) => ({ at, adapterWatts: null, systemPowerInW: 0, systemLoadW: 31.5, batteryW: -31.5, pct }),
+        benchStop: async (_d, _p, why, saveMs, facts) => (benchStops.push(`${why}|${saveMs}|${facts}`), ["saved"]),
+      }, state);
+    await tick(); // 24 %: normal work paused, benchmark open
+    expect(batteryGateRefusal(t)).toContain("battery at 24 %");
+    expect(batteryGateRefusal(t, true)).toBeNull();
+    expect(batteryGuardRefusal(true, bl, "localA", t, undefined, true)).toBeNull();
+
+    t += 60_000;
+    pct = 15;
+    await tick();
+    await tick(); // latched: no second stop
+    expect(benchStops).toHaveLength(1);
+    expect(benchStops[0]).toContain("benchmarkStopBelowPct 15)|120000|pct=15");
+    expect(batteryGateRefusal(t, true)).toContain("benchmarkStopBelowPct 15");
+    expect(batteryGuardRefusal(true, bl, "localA", t, undefined, true)).toContain("stopped benchmark runs");
+    const tel = readFileSync(join(home, "battery-telemetry.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(tel.length).toBe(3);
+    expect(tel[1]).toMatchObject({ pct: 15, systemLoadW: 31.5, batteryW: -31.5 });
+  });
 });

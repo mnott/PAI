@@ -277,6 +277,14 @@ export interface PaiDaemonConfig {
       hysteresisPct?: number;
       /** Readings the draining-on-AC check looks back over. */
       drainWindowReadings?: number;
+      /** Benchmark runs: last-resort stop at or below this percent (they are never paused). */
+      benchmarkStopBelowPct?: number;
+      /** Benchmark runs: early stop when the drain rate projects this percent ... */
+      benchmarkProjectFloorPct?: number;
+      /** ... within this many minutes. */
+      benchmarkProjectMins?: number;
+      /** Seconds a stopped benchmark item gets to write its result/progress files. */
+      benchmarkSaveSecs?: number;
     };
   };
 

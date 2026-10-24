@@ -23,6 +23,18 @@
  *
  * Admission resumes only above pauseBelowPct + hysteresisPct (default 10), so
  * a battery hovering at the threshold never opens and closes the gate.
+ * Benchmark / performance runs (strata-bench, the night queue runner, any run
+ * labelled benchmark) are exempt from pause and the normal stop: a paused
+ * machine would corrupt the measurement. For them the guard records telemetry
+ * once a minute (battery-telemetry.jsonl: adapter watts, SystemPowerIn,
+ * SystemLoad, battery watts, percent, from `ioreg -rn AppleSmartBattery`) and
+ * warns at pauseBelowPct. Their last-resort stop leaves time to save: at or
+ * below benchmarkStopBelowPct (default 15), or earlier when the drain rate over
+ * the last drainWindowReadings readings projects benchmarkProjectFloorPct
+ * (default 10) within benchmarkProjectMins (default 20). No new benchmark item
+ * starts; the running item gets SIGTERM and up to benchmarkSaveSecs (default
+ * 120) to write its result/progress files; then PAI-started runtimes stop.
+ *
  * Cloud workers and the operator's interactive sessions are never touched:
  * only headless runs on loopback providers are refused or stopped, and chat
  * panes are skipped by the stop pass.
@@ -33,14 +45,14 @@
  */
 
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { appendLedger } from "../workers/ledger.js";
 import { ledgerPath } from "../workers/paths.js";
 import { isLocalProvider } from "../workers/config.js";
-import { isChatPane, isLive, loadStatuses } from "../workers/status.js";
+import { isChatPane, isLive, loadStatuses, waitForTerminalStatus } from "../workers/status.js";
 import { killTree } from "../workers/kill-tree.js";
 import { readRuntimeCommands, runRuntimeOp, liveRuntimeOpDeps } from "../workers/model-runtimes.js";
 import { readLocalStatus } from "../workers/local-status.js";
@@ -62,6 +74,14 @@ export interface BatteryGuardConfig {
   hysteresisPct: number;
   /** Readings the draining-on-AC check looks back over. Default 10. */
   drainWindowReadings: number;
+  /** Last-resort stop for benchmark runs at or below this percent. Default 15. */
+  benchmarkStopBelowPct: number;
+  /** Early benchmark stop when the drain rate projects this percent ... Default 10. */
+  benchmarkProjectFloorPct: number;
+  /** ... within this many minutes. Default 20. */
+  benchmarkProjectMins: number;
+  /** Seconds a stopped benchmark item gets to write its result/progress files. Default 120. */
+  benchmarkSaveSecs: number;
 }
 
 export const BATTERY_GUARD_DEFAULTS: BatteryGuardConfig = {
@@ -71,6 +91,10 @@ export const BATTERY_GUARD_DEFAULTS: BatteryGuardConfig = {
   stopBelowPct: 12,
   hysteresisPct: 10,
   drainWindowReadings: 10,
+  benchmarkStopBelowPct: 15,
+  benchmarkProjectFloorPct: 10,
+  benchmarkProjectMins: 20,
+  benchmarkSaveSecs: 120,
 };
 
 /** The effective config: the shipped/loaded `power.batteryGuard` block over the code defaults. */
@@ -85,6 +109,10 @@ export function batteryGuardConfig(power: unknown): BatteryGuardConfig {
     stopBelowPct: num("stopBelowPct", BATTERY_GUARD_DEFAULTS.stopBelowPct),
     hysteresisPct: num("hysteresisPct", BATTERY_GUARD_DEFAULTS.hysteresisPct),
     drainWindowReadings: num("drainWindowReadings", BATTERY_GUARD_DEFAULTS.drainWindowReadings),
+    benchmarkStopBelowPct: num("benchmarkStopBelowPct", BATTERY_GUARD_DEFAULTS.benchmarkStopBelowPct),
+    benchmarkProjectFloorPct: num("benchmarkProjectFloorPct", BATTERY_GUARD_DEFAULTS.benchmarkProjectFloorPct),
+    benchmarkProjectMins: num("benchmarkProjectMins", BATTERY_GUARD_DEFAULTS.benchmarkProjectMins),
+    benchmarkSaveSecs: num("benchmarkSaveSecs", BATTERY_GUARD_DEFAULTS.benchmarkSaveSecs),
   };
 }
 
@@ -115,7 +143,7 @@ export function parsePmsetBatt(stdout: string, at: number = Date.now()): Battery
   const source: PowerSource = src[1] === "AC" ? "ac" : "battery";
   // pmset separates the battery line's fields with a tab:
   // `-InternalBattery-0 (id=…)\t92%; charging; …`
-  const batt = /InternalBattery-\d+[^;\n]*;\s*(\d+)%\s*;\s*(charging|discharging|charged|finishing charge)/.exec(stdout);
+  const batt = /InternalBattery-\d+[^\n]*?\s(\d+)%\s*;\s*(charging|discharging|charged|finishing charge)/.exec(stdout);
   const charge: ChargeState =
     batt?.[2] === "charging" || batt?.[2] === "finishing charge" ? "charging"
       : batt?.[2] === "charged" ? "charged"
@@ -135,6 +163,133 @@ export function readBattery(now: number = Date.now()): Promise<BatteryReading | 
 }
 
 // ---------------------------------------------------------------------------
+// ioreg power telemetry (pure parser)
+// ---------------------------------------------------------------------------
+
+export interface PowerTelemetry {
+  at: number;
+  /** AdapterDetails "Watts": what the charger can supply (W); null with no adapter. */
+  adapterWatts: number | null;
+  /** PowerTelemetryData SystemPowerIn (W): drawn from the adapter. */
+  systemPowerInW: number | null;
+  /** PowerTelemetryData SystemLoad (W): what the machine consumes. */
+  systemLoadW: number | null;
+  /** PowerTelemetryData BatteryPower (W): negative = discharging. */
+  batteryW: number | null;
+  /** Top-level CurrentCapacity (percent). */
+  pct: number | null;
+}
+
+/** ioreg prints negative numbers as unsigned 64-bit; read them back signed. */
+function signed64(digits: string): number {
+  return Number(BigInt.asIntN(64, BigInt(digits)));
+}
+
+/**
+ * Parse `ioreg -rn AppleSmartBattery` stdout. Real keys (macOS, 2026-10-24):
+ *   "AdapterDetails" = {...,"Watts"=100,...}
+ *   "PowerTelemetryData" = {...,"SystemLoad"=68735,...,"SystemPowerIn"=68514,...,"BatteryPower"=18446744073709551395}
+ *   "CurrentCapacity" = 100
+ * Telemetry values are milliwatts. Missing keys give null; no AppleSmartBattery
+ * at all gives null for the whole reading.
+ */
+export function parseIoregPower(stdout: string, at: number = Date.now()): PowerTelemetry | null {
+  if (!/"(CurrentCapacity|PowerTelemetryData|AdapterDetails)"/.test(stdout)) return null;
+  const block = (key: string): string => new RegExp(`"${key}"\\s*=\\s*\\{([^\\n]*)\\}`).exec(stdout)?.[1] ?? "";
+  const field = (text: string, key: string): string | null => new RegExp(`"${key}"=(-?\\d+)`).exec(text)?.[1] ?? null;
+  const w = (v: string | null): number | null => (v === null ? null : Math.round((signed64(v) / 1000) * 100) / 100);
+  const tel = block("PowerTelemetryData");
+  const adapter = field(block("AdapterDetails"), "Watts");
+  const cap = /^\s*\|?\s*"CurrentCapacity"\s*=\s*(\d+)/m.exec(stdout)?.[1];
+  return {
+    at,
+    adapterWatts: adapter === null ? null : Number(adapter),
+    systemPowerInW: w(field(tel, "SystemPowerIn")),
+    systemLoadW: w(field(tel, "SystemLoad")),
+    batteryW: w(field(tel, "BatteryPower")),
+    pct: cap === undefined ? null : Number(cap),
+  };
+}
+
+/** One ioreg run; null on failure or off macOS. */
+export function readPowerTelemetry(now: number = Date.now()): Promise<PowerTelemetry | null> {
+  if (process.platform !== "darwin") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile("ioreg", ["-rn", "AppleSmartBattery"], { timeout: 5000, maxBuffer: 4 << 20 }, (err, stdout) =>
+      resolve(err ? null : parseIoregPower(stdout, now))
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark runs (pure)
+// ---------------------------------------------------------------------------
+
+/** A run marked benchmark: its label names strata-bench, the night queue, or says bench/benchmark. */
+export function isBenchmarkLabel(label: string | undefined | null): boolean {
+  return !!label && /strata-bench|night[- ]?queue|\bbench(mark)?\b/i.test(label);
+}
+
+/** Percent per minute lost over the last `windowReadings` readings; null when too short or not falling. */
+export function drainRatePctPerMin(readings: BatteryReading[], windowReadings: number): number | null {
+  const win = readings.filter((x) => x.pct !== null).slice(-windowReadings);
+  const first = win[0];
+  const last = win.at(-1);
+  if (!first || !last || win.length < Math.min(windowReadings, 5)) return null;
+  const mins = (last.at - first.at) / 60_000;
+  if (mins < 4) return null;
+  const rate = ((first.pct as number) - (last.pct as number)) / mins;
+  return rate > 0 ? rate : null;
+}
+
+export interface BenchmarkVerdict {
+  state: BatteryState;
+  /** Warn (log + ledger) that the battery is at pauseBelowPct while a benchmark runs; once per spell. */
+  warn: boolean;
+  /** Last-resort stop starts now (one move; latched until the battery recovers). */
+  stop: boolean;
+  /** Why the stop fired; null without one. */
+  reason: string | null;
+  drainRate: number | null;
+}
+
+/**
+ * Benchmark rules on a state that already holds `r` (evaluateBattery ran
+ * first): warn at pauseBelowPct, stop at benchmarkStopBelowPct or when the
+ * drain rate projects benchmarkProjectFloorPct within benchmarkProjectMins.
+ */
+export function evaluateBenchmark(state: BatteryState, r: BatteryReading, cfg: BatteryGuardConfig): BenchmarkVerdict {
+  const next: BatteryState = { ...state };
+  const none = { state: next, warn: false, stop: false, reason: null, drainRate: null as number | null };
+  if (!cfg.enabled || r.pct === null) return none;
+  const rate = drainRatePctPerMin(state.readings, cfg.drainWindowReadings);
+  none.drainRate = rate;
+  const projected = rate === null ? null : r.pct - rate * cfg.benchmarkProjectMins;
+  const early = projected !== null && projected <= cfg.benchmarkProjectFloorPct;
+  if (next.benchStopped) {
+    if (r.pct > cfg.benchmarkStopBelowPct + cfg.hysteresisPct && !early) next.benchStopped = false;
+    return { ...none, state: next };
+  }
+  let warn = false;
+  if (r.pct <= cfg.pauseBelowPct) {
+    warn = !next.benchWarned;
+    next.benchWarned = true;
+  } else if (r.pct > cfg.pauseBelowPct + cfg.hysteresisPct) {
+    next.benchWarned = false;
+  }
+  let reason: string | null = null;
+  if (r.pct <= cfg.benchmarkStopBelowPct) {
+    reason = `battery at ${r.pct} % (at or below power.batteryGuard.benchmarkStopBelowPct ${cfg.benchmarkStopBelowPct})`;
+  } else if (early && rate !== null) {
+    reason =
+      `battery at ${r.pct} %, draining ${rate.toFixed(2)} %/min: projects ${Math.max(0, Math.round(projected as number))} % ` +
+      `within ${cfg.benchmarkProjectMins} min (floor ${cfg.benchmarkProjectFloorPct} %)`;
+  }
+  if (reason) next.benchStopped = true;
+  return { state: next, warn, stop: reason !== null, reason, drainRate: rate };
+}
+
+// ---------------------------------------------------------------------------
 // The state machine (pure)
 // ---------------------------------------------------------------------------
 
@@ -149,6 +304,10 @@ export interface BatteryState {
   lastDrainWarnAt: number | null;
   /** Epoch ms of the last stop sweep (one sweep per spell, not one per tick). */
   lastStopAt: number | null;
+  /** Benchmark last-resort stop latched (cleared above benchmarkStopBelowPct + hysteresisPct and no projection). */
+  benchStopped: boolean;
+  /** Epoch ms of the last benchmark low-battery warning (once per spell). */
+  benchWarned: boolean;
 }
 
 export const emptyBatteryState = (): BatteryState => ({
@@ -156,6 +315,8 @@ export const emptyBatteryState = (): BatteryState => ({
   readings: [],
   lastDrainWarnAt: null,
   lastStopAt: null,
+  benchStopped: false,
+  benchWarned: false,
 });
 
 /** Readings kept: enough to cover the drain window with slack. */
@@ -189,7 +350,7 @@ export function evaluateBattery(
   const readings = [...state.readings, r].slice(-KEEP_READINGS);
   const next: BatteryState = { ...state, readings };
   let drainWarn = false;
-  if (cfg.enabled && r.source === "ac" && r.pct !== null) {
+  if (cfg.enabled && r.source === "ac" && r.charge !== "charging" && r.pct !== null) {
     const win = readings.slice(-cfg.drainWindowReadings);
     const first = win[0];
     if (win.length >= cfg.drainWindowReadings && first.pct !== null && r.pct <= first.pct - 1) {
@@ -255,6 +416,10 @@ export interface BatteryGateFile {
   source: PowerSource | null;
   /** Why admission is refused while paused/stopped; null when open. */
   reason: string | null;
+  /** Benchmark last-resort stop latched: no new benchmark item starts. */
+  benchStop?: boolean;
+  /** Why; null when not latched. */
+  benchReason?: string | null;
 }
 
 /** What the cockpit reads: the last reading and the drain warning. */
@@ -309,9 +474,19 @@ const pauseReason = (pct: number, cfg: BatteryGuardConfig, stopped: boolean): st
  * Live headless runs on loopback providers, leaves first. Chat panes (the
  * operator's interactive sessions) and cloud providers are never in this list.
  */
-export function localKillTargets(logDir: string, providers: Record<string, { baseUrl: string }>): string[] {
+export function localKillTargets(
+  logDir: string,
+  providers: Record<string, { baseUrl: string }>,
+  /** true = the benchmark runs; false (default) = every other local run. */
+  benchmark = false
+): string[] {
   const statuses = loadStatuses(logDir).filter(
-    (s) => !isChatPane(s) && isLive(s) && (s.state === "running" || s.state === "queued") && isLocalProvider(providers[s.provider]?.baseUrl ?? "")
+    (s) =>
+      !isChatPane(s) &&
+      isLive(s) &&
+      (s.state === "running" || s.state === "queued") &&
+      isLocalProvider(providers[s.provider]?.baseUrl ?? "") &&
+      isBenchmarkLabel(s.label) === benchmark
   );
   const ids = new Set(statuses.map((s) => s.id));
   // deepest first: a parent's kill takes its descendants anyway, but leaves
@@ -333,6 +508,10 @@ export interface BatteryStopDeps {
   /** The runtimes to stop: running local servers whose name is a configured runtime. */
   runtimesToStop?: (logDir: string) => string[];
   now?: () => number;
+  /** Benchmark stop: wait up to this long for each run's own terminal status (it writes result/progress files). */
+  saveMs?: number;
+  /** Benchmark stop: ledger/log facts (percent, drain rate). */
+  facts?: string;
 }
 
 /**
@@ -347,20 +526,37 @@ export async function stopLocalWork(
   deps: BatteryStopDeps = {}
 ): Promise<string[]> {
   const now = deps.now ?? Date.now;
-  const kill = deps.killWorker ?? ((dir, id) => killTree(dir, id, { only: true, by: "battery guard", reason: why }));
+  const benchmark = deps.saveMs !== undefined;
+  const kill =
+    deps.killWorker ??
+    ((dir, id) =>
+      killTree(dir, id, {
+        only: true,
+        by: "battery guard",
+        reason: why,
+        // SIGTERM, then the run's own terminal status is awaited this long: time to save
+        ...(benchmark ? { deps: { waitTerminal: (d: string, i: string) => waitForTerminalStatus(d, i, deps.saveMs) } } : {}),
+      }));
   const lines: string[] = [];
-  for (const id of localKillTargets(logDir, providers)) {
+  const stopEvent = benchmark ? "BATTERY-BENCH-STOP" : "BATTERY-STOP";
+  for (const id of localKillTargets(logDir, providers, benchmark)) {
     try {
       lines.push(...(await kill(logDir, id)));
     } catch (e) {
       lines.push(`worker ${id}: battery stop failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  appendLedger(ledgerPath(logDir), "BATTERY-STOP", { reason: why, workers: lines.length ? lines.join(" | ").slice(0, 400) : "-" }, new Date(now()));
+  appendLedger(
+    ledgerPath(logDir),
+    stopEvent,
+    { reason: why, facts: deps.facts, saved: benchmark ? "SIGTERM + result/progress save window" : undefined, workers: lines.length ? lines.join(" | ").slice(0, 400) : "-" },
+    new Date(now())
+  );
   const stopRuntime =
     deps.stopRuntime ??
     ((runtime) => runRuntimeOp(runtime, "stop", readRuntimeCommands(), liveRuntimeOpDeps, homedir()));
-  const runtimes = (deps.runtimesToStop ?? defaultRuntimesToStop)(logDir);
+  // a normal stop never takes the model out from under a live benchmark run
+  const runtimes = !benchmark && localKillTargets(logDir, providers, true).length ? [] : (deps.runtimesToStop ?? defaultRuntimesToStop)(logDir);
   for (const runtime of runtimes) {
     const r = await stopRuntime(runtime).catch((e: unknown) => ({ ok: false, message: e instanceof Error ? e.message : String(e) }));
     appendLedger(ledgerPath(logDir), "BATTERY-RUNTIME-STOP", { runtime, ok: r.ok ? 1 : 0, message: r.message.slice(0, 200) }, new Date(now()));
@@ -385,6 +581,30 @@ export interface BatteryTickDeps {
   /** Daemon shutdown in progress: no stops, no pause moves. */
   shutdown?: () => boolean;
   stop?: (logDir: string, providers: Record<string, { baseUrl: string }>, why: string) => Promise<string[]>;
+  /** A benchmark run is live (telemetry is recorded and the benchmark rules apply). Default: scan the status files. */
+  benchmarkLive?: (logDir: string) => boolean;
+  /** The benchmark last-resort stop: SIGTERM + save window, then the runtimes. */
+  benchStop?: (logDir: string, providers: Record<string, { baseUrl: string }>, why: string, saveMs: number, facts: string) => Promise<string[]>;
+  /** One ioreg reading; default `ioreg -rn AppleSmartBattery`. */
+  readPower?: (now: number) => Promise<PowerTelemetry | null>;
+}
+
+function liveBenchmark(logDir: string): boolean {
+  return loadStatuses(logDir).some((s) => !isChatPane(s) && isLive(s) && isBenchmarkLabel(s.label));
+}
+
+/** Append one telemetry line (jsonl) next to the guard's other state files. */
+function recordTelemetry(t: PowerTelemetry | null, r: BatteryReading, drainRate: number | null): void {
+  try {
+    mkdirSync(paiHomePath("."), { recursive: true });
+    appendFileSync(
+      paiHomePath("battery-telemetry.jsonl"),
+      JSON.stringify({ at: new Date(r.at).toISOString(), pct: r.pct, source: r.source, ...t, drainPctPerMin: drainRate, at_ms: undefined }) + "\n",
+      "utf8"
+    );
+  } catch {
+    /* telemetry is an extra: never fail a tick over it */
+  }
 }
 
 const daemonState = { current: emptyBatteryState() };
@@ -417,6 +637,15 @@ export async function batteryGuardTick(
         ? null
         : pauseReason(pct, cfg, v.state.phase === "stopped"),
   };
+  // benchmark rules ride the same state: warn / last-resort stop (never a pause)
+  const benchLive = (deps.benchmarkLive ?? liveBenchmark)(logDir);
+  const bv = !(deps.shutdown ?? (() => false))() ? evaluateBenchmark(v.state, r, cfg) : null;
+  if (bv) {
+    state.current = bv.state;
+    gate.benchStop = bv.state.benchStopped;
+    gate.benchReason = bv.state.benchStopped ? (bv.reason ?? readBatteryGate()?.benchReason ?? "battery low") : null;
+  }
+  if (benchLive) recordTelemetry(await (deps.readPower ?? readPowerTelemetry)(now).catch(() => null), r, bv?.drainRate ?? null);
   writeJson(gateFile(), gate);
   writeJson(cockpitFile(), {
     at: new Date(r.at).toISOString(),
@@ -440,6 +669,23 @@ export async function batteryGuardTick(
     process.stderr.write(`[pai-daemon] battery guard: local-model work resumed (${pct ?? "?"} %).\n`);
     appendLedger(ledgerPath(logDir), "BATTERY-RESUME", { pct }, new Date(r.at));
   }
+  if (bv?.warn && benchLive) {
+    process.stderr.write(`[pai-daemon] battery guard: benchmark run in progress at ${pct} % — not paused, telemetry recorded.\n`);
+    appendLedger(ledgerPath(logDir), "BATTERY-BENCH-WARN", { pct, drainPctPerMin: bv.drainRate?.toFixed(2) }, new Date(r.at));
+  }
+  if (bv?.stop && benchLive) {
+    const why = bv.reason ?? "battery low";
+    const facts = `pct=${pct} drainPctPerMin=${bv.drainRate?.toFixed(2) ?? "?"}`;
+    process.stderr.write(`[pai-daemon] battery guard: stopping benchmark run (${why}); no new item starts, ${cfg.benchmarkSaveSecs}s to save.\n`);
+    const lines = await (deps.benchStop ?? ((dir, providers, w, saveMs, f) => stopLocalWork(dir, providers, w, { saveMs, facts: f })))(
+      logDir,
+      workers.providers,
+      why,
+      cfg.benchmarkSaveSecs * 1000,
+      facts
+    );
+    for (const l of lines) process.stderr.write(`[pai-daemon] battery guard benchmark stop: ${l}\n`);
+  }
   if (v.stopped) {
     const why = gate.reason ?? "battery low";
     process.stderr.write(`[pai-daemon] battery guard: stopping local-model work (${why}).\n`);
@@ -459,11 +705,14 @@ export async function batteryGuardTick(
  * not trusted — the guard stops writing when the daemon does, and a dead
  * guard must never hold workers back.
  */
-export function batteryGateRefusal(now = Date.now()): string | null {
+export function batteryGateRefusal(now = Date.now(), benchmark = false): string | null {
   const g = readBatteryGate();
-  if (!g || g.phase === "ok" || !g.reason) return null;
+  if (!g) return null;
   const at = Date.parse(g.at);
   if (Number.isFinite(at) && now - at > 3 * BATTERY_GUARD_DEFAULTS.intervalSecs * 1000) return null;
+  // a benchmark item is exempt from the pause; only the last-resort stop holds it back
+  if (benchmark) return g.benchStop ? (g.benchReason ?? "battery low") : null;
+  if (g.phase === "ok" || !g.reason) return null;
   return g.reason;
 }
 
