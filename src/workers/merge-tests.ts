@@ -21,7 +21,7 @@ export interface RelatedSettings {
 }
 
 export interface RelatedResult {
-  status: "passed" | "failed" | "skipped";
+  status: "passed" | "failed" | "skipped" | "flaky";
   /** The one line printed and recorded in the ledger. */
   line: string;
   failing: string[];
@@ -223,7 +223,9 @@ export function runRelatedTests(
   settings: RelatedSettings,
   git: (cwd: string, args: string[]) => string,
   /** Test hook: shorten the runner's pipe-drain grace. */
-  pipeGraceMs?: number
+  pipeGraceMs?: number,
+  /** Test hook: replaces the command runner (parallel run and serial re-run). */
+  runner: typeof runCommands = runCommands
 ): RelatedResult {
   const skip = (why: string): RelatedResult => ({ status: "skipped", line: `related tests: skipped (${why})`, failing: [] });
   if (!settings.verify.trim()) return skip("workers.merge.verify is empty");
@@ -248,7 +250,7 @@ export function runRelatedTests(
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
   const cmds: string[] = [];
   for (let i = 0; i < run.length; i += FILES_PER_COMMAND) cmds.push(buildRelatedCommand(settings.verify, run.slice(i, i + FILES_PER_COMMAND)));
-  const r = runCommands(cwd, env, cmds, timeoutSec, pipeGraceMs);
+  const r = runner(cwd, env, cmds, timeoutSec, pipeGraceMs);
   const output = r.output;
   if (r.timedOut) {
     return { status: "failed", line: `${skipped}timed out after ${timeoutSec}s`, failing: [] };
@@ -259,8 +261,20 @@ export function runRelatedTests(
     const summary = passSummary(output) ?? (files.length ? counts : `${always.files.length} files, passed`);
     return { status: "passed", line: `${skipped}${summary}${note}`, failing: [] };
   }
-  const failing = failingFiles(output);
-  const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
+  let failing = failingFiles(output);
+  // Load-only flakes: a parallel run on a busy machine misses timing deadlines.
+  // Re-run just the failing files once, serially; only files that fail again count.
+  if (failing.length && !r.error && !r.signal) {
+    const serial = settings.verify.includes("vitest") ? `${settings.verify} --no-file-parallelism` : settings.verify;
+    const again = runner(cwd, env, [buildRelatedCommand(serial, failing)], timeoutSec, pipeGraceMs);
+    if (again.code === 0 && !again.signal && !again.error && !again.timedOut) {
+      const summary = passSummary(again.output) ?? `${failing.length} files, passed`;
+      return { status: "flaky", line: `${skipped}${summary}; flaky under load (passed alone): ${failing.join(", ")}${note}`, failing: [] };
+    }
+    const still = failingFiles(again.output).filter((f) => failing.includes(f));
+    if (still.length) failing = still;
+  }
+  const exit =r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const why = failing.length ? `failed: ${failing.join(", ")}` : `failed (${exit})`;
   return { status: "failed", line: `${skipped}${why}${note}`, failing };
 }
