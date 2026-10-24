@@ -29,8 +29,9 @@ Verify: all three commands print a version. If `npm i -g` later fails with EACCE
 Check: `pai --version`.
 
 ```
-npm i -g @tekmidian/pai          # install
-npm i -g @tekmidian/pai@latest   # upgrade
+npm i -g https://github.com/<owner>/<repo>/releases/latest/download/pai.tgz   # install (the release asset; no npm registry)
+pai update                                  # upgrade to the latest GitHub Release
+pai update --check                          # only report
 ```
 
 Verify: `pai --version` prints a version and `pai more` lists commands. If `pai` is not found, add `$(npm prefix -g)/bin` to PATH in the shell profile and open a new shell.
@@ -86,7 +87,7 @@ On Linux without systemd (containers) run `pai daemon serve` in a terminal or pr
 Check: `aibroker doctor` exits 0. AIBroker is a separate package and PAI's messaging layer (messages between sessions, worker reports, terminal tab names, WhatsApp, Telegram, PAILot). `pai setup` installs it automatically (unless run with `--no-aibroker`); this phase only confirms it. If `aibroker` is not on the PATH or doctor fails:
 
 ```
-npm install -g aibroker@^0.62.4
+npm i -g https://github.com/<owner>/<aibroker-repo>/releases/latest/download/aibroker.tgz
 aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor
 ```
@@ -156,7 +157,7 @@ Verify: `pai worker local` prints the running model and `pai worker route` shows
 ## 9. After any update
 
 ```
-npm i -g @tekmidian/pai@latest
+pai update
 pai reload
 ```
 

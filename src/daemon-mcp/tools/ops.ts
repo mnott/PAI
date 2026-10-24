@@ -264,3 +264,36 @@ export async function batteryStatus(args: { window_hours?: number } = {}): Promi
     return error(e);
   }
 }
+
+export interface ReleaseArgs {
+  repo?: string;
+  bump?: string;
+  dry_run?: boolean;
+}
+
+/** pai release: forge commit + tag, GitHub mirror, GitHub Release. Dry run by default would hide the effect; the caller states dry_run explicitly. */
+export async function release(args: ReleaseArgs): Promise<WorkerToolResult> {
+  try {
+    const { runRelease } = await import("../../release/release.js");
+    const { resolve } = await import("node:path");
+    const r = await runRelease({ repo: resolve(args.repo ?? process.cwd()), bump: args.bump ?? "patch", dryRun: args.dry_run === true });
+    const body = r.lines.join("\n");
+    return r.ok ? text(body) : { content: [{ type: "text", text: body }], isError: true };
+  } catch (e) {
+    return error(e);
+  }
+}
+
+export interface UpdateCheckArgs {
+  package?: string;
+}
+
+/** pai update --check: installed version vs the latest GitHub release; installs nothing. */
+export async function updateCheck(args: UpdateCheckArgs): Promise<WorkerToolResult> {
+  try {
+    const { formatUpdate, updatePackage } = await import("../../release/update.js");
+    return text(formatUpdate(await updatePackage({ package: args.package, check: true })));
+  } catch (e) {
+    return error(e);
+  }
+}

@@ -15,7 +15,7 @@ The plugin includes an install skill; you start it by saying "set up PAI". `/plu
 
 ```bash
 claude --plugin-dir PAI                                  # a clone: git clone <repository URL> PAI
-claude --plugin-dir "$(npm root -g)/@tekmidian/pai"      # after npm i -g @tekmidian/pai
+claude --plugin-dir "$(npm root -g)/@tekmidian/pai"      # after installing the package
 ```
 
 Then tell Claude Code: "set up PAI". The skill walks through the phases below, checks each one first and does only what is missing, and ends with a pass/fail list. Everything it does is also a plain command, so you can follow this page by hand.
@@ -25,7 +25,7 @@ Then tell Claude Code: "set up PAI". The skill walks through the phases below, c
 | Phase | Command | Verify |
 |---|---|---|
 | Prerequisites | `node --version`, `claude --version`, `git --version` | all print a version, Node is 20 or newer |
-| Package | `npm i -g @tekmidian/pai` | `pai --version` |
+| Package | `npm i -g https://github.com/<owner>/<repo>/releases/latest/download/pai.tgz` | `pai --version` |
 | Setup | `pai setup` or `pai setup --yes --storage sqlite` | ends without error; `pai memory search "test"` prints hits or no results, but no error |
 | Daemon | `pai daemon status` | prints `Daemon running` with a PID; if not, `pai daemon install`, then `pai daemon restart`, then `pai daemon logs` |
 | First workers | optional, see [first-workers.md](first-workers.md) | `pai worker providers test anthropic` prints a reply and the time |
@@ -57,7 +57,7 @@ pai daemon serve       # foreground, where there is no service manager
 [AIBroker](https://github.com/mnott/AIBroker) is a separate project and PAI's messaging layer: messages between sessions, worker reports to the session that started them, terminal tab names, and WhatsApp, Telegram and PAILot. PAI runs without it, but none of these work until it is installed:
 
 ```bash
-npm install -g aibroker@^0.62.4
+npm i -g https://github.com/<owner>/<aibroker-repo>/releases/latest/download/aibroker.tgz
 aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor     # every check green, or it says exactly what to fix
 ```
@@ -84,11 +84,12 @@ The router answers land in `config.yaml` as `router.enabled`, `router.port` and 
 ### Updating
 
 ```bash
-npm i -g @tekmidian/pai@latest
+pai update          # latest GitHub Release; pai update --check only reports
+pai update --package aibroker
 pai reload
 ```
 
-`pai reload` restarts PAI's background processes (the daemon and, when they run, the router and the worker pool host) onto the new code; run it after every update. (`pai update` is for a source checkout: it pulls, rebuilds and restarts the daemon.)
+`pai reload` restarts PAI's background processes (the daemon and, when they run, the router and the worker pool host) onto the new code; run it after every update. `pai update` reads the installed version, asks GitHub for the latest release of the package's repository and runs `npm i -g` on its asset when it is newer. (`pai update --source` is for a source checkout: it pulls, rebuilds and restarts the daemon.)
 
 ## macOS from a clean machine
 
@@ -102,7 +103,7 @@ Run end to end on a fresh Ubuntu: setup, daemon, statusline and a real `pai work
 sudo apt install -y nodejs npm tmux
 node --version                  # must be v20 or newer
 npm config set prefix ~/.npm-global && export PATH="$HOME/.npm-global/bin:$PATH"
-npm i -g @tekmidian/pai
+npm i -g https://github.com/<owner>/<repo>/releases/latest/download/pai.tgz
 pai setup --yes --storage sqlite
 ```
 

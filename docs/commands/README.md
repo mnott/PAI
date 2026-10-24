@@ -52,6 +52,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai providers`](providers.md) | List providers (● = active); `providers use NAME` switches |
 | [`pai queue`](queue.md) | Queue small changes, run them on a local worker, review in a batch |
 | [`pai registry`](registry.md) | Maintain the project registry: scan, stats, rebuild |
+| [`pai release`](release.md) | Cut a release: forge commit and tag, GitHub mirror, GitHub Release with the package |
 | [`pai reload`](reload.md) | Restart daemon, router and worker pool host onto the code on disk |
 | [`pai rename`](rename.md) | Give a session a new name |
 | [`pai restore`](restore.md) | Restore PAI data from a backup |
@@ -67,7 +68,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai task`](task.md) | Cross-session task list: list, add, dispatch, done |
 | [`pai tasks`](tasks.md) | Same as task |
 | [`pai topic`](topic.md) | Detect when a conversation moved to another project |
-| [`pai update`](update.md) | Update PAI to the latest version |
+| [`pai update`](update.md) | Update PAI (or another package) to the latest GitHub Release |
 | [`pai worker`](worker.md) | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | [`pai zettel`](zettel.md) | Explore the links between your notes |
 
@@ -312,6 +313,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai registry reconnect` | Reconnect projects to transcripts they lost |
 | `pai registry scan` | Find projects on disk and register them |
 | `pai registry stats` | Count what the registry holds |
+| `pai release` | Cut a release: forge commit and tag, GitHub mirror, GitHub Release with the package |
 | `pai reload` | Restart daemon, router and worker pool host onto the code on disk |
 | `pai rename` | Give a session a new name |
 | `pai restore` | Restore PAI data from a backup |
@@ -399,7 +401,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai tasks schedule uninstall` | Remove the timer |
 | `pai topic` | Detect when a conversation moved to another project |
 | `pai topic check` | Check whether a text belongs to a different project than the current one |
-| `pai update` | Update PAI to the latest version |
+| `pai update` | Update PAI (or another package) to the latest GitHub Release |
 | `pai worker` | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | `pai worker bench` | Compare providers on a set of real tasks |
 | `pai worker capability` | Choose which provider serves a capability (e.g. image) |
