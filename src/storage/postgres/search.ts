@@ -33,22 +33,15 @@ function searchFailure(kind: "keyword" | "semantic", cause: unknown): Error {
 }
 
 /**
- * Full-text keyword search using Postgres tsvector/tsquery with 'simple' dictionary.
+ * Append the project/source/tier filters of `opts` to a WHERE clause being built;
+ * returns the next free `$n` placeholder index.
  */
-export async function searchKeyword(
-  pool: Pool,
-  query: string,
-  opts?: SearchOptions
-): Promise<SearchResult[]> {
-  const maxResults = opts?.maxResults ?? 10;
-
-  const tsQuery = buildPgTsQuery(query);
-  if (!tsQuery) return [];
-
-  const conditions: string[] = ["fts_vector @@ to_tsquery('simple', $1)"];
-  const params: (string | number)[] = [tsQuery];
-  let paramIdx = 2;
-
+function addFilters(
+  opts: SearchOptions | undefined,
+  conditions: string[],
+  params: (string | number)[],
+  paramIdx: number,
+): number {
   if (opts?.projectIds && opts.projectIds.length > 0) {
     const placeholders = opts.projectIds.map(() => `$${paramIdx++}`).join(", ");
     conditions.push(`project_id IN (${placeholders})`);
@@ -66,6 +59,27 @@ export async function searchKeyword(
     conditions.push(`tier IN (${placeholders})`);
     params.push(...opts.tiers);
   }
+  return paramIdx;
+}
+
+/**
+ * Full-text keyword search using Postgres tsvector/tsquery with 'simple' dictionary.
+ */
+export async function searchKeyword(
+  pool: Pool,
+  query: string,
+  opts?: SearchOptions
+): Promise<SearchResult[]> {
+  const maxResults = opts?.maxResults ?? 10;
+
+  const tsQuery = buildPgTsQuery(query);
+  if (!tsQuery) return [];
+
+  const conditions: string[] = ["fts_vector @@ to_tsquery('simple', $1)"];
+  const params: (string | number)[] = [tsQuery];
+  let paramIdx = 2;
+
+  paramIdx = addFilters(opts, conditions, params, paramIdx);
 
   params.push(maxResults);
   const limitParam = `$${paramIdx}`;
@@ -142,23 +156,7 @@ export async function searchSemantic(
   params.push(vecStr);
   const vecParam = `$${paramIdx++}`;
 
-  if (opts?.projectIds && opts.projectIds.length > 0) {
-    const placeholders = opts.projectIds.map(() => `$${paramIdx++}`).join(", ");
-    conditions.push(`project_id IN (${placeholders})`);
-    params.push(...opts.projectIds);
-  }
-
-  if (opts?.sources && opts.sources.length > 0) {
-    const placeholders = opts.sources.map(() => `$${paramIdx++}`).join(", ");
-    conditions.push(`source IN (${placeholders})`);
-    params.push(...opts.sources);
-  }
-
-  if (opts?.tiers && opts.tiers.length > 0) {
-    const placeholders = opts.tiers.map(() => `$${paramIdx++}`).join(", ");
-    conditions.push(`tier IN (${placeholders})`);
-    params.push(...opts.tiers);
-  }
+  paramIdx = addFilters(opts, conditions, params, paramIdx);
 
   params.push(maxResults);
   const limitParam = `$${paramIdx}`;

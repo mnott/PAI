@@ -31,7 +31,6 @@
   "src/memory/indexer/async.ts | src/storage/sqlite/indexer.ts | 7f79b7cd54ca",
   "src/memory/indexer/async.ts | src/storage/sqlite/indexer.ts | b4d8b2c5427a",
   "src/storage/postgres/backend.ts | src/storage/sqlite.ts | 692609a99915",
-  "src/storage/postgres/search.ts | src/storage/postgres/search.ts | 4be1625bac68",
   "src/storage/postgres/tunnels.ts | src/storage/sqlite/tunnels.ts | 3e750bd01659",
   "src/storage/postgres/tunnels.ts | src/storage/sqlite/tunnels.ts | 51ace740b8af",
   "src/zettelkasten/communities.ts | src/zettelkasten/themes.ts | 707277e80444"
