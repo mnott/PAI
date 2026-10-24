@@ -978,7 +978,12 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
   };
   const runTaskInner = async (task: PoolTaskRequest, clientGone?: AbortSignal): Promise<PoolTaskResponse> => {
-    if (drainSince !== null) return { pooled: false, reason: "busy" };
+    if (drainSince !== null) {
+      // a drain refuses new work: counted as a miss so a client waiting on the
+      // claim's start sees the refusal instead of hanging
+      state.spareMisses = { ...(state.spareMisses ?? {}), busy: ((state.spareMisses ?? {}).busy ?? 0) + 1 };
+      return { pooled: false, reason: "busy" };
+    }
     const provider = getProviderOrNative(config, task.provider);
     if (!provider) return { pooled: false, reason: "engine" };
     // the client screens eligibility before shipping the task; the host
@@ -1546,14 +1551,17 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     }
     if (now().getTime() - seenSince < (opts.bundleStableMs ?? 5000)) return false;
     // a busy or claimed slot defers the reload until it is idle: drain (hand out nothing new,
-    // let running tasks finish) for at most drainTimeoutSec, then go anyway
+    // let running tasks finish to their natural end — their own max-minutes still applies —
+    // and reload once they are gone). A newer build never kills running tasks; a forced
+    // reload is the operator's own action (`pai worker pool off`), logged as such.
     if (inflight > 0 || claimed.size || [...slots.values()].some((s) => s.busy || s.record.busyWith)) {
       if (drainSince === null) {
         drainSince = now().getTime();
         appendLedger(ledger, "POOL-HOST-DRAIN", { pid: process.pid, note: "newer build on disk: draining before restart" });
+        // idle spares serve no more work: retire them at once, the replacement recreates them
+        retireSpares("newer build on disk");
       }
-      if (now().getTime() - drainSince < settings.drainTimeoutSec * 1000) return false;
-      appendLedger(ledger, "POOL-HOST-DRAIN", { pid: process.pid, note: `drain timeout after ${settings.drainTimeoutSec}s: restarting with tasks running` });
+      return false;
     }
     reloading = true;
     writeReloadMarker(logDir);

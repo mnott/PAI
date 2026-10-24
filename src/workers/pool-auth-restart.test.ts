@@ -252,23 +252,44 @@ describe("stale build drains and restarts", () => {
     expect(ledger(h.logDir).filter((l) => l.event === "POOL-HOST-DRAIN").length).toBe(1);
   });
 
-  it("restarts anyway once the drain timeout has passed with a task still running", async () => {
+  it("a newer build never kills a running task: the drain waits past any timeout and reloads only once it ends", async () => {
     const repo = makeRepo();
     const mtime = { v: 1000 };
     const clock = { t: Date.parse("2026-10-24T10:00:00Z") };
     const reexec = vi.fn(async () => true);
     const h = makeHost(repo, { mtime, clock, reexec, hold: true });
     await h.host.settle();
-    void h.host.runTask(task(repo));
+    const run = h.host.runTask(task(repo));
     for (let i = 0; i < 100 && !h.host.state().spareClaims; i++) await new Promise((r) => setTimeout(r, 10));
     mtime.v = 2000;
     expect(await h.host.checkReload()).toBe(false);
-    clock.t += 119_000;
+    // far past the old 120 s drain timeout: still draining, the task is kept to its natural end
+    clock.t += 40 * 60_000;
     expect(await h.host.checkReload()).toBe(false);
-    clock.t += 2_000;
+    expect(reexec).not.toHaveBeenCalled();
+    // a new claim during the drain is refused, so the caller takes the fresh-spawn (headless) path
+    expect(await h.host.runTask(task(repo, { id: "w2" }))).toEqual({ pooled: false, reason: "busy" });
+    h.procs[0]!.release();
+    await run;
     expect(await h.host.checkReload()).toBe(true);
     expect(reexec).toHaveBeenCalledTimes(1);
     const notes = ledger(h.logDir).filter((l) => l.event === "POOL-HOST-DRAIN");
-    expect(notes.length).toBe(2);
+    expect(notes.length).toBe(1);
+    // the ledger splits values on spaces, so match the raw line instead
+    expect(readFileSync(ledgerPath(h.logDir), "utf8")).toContain("POOL-HOST-DRAIN pid=");
+    expect(notes[0]!.fields.note).toBe("newer");
+    expect(readFileSync(ledgerPath(h.logDir), "utf8")).not.toContain("restarting with tasks running");
+  });
+
+  it("drain with no tasks running: immediate reload, no drain line", async () => {
+    const repo = makeRepo();
+    const mtime = { v: 1000 };
+    const reexec = vi.fn(async () => true);
+    const h = makeHost(repo, { mtime, reexec });
+    await h.host.settle();
+    mtime.v = 2000;
+    expect(await h.host.checkReload()).toBe(true);
+    expect(reexec).toHaveBeenCalledTimes(1);
+    expect(ledger(h.logDir).filter((l) => l.event === "POOL-HOST-DRAIN").length).toBe(0);
   });
 });

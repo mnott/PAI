@@ -224,6 +224,9 @@ export async function poolOff(logDir: string): Promise<string[]> {
   const { workers } = readWorkersSection();
   const port = poolPort(workers);
   setPoolEnabled(false);
+  // the operator's own forced stop: the only way a host goes down with tasks
+  // running (a newer build on disk drains and waits for them instead)
+  appendLedger(ledgerPath(logDir), "POOL-HOST-OFF", { port, note: "forced stop by `pai worker pool off`" });
   shutdownHost(port);
   const lines = [`routing disabled — every run spawns fresh again`];
   const pidPath = poolPidPath(logDir);
