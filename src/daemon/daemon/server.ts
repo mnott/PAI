@@ -39,6 +39,8 @@ import { handleRequest, sendResponse } from "./handler.js";
 import { loadQueue } from "../../daemon/work-queue.js";
 import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
+import { batteryGuardTimer } from "./state.js";
+import { startBatteryGuard } from "./scheduler.js";
 import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
 // ---------------------------------------------------------------------------
@@ -208,6 +210,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   // file), so it starts with the IPC server too.
   startSessionKeepalive();
 
+  // Battery guard: pmset readings drive the local-work pause/stop (macOS only).
+  startBatteryGuard();
+
   // Model router: restart it whenever its port stops answering (opt-in).
   startRouterSupervisor();
 
@@ -264,6 +269,7 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
     if (indexSchedulerTimer) clearInterval(indexSchedulerTimer);
     if (embedSchedulerTimer) clearInterval(embedSchedulerTimer);
     if (cacheKeepaliveTimer) clearInterval(cacheKeepaliveTimer);
+    if (batteryGuardTimer) clearInterval(batteryGuardTimer);
 
     stopWorker();
 

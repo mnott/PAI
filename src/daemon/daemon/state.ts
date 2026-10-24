@@ -42,6 +42,9 @@ export let lastVaultIndexTime = 0;
 /** Interval timer of the worker prompt-cache keepalive (null = not armed). */
 export let cacheKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
+/** Interval timer of the battery guard tick (null = not armed). */
+export let batteryGuardTimer: ReturnType<typeof setInterval> | null = null;
+
 // ---------------------------------------------------------------------------
 // Notification state
 // ---------------------------------------------------------------------------
@@ -82,6 +85,7 @@ export function setEmbedSchedulerTimer(v: ReturnType<typeof setInterval> | null)
 export function setVaultIndexInProgress(v: boolean): void { vaultIndexInProgress = v; }
 export function setLastVaultIndexTime(v: number): void { lastVaultIndexTime = v; }
 export function setCacheKeepaliveTimer(v: ReturnType<typeof setInterval> | null): void { cacheKeepaliveTimer = v; }
+export function setBatteryGuardTimer(v: ReturnType<typeof setInterval> | null): void { batteryGuardTimer = v; }
 
 // ---------------------------------------------------------------------------
 // Scheduled-pass failures (index / embed / vault)
