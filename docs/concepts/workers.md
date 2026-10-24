@@ -34,6 +34,12 @@ pai worker gc                 # archive old worktrees under refs/pai-archive/ID
   changed; nothing runs only when the merge changed nothing. A failure keeps
   the merge, exits 3 and prints the failing files and the revert command
   (`--no-verify-tests` skips it once).
+  Failing test files are re-run alone once; files that pass alone are reported
+  as `flaky under load (passed alone)` and do not fail the merge. Test files
+  the worker changed always run. When the merge lands in the PAI checkout that
+  is running, `dist/` is rebuilt (`--no-build` or `workers.merge.rebuild: false`
+  skips it; ledger `WORKER-MERGE-BUILD`; a failed build never reverts the
+  merge). Over MCP: `worker_merge`.
   Conflicts only in generated files are regenerated (`workers.merge.generated`,
   `workers.merge.regenerate`), add-only clashes in `workers.merge.union` files
   are union-merged. `discard` throws a branch away.
@@ -41,6 +47,13 @@ pai worker gc                 # archive old worktrees under refs/pai-archive/ID
   leftovers.
 - Other verbs: `say` (message a running worker), `goal`, `resume ID TEXT`
   (continue a finished worker's conversation), `replay`, `kill`, `wait`.
+- **Kill.** `pai worker kill ID --reason TEXT`: a non-interactive caller
+  (a worker, a script, MCP) must give a reason, which is recorded with the
+  stop. `say` to a pooled worker queues a note it reads at its next turn.
+- **Benchmark runs.** A run labelled benchmark (`bench`, `benchmark`,
+  `strata-bench`, night queue) stays on its provider: it never falls through
+  to the cloud or escalates to a higher tier, and it is not held by a
+  [provider hold](providers.md) or paused by the [battery guard](battery-guard.md).
 
 ## The report
 

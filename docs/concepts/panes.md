@@ -118,6 +118,10 @@ and never PAILot, and it never reopens anything.
 - Pane gone, child alive: the child is killed (`side=child`).
 - A running worker that never went through the launcher: `PANE-UNLAUNCHED`.
 - Placement marks: `PANE-VIOLATION` lines.
+- A live worker whose pane entry is missing (a sibling dropped it): the audit
+  registers its pane again (`PANE-REREGISTERED`) instead of killing the
+  worker. Dropping an entry is itself a ledger row (`PANE-ENTRY-DROP`: run,
+  session, caller, reason).
 
 Processes younger than `panes.audit.startGraceSecs` (30) or ended within
 `panes.audit.endGraceSecs` (60) are not judged; a wrapper that outlives its child

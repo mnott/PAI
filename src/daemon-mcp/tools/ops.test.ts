@@ -20,6 +20,12 @@ const m = vi.hoisted(() => ({
   killWorker: vi.fn(async () => ["w-1: stopped"]),
   runWorkerGc: vi.fn(async (_d: string, _o: unknown, out: (s: string) => void) => out("0 archived")),
   poolStatusText: vi.fn(async () => "pool: enabled"),
+  mergeWorker: vi.fn((_d: string, id: string, _o: unknown) => `merged ${id}`),
+  readMergeVerify: vi.fn(() => "npx tsc --noEmit" as string | undefined),
+  RelatedTestsFailedError: class RelatedTestsFailedError extends Error {},
+  batteryCockpitLine: vi.fn(() => "18 % (battery) · local work paused"),
+  readBatteryGate: vi.fn(() => ({ phase: "paused", reason: "battery at 18 %" }) as unknown),
+  liveBenchmarkMarker: vi.fn(() => ({ pid: 9, label: "strata-bench" }) as unknown),
 }));
 
 vi.mock("../../cli/impl/daemon.js", () => m);
@@ -30,11 +36,14 @@ vi.mock("../../memory/run-state.js", () => m);
 vi.mock("../../workers/kill-tree.js", () => m);
 vi.mock("../../workers/gc-run.js", () => m);
 vi.mock("../../workers/pool-cli.js", () => m);
+vi.mock("../../workers/worktree.js", () => m);
+vi.mock("../../workers/workers-config.js", () => m);
+vi.mock("../../daemon/battery-guard.js", () => m);
 vi.mock("../../daemon/pass-priority.js", () => ({ cliEntry: () => "/dist/cli/index.mjs" }));
 vi.mock("../../workers/config.js", () => ({ readWorkersSection: () => ({ workers: {} }) }));
 vi.mock("../../workers/paths.js", () => ({ workersLogDir: () => "/logs" }));
 
-import { daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill } from "./ops.js";
+import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill, workerMerge } from "./ops.js";
 
 const body = (r: { content: Array<{ text: string }> }): string => r.content[0]!.text;
 
@@ -121,5 +130,31 @@ describe("worker_kill, worker_gc, pool_status", () => {
   });
   it("pool status", async () => {
     expect(body(await poolStatus())).toBe("pool: enabled");
+  });
+});
+
+describe("worker_merge", () => {
+  it("uses the configured verify default and the shared gates", async () => {
+    expect(body(await workerMerge({ id: "w-1" }))).toBe("merged w-1");
+    expect(m.mergeWorker).toHaveBeenLastCalledWith("/logs", "w-1", { noCommit: false, verify: "npx tsc --noEmit", verifyTests: true, rebuild: true });
+  });
+  it("flags skip the gates", async () => {
+    await workerMerge({ id: "w-2", no_verify: true, no_verify_tests: true, no_build: true, no_commit: true });
+    expect(m.mergeWorker).toHaveBeenLastCalledWith("/logs", "w-2", { noCommit: true, verify: undefined, verifyTests: false, rebuild: false });
+  });
+  it("a failed related-tests gate is an error that says the merge was kept", async () => {
+    m.mergeWorker.mockImplementationOnce(() => { throw new m.RelatedTestsFailedError("failed: a.test.ts"); });
+    const r = await workerMerge({ id: "w-3" });
+    expect(r).toMatchObject({ isError: true });
+    expect(body(r)).toMatch(/failed: a.test.ts[\s\S]*merge was kept/);
+  });
+});
+
+describe("battery_status", () => {
+  it("reports reading, gate and the benchmark marker", async () => {
+    const t = body(await batteryStatus());
+    expect(t).toMatch(/18 % \(battery\)/);
+    expect(t).toMatch(/gate: paused — battery at 18 %/);
+    expect(t).toMatch(/strata-bench \(pid 9\)/);
   });
 });

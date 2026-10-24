@@ -29,6 +29,38 @@ pai router restart        # the new router takes the port, the old one drains st
 Endpoint and flag reference: [../router.md](../router.md) and
 [../commands/router.md](../commands/router.md).
 
+## Lockout guard
+
+A router that cannot resolve or reach its upstream locks every session out of
+the cloud, so a replacement is checked before it takes over.
+
+- **Successor preflight.** `pai router restart` starts the new router beside
+  the old one. Before it takes the port (and before any startup work) it
+  resolves and TLS-connects to `router.claudeUpstream` and to each enabled
+  cloud provider (no auth, nothing sent). Only the Anthropic upstream blocks;
+  other hosts are reported. A timeout is retried once, and the timeout counts
+  connect progress, so a blocked event loop is not reported as network silence.
+- **Abort.** On failure the new router exits and the old one keeps serving:
+  `router restart aborted: successor cannot reach HOST: CODE; old router PID
+  keeps serving; diag ...`. The diag line compares `lookup`, `resolve4`, the
+  configured DNS servers and `dscacheutil`; a `trace` line gives the probe's
+  start, connect and timer-lateness readings and the loop delay. The ledger
+  gets a `ROUTER-PREFLIGHT-FAIL` row (host, code, diag, trace).
+- **Daemon watchdog.** If `router.watchdog.failStreak` (5) consecutive cloud
+  requests fail with ENOTFOUND, ECONNREFUSED or ETIMEDOUT within 60 s, and the
+  daemon itself can reach the upstream, the daemon restarts the router (once
+  per five minutes). If the daemon cannot reach it either, it logs "network
+  down" and does nothing.
+- **Escape hatch.** Claude Code started without `ANTHROPIC_BASE_URL` talks to
+  Anthropic directly, bypassing the router. When the router is broken, run a
+  plain `claude` in a shell where the variable is unset.
+
+| Surface | What |
+|---|---|
+| CLI | `pai router restart\|status` |
+| Cockpit | router state on the System section |
+| MCP | `router_service` (action `restart`) |
+
 ## The local scheduler
 
 A local engine serves one request at a time. Further requests wait in the router

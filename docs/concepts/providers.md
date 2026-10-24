@@ -80,6 +80,15 @@ provider serves a model on loopback; by default it runs one worker at a time and
 is reached through the [router](router.md). Never name a local provider in a
 command: `--local` picks the running one. See [local models](local-models.md).
 
+## Holding a provider
+
+`pai worker providers hold NAME --reason TEXT` queues new work for a provider
+while running work continues: queued runs show `held: <reason>` in their queue
+line, the pool keeps no idle spares for it, and nothing falls back to another
+provider. Benchmark-labelled runs are not held. `pai worker providers release
+NAME` lifts it. MCP: `worker_providers` with `action: "hold"` (needs `reason`)
+or `"release"`.
+
 ## Independence from one vendor
 
 Every spawn builds its environment from the provider alone: its base URL, token

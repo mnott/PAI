@@ -33,6 +33,7 @@ Orchestration, in reading order:
 - [Local models](concepts/local-models.md): running a model on your own machine
 - [Router](concepts/router.md): usage accounting and the cockpit service
 - [Pool](concepts/pool.md): warm spare workers
+- [Battery guard](concepts/battery-guard.md): local work and the battery
 - [Loop guard and limits](concepts/loop-guard-and-limits.md): stopping runaway runs
 - [Security rules](concepts/security-rules.md): rule files, severities, the audit scan
 - [Lessons](concepts/lessons.md): review-gated notes, promoted to skills

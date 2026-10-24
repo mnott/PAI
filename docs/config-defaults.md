@@ -37,6 +37,8 @@ More on the commands: [config.md](config.md). Worker keys: [workers-config.md](w
 | Cockpit layout | `router.cockpit.layout.*` | Tile and chart geometry, row limits, polling intervals, colour thresholds (`gaugeWarnPct`, `gaugeBadPct`, `hitWarn`, `hitBad`, `errorWarn`, `errorBad`). The arrangement you drag is kept per browser, not in config. |
 | Cockpit probe | `router.cockpit.probe.*` | Local-server probe policy: `timeoutStrikes` (consecutive timeouts before a busy server is shown down), `tcpTimeoutMs` (TCP connect timeout of the probe). |
 | Local model consumers | `models.consumers`, `models.runtimes` | Who uses a runtime, and the start/stop/ready commands `pai models start|stop` run; the shipped defaults configure `ollama` and `docker-model-runner`, your entries win per key ([local models](concepts/local-models.md)). |
+| Battery guard | `power.batteryGuard.*` | Pause and stop thresholds, benchmark last-resort stop, sampling ([battery guard](concepts/battery-guard.md)). |
+| Router watchdog | `router.watchdog.failStreak` (5) | Consecutive upstream network failures before the daemon restarts the router ([router](concepts/router.md)). |
 | Workers (`config.yaml`) | `workers.*`, shipped in `workers.yaml` defaults | Pool, routing budget walls, supervision, capacity and stagger, gc ([worker.md](worker.md)). |
 | Delegation tiers (`workers.yaml`) | `tiers`, `providers.anthropic.models` | The shipped t0/t1/t2 table ([delegation tiers](concepts/delegation-tiers.md)). |
 | Cache keepalive | `sessions.cacheKeepalive.*`, `workers.cacheKeepaliveSecs` | Off by default ([cache-keepalive.md](cache-keepalive.md)). |
