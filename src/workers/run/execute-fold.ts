@@ -268,6 +268,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       render: "stream",
       title: paneTitle(label, target.providerName),
       statusLine: { kind: "worker", id: wid, logDir },
+      // a possible report retry runs after this process ends: the pane closes when the run does
+      hold: headless && a.reportFormat === "ag2" && !(a.noReportRetry ?? false),
     });
   } catch (e) {
     await failRun(e);
@@ -555,6 +557,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       }
     }
   }
+  (spawned as { release?: () => void }).release?.(); // the retry (if any) is over: the held pane may close
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
     const stray = newUntracked(worktree?.dir ?? cwd, untrackedAtStart);
     const chk = checkProof(resultEvent.result, state.bashRuns, stray);

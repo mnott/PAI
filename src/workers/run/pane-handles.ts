@@ -85,12 +85,12 @@ export function paneWaiver(config: { panes?: { required: boolean } }): string | 
 export async function spawnOwned(
   wid: string,
   cmd: string[],
-  o: { env: NodeJS.ProcessEnv; cwd: string; stdio: ["pipe" | "ignore", "pipe", "pipe" | "inherit"] | "inherit"; render?: "plain" | "stream"; title: string; statusLine?: StatusLineSpec }
+  o: { env: NodeJS.ProcessEnv; cwd: string; stdio: ["pipe" | "ignore", "pipe", "pipe" | "inherit"] | "inherit"; render?: "plain" | "stream"; title: string; statusLine?: StatusLineSpec; hold?: boolean }
 ): Promise<ReturnType<typeof spawn>> {
   const pane = paneHandles.get(wid);
   if (!pane || o.stdio === "inherit") return spawn(cmd[0], cmd.slice(1), { env: o.env, cwd: o.cwd, stdio: o.stdio });
   paneHandles.delete(wid);
-  const proc = (await pane.start({ argv: cmd, cwd: o.cwd, env: o.env as Record<string, string | undefined>, stdin: o.stdio[0] === "pipe" ? "pipe" : "ignore", render: o.render ?? "plain", title: o.title, ...(o.statusLine ? { statusLine: o.statusLine } : {}) })).asChild();
+  const proc = (await pane.start({ argv: cmd, cwd: o.cwd, env: o.env as Record<string, string | undefined>, stdin: o.stdio[0] === "pipe" ? "pipe" : "ignore", render: o.render ?? "plain", title: o.title, ...(o.statusLine ? { statusLine: o.statusLine } : {}), ...(o.hold ? { hold: true } : {}) })).asChild();
   if (o.stdio[2] === "inherit") proc.stderr?.pipe(process.stderr);
   return proc;
 }
