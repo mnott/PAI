@@ -23,7 +23,7 @@ async function runPass(name: PassName, sleepMs: number, embed: EmbedPassArgs): P
   try {
     const r = await runMemoryPass(name, embed, run);
     const o = (r as { outcome?: string } | null)?.outcome;
-    result = o === "budget" || o === "yielded" ? { outcome: o, reason: (r as { reason?: string }).reason } : { outcome: "done" };
+    result = o === "budget" || o === "yielded" || o === "failed" ? { outcome: o, reason: (r as { reason?: string }).reason } : { outcome: "done" };
     return r;
   } finally {
     run.release(result);

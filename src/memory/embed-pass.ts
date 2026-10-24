@@ -19,7 +19,7 @@ export const DEFAULT_EMBED_MAX_LOAD = 8;
 /** Modest batch: small enough that a budget or yield check lands within seconds. */
 export const EMBED_PASS_BATCH_SIZE = 25;
 
-export type EmbedPassOutcome = "done" | "budget" | "yielded";
+export type EmbedPassOutcome = "done" | "budget" | "yielded" | "failed";
 
 export interface EmbedPassRecord {
   /** Epoch ms the pass ended. */
@@ -80,6 +80,7 @@ const OUTCOME_TEXT: Record<EmbedPassOutcome, string> = {
   done: "done",
   budget: "budget hit",
   yielded: "yielded",
+  failed: "failed",
 };
 
 /** The `pai daemon status` lines for the embed backlog and the last pass. */
