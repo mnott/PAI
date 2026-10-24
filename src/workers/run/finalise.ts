@@ -38,6 +38,7 @@ import {
 } from "./types.js";
 import { modelFlagArgs } from "./model.js";
 import { ensureToolSearch } from "./argv.js";
+import { hasMalformedToolCall, MALFORMED_TOOL_CALL } from "../malformed-toolcall.js";
 
 /**
  * The finalisation every engine shares: orphaned-children check, state, the
@@ -174,6 +175,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   }
   const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop });
   status.endReason = end.reason;
+  if (end.reason === "exit" && hasMalformedToolCall(report?.notes ?? f.fallbackText)) status.endReason = MALFORMED_TOOL_CALL;
   // PAI itself stopped the child (not the deadline, not a signal): the report says which timer or check did
   if (end.reason === "pai-worker-kill" && !f.timedOut && end.killReason && !succeeded) {
     status.last = shortText(end.killReason, 90);
@@ -182,7 +184,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
   status.claimsContinue = report?.result === "~";
   saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end) });
+  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end), ...(status.endReason === MALFORMED_TOOL_CALL ? { instrument: MALFORMED_TOOL_CALL } : {}) });
 
   if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
 

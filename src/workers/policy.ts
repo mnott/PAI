@@ -294,6 +294,7 @@ export interface EndedRun {
   timedOut?: boolean;
   rc?: number | null;
   state?: string;
+  endReason?: string;
 }
 
 /**
@@ -312,6 +313,7 @@ export function fallThroughReason(
 ): string | null {
   if (!route?.local || route.policy === "local-only") return null;
   if (isBenchmarkLabel(label)) return null;
+  if (status.endReason === "malformed-tool-call") return "instrument fault: malformed tool call";
   if (status.timedOut) return "max-minutes";
   if (status.rc === 143) return null;
   if (status.reportValid === false) return "invalid report";

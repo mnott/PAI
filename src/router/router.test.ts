@@ -586,3 +586,63 @@ describe("router: managed and registered endpoints", () => {
     }
   });
 });
+
+describe("router: malformed local tool call", () => {
+  const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+  const DAMAGED = "<tool_call>\n<=Bash>\n<parameter=command>\nls\n</parameter>\n</function>";
+  const msg = (content: object[], stop: string) => JSON.stringify({ type: "message", role: "assistant", content, stop_reason: stop, usage: { input_tokens: 1, output_tokens: 1 } });
+  const GOOD = msg([{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }], "tool_use");
+  const BAD = msg([{ type: "text", text: DAMAGED }], "end_turn");
+  const run = async (answers: string[], retry = true) => {
+    const seen: string[] = [];
+    const up = http.createServer((req, res) => {
+      const bits: Buffer[] = [];
+      req.on("data", (c) => bits.push(c));
+      req.on("end", () => {
+        seen.push(Buffer.concat(bits).toString());
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(answers[Math.min(seen.length, answers.length) - 1]);
+      });
+    });
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "gyro-m" } } } }).providers;
+    const logs: string[] = [];
+    const r = createRouter(() => prov, "http://127.0.0.1:1", (l) => logs.push(l), undefined, undefined, { instances: () => [], localToolCallRetry: retry });
+    const port = await listen(r);
+    const out = await new Promise<string>((resolve) => {
+      const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "gyro" } }, (x) => {
+        const bits: Buffer[] = [];
+        x.on("data", (c) => bits.push(c));
+        x.on("end", () => resolve(Buffer.concat(bits).toString()));
+      });
+      q.end(JSON.stringify({ model: "gyro-m", messages: [{ role: "user", content: "hi" }] }));
+    });
+    r.close();
+    up.close();
+    return { out, seen, logs };
+  };
+
+  it("damaged then good: the client sees the good tool_use", async () => {
+    const { out, seen, logs } = await run([BAD, GOOD]);
+    expect(JSON.parse(out).content[0].type).toBe("tool_use");
+    expect(seen).toHaveLength(2);
+    const msgs = JSON.parse(seen[1]).messages;
+    expect(msgs).toHaveLength(3);
+    expect(msgs[2]).toMatchObject({ role: "user" });
+    expect(msgs[2].content).toMatch(/damaged format/);
+    expect(logs.some((l) => l.includes("malformed-tool-call retried provider=gyro ok"))).toBe(true);
+  });
+
+  it("damaged twice: passed through unchanged after one retry", async () => {
+    const { out, seen, logs } = await run([BAD, BAD]);
+    expect(JSON.parse(out).content[0].text).toBe(DAMAGED);
+    expect(seen).toHaveLength(2);
+    expect(logs.some((l) => l.includes("malformed-tool-call retried provider=gyro again"))).toBe(true);
+  });
+
+  it("switch off: no retry", async () => {
+    const { out, seen } = await run([BAD, GOOD], false);
+    expect(JSON.parse(out).content[0].text).toBe(DAMAGED);
+    expect(seen).toHaveLength(1);
+  });
+});

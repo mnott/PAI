@@ -137,6 +137,8 @@ export interface RouterConfig {
   watchdog?: { failStreak?: number };
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
+  /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
+  localToolCallRetry?: boolean;
   /**
    * Listen scope: "loopback" (default — 127.0.0.1 only, as always), or beyond
    * it: "tailscale" (the utun address inside 100.64.0.0/10) or an explicit

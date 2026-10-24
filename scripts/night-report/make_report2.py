@@ -48,6 +48,17 @@ def ok_reps(tier, model):
     return [r for r in rep(tier, model) if r.get("status") == "ok"]
 
 
+def fault_reps():
+    """Reps the instrument (server tool-call parser) ended, not the model: counted apart from failures."""
+    rows = []
+    for tier, tlabel in TIERS:
+        for key, label in CLOUD + LOCAL:
+            bad = [r["rep"] for r in rep(tier, key) if r.get("instrument_fault") or r.get("instrument_faults")]
+            if bad:
+                rows.append((label, tlabel, ", ".join(f"rep{n}" for n in bad), len(bad)))
+    return rows
+
+
 CLOUD = [("opus", "Opus"), ("sonnet", "Sonnet"), ("glm", "GLM"), ("glm-flash", "GLM-fast"), ("kimi", "Kimi")]
 LOCAL = [("coder-l", "Coder-L (MTP)"), ("gyro-m", "Gyro-M")]
 TIERS = [("short", "short (20)"), ("easy", "easy (40)"), ("hard", "hard (40)"), ("real", "real tasks (5)")]
@@ -230,6 +241,10 @@ rows = [(m, f"rep{r}", s, p, f"{w:.0f} s", (f"{t:.1f}" if t else "—")) for m, 
 parts.append(table(["model", "rep", "status", "passed", "wall", "tok/s"], rows,
                    "Rep 5 of the real tier finished for both glm (02:29:34) and glm-flash (03:54:55); all 5 reps ok for opus, sonnet, glm, glm-flash."))
 parts.append(img_tag("realtasks.png"))
+fr = fault_reps()
+parts.append("<h2>Instrument faults</h2>")
+parts.append(table(["model", "tier", "reps", "n"], fr or [("none", "", "", 0)],
+                   "Reps ended by a malformed tool call (unparsed tool-call block returned as text: server parser defect). Counted here, not as failures."))
 
 parts.append("<h2>6. Agent harness — wall time and output tok/s</h2>")
 rows = [[c + n1_mark(c) for c in r] for r in agent_wall]
@@ -341,6 +356,9 @@ md.append("")
 md.append("## 4. Cloud pass@1 per model and set")
 md.append("![cloud pass@1](../../.cache/pai/strata-bench/report/out/cloud-pass1.png)")
 md.append("")
+md.append("## Instrument faults")
+md += md_table(["model", "tier", "reps", "n"], fault_reps() or [("none", "", "", 0)])
+md.append("Reps ended by a malformed tool call (server parser defect) are counted here, not as failures.")
 md.append("## 5. Real PAI tasks per rep")
 md += md_table(["model", "rep", "status", "passed", "wall", "tok/s"],
                [(m, f"rep{r}", s, p, f"{w:.0f} s", (f"{t:.1f}" if t else "—")) for m, r, s, p, w, t in real_reps])
