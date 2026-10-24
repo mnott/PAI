@@ -32,7 +32,7 @@ import { registerQuietRunner, startQuietWatcher } from "../quiet.js";
 import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
 import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sync.js";
-import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor } from "./scheduler.js";
+import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
 import { handleRequest, sendResponse } from "./handler.js";
@@ -215,6 +215,9 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Model router: restart it whenever its port stops answering (opt-in).
   startRouterSupervisor();
+
+  // Restart onto a new build when dist changes under us.
+  startDistWatch();
 
   // Connect the federation backend in the background. When storageBackend is
   // "postgres" this retries forever (never silently falls back to SQLite), so

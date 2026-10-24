@@ -28,6 +28,7 @@ import { restartRouter } from "../../router/restart.js";
 import { routerRestartDeps } from "../../router/service-control.js";
 import { checkUpstream, readUpstreamHealth } from "../../router/preflight.js";
 import { cliEntry } from "../pass-priority.js";
+import { createDistWatch, distBuildId, DIST_POLL_MS } from "../dist-watch.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
 import { startWorktreeGc } from "../worktree-gc.js";
@@ -993,4 +994,25 @@ export function startRouterSupervisor(): void {
   }, ROUTER_TICK_MS);
   if (timer.unref) timer.unref();
   process.stderr.write(`[pai-daemon] Router supervisor: every ${ROUTER_TICK_MS / 1000}s\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Self-restart on a new build
+// ---------------------------------------------------------------------------
+
+/**
+ * Restart the daemon when dist changes under it (merge/release rebuilds): the
+ * watcher waits out the debounce and any index/embed pass, then SIGTERMs us;
+ * the shutdown handler closes cleanly and launchd/systemd start the new build.
+ */
+export function startDistWatch(): void {
+  const tick = createDistWatch({
+    readId: () => distBuildId(cliEntry()),
+    now: Date.now,
+    busy: () => indexInProgress || embedInProgress || vaultIndexInProgress,
+    restart: () => void process.kill(process.pid, "SIGTERM"),
+    log: (l) => process.stderr.write(`[pai-daemon] ${l}\n`),
+  });
+  const timer = setInterval(tick, DIST_POLL_MS);
+  if (timer.unref) timer.unref();
 }

@@ -1398,7 +1398,7 @@ function rebuildDist(
     res = { ok: false, ms: 0, tail: (e as Error).message };
   }
   appendLedger(ledgerPath(logDir), "WORKER-MERGE-BUILD", { id, ok: String(res.ok), ms: res.ms, tail: res.tail.replace(/\s+/g, " ").slice(-300) });
-  if (res.ok) return "build: ok (dist rebuilt; router/daemon pick it up)";
+  if (res.ok) return "build: ok (dist rebuilt; the daemon restarts itself on the new build, the router swaps gaplessly within ~30 s)";
   const last = res.tail.split(/\s*\|\s*|\n/).filter(Boolean).pop() ?? "no output";
   return `build: FAILED — dist unchanged: ${last}`;
 }
