@@ -9,9 +9,14 @@ describe("hasMalformedToolCall", () => {
     expect(hasMalformedToolCall("I will read it.\n<tool_call>\n<Read>\n<parameter=file_path>\n/x\n</parameter>")).toBe(true);
     expect(hasMalformedToolCall("<tool_call>\n<Read>\n</function>\n</tool_call>")).toBe(true);
   });
+  it("flags a damaged call truncated before any <parameter= or </function>", () => {
+    // exactly what the live coder-l run of 20261024-145801-15024 ended with
+    expect(hasMalformedToolCall("<tool_call>\n<\n</")).toBe(true);
+  });
   it("ignores a well-formed result", () => {
     expect(hasMalformedToolCall("R\ni=x\nr=+\nz=done")).toBe(false);
     expect(hasMalformedToolCall("mentions <tool_call> only")).toBe(false);
+    expect(hasMalformedToolCall("Ship it — the `tool_call` block was fine, then done.")).toBe(false);
     expect(hasMalformedToolCall(`<tool_call>${"x".repeat(300)}<parameter=a>`)).toBe(false);
     expect(hasMalformedToolCall(undefined)).toBe(false);
   });
