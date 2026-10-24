@@ -9,7 +9,8 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readdirSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
+import { loginUsername } from "../utils/login-username.js";
 import { join, dirname, basename } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
@@ -130,6 +131,8 @@ export interface RouterConfig {
   claudeUpstream: string;
   /** Milliseconds a stopping router waits for in-flight requests before force-closing. Default: 120000. */
   drainMs: number;
+  /** After a handover the old router stops accepting and finishes its in-flight requests; `drainMaxSecs` bounds that (then they end with a retryable error). Default: 1800. */
+  handover?: { drainMaxSecs?: number };
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
   /**
@@ -323,7 +326,7 @@ export interface IdentityConfig {
 
 /** Derive a per-user Postgres database name: pai_<username> */
 function perUserDbName(): string {
-  const username = userInfo().username;
+  const username = loginUsername();
   // Sanitize: only allow alphanumeric and underscore for Postgres identifiers
   const safe = username.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
   return `pai_${safe}`;

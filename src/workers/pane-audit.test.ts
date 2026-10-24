@@ -162,13 +162,53 @@ describe("auditTick", () => {
     await run();
     expect(renderPaneAudit(await run())).toMatch(/WRONG TAB\s+worker w-bad\s+pane BBBBBBBB.*tab 9:1.*host tab 1:2/);
   });
-  it("there is no reopening: a running worker whose pane is gone is a ledger line, nothing else", async () => {
-    const tick = () => auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], running: () => true, ...noLaunches });
-    await tick();
-    expect((await tick())[0].mark).toBe("NO PANE");
-    expect(ledger()).toMatch(/PANE-VIOLATION.*w-1/);
-    expect(ledger()).not.toMatch(/REOPEN/);
-    expect(sent.length).toBe(0);
+  describe("a running worker whose pane vanished", () => {
+    const T0 = new Date("2026-10-24T09:00:00Z");
+    const at = (secs: number) => () => new Date(T0.getTime() + secs * 1000);
+    const mk = (extra: Record<string, unknown>) => (secs: number) =>
+      auditTick(dir, msg, { tabs: async () => tabs({ [H]: "1:2" }), procs: () => [{ id: "w-1", kind: "worker" }], registry: () => [entry("w-1", P1)], running: () => true, now: at(secs), ...noLaunches, ...extra });
+    it("gets a new pane, is not stopped, ledgered PANE-REOPENED", async () => {
+      const reopened: string[] = [];
+      const stopped: string[] = [];
+      const tick = mk({ reopen: async (id: string) => void reopened.push(id), stop: async (id: string) => void stopped.push(id) });
+      await tick(0); // confirming check
+      expect(reopened).toEqual([]);
+      await tick(30);
+      expect(reopened).toEqual(["w-1"]);
+      expect(stopped).toEqual([]);
+      expect(ledger()).toMatch(/PANE-REOPENED.*w-1/);
+      expect(ledger()).not.toMatch(/PANE-STOPPED|PANE-VIOLATION/);
+      expect(sent.length).toBe(0);
+    });
+    it("retries with backoff while the terminal is unreachable, falls back after the grace", async () => {
+      let calls = 0;
+      const stopped: string[] = [];
+      const tick = mk({ reopen: async () => { calls++; throw new Error("iTerm2 is not running"); }, stop: async (id: string) => void stopped.push(id) });
+      await tick(0);
+      await tick(30); // first try fails
+      expect(calls).toBe(1);
+      await tick(35); // inside the backoff: no try
+      expect(calls).toBe(1);
+      await tick(60); // backoff over: second try
+      expect(calls).toBe(2);
+      await tick(300);
+      expect(stopped).toEqual([]); // still within the 600 s grace
+      await tick(700);
+      expect(stopped).toEqual(["w-1"]);
+      expect(ledger()).toMatch(/PANE-REOPEN-FAILED.*w-1/);
+      expect(ledger()).toMatch(/PANE-STOPPED.*w-1/);
+    });
+    it("a later success clears the retry state", async () => {
+      let fail = true;
+      const stopped: string[] = [];
+      const tick = mk({ reopen: async () => { if (fail) throw new Error("down"); }, stop: async (id: string) => void stopped.push(id) });
+      await tick(0);
+      await tick(30);
+      fail = false;
+      await tick(60);
+      expect(ledger()).toMatch(/PANE-REOPENED/);
+      expect(stopped).toEqual([]);
+    });
   });
   it("a worker running without its pane is stopped through the normal end path, ledgered PANE-STOPPED, once", async () => {
     const stopped: string[] = [];

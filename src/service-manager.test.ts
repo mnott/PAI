@@ -2,11 +2,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const spawn = vi.hoisted(() => vi.fn(() => ({ status: 0, stdout: "", stderr: "" })));
 const home = vi.hoisted(() => ({ current: "/real/home" }));
+const userInfoThrows = vi.hoisted(() => ({ on: false }));
 
 vi.mock("node:child_process", async (orig) => ({ ...(await orig<typeof import("node:child_process")>()), spawnSync: spawn }));
 vi.mock("node:os", async (orig) => {
   const os = await orig<typeof import("node:os")>();
-  return { ...os, homedir: () => home.current, userInfo: () => ({ ...os.userInfo(), homedir: "/real/home" }) };
+  return {
+    ...os,
+    homedir: () => home.current,
+    userInfo: () => {
+      // a launchd service has no USER/LOGNAME → os.userInfo() throws
+      // ERR_SYSTEM_ERROR (uv_os_get_passwd ENOENT)
+      if (userInfoThrows.on) throw Object.assign(new Error("uv_os_get_passwd ENOENT"), { code: "ERR_SYSTEM_ERROR" });
+      return { ...os.userInfo(), homedir: "/real/home" };
+    },
+  };
 });
 
 import { serviceManagerAllowed } from "./service-manager.js";
@@ -30,6 +40,19 @@ describe("serviceManagerAllowed", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     expect(serviceManagerAllowed("x")).toBe(true);
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it("userInfo() throws (launchd, no USER/LOGNAME): refuses instead of crashing", () => {
+    home.current = "/real/home";
+    userInfoThrows.on = true;
+    try {
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      expect(() => serviceManagerAllowed("launchctl kickstart -k gui/501/com.pai.pai-daemon")).not.toThrow();
+      expect(serviceManagerAllowed("x")).toBe(false);
+      expect(log.mock.calls[0][0]).toContain("service not (re)loaded because HOME is not the account home");
+    } finally {
+      userInfoThrows.on = false;
+    }
   });
 });
 

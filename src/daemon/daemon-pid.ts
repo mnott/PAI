@@ -13,6 +13,17 @@ import { spawnSync } from "node:child_process";
 import { userInfo } from "node:os";
 import { daemonPidPath } from "../runtime-paths.js";
 
+/** Real uid, or undefined when neither process.getuid() nor os.userInfo() answers
+ *  (a launchd service with no USER/LOGNAME makes userInfo() throw ERR_SYSTEM_ERROR). */
+export function currentUid(): number | undefined {
+  if (process.getuid) return process.getuid();
+  try {
+    return userInfo().uid;
+  } catch {
+    return undefined;
+  }
+}
+
 export const LAUNCHD_LABEL = "com.pai.pai-daemon";
 const SYSTEMD_UNIT = "pai-daemon.service";
 
@@ -67,10 +78,12 @@ export function resolveDaemonPid(
   path: string = daemonPidPath(),
 ): number | undefined {
   if (plat === "darwin") {
-    const uid = process.getuid?.() ?? userInfo().uid;
-    const r = sh("launchctl", ["print", `gui/${uid}/${LAUNCHD_LABEL}`]);
-    const pid = r.status === 0 ? parseLaunchctlPid(r.stdout) : undefined;
-    if (pid) return pid;
+    const uid = currentUid();
+    if (uid !== undefined) {
+      const r = sh("launchctl", ["print", `gui/${uid}/${LAUNCHD_LABEL}`]);
+      const pid = r.status === 0 ? parseLaunchctlPid(r.stdout) : undefined;
+      if (pid) return pid;
+    }
   } else if (plat === "linux") {
     const r = sh("systemctl", ["--user", "show", "-p", "MainPID", SYSTEMD_UNIT]);
     const pid = r.status === 0 ? parseSystemdMainPid(r.stdout) : undefined;

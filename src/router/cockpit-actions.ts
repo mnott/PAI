@@ -17,6 +17,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { withLoginIdentity } from "../workers/run-env.js";
 import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
@@ -726,18 +727,33 @@ export function spawnMemoryRun(
       child = io.spawn(process.execPath, [cliEntry, ...args], {
         detached: true,
         stdio: ["ignore", fd, fd],
-        env: { ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId },
+        // the router may run without USER/LOGNAME/HOME; the CLI then dies in os.userInfo() while loading its config
+        env: withLoginIdentity({ ...process.env, PAI_RUN_BY: "cockpit", PAI_COCKPIT_JOB: jobId }),
       });
     } finally {
       io.closeSync(fd);
     }
     child.on("error", (e) => resolve({ ok: false, message: `cannot start: ${e.message}` }));
     child.on("close", (code, signal) => {
-      const tail = logTailSince(log, 0);
+      const tail = code === 0 ? logTailSince(log, 0) : failureLine(log);
       resolve({ ok: code === 0, message: code === 0 ? tail || `${kind} finished` : `${kind} ended (${code ?? signal})${tail ? ": " + tail : ""}` });
     });
     child.unref();
   });
+}
+
+/** The line that says why a run died: the last error-looking line of the log's tail, else its last line
+ *  (a Node crash ends in "Node.js vX", which says nothing). */
+function failureLine(log: string): string {
+  let text = "";
+  try {
+    text = readFileSync(log, "utf8").slice(-8192);
+  } catch {
+    return "";
+  }
+  const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split(/[\r\n]+/).map((l) => l.trim().replace(/\s+/g, " ")).filter((l) => l && !l.startsWith("at ") && !/^Node\.js v/.test(l));
+  const hit = [...lines].reverse().find((l) => /error|refus|cannot|failed|ENOENT/i.test(l)) ?? lines[lines.length - 1] ?? "";
+  return hit.length > 160 ? hit.slice(0, 159) + "…" : hit;
 }
 
 /** Runs the memory job (hook or the detached CLI), records its outcome in the job file. */

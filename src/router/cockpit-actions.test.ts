@@ -821,6 +821,58 @@ describe("memory run safety", () => {
     rmSync(home, { recursive: true });
   });
 
+  it("spawnMemoryRun gives the CLI a login identity when the router has no USER/LOGNAME/HOME", async () => {
+    const { spawnMemoryRun } = await import("./cockpit-actions.js");
+    const { EventEmitter } = await import("node:events");
+    const home = mkdtempSync(join(tmpdir(), "mem-spawn-"));
+    const saved = { ...process.env };
+    delete process.env.USER; delete process.env.LOGNAME; delete process.env.HOME;
+    let env: NodeJS.ProcessEnv | undefined;
+    try {
+      const io = {
+        spawn: ((_c: string, _a: string[], o: { env: NodeJS.ProcessEnv }) => {
+          env = o.env;
+          const ee = new EventEmitter() as InstanceType<typeof EventEmitter> & { unref(): void };
+          ee.unref = () => {};
+          setImmediate(() => ee.emit("close", 0, null));
+          return ee;
+        }) as never,
+        openSync: (() => 77) as never,
+        closeSync: (() => {}) as never,
+      };
+      await spawnMemoryRun("index", "j1", home, io);
+    } finally {
+      Object.assign(process.env, saved);
+    }
+    expect(env?.USER).toBeTruthy();
+    expect(env?.LOGNAME).toBeTruthy();
+    expect(env?.HOME).toBeTruthy();
+    rmSync(home, { recursive: true });
+  });
+
+  it("a failed memory run names its error line, not the trailing 'Node.js vX' of the crash", async () => {
+    const { spawnMemoryRun } = await import("./cockpit-actions.js");
+    const { EventEmitter } = await import("node:events");
+    const { writeFileSync: wf } = await import("node:fs");
+    const home = mkdtempSync(join(tmpdir(), "mem-spawn-"));
+    const io = {
+      spawn: (() => {
+        wf(join(home, "state", "memory-run.log"), "SystemError [ERR_SYSTEM_ERROR]: uv_os_get_passwd returned ENOENT\n    at userInfo (node:os:305:11)\n\nNode.js v22.16.0\n");
+        const ee = new EventEmitter() as InstanceType<typeof EventEmitter> & { unref(): void };
+        ee.unref = () => {};
+        setImmediate(() => ee.emit("close", 1, null));
+        return ee;
+      }) as never,
+      openSync: (() => 77) as never,
+      closeSync: (() => {}) as never,
+    };
+    const r = await spawnMemoryRun("index", "j1", home, io);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("index ended (1)");
+    expect(r.message).toContain("uv_os_get_passwd");
+    rmSync(home, { recursive: true });
+  });
+
   it("memory.stop does not signal a live pid that is not the recorded run (reused pid)", async () => {
     const { runCockpitAction } = await import("./cockpit-actions.js");
     const home = mkdtempSync(join(tmpdir(), "mem-stop-"));

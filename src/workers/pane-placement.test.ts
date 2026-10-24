@@ -109,3 +109,17 @@ describe("openVerifiedPane without any host", () => {
     await expect(openVerifiedPane(dir, config, "w-res", TERM, {}, ops, seam({ split: "ok" }))).resolves.toContain("S1");
   });
 });
+
+describe("openVerifiedPane with an inherited ITERM_SESSION_ID that died with its terminal", () => {
+  const STALE = "w0t0p0:53AD0E31-0000-4000-8000-000000000000";
+  it("opens in the live host the tty lookup found", async () => {
+    const s = seam({ split: "ok" });
+    await expect(openVerifiedPane(dir, config, "w-stale", TERM, { ITERM_SESSION_ID: STALE } as NodeJS.ProcessEnv, ops, s)).resolves.toContain("S1");
+    expect(s.splits).toBe(1);
+  });
+  it("is refused when no live host is found", async () => {
+    const s = seam({ split: "ok" });
+    await expect(openVerifiedPane(dir, config, "w-stale2", "", { ITERM_SESSION_ID: STALE } as NodeJS.ProcessEnv, ops, s)).rejects.toThrow(/not a live iTerm2 session/);
+    expect(s.splits).toBe(0);
+  });
+});

@@ -99,7 +99,7 @@ function input(over: Partial<RuntimeSamplerInput> = {}): RuntimeSamplerInput {
     sched,
     statuses: [status({})],
     poolState: { hostPid: 1, port: 8798, startedAt: "", updatedAt: "", slots: [], tasksServed: 0, tokensCarried: 0, spares: [{ id: "s1", repo: "/r", provider: "gyro-m", model: "flash-next", dir: "/r/wt", branch: "b", base: "h", pid: 9, createdAt: "", state: "ready" }] },
-    pool: { enabled: true, maxSlots: 3, idleSecs: 900, port: 8798, native: true, spares: 1, idleKillSec: 1800, continuation: false },
+    pool: { enabled: true, maxSlots: 3, idleSecs: 900, port: 8798, native: true, spares: 1, idleKillSec: 1800, continuation: false, credWatchSec: 30, drainTimeoutSec: 120 },
     workers: workersConfig({ "gyro-m": provider({ baseUrl: "http://127.0.0.1:8035", conversationSlots: 4 }), ollama: provider({ baseUrl: "http://127.0.0.1:11434" }) }),
     engine: { "gyro-m": { decode: 73.4, prefill: 715, phase: "idle", parked: 2, slots: 4, reusedPct: 90, lastDecode: 73.4, lastPrompt: null, lastReused: null, lastPromptMs: null, lastUsed: null, gpuMemUsed: null, gpuMemTotal: null, maxContext: null, liveUsed: null } },
     now: 1000,

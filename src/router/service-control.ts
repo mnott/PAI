@@ -10,7 +10,7 @@ import { loadConfig } from "../daemon/config.js";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 import { restartRouter } from "./restart.js";
 import { routerPort } from "./router.js";
-import { probeRouter, routerLogFile, routerPidFile, routerRunningPid, routerSwapArgs, spawnRouter, startHandover } from "./supervisor.js";
+import { probeRouter, readHandoverStatus, routerLogFile, routerPidFile, routerRunningPid, routerSwapArgs, spawnRouter, startHandover } from "./supervisor.js";
 
 export function routerStartText(cliEntry: string): string {
   const pid = routerRunningPid();
@@ -38,7 +38,9 @@ export async function routerRestartText(cliEntry: string): Promise<string> {
     handover: (old) => startHandover(old),
     isUp: () => probeRouter(routerPort(), 500),
   });
-  return `router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms)`;
+  const st = result.oldPid !== undefined ? readHandoverStatus(result.oldPid) : undefined;
+  const finishing = st?.state === "draining" && st.inflight ? `, old router still finishing ${st.inflight} in-flight request(s)` : "";
+  return `router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms${finishing})`;
 }
 
 export function routerStatusText(): string {
