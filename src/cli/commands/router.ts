@@ -34,7 +34,7 @@ import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
 import { routerRestartText, routerStartText, routerStatusText, routerStopText } from "../../router/service-control.js";
 import { LOOPBACK_HOST } from "../../utils/loopback.js";
-import { abortMessage, diagnoseSuccessor, preflightUpstreams } from "../../router/preflight.js";
+import { abortMessage, diagnoseSuccessor, preflightFirst, preflightUpstreams } from "../../router/preflight.js";
 
 const out = (s: string) => void process.stdout.write(s + "\n");
 
@@ -109,239 +109,243 @@ const runCommand: CommandDef = {
       process.stderr.write("pai: router: router.allowedHosts is empty: the cockpit opened by tailnet hostname will be refused (403); add the name to router.allowedHosts\n");
     }
     const token = undefined as string | undefined; // no auth ceremony on the tailnet
-    const rows = cachedRows(usageFile);
-    let schedCache: { at: number; cfg: SchedConfig } | undefined;
-    setSchedConfigSource(() => {
-      if (!schedCache || Date.now() - schedCache.at > 10_000) {
-        let cfg: SchedConfig;
-        try {
-          cfg = schedConfigFrom(loadConfig().router.scheduling);
-        } catch {
-          cfg = schedConfigFrom(undefined);
-        }
-        schedCache = { at: Date.now(), cfg };
-      }
-      return schedCache.cfg;
-    });
-    setParkConfigSource(() => {
+    const replace = Number(ctx.opts.replace ?? 0);
+    const inheritFds = String(ctx.opts["inherit-fds"] ?? "").split(",").filter(Boolean).map(Number);
+    // A successor takes over only if it can itself reach the upstream: a process that cannot resolve api.anthropic.com
+    // (lockout 2026-10-24) must never replace one that can. On failure the old router keeps serving.
+    const preflight = async (): Promise<void> => {
+      if (!replace && !inheritFds.length) return;
+      const cloud = Object.values(readWorkersSection().workers.providers).filter((p) => p.enabled && !p.native && /^https:/.test(p.baseUrl ?? "")).map((p) => p.baseUrl);
+      const { claude, others } = await preflightUpstreams(loadConfig().router.claudeUpstream, cloud);
+      for (const o of others) if (!o.ok) process.stderr.write(`pai: router: preflight: cannot reach ${o.host}: ${o.code}\n`);
+      if (claude.ok) return;
+      const oldPid = replace || process.ppid;
+      const diag = await diagnoseSuccessor(claude.host);
+      process.stderr.write(`pai: router: preflight trace ${JSON.stringify({ ...claude.trace, processStart: Math.round(Date.now() - process.uptime() * 1000) })}\n`);
+      const reason = abortMessage(claude.host, claude.code, oldPid, diag);
+      process.stderr.write(`pai: router: ${reason}\n`);
       try {
-        return parkConfigFrom(loadConfig().router.parking);
+        appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-PREFLIGHT-FAIL", { host: claude.host, code: claude.code ?? "unknown", diag: diag.replace(/\s+/g, "_"), trace: JSON.stringify({ ...claude.trace, processStart: Math.round(Date.now() - process.uptime() * 1000) }) });
       } catch {
-        return parkConfigFrom(undefined);
+        /* ledger is best effort */
       }
-    });
-    // cockpit Models cards: the sampler's policy values (router.samples)
-    const sampleCfg = (): ReturnType<typeof runtimeSampleSettings> => {
-      try {
-        return runtimeSampleSettings(loadConfig().router.samples);
-      } catch {
-        return runtimeSampleSettings(undefined);
-      }
+      if (process.send) process.send({ failed: true, reason: `successor cannot reach ${claude.host}: ${claude.code}`, diag });
+      else if (managed) writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid, state: "failed", reason: `successor cannot reach ${claude.host}: ${claude.code}`, successorPid: process.pid, diag }));
+      await new Promise((r) => setTimeout(r, 100)); // let the IPC message flush
+      process.exit(1);
     };
-    sharedParker().sweep();
-    // per-worker priority and pause: read from the worker's status file at every admission
-    sharedScheduler().control ??= engineControlReader(() => workersLogDir(readWorkersSection().workers));
-    if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
-    // local-server probe policy (router.cockpit.probe), re-read per poll like the other config sources
-    const limits = new LimitsCache({
-      providers: () => readWorkersSection().workers.providers,
-      rows,
-      get probe() {
-        return cockpitProbeSettings();
-      },
-    });
-    const system = new SystemMonitor();
-    system.startRing(); // the ring must not depend on an open cockpit page
-    // cockpit Models cards: the 5 s ring of live readings per running runtime (runtime-samples.ts)
-    const sampler = createRuntimeSampler(
-      routerSamplerDeps(() => sharedScheduler().snapshot(), () => sampleCfg().engineStatusTimeoutMs),
-      () => readWorkersSection().workers,
-      () => workersLogDir(readWorkersSection().workers),
-      () => {
-        const c = system.cachedSample();
-        return c && c.memUsed != null && c.memTotal ? (c.memUsed / c.memTotal) * 100 : null;
-      },
-      sampleCfg
-    );
-    sampler.start();
-    setRuntimeSampler(sampler);
-    // cockpit action endpoint: local server start/stop runs the same code path
-    // as `pai worker local <tier>` / `off` (spawn + wait, detached from the request)
-    setActionHooks({
-      runLocalJob: async (kind, tier) => {
-        const { startTier, stopAll } = await import("./worker-config.js");
-        const { readLocalConfig } = await import("../../workers/local-tiers.js");
-        const { workersYamlPath } = await import("../../workers/workers-config.js");
-        const cfg = readLocalConfig(workersYamlPath());
-        if (kind === "off") return void (await stopAll(cfg));
-        const t = cfg.tiers[tier];
-        if (!t) throw new Error(`no tier "${tier}"`);
-        await startTier(cfg, tier, t);
-      },
-    });
-    // built once: each holds its own TTL cache, so a new one per request would reread every status file on every poll
-    const sessionMap = cachedSessionMap();
-    const workerWindows = cachedWorkerWindows();
-    warmCockpit(rows, sessionMap, workerWindows); // the first build walks every status file: before the port opens, not in a request
-    const endpointHealth = createEndpointHealth(); // one probe cache for the router and the cockpit
-    setEndpointHealth(endpointHealth);
-    const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
-    const cockpit = token ? withCockpitToken(token, serve) : serve;
-    const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
-    const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { hosts, ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp, health: endpointHealth });
-    const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
-    const handler = stalls.wrap(inner);
-    // backstop: a stray exception is logged, it does not take the proxy down
-    process.on("uncaughtException", (e) => process.stderr.write(`pai: router: uncaught exception: ${(e as Error)?.stack ?? String(e)}\n`));
-    return new Promise<number>(() => {
-      // after SIGTERM the open keep-alive sockets stay served by this process, each reply tells its client to reconnect (to the new router)
-      let draining = false;
-      const inflight = trackInflight();
-      const tracked = inflight.wrap(handler);
-      const serving: typeof handler = (req, res) => {
-        if (draining) res.setHeader("Connection", "close");
-        return tracked(req, res);
-      };
-      const server = http.createServer(serving);
-      const tail = remote ? http.createServer(serving) : undefined;
-      const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
-      const replace = Number(ctx.opts.replace ?? 0);
-      const inheritFds = String(ctx.opts["inherit-fds"] ?? "").split(",").filter(Boolean).map(Number);
-      // A successor takes over only if it can itself reach the upstream: a process that cannot resolve api.anthropic.com
-      // (lockout 2026-10-24) must never replace one that can. On failure the old router keeps serving.
-      const preflight = async (): Promise<void> => {
-        if (!replace && !inheritFds.length) return;
-        const cloud = Object.values(readWorkersSection().workers.providers).filter((p) => p.enabled && !p.native && /^https:/.test(p.baseUrl ?? "")).map((p) => p.baseUrl);
-        const { claude, others } = await preflightUpstreams(loadConfig().router.claudeUpstream, cloud);
-        for (const o of others) if (!o.ok) process.stderr.write(`pai: router: preflight: cannot reach ${o.host}: ${o.code}\n`);
-        if (claude.ok) return;
-        const oldPid = replace || process.ppid;
-        const diag = await diagnoseSuccessor(claude.host);
-        process.stderr.write(`pai: router: preflight trace ${JSON.stringify({ ...claude.trace, processStart: Math.round(Date.now() - process.uptime() * 1000) })}\n`);
-        const reason = abortMessage(claude.host, claude.code, oldPid, diag);
-        process.stderr.write(`pai: router: ${reason}\n`);
-        try {
-          appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-PREFLIGHT-FAIL", { host: claude.host, code: claude.code ?? "unknown", diag: diag.replace(/\s+/g, "_"), trace: JSON.stringify({ ...claude.trace, processStart: Math.round(Date.now() - process.uptime() * 1000) }) });
-        } catch {
-          /* ledger is best effort */
-        }
-        if (process.send) process.send({ failed: true, reason: `successor cannot reach ${claude.host}: ${claude.code}`, diag });
-        else if (managed) writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid, state: "failed", reason: `successor cannot reach ${claude.host}: ${claude.code}`, successorPid: process.pid, diag }));
-        await new Promise((r) => setTimeout(r, 100)); // let the IPC message flush
-        process.exit(1);
-      };
-      void preflight().then(() => {
-      // the old router keeps serving through this process's warm-up: it is stopped only now, so the port is refused for one retry interval
-      if (replace > 0) {
-        try {
-          process.kill(replace, "SIGTERM");
-        } catch {
-          /* already gone */
-        }
-      }
-      const claimPidFiles = () => {
-        if (!managed) return;
-        mkdirSync(dirname(routerPidFile()), { recursive: true });
-        writeFileSync(routerPidFile(), String(process.pid));
-        writeFileSync(routerHandoverFile(), String(process.pid));
-      };
-      const bound = inheritFds.length
-        ? new Promise<void>((resolve) => server.listen({ fd: inheritFds[0]! }, resolve))
-        : listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs, intervalMs: 1 });
-      bound.then(() => {
-        claimPidFiles();
-        process.send?.({ ready: true });
-      }, (e: unknown) => {
-        process.stderr.write(`pai: router: ${(e as Error).message}\n`);
-        process.exit(1);
-      });
-      if (tail) {
-        const tailBound = inheritFds.length > 1
-          ? new Promise<void>((resolve) => tail.listen({ fd: inheritFds[1]! }, resolve))
-          : listenRetry(tail, port, addr, { waitMs: waitBindMs, intervalMs: 1 });
-        tailBound.then(async () => {
-          out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
-        }, (e: unknown) => {
-          process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
-          process.exit(1);
-        });
-      }
-      }, (e: unknown) => {
+    const guarded = (): Promise<void> =>
+      preflight().catch((e: unknown) => {
         process.stderr.write(`pai: router: preflight error: ${(e as Error).message}\n`);
         process.exit(1);
       });
-      // a handover keeps the old router alive for its in-flight streams: bounded by router.handover.drainMaxSecs, then they end with a retryable error
-      const bye = (handedOver = false) => {
-        draining = true;
-        const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 1800) * 1000 : loadConfig().router.drainMs;
-        if (handedOver) {
-          writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "draining", inflight: inflight.count() }));
-          process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) (at most ${maxMs / 1000}s)\n`);
-        }
-        void drainServers(tail ? [server, tail] : [server], {
-          timeoutMs: maxMs,
-          idleGraceMs: 1500,
-          onTimeout: () => {
-            const n = inflight.endAll("router restarted, retry the request");
-            if (n) process.stderr.write(`pai: router: drain limit reached, ended ${n} request(s) with a retryable error\n`);
-          },
-        }).then(() => {
-          if (managed) {
-            try {
-              if (readFileSync(routerPidFile(), "utf8").trim() === String(process.pid)) unlinkSync(routerPidFile());
-            } catch {
-              /* ignore */
-            }
+    return preflightFirst(guarded, () => {
+      const rows = cachedRows(usageFile);
+      let schedCache: { at: number; cfg: SchedConfig } | undefined;
+      setSchedConfigSource(() => {
+        if (!schedCache || Date.now() - schedCache.at > 10_000) {
+          let cfg: SchedConfig;
+          try {
+            cfg = schedConfigFrom(loadConfig().router.scheduling);
+          } catch {
+            cfg = schedConfigFrom(undefined);
           }
-          process.exit(0);
-        });
+          schedCache = { at: Date.now(), cfg };
+        }
+        return schedCache.cfg;
+      });
+      setParkConfigSource(() => {
+        try {
+          return parkConfigFrom(loadConfig().router.parking);
+        } catch {
+          return parkConfigFrom(undefined);
+        }
+      });
+      // cockpit Models cards: the sampler's policy values (router.samples)
+      const sampleCfg = (): ReturnType<typeof runtimeSampleSettings> => {
+        try {
+          return runtimeSampleSettings(loadConfig().router.samples);
+        } catch {
+          return runtimeSampleSettings(undefined);
+        }
       };
-      // SIGUSR2: spawn the successor on this router's listening sockets (inherited fds, so the accept queue is never closed), stop accepting once it is ready, drain, exit
-      let handing = false;
-      process.on("SIGUSR2", () => {
-        if (handing || draining) return;
-        const handles = [server, ...(tail ? [tail] : [])].map((s) => (s as unknown as { _handle?: { fd?: number } })._handle?.fd);
-        if (handles.some((fd) => typeof fd !== "number" || fd < 0)) {
-          process.stderr.write("pai: router: handover skipped, listening fd unavailable\n");
-          return;
-        }
-        handing = true;
-        mkdirSync(dirname(routerLogFile()), { recursive: true });
-        const log = openSync(routerLogFile(), "a");
-        const child = spawn(
-          process.execPath,
-          [process.argv[1]!, "router", "run", "--port", String(port), "--inherit-fds", handles.map((_, i) => 3 + i).join(","), ...(usageFile ? ["--usage-file", usageFile] : [])],
-          { detached: true, stdio: ["ignore", log, log, ...(handles as number[]), "ipc"] }
-        );
-        closeSync(log);
-        const giveUp = setTimeout(() => child.kill("SIGKILL"), 30_000);
-        let failedReason: string | undefined;
-        let failedDiag: string | undefined;
-        child.once("exit", () => {
-          clearTimeout(giveUp);
-          if (handing) {
-            handing = false;
-            const reason = failedReason ?? "successor exited before taking over";
-            process.stderr.write(`pai: router: ${reason}, still serving\n`);
-            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason, ...(failedDiag ? { diag: failedDiag } : {}) }));
+      sharedParker().sweep();
+      // per-worker priority and pause: read from the worker's status file at every admission
+      sharedScheduler().control ??= engineControlReader(() => workersLogDir(readWorkersSection().workers));
+      if (managed) mirrorTo(sharedScheduler(), () => workersLogDir(readWorkersSection().workers));
+      // local-server probe policy (router.cockpit.probe), re-read per poll like the other config sources
+      const limits = new LimitsCache({
+        providers: () => readWorkersSection().workers.providers,
+        rows,
+        get probe() {
+          return cockpitProbeSettings();
+        },
+      });
+      const system = new SystemMonitor();
+      system.startRing(); // the ring must not depend on an open cockpit page
+      // cockpit Models cards: the 5 s ring of live readings per running runtime (runtime-samples.ts)
+      const sampler = createRuntimeSampler(
+        routerSamplerDeps(() => sharedScheduler().snapshot(), () => sampleCfg().engineStatusTimeoutMs),
+        () => readWorkersSection().workers,
+        () => workersLogDir(readWorkersSection().workers),
+        () => {
+          const c = system.cachedSample();
+          return c && c.memUsed != null && c.memTotal ? (c.memUsed / c.memTotal) * 100 : null;
+        },
+        sampleCfg
+      );
+      sampler.start();
+      setRuntimeSampler(sampler);
+      // cockpit action endpoint: local server start/stop runs the same code path
+      // as `pai worker local <tier>` / `off` (spawn + wait, detached from the request)
+      setActionHooks({
+        runLocalJob: async (kind, tier) => {
+          const { startTier, stopAll } = await import("./worker-config.js");
+          const { readLocalConfig } = await import("../../workers/local-tiers.js");
+          const { workersYamlPath } = await import("../../workers/workers-config.js");
+          const cfg = readLocalConfig(workersYamlPath());
+          if (kind === "off") return void (await stopAll(cfg));
+          const t = cfg.tiers[tier];
+          if (!t) throw new Error(`no tier "${tier}"`);
+          await startTier(cfg, tier, t);
+        },
+      });
+      // built once: each holds its own TTL cache, so a new one per request would reread every status file on every poll
+      const sessionMap = cachedSessionMap();
+      const workerWindows = cachedWorkerWindows();
+      warmCockpit(rows, sessionMap, workerWindows); // the first build walks every status file: before the port opens, not in a request
+      const endpointHealth = createEndpointHealth(); // one probe cache for the router and the cockpit
+      setEndpointHealth(endpointHealth);
+      const serve: CockpitHandler = (req, res) => handleCockpit(req, res, limits, rows, sessionMap, system, workerWindows);
+      const cockpit = token ? withCockpitToken(token, serve) : serve;
+      const append = usageFile ? () => undefined : (row: UsageRow) => appendUsage(row);
+      const inner = routerHandler(undefined, undefined, undefined, append, cockpit, { hosts, ...(remote ? { remoteAllowed: defaultV1Guard } : {}), isUp: limits.isUp, health: endpointHealth });
+      const stalls = startStallMonitor({ thresholdMs: cockpitProbeSettings().stallLogMs, log: (l) => process.stderr.write(l + "\n") });
+      const handler = stalls.wrap(inner);
+      // backstop: a stray exception is logged, it does not take the proxy down
+      process.on("uncaughtException", (e) => process.stderr.write(`pai: router: uncaught exception: ${(e as Error)?.stack ?? String(e)}\n`));
+      return new Promise<number>(() => {
+        // after SIGTERM the open keep-alive sockets stay served by this process, each reply tells its client to reconnect (to the new router)
+        let draining = false;
+        const inflight = trackInflight();
+        const tracked = inflight.wrap(handler);
+        const serving: typeof handler = (req, res) => {
+          if (draining) res.setHeader("Connection", "close");
+          return tracked(req, res);
+        };
+        const server = http.createServer(serving);
+        const tail = remote ? http.createServer(serving) : undefined;
+        const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
+        {
+        // the old router keeps serving through this process's warm-up: it is stopped only now, so the port is refused for one retry interval
+        if (replace > 0) {
+          try {
+            process.kill(replace, "SIGTERM");
+          } catch {
+            /* already gone */
           }
+        }
+        const claimPidFiles = () => {
+          if (!managed) return;
+          mkdirSync(dirname(routerPidFile()), { recursive: true });
+          writeFileSync(routerPidFile(), String(process.pid));
+          writeFileSync(routerHandoverFile(), String(process.pid));
+        };
+        const bound = inheritFds.length
+          ? new Promise<void>((resolve) => server.listen({ fd: inheritFds[0]! }, resolve))
+          : listenRetry(server, port, LOOPBACK_HOST, { waitMs: waitBindMs, intervalMs: 1 });
+        bound.then(() => {
+          claimPidFiles();
+          process.send?.({ ready: true });
+        }, (e: unknown) => {
+          process.stderr.write(`pai: router: ${(e as Error).message}\n`);
+          process.exit(1);
         });
-        child.on("message", (m: { ready?: boolean; failed?: boolean; reason?: string; diag?: string }) => {
-          if (m?.failed) {
-            failedReason = m.reason;
-            failedDiag = m.diag;
+        if (tail) {
+          const tailBound = inheritFds.length > 1
+            ? new Promise<void>((resolve) => tail.listen({ fd: inheritFds[1]! }, resolve))
+            : listenRetry(tail, port, addr, { waitMs: waitBindMs, intervalMs: 1 });
+          tailBound.then(async () => {
+            out(ok(`cockpit beyond loopback: http://${await displayHost(addr)}:${port}/cockpit`));
+          }, (e: unknown) => {
+            process.stderr.write(`pai: router ${addr}: ${(e as Error).message}\n`);
+            process.exit(1);
+          });
+        }
+        }
+        // a handover keeps the old router alive for its in-flight streams: bounded by router.handover.drainMaxSecs, then they end with a retryable error
+        const bye = (handedOver = false) => {
+          draining = true;
+          const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 1800) * 1000 : loadConfig().router.drainMs;
+          if (handedOver) {
+            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "draining", inflight: inflight.count() }));
+            process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) (at most ${maxMs / 1000}s)\n`);
+          }
+          void drainServers(tail ? [server, tail] : [server], {
+            timeoutMs: maxMs,
+            idleGraceMs: 1500,
+            onTimeout: () => {
+              const n = inflight.endAll("router restarted, retry the request");
+              if (n) process.stderr.write(`pai: router: drain limit reached, ended ${n} request(s) with a retryable error\n`);
+            },
+          }).then(() => {
+            if (managed) {
+              try {
+                if (readFileSync(routerPidFile(), "utf8").trim() === String(process.pid)) unlinkSync(routerPidFile());
+              } catch {
+                /* ignore */
+              }
+            }
+            process.exit(0);
+          });
+        };
+        // SIGUSR2: spawn the successor on this router's listening sockets (inherited fds, so the accept queue is never closed), stop accepting once it is ready, drain, exit
+        let handing = false;
+        process.on("SIGUSR2", () => {
+          if (handing || draining) return;
+          const handles = [server, ...(tail ? [tail] : [])].map((s) => (s as unknown as { _handle?: { fd?: number } })._handle?.fd);
+          if (handles.some((fd) => typeof fd !== "number" || fd < 0)) {
+            process.stderr.write("pai: router: handover skipped, listening fd unavailable\n");
             return;
           }
-          if (!m?.ready) return;
-          clearTimeout(giveUp);
-          child.removeAllListeners("exit");
-          child.disconnect();
-          child.unref();
-          bye(true);
+          handing = true;
+          mkdirSync(dirname(routerLogFile()), { recursive: true });
+          const log = openSync(routerLogFile(), "a");
+          const child = spawn(
+            process.execPath,
+            [process.argv[1]!, "router", "run", "--port", String(port), "--inherit-fds", handles.map((_, i) => 3 + i).join(","), ...(usageFile ? ["--usage-file", usageFile] : [])],
+            { detached: true, stdio: ["ignore", log, log, ...(handles as number[]), "ipc"] }
+          );
+          closeSync(log);
+          const giveUp = setTimeout(() => child.kill("SIGKILL"), 30_000);
+          let failedReason: string | undefined;
+          let failedDiag: string | undefined;
+          child.once("exit", () => {
+            clearTimeout(giveUp);
+            if (handing) {
+              handing = false;
+              const reason = failedReason ?? "successor exited before taking over";
+              process.stderr.write(`pai: router: ${reason}, still serving\n`);
+              writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason, ...(failedDiag ? { diag: failedDiag } : {}) }));
+            }
+          });
+          child.on("message", (m: { ready?: boolean; failed?: boolean; reason?: string; diag?: string }) => {
+            if (m?.failed) {
+              failedReason = m.reason;
+              failedDiag = m.diag;
+              return;
+            }
+            if (!m?.ready) return;
+            clearTimeout(giveUp);
+            child.removeAllListeners("exit");
+            child.disconnect();
+            child.unref();
+            bye(true);
+          });
         });
+        process.on("SIGTERM", () => bye());
+        process.on("SIGINT", () => bye());
       });
-      process.on("SIGTERM", () => bye());
-      process.on("SIGINT", () => bye());
     });
   },
 };
