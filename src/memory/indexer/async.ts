@@ -9,8 +9,8 @@
  * due to synchronous transactions).
  */
 
-import { readFileSync, statSync, existsSync } from "node:fs";
-import { join, relative, basename } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import type { StorageBackend, ChunkRow } from "../../storage/interface.js";
 import type { RegistryBackend } from "../../storage/registry-interface.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
@@ -19,17 +19,12 @@ import { serializeEmbedding } from "../embeddings.js";
 import { gateBackend } from "../embedding-gate.js";
 import { chunkMarkdown, fileContentHash } from "../chunker.js";
 import {
-  sha256File,
   chunkId,
-  detectTier,
-  walkMdFiles,
-  walkContentFiles,
-  isPathTooBroadForContentScan,
-  parseSessionTitleChunk,
   yieldToEventLoop,
   INDEX_YIELD_EVERY,
 } from "./helpers.js";
 import { retryTransient } from "./retry.js";
+import { discoverProjectFiles } from "./discover.js";
 import type { IndexResult } from "./types.js";
 
 export type { IndexResult };
@@ -116,98 +111,13 @@ export async function indexProjectWithBackend(
 ): Promise<IndexResult> {
   const result: IndexResult = { filesProcessed: 0, chunksCreated: 0, filesSkipped: 0 };
 
-  const filesToIndex: Array<{ absPath: string; rootBase: string; source: string; tier: string; pathPrefix?: string }> = [];
-
-  const rootMemoryMd = join(rootPath, "MEMORY.md");
-  if (existsSync(rootMemoryMd)) {
-    filesToIndex.push({ absPath: rootMemoryMd, rootBase: rootPath, source: "memory", tier: "evergreen" });
-  }
-
-  const memoryDir = join(rootPath, "memory");
-  for (const absPath of walkMdFiles(memoryDir)) {
-    const relPath = relative(rootPath, absPath);
-    const tier = detectTier(relPath);
-    filesToIndex.push({ absPath, rootBase: rootPath, source: "memory", tier });
-  }
-
-  const notesDir = join(rootPath, "Notes");
-  for (const absPath of walkMdFiles(notesDir)) {
-    filesToIndex.push({ absPath, rootBase: rootPath, source: "notes", tier: "session" });
-  }
-
-  // Synthetic session-title chunks for Notes files
-  {
-    const updatedAt = Date.now();
-    for (const absPath of walkMdFiles(notesDir)) {
-      const fileName = basename(absPath);
-      const text = parseSessionTitleChunk(fileName);
-      if (!text) continue;
-      const relPath = relative(rootPath, absPath);
-      const syntheticPath = `${relPath}::title`;
-      const id = chunkId(projectId, syntheticPath, 0, 0, 0);
-      const hash = sha256File(text);
-      const titleChunk: ChunkRow = {
-        id, projectId, source: "notes", tier: "session",
-        path: syntheticPath, startLine: 0, endLine: 0,
-        hash, text, updatedAt, embedding: null,
-      };
-      try {
-        if ((await backend.getChunkIds(projectId, syntheticPath)).length > 0) continue;
-        await backend.insertChunks([titleChunk]);
-      } catch {
-        // Skip title chunks that cause backend errors
-      }
-    }
-  }
-
-  if (!isPathTooBroadForContentScan(rootPath)) {
-    for (const absPath of walkContentFiles(rootPath)) {
-      filesToIndex.push({ absPath, rootBase: rootPath, source: "content", tier: "topic" });
-    }
-  }
-
-  if (claudeNotesDir && claudeNotesDir !== notesDir) {
-    for (const absPath of walkMdFiles(claudeNotesDir)) {
-      filesToIndex.push({ absPath, rootBase: claudeNotesDir, source: "notes", tier: "session" });
-    }
-
-    // Synthetic title chunks for claude notes dir
-    {
-      const updatedAt = Date.now();
-      for (const absPath of walkMdFiles(claudeNotesDir)) {
-        const fileName = basename(absPath);
-        const text = parseSessionTitleChunk(fileName);
-        if (!text) continue;
-        const relPath = relative(claudeNotesDir, absPath);
-        const syntheticPath = `${relPath}::title`;
-        const id = chunkId(projectId, syntheticPath, 0, 0, 0);
-        const hash = sha256File(text);
-        const titleChunk: ChunkRow = {
-          id, projectId, source: "notes", tier: "session",
-          path: syntheticPath, startLine: 0, endLine: 0,
-          hash, text, updatedAt, embedding: null,
-        };
-        try {
-          if ((await backend.getChunkIds(projectId, syntheticPath)).length > 0) continue;
-          await backend.insertChunks([titleChunk]);
-        } catch {
-          // Skip title chunks that cause backend errors
-        }
-      }
-    }
-
-    if (claudeNotesDir.endsWith("/Notes")) {
-      const claudeProjectDir = claudeNotesDir.slice(0, -"/Notes".length);
-      const claudeMemoryMd = join(claudeProjectDir, "MEMORY.md");
-      if (existsSync(claudeMemoryMd)) {
-        filesToIndex.push({ absPath: claudeMemoryMd, rootBase: claudeProjectDir, source: "memory", tier: "evergreen", pathPrefix: CLAUDE_MEMORY_PREFIX });
-      }
-      const claudeMemoryDir = join(claudeProjectDir, "memory");
-      for (const absPath of walkMdFiles(claudeMemoryDir)) {
-        const relPath = relative(claudeProjectDir, absPath);
-        const tier = detectTier(relPath);
-        filesToIndex.push({ absPath, rootBase: claudeProjectDir, source: "memory", tier, pathPrefix: CLAUDE_MEMORY_PREFIX });
-      }
+  const { files: filesToIndex, titleChunks } = discoverProjectFiles(projectId, rootPath, claudeNotesDir, CLAUDE_MEMORY_PREFIX);
+  for (const titleChunk of titleChunks) {
+    try {
+      if ((await backend.getChunkIds(projectId, titleChunk.path)).length > 0) continue;
+      await backend.insertChunks([titleChunk]);
+    } catch {
+      // Skip title chunks that cause backend errors
     }
   }
 
