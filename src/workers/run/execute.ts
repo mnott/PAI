@@ -11,7 +11,7 @@ import { openSync, closeSync, writeSync } from "node:fs";
 import { shortText } from "../args.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
-import { endFields, parentInfo } from "../endreason.js";
+import { parentInfo } from "../endreason.js";
 import { eventsPath, ledgerPath } from "../paths.js";
 import { type WorkerStatus, newWorkerId, saveStatus, nowStamp, markStartFailed, selfProcStart } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";

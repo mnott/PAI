@@ -15,11 +15,12 @@
  */
 
 import { currentWorkerId } from "./worker-id.js";
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, type WorkersConfig } from "./config.js";
 import { loadStatus } from "./status.js";
+import { claudeSessionTranscript } from "./scan.js";
 import { isLocalCandidate, tierProviderNames } from "./local-candidate.js";
 
 export const SESSION_PROVIDER_ENV = "PAI_SESSION_PROVIDER";
@@ -107,21 +108,6 @@ function spawnerClaudeSession(env: NodeJS.ProcessEnv, home: string, logDir?: str
   return null;
 }
 
-function findTranscript(home: string, sessionId: string, cwd: string): string | null {
-  const projects = join(home, ".claude", "projects");
-  const own = join(projects, cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
-  if (existsSync(own)) return own;
-  try {
-    for (const d of readdirSync(projects)) {
-      const p = join(projects, d, `${sessionId}.jsonl`);
-      if (existsSync(p)) return p;
-    }
-  } catch {
-    // no projects dir
-  }
-  return null;
-}
-
 export function detectSessionProvider(
   config: ProviderTable,
   opts: { env?: NodeJS.ProcessEnv; home?: string; cwd?: string; logDir?: string; side?: "workers" | "orchestrator" } = {}
@@ -137,7 +123,7 @@ export function detectSessionProvider(
     const home = opts.home ?? homedir();
     const id = spawnerClaudeSession(env, home, opts.logDir);
     if (!id) return null;
-    const file = findTranscript(home, id, opts.cwd ?? process.cwd());
+    const file = claudeSessionTranscript(id, opts.cwd ?? process.cwd(), home);
     const model = file && lastAssistantModel(file);
     if (!model) return null;
     const name = providerForModel(config, model);

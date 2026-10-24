@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { openSync, closeSync, writeSync } from "node:fs";
 import { shortText } from "../args.js";
 import { appendLedger } from "../ledger.js";
-import { endFields, parentInfo } from "../endreason.js";
+import { parentInfo } from "../endreason.js";
 import { peekLoopStop } from "../loop-stop.js";
 import { TroubleWatcher } from "../worker-trouble.js";
 import { reportOriginWithHost, runMessenger } from "../run-report-wiring.js";
