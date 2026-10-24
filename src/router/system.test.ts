@@ -336,7 +336,7 @@ describe("SystemMonitor", () => {
 describe("cockpit system http", () => {
   const limitsStub = {
     get: async () => [
-      { provider: "llamacpp", kind: "local" as const, windows: [], up: true, rssMb: 4321, tokensPerSec: 7.3, served: ["qwen3"], fetchedAt: 0 },
+      { provider: "llamacpp", kind: "local" as const, windows: [], up: true, rssMb: 4321, served: ["qwen3"], fetchedAt: 0 },
     ],
   };
 
@@ -363,7 +363,7 @@ describe("cockpit system http", () => {
     expect(j.current.swapUsed).toBe(1240.75 * MIB); // direct sysctl sample
     expect(j.current.wired).toBe(474420 * PAGE);
     expect(j.series.series.length).toBe(buildCockpitData([], "24h", NOW).series.length);
-    expect(j.servers).toEqual([{ provider: "llamacpp", up: true, rssMb: 4321, tokensPerSec: 7.3, served: ["qwen3"] }]);
+    expect(j.servers).toEqual([{ provider: "llamacpp", up: true, rssMb: 4321, served: ["qwen3"] }]);
     expect((await get("/cockpit/system", "POST")).status).toBe(405);
     expect((await get("/cockpit/nonsense")).status).toBe(404);
     srv.close();

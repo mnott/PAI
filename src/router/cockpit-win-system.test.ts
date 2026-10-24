@@ -24,7 +24,7 @@ const sysPayload = (i: number, servers = 1) => ({
   window: "1h", slowAgeS: 12,
   current: { memUsed: (8 + i) * GB, memTotal: 36 * GB, pressureLevel: 80, swapUsed: i * GB, swapTotal: 4 * GB, wired: 3 * GB, compressed: GB, cpu: 10 + i, gpu: 20 + i, ane: 0, socTemp: 50 + i, cpuW: 0, gpuW: 0, aneW: 0, systemW: 20 + i, totalW: 30 + i, gpuFreqMhz: 1200, source: "test" },
   series: { wh: { "1h": 4 + i }, coveredMin: { "1h": 60 }, series: [1, 2, 3, 4, 5].map((k) => ({ t: 1_700_000_000_000 + k * 60_000, n: 1, cpu: 10 * k + i, gpu: 5 * k, ane: 0, cpuW: 0, gpuW: 0, aneW: 0, totalW: 10 + k + i, systemW: 20, socTemp: 50 })) },
-  servers: [{ provider: "gyro-m", up: true, rssMb: 40000 + i * 100, tokensPerSec: 50 + i, prefixCache: { hitRate: 0.5, hits: 5, misses: 5 } }, ...(servers > 1 ? [{ provider: "second", up: true, rssMb: 1000, tokensPerSec: 5, prefixCache: { hitRate: 0.1, hits: 1, misses: 9 } }] : []), { provider: "off", up: false }],
+  servers: [{ provider: "gyro-m", up: true, rssMb: 40000 + i * 100, speed: { prefillTps: 500 + i, decodeTps: 50 + i, prefillN: 3, decodeN: 2, window: "1h", source: "measured", text: "t", tip: "how" }, prefixCache: { hitRate: 0.5, hits: 5, misses: 5 } }, ...(servers > 1 ? [{ provider: "second", up: true, rssMb: 1000, speed: { prefillTps: 50, decodeTps: 5, prefillN: 3, decodeN: 2, window: "1h", source: "measured", text: "t", tip: "how" }, prefixCache: { hitRate: 0.1, hits: 1, misses: 9 } }] : []), { provider: "off", up: false }],
 });
 /** No server up at all: the note card stands in for the server cards. */
 const sysPayloadNone = (i: number) => ({
@@ -113,7 +113,7 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     const r = await open("/page", 1400, shots ? join(shots, "system-1400-light.png") : undefined);
     expect(r.err).toBeNull();
     for (const id of ["system", "sys-metrics", "sys-power", "sys-servers", "system.power-chart", "system.memory", "system.energy", "system.ane-load", "system.cpu-w", "system.gpu-w", "system.ane-w"]) expect(r.ids).toContain(id);
-    expect(r.ids.filter((i: string) => /^system\.srv:gyro-m\//.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/e2e", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
+    expect(r.ids.filter((i: string) => /^system\.srv:gyro-m\//.test(i))).toEqual(["system.srv:gyro-m/rss", "system.srv:gyro-m/prefill", "system.srv:gyro-m/decode", "system.srv:gyro-m/prefix"]);
     expect(r.syshid).toBe(false);
     for (const h of r.heads) expect(h).toMatch(/^cgrip,ctitle,cstatus(,cbtn|,wctl|,wsearch)*$/);
     expect(r.vals).toContain("system.memory=8.0 / of 36 GB · pressure 20%");
@@ -125,7 +125,7 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     expect(r.boxesR).toBe(r.boxes);
     expect(r.vals).toContain("system.energy=4 / 60 min of 1-min samples");
     expect(r.vals).toContain("system.srv:gyro-m/rss=39.1 / resident memory");
-    expect(r.vals).toContain("system.srv:gyro-m/decode=61 / decode");
+    expect(r.vals).toContain("system.srv:gyro-m/decode=50 / n=2 · 1h · measured");
     expect(r.vals).toContain("system.srv:gyro-m/prefix=50.0 / 5/10");
     // the legend is whole inside the card body at body heights 160 (default) / 180 / 300 / 500
     expect(r.leg.length).toBe(4);
@@ -141,7 +141,7 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     expect(r.boxes2).toBe(r.boxes);
     // a second up server: only its four cards are new; the other cards keep their ids
     const added = r.ids3.filter((i: string) => !r.ids.includes(i));
-    expect(added).toEqual(["system.srv:second/rss", "system.srv:second/e2e", "system.srv:second/decode", "system.srv:second/prefix"]);
+    expect(added).toEqual(["system.srv:second/rss", "system.srv:second/prefill", "system.srv:second/decode", "system.srv:second/prefix"]);
     expect(r.overlap3).toBe(0);
   }, 120_000);
 
@@ -155,12 +155,12 @@ describe.skipIf(!CHROME)("B2 system on the win runtime", () => {
     expect(r.none).toContain("system.srv:none=/no local model server is up");
     // one server up: its four cards mount beside the kept note leaf; the note takes no space
     expect(r.srv2).toContain("system.srv:gyro-m/rss=39.2/resident memory");
-    expect(r.srv2).toContain("system.srv:gyro-m/decode=61/decode");
+    expect(r.srv2).toContain("system.srv:gyro-m/decode=51/n=2 · 1h · measured");
     // addCards on a group holding one leaf: the leaf stays on top, the server's row goes below it
     const kids = JSON.parse(r.kids);
     expect(kids.d).toBe("c");
     expect(kids.ch[0]).toEqual({ k: "c", id: "system.srv:none" });
-    expect(kids.ch.slice(1).map((c: { id: string }) => c.id)).toEqual(["rss", "e2e", "decode", "prefix"].map((w) => `system.srv:gyro-m/${w}`));
+    expect(kids.ch.slice(1).map((c: { id: string }) => c.id)).toEqual(["rss", "prefill", "decode", "prefix"].map((w) => `system.srv:gyro-m/${w}`));
     // a server that was up and goes down: its cards stay and read "–" / "down"
     expect(r.srv3).toContain("system.srv:gyro-m/rss=–/down");
     expect(r.srv3).toContain("system.srv:gyro-m/decode=–/down");

@@ -32,8 +32,6 @@ import {
   type LastGoodEntry,
   type LimitWindow,
   staleText,
-  decodeTokPerSec,
-  tokensPerSec,
   fetchAnthropicUsage,
   isAnthropicHost,
   keychainCredentialArgs,
@@ -657,62 +655,6 @@ describe("local server up/down and prefix cache", () => {
     expect(parsePrefixCacheStats('{"engine_cache":{"hits":0,"misses":0,"tokens_saved":0}}')).toEqual({ hits: 0, misses: 0, hitRate: 0, tokensSaved: 0 });
     expect(parsePrefixCacheStats('{"engine_cache":null,"error":"x"}')).toBeUndefined();
     expect(parsePrefixCacheStats("not json")).toBeUndefined();
-  });
-});
-
-describe("decodeTokPerSec", () => {
-  const NOW = Date.parse("2026-10-17T12:00:00Z");
-  const row = (o: Partial<UsageRow>): UsageRow =>
-    ({ ts: new Date(NOW - 60_000).toISOString(), model: "m", provider: "local30x8", status: 200, ms: 50000, bytes: 1, cache: "none", input_tokens: 0, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, decodeMs: 2000, ...o }) as UsageRow;
-
-  it("computes decode tok/s from rows with decodeMs", () => {
-    const rows = [
-      row({ decodeMs: 2000, output_tokens: 100 }), // 50 tok/s
-      row({ decodeMs: 1000, output_tokens: 100 }), // 100 tok/s
-      row({ decodeMs: 4000, output_tokens: 100 }), // 25 tok/s
-    ];
-    // p50 of [25, 50, 100]
-    expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({ decodeTokPerSec: 50 });
-    expect(tokensPerSec(rows, "local30x8", NOW)).toEqual({ tokensPerSec: 2, tokensPerSecWindow: "1h" });
-  });
-
-  it("falls back to the 24 h window when the last hour has no request, and to nothing without any", () => {
-    const old = row({ ts: new Date(NOW - 5 * 3_600_000).toISOString(), ms: 10000, output_tokens: 100 });
-    expect(tokensPerSec([old], "local30x8", NOW)).toEqual({ tokensPerSec: 10, tokensPerSecWindow: "24h" });
-    expect(tokensPerSec([row({ ts: new Date(NOW - 30 * 3_600_000).toISOString() })], "local30x8", NOW)).toEqual({});
-  });
-
-  it("ignores rows without decodeMs", () => {
-    const rows = [
-      row({ decodeMs: 2000, output_tokens: 100 }), // 50 tok/s
-      row({ decodeMs: undefined, output_tokens: 100 }), // No decodeMs
-    ];
-    expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({ decodeTokPerSec: 50 });
-  });
-
-  it("ignores rows with status != 200", () => {
-    const rows = [
-      row({ decodeMs: 2000, output_tokens: 100 }), // 50 tok/s
-      row({ decodeMs: 2000, output_tokens: 100, status: 500 }), // Bad status
-    ];
-    expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({ decodeTokPerSec: 50 });
-  });
-
-  it("ignores rows older than 1 hour", () => {
-    const rows = [
-      row({ decodeMs: 2000, output_tokens: 100 }), // 50 tok/s
-      row({ ts: new Date(NOW - 3_600_000 - 1).toISOString(), decodeMs: 2000, output_tokens: 100 }), // Older than 1 hour
-    ];
-    expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({ decodeTokPerSec: 50 });
-  });
-
-  it("returns empty object when no valid rows", () => {
-    const rows = [
-      row({ decodeMs: undefined, output_tokens: 100 }), // No decodeMs
-      row({ decodeMs: 2000, output_tokens: 100, status: 500 }), // Bad status
-      row({ ts: new Date(NOW - 3_600_000 - 1).toISOString(), decodeMs: 2000, output_tokens: 100 }), // Older than 1 hour
-    ];
-    expect(decodeTokPerSec(rows, "local30x8", NOW)).toEqual({});
   });
 });
 

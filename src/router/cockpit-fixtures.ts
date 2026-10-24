@@ -27,7 +27,7 @@ export function fixtureData() {
     promptByProvider: {}, promptSince: {},
   };
 }
-export const fixtureSystem = () => ({ current: {}, series: { series: [] }, servers: [{ provider: "gyro-m", up: true, rssMb: 36148, tokensPerSec: 58.5, prefixCache: { hitRate: 0.91, hits: 910, misses: 90, tokensSaved: 1e6, entries: 4, memoryMb: 2048 } }, { provider: "ollama-local-with-a-long-name", up: true, rssMb: 5100, tokensPerSec: 31.2, prefixCache: null }] });
+export const fixtureSystem = () => ({ current: {}, series: { series: [] }, servers: [{ provider: "gyro-m", up: true, rssMb: 36148, speed: { prefillTps: 245, decodeTps: 58.5, prefillN: 3, decodeN: 2, window: "1h", source: "measured", text: "t", tip: "how" }, prefixCache: { hitRate: 0.91, hits: 910, misses: 90, tokensSaved: 1e6, entries: 4, memoryMb: 2048 } }, { provider: "ollama-local-with-a-long-name", up: true, rssMb: 5100, speed: { prefillTps: 120, decodeTps: 31.2, prefillN: 3, decodeN: 2, window: "1h", source: "measured", text: "t", tip: "how" }, prefixCache: null }] });
 export const fixtureQueue = () => ({ providers: [{ provider: "glm", cap: 2, running: [{ id: "w-20261021-063345", label: "run.ts split step 1: provider test moved out of the router file", ageSec: 120, now: "editing script-tables.ts", session: "PAI", model: "glm-5.3" }], waiting: [{ id: "w-2", label: "fix cockpit tables at any width", waitedSec: 30, position: 1, session: "PAI", model: "glm-5.3" }] }], panes: [], paneViolations: [], plans: [], build: { running: [], waiting: [] } });
 /** Three cloud providers: at 822 px the old auto-fill grid put the third tile alone on a half-width row. */
 export const fixtureLimits = () => ({

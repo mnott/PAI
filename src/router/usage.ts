@@ -53,6 +53,9 @@ export interface UsageRow extends Usage {
   ttftMs?: number;
   /** ms from the first content token to the end of the reply */
   decodeMs?: number;
+  /** server-reported prompt processing / generation ms (llama.cpp-style `timings`), when the backend returns them */
+  promptMs?: number;
+  predictedMs?: number;
   /** input_tokens was estimated from the request size because the server did not report it */
   input_estimated?: boolean;
 }
@@ -112,6 +115,8 @@ export class UsageSniffer {
   firstContentAt: number | undefined;
   /** the response carries a tool call that runs `pai build` (the worker is about to wait on the build gate) */
   buildCall = false;
+  /** server-reported timings (`timings` or `usage` carrying prompt_ms / predicted_ms), when present */
+  serverTimings: { promptMs?: number; predictedMs?: number } | undefined;
   private toolTail = "";
 
   constructor(contentType: string | undefined) {
@@ -160,15 +165,26 @@ export class UsageSniffer {
         if (/pai build (run|lock)/.test(this.toolTail)) this.buildCall = true;
       }
     }
-    // cheap prefilter: only usage-bearing events are parsed
-    if (!data.includes('"usage"')) return;
+    // cheap prefilter: only usage- or timings-bearing events are parsed
+    if (!data.includes('"usage"') && !data.includes('"timings"')) return;
     try {
-      const ev = JSON.parse(data) as { type?: string; usage?: unknown; message?: { usage?: unknown } };
+      const ev = JSON.parse(data) as { type?: string; usage?: unknown; timings?: unknown; message?: { usage?: unknown } };
+      this.noteTimings(ev.timings ?? ev.usage ?? ev.message?.usage);
       if (ev.type === "message_start") mergeUsage(this.usage, ev.message?.usage);
       else if (ev.type === "message_delta") mergeUsage(this.usage, ev.usage);
     } catch {
       /* malformed event: ignore */
     }
+  }
+
+  private noteTimings(t: unknown): void {
+    if (!t || typeof t !== "object") return;
+    const o = t as Record<string, unknown>;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const ns = (v: unknown) => (num(v) === undefined ? undefined : num(v)! / 1e6); // Ollama reports nanoseconds
+    const promptMs = num(o.prompt_ms) ?? ns(o.prompt_eval_duration);
+    const predictedMs = num(o.predicted_ms) ?? ns(o.eval_duration);
+    if (promptMs !== undefined || predictedMs !== undefined) this.serverTimings = { ...this.serverTimings, ...(promptMs !== undefined && { promptMs }), ...(predictedMs !== undefined && { predictedMs }) };
   }
 
   finish(): Usage {
@@ -177,13 +193,14 @@ export class UsageSniffer {
       if (this.line && !this.skipLine) this.handleLine(this.line);
       this.line = "";
     } else if (!this.jsonOverflow && this.json) {
-      mergeUsage(this.usage, (() => {
-        try {
-          return (JSON.parse(this.json) as { usage?: unknown }).usage;
-        } catch {
-          return undefined;
-        }
-      })());
+      let body: { usage?: unknown; timings?: unknown } = {};
+      try {
+        body = JSON.parse(this.json) as typeof body;
+      } catch {
+        /* not JSON: zero usage */
+      }
+      mergeUsage(this.usage, body.usage);
+      this.noteTimings(body.timings ?? body.usage);
       this.json = "";
     }
     return this.usage;

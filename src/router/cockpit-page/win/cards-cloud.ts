@@ -38,12 +38,12 @@ function limServerHtml(l){
   var ins=l.instances||[];
   if(ins.length>0){
    var w=l.weightsBytes?r("weights",esc(gbm(l.weightsBytes/1048576)+" GB (shared, mapped)")):"";
-   var sp=l.tokensPerSec?" · "+Math.round(l.tokensPerSec)+" tok/s":"";
+   var sp=l.speed?" · "+esc(l.speed.text):"";
    var ih=ins.map(function(i){
     return'<div class="rtsess"><span class="'+(i.state==="ready"?"ok":"warn")+'">'+esc(i.id)+'</span> <span class="dim">:'+i.port+(i.pid!=null?" · pid "+i.pid:"")+(i.rssMb?" · resident "+gbm(i.rssMb)+" GB":"")+sp+" · "+(i.inflight||0)+' in flight</span> <button type="button" class="b" data-stop="'+esc(i.id)+'" data-busy="'+(i.inflight||0)+'" title="stop instance '+esc(i.id)+'">stop</button></div>'}).join("");
    return'<div class="phead"><span class="ok nw">● up</span></div>'+(w||m||eng?'<div class="ltab">'+w+(m?r("model",esc(shortModel(m)),m):"")+eng+'</div>':"")+ih;
   }
-  var rows=(l.rssMb?r("memory",esc(res.txt))+(res.note?'<span class="dim"></span><span class="dim nw">'+esc(res.note)+"</span>":""):"")+(l.tokensPerSec?r("speed",esc(Math.round(l.tokensPerSec))+" tok/s"):"")+(m?r("model",esc(shortModel(m)),m):"");
+  var rows=(l.rssMb?r("memory",esc(res.txt))+(res.note?'<span class="dim"></span><span class="dim nw">'+esc(res.note)+"</span>":""):"")+(l.speed?r("speed",esc(l.speed.text),l.speed.tip):"")+(m?r("model",esc(shortModel(m)),m):"");
   return'<div class="phead"><span class="ok nw">● up</span></div>'+(rows||eng?'<div class="ltab">'+rows+eng+'</div>':"");
  }
  var s=l.starting,failed=s.state==="failed";

@@ -29,7 +29,7 @@ import { vllmLogCacheStats } from "./vllm-log-cache.js";
 import { serves } from "../workers/served-models.js";
 import { isLocalCandidate, tierProviderNames } from "../workers/local-provider.js";
 import type { UsageRow } from "./usage.js";
-import { writeRate, percentile } from "./speed.js";
+import { endpointSpeed, strataSpeed, type EndpointSpeed } from "./speed.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 
 export interface LimitWindow {
@@ -53,12 +53,8 @@ export interface ProviderLimits {
   weightsBytes?: number;
   /** model ids the local server lists */
   served?: string[];
-  /** average output tokens per second of request wall time (the router's own accounting), over `tokensPerSecWindow` */
-  tokensPerSec?: number;
-  /** the window `tokensPerSec` covers: the last hour, else the last 24 h */
-  tokensPerSecWindow?: "1h" | "24h";
-  /** p50 decode tokens/s over the last hour, from the per-row decodeMs (the Speed table write rate) */
-  decodeTokPerSec?: number;
+  /** prefill and decode rate of the endpoint, measured separately (see speed.ts endpointSpeed) */
+  speed?: EndpointSpeed;
   /** prefix-cache counters the local server reports itself (undefined = server does not report them) */
   prefixCache?: PrefixCacheStats;
   /** engine build of the local server's engine binary, e.g. "0.1.48-metal" (`<bin> --version`); undefined = not a Strata engine or the version could not be read */
@@ -542,6 +538,15 @@ export interface ServedAnswer {
 /** Per provider+endpoint: whether the last settled poll said up, and the run of consecutive timeouts since. */
 const probeState = new Map<string, { up: boolean; strikes: number }>();
 
+/** Strata's own prefill/decode reading from GET /metrics; null for any other server or a failed/slow probe (the router's rows are used then). */
+async function strataSpeedOf(base: URL, key: string): Promise<EndpointSpeed | null> {
+  try {
+    return strataSpeed(key, await getJson(new URL("/metrics", base), {}, 2000));
+  } catch {
+    return null;
+  }
+}
+
 /** A server busy prefilling answers /v1/cache/stats slowly (7.6 s seen). */
 export const PREFIX_STATS_TIMEOUT_MS = 15_000;
 
@@ -555,7 +560,7 @@ export async function localLimits(
   rows: UsageRow[],
   now: number,
   background?: (stats: Promise<PrefixCacheStats | undefined>) => void,
-  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined>; engineInfo?: (port: number) => Promise<{ engineVersion?: string; engineDir?: string }> } = {}
+  opts: { probes?: LocalProbes; timeoutStrikes?: number; tcpTimeoutMs?: number; listenerRssMb?: (port: number) => Promise<number | undefined>; engineInfo?: (port: number) => Promise<{ engineVersion?: string; engineDir?: string }>; strataSpeed?: (base: URL, key: string) => Promise<EndpointSpeed | null> } = {}
 ): Promise<ProviderLimits> {
   const u = new URL(p.baseUrl);
   const port = Number(u.port) || 80;
@@ -587,13 +592,16 @@ export async function localLimits(
   }
   let rssMb: number | undefined;
   let prefixCache: PrefixCacheStats | undefined;
+  let strata: EndpointSpeed | null = null;
   let engine: { engineVersion?: string; engineDir?: string } = {};
   if (up) {
     rssMb = await (opts.listenerRssMb ?? listenerRssMb)(port);
     engine = await (opts.engineInfo ?? engineInfoOf)(port);
+    strata = await (opts.strataSpeed ?? strataSpeedOf)(u, stateKey);
     if (background) background(prefixCacheStats(u, p, name));
     else prefixCache = await prefixCacheStats(u, p, name);
   }
+  const speed = strata ?? endpointSpeed(rows, name, now);
   return {
     provider: name,
     kind: "local",
@@ -604,8 +612,7 @@ export async function localLimits(
     ...(served ? { served } : {}),
     ...(prefixCache ? { prefixCache } : {}),
     ...engine,
-    ...tokensPerSec(rows, name, now),
-    ...decodeTokPerSec(rows, name, now),
+    ...(speed ? { speed } : {}),
     fetchedAt: now,
   };
 }
@@ -777,32 +784,6 @@ async function prefixCacheStats(base: URL, p: WorkerProvider, name: string): Pro
 export { serves as modelServed } from "../workers/served-models.js";
 
 /** output tokens / request wall seconds over the last hour, else the last 24 h (successful requests). */
-export function tokensPerSec(rows: UsageRow[], provider: string, now: number): { tokensPerSec?: number; tokensPerSecWindow?: "1h" | "24h" } {
-  for (const [span, tokensPerSecWindow] of [[3_600_000, "1h"], [86_400_000, "24h"]] as const) {
-    let out = 0;
-    let ms = 0;
-    for (const r of rows) {
-      if (r.provider !== provider || Date.parse(r.ts) < now - span || r.status !== 200 || !r.output_tokens) continue;
-      out += r.output_tokens;
-      ms += r.ms;
-    }
-    if (ms) return { tokensPerSec: Math.round((out / (ms / 1000)) * 10) / 10, tokensPerSecWindow };
-  }
-  return {};
-}
-
-/** p50 decode tokens/s over the last hour (slow-path requests only). */
-export function decodeTokPerSec(rows: UsageRow[], provider: string, now: number): { decodeTokPerSec?: number } {
-  const rates: number[] = [];
-  for (const r of rows) {
-    if (r.provider !== provider || Date.parse(r.ts) < now - 3_600_000 || r.status !== 200 || r.decodeMs === undefined) continue;
-    const rate = writeRate(r);
-    if (rate !== null) rates.push(rate);
-  }
-  if (!rates.length) return {};
-  return { decodeTokPerSec: Math.round(percentile(rates, 0.5)! * 10) / 10 };
-}
-
 function isLocalUrl(u: string): boolean {
   return isLoopbackUrl(u);
 }
