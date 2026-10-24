@@ -53,10 +53,29 @@ def fault_reps():
     rows = []
     for tier, tlabel in TIERS:
         for key, label in CLOUD + LOCAL:
-            bad = [r["rep"] for r in rep(tier, key) if r.get("instrument_fault") or r.get("instrument_faults")]
+            bad = [r["rep"] for r in rep(tier, key) if fault_count(r)]
             if bad:
                 rows.append((label, tlabel, ", ".join(f"rep{n}" for n in bad), len(bad)))
     return rows
+
+
+def is_fault(x):
+    return bool(x.get("instrument_fault"))
+
+
+def excl_rate(r):
+    """pass@1 (%) of one rep without instrument faults: faulted rep dropped (None); real-tier faulted tasks dropped."""
+    tasks = r.get("tasks") or []
+    if any("instrument_fault" in t for t in tasks):
+        ok = [t for t in tasks if not is_fault(t)]
+        return sum(1 for t in ok if t.get("ok")) / len(ok) * 100 if ok else None
+    return None if is_fault(r) else r["pass_at_1"] * 100
+
+
+def fault_count(r):
+    tasks = r.get("tasks") or []
+    n = sum(1 for t in tasks if is_fault(t))
+    return n if n else (1 if is_fault(r) or r.get("instrument_faults") else 0)
 
 
 CLOUD = [("opus", "Opus"), ("sonnet", "Sonnet"), ("glm", "GLM"), ("glm-flash", "GLM-fast"), ("kimi", "Kimi")]
@@ -126,10 +145,15 @@ for key, label in [("gm", "Gyro-M"), ("cl", "Coder-L (MTP)")]:
         quality_rows.append((label, sl, ms(codeset(key, s)), greedy(key, s)))
 
 agent_pass, agent_wall, agent_tps = [], [], []
+fault_pass = []
 for key, label in CLOUD + LOCAL:
     prow, wrow, trow = [label], [label], [label]
-    for t, _ in TIERS:
+    for t, tl in TIERS:
         rs = ok_reps(t, key)
+        if rs:
+            fault_pass.append((label, tl, fmt(ms([r["pass_at_1"] * 100 for r in rs]), 1, "%"),
+                               sum(fault_count(r) for r in rs),
+                               fmt(ms([excl_rate(r) for r in rs]), 1, "%")))
         prow.append(fmt(ms([r["pass_at_1"] * 100 for r in rs]), 1, "%"))
         wrow.append(fmt(ms([r["wall_s"] for r in rs]), 0, " s"))
         trow.append(fmt(ms([r["tok_per_s"] for r in rs if r.get("tok_per_s")]), 1))
@@ -243,6 +267,8 @@ parts.append(table(["model", "rep", "status", "passed", "wall", "tok/s"], rows,
 parts.append(img_tag("realtasks.png"))
 fr = fault_reps()
 parts.append("<h2>Instrument faults</h2>")
+parts.append(table(["model", "tier", "pass@1 (all reps)", "instrument faults", "pass@1 excluding instrument faults"], fault_pass,
+                   "Faults are PAI's own classification per worker (malformed-tool-call, degenerate-answer). The excluding column drops faulted reps (real tier: faulted tasks) from the denominator; the first column is unchanged."))
 parts.append(table(["model", "tier", "reps", "n"], fr or [("none", "", "", 0)],
                    "Reps ended by a malformed tool call (unparsed tool-call block returned as text: server parser defect). Counted here, not as failures."))
 
@@ -357,6 +383,7 @@ md.append("## 4. Cloud pass@1 per model and set")
 md.append("![cloud pass@1](../../.cache/pai/strata-bench/report/out/cloud-pass1.png)")
 md.append("")
 md.append("## Instrument faults")
+md += md_table(["model", "tier", "pass@1 (all reps)", "instrument faults", "pass@1 excluding instrument faults"], fault_pass)
 md += md_table(["model", "tier", "reps", "n"], fault_reps() or [("none", "", "", 0)])
 md.append("Reps ended by a malformed tool call (server parser defect) are counted here, not as failures.")
 md.append("## 5. Real PAI tasks per rep")
