@@ -11,9 +11,9 @@ import { loadConfig } from "../daemon/config.js";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 import { pidAlive } from "../workers/status.js";
 import { restartRouter } from "./restart.js";
-import { checkUpstream } from "./preflight.js";
+import { checkUpstream, restarterLookup } from "./preflight.js";
 import { routerPort } from "./router.js";
-import { abortedText, probeRouter, readHandoverStatus, routerHandoverStatusFile, routerLogFile, routerPidFile, routerRunningPid, routerSwapArgs, spawnRouter, startHandover } from "./supervisor.js";
+import { abortedHost, abortedText, probeRouter, readHandoverStatus, routerHandoverStatusFile, routerLogFile, routerPidFile, routerRunningPid, routerSwapArgs, spawnRouter, startHandover } from "./supervisor.js";
 
 export function routerStartText(cliEntry: string): string {
   const pid = routerRunningPid();
@@ -46,9 +46,10 @@ export function routerRestartDeps(cliEntry: string): Parameters<typeof restartRo
     isUp: () => probeRouter(routerPort(), 500),
     preflight: () => checkUpstream(loadConfig().router.claudeUpstream),
     settled: (n) => n === undefined || routerRunningPid() === n || !pidAlive(n),
-    aborted: (old, n) => {
+    aborted: async (old, n) => {
       const st = readHandoverStatus(old);
-      return st && (st.successorPid === undefined || st.successorPid === n) ? abortedText(st) : undefined;
+      if (!st || (st.successorPid !== undefined && st.successorPid !== n)) return undefined;
+      return abortedText(st, st.diag ? await restarterLookup(abortedHost(st)) : undefined);
     },
   };
 }

@@ -6,7 +6,7 @@ export interface RestartDeps {
   /** Run in this process before anything is started: a failure here aborts the restart (message names host and code). */
   preflight?: () => Promise<{ ok: boolean; host: string; code?: string }>;
   /** After the new router answers: the abort message when the successor reported it cannot reach the upstream and left the old router serving. */
-  aborted?: (oldPid: number, newPid: number | undefined) => string | undefined;
+  aborted?: (oldPid: number, newPid: number | undefined) => string | undefined | Promise<string | undefined>;
   /** Spawn path only: true once the successor owns the router pid file or has exited; until then an answering port may still be the old router. */
   settled?: (newPid: number | undefined) => boolean;
   now?: () => number;                        // default Date.now
@@ -57,7 +57,7 @@ export async function restartRouter(d: RestartDeps): Promise<RestartResult> {
       // still the old router answering; the successor is in its preflight
     } else if (isUp) {
       // the old router answers while a successor that failed its preflight has already exited
-      const why = d.oldPid !== undefined ? d.aborted?.(d.oldPid, newPid) : undefined;
+      const why = d.oldPid !== undefined ? await d.aborted?.(d.oldPid, newPid) : undefined;
       if (why) throw new RestartAborted(why);
       // First success after signal
       if (firstSuccessTime === undefined) {

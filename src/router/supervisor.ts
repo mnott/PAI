@@ -10,6 +10,7 @@ import { dirname } from "node:path";
 import { connect } from "node:net";
 import { pidAlive } from "../workers/status.js";
 import { routerPort } from "./router.js";
+import { restarterLookup } from "./preflight.js";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 import { LOCAL_PROBE_TIMEOUT_MS } from "../utils/timeouts.js";
 
@@ -29,12 +30,19 @@ export interface HandoverStatus {
   reason?: string;
   /** Set when the successor itself reported the failure (spawn path): its pid. */
   successorPid?: number;
+  /** Successor's own reading of the resolvers at the moment its preflight failed. */
+  diag?: string;
 }
 
 /** What the CLI prints when the successor could not reach the upstream and the old router was left serving. */
-export function abortedText(st: HandoverStatus): string | undefined {
-  return st.state === "failed" && st.reason?.startsWith("successor cannot reach") ? `router restart aborted: ${st.reason}; old router ${st.oldPid} keeps serving` : undefined;
+export function abortedText(st: HandoverStatus, restarter?: string): string | undefined {
+  if (st.state !== "failed" || !st.reason?.startsWith("successor cannot reach")) return undefined;
+  const diag = st.diag ? `; diag ${st.diag}${restarter ? `; ${restarter}` : ""}` : "";
+  return `router restart aborted: ${st.reason}; old router ${st.oldPid} keeps serving${diag}`;
 }
+
+/** The host named in a "successor cannot reach <host>: <code>" reason. */
+export const abortedHost = (st: HandoverStatus): string => /^successor cannot reach (\S+):/.exec(st.reason ?? "")?.[1] ?? "";
 
 export function readHandoverStatus(oldPid: number): HandoverStatus | undefined {
   try {
@@ -69,7 +77,7 @@ export function startHandover(oldPid: number, timeoutMs = 30000): Promise<number
         return pid;
       }
       const st = readHandoverStatus(oldPid);
-      if (st?.state === "failed") throw new Error(abortedText(st) ?? `router ${oldPid} kept serving: ${st.reason ?? "successor did not start"} (see ${routerLogFile()})`);
+      if (st?.state === "failed") throw new Error(abortedText(st, st.diag ? await restarterLookup(abortedHost(st)) : undefined) ?? `router ${oldPid} kept serving: ${st.reason ?? "successor did not start"} (see ${routerLogFile()})`);
     }
     throw new Error(`router ${oldPid} did not hand over within ${timeoutMs}ms`);
   })();
