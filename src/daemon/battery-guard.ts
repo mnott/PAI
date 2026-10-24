@@ -682,6 +682,63 @@ export function rotateTelemetry(path: string, now: number): number {
   }
 }
 
+export interface TelemetryLine extends Partial<Omit<PowerTelemetry, "at">> {
+  at: number;
+  source?: string;
+  drainPctPerMin?: number | null;
+}
+
+export interface TelemetrySummary {
+  latest: TelemetryLine;
+  ageS: number;
+  /** Lines inside the window. */
+  samples: number;
+  systemPowerInW: { max: number; avg: number } | null;
+  systemLoadW: { max: number; avg: number } | null;
+  /** Largest discharge (W, positive); batteryW is negative while discharging. null with no samples. */
+  maxDrainW: number | null;
+  minPct: number | null;
+}
+
+/** Read the telemetry jsonl: latest line plus max/average over the window. null for a missing or empty file. */
+export function summarizeTelemetry(windowMs: number, now: number = Date.now(), path: string = telemetryFile()): TelemetrySummary | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  const lines: TelemetryLine[] = [];
+  for (const l of raw.split("\n")) {
+    if (!l) continue;
+    try {
+      const o = JSON.parse(l) as Omit<TelemetryLine, "at"> & { at?: number | string };
+      const at = typeof o.at === "number" ? o.at : Date.parse(String(o.at));
+      if (Number.isFinite(at)) lines.push({ ...o, at });
+    } catch {
+      /* skip an unparsable line */
+    }
+  }
+  if (!lines.length) return null;
+  const latest = lines.reduce((a, b) => (b.at >= a.at ? b : a));
+  const win = lines.filter((x) => x.at >= now - windowMs);
+  const nums = (k: "systemPowerInW" | "systemLoadW" | "batteryW" | "pct"): number[] =>
+    win.map((x) => x[k]).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const maxAvg = (v: number[]): { max: number; avg: number } | null =>
+    v.length ? { max: Math.max(...v), avg: Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 100) / 100 } : null;
+  const bat = nums("batteryW");
+  const pct = nums("pct");
+  return {
+    latest,
+    ageS: Math.max(0, Math.round((now - latest.at) / 1000)),
+    samples: win.length,
+    systemPowerInW: maxAvg(nums("systemPowerInW")),
+    systemLoadW: maxAvg(nums("systemLoadW")),
+    maxDrainW: bat.length && Math.min(...bat) < 0 ? -Math.min(...bat) : bat.length ? 0 : null,
+    minPct: pct.length ? Math.min(...pct) : null,
+  };
+}
+
 /** Once a day, or at over 5 MB (at most hourly): rotate. */
 function maybeRotateTelemetry(now: number): void {
   const due = now - lastTelemetryRotate >= DAY_MS || (now - lastTelemetryRotate >= 3600_000 && fileSize(telemetryFile()) > TELEMETRY_MAX_BYTES);

@@ -1863,9 +1863,9 @@ async function startShim(): Promise<void> {
 
   server.tool(
     "battery_status",
-    "The battery guard (power.batteryGuard.*): last reading, whether new local-model work is paused or stopped and why, a benchmark last-resort stop, and the live <PAI home>/state/benchmark-run.json marker.",
-    {},
-    async () => batteryStatus()
+    "The battery guard (power.batteryGuard.*): last reading, whether new local-model work is paused or stopped and why, a benchmark last-resort stop, and the live <PAI home>/state/benchmark-run.json marker. Also the latest power telemetry line and, over a window, max/average system power in and load, max battery drain and minimum charge.",
+    { window_hours: z.number().min(0).max(336).optional().describe("Telemetry window in hours (default 12, max 14 days = 336).") },
+    async (args) => batteryStatus(args)
   );
 
   server.tool(
