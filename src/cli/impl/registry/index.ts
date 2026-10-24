@@ -49,12 +49,21 @@ export async function registryStatsCmd(): Promise<number> {
 // rebuild
 // ---------------------------------------------------------------------------
 
-export async function registryRebuildCmd(): Promise<number> {
+export async function registryRebuildCmd(opts: { yes?: boolean } = {}): Promise<number> {
   const backend = await getRegistryBackend();
+  if (!opts.yes) {
+    const orphans = await backend.countOrphanedChunks();
+    console.log(warn("Rebuilding the registry would delete:"));
+    console.log(`  ${await backend.countProjects()} projects, ${await backend.countSessions()} sessions, all tags, aliases and links`);
+    console.log(dim(`  (every project gets a new id; ${orphans.total} indexed chunks would be orphaned unless ids are reused)`));
+    console.log(dim("  A backup of the projects table is kept. Re-run with --yes to do it."));
+    return 1;
+  }
   console.log(warn("Rebuilding registry — all existing data will be erased."));
   console.log(dim("Clearing all tables ..."));
 
-  await backend.resetRegistry();
+  const { backupTable } = await backend.resetRegistry();
+  if (backupTable) console.log(dim(`Projects backed up to ${backupTable}`));
 
   console.log(dim("Registry cleared. Re-scanning ..."));
   await cmdScan();

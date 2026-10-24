@@ -1217,6 +1217,16 @@ export function defineRegistryBackendContract(
       expect(await backend.resolveAlias("reset-alias")).toBeNull();
     });
 
+    it("resetRegistry backs up projects (none when empty), and orphan counting/repair run clean", async () => {
+      await backend.createProject({ slug: "bk", displayName: "Bk", rootPath: "/tmp/bk", encodedDir: "-tmp-bk", createdAt: 1, updatedAt: 1 });
+      const r = await backend.resetRegistry();
+      expect(r.projects).toBe(1);
+      expect(r.backupTable).toMatch(/^projects_backup_\d+$/);
+      expect((await backend.resetRegistry()).backupTable).toBeNull();
+      expect((await backend.countOrphanedChunks()).orphaned).toBe(0);
+      expect((await backend.repairOrphans({ dryRun: true })).orphanChunks).toBe(0);
+    });
+
     // -----------------------------------------------------------------------
     // Coverage gate — must be the LAST test: closes the backend, then checks
     // every RegistryBackend method was exercised at least once above.

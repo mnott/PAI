@@ -48,9 +48,10 @@ describe("pai registry", () => {
     const r = await runPai(["registry","scan","--quick"]);
     expect(r.code).toBe(0);
   });
-  it("pai registry rebuild exits 0", async () => {
+  it("pai registry rebuild without --yes deletes nothing and exits 1", async () => {
     const r = await runPai(["registry","rebuild"]);
-    expect(r.code).toBe(0);
+    expect(r.code).toBe(1);
+    expect(r.out + r.err).toContain("--yes");
   });
   it("pai registry migrate exits 0", async () => {
     const r = await runPai(["registry","migrate"]);

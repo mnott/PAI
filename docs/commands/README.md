@@ -194,6 +194,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai memory index` | Read project notes and memory files into the search index |
 | `pai memory pass` | Internal: one background pass started by the daemon |
 | `pai memory reembed` | Switch the index to another embedding backend |
+| `pai memory repair-orphans` | Re-attach indexed text left under project ids that no longer exist |
 | `pai memory search` | Search what the memory index knows |
 | `pai memory settings` | Show or change the search settings |
 | `pai memory sources` | Where the indexed content comes from |
