@@ -26,6 +26,9 @@ import {
   INDEX_YIELD_EVERY,
 } from "./helpers.js";
 import { retryTransient } from "./retry.js";
+import { withCarriedEmbeddings } from "./carry-over.js";
+import { guardMassRewrite } from "./rewrite-guard.js";
+import { sha256 } from "../../utils/hash.js";
 import { discoverProjectFiles } from "./discover.js";
 import type { IndexResult } from "./types.js";
 
@@ -73,9 +76,6 @@ export async function indexFileWithBackend(
   const existingHash = await backend.getFileHash(projectId, dbPath);
   if (existingHash === hash) return false;
 
-  // Delete old chunks
-  await backend.deleteChunksForFile(projectId, dbPath);
-
   // Chunk the content
   const rawChunks = chunkMarkdown(content);
   const updatedAt = Date.now();
@@ -94,8 +94,12 @@ export async function indexFileWithBackend(
     embedding: null,
   }));
 
+  // Vectors of unchanged text survive the rewrite: look them up before the old rows go.
+  const carried = await withCarriedEmbeddings(backend, chunks);
+  await backend.deleteChunksForFile(projectId, dbPath);
+
   // Insert chunks + update file record
-  await backend.insertChunks(chunks);
+  await backend.insertChunks(carried);
   await backend.upsertFile({ projectId, path: dbPath, source, tier, hash, mtime, size });
 
   return true;
@@ -204,8 +208,8 @@ export interface EmbedPassOptions {
   batchSize?: number;
   /** Checked between batches; a string stops the pass (yield) with that reason. */
   shouldYield?: () => string | null;
-  /** Called after every stored batch with the chunks embedded so far. */
-  onProgress?: (embedded: number) => void;
+  /** Called after every stored batch with the chunks stored so far, of which `carried` took a same-text vector instead of the model. */
+  onProgress?: (stored: number, carried: number) => void;
   /** Called once when the loop ends: "done" (backlog slice finished), "budget" or "yielded". */
   onEnd?: (r: { outcome: "done" | "budget" | "yielded" | "failed"; embedded: number; reason?: string }) => void;
 }
@@ -291,15 +295,21 @@ export async function embedChunksWithBackend(
   const r = await runEmbedPipeline({
     fetchPage: async () => (served ? [] : ((served = true), rows)),
     embed: (texts) => gate.backend.embed(texts),
+    // The same text already has a vector somewhere (an orphaned project id, a moved file): copy it, skip the model.
+    carry: async (batch) => {
+      const hashes = batch.map((row) => sha256(row.text));
+      const known = await retryTransient(() => backend.getEmbeddingsByHash(hashes));
+      return hashes.map((h) => known.get(h) ?? null);
+    },
     // One bulk statement per batch; a per-row UPDATE was most of the pass's time.
     write: (batch, vecs) =>
-      retryTransient(() => backend.updateEmbeddings(batch.map((row, j) => ({ id: row.id, embedding: serializeEmbedding(vecs[j]) })))),
+      retryTransient(() => backend.updateEmbeddings(batch.map((row, j) => ({ id: row.id, embedding: Buffer.isBuffer(vecs[j]) ? vecs[j] : serializeEmbedding(vecs[j] as Float32Array) })))),
     batchSize,
     concurrency: configuredEmbedConcurrency(),
     shouldStop,
     deadline,
     shouldYield: options?.shouldYield,
-    onBatch: (batch, n) => {
+    onBatch: (batch, n, carriedN) => {
       // Attribute the batch to projects only after it is durably stored. Rows
       // arrive ordered by project, so a boundary is a real transition.
       for (const { project_id, path } of batch) {
@@ -317,10 +327,10 @@ export async function embedChunksWithBackend(
         projectEmbedded++;
       }
       embedded = n;
-      options?.onProgress?.(n);
+      options?.onProgress?.(n, carriedN);
       const lastChunk = batch[batch.length - 1];
       process.stderr.write(
-        `[pai-daemon] Embedded ${n}/${total} chunks (${pName(lastChunk.project_id)}: ${lastChunk.path})\n`
+        `[pai-daemon] Stored ${n}/${total} chunks (carried ${carriedN}, embedded ${n - carriedN}; ${pName(lastChunk.project_id)}: ${lastChunk.path})\n`
       );
     },
   });
@@ -376,6 +386,10 @@ export async function indexAllWithBackend(
     totals.filesSkipped += r.filesSkipped;
     report(++n, project.display_name);
   }
+
+  let total = 0;
+  for (const project of projects) total += (await backend.getProjectStats(project.id)).chunks;
+  guardMassRewrite(totals.chunksCreated, total);
 
   return { projects: projects.length, result: totals };
 }
