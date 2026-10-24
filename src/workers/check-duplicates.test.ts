@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symli
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { findNewDuplicates } from "./worktree.js";
+import { findNewDuplicates, stubScan } from "./worktree.js";
 
 const repo = join(__dirname, "..", "..");
 const hasJscpd = existsSync(join(repo, "node_modules", ".bin", "jscpd"));
@@ -70,5 +70,53 @@ describe.skipIf(!hasJscpd)("duplicate-code gate on a temp copy", () => {
     expect(run("--prune").status).toBe(0);
     expect(baseline().length).toBeLessThan(before.length); // the fixed alpha clone is dropped
     expect(run().status).toBe(0);
+  });
+});
+
+describe("duplicate gate fails closed when the scan cannot run", () => {
+  let dir: string;
+  let oldHead: string;
+  const git = (...a: string[]) => spawnSync("git", a, { cwd: dir, encoding: "utf8" }).stdout.trim();
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "pai-dupgate-closed-"));
+    mkdirSync(join(dir, "scripts"));
+    mkdirSync(join(dir, "src"));
+    cpSync(join(repo, "scripts", "check-duplicates.mjs"), join(dir, "scripts", "check-duplicates.mjs"));
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "t@example.com");
+    git("config", "user.name", "t");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    oldHead = git("rev-parse", "HEAD");
+    writeFileSync(join(dir, "src", "a.ts"), "export const a = 1;\n");
+    git("add", "-A");
+    git("commit", "-q", "-m", "work");
+  });
+  afterAll(() => {
+    delete process.env.PAI_MERGE_ALLOW_DUPLICATES;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("the script exits 2 when the jscpd binary cannot be resolved", () => {
+    const r = spawnSync("node", ["scripts/check-duplicates.mjs"], {
+      cwd: dir,
+      encoding: "utf8",
+      env: { ...process.env, PAI_JSCPD_BIN: join(dir, "no-such-jscpd") },
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/could not run: jscpd is not installed/);
+  });
+
+  it("findNewDuplicates reports the reason and the repair; the gate reverts and keeps the branch", () => {
+    delete process.env.PAI_MERGE_ALLOW_DUPLICATES;
+    expect(findNewDuplicates(dir)).toMatch(/^duplicate gate could not run: jscpd is not installed \(npm install\) — run npm install in /);
+    expect(() => stubScan(dir, oldHead)).toThrow(/duplicate gate could not run:.*reverted/);
+    expect(git("log", "-1", "--format=%s")).toMatch(/^Revert/);
+  });
+
+  it("PAI_MERGE_ALLOW_DUPLICATES=1 overrides", () => {
+    process.env.PAI_MERGE_ALLOW_DUPLICATES = "1";
+    expect(() => stubScan(dir, oldHead)).not.toThrow();
   });
 });

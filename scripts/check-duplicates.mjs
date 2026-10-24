@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Duplicate-code gate: runs jscpd over src/ with a fixed threshold and fails on any clone
 // that is not in scripts/duplicates-baseline.json. The baseline can only shrink:
-//   node scripts/check-duplicates.mjs          check (exit 1 on a new clone)
+//   node scripts/check-duplicates.mjs          check (exit 1 on a new clone, 2 when the scan cannot run)
 //   node scripts/check-duplicates.mjs --prune  drop baseline entries that are fixed
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,7 +15,7 @@ const baselinePath = join(root, "scripts", "duplicates-baseline.json");
 const THRESHOLD = ["--min-lines", "8", "--min-tokens", "70"];
 
 const out = mkdtempSync(join(tmpdir(), "pai-jscpd-"));
-const jscpd = join(root, "node_modules", ".bin", "jscpd");
+const jscpd = process.env.PAI_JSCPD_BIN ?? join(root, "node_modules", ".bin", "jscpd"); // PAI_JSCPD_BIN: test seam for the resolver
 if (!existsSync(jscpd)) {
   console.error("duplicate scan could not run: jscpd is not installed (npm install)");
   process.exit(2);

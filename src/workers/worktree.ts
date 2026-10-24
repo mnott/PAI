@@ -1502,7 +1502,7 @@ function gateLines(
     const dup = findDuplicates();
     if (dup) {
       throw new Error(
-        `duplicate-code gate failed: ${dup}: reverted ${revert()}; the worker branch is kept (extract the shared function and re-merge)`
+        `${dup.startsWith("duplicate gate could not run") ? dup : `duplicate-code gate failed: ${dup}`}: reverted ${revert()}; the worker branch is kept (extract the shared function and re-merge)`
       );
     }
   }
@@ -1585,11 +1585,18 @@ export function stubScan(cwd: string, oldHead: string): string {
   );
 }
 
-/** Run scripts/check-duplicates.mjs in the merged tree: its report when a new clone was added, else null (also null when the repo has no such script). */
+/**
+ * Run scripts/check-duplicates.mjs in the merged tree: its report when a new clone was added, else null
+ * (also null when the repo has no such script). Fails closed: exit 2 (jscpd missing or crashed) is a
+ * report too, "duplicate gate could not run: <reason> — run npm install in <cwd>".
+ */
 export function findNewDuplicates(cwd: string): string | null {
   if (!existsSync(join(cwd, "scripts", "check-duplicates.mjs"))) return null;
   const r = spawnSync("node", ["scripts/check-duplicates.mjs"], { cwd, encoding: "utf8" });
-  return r.status === 0 ? null : (r.stderr || r.stdout).trim().split("\n").join("; ");
+  if (r.status === 0) return null;
+  const text = (r.stderr || r.stdout || String(r.error ?? "")).trim().split("\n").join("; ");
+  if (r.status !== 2) return text;
+  return `duplicate gate could not run: ${text.replace(/^duplicate scan could not run:?\s*/, "")} — run npm install in ${cwd}`;
 }
 
 /** First repo among the status's worktree, cwd and the invocation cwd that has refs/heads/<branch>. */
