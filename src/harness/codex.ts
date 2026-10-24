@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { jsonlRecords, newestFirst } from "./jsonl.js";
 import type { HarnessAdapter, HarnessEvent, HarnessSession } from "./types.js";
 
 /** Codex CLI's config dir: CODEX_HOME if set, else ~/.codex. */
@@ -79,12 +80,6 @@ function eventsOfEntry(sessionId: string, e: Entry): HarnessEvent[] {
 
 const NAME = "codex";
 
-/** Sort/filter time of an updatedAt stamp; an unparsable one counts as 0 (oldest). */
-function sortMs(updatedAt: string): number {
-  const ms = Date.parse(updatedAt);
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
 /** rollout-*.jsonl under `dir`, recursing into subdirectories. */
 function rolloutFiles(dir: string): string[] {
   const out: string[] = [];
@@ -135,28 +130,9 @@ export const codexAdapter: HarnessAdapter = {
   listSessions(opts: { cwd?: string; sinceMs?: number } = {}): HarnessSession[] {
     const root = join(codexHomeDir(), "sessions");
     if (!existsSync(root)) return [];
-    const out = rolloutFiles(root).map(toSession);
-    const since = opts.sinceMs !== undefined ? Date.now() - opts.sinceMs : undefined;
-    return out
-      .filter((s) => since === undefined || sortMs(s.updatedAt) >= since)
-      .sort((a, b) => sortMs(b.updatedAt) - sortMs(a.updatedAt));
+    return newestFirst(rolloutFiles(root).map(toSession), opts.sinceMs);
   },
   *readEvents(session: HarnessSession): Iterable<HarnessEvent> {
-    let text: string;
-    try {
-      text = readFileSync(session.path, "utf8");
-    } catch {
-      return;
-    }
-    for (const raw of text.split("\n")) {
-      if (!raw.trim()) continue;
-      let e: Entry;
-      try {
-        e = JSON.parse(raw) as Entry;
-      } catch {
-        continue;
-      }
-      yield* eventsOfEntry(session.id, e);
-    }
+    for (const e of jsonlRecords<Entry>(session.path)) yield* eventsOfEntry(session.id, e);
   },
 };
