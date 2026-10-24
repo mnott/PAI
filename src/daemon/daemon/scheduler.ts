@@ -432,7 +432,7 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
         process.stderr.write("[pai-daemon] embed pass: cannot spawn child; running in-process at normal priority\n");
       }
       const pw = jobProgressFromEnv("embed");
-      pw?.update({ phase: "embed", unit: "chunks", done: 0, total: await storageBackend.countUnembeddedChunks().catch(() => 0) });
+      pw?.update({ phase: "embed", unit: "chunks", done: 0, total: await Promise.resolve().then(() => storageBackend.countUnembeddedChunks()).catch(() => 0) });
       const count = await embedChunksWithBackend(
         storageBackend,
         () => shutdownRequested,
