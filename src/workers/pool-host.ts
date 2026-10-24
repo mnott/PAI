@@ -75,7 +75,8 @@ import {
   type SlotPrep,
 } from "./slots.js";
 import { commitsSince, git, isPaiBookkeepingPath, salvageNotes, salvageOnExit, uncommittedPaths, worktreeBranch, worktreeSystemPrompt } from "./worktree.js";
-import { AG2_REASK_TEXT, checkProof, newUntracked, parseWorkerReport, untrackedPaths, type BashRun } from "./report.js";
+import { AG2_REASK_TEXT, parseWorkerReport, untrackedPaths } from "./report.js";
+import { createToolFold, proofNote, runProofCheck } from "./run/tool-fold.js";
 import {
   appendPoolMetric,
   firstRequestShare,
@@ -255,6 +256,11 @@ export class PoolSlotSession {
       this.listeners.delete(listener);
       this.feeding = false;
     }
+  }
+
+  /** Mid-turn harness line to the slot as a user turn; best effort. */
+  inject(text: string): void {
+    if (!this.exited) this.proc.write(stdinUserMessage(text));
   }
 
   /** Resolves when the process exits (immediately when it already has). */
@@ -1160,8 +1166,15 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // (holder object: a plain `let` would be flow-narrowed to null at the
     // use site below, since only the callback ever assigns it)
     const scratch: { firstUsage: UsageBlock | null } = { firstUsage: null };
-    const toolUses = new Map<string, { name: string; input: unknown }>();
-    const bashRuns: BashRun[] = [];
+    const toolFold = createToolFold({
+      logDir,
+      worker: wid,
+      provider: task.provider,
+      label: task.label,
+      cwd: workDir,
+      inject: (t) => session.inject(t),
+    });
+    const bashRuns = toolFold.bashRuns;
     const untrackedAtStart = new Set(untrackedPaths(workDir));
 
     const onEvent = (e: StreamEvent): void => {
@@ -1182,7 +1195,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         for (const block of e.message?.content ?? []) {
           if (block.type === "tool_use") {
             status.tools += 1;
-            if (block.id) toolUses.set(block.id, { name: block.name ?? "?", input: block.input });
+            toolFold.onToolUse(block);
             status.last = describeTool(block.name ?? "?", block.input);
             if (block.name === "Bash") {
               status.sleepSec = parseSleepSecs(String((block.input as { command?: unknown })?.command ?? ""));
@@ -1196,12 +1209,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         if (Array.isArray(blocks)) {
           for (const block of blocks) {
             if (block.type !== "tool_result") continue;
-            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
-            if (use?.name === "Bash") {
-              const text = typeof block.content === "string" ? block.content : "";
-              const failed = block.is_error === true || /Exit code [1-9]/.test(text);
-              bashRuns.push({ command: String((use.input as { command?: unknown })?.command ?? ""), failed, output: text.slice(-400) });
-            }
+            toolFold.onToolResult(block);
           }
         }
       } else if (e.type === "result") {
@@ -1309,15 +1317,13 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
     // proof check against THIS task's bash runs and the untracked files it added
     if (resultEvent?.result && task.reportFormat === "ag2") {
-      const stray = newUntracked(workDir, untrackedAtStart);
-      const chk = checkProof(resultEvent.result, bashRuns, stray);
-      if (chk.rewritten || stray.length) {
-        resultEvent = { ...resultEvent, result: chk.text };
-        report = parseWorkerReport(chk.text);
-        if (chk.rewritten) {
+      const { text, report: rep, stray, rewritten, proof } = runProofCheck(resultEvent.result, bashRuns, workDir, untrackedAtStart, ledger, wid);
+      if (rewritten || stray.length) {
+        resultEvent = { ...resultEvent, result: text };
+        report = rep;
+        if (rewritten) {
           status.reportValid = false;
-          status.last = `claimed proof not run or failed: ${chk.proof}`;
-          appendLedger(ledger, "REPORT-PROOF-UNVERIFIED", { id: wid, proof: chk.proof ?? "?" });
+          status.last = proofNote(proof);
         }
       }
     }
