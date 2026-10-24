@@ -942,6 +942,14 @@ describe("ps machine scope (no hidden workers)", () => {
     expect(psOutput(plain, true, env, false)).not.toContain("QUEUED");
   });
 
+  it("a run queued by a provider hold says held: <reason> in the ps line", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-ps-held-"));
+    saveStatus(dir, { ...base, id: "20260917-100020-1", state: "queued", capacity: { provider: "prov", cap: 3, total: 1, position: 1, queued: 1, elapsedSec: 5, held: "hold probe" } } as WorkerStatus);
+    const out = psOutput(dir, true, env, false);
+    expect(out).toContain("held: hold probe");
+    expect(out).not.toContain("cap 3");
+  });
+
   it("chat panes are terminals, not workers: never in the machine count", () => {
     const dir = mkdtempSync(join(tmpdir(), "pai-ps-chat-"));
     saveStatus(dir, { ...base, id: "20260917-100003-4", term: "w9t0p0:aaaa-bbbb", origin: "chat", label: "unlabeled", turns: 0 });

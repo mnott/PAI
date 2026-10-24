@@ -222,7 +222,7 @@ export interface StatusRow {
   /** set while the run waits in the stagger gate for a cache warm-up. */
   warmup?: { elapsedSec: number; limitSec: number } | null;
   /** set while the run waits behind the provider cap (capacity gate). */
-  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number; queued?: number; behind?: string; sinceMs?: number } | null;
+  capacity?: { provider: string; cap: number; total: number; position: number; elapsedSec: number; queued?: number; behind?: string; sinceMs?: number; held?: string } | null;
 }
 
 export { fmtElapsed };
@@ -230,7 +230,7 @@ export { fmtElapsed };
 /** The queue wording of a waiting run: the full line when the gate recorded it, the older total/cap form otherwise. */
 function capacityText(cap: NonNullable<StatusRow["capacity"]>): string {
   return cap.queued !== undefined && cap.sinceMs !== undefined
-    ? queuedText({ provider: cap.provider, position: cap.position, queued: cap.queued, behind: cap.behind, sinceMs: cap.sinceMs })
+    ? queuedText({ provider: cap.provider, position: cap.position, queued: cap.queued, behind: cap.behind, sinceMs: cap.sinceMs, held: cap.held })
     : `queued: ${cap.total} on ${cap.provider}, cap ${cap.cap} (position ${cap.position})`;
 }
 
@@ -599,7 +599,9 @@ export function renderTable(
     lines.push(c("bold", `QUEUED (${queued.length})`));
     for (const s of queued) {
       const cap = s.capacity;
-      const pos = cap
+      const pos = cap?.held !== undefined
+        ? `held: ${cap.held}, position ${cap.position} of ${cap.queued ?? cap.total}`
+        : cap
         ? `position ${cap.position} of ${cap.total}, cap ${cap.cap}${cap.priority ? `, ${cap.priority} priority` : ""}`
         : `waiting for a ${s.provider} slot`;
       lines.push(
