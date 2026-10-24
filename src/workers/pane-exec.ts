@@ -291,6 +291,13 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   const sigs: NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
   let sigSeen: NodeJS.Signals | null = null;
   const onSig = (s: NodeJS.Signals): void => {
+    // SIGHUP is the terminal going away (a crashed or restarted iTerm), not an order: the pane only shows the
+    // command, so the wrapper lives on without a terminal (output to the dead tty is dropped) and the
+    // command keeps running; the pane audit opens a new follow pane for it. SIGTERM/SIGINT still stop it.
+    if (s === "SIGHUP") {
+      for (const st of [proc.stdout, proc.stderr]) st?.on?.("error", () => undefined);
+      return;
+    }
     sigSeen ??= s;
     callerGone = true;
     stop?.("pane closed", s);

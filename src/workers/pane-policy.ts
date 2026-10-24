@@ -49,6 +49,8 @@ export interface PanePolicy {
   startGraceMs: number;
   endGraceMs: number;
   launchGraceMs: number;
+  /** How long a running worker's vanished pane is retried before the worker is stopped. */
+  reopenGraceMs: number;
 }
 
 /** The effective pane policy; the numbers here are only the fallback for a key the defaults file lacks. */
@@ -74,5 +76,6 @@ export function panePolicy(): PanePolicy {
     startGraceMs: num(audit, "startGraceSecs", 30) * 1000,
     endGraceMs: num(audit, "endGraceSecs", 60) * 1000,
     launchGraceMs: num(audit, "launchGraceSecs", 15) * 1000,
+    reopenGraceMs: num(audit, "reopenGraceSecs", 600) * 1000,
   };
 }

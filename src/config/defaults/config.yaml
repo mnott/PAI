@@ -428,6 +428,9 @@ panes:
     startGraceSecs: 30
     endGraceSecs: 60
     launchGraceSecs: 15
+    # A running worker whose pane vanished (terminal crash) gets a new pane, retried with backoff;
+    # only when none can be opened for this long is the worker stopped.
+    reopenGraceSecs: 600
 
 # Release steps (src/builds/mirror-sync.ts, npm-auth.ts).
 release:

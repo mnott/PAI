@@ -14,7 +14,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { closePaneForWorker, loadRegistry, osascriptJxa, type PaneEntry } from "./pane.js";
+import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptJxa, type PaneEntry } from "./pane.js";
+import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid } from "./scope.js";
 import { appendLedger } from "./ledger.js";
@@ -204,6 +205,8 @@ export async function auditTick(
     launches?: () => Promise<unknown>;
     /** Stops a worker through the normal end path (kill-tree: SIGTERM, the runner salvages and ends). */
     stop?: (wid: string, why: string) => Promise<unknown>;
+    /** Opens a new follow pane for a running worker whose pane vanished; rejects when it cannot (default: split in a live host tab). */
+    reopen?: (wid: string, v: PaneVerdict, tabs: TabMap) => Promise<unknown>;
   } = {}
 ): Promise<PaneVerdict[]> {
   const now = deps.now?.() ?? new Date();
@@ -247,13 +250,92 @@ export async function auditTick(
   for (const v of verdicts) {
     if (v.mark === "ok" || SHOWN_ONLY.includes(v.mark)) continue; // shown, never alarmed
     next[v.id] = v.mark;
+    // a running worker whose registered pane vanished (a terminal crash) is not lost work: reopen its pane
+    if (v.kind === "worker" && v.mark === "NO PANE" && v.session) {
+      if (await reopenOrFall(logDir, v, tabs, deps.reopen, deps.stop, now)) {
+        delete next[v.id];
+        continue;
+      }
+    }
     if (told[v.id] === v.mark) continue;
     appendLedger(ledgerPath(logDir), "PANE-VIOLATION", { id: v.id, kind: v.kind, mark: v.mark, why: v.why }, now);
     // a worker without its pane does not run on: it ends through the normal path, which salvages its work
-    if (v.kind === "worker" && v.mark === "NO PANE") await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, now);
+    if (v.kind === "worker" && v.mark === "NO PANE" && !v.session) await stopUnpaned(logDir, v.id, v.why ?? "no pane", deps.stop, now);
   }
   writeFileSync(toldFile(logDir), JSON.stringify(next), "utf8");
   return verdicts;
+}
+
+const reopenFile = (logDir: string): string => join(logDir, "pane-audit-reopen.json");
+
+interface ReopenState {
+  firstMs: number;
+  tries: number;
+  nextMs: number;
+}
+
+/** The host a new pane splits: the registered host while it lives, else any live iTerm session. */
+function liveHost(v: PaneVerdict, tabs: TabMap): string | undefined {
+  if (v.host && tabs.has(norm(v.host))) return v.host;
+  return tabs.keys().next().value;
+}
+
+async function defaultReopen(logDir: string, wid: string, v: PaneVerdict, tabs: TabMap): Promise<void> {
+  const host = liveHost(v, tabs);
+  if (!host) throw new Error("no live iTerm session to split");
+  const stale = loadRegistry(logDir).filter((e) => e.worker === wid);
+  const env = { ...process.env, ITERM_SESSION_ID: host } as NodeJS.ProcessEnv;
+  const r = await openPaneForWorker(logDir, readWorkersSection().workers, wid, host, env, undefined, true);
+  if (!r.session) throw new Error(r.message);
+  for (const e of stale) if (e.session !== r.session) dropPaneEntry(logDir, e, "pane audit", "pane reopened after it vanished");
+}
+
+/**
+ * A running worker's registered pane is gone: open a new follow pane, retrying with backoff while the terminal
+ * cannot be reached; after reopenGraceMs without success the worker is stopped (PANE-REOPEN-FAILED).
+ * Returns true when the worker is handled (reopened, or waiting for its next try), false when it fell back to
+ * the stop (the caller then records the violation).
+ */
+async function reopenOrFall(
+  logDir: string,
+  v: PaneVerdict,
+  tabs: TabMap,
+  reopen: ((wid: string, v: PaneVerdict, tabs: TabMap) => Promise<unknown>) | undefined,
+  stop: ((wid: string, why: string) => Promise<unknown>) | undefined,
+  now: Date
+): Promise<boolean> {
+  const nowMs = now.getTime();
+  const all = readJsonAny<ReopenState>(reopenFile(logDir));
+  const st = all[v.id] ?? { firstMs: nowMs, tries: 0, nextMs: 0 };
+  if (nowMs < st.nextMs) return true;
+  try {
+    await (reopen ?? ((wid, vv, t) => defaultReopen(logDir, wid, vv, t)))(v.id, v, tabs);
+    appendLedger(ledgerPath(logDir), "PANE-REOPENED", { id: v.id, was: v.session, tries: st.tries + 1 }, now);
+    delete all[v.id];
+    writeFileSync(reopenFile(logDir), JSON.stringify(all), "utf8");
+    return true;
+  } catch (e) {
+    const err = e instanceof Error ? e.message : String(e);
+    if (nowMs - st.firstMs >= panePolicy().reopenGraceMs) {
+      appendLedger(ledgerPath(logDir), "PANE-REOPEN-FAILED", { id: v.id, tries: st.tries + 1, why: err }, now);
+      delete all[v.id];
+      writeFileSync(reopenFile(logDir), JSON.stringify(all), "utf8");
+      await stopUnpaned(logDir, v.id, `pane gone and could not be reopened: ${err}`, stop, now);
+      return false;
+    }
+    // backoff 15 s, 30 s, ... capped at 2 min
+    all[v.id] = { firstMs: st.firstMs, tries: st.tries + 1, nextMs: nowMs + Math.min(15_000 * 2 ** st.tries, 120_000) };
+    writeFileSync(reopenFile(logDir), JSON.stringify(all), "utf8");
+    return true;
+  }
+}
+
+function readJsonAny<T>(file: string): Record<string, T> {
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as Record<string, T>;
+  } catch {
+    return {};
+  }
 }
 
 /** End a worker that runs without a registered pane (kill-tree is the normal end path); ledgered PANE-STOPPED. */

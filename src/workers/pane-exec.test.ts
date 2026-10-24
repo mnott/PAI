@@ -228,6 +228,34 @@ describe("the pane owns the process", () => {
     expect(JSON.parse(readFileSync(exitFilePath(id), "utf8")).reason).toBe("caller gone");
   }, 15_000);
 
+  it("the terminal going away (SIGHUP) does not kill the command; SIGTERM still does", async () => {
+    const run = async (id: string, sig: NodeJS.Signals, argv: string[]): Promise<{ code: number; reason?: string; alive: boolean }> => {
+      mkdirSync(paneExecDir(), { recursive: true });
+      const server = createServer();
+      const sockets = new Promise<import("node:net").Socket>((res) => server.once("connection", res));
+      await new Promise<void>((res) => server.listen(sockPath(id), res));
+      const proc = new EventEmitter() as NodeJS.Process;
+      const wrapper = runPaneExec(id, { out: () => undefined, err: () => undefined, closePane: async () => undefined, proc, killGraceMs: 300, linger: 0 });
+      const s = await sockets;
+      const rd = new FrameReader();
+      const pid = await new Promise<number>((res) => {
+        s.on("data", (c: Buffer) => { for (const f of rd.push(c)) if (f.t === "P") res(JSON.parse(f.p.toString()).pid); });
+        s.write(frame("S", JSON.stringify({ argv })));
+      });
+      proc.emit(sig, sig);
+      await new Promise((r) => setTimeout(r, 200));
+      const alive = pidAlive(pid);
+      const code = await wrapper;
+      server.close();
+      return { code, reason: JSON.parse(readFileSync(exitFilePath(id), "utf8")).reason, alive };
+    };
+    const hup = await run("t-hup", "SIGHUP", ["sh", "-c", "sleep 1; exit 0"]);
+    expect(hup).toEqual({ code: 0, reason: undefined, alive: true });
+    const term = await run("t-term", "SIGTERM", ["sleep", "60"]);
+    expect(term.reason).toBe("pane closed");
+    expect(term.alive).toBe(false);
+  }, 20_000);
+
   it("a wrapper that never connects fails the open and closes the pane again", async () => {
     const closeFailed = vi.fn(async () => true);
     await expect(openOwnedPane({ id: "t-nohello", kind: "pane", open: async () => "pane", closeFailed, helloMs: 200 })).rejects.toThrow(/did not connect/);
