@@ -346,6 +346,17 @@ export class SystemMonitor {
     void this.probe(); // warm power/temp/gpu so the first page does not wait ~10 s
   }
 
+  /**
+   * Keeps the ring filling while nobody has the cockpit open: samples are otherwise taken only when
+   * a page polls /cockpit/system, so a closed browser left a gap in the power/memory charts while
+   * the router kept serving requests. Returns the stop function.
+   */
+  startRing(): () => void {
+    const timer = setInterval(() => void this.current().catch(() => undefined), this.ringMs);
+    timer.unref();
+    return () => clearInterval(timer);
+  }
+
   /** The last served reading without polling (null before the first `current()`); for cheap periodic readers. */
   cachedSample(): SystemSample | null {
     return this.cached;
