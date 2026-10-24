@@ -17,35 +17,8 @@
 import { existsSync } from "node:fs";
 import chalk from "chalk";
 import { searchHistory, HISTORY_FILE } from "../../lib/history-search.js";
+import { HISTORY_TABLE_HEADERS, historyMatchRows } from "../../lib/history-table.js";
 import { renderTable, header, dim, warn, err } from "../../lib/utils.js";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Shorten project path for display
-// ---------------------------------------------------------------------------
-
-function shortenProject(p: string, maxLen = 42): string {
-  if (p.length <= maxLen) return p;
-  // Keep tail (the meaningful part) and prefix with …
-  return "…" + p.slice(-(maxLen - 1));
-}
-
-// ---------------------------------------------------------------------------
-// Format timestamp
-// ---------------------------------------------------------------------------
-
-function fmtTs(ts: number): string {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
 
 // ---------------------------------------------------------------------------
 // Command
@@ -79,30 +52,9 @@ export async function cmdFind(
   console.log("\n" + header("Session Search Results") + "\n");
   console.log(dim(`  Query: "${query}"  (${matches.length} session(s) with matching prompts)\n`));
 
-  const headers = ["#", "id", "when", "project", "last matching prompt"];
-  const rows = matches.map((m, idx) => {
-    const shortId = (m.sessionId ?? "no-session").slice(0, 8);
-    const when = m.lastMatchTs > 0 ? fmtTs(m.lastMatchTs) : dim("—");
-    const project = shortenProject(m.project || dim("—"));
-    // Truncate the prompt snippet — strip newlines, trim
-    const snippet = m.lastMatchDisplay
-      .replace(/\n+/g, " ")
-      .trim()
-      .slice(0, 48);
-    const display = snippet.length < m.lastMatchDisplay.replace(/\n+/g, " ").trim().length
-      ? `"${snippet}…"`
-      : `"${snippet}"`;
+  const rows = historyMatchRows(matches, { noSessionId: "no-session", projectMax: 42, noProject: dim("—") });
 
-    return [
-      dim(String(idx + 1)),
-      chalk.cyan(shortId),
-      when,
-      dim(project),
-      chalk.dim(display),
-    ];
-  });
-
-  console.log(renderTable(headers, rows));
+  console.log(renderTable(HISTORY_TABLE_HEADERS, rows));
   console.log();
   console.log(dim("  Resume: ") + chalk.white("pai resume <id>"));
   console.log();
