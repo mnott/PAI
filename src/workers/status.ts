@@ -174,9 +174,6 @@ export interface WorkerStatus {
   className?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
   rerouted?: string;
-  /** The run this one continues, and (on the old run) its continuation. */
-  reroutedFrom?: string;
-  reroutedTo?: string;
   /** Hook/permission denials the run hit (capped list, see denials.ts) and their true total. */
   denials?: Denial[];
   denialCount?: number;

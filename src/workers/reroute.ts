@@ -7,49 +7,23 @@
  * provider. A running worker goes through the normal kill path (which salvages its commits onto its branch)
  * and the same task starts on the target, with a note naming the old id and the branch it continues from.
  *
- * Escalation policy (config.yaml `workers.reroute`): queuedMaxMin, stallMaxMin, stallFailedCalls. A job whose
+ * The restart itself is the fall-through's: `rerunOn` (run/escalate.ts) starts the task on the target and links the
+ * two runs (ledger, _fallThroughOf, fallThroughTo).
+ *
+ * Escalation policy (workers.escalate): queuedMaxMin, stallMaxMin, stallFailedCalls. A job whose
  * provider was pinned (--provider, --local, the session profile) is never escalated, a job is escalated once,
  * and only to the fallback (`where: cloud`).
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { paiConfigFilePath } from "../daemon/config.js";
-import { effectiveMainConfig } from "../config/shipped-defaults.js";
-import { appendLedger } from "./ledger.js";
-import { ledgerPath } from "./paths.js";
+import { escalationPolicy } from "./config.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
-export interface ReroutePolicy {
-  /** Minutes a job may wait for a slot before it goes to the fallback provider. */
-  queuedMaxMin: number;
-  /** Minutes a running job may go without a successful Edit/Write/commit. */
-  stallMaxMin: number;
-  /** Failed tool calls in a row that count as a stall. */
-  stallFailedCalls: number;
-}
+export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
 
-const SHIPPED: ReroutePolicy = { queuedMaxMin: 15, stallMaxMin: 10, stallFailedCalls: 6 };
-
-const pos = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : fallback);
-
-/** The effective policy: config.yaml `workers.reroute`, the shipped numbers for a missing key. */
-export function reroutePolicy(): ReroutePolicy {
-  let s: Record<string, unknown> = {};
-  try {
-    const w = effectiveMainConfig(paiConfigFilePath()).workers as Record<string, unknown> | undefined;
-    const r = w?.reroute;
-    if (typeof r === "object" && r !== null && !Array.isArray(r)) s = r as Record<string, unknown>;
-  } catch {
-    // a damaged user config must not stop supervision: the shipped numbers stand alone
-  }
-  return {
-    queuedMaxMin: pos(s.queuedMaxMin, SHIPPED.queuedMaxMin),
-    stallMaxMin: pos(s.stallMaxMin, SHIPPED.stallMaxMin),
-    stallFailedCalls: pos(s.stallFailedCalls, SHIPPED.stallFailedCalls),
-  };
-}
+/** The effective policy: workers.escalate, read through the same loader as the rest of the escalation settings. */
+export const reroutePolicy = escalationPolicy;
 
 const PINNED = /\((?:flag: --provider|local|session profile)\)$/;
 
@@ -89,10 +63,11 @@ export interface RerouteTarget {
 }
 
 export interface SpawnSpec {
+  /** The old run and why it moves. */
+  id: string;
+  why: string;
   provider: string;
   model?: string;
-  label: string;
-  cwd: string;
   specFile: string;
 }
 
@@ -103,7 +78,7 @@ export interface RerouteDeps {
   resolve?: (where: string) => Promise<RerouteTarget>;
   /** Stop the old worker the way `pai worker kill` does; it salvages the commits (default: killWorker). */
   kill?: (id: string, reason: string) => Promise<unknown>;
-  /** Start the task on the target provider (default: a detached `pai worker run`). */
+  /** Start the task on the target provider (default: rerunOn, the fall-through's restart). */
   spawn?: (s: SpawnSpec) => void | Promise<void>;
   /** Wait before the kill so the old pane can print its line (default 1500 when the worker has a pane, tests pass 0). */
   announceMs?: number;
@@ -137,12 +112,23 @@ async function defaultKill(logDir: string, id: string, reason: string, by: strin
   return killWorker(logDir, id, { by, reason });
 }
 
-function defaultSpawn(s: SpawnSpec): void {
-  const argv = ["worker", "run", "--provider", s.provider, "--label", s.label, "--spec", s.specFile, "--cwd", s.cwd, "--no-queue"];
-  if (s.model) argv.push("--model", s.model);
-  const child = spawn("pai", argv, { detached: true, stdio: "ignore", cwd: s.cwd, env: process.env });
-  child.on("error", () => undefined);
-  child.unref();
+/** The restart is the run's own fall-through path, fed from the status the old run left (it may live in another process). */
+function defaultSpawn(logDir: string): (s: SpawnSpec) => void {
+  return (s) => {
+    const st = loadStatus(logDir, s.id);
+    if (!st) return;
+    void import("./run/escalate.js")
+      .then(({ rerunOn }) =>
+        rerunOn(
+          { logDir, cwd: st.cwd, label: st.label, specPath: s.specFile, claudeArgs: [], className: st.className, quiet: true },
+          s.id,
+          s.why,
+          st,
+          { provider: s.provider, model: s.model }
+        )
+      )
+      .catch(() => undefined);
+  };
 }
 
 /** Where the task text of `s` lives: its --spec file or the copy the run kept. */
@@ -175,8 +161,7 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   const branch = old.state === "running" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
   const specFile = join(d.logDir, `${id}.reroute.prompt`);
   writeFileSync(specFile, branch ? `${continuedNote(id, branch)}\n\n${text}` : text, "utf8");
-  await (d.spawn ?? defaultSpawn)({ provider: target.provider, model: target.model, label: `${old.label} (rerouted)`, cwd: old.cwd, specFile });
-  appendLedger(ledgerPath(d.logDir), "WORKER-REROUTE", { id, from: old.provider, to: target.provider, was: old.state, by, reason: d.reason, branch });
+  await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
   return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
 }
 

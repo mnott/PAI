@@ -42,12 +42,11 @@ describe("rerouteWorker", () => {
     expect(s.kill).toHaveBeenCalledWith("w1", expect.stringContaining("rerouted to anthropic"));
     expect(s.spawn).toHaveBeenCalledTimes(1);
     const sp = s.spawn.mock.calls[0]![0];
-    expect(sp).toMatchObject({ provider: "anthropic", model: "sonnet", cwd: "/repo", label: "fix it (rerouted)" });
+    expect(sp).toMatchObject({ id: "w1", provider: "anthropic", model: "sonnet", why: "rerouted by reroute" });
     expect(readFileSync(sp.specFile, "utf8")).toBe("Do the thing.");
     expect(r).toMatchObject({ was: "queued", provider: "anthropic" });
     expect(r.branch).toBeUndefined();
     expect(loadStatus(dir, "w1")?.rerouted).toContain("anthropic");
-    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/WORKER-REROUTE id=w1 from=coder-l to=anthropic was=queued/);
   });
 
   it("running: kills first (salvage), then spawns with the continued-from note on the branch", async () => {
@@ -120,7 +119,7 @@ describe("escalateOverdue", () => {
     const again = await escalateOverdue([loadStatus(dir, "w1")!], s.deps, NOW, POLICY);
     expect(again).toEqual([]);
     expect(s.spawn).toHaveBeenCalledTimes(1);
-    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/WORKER-REROUTE id=w1 .*by=escalation reason=queued 30m/);
+    expect(s.spawn.mock.calls[0]![0].why).toBe("rerouted by escalation: queued 30m");
   });
 
   it("a job already on the fallback is marked and not tried again", async () => {
@@ -148,6 +147,20 @@ describe("escalateOverdue", () => {
   });
 });
 
+describe("the shared restart (rerunOn)", () => {
+  it("starts the task on the target through the runner, ledgers it and links the old run", async () => {
+    const { rerunOn } = await import("./run/escalate.js");
+    const st = mkStatus();
+    saveStatus(dir, st);
+    const runner = vi.fn().mockImplementation(async (o: { onWorkerStart: (id: string) => void }) => (o.onWorkerStart("w2"), 0));
+    const rc = await rerunOn({ logDir: dir, cwd: "/repo", label: "fix it", specPath: promptFile, claudeArgs: [], runner: runner as never }, "w1", "rerouted by cli", st, { provider: "anthropic", model: "sonnet" });
+    expect(rc).toBe(0);
+    expect(runner.mock.calls[0]![0]).toMatchObject({ providerFlag: "anthropic", modelFlag: "sonnet", label: "fix it (rerouted)", specPath: promptFile, _fallThroughOf: "w1", _priorIds: ["w1"] });
+    expect(loadStatus(dir, "w1")?.fallThroughTo).toBe("w2");
+    expect(readFileSync(join(dir, "ledger.log"), "utf8")).toMatch(/WORKER-FALLTHROUGH id=w1 reason=rerouted by cli to=anthropic/);
+  });
+});
+
 describe("reroutePolicy", () => {
   it("defaults: queuedMaxMin 15, stallMaxMin 10, stallFailedCalls 6", () => {
     const old = process.env.PAI_CONFIG_FILE;
@@ -160,9 +173,9 @@ describe("reroutePolicy", () => {
     }
   });
 
-  it("a user config.yaml overrides single keys", () => {
+  it("a user config.yaml workers.escalate overrides single keys", () => {
     const file = join(dir, "config.yaml");
-    writeFileSync(file, "workers:\n  reroute:\n    queuedMaxMin: 5\n", "utf8");
+    writeFileSync(file, "workers:\n  escalate:\n    queuedMaxMin: 5\n", "utf8");
     const old = process.env.PAI_CONFIG_FILE;
     process.env.PAI_CONFIG_FILE = file;
     try {

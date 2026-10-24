@@ -74,7 +74,7 @@ import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult, identityExtras } from "./finalise.js";
-import { tryEscalate, rerunOnCloud, ranLocal } from "./escalate.js";
+import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
@@ -372,7 +372,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       st.claimsContinue = true;
       saveStatus(a.logDir, st);
     } else if (why && a.route && !st.escalated) {
-      return rerunOnCloud(a, wid, why, st);
+      return rerunOn(a, wid, why, st);
     }
   }
   if (!a.quiet) {
