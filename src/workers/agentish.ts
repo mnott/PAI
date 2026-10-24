@@ -67,6 +67,84 @@ export function unwrapAg2(text: string): string {
   return t.replace(/^\[\d{4}-\d{2}-\d{2}[^\]\n]*\][ \t]*\n/, "").trim();
 }
 
+const AG2_KEYS = new Set([
+  "i", "id", "g", "goal", "o", "own", "n", "forbid", "d", "steps", "p", "proof", "u", "out", "l", "limits",
+  "r", "res", "c", "changes", "t", "tests", "G", "gate", "I", "inst", "m", "images", "#", "nums", "w", "worst",
+  "x", "next", "z", "note", "y",
+]);
+const KV = /^(@\w+(?::\d+)?|[A-Za-z#]\w*)=/;
+
+export interface NormalisedAg2 {
+  /** Kind line followed by one entry per key; an entry is its k=v line plus continuation parts. */
+  kindLine: string;
+  entries: string[][];
+  normalised: boolean;
+}
+
+/**
+ * Fix the form slips workers make around an AG2 `R`: (1) `R:` / `R k=v | k=v`
+ * with text on the kind line, (2) no kind line, first line starts with a known
+ * key, (3) `- `/`* `/indented non-k=v lines, which continue the previous value.
+ * Already-well-formed text comes back with normalised=false.
+ */
+export function normaliseAg2Entries(text: string): NormalisedAg2 | null {
+  const raw = unwrapAg2(text)
+    .split("\n")
+    .filter((l) => l.trim() && !l.trim().startsWith("```"));
+  if (!raw.length) return null;
+  let normalised = false;
+  let kindLine = raw[0].trim();
+  let rest = raw.slice(1);
+
+  // lead = text to split into k=v parts when the kind line carries content
+  let lead: string | null = null;
+  const kindM = kindLine.match(/^R(?::\s*|\s+|\|\s*)(.+)$/);
+  const keyM = kindLine.match(KV);
+  if (kindM && KV.test(kindM[1])) {
+    lead = kindM[1];
+    kindLine = "R";
+  } else if (!/^[TRSQAX]\b/.test(kindLine) && keyM && AG2_KEYS.has(keyM[1])) {
+    lead = kindLine;
+    kindLine = "R";
+  } else if (/^R:\s*$/.test(kindLine)) {
+    kindLine = "R";
+    normalised = true;
+  }
+  if (lead !== null) {
+    normalised = true;
+    const parts: string[] = [];
+    for (const p of lead.split(/\s+\|\s+/)) {
+      if (parts.length && !KV.test(p.trim())) parts[parts.length - 1] += ` | ${p.trim()}`;
+      else parts.push(p.trim());
+    }
+    rest = [...parts, ...rest];
+  }
+
+  const entries: string[][] = [];
+  for (const line of rest) {
+    const t = line.trim();
+    const isCont = !KV.test(t) && (/^[-*]\s/.test(t) || /^\s/.test(line));
+    if (isCont && entries.length) {
+      entries[entries.length - 1].push(t.replace(/^[-*]\s+/, ""));
+      normalised = true;
+    } else {
+      entries.push([t]);
+    }
+  }
+  return { kindLine, entries, normalised };
+}
+
+/**
+ * Text form of normaliseAg2Entries for the validator: continuation parts are
+ * folded into their key's line with " | " (a validator reads one k=v per line).
+ * Returns the input untouched when nothing needed normalising.
+ */
+export function normaliseAg2(text: string): { text: string; normalised: boolean } {
+  const n = normaliseAg2Entries(text);
+  if (!n || !n.normalised) return { text, normalised: false };
+  return { text: [n.kindLine, ...n.entries.map((e) => e.join(" | "))].join("\n"), normalised: true };
+}
+
 export interface ParsedAg2 {
   kind: string;
   fields: Record<string, string>;
@@ -82,17 +160,14 @@ export interface ParsedAg2 {
  */
 export function parseAg2Report(text: string): ParsedAg2 | null {
   const kinds = new Set(["T", "R", "S", "Q", "A", "X"]);
-  const lines = unwrapAg2(text)
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("```"));
-  if (!lines.length) return null;
-  const kind = lines[0][0];
+  const n = normaliseAg2Entries(text);
+  if (!n) return null;
+  const kind = n.kindLine[0];
   if (!kinds.has(kind)) return null;
 
   const fields: Record<string, string> = {};
   const symbols: Record<string, string> = {};
-  for (const line of lines.slice(1)) {
+  for (const line of n.entries.map((e) => e.join("\n"))) {
     const eq = line.indexOf("=");
     if (eq < 0) continue;
     const key = line.slice(0, eq).trim();
@@ -274,10 +349,22 @@ export function repairAg2(text: string): Ag2Repair {
  * (and something was repaired) the returned text carries "repaired: ..." in z;
  * otherwise the original text is returned untouched so the re-ask sees it as written.
  */
-export function repairAndValidateAg2(text: string): { text: string; validation: Ag2ValidationResult; repairs: string[] } {
+export function repairAndValidateAg2(
+  text: string,
+): { text: string; validation: Ag2ValidationResult; repairs: string[]; normalised?: boolean } {
   const original = validateAg2(text);
   if (original.ok) return { text, validation: original, repairs: [] };
-  const fixed = repairAg2(text);
+  // form slips first (R: / one-line / bulleted continuation), then mechanical repairs
+  const norm = normaliseAg2(text);
+  let working = text;
+  let normalisedOk: { text: string; validation: Ag2ValidationResult } | null = null;
+  if (norm.normalised) {
+    const nv = validateAg2(norm.text);
+    if (nv.ok) normalisedOk = { text: norm.text, validation: nv };
+    else working = norm.text;
+  }
+  if (normalisedOk) return { text: normalisedOk.text, validation: normalisedOk.validation, repairs: [], normalised: true };
+  const fixed = repairAg2(working);
   if (!fixed.repairs.length) return { text, validation: original, repairs: [] };
   const v = validateAg2(fixed.text);
   if (!v.ok) return { text, validation: original, repairs: [] };
@@ -288,5 +375,8 @@ export function repairAndValidateAg2(text: string): { text: string; validation: 
   else lines.push(`z=${note}`);
   const withNote = lines.join("\n");
   const v2 = validateAg2(withNote);
-  return v2.ok ? { text: withNote, validation: v2, repairs: fixed.repairs } : { text: fixed.text, validation: v, repairs: fixed.repairs };
+  const normalised = norm.normalised || undefined;
+  return v2.ok
+    ? { text: withNote, validation: v2, repairs: fixed.repairs, normalised }
+    : { text: fixed.text, validation: v, repairs: fixed.repairs, normalised };
 }

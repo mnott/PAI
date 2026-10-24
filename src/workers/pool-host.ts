@@ -1274,7 +1274,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       }
       // AG2 validity + the one bounded re-ask, fed to the same warm slot
       const rep = task.reportFormat === "ag2" && resultEvent.result ? repairAndValidateAg2(resultEvent.result) : null;
-      if (rep?.repairs.length) resultEvent = { ...resultEvent, result: rep.text };
+      if (rep?.normalised) status.reportNormalised = true;
+      if (rep?.repairs.length || rep?.normalised) resultEvent = { ...resultEvent, result: rep.text };
       if (rep && !rep.validation.ok) {
         const v = rep.validation;
         status.reportValid = v.ok;
