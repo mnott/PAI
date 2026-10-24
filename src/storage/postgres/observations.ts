@@ -9,6 +9,7 @@
  * rapid repeated tool calls.
  */
 
+import { ensureIndexes, type IndexSpec } from "./ensure-index.js";
 import type { Pool } from "pg";
 import { sha256 } from "../../utils/hash.js";
 import type { RegistryBackend } from "../registry-interface.js";
@@ -46,11 +47,6 @@ CREATE TABLE IF NOT EXISTS pai_observations (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_obs_project ON pai_observations(project_id);
-CREATE INDEX IF NOT EXISTS idx_obs_session ON pai_observations(session_id);
-CREATE INDEX IF NOT EXISTS idx_obs_type ON pai_observations(type);
-CREATE INDEX IF NOT EXISTS idx_obs_created ON pai_observations(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_obs_hash ON pai_observations(content_hash);
 
 CREATE TABLE IF NOT EXISTS pai_session_summaries (
   id SERIAL PRIMARY KEY,
@@ -66,9 +62,23 @@ CREATE TABLE IF NOT EXISTS pai_session_summaries (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_ss_project ON pai_session_summaries(project_id);
-CREATE INDEX IF NOT EXISTS idx_ss_session ON pai_session_summaries(session_id);
 `;
+
+const OBSERVATION_INDEXES: IndexSpec[] = [
+  { name: "idx_obs_project", table: "pai_observations", columns: "project_id" },
+  { name: "idx_obs_session", table: "pai_observations", columns: "session_id" },
+  { name: "idx_obs_type", table: "pai_observations", columns: "type" },
+  { name: "idx_obs_created", table: "pai_observations", columns: "created_at DESC" },
+  { name: "idx_obs_hash", table: "pai_observations", columns: "content_hash" },
+  { name: "idx_ss_project", table: "pai_session_summaries", columns: "project_id" },
+  { name: "idx_ss_session", table: "pai_session_summaries", columns: "session_id" },
+];
+
+const SKILL_TELEMETRY_INDEXES: IndexSpec[] = [
+  { name: "idx_skilltel_scope", table: "pai_skill_telemetry", columns: "scope" },
+  { name: "idx_skilltel_status", table: "pai_skill_telemetry", columns: "scope, status" },
+  { name: "idx_skilltel_last", table: "pai_skill_telemetry", columns: "last_triggered DESC" },
+];
 
 let _tablesEnsured = false;
 
@@ -94,6 +104,7 @@ async function ensureObservationTables(pool: Pool): Promise<void> {
   if (!existing.has("fidelity")) {
     await pool.query("ALTER TABLE pai_observations ADD COLUMN IF NOT EXISTS fidelity TEXT");
   }
+  await ensureIndexes(pool, OBSERVATION_INDEXES);
   _tablesEnsured = true;
 }
 
@@ -120,9 +131,6 @@ CREATE TABLE IF NOT EXISTS pai_skill_telemetry (
   UNIQUE(scope, skill_name, source)
 );
 
-CREATE INDEX IF NOT EXISTS idx_skilltel_scope   ON pai_skill_telemetry(scope);
-CREATE INDEX IF NOT EXISTS idx_skilltel_status  ON pai_skill_telemetry(scope, status);
-CREATE INDEX IF NOT EXISTS idx_skilltel_last    ON pai_skill_telemetry(last_triggered DESC);
 `;
 
 let _skillTelemetryEnsured = false;
@@ -130,6 +138,7 @@ let _skillTelemetryEnsured = false;
 async function ensureSkillTelemetryTable(pool: Pool): Promise<void> {
   if (_skillTelemetryEnsured) return;
   await pool.query(SKILL_TELEMETRY_SCHEMA_SQL);
+  await ensureIndexes(pool, SKILL_TELEMETRY_INDEXES);
   _skillTelemetryEnsured = true;
 }
 

@@ -39,6 +39,7 @@ import { estimateCountsPostgres, exactCountsPostgres, embeddingJobsPostgres } fr
 import * as kgTriples from "./kg-triples.js";
 import * as observations from "./observations.js";
 import * as filePaths from "./file-paths.js";
+import { ensureIndexes } from "./ensure-index.js";
 
 const { Pool: PgPool } = pg;
 
@@ -121,7 +122,9 @@ export class PostgresBackend implements StorageBackend {
     }
 
     // Migration: carry-over lookups find a vector by chunk text hash
-    await pool.query("CREATE INDEX IF NOT EXISTS idx_pc_hash_embedded ON pai_chunks(hash) WHERE embedding IS NOT NULL");
+    await ensureIndexes(pool, [
+      { name: "idx_pc_hash_embedded", table: "pai_chunks", columns: "hash", where: "embedding IS NOT NULL" },
+    ]);
 
     // Migration: create kg_triples table if it does not exist
     const kgCheck = await pool.query(
@@ -142,10 +145,12 @@ export class PostgresBackend implements StorageBackend {
           created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
       `);
-      await pool.query(`CREATE INDEX idx_kg_subject   ON kg_triples(subject)`);
-      await pool.query(`CREATE INDEX idx_kg_predicate ON kg_triples(predicate)`);
-      await pool.query(`CREATE INDEX idx_kg_object    ON kg_triples(object)`);
-      await pool.query(`CREATE INDEX idx_kg_valid     ON kg_triples(valid_from, valid_to)`);
+      await ensureIndexes(pool, [
+        { name: "idx_kg_subject", table: "kg_triples", columns: "subject" },
+        { name: "idx_kg_predicate", table: "kg_triples", columns: "predicate" },
+        { name: "idx_kg_object", table: "kg_triples", columns: "object" },
+        { name: "idx_kg_valid", table: "kg_triples", columns: "valid_from, valid_to" },
+      ]);
       process.stderr.write("[pai-postgres] Migration: created kg_triples table\n");
     }
 
@@ -165,10 +170,6 @@ export class PostgresBackend implements StorageBackend {
         feedback_weight REAL NOT NULL DEFAULT 0.5,
         UNIQUE (tenant_id, entity_id)
       );
-      CREATE INDEX IF NOT EXISTS idx_kge_tenant ON kg_entities(tenant_id);
-      CREATE INDEX IF NOT EXISTS idx_kge_name   ON kg_entities(tenant_id, name);
-      CREATE INDEX IF NOT EXISTS idx_kge_type   ON kg_entities(tenant_id, type);
-
       CREATE TABLE IF NOT EXISTS projects (
         id               SERIAL PRIMARY KEY,
         slug             TEXT NOT NULL UNIQUE,
@@ -246,16 +247,20 @@ export class PostgresBackend implements StorageBackend {
         created_at         BIGINT NOT NULL,
         UNIQUE (session_id, target_project_id)
       );
-
-      CREATE INDEX IF NOT EXISTS idx_projects_slug    ON projects(slug);
-      CREATE INDEX IF NOT EXISTS idx_projects_status  ON projects(status);
-      CREATE INDEX IF NOT EXISTS idx_projects_type    ON projects(type);
-      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
-      CREATE INDEX IF NOT EXISTS idx_sessions_date    ON sessions(date);
-      CREATE INDEX IF NOT EXISTS idx_sessions_status  ON sessions(status);
-      CREATE INDEX IF NOT EXISTS idx_sessions_claude  ON sessions(claude_session_id);
-      CREATE INDEX IF NOT EXISTS idx_pc_project       ON project_tags(project_id);
     `);
+    await ensureIndexes(pool, [
+      { name: "idx_kge_tenant", table: "kg_entities", columns: "tenant_id" },
+      { name: "idx_kge_name", table: "kg_entities", columns: "tenant_id, name" },
+      { name: "idx_kge_type", table: "kg_entities", columns: "tenant_id, type" },
+      { name: "idx_projects_slug", table: "projects", columns: "slug" },
+      { name: "idx_projects_status", table: "projects", columns: "status" },
+      { name: "idx_projects_type", table: "projects", columns: "type" },
+      { name: "idx_sessions_project", table: "sessions", columns: "project_id" },
+      { name: "idx_sessions_date", table: "sessions", columns: "date" },
+      { name: "idx_sessions_status", table: "sessions", columns: "status" },
+      { name: "idx_sessions_claude", table: "sessions", columns: "claude_session_id" },
+      { name: "idx_pc_project", table: "project_tags", columns: "project_id" },
+    ]);
 
     // Migration: add relevance_score/last_accessed_at to pai_chunks (feedback loop + QW2).
     const feedbackColCheck = await pool.query(
@@ -274,9 +279,9 @@ export class PostgresBackend implements StorageBackend {
 
     // The embed pass pages the backlog by (project_id, id). Without this partial
     // index that is a scan of the whole table per page (~15 s on 3M chunks).
-    await pool.query(
-      "CREATE INDEX IF NOT EXISTS idx_pc_unembedded ON pai_chunks (project_id, id) WHERE embedding IS NULL"
-    );
+    await ensureIndexes(pool, [
+      { name: "idx_pc_unembedded", table: "pai_chunks", columns: "project_id, id", where: "embedding IS NULL" },
+    ]);
   }
 
   constructor(config: PostgresConfig) {
