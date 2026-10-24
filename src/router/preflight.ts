@@ -4,7 +4,8 @@
  * No auth, no request body: the connection is closed after the handshake.
  */
 
-import { getServers, lookup, resolve4 } from "node:dns/promises";
+import { getServers } from "node:dns"; // bun's node:dns/promises lacks getServers
+import { lookup, resolve4 } from "node:dns/promises";
 import { execFile } from "node:child_process";
 import { connect as tlsConnect } from "node:tls";
 import { connect as tcpConnect } from "node:net";
