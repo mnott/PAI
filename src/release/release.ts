@@ -9,7 +9,7 @@
  * effect goes through the injected `run` (git, npm, gh) and `syncMirrors`.
  */
 
-import { existsSync, mkdtempSync, readFileSync, copyFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, copyFileSync, rmSync, readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,14 +80,21 @@ function installCommand(dir: string): string[] {
   return ["npm", "install"];
 }
 
-/** Filename, packed size and file count from `npm pack --json`; null when the output is not that. */
-function parsePackJson(out: string): { filename: string; size: number; entryCount: number } | null {
-  try {
-    const j = JSON.parse(out)?.[0];
-    return j?.filename ? { filename: String(j.filename), size: Number(j.size) || 0, entryCount: Number(j.entryCount) || 0 } : null;
-  } catch {
-    return null;
+/**
+ * Filename, packed size and file count from `npm pack --json`; null when the output is not that.
+ * The JSON array is pretty-printed and may follow lifecycle-script output on stdout, so try
+ * parsing from each line that starts with "[" to the end.
+ */
+export function parsePackJson(out: string): { filename: string; size: number; entryCount: number } | null {
+  const lines = out.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].startsWith("[")) continue;
+    try {
+      const j = JSON.parse(lines.slice(i).join("\n"))?.[0];
+      if (j?.filename) return { filename: String(j.filename), size: Number(j.size) || 0, entryCount: Number(j.entryCount) || 0 };
+    } catch { /* not the JSON start; try the next candidate */ }
   }
+  return null;
 }
 
 /** Env without terminal-session variables, so a test run does not talk to the user's terminal. */
@@ -376,7 +383,9 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
       if (pkg.scripts?.build) await shIn(tree, "npm", ["run", "build"]);
       const out = await shIn(tree, "npm", ["pack", "--pack-destination", dir, "--json"]);
       const info = parsePackJson(out);
-      packed = info?.filename ?? (out.trim().split("\n").pop()?.trim() || versionedAssetName(pkg.name, version));
+      // the pack destination is fresh, so its single .tgz is the source of truth when the JSON is unreadable
+      const tgzs = readdirSync(dir).filter((f) => f.endsWith(".tgz"));
+      packed = info?.filename ?? (tgzs.length === 1 ? tgzs[0] : versionedAssetName(pkg.name, version));
       if (info) facts = ` (${(info.size / 1048576).toFixed(1)} MB packed, ${info.entryCount} files)`;
     } finally {
       try { await run("git", ["worktree", "remove", "--force", tree], { cwd: repo }); } catch { /* best effort */ }
