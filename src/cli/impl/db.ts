@@ -42,6 +42,23 @@ async function backendForTarget(target: DbTarget): Promise<StorageBackend> {
 // Output helpers
 // ---------------------------------------------------------------------------
 
+/** Run `fn` against the backend of `target`, closing it afterwards. */
+async function withBackend<T>(target: DbTarget, fn: (backend: StorageBackend) => Promise<T>): Promise<T> {
+  const backend = await backendForTarget(target);
+  try {
+    return await fn(backend);
+  } finally {
+    await backend.close();
+  }
+}
+
+/** Print a command failure; the exit code. */
+function reportFailure(e: unknown): number {
+  const msg = e instanceof Error ? e.message : String(e);
+  console.error(err(`  ${msg}`));
+  return 1;
+}
+
 function printResult(
   result: { columns: string[]; rows: unknown[][] },
   json: boolean
@@ -95,19 +112,11 @@ export async function cmdQuery(
   );
 
   try {
-    let result: { columns: string[]; rows: unknown[][] };
-    const backend = await backendForTarget(target);
-    try {
-      result = await runDbQuery(backend, sql);
-    } finally {
-      await backend.close();
-    }
+    const result = await withBackend(target, (backend) => runDbQuery(backend, sql));
     printResult(result, opts.json ?? false);
     return 0;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(err(`  ${msg}`));
-    return 1;
+    return reportFailure(e);
   }
 }
 
@@ -122,13 +131,7 @@ export async function cmdTables(opts: CommonOpts): Promise<number> {
   console.log();
 
   try {
-    let tables: string[];
-    const backend = await backendForTarget(target);
-    try {
-      tables = await listDbTables(backend);
-    } finally {
-      await backend.close();
-    }
+    const tables = await withBackend(target, listDbTables);
 
     if (opts.json) {
       console.log(JSON.stringify(tables, null, 2));
@@ -147,9 +150,7 @@ export async function cmdTables(opts: CommonOpts): Promise<number> {
     console.log();
     return 0;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(err(`  ${msg}`));
-    return 1;
+    return reportFailure(e);
   }
 }
 
@@ -163,19 +164,11 @@ export async function cmdSchema(table: string, opts: CommonOpts): Promise<number
   console.log(header(`  Schema: ${table} [${target}]`));
 
   try {
-    let result: { columns: string[]; rows: unknown[][] };
-    const backend = await backendForTarget(target);
-    try {
-      result = await getDbTableSchema(backend, table);
-    } finally {
-      await backend.close();
-    }
+    const result = await withBackend(target, (backend) => getDbTableSchema(backend, table));
     printResult(result, opts.json ?? false);
     return 0;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(err(`  ${msg}`));
-    return 1;
+    return reportFailure(e);
   }
 }
 
