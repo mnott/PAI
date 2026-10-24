@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { maxOf } from "../utils/min-max.js";
 import { join } from "node:path";
+import { isLocalProvider, readWorkersSection } from "./config.js";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
 import { bashExitCode, isExpectedWaitExit } from "./wait.js";
@@ -45,6 +46,26 @@ const INPUT_MAX = 1000;
 const TAIL_BYTES = 400_000;
 
 export type ErrorClass = "harness" | "model" | "benign" | "unknown";
+
+/**
+ * Classes that reach a session under the harness-only push policy: a harness
+ * fault and anything the table cannot name yet (the operator rule is
+ * "[unknown] → inspect", so silence is not an answer). Model and benign stay
+ * quiet — the model class still alerts through its loopAt thresholds.
+ */
+export function pushable(cls: ErrorClass): boolean {
+  return cls === "harness" || cls === "unknown";
+}
+
+/** Does this record's provider live on this machine? A name the config no longer knows is cloud. */
+function providerIsLocal(name: string): boolean {
+  try {
+    const p = readWorkersSection().workers.providers[name];
+    return !!p && isLocalProvider(p.baseUrl);
+  } catch {
+    return false;
+  }
+}
 
 export interface Classification {
   cls: ErrorClass;
@@ -158,7 +179,7 @@ const API_AUTH_EVIDENCE = new RegExp(
 /** A 5xx status in a request context (returned/status/HTTP/error or its reason phrase). */
 const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\d.]+)?|error|code)[ :=]+5\d\d\b|\b5\d\d\s+(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)/i;
 
-const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }> = [
+const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | ((r: ToolErrorRecord) => Classification) }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
   { test: (r) => r.tool === "Bash" && /\b(?:ls|cat|tail|head|cd|stat|wc): .*No such file or directory/i.test(r.raw), c: { cls: "model", hint: "Bash on a path that does not exist (model error)", loopAt: 5 } },
@@ -166,6 +187,15 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
   { test: (r) => /^loop guard:/i.test(r.raw), c: { cls: "model", hint: "loop: same command repeated without a change", loopAt: Infinity } },
   { test: (r) => /sleep .*blocked/i.test(r.raw), c: { cls: "model", hint: "guard: sleep blocked", loopAt: 3 } },
   { test: (r) => r.raw.includes(GUARD_MARKER), c: { cls: "benign", hint: "guard redirect (PAI guard steering the model)", loopAt: Infinity } },
+  // The harness's own argument schema rejected the call. A local provider's
+  // tool-call parser is ours to fix; a cloud provider's is the model's to blame.
+  {
+    test: (r) => /InputValidationError/i.test(r.raw),
+    c: (r) =>
+      providerIsLocal(r.provider)
+        ? { cls: "harness", hint: "tool-call arguments not matching the tool schema (local model server's tool-call parser)" }
+        : { cls: "model", hint: "tool input failed schema validation", loopAt: 3 },
+  },
   { test: (r) => wrongCaseTool(r.raw) !== null, c: { cls: "model", hint: "tool name in the wrong case (model error)", loopAt: 3 } },
   {
     test: (r) => {
@@ -196,7 +226,9 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification }>
 ];
 
 export function classifyToolError(r: ToolErrorRecord): Classification {
-  return RULES.find((x) => x.test(r))?.c ?? { cls: "unknown", hint: "unclassified" };
+  const hit = RULES.find((x) => x.test(r))?.c;
+  if (!hit) return { cls: "unknown", hint: "unclassified" };
+  return typeof hit === "function" ? hit(r) : hit;
 }
 
 /** Raw texts of the records that may count as a harness fault: what the model asked for outside its grant (cls model) never does. */
@@ -440,7 +472,7 @@ export function detectRunningWorkerErrors(
   const benign = new Map<string, number>();
   for (const r of records) {
     if (!sessions.has(r.worker)) continue;
-    if (harnessOnly && classifyToolError(r).cls !== "harness") {
+    if (harnessOnly && !pushable(classifyToolError(r).cls)) {
       if (classifyToolError(r).cls === "benign") benign.set(r.worker, (benign.get(r.worker) ?? 0) + 1);
       continue; // recorded, summarised at the end of the run, not pushed
     }

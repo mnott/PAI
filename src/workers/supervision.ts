@@ -70,6 +70,7 @@ import {
   SAME_WORKER_WINDOW_MS,
   toolErrorSigTag,
   toolErrorText,
+  pushable,
 } from "./tool-errors.js";
 import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
@@ -597,7 +598,7 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
       text: toolErrorText(p.group) + benignNote(p.benign),
     });
   }
-  for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker) && (!harnessOnly || classifyToolError(r).cls === "harness")), now.getTime(), sent)) {
+  for (const g of detectToolErrors(records.filter((r) => !ownedIds.has(r.worker) && (!harnessOnly || pushable(classifyToolError(r).cls))), now.getTime(), sent)) {
     const owner = [...g.workers].reverse().map((w) => byId.get(w)).find((s) => s && ownershipKey(s));
     if (!owner) continue;
     pending.push({
