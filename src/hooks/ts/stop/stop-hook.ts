@@ -4,8 +4,7 @@ import { isWorkerSession } from "../lib/worker-session.js";
 import { setTabTitle } from "../lib/tab-title.js";
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join, basename, dirname } from 'path';
-import { connect } from 'net';
-import { randomUUID } from 'crypto';
+import { socketRequest, enqueueWork, enqueueRegistryScan } from '../lib/socket-request.js';
 import {
   sendNtfyNotification,
   getCurrentNotePath,
@@ -181,49 +180,11 @@ const AIBROKER_TIMEOUT_MS = 2_000;
  */
 async function getPersistentTabName(itermSessionId: string | undefined): Promise<string | null> {
   if (!itermSessionId) return null;
-
-  return new Promise((resolve) => {
-    let done = false;
-    let buffer = '';
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(result: string | null): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve(result);
-    }
-
-    const client = connect(AIBROKER_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'get_persistent_name',
-        params: { itermSessionId },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl);
-      try {
-        const response = JSON.parse(line) as { ok: boolean; result?: { name: string | null } };
-        if (response.ok && response.result?.name) {
-          finish(response.result.name);
-        } else {
-          finish(null);
-        }
-      } catch {
-        finish(null);
-      }
-    });
-
-    client.on('error', () => finish(null));
-    client.on('end', () => { if (!done) finish(null); });
-    timer = setTimeout(() => finish(null), AIBROKER_TIMEOUT_MS);
+  return socketRequest<string | null>(AIBROKER_SOCKET, 'get_persistent_name', { itermSessionId }, AIBROKER_TIMEOUT_MS, {
+    onReply: (r) => (r.ok && r.result?.name ? r.result.name : null),
+    onError: () => null,
+    onTimeout: () => null,
+    fallback: null,
   });
 }
 
@@ -241,226 +202,54 @@ function enqueueWithDaemon(payload: {
   cwd: string;
   message: string;
 }): Promise<boolean> {
-  return new Promise((resolve) => {
-    let done = false;
-    let buffer = '';
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(ok: boolean): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve(ok);
-    }
-
-    const client = connect(DAEMON_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'session-end',
-          priority: 2,
-          payload: {
-            transcriptPath: payload.transcriptPath,
-            cwd: payload.cwd,
-            message: payload.message,
-          },
-        },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl);
-      try {
-        const response = JSON.parse(line) as { ok: boolean; error?: string };
-        if (response.ok) {
-          console.error(`STOP-HOOK: Work enqueued with daemon (id=${(response as any).result?.id}).`);
-          finish(true);
-        } else {
-          console.error(`STOP-HOOK: Daemon rejected enqueue: ${response.error}`);
-          finish(false);
-        }
-      } catch {
-        finish(false);
-      }
-    });
-
-    client.on('error', (e: NodeJS.ErrnoException) => {
+  return enqueueWork<boolean>(DAEMON_SOCKET, DAEMON_TIMEOUT_MS, 'session-end', 2, {
+    transcriptPath: payload.transcriptPath,
+    cwd: payload.cwd,
+    message: payload.message,
+  }, {
+    onReply: (r) => {
+      if (r.ok) console.error(`STOP-HOOK: Work enqueued with daemon (id=${r.result?.id}).`);
+      else console.error(`STOP-HOOK: Daemon rejected enqueue: ${r.error}`);
+      return r.ok;
+    },
+    onError: (e) => {
       if (e.code === 'ENOENT' || e.code === 'ECONNREFUSED') {
         console.error('STOP-HOOK: Daemon not running — falling back to direct execution.');
       } else {
         console.error(`STOP-HOOK: Daemon socket error: ${e.message}`);
       }
-      finish(false);
-    });
-
-    client.on('end', () => { if (!done) finish(false); });
-
-    timer = setTimeout(() => {
+      return false;
+    },
+    onTimeout: () => {
       console.error(`STOP-HOOK: Daemon timeout after ${DAEMON_TIMEOUT_MS}ms — falling back.`);
-      finish(false);
-    }, DAEMON_TIMEOUT_MS);
+      return false;
+    },
+    fallback: false,
   });
 }
 
 /**
- * Enqueue a registry-scan work item with the daemon.
- * Fire-and-forget — never throws, never blocks the session stop.
- */
-function enqueueRegistryScanWithDaemon(): Promise<void> {
-  return new Promise((resolve) => {
-    let done = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve();
-    }
-
-    const client = connect(DAEMON_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'registry-scan',
-          priority: 5,
-          payload: { cwd: process.cwd() },
-        },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', () => finish());
-    client.on('error', () => finish());
-    client.on('end', () => finish());
-    timer = setTimeout(() => finish(), DAEMON_TIMEOUT_MS);
-  });
-}
-
-/**
- * Enqueue a session-summary work item with `force: true` for mid-session auto-save.
- * Like the regular enqueueSessionSummaryWithDaemon but signals the daemon to
- * summarise even though the session is still ongoing.
- */
-function enqueueMidSessionSummaryWithDaemon(payload: {
-  cwd: string;
-}): Promise<boolean> {
-  return new Promise((resolve) => {
-    let done = false;
-    let buffer = '';
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(ok: boolean): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve(ok);
-    }
-
-    const client = connect(DAEMON_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'session-summary',
-          priority: 3,
-          payload: {
-            cwd: payload.cwd,
-            force: true,
-          },
-        },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl);
-      try {
-        const response = JSON.parse(line) as { ok: boolean; result?: { id: string } };
-        if (response.ok) {
-          debug(`STOP-HOOK: Mid-session summary enqueued (id=${response.result?.id}).`);
-        }
-      } catch { /* ignore */ }
-      finish(true);
-    });
-
-    client.on('error', () => finish(false));
-    client.on('end', () => { if (!done) finish(false); });
-
-    timer = setTimeout(() => finish(false), DAEMON_TIMEOUT_MS);
-  });
-}
-
-/**
- * Enqueue a session-summary work item with the daemon for AI-powered note generation.
- * Non-blocking — if daemon is unavailable, silently skips (the mechanical note is sufficient).
+ * Enqueue a session-summary work item with `force: true`: the AI note is written
+ * even though the session may still be ongoing (mid-session auto-save, priority 3)
+ * or just ended (priority 4). Non-blocking — if the daemon is unavailable the
+ * mechanical note is sufficient.
  *
  * Note: we intentionally omit transcriptPath here to let the worker call findLatestJsonl()
  * itself. At session-end, Claude Code may still be moving the JSONL to sessions/, so a
  * stale path passed from the hook could point to a file that no longer exists.
  */
-function enqueueSessionSummaryWithDaemon(payload: {
-  cwd: string;
-}): Promise<boolean> {
-  return new Promise((resolve) => {
-    let done = false;
-    let buffer = '';
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function finish(ok: boolean): void {
-      if (done) return;
-      done = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      try { client.destroy(); } catch { /* ignore */ }
-      resolve(ok);
-    }
-
-    const client = connect(DAEMON_SOCKET, () => {
-      const msg = JSON.stringify({
-        id: randomUUID(),
-        method: 'work_queue_enqueue',
-        params: {
-          type: 'session-summary',
-          priority: 4,
-          payload: {
-            cwd: payload.cwd,
-            force: true,
-          },
-        },
-      }) + '\n';
-      client.write(msg);
-    });
-
-    client.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const nl = buffer.indexOf('\n');
-      if (nl === -1) return;
-      const line = buffer.slice(0, nl);
-      try {
-        const response = JSON.parse(line) as { ok: boolean; result?: { id: string } };
-        if (response.ok) {
-          debug(`STOP-HOOK: Session summary enqueued (id=${response.result?.id}).`);
-        }
-      } catch { /* ignore */ }
-      finish(true);
-    });
-
-    client.on('error', () => finish(false));
-    client.on('end', () => { if (!done) finish(false); });
-
-    timer = setTimeout(() => finish(false), DAEMON_TIMEOUT_MS);
+function enqueueForcedSessionSummary(label: string, priority: number, payload: { cwd: string }): Promise<boolean> {
+  return enqueueWork<boolean>(DAEMON_SOCKET, DAEMON_TIMEOUT_MS, 'session-summary', priority, {
+    cwd: payload.cwd,
+    force: true,
+  }, {
+    onReply: (r) => {
+      if (r.ok) debug(`STOP-HOOK: ${label} enqueued (id=${r.result?.id}).`);
+      return true;
+    },
+    onError: () => false,
+    onTimeout: () => false,
+    fallback: false,
   });
 }
 
@@ -811,7 +600,7 @@ async function main() {
         // The whisper rules already enforce "never stop" behavior, so blocking
         // is redundant. Just fire the work item and exit 0 silently.
         try {
-          await enqueueMidSessionSummaryWithDaemon({ cwd });
+          await enqueueForcedSessionSummary('Mid-session summary', 3, { cwd });
         } catch { /* daemon may not be running — non-fatal */ }
       } else {
         // Update the stored count so we can measure delta on next fire.
@@ -909,10 +698,10 @@ async function main() {
   // Also enqueue a session-summary for AI-powered note generation.
   // We omit transcriptPath so the worker resolves it via findLatestJsonl(),
   // avoiding a race where the session-end hook moves the JSONL before the worker reads it.
-  await enqueueSessionSummaryWithDaemon({ cwd });
+  await enqueueForcedSessionSummary('Session summary', 4, { cwd });
 
   // Enqueue a registry-scan so pai session recent stays fresh after this session ends.
-  await enqueueRegistryScanWithDaemon();
+  await enqueueRegistryScan(DAEMON_SOCKET, DAEMON_TIMEOUT_MS);
 
   // Clean up the session-state file now that the session has truly ended.
   if (sessionId) {

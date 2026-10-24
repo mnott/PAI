@@ -7,8 +7,7 @@
  * Claude Code (always exits 0).
  */
 
-import { paiSocketPath } from "../../../runtime-paths.js";
-import { connect } from 'net';
+import { sendToDaemon } from "../lib/send-to-daemon.js";
 import { sha256 } from '../../../utils/hash.js';
 import { basename } from 'path';
 import { isProbeSession } from '../lib/project-utils.js';
@@ -49,28 +48,6 @@ const SKIP_TOOLS = new Set([
   'ExitPlanMode',
   'Skill',
 ]);
-
-// ---------------------------------------------------------------------------
-// Inline IPC sender — avoids importing src/daemon/ipc-client.ts at build time
-// ---------------------------------------------------------------------------
-
-function sendToDaemon(method: string, params: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => { resolve(); }, 5000);
-    try {
-      const socket = connect(paiSocketPath(), () => {
-        const req = JSON.stringify({ id: Date.now().toString(), method, params }) + '\n';
-        socket.write(req);
-        socket.on('data', () => { clearTimeout(timeout); socket.destroy(); resolve(); });
-        socket.on('error', () => { clearTimeout(timeout); resolve(); });
-      });
-      socket.on('error', () => { clearTimeout(timeout); resolve(); });
-    } catch {
-      clearTimeout(timeout);
-      resolve();
-    }
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Concept extraction from file paths

@@ -20,9 +20,8 @@
  * Never blocks Claude Code: always exits 0, tolerant of missing transcript.
  */
 
-import { paiSocketPath } from "../../../runtime-paths.js";
+import { sendToDaemon } from "../lib/send-to-daemon.js";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { connect } from "node:net";
 import { decideMcpGate, PASS_OUTPUT, type GateHookInput } from "../lib/mcp-deferred-gate.js";
 import { isProbeSession } from "../lib/project-utils.js";
 
@@ -48,40 +47,6 @@ function readTranscriptTail(path: string): string {
   } catch {
     return "";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Inline IPC sender — avoids importing src/daemon/ipc-client.ts at build time
-// ---------------------------------------------------------------------------
-
-function sendToDaemon(method: string, params: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      resolve();
-    }, 5000);
-    try {
-      const socket = connect(paiSocketPath(), () => {
-        const req = JSON.stringify({ id: Date.now().toString(), method, params }) + "\n";
-        socket.write(req);
-        socket.on("data", () => {
-          clearTimeout(timeout);
-          socket.destroy();
-          resolve();
-        });
-        socket.on("error", () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
-      socket.on("error", () => {
-        clearTimeout(timeout);
-        resolve();
-      });
-    } catch {
-      clearTimeout(timeout);
-      resolve();
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------

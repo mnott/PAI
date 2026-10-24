@@ -7,46 +7,9 @@
  * (search / install / audit / trial) — see Notes/swarm/skills-self-educating.md.
  */
 
-import { createConnection } from "net";
 import { warn, err, dim, bold, header } from "./utils.js";
 import chalk from "chalk";
-import { paiSocketPath } from "../../runtime-paths.js";
-
-// ---------------------------------------------------------------------------
-// IPC helper — communicates with PAI daemon via Unix socket
-// ---------------------------------------------------------------------------
-
-function ipcCall(method: string, params: Record<string, unknown>): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const settle = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
-
-    const client = createConnection(paiSocketPath(), () => {
-      client.write(JSON.stringify({ id: 1, method, params }) + "\n");
-    });
-    let data = "";
-    client.on("data", (chunk) => {
-      data += chunk.toString();
-      try {
-        const resp = JSON.parse(data) as { ok: boolean; result: unknown; error?: string };
-        client.end();
-        settle(() => resp.ok ? resolve(resp.result) : reject(new Error(resp.error ?? "IPC call failed")));
-      } catch {
-        // Incomplete — wait for more data or end
-      }
-    });
-    client.on("end", () => {
-      settle(() => {
-        try {
-          const resp = JSON.parse(data) as { ok: boolean; result: unknown; error?: string };
-          resp.ok ? resolve(resp.result) : reject(new Error(resp.error ?? "IPC call failed"));
-        } catch (e) { reject(e); }
-      });
-    });
-    client.on("error", (e) => settle(() => reject(e)));
-    setTimeout(() => { client.destroy(); settle(() => reject(new Error("IPC timeout"))); }, 10000);
-  });
-}
+import { ipcCall } from "./daemon-ipc.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

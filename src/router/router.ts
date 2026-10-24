@@ -453,16 +453,9 @@ function safeBody(raw: Buffer): Record<string, unknown> | null {
   }
 }
 
-export function createRouter(
-  loadProviders: () => Record<string, WorkerProvider> = () => withTierProviders(readWorkersSection().workers.providers),
-  claudeBase: string = claudeUpstream(),
-  log: (line: string) => void = (l) => process.stderr.write(l + "\n"),
-  onUsage?: (row: UsageRow) => void,
-  /** serves GET pages (the cockpit) before routing; true = handled */
-  extra?: (req: http.IncomingMessage, res: http.ServerResponse) => boolean,
-  options?: RouterOptions
-): http.Server {
-  return http.createServer(routerHandler(loadProviders, claudeBase, log, onUsage, extra, options));
+/** A server on `routerHandler(...)`; takes exactly its parameters. */
+export function createRouter(...args: Parameters<typeof routerHandler>): http.Server {
+  return http.createServer(routerHandler(...args));
 }
 
 /**

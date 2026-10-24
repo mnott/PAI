@@ -266,6 +266,20 @@ interface Stop {
   foreign: boolean;
 }
 
+/** The kill did not self-report: put killed/rc/end fields on the status unless the worker already reached a terminal state. */
+function markKilled(logDir: string, recorded: WorkerStatus, stop: Stop, how: string, last: string): void {
+  const latest = loadStatus(logDir, recorded.id) ?? recorded;
+  if (latest.state !== "running" && latest.state !== "queued") return;
+  latest.state = "killed";
+  latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
+  latest.last = latest.last || last;
+  latest.endReason = "pai-worker-kill";
+  latest.endBy = stop.by;
+  latest.endKillReason = stop.reason;
+  if (stop.forced) latest.endForced = true;
+  saveStatus(logDir, latest);
+}
+
 /**
  * A pooled task runs in the host's slot process, not in its client: the host is asked to end the task
  * (POST /task/<id>/stop); a host that does not answer is bypassed by signalling the slot's claude tree
@@ -330,19 +344,7 @@ async function killPooled(logDir: string, recorded: WorkerStatus, status: Worker
       }
     }
   }
-  if (!selfReported) {
-    const latest = loadStatus(logDir, id) ?? recorded;
-    if (latest.state === "running" || latest.state === "queued") {
-      latest.state = "killed";
-      latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
-      latest.last = latest.last || `killed (${how})`;
-      latest.endReason = "pai-worker-kill";
-      latest.endBy = stop.by;
-      latest.endKillReason = stop.reason;
-      if (stop.forced) latest.endForced = true;
-      saveStatus(logDir, latest);
-    }
-  }
+  if (!selfReported) markKilled(logDir, recorded, stop, how, `killed (${how})`);
   return `stopped pooled worker ${id} (${how})`;
 }
 
@@ -395,19 +397,7 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
       }
     }
   }
-  if (!selfReported) {
-    const latest = loadStatus(logDir, id) ?? recorded;
-    if (latest.state === "running" || latest.state === "queued") {
-      latest.state = "killed";
-      latest.rc = latest.rc ?? (how === "SIGKILL" ? 137 : 143);
-      latest.last = latest.last || `killed by signal ${how}`;
-      latest.endReason = "pai-worker-kill";
-      latest.endBy = stop.by;
-      latest.endKillReason = stop.reason;
-      if (stop.forced) latest.endForced = true;
-      saveStatus(logDir, latest);
-    }
-  }
+  if (!selfReported) markKilled(logDir, recorded, stop, how, `killed by signal ${how}`);
   return `sent ${how} to worker ${id} (pid ${status.pid})`;
 }
 

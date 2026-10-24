@@ -126,6 +126,32 @@ export interface PreparedRun {
   state: RunState;
 }
 
+/**
+ * The worktree for a run whose tools can write: the info, null when git refused but
+ * the run is read-only (it runs in place, with a ledger note), "refused" when a writing run must not start.
+ */
+export function createRunWorktree(
+  logDir: string,
+  wid: string,
+  cwd: string,
+  allowedTools: Parameters<typeof worktreeRefusesStart>[3]
+): WorktreeInfo | null | "refused" {
+  try {
+    const worktree = addWorktree(logDir, wid, cwd);
+    if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
+    return worktree;
+  } catch (e) {
+    const why = (e as Error).message;
+    if (worktreeRefusesStart(logDir, wid, why, allowedTools)) {
+      process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
+      return "refused";
+    }
+    process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
+    appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
+    return null;
+  }
+}
+
 export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> {
   const { config, logDir, target, model, label, parsed, systemWaiver, limit, noBrowser } = a;
   const headless = parsed.headless;
@@ -249,18 +275,9 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     !a.printCmd &&
     worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })
   ) {
-    try {
-      worktree = addWorktree(logDir, wid, cwd);
-      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
-    } catch (e) {
-      const why = (e as Error).message;
-      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
-        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
-        return 1;
-      }
-      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
-      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
-    }
+    const made = createRunWorktree(logDir, wid, cwd, parsed.allowedTools);
+    if (made === "refused") return 1;
+    worktree = made;
   }
   // In stdin mode the prompt moves to the first user message on stdin, so it
   // must come off the command line (bare -p stays: stream-json needs --print).

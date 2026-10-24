@@ -11,7 +11,7 @@ import { openSync, closeSync, writeSync } from "node:fs";
 import { shortText } from "../args.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
-import { endFields, parentInfo } from "../endreason.js";
+import { parentInfo } from "../endreason.js";
 import { eventsPath, ledgerPath } from "../paths.js";
 import { type WorkerStatus, newWorkerId, saveStatus, nowStamp, markStartFailed, selfProcStart } from "../status.js";
 import { resolveSession, resolveSpawnerSession } from "../scope.js";
@@ -19,11 +19,9 @@ import { runImageCapability } from "../engines/image.js";
 import { resolveHostSession } from "../pane.js";
 import { paneTitle } from "../pane-title.js";
 import {
-  addWorktree,
   salvageOnExit,
   recordWorktree,
   worktreeSystemPrompt,
-  worktreeRefusesStart,
   worktreeWanted,
   type WorktreeInfo,
 } from "../worktree.js";
@@ -45,7 +43,7 @@ import {
   SIGNAL_SALVAGE_MS,
   fireDeadline,
   trackBlocked,
-  recordSignalEnd,
+  recordKilledEnd,
   finaliseRun,
   worktreeExtras,
   identityExtras,
@@ -53,7 +51,7 @@ import {
 } from "./finalise.js";
 import { spawn } from "node:child_process";
 import { reapRunTree } from "./lifecycle.js";
-import { prepareRun } from "./execute-prepare.js";
+import { prepareRun, createRunWorktree } from "./execute-prepare.js";
 import { foldRun } from "./execute-fold.js";
 
 export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType<typeof readWorkersSection>["workers"] }): Promise<number> {
@@ -174,18 +172,9 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
 
   let worktree: WorktreeInfo | null = null;
   if (worktreeWanted(a.worktreeFlag, { cwd, allowedTools: parsed.allowedTools })) {
-    try {
-      worktree = addWorktree(logDir, wid, cwd);
-      if (worktree.snapshotSkipped) process.stderr.write(`pai worker: ${worktree.snapshotSkipped}\n`);
-    } catch (e) {
-      const why = (e as Error).message;
-      if (worktreeRefusesStart(logDir, wid, why, parsed.allowedTools)) {
-        process.stderr.write(`pai worker: not started, no worktree (${why})\n`);
-        return 1;
-      }
-      process.stderr.write(`pai worker: no worktree (${why}) — read-only, running in place\n`);
-      appendLedger(ledgerPath(logDir), "WORKER-NOTE", { id: wid, note: `no worktree: ${why}` });
-    }
+    const made = createRunWorktree(logDir, wid, cwd, parsed.allowedTools);
+    if (made === "refused") return 1;
+    worktree = made;
   }
   env.PAI_WORKER_ID = wid;
   const scratch = applyScratchEnv(env, wid);
@@ -282,24 +271,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   };
   const onCodexSignal = (sig: string) => {
     killed = true;
-    status.state = "killed";
-    status.rc = 143;
-    status.secs = Math.floor((Date.now() - t0) / 1000);
-    const end = recordSignalEnd(logDir, status, sig);
-    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
-    saveStatus(logDir, status);
-    appendLedger(ledger, "WORKER-END", {
-      id: wid,
-      provider: target.providerName,
-      mode: "headless",
-      model,
-      rc: 143,
-      secs: status.secs,
-      killed: 1,
-      ...endFields(end),
-      note: end.note,
-      label,
-    });
+    recordKilledEnd({ logDir, status, sig, t0, ledger, wid, providerName: target.providerName, model, label });
     // same as the claude path: a killed run's worktree and branch go now
     if (worktree) {
       salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);

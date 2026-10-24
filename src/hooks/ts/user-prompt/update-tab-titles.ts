@@ -8,6 +8,7 @@
 
 import { isWorkerSession } from "../lib/worker-session.js";
 import { setTabTitle } from "../lib/tab-title.js";
+import { readStdinWithTimeout } from "../lib/read-stdin.js";
 
 interface HookInput {
   session_id: string;
@@ -16,37 +17,11 @@ interface HookInput {
   hook_event_name: string;
 }
 
-/**
- * Read stdin with timeout
- */
-async function readStdinWithTimeout(timeout: number = 5000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    const timer = setTimeout(() => {
-      reject(new Error('Timeout reading from stdin'));
-    }, timeout);
-
-    process.stdin.on('data', (chunk) => {
-      data += chunk.toString();
-    });
-
-    process.stdin.on('end', () => {
-      clearTimeout(timer);
-      resolve(data);
-    });
-
-    process.stdin.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
-
 async function main() {
   if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
     // Read the hook input from stdin
-    const input = await readStdinWithTimeout();
+    const input = await readStdinWithTimeout(5000, 'Timeout reading from stdin');
     const data: HookInput = JSON.parse(input);
 
     const prompt = data.prompt || '';
