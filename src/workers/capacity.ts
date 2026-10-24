@@ -397,6 +397,20 @@ export interface QueuedFile {
   label?: string;
   /** Admission priority when not normal. */
   priority?: QueuePriority;
+  /** Slots held / the provider's cap, for the pane bar's "coder-l 3/3". */
+  held?: number;
+  cap?: number;
+  /** The worker log dir, so a pane that opened before the run started can run its bar. */
+  logDir?: string;
+}
+
+/** The pane bar's row while the run waits: "queued · position 2 of 6 · coder-l 3/3 · waited 25m". */
+export function queuedBarRow(q: QueuedFile): string {
+  const parts = ["queued", `position ${q.position} of ${q.queued}`];
+  parts.push(q.held !== undefined && q.cap !== undefined ? `${q.provider} ${q.held}/${q.cap}` : q.provider);
+  parts.push(`waited ${Math.floor(q.elapsedSec / 60)}m`);
+  if (q.priority && q.priority !== "normal") parts.push(`${q.priority} priority`);
+  return parts.join(" · ");
 }
 
 /** The pane's queue line, refreshed in place: "queued on gyro-m · position 2 of 5 · waiting 2m10s · <label>". */
@@ -624,6 +638,8 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     position: i.position,
     queued: i.queued,
     elapsedSec: i.elapsedSec,
+    held: Math.max(0, i.total - i.queued),
+    cap: i.cap,
     ...(c.behind ? { behind: c.behind } : {}),
     ...(i.priority ? { priority: i.priority } : {}),
   });

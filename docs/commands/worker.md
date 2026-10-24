@@ -381,6 +381,31 @@ pai worker goal w-20260101-abc 'review the export tests'
 
 See also: `pai worker say`, `pai worker ps`
 
+### pai worker reroute
+
+Move a queued or running worker to another provider
+
+```
+pai worker reroute ID [options]
+```
+
+A queued worker is stopped and its task starts on the target provider. A running worker is stopped the normal way (its commits stay on its branch) and the same task starts on the target, with a note naming the old id and the branch. The pane commands /cloud and /local and the worker_reroute MCP tool do the same.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Worker id (see `pai worker ps`) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--where WHERE` | string | — | cloud (the session's cloud provider), local or a provider name |
+
+```sh
+pai worker reroute w-20260101-abc --where cloud
+pai worker reroute w-20260101-abc --where local
+```
+
+See also: `pai worker queue`, `pai worker kill`
+
 ### pai worker pause
 
 Park a worker's next engine request until resume
@@ -1816,6 +1841,7 @@ See also: `pai worker providers`
 | `pai worker status-line` | One-line worker summary for a status bar |
 | `pai worker say` | Send a message to a running worker |
 | `pai worker goal` | Leave a goal note on a running worker |
+| `pai worker reroute` | Move a queued or running worker to another provider |
 | `pai worker pause` | Park a worker's next engine request until resume |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
 | `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |

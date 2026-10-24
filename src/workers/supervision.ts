@@ -73,13 +73,14 @@ import {
   pushable,
 } from "./tool-errors.js";
 import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
+import { escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
 
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
-export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping" | "toolerror" | "looping";
+export type SupervisionKind = "finished" | "failed" | "stalled" | "thrashing" | "sleeping" | "toolerror" | "looping" | "rerouted";
 
 /** The kinds that fire mid-run and re-arm on turn progress (see eventId). */
 const MID_RUN_KINDS: readonly SupervisionKind[] = ["stalled", "thrashing", "sleeping", "toolerror", "looping"];
@@ -468,7 +469,7 @@ export function shouldRelay(
   kind: SupervisionKind,
   outputFormat: WorkerStatus["outputFormat"] | undefined
 ): boolean {
-  if (MID_RUN_KINDS.includes(kind)) return true;
+  if (MID_RUN_KINDS.includes(kind) || kind === "rerouted") return true;
   return outputFormat !== "json" && outputFormat !== "stream-json";
 }
 
@@ -521,6 +522,11 @@ export interface TickOptions {
   pointer?: Parameters<typeof pointUndrained>[4];
   /** Injectable for tests. */
   loops?: LoopDeps;
+  /** false skips the time-bound escalation pass (tests of the other passes). */
+  reroute?: boolean;
+  /** Seams and policy of the escalation pass (tests); default the live kill/spawn/config. */
+  rerouteDeps?: Partial<Parameters<typeof escalateOverdue>[1]>;
+  reroutePolicy?: Parameters<typeof escalateOverdue>[3];
   /** Overrides workers.supervision.push; default read from the workers config. */
   pushPolicy?: "harness" | "all";
 }
@@ -645,6 +651,23 @@ export async function runSupervisionTick(logDir: string, opts: TickOptions = {})
         (f.action === "stop" ? " - run stopped, diff kept" : f.local ? " - correction injected" : "") +
         ` - see pai worker replay ${owner.id}`,
     });
+  }
+
+  // time-bound escalation: an overdue job moves to the fallback provider (reroute.ts), once, and the owner hears
+  if (opts.reroute !== false) {
+    for (const e of await escalateOverdue(statuses, { logDir, ...opts.rerouteDeps }, now.getTime(), opts.reroutePolicy)) {
+      pending.push({
+        id: `${e.id}#rerouted`,
+        ts: nowStamp(now),
+        kind: "rerouted",
+        worker: e.id,
+        label: e.label,
+        session: e.session ?? "",
+        rc: null,
+        stalledMin: null,
+        text: escalationMessage(e),
+      });
+    }
   }
 
   const written: SupervisionEvent[] = [];
