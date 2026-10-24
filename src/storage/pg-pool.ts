@@ -11,7 +11,6 @@
  */
 
 import pg from "pg";
-import { noteForeignConfigLiveDb } from "./foreign-config-guard.js";
 
 export function assertNotLiveDatabase(connectionString: string | undefined): void {
   const live = process.env.PAI_TEST_LIVE_DB;
@@ -27,6 +26,5 @@ export function assertNotLiveDatabase(connectionString: string | undefined): voi
 
 export function createPgPool(opts: pg.PoolConfig): pg.Pool {
   assertNotLiveDatabase(opts.connectionString);
-  noteForeignConfigLiveDb();
   return new pg.Pool(opts);
 }

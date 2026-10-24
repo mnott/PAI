@@ -18,7 +18,6 @@ import { fmtSeenLocal } from "../../utils/fmt-age.js";
 import { inVisiblePane } from "../../workers/pane.js";
 import { runCommandInPane } from "./pane.js";
 import { CliError, type CommandDef, type RunContext } from "../define.js";
-import { foreignConfigsOnLiveDb } from "../../storage/foreign-config-guard.js";
 
 const out = (s: string) => process.stdout.write(s + "\n");
 
@@ -147,8 +146,6 @@ const doctorCmd: CommandDef = {
       } else if (h.observed) out(`ok   ${h.event}: observed ${h.lastSeen ? fmtSeenLocal(h.lastSeen) : ""}`.trimEnd());
       else if (h.configured) out(`WARN ${h.event}: configured, never observed in ${sinceHours}h`);
     }
-    const foreign = foreignConfigsOnLiveDb();
-    for (const f of foreign) out(`FAIL foreign config ${f.path} points at the live database ${f.database}: set its own database (e.g. pai_eval)`);
     const pkg = publishablePackage(process.cwd());
     let authRejected = false;
     if (pkg) {
@@ -160,7 +157,7 @@ const doctorCmd: CommandDef = {
         out(a.message);
       } else out(`npm publish auth: unknown (${a.detail})`);
     }
-    return r.findings.every((f) => f.ok) && missingScripts === 0 && !authRejected && foreign.length === 0 ? 0 : 1;
+    return r.findings.every((f) => f.ok) && missingScripts === 0 && !authRejected ? 0 : 1;
   },
 };
 

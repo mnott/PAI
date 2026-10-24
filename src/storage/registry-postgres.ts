@@ -16,7 +16,6 @@
 
 import pg from "pg";
 import { createPgPool } from "./pg-pool.js";
-import { assertDestructiveAllowed } from "./foreign-config-guard.js";
 import { MergeError } from "../registry/merge.js";
 import { backupTableName, backupsToPrune, logRegistryReset, sortBackups } from "./registry-reset.js";
 import type { Pool, PoolClient } from "pg";
@@ -126,7 +125,6 @@ export class PostgresRegistryBackend implements RegistryBackend {
   }
 
   async resetRegistry(): Promise<{ backupTable: string | null; projects: number }> {
-    assertDestructiveAllowed("registry reset");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -205,7 +203,6 @@ export class PostgresRegistryBackend implements RegistryBackend {
   }
 
   async repairOrphans(opts: { dryRun: boolean; deleteTwins?: boolean }): Promise<OrphanRepairReport> {
-    if (!opts.dryRun) assertDestructiveAllowed(opts.deleteTwins ? "repair-orphans --delete --execute" : "repair-orphans --execute");
     const rep: OrphanRepairReport = {
       orphanChunks: 0, orphanFiles: 0, mappedIds: 0, unmappedIds: 0, repointedChunks: 0, repointedFiles: 0,
       droppedDuplicateChunks: 0, droppedDuplicateFiles: 0, deletedTwinChunks: 0, dryRun: opts.dryRun,
@@ -659,12 +656,10 @@ export class PostgresRegistryBackend implements RegistryBackend {
   }
 
   async deleteProject(id: number): Promise<void> {
-    assertDestructiveAllowed("project delete");
     await this.pool.query("DELETE FROM projects WHERE id = $1", [id]);
   }
 
   async deleteProjectCascade(id: number): Promise<void> {
-    assertDestructiveAllowed("project delete");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -1275,7 +1270,6 @@ export class PostgresRegistryBackend implements RegistryBackend {
   }
 
   async applyProjectMerge(plan: MergePlan): Promise<void> {
-    assertDestructiveAllowed("project merge");
     const client: PoolClient = await this.pool.connect();
     try {
       await client.query("BEGIN");

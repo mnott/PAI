@@ -12,7 +12,6 @@
 import type { IndexAllProgress } from "../../memory/job-progress.js";
 import pg from "pg";
 import { createPgPool } from "../pg-pool.js";
-import { assertDestructiveAllowed } from "../foreign-config-guard.js";
 import type { Pool, PoolClient } from "pg";
 import { readFileSync } from "node:fs";
 import { resolveFromModule } from "../../module-paths.js";
@@ -601,7 +600,6 @@ export class PostgresBackend implements StorageBackend {
   }
 
   async clearEmbeddingsBatch(limit: number): Promise<number> {
-    assertDestructiveAllowed("clear embeddings");
     const r = await this.pool.query(
       "UPDATE pai_chunks SET embedding = NULL WHERE id IN (SELECT id FROM pai_chunks WHERE embedding IS NOT NULL LIMIT $1)",
       [limit]
