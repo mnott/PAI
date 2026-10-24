@@ -34,6 +34,7 @@ import { getProviderOrNative, readWorkersSection, workersConfigStamp, type Worke
 import { buildRunEnv, claudeCommand, claudeSettingsExtra, isLoopbackProvider, loopbackRouterChoice, pinnedSettings } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { appendLedger } from "./ledger.js";
+import { NOTE_TOKEN_ENV, newNoteToken } from "./note-delivery.js";
 import { resolveLocalProvider } from "./local-provider.js";
 import { routeRun } from "./policy.js";
 import { takeLoopStop } from "./loop-stop.js";
@@ -561,6 +562,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // ...but it does have a stable name; the job it serves is in slots/<name>.current (worker-id.ts)
     const slotName = slotNameFor(cwd);
     env[POOL_SLOT_ENV] = slotName;
+    // the note hook delivers only with a token; the slot lives across tasks, so one token per slot process
+    env[NOTE_TOKEN_ENV] = newNoteToken();
     let cmd: string[] = [...cmdHead(env)];
     const addendum = loadContractAddendum(providerName, provider.contract);
     cmd.push("--model", model);
