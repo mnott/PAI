@@ -204,6 +204,10 @@ export interface PaiDaemonConfig {
   /** Load average (1 min) above which an embed pass yields (default 8). */
   embedMaxLoad?: number;
 
+  /** An index pass that rewrites more than this percent of all chunks logs a loud warning and
+   *  flags the cockpit index tile (default 20). */
+  indexRewriteWarnPercent?: number;
+
   /** Local hour (0-23) to anchor the recurring index/embed cycle to. When unset,
    *  the cycle is anchored to daemon start, so a daytime restart pins every
    *  later pass to daytime too — a 24h interval does not by itself mean "at

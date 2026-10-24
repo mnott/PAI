@@ -15,6 +15,12 @@ export function bufferToVector(buf: Buffer): number[] {
   return floats;
 }
 
+/** Float32 LE bytes of a vector. */
+export function vectorToBuffer(vec: number[]): Buffer {
+  const f = Float32Array.from(vec);
+  return Buffer.from(f.buffer, f.byteOffset, f.byteLength);
+}
+
 /**
  * Convert a free-text query to a Postgres tsquery string.
  *

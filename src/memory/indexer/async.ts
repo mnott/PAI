@@ -25,6 +25,9 @@ import {
   INDEX_YIELD_EVERY,
 } from "./helpers.js";
 import { retryTransient } from "./retry.js";
+import { withCarriedEmbeddings } from "./carry-over.js";
+import { guardMassRewrite } from "./rewrite-guard.js";
+import { sha256 } from "../../utils/hash.js";
 import { discoverProjectFiles } from "./discover.js";
 import type { IndexResult } from "./types.js";
 
@@ -72,9 +75,6 @@ export async function indexFileWithBackend(
   const existingHash = await backend.getFileHash(projectId, dbPath);
   if (existingHash === hash) return false;
 
-  // Delete old chunks
-  await backend.deleteChunksForFile(projectId, dbPath);
-
   // Chunk the content
   const rawChunks = chunkMarkdown(content);
   const updatedAt = Date.now();
@@ -93,8 +93,12 @@ export async function indexFileWithBackend(
     embedding: null,
   }));
 
+  // Vectors of unchanged text survive the rewrite: look them up before the old rows go.
+  const carried = await withCarriedEmbeddings(backend, chunks);
+  await backend.deleteChunksForFile(projectId, dbPath);
+
   // Insert chunks + update file record
-  await backend.insertChunks(chunks);
+  await backend.insertChunks(carried);
   await backend.upsertFile({ projectId, path: dbPath, source, tier, hash, mtime, size });
 
   return true;
@@ -320,7 +324,13 @@ export async function embedChunksWithBackend(
     // model, so yield before entering it rather than between chunks.
     await yieldToEventLoop();
 
-    const vecs = await gate.backend.embed(batch.map((r) => r.text));
+    // The same text already has a vector somewhere (an orphaned project id, a moved file):
+    // copy it rather than run the model again.
+    const hashes = batch.map((r) => sha256(r.text));
+    const known = await retryTransient(() => backend.getEmbeddingsByHash(hashes));
+    const fresh = batch.map((_, j) => j).filter((j) => !known.has(hashes[j]!));
+    const made = fresh.length > 0 ? await gate.backend.embed(fresh.map((j) => batch[j]!.text)) : [];
+    const bufs = batch.map((_, j) => known.get(hashes[j]!) ?? serializeEmbedding(made[fresh.indexOf(j)]!));
     // Issue the writes together rather than one round-trip at a time. Measured
     // on this machine the model embeds 40-67 chunks/s in isolation while the
     // daemon managed ~5/s: the difference was one sequential UPDATE per chunk,
@@ -329,7 +339,7 @@ export async function embedChunksWithBackend(
     // SQLite backend is synchronous and simply ignores the difference.
     await Promise.all(
       batch.map((row, j) =>
-        retryTransient(() => backend.updateEmbedding(row.id, serializeEmbedding(vecs[j])))
+        retryTransient(() => backend.updateEmbedding(row.id, bufs[j]!))
       )
     );
 
@@ -400,6 +410,10 @@ export async function indexAllWithBackend(
     totals.filesSkipped += r.filesSkipped;
     report(++n, project.display_name);
   }
+
+  let total = 0;
+  for (const project of projects) total += (await backend.getProjectStats(project.id)).chunks;
+  guardMassRewrite(totals.chunksCreated, total);
 
   return { projects: projects.length, result: totals };
 }
