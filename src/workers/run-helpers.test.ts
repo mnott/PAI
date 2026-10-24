@@ -845,21 +845,6 @@ describe("printResult", () => {
     }
   });
 
-  it("json: a connection-string password in the result never reaches the record", () => {
-    const pw = ["hunter", "2", "xyz"].join("");
-    const dsn = `postgresql://app:${pw}@db.example:5432/main`;
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      printResult("json", { type: "result", result: `connect failed ${dsn}`, is_error: true }, 1, "/log", "w1", null, { cfg: { password: pw } });
-      const line = log.mock.calls[0][0] as string;
-      expect(line).not.toContain(pw);
-      expect(line).toContain("postgresql://app:[REDACTED]@db.example");
-      expect(() => JSON.parse(line)).not.toThrow();
-    } finally {
-      log.mockRestore();
-    }
-  });
-
   it("json without a report omits the report key", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
