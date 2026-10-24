@@ -45,7 +45,7 @@ import {
   SIGNAL_SALVAGE_MS,
   fireDeadline,
   trackBlocked,
-  recordSignalEnd,
+  recordKilledEnd,
   finaliseRun,
   worktreeExtras,
   identityExtras,
@@ -282,24 +282,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   };
   const onCodexSignal = (sig: string) => {
     killed = true;
-    status.state = "killed";
-    status.rc = 143;
-    status.secs = Math.floor((Date.now() - t0) / 1000);
-    const end = recordSignalEnd(logDir, status, sig);
-    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
-    saveStatus(logDir, status);
-    appendLedger(ledger, "WORKER-END", {
-      id: wid,
-      provider: target.providerName,
-      mode: "headless",
-      model,
-      rc: 143,
-      secs: status.secs,
-      killed: 1,
-      ...endFields(end),
-      note: end.note,
-      label,
-    });
+    recordKilledEnd({ logDir, status, sig, t0, ledger, wid, providerName: target.providerName, model, label });
     // same as the claude path: a killed run's worktree and branch go now
     if (worktree) {
       salvageOnExit(ledger, wid, label, worktree.dir, SIGNAL_SALVAGE_MS);

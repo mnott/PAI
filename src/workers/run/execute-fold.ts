@@ -74,7 +74,7 @@ import {
   SIGNAL_SALVAGE_MS,
   fireDeadline,
   trackBlocked,
-  recordSignalEnd,
+  recordKilledEnd,
   finaliseRun,
   relaunchOptions,
   worktreeExtras,
@@ -184,24 +184,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   };
   const onSignal = (sig: string) => {
     state.killed = true;
-    status.state = "killed";
-    status.rc = 143;
-    status.secs = Math.floor((Date.now() - t0) / 1000);
-    const end = recordSignalEnd(logDir, status, sig);
-    status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
-    saveStatus(logDir, status);
-    appendLedger(ledger, "WORKER-END", {
-      id: wid,
-      provider: target.providerName,
-      mode: "headless",
-      model,
-      rc: 143,
-      secs: status.secs,
-      killed: 1,
-      ...endFields(end),
-      note: end.note,
-      label,
-    });
+    recordKilledEnd({ logDir, status, sig, t0, ledger, wid, providerName: target.providerName, model, label });
     // a killed worktree run leaves nothing to merge — drop its worktree and
     // branch too, or every kill strands them for hand-pruning (2026-09-18)
     if (worktree) {

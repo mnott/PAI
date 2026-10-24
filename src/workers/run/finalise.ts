@@ -81,6 +81,39 @@ export function trackBlocked(logDir: string, status: WorkerStatus, limit: RunLim
   return () => clearInterval(t);
 }
 
+/** A signal killed the run: status killed/143, the end reason, and the WORKER-END ledger line (shared by the claude and codex paths). */
+export function recordKilledEnd(p: {
+  logDir: string;
+  status: WorkerStatus;
+  sig: string;
+  t0: number;
+  ledger: string;
+  wid: string;
+  providerName: string;
+  model: string;
+  label: string;
+}): void {
+  const { logDir, status, sig, ledger } = p;
+  status.state = "killed";
+  status.rc = 143;
+  status.secs = Math.floor((Date.now() - p.t0) / 1000);
+  const end = recordSignalEnd(logDir, status, sig);
+  status.last = `killed by signal ${sig} (${end.reason}${end.by ? ` by ${end.by}` : ""})`;
+  saveStatus(logDir, status);
+  appendLedger(ledger, "WORKER-END", {
+    id: p.wid,
+    provider: p.providerName,
+    mode: "headless",
+    model: p.model,
+    rc: 143,
+    secs: status.secs,
+    killed: 1,
+    ...endFields(end),
+    note: end.note,
+    label: p.label,
+  });
+}
+
 /** Decide why a signal ended the run and put it on the status; the caller writes WORKER-END. */
 export function recordSignalEnd(logDir: string, status: WorkerStatus, signal: string): EndInfo {
   const end = decideEndReason({
