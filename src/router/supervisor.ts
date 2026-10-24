@@ -27,6 +27,13 @@ export interface HandoverStatus {
   state: "draining" | "failed";
   inflight?: number;
   reason?: string;
+  /** Set when the successor itself reported the failure (spawn path): its pid. */
+  successorPid?: number;
+}
+
+/** What the CLI prints when the successor could not reach the upstream and the old router was left serving. */
+export function abortedText(st: HandoverStatus): string | undefined {
+  return st.state === "failed" && st.reason?.startsWith("successor cannot reach") ? `router restart aborted: ${st.reason}; old router ${st.oldPid} keeps serving` : undefined;
 }
 
 export function readHandoverStatus(oldPid: number): HandoverStatus | undefined {
@@ -62,7 +69,7 @@ export function startHandover(oldPid: number, timeoutMs = 30000): Promise<number
         return pid;
       }
       const st = readHandoverStatus(oldPid);
-      if (st?.state === "failed") throw new Error(`router ${oldPid} kept serving: ${st.reason ?? "successor did not start"} (see ${routerLogFile()})`);
+      if (st?.state === "failed") throw new Error(abortedText(st) ?? `router ${oldPid} kept serving: ${st.reason ?? "successor did not start"} (see ${routerLogFile()})`);
     }
     throw new Error(`router ${oldPid} did not hand over within ${timeoutMs}ms`);
   })();
@@ -138,4 +145,44 @@ export async function runRouterTick(deps: RouterTickDeps): Promise<"up" | "start
   }
   deps.start();
   return "started";
+}
+
+export interface WatchdogDeps {
+  pid: () => number | null;
+  health: (pid: number) => { streak: number; code?: string } | undefined;
+  failStreak: number;
+  /** The daemon's own resolve+connect to the upstream: a streak is blamed on the router only when this works. */
+  ownProbe: () => Promise<{ ok: boolean; host: string; code?: string }>;
+  restart: () => Promise<void>;
+  log: (line: string) => void;
+  now?: () => number;
+  /** Minimum ms between restart attempts and between repeated "network down" lines. Default 300000. */
+  cooldownMs?: number;
+}
+
+/** Returns a check to run each supervision tick: restarts the router when it, and only it, cannot reach the upstream. */
+export function createRouterWatchdog(d: WatchdogDeps): () => Promise<"ok" | "restarted" | "network-down" | "cooldown" | "failed"> {
+  const now = d.now ?? Date.now;
+  const cooldownMs = d.cooldownMs ?? 300_000;
+  let lastAct = -Infinity;
+  return async () => {
+    const pid = d.pid();
+    const h = pid ? d.health(pid) : undefined;
+    if (!h || h.streak < d.failStreak) return "ok";
+    if (now() - lastAct < cooldownMs) return "cooldown";
+    lastAct = now();
+    const own = await d.ownProbe();
+    if (!own.ok) {
+      d.log(`router watchdog: ${h.streak} upstream failures (${h.code}) but the daemon cannot reach ${own.host} either (${own.code}); network down, not restarting`);
+      return "network-down";
+    }
+    try {
+      await d.restart();
+    } catch (e) {
+      d.log(`router watchdog: restart failed: ${e instanceof Error ? e.message : String(e)}`);
+      return "failed";
+    }
+    d.log("router watchdog: successor cannot reach upstream, restarted");
+    return "restarted";
+  };
 }

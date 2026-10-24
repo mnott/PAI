@@ -20,6 +20,8 @@ import {
   toolMemoryFeedback,
   toolMemoryKgSearch,
 } from "../../mcp/tools.js";
+import { routerRestartDirect } from "../../router/service-control.js";
+import { cliEntry } from "../pass-priority.js";
 import { detectTopicShift } from "../../topics/detector.js";
 import { registryBackend, storageBackend, daemonConfig } from "./state.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
@@ -183,6 +185,9 @@ export async function dispatchTool(
       }
       return await toolMemoryKgSearch(storageBackend, p as Parameters<typeof toolMemoryKgSearch>[1]);
     }
+
+    case "router_restart":
+      return await routerRestartDirect(cliEntry());
 
     default:
       throw new Error(`Unknown method: ${method}`);
