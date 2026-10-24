@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { FLAKY_KEEP, listFlaky, saveFlakyLog } from "./flaky-log.js";
 import {
   buildRelatedCommand,
   changedSourceFiles,
@@ -252,6 +253,51 @@ describe("serial re-run of failing files", () => {
     expect(r.failing).toEqual(["src/a.test.ts"]);
     expect(r.line).toContain("failed: src/a.test.ts");
     expect(r.line).not.toContain("b.test.ts");
+  });
+
+  const BATCH =
+    " FAIL  src/a.test.ts > limits > rejects\nAssertionError: expected 5 to be 4\n  at src/a.test.ts:12\n\n Test Files  1 failed | 2 passed (3)\n      Tests  1 failed (9)\n";
+  const flakyRun = (dir: string, runner: (...a: any[]) => ReturnType<typeof out>, files = ["a.ts"]) =>
+    runRelatedTests(
+      tmp({ devDependencies: { vitest: "1" } }),
+      "x",
+      { ...cfg("npx vitest related --run {files}"), flakyDir: dir },
+      git(files),
+      undefined,
+      runner as never
+    );
+
+  it("batch fails, alone passes -> one log with the assertion, path returned", () => {
+    const dir = join(tmp(), "flaky");
+    let n = 0;
+    const r = flakyRun(dir, () => (++n === 1 ? out(1, BATCH) : out(0, PASS)));
+    expect(r.status).toBe("flaky");
+    expect(r.flakyLogs).toHaveLength(1);
+    expect(r.flakyLogs![0].startsWith(dir)).toBe(true);
+    const text = readFileSync(r.flakyLogs![0], "utf8");
+    expect(text).toContain("FAIL  src/a.test.ts > limits > rejects");
+    expect(text).toContain("AssertionError: expected 5 to be 4");
+    expect(text).toContain("Test Files  1 failed | 2 passed (3)");
+    expect(text).toContain("batch load: 1 files");
+    expect(readdirSync(dir)).toHaveLength(1);
+    expect(listFlaky(dir)).toEqual([{ slug: "src-a.test.ts", file: "src/a.test.ts", count: 1, latest: r.flakyLogs![0] }]);
+  });
+
+  it("a real failure writes no log", () => {
+    const dir = join(tmp(), "flaky");
+    const r = flakyRun(dir, () => out(1, BATCH));
+    expect(r.status).toBe("failed");
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("keeps the newest 20 logs per file", () => {
+    const dir = join(tmp(), "flaky");
+    for (let i = 0; i < 25; i++) saveFlakyLog(dir, "src/a.test.ts", BATCH, { files: 3, at: new Date(Date.UTC(2026, 9, 24, 10, i)) });
+    saveFlakyLog(dir, "src/a.test.ts.x", BATCH, { files: 3, at: new Date(Date.UTC(2026, 9, 24, 9)) });
+    const names = readdirSync(dir).filter((f) => f.startsWith("src-a.test.ts-2026")).sort();
+    expect(names).toHaveLength(FLAKY_KEEP);
+    expect(names[0]).toContain("T10-05-");
+    expect(readdirSync(dir)).toHaveLength(FLAKY_KEEP + 1);
   });
 
   it("parallel passes -> re-run not called", () => {

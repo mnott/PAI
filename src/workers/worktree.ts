@@ -25,6 +25,7 @@ import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
 import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
+import { flakyDir } from "./flaky-log.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
@@ -1297,8 +1298,13 @@ export function mergeWorker(
   if (opts.verifyTests !== false) {
     const cfg = opts.merge ?? mergeSettings();
     mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
-    related = runRelatedTests(st.cwd, oldHead, cfg, git);
-    appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", { id, status: related.status, result: related.line.replace(/\s+/g, " ").slice(0, 300) });
+    related = runRelatedTests(st.cwd, oldHead, { ...cfg, flakyDir: flakyDir(logDir) }, git);
+    appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", {
+      id,
+      status: related.status,
+      result: related.line.replace(/\s+/g, " ").slice(0, 300),
+      ...(related.flakyLogs?.length ? { flakyLog: related.flakyLogs.join(",") } : {}),
+    });
     // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
