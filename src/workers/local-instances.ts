@@ -8,6 +8,7 @@
  * whose pid is gone and adopts a catalogue server that has no row.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { minOf } from "../utils/min-max.js";
 import { dirname, join } from "node:path";
@@ -66,9 +67,23 @@ export function readInstances(logDir: string): LocalInstance[] {
   }
 }
 
-/** The recorded rows minus managed ones whose process is gone (killed outside PAI); failed rows stay until dismissed. Readers that report or route use this; writers read the raw file. */
-export function readLiveInstances(logDir: string): LocalInstance[] {
-  return readInstances(logDir).filter((r) => !(r.origin === "managed" && r.state !== "failed" && r.pid && !pidAlive(r.pid)));
+/** Pids listening on a TCP port (lsof; none when nothing listens or lsof is missing). */
+export function portListeners(port: number): number[] {
+  try {
+    const o = execFileSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    return o.split(/\s+/).filter(Boolean).map(Number);
+  } catch {
+    return [];
+  }
+}
+
+/** The recorded rows minus managed ones that are gone: the pid is dead (killed outside PAI) or, for a ready row, nothing listens on its port any more. Failed rows stay until dismissed. Readers that report or route use this; writers read the raw file. */
+export function readLiveInstances(logDir: string, listening: (port: number) => boolean = (port) => portListeners(port).length > 0): LocalInstance[] {
+  return readInstances(logDir).filter((r) => {
+    if (r.origin !== "managed" || r.state === "failed") return true;
+    if (r.pid && !pidAlive(r.pid)) return false;
+    return r.state !== "ready" || listening(r.port);
+  });
 }
 
 /** Atomic write (tmp + rename). */

@@ -14,6 +14,7 @@ afterEach(() => {
   for (const s of servers.splice(0)) s.close();
 });
 
+const up = (): boolean => true;
 const row = (pid: number, port: number): LocalInstance => ({
   id: "fake#1", model: "fake", provider: "fake", url: `http://127.0.0.1:${port}`, origin: "managed", port, pid, state: "ready", startedAt: 0, log: "",
 });
@@ -24,11 +25,11 @@ describe("instance records follow the processes", () => {
     dirs.push(dir);
     const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
     writeInstances(dir, [row(child.pid!, 59999)]);
-    expect(readLiveInstances(dir)).toHaveLength(1);
+    expect(readLiveInstances(dir, up)).toHaveLength(1);
     const gone = new Promise((r) => child.once("exit", r));
     child.kill("SIGKILL");
     await gone;
-    expect(readLiveInstances(dir)).toHaveLength(0);
+    expect(readLiveInstances(dir, up)).toHaveLength(0);
   });
 
   it("keeps a failed row and a row without a pid", () => {
@@ -36,7 +37,7 @@ describe("instance records follow the processes", () => {
     dirs.push(dir);
     const dead = 2 ** 22 - 1;
     writeInstances(dir, [{ ...row(dead, 1), state: "failed" }, { ...row(0, 2), id: "fake#2", pid: undefined }]);
-    expect(readLiveInstances(dir).map((r) => r.id)).toEqual(["fake#1", "fake#2"]);
+    expect(readLiveInstances(dir, up).map((r) => r.id)).toEqual(["fake#1", "fake#2"]);
   });
 });
 
