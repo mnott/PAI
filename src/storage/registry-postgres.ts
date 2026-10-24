@@ -15,6 +15,7 @@
  */
 
 import pg from "pg";
+import { createPgPool } from "./pg-pool.js";
 import { MergeError } from "../registry/merge.js";
 import { backupTableName, backupsToPrune, logRegistryReset, sortBackups } from "./registry-reset.js";
 import type { Pool, PoolClient } from "pg";
@@ -105,7 +106,7 @@ export class PostgresRegistryBackend implements RegistryBackend {
     const config = configOrPool;
     const connStr = postgresConnectionString(config);
 
-    this.pool = new PgPool({
+    this.pool = createPgPool({
       connectionString: connStr,
       max: config.maxConnections ?? 5,
       connectionTimeoutMillis: config.connectionTimeoutMs ?? DEFAULT_PG_CONNECTION_TIMEOUT_MS,
