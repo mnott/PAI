@@ -29,7 +29,6 @@
   "src/hooks/ts/lib/worker-bash-rules.ts | src/hooks/ts/lib/worker-bash-rules.ts | 443a3b4193fa",
   "src/hooks/ts/lib/worker-bash-rules.ts | src/hooks/ts/lib/worker-bash-rules.ts | 99dd25365e30",
   "src/hooks/ts/lib/worker-bash-rules.ts | src/hooks/ts/lib/worker-bash-rules.ts | 9f9ab4a068d4",
-  "src/hooks/ts/pre-tool-use/block-sleep-poll.ts | src/hooks/ts/pre-tool-use/route-edits-to-worker.ts | 687a0b5470e2",
   "src/mcp/tools/memory.ts | src/storage/sqlite/search.ts | 865d1ba31df3",
   "src/memory/indexer/async.ts | src/memory/indexer/async.ts | 0c2f2de325ec",
   "src/memory/indexer/async.ts | src/storage/sqlite/indexer.ts | 20fb681e152d",

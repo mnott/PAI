@@ -20,6 +20,7 @@
 
 import { decideSleepPollGate, type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
 import { renderDecision } from "../lib/render-decision.js";
+import { allow, deny, readGateInput } from "../lib/gate-io.js";
 import { mainSessionBashReason } from "../lib/main-session-git-gate.js";
 import { modelServerReason } from "../lib/model-server-guard.js";
 import { cachedLocalAnswer } from "../lib/local-answer.js";
@@ -27,30 +28,9 @@ import { buildGateReason } from "../lib/build-gate.js";
 import { backgroundReason } from "../lib/background-gate.js";
 import { raiseWaitTimeout } from "../lib/wait-timeout.js";
 
-function allow(): void {
-  process.exit(0);
-}
-
-function deny(reason: string): void {
-  process.stdout.write(renderDecision({ decision: "deny", reason }) + "\n");
-  process.exit(0);
-}
-
 async function main(): Promise<void> {
-  let text = "";
-  try {
-    for await (const chunk of process.stdin) text += chunk;
-  } catch {
-    return allow();
-  }
-  if (!text.trim()) return allow();
-
-  let input: SleepPollGateInput;
-  try {
-    input = JSON.parse(text) as SleepPollGateInput;
-  } catch {
-    return allow();
-  }
+  const input = await readGateInput<SleepPollGateInput>();
+  if (!input) return allow();
 
   const command = input.tool_input?.command;
   if (process.env.PAI_WORKER !== "1" && typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
