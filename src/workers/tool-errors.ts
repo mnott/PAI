@@ -131,17 +131,12 @@ export function lastCommand(command: string): { name: string; segment: string; c
   return name ? { name, segment, compound: segs.length > 1 } : null;
 }
 
-/** Output that says something went wrong; exit 1 without any of it is a probe's answer, not a failure. */
-const FAILURE_EVIDENCE =
-  /\b(?:errors?|failed|failures?|fatal|cannot|can't|not found|no such file|denied|traceback|exceptions?|panic|segmentation|abort(?:ed)?|TS\d+|FAIL|assertion|exit status|command not found)\b|[✗×]/i;
-
 /**
  * Bash exits that are the tool's normal answer, matched on exit code AND
  * command shape AND output marker: search no-match (exit 1, empty output),
  * diff/cmp "differ" (exit 1), test/[ false (exit 1, empty output), a vitest
  * run that reports failing tests (exit 1), zsh's "=, ==, === not found" (any run of =) from an
- * `echo ===` separator, timeout's own 124/144 after a deliberate bound, and
- * any exit 1 whose output holds no failure evidence (a trailing `[ … ] && echo`).
+ * `echo ===` separator, and timeout's own 124/144 after a deliberate bound.
  */
 export function isBenignBash(r: ToolErrorRecord): boolean {
   if (r.tool !== "Bash" || !r.input) return false;
@@ -155,7 +150,6 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   const last = lastCommand(cmd);
   if (last && isExpectedWaitExit(last.segment, code)) return true;
   if (code !== 1) return false;
-  if (!FAILURE_EVIDENCE.test(r.raw.replace(/^Exit code \d+/i, ""))) return true;
   if (!last) return false;
   // In a compound/pipeline the exit status is the last stage's and the output belongs to the earlier ones.
   if (last.compound && (SEARCH_CMDS.has(last.name) || ["test", "[", "diff", "cmp", "ls", "find"].includes(last.name))) return true;

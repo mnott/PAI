@@ -240,15 +240,6 @@ describe("classification", () => {
     expect(isBenignBash(r)).toBe(true);
     expect(classifyToolError(r).cls).toBe("benign");
   });
-  it("exit 1 with clean output is benign, with failure evidence is not", () => {
-    const loop = 'for f in a.ts b.ts; do for n in x y z; do c=$(grep -c "\\b$n\\b" $f); [ "$c" -le 1 ] && echo $f $n $c; done; done';
-    expect(isBenignBash(inp(rec("w1", NOW, "Exit code 1\nsrc/memory/indexer/async.ts sha256File 1", "Bash"), loop))).toBe(true);
-    expect(isBenignBash(inp(rec("w1", NOW, "Exit code 1\nerror TS2304: Cannot find name", "Bash"), "npm run build"))).toBe(false);
-    expect(isBenignBash(inp(rec("w1", NOW, "Exit code 1\nFAIL src/x.test.ts", "Bash"), "npm run check"))).toBe(false);
-    const ls = inp(rec("w1", NOW, "Exit code 1\nls: x: No such file or directory", "Bash"), "ls x");
-    expect(isBenignBash(ls)).toBe(false);
-    expect(classifyToolError(ls).cls).toBe("model");
-  });
   it("a failing build stays unknown", () => {
     const r = inp(rec("w1", NOW, "Exit code 1\nsrc/x.ts(1,1): error TS2304: Cannot find name 'q'", "Bash"), "npm run build");
     expect(isBenignBash(r)).toBe(false);
