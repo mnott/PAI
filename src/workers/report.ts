@@ -410,13 +410,13 @@ const squeeze = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 /**
  * Reduce a shell command to what it runs: drop leading `cd <dir> &&|;` and
- * `VAR=value` assignments, trailing `| tail|head …`, `2>&1`, `; echo rc=$?`.
+ * `VAR=value` assignments, `env [-u NAME|-i|VAR=value]…`, trailing `| tail|head …`, `2>&1`, `; echo rc=$?`.
  */
 function normaliseCommand(cmd: string): string {
   let c = squeeze(cmd).replace(/\bgit -C (?:"[^"]*"|'[^']*'|\S+) /g, "git ");
   for (let prev = ""; prev !== c; ) {
     prev = c;
-    c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^[A-Za-z_]\w*=\S*\s+/, "");
+    c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^[A-Za-z_]\w*=\S*\s+/, "").replace(/^env\s+(?:(?:-u\s+\S+|-i|[A-Za-z_]\w*=\S*)\s+)*/, "");
   }
   for (let prev = ""; prev !== c; ) {
     prev = c;
@@ -458,7 +458,10 @@ export function checkProof(
     const passing = runs.filter((r) => !r.failed);
     const clean = passing.filter((r) => !OUTPUT_FAILURE.test(r.output ?? ""));
     const ran = match(passing, false);
-    const why = !ran ? `claimed proof not run or failed: ${parsed.fields.p}` : !match(passing, true) ? "claimed proof masked its exit code" : !match(clean, true) ? "claimed proof output shows a failure" : "";
+    // p= that names no command any Bash call started with, and reads as a sentence, is a description
+    const firsts = new Set(runs.map((r) => normaliseCommand(r.command).split(" ")[0]));
+    const prose = runs.length > 0 && !parts.some((c) => firsts.has(c.split(" ")[0])) && /: |\b\d+ [a-z]/i.test(claimed);
+    const why = !ran ? (prose ? "p= must be the exact command you ran, not a description" : `claimed proof not run or failed: ${parsed.fields.p}`) : !match(passing, true) ? "claimed proof masked its exit code" : !match(clean, true) ? "claimed proof output shows a failure" : "";
     if (why) {
       rewritten = true;
       proof = parsed.fields.p;
