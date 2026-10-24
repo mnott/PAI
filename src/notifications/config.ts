@@ -10,7 +10,7 @@
  */
 
 import { expandHome, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
-import { shippedMainDefaults } from "../config/shipped-defaults.js";
+import { deepMergeSkippingNull, shippedMainDefaults } from "../config/shipped-defaults.js";
 import type {
   NotificationConfig,
   ChannelConfigs,
@@ -26,37 +26,6 @@ function defaultNotificationConfig(): NotificationConfig {
     channels: {},
     routing: {},
   }) as NotificationConfig;
-}
-
-// ---------------------------------------------------------------------------
-// Deep merge helper (same approach as daemon/config.ts)
-// ---------------------------------------------------------------------------
-
-function deepMerge<T extends object>(
-  target: T,
-  source: Record<string, unknown>
-): T {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    const srcVal = source[key];
-    if (srcVal === undefined || srcVal === null) continue;
-    const tgtVal = (target as Record<string, unknown>)[key];
-    if (
-      typeof srcVal === "object" &&
-      !Array.isArray(srcVal) &&
-      typeof tgtVal === "object" &&
-      tgtVal !== null &&
-      !Array.isArray(tgtVal)
-    ) {
-      (result as Record<string, unknown>)[key] = deepMerge(
-        tgtVal as object,
-        srcVal as Record<string, unknown>
-      );
-    } else {
-      (result as Record<string, unknown>)[key] = srcVal;
-    }
-  }
-  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +49,7 @@ export function loadNotificationConfig(): NotificationConfig {
     return { ...defaultNotificationConfig() };
   }
 
-  return deepMerge(
+  return deepMergeSkippingNull(
     defaultNotificationConfig(),
     stored as Record<string, unknown>
   );
@@ -126,14 +95,14 @@ export function patchNotificationConfig(patch: {
   }
 
   if (patch.channels) {
-    current.channels = deepMerge(
+    current.channels = deepMergeSkippingNull(
       current.channels,
       patch.channels as Record<string, unknown>
     );
   }
 
   if (patch.routing) {
-    current.routing = deepMerge(
+    current.routing = deepMergeSkippingNull(
       current.routing,
       patch.routing as Record<string, unknown>
     );

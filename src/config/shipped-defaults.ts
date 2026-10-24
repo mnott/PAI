@@ -128,12 +128,16 @@ function readYamlMapping(path: string): Record<string, unknown> {
 
 /** Deep-merge `over` onto `base`: user values win, arrays replace, objects
  *  merge recursively. `null` in `over` replaces the base value (it is a real
- *  YAML value, e.g. `active: null`); only `undefined` is skipped. */
-export function deepMergeConfig(base: Record<string, unknown>, over: Record<string, unknown>): Record<string, unknown> {
+ *  YAML value, e.g. `active: null`) unless `skipNull`; `undefined` is always skipped. */
+export function deepMergeConfig(
+  base: Record<string, unknown>,
+  over: Record<string, unknown>,
+  skipNull = false,
+): Record<string, unknown> {
   const result: Record<string, unknown> = { ...base };
   for (const key of Object.keys(over)) {
     const srcVal = over[key];
-    if (srcVal === undefined) continue;
+    if (srcVal === undefined || (skipNull && srcVal === null)) continue;
     const tgtVal = result[key];
     if (
       typeof srcVal === "object" &&
@@ -143,12 +147,17 @@ export function deepMergeConfig(base: Record<string, unknown>, over: Record<stri
       tgtVal !== null &&
       !Array.isArray(tgtVal)
     ) {
-      result[key] = deepMergeConfig(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+      result[key] = deepMergeConfig(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>, skipNull);
     } else {
       result[key] = srcVal;
     }
   }
   return result;
+}
+
+/** deepMergeConfig for a typed target where a `null` in `source` leaves the target value alone. */
+export function deepMergeSkippingNull<T extends object>(target: T, source: Record<string, unknown>): T {
+  return deepMergeConfig(target as Record<string, unknown>, source, true) as T;
 }
 
 /** The shipped main-config defaults (defaults/config.yaml). */

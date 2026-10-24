@@ -16,7 +16,7 @@ import type { NotificationConfig } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
 import { paiSocketPath } from "../runtime-paths.js";
 import { postgresConnectionString } from "../storage/postgres/config.js";
-import { effectiveMainConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
+import { deepMergeSkippingNull, effectiveMainConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 import {
   paiHomePath,
   claudeHomeDir,
@@ -394,8 +394,8 @@ function computedDefaults(): Record<string, unknown> {
 /** The effective defaults: the shipped file plus the load-time computed
  *  values, as the typed shape. */
 export function defaults(): PaiDaemonConfig {
-  return deepMerge(
-    deepMerge(shippedMainDefaults(), computedDefaults()) as unknown as PaiDaemonConfig,
+  return deepMergeSkippingNull(
+    deepMergeSkippingNull(shippedMainDefaults(), computedDefaults()) as unknown as PaiDaemonConfig,
     {}
   );
 }
@@ -534,37 +534,6 @@ export function migrateConfigFile(opts: { dryRun?: boolean } = {}): ConfigMigrat
 }
 
 // ---------------------------------------------------------------------------
-// Deep merge (handles nested objects, not arrays)
-// ---------------------------------------------------------------------------
-
-function deepMerge<T extends object>(
-  target: T,
-  source: Record<string, unknown>
-): T {
-  const result = { ...target };
-  for (const key of Object.keys(source)) {
-    const srcVal = source[key];
-    if (srcVal === undefined || srcVal === null) continue;
-    const tgtVal = (target as Record<string, unknown>)[key];
-    if (
-      typeof srcVal === "object" &&
-      !Array.isArray(srcVal) &&
-      typeof tgtVal === "object" &&
-      tgtVal !== null &&
-      !Array.isArray(tgtVal)
-    ) {
-      (result as Record<string, unknown>)[key] = deepMerge(
-        tgtVal as object,
-        srcVal as Record<string, unknown>
-      );
-    } else {
-      (result as Record<string, unknown>)[key] = srcVal;
-    }
-  }
-  return result;
-}
-
-// ---------------------------------------------------------------------------
 // Config loader
 // ---------------------------------------------------------------------------
 
@@ -586,10 +555,10 @@ export function loadConfig(): PaiDaemonConfig {
     );
     // The user's file is damaged: fall back to the shipped defaults alone
     // (plus the computed values), same as the old defaults-only behaviour.
-    merged = deepMerge(shippedMainDefaults(), computedDefaults());
+    merged = deepMergeSkippingNull(shippedMainDefaults(), computedDefaults());
   }
   // the computed values are defaults too: the user's file wins
-  merged = deepMerge(computedDefaults(), merged);
+  merged = deepMergeSkippingNull(computedDefaults(), merged);
 
   // Compat: config.json may use "obsidianVaultPath" (legacy key) instead of "vaultPath".
   // Map it across so the daemon picks it up correctly.

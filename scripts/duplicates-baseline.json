@@ -20,7 +20,6 @@
   "src/daemon-mcp/tools/delegation.ts | src/daemon-mcp/tools/worker-capability.ts | c9620da879d6",
   "src/daemon-mcp/tools/ops.ts | src/daemon-mcp/tools/worker-model.ts | 330a28293f33",
   "src/daemon-mcp/tools/worker-capability.ts | src/daemon-mcp/tools/worker-model.ts | 2dbf88ba1894",
-  "src/daemon/config.ts | src/notifications/config.ts | 11779d45d4d5",
   "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | 0387f6bd92ed",
   "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | 89133fb4f493",
   "src/daemon/daemon/handler.ts | src/daemon/daemon/handler.ts | ecd239421970",
