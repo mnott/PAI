@@ -228,6 +228,8 @@ export interface WorkerReport {
   checks?: Array<{ name?: string; ok?: boolean; detail?: string }>;
   open?: string[];
   notes?: string;
+  /** Full text of an over-long AG2 note that was shortened to fit `notes`. */
+  details?: string;
   /** AG2 `r` (res): the single outcome character, when the report was AG2. */
   result?: "+" | "-" | "~" | "?" | "!";
   /** AG2 `y` (why): one line explaining a non-"+" result. */
