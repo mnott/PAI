@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, readFileSync, copyFileSync, rmSync } from "nod
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bumpVersion, githubRepoOf, parseGithubRepo, stableAssetName, versionedAssetName } from "./repo-facts.js";
+import { bumpVersion, detectGithubRepo, githubRepoOf, isGithubUrl, parseGithubRepo, remoteUrl, stableAssetName, versionedAssetName } from "./repo-facts.js";
 import { deriveForge, syncMirrors as realSyncMirrors, formatMirror, type MirrorSyncResult } from "../builds/mirror-sync.js";
 
 export interface RunResult {
@@ -153,7 +153,8 @@ export function changelogSection(changelog: string, version: string): string | n
 /** The ordered plan for a repo: what `--dry-run` prints and what a run follows. */
 export function planRelease(repo: string, opts: { bump?: string; from?: Step; skip?: Step[]; version?: string } = {}): string[] {
   const pkg = readPkg(repo);
-  const gh = githubRepoOf(pkg);
+  const gh = detectGithubRepo(repo, pkg);
+  const githubOrigin = isGithubUrl(remoteUrl(repo, "origin"));
   const next = opts.version ?? bumpVersion(pkg.version ?? "0.0.0", opts.bump ?? "patch");
   const t = testCommand(repo, pkg);
   const sync = existsSync(join(repo, "scripts", "sync-versions.mjs")) ? " + node scripts/sync-versions.mjs" : "";
@@ -166,7 +167,9 @@ export function planRelease(repo: string, opts: { bump?: string; from?: Step; sk
     `commit: git add -A; git commit -m "chore: release ${next}"`,
     `tag: v${next}`,
     `push: git push origin main --tags`,
-    `mirror: ${opts.from || opts.skip?.includes("mirror") ? `no-op when v${next} is already on GitHub, else ` : ""}forge push-mirror sync; wait for v${next} on GitHub${gh ? ` (${gh.owner}/${gh.repo})` : ""}`,
+    githubOrigin
+      ? `mirror: skipped (origin is GitHub${gh ? `, ${gh.owner}/${gh.repo}` : ""}; the push already reaches it)`
+      : `mirror: ${opts.from || opts.skip?.includes("mirror") ? `no-op when v${next} is already on GitHub, else ` : ""}forge push-mirror sync; wait for v${next} on GitHub${gh ? ` (${gh.owner}/${gh.repo})` : ""}`,
     `pack: clean worktree of v${next} (install, build) -> npm pack -> ${stable} + versioned`,
     `release: gh release create v${next} ${stable}${gh ? ` --repo ${gh.owner}/${gh.repo}` : ""}`,
   ];
@@ -243,8 +246,9 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
       if (branch !== "main") throw new StepFailed(`on branch "${branch}", releases are cut from main`);
     }
     const origin = (await sh("git", ["remote", "get-url", "origin"])).trim();
-    const forge = deriveForge(origin);
-    const gh = githubRepoOf(pkg) ?? parseGithubRepo(await run("git", ["remote", "get-url", "github"], { cwd: repo }).then((r) => (r.code === 0 ? r.stdout : "")));
+    const githubOrigin = isGithubUrl(origin);
+    const forgeName = githubOrigin ? "none, origin is GitHub" : `forge ${deriveForge(origin).repo}`;
+    const gh = githubRepoOf(pkg) ?? parseGithubRepo(await run("git", ["remote", "get-url", "github"], { cwd: repo }).then((r) => (r.code === 0 ? r.stdout : ""))) ?? parseGithubRepo(origin);
     if (!gh) throw new StepFailed("no GitHub repository: set package.json repository or a `github` remote");
     if (!pkg.name) throw new StepFailed("package.json has no name");
     // a resume after `tag` releases the tag on HEAD; from build on, the bump is already in package.json
@@ -255,8 +259,8 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
     if (opts.from === "release") throw new StepFailed("release needs the packed files; resume with --from pack");
     if (resume) {
       Object.assign(state, { version, bumped: true, committed: true, tagged: true, pushed: fromIdx > STEPS.indexOf("push"), mirrored: fromIdx > STEPS.indexOf("mirror") });
-      print(`check: resuming from ${opts.from} on ${tag} (forge ${forge.repo}; GitHub ${gh.owner}/${gh.repo})`);
-    } else print(`check: ok (main, clean; forge ${forge.repo}; GitHub ${gh.owner}/${gh.repo})`);
+      print(`check: resuming from ${opts.from} on ${tag} (${forgeName}; GitHub ${gh.owner}/${gh.repo})`);
+    } else print(`check: ok (main, clean; ${forgeName}; GitHub ${gh.owner}/${gh.repo})`);
 
     // 2. bump
     if (at("bump")) {
@@ -316,12 +320,15 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
     if (at("mirror")) {
       step = "mirror";
       const hasGithubRemote = (await run("git", ["remote", "get-url", "github"], { cwd: repo })).code === 0;
-      const target = hasGithubRemote ? "github" : `https://github.com/${gh.owner}/${gh.repo}.git`;
+      const target = githubOrigin ? "origin" : hasGithubRemote ? "github" : `https://github.com/${gh.owner}/${gh.repo}.git`;
       const onGithub = async (): Promise<boolean> => {
         const r = await run("git", ["ls-remote", target, `refs/tags/${tag}`], { cwd: repo });
         return r.code === 0 && r.stdout.includes(`refs/tags/${tag}`);
       };
-      if ((opts.from || skipMirror) && (await onGithub())) {
+      if (githubOrigin) {
+        state.mirrored = true;
+        print("mirror: skipped (origin is GitHub)");
+      } else if ((opts.from || skipMirror) && (await onGithub())) {
         state.mirrored = true;
         print(`mirror: skipped (${tag} already on GitHub)`);
       } else {

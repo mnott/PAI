@@ -3,6 +3,8 @@
  * package name, version, GitHub owner/repo, stable asset name. Nothing is hard-coded.
  */
 
+import { execFileSync } from "node:child_process";
+
 export interface GithubRepo {
   owner: string;
   repo: string;
@@ -16,6 +18,23 @@ export function parseGithubRepo(url: string | undefined): GithubRepo | null {
     u.match(/^github:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/) ??
     u.match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?(?:#.*)?$/);
   return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+/** True when the remote URL points at github.com itself (no forge in between). */
+export const isGithubUrl = (url: string | undefined): boolean => parseGithubRepo(url) !== null;
+
+/** URL of git remote `name` in `repo`, or "" when absent. */
+export function remoteUrl(repo: string, name: string): string {
+  try {
+    return execFileSync("git", ["remote", "get-url", name], { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** GitHub owner/repo: package.json `repository`, else the `github` remote, else a GitHub-hosted `origin`. */
+export function detectGithubRepo(repo: string, pkg: { repository?: unknown }): GithubRepo | null {
+  return githubRepoOf(pkg) ?? parseGithubRepo(remoteUrl(repo, "github")) ?? parseGithubRepo(remoteUrl(repo, "origin"));
 }
 
 /** package.json `repository` (string or {url}) -> GitHub owner/repo. */

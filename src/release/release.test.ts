@@ -65,6 +65,44 @@ describe("planRelease", () => {
   });
 });
 
+describe("GitHub-origin repos", () => {
+  const gitRepo = (origin: string, extra: Record<string, unknown> = {}): string => {
+    const dir = tmpRepo(extra);
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+    execFileSync("git", ["remote", "add", "origin", origin], { cwd: dir });
+    return dir;
+  };
+
+  it("plans no mirror step and still lists release for a GitHub origin", () => {
+    const plan = planRelease(gitRepo("https://github.com/acme/tool.git"));
+    expect(plan[6]).toBe("push: git push origin main --tags");
+    expect(plan[7]).toContain("mirror: skipped (origin is GitHub");
+    expect(plan[7]).not.toContain("push-mirror sync");
+  });
+
+  it("keeps the mirror step for a forge origin", () => {
+    expect(planRelease(gitRepo("https://forge.example/git/APPS/tool.git"))[7]).toContain("forge push-mirror sync; wait for v1.2.4 on GitHub (acme/tool)");
+  });
+
+  it("detects owner/repo from the origin URL when package.json has no repository", () => {
+    const dir = gitRepo("https://github.com/acme/Tool.git", { repository: undefined });
+    const plan = planRelease(dir);
+    expect(plan[9]).toContain("--repo acme/Tool");
+  });
+
+  it("run: pushes to origin, skips the mirror, never syncs", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir);
+    const run: RunFn = (cmd, args, o) => (`${cmd} ${args.join(" ")}` === "git remote get-url origin" ? Promise.resolve({ code: 0, stdout: "git@github.com:acme/tool.git\n", stderr: "" }) : f.run(cmd, args, o));
+    let synced = false;
+    const r = await runRelease({ repo: dir, bump: "patch" }, { ...common, run, syncMirrors: async () => ((synced = true), mirrorOk()) });
+    expect(r.ok).toBe(true);
+    expect(synced).toBe(false);
+    expect(f.calls).toContain("git push origin main --tags");
+    expect(r.lines.some((l) => l.startsWith("mirror: skipped (origin is GitHub"))).toBe(true);
+  });
+});
+
 describe("runRelease", () => {
   it("packs from a temp worktree of the tag, not the live checkout, and removes it", async () => {
     const dir = tmpRepo();
