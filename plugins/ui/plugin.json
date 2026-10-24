@@ -2,6 +2,6 @@
   "name": "pai-ui",
   "displayName": "PAI UI Customization",
   "description": "Terminal tab titles, statusline, tab coloring, and visual customization",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "hooks": "./hooks/hooks.json"
 }
