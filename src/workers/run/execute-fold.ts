@@ -169,7 +169,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // Follow pane: headless only (interactive runs ARE the chat pane). Verified
   // above when the gate applies; best effort otherwise.
   if (paneVerified) status.pane = { opened: true, exec: true };
-  else if (headless && !a.panePrepared) void announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
+  else if (headless) await announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
   // The signal handlers and the one failure path come first: nothing below that can block (gates, the spawn) may run unguarded.
   let spawned: ReturnType<typeof spawn> | undefined;

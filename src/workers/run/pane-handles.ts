@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { shortText } from "../args.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
-import { type WorkerStatus } from "../status.js";
+import { saveStatus, type WorkerStatus } from "../status.js";
 import { headlessAllowed } from "../pane.js";
 import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
@@ -123,17 +123,19 @@ export async function announcePane(
   ledger: string,
   status?: WorkerStatus
 ): Promise<void> {
+  // the decision is saved here, before the caller spawns the child: the audit reads it from the status file
   const setPane = (p: NonNullable<WorkerStatus["pane"]>): void => {
-    if (status) status.pane = p;
+    if (!status) return;
+    status.pane = p;
+    saveStatus(logDir, status);
   };
-  void logDir;
   void term;
   if (paneHandles.has(wid)) {
     setPane({ opened: true, exec: true });
     return;
   }
   const why = noTerminalReasons.get(wid) ?? (systemWaiver ? `system job ${systemWaiver}` : headlessAllowed() ?? "no pane owns this run");
-  process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
+  if (status?.pane?.opened !== false) process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
   setPane({ opened: false, reason: why });
   void ledger;
 }

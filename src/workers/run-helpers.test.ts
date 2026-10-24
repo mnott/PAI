@@ -14,6 +14,7 @@ import DatabaseCtor from "better-sqlite3";
 import { initializeSchema } from "../storage/sqlite/registry-schema.js";
 import { SQLiteRegistryBackend } from "../storage/registry-sqlite.js";
 import { preEventFailure } from "./run.js";
+import { runningProcs } from "./pane-audit.js";
 import { appendSystemPromptArgs, longInlinePromptHint, parseRunnerArgs, stripPromptValues } from "./args.js";
 import {
   adoptInitModel,
@@ -1012,11 +1013,18 @@ describe("announcePane (records, never opens)", () => {
   });
 
   it("names the reason in the status and on stderr; never opens a pane", async () => {
-    const status = { pane: undefined } as { pane?: unknown };
+    const status = { id: "w1", label: "l", state: "running" } as { pane?: unknown };
     await announcePane(dir, cfg, "w1", "term-1", "keepalive", ledger, status as never);
     expect(stderr).toHaveBeenCalledWith("[pai worker] no pane for w1: system job keepalive\n");
     expect(status.pane).toMatchObject({ opened: false, reason: "system job keepalive" });
     expect(pane.openPaneForWorker).not.toHaveBeenCalled();
+  });
+
+  it("saves the no-pane decision to disk before the caller spawns, and the audit then spares the run", async () => {
+    const status = { id: "w2", label: "l", state: "running" } as never;
+    await announcePane(dir, cfg, "w2", "term-1", undefined, ledger, status);
+    expect(JSON.parse(readFileSync(join(dir, "w2.status"), "utf8")).pane).toMatchObject({ opened: false });
+    expect(runningProcs(dir).some((p) => p.id === "w2")).toBe(false);
   });
 });
 

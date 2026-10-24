@@ -248,7 +248,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
 
   if (paneVerified) status.pane = { opened: true, exec: true };
-  else void announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
+  else await announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
   // The signal handlers and the one failure path come first: the spawn must not run unguarded.
   let spawned: ReturnType<typeof spawn> | undefined;
