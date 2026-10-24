@@ -3,7 +3,7 @@
  * Pure: takes the worker's stream-json events, returns the trailing run.
  */
 
-import { classifyToolError, summarizeToolInput } from "./tool-errors.js";
+import { isPollingExit, summarizeToolInput } from "./tool-errors.js";
 
 export interface RepeatLoop {
   name: string;
@@ -69,8 +69,8 @@ export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): R
         if (!use) continue;
         const text = resultText(b.content);
         const failed = b.is_error === true || (use.name === "Bash" && /^Exit code (?!0\b)\d+/.test(text.trim()));
-        // designed non-zero answers (wait verbs exit 3, grep no-match, diff...) are not failures
-        const benign = failed && classifyToolError({ ts: 0, worker: "", provider: "", label: "", tool: use.name, signature: "", raw: text.trim(), input: summarizeToolInput(use.input) }).cls === "benign";
+        // deliberate polling exits (wait verbs exit 3, timeout) are not failures; a benign exit 1 still repeats
+        const benign = failed && isPollingExit({ ts: 0, worker: "", provider: "", label: "", tool: use.name, signature: "", raw: text.trim(), input: summarizeToolInput(use.input) });
         calls.push({ name: use.name, key: use.key, failed: failed && !benign, text });
       }
     }
