@@ -700,23 +700,6 @@ export function recordCombinedReport(dir: string, data: CombinedData): void {
   );
 }
 
-async function cmdCombined(opts: { json?: boolean; record?: string }): Promise<void> {
-  const data = await gatherCombined();
-
-  if (opts.json) {
-    printJson(data);
-  } else {
-    console.log(header("pai audit tokens — combined report"));
-    console.log(dim(`token encoding: ${data.encoding}`));
-    const rows = data.findings.map((f) => [severityColor(f.severity, f.finding), severityColor(f.severity, f.severity), f.evidence]);
-    console.log(renderTable(["FINDING", "SEVERITY", "EVIDENCE"], rows));
-  }
-
-  if (opts.record) {
-    recordCombinedReport(opts.record, data);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // scan
 // ---------------------------------------------------------------------------
