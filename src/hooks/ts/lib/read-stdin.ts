@@ -21,3 +21,22 @@ export function readStdinWithTimeout(timeout: number, timeoutMessage = 'Timeout'
     });
   });
 }
+
+/** Parse the hook's JSON stdin, waiting at most 500 ms; null when empty, late or malformed. */
+export async function readHookInput<T>(): Promise<T | null> {
+  try {
+    const decoder = new TextDecoder();
+    let input = '';
+    const timeoutPromise = new Promise<void>((resolve) => { setTimeout(resolve, 500); });
+    const readPromise = (async () => {
+      for await (const chunk of process.stdin) {
+        input += decoder.decode(chunk, { stream: true });
+      }
+    })();
+    await Promise.race([readPromise, timeoutPromise]);
+    if (input.trim()) return JSON.parse(input) as T;
+  } catch {
+    // Silently handle input errors
+  }
+  return null;
+}

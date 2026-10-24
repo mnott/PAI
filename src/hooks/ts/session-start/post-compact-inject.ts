@@ -21,6 +21,7 @@ import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { paiHomePath } from '../../../config/pai-home.js';
 import { resetHandoverTriggerState } from '../../../session/context-handover-trigger.js';
+import { readHookInput } from '../lib/read-stdin.js';
 import { clearWhisperConfirmMarker } from '../lib/whisper-confirm.js';
 
 interface HookInput {
@@ -33,24 +34,7 @@ interface HookInput {
 
 async function main() {
   if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
-  let hookInput: HookInput | null = null;
-
-  try {
-    const decoder = new TextDecoder();
-    let input = '';
-    const timeoutPromise = new Promise<void>((resolve) => { setTimeout(resolve, 500); });
-    const readPromise = (async () => {
-      for await (const chunk of process.stdin) {
-        input += decoder.decode(chunk, { stream: true });
-      }
-    })();
-    await Promise.race([readPromise, timeoutPromise]);
-    if (input.trim()) {
-      hookInput = JSON.parse(input) as HookInput;
-    }
-  } catch {
-    // Silently handle input errors
-  }
+  const hookInput = await readHookInput<HookInput>();
 
   if (!hookInput?.session_id) {
     console.error('post-compact-inject: no session_id, exiting');
