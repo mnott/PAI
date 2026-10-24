@@ -8,6 +8,8 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { appendLedger } from "./ledger.js";
+import { ledgerPath } from "./paths.js";
 import { loadStatus, nowStamp, saveStatus } from "./status.js";
 
 /** The pending notes of a worker, cleared and stamped as delivered; null when there are none. */
@@ -18,6 +20,7 @@ export function takePendingNotes(logDir: string, id: string, d: Date = new Date(
   status.notePending = [];
   status.noteDeliveredAt = nowStamp(d);
   saveStatus(logDir, status, d, true);
+  appendLedger(ledgerPath(logDir), "WORKER-NOTE-DELIVERED", { id, count: notes.length }, d);
   return notes;
 }
 

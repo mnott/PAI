@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { saveStatus, type WorkerStatus } from "../../../workers/status.js";
+import { ledgerPath } from "../../../workers/paths.js";
+import { loadStatus, saveStatus, type WorkerStatus } from "../../../workers/status.js";
 import { setSlotCurrent } from "../../../workers/worker-id.js";
 
 const dirs: string[] = [];
@@ -32,6 +33,8 @@ describe("worker-note in a pool slot", () => {
     expect(run(d, { PAI_POOL_SLOT: "prov-1" })).toBe("");
     const env = { PAI_POOL_SLOT: "prov-1", PAI_WORKER_NOTE_TOKEN: "ab12cd34" };
     expect(run(d, env)).toContain("PAI note [ab12cd34]: use the other branch");
+    expect(loadStatus(d, "pooled1")?.notePending).toEqual([]);
+    expect(readFileSync(ledgerPath(d), "utf8")).toMatch(/WORKER-NOTE-DELIVERED id=pooled1 count=1/);
     // delivered once
     expect(run(d, env)).toBe("");
   });
