@@ -11,7 +11,7 @@
  * logs       — Tail the daemon log file
  */
 
-import { LAUNCHD_LABEL } from "../../daemon/daemon-pid.js";
+import { LAUNCHD_LABEL, currentUid } from "../../daemon/daemon-pid.js";
 import { formatEmbedStatus, lastRecordedEmbedPass } from "../../memory/embed-pass.js";
 import {
   existsSync,
@@ -21,7 +21,8 @@ import {
   mkdirSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
+import { loginUsername } from "../../utils/login-username.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { ok, warn, err, dim, bold } from "../lib/utils.js";
 import { loadConfig, paiConfigFilePath } from "../../daemon/config.js";
@@ -160,7 +161,7 @@ const runLoginctl: LoginctlRunner = (args) => {
  */
 export function ensureLinger(
   plat: NodeJS.Platform = process.platform,
-  username: string = userInfo().username,
+  username: string = loginUsername(),
   loginctl: LoginctlRunner = runLoginctl,
   log: (s: string) => void = console.log,
 ): void {
@@ -693,7 +694,7 @@ export interface ServiceControlDeps {
 
 const realServiceControlDeps = (): ServiceControlDeps => ({
   plat: process.platform,
-  uid: process.getuid?.() ?? userInfo().uid,
+  uid: currentUid() ?? -1,
   run: (cmd, args) => {
     const r = spawnSync(cmd, args, { encoding: "utf8" });
     return { status: r.status, stderr: r.stderr ?? "" };

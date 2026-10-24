@@ -9,7 +9,8 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readdirSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
+import { loginUsername } from "../utils/login-username.js";
 import { join, dirname, basename } from "node:path";
 import type { NotificationConfig } from "../notifications/types.js";
 import type { TaskConfig } from "../tasks/types.js";
@@ -325,7 +326,7 @@ export interface IdentityConfig {
 
 /** Derive a per-user Postgres database name: pai_<username> */
 function perUserDbName(): string {
-  const username = userInfo().username;
+  const username = loginUsername();
   // Sanitize: only allow alphanumeric and underscore for Postgres identifiers
   const safe = username.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
   return `pai_${safe}`;
