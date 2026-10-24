@@ -39,10 +39,24 @@ describe("session-start hooks: worker sessions get no injected context", () => {
   it("load-core-context.ts injects the standing edit-gate notice for a non-worker session", () => {
     // Explicitly clear PAI_WORKER: this suite itself may run inside a worker,
     // whose ambient env would otherwise leak into the child and short-circuit it.
-    const stdout = runHook("src/hooks/ts/session-start/load-core-context.ts", { PAI_WORKER: "" });
-    expect(stdout).toContain("Edit/Write on code files is denied in this session by policy");
-    expect(stdout).toContain("pai worker run --class implement");
-    expect(stdout).not.toContain("--provider anthropic");
+    // The suite's sandbox HOME has no CORE skill (the hook prints nothing
+    // without one), so give the child a home that a fresh install would have.
+    const home = mkdtempSync(join(tmpdir(), "pai-core-"));
+    try {
+      mkdirSync(join(home, ".claude", "skills", "CORE"), { recursive: true });
+      writeFileSync(join(home, ".claude", "skills", "CORE", "SKILL.md"), "core");
+      const stdout = runHook("src/hooks/ts/session-start/load-core-context.ts", {
+        HOME: home,
+        ADAPTER_DIR: "",
+        PAI_DIR: "",
+        PAI_WORKER: "",
+      });
+      expect(stdout).toContain("Edit/Write on code files is denied in this session by policy");
+      expect(stdout).toContain("pai worker run --class implement");
+      expect(stdout).not.toContain("--provider anthropic");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("load-core-context.ts omits the edit-gate notice when PAI_WORKER=1", () => {
