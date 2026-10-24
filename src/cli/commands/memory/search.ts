@@ -1,7 +1,7 @@
 /** Memory search command: BM25/semantic/hybrid search across the memory store. */
 
 import chalk from "chalk";
-import { applyRecencyBoost, type SearchResult } from "../../../memory/search.js";
+import { applyRecencyBoost, combineHybridResults, type SearchResult } from "../../../memory/search.js";
 import { dim, bold, ok, warn, err } from "../../lib/utils.js";
 import { loadConfig } from "../../../daemon/config.js";
 import { getStorageBackend, getRegistryBackend } from "../../../storage/factory.js";
@@ -103,44 +103,7 @@ export async function memorySearchCmd(
         backend.searchSemantic(queryEmbedding, { ...searchOpts, maxResults: 500 }),
       ]);
 
-      if (keywordResults.length === 0 && semanticResults.length === 0) {
-        results = [];
-      } else {
-        const keyFor = (r: SearchResult) =>
-          `${r.projectId}:${r.path}:${r.startLine}:${r.endLine}`;
-
-        function minMaxNormalize(items: SearchResult[]): Map<string, number> {
-          if (items.length === 0) return new Map();
-          const min = Math.min(...items.map((r) => r.score));
-          const max = Math.max(...items.map((r) => r.score));
-          const range = max - min;
-          const m = new Map<string, number>();
-          for (const r of items) {
-            m.set(keyFor(r), range === 0 ? 1 : (r.score - min) / range);
-          }
-          return m;
-        }
-
-        const kwNorm = minMaxNormalize(keywordResults);
-        const semNorm = minMaxNormalize(semanticResults);
-        const allKeys = new Set<string>([
-          ...keywordResults.map(keyFor),
-          ...semanticResults.map(keyFor),
-        ]);
-        const metaMap = new Map<string, SearchResult>();
-        for (const r of [...keywordResults, ...semanticResults]) {
-          metaMap.set(keyFor(r), r);
-        }
-
-        const combined: SearchResult[] = [];
-        for (const key of allKeys) {
-          const meta = metaMap.get(key)!;
-          const combinedScore = 0.5 * (kwNorm.get(key) ?? 0) + 0.5 * (semNorm.get(key) ?? 0);
-          combined.push({ ...meta, score: combinedScore });
-        }
-
-        results = combined.sort((a, b) => b.score - a.score).slice(0, maxResults);
-      }
+      results = combineHybridResults(keywordResults, semanticResults, maxResults);
     }
   }
 
