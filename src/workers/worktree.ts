@@ -443,8 +443,8 @@ export function salvageOnExit(
 }
 
 /** Build and dependency output that is never knowledge; extend this list as needed. */
-export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache"];
-const KNOWLEDGE_IGNORE_SUFFIXES = [".log"];
+export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache", "__pycache__", "build", ".venv"];
+const KNOWLEDGE_IGNORE_SUFFIXES = [".log", ".pyc", ".o", ".so", ".dylib"];
 
 function isBuildOutput(rel: string): boolean {
   const parts = rel.split("/").filter(Boolean);
@@ -457,15 +457,35 @@ function isBuildOutput(rel: string): boolean {
  * everything `git status --ignored` lists as `!!`, minus build output.
  */
 export function ignoredKnowledge(wtDir: string): string[] {
+  return ignoredFiles(wtDir).filter((p) => !isBuildOutput(p));
+}
+
+function ignoredFiles(wtDir: string): string[] {
   try {
     return git(wtDir, ["status", "--porcelain", "--ignored", "--untracked-files=all", "-z"])
       .split("\0")
       .filter((l) => l.startsWith("!! "))
       .map((l) => l.slice(3))
-      .filter((p) => !p.endsWith("/") && !isBuildOutput(p));
+      .filter((p) => !p.endsWith("/"));
   } catch {
     return [];
   }
+}
+
+/** True when the first 8 KB is valid UTF-8 without NUL bytes (a cut multibyte tail is tolerated). */
+function looksLikeText(data: Buffer): boolean {
+  const head = data.subarray(0, 8192);
+  if (head.includes(0)) return false;
+  const text = new TextDecoder("utf-8", { fatal: true });
+  for (let cut = 0; cut <= 3 && cut < head.length; cut++) {
+    try {
+      text.decode(head.subarray(0, head.length - cut));
+      return true;
+    } catch {
+      if (data.length <= 8192) return false;
+    }
+  }
+  return false;
 }
 
 export interface SalvageIgnoredResult {
@@ -483,11 +503,20 @@ export function salvageIgnored(cwd: string, wtDir: string, id: string): SalvageI
   const lines: string[] = [];
   const failed: string[] = [];
   if (!existsSync(wtDir)) return { lines, failed };
-  for (const rel of ignoredKnowledge(wtDir)) {
+  let skipped = 0;
+  for (const rel of ignoredFiles(wtDir)) {
+    if (isBuildOutput(rel)) {
+      skipped++;
+      continue;
+    }
     try {
       const src = join(wtDir, rel);
       if (!lstatSync(src).isFile()) continue;
       const data = readFileSync(src);
+      if (!looksLikeText(data)) {
+        skipped++;
+        continue;
+      }
       let dest = join(cwd, rel);
       let outRel = rel;
       if (existsSync(dest)) {
@@ -506,6 +535,7 @@ export function salvageIgnored(cwd: string, wtDir: string, id: string): SalvageI
       failed.push(rel);
     }
   }
+  if (skipped > 0) lines.push(`skipped ${skipped} cache/binary files`);
   return { lines, failed };
 }
 
