@@ -9,6 +9,7 @@ import {
   clearPolicy,
   committedFallThrough,
   fallThroughReason,
+  invalidCloudReport,
   findLocal,
   parseDuration,
   readPolicy,
@@ -125,8 +126,21 @@ describe("findLocal", () => {
   });
 });
 
+describe("invalidCloudReport", () => {
+  it("a cloud run's invalid report ends as r=~ with the reason; valid or r=~ is untouched", () => {
+    expect(invalidCloudReport({ reportValid: false, reportErrors: ["unknown kind"] }, { result: "-" })).toEqual({ result: "~", why: "invalid report: unknown kind" });
+    expect(invalidCloudReport({ reportValid: true }, { result: "+" })).toBeNull();
+    expect(invalidCloudReport({ reportValid: false }, { result: "~" })).toBeNull();
+  });
+});
+
 describe("fallThroughReason", () => {
   const local = { policy: "prefer-local" as const, reason: "policy prefer-local", local: true };
+  it("a run that actually ran on the cloud never falls through, whatever the route said; a local run is unchanged", () => {
+    const bad = { reportValid: false, rc: 0 };
+    expect(fallThroughReason(local, bad, { result: "-" }, undefined, false)).toBeNull();
+    expect(fallThroughReason(local, bad, { result: "-" }, undefined, true)).toBe("invalid report");
+  });
   it("a benchmark-labelled run never falls through; unlabelled is unchanged", () => {
     const bad = { reportValid: false, rc: 0 };
     expect(fallThroughReason(local, bad, { result: "-" }, "hold probe3 bench")).toBeNull();

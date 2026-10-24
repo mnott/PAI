@@ -72,7 +72,7 @@ import { ensurePoolHost } from "../pool-cli.js";
 import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult } from "./finalise.js";
-import { tryEscalate, rerunOnCloud } from "./escalate.js";
+import { tryEscalate, rerunOnCloud, ranLocal } from "./escalate.js";
 import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
@@ -358,7 +358,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     // then read the commits — without them the loop-stop escalation has no
     // trigger and the run ends without ever going up a tier (2026-10-23)
     const commits = st.worktreeDir && st.worktreeBase ? commitLines(st.worktreeDir, st.worktreeBase) : [];
-    const why = fallThroughReason(a.route, st, report, a.label) ?? (st.loopStopped ? "loop-guard stop" : st.timedOut ? "max-minutes" : null);
+    const why = fallThroughReason(a.route, st, report, a.label, ranLocal(a, st)) ?? (st.loopStopped ? "loop-guard stop" : st.timedOut ? "max-minutes" : null);
     // kept for review (it committed) stays: no cloud re-run, no escalation
     const reviewed = committedFallThrough(why, commits);
     const escalated = await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why, !!reviewed);
@@ -602,6 +602,8 @@ export async function escalateAfterPoolUnreachable(a: ExecuteArgs, wid: string, 
 export async function resolveClaimProvider(a: ExecuteArgs): Promise<string> {
   const config = a.config;
   const opts = a.opts ?? {};
+  // a routed run's target is resolved with its route: the claim must match it, never a second resolution
+  if (a.route && !opts.localFlag && !opts.providerFlag) return a.target.providerName;
   if (opts.localFlag) {
     const res = await resolveLocalProvider(config, a.logDir, { className: a.className, name: opts.localName });
     return res.name;

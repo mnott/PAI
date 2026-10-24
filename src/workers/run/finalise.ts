@@ -12,7 +12,7 @@ import { appendStopEvent, decideEndReason, endFields, type EndInfo } from "../en
 import { takeLoopStop } from "../loop-stop.js";
 import { eventsPath } from "../paths.js";
 import { type WorkerStatus, saveStatus, UNLABELED } from "../status.js";
-import { committedFallThrough } from "../policy.js";
+import { committedFallThrough, invalidCloudReport } from "../policy.js";
 import { checkOrphanedChildren, isWorkerId } from "../tree.js";
 import { deliverHandoff } from "../handoff.js";
 import {
@@ -200,6 +200,13 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     status.claimsContinue = true;
     saveStatus(logDir, status);
     f.onReviewed?.();
+  }
+  const cloudInvalid = f.cloudRun?.(status) ? invalidCloudReport(status, report) : null;
+  if (cloudInvalid) {
+    appendLedger(ledger, "WORKER-REPORT-INVALID", { id: wid, reason: cloudInvalid.why });
+    report = { ...(report ?? {}), ...cloudInvalid };
+    status.claimsContinue = true;
+    saveStatus(logDir, status);
   }
   const early = await f.beforeHandoff?.(status, report);
   if (typeof early === "number") return early;

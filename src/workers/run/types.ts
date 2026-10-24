@@ -196,6 +196,8 @@ export interface FinaliseArgs {
    */
   /** why a failed local run would be re-run on the cloud; with commits it is reviewed instead */
   fallThroughWhy?: (status: WorkerStatus, report: WorkerReport | null) => string | null;
+  /** True when the run ended on a cloud provider (and is not a benchmark): an invalid report then ends as r=~, never a re-run. */
+  cloudRun?: (status: WorkerStatus) => boolean;
   /** set when a committed run was kept for review: beforeHandoff must not re-run or escalate it */
   onReviewed?: () => void;
   beforeHandoff?: (status: WorkerStatus, report: WorkerReport | null) => Promise<number | void> | number | void;

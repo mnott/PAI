@@ -29,6 +29,7 @@ import {
 } from "../status.js";
 import { certainContextWindow } from "../../utils/model-window.js";
 import { fallThroughReason } from "../policy.js";
+import { isBenchmarkLabel } from "../../daemon/battery-guard.js";
 import { recordWarmup } from "../stagger.js";
 import { autoOrder, isQuotaFailure, nextAutoProvider, setCooldown } from "../routing.js";
 import { paneTitle } from "../pane-title.js";
@@ -82,7 +83,7 @@ import {
   reaskAg2Report,
   printResult,
 } from "./finalise.js";
-import { tryEscalate, rerunOnCloud } from "./escalate.js";
+import { tryEscalate, rerunOnCloud, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
 import type { PreparedRun } from "./execute-prepare.js";
@@ -612,7 +613,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     fallbackText: resultEvent?.result,
     worktree,
     timedOut: status.timedOut ? limit?.minutes : undefined,
-    fallThroughWhy: (st, rep) => (headless ? fallThroughReason(a.route, st, rep, label) : null),
+    cloudRun: (st) => headless && !isBenchmarkLabel(label) && !ranLocal(a, st),
+    fallThroughWhy: (st, rep) => (headless ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) : null),
     onReviewed: () => {
       reviewed = true;
     },
@@ -621,12 +623,12 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       // (unless it committed: finaliseRun keeps that one for review — and a run
       // kept for review is not escalated either; escalation starts from the
       // salvaged branch instead).
-      const failWhy = headless ? fallThroughReason(a.route, st, rep, label) ?? (st.loopStopped ? "loop-guard stop" : null) : null;
+      const failWhy = headless ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) ?? (st.loopStopped ? "loop-guard stop" : null) : null;
       const escalated = headless
         ? await tryEscalate(a, wid, st, rep, resultEvent?.result, worktree ? commitLines(worktree.dir, worktree.base) : [], failWhy, reviewed)
         : null;
       if (escalated !== null) return escalated;
-      const why = headless && !reviewed ? fallThroughReason(a.route, st, rep, label) : null;
+      const why = headless && !reviewed ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) : null;
       if (why && a.route && !st.escalated) {
         return rerunOnCloud(a, wid, why, st);
       }
