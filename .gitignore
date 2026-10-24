@@ -63,3 +63,4 @@ tmp/
 
 # One-off local debug harness
 /tmp/
+__pycache__/

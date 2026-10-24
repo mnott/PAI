@@ -69,4 +69,21 @@ describe("ztk-auto.sh", () => {
   it("passes through a command requesting --json output", () => {
     expect(runHook("pai worker ps --json")).toBe("");
   });
+
+  it("passes through a single-file grep -n (compaction dropped its matching lines)", () => {
+    expect(runHook('grep -n "notify(" src/daemon/manage.ts')).toBe("");
+  });
+
+  it("passes through a cd-prefixed rg command", () => {
+    expect(runHook("cd /x && rg -n foo src")).toBe("");
+  });
+
+  it("passes through a pipeline whose last stage is grep", () => {
+    expect(runHook("ls -la | grep foo")).toBe("");
+  });
+
+  it("still sends an unrecognised command to ztk", () => {
+    const stdout = runHook("cargo build");
+    expect(stdout).toContain("ztk run");
+  });
 });
