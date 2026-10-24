@@ -7,6 +7,7 @@ import { reexecBackground } from "../../../daemon/pass-priority.js";
 import { retryTransient } from "../../../memory/indexer/retry.js";
 import { DEFAULT_EMBED_MAX_MINUTES } from "../../../memory/embed-pass.js";
 import { CliError } from "../../define.js";
+import { jobProgressFromEnv, type ProgressWriter } from "../../../memory/job-progress.js";
 import { acquireRun, readRun, type RunHandle, type RunOutcome } from "../../../memory/run-state.js";
 
 // ---------------------------------------------------------------------------
@@ -33,6 +34,8 @@ export async function runEmbed(
   run?: RunHandle,
   /** Checked between batches; true ends the run cleanly (SIGTERM from the cockpit's stop). */
   shouldStop?: () => boolean,
+  /** Progress into the cockpit job record (embed command only). */
+  jobProgress?: ProgressWriter | null,
 ): Promise<{ done: number; budgetHit: boolean; stopped: boolean }> {
   const label = projectSlug ? `project ${projectSlug}` : "all projects";
   console.log(dim(`Generating embeddings for ${label} (this may take a while on first run)...`));
@@ -55,6 +58,7 @@ export async function runEmbed(
       ? (await backend.getProjectStats(projectId)).chunks
       : await backend.countUnembeddedChunks();
   run?.setBacklog(backlog);
+  jobProgress?.update({ phase: "embed", unit: "chunks", done: 0, total: backlog });
 
   let done = 0;
   let budgetHit = false;
@@ -84,6 +88,7 @@ export async function runEmbed(
       );
       done += batch.length;
       run?.progress(done);
+      jobProgress?.update({ done });
       process.stdout.write(`\r  ${embedProgressLine(done, backlog)}`);
     }
 
@@ -130,6 +135,7 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
     return 1;
   }
   let result: { outcome: RunOutcome; reason?: string } | undefined;
+  const jobProgress = jobProgressFromEnv();
   const settle = (r: { done: number; budgetHit: boolean; stopped: boolean }): void => {
     result = r.stopped ? { outcome: "stopped", reason: "stopped on request" } : r.budgetHit ? { outcome: "budget", reason: "time budget reached" } : process.exitCode === 1 ? { outcome: "failed", reason: "embedding backend not usable" } : { outcome: "done" };
   };
@@ -147,9 +153,9 @@ export async function memoryEmbedCmd(projectSlug: string | undefined, opts: { ba
         return 1;
       }
 
-      settle(await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop));
+      settle(await runEmbed(backend, project.id, project.slug, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop, jobProgress));
     } else {
-      settle(await runEmbed(backend, undefined, undefined, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop));
+      settle(await runEmbed(backend, undefined, undefined, opts.batchSize ?? 25, undefined, maxMillis, run, () => stop, jobProgress));
     }
   } finally {
     process.off("SIGTERM", onTerm);

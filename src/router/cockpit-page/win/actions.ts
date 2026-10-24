@@ -113,6 +113,18 @@ function winPost(host,url,bodyObj){
   })
   .catch(function(e){return{ok:false,message:"no answer: "+(detail||(e&&e.message)||"network failure")}});
 }
+/** The pending line of a polled job. A job with run progress reads "indexing 120/254 projects · 72 files · 1:40 ▰▰▰▱▱▱▱▱"
+ *  (embed: "embedding 4200/9000 chunks · 2:05 ▰▰▰▱▱▱▱▱"); one whose counters stood still past the server's stall limit
+ *  (stalledSec) reads "no progress for N s" in front. Other jobs keep message + seconds + log tail. */
+function winJobLine(j,verb){
+ var p=j.progress;
+ if(!p||typeof p!=="object")return(j.message||verb)+" ..."+(j.elapsedSec!=null?" "+j.elapsedSec+" s":"")+(j.tail?" · "+j.tail:"");
+ var e=j.elapsedSec!=null?j.elapsedSec:p.elapsedSec||0,t=Math.floor(e/60)+":"+("0"+(e%60)).slice(-2);
+ var frac=p.total>0?Math.max(0,Math.min(1,p.done/p.total)):0,n=Math.round(frac*8);
+ var bar=p.total>0?" "+new Array(n+1).join("▰")+new Array(9-n).join("▱"):"";
+ var what=p.phase==="embed"?"embedding "+p.done+"/"+p.total+" chunks":p.phase==="scan"?"scanning projects":"indexing "+p.done+"/"+p.total+" projects · "+p.files+" files";
+ return(j.stalledSec!=null?"no progress for "+j.stalledSec+" s · ":"")+what+" · "+t+bar+(p.current&&p.phase==="index"?" · "+p.current:"");
+}
 /** Polls a job to its end, but resolves early when the job file is gone: a 404 or a
  *  {"error":"no such job"} body twice in a row means the job is over and unreadable —
  *  do not sit out the whole JOB_TRIES budget. pollMs is the wait between polls; the
@@ -171,7 +183,7 @@ function runAction(cardId,verb,args,el,host,opts){
    // an accepted job stays pending/busy; the runner polls /cockpit/job itself (JOB_* policy)
    winStatus(host,cardId,"pending",(r.message||verb)+" ...");
    return winPollJobEnd(host,r.jobId,function(j){
-    winStatus(host,cardId,"pending",(j.message||verb)+" ..."+(j.elapsedSec!=null?" "+j.elapsedSec+" s":"")+(j.tail?" · "+j.tail:""));
+    winStatus(host,cardId,"pending",winJobLine(j,verb));
    },opts&&opts.pollMs).then(function(j){
     if(el&&pendingEl[cardId]===el)delete pendingEl[cardId];
     winBusy(host,cardId,false,el);
