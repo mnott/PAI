@@ -20,7 +20,7 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { renderDecision } from "../lib/render-decision.js";
+import { allow, deny as block, readGateInput } from "../lib/gate-io.js";
 import { decideEditGate, decideOrchestratorEdit, type EditGateContext } from "../lib/edit-gate.js";
 
 function isUnder(p: string, prefix: string): boolean {
@@ -51,30 +51,9 @@ function exemptPrefixes(): string[] {
   ];
 }
 
-function allow(): void {
-  process.exit(0);
-}
-
-function block(reason: string): void {
-  process.stdout.write(renderDecision({ decision: "deny", reason }) + "\n");
-  process.exit(0);
-}
-
 async function main(): Promise<void> {
-  let text = "";
-  try {
-    for await (const chunk of process.stdin) text += chunk;
-  } catch {
-    return allow();
-  }
-  if (!text.trim()) return allow();
-
-  let input: { cwd?: string; tool_input?: { file_path?: string; notebook_path?: string } };
-  try {
-    input = JSON.parse(text);
-  } catch {
-    return allow();
-  }
+  const input = await readGateInput<{ cwd?: string; tool_input?: { file_path?: string; notebook_path?: string } }>();
+  if (!input) return allow();
 
   const target = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
   const filePath = typeof target === "string" ? target : "";

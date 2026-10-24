@@ -27,6 +27,7 @@ import {
   fmtAge,
   type ScannedSession,
 } from "./session-scan.js";
+import { HISTORY_TABLE_HEADERS, historyMatchRows, shortenProject } from "./history-table.js";
 import { searchHistory, HISTORY_FILE, type SessionMatch } from "./history-search.js";
 import { fetchLiveSessions, fetchLiveSessionsWithPrompts, switchToSession } from "./aibroker-client.js";
 import { basename } from "node:path";
@@ -264,20 +265,6 @@ function matchToSession(
 // ---------------------------------------------------------------------------
 // Formatters
 // ---------------------------------------------------------------------------
-
-function fmtTs(ts: number): string {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-function shortenProject(p: string, maxLen = 44): string {
-  if (!p || p.length <= maxLen) return p || dim("—");
-  return "…" + p.slice(-(maxLen - 1));
-}
 
 // ---------------------------------------------------------------------------
 // Interactive picker prompt
@@ -626,24 +613,9 @@ export async function cmdMain(
   }
 
   console.log("\n" + header(`Sessions matching "${query}"`) + "\n");
-  const headers = ["#", "id", "when", "project", "last matching prompt"];
-  const rows = matches.map((m, idx) => {
-    const shortId = (m.sessionId ?? "—").slice(0, 8);
-    const when = m.lastMatchTs > 0 ? fmtTs(m.lastMatchTs) : dim("—");
-    const project = shortenProject(m.project || "—");
-    const snippet = m.lastMatchDisplay.replace(/\n+/g, " ").trim().slice(0, 48);
-    const fullSnippet = m.lastMatchDisplay.replace(/\n+/g, " ").trim();
-    const display = snippet.length < fullSnippet.length ? `"${snippet}…"` : `"${snippet}"`;
-    return [
-      dim(String(idx + 1)),
-      chalk.cyan(shortId),
-      when,
-      dim(project),
-      chalk.dim(display),
-    ];
-  });
+  const rows = historyMatchRows(matches, { noSessionId: "—", projectMax: 44, noProject: "—" });
 
-  console.log(renderTable(headers, rows));
+  console.log(renderTable(HISTORY_TABLE_HEADERS, rows));
   console.log();
 
   const launchHistoryMatch = (match: SessionMatch) => {

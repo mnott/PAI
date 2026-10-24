@@ -16,7 +16,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { type PathRepairCtx, renderPathDeny, renderPathRepair, repairFilePath } from "../lib/file-path-repair.js";
+import { type PathRepairCtx, renderPathDeny, renderPathRepair, repairFilePath } from "../lib/path-repair.js";
 import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial, inventedToolDirective, repairParams, renderParamRepair } from "../lib/tool-name-repair.js";
 
 function logRepair(tail: string): void {
