@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { changelogSection, planRelease, realRun, runRelease, STEPS, stateLine, type RunFn } from "./release.js";
+import { changelogSection, parsePackJson, planRelease, realRun, runRelease, STEPS, stateLine, type RunFn } from "./release.js";
 import type { MirrorSyncResult } from "../builds/mirror-sync.js";
 
 function tmpRepo(extra: Record<string, unknown> = {}): string {
@@ -303,5 +303,22 @@ describe("helpers", () => {
   });
   it("stateLine for a fresh failure", () => {
     expect(stateLine({ bumped: false, committed: false, tagged: false, pushed: false, mirrored: false, released: false })).toContain("working tree untouched");
+  });
+});
+
+describe("parsePackJson", () => {
+  const obj = [{ id: "a@1", filename: "a-1.tgz", size: 2097152, entryCount: 7 }];
+  const want = { filename: "a-1.tgz", size: 2097152, entryCount: 7 };
+  it("parses pretty-printed JSON", () => {
+    expect(parsePackJson(JSON.stringify(obj, null, 2) + "\n")).toEqual(want);
+  });
+  it("parses JSON preceded by script output", () => {
+    expect(parsePackJson("> a@1 prepack\n> tsc [build]\nbuilt\n" + JSON.stringify(obj, null, 2) + "\n")).toEqual(want);
+  });
+  it("parses compact JSON", () => {
+    expect(parsePackJson(JSON.stringify(obj) + "\n")).toEqual(want);
+  });
+  it("returns null for non-JSON", () => {
+    expect(parsePackJson("a-1.tgz\n")).toBeNull();
   });
 });
