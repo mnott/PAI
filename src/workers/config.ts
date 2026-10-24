@@ -428,6 +428,10 @@ export interface WorkersPoolConfig {
   idleKillSec?: number;
   /** The old multi-task continuation path (one warm conversation serving many tasks); default off. */
   continuation?: boolean;
+  /** Seconds between login-credential change checks in the pool host (0 = off). */
+  credWatchSec?: number;
+  /** Seconds a self-restart drain waits for running tasks (0 = proceed at once). */
+  drainTimeoutSec?: number;
 }
 
 /** The tier aliases the CLI and daemon tables understand — class proxies, not
@@ -697,6 +701,8 @@ export function defaultWorkersConfig(): WorkersConfig {
       spares: num(pool.spares, 0),
       idleKillSec: num(pool.idleKillSec, 1800),
       continuation: bool(pool.continuation, false),
+      credWatchSec: num(pool.credWatchSec, 30),
+      drainTimeoutSec: num(pool.drainTimeoutSec, 120),
     },
     cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
     defaultMaxMinutes: num(w.defaultMaxMinutes, 60),

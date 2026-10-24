@@ -82,6 +82,12 @@ workers:
     idleKillSec: 1800
     # The old multi-task continuation path; default off.
     continuation: false
+    # Seconds between login-credential change checks: a re-login retires the
+    # spares (they hold the old OAuth session in their env). 0 = off.
+    credWatchSec: 30
+    # Seconds a self-restart on a newer build waits for running tasks to
+    # finish before it proceeds anyway. 0 = proceed at once.
+    drainTimeoutSec: 120
   # Daemon cache-keepalive cadence in seconds: how often a trivial heartbeat
   # worker re-arms the provider prompt cache. 0 = off — arming it is the
   # operator's explicit call.

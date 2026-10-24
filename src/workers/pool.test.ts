@@ -58,7 +58,7 @@ describe("pool settings", () => {
     expect(poolSettings(cfg)).toEqual(cfg.pool);
     expect(
       poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false } })
-    ).toEqual({ enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false, spares: 0, idleKillSec: 1800, continuation: false });
+    ).toEqual({ enabled: true, maxSlots: 2, idleSecs: 60, port: 9000, native: false, spares: 0, idleKillSec: 1800, continuation: false, credWatchSec: 30, drainTimeoutSec: 120 });
     expect(poolSettings({ ...cfg, pool: { enabled: true, maxSlots: 5, idleSecs: 0, port: 8798, native: true } }).idleSecs).toBe(0);
   });
 });
