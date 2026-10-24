@@ -4,7 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { paiHomePath } from "../config/pai-home.js";
 import { dirname } from "node:path";
 import { connect } from "node:net";
@@ -19,6 +19,25 @@ export const routerLogFile = (): string => paiHomePath("logs", "router.log");
 /** Written by a router that can hand its listening socket to a successor on SIGUSR2; holds that router's pid. */
 export const routerHandoverFile = (): string => paiHomePath("router.handover");
 
+/** Written by a router that handed its sockets over (or failed to): the restarter reads how the swap went and how many requests the old one is still finishing. */
+export const routerHandoverStatusFile = (): string => paiHomePath("router.handover-status");
+
+export interface HandoverStatus {
+  oldPid: number;
+  state: "draining" | "failed";
+  inflight?: number;
+  reason?: string;
+}
+
+export function readHandoverStatus(oldPid: number): HandoverStatus | undefined {
+  try {
+    const st = JSON.parse(readFileSync(routerHandoverStatusFile(), "utf8")) as HandoverStatus;
+    return st.oldPid === oldPid ? st : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Gapless swap: ask the running router to spawn its successor with the listening socket.
  * Returns null when `oldPid` predates handover (SIGUSR2 would kill it), else resolves with the successor's pid
@@ -27,6 +46,7 @@ export const routerHandoverFile = (): string => paiHomePath("router.handover");
 export function startHandover(oldPid: number, timeoutMs = 30000): Promise<number | undefined> | null {
   try {
     if (readFileSync(routerHandoverFile(), "utf8").trim() !== String(oldPid)) return null;
+    rmSync(routerHandoverStatusFile(), { force: true });
     process.kill(oldPid, "SIGUSR2");
   } catch {
     return null;
@@ -36,7 +56,13 @@ export function startHandover(oldPid: number, timeoutMs = 30000): Promise<number
     while (Date.now() - t0 < timeoutMs) {
       await new Promise((r) => setTimeout(r, 20));
       const pid = parseInt(existsSync(routerPidFile()) ? readFileSync(routerPidFile(), "utf8") : "", 10);
-      if (pid && pid !== oldPid) return pid;
+      if (pid && pid !== oldPid) {
+        // the old router records what it is still finishing right after the successor's ready message
+        for (let i = 0; i < 50 && readHandoverStatus(oldPid) === undefined; i++) await new Promise((r) => setTimeout(r, 20));
+        return pid;
+      }
+      const st = readHandoverStatus(oldPid);
+      if (st?.state === "failed") throw new Error(`router ${oldPid} kept serving: ${st.reason ?? "successor did not start"} (see ${routerLogFile()})`);
     }
     throw new Error(`router ${oldPid} did not hand over within ${timeoutMs}ms`);
   })();

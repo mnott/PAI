@@ -23,7 +23,8 @@ import { SystemMonitor } from "../../router/system.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { aggregate, aggregateBySession, appendUsage, formatSessionStats, formatStats, parseSince, readUsage, type UsageRow } from "../../router/usage.js";
 import { loadSessionMap, loadWorkerWindows, sessionDisplayName, withWorkerAttribution } from "../../router/sessions.js";
-import { routerSwapArgs, startHandover, routerHandoverFile, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
+import { trackInflight } from "../../router/inflight.js";
+import { routerSwapArgs, startHandover, routerHandoverFile, routerHandoverStatusFile, readHandoverStatus, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { engineControlReader } from "../../workers/engine-control.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
 import { workersLogDir } from "../../workers/paths.js";
@@ -205,9 +206,11 @@ const runCommand: CommandDef = {
     return new Promise<number>(() => {
       // after SIGTERM the open keep-alive sockets stay served by this process, each reply tells its client to reconnect (to the new router)
       let draining = false;
+      const inflight = trackInflight();
+      const tracked = inflight.wrap(handler);
       const serving: typeof handler = (req, res) => {
         if (draining) res.setHeader("Connection", "close");
-        return handler(req, res);
+        return tracked(req, res);
       };
       const server = http.createServer(serving);
       const tail = remote ? http.createServer(serving) : undefined;
@@ -249,9 +252,22 @@ const runCommand: CommandDef = {
           process.exit(1);
         });
       }
-      const bye = () => {
+      // a handover keeps the old router alive for its in-flight streams: bounded by router.handover.drainMaxSecs, then they end with a retryable error
+      const bye = (handedOver = false) => {
         draining = true;
-        void drainServers(tail ? [server, tail] : [server], { timeoutMs: loadConfig().router.drainMs, idleGraceMs: 1500 }).then(() => {
+        const maxMs = handedOver ? (loadConfig().router.handover?.drainMaxSecs ?? 1800) * 1000 : loadConfig().router.drainMs;
+        if (handedOver) {
+          writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "draining", inflight: inflight.count() }));
+          process.stderr.write(`pai: router: handed over, finishing ${inflight.count()} in-flight request(s) (at most ${maxMs / 1000}s)\n`);
+        }
+        void drainServers(tail ? [server, tail] : [server], {
+          timeoutMs: maxMs,
+          idleGraceMs: 1500,
+          onTimeout: () => {
+            const n = inflight.endAll("router restarted, retry the request");
+            if (n) process.stderr.write(`pai: router: drain limit reached, ended ${n} request(s) with a retryable error\n`);
+          },
+        }).then(() => {
           if (managed) {
             try {
               if (readFileSync(routerPidFile(), "utf8").trim() === String(process.pid)) unlinkSync(routerPidFile());
@@ -286,6 +302,7 @@ const runCommand: CommandDef = {
           if (handing) {
             handing = false;
             process.stderr.write("pai: router: successor exited before taking over, still serving\n");
+            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason: "successor exited before taking over" }));
           }
         });
         child.once("message", () => {
@@ -293,11 +310,11 @@ const runCommand: CommandDef = {
           child.removeAllListeners("exit");
           child.disconnect();
           child.unref();
-          bye();
+          bye(true);
         });
       });
-      process.on("SIGTERM", bye);
-      process.on("SIGINT", bye);
+      process.on("SIGTERM", () => bye());
+      process.on("SIGINT", () => bye());
     });
   },
 };
@@ -315,7 +332,9 @@ const restartCommand: CommandDef = {
       handover: (old) => startHandover(old),
       isUp: () => probeRouter(routerPort(), 500)
     });
-    out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms)`));
+    const st = result.oldPid !== undefined ? readHandoverStatus(result.oldPid) : undefined;
+    const finishing = st?.state === "draining" && st.inflight ? `, old router still finishing ${st.inflight} in-flight request(s)` : "";
+    out(ok(`router restarted (new pid ${result.newPid}, old pid ${result.oldPid ?? "none"}, refused for ${result.gapMs ?? 0} ms${finishing})`));
   },
 };
 
