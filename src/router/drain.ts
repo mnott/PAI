@@ -2,7 +2,7 @@ import http from 'http';
 import net from 'net';
 
 /** Close the servers, force-closing what is still open after `timeoutMs` (router.drainMs in config.yaml). */
-export function drainServers(servers: http.Server[], opts: { timeoutMs: number; idleGraceMs?: number }): Promise<void> {
+export function drainServers(servers: http.Server[], opts: { timeoutMs: number; idleGraceMs?: number; onTimeout?: () => void }): Promise<void> {
   const { timeoutMs, idleGraceMs = 0 } = opts;
 
   // Track servers that are already closed or not listening
@@ -77,15 +77,16 @@ export function drainServers(servers: http.Server[], opts: { timeoutMs: number; 
   // Set up timeout
   const timeoutPromise = new Promise<void>((resolve) => {
     timeoutId = setTimeout(() => {
-      // Force close all remaining servers
-      for (const server of servers) {
-        if (closingServers.has(server)) {
-          server.closeAllConnections();
+      // Let the caller end its open responses cleanly first, then force close what is left
+      opts.onTimeout?.();
+      setTimeout(() => {
+        for (const server of servers) {
+          if (closingServers.has(server)) {
+            server.closeAllConnections();
+          }
         }
-      }
-
-
-      resolve();
+        resolve();
+      }, opts.onTimeout ? 500 : 0);
     }, timeoutMs);
   });
 

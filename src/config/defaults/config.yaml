@@ -200,6 +200,11 @@ router:
   allowedHosts: []
   # Milliseconds a stopping router waits for in-flight requests before force-closing.
   drainMs: 120000
+  # Zero-downtime handover: the new router takes every new connection at once; the old
+  # one finishes its in-flight requests (long local-engine streams) for at most this
+  # many seconds, then ends them with a retryable error and exits.
+  handover:
+    drainMaxSecs: 1800
   # Cockpit page layout policy (src/router/cockpit-layout.ts): tile min/max
   # widths, chart heights, sample/history window lengths, refresh intervals,
   # row limits. Card arrangement is the windowing registry's, not config's.

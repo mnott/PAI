@@ -130,6 +130,8 @@ export interface RouterConfig {
   claudeUpstream: string;
   /** Milliseconds a stopping router waits for in-flight requests before force-closing. Default: 120000. */
   drainMs: number;
+  /** After a handover the old router stops accepting and finishes its in-flight requests; `drainMaxSecs` bounds that (then they end with a retryable error). Default: 1800. */
+  handover?: { drainMaxSecs?: number };
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
   /**
