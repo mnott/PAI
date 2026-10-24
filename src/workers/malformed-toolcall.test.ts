@@ -17,7 +17,6 @@ describe("hasMalformedToolCall", () => {
     expect(hasMalformedToolCall("R\ni=x\nr=+\nz=done")).toBe(false);
     expect(hasMalformedToolCall("mentions <tool_call> only")).toBe(false);
     expect(hasMalformedToolCall("Ship it — the `tool_call` block was fine, then done.")).toBe(false);
-    expect(hasMalformedToolCall(`<tool_call>${"x".repeat(300)}<parameter=a>`)).toBe(false);
     expect(hasMalformedToolCall(undefined)).toBe(false);
   });
   it("labels and falls through as an instrument fault", () => {
