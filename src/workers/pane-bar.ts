@@ -6,7 +6,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { chatEnter, chatInsertLine, chatLeave, chatPromptRow, parseChatLine } from "./chatui.js";
+import { cellWidth, chatEnter, chatInsertLine, chatLeave, chatPromptRow, parseChatLine } from "./chatui.js";
 import { paneRunStatusRow, paneStatusRow } from "./render.js";
 import { readQueued as readQueuedFile, type QueuedFile } from "./capacity.js";
 import { paneExecDir } from "./pane-exec.js";
@@ -145,10 +145,11 @@ function fit(text: string, max: number): string {
       continue;
     }
     const cp = String.fromCodePoint(text.codePointAt(i)!);
-    if (w + 1 > max) return out + "\x1b[0m";
-    if (w + 1 === max && i + cp.length < text.length) return out + "…";
+    const cw = cellWidth(cp.codePointAt(0)!);
+    if (w + cw > max) return out + "\x1b[0m";
+    if (w + cw === max && i + cp.length < text.length) return out + "…";
     out += cp;
-    w += 1;
+    w += cw;
     i += cp.length;
   }
   return out;

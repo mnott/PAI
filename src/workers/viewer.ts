@@ -287,6 +287,8 @@ export function gutterBody(
   wrapWidth: number | null
 ): string[] {
   if (!gutter) return body;
+  // an embedded newline would start a row at column 0: every row is its own body line
+  body = body.flatMap((ln) => ln.split("\n"));
   if (wrapWidth === null || wrapWidth <= gutter.width) {
     return body.map((ln, i) => (i === 0 ? gutter.first : gutter.cont) + ln);
   }
