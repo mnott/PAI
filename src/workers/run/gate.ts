@@ -602,42 +602,8 @@ export async function escalateAfterPoolUnreachable(a: ExecuteArgs, wid: string, 
  * the local model with the cloud's label).
  */
 export async function resolveClaimProvider(a: ExecuteArgs): Promise<string> {
-  const config = a.config;
-  const opts = a.opts ?? {};
-  // a routed run's target is resolved with its route: the claim must match it, never a second resolution
-  if (a.route && !opts.localFlag && !opts.providerFlag) return a.target.providerName;
-  if (opts.localFlag) {
-    const res = await resolveLocalProvider(config, a.logDir, { className: a.className, name: opts.localName });
-    return res.name;
-  }
-  if (opts.providerFlag) return opts.providerFlag;
-  if (opts._route?.local && opts._route.reason.startsWith("routing policy")) {
-    const routed = await routeRun(config, a.logDir, {
-      ...opts,
-      className: a.className,
-      urgent: opts.urgent,
-      localOk: opts.localOk,
-      cloud: opts.cloud,
-    });
-    if (routed?.providerFlag) return routed.providerFlag;
-  }
-  if (!opts._route && currentSessionName()) {
-    const profile = getProfile(currentSessionName());
-    // a launch-written pin (workers_implicit) is not a choice: it neither routes
-    // here nor lets the inherited launch env decide below
-    const env = nativeLaunchEnv();
-    if (profile?.workers_implicit) delete env[SESSION_WORKER_PROVIDER_ENV];
-    const ctx: ResolveCtx = { cfg: config, profile, env, budgets: {}, routing: readRoutingState(a.logDir) };
-    const r = resolveWorkers(
-      { explicit: { model: opts.modelFlag ?? (opts.modelFast ? "fast" : opts.modelDefault ? "default" : undefined) }, batch: isBatchEnv() },
-      ctx
-    );
-    if (r.provider) return r.provider;
-  }
-  const env = nativeLaunchEnv();
-  if (getProfile(currentSessionName())?.workers_implicit) delete env[SESSION_WORKER_PROVIDER_ENV];
-  const session = detectSessionProvider(config, { env, cwd: a.cwd ?? process.cwd(), logDir: a.logDir, side: "workers" });
-  if (session) return session.name;
+  // the run's target is the provider the fresh spawn would use: a second resolution here can disagree
+  // with it (2026-10-24: a coder-l session-profile run claimed the anthropic spare)
   return a.target.providerName;
 }
 

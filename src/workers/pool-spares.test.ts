@@ -448,3 +448,55 @@ describe("spare helpers and the client", () => {
     expect((a as { spareMiss?: string }).spareMiss).toBe("unreachable");
   });
 });
+
+describe("a claim is served only by a spare of the routed provider and model", () => {
+  const two = (): WorkersConfig => ({ ...config(), providers: { coderl: { ...provider, models: { default: "qwen" } }, anth: { ...provider, models: { default: "sonnet" } } } });
+  const hostFor = (repo: string, keys: Array<{ provider: string; model: string }>) => {
+    const logDir = mkdtempSync(join(tmpdir(), "pai-spare-route-"));
+    const procs: FakeSpare[] = [];
+    const host = createPoolHost({
+      config: two(),
+      logDir,
+      usageLogFile: join(logDir, "none.jsonl"),
+      spawner: () => {
+        const p = new FakeSpare();
+        procs.push(p);
+        return p;
+      },
+      envFor: () => ({}),
+      cmdHead: () => ["fake-claude"],
+      warmKeys: keys.map((k) => ({ ...k, cwd: repo })),
+      noReaper: true,
+    });
+    live.push(host);
+    return { host, logDir, procs };
+  };
+  const both = [{ provider: "anth", model: "sonnet" }, { provider: "coderl", model: "qwen" }];
+
+  it("route coder-l claims the coder-l spare, route anthropic the anthropic one", async () => {
+    const repo = makeRepo();
+    const h = hostFor(repo, both);
+    await h.host.settle();
+    const spares = h.host.state().spares!;
+    expect(spares).toHaveLength(2);
+    const r1 = await h.host.runTask(task(repo, { provider: "coderl", model: "qwen" }));
+    expect(r1.pooled).toBe(true);
+    const start = ledgerLines(h.logDir).find((l) => l.event === "WORKER-START" && l.fields.id === "w1")!;
+    expect(start.fields.provider).toBe("coderl");
+    await h.host.settle();
+    const r2 = await h.host.runTask(task(repo, { id: "w2", provider: "anth", model: "sonnet" }));
+    expect(r2.pooled).toBe(true);
+    const start2 = ledgerLines(h.logDir).find((l) => l.event === "WORKER-START" && l.fields.id === "w2")!;
+    expect(start2.fields.provider).toBe("anth");
+  });
+
+  it("only a mismatching spare available: no claim, the spare stays", async () => {
+    const repo = makeRepo();
+    const h = hostFor(repo, [{ provider: "anth", model: "sonnet" }]);
+    await h.host.settle();
+    const r = await h.host.runTask(task(repo, { provider: "coderl", model: "qwen" }));
+    expect(r.pooled).toBe(false);
+    expect(h.procs[0]!.fed).toEqual([]);
+    expect(h.host.state().spares!.some((s) => s.provider === "anth" && s.state === "ready")).toBe(true);
+  });
+});

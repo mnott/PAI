@@ -930,6 +930,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       topUp(repo, task.provider, task.model); // the next run of this key finds one
       return { reason: list.length ? "starting" : "no-spare" };
     }
+    // belt and braces: the key already pins provider and model, a spare of another route is never served
+    if (ready.rec.provider !== task.provider || ready.rec.model !== task.model) {
+      appendLedger(ledger, "WORKER-POOL-MISMATCH", { id: task.id, route: `${task.provider}/${task.model}`, spare: `${ready.rec.provider}/${ready.rec.model}` });
+      return { reason: "no-spare" };
+    }
     // a spare is cut from the HEAD of its day: a moved HEAD or a dirty checkout is not what a fresh worker would see
     let head = "";
     try {
