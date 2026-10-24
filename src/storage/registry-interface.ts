@@ -170,7 +170,25 @@ export interface OrphanRepairReport {
   droppedDuplicateFiles: number;
   /** Orphan chunks deleted because a vectored twin exists (deleteTwins). */
   deletedTwinChunks: number;
+  /** Unmapped orphans (no current project id): chunks with a hash twin / without one. */
+  unmappedTwinChunks: number;
+  unmappedStaleChunks: number;
+  /** Unmapped orphan chunks/files deleted (would be, on a dry run). */
+  deletedUnmappedChunks: number;
+  deletedUnmappedFiles: number;
+  /** COPY backups written before the delete. */
+  backupFiles: string[];
   dryRun: boolean;
+}
+
+export interface RepairOrphansOpts {
+  dryRun: boolean;
+  deleteTwins?: boolean;
+  /** With deleteTwins: also delete unmapped orphans that have no twin (old versions of changed or deleted text). */
+  includeStale?: boolean;
+  /** Where the pre-delete backups go; default <PAI home>/backups. */
+  backupDir?: string;
+  log?: (msg: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,9 +218,10 @@ export interface RegistryBackend {
    * Re-point chunks/files orphaned by a registry rebuild to the current project
    * with the same root path (found via the projects_backup_* tables), dropping
    * the newer vectorless duplicates; with `deleteTwins`, instead delete orphans
-   * that have a vectored twin under the current id. `dryRun` only counts.
+   * that have a vectored twin under a current project (by path for mapped ids, by hash for
+   * unmapped ones; `includeStale` takes every unmapped orphan), after a verified backup. `dryRun` only counts.
    */
-  repairOrphans(opts: { dryRun: boolean; deleteTwins?: boolean }): Promise<OrphanRepairReport>;
+  repairOrphans(opts: RepairOrphansOpts): Promise<OrphanRepairReport>;
 
   // -------------------------------------------------------------------------
   // Projects — reads
