@@ -23,7 +23,7 @@ import {
 } from "./config.js";
 import { resolveTarget } from "./routing.js";
 import { ensureNoMcpConfig, workersLogDir } from "./paths.js";
-import { buildRunEnv, loopbackRouterChoice } from "./run-env.js";
+import { buildRunEnv, loopbackRouterChoice, withLoginIdentity } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
 import { proxyPort, ensureProxyRunning } from "./proxy/server.js";
 
@@ -77,7 +77,8 @@ function containmentArgs(logDir: string): string[] {
 /** The historical fallback: tier alias as the model id, ambient env with the
  *  Anthropic API key stripped (so the CLI uses its interactive login). */
 function legacyPlan(tier: ModelTier, config: WorkersConfig | null): LlmSpawnPlan {
-  const { ANTHROPIC_API_KEY: _drop, ...env } = process.env;
+  const { ANTHROPIC_API_KEY: _drop, ...rest } = process.env;
+  const env = withLoginIdentity(rest);
   return {
     model: tier,
     args: [

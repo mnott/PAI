@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { paiHomePath } from "../config/pai-home.js";
+import { withLoginIdentity } from "./run-env.js";
 import { queueLineWriter, queuedFilePath, readQueued, removeQueued, writeQueued, type QueuedFile } from "./capacity.js";
 import { startPaneBar, type PaneBar, type PaneBarDeps, type StatusLineSpec } from "./pane-bar.js";
 import { panePolicy } from "./pane-policy.js";
@@ -348,7 +349,9 @@ export async function runPaneExec(id: string, d: ExecDeps = {}): Promise<number>
   try {
     child = spawn(argv[0], argv.slice(1), {
       cwd: sp.cwd,
-      env: { ...(sp.env ?? process.env), ...(d.env ?? {}), [PANE_EXEC_ENV]: id, [PANE_EXEC_PID_ENV]: String(process.pid) } as NodeJS.ProcessEnv,
+      // the spec's env replaces process.env entirely: a worker claude must still
+      // carry USER/LOGNAME/HOME (Claude Code names its keychain account by them)
+      env: withLoginIdentity({ ...(sp.env ?? process.env), ...(d.env ?? {}), [PANE_EXEC_ENV]: id, [PANE_EXEC_PID_ENV]: String(process.pid) } as NodeJS.ProcessEnv),
       detached: true,
       stdio: [sp.stdin === "pipe" ? "pipe" : "ignore", "pipe", "pipe"],
     });

@@ -11,7 +11,8 @@ import http from "node:http";
 import { mkdtempSync, writeFileSync, rmSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs, probeRoute, routeLoopbackViaRouter, routeVerdictLine, nativeRoutePreflight } from "./run-env.js";
+import { buildRunEnv, claudeCommand, nativeLaunchSettingsArgs, probeRoute, routeLoopbackViaRouter, routeVerdictLine, nativeRoutePreflight, withLoginIdentity } from "./run-env.js";
+import { homedir, userInfo } from "node:os";
 import { nativeAnthropicProvider, type WorkerProvider } from "./config.js";
 
 const dir = mkdtempSync(join(tmpdir(), "pai-runenv-test-"));
@@ -99,6 +100,65 @@ describe("buildRunEnv session identity", () => {
       if (saved.PAI_WORKER !== undefined) process.env.PAI_WORKER = saved.PAI_WORKER;
       if (saved.CLAUDE_CODE_DISABLE_AUTO_MEMORY !== undefined) {
         process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = saved.CLAUDE_CODE_DISABLE_AUTO_MEMORY;
+      }
+    }
+  });
+});
+
+describe("login identity (USER/LOGNAME/HOME)", () => {
+  // Claude Code names its macOS keychain OAuth account by USER/LOGNAME and
+  // finds its config under HOME: a spawn env without them dies at start with
+  // "Failed to authenticate: OAuth session expired and could not be refreshed"
+  const IDENTITY = ["USER", "LOGNAME", "HOME"] as const;
+
+  it("withLoginIdentity keeps the env's own USER/LOGNAME/HOME", () => {
+    expect(withLoginIdentity({ USER: "u", LOGNAME: "l", HOME: "/h", PATH: "/bin" })).toEqual({
+      USER: "u",
+      LOGNAME: "l",
+      HOME: "/h",
+      PATH: "/bin",
+    });
+  });
+
+  it("withLoginIdentity fills a missing identity from the real account", () => {
+    const env = withLoginIdentity({ PATH: "/bin" });
+    expect(env.USER).toBe(userInfo().username);
+    expect(env.LOGNAME).toBe(userInfo().username);
+    expect(env.HOME).toBe(homedir());
+  });
+
+  it("buildRunEnv keeps USER/LOGNAME/HOME for headless and interactive runs", () => {
+    const saved = { ...process.env };
+    try {
+      process.env.USER = "worker-user";
+      process.env.LOGNAME = "worker-login";
+      process.env.HOME = "/worker-home";
+      for (const env of [buildRunEnv(provider, true), buildRunEnv(nativeAnthropicProvider(), true), buildRunEnv(provider, false)]) {
+        expect(env.USER).toBe("worker-user");
+        expect(env.LOGNAME).toBe("worker-login");
+        expect(env.HOME).toBe("/worker-home");
+      }
+    } finally {
+      for (const k of IDENTITY) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  });
+
+  it("buildRunEnv fills a missing identity from the real account", () => {
+    const saved = { ...process.env };
+    try {
+      for (const k of IDENTITY) delete process.env[k];
+      for (const env of [buildRunEnv(provider, true), buildRunEnv(nativeAnthropicProvider(), true)]) {
+        expect(env.USER).toBe(userInfo().username);
+        expect(env.LOGNAME).toBe(userInfo().username);
+        expect(env.HOME).toBe(homedir());
+      }
+    } finally {
+      for (const k of IDENTITY) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
       }
     }
   });
