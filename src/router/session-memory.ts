@@ -69,7 +69,7 @@ export const memoryIndexSearch: MemorySearchFn = async (q, limit) => {
     import("../storage/factory.js"),
     import("../daemon/config.js"),
     import("../memory/embedding-gate.js"),
-    import("../mcp/tools/memory.js"),
+    import("../memory/search.js"),
   ]);
   const search = loadConfig().search;
   const backend = await getStorageBackend();

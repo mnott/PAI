@@ -188,3 +188,63 @@ export function applyRecencyBoost(
     })
     .sort((a, b) => b.score - a.score);
 }
+
+// ---------------------------------------------------------------------------
+// Hybrid search helper (backend-agnostic)
+// ---------------------------------------------------------------------------
+
+/**
+ * Combine keyword + semantic results using min-max normalized scoring.
+ * Works on pre-computed result arrays, so it serves every backend.
+ */
+export function combineHybridResults(
+  keywordResults: SearchResult[],
+  semanticResults: SearchResult[],
+  maxResults: number,
+  keywordWeight = 0.5,
+  semanticWeight = 0.5
+): SearchResult[] {
+  if (keywordResults.length === 0 && semanticResults.length === 0) return [];
+
+  const keyFor = (r: SearchResult) =>
+    `${r.projectId}:${r.path}:${r.startLine}:${r.endLine}`;
+
+  function minMaxNormalize(items: SearchResult[]): Map<string, number> {
+    if (items.length === 0) return new Map();
+    const min = Math.min(...items.map((r) => r.score));
+    const max = Math.max(...items.map((r) => r.score));
+    const range = max - min;
+    const m = new Map<string, number>();
+    for (const r of items) {
+      m.set(keyFor(r), range === 0 ? 1 : (r.score - min) / range);
+    }
+    return m;
+  }
+
+  const kwNorm = minMaxNormalize(keywordResults);
+  const semNorm = minMaxNormalize(semanticResults);
+
+  const allKeys = new Set<string>([
+    ...keywordResults.map(keyFor),
+    ...semanticResults.map(keyFor),
+  ]);
+
+  const metaMap = new Map<string, SearchResult>();
+  for (const r of [...keywordResults, ...semanticResults]) {
+    metaMap.set(keyFor(r), r);
+  }
+
+  const combined: Array<SearchResult & { combinedScore: number }> = [];
+  for (const key of allKeys) {
+    const meta = metaMap.get(key)!;
+    const kwScore = kwNorm.get(key) ?? 0;
+    const semScore = semNorm.get(key) ?? 0;
+    const combinedScore = keywordWeight * kwScore + semanticWeight * semScore;
+    combined.push({ ...meta, score: combinedScore, combinedScore });
+  }
+
+  return combined
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults)
+    .map(({ combinedScore: _unused, ...r }) => r);
+}
