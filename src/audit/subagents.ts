@@ -8,6 +8,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { unquote } from "./skills.js";
 import { countTokens, TOKEN_ENCODING } from "./tokens.js";
 
 export interface SubagentEntry {
@@ -19,18 +20,6 @@ export interface SubagentEntry {
 export interface SubagentsReport {
   encoding: string;
   entries: SubagentEntry[];
-}
-
-/** Strip a single layer of matching quotes ("..." or '...') from a trimmed value. */
-function unquote(value: string): string {
-  if (value.length >= 2) {
-    const first = value[0];
-    const last = value[value.length - 1];
-    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-      return value.slice(1, -1);
-    }
-  }
-  return value;
 }
 
 /** The top-level `model:` frontmatter field, or `"inherits"` if absent/empty. */

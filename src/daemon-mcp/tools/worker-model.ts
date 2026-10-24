@@ -14,6 +14,9 @@ import {
   resolveProviderName,
   setProviderModel,
 } from "../../workers/providers.js";
+import { error, text, type WorkerToolResult } from "./tool-result.js";
+
+export type { WorkerToolResult };
 
 export interface WorkerModelArgs {
   action?: "get" | "set";
@@ -24,17 +27,6 @@ export interface WorkerModelArgs {
   slot?: string;
   model?: string;
 }
-
-export type WorkerToolResult = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-};
-
-const text = (s: string): WorkerToolResult => ({ content: [{ type: "text", text: s }] });
-const error = (e: unknown): WorkerToolResult => ({
-  content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-  isError: true,
-});
 
 /**
  * get: the model ids of one provider (default: the active one), or of every

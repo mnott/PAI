@@ -25,7 +25,7 @@ import { acceptItems } from "../../workers/queue-runner.js";
 import { branchDiff, realQueueDeps } from "../../workers/queue-deps.js";
 import { reportOriginWithHost, startDetached, type DetachRequest } from "../../workers/run-report-wiring.js";
 import type { RunOrigin, RunRecord } from "../../workers/run-events.js";
-import type { WorkerToolResult } from "./worker-model.js";
+import { error, text, type WorkerToolResult } from "./tool-result.js";
 
 export type { WorkerToolResult };
 
@@ -82,11 +82,6 @@ export interface DelegationDeps {
   logDir?(): string;
 }
 
-const text = (s: string): WorkerToolResult => ({ content: [{ type: "text", text: s }] });
-const error = (e: unknown): WorkerToolResult => ({
-  content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-  isError: true,
-});
 const fail = (s: string): WorkerToolResult => error(new Error(s));
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -168,6 +163,16 @@ function loadNamedPlan(repo: string, name: string): { path: string; plan: Plan }
   const path = planFile(repo, name);
   if (!existsSync(path)) throw new Error(`no plan "${name}" in ${repo}; save it first with plan_save`);
   return { path, plan: loadPlan(path) };
+}
+
+/** The named plan of a project with its repo, or the tool failure to return when it cannot be resolved or loaded. */
+async function loadProjectPlan(args: { project: string; name: string }, deps: DelegationDeps): Promise<{ repo: string; path: string; plan: Plan } | WorkerToolResult> {
+  const repo = await deps.resolveProject(args.project);
+  try {
+    return { repo, ...loadNamedPlan(repo, args.name) };
+  } catch (e) {
+    return fail(problemsText(e));
+  }
 }
 
 const problemsText = (e: unknown): string => (e instanceof PlanError ? e.problems.map((p) => `- ${p}`).join("\n") : e instanceof Error ? e.message : String(e));
@@ -252,14 +257,9 @@ export async function planSave(args: { project: string; name: string; plan: Plan
 /** Start the run in the background and return at once. */
 export async function planRun(args: { project: string; name: string; escalate?: boolean } & WhereArgs, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
-    const repo = await deps.resolveProject(args.project);
-    let loaded: { path: string; plan: Plan };
-    try {
-      loaded = loadNamedPlan(repo, args.name);
-    } catch (e) {
-      return fail(problemsText(e));
-    }
-    const { path, plan } = loaded;
+    const loaded = await loadProjectPlan(args, deps);
+    if ("content" in loaded) return loaded;
+    const { repo, path, plan } = loaded;
     const clash = dirtyConflicts(plan, await deps.dirtyPaths(plan.repo));
     if (clash.length) return fail(`Not started: ${plan.repo} has uncommitted changes to files the plan touches (${clash.join(", ")}). Commit or stash them first.`);
 
@@ -290,13 +290,8 @@ function lastNote(log: RunLogEntry[], part: string): string {
 
 export async function planStatusText(args: { project: string; name: string }, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
-    const repo = await deps.resolveProject(args.project);
-    let loaded: { path: string; plan: Plan };
-    try {
-      loaded = loadNamedPlan(repo, args.name);
-    } catch (e) {
-      return fail(problemsText(e));
-    }
+    const loaded = await loadProjectPlan(args, deps);
+    if ("content" in loaded) return loaded;
     const { path, plan } = loaded;
     const log = readRunLog(runLogPath(path));
     const st = planStatus(plan, log, deps.now());
@@ -329,13 +324,8 @@ export async function planStatusText(args: { project: string; name: string }, de
 /** Ask a running plan to stop once its in-flight parts are done. */
 export async function planStop(args: { project: string; name: string }, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
-    const repo = await deps.resolveProject(args.project);
-    let loaded: { path: string; plan: Plan };
-    try {
-      loaded = loadNamedPlan(repo, args.name);
-    } catch (e) {
-      return fail(problemsText(e));
-    }
+    const loaded = await loadProjectPlan(args, deps);
+    if ("content" in loaded) return loaded;
     if (!readRunLock(planLockPath(loaded.path))) return fail(`No run of plan "${args.name}" is in progress.`);
     requestPlanStop(loaded.path);
     return text(`Plan "${args.name}" will stop after its in-flight parts finish; follow it with plan_status. plan_run resumes it later.`);
@@ -348,13 +338,8 @@ export async function planStop(args: { project: string; name: string }, deps: De
 export async function planAmend(args: { project: string; name: string; part: string; spec_append: string }, deps: DelegationDeps): Promise<WorkerToolResult> {
   try {
     if (!args.spec_append?.trim()) return fail("spec_append is empty; say what the worker should know or do differently");
-    const repo = await deps.resolveProject(args.project);
-    let loaded: { path: string; plan: Plan };
-    try {
-      loaded = loadNamedPlan(repo, args.name);
-    } catch (e) {
-      return fail(problemsText(e));
-    }
+    const loaded = await loadProjectPlan(args, deps);
+    if ("content" in loaded) return loaded;
     if (!loaded.plan.units.some((u) => u.parts.some((p) => p.id === args.part))) return fail(`Plan "${args.name}" has no part "${args.part}".`);
     const file = join(dirname(loaded.path), "specs", `${args.part}.md`);
     if (!existsSync(file)) return fail(`Part "${args.part}" has no spec file at ${file}; it was not saved with plan_save.`);

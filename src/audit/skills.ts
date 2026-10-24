@@ -142,7 +142,7 @@ export function findCatalogueFiles(claudeDir: string): RawFile[] {
 }
 
 /** Strip a single layer of matching quotes ("..." or '...') from a trimmed value. */
-function unquote(value: string): string {
+export function unquote(value: string): string {
   if (value.length >= 2) {
     const first = value[0];
     const last = value[value.length - 1];

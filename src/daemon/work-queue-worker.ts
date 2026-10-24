@@ -15,6 +15,7 @@
  * complete immediately, ready for future expansion.
  */
 
+import { contentToText } from "./content-text.js";
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 
@@ -384,23 +385,6 @@ function tryParseJson(line: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c) => {
-        if (typeof c === "string") return c;
-        const block = c as Record<string, unknown>;
-        if (block?.text) return String(block.text);
-        if (block?.content) return String(block.content);
-        return "";
-      })
-      .join(" ")
-      .trim();
-  }
-  return "";
 }
 
 function extractWorkFromTranscript(lines: string[]): NoteWorkItem[] {

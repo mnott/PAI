@@ -11,13 +11,7 @@
 import { workersLogDir } from "../../workers/paths.js";
 import { readWorkersSection } from "../../workers/config.js";
 import { cliEntry } from "../../daemon/pass-priority.js";
-import type { WorkerToolResult } from "./worker-model.js";
-
-const text = (s: string): WorkerToolResult => ({ content: [{ type: "text", text: s }] });
-const error = (e: unknown): WorkerToolResult => ({
-  content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
-  isError: true,
-});
+import { error, text, type WorkerToolResult } from "./tool-result.js";
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");

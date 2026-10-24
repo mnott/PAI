@@ -120,8 +120,8 @@ interface UserLine {
   message?: { content?: string | Array<{ text?: string }> };
 }
 
-/** Token count of the first `type:"user"` message's text, or null if none found. */
-export async function firstUserPromptTokens(path: string): Promise<number | null> {
+/** The first JSONL record of `path` for which `pick` returns a value, or null if none does. */
+async function firstJsonlPick<R>(path: string, pick: (obj: UserLine) => R | undefined): Promise<R | null> {
   const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
   try {
     for await (const raw of rl) {
@@ -132,15 +132,8 @@ export async function firstUserPromptTokens(path: string): Promise<number | null
       } catch {
         continue;
       }
-      if (obj.type !== "user") continue;
-      const content = obj.message?.content;
-      const text =
-        typeof content === "string"
-          ? content
-          : Array.isArray(content)
-            ? content.map((part) => part?.text ?? "").join(" ")
-            : "";
-      return countTokens(text);
+      const picked = pick(obj);
+      if (picked !== undefined) return picked;
     }
   } finally {
     rl.close();
@@ -148,24 +141,24 @@ export async function firstUserPromptTokens(path: string): Promise<number | null
   return null;
 }
 
+/** Token count of the first `type:"user"` message's text, or null if none found. */
+export function firstUserPromptTokens(path: string): Promise<number | null> {
+  return firstJsonlPick(path, (obj) => {
+    if (obj.type !== "user") return undefined;
+    const content = obj.message?.content;
+    const text =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => part?.text ?? "").join(" ")
+          : "";
+    return countTokens(text);
+  });
+}
+
 /** `session_id` off the first record that carries one, or null if none do. */
-export async function firstSessionId(path: string): Promise<string | null> {
-  const rl = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
-  try {
-    for await (const raw of rl) {
-      if (!raw.trim()) continue;
-      let obj: UserLine;
-      try {
-        obj = JSON.parse(raw) as UserLine;
-      } catch {
-        continue;
-      }
-      if (obj.session_id) return obj.session_id;
-    }
-  } finally {
-    rl.close();
-  }
-  return null;
+export function firstSessionId(path: string): Promise<string | null> {
+  return firstJsonlPick(path, (obj) => obj.session_id || undefined);
 }
 
 /** `~/.claude/projects/**\/<sessionId>.jsonl`, searched only under the projects dir. */
