@@ -10,7 +10,7 @@
  * All sub-commands communicate with the running daemon via IPC.
  */
 
-import { ok, warn, err, dim, bold, header } from "../lib/utils.js";
+import { ok, warn, err, dim, bold, header, daemonUnreachable } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import type {
@@ -78,13 +78,7 @@ export async function notifyStatusCmd(): Promise<number> {
     printConfig(config, activeChannels);
     return 0;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log();
-    console.log(warn("  Cannot reach PAI daemon."));
-    console.log(dim(`  ${msg}`));
-    console.log(dim("  Start it with: pai daemon serve"));
-    console.log();
-    return 1;
+    return daemonUnreachable(e);
   }
 }
 

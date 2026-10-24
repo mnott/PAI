@@ -12,7 +12,7 @@
  *   pai topic check "database schema migration" --threshold 0.7
  */
 
-import { ok, warn, err, dim, bold, header } from "../lib/utils.js";
+import { ok, warn, err, dim, bold, header, daemonUnreachable } from "../lib/utils.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import type { TopicCheckResult } from "../../topics/detector.js";
@@ -121,12 +121,6 @@ export async function topicCheck(
     // Exit with code 1 if a shift was detected (useful for scripting / hooks)
     return result.shifted ? 1 : 0;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log();
-    console.log(warn("  Cannot reach PAI daemon."));
-    console.log(dim(`  ${msg}`));
-    console.log(dim("  Start it with: pai daemon serve"));
-    console.log();
-    return 1;
+    return daemonUnreachable(e);
   }
 }

@@ -348,3 +348,14 @@ export function fmtDate(epochMs: number | null | undefined): string {
 export function now(): number {
   return Date.now();
 }
+
+/** Tell the user the daemon did not answer (`e` is the connection error) and return the failing exit code. */
+export function daemonUnreachable(e: unknown): number {
+  const msg = e instanceof Error ? e.message : String(e);
+  console.log();
+  console.log(warn("  Cannot reach PAI daemon."));
+  console.log(dim(`  ${msg}`));
+  console.log(dim("  Start it with: pai daemon serve"));
+  console.log();
+  return 1;
+}
