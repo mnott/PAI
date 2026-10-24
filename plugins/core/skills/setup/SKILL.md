@@ -29,7 +29,7 @@ Verify: all three commands print a version. If `npm i -g` later fails with EACCE
 Check: `pai --version`.
 
 ```
-npm i -g https://github.com/<owner>/<repo>/releases/latest/download/pai.tgz   # install (the release asset; no npm registry)
+npm i -g https://github.com/mnott/PAI/releases/latest/download/pai.tgz   # install (the release asset; no npm registry)
 pai update                                  # upgrade to the latest GitHub Release
 pai update --check                          # only report
 ```
@@ -87,7 +87,7 @@ On Linux without systemd (containers) run `pai daemon serve` in a terminal or pr
 Check: `aibroker doctor` exits 0. AIBroker is a separate package and PAI's messaging layer (messages between sessions, worker reports, terminal tab names, WhatsApp, Telegram, PAILot). `pai setup` installs it automatically (unless run with `--no-aibroker`); this phase only confirms it. If `aibroker` is not on the PATH or doctor fails:
 
 ```
-npm i -g https://github.com/<owner>/<aibroker-repo>/releases/latest/download/aibroker.tgz
+npm i -g https://github.com/mnott/AIBroker/releases/latest/download/aibroker.tgz
 aibroker setup      # service, MCP registration, Claude Code hooks
 aibroker doctor
 ```
