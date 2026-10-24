@@ -24,6 +24,7 @@ import { eventsPath, ledgerPath, slotCurrentPath, statusPath } from "./paths.js"
 import { parseLedger } from "./ledger.js";
 import { routerPort } from "../router/router.js";
 import { git } from "./worktree.js";
+import { loadStatus, nowStamp, saveStatus, type WorkerStatus } from "./status.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -207,6 +208,24 @@ afterEach(async () => {
 });
 
 describe("pooled task lifecycle", () => {
+  it("the pooled status keeps the requesting session's term, session and run pid from the client's placeholder", async () => {
+    const h = makeHost();
+    liveHosts.push(h.host);
+    h.script([[assistantUsage(usage1), resultEvt(R_PLAIN_1)]]);
+    const term = "w5t0p0:11111111-2222-3333-4444-555555555555";
+    saveStatus(h.host.logDir, {
+      id: "w1", pid: 4242, runPid: 4242, label: "first", cwd: tmpdir(), term, provider: "fakeprov", model: "m1",
+      state: "running", started: nowStamp(), updated: nowStamp(), turns: 0, tools: 0, last: "", rc: null, secs: null,
+      origin: "spawn", session: { id: "11111111-2222-3333-4444-555555555555", name: "Mine" }, spawnerSession: "claude-abc",
+    } as WorkerStatus);
+    await h.host.runTask(task());
+    const st = loadStatus(h.host.logDir, "w1")!;
+    expect(st.term).toBe(term);
+    expect(st.session?.name).toBe("Mine");
+    expect(st.spawnerSession).toBe("claude-abc");
+    expect(st.runPid).toBe(4242);
+  });
+
   it("two tasks run through ONE warm slot, each with its own boundary, status and carry metric", async () => {
     const h = makeHost();
     liveHosts.push(h.host);
