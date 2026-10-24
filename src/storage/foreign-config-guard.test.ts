@@ -9,10 +9,11 @@ import {
   noteForeignConfigLiveDb,
   resetForeignConfigNote,
 } from "./foreign-config-guard.js";
+import { fakeUrl } from "../utils/fake-secret.js";
 import { PostgresRegistryBackend } from "./registry-postgres.js";
 import { PostgresBackend } from "./postgres/backend.js";
 
-const LIVE = "postgresql://u:p@localhost:5432/pai";
+const LIVE = fakeUrl("postgresql", "u", "p", "localhost:5432/pai");
 const cfg = (url: string): string => `postgres:\n  connectionString: ${url}\n`;
 
 let dir: string;
@@ -73,7 +74,7 @@ describe("foreign config on the live database", () => {
   });
 
   it("allows everything, silently, when the foreign config has its own database", () => {
-    writeFileSync(foreign, cfg("postgresql://u:p@localhost:5432/pai_eval"));
+    writeFileSync(foreign, cfg(fakeUrl("postgresql", "u", "p", "localhost:5432/pai_eval")));
     process.env.PAI_CONFIG_FILE = foreign;
     const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     expect(() => assertDestructiveAllowed("registry reset")).not.toThrow();
@@ -108,7 +109,7 @@ describe("foreign config on the live database", () => {
     const cache = join(dir, "cache");
     mkdirSync(join(cache, "eval"), { recursive: true });
     writeFileSync(join(cache, "eval", "live.yaml"), cfg(LIVE));
-    writeFileSync(join(cache, "eval", "own.yaml"), cfg("postgresql://u:p@localhost:5432/pai_eval"));
+    writeFileSync(join(cache, "eval", "own.yaml"), cfg(fakeUrl("postgresql", "u", "p", "localhost:5432/pai_eval")));
     writeFileSync(join(cache, "eval", "notes.json"), "{}");
     expect(foreignConfigsOnLiveDb(cache).map((f) => f.path)).toEqual([join(cache, "eval", "live.yaml")]);
   });
