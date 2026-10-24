@@ -4,9 +4,16 @@ import type { AddressInfo } from "node:net";
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { loginUsername, resetLoginUsername } from "../utils/login-username.js";
 import { dirname, join, resolve } from "node:path";
 import net from "node:net";
 import { vi } from "vitest";
+
+const execMock = vi.hoisted(() => ({ impl: undefined as undefined | ((...a: unknown[]) => void) }));
+vi.mock("node:child_process", async (orig) => {
+  const real = await orig<typeof import("node:child_process")>();
+  return { ...real, execFile: ((...a: unknown[]) => (execMock.impl ? execMock.impl(...a) : (real.execFile as (...x: unknown[]) => unknown)(...a))) as typeof real.execFile };
+});
 import {
   ANTHROPIC_POLL_MS,
   Backoff,
@@ -29,10 +36,60 @@ import {
   tokensPerSec,
   fetchAnthropicUsage,
   isAnthropicHost,
+  keychainCredentialArgs,
+  anthropicToken,
+  tokenFailureCounts,
+  resetTokenFailures,
 } from "./limits.js";
 import type { WorkerProvider } from "../workers/config.js";
 import type { UsageRow } from "./usage.js";
 import { parse } from "yaml";
+
+describe("keychain credential lookup", () => {
+  it("always selects the item by explicit account, from the passwd entry", () => {
+    // USER unset: the account must still be the login user, not ""
+    delete process.env.USER;
+    delete process.env.LOGNAME;
+    resetLoginUsername();
+    const args = keychainCredentialArgs();
+    expect(args).toEqual(["find-generic-password", "-s", "Claude Code-credentials", "-a", loginUsername(), "-w"]);
+    expect(args[args.indexOf("-a") + 1]).toMatch(/\S/);
+  });
+
+  it("anthropicToken reads with -a <username> and works with USER unset", async () => {
+    delete process.env.USER;
+    delete process.env.LOGNAME;
+    resetLoginUsername();
+    const username = loginUsername();
+    const seen: string[][] = [];
+    execMock.impl = (...a: unknown[]) => {
+      const [cmd, args, , cb] = a as [string, string[], unknown, (e: unknown, out: string, se: string) => void];
+      seen.push([cmd, ...args]);
+      cb(null, args[args.indexOf("-a") + 1] === username ? JSON.stringify({ claudeAiOauth: { accessToken: "tok-abc" } }) : "", "");
+    };
+    try {
+      await expect(anthropicToken()).resolves.toBe("tok-abc");
+    } finally {
+      execMock.impl = undefined;
+    }
+    expect(seen).toEqual([["security", "find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"]]);
+  });
+
+  it("anthropicToken failure: counts the reason by exit code and logs stderr", async () => {
+    resetTokenFailures();
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    execMock.impl = (...a: unknown[]) => (a[3] as (e: unknown, out: string, se: string) => void)(Object.assign(new Error("x"), { code: 44 }), "", "security: item could not be found");
+    try {
+      await expect(anthropicToken()).resolves.toBeUndefined();
+    } finally {
+      execMock.impl = undefined;
+    }
+    expect(tokenFailureCounts()).toEqual({ "exit 44": 1 });
+    expect(String(err.mock.calls[0]![0])).toContain("exit 44");
+    expect(String(err.mock.calls[0]![0])).toContain("could not be found");
+    err.mockRestore();
+  });
+});
 
 describe("modelServed", () => {
   it("decides by served model id, not by the shared port", () => {
@@ -193,6 +250,18 @@ describe("anthropic usage poll: one door, 429 backoff", () => {
   };
 
   afterEach(() => vi.useRealTimers());
+
+  it("TokenReadFailureHoldsLastGood: a failed token read keeps the last reading with a transient cause", async () => {
+    vi.useFakeTimers({ now: 1_800_000_000_000 });
+    const { fetchUsage, poll } = setup("hold");
+    fetchUsage.mockResolvedValueOnce(BODY);
+    expect((await poll()).windows[0]!.percent).toBe(42);
+    vi.advanceTimersByTime(ANTHROPIC_POLL_MS + 1000);
+    fetchUsage.mockRejectedValueOnce(new Error("no OAuth token in keychain"));
+    const held = await poll();
+    expect(held.windows[0]!.percent).toBe(42);
+    expect(held.error).toContain("no OAuth token in keychain");
+  });
 
   it("PollIntervalShared: a reading younger than the poll interval is read, not fetched", async () => {
     vi.useFakeTimers({ now: 1_800_000_000_000 });

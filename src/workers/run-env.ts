@@ -8,7 +8,8 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
+import { loginUsername } from "../utils/login-username.js";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -138,7 +139,7 @@ export function withLoginIdentity(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     let name = "";
     let home = "";
     try {
-      name = userInfo().username;
+      name = loginUsername();
       home = homedir();
     } catch {
       /* no account info available: leave whatever the env carried */
