@@ -7,28 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-
-// Same regex set as the rg proof command; each alternative is split across
-// parts so this file itself carries no token-shaped literal.
-const PATTERNS: Array<[string, RegExp]> = [
-  ["slack", new RegExp(fake("xo", "[bap]-"))],
-  ["anthropic", new RegExp(fake("sk", "-ant-"))],
-  ["github", new RegExp(fake("gh", "p_", "[A-Za-z0-9]{20}"))],
-  ["github-pat", new RegExp(fake("github", "_pat_"))],
-  ["gitlab", new RegExp(fake("gl", "pat-"))],
-  ["aws", new RegExp(fake("AK", "IA[A-Z0-9]{16}"))],
-  ["google", new RegExp(fake("AI", "za[A-Za-z0-9_-]{30}"))],
-  ["google-35", new RegExp(fake("AI", "za[A-Za-z0-9_-]{35}"))],
-  ["slack-any", new RegExp(fake("xo", "x[abposr]-"))],
-  // scheme://user:pass with a real (non-redacted) password
-  ["url-creds", new RegExp(fake("[a-z]+://", "[^\\s/:\"'`@\\[]+:", "[^\\s/@\"'`\\[]+@"))],
-  ["pem", new RegExp(fake("-----", "BEGIN ", "[A-Z ]*PRIVATE KEY"))],
-];
-
-/** Concatenates parts so the guard file stays free of token-shaped literals. */
-function fake(...parts: string[]): string {
-  return parts.join("");
-}
+import { scanLine } from "./token-literals.js";
 
 function walk(dir: string): string[] {
   const out: string[] = [];
@@ -46,9 +25,7 @@ describe("no raw token-shaped literals in test files", () => {
     for (const file of walk("src")) {
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
-        for (const [name, re] of PATTERNS) {
-          if (re.test(line)) offenders.push(`${file}:${i + 1} (${name})`);
-        }
+        for (const name of scanLine(line)) offenders.push(`${file}:${i + 1} (${name})`);
       });
     }
     expect(offenders).toEqual([]);

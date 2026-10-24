@@ -31,7 +31,7 @@ export const SETTINGS_HOOKS: HookEntry[] = [
     // Every tool: the loop guard inside counts Read/Grep/Glob repeats too.
     { hookType: "PreToolUse", matcher: "*", oldMatchers: WORKER_GUARD_OLD_MATCHERS, command: "${ADAPTER_DIR}/Hooks/worker-guard.mjs" },
     { hookType: "PreToolUse", matcher: "Read|Edit|Write|MultiEdit|NotebookEdit|Glob|Grep", command: "${ADAPTER_DIR}/Hooks/worker-path-repair.mjs" },
-    { hookType: "PreToolUse", matcher: "Edit|MultiEdit", command: "${ADAPTER_DIR}/Hooks/worker-edit-repair.mjs" },
+    { hookType: "PreToolUse", matcher: "Write|Edit|MultiEdit", oldMatchers: ["Edit|MultiEdit"], command: "${ADAPTER_DIR}/Hooks/worker-edit-repair.mjs" },
     // Dotted tool names (Glob.glob) die before any name-matched hook sees
     // them, so this one must match every call and rewrite the name itself.
     { hookType: "PreToolUse", matcher: "*", command: "${ADAPTER_DIR}/Hooks/worker-tool-name-repair.mjs" },
