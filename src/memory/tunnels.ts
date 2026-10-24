@@ -69,3 +69,43 @@ export async function findTunnels(
 ): Promise<FindTunnelsResult> {
   return backend.findTunnels(registry, options);
 }
+
+// ---------------------------------------------------------------------------
+// Helpers shared by the SQLite and Postgres tunnel finders
+// ---------------------------------------------------------------------------
+
+/** Fill option defaults and map active project ids to slugs. */
+export async function resolveTunnelInputs(
+  registry: RegistryBackend,
+  options?: FindTunnelsOptions
+): Promise<{ opts: Required<FindTunnelsOptions>; slugMap: Record<number, string> }> {
+  const opts: Required<FindTunnelsOptions> = {
+    min_projects: options?.min_projects ?? 2,
+    min_occurrences: options?.min_occurrences ?? 3,
+    limit: options?.limit ?? 20,
+  };
+  const slugMap: Record<number, string> = {};
+  for (const { id, slug } of await registry.listProjects({ excludeArchived: true })) {
+    slugMap[id] = slug;
+  }
+  return { opts, slugMap };
+}
+
+/** Order tunnels by project spread then occurrences and cut to the limit. */
+export function rankTunnels(
+  tunnels: Tunnel[],
+  projectCount: number,
+  conceptsEvaluated: number,
+  limit: number
+): FindTunnelsResult {
+  tunnels.sort((a, b) => {
+    const byProjects = b.projects.length - a.projects.length;
+    if (byProjects !== 0) return byProjects;
+    return b.occurrences - a.occurrences;
+  });
+  return {
+    tunnels: tunnels.slice(0, limit),
+    projects_analyzed: projectCount,
+    total_concepts_evaluated: conceptsEvaluated,
+  };
+}
