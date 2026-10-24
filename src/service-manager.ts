@@ -10,9 +10,20 @@
 
 import { homedir, userInfo } from "node:os";
 
+/** The account home os.userInfo() reports; undefined when it throws
+ *  (a launchd service has no USER/LOGNAME → ERR_SYSTEM_ERROR). */
+function accountHome(): string | undefined {
+  try {
+    return userInfo().homedir;
+  } catch {
+    return undefined;
+  }
+}
+
 /** True when it is safe to call launchctl/systemctl; otherwise prints why not and how to finish by hand. */
 export function serviceManagerAllowed(manualCommand: string): boolean {
-  if (homedir() === userInfo().homedir) return true;
+  const account = accountHome();
+  if (account !== undefined && homedir() === account) return true;
   console.log(`  service not (re)loaded because HOME is not the account home; as the real user run: ${manualCommand}`);
   return false;
 }

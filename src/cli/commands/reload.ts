@@ -8,8 +8,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { userInfo } from "node:os";
-import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
+import { currentUid, resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { loadConfig } from "../../daemon/config.js";
 import { PaiClient } from "../../daemon/ipc-client.js";
 import { routerPort } from "../../router/router.js";
@@ -161,7 +160,8 @@ function liveDeps(): ReloadDeps {
         if (process.platform === "linux") {
           return spawnSync("systemctl", ["--user", "start", daemonServiceName()], { encoding: "utf8" }).status === 0;
         }
-        const uid = process.getuid?.() ?? userInfo().uid;
+        const uid = currentUid();
+        if (uid === undefined) return false;
         return spawnSync("launchctl", ["kickstart", "-k", `gui/${uid}/${daemonServiceName()}`], { encoding: "utf8" }).status === 0;
       },
       socketUp: async () => {
