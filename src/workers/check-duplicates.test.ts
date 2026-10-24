@@ -70,7 +70,8 @@ describe.skipIf(!hasJscpd)("duplicate-code gate on a temp copy", () => {
     expect(run("--prune").status).toBe(0);
     expect(baseline().length).toBeLessThan(before.length); // the fixed alpha clone is dropped
     expect(run().status).toBe(0);
-  });
+    // child process (jscpd x6) under parallel load: 1.7s alone, 2.9s in batch, so 3x the batch time
+  }, 9000);
 });
 
 describe("duplicate gate fails closed when the scan cannot run", () => {

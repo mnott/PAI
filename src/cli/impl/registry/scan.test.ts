@@ -83,7 +83,8 @@ describe("performScan incremental", () => {
     expect((await writes()).c).toBe(before);
     expect(second.projectsNew).toBe(0);
     expect(second.projectsUpdated).toBe(0);
-  });
+    // real fs scan under parallel load: 0.9s alone and in batch, flaky at the 5s default under 27 files
+  }, 9000);
 
   it("rescans only the project whose dir mtime changed, and registers its new note", async () => {
     const p1 = mkProject("p1");
@@ -99,7 +100,8 @@ describe("performScan incremental", () => {
     const r = await performScan({ indexFile });
     expect(r.sessionsNew).toBe(1);
     expect(r.projectsUpdated).toBe(1);
-  });
+    // real fs scan under parallel load: 1.4s alone, 1.5s in batch, flaky at the 5s default under 27 files
+  }, 9000);
 
   it("a missing registry row defeats the skip (re-registers)", async () => {
     mkProject("p1");
