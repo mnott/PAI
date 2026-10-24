@@ -140,9 +140,11 @@ export interface LocalJobState {
   op?: "start" | "stop";
   /** a "memory" job: which run it started */
   what?: RunKind;
-  state: "running" | "done" | "failed";
+  state: "running" | "done" | "failed" | "interrupted";
   message: string;
   at: string;
+  /** a running job: the process that runs it (cut off by its restart = interrupted, see cockpit-job-recovery.ts) */
+  pid?: number;
   /** a runtime job: when it began (ISO) and the size of the runtime log then, so progress shows only its own lines */
   startedAt?: string;
   logOffset?: number;
@@ -263,11 +265,11 @@ export function readCockpitJob(home: string, id: string): LocalJobState | null {
   }
 }
 
-function writeJob(home: string, j: LocalJobState): void {
+export function writeCockpitJob(home: string, j: LocalJobState): void {
   const path = cockpitJobFile(home, j.id);
   try {
     mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
-    writeFileSync(path, JSON.stringify(j) + "\n", "utf8");
+    writeFileSync(path, JSON.stringify(j.state === "running" ? { pid: process.pid, ...j } : j) + "\n", "utf8");
   } catch {
     /* the job answer already went out; the card just shows no progress */
   }
@@ -447,7 +449,7 @@ export async function runCockpitAction(
     const tiers = deps.tiers ?? tierNames(deps.workersYaml);
     if (!target || !tiers.includes(target)) return fail(`no tier "${target}" (configured: ${tiers.join(", ") || "none"})`);
     const id = randomBytes(6).toString("hex");
-    writeJob(deps.home, { id, kind: "switch", tier: target, state: "running", message: `starting ${target}`, at: new Date().toISOString() });
+    writeCockpitJob(deps.home, { id, kind: "switch", tier: target, state: "running", message: `starting ${target}`, at: new Date().toISOString() });
     writeLedgerLine(deps, action, target, `job ${id}: started`);
     void finishLocalJob(deps, hooks, id, "switch", target);
     return { ok: true, message: `switching to ${target}`, jobId: id };
@@ -465,7 +467,7 @@ export async function runCockpitAction(
     }
     const id = randomBytes(6).toString("hex");
     const verb = kind === "start" ? `starting ${target}` : kind === "stop" ? `stopping ${target}` : `scaling ${target} to ${count}`;
-    writeJob(deps.home, { id, kind, tier: target, state: "running", message: verb, at: new Date().toISOString() });
+    writeCockpitJob(deps.home, { id, kind, tier: target, state: "running", message: verb, at: new Date().toISOString() });
     writeLedgerLine(deps, action, target, `job ${id}: started`);
     const job = finishLocalJob(deps, hooks, id, kind, target, { count, confirm: value === "confirm", all: body.all === true });
     // a refusal (short memory, maxInstances, requests in flight) comes back at once, not as a job to poll
@@ -494,7 +496,7 @@ export async function runCockpitAction(
         /* no log yet */
       }
       const at = new Date().toISOString();
-      writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at, startedAt: at, logOffset });
+      writeCockpitJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state: "running", message: `${op} ${runtime}`, at, startedAt: at, logOffset });
     } finally {
       inFlightActions.delete(claim);
     }
@@ -512,7 +514,7 @@ export async function runCockpitAction(
       if (kind === "embed" && (await (deps.embedBacklog ?? daemonEmbedBacklog)()) === 0) return { ok: true, message: "nothing to embed (backlog 0)" };
       id = randomBytes(6).toString("hex");
       const at = new Date().toISOString();
-      writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: "running", message: kind === "embed" ? "embed backlog" : "index now", at, startedAt: at });
+      writeCockpitJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: "running", message: kind === "embed" ? "embed backlog" : "index now", at, startedAt: at });
     } finally {
       inFlightActions.delete("memory");
     }
@@ -526,7 +528,7 @@ export async function runCockpitAction(
   }
   if (action === "local.off") {
     const id = randomBytes(6).toString("hex");
-    writeJob(deps.home, { id, kind: "off", tier: "", state: "running", message: "stopping local servers", at: new Date().toISOString() });
+    writeCockpitJob(deps.home, { id, kind: "off", tier: "", state: "running", message: "stopping local servers", at: new Date().toISOString() });
     writeLedgerLine(deps, action, target || "-", `job ${id}: started`);
     void finishLocalJob(deps, hooks, id, "off", "");
     return { ok: true, message: "stopping local model servers", jobId: id };
@@ -770,7 +772,7 @@ async function finishMemoryJob(deps: ActionDeps, hooks: ActionHooks, id: string,
   } catch (e) {
     r = { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
-  writeJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: r.ok ? "done" : "failed", message: r.message, at: new Date().toISOString() });
+  writeCockpitJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: r.ok ? "done" : "failed", message: r.message, at: new Date().toISOString() });
   writeLedgerLine(deps, kind === "embed" ? "memory.embed" : "memory.index", kind, `job ${id}: ${r.ok ? "done" : "failed: " + r.message}`);
 }
 
@@ -779,7 +781,7 @@ async function finishMemoryJob(deps: ActionDeps, hooks: ActionHooks, id: string,
 async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string, runtime: string, op: "start" | "stop"): Promise<void> {
   const run = hooks.runRuntimeJob ?? (() => runtimeStartStop(runtime, op, deps, { jobId: id }));
   const end = (state: "done" | "failed", message: string): void =>
-    writeJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state, message, at: new Date().toISOString() });
+    writeCockpitJob(deps.home, { id, kind: "runtime", tier: "", runtime, op, state, message, at: new Date().toISOString() });
   let state: "done" | "failed" = "done";
   let message = `${runtime} ${op === "start" ? "up" : "stopped"}`;
   try {
@@ -831,12 +833,12 @@ async function finishLocalJob(
       deps.onLocalChange?.();
     }
     const message = kind === "off" ? "local servers stopped" : kind === "stop" ? `${tier} stopped` : kind === "scale" ? `${tier} at ${opts.count}` : `${tier} up`;
-    writeJob(deps.home, { id, kind, tier, state: "done", message, at: new Date().toISOString() });
+    writeCockpitJob(deps.home, { id, kind, tier, state: "done", message, at: new Date().toISOString() });
     writeLedgerLine(deps, action, tier || "-", `job ${id}: done`);
     return { ok: true, message };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    writeJob(deps.home, { id, kind, tier, state: "failed", message: msg, at: new Date().toISOString() });
+    writeCockpitJob(deps.home, { id, kind, tier, state: "failed", message: msg, at: new Date().toISOString() });
     writeLedgerLine(deps, action, tier || "-", `job ${id}: failed: ${msg}`);
     return { ok: false, message: msg };
   }

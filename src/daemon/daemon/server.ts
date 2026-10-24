@@ -32,6 +32,8 @@ import { registerQuietRunner, startQuietWatcher } from "../quiet.js";
 import { triggerRegistryScan } from "../registry-scan-trigger.js";
 import { backfillKgFromNotes } from "../../memory/kg-backfill.js";
 import { runObsidianSyncIfDue, startObsidianSyncScheduler } from "../obsidian-sync.js";
+import { interruptStaleJobs } from "../../router/cockpit-job-recovery.js";
+import { paiHomeDir } from "../../config/pai-home.js";
 import { quietRunners, startIndexScheduler, startEmbedScheduler, startRegistryScanScheduler, startWorkerSupervisor, startCacheKeepalive, startSessionKeepalive, startRouterSupervisor, startDistWatch } from "./scheduler.js";
 import { startLocalStatusRefresh } from "../../workers/local-provider.js";
 import { startInventoryRefresh } from "../../workers/model-inventory.js";
@@ -215,6 +217,14 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
   // Model router: restart it whenever its port stops answering (opt-in).
   startRouterSupervisor();
+
+  // Cockpit jobs the previous daemon (or its router) was running died with it: say so, never resume.
+  try {
+    const cut = interruptStaleJobs(paiHomeDir(), Date.now());
+    if (cut.length) process.stderr.write(`[pai-daemon] Cockpit jobs interrupted by the restart: ${cut.join(", ")}\n`);
+  } catch (e) {
+    process.stderr.write(`[pai-daemon] Cockpit job recovery failed: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 
   // Restart onto a new build when dist changes under us.
   startDistWatch();
