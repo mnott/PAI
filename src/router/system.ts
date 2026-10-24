@@ -26,7 +26,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { paiHomePath } from "../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { bucketStart, WINDOWS, type CockpitWindow } from "./cockpit.js";
-import { batteryCockpitLine } from "../daemon/battery-guard.js";
+import { batteryCockpitLine, readTelemetryLines, summarizeTelemetry, telemetryFile, type TelemetryLine } from "../daemon/battery-guard.js";
 
 export const systemRingFile = (): string => paiHomePath("logs", "router-system.jsonl");
 const MIN = 60_000;
@@ -187,6 +187,11 @@ export interface SystemBucket {
   cpuW?: number;
   aneW?: number;
   memPct?: number;
+  /** battery guard telemetry (W): charger delivery, charger limit, signed battery power, discharge as a positive number */
+  powerInW?: number;
+  adapterW?: number;
+  batteryW?: number;
+  drainW?: number;
 }
 
 export interface SystemSeries {
@@ -216,7 +221,7 @@ const AVG_KEYS = ["cpu", "gpu", "ane", "socTemp", "totalW", "systemW", "gpuW", "
  * Bucket 1-min samples into the cockpit windows' buckets — the same from/bucket
  * math as buildCockpitData, so the power chart lines up with the token chart.
  */
-export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, now: number): SystemSeries {
+export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, now: number, telemetry: TelemetryLine[] = []): SystemSeries {
   const { span, bucket } = WINDOWS[win];
   const from = bucketStart(now - span, bucket);
   const series: SystemBucket[] = [];
@@ -259,7 +264,23 @@ export function buildSystemSeries(samples: SystemSample[], win: SystemWindow, no
     }
   }
 
+  const tAcc = series.map(() => new Map<string, { s: number; n: number }>());
+  const TEL_KEYS = [["powerInW", "systemPowerInW"], ["adapterW", "adapterWatts"], ["batteryW", "batteryW"]] as const;
+  for (const l of telemetry) {
+    const b = Math.floor((bucketStart(l.at, bucket) - from) / bucket);
+    if (b < 0 || b >= series.length) continue;
+    for (const [k, src] of TEL_KEYS) {
+      const v = l[src];
+      if (typeof v !== "number" || !Number.isFinite(v)) continue;
+      const a = tAcc[b]!.get(k) ?? { s: 0, n: 0 };
+      a.s += v;
+      a.n++;
+      tAcc[b]!.set(k, a);
+    }
+  }
   series.forEach((b, i) => {
+    for (const [k, a] of tAcc[i]!) (b as unknown as Record<string, number>)[k] = a.s / a.n;
+    if (b.batteryW !== undefined) b.drainW = Math.max(0, -b.batteryW);
     const acc = sums[i]!;
     for (const [k, a] of acc) {
       const avg = a.n ? a.s / a.n : undefined;
@@ -287,10 +308,43 @@ export interface SystemSnapshot {
    * (non-macOS, or the daemon's guard is off).
    */
   battery: string;
+  /** Latest battery guard telemetry line; absent with no telemetry file (desktop Mac, guard never ran). */
+  power?: PowerReading;
+}
+
+export interface PowerReading {
+  adapterW: number | null;
+  powerInW: number | null;
+  loadW: number | null;
+  /** negative while discharging */
+  batteryW: number | null;
+  pct: number | null;
+  source: string | null;
+  drainPctPerMin: number | null;
+  ageS: number;
+}
+
+/** The newest telemetry line as the feed's `power` object; undefined without a readable line. */
+export function powerReading(now: number, path: string): PowerReading | undefined {
+  const t = summarizeTelemetry(0, now, path);
+  if (!t) return undefined;
+  const l = t.latest;
+  return {
+    adapterW: l.adapterWatts ?? null,
+    powerInW: l.systemPowerInW ?? null,
+    loadW: l.systemLoadW ?? null,
+    batteryW: l.batteryW ?? null,
+    pct: l.pct ?? null,
+    source: l.source ?? null,
+    drainPctPerMin: l.drainPctPerMin ?? null,
+    ageS: t.ageS,
+  };
 }
 
 export interface SystemDeps {
   file?: string;
+  /** battery guard telemetry jsonl (tests); default the guard's own file */
+  telemetryFile?: string;
   /** minimum distance between direct-source polls (the page asks every 5 s) */
   ttlMs?: number;
   /** ring cadence; the mactop probe rides it */
@@ -321,6 +375,7 @@ function sh(cmd: string, args: string[], timeoutMs = CMD_TIMEOUT): Promise<strin
  */
 export class SystemMonitor {
   private readonly file: string;
+  private readonly telemetryPath: string;
   private readonly ttlMs: number;
   private readonly ringMs: number;
   private readonly keepMs: number;
@@ -343,6 +398,7 @@ export class SystemMonitor {
 
   constructor(deps: SystemDeps = {}) {
     this.file = deps.file ?? systemRingFile();
+    this.telemetryPath = deps.telemetryFile ?? telemetryFile();
     this.ttlMs = deps.ttlMs ?? 5_000;
     this.ringMs = deps.ringMs ?? MIN;
     this.keepMs = deps.keepMs ?? 7 * DAY;
@@ -529,15 +585,18 @@ export class SystemMonitor {
     const hasMetric = sample && Object.entries(sample).some(([k, v]) => k !== "t" && typeof v === "number");
     if (!hasMetric) unavailable.all = why || sample?.notes?.join("; ") || "no system source available";
     const slowAge = this.slow ? now - this.slowAt : undefined;
+    const tfile = this.telemetryPath;
+    const power = powerReading(now, tfile);
     return {
       now,
       window: win,
       bucketMs: WINDOWS[win].bucket,
       current: hasMetric ? sample : null,
       unavailable,
-      series: buildSystemSeries(this.samples(), win, now),
+      series: buildSystemSeries(this.samples(), win, now, readTelemetryLines(tfile) ?? []),
       ...(slowAge !== undefined && slowAge <= this.staleMs ? { slowAgeS: Math.round(slowAge / 1000) } : {}),
       battery: batteryCockpitLine(now),
+      ...(power ? { power } : {}),
     };
   }
 }

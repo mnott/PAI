@@ -2,7 +2,7 @@
  *  Page-scope ES5 (runs after scriptCore/scriptCharts helpers exist at call time: fmt, esc, gb, gbm, metricSpark,
  *  trimEmpty, fmtAxis, padFor, labelStep, label) and needs `Win` + `WinT`. Feed `system` (/cockpit/system);
  *  the server cards also read the `data` feed (speed table) and the page's `lim`/`data` globals.
- *  Cards: group `system` > groups `sys-metrics` (14 `metric` cards `system.<name>`), `sys-power` (chart card
+ *  Cards: group `system` > groups `sys-metrics` (14 + 6 `metric` cards `system.<name>`), `sys-power` (chart card
  *  `system.power-chart`), `sys-servers` (the note card `system.srv:none`, shown while no server is up, plus
  *  dynamic: four `metric` cards `system.srv:<provider>/<rss|e2e|decode|prefix>` per up server, added by data
  *  through Win.addCards). The `metric` type itself is registered in cards-kpis;
@@ -53,6 +53,33 @@ var SYSM={
  "power":["power","totalW",sysW1,"W",function(c,d){return"SoC total"+sysTag(d)},"totalW"]
 };
 var SYS_NAMES=["memory","swap","wired","compressed","cpu-load","gpu-load","ane-load","soc-temp","cpu-w","gpu-w","ane-w","system-w","power","energy"];
+/** Extra read-only cards; battery/charger/power-in sit in sys-power, the rest are minimized in sys-metrics (restore one to show it). name -> [title, info]. */
+var SYS_EXTRA=[["battery","battery","Battery charge, on AC or battery; the drain rate shows while discharging. Source: the battery guard's telemetry."],
+ ["charger","charger","What the connected charger can supply (W), from the adapter details."],
+ ["power-in","power in","Power delivered to the machine by the charger (SystemPowerIn, W)."],
+ ["battery-w","battery W","Battery power in W: positive = charging, negative = discharging."],
+ ["gpu-freq","GPU frequency","Current GPU clock in MHz (mactop probe)."],
+ ["mem-pressure","memory pressure","normal / warn / critical, from the free-memory level (kern.memorystatus_level: 40% or more free = normal, 20-39 = warn, below 20 = critical)."]];
+var SYS_DEFAULT_EXTRA=["battery","charger","power-in"];
+/** name -> telemetry key of the series (bucketed) for the power cards. */
+var SYSP_SERIES={"battery":null,"charger":"adapterW","power-in":"powerInW","battery-w":"batteryW"};
+/** One power/pressure card from the feed's power object or current sample; "no reading" when absent. */
+function sysExtraView(d,name){
+ var p=d.power,c=d.current||{},none=function(sub){return sysMetric("–","",sub||"no reading",sysSeries(d,"x:"+name,SYSP_SERIES[name],null))},age;
+ if(name==="gpu-freq"){var f=c.gpuFreqMhz;return f==null?none():sysMetric(String(Math.round(f)),"MHz","mactop"+sysTag(d),sysSeries(d,"gpuFreq",null,f))}
+ if(name==="mem-pressure"){var l=c.pressureLevel;return l==null?none():sysMetric(l>=40?"normal":l>=20?"warn":"critical","","free "+Math.round(l)+"%",sysSeries(d,"pressureLevel",null,l))}
+ if(!p)return none();
+ age=p.ageS>90?" · "+(p.ageS<3600?Math.round(p.ageS/60)+" min":Math.round(p.ageS/3600)+" h")+" old":"";
+ if(name==="battery"){
+  if(p.pct==null)return none();
+  var dr=p.batteryW!=null&&p.batteryW<0,sub=(dr?"on battery":"on AC")+(dr&&p.drainPctPerMin!=null?" · "+Math.abs(p.drainPctPerMin).toFixed(2)+" %/min":"")+age;
+  return sysMetric(String(Math.round(p.pct)),"%",sub,sysSeries(d,"battery",null,p.pct));
+ }
+ var v=name==="charger"?p.adapterW:name==="power-in"?p.powerInW:p.batteryW;
+ if(v==null)return none(name==="charger"?"no adapter":null);
+ var sub=name==="charger"?"adapter limit":name==="power-in"?"from the charger":(v<0?"discharging":v>0?"charging":"idle");
+ return sysMetric(name==="charger"?String(Math.round(v)):sysW1(v),"W",sub+age,sysSeries(d,"p:"+name,SYSP_SERIES[name],v));
+}
 var SYS_ZERO=["ane-load","cpu-w","gpu-w","ane-w"];
 /** One metric card's data: value, unit, sub line, sparkline. */
 function sysMetric(v,unit,sub,data){
@@ -66,7 +93,8 @@ function sysMetricView(d,ctx){
   var wh=(d.series&&d.series.wh&&d.series.wh[win])||0,cov=(d.series&&d.series.coveredMin&&d.series.coveredMin[win])||0;
   return Object.assign({title:"energy "+win},sysMetric(String(wh),"Wh",cov+" min of 1-min samples",sysSeries(d,"wh"+win,null,wh)));
  }
- var m=SYSM[name];if(!m)return null;
+ if(!SYSM[name]){for(var xi=0;xi<SYS_EXTRA.length;xi++)if(SYS_EXTRA[xi][0]===name)return sysExtraView(d,name);return null}
+ var m=SYSM[name];
  var tip=(d.unavailable&&d.unavailable.all)?d.unavailable.all:((c.notes||[]).join("; ")||("source: "+(c.source||"none")));
  if(m[6]&&sysUnused(d,m[5]))return sysMetric("0",m[3],"0 in this window",sysSeries(d,m[1],m[5],0));
  var r=sysRead(c,m[1]);
@@ -106,7 +134,7 @@ function sysChartSvg(d,w,h){
  keys.forEach(function(k){
   var scale=k[3]?100:leftMax,dd="",pen=false;
   rows.forEach(function(s,i){var v=s[k[0]];if(v==null){pen=false;return}dd+=(pen?"L":"M")+(padL+i*bw+bw/2).toFixed(1)+' '+(padT+H-(v/scale)*H).toFixed(1);pen=true});
-  if(dd)svg+='<path d="'+dd+'" fill="none" stroke="'+k[2]+'" stroke-width="1.5"/>';
+  if(dd)svg+='<path d="'+dd+'" fill="none" stroke="'+k[2]+'" stroke-width="1.5"'+(k[4]?' stroke-dasharray="5 3"':'')+'/>';
  });
  var step=labelStep(bw);
  rows.forEach(function(s,i){if(i%step===0)svg+='<text x="'+(padL+i*bw+bw/2)+'" y="'+(h-4)+'" text-anchor="middle">'+esc(labels[i])+'</text>'});
@@ -143,23 +171,29 @@ function sysServerSync(d){
 /** The system feed: the static cards, then the dynamic server cards. */
 function winFeedSystem(j){Win.update("system",j);sysServerSync(j)}
 function sysDefaults(){
+ var pw=[];
  var cards=[{id:"system",type:"group",title:"System — memory, load, temperature, power",info:SYS_INFO},
   {id:"sys-metrics",type:"group",title:"Memory, load, temperature, power"},
   {id:"sys-power",type:"group",title:"Power and load"},
   {id:"sys-servers",type:"group",title:"Local model servers"},
-  {id:"system.srv:none",type:"note",title:"Local model servers",feeds:["system"],view:sysSrvNoneView,hidden:true}],st={},i,r1=[],r2=[],r3=[];
+  {id:"system.srv:none",type:"note",title:"Local model servers",feeds:["system"],view:sysSrvNoneView,hidden:true}],st={},i,r1=[],r2=[],r3=[],r4=[];
  for(i=0;i<SYS_NAMES.length;i++){
   var id="system."+SYS_NAMES[i],t=SYS_NAMES[i]==="energy"?"energy":SYSM[SYS_NAMES[i]][0];
   cards.push({id:id,type:"metric",title:t,feeds:["system"],view:sysMetricView});
   (i<5?r1:i<10?r2:r3).push(WinT.leaf(id));
   if(SYS_ZERO.indexOf(SYS_NAMES[i])>=0)st[id]={min:1};
  }
- cards.push({id:"system.power-chart",type:"chart",title:"Power and GPU/CPU load",info:"Same buckets as the window selected above. W on the left axis, load % on the fixed 0-100 right axis.",feeds:["system"]});
+ SYS_EXTRA.forEach(function(x){
+  var id="system."+x[0],on=SYS_DEFAULT_EXTRA.indexOf(x[0])>=0;
+  cards.push({id:id,type:"metric",title:x[1],info:x[2],feeds:["system"],view:sysMetricView});
+  if(on)pw.push(WinT.leaf(id));else{r4.push(WinT.leaf(id));st[id]={min:1}}
+ });
+ cards.push({id:"system.power-chart",type:"chart",title:"Power and GPU/CPU load",info:"Same buckets as the window selected above. W on the left axis, load % on the fixed 0-100 right axis. power in = what the charger delivers to the machine; charger limit (dashed) = what the adapter can supply; battery discharge = battery power drawn while discharging (the axis starts at 0, so charging is not drawn; see the battery W card for the signed value).",feeds:["system"]});
  var eq=function(n){var a=[],k;for(k=0;k<n;k++)a.push(1/n);return a};
  return{tree:WinT.leaf("system"),stDefaults:st,cards:cards,kids:{
   "system":WinT.split("c",[WinT.leaf("sys-metrics"),WinT.leaf("sys-power")],[0.6,0.4]),
-  "sys-metrics":WinT.split("c",[WinT.split("r",r1,eq(5)),WinT.split("r",r2,eq(5)),WinT.split("r",r3,eq(4))],[1/3,1/3,1/3]),
-  "sys-power":WinT.leaf("system.power-chart"),
+  "sys-metrics":WinT.split("c",[WinT.split("r",r1,eq(5)),WinT.split("r",r2,eq(5)),WinT.split("r",r3,eq(4)),WinT.split("r",r4,eq(r4.length))],[0.25,0.25,0.25,0.25]),
+  "sys-power":pw.length?WinT.split("c",[WinT.split("r",pw,eq(pw.length)),WinT.leaf("system.power-chart")],[0.3,0.7]):WinT.leaf("system.power-chart"),
   "sys-servers":WinT.leaf("system.srv:none")}};
 }
 `;

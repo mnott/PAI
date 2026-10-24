@@ -297,6 +297,27 @@ describe("SystemMonitor", () => {
     rmSync(d, { recursive: true, force: true });
   });
 
+  it("snapshot carries the battery guard's power telemetry, and omits it without a file", async () => {
+    const d = dir();
+    const t0 = 1_800_000_000_000;
+    const tel = join(d, "battery-telemetry.jsonl");
+    const mk = (file?: string) => new SystemMonitor({ file: join(d, "ring.jsonl"), telemetryFile: file, run: runner(true).run, now: () => t0 });
+    const none = await mk(join(d, "missing.jsonl")).snapshot("1h");
+    expect(none.power).toBeUndefined();
+    expect(none.series.series.every((b) => b.powerInW === undefined)).toBe(true);
+
+    const line = (at: number, extra: object) => JSON.stringify({ at, adapterWatts: 100, systemPowerInW: 60, systemLoadW: 65, batteryW: -5, pct: 80, ...extra });
+    writeFileSync(tel, [line(t0 - 10 * MIN, {}), line(t0 - 30_000, { source: "ioreg", drainPctPerMin: -0.5 }), "not json"].join("\n") + "\n");
+    const snap = await mk(tel).snapshot("1h");
+    expect(snap.power).toEqual({ adapterW: 100, powerInW: 60, loadW: 65, batteryW: -5, pct: 80, source: "ioreg", drainPctPerMin: -0.5, ageS: 30 });
+    const last = snap.series.series.filter((b) => b.powerInW !== undefined).at(-1)!;
+    expect(last.powerInW).toBe(60);
+    expect(last.adapterW).toBe(100);
+    expect(last.batteryW).toBe(-5);
+    expect(last.drainW).toBe(5);
+    rmSync(d, { recursive: true, force: true });
+  });
+
   it("prunes the ring to the retention window on append", async () => {
     const d = dir();
     const file = join(d, "ring.jsonl");
