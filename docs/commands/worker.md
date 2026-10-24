@@ -62,7 +62,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | `--cwd DIR` | string | — | Directory the worker runs in (default: here) |
 | `--mcp NAMES` | string | — | MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`) |
 | `--no-pane` | flag | — | Ignored: every start needs a visible pane |
-| `--priority high|normal|low` | string | — | Queue admission priority when the provider is full (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker |
+| `--priority high|normal|low` | string | — | Priority when the provider is full or its local engine is shared (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker; change it live with `pai worker priority <id> <level>` |
 | `--no-queue` | flag | — | Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent) |
 | `--no-stagger` | flag | — | Do not wait for an earlier run on the same provider to warm its prompt cache |
 | `--worktree` | flag | — | Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo) |
@@ -90,18 +90,19 @@ See also: `pai worker ps`, `pai worker follow`, `pai worker merge`, `pai worker 
 
 ### pai worker resume
 
-Continue a finished worker with a new instruction
+Continue a finished worker with a new instruction, or release a paused one
 
 ```
-pai worker resume ID TEXT [options]
+pai worker resume ID [TEXT] [options]
 ```
 
-Starts a new worker on the same provider and model that picks up the conversation of a finished one (claude --resume).
+With TEXT: starts a new worker on the same provider and model that picks up the conversation of a finished one (claude --resume).
+Without TEXT: releases a worker paused with `pai worker pause`; its parked engine request goes on.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ID` | yes | Id of the finished worker (see `pai worker ps`) |
-| `TEXT` | yes | What the worker should do next |
+| `TEXT` | no | What the worker should do next (omit to release a paused worker) |
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -110,6 +111,7 @@ Starts a new worker on the same provider and model that picks up the conversatio
 | `--label TEXT` | string | — | Short task label (default: the old label with a return arrow) |
 
 ```sh
+pai worker resume w-20260101-abc
 pai worker resume w-20260101-abc 'Also add a test'
 pai worker resume w-20260101-abc 'Continue' --print-id
 ```
@@ -378,6 +380,26 @@ pai worker goal w-20260101-abc 'review the export tests'
 ```
 
 See also: `pai worker say`, `pai worker ps`
+
+### pai worker pause
+
+Park a worker's next engine request until resume
+
+```
+pai worker pause ID
+```
+
+The worker's next request to the local engine waits in the router until `pai worker resume <id>`; the request in flight finishes. Nothing is killed, the worker simply stops taking engine time. ps shows it as paused.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Worker id (see `pai worker ps`) |
+
+```sh
+pai worker pause w-20260101-abc
+```
+
+See also: `pai worker resume`, `pai worker priority`
 
 ### pai worker handoff
 
@@ -1379,21 +1401,28 @@ See also: `pai worker local`, `pai worker providers`
 
 ### pai worker priority
 
-Queue priority per session: list, set, clear
+Priority of a worker at the local engine, and of a session in the queue
 
 ```
-pai worker priority [command]
+pai worker priority [ID] [LEVEL] [command]
 ```
 
-workers.yaml `workers.priority.sessions`: the queue priority of every run a named session starts, without editing workers.yaml by hand. When a provider is full, queued runs are admitted high before normal before low; running workers are never preempted. Without a subcommand, lists the entries.
+`pai worker priority <id> <level>` changes a running worker's priority live (high, normal, low): at a serial local engine the router admits high before normal before low, FIFO inside a level, and reads the level at every request, so the change applies to the next one. Nothing running is interrupted.
+`list|set|clear` edit workers.yaml `workers.priority.sessions`: the queue priority of every run a named session starts. When a provider is full, queued runs are admitted high before normal before low; running workers are never preempted. Without arguments, lists the session entries.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | no | Worker id (see `pai worker ps`) |
+| `LEVEL` | no | high, normal or low |
 
 ```sh
+pai worker priority w-20260101-abc low
 pai worker priority
 pai worker priority set Jobs high
 pai worker priority clear Jobs
 ```
 
-See also: `pai worker queue`, `pai worker run`
+See also: `pai worker pause`, `pai worker queue`, `pai worker run`
 
 #### pai worker priority list
 
@@ -1728,7 +1757,7 @@ See also: `pai worker providers`
 | Command | Description |
 |---|---|
 | `pai worker run` | Run one task on a worker (another provider or model) |
-| `pai worker resume` | Continue a finished worker with a new instruction |
+| `pai worker resume` | Continue a finished worker with a new instruction, or release a paused one |
 | `pai worker ps` | List this session's workers, running and finished |
 | `pai worker usage` | Token totals per provider and model for a set of workers |
 | `pai worker follow` | Watch a worker live, or all running workers |
@@ -1740,6 +1769,7 @@ See also: `pai worker providers`
 | `pai worker status-line` | One-line worker summary for a status bar |
 | `pai worker say` | Send a message to a running worker |
 | `pai worker goal` | Leave a goal note on a running worker |
+| `pai worker pause` | Park a worker's next engine request until resume |
 | `pai worker handoff` | From inside a worker: pass a question or result to its parent |
 | `pai worker help` | From inside a worker: ask a stronger model to do one sub-task (budgeted) |
 | `pai worker merge` | Merge a worker's branch into your checkout |
@@ -1761,7 +1791,7 @@ See also: `pai worker providers`
 | `pai worker roles` | Old name of `classes` |
 | `pai worker config` | The workers.yaml file itself: path, init, migrate, check, inline-keys, normalize-paths |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
-| `pai worker priority` | Queue priority per session: list, set, clear |
+| `pai worker priority` | Priority of a worker at the local engine, and of a session in the queue |
 | `pai worker route` | Print the routing table: per delegation tier the ordered models |
 | `pai worker local` | Which local models run; the operator starts and stops them |
 | `pai worker fallback` | Run every new Claude Code process on a worker provider |

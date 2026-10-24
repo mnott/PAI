@@ -34,6 +34,8 @@ export interface SchedConfig {
   warmMs: number;
   /** Queued-stream ping interval (ms); PAI_ROUTER_PING_MS shortens it for tests. */
   pingMs: number;
+  /** A low-priority request waiting longer than this gets one turn although higher ones wait (seconds). */
+  lowAgingSec: number;
 }
 
 /**
@@ -42,7 +44,7 @@ export interface SchedConfig {
  * (src/config/defaults/config.yaml, `router.scheduling`) and reach the
  * scheduler through `loadConfig().router.scheduling` → `schedConfigFrom`.
  */
-export const DEFAULT_SCHED: SchedConfig = { enabled: true, wTokIn: 1, wTokOut: 2, agingSec: 120, sessionWeights: {}, warmMs: 300_000, pingMs: 15_000 };
+export const DEFAULT_SCHED: SchedConfig = { enabled: true, wTokIn: 1, wTokOut: 2, agingSec: 120, sessionWeights: {}, warmMs: 300_000, pingMs: 15_000, lowAgingSec: 900 };
 
 export const SCHED_FILE = "router-sched.json";
 
@@ -52,7 +54,7 @@ export function schedConfigFrom(raw: unknown): SchedConfig {
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
   if (typeof r.enabled === "boolean") out.enabled = r.enabled;
-  for (const k of ["wTokIn", "wTokOut", "agingSec", "warmMs", "pingMs"] as const) {
+  for (const k of ["wTokIn", "wTokOut", "agingSec", "warmMs", "pingMs", "lowAgingSec"] as const) {
     const v = r[k];
     if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
   }
@@ -85,8 +87,15 @@ export interface ReleaseOpts {
 /** Runs while the engine is still held after a gate-bound response; the engine frees when it settles. */
 export type IdleHook = (engine: string, worker: string, waiting: number) => Promise<void>;
 
+/** A worker's current engine controls (priority, pause): read at every admission decision. */
+export type ControlSource = (worker: string, hint?: Priority) => { priority: Priority; paused: boolean };
+export type Priority = "high" | "normal" | "low";
+const LEVELS: readonly Priority[] = ["high", "normal", "low"];
+
 interface Waiter {
   seq: number;
+  /** priority the request announced (x-pai-priority); the control source outranks it */
+  hint?: Priority;
   session: string;
   worker: string;
   at: number;
@@ -105,6 +114,8 @@ interface Engine {
   /** worker whose conversation the engine holds (its last response) */
   lastWorker?: string;
   waiting: Waiter[];
+  /** epoch ms a low-priority request was last admitted (the anti-starvation turn counts from it) */
+  lastLowAt?: number;
 }
 
 export interface WorkerAcct {
@@ -120,6 +131,9 @@ export interface WorkerAcct {
   lastEnd: number;
   session: string;
   engine: string;
+  /** controls as of the last snapshot */
+  priority?: Priority;
+  paused?: boolean;
 }
 
 export interface SchedSnapshot {
@@ -137,6 +151,9 @@ export class RequestScheduler {
   onChange?: () => void;
   /** parking: see parking.ts */
   idleHook?: IdleHook;
+  /** per-worker priority and pause; absent = everyone normal, nobody paused */
+  control?: ControlSource;
+  private recheck?: NodeJS.Timeout;
 
   constructor(private cfg: () => SchedConfig = () => DEFAULT_SCHED, private now: () => number = Date.now) {}
 
@@ -179,7 +196,7 @@ export class RequestScheduler {
   }
 
   /** Wait for the engine. Resolves with a ticket; rejects only when cancelled. */
-  acquire(engineName: string, session: string, worker: string, signal?: { onAbort(cb: () => void): void }): Promise<Ticket> {
+  acquire(engineName: string, session: string, worker: string, signal?: { onAbort(cb: () => void): void }, hint?: Priority): Promise<Ticket> {
     const eng = this.engine(engineName);
     const now = this.now();
     const ctr = this.ctr(engineName);
@@ -193,7 +210,7 @@ export class RequestScheduler {
     } else if (!ctr.has(session)) ctr.set(session, 0);
     const acct = this.acct(worker, session, engineName);
     return new Promise<Ticket>((resolve, reject) => {
-      const w: Waiter = { seq: ++this.seq, session, worker, at: now, grant: resolve, fail: reject };
+      const w: Waiter = { seq: ++this.seq, hint, session, worker, at: now, grant: resolve, fail: reject };
       eng.waiting.push(w);
       if (!acct.waitingSince) acct.waitingSince = now;
       signal?.onAbort(() => {
@@ -216,29 +233,48 @@ export class RequestScheduler {
     a.waitingSince = oldest;
   }
 
-  /** The next waiter by the policy above; exported through dispatch only. */
+  private ctl(w: Waiter): { priority: Priority; paused: boolean } {
+    try {
+      return this.control?.(w.worker, w.hint) ?? { priority: w.hint ?? "normal", paused: false };
+    } catch {
+      return { priority: w.hint ?? "normal", paused: false };
+    }
+  }
+
+  /**
+   * The next waiter. Paused workers' requests are not eligible. Of the rest:
+   * a low request waiting longer than lowAgingSec goes (once per that span),
+   * else the highest priority level present is served, and inside it the
+   * session-fair policy above (FIFO inside a session).
+   */
   private pick(engineName: string): Waiter | undefined {
     const eng = this.engine(engineName);
-    if (!eng.waiting.length) return undefined;
     const cfg = this.cfg();
     const now = this.now();
-    const aged = eng.waiting.filter((w) => now - w.at > cfg.agingSec * 1000);
+    const cl = new Map(eng.waiting.map((w) => [w, this.ctl(w)] as const));
+    const elig = eng.waiting.filter((w) => !cl.get(w)!.paused);
+    if (!elig.length) return undefined;
+    const starved = elig.filter((w) => cl.get(w)!.priority === "low" && now - Math.max(w.at, eng.lastLowAt ?? 0) > cfg.lowAgingSec * 1000);
+    if (starved.length) return starved.reduce((a, b) => (a.at <= b.at ? a : b));
+    const level = LEVELS.find((l) => elig.some((w) => cl.get(w)!.priority === l))!;
+    const cand = elig.filter((w) => cl.get(w)!.priority === level);
+    const aged = cand.filter((w) => now - w.at > cfg.agingSec * 1000);
     if (aged.length) return aged.reduce((a, b) => (a.at <= b.at ? a : b));
     const ctr = this.ctr(engineName);
-    const sessions = new Set(eng.waiting.map((w) => w.session));
+    const sessions = new Set(cand.map((w) => w.session));
     let best: string | undefined;
     let bestC = Infinity;
     let bestAt = Infinity;
     for (const s of sessions) {
       const c = ctr.get(s) ?? 0;
-      const at = minOf(eng.waiting.filter((w) => w.session === s).map((w) => w.at));
+      const at = minOf(cand.filter((w) => w.session === s).map((w) => w.at));
       if (c < bestC || (c === bestC && at < bestAt)) {
         best = s;
         bestC = c;
         bestAt = at;
       }
     }
-    const mine = eng.waiting.filter((w) => w.session === best).sort((a, b) => a.seq - b.seq);
+    const mine = cand.filter((w) => w.session === best).sort((a, b) => a.seq - b.seq);
     return mine.find((w) => this.isWarm(w.worker)) ?? mine[0];
   }
 
@@ -249,6 +285,7 @@ export class RequestScheduler {
       if (!w) break;
       eng.waiting.splice(eng.waiting.indexOf(w), 1);
       const start = this.now();
+      if (this.ctl(w).priority === "low") eng.lastLowAt = start;
       const waitedMs = start - w.at;
       eng.inflight = { session: w.session, worker: w.worker, since: start };
       const a = this.acct(w.worker, w.session, engineName);
@@ -295,6 +332,14 @@ export class RequestScheduler {
         },
       });
     }
+    // a parked (paused) worker is released by a status-file change, which nothing signals: look again shortly
+    if (!this.recheck && eng.waiting.some((w) => this.ctl(w).paused)) {
+      this.recheck = setTimeout(() => {
+        this.recheck = undefined;
+        this.dispatch(engineName);
+      }, 1000);
+      this.recheck.unref();
+    }
     this.changed();
   }
 
@@ -318,7 +363,13 @@ export class RequestScheduler {
         counters: Object.fromEntries([...(this.counters.get(name) ?? [])].map(([k, v]) => [k, Math.round(v)])),
       };
     }
-    return { at: now, engines, workers: Object.fromEntries(this.workers) };
+    const workers: Record<string, WorkerAcct> = {};
+    for (const [id, a] of this.workers) {
+      const w = [...this.engines.values()].flatMap((e) => e.waiting).find((x) => x.worker === id);
+      const c = w ? this.ctl(w) : this.control?.(id);
+      workers[id] = c ? { ...a, priority: c.priority, paused: c.paused } : { ...a };
+    }
+    return { at: now, engines, workers };
   }
 }
 

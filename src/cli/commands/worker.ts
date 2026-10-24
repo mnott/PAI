@@ -22,6 +22,7 @@ import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } fro
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
 import { checkPaneForWorker, closeEndedPanes, openFollowPane, paneMayClose, openPaneForWorker, resolveHostSession, workerEnded } from "../../workers/pane.js";
 import { renderUsage, usageJson, parseWhen, workerUsage } from "../../workers/usage.js";
+import { setWorkerPaused } from "../../workers/engine-control.js";
 import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status.js";
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
@@ -277,7 +278,7 @@ const runCommand: CommandDef = {
     { name: "cwd", type: "string", value: "DIR", summary: "Directory the worker runs in (default: here)" },
     { name: "mcp", type: "string", value: "NAMES", summary: "MCP servers or sets this worker may use, comma-separated (see `pai worker mcp`)" },
     { name: "no-pane", type: "boolean", summary: "Ignored: every start needs a visible pane" },
-    { name: "priority", type: "string", value: "high|normal|low", summary: "Queue admission priority when the provider is full (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker" },
+    { name: "priority", type: "string", value: "high|normal|low", summary: "Priority when the provider is full or its local engine is shared (default: the session's workers.priority.sessions entry, else normal); never preempts a running worker; change it live with `pai worker priority <id> <level>`" },
     { name: "no-queue", type: "boolean", summary: "Do not queue behind the provider's concurrent-run cap (workers.yaml maxConcurrent)" },
     { name: "no-stagger", type: "boolean", summary: "Do not wait for an earlier run on the same provider to warm its prompt cache" },
     { name: "worktree", type: "boolean", summary: "Work in a git worktree on branch worker/ID (default for implement and complex work in a git repo)" },
@@ -312,24 +313,30 @@ const runCommand: CommandDef = {
 
 const resumeCommand: CommandDef = {
   name: "resume",
-  summary: "Continue a finished worker with a new instruction",
-  description: "Starts a new worker on the same provider and model that picks up the conversation of a finished one (claude --resume).",
+  summary: "Continue a finished worker with a new instruction, or release a paused one",
+  description:
+    "With TEXT: starts a new worker on the same provider and model that picks up the conversation of a finished one (claude --resume).\n" +
+    "Without TEXT: releases a worker paused with `pai worker pause`; its parked engine request goes on.",
   args: [
     { name: "ID", required: true, summary: "Id of the finished worker (see `pai worker ps`)" },
-    { name: "TEXT", required: true, summary: "What the worker should do next" },
+    { name: "TEXT", summary: "What the worker should do next (omit to release a paused worker)" },
   ],
   options: [
     { name: "print-id", type: "boolean", summary: "Print the new worker id on its own line" },
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
   ],
-  examples: ["pai worker resume w-20260101-abc 'Also add a test'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
+  examples: ["pai worker resume w-20260101-abc","pai worker resume w-20260101-abc 'Also add a test'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
   seeAlso: ["pai worker ps", "pai worker run"],
   run: (ctx) =>
     guard("pai worker ps   (lists worker ids)", async () => {
       const id = ctx.args.ID as string;
-      const text = ctx.args.TEXT as string;
+      const text = ctx.args.TEXT as string | undefined;
       const dir = logDir();
+      if (text === undefined) {
+        out(setWorkerPaused(dir, id, false) ? `${id}: resumed` : `${id}: was not paused`);
+        return;
+      }
       const old = loadStatus(dir, id);
       if (!old) throw new Error(`no worker named "${id}"`);
       if (!old.claudeSession) {
@@ -641,6 +648,21 @@ const sayCommand: CommandDef = {
       if (goal !== undefined) setWorkerNote(dir, ctx.args.ID as string, goal);
       await sayToWorker(dir, ctx.args.ID as string, ctx.args.TEXT as string);
       out("ok");
+    }),
+};
+
+const pauseCommand: CommandDef = {
+  name: "pause",
+  summary: "Park a worker's next engine request until resume",
+  description:
+    "The worker's next request to the local engine waits in the router until `pai worker resume <id>`; the request in flight finishes. Nothing is killed, the worker simply stops taking engine time. ps shows it as paused.",
+  args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
+  examples: ["pai worker pause w-20260101-abc"],
+  seeAlso: ["pai worker resume", "pai worker priority"],
+  run: (ctx) =>
+    guard("pai worker ps", () => {
+      const id = ctx.args.ID as string;
+      out(setWorkerPaused(logDir(), id, true) ? `${id}: paused (its next engine request parks until resume)` : `${id}: already paused`);
     }),
 };
 
@@ -1246,6 +1268,7 @@ export const workerCommand: CommandDef = {
     statusLineCommand,
     sayCommand,
     goalCommand,
+    pauseCommand,
     handoffCommand,
     helpCommand,
     mergeCommand,

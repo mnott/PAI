@@ -351,6 +351,10 @@ router:
     warmMs: 300000
     # Queued-stream ping interval of the router (milliseconds).
     pingMs: 15000
+    # Worker priority at a serial engine: high is admitted before normal before
+    # low. A low request waiting longer than this (seconds) gets one turn
+    # although higher ones wait; the span restarts after each low admission.
+    lowAgingSec: 900
   # Park an idle local conversation to disk while its worker waits on a long
   # build gate (src/router/parking.ts). Needs the engine started with
   # `--slot-save-path <PAI home>/state/strata-slots`.

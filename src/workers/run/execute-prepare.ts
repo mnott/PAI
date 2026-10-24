@@ -180,7 +180,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   env.PAI_WORKER_ID = wid;
   const scratch = applyScratchEnv(env, wid);
   // the router's fair queue shares a local engine between owning sessions
-  addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid });
+  addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid, priority: a.queuePriority });
   const noteToken = newNoteToken();
   env[NOTE_TOKEN_ENV] = noteToken;
   applySessionProviderEnv(env, target);

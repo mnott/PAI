@@ -27,6 +27,10 @@ export const workerRunShape = {
   cwd: z.string().optional().describe("Working directory (default: here)."),
   allowed_tools: z.string().optional().describe("Comma-separated tool allowlist passed to the worker."),
   no_pool: z.boolean().optional().describe("Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own allowed_tools, mcp) is refused."),
+  priority: z
+    .enum(["high", "normal", "low"])
+    .optional()
+    .describe("Priority when the provider is full or its local engine is shared (default normal). Change it live with worker_priority."),
   mcp: z.string().optional().describe("MCP servers/sets the worker may use (comma-separated)."),
 };
 

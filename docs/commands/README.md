@@ -431,10 +431,11 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker off` | Stop routing: Agent tool runs on Anthropic again |
 | `pai worker on` | Send Agent-tool subagents to workers |
 | `pai worker pane` | Open a window pane that follows a worker |
+| `pai worker pause` | Park a worker's next engine request until resume |
 | `pai worker pending` | Finished workers whose work is not merged yet |
 | `pai worker policy` | Where workers run: cloud, local, or a mix |
 | `pai worker pool` | Keep headless worker sessions warm between small runs |
-| `pai worker priority` | Queue priority per session: list, set, clear |
+| `pai worker priority` | Priority of a worker at the local engine, and of a session in the queue |
 | `pai worker priority clear` | Remove a session's queue priority (it goes back to normal) |
 | `pai worker priority list` | List the sessions with a queue priority |
 | `pai worker priority set` | Give a named session a queue priority (high, normal, low) |
@@ -452,7 +453,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker ps` | List this session's workers, running and finished |
 | `pai worker queue` | Show or reorder the workers waiting for a provider slot |
 | `pai worker replay` | Print the transcript of one worker |
-| `pai worker resume` | Continue a finished worker with a new instruction |
+| `pai worker resume` | Continue a finished worker with a new instruction, or release a paused one |
 | `pai worker roles` | Old name of `classes` |
 | `pai worker roles list` | List classes and where each one runs |
 | `pai worker roles set` | Send a class to a provider, or give it routing limits |

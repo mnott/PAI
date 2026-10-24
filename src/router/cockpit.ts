@@ -1146,7 +1146,7 @@ export interface QueueProvider {
   cap?: number;
   /** Engine conversation-cache slots, when configured (slots used = running.length). */
   conversationSlots?: number;
-  running: Array<{ id: string; label: string; ageSec: number; now?: string; session: string; model: string }>;
+  running: Array<{ id: string; label: string; ageSec: number; now?: string; session: string; model: string; priority?: string; paused?: boolean; engineWaitSec?: number }>;
   waiting: Array<{ id: string; label: string; waitedSec: number; position: number; session: string; model: string; priority?: string }>;
 }
 
@@ -1241,7 +1241,7 @@ export function cockpitQueue(
     if (max) sessionMax[sessionGroup(s)] = max;
   }
   for (const s of statuses) {
-    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model });
+    if (s.state === "running" && isLive(s, owns)) row(s.provider).running.push({ id: s.id, label: s.label, ageSec: waited(s), now: s.last ? s.last.slice(0, 80) : undefined, session: sessionGroup(s), model: s.model, priority: s.priority ?? "normal", ...(s.paused ? { paused: true } : {}) });
   }
   for (const r of queueRows(logDir, caps, undefined, statuses)) {
     const s = r.status;
@@ -1257,6 +1257,13 @@ export function cockpitQueue(
     });
   }
   const snap = readSchedFile(logDir, now);
+  // a worker whose request waits at the local engine: how long (router scheduler snapshot)
+  for (const p of byProvider.values()) {
+    for (const r of p.running) {
+      const since = snap?.workers[r.id]?.waitingSince;
+      if (since) r.engineWaitSec = Math.max(0, Math.floor((now - since) / 1000));
+    }
+  }
   // the scheduler line resolves through the display-name order: the agent-sessions
   // registry gives every session a project slug, and a session's own background-job
   // name beats that slug; a worker's own session name tops both

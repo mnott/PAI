@@ -216,7 +216,7 @@ describe("RequestScheduler", () => {
 
   it("parses config over the defaults", () => {
     expect(schedConfigFrom({ wTokOut: 3, enabled: false, sessionWeights: { a: 2, b: -1 }, agingSec: "x" })).toEqual({
-      enabled: false, wTokIn: 1, wTokOut: 3, agingSec: 120, sessionWeights: { a: 2 }, warmMs: 300_000, pingMs: 15_000,
+      enabled: false, wTokIn: 1, wTokOut: 3, agingSec: 120, sessionWeights: { a: 2 }, warmMs: 300_000, pingMs: 15_000, lowAgingSec: 900,
     });
   });
 });

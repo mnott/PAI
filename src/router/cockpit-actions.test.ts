@@ -109,6 +109,23 @@ describe("cockpit actions", () => {
     ).toBe(true);
   });
 
+  it("worker.priority / worker.pause / worker.resume write the worker's status and the ledger, and refuse bad input", async () => {
+    const tmp = newDir();
+    const { saveStatus, loadStatus } = await import("../workers/status.js");
+    saveStatus(tmp, { id: "w9", pid: process.pid, label: "x", cwd: "/", term: "", provider: "gyro-m", model: "m", state: "running", started: "2026-01-01 00:00:00", updated: "", turns: 0, tools: 0, last: "", rc: null, secs: null } as never);
+    const deps = testDeps(tmp, emptyCalls());
+    expect((await runCockpitAction({ action: "worker.priority", target: "w9", value: "low" }, deps)).ok).toBe(true);
+    expect((await runCockpitAction({ action: "worker.pause", target: "w9" }, deps)).message).toMatch(/paused/);
+    expect(loadStatus(tmp, "w9")).toMatchObject({ priority: "low", paused: true });
+    expect((await runCockpitAction({ action: "worker.resume", target: "w9" }, deps)).message).toMatch(/resumed/);
+    expect(loadStatus(tmp, "w9")!.paused).toBe(false);
+    expect((await runCockpitAction({ action: "worker.priority", target: "w9", value: "urgent" }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "worker.pause", target: "ghost" }, deps)).ok).toBe(false);
+    expect((await runCockpitAction({ action: "worker.pause" }, deps)).ok).toBe(false);
+    const events = parseLedger(readFileSync(join(tmp, "ledger.log"), "utf8")).map((l) => l.event);
+    expect(events).toEqual(expect.arrayContaining(["WORKER-PRIORITY", "WORKER-PAUSE", "WORKER-RESUME", "COCKPIT-ACTION"]));
+  });
+
   it("the cockpit routing section is read-only: there is no route action", async () => {
     const tmp = newDir();
     const r = await runCockpitAction({ action: "route", class: "implement", models: ["anthropic/opus"] }, testDeps(tmp, emptyCalls()));

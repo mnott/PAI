@@ -18,6 +18,8 @@
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { dirname } from "node:path";
+import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 import { readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
@@ -643,6 +645,24 @@ export async function runCockpitAction(
       }
       writeLedgerLine(deps, action, provider, "role=orchestrator: active → " + provider);
       return { ok: true, message: `orchestrator → ${provider}` };
+    } catch (e) {
+      return fail(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (action === "worker.priority" || action === "worker.pause" || action === "worker.resume") {
+    // engine priority / pause of a running worker (status file; the router reads it at the next request)
+    if (!target) return fail("target (worker id) required");
+    const dir = dirname(deps.ledger);
+    try {
+      if (action === "worker.priority") {
+        const level = parseEnginePriority(value);
+        const from = setWorkerPriority(dir, target, level, "cockpit");
+        writeLedgerLine(deps, action, target, `${from}->${level}`);
+        return { ok: true, message: `${target}: ${level} priority (next engine request)` };
+      }
+      const changed = setWorkerPaused(dir, target, action === "worker.pause", "cockpit");
+      writeLedgerLine(deps, action, target, changed ? "done" : "unchanged");
+      return { ok: true, message: `${target}: ${action === "worker.pause" ? (changed ? "paused" : "already paused") : changed ? "resumed" : "was not paused"}` };
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e));
     }

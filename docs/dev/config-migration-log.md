@@ -42,7 +42,7 @@ The pane values live in `defaults/config.yaml` under `panes`, read at call time 
 
 | area | key path | values |
 |---|---|---|
-| Router request scheduling (`src/router/scheduler.ts`) | `router.scheduling` (defaults/config.yaml) | `enabled` true, `wTokIn` 1, `wTokOut` 2, `agingSec` 120, `sessionWeights` {}, `warmMs` 300000, `pingMs` 15000 |
+| Router request scheduling (`src/router/scheduler.ts`) | `router.scheduling` (defaults/config.yaml) | `enabled` true, `wTokIn` 1, `wTokOut` 2, `agingSec` 120, `sessionWeights` {}, `warmMs` 300000, `pingMs` 15000, `lowAgingSec` 900 |
 | Router parking (`src/router/parking.ts`) | `router.parking` (defaults/config.yaml) | `enabled` false, `parkAfterSec` 120 |
 | Router runtime sampling (`src/router/runtime-samples.ts`) | `router.samples` (defaults/config.yaml) | `sampleMs` 5000, `historyLen` 60, `engineStatusTimeoutMs` 1000, `cardReadingMaxAgeMs` 2000 |
 | Worker admission gate (`src/workers/capacity.ts`) | `workers.capacity` (defaults/workers.yaml) | `enabled` true, `localDefaultCap` 1, `uncappedQueueCap` 3, `maxTotalWaitMs` 7200000, `heartbeatMs` 60000, `agingMs` 900000 |

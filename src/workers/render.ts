@@ -585,6 +585,12 @@ export function renderTable(
     return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l + (a ? ` (${a})` : "")) : "";
   };
 
+  // engine controls: "paused" or a non-normal priority, only while set
+  const engineMark = (s: WorkerStatus): string => {
+    const m = [s.paused ? "paused" : "", s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
+  };
+
   const clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
   const lines: string[] = [c("bold", `Workers  ${clock}`), ""];
   // the QUEUED section only exists while something waits: a table that never
@@ -640,7 +646,7 @@ export function renderTable(
     const tag = sessionTag(s);
     lines.push(
       treeLine(
-        `${p}${c("cyan", s.id)}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
+        `${p}${c("cyan", s.id)}${inboxMark(s)} ${provTag(s)}${tag ? " " + tag : ""}  ${ageOf(s.started, now).padStart(4)} old  turns ${String(s.turns).padStart(2)}  tools ${String(s.tools).padStart(2)}  ${basename(s.cwd)}${branchMark(s)}${treeMark(s)}${timeMark(s)}${engineMark(s)}${deniedMark(s)}${meter ? "  " + meter : ""}`,
         chain,
         last
       )
