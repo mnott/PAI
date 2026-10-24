@@ -230,3 +230,9 @@ export function readUpstreamHealth(pid: number, now = Date.now(), windowMs = 60_
     return undefined;
   }
 }
+
+/** The successor's upstream check runs before any startup work (cockpit, sampler, warm-up): that work blocks the event loop and would starve the check's timer. */
+export async function preflightFirst<T>(preflight: () => Promise<void>, startup: () => T | Promise<T>): Promise<T> {
+  await preflight();
+  return startup();
+}

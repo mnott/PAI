@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
-import { checkUpstream, preflightUpstreams } from "./preflight.js";
+import { checkUpstream, preflightFirst, preflightUpstreams } from "./preflight.js";
 
 const block = (ms: number): void => void execFileSync("/bin/sleep", [String(ms / 1000)]);
 
@@ -37,5 +37,27 @@ describe("preflightUpstreams", () => {
     const r = await preflightUpstreams("https://x.invalid", [], async (u) => (calls++ ? { ok: true, host: u } : { ok: false, host: u, code: "ETIMEDOUT" }), 10);
     expect(r.claude.ok).toBe(true);
     expect(calls).toBe(2);
+  });
+});
+
+describe("preflightFirst", () => {
+  it("runs the preflight before the sampler start and warmCockpit", async () => {
+    const order: string[] = [];
+    await preflightFirst(
+      async () => void order.push("preflight"),
+      () => {
+        order.push("sampler");
+        order.push("warmCockpit");
+      }
+    );
+    expect(order).toEqual(["preflight", "sampler", "warmCockpit"]);
+  });
+
+  it("runs no startup work when the preflight fails", async () => {
+    const sampler = vi.fn();
+    const warm = vi.fn();
+    await expect(preflightFirst(async () => { throw new Error("no upstream"); }, () => { sampler(); warm(); })).rejects.toThrow("no upstream");
+    expect(sampler).not.toHaveBeenCalled();
+    expect(warm).not.toHaveBeenCalled();
   });
 });
