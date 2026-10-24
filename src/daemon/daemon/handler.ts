@@ -45,6 +45,20 @@ export function sendResponse(socket: Socket, response: IpcResponse): void {
   }
 }
 
+/** Answer a Postgres-only method: refuse on other backends, else reply with what `work` returns (or its error) and close. */
+async function answerPostgresOnly(socket: Socket, id: IpcRequest["id"], what: string, work: () => Promise<unknown>): Promise<void> {
+  if (!storageBackend?.supportsPostgresFeatures) {
+    sendResponse(socket, { id, ok: false, error: `${what} require Postgres backend` });
+  } else {
+    try {
+      sendResponse(socket, { id, ok: true, result: await work() });
+    } catch (e) {
+      sendResponse(socket, { id, ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  socket.end();
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -214,12 +228,7 @@ export async function handleRequest(
   // ---- Observation methods (Postgres only) --------------------------------
 
   if (method === "observation_store") {
-    if (!storageBackend?.supportsPostgresFeatures) {
-      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
-      socket.end();
-      return;
-    }
-    try {
+    await answerPostgresOnly(socket, id, "Observations", async () => {
       const p = params as {
         session_id: string;
         type: string;
@@ -249,12 +258,8 @@ export async function handleRequest(
         fidelity: 'observed',
       });
 
-      sendResponse(socket, { id, ok: true, result: { ok: true, id: insertedId } });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      sendResponse(socket, { id, ok: false, error: msg });
-    }
-    socket.end();
+      return { ok: true, id: insertedId };
+    });
     return;
   }
 
@@ -319,12 +324,7 @@ export async function handleRequest(
   }
 
   if (method === "observation_query") {
-    if (!storageBackend?.supportsPostgresFeatures) {
-      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
-      socket.end();
-      return;
-    }
-    try {
+    await answerPostgresOnly(socket, id, "Observations", async () => {
       const p = params as {
         project_id?: number;
         session_id?: string;
@@ -340,22 +340,13 @@ export async function handleRequest(
         limit: p.limit,
         offset: p.offset,
       });
-      sendResponse(socket, { id, ok: true, result: rows });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      sendResponse(socket, { id, ok: false, error: msg });
-    }
-    socket.end();
+      return rows;
+    });
     return;
   }
 
   if (method === "observation_recent") {
-    if (!storageBackend?.supportsPostgresFeatures) {
-      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
-      socket.end();
-      return;
-    }
-    try {
+    await answerPostgresOnly(socket, id, "Observations", async () => {
       const p = params as { project_id?: number; cwd?: string; limit?: number };
       const limit = p.limit ?? 20;
 
@@ -375,23 +366,14 @@ export async function handleRequest(
       } else {
         rows = await storageBackend.queryObservations({ limit });
       }
-      sendResponse(socket, { id, ok: true, result: { rows, project_slug: resolvedProjectSlug } });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      sendResponse(socket, { id, ok: false, error: msg });
-    }
-    socket.end();
+      return { rows, project_slug: resolvedProjectSlug };
+    });
     return;
   }
 
   // observation_list — alias for observation_query with project slug resolution
   if (method === "observation_list") {
-    if (!storageBackend?.supportsPostgresFeatures) {
-      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
-      socket.end();
-      return;
-    }
-    try {
+    await answerPostgresOnly(socket, id, "Observations", async () => {
       const p = params as {
         project_slug?: string;
         session_id?: string;
@@ -413,40 +395,22 @@ export async function handleRequest(
         limit: p.limit ?? 20,
         offset: p.offset ?? 0,
       });
-      sendResponse(socket, { id, ok: true, result: rows });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      sendResponse(socket, { id, ok: false, error: msg });
-    }
-    socket.end();
+      return rows;
+    });
     return;
   }
 
   // observation_stats — aggregate statistics
   if (method === "observation_stats") {
-    if (!storageBackend?.supportsPostgresFeatures) {
-      sendResponse(socket, { id, ok: false, error: "Observations require Postgres backend" });
-      socket.end();
-      return;
-    }
-    try {
+    await answerPostgresOnly(socket, id, "Observations", async () => {
       const stats = await storageBackend.getObservationStats();
-      sendResponse(socket, { id, ok: true, result: stats });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      sendResponse(socket, { id, ok: false, error: msg });
-    }
-    socket.end();
+      return stats;
+    });
     return;
   }
 
   if (method === "session_summary_store") {
-    if (!storageBackend?.supportsPostgresFeatures) {
-      sendResponse(socket, { id, ok: false, error: "Session summaries require Postgres backend" });
-      socket.end();
-      return;
-    }
-    try {
+    await answerPostgresOnly(socket, id, "Session summaries", async () => {
       const p = params as {
         session_id: string;
         project_id?: number;
@@ -482,12 +446,8 @@ export async function handleRequest(
         observation_count: p.observation_count ?? 0,
       });
 
-      sendResponse(socket, { id, ok: true, result: { ok: true } });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      sendResponse(socket, { id, ok: false, error: msg });
-    }
-    socket.end();
+      return { ok: true };
+    });
     return;
   }
 
