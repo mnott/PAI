@@ -85,6 +85,8 @@ export interface RunOptions {
   _fallThroughOf?: string;
   /** Internal: tiers this task already escalated out of (escalation.ts); an escalated re-run is not escalated again from them. */
   _escalatedFrom?: string[];
+  /** Internal: PAI ids of the runs this one repeats (escalation, fall-through, empty retry), in order. */
+  _priorIds?: string[];
   /** Internal: suppress recursion depth on reroute. */
   _reroutes?: number;
   /** Internal: this run is the one automatic re-launch after an empty model response. */
@@ -237,6 +239,7 @@ export interface ExecuteArgs {
   route?: RouteInfo;
   fallThroughOf?: string;
   escalatedFrom?: string[];
+  priorIds?: string[];
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
   routeWhy?: string;

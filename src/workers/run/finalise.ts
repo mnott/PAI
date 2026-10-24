@@ -38,7 +38,7 @@ import {
 } from "./types.js";
 import { modelFlagArgs } from "./model.js";
 import { ensureToolSearch } from "./argv.js";
-import { hasMalformedToolCall, MALFORMED_TOOL_CALL } from "../malformed-toolcall.js";
+import { hasMalformedToolCall, MALFORMED_TOOL_CALL, DEGENERATE_ANSWER } from "../malformed-toolcall.js";
 
 /**
  * The finalisation every engine shares: orphaned-children check, state, the
@@ -233,6 +233,12 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   // nothing to merge: the worktree goes now instead of piling up until gc
   if (f.worktree && status.worktreeDir) archiveEmptyResult(logDir, status);
   return finalRc;
+}
+
+/** Own-identity fields of the final json: this run's id, every run's id in order, the provider, the instrument fault (or null). */
+export function identityExtras(wid: string, priorIds: string[] | undefined, s: Pick<WorkerStatus, "provider"> & Partial<Pick<WorkerStatus, "endReason">>): Record<string, unknown> {
+  const instrument = s.endReason === MALFORMED_TOOL_CALL || s.endReason === DEGENERATE_ANSWER ? s.endReason : null;
+  return { worker_id: wid, worker_ids: [...(priorIds ?? []), wid], provider: s.provider, instrument };
 }
 
 /**

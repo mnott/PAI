@@ -44,6 +44,7 @@ import {
   usageContextUsed,
   printResult,
   worktreeExtras,
+  identityExtras,
   type StreamEvent,
   isEmptyResponse,
 } from "./run.js";
@@ -1240,5 +1241,34 @@ describe("placeVolatile", () => {
   it("two workers differ only inside the volatile block", () => {
     const strip = (t: string) => t.replace(/<v>[\s\S]*?<\/v>/, "");
     expect(strip(placeVolatile(task, "<v>id-1 /w/1 03:21 tok-a</v>"))).toBe(strip(placeVolatile(task, "<v>id-2 /w/2 03:24 tok-b</v>")));
+  });
+});
+
+describe("identityExtras in the run json", () => {
+  const ev: StreamEvent = { type: "result", result: "ok", is_error: false };
+  const emit = (extras: Record<string, unknown>): Record<string, unknown> => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printResult("json", ev, 0, "/log", "w2", { notes: "n" }, extras);
+      return JSON.parse(log.mock.calls[0][0] as string);
+    } finally {
+      log.mockRestore();
+    }
+  };
+
+  it("plain run: its own id, one-entry list, provider, null instrument", () => {
+    const p = emit(identityExtras("w1", undefined, { provider: "glm" }));
+    expect(p).toMatchObject({ worker_id: "w1", worker_ids: ["w1"], provider: "glm", instrument: null, result: "ok" });
+  });
+
+  it("escalated run: last id plus every earlier run in order", () => {
+    const p = emit(identityExtras("w2", ["w1"], { provider: "anthropic" }));
+    expect(p).toMatchObject({ worker_id: "w2", worker_ids: ["w1", "w2"], provider: "anthropic" });
+  });
+
+  it("instrument-fault run carries the classification", () => {
+    expect(identityExtras("w1", undefined, { provider: "local", endReason: "malformed-tool-call" }).instrument).toBe("malformed-tool-call");
+    expect(identityExtras("w1", undefined, { provider: "local", endReason: "degenerate-answer" }).instrument).toBe("degenerate-answer");
+    expect(identityExtras("w1", undefined, { provider: "local", endReason: "exit" }).instrument).toBeNull();
   });
 });
