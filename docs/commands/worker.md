@@ -310,6 +310,22 @@ pai worker errors --since 2h
 
 See also: `pai worker log`
 
+### pai worker flaky
+
+Test files that failed in the merge gate's batch and passed alone
+
+```
+pai worker flaky
+```
+
+Lists files by flake count with the newest saved batch output (the path is also in the WORKER-MERGE-TESTS ledger line as flakyLog=).
+
+```sh
+pai worker flaky
+```
+
+See also: `pai worker errors`
+
 ### pai worker status-line
 
 One-line worker summary for a status bar
@@ -1838,6 +1854,7 @@ See also: `pai worker providers`
 | `pai worker pane` | Open a window pane that follows a worker |
 | `pai worker log` | Worker ledger or the raw events of one worker |
 | `pai worker errors` | Tool errors workers hit, grouped by kind |
+| `pai worker flaky` | Test files that failed in the merge gate's batch and passed alone |
 | `pai worker status-line` | One-line worker summary for a status bar |
 | `pai worker say` | Send a message to a running worker |
 | `pai worker goal` | Leave a goal note on a running worker |
