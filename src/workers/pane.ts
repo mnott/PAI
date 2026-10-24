@@ -605,6 +605,11 @@ export function saveEntry(logDir: string, e: PaneEntry): void {
   renameSync(tmp, path);
 }
 
+/** dropEntry for the pane audit, which replaces a vanished pane's entry. */
+export function dropPaneEntry(logDir: string, e: PaneEntry, caller: string, reason: string): void {
+  dropEntry(logDir, e, caller, reason);
+}
+
 /** Forget an entry (its per-worker file; a legacy list is rewritten without it). */
 function dropEntry(logDir: string, e: PaneEntry, caller: string, reason: string): void {
   process.stderr.write(`[pane-registry] drop caller=${caller} run=${e.worker} session=${e.session} reason=${reason}\n`);
@@ -1379,9 +1384,11 @@ export async function openPaneForWorker(
   wid: string,
   term: string,
   env: NodeJS.ProcessEnv,
-  command?: string
+  command?: string,
+  /** Open even when a process for the worker runs (a wrapper whose terminal is gone shows nothing). */
+  force = false
 ): Promise<PaneOpenResult> {
-  if (workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
+  if (!force && workerPaneOpen(wid)) return { message: `pane for ${wid} already open`, session: null };
   const backend = paneBackend(env, process.platform, term);
   if (backend === "none") return { message: noPaneMessage(wid), session: null };
   if (backend === "tmux") {
@@ -1740,7 +1747,10 @@ export async function openVerifiedPane(
     throw new NoTerminalError(refusal);
   }
   if (envUid && envUid !== hostUid) {
-    throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session${hostUid ? ` (host found: ${hostUid})` : ""}`);
+    // an inherited id that died with its terminal (iTerm relaunched) while the tty lookup found the live host:
+    // the pane opens in the found host; only no live host at all is refused
+    if (!hostUid) throw new Error(`ITERM_SESSION_ID names ${envUid}, which is not a live iTerm2 session`);
+    process.stderr.write(`[pai worker] pane: ITERM_SESSION_ID ${envUid} is not live; using the host found by tty: ${hostUid}\n`);
   }
   // Every pane is a split of the host's own tab: never a window, never another tab. A host tab that is not
   // the selected one still gets its split (the operator finds it there); only the visibility proof is skipped.
