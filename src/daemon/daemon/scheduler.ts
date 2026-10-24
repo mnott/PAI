@@ -22,8 +22,10 @@ import { buildsDir, listBuildsSync } from "../../builds/queue.js";
 import { stallMinutes } from "../../builds/config.js";
 import { buildStallTick } from "../../builds/stall.js";
 import { runMessenger } from "../../workers/run-report-wiring.js";
-import { probeRouter, routerSwapArgs, startHandover, routerIsStale, routerRunningPid, runRouterTick, spawnRouter } from "../../router/supervisor.js";
+import { probeRouter, routerSwapArgs, startHandover, routerIsStale, routerRunningPid, runRouterTick, spawnRouter, createRouterWatchdog } from "../../router/supervisor.js";
 import { restartRouter } from "../../router/restart.js";
+import { routerRestartDeps } from "../../router/service-control.js";
+import { checkUpstream, readUpstreamHealth } from "../../router/preflight.js";
 import { cliEntry } from "../pass-priority.js";
 import { runSessionKeepaliveTick } from "../session-keepalive.js";
 import { runStalePassDaily } from "../stale-pass.js";
@@ -895,12 +897,7 @@ export function startRouterSupervisor(): void {
       probe: () => probeRouter(),
       stale: () => routerIsStale(cliEntry()),
       restart: async () => {
-        const r = await restartRouter({
-          oldPid: routerRunningPid() ?? undefined,
-          spawnNew: (old) => spawnRouter(cliEntry(), routerSwapArgs(old)),
-          handover: (old) => startHandover(old),
-          isUp: () => probeRouter(undefined, 500),
-        });
+        const r = await restartRouter(routerRestartDeps(cliEntry()));
         process.stderr.write(`[pai-daemon] Router supervisor: new build, router swapped (pid ${r.oldPid ?? "none"} -> ${r.newPid}, refused ${r.gapMs ?? 0} ms)\n`);
       },
       start: () => {
@@ -913,8 +910,20 @@ export function startRouterSupervisor(): void {
       );
     });
   };
+  const watchdog = createRouterWatchdog({
+    pid: () => routerRunningPid(),
+    health: (pid) => readUpstreamHealth(pid),
+    failStreak: daemonConfig.router.watchdog?.failStreak ?? 5,
+    ownProbe: () => checkUpstream(daemonConfig.router.claudeUpstream),
+    restart: async () => void (await restartRouter(routerRestartDeps(cliEntry()))),
+    log: (l) => process.stderr.write(`[pai-daemon] ${l}\n`),
+  });
+  const guard = () => void watchdog().catch((e) => process.stderr.write(`[pai-daemon] Router watchdog error: ${e instanceof Error ? e.message : String(e)}\n`));
   tick();
-  const timer = setInterval(tick, ROUTER_TICK_MS);
+  const timer = setInterval(() => {
+    tick();
+    guard();
+  }, ROUTER_TICK_MS);
   if (timer.unref) timer.unref();
   process.stderr.write(`[pai-daemon] Router supervisor: every ${ROUTER_TICK_MS / 1000}s\n`);
 }

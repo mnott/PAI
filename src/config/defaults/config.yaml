@@ -205,6 +205,11 @@ router:
   # many seconds, then ends them with a retryable error and exits.
   handover:
     drainMaxSecs: 1800
+  # Daemon watchdog: after this many consecutive cloud requests failed with a network error
+  # (ENOTFOUND, ECONNREFUSED, ETIMEDOUT) within 60 s while the daemon itself reaches the upstream,
+  # the daemon restarts the router.
+  watchdog:
+    failStreak: 5
   # Cockpit page layout policy (src/router/cockpit-layout.ts): tile min/max
   # widths, chart heights, sample/history window lengths, refresh intervals,
   # row limits. Card arrangement is the windowing registry's, not config's.

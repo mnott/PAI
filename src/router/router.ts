@@ -31,6 +31,7 @@ import { recordToolError } from "../workers/tool-errors.js";
 import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { sharedParker } from "./parking.js";
+import { createUpstreamStreak } from "./preflight.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
 import { loadConfig } from "../daemon/config.js";
 import { readWorkersSection, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "../workers/config.js";
@@ -45,6 +46,10 @@ import { hostAllowed, originAllowed, isCockpitPath } from "./cockpit-auth.js";
 
 /** The router's port (router.port in config.yaml). */
 export const routerPort = (): number => loadConfig().router.port;
+let streak: ReturnType<typeof createUpstreamStreak> | undefined;
+/** Consecutive cloud-upstream network failures of this router process, written for the daemon's watchdog. */
+const upstreamStreak = () => (streak ??= createUpstreamStreak());
+
 /** Upstream for claude ids (router.claudeUpstream in config.yaml). */
 export const claudeUpstream = (): string => loadConfig().router.claudeUpstream;
 
@@ -663,6 +668,7 @@ export function routerHandler(
         up.url,
         { method: "POST", headers: up.headers },
         (ures) => {
+        if (!isLocal(up.url)) upstreamStreak().success();
           if (isCount && target.kind === "provider" && (ures.statusCode ?? 0) >= 400) {
             // provider has no count_tokens: estimate instead of failing the client
             ures.resume();
@@ -729,6 +735,7 @@ export function routerHandler(
       ureq.on("error", (e: NodeJS.ErrnoException) => {
         release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());
+        if (!isLocal(up.url)) upstreamStreak().failure(e.code);
         if (target.kind === "provider" && isLocal(up.url) && e.code === "ECONNREFUSED") {
           return fail(
             503,

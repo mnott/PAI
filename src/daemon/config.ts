@@ -133,6 +133,8 @@ export interface RouterConfig {
   drainMs: number;
   /** After a handover the old router stops accepting and finishes its in-flight requests; `drainMaxSecs` bounds that (then they end with a retryable error). Default: 1800. */
   handover?: { drainMaxSecs?: number };
+  /** Daemon watchdog: restart the router after this many consecutive cloud requests failed with ENOTFOUND/ECONNREFUSED/ETIMEDOUT within 60 s while the daemon itself reaches the upstream. Default: failStreak 5. */
+  watchdog?: { failStreak?: number };
   /** Bare model aliases (besides ids starting with `claude-`) that route to claudeUpstream. */
   claudeModelAliases: string[];
   /**

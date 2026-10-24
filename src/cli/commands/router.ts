@@ -33,6 +33,7 @@ import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
 import { routerRestartText, routerStartText, routerStatusText, routerStopText } from "../../router/service-control.js";
 import { LOOPBACK_HOST } from "../../utils/loopback.js";
+import { abortMessage, preflightUpstreams } from "../../router/preflight.js";
 
 const out = (s: string) => void process.stdout.write(s + "\n");
 
@@ -203,8 +204,26 @@ const runCommand: CommandDef = {
       const server = http.createServer(serving);
       const tail = remote ? http.createServer(serving) : undefined;
       const waitBindMs = Math.min(10, Number(ctx.opts["wait-bind"] ?? 0) || 0) * 1000;
-      // the old router keeps serving through this process's warm-up: it is stopped only now, so the port is refused for one retry interval
       const replace = Number(ctx.opts.replace ?? 0);
+      const inheritFds = String(ctx.opts["inherit-fds"] ?? "").split(",").filter(Boolean).map(Number);
+      // A successor takes over only if it can itself reach the upstream: a process that cannot resolve api.anthropic.com
+      // (lockout 2026-10-24) must never replace one that can. On failure the old router keeps serving.
+      const preflight = async (): Promise<void> => {
+        if (!replace && !inheritFds.length) return;
+        const cloud = Object.values(readWorkersSection().workers.providers).filter((p) => p.enabled && !p.native && /^https:/.test(p.baseUrl ?? "")).map((p) => p.baseUrl);
+        const { claude, others } = await preflightUpstreams(loadConfig().router.claudeUpstream, cloud);
+        for (const o of others) if (!o.ok) process.stderr.write(`pai: router: preflight: cannot reach ${o.host}: ${o.code}\n`);
+        if (claude.ok) return;
+        const oldPid = replace || process.ppid;
+        const reason = abortMessage(claude.host, claude.code, oldPid);
+        process.stderr.write(`pai: router: ${reason}\n`);
+        if (process.send) process.send({ failed: true, reason: `successor cannot reach ${claude.host}: ${claude.code}` });
+        else if (managed) writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid, state: "failed", reason: `successor cannot reach ${claude.host}: ${claude.code}`, successorPid: process.pid }));
+        await new Promise((r) => setTimeout(r, 100)); // let the IPC message flush
+        process.exit(1);
+      };
+      void preflight().then(() => {
+      // the old router keeps serving through this process's warm-up: it is stopped only now, so the port is refused for one retry interval
       if (replace > 0) {
         try {
           process.kill(replace, "SIGTERM");
@@ -212,7 +231,6 @@ const runCommand: CommandDef = {
           /* already gone */
         }
       }
-      const inheritFds = String(ctx.opts["inherit-fds"] ?? "").split(",").filter(Boolean).map(Number);
       const claimPidFiles = () => {
         if (!managed) return;
         mkdirSync(dirname(routerPidFile()), { recursive: true });
@@ -240,6 +258,10 @@ const runCommand: CommandDef = {
           process.exit(1);
         });
       }
+      }, (e: unknown) => {
+        process.stderr.write(`pai: router: preflight error: ${(e as Error).message}\n`);
+        process.exit(1);
+      });
       // a handover keeps the old router alive for its in-flight streams: bounded by router.handover.drainMaxSecs, then they end with a retryable error
       const bye = (handedOver = false) => {
         draining = true;
@@ -285,15 +307,22 @@ const runCommand: CommandDef = {
         );
         closeSync(log);
         const giveUp = setTimeout(() => child.kill("SIGKILL"), 30_000);
+        let failedReason: string | undefined;
         child.once("exit", () => {
           clearTimeout(giveUp);
           if (handing) {
             handing = false;
-            process.stderr.write("pai: router: successor exited before taking over, still serving\n");
-            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason: "successor exited before taking over" }));
+            const reason = failedReason ?? "successor exited before taking over";
+            process.stderr.write(`pai: router: ${reason}, still serving\n`);
+            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason }));
           }
         });
-        child.once("message", () => {
+        child.on("message", (m: { ready?: boolean; failed?: boolean; reason?: string }) => {
+          if (m?.failed) {
+            failedReason = m.reason;
+            return;
+          }
+          if (!m?.ready) return;
           clearTimeout(giveUp);
           child.removeAllListeners("exit");
           child.disconnect();
@@ -314,7 +343,11 @@ const restartCommand: CommandDef = {
   examples: ["pai router restart", "pai router status"],
   seeAlso: ["pai router start", "pai router stop"],
   async run() {
-    out(ok(await routerRestartText(process.argv[1]!)));
+    try {
+      out(ok(await routerRestartText(process.argv[1]!)));
+    } catch (e) {
+      throw new CliError((e as Error).message, "pai router status");
+    }
   },
 };
 
