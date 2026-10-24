@@ -108,7 +108,7 @@ export interface ActionHooks {
    *  the cockpit share it); tests inject a fake. */
   runRuntimeJob?: (runtime: string, op: "start" | "stop") => Promise<void | { ok: boolean; message: string }>;
   /** memory.embed / memory.index run through this (default: the detached CLI, see spawnMemoryRun); tests inject a fake. */
-  runMemoryJob?: (kind: RunKind, jobId: string) => Promise<{ ok: boolean; message: string }>;
+  runMemoryJob?: (kind: RunKind, jobId: string) => Promise<{ ok: boolean; message: string; tail?: string }>;
 }
 
 export interface ActionResult {
@@ -142,6 +142,8 @@ export interface LocalJobState {
   what?: RunKind;
   state: "running" | "done" | "failed" | "interrupted";
   message: string;
+  /** a failed job: the last ~40 lines of its log, for the details view */
+  tail?: string;
   at: string;
   /** a running job: the process that runs it (cut off by its restart = interrupted, see cockpit-job-recovery.ts) */
   pid?: number;
@@ -723,7 +725,7 @@ export function spawnMemoryRun(
   home: string,
   io: { spawn: typeof spawn; openSync: typeof openSync; closeSync: typeof closeSync } = { spawn, openSync, closeSync },
   cliEntry: string = process.argv[1] ?? "",
-): Promise<{ ok: boolean; message: string }> {
+): Promise<{ ok: boolean; message: string; tail?: string }> {
   const args = kind === "embed" ? ["memory", "embed", "--all", "--background"] : ["memory", "index", "--direct", "--background"];
   const log = memoryRunLog(home);
   mkdirSync(`${home}/state`, { recursive: true });
@@ -742,37 +744,53 @@ export function spawnMemoryRun(
     }
     child.on("error", (e) => resolve({ ok: false, message: `cannot start: ${e.message}` }));
     child.on("close", (code, signal) => {
-      const tail = code === 0 ? logTailSince(log, 0) : failureLine(log);
-      resolve({ ok: code === 0, message: code === 0 ? tail || `${kind} finished` : `${kind} ended (${code ?? signal})${tail ? ": " + tail : ""}` });
+      const line = code === 0 ? logTailSince(log, 0) : failureLine(log);
+      resolve({ ok: code === 0, message: code === 0 ? line || `${kind} finished` : `${kind} ended (${code ?? signal})${line ? ": " + line : ""}`, ...(code === 0 ? {} : { tail: failureTail(log) }) });
     });
     child.unref();
   });
 }
 
-/** The line that says why a run died: the last error-looking line of the log's tail, else its last line
- *  (a Node crash ends in "Node.js vX", which says nothing). */
-function failureLine(log: string): string {
-  let text = "";
+/** Lines of the log's tail kept in the job record for the details view. */
+const JOB_TAIL_LINES = 40;
+
+/** The line that says why a run died, from its stderr text: the first line that looks like the error
+ *  ("Error: …", "TypeError: …", "pai: …", "error: …"), else the last meaningful line. Skips Node's
+ *  "Node.js vX" footer, stack frames, "^" markers and blank lines. */
+export function pickFailureLine(text: string): string {
+  const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split(/[\r\n]+/).map((l) => l.trim().replace(/\s+/g, " "))
+    .filter((l) => l && !/^at /.test(l) && !/^Node\.js v/.test(l) && !/^[\^~\s]+$/.test(l));
+  const hit = lines.find((l) => /^(?:Uncaught |Unhandled )?(?:\w*Error\b|\w*Error \[|pai:|error:|fatal:)/i.test(l)) ?? lines[lines.length - 1] ?? "";
+  return hit.length > 160 ? hit.slice(0, 159) + "…" : hit;
+}
+
+/** The last lines of a run's log, for the job record. */
+function failureTail(log: string): string {
   try {
-    text = readFileSync(log, "utf8").slice(-8192);
+    return readFileSync(log, "utf8").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split(/\r?\n/).slice(-JOB_TAIL_LINES - 1).join("\n").trim();
   } catch {
     return "";
   }
-  const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").split(/[\r\n]+/).map((l) => l.trim().replace(/\s+/g, " ")).filter((l) => l && !l.startsWith("at ") && !/^Node\.js v/.test(l));
-  const hit = [...lines].reverse().find((l) => /error|refus|cannot|failed|ENOENT/i.test(l)) ?? lines[lines.length - 1] ?? "";
-  return hit.length > 160 ? hit.slice(0, 159) + "…" : hit;
+}
+
+function failureLine(log: string): string {
+  try {
+    return pickFailureLine(readFileSync(log, "utf8").slice(-8192));
+  } catch {
+    return "";
+  }
 }
 
 /** Runs the memory job (hook or the detached CLI), records its outcome in the job file. */
 async function finishMemoryJob(deps: ActionDeps, hooks: ActionHooks, id: string, kind: RunKind): Promise<void> {
   const run = hooks.runMemoryJob ?? ((k, j) => spawnMemoryRun(k, j, deps.home));
-  let r: { ok: boolean; message: string };
+  let r: { ok: boolean; message: string; tail?: string };
   try {
     r = await run(kind, id);
   } catch (e) {
     r = { ok: false, message: e instanceof Error ? e.message : String(e) };
   }
-  writeCockpitJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: r.ok ? "done" : "failed", message: r.message, at: new Date().toISOString() });
+  writeCockpitJob(deps.home, { id, kind: "memory", tier: "", what: kind, state: r.ok ? "done" : "failed", message: r.message, ...(r.tail ? { tail: r.tail } : {}), at: new Date().toISOString() });
   writeLedgerLine(deps, kind === "embed" ? "memory.embed" : "memory.index", kind, `job ${id}: ${r.ok ? "done" : "failed: " + r.message}`);
 }
 

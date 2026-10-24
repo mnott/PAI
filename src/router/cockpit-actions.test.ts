@@ -873,6 +873,42 @@ describe("memory run safety", () => {
     rmSync(home, { recursive: true });
   });
 
+  it("pickFailureLine: a Node crash gives its Error line, not the version footer", async () => {
+    const { pickFailureLine } = await import("./cockpit-actions.js");
+    const crash = "node:internal/x:1\n  throw e;\n  ^\n\nTypeError: bad thing\n    at foo (a.js:1:1)\n    at bar (b.js:2:2)\n\nNode.js v22.16.0\n";
+    expect(pickFailureLine(crash)).toBe("TypeError: bad thing");
+    expect(pickFailureLine("Error: boom\n    at x (y:1:1)\n\nNode.js v22.16.0\n")).toBe("Error: boom");
+  });
+
+  it("pickFailureLine: the Ollama 500 pai line; fallback is the last non-footer line", async () => {
+    const { pickFailureLine } = await import("./cockpit-actions.js");
+    const ollama = "indexing...\npai: unexpected failure: Ollama /api/embed HTTP 500: model failed to load\n";
+    expect(pickFailureLine(ollama)).toBe("pai: unexpected failure: Ollama /api/embed HTTP 500: model failed to load");
+    expect(pickFailureLine("one\ntwo\n\nNode.js v22.16.0\n")).toBe("two");
+  });
+
+  it("a failed memory run keeps the log tail in the job record", async () => {
+    const { spawnMemoryRun } = await import("./cockpit-actions.js");
+    const { EventEmitter } = await import("node:events");
+    const { writeFileSync: wf } = await import("node:fs");
+    const home = mkdtempSync(join(tmpdir(), "mem-tail-"));
+    const io = {
+      spawn: (() => {
+        wf(join(home, "state", "memory-run.log"), "Error: boom\n    at x (y:1:1)\n\nNode.js v22.16.0\n");
+        const ee = new EventEmitter() as InstanceType<typeof EventEmitter> & { unref(): void };
+        ee.unref = () => {};
+        setImmediate(() => ee.emit("close", 1, null));
+        return ee;
+      }) as never,
+      openSync: (() => 77) as never,
+      closeSync: (() => {}) as never,
+    };
+    const r = await spawnMemoryRun("index", "j2", home, io);
+    expect(r.message).toBe("index ended (1): Error: boom");
+    expect(r.tail).toContain("Node.js v22.16.0");
+    rmSync(home, { recursive: true });
+  });
+
   it("memory.stop does not signal a live pid that is not the recorded run (reused pid)", async () => {
     const { runCockpitAction } = await import("./cockpit-actions.js");
     const home = mkdtempSync(join(tmpdir(), "mem-stop-"));
