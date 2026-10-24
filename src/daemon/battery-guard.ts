@@ -659,7 +659,7 @@ function liveBenchmark(logDir: string): boolean {
 const TELEMETRY_KEEP_MS = 14 * 24 * 3600_000;
 const TELEMETRY_MAX_BYTES = 5 << 20;
 const DAY_MS = 24 * 3600_000;
-const telemetryFile = (): string => paiHomePath("battery-telemetry.jsonl");
+export const telemetryFile = (): string => paiHomePath("battery-telemetry.jsonl");
 let lastTelemetryRotate = 0;
 
 /** Drop telemetry lines older than 14 days (an unparsable line goes too). Returns how many were dropped. */
@@ -700,8 +700,17 @@ export interface TelemetrySummary {
   minPct: number | null;
 }
 
-/** Read the telemetry jsonl: latest line plus max/average over the window. null for a missing or empty file. */
-export function summarizeTelemetry(windowMs: number, now: number = Date.now(), path: string = telemetryFile()): TelemetrySummary | null {
+let telemetryCache: { path: string; mtimeMs: number; size: number; lines: TelemetryLine[] } | null = null;
+
+/** Every parsable line of the telemetry jsonl, cached by path, mtime and size. null for a missing file. */
+export function readTelemetryLines(path: string = telemetryFile()): TelemetryLine[] | null {
+  let st;
+  try {
+    st = statSync(path);
+  } catch {
+    return null;
+  }
+  if (telemetryCache && telemetryCache.path === path && telemetryCache.mtimeMs === st.mtimeMs && telemetryCache.size === st.size) return telemetryCache.lines;
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -719,6 +728,14 @@ export function summarizeTelemetry(windowMs: number, now: number = Date.now(), p
       /* skip an unparsable line */
     }
   }
+  telemetryCache = { path, mtimeMs: st.mtimeMs, size: st.size, lines };
+  return lines;
+}
+
+/** Read the telemetry jsonl: latest line plus max/average over the window. null for a missing or empty file. */
+export function summarizeTelemetry(windowMs: number, now: number = Date.now(), path: string = telemetryFile()): TelemetrySummary | null {
+  const lines = readTelemetryLines(path);
+  if (!lines) return null;
   if (!lines.length) return null;
   const latest = lines.reduce((a, b) => (b.at >= a.at ? b : a));
   const win = lines.filter((x) => x.at >= now - windowMs);

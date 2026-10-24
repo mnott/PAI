@@ -8,7 +8,7 @@ export const scriptCharts = (L: CockpitLayout, n: Num, q: Str, hex: Str): string
 /** Chart redraw on resize: a change smaller than the slack is ignored; the redraw is debounced. */
 var MIN_LABEL_GAP_PX=${n(L.minLabelGapPx)},MIN_BAR_PX=${n(L.minBarPx)},MAX_BAR_PX=28;
 /** 4th column: 0 = watts on the left axis (auto), 1 = percent on the fixed 0-100 right axis. */
-var PKEYS=[["totalW","power W","#d98a1c",0],["gpu","GPU load","#3b6fe0",1],["cpu","CPU load","#2e9e5b",1]];
+var PKEYS=[["totalW","power W","#d98a1c",0],["gpu","GPU load","#3b6fe0",1],["cpu","CPU load","#2e9e5b",1],["powerInW","power in W","#8a4fd0",0],["adapterW","charger limit W","#8a8a8a",0,1],["drainW","battery discharge W","#d0443e",0]];
 /* one helper for every GB on the page: binary GB (1024^3), the same rounding as
  * Strata's monitor (serve/web/app.js line 13): 1 decimal for a used value, 0 for a total */
 function gb(b,d){return b==null?"n/a":(b/1073741824).toFixed(d==null?1:d)}
