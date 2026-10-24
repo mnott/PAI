@@ -575,18 +575,24 @@ See also: `pai worker merge`, `pai worker discard`
 Throw away a worker's branch and worktree
 
 ```
-pai worker discard ID
+pai worker discard [ID] [options]
 ```
 
 Removes the worktree and branch of a worker and keeps nothing. Use `verify` first if you are unsure.
 
 | Argument | Required | Description |
 |---|---|---|
-| `ID` | yes | Worker id |
+| `ID` | no | Worker id (omit with --worktree) |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--worktree PATH` | string | — | Discard any linked git worktree of any repo (not a worker): salvages ignored notes, archives its commits and dirty state under refs/pai-archive/<branch>, removes it, deletes the branch once archived. Refuses the main working tree and a dirty tree without --force |
+| `--force` | flag | — | With --worktree: archive a dirty tree's uncommitted state instead of refusing |
 
 ```sh
 pai worker discard w-20260101-abc
 pai worker verify w-20260101-abc && pai worker discard w-20260101-abc
+pai worker discard --worktree ~/.cache/pai/some-port --force
 ```
 
 See also: `pai worker verify`, `pai worker merge`, `pai worker gc`

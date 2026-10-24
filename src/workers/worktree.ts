@@ -1690,6 +1690,56 @@ export function discardWorker(logDir: string, id: string): string {
   return `discarded worker ${id}: worktree removed, branch ${st.branch} deleted${archived.archive ? `, state kept in ${archived.archive}` : ""}`;
 }
 
+/**
+ * `pai worker discard --worktree <path>`: the discard path for any linked worktree
+ * of any repo (resolved from the worktree itself), not just worker trees. Refuses the
+ * main working tree and, without `force`, a dirty one; with `force` the dirty state is
+ * committed into the archive first. Commits land under refs/pai-archive/<name>, the
+ * branch is deleted only once that ref keeps its tip, ignored notes are salvaged.
+ */
+export function discardWorktree(logDir: string, path: string, force = false): string {
+  const dir = realpathOr(path);
+  if (!existsSync(dir)) throw new Error(`no such directory: ${path}`);
+  let list: string;
+  try {
+    list = git(dir, ["worktree", "list", "--porcelain"]);
+  } catch {
+    throw new Error(`${path} is not inside a git repository`);
+  }
+  const top = realpathOr(git(dir, ["rev-parse", "--show-toplevel"]));
+  if (top !== dir) throw new Error(`${path} is not the root of a worktree (root is ${top})`);
+  const blocks = list.split("\n\n").map((b) => b.trim()).filter(Boolean);
+  const field = (b: string, k: string): string | undefined => b.split("\n").find((l) => l.startsWith(k + " "))?.slice(k.length + 1);
+  if (realpathOr(field(blocks[0] ?? "", "worktree") ?? "") === dir) {
+    throw new Error(`${path} is the main working tree of its repo; only linked worktrees can be discarded`);
+  }
+  const block = blocks.find((b) => realpathOr(field(b, "worktree") ?? "") === dir);
+  if (!block) throw new Error(`${path} is not a linked worktree`);
+  const dirty = uncommittedPaths(dir);
+  if (dirty.length && !force) {
+    throw new Error(`${path} has ${dirty.length} uncommitted file(s) (${dirty.slice(0, 5).join(", ")}); commit them or pass --force to archive them first`);
+  }
+  const branch = field(block, "branch")?.replace(/^refs\/heads\//, "") ?? "";
+  const repo = commonDir(dir)!;
+  const sanitize = (v: string): string => v.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+  let id = sanitize(branch) || `detached-${sanitize(basename(dir)) || "tree"}-${(field(block, "HEAD") ?? "").slice(0, 7)}`;
+  // never overwrite an earlier archive that holds something else
+  const head = git(dir, ["rev-parse", "HEAD"]);
+  for (let n = 2; ; n++) {
+    let cur: string | null = null;
+    try {
+      cur = git(repo, ["rev-parse", "--verify", "-q", `refs/pai-archive/${id}`]);
+    } catch {
+      // free
+    }
+    if (!cur || cur === head) break;
+    id = `${sanitize(branch) || id}-${n}`;
+  }
+  const res = archiveWorktree(logDir, id, dir, branch);
+  appendLedger(ledgerPath(logDir), "WORKER-GC", { id, archive: res.archive, why: "discard-worktree" });
+  return `discarded worktree ${dir}: removed${branch ? `, branch ${branch} deleted` : ""}, state kept in ${res.archive} (${repo})`;
+}
+
 function mustHaveBranch(logDir: string, id: string): WorkerStatus & Required<Pick<WorkerStatus, "branch" | "worktreeDir">> {
   const st = loadStatus(logDir, id);
   if (!st) throw new Error(`no worker named "${id}"`);
