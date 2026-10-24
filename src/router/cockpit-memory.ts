@@ -14,7 +14,7 @@ import { loadConfig } from "../daemon/config.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { listLessons, LESSON_STATES, type Lesson, type LessonState } from "../memory/lessons.js";
 import { readFinishedRun, readRun, type FinishedRun, type RunState } from "../memory/run-state.js";
-import type { JobRunProgress } from "../memory/job-progress.js";
+import { readRunProgress, type JobRunProgress, type RunKind, type RunProgressView } from "../memory/job-progress.js";
 import { readEmbedPasses, type EmbedPassLogEntry } from "../memory/embed-pass.js";
 import { cockpitLayout } from "./cockpit-layout.js";
 import { logTailSince, readCockpitJob, type LocalJobState } from "./cockpit-actions.js";
@@ -47,6 +47,8 @@ export interface MemoryDeps {
   deadRun?: () => RunState | null;
   /** The last finished run of a kind (run-state); defaults to the marker kept under the PAI home. */
   finished?: (kind: "embed" | "index") => FinishedRun | null;
+  /** The shared run-progress record of a kind (every run: cockpit, CLI, daemon); defaults to the record under the PAI home. */
+  runRecord?: (kind: RunKind) => RunProgressView | null;
   /** All lessons; defaults to the lesson files under the PAI home. */
   lessons?: () => Lesson[];
 }
@@ -128,6 +130,35 @@ export function runProgress(r: RunState, nowMs: number, home: string): RunProgre
     etaSec: rate !== null && left !== null ? Math.round(left / rate) : null,
     tail: r.by === "cockpit" ? logTailSince(memoryRunLog(home), 0) : "",
     stoppable: r.by !== "daemon",
+  };
+}
+
+/** What the Index tile shows of a run record: counters, rate, ETA, and how long nothing moved. Null when the run is over. */
+export interface RunTileView {
+  kind: RunKind;
+  state: "running" | "ended";
+  pid: number;
+  phase: string;
+  unit: string;
+  done: number;
+  total: number;
+  files: number;
+  ratePerMin: number | null;
+  etaSec: number | null;
+  current: string;
+  elapsedSec: number;
+  updatedAt: string;
+  stalledSec: number | null;
+}
+
+export function runTileView(r: RunProgressView | null, nowMs: number): RunTileView | null {
+  if (!r || r.state === "finished") return null;
+  const started = Date.parse(r.startedAt);
+  return {
+    kind: r.kind, state: r.state, pid: r.pid, phase: r.phase, unit: r.unit, done: r.done, total: r.total, files: r.files,
+    ratePerMin: r.ratePerMin, etaSec: r.etaSec, current: r.current, updatedAt: r.updatedAt,
+    elapsedSec: Math.max(0, Math.round((nowMs - (Number.isNaN(started) ? nowMs : started)) / 1000)),
+    stalledSec: r.state === "running" ? stalledSeconds(r, nowMs) : null,
   };
 }
 
@@ -233,7 +264,7 @@ function finishedTile(f: FinishedRun): JobTile {
 }
 
 /** The running memory run as a job tile, with its server-side progress history. */
-function runTile(r: RunProgress, run: RunState, now: number, stallMs: number, len: number): JobTile {
+function runTile(r: RunProgress, run: RunState, now: number, stallMs: number, len: number, moved: number | null): JobTile {
   const key = `${run.pid}|${run.startedAt}`;
   const h = runHistory.get(key) ?? [];
   const last = h[h.length - 1];
@@ -243,6 +274,8 @@ function runTile(r: RunProgress, run: RunState, now: number, stallMs: number, le
   for (const k of runHistory.keys()) if (k !== key) runHistory.delete(k);
   let progressAt = Date.parse(run.startedAt);
   for (let i = 1; i < h.length; i++) if (h[i]!.done > h[i - 1]!.done) progressAt = h[i]!.t;
+  // counters inside a project (files, chunks) count as progress, so one big project does not read stalled
+  if (moved !== null && !Number.isNaN(moved) && moved > progressAt) progressAt = moved;
   const total = run.kind === "embed" ? run.backlogStart : null;
   return {
     id: `run-${run.kind}`, kind: run.kind, name: `${run.kind} run`, phase: run.kind, done: run.done, total,
@@ -293,8 +326,19 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
   const files = s?.index.files ?? null;
   const chunks = s?.index.chunks ?? null;
   const embedded = s?.index.embedded ?? null;
-  const backlog = d?.embedBacklog ?? (chunks !== null && embedded !== null ? Math.max(0, chunks - embedded) : null);
-  const coverage = s?.index.coverage ?? null;
+  const rr = deps.runRecord ?? ((k: RunKind) => readRunProgress(deps.home, k));
+  const runRec = { index: rr("index"), embed: rr("embed") };
+  const runs = { index: runTileView(runRec.index, now), embed: runTileView(runRec.embed, now) };
+  const liveEmbed = runRec.embed?.state === "running" && runRec.embed.total > 0 ? runRec.embed : null;
+  let backlog = d?.embedBacklog ?? (chunks !== null && embedded !== null ? Math.max(0, chunks - embedded) : null);
+  let coverage = s?.index.coverage ?? null;
+  // the daemon samples its counts slowly: while an embed run reports, the coverage follows its counters
+  let embeddedNow = embedded;
+  if (liveEmbed && chunks !== null && chunks > 0) {
+    backlog = Math.max(0, liveEmbed.total - liveEmbed.done);
+    embeddedNow = Math.max(0, chunks - backlog);
+    coverage = embeddedNow / chunks;
+  }
   const coverageLevel: Level | null = coverage === null ? null : coverage < L.memoryCoverageBad ? "red" : coverage < L.memoryCoverageWarn ? "amber" : "green";
   const job = latestMemoryJob(deps.home);
   const progress = run ? runProgress(run, now, deps.home) : null;
@@ -308,7 +352,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
       series: rateSeries(j.history ?? [], L.memoryHistoryLen), by: null, finished: null,
     };
   });
-  if (run && progress) jobs.unshift(runTile(progress, run, now, stallMs, L.memoryHistoryLen));
+  if (run && progress) jobs.unshift(runTile(progress, run, now, stallMs, L.memoryHistoryLen, runRec[run.kind]?.state === "running" ? Date.parse(runRec[run.kind]!.movedAt) : null));
   else runHistory.clear();
   const starting = !run ? runningMemoryJob(deps.home, now, L.memoryStartGraceSecs * 1000) : null;
   if (starting) {
@@ -361,7 +405,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
     reason: fail ? (d === null ? fail.reason : `${fail.reason} since ${hhmmss(fail.since)}`)
       : stalled && level === "green" ? `job ${stalled.name} stalled` : s?.reason ?? (d ? "status not sampled yet" : "daemon not answering"),
     stallSecs: L.memoryStallSecs,
-    counts: { files, chunks, embedded, backlog, coverage, coverageLevel, exact: s?.index.countsExact ?? false },
+    counts: { files, chunks, embedded: embeddedNow, backlog, coverage, coverageLevel, exact: s?.index.countsExact ?? false },
     segments: s?.index.segments ?? (embedded !== null && backlog !== null ? { fresh: 0, old: embedded, missing: backlog } : null),
     reembedding: (s?.index.segments?.fresh ?? 0) > 0 && (s?.jobs ?? []).some((j) => j.phase !== "done"),
     binding: s ? {
@@ -383,6 +427,7 @@ export async function cockpitMemoryPayload(deps: MemoryDeps = liveMemoryDeps()):
       : null,
     schedule: d ? { maintenanceHour: d.maintenanceHour, indexIntervalSecs: d.indexIntervalSecs, embedIntervalSecs: d.embedIntervalSecs } : null,
     run: progress,
+    runs,
     lessons: lessonsSummary((deps.lessons ?? (() => listLessons()))(), now, L.memoryLessonsTop),
     // the cockpit job that has not produced its run marker yet: the card is busy from the click
     starting: starting ? { jobId: starting.id } : null,

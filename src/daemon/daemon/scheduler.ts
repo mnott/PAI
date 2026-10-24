@@ -51,6 +51,7 @@ import {
   recordEmbedPass,
   runEmbedCycle,
 } from "../../memory/embed-pass.js";
+import { indexTick, jobProgressFromEnv } from "../../memory/job-progress.js";
 import { embedChunksWithBackend } from "../../memory/indexer-backend.js";
 import { indexVault } from "../../memory/vault-indexer.js";
 import { lessonsDir } from "../../memory/lessons.js";
@@ -179,9 +180,10 @@ export async function runIndex(): Promise<void> {
   try {
     process.stderr.write("[pai-daemon] Starting scheduled index run...\n");
 
+    const pw = jobProgressFromEnv("index");
     const { projects, result } = await runPassPrioritised("index", () =>
-      storageBackend.indexAll(registryBackend)
-    );
+      storageBackend.indexAll(registryBackend, pw ? indexTick(pw) : undefined)
+    ).finally(() => pw?.finish());
     const elapsed = Date.now() - t0;
     setLastIndexTime(Date.now());
     setLastIndexPass({ at: Date.now(), durationMs: elapsed, projects, files: result.filesProcessed, chunks: result.chunksCreated });
@@ -429,6 +431,8 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
         }
         process.stderr.write("[pai-daemon] embed pass: cannot spawn child; running in-process at normal priority\n");
       }
+      const pw = jobProgressFromEnv("embed");
+      pw?.update({ phase: "embed", unit: "chunks", done: 0, total: await storageBackend.countUnembeddedChunks().catch(() => 0) });
       const count = await embedChunksWithBackend(
         storageBackend,
         () => shutdownRequested,
@@ -443,7 +447,9 @@ export async function runEmbed(): Promise<EmbedPassLogEntry | null> {
           maxMillis: maxMinutes * 60_000,
           batchSize: EMBED_PASS_BATCH_SIZE,
           shouldYield: liveYieldCheck(maxLoad),
+          onProgress: (n) => pw?.update({ done: n }),
           onEnd: (r) => {
+            pw?.finish();
             ended = { outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}) };
             setLastEmbedPass({ at: Date.now(), durationMs: Date.now() - t0, ...r });
           },
