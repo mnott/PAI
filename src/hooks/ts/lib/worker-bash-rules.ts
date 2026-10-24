@@ -13,6 +13,30 @@ export const NODE_ON_TS_REASON = NODE_ON_TS_PREFIX + ". Write a vitest test and 
 const IGNORED_PATH_PREFIX = "Notes/ and other ignored paths stay untracked";
 export const IGNORED_PATH_REASON = IGNORED_PATH_PREFIX + "; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)";
 
+const WRAPPERS = ["sudo", "time", "env", "nohup"];
+
+/** Index of the command word: past leading `VAR=value` assignments and the given wrapper words. */
+function commandStart(words: string[], wrappers: string[]): number {
+  let i = 0;
+  while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
+  while (i < words.length && wrappers.includes(words[i])) i++;
+  return i;
+}
+
+/** The arguments after `git add` of every such segment of the command. */
+function gitAddArgs(command: string): string[][] {
+  const out: string[][] = [];
+  for (const { words } of parseCommand(command)) {
+    const i = commandStart(words, WRAPPERS);
+    if (i < words.length && words[i] === "git" && words[i + 1] === "add") out.push(words.slice(i + 2));
+  }
+  return out;
+}
+
+/** A `git add` argument that names a path: not a flag, not `.`. */
+const isGitAddPath = (arg: string): boolean => !arg.startsWith("-") && arg !== ".";
+
+
 /** Returns exactly "node cannot load TypeScript source. Write a vitest test and run `npx vitest run <file>`, or run `npx tsx <file>.ts`." when any segment (after prefix strip) is:
  * - `node` (not `tsx`, not `npx tsx`) whose positional (non-flag) first argument ends in `.ts` or `.tsx` or `.mts`;
  * - `node --test` (flag --test present) with any argument ending in `.ts`;
@@ -26,10 +50,7 @@ export function nodeOnTypeScriptReason(command: string): string | null {
     const words = segment.words;
     if (words.length === 0) continue;
 
-    // Skip prefix stripping - we handle that ourselves
-    let i = 0;
-    while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
-    while (i < words.length && ["sudo", "time", "env", "nohup", "npx"].includes(words[i])) i++;
+    let i = commandStart(words, [...WRAPPERS, "npx"]);
 
     if (i >= words.length) continue;
 
@@ -83,10 +104,7 @@ export function tscFileArgReason(command: string): string | null {
     const words = segment.words;
     if (words.length === 0) continue;
 
-    // Skip prefix stripping - we handle that ourselves
-    let i = 0;
-    while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
-    while (i < words.length && ["sudo", "time", "env", "nohup"].includes(words[i])) i++;
+    let i = commandStart(words, WRAPPERS);
 
     if (i >= words.length) continue;
 
@@ -149,45 +167,22 @@ export function tscFileArgReason(command: string): string | null {
  * Reason text exactly: "Notes/ and other ignored paths stay untracked; copy notes to /tmp/pai-notes/ instead (merge salvages Notes/ automatically)".
  */
 export function forceAddReason(command: string, isIgnored: (path: string) => boolean): string | null {
-  const segments = parseCommand(command);
-  for (const segment of segments) {
-    const words = segment.words;
-    if (words.length === 0) continue;
-
-    // Skip prefix stripping - we handle that ourselves
-    let i = 0;
-    while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
-    while (i < words.length && ["sudo", "time", "env", "nohup"].includes(words[i])) i++;
-
-    if (i >= words.length) continue;
-
-    // Check if it's a git add command
-    const cmd = words[i];
-    if (cmd === "git" && words[i + 1] === "add") {
-      const args = words.slice(i + 2);
-      for (const arg of args) {
-        // Check for -f, --force flags
-        if (arg === "-f" || arg === "--force") {
-          return IGNORED_PATH_REASON;
-        }
-        // Check for combined flags like -fA, -Af
-        if (arg.length > 1 && arg.startsWith("-") && arg.includes("f") && !arg.includes("A") && !arg.includes("u") && !arg.includes("p")) {
-          return IGNORED_PATH_REASON;
-        }
+  for (const args of gitAddArgs(command)) {
+    for (const arg of args) {
+      // Check for -f, --force flags
+      if (arg === "-f" || arg === "--force") {
+        return IGNORED_PATH_REASON;
       }
+      // Check for combined flags like -fA, -Af
+      if (arg.length > 1 && arg.startsWith("-") && arg.includes("f") && !arg.includes("A") && !arg.includes("u") && !arg.includes("p")) {
+        return IGNORED_PATH_REASON;
+      }
+    }
 
-      // Check positional paths
-      for (const arg of args) {
-        // Skip flags and special arguments
-        if (arg.startsWith("-") || arg === "." || arg === "-A" || arg === "-u" || arg === "-p") continue;
-
-        // Helper to check if a path should be ignored, including paths containing .pai-scratch
-        const ignoredPath = (p: string, isIgnored: (p: string) => boolean) => p.split("/").includes(".pai-scratch") || isIgnored(p);
-
-        // Check if path is ignored
-        if (ignoredPath(arg, isIgnored)) {
-          return IGNORED_PATH_REASON;
-        }
+    // Paths containing .pai-scratch count as ignored too
+    for (const arg of args.filter(isGitAddPath)) {
+      if (arg.split("/").includes(".pai-scratch") || isIgnored(arg)) {
+        return IGNORED_PATH_REASON;
       }
     }
   }
@@ -199,31 +194,7 @@ export function forceAddReason(command: string, isIgnored: (path: string) => boo
  * Used by the caller to pre-compute ignore status.
  */
 export function gitAddPaths(command: string): string[] {
-  const paths: string[] = [];
-  const segments = parseCommand(command);
-  for (const segment of segments) {
-    const words = segment.words;
-    if (words.length < 2) continue;
-
-    // Skip prefix stripping - we handle that ourselves
-    let i = 0;
-    while (i < words.length && /^[A-Za-z_]\w*=/.test(words[i])) i++;
-    while (i < words.length && ["sudo", "time", "env", "nohup"].includes(words[i])) i++;
-
-    if (i >= words.length) continue;
-
-    // Check if it's a git add command
-    const cmd = words[i];
-    if (cmd === "git" && words[i + 1] === "add") {
-      const args = words.slice(i + 2);
-      for (const arg of args) {
-        // Skip flags and special arguments
-        if (arg.startsWith("-") || arg === "." || arg === "-A" || arg === "-u" || arg === "-p") continue;
-        paths.push(arg);
-      }
-    }
-  }
-  return paths;
+  return gitAddArgs(command).flatMap((args) => args.filter(isGitAddPath));
 }
 
 export const MASKED_PROOF_REASON = "proof command with a masked result (`> /dev/null`, `||`, `; true`): run it bare and read the output";
