@@ -5,7 +5,7 @@
  */
 
 import { grantedToolNames, recordToolError } from "../tool-errors.js";
-import { editHintFor } from "../edit-assist.js";
+import { createToolFold, runProofCheck, proofNote } from "./tool-fold.js";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -40,8 +40,6 @@ import {
   parseWorkerReport,
   verifyReportChanges,
   verifyFailNote,
-  checkProof,
-  newUntracked,
   untrackedPaths,
 } from "../report.js";
 import { parseDenialText, recordDenial } from "../denials.js";
@@ -351,6 +349,16 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid)) : null;
   stopTrack = trackBlocked(logDir, status, limit);
 
+  const toolFold = createToolFold({
+    logDir,
+    worker: wid,
+    provider: target.providerName,
+    label,
+    cwd: worktree?.dir ?? cwd,
+    granted: headless ? grantedToolNames(toolsFlag.slice(1), parsed.allowedTools) : undefined,
+    inject: injectHarnessHint,
+  });
+  state.bashRuns = toolFold.bashRuns;
   const untrackedAtStart = new Set(headless ? untrackedPaths(worktree?.dir ?? cwd) : []);
 
   // setup ends when the worker process holds its first turn; the first answer is timed from there
@@ -375,7 +383,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
     if (addendum) writeEvent({ type: "contract-addendum", text: `${addendum.path} sha ${addendum.sha}`, sha: addendum.sha });
     const rl = createInterface({ input: proc.stdout! });
-    const toolUses = new Map<string, { name: string; input: unknown }>();
+    const toolUses = toolFold.uses;
     rl.on("line", (line) => {
       state.trouble?.activity();
       if (parsed.outputFormat === "stream-json") {
@@ -410,7 +418,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         for (const block of e.message?.content ?? []) {
           if (block.type === "tool_use") {
             status.tools += 1;
-            if (block.id) toolUses.set(block.id, { name: block.name ?? "?", input: block.input });
+            toolFold.onToolUse(block);
             status.last = describeTool(block.name ?? "?", block.input);
             // a long single sleep is worth seeing while it runs (supervision's
             // "sleeping" kind) — set when issued, cleared when it completes
@@ -437,23 +445,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
               const d = parseDenialText(toolResultText(block.content), "?");
               if (d) state.trouble?.onDenial(d.hook, d.reason);
             }
-            if (block.is_error === true) {
-              recordToolError(logDir, {
-                worker: wid,
-                provider: target.providerName,
-                label,
-                tool: toolUses.get(block.tool_use_id ?? "")?.name ?? "?",
-                text: toolResultText(block.content),
-                input: toolUses.get(block.tool_use_id ?? "")?.input,
-                granted: headless ? grantedToolNames(toolsFlag.slice(1), parsed.allowedTools) : undefined,
-              });
-            }
-            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
-            if (use?.name === "Edit" && block.is_error === true) {
-              const hint = editHintFor(use.input, toolResultText(block.content), worktree?.dir ?? cwd);
-              if (hint) injectHarnessHint(hint);
-            }
-            if (use?.name === "Bash") state.bashRuns.push({ command: bashCommand(use.input), failed: toolResultFailed(block), output: toolResultText(block.content).slice(-400) });
+            toolFold.onToolResult(block);
           }
           if (sawResult) saveStatus(logDir, status);
         }
@@ -559,17 +551,14 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   }
   (spawned as { release?: () => void }).release?.(); // the retry (if any) is over: the held pane may close
   if (headless && a.reportFormat === "ag2" && resultEvent?.result) {
-    const stray = newUntracked(worktree?.dir ?? cwd, untrackedAtStart);
-    const chk = checkProof(resultEvent.result, state.bashRuns, stray);
-    if (chk.rewritten || stray.length) {
-      resultEvent.result = chk.text;
-      state.resultReport = parseWorkerReport(chk.text);
-      if (state.resultReport) state.resultReport.untracked = stray.length ? stray : undefined;
+    const { text, report, stray, rewritten, proof } = runProofCheck(resultEvent.result, state.bashRuns, worktree?.dir ?? cwd, untrackedAtStart, ledger, wid);
+    if (rewritten || stray.length) {
+      resultEvent.result = text;
+      state.resultReport = report;
     }
-    if (chk.rewritten) {
+    if (rewritten) {
       status.reportValid = false;
-      status.last = shortText(`claimed proof not run or failed: ${chk.proof}`, 90);
-      appendLedger(ledger, "REPORT-PROOF-UNVERIFIED", { id: wid, proof: chk.proof });
+      status.last = proofNote(proof);
     }
     if (stray.length) process.stderr.write(`pai worker: warning: ${stray.length} untracked file(s) left by the worker: ${stray.join(", ")}\n`);
   }

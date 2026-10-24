@@ -8,6 +8,8 @@ import { classifyToolError, summarizeToolInput } from "./tool-errors.js";
 export interface RepeatLoop {
   name: string;
   count: number;
+  /** The repeated failure is a tool call whose JSON input was cut off at the output limit. */
+  cut?: boolean;
   /** Canonical input of the repeated call, truncated. */
   input: string;
   /** Set for an echo loop (see detectEchoLoop); absent for a repeated failing call. */
@@ -15,6 +17,9 @@ export interface RepeatLoop {
   /** Echo loops only: what tripped the verdict. */
   by?: "turns" | "string";
 }
+
+/** The call's JSON never arrived whole: the model hit its output limit mid-call. */
+export const JSON_CUT_RE = /could not be parsed as JSON/i;
 
 export const LOOP_WARN_AT = 3;
 export const LOOP_STOP_AT = 6;
@@ -29,6 +34,7 @@ interface Call {
   name: string;
   key: string;
   failed: boolean;
+  text: string;
 }
 
 const canon = (v: unknown): string => {
@@ -65,7 +71,7 @@ export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): R
         const failed = b.is_error === true || (use.name === "Bash" && /^Exit code (?!0\b)\d+/.test(text.trim()));
         // designed non-zero answers (wait verbs exit 3, grep no-match, diff...) are not failures
         const benign = failed && classifyToolError({ ts: 0, worker: "", provider: "", label: "", tool: use.name, signature: "", raw: text.trim(), input: summarizeToolInput(use.input) }).cls === "benign";
-        calls.push({ name: use.name, key: use.key, failed: failed && !benign });
+        calls.push({ name: use.name, key: use.key, failed: failed && !benign, text });
       }
     }
   }
@@ -77,7 +83,8 @@ export function detectRepeatLoop(events: unknown[], minRepeat = LOOP_WARN_AT): R
     if (c.failed && c.name === last.name && c.key === last.key) n++;
     else break;
   }
-  return n >= minRepeat ? { name: last.name, count: n, input: last.key.slice(0, 200) } : null;
+  if (n < minRepeat) return null;
+  return { name: last.name, count: n, input: last.key.slice(0, 200), ...(JSON_CUT_RE.test(last.text) ? { cut: true } : {}) };
 }
 
 // ---------------------------------------------------------------------------
