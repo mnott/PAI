@@ -459,6 +459,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai worker ps` | List this session's workers, running and finished |
 | `pai worker queue` | Show or reorder the workers waiting for a provider slot |
 | `pai worker replay` | Print the transcript of one worker |
+| `pai worker reroute` | Move a queued or running worker to another provider |
 | `pai worker resume` | Continue a finished worker with a new instruction, or release a paused one |
 | `pai worker roles` | Old name of `classes` |
 | `pai worker roles list` | List classes and where each one runs |

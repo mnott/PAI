@@ -61,6 +61,7 @@ import {
   resetContextTokensOnCompact,
   isCompactBoundary,
   bashCommand,
+  isProgressTool,
   toolResultText,
   toolResultFailed,
   adoptInitModel,
@@ -446,6 +447,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
               if (d) state.trouble?.onDenial(d.hook, d.reason);
             }
             toolFold.onToolResult(block);
+            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+            if (use && !toolResultFailed(block) && isProgressTool(use.name, use.input)) status.progressAt = nowStamp();
           }
           if (sawResult) saveStatus(logDir, status);
         }

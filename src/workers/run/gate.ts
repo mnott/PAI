@@ -5,6 +5,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ANTHROPIC_NATIVE, isLocalProvider, readWorkersCached, resolveModelCapability, type PriorityConfig, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../config.js";
 import { shortText } from "../args.js";
 import { isLoopbackProvider, nativeLaunchEnv } from "../run-env.js";
@@ -620,8 +622,8 @@ export function queuePriorityOf(flag: QueuePriority | undefined, status: Pick<Wo
 }
 
 /** The pane's queue file content from a gate poll: the run's place in line, its label last. */
-function queuedOf(q: QueuedFile, label: string | undefined): QueuedFile {
-  return label ? { ...q, label } : q;
+function queuedOf(q: QueuedFile, label: string | undefined, logDir: string): QueuedFile {
+  return { ...q, logDir, ...(label ? { label } : {}) };
 }
 
 /**
@@ -701,7 +703,7 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
       saveStatus(logDir, status);
     },
     // the pane opened before the wait shows its place in line (pane-exec reads the file)
-    onQueued: (line) => paneHandles.get(wid)?.setQueued(line === null ? null : queuedOf(line, a.label)),
+    onQueued: (line) => paneHandles.get(wid)?.setQueued(line === null ? null : queuedOf(line, a.label, logDir)),
   };
   // the session's own limit ("one after the other"): same gate, counted per session across providers
   const max = status.sessionKey ? getProfile(status.sessionKey)?.max_parallel : undefined;
@@ -738,6 +740,18 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
  * so the run counts as holding a slot the moment it leaves the queue; the pool
  * host or executeRun overwrites it under the same id.
  */
+/** The task text kept beside the status, so `rerouteWorker` can start the same task elsewhere (a --spec run already has its file). */
+function promptCopy(logDir: string, wid: string, prompt: string | null | undefined): { promptFile?: string } {
+  if (!prompt) return {};
+  try {
+    const file = join(logDir, `${wid}.prompt`);
+    writeFileSync(file, prompt, "utf8");
+    return { promptFile: file };
+  } catch {
+    return {};
+  }
+}
+
 export async function gateStart(a: ExecuteArgs): Promise<void> {
   if (!a.parsed.headless || a.printCmd || a.gated) return;
   const wid = a.id ?? newWorkerId();
@@ -767,6 +781,9 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     outputFormat: a.parsed.outputFormat,
     ...(sessionKey ? { sessionKey } : {}),
     ...(spawner ? { spawnerSession: spawner } : {}),
+    ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
+    ...(a.className ? { className: a.className } : {}),
+    ...promptCopy(a.logDir, wid, a.parsed.prompt),
   };
   saveStatus(a.logDir, status);
   // the follow pane opens now, not after the queue (a run parked at a cap shows

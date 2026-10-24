@@ -11,7 +11,7 @@
 import { deadlineLabel } from "./deadline.js";
 import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
-import { ellipsize, queuedPaneLine, queuedText, type QueuedFile } from "./capacity.js";
+import { ellipsize, queuedBarRow, queuedText, type QueuedFile } from "./capacity.js";
 import { relative, basename } from "node:path";
 import { ANTHROPIC_NATIVE, getProviderOrNative, nativeAnthropicModels, readWorkersSection, type WorkersConfig } from "./config.js";
 import { shortText } from "./args.js";
@@ -787,7 +787,7 @@ export function paneStatusRow(
   // the pane opened before the queue: while the run waits for a slot the line
   // is the queue itself, refreshed in place (no goal/model tail yet — nothing has started)
   if (queued) {
-    const line = queuedPaneLine(queued);
+    const line = queuedBarRow(queued);
     return columns !== null && columns > 1 ? ellipsize(line, columns - 1) : line;
   }
   const model = [shortModel(s.model), contextFooter(s)].filter(Boolean).join(" · ");

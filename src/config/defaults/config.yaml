@@ -195,6 +195,15 @@ workers:
       - "src/utils/no-token-literals.test.ts"
       - "src/cli/docs-sync.test.ts"
       - "src/cli/docs-keys.test.ts"
+  # Time-bound escalation (the supervision tick, reroute.ts): a job that waits
+  # for a slot longer than queuedMaxMin, or runs without a successful
+  # Edit/Write/commit for stallMaxMin, or has stallFailedCalls failed tool
+  # calls in a row, moves once to the fallback provider. A job whose provider
+  # was pinned (--provider, --local, the session profile) is never moved.
+  reroute:
+    queuedMaxMin: 15
+    stallMaxMin: 10
+    stallFailedCalls: 6
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:

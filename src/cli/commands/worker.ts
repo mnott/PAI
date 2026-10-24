@@ -682,6 +682,25 @@ const goalCommand: CommandDef = {
     }),
 };
 
+const rerouteCommand: CommandDef = {
+  name: "reroute",
+  summary: "Move a queued or running worker to another provider",
+  description:
+    "A queued worker is stopped and its task starts on the target provider. A running worker is stopped the normal way (its commits stay on its branch) and the same task starts on the target, with a note naming the old id and the branch. The pane commands /cloud and /local and the worker_reroute MCP tool do the same.",
+  args: [{ name: "ID", required: true, summary: "Worker id (see `pai worker ps`)" }],
+  options: [{ name: "where", type: "string", value: "WHERE", summary: "cloud (the session's cloud provider), local or a provider name" }],
+  examples: ["pai worker reroute w-20260101-abc --where cloud", "pai worker reroute w-20260101-abc --where local"],
+  seeAlso: ["pai worker queue", "pai worker kill"],
+  run: (ctx) =>
+    guard("pai worker reroute <id> --where cloud|local|<provider>", async () => {
+      const where = str(ctx.opts.where);
+      if (!where) throw new Error("--where is required: cloud, local or a provider name");
+      const { rerouteWorker } = await import("../../workers/reroute.js");
+      const r = await rerouteWorker(ctx.args.ID as string, where, { logDir: logDir(), by: "cli" });
+      out(`${r.id}: ${r.was} -> started again on ${r.provider}${r.branch ? ` (continues branch ${r.branch})` : ""}`);
+    }),
+};
+
 const handoffCommand: CommandDef = {
   name: "handoff",
   summary: "From inside a worker: pass a question or result to its parent",
@@ -1202,6 +1221,7 @@ export const workerCommand: CommandDef = {
     statusLineCommand,
     sayCommand,
     goalCommand,
+    rerouteCommand,
     pauseCommand,
     handoffCommand,
     helpCommand,

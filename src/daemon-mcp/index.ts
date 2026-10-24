@@ -1763,6 +1763,28 @@ async function startShim(): Promise<void> {
   );
 
   server.tool(
+    "worker_reroute",
+    [
+      "Move a QUEUED or RUNNING worker to another provider.",
+      "",
+      "where=cloud is the session's cloud provider, local the running local model, or a provider name. A queued worker's task starts on the target; a running worker is stopped (its commits stay on its branch) and the same task continues there.",
+    ].join("\n"),
+    {
+      id: z.string().describe("Worker id (as shown by worker_ps)."),
+      where: z.string().describe("cloud, local or a provider name."),
+    },
+    async (args) => {
+      try {
+        const { rerouteWorker } = await import("../workers/reroute.js");
+        const r = await rerouteWorker(args.id, args.where, { logDir: workersLogDir(readWorkersSection().workers), by: "mcp" });
+        return workerText(`${r.id}: ${r.was} -> started again on ${r.provider}${r.branch ? ` (continues branch ${r.branch})` : ""}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
     "worker_pause",
     [
       "Pause a RUNNING worker's engine requests: its next request to the local engine parks in the router until worker_resume (without text). The request in flight finishes; nothing is killed.",
