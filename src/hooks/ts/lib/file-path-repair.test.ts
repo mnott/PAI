@@ -70,8 +70,24 @@ describe("repairFilePath", () => {
   });
 
   it("UniqueBasename: one tracked file with that name", () => {
-    const r = repairFilePath(call("Read", "/nowhere/unique-name.ts"), W, ctx) as any;
+    const r = repairFilePath(call("Read", "unique-name.ts"), W, ctx) as any;
     expect(r).toMatchObject({ rule: "basename", to: `${cwd}/src/hooks/unique-name.ts` });
+    const t = repairFilePath(call("Read", "/x/worktrees/old/gone/unique-name.ts"), W, ctx) as any;
+    expect(t).toMatchObject({ rule: "basename", to: `${cwd}/src/hooks/unique-name.ts` });
+  });
+
+  it("UnrelatedAbsoluteNotRewritten: same basename outside the repo tree is denied", () => {
+    writeFileSync(join(cwd, "README.md"), "x");
+    ctx.tracked = () => ["README.md", "src/hooks/unique-name.ts"];
+    expect(repairFilePath(call("Read", "/tmp/foo/README.md"), W, ctx)?.kind).toBe("deny");
+    expect(repairFilePath(call("Read", "/nowhere/unique-name.ts"), W, ctx)?.kind).toBe("deny");
+  });
+
+  it("OldWorktreeNested: <oldworktree>/src/a/b.ts maps to cwd", () => {
+    mkdirSync(join(cwd, "src/a"), { recursive: true });
+    writeFileSync(join(cwd, "src/a/b.ts"), "x");
+    const r = repairFilePath(call("Read", "/x/worktrees/old/src/a/b.ts"), W, ctx) as any;
+    expect(r.to).toBe(`${cwd}/src/a/b.ts`);
   });
 
   it("AmbiguousBasename: two index.ts → deny", () => {
@@ -130,6 +146,7 @@ describe("repairFilePath", () => {
     const out = JSON.parse(renderPathRepair(r)).hookSpecificOutput;
     expect(out.permissionDecision).toBe("allow");
     expect(out.updatedInput.file_path).toBe(`${cwd}/src/workers/pane-exec.ts`);
-    expect(out.additionalContext).toContain("path-repair relative src/workers/pane-exec.ts ->");
+    expect(out.additionalContext).toContain("path repaired: src/workers/pane-exec.ts → ");
+    expect(out.additionalContext).toContain("(relative)");
   });
 });

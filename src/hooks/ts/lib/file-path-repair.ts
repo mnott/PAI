@@ -67,27 +67,32 @@ function resolvePath(raw: string, ctx: PathRepairCtx, mayCreate: boolean): { rul
   const under = (rule: string, p: string, needExist = true) =>
     inside(cwd, p) && (!needExist || ex(p)) ? { rule, to: p } : null;
 
+  let ownTree = !isAbsolute(raw);
   if (!isAbsolute(raw)) {
     const hit = under("relative", resolve(cwd, raw));
     if (hit) return hit;
   } else {
     const wt = TREE_PREFIX.exec(raw);
     if (wt) {
+      ownTree = true;
       const hit = under("other-tree", join(cwd, raw.slice(wt[0].length)), !mayCreate);
       if (hit) return hit;
     }
     const root = ctx.mainRoot?.();
+    if (inside(cwd, raw)) ownTree = true;
     if (root && raw.startsWith(root + sep)) {
+      ownTree = true;
       const hit = under("other-tree", join(cwd, raw.slice(root.length + 1)), !mayCreate);
       if (hit) return hit;
     }
     const parts = raw.split(sep).filter(Boolean);
-    for (let i = 0; i < parts.length; i++) {
+    // dir/file at least: a bare basename would map an unrelated path onto a same-named repo file
+    for (let i = 0; i < parts.length - 1; i++) {
       const hit = under("other-tree", join(cwd, ...parts.slice(i)));
       if (hit) return hit;
     }
   }
-  if (mayCreate) return null;
+  if (mayCreate || !ownTree) return null;
   const base = basename(raw);
   const same = ctx.tracked().filter((f) => basename(f) === base);
   return same.length === 1 ? { rule: "basename", to: join(cwd, same[0]) } : null;
@@ -146,7 +151,7 @@ export function repairFilePath(
 }
 
 export function renderPathRepair(r: Extract<PathRepairResult, { kind: "repair" }>): string {
-  const msg = `path-repair ${r.rule} ${r.from} -> ${r.to}`;
+  const msg = `path repaired: ${r.from} → ${r.to} (${r.rule})`;
   return renderDecision({ decision: "allow", updatedInput: r.updatedInput, context: msg });
 }
 
