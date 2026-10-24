@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { detectRepeatLoop, loopAction } from "./repeat-loop.js";
+import { classifyToolError } from "./tool-errors.js";
 
 const use = (id: string, name: string, input: unknown) => ({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input }] } });
 const res = (id: string, text: string, isError = false) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: text }] } });
@@ -124,5 +125,15 @@ describe("repeat-loop benign polling", () => {
     const input = { command: "cd /tmp/d; pai worker wait-file b0.json --max 100" };
     const events = Array.from({ length: 6 }, (_, i) => [use(`w${i}`, "Bash", input), res(`w${i}`, "Exit code 3\nnot yet", true)]).flat();
     expect(detectRepeatLoop(events)).toBeNull();
+  });
+});
+
+describe("repeat-loop benign exit 1", () => {
+  it("a single benign exit 1 is not alerted, three identical ones are a loop", () => {
+    const input = { command: "exit 1" };
+    const mk = (n: number) => Array.from({ length: n }, (_, i) => [use(`b${i}`, "Bash", input), res(`b${i}`, "Exit code 1", true)]).flat();
+    expect(classifyToolError({ ts: 0, worker: "", provider: "", label: "", tool: "Bash", signature: "", raw: "Exit code 1", input: "exit 1" }).cls).toBe("benign");
+    expect(detectRepeatLoop(mk(1))).toBeNull();
+    expect(detectRepeatLoop(mk(3))?.count).toBe(3);
   });
 });

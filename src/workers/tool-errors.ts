@@ -136,6 +136,21 @@ const FAILURE_EVIDENCE =
   /\b(?:errors?|failed|failures?|fatal|cannot|can't|not found|no such file|denied|traceback|exceptions?|panic|segmentation|abort(?:ed)?|TS\d+|FAIL|assertion|exit status|command not found)\b|[✗×]/i;
 
 /**
+ * A deliberate polling exit: a wait verb's "not yet" or timeout's own 124/144
+ * after a bound. Repeating it is the design, so it is never an identical-call
+ * loop. Other benign exits (exit 1 with clean output) are only not alert-worthy;
+ * repeating them still is a loop.
+ */
+export function isPollingExit(r: ToolErrorRecord): boolean {
+  if (r.tool !== "Bash" || !r.input) return false;
+  const code = bashExitCode(r.raw);
+  if (code === null) return false;
+  if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(r.input)) return true;
+  const last = lastCommand(r.input);
+  return !!last && isExpectedWaitExit(last.segment, code);
+}
+
+/**
  * Bash exits that are the tool's normal answer, matched on exit code AND
  * command shape AND output marker: search no-match (exit 1, empty output),
  * diff/cmp "differ" (exit 1), test/[ false (exit 1, empty output), a vitest
@@ -151,9 +166,8 @@ export function isBenignBash(r: ToolErrorRecord): boolean {
   const cmd = r.input;
   if (/^(?:\(eval\)|zsh):\d+: =+ not found$/m.test(out) && /\becho\s+["']?=+/.test(cmd)) return true;
   if (code === null) return false;
-  if ((code === 124 || code === 144) && /(^|[\s;&|(])g?timeout\s+(-\S+\s+)*\d/.test(cmd)) return true;
+  if (isPollingExit(r)) return true;
   const last = lastCommand(cmd);
-  if (last && isExpectedWaitExit(last.segment, code)) return true;
   if (code !== 1) return false;
   if (!FAILURE_EVIDENCE.test(r.raw.replace(/^Exit code \d+/i, ""))) return true;
   if (!last) return false;
