@@ -600,6 +600,19 @@ const errorsCommand: CommandDef = {
     }),
 };
 
+const flakyCommand: CommandDef = {
+  name: "flaky",
+  summary: "Test files that failed in the merge gate's batch and passed alone",
+  description: "Lists files by flake count with the newest saved batch output (the path is also in the WORKER-MERGE-TESTS ledger line as flakyLog=).",
+  examples: ["pai worker flaky"],
+  seeAlso: ["pai worker errors"],
+  run: () =>
+    guard("pai worker flaky", async () => {
+      const { flakyDir, flakyTable, listFlaky } = await import("../../workers/flaky-log.js");
+      out(flakyTable(listFlaky(flakyDir(logDir()))));
+    }),
+};
+
 const statusLineCommand: CommandDef = {
   name: "status-line",
   summary: "One-line worker summary for a status bar",
@@ -1218,6 +1231,7 @@ export const workerCommand: CommandDef = {
     paneCommand,
     logCommand,
     errorsCommand,
+    flakyCommand,
     statusLineCommand,
     sayCommand,
     goalCommand,
