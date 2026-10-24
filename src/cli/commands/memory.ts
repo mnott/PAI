@@ -204,15 +204,16 @@ export const memoryRepairOrphansCommand: CommandDef = {
   description:
     "A registry rebuild gives every project a new id and strands the indexed text (with its vectors) under the old ones. " +
     "This maps those chunks to the current project with the same folder (via the projects backup table), moves them over and drops the newer copies that have no vectors. " +
-    "With --delete it instead removes orphans whose current project already has vectors for the same file. Counts only unless --execute is given.",
+    "With --delete it instead removes orphans whose current project already has vectors for the same file (ids nothing maps are matched by chunk hash; --include-stale also takes those without a twin). Rows are copied to <PAI home>/backups and verified before any delete. Counts only unless --execute is given.",
   options: [
     { name: "execute", type: "boolean", summary: "Apply the change (default: print counts only)" },
     { name: "dry-run", type: "boolean", summary: "Print counts only (the default; wins over --execute)" },
-    { name: "delete", type: "boolean", summary: "Delete orphans that have a vectored twin under the current id instead of moving them" },
+    { name: "delete", type: "boolean", summary: "Delete orphans that have a vectored twin under a current project (by path if mapped, by hash if not) instead of moving them; backs them up first" },
+    { name: "include-stale", type: "boolean", summary: "With --delete: also delete unmapped orphans that have no twin (old versions of changed or deleted text)" },
   ],
   examples: ["pai memory repair-orphans", "pai memory repair-orphans --execute", "pai memory repair-orphans --delete --execute"],
   seeAlso: ["pai memory status", "pai registry rebuild"],
-  run: (ctx) => memoryRepairOrphansCmd({ execute: ctx.opts.execute === true && ctx.opts["dry-run"] !== true, deleteTwins: ctx.opts.delete === true }),
+  run: (ctx) => memoryRepairOrphansCmd({ execute: ctx.opts.execute === true && ctx.opts["dry-run"] !== true, deleteTwins: ctx.opts.delete === true, includeStale: ctx.opts["include-stale"] === true }),
 };
 
 export const memoryCommand: CommandDef = {

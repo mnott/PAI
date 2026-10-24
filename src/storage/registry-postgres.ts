@@ -18,12 +18,15 @@ import pg from "pg";
 import { createPgPool } from "./pg-pool.js";
 import { assertDestructiveAllowed } from "./foreign-config-guard.js";
 import { MergeError } from "../registry/merge.js";
+import { paiHomePath } from "../config/pai-home.js";
+import { CHUNK_HASH_TWIN, FILE_HASH_TWIN, countHashTwins, runDelete, type DeleteTarget } from "./orphan-delete.js";
 import { backupTableName, backupsToPrune, logRegistryReset, sortBackups } from "./registry-reset.js";
 import type { Pool, PoolClient } from "pg";
 import { DEFAULT_PG_CONNECTION_TIMEOUT_MS, postgresConnectionString, type PostgresConfig } from "./postgres/config.js";
 import type {
   OrphanCounts,
   OrphanRepairReport,
+  RepairOrphansOpts,
   RegistryBackend,
   Project,
   ProjectWithSessionStats,
@@ -204,11 +207,67 @@ export class PostgresRegistryBackend implements RegistryBackend {
     return { orphaned: Number(r.rows[0].orphaned), total: Number(r.rows[0].total) };
   }
 
-  async repairOrphans(opts: { dryRun: boolean; deleteTwins?: boolean }): Promise<OrphanRepairReport> {
+  /**
+   * `--delete`: orphans with a vectored twin (by path for mapped ids, by hash for
+   * unmapped ones) and, with includeStale, every unmapped orphan. Backed up and
+   * verified before the first DELETE; deleted in batches per old project id.
+   */
+  private async deleteOrphanTwins(
+    rep: OrphanRepairReport,
+    ids: { project_id: number; n: string; f: string }[],
+    map: Map<number, number>,
+    opts: RepairOrphansOpts
+  ): Promise<void> {
+    const targets: DeleteTarget[] = [];
+    const count = async (table: string, where: string, args: unknown[]): Promise<number> =>
+      Number((await this.pool.query(`SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`, args)).rows[0].n);
+    for (const [oldId, newId] of map) {
+      const where = "project_id = $1 AND path IN (SELECT path FROM pai_chunks WHERE project_id = $2 AND embedding IS NOT NULL)";
+      for (const table of ["pai_chunks", "pai_files"] as const) {
+        targets.push({ oldId, table, where, args: [oldId, newId], expected: await count(table, where, [oldId, newId]) });
+      }
+    }
+    const unmapped = ids.filter((x) => !map.has(x.project_id));
+    const twins = await countHashTwins(this.pool, unmapped.map((x) => x.project_id));
+    for (const u of unmapped) {
+      const id = u.project_id;
+      const chunks = Number(u.n);
+      const twinChunks = twins.chunks.get(id) ?? 0;
+      rep.unmappedTwinChunks += twinChunks;
+      rep.unmappedStaleChunks += chunks - twinChunks;
+      const all = opts.includeStale === true;
+      targets.push({
+        oldId: id, table: "pai_chunks", args: [id], expected: all ? chunks : twinChunks,
+        where: all ? "project_id = $1" : `project_id = $1 AND ${CHUNK_HASH_TWIN}`,
+      });
+      targets.push({
+        oldId: id, table: "pai_files", args: [id], expected: all ? Number(u.f) : twins.files.get(id) ?? 0,
+        where: all ? "project_id = $1" : `project_id = $1 AND ${FILE_HASH_TWIN}`,
+      });
+    }
+    const live = targets.filter((t) => t.expected > 0);
+    const done = await runDelete(this.pool, live, {
+      dryRun: opts.dryRun,
+      backupDir: opts.backupDir ?? paiHomePath("backups"),
+      ts: Date.now(),
+      log: opts.log,
+    });
+    rep.backupFiles = done.backups;
+    live.forEach((t, i) => {
+      const n = done.deleted[i];
+      if (t.table === "pai_chunks") {
+        if (map.has(t.oldId)) rep.deletedTwinChunks += n;
+        else rep.deletedUnmappedChunks += n;
+      } else if (!map.has(t.oldId)) rep.deletedUnmappedFiles += n;
+    });
+  }
+
+  async repairOrphans(opts: RepairOrphansOpts): Promise<OrphanRepairReport> {
     if (!opts.dryRun) assertDestructiveAllowed(opts.deleteTwins ? "repair-orphans --delete --execute" : "repair-orphans --execute");
     const rep: OrphanRepairReport = {
       orphanChunks: 0, orphanFiles: 0, mappedIds: 0, unmappedIds: 0, repointedChunks: 0, repointedFiles: 0,
       droppedDuplicateChunks: 0, droppedDuplicateFiles: 0, deletedTwinChunks: 0, dryRun: opts.dryRun,
+      unmappedTwinChunks: 0, unmappedStaleChunks: 0, deletedUnmappedChunks: 0, deletedUnmappedFiles: 0, backupFiles: [],
     };
     const orphan = (t: string) => `NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = ${t}.project_id)`;
     const ids = (await this.pool.query(
@@ -229,6 +288,10 @@ export class PostgresRegistryBackend implements RegistryBackend {
     }
     rep.mappedIds = map.size;
     rep.unmappedIds = ids.length - map.size;
+    if (opts.deleteTwins) {
+      await this.deleteOrphanTwins(rep, ids, map, opts);
+      return rep;
+    }
 
     const client = await this.pool.connect();
     try {
@@ -243,12 +306,6 @@ export class PostgresRegistryBackend implements RegistryBackend {
           opts.dryRun ? count(table, where) : (await client.query(`DELETE FROM ${table} WHERE ${where}`, args)).rowCount ?? 0;
         const move = async (table: string, where: string): Promise<number> =>
           opts.dryRun ? count(table, where) : (await client.query(`UPDATE ${table} SET project_id = $2 WHERE ${where}`, args)).rowCount ?? 0;
-        const orphanTwin = `project_id = $1 AND path IN (${twin})`;
-        if (opts.deleteTwins) {
-          rep.deletedTwinChunks += await del("pai_chunks", orphanTwin);
-          await del("pai_files", orphanTwin);
-          continue;
-        }
         const movable = `project_id = $1 AND path NOT IN (${twin})`;
         // the newer vectorless copy of a path the orphan owns is the duplicate; the orphan has the vectors
         rep.droppedDuplicateChunks += await del(

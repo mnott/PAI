@@ -92,6 +92,7 @@ export class SQLiteRegistryBackend implements RegistryBackend {
     return {
       orphanChunks: 0, orphanFiles: 0, mappedIds: 0, unmappedIds: 0, repointedChunks: 0, repointedFiles: 0,
       droppedDuplicateChunks: 0, droppedDuplicateFiles: 0, deletedTwinChunks: 0, dryRun: opts.dryRun,
+      unmappedTwinChunks: 0, unmappedStaleChunks: 0, deletedUnmappedChunks: 0, deletedUnmappedFiles: 0, backupFiles: [],
     };
   }
 
