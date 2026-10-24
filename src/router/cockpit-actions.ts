@@ -31,6 +31,7 @@ import { setConfigValueOp, unsetConfigValueOp } from "../config/main-config-ops.
 import { readLocalConfig } from "../workers/local-tiers.js";
 import { workersYamlPath } from "../workers/workers-config.js";
 import { instanceEngineKey } from "../workers/local-instances.js";
+import { syncRuntimeInstance, type RuntimeInstanceDeps } from "../workers/runtime-instances.js";
 import { sharedScheduler, type SchedSnapshot } from "./scheduler.js";
 import { primaryLocal, readLocalStatus } from "../workers/local-status.js";
 import { paiHomeDir } from "../config/pai-home.js";
@@ -82,6 +83,8 @@ export interface ActionDeps {
   runtimeOps?: RuntimeOpDeps;
   /** Runtime name → inventory kind (docker-model-runner needs no ready check); default read from the inventory cache. */
   runtimeKinds?: Record<string, string>;
+  /** Overrides of the managed-instance registry sync after a runtime op (tests); default lsof and the live log dir. */
+  runtimeInstance?: Partial<RuntimeInstanceDeps>;
   /** Fresh model-inventory probe written over the 30 s cache; called when a runtime job ends. Default: compute + write. */
   refreshInventory?: (runtime: string) => Promise<void>;
   /** Called when a local start/stop/scale/switch/off ends: the router drops its cached server probe. */
@@ -410,6 +413,8 @@ export async function runtimeStartStop(
     result: r.ok ? "ok" : `error: ${r.message}`,
     log: runtimeLogFile(deps.home, runtime),
   });
+  const providerUrl = deps.workers.providers?.[runtime]?.baseUrl;
+  if (providerUrl) syncRuntimeInstance(runtime, op, r.ok, { logDir: workersLogDir(deps.workers), home: deps.home, providerUrl, ...deps.runtimeInstance });
   return r;
 }
 
