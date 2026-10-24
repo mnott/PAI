@@ -27,6 +27,10 @@ export interface ReleaseOptions {
   repo: string;
   bump?: string;
   dryRun?: boolean;
+  /** Resume at this step: earlier steps are skipped; after `tag` the tag on HEAD is the release. */
+  from?: Step;
+  /** Steps to skip; only `mirror` (no-op when the tag is already on GitHub). */
+  skip?: Step[];
 }
 
 export interface ReleaseDeps {
@@ -62,6 +66,12 @@ export interface ReleaseResult {
 }
 
 class StepFailed extends Error {}
+
+/** Parse `--from` / `--skip` values; throws a plain Error naming the valid steps. */
+export function parseStep(value: string, flag: string): Step {
+  if ((STEPS as readonly string[]).includes(value)) return value as Step;
+  throw new Error(`--${flag}: unknown step "${value}" (steps: ${STEPS.join(" ")})`);
+}
 
 /** Lockfile-faithful dependency install for a checkout: npm ci, bun's frozen install, or plain npm install. */
 function installCommand(dir: string): string[] {
@@ -141,14 +151,14 @@ export function changelogSection(changelog: string, version: string): string | n
 }
 
 /** The ordered plan for a repo: what `--dry-run` prints and what a run follows. */
-export function planRelease(repo: string, opts: { bump?: string } = {}): string[] {
+export function planRelease(repo: string, opts: { bump?: string; from?: Step; skip?: Step[]; version?: string } = {}): string[] {
   const pkg = readPkg(repo);
   const gh = githubRepoOf(pkg);
-  const next = bumpVersion(pkg.version ?? "0.0.0", opts.bump ?? "patch");
+  const next = opts.version ?? bumpVersion(pkg.version ?? "0.0.0", opts.bump ?? "patch");
   const t = testCommand(repo, pkg);
   const sync = existsSync(join(repo, "scripts", "sync-versions.mjs")) ? " + node scripts/sync-versions.mjs" : "";
   const stable = pkg.name ? stableAssetName(pkg.name) : "<name>.tgz";
-  return [
+  const plan = [
     `check: clean tree, branch main`,
     `bump: ${pkg.version} -> ${next} (npm version --no-git-tag-version${sync})`,
     `build: ${pkg.scripts?.build ? "npm run build" : "(no build script)"}`,
@@ -156,10 +166,11 @@ export function planRelease(repo: string, opts: { bump?: string } = {}): string[
     `commit: git add -A; git commit -m "chore: release ${next}"`,
     `tag: v${next}`,
     `push: git push origin main --tags`,
-    `mirror: forge push-mirror sync; wait for v${next} on GitHub${gh ? ` (${gh.owner}/${gh.repo})` : ""}`,
+    `mirror: ${opts.from || opts.skip?.includes("mirror") ? `no-op when v${next} is already on GitHub, else ` : ""}forge push-mirror sync; wait for v${next} on GitHub${gh ? ` (${gh.owner}/${gh.repo})` : ""}`,
     `pack: clean worktree of v${next} (install, build) -> npm pack -> ${stable} + versioned`,
     `release: gh release create v${next} ${stable}${gh ? ` --repo ${gh.owner}/${gh.repo}` : ""}`,
   ];
+  return opts.from ? plan.slice(STEPS.indexOf(opts.from)) : plan;
 }
 
 /** The `state:` line: what is committed, tagged and pushed. */
@@ -193,15 +204,28 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
     return { ok: false, failedStep: "check", message: (e as Error).message, state, lines: [`check: FAILED — ${(e as Error).message}`] };
   }
 
+  const fromIdx = opts.from ? STEPS.indexOf(opts.from) : 0;
+  const resume = fromIdx > STEPS.indexOf("tag");
+  const skipMirror = opts.skip?.includes("mirror") ?? false;
+  /** The v* tag on HEAD, for steps after `tag`. */
+  const headTag = async (): Promise<string> => {
+    const r = await run("git", ["tag", "--points-at", "HEAD"], { cwd: repo });
+    const t = r.stdout.split("\n").map((x) => x.trim()).filter((x) => /^v\d/.test(x)).sort().pop();
+    if (r.code !== 0 || !t) throw new StepFailed(`--from ${opts.from}: HEAD has no v* tag; resume from a step up to tag, or check out the tagged commit`);
+    return t;
+  };
+
   if (opts.dryRun) {
     try {
-      for (const l of planRelease(repo, { bump: opts.bump })) print(`plan ${l}`);
+      const version = resume ? (await headTag()).slice(1) : undefined;
+      for (const l of planRelease(repo, { bump: opts.bump, from: opts.from, skip: opts.skip, version })) print(`plan ${l}`);
       return { ok: true, state, lines };
     } catch (e) {
       print(`check: FAILED — ${(e as Error).message}`);
       return { ok: false, failedStep: "check", message: (e as Error).message, state, lines };
     }
   }
+  const at = (s: Step): boolean => STEPS.indexOf(s) >= fromIdx;
 
   const sh = async (cmd: string, args: string[]): Promise<string> => {
     const r = await run(cmd, args, { cwd: repo });
@@ -212,80 +236,118 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
   let step: Step = "check";
   try {
     // 1. check
-    const dirty = (await sh("git", ["status", "--porcelain"])).trim();
-    if (dirty) throw new StepFailed(`working tree is not clean (${dirty.split("\n").length} changed path(s)); commit or stash first`);
-    const branch = (await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
-    if (branch !== "main") throw new StepFailed(`on branch "${branch}", releases are cut from main`);
+    if (!resume) {
+      const dirty = (await sh("git", ["status", "--porcelain"])).trim();
+      if (dirty) throw new StepFailed(`working tree is not clean (${dirty.split("\n").length} changed path(s)); commit or stash first`);
+      const branch = (await sh("git", ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      if (branch !== "main") throw new StepFailed(`on branch "${branch}", releases are cut from main`);
+    }
     const origin = (await sh("git", ["remote", "get-url", "origin"])).trim();
     const forge = deriveForge(origin);
     const gh = githubRepoOf(pkg) ?? parseGithubRepo(await run("git", ["remote", "get-url", "github"], { cwd: repo }).then((r) => (r.code === 0 ? r.stdout : "")));
     if (!gh) throw new StepFailed("no GitHub repository: set package.json repository or a `github` remote");
     if (!pkg.name) throw new StepFailed("package.json has no name");
-    const version = bumpVersion(pkg.version ?? "0.0.0", opts.bump ?? "patch");
-    const tag = `v${version}`;
-    if ((await sh("git", ["tag", "--list", tag])).trim()) throw new StepFailed(`tag ${tag} already exists`);
-    print(`check: ok (main, clean; forge ${forge.repo}; GitHub ${gh.owner}/${gh.repo})`);
+    // a resume after `tag` releases the tag on HEAD; from build on, the bump is already in package.json
+    const tag = resume ? await headTag() : `v${fromIdx > STEPS.indexOf("bump") ? (pkg.version ?? "0.0.0") : bumpVersion(pkg.version ?? "0.0.0", opts.bump ?? "patch")}`;
+    const version = tag.slice(1);
+    if (!resume && (await sh("git", ["tag", "--list", tag])).trim()) throw new StepFailed(`tag ${tag} already exists`);
+    state.version = version;
+    if (opts.from === "release") throw new StepFailed("release needs the packed files; resume with --from pack");
+    if (resume) {
+      Object.assign(state, { version, bumped: true, committed: true, tagged: true, pushed: fromIdx > STEPS.indexOf("push"), mirrored: fromIdx > STEPS.indexOf("mirror") });
+      print(`check: resuming from ${opts.from} on ${tag} (forge ${forge.repo}; GitHub ${gh.owner}/${gh.repo})`);
+    } else print(`check: ok (main, clean; forge ${forge.repo}; GitHub ${gh.owner}/${gh.repo})`);
 
     // 2. bump
-    step = "bump";
-    state.version = version;
-    state.bumped = true;
-    await sh("npm", ["version", version, "--no-git-tag-version"]);
-    if (existsSync(join(repo, "scripts", "sync-versions.mjs"))) await sh("node", ["scripts/sync-versions.mjs"]);
-    print(`bump: ${pkg.version} -> ${version}`);
+    if (at("bump")) {
+      step = "bump";
+      state.version = version;
+      state.bumped = true;
+      await sh("npm", ["version", version, "--no-git-tag-version"]);
+      if (existsSync(join(repo, "scripts", "sync-versions.mjs"))) await sh("node", ["scripts/sync-versions.mjs"]);
+      print(`bump: ${pkg.version} -> ${version}`);
+    }
 
     // 3. build
-    step = "build";
-    if (pkg.scripts?.build) {
-      await sh("npm", ["run", "build"]);
-      print("build: ok");
-    } else print("build: skipped (no build script)");
+    if (at("build")) {
+      step = "build";
+      if (pkg.scripts?.build) {
+        await sh("npm", ["run", "build"]);
+        print("build: ok");
+      } else print("build: skipped (no build script)");
+    }
 
     // 4. test
-    step = "test";
-    const t = testCommand(repo, pkg);
-    if (t) {
-      await sh(t.cmd, t.args);
-      print(`test: ok (${[t.cmd, ...t.args].join(" ")})`);
-    } else print("test: skipped (no unit tests)");
+    if (at("test")) {
+      step = "test";
+      const t = testCommand(repo, pkg);
+      if (t) {
+        await sh(t.cmd, t.args);
+        print(`test: ok (${[t.cmd, ...t.args].join(" ")})`);
+      } else print("test: skipped (no unit tests)");
+    }
 
     // 5. commit
-    step = "commit";
-    await sh("git", ["add", "-A"]);
-    await sh("git", ["commit", "-m", `chore: release ${version}`]);
-    state.committed = true;
-    print(`commit: chore: release ${version}`);
+    if (at("commit")) {
+      step = "commit";
+      await sh("git", ["add", "-A"]);
+      await sh("git", ["commit", "-m", `chore: release ${version}`]);
+      state.committed = true;
+      print(`commit: chore: release ${version}`);
+    }
 
     // 6. tag
-    step = "tag";
-    await sh("git", ["tag", tag]);
-    state.tagged = true;
-    print(`tag: ${tag}`);
+    if (at("tag")) {
+      step = "tag";
+      await sh("git", ["tag", tag]);
+      state.tagged = true;
+      print(`tag: ${tag}`);
+    }
 
     // 7. push
-    step = "push";
-    await sh("git", ["push", "origin", "main", "--tags"]);
-    state.pushed = true;
-    print("push: origin main + tags");
+    if (at("push")) {
+      step = "push";
+      await sh("git", ["push", "origin", "main", "--tags"]);
+      state.pushed = true;
+      print("push: origin main + tags");
+    }
 
     // 8. mirror
-    step = "mirror";
-    const sync = await (deps.syncMirrors ?? ((cwd: string) => realSyncMirrors(cwd)))(repo);
-    const bad = sync.mirrors.filter((m) => !m.ok);
-    if (!sync.mirrors.length) throw new StepFailed("the forge has no push mirror to GitHub");
-    if (bad.length) throw new StepFailed(bad.map(formatMirror).join("; "));
-    const hasGithubRemote = (await run("git", ["remote", "get-url", "github"], { cwd: repo })).code === 0;
-    const target = hasGithubRemote ? "github" : `https://github.com/${gh.owner}/${gh.repo}.git`;
-    const { attempts, delayMs } = deps.tagPoll ?? { attempts: 12, delayMs: 5000 };
-    let seen = false;
-    for (let i = 0; i < attempts && !seen; i++) {
-      const r = await run("git", ["ls-remote", "--tags", target, `refs/tags/${tag}`], { cwd: repo });
-      seen = r.code === 0 && r.stdout.includes(`refs/tags/${tag}`);
-      if (!seen && i < attempts - 1) await (deps.sleep ?? sleepReal)(delayMs);
+    if (at("mirror")) {
+      step = "mirror";
+      const hasGithubRemote = (await run("git", ["remote", "get-url", "github"], { cwd: repo })).code === 0;
+      const target = hasGithubRemote ? "github" : `https://github.com/${gh.owner}/${gh.repo}.git`;
+      const onGithub = async (): Promise<boolean> => {
+        const r = await run("git", ["ls-remote", target, `refs/tags/${tag}`], { cwd: repo });
+        return r.code === 0 && r.stdout.includes(`refs/tags/${tag}`);
+      };
+      if ((opts.from || skipMirror) && (await onGithub())) {
+        state.mirrored = true;
+        print(`mirror: skipped (${tag} already on GitHub)`);
+      } else {
+        let sync: MirrorSyncResult;
+        try {
+          sync = await (deps.syncMirrors ?? ((cwd: string) => realSyncMirrors(cwd)))(repo);
+        } catch (e) {
+          const env = /^no forge token: set (\S+)/.exec(e instanceof Error ? e.message : "")?.[1];
+          if (env) throw new StepFailed(`no forge token (set $${env}) — sync the push mirror in the forge UI, then run: pai release --from mirror`);
+          throw e;
+        }
+        const bad = sync.mirrors.filter((m) => !m.ok);
+        if (!sync.mirrors.length) throw new StepFailed("the forge has no push mirror to GitHub");
+        if (bad.length) throw new StepFailed(bad.map(formatMirror).join("; "));
+        const { attempts, delayMs } = deps.tagPoll ?? { attempts: 12, delayMs: 5000 };
+        let seen = false;
+        for (let i = 0; i < attempts && !seen; i++) {
+          const r = await run("git", ["ls-remote", "--tags", target, `refs/tags/${tag}`], { cwd: repo });
+          seen = r.code === 0 && r.stdout.includes(`refs/tags/${tag}`);
+          if (!seen && i < attempts - 1) await (deps.sleep ?? sleepReal)(delayMs);
+        }
+        if (!seen) throw new StepFailed(`${tag} not visible on GitHub after ${attempts} checks`);
+        state.mirrored = true;
+        print(`mirror: ok (${tag} on GitHub)`);
+      }
     }
-    if (!seen) throw new StepFailed(`${tag} not visible on GitHub after ${attempts} checks`);
-    state.mirrored = true;
-    print(`mirror: ok (${tag} on GitHub)`);
 
     // 9. pack
     step = "pack";
@@ -319,6 +381,7 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
     if (!existsSync(versioned)) throw new StepFailed(`npm pack reported ${packed} but it is not in ${dir}`);
     copyFileSync(versioned, stable);
     print(`pack: ${stableAssetName(pkg.name)} + ${packed}${facts}`);
+
 
     // 10. release
     step = "release";
