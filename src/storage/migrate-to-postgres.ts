@@ -19,7 +19,6 @@ import { dirname } from "node:path";
 import BetterSqlite3 from "better-sqlite3";
 import type { Database } from "better-sqlite3";
 import pg from "pg";
-import { createPgPool } from "./pg-pool.js";
 import type { Pool, PoolClient } from "pg";
 import { loadConfig } from "../daemon/config.js";
 import { federationDbPath } from "./sqlite/federation-db.js";
@@ -723,7 +722,7 @@ export async function migrateToPostgres(opts: MigrateOptions = {}): Promise<Migr
   const sqlite = new BetterSqlite3(sqliteFederationPath, { readonly: true });
   const registrySqlite =
     sqliteRegistryPath === sqliteFederationPath ? sqlite : new BetterSqlite3(sqliteRegistryPath, { readonly: true });
-  const pool = createPgPool({
+  const pool = new PgPool({
     connectionString: resolvePgConnectionString(pgConfig),
     max: 4,
     connectionTimeoutMillis: pgConfig.connectionTimeoutMs ?? DEFAULT_PG_CONNECTION_TIMEOUT_MS,

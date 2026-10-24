@@ -149,30 +149,6 @@ export interface ListSessionsForProjectOptions {
   limit?: number;
 }
 
-export interface OrphanCounts {
-  orphaned: number;
-  total: number;
-}
-
-export interface OrphanRepairReport {
-  /** Orphaned chunks / files found under old ids. */
-  orphanChunks: number;
-  orphanFiles: number;
-  /** Orphan ids with a backup row whose root path is a current project. */
-  mappedIds: number;
-  /** Orphan ids no backup or current project explains; left alone. */
-  unmappedIds: number;
-  /** Chunks/files moved to the current id. */
-  repointedChunks: number;
-  repointedFiles: number;
-  /** Newer vectorless chunks/files dropped because the orphan replaces them. */
-  droppedDuplicateChunks: number;
-  droppedDuplicateFiles: number;
-  /** Orphan chunks deleted because a vectored twin exists (deleteTwins). */
-  deletedTwinChunks: number;
-  dryRun: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // RegistryBackend interface
 // ---------------------------------------------------------------------------
@@ -186,23 +162,8 @@ export interface RegistryBackend {
    * Erase every row from every registry table (projects, sessions, tags,
    * project_tags, session_tags, aliases, links, compaction_log). Used by
    * `pai registry rebuild`. Does not touch schema/DDL — only data.
-   * Before deleting, `projects` is copied to `projects_backup_<epochMs>` (the
-   * last 3 are kept; an empty table is not backed up) and a REGISTRY-RESET
-   * line naming the calling process is logged. Returns the backup table, or
-   * null when there was nothing to back up.
    */
-  resetRegistry(): Promise<{ backupTable: string | null; projects: number }>;
-
-  /** Chunks whose project_id is not in `projects`, against all chunks. Zeros where chunks are not stored with the registry (SQLite). */
-  countOrphanedChunks(): Promise<OrphanCounts>;
-
-  /**
-   * Re-point chunks/files orphaned by a registry rebuild to the current project
-   * with the same root path (found via the projects_backup_* tables), dropping
-   * the newer vectorless duplicates; with `deleteTwins`, instead delete orphans
-   * that have a vectored twin under the current id. `dryRun` only counts.
-   */
-  repairOrphans(opts: { dryRun: boolean; deleteTwins?: boolean }): Promise<OrphanRepairReport>;
+  resetRegistry(): Promise<void>;
 
   // -------------------------------------------------------------------------
   // Projects — reads

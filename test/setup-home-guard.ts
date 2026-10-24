@@ -22,12 +22,11 @@
  * state. That is the bug, not this file.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RUNTIME_PATH_ENV_VARS } from "../src/runtime-paths.js";
 
-const realHome = homedir();
 const sandbox = mkdtempSync(join(tmpdir(), "pai-test-home-"));
 
 process.env.HOME = sandbox;
@@ -118,61 +117,5 @@ for (const key of Object.keys(process.env)) {
     key === "TMUX_PANE"
   ) {
     delete process.env[key];
-  }
-}
-
-/**
- * Config and database isolation. HOME alone is not enough: PAI_HOME,
- * PAI_CONFIG_FILE and CLAUDE_CONFIG_DIR inherited from the operator's shell
- * (or a worker) point straight at the live config.yaml, whose
- * postgres.connectionString is the live database. On 2026-10-24 01:48 UTC the
- * live `projects` table was wiped by a test run that could reach it.
- *
- * Three layers:
- *  1. Read the live database name BEFORE redirecting anything and export it as
- *     PAI_TEST_LIVE_DB; createPgPool (src/storage/pg-pool.ts) refuses to
- *     connect to it ("test tried to open the live database").
- *  2. Point PAI_CONFIG_FILE at the sandbox and drop inherited PAI_HOME/CLAUDE_CONFIG_DIR,
- *     then write a config there.
- *     It keeps the live server's host and credentials, so
- *     the scratch-database tests (which derive pai_test_* URLs from the
- *     configured connection string) still work, but names a throwaway database.
- *  3. These are process.env writes, so every `pai` child a test spawns with the
- *     default env inherits the sandbox config and the guard variable.
- */
-function liveConnectionString(): string | undefined {
-  const real = realHome;
-  const dirs = [process.env.PAI_HOME, join(real, ".pai"), join(real, ".claude", "pai")];
-  for (const dir of dirs) {
-    if (!dir) continue;
-    try {
-      const m = /connectionString:\s*["']?([^\s"']+)/.exec(readFileSync(join(dir, "config.yaml"), "utf8"));
-      if (m) return m[1];
-    } catch {
-      // next candidate
-    }
-  }
-  return undefined;
-}
-
-const liveUrl = liveConnectionString();
-const paiHome = join(sandbox, "pai-config");
-mkdirSync(paiHome, { recursive: true });
-process.env.PAI_CONFIG_FILE = join(paiHome, "config.json");
-// Inherited overrides would point the home resolvers back at the live dirs;
-// without them they resolve under the sandbox HOME.
-for (const key of ["PAI_HOME", "CLAUDE_CONFIG_DIR", "PAI_DIR", "ADAPTER_DIR"]) delete process.env[key];
-
-if (liveUrl) {
-  try {
-    process.env.PAI_TEST_LIVE_DB = decodeURIComponent(new URL(liveUrl).pathname.slice(1));
-    const throwaway = new URL(liveUrl);
-    throwaway.pathname = "/pai_test_config_unused";
-    writeFileSync(
-      join(paiHome, "config.yaml"),
-      `storageBackend: sqlite\npostgres:\n  connectionString: ${throwaway.toString()}\n`,
-    );
-  } catch {
-    // unparseable URL: nothing to protect or derive from
   }
 }

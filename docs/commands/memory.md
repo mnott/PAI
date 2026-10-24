@@ -129,30 +129,6 @@ pai memory embed --all
 
 See also: `pai memory index`, `pai memory backend detect`
 
-### pai memory repair-orphans
-
-Re-attach indexed text left under project ids that no longer exist
-
-```
-pai memory repair-orphans [options]
-```
-
-A registry rebuild gives every project a new id and strands the indexed text (with its vectors) under the old ones. This maps those chunks to the current project with the same folder (via the projects backup table), moves them over and drops the newer copies that have no vectors. With --delete it instead removes orphans whose current project already has vectors for the same file. Counts only unless --execute is given.
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--execute` | flag | — | Apply the change (default: print counts only) |
-| `--dry-run` | flag | — | Print counts only (the default; wins over --execute) |
-| `--delete` | flag | — | Delete orphans that have a vectored twin under the current id instead of moving them |
-
-```sh
-pai memory repair-orphans
-pai memory repair-orphans --execute
-pai memory repair-orphans --delete --execute
-```
-
-See also: `pai memory status`, `pai registry rebuild`
-
 ### pai memory settings
 
 Show or change the search settings
@@ -332,7 +308,6 @@ pai memory pass index
 | `pai memory status` | How much the memory index holds |
 | `pai memory index` | Read project notes and memory files into the search index |
 | `pai memory embed` | Compute meaning vectors for indexed text that has none yet |
-| `pai memory repair-orphans` | Re-attach indexed text left under project ids that no longer exist |
 | `pai memory settings` | Show or change the search settings |
 | `pai memory sources` | Where the indexed content comes from |
 | `pai memory backend` | Embedding backends: detect, use, provision |

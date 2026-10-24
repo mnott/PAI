@@ -22,7 +22,6 @@ let home: string;
 async function load() {
   vi.resetModules();
   vi.stubEnv("HOME", home);
-  vi.stubEnv("PAI_CONFIG_FILE", "");
   const utils = await import("./utils.js");
   const storage = await import("./steps/02-storage.js");
   return { ...utils, ...storage };
