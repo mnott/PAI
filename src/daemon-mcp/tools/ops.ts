@@ -200,3 +200,56 @@ export async function poolStatus(): Promise<WorkerToolResult> {
     return error(e);
   }
 }
+
+export interface WorkerMergeArgs {
+  id: string;
+  no_commit?: boolean;
+  verify?: string;
+  no_verify?: boolean;
+  no_verify_tests?: boolean;
+  no_build?: boolean;
+}
+
+/** pai worker merge: same function, same gates (verify, stub scan, related tests, dist rebuild). */
+export async function workerMerge(args: WorkerMergeArgs): Promise<WorkerToolResult> {
+  try {
+    const { mergeWorker, RelatedTestsFailedError } = await import("../../workers/worktree.js");
+    const { readMergeVerify } = await import("../../workers/workers-config.js");
+    const verify = args.verify ?? (args.no_verify ? undefined : readMergeVerify());
+    const r = await captured(() => {
+      try {
+        console.log(mergeWorker(logDir(), args.id, { noCommit: args.no_commit === true, verify, verifyTests: args.no_verify_tests !== true, rebuild: args.no_build !== true }));
+        return 0;
+      } catch (e) {
+        if (e instanceof RelatedTestsFailedError) {
+          console.log(`${e.message}\nthe merge was kept; fix forward or revert it`);
+          return 3;
+        }
+        throw e;
+      }
+    });
+    const body = r.lines.join("\n").trim();
+    return r.code === 0 ? text(body) : error(new Error(body));
+  } catch (e) {
+    return error(e);
+  }
+}
+
+/** The battery guard's state: last reading, gate (pause/stop, benchmark stop) and the benchmark marker. */
+export async function batteryStatus(): Promise<WorkerToolResult> {
+  try {
+    const g = await import("../../daemon/battery-guard.js");
+    const line = g.batteryCockpitLine();
+    const gate = g.readBatteryGate();
+    const marker = g.liveBenchmarkMarker();
+    return text(
+      [
+        `battery: ${line || "no recent reading (guard off, not macOS, or daemon not running)"}`,
+        `gate: ${gate ? `${gate.phase}${gate.reason ? ` — ${gate.reason}` : ""}${gate.benchStop ? ` · benchmark stop: ${gate.benchReason ?? "battery low"}` : ""}` : "no gate file"}`,
+        `benchmark marker: ${marker ? `${marker.label} (pid ${marker.pid})` : "none"}`,
+      ].join("\n")
+    );
+  } catch (e) {
+    return error(e);
+  }
+}

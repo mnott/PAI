@@ -134,7 +134,7 @@ Line 4 of the status line, prefixed üêù, summarises workers: provider head, `‚ñ
 
 ## MCP
 
-`worker_status`, `worker_providers`, `worker_classes`, `worker_run`, `worker_toggle`, `worker_ps`, `worker_replay`, `worker_say`, `worker_resume`, `worker_priority`, `worker_pause`, `worker_kill`, `worker_gc`, `pool_status`, `worker_handoff`, `worker_fallback`, `worker_capability`, `worker_model` call the same library as the CLI. Headless workers start with no MCP servers; opt in per run with `--mcp NAMES` (server names or `mcp_sets` names; `pai worker mcp list`). Allowlisting any `mcp__claude-in-chrome__*` tool adds `--chrome`.
+`worker_status`, `worker_providers`, `worker_classes`, `worker_run`, `worker_toggle`, `worker_ps`, `worker_replay`, `worker_say`, `worker_resume`, `worker_priority`, `worker_pause`, `worker_merge`, `worker_kill`, `worker_gc`, `pool_status`, `battery_status`, `worker_handoff`, `worker_fallback`, `worker_capability`, `worker_model` call the same library as the CLI. Headless workers start with no MCP servers; opt in per run with `--mcp NAMES` (server names or `mcp_sets` names; `pai worker mcp list`). Allowlisting any `mcp__claude-in-chrome__*` tool adds `--chrome`.
 
 ## Control and cleanup
 
@@ -142,7 +142,10 @@ Line 4 of the status line, prefixed üêù, summarises workers: provider head, `‚ñ
 |---|---|---|---|
 | Change a running worker's engine priority | `pai worker priority set ID high\|normal\|low` | worker row | `worker_priority` (`worker_run` takes `priority`) |
 | Park / release a worker's next engine request | `pai worker pause ID`, `pai worker resume ID` | worker row | `worker_pause`, `worker_resume` without text |
-| Stop a worker and its descendants | `pai worker kill ID [--only] [--force --reason T]` | - | `worker_kill` |
+| Merge a worker's branch (gates, dist rebuild) | `pai worker merge ID [--no-build]` | - | `worker_merge` |
+| Hold / release a provider | `pai worker providers hold\|release NAME` | - | `worker_providers` (`hold`, `release`) |
+| Battery guard state | `pai config get power.batteryGuard` | System section | `battery_status` |
+| Stop a worker and its descendants | `pai worker kill ID [--only] [--force] --reason T` | - | `worker_kill` |
 | Archive leftover worktrees | `pai worker gc [--all-finished] [--pool] [--foreign] [--kill-orphans] [--dry-run]` | - | `worker_gc` (dry run unless `dry_run=false`) |
 | Pool config, host, slots, skip reasons | `pai worker pool status` | - | `pool_status` |
 

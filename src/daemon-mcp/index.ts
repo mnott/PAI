@@ -31,7 +31,7 @@ import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
 import { PAI_INSTRUCTIONS } from "./instructions.js";
-import { daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill } from "./tools/ops.js";
+import { batteryStatus, daemonService, memoryRun, modelRuntime, poolStatus, routerService, workerGc, workerKill, workerMerge } from "./tools/ops.js";
 import { dropItermBundleId } from "../utils/env.js";
 
 dropItermBundleId();
@@ -1845,6 +1845,27 @@ async function startShim(): Promise<void> {
       reason: z.string().min(1).describe("Why; required, recorded in the worker's event log and pai worker ps."),
     },
     async (args) => workerKill(args)
+  );
+
+  server.tool(
+    "worker_merge",
+    "Merge a finished worker's branch into its checkout (`pai worker merge`): verify command (default workers.yaml merge.verify), stub scan, related tests, then dist rebuild when it lands in the running PAI. A failing gate reverts (verify) or keeps the merge and reports the failing files (related tests).",
+    {
+      id: z.string().describe("Worker id."),
+      no_commit: z.boolean().optional().describe("Stage the merge without committing."),
+      verify: z.string().optional().describe("Command to run on the merged tree; a non-zero exit reverts the merge."),
+      no_verify: z.boolean().optional().describe("Skip the configured merge.verify default."),
+      no_verify_tests: z.boolean().optional().describe("Skip the related-tests check for this merge."),
+      no_build: z.boolean().optional().describe("Do not rebuild dist/ after merging into the running PAI checkout."),
+    },
+    async (args) => workerMerge(args)
+  );
+
+  server.tool(
+    "battery_status",
+    "The battery guard (power.batteryGuard.*): last reading, whether new local-model work is paused or stopped and why, a benchmark last-resort stop, and the live <PAI home>/state/benchmark-run.json marker.",
+    {},
+    async () => batteryStatus()
   );
 
   server.tool(
