@@ -9,6 +9,7 @@
 
 import { isWorkerSession } from "../lib/worker-session.js";
 import { setTabTitle } from "../lib/tab-title.js";
+import { readStdinWithTimeout } from "../lib/read-stdin.js";
 
 // Action tools that warrant a tab title update
 const ACTION_TOOLS = new Set([
@@ -32,32 +33,6 @@ interface HookInput {
   };
   tool_response?: unknown;
   hook_event_name: string;
-}
-
-/**
- * Read stdin with timeout
- */
-async function readStdinWithTimeout(timeout: number = 3000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let data = '';
-    const timer = setTimeout(() => {
-      reject(new Error('Timeout'));
-    }, timeout);
-
-    process.stdin.on('data', (chunk) => {
-      data += chunk.toString();
-    });
-
-    process.stdin.on('end', () => {
-      clearTimeout(timer);
-      resolve(data);
-    });
-
-    process.stdin.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
 }
 
 /**
@@ -107,7 +82,7 @@ function generateTitle(toolName: string, input: HookInput['tool_input']): string
 async function main() {
   if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
   try {
-    const input = await readStdinWithTimeout();
+    const input = await readStdinWithTimeout(3000);
     const data: HookInput = JSON.parse(input);
 
     // Only process action tools
