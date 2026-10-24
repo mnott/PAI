@@ -13,7 +13,7 @@ import { eventsPath } from "./paths.js";
 import { appendLedger } from "./ledger.js";
 import { pidAlive } from "./status.js";
 
-export type EndReason = "exit" | "deadline" | "loop-stopped" | "pai-worker-kill" | "parent-gone" | "external-signal";
+export type EndReason = "exit" | "deadline" | "loop-stopped" | "pai-worker-kill" | "parent-gone" | "external-signal" | "malformed-tool-call";
 
 export interface EndInfo {
   reason: EndReason;
@@ -161,6 +161,7 @@ export function endFields(e: EndInfo): { reason: EndReason; by?: string } {
 /** "external-signal", "pai-worker-kill by <caller>" for a finished worker; null when nothing was recorded. */
 export function endLabel(s: { endReason?: string; endBy?: string; endKillReason?: string; endForced?: boolean }): string | null {
   if (!s.endReason) return null;
+  if (s.endReason === "malformed-tool-call") return "instrument: malformed tool call";
   return `${s.endReason}${s.endBy ? ` by ${s.endBy}` : ""}${s.endForced ? " (forced)" : ""}${s.endKillReason ? `: ${s.endKillReason}` : ""}`;
 }
 

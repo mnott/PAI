@@ -117,6 +117,7 @@ import {
 import { usageLogFile } from "../router/usage.js";
 import { reapNewSince, snapshotWorkerPids } from "./reap.js";
 import { LOOPBACK_HOST, loopbackUrl } from "../utils/loopback.js";
+import { hasMalformedToolCall, MALFORMED_TOOL_CALL } from "./malformed-toolcall.js";
 
 // ---------------------------------------------------------------------------
 // Slot process (real spawn)
@@ -1353,6 +1354,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     status.rc = rc;
     status.secs = secs;
     if (status.timedOut) status.endReason = "deadline";
+    else if (!status.endReason && hasMalformedToolCall(resultEvent?.result)) status.endReason = MALFORMED_TOOL_CALL;
     saveStatus(logDir, status);
     appendLedger(ledger, "WORKER-END", {
       id: wid,
@@ -1371,6 +1373,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       ...(claimMs !== undefined ? { claimMs } : {}),
       ...(timing.firstAt !== null ? { firstAnswerMs: timing.firstAt - readyAt } : {}),
       ...(status.timedOut ? { timedOut: 1 } : {}),
+      ...(status.endReason === MALFORMED_TOOL_CALL ? { instrument: MALFORMED_TOOL_CALL } : {}),
     });
     closeSync(eventsFd);
 

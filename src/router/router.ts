@@ -11,6 +11,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { Readable } from "node:stream";
+import { isDamaged, readAnswer, retryBody } from "./malformed-retry.js";
 import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
@@ -225,6 +227,8 @@ export interface RouterOptions {
    * leave the loopback+tailnet perimeter. Cockpit routes are handled before
    * this (they carry their own token, see src/router/cockpit-auth.ts).
    */
+  /** Retry a local answer that carries an unparsed tool-call block once; default router.localToolCallRetry (true). */
+  localToolCallRetry?: boolean;
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
   /** cached up/down of a provider (limits poll); breaks ties between providers declaring one model id */
   isUp?: (provider: string) => boolean | undefined;
@@ -664,10 +668,66 @@ export function routerHandler(
       const counted: Promise<number | null> = mayCount ? promptTokenCount(safeBody(up.body) ?? {}, target.model) : Promise.resolve(null);
       const mod = up.url.protocol === "https:" ? https : http;
       const forward = (release: (u?: Usage, opts?: { gate?: boolean }) => void): void => {
-      const ureq = mod.request(
-        up.url,
-        { method: "POST", headers: up.headers },
-        (ures) => {
+      const retryOn =
+        target.kind === "provider" && !isCount && isLocal(up.url) && (options?.localToolCallRetry ?? loadConfig().router.localToolCallRetry) !== false;
+      // one buffered POST to the same upstream (the retry)
+      const again = (b: Buffer, cb: (status: number, headers: http.IncomingHttpHeaders, raw: Buffer) => void): void => {
+        const q = mod.request(up.url, { method: "POST", headers: { ...up.headers, "content-length": String(b.length) } }, (x) => {
+          const bits: Buffer[] = [];
+          x.on("data", (c: Buffer) => bits.push(c));
+          x.on("end", () => cb(x.statusCode ?? 502, x.headers, Buffer.concat(bits)));
+          x.on("error", () => cb(502, {}, Buffer.alloc(0)));
+        });
+        q.on("error", () => cb(502, {}, Buffer.alloc(0)));
+        res.on("close", () => q.destroy());
+        q.end(b);
+      };
+      // Local 200 answers are held until complete so a damaged tool call never reaches the client as text.
+      const gate = (ures0: http.IncomingMessage): void => {
+        const ct = String(ures0.headers["content-type"] ?? "");
+        if (!retryOn || ures0.statusCode !== 200 || ures0.headers["content-encoding"]) return respond(ures0);
+        let pings: NodeJS.Timeout | undefined;
+        if (/text\/event-stream/i.test(ct) && !res.headersSent) {
+          const rh0 = { ...ures0.headers };
+          delete rh0["transfer-encoding"];
+          delete rh0.connection;
+          delete rh0["keep-alive"];
+          delete rh0["content-length"];
+          res.writeHead(200, rh0);
+          pings = setInterval(() => !res.writableEnded && res.write(`event: ping\ndata: {"type":"ping"}\n\n`), pingMs());
+          pings.unref();
+        }
+        const bits: Buffer[] = [];
+        ures0.on("data", (c: Buffer) => bits.push(c));
+        ures0.on("error", () => {});
+        ures0.on("end", () => {
+          const first = Buffer.concat(bits);
+          const deliver = (status: number, headers: http.IncomingHttpHeaders, raw: Buffer) => {
+            if (pings) clearInterval(pings);
+            const h = { ...headers };
+            delete h["content-length"];
+            const src = Readable.from([raw]) as unknown as http.IncomingMessage;
+            src.statusCode = status;
+            src.headers = h;
+            respond(src);
+          };
+          const ans = readAnswer(first.toString("utf8"), ct);
+          if (!isDamaged(ans)) return deliver(200, ures0.headers, first);
+          let nb: Buffer;
+          try {
+            nb = retryBody(up.body, ans.text);
+          } catch {
+            return deliver(200, ures0.headers, first);
+          }
+          again(nb, (status, headers, raw) => {
+            const ok = status === 200 && !isDamaged(readAnswer(raw.toString("utf8"), String(headers["content-type"] ?? "")));
+            log(`${new Date().toISOString()} malformed-tool-call retried provider=${prov} ${ok ? "ok" : "again"}`);
+            if (ok) deliver(status, headers, raw);
+            else deliver(200, ures0.headers, first);
+          });
+        });
+      };
+      const respond = (ures: http.IncomingMessage): void => {
         if (!isLocal(up.url)) upstreamStreak().success();
           if (isCount && target.kind === "provider" && (ures.statusCode ?? 0) >= 400) {
             // provider has no count_tokens: estimate instead of failing the client
@@ -730,8 +790,8 @@ export function routerHandler(
               first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}
             );
           });
-        }
-      );
+      };
+      const ureq = mod.request(up.url, { method: "POST", headers: up.headers }, gate);
       ureq.on("error", (e: NodeJS.ErrnoException) => {
         release();
         record(e.code === "ECONNREFUSED" ? 503 : 502, emptyUsage());

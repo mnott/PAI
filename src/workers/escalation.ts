@@ -96,6 +96,8 @@ export interface TriggerInput {
   salvaged?: boolean;
   reportValid?: boolean;
   checksFailed?: boolean;
+  /** The run ended on an unparsed tool-call block: an instrument fault, not a model failure. */
+  instrumentFault?: boolean;
 }
 
 const TOO_LONG = /prompt is too long|context[_ ]length|maximum context|context window (?:exceeded|limit)|exceeds the (?:model'?s )?(?:max|context)/i;
@@ -128,7 +130,7 @@ export function detectTrigger(i: TriggerInput): Trigger | null {
   if (on("deadline") && i.timedOut) {
     return { kind: "deadline", reason: (i.commits?.length ?? 0) > 0 || i.salvaged ? "time limit reached with saved work" : "time limit reached" };
   }
-  if (on("repeated-failure") && (i.failures ?? 0) >= cfg.failures) {
+  if (on("repeated-failure") && !i.instrumentFault && (i.failures ?? 0) >= cfg.failures) {
     const what = i.loopStopped ? "loop-guard stop" : i.timedOut ? "time limit" : i.reportValid === false ? "invalid report" : i.checksFailed ? "failed checks" : "failed run";
     return { kind: "repeated-failure", reason: `${what}, ${i.failures} failures` };
   }
