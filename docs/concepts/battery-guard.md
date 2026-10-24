@@ -70,6 +70,6 @@ or hourly when the file passes 5 MB.
 
 | Surface | What |
 |---|---|
-| CLI | `pai config get power.batteryGuard`; `pai worker ps` and `pai audit` show ledger rows |
+| CLI | `pai config get power.batteryGuard`; the ledger records every move (`BATTERY-*` rows) |
 | Cockpit | System section: percent, source, "local work paused/stopped", drain warning |
 | MCP | `battery_status` (reading, gate, benchmark marker) |
