@@ -7,6 +7,7 @@
 import { getServers } from "node:dns"; // bun's node:dns/promises lacks getServers
 import { lookup, resolve4 } from "node:dns/promises";
 import { execFile } from "node:child_process";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 import { connect as tlsConnect } from "node:tls";
 import { connect as tcpConnect } from "node:net";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,11 +18,30 @@ export interface PreflightResult {
   host: string;
   /** Error code (ENOTFOUND, ECONNREFUSED, ETIMEDOUT, ...) when not ok. */
   code?: string;
+  trace?: PreflightTrace;
+}
+
+/** Epoch-ms readings of one probe, for judging a failure afterwards. */
+export interface PreflightTrace {
+  startedAt: number;
+  connectedAt?: number;
+  timerFiredAt?: number;
+  /** How late the timeout timer ran; large means the event loop was blocked. */
+  timerLateMs?: number;
+  /** perf_hooks event-loop delay maximum during the probe. */
+  maxLoopDelayMs: number;
 }
 
 export const PREFLIGHT_TIMEOUT_MS = 5000;
+/** A timer this much later than due means the event loop was blocked, not that the network was silent. */
+const LOOP_BLOCKED_MS = 250;
+export const PREFLIGHT_RETRY_DELAY_MS = 2000;
 
-/** Resolve `url`'s host, then connect (TLS for https, plain TCP otherwise) within `timeoutMs`. */
+/**
+ * Resolve `url`'s host, then connect (TLS for https, plain TCP otherwise) within `timeoutMs`.
+ * The timeout counts time the loop could run: a timer that fires late (the process was blocked by synchronous
+ * work) is re-armed once instead of reported, and a handshake that completed always wins.
+ */
 export async function checkUpstream(url: string, timeoutMs = PREFLIGHT_TIMEOUT_MS): Promise<PreflightResult> {
   let u: URL;
   try {
@@ -32,7 +52,28 @@ export async function checkUpstream(url: string, timeoutMs = PREFLIGHT_TIMEOUT_M
   const host = u.hostname;
   const tls = u.protocol === "https:";
   const port = Number(u.port) || (tls ? 443 : 80);
-  const timer = new Promise<PreflightResult>((r) => setTimeout(() => r({ ok: false, host, code: "ETIMEDOUT" }), timeoutMs).unref());
+  const t0 = Date.now();
+  const delay = monitorEventLoopDelay({ resolution: 20 });
+  delay.enable();
+  const trace = (extra: Partial<PreflightTrace>): PreflightTrace => ({ startedAt: t0, maxLoopDelayMs: Math.round(delay.max / 1e6), ...extra });
+  let connectedAt: number | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<PreflightResult>((resolve) => {
+    const arm = (ms: number, rearm: boolean): void => {
+      const armedAt = Date.now();
+      timer = setTimeout(() => {
+        const late = Date.now() - armedAt - ms;
+        if (connectedAt !== undefined) return; // handshake done: the attempt resolves with ok
+        if (late > LOOP_BLOCKED_MS && rearm) {
+          arm(timeoutMs, false); // blocked loop: the connect callbacks had no chance to run yet
+          return;
+        }
+        resolve({ ok: false, host, code: "ETIMEDOUT", trace: trace({ timerFiredAt: Date.now(), timerLateMs: late }) });
+      }, ms);
+      timer.unref();
+    };
+    arm(timeoutMs, true);
+  });
   const attempt = (async (): Promise<PreflightResult> => {
     try {
       await lookup(host);
@@ -42,8 +83,9 @@ export async function checkUpstream(url: string, timeoutMs = PREFLIGHT_TIMEOUT_M
     return new Promise<PreflightResult>((resolve) => {
       const sock = tls ? tlsConnect({ host, port, servername: host }) : tcpConnect({ host, port });
       sock.once(tls ? "secureConnect" : "connect", () => {
+        connectedAt = Date.now();
         sock.destroy();
-        resolve({ ok: true, host });
+        resolve({ ok: true, host, trace: trace({ connectedAt }) });
       });
       sock.once("error", (e: NodeJS.ErrnoException) => {
         sock.destroy();
@@ -51,14 +93,25 @@ export async function checkUpstream(url: string, timeoutMs = PREFLIGHT_TIMEOUT_M
       });
     });
   })();
-  return Promise.race([attempt, timer]);
+  try {
+    return await Promise.race([attempt, timeout]);
+  } finally {
+    clearTimeout(timer);
+    delay.disable();
+  }
 }
 
 export type UpstreamProbe = (url: string) => Promise<PreflightResult>;
 
 /** The Anthropic upstream decides; other cloud providers are reported but never block. */
-export async function preflightUpstreams(claudeUpstream: string, cloudBaseUrls: string[], probe: UpstreamProbe = checkUpstream): Promise<{ claude: PreflightResult; others: PreflightResult[] }> {
-  const [claude, ...others] = await Promise.all([claudeUpstream, ...cloudBaseUrls].map((u) => probe(u)));
+export async function preflightUpstreams(claudeUpstream: string, cloudBaseUrls: string[], probe: UpstreamProbe = checkUpstream, retryDelayMs = PREFLIGHT_RETRY_DELAY_MS): Promise<{ claude: PreflightResult; others: PreflightResult[] }> {
+  const once = async (u: string): Promise<PreflightResult> => {
+    const r = await probe(u);
+    if (r.code !== "ETIMEDOUT") return r;
+    await new Promise((res) => setTimeout(res, retryDelayMs)); // a timeout may be this process's own stall: one more try
+    return probe(u);
+  };
+  const [claude, ...others] = await Promise.all([claudeUpstream, ...cloudBaseUrls].map(once));
   return { claude: claude!, others };
 }
 
