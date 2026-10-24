@@ -94,11 +94,17 @@ describe("escalationReason", () => {
   });
 
   it("a pinned provider is never escalated", () => {
-    for (const why of ["glm/m (flag: --provider)", "gyro/m (local)", "glm/m (session profile)"]) {
+    for (const why of ["glm/m (flag: --provider)", "gyro/m (local)"]) {
       expect(providerPinned({ routeWhy: why })).toBe(true);
       expect(escalationReason(mkStatus({ state: "queued", started: ago(99), routeWhy: why }), NOW, POLICY)).toBeNull();
     }
     expect(providerPinned({ routeWhy: "glm/m (session profile fallback)" })).toBe(false);
+  });
+
+  it("a session-profile-routed job is not pinned: queued past queuedMaxMin it escalates", () => {
+    const s = mkStatus({ state: "queued", started: ago(99), routeWhy: "glm/m (session profile)" });
+    expect(providerPinned(s)).toBe(false);
+    expect(escalationReason(s, NOW, POLICY)).toMatch(/^queued/);
   });
 
   it("an already rerouted, paused or task-less job is left alone", () => {
