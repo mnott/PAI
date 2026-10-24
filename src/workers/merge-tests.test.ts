@@ -203,3 +203,37 @@ describe("merge related tests", () => {
     expect(readFileSync(join(d, "counts.txt"), "utf8").trim().split("\n").map(Number)).toEqual([100, 100, 100, 100, 50]);
   });
 });
+
+describe("serial re-run of failing files", () => {
+  const out = (code: number, output: string) => ({ code, signal: null, timedOut: false, error: null, output });
+  const FAIL = " FAIL  src/a.test.ts > t\n";
+  const PASS = " Test Files  1 passed (1)\n      Tests  3 passed (3)\n";
+  const run = (runner: (...a: any[]) => ReturnType<typeof out>) =>
+    runRelatedTests(tmp({ devDependencies: { vitest: "1" } }), "x", cfg("npx vitest related --run {files}"), git(["a.ts"]), undefined, runner as never);
+
+  it("parallel fails A, serial passes -> flaky, no revert hint", () => {
+    const cmds: string[] = [];
+    const r = run((_c, _e, c: string[]) => { cmds.push(...c); return cmds.length === 1 ? out(1, FAIL) : out(0, PASS); });
+    expect(r.status).toBe("flaky");
+    expect(r.line).toBe("1 files, 3 passed; flaky under load (passed alone): src/a.test.ts");
+    expect(cmds[1]).toContain("--no-file-parallelism");
+    expect(cmds[1]).toContain("'src/a.test.ts'");
+    expect(r.failing).toEqual([]);
+  });
+
+  it("serial re-run fails -> failed, naming only A", () => {
+    let n = 0;
+    const r = run(() => (++n === 1 ? out(1, FAIL + " FAIL  src/b.test.ts > t\n") : out(1, FAIL)));
+    expect(r.status).toBe("failed");
+    expect(r.failing).toEqual(["src/a.test.ts"]);
+    expect(r.line).toContain("failed: src/a.test.ts");
+    expect(r.line).not.toContain("b.test.ts");
+  });
+
+  it("parallel passes -> re-run not called", () => {
+    let n = 0;
+    const r = run(() => { n++; return out(0, PASS); });
+    expect(r.status).toBe("passed");
+    expect(n).toBe(1);
+  });
+});
