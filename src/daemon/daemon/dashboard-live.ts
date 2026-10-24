@@ -22,6 +22,7 @@ import {
   vaultIndexInProgress,
   storageBackend,
 } from "./state.js";
+import { currentOrphanWarning } from "../orphan-check.js";
 import { Snapshot } from "../memory-snapshot.js";
 import type { StorageBackend } from "../../storage/interface.js";
 import { PASS_RETRY_DELAYS_MS, msUntilNextAnchor } from "./scheduler.js";
@@ -111,5 +112,6 @@ export function memoryDashboard(backlog: number | null): Record<string, unknown>
     embedMaxMinutes: daemonConfig.embedMaxMinutes ?? null,
     lastIndexPass,
     lastEmbedPass,
+    orphans: currentOrphanWarning(),
   };
 }
