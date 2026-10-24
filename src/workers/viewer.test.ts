@@ -974,6 +974,32 @@ describe("ps machine scope (no hidden workers)", () => {
     );
     expect(stray.map((s) => s.pid)).toEqual([102]);
   });
+
+  it("strayWorkerProcesses: a pooled status owns its pai worker run client pid", () => {
+    const ps = `  7777 node /usr/local/bin/pai worker run --class implement --label pane\n  102 node /usr/local/bin/pai worker run -p 'ghost'`;
+    const stray = strayWorkerProcesses(
+      // pid is the spare's claude (child of the pool host); the run process is only in runPid / clientPid
+      [{ pid: process.pid, runPid: 7777, started: nowStamp(), state: "running", pool: { task: 1, slotSession: null, hostPid: process.ppid } }],
+      ps
+    );
+    expect(stray.map((s) => s.pid)).toEqual([102]);
+  });
+
+  it("a pooled status owned by the requesting session shows in the default scope", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-ps-pooled-"));
+    saveStatus(dir, {
+      ...base,
+      id: "20260917-100020-5",
+      term: mineTerm,
+      cwd: "/work/spare-85202-3",
+      worktreeDir: "/work/spare-85202-3",
+      pool: { spare: true, task: 1, slotSession: null, hostPid: 1, slot: "spare-85202-3" },
+    } as WorkerStatus);
+    const out = psOutput(dir, false, env, false);
+    expect(out).toContain("scope: tab w5t0");
+    expect(out).toContain("20260917-100020-5");
+    expect(out).not.toContain("scope: MACHINE");
+  });
 });
 
 describe("viewer resume spawn", () => {

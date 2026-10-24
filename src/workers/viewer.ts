@@ -33,7 +33,7 @@ import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
 import { localIdleLine, readLocalIdle } from "./local-idle.js";
 import { readSchedFile, schedLine } from "../router/scheduler.js";
-import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { isChatPane, isLive, isTerminal, loadStatus, loadStatuses, ownsPid, reconcileStatuses, statusPids, type WorkerStatus } from "./status.js";
 import { currentTabKey, ownerSessionName, resolveSession, workerInScope } from "./scope.js";
 import { formatWorktreesStats, worktreesStats } from "./worktree.js";
 import { readInbox } from "./handoff.js";
@@ -103,14 +103,13 @@ export const BACKFILL_EVENTS = 200;
  * which ps also shows naming the worker). Pane follows are views, not runs.
  */
 export function strayWorkerProcesses(
-  statuses: Pick<WorkerStatus, "pid" | "started" | "state" | "parentPid">[],
+  statuses: (Pick<WorkerStatus, "pid" | "started" | "state" | "parentPid"> & Partial<Pick<WorkerStatus, "runPid" | "pool">>)[],
   psOut: string = psTable("pid=,command=")
 ): Array<{ pid: number; command: string }> {
   const owned = new Set<number>();
   for (const s of statuses) {
     if ((s.state !== "running" && s.state !== "queued") || !ownsPid(s as WorkerStatus)) continue;
-    owned.add(s.pid);
-    if (s.parentPid && s.parentPid > 0) owned.add(s.parentPid);
+    for (const p of statusPids(s)) owned.add(p);
   }
   const out: Array<{ pid: number; command: string }> = [];
   for (const line of psOut.split("\n")) {

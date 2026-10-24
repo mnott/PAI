@@ -1068,7 +1068,11 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
       pid: session.pid,
       label: task.label,
       cwd: task.cwd,
-      term: "",
+      // ownership belongs to the session that ran `pai worker run`: its placeholder status carries it
+      term: prior?.term ?? "",
+      ...(prior?.session ? { session: prior.session } : {}),
+      ...(prior?.spawnerSession ? { spawnerSession: prior.spawnerSession } : {}),
+      ...(prior?.runPid ? { runPid: prior.runPid } : task.clientPid ? { runPid: task.clientPid } : {}),
       provider: task.provider,
       model: task.model,
       state: "running",

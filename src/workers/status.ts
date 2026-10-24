@@ -632,6 +632,11 @@ export function ownsPidCached(status: OwnerFields, now = Date.now()): boolean {
   return ok;
 }
 
+/** Every pid that identifies a worker's processes: the writer, the `pai worker run` client (also when a pool spare serves it), and the wrapper shell. */
+export function statusPids(s: Pick<WorkerStatus, "pid" | "runPid" | "parentPid"> & { pool?: { clientPid?: number } }): number[] {
+  return [s.pid, s.runPid, s.pool?.clientPid, s.parentPid].filter((p): p is number => typeof p === "number" && p > 0);
+}
+
 /** Any state a worker never leaves on its own: everything but "running" and "queued". */
 export function isTerminal(state: WorkerStatus["state"] | undefined): boolean {
   return state !== undefined && state !== "running" && state !== "queued";
