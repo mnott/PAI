@@ -27,13 +27,14 @@ import { trackInflight } from "../../router/inflight.js";
 import { routerSwapArgs, startHandover, routerHandoverFile, routerHandoverStatusFile, readHandoverStatus, routerLogFile, routerPidFile, routerRunningPid, spawnRouter, probeRouter } from "../../router/supervisor.js";
 import { engineControlReader } from "../../workers/engine-control.js";
 import { mirrorTo, schedConfigFrom, setSchedConfigSource, sharedScheduler, type SchedConfig } from "../../router/scheduler.js";
-import { workersLogDir } from "../../workers/paths.js";
+import { ledgerPath, workersLogDir } from "../../workers/paths.js";
+import { appendLedger } from "../../workers/ledger.js";
 import { loadConfig } from "../../daemon/config.js";
 import { CliError, type CommandDef } from "../define.js";
 import { dim, ok } from "../lib/utils.js";
 import { routerRestartText, routerStartText, routerStatusText, routerStopText } from "../../router/service-control.js";
 import { LOOPBACK_HOST } from "../../utils/loopback.js";
-import { abortMessage, preflightUpstreams } from "../../router/preflight.js";
+import { abortMessage, diagnoseSuccessor, preflightUpstreams } from "../../router/preflight.js";
 
 const out = (s: string) => void process.stdout.write(s + "\n");
 
@@ -215,10 +216,16 @@ const runCommand: CommandDef = {
         for (const o of others) if (!o.ok) process.stderr.write(`pai: router: preflight: cannot reach ${o.host}: ${o.code}\n`);
         if (claude.ok) return;
         const oldPid = replace || process.ppid;
-        const reason = abortMessage(claude.host, claude.code, oldPid);
+        const diag = await diagnoseSuccessor(claude.host);
+        const reason = abortMessage(claude.host, claude.code, oldPid, diag);
         process.stderr.write(`pai: router: ${reason}\n`);
-        if (process.send) process.send({ failed: true, reason: `successor cannot reach ${claude.host}: ${claude.code}` });
-        else if (managed) writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid, state: "failed", reason: `successor cannot reach ${claude.host}: ${claude.code}`, successorPid: process.pid }));
+        try {
+          appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "ROUTER-PREFLIGHT-FAIL", { host: claude.host, code: claude.code ?? "unknown", diag: diag.replace(/\s+/g, "_") });
+        } catch {
+          /* ledger is best effort */
+        }
+        if (process.send) process.send({ failed: true, reason: `successor cannot reach ${claude.host}: ${claude.code}`, diag });
+        else if (managed) writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid, state: "failed", reason: `successor cannot reach ${claude.host}: ${claude.code}`, successorPid: process.pid, diag }));
         await new Promise((r) => setTimeout(r, 100)); // let the IPC message flush
         process.exit(1);
       };
@@ -308,18 +315,20 @@ const runCommand: CommandDef = {
         closeSync(log);
         const giveUp = setTimeout(() => child.kill("SIGKILL"), 30_000);
         let failedReason: string | undefined;
+        let failedDiag: string | undefined;
         child.once("exit", () => {
           clearTimeout(giveUp);
           if (handing) {
             handing = false;
             const reason = failedReason ?? "successor exited before taking over";
             process.stderr.write(`pai: router: ${reason}, still serving\n`);
-            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason }));
+            writeFileSync(routerHandoverStatusFile(), JSON.stringify({ oldPid: process.pid, state: "failed", reason, ...(failedDiag ? { diag: failedDiag } : {}) }));
           }
         });
-        child.on("message", (m: { ready?: boolean; failed?: boolean; reason?: string }) => {
+        child.on("message", (m: { ready?: boolean; failed?: boolean; reason?: string; diag?: string }) => {
           if (m?.failed) {
             failedReason = m.reason;
+            failedDiag = m.diag;
             return;
           }
           if (!m?.ready) return;

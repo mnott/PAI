@@ -4,7 +4,8 @@
  * No auth, no request body: the connection is closed after the handshake.
  */
 
-import { lookup } from "node:dns/promises";
+import { getServers, lookup, resolve4 } from "node:dns/promises";
+import { execFile } from "node:child_process";
 import { connect as tlsConnect } from "node:tls";
 import { connect as tcpConnect } from "node:net";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -60,8 +61,69 @@ export async function preflightUpstreams(claudeUpstream: string, cloudBaseUrls: 
   return { claude: claude!, others };
 }
 
-export function abortMessage(host: string, code: string | undefined, oldPid: number | undefined): string {
-  return `router restart aborted: successor cannot reach ${host}: ${code ?? "unknown"}; old router ${oldPid ?? "none"} keeps serving`;
+export function abortMessage(host: string, code: string | undefined, oldPid: number | undefined, diag?: string): string {
+  return `router restart aborted: successor cannot reach ${host}: ${code ?? "unknown"}; old router ${oldPid ?? "none"} keeps serving${diag ? `; diag ${diag}` : ""}`;
+}
+
+export const DIAG_PROBE_TIMEOUT_MS = 5000;
+
+/** The probes behind a failed-preflight diagnosis; injectable so tests need no network. */
+export interface DiagProbes {
+  lookup: (host: string) => Promise<unknown>;
+  resolve4: (host: string) => Promise<unknown>;
+  servers: () => string[];
+  /** First address `dscacheutil` (the system resolver, as other processes see it) gives, or "". */
+  dscacheutil: (host: string) => Promise<string>;
+}
+
+export const defaultDiagProbes: DiagProbes = {
+  lookup: (h) => lookup(h),
+  resolve4: (h) => resolve4(h),
+  servers: () => getServers(),
+  dscacheutil: (host) =>
+    new Promise((res) => {
+      execFile("/usr/bin/dscacheutil", ["-q", "host", "-a", "name", host], { timeout: DIAG_PROBE_TIMEOUT_MS }, (err, out) => {
+        res(err ? "" : (/ip_address:\s*(\S+)/.exec(String(out))?.[1] ?? ""));
+      });
+    }),
+};
+
+/** `ok 21ms` or `ENOTFOUND 5003ms`: how a probe ended and how long it took, each bounded by `timeoutMs`. */
+async function timed(run: () => Promise<unknown>, timeoutMs: number): Promise<string> {
+  const t0 = Date.now();
+  let timer: NodeJS.Timeout | undefined;
+  const outcome = await Promise.race([
+    run().then(() => "ok", (e: NodeJS.ErrnoException) => e?.code ?? "ERR"),
+    new Promise<string>((r) => { timer = setTimeout(() => r("ETIMEDOUT"), timeoutMs); }),
+  ]);
+  clearTimeout(timer);
+  return `${outcome} ${Date.now() - t0}ms`;
+}
+
+/** What this process sees for `host` right now; run only after a failed preflight. At most 5 s per probe, probes run in parallel. */
+export async function diagnoseSuccessor(host: string, probes: DiagProbes = defaultDiagProbes, timeoutMs = DIAG_PROBE_TIMEOUT_MS): Promise<string> {
+  const [lk, r4, dsc] = await Promise.all([
+    timed(() => probes.lookup(host), timeoutMs),
+    timed(() => probes.resolve4(host), timeoutMs),
+    Promise.race([probes.dscacheutil(host).catch(() => ""), new Promise<string>((r) => setTimeout(() => r(""), timeoutMs).unref())]),
+  ]);
+  let servers = "";
+  try {
+    servers = probes.servers().join(",");
+  } catch {
+    /* none */
+  }
+  return `successor lookup=${lk} resolve4=${r4} servers=${servers} dscacheutil=${dsc}`;
+}
+
+/** The restarting process's own `lookup(host)`: `lookup=ok` or `lookup=<code>`. */
+export async function restarterLookup(host: string, probe: (h: string) => Promise<unknown> = (h) => lookup(h)): Promise<string> {
+  try {
+    await Promise.race([probe(host), new Promise((_, rej) => setTimeout(() => rej({ code: "ETIMEDOUT" }), DIAG_PROBE_TIMEOUT_MS).unref())]);
+    return "restarter lookup=ok";
+  } catch (e) {
+    return `restarter lookup=${(e as NodeJS.ErrnoException)?.code ?? "ERR"}`;
+  }
 }
 
 /** Upstream-failure streak the router keeps for the daemon's watchdog. */
