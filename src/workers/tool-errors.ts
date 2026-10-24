@@ -179,7 +179,7 @@ const API_AUTH_EVIDENCE = new RegExp(
 /** A 5xx status in a request context (returned/status/HTTP/error or its reason phrase). */
 const LOCAL_5XX_EVIDENCE = /\b(?:returned|responded(?: with)?|status|HTTP(?:\/[\d.]+)?|error|code)[ :=]+5\d\d\b|\b5\d\d\s+(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Time-?out)/i;
 
-const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | ((r: ToolErrorRecord) => Classification) }> = [
+const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | ((r: ToolErrorRecord, isLocal: (provider: string) => boolean) => Classification) }> = [
   { test: (r) => /no matches/i.test(r.raw) && /^(Grep|Bash)$/.test(r.tool), c: { cls: "model", hint: "search found nothing", loopAt: Infinity } },
   { test: isBenignBash, c: { cls: "benign", hint: "expected non-zero exit", loopAt: Infinity } },
   { test: (r) => r.tool === "Bash" && /\b(?:ls|cat|tail|head|cd|stat|wc): .*No such file or directory/i.test(r.raw), c: { cls: "model", hint: "Bash on a path that does not exist (model error)", loopAt: 5 } },
@@ -191,8 +191,8 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | 
   // tool-call parser is ours to fix; a cloud provider's is the model's to blame.
   {
     test: (r) => /InputValidationError/i.test(r.raw),
-    c: (r) =>
-      providerIsLocal(r.provider)
+    c: (r, isLocal) =>
+      isLocal(r.provider)
         ? { cls: "harness", hint: "tool-call arguments not matching the tool schema (local model server's tool-call parser)" }
         : { cls: "model", hint: "tool input failed schema validation", loopAt: 3 },
   },
@@ -225,10 +225,10 @@ const RULES: Array<{ test: (r: ToolErrorRecord) => boolean; c: Classification | 
   { test: (r) => LOCAL_5XX_EVIDENCE.test(r.raw) && /localhost|127\.0\.0\.1/.test(r.raw), c: { cls: "harness", hint: "HTTP 5xx from a local server" } },
 ];
 
-export function classifyToolError(r: ToolErrorRecord): Classification {
+export function classifyToolError(r: ToolErrorRecord, isLocal: (provider: string) => boolean = providerIsLocal): Classification {
   const hit = RULES.find((x) => x.test(r))?.c;
   if (!hit) return { cls: "unknown", hint: "unclassified" };
-  return typeof hit === "function" ? hit(r) : hit;
+  return typeof hit === "function" ? hit(r, isLocal) : hit;
 }
 
 /** Raw texts of the records that may count as a harness fault: what the model asked for outside its grant (cls model) never does. */

@@ -1,8 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeWorkersYamlText } from "./workers-config.js";
 import { runSupervisionTick, supervisionEventsPath } from "./supervision.js";
 import { recordToolError, clipRaw } from "./tool-errors.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
@@ -14,20 +13,6 @@ const rec = (worker: string, ts: number, raw: string, tool = "Read", provider = 
   ts, worker, provider, label: "l", tool, raw, signature: normalizeError(tool, raw),
 });
 const NOW = 10_000_000_000;
-
-// Provider names for the schema-error rule: the yaml below decides which is
-// local; "p" (the default above) is a name the config does not know -> cloud.
-const savedYamlEnv = process.env.PAI_WORKERS_YAML;
-const yamlDir = mkdtempSync(join(tmpdir(), "pai-toolerr-yaml-"));
-process.env.PAI_WORKERS_YAML = join(yamlDir, "workers.yaml");
-writeWorkersYamlText(
-  process.env.PAI_WORKERS_YAML,
-  `active: localp\nproviders:\n  localp:\n    baseUrl: http://127.0.0.1:8123\n    models:\n      default: m\n  cloudp:\n    baseUrl: https://cloudp.example.com\n    models:\n      default: m\nclasses: {}\n`
-);
-afterEach(() => {
-  if (savedYamlEnv === undefined) delete process.env.PAI_WORKERS_YAML;
-  else process.env.PAI_WORKERS_YAML = savedYamlEnv;
-});
 
 describe("normalizeError", () => {
   it("masks paths", () => {
