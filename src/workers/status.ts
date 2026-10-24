@@ -7,6 +7,7 @@
  * (the AIBroker identity of the launching session, see scope.ts).
  */
 
+import { ledgerStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -279,13 +280,7 @@ export function contextLabel(
 }
 
 /** Timestamp format shared by status files and the ledger. */
-export function nowStamp(d: Date = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-  );
-}
+export const nowStamp = ledgerStamp;
 
 // second-resolution ids repeat when two workers/chains start together in one
 // process; a repeat gets a monotonic suffix so files never collide
