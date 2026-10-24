@@ -132,6 +132,38 @@ sessions:
     minContextTokens: 20000
     # The exact word typed into the session.
     prompt: keepalive
+# Battery guard (src/daemon/battery-guard.ts; macOS only, no-op elsewhere).
+# The daemon samples `pmset -g batt` and protects the battery from local-model
+# work: new local workers and the scheduled memory index/embed passes are
+# refused below pauseBelowPct, running local work stops cleanly at
+# stopBelowPct (salvage as on any stop, recorded in the ledger), and admission
+# reopens only above pauseBelowPct + hysteresisPct. A battery that falls while
+# on AC is warned to the daemon log and the cockpit, never acted on.
+# Cloud workers and interactive sessions are never touched.
+power:
+  batteryGuard:
+    enabled: true
+    # Seconds between pmset readings.
+    intervalSecs: 60
+    # Refuse new local-model work at or below this percent.
+    pauseBelowPct: 25
+    # Stop running local-model work at or below this percent.
+    stopBelowPct: 12
+    # Admission resumes only above pauseBelowPct + this many percent.
+    hysteresisPct: 10
+    # Readings the draining-on-AC check looks back over (10 × 60 s = 10 min).
+    drainWindowReadings: 10
+    # Benchmark runs (strata-bench, the night queue, any run labelled benchmark)
+    # are never paused: telemetry is recorded once a minute and the guard warns.
+    # Last resort, leaving time to save: stop at or below this percent ...
+    benchmarkStopBelowPct: 15
+    # ... or earlier when the drain rate projects this percent ...
+    benchmarkProjectFloorPct: 10
+    # ... within this many minutes.
+    benchmarkProjectMins: 20
+    # A stopped benchmark item gets this long after SIGTERM to write its files.
+    benchmarkSaveSecs: 120
+
 # Worker settings.
 workers:
   merge:

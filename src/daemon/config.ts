@@ -259,6 +259,35 @@ export interface PaiDaemonConfig {
   /** Model router supervised by the daemon (src/router/supervisor.ts). */
   router: RouterConfig;
 
+  /**
+   * Battery guard (src/daemon/battery-guard.ts, macOS only). Defaults in the
+   * shipped file under `power.batteryGuard`.
+   */
+  power?: {
+    batteryGuard?: {
+      /** Off = no sampling, no gate, no stops. */
+      enabled?: boolean;
+      /** Seconds between pmset readings. */
+      intervalSecs?: number;
+      /** Pause new local-model work at or below this percent. */
+      pauseBelowPct?: number;
+      /** Stop running local-model work at or below this percent. */
+      stopBelowPct?: number;
+      /** Admission resumes only above pauseBelowPct + this. */
+      hysteresisPct?: number;
+      /** Readings the draining-on-AC check looks back over. */
+      drainWindowReadings?: number;
+      /** Benchmark runs: last-resort stop at or below this percent (they are never paused). */
+      benchmarkStopBelowPct?: number;
+      /** Benchmark runs: early stop when the drain rate projects this percent ... */
+      benchmarkProjectFloorPct?: number;
+      /** ... within this many minutes. */
+      benchmarkProjectMins?: number;
+      /** Seconds a stopped benchmark item gets to write its result/progress files. */
+      benchmarkSaveSecs?: number;
+    };
+  };
+
   /** Worker settings; `merge` drives conflict auto-resolution in `pai worker merge`. */
   workers?: {
     merge?: {

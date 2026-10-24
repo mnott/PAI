@@ -60,6 +60,7 @@ import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
 import { aibrokerMessenger } from "../run-events.js";
 import { ownerOf } from "../local-idle.js";
+import { batteryGateRefusal } from "../../daemon/battery-guard.js";
 import {
   poolIneligibleReason,
   poolSettings,
@@ -76,6 +77,33 @@ import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
 export class LocalProviderRefusedError extends Error {}
+
+/** The battery guard holds new local-model work (src/daemon/battery-guard.ts). */
+export class BatteryGuardRefusedError extends Error {}
+
+/**
+ * The battery guard's refusal for a run resolved onto a local (loopback)
+ * provider while the guard has paused new local work, or null when admission
+ * is open. Cloud runs are untouched; the message names the reading and the
+ * config keys that move the thresholds.
+ */
+export function batteryGuardRefusal(
+  local: boolean,
+  logDir: string,
+  name: string,
+  now: number = Date.now(),
+  refusal?: string | null,
+  benchmark = false
+): string | null {
+  if (refusal === undefined) refusal = batteryGateRefusal(now, benchmark);
+  if (!local || !refusal) return null;
+  appendLedger(ledgerPath(logDir), "BATTERY-GATE-REFUSED", { provider: name, reason: refusal });
+  return (
+    `provider "${name}" is a local (loopback) provider and the battery guard has ${benchmark ? "stopped benchmark runs" : "paused new local-model work"}: ` +
+    `${refusal}. This run is refused instead of starting.\n` +
+    `Raise power.batteryGuard.pauseBelowPct, or set power.batteryGuard.enabled: false, in config.yaml.`
+  );
+}
 
 /**
  * A provider named for this run (--provider, a class pin, a profile, a
