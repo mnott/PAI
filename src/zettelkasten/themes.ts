@@ -39,7 +39,8 @@ function getTopFolder(vaultPath: string): string {
   return parts.length > 1 ? parts[0] : "";
 }
 
-function generateLabel(titles: Array<string | null>): string {
+/** Top three most frequent title words joined with " / " (empty when no usable words). */
+export function generateLabel(titles: Array<string | null>, stopWords: ReadonlySet<string> = STOP_WORDS): string {
   const wordCounts = new Map<string, number>();
   for (const title of titles) {
     if (!title) continue;
@@ -47,7 +48,7 @@ function generateLabel(titles: Array<string | null>): string {
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, " ")
       .split(/\s+/)
-      .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+      .filter((w) => w.length > 2 && !stopWords.has(w));
     for (const word of words) {
       wordCounts.set(word, (wordCounts.get(word) ?? 0) + 1);
     }
