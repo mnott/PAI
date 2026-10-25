@@ -1,0 +1,26 @@
+# Same hazard as recursive-search-root, via `cd ~ && rg foo` or `cd / ; find . -name x`:
+# the search root is the directory the command line just changed into.
+# Workers also get the cwd-aware check in worker-guard.ts.
+id: recursive-search-after-cd-root
+severity: block
+quoted: true
+category: resource_exhaustion
+flags: m
+match: /{{CMDPOS}}\s*cd\s+["']?(?:~|\$\{?HOME\}?|\/Users\/[^\s\/;&|"']+|\/)\/*["']?\s*(?:;|&&|\n)\s*(?:timeout\s+(?:-[^\s;&|]+\s+)*\d+[smhd]?\s+)?(?:find(?:\s+\.\/?)?(?=\s+-|\s*(?:$|[;&|)]))|(?:fd|fdfind|rg|ag)(?:\s+-[^\s;&|]+)*(?:\s+["']?[^\s;&|-][^\s;&|]*)?(?:\s+\.\/?)?(?=\s*(?:$|[;&|)]))|grep(?=[^;&|]*\s(?:-\w*[rR]\w*|--recursive)(?=\s))(?:\s+-[^\s;&|]+)*\s+["']?[^\s;&|-][^\s;&|]*(?:\s+-[^\s;&|]+)*(?:\s+\.\/?)?(?=\s*(?:$|[;&|)])))/
+reason: recursive search from the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)
+tests:
+  match:
+    - cd ~ && rg foo
+    - cd ~; grep -r x .
+    - cd /Users/someone && rg x
+    - cd / ; find . -name x
+    - cd $HOME && fd x
+    - cd ~ && grep -rn foo | head
+    - cd ~ && timeout 100 grep -rl foo --include=x.c . | head
+  no_match:
+    - cd ~/strata-020 && rg foo
+    - cd ~ && rg foo ~/strata-020
+    - cd ~ && mdfind -name x
+    - cd ~ && grep foo file.txt
+    - cd /tmp && find . -name x
+    - cd ~ && ls
