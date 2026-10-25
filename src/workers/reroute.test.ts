@@ -33,17 +33,6 @@ const seams = (over: Partial<RerouteDeps> = {}) => {
   return { kill, spawn, resolve, deps: { logDir: dir, kill, spawn, resolve, announceMs: 0, ...over } satisfies RerouteDeps };
 };
 
-describe("rerouteWorker claude args", () => {
-  it("a headless queued run is restarted with its original args and the task text", async () => {
-    const args = ["-p", "Do the thing.", "--allowedTools", "Read,Edit", "--output-format", "json"];
-    saveStatus(dir, mkStatus({ state: "queued", claudeArgs: args }));
-    const s = seams();
-    await rerouteWorker("w1", "cloud", s.deps);
-    const sp = s.spawn.mock.calls[0]![0];
-    expect(sp.claudeArgs).toEqual(["--allowedTools", "Read,Edit", "--output-format", "json", "-p", "Do the thing."]);
-  });
-});
-
 describe("rerouteWorker", () => {
   it("queued: stops the waiting process, starts the same task on the target, no branch note", async () => {
     saveStatus(dir, mkStatus({ state: "queued" }));

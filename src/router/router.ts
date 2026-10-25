@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody, toolWork, turnKey } from "./malformed-retry.js";
+import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody } from "./malformed-retry.js";
 import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
@@ -30,13 +30,7 @@ import {
 } from "./usage.js";
 import { workersLogDir } from "../workers/paths.js";
 import { recordToolError } from "../workers/tool-errors.js";
-import { declaredToolNames, fixJsonReply, ToolCaseSse } from "./tool-case.js";
-import { declaredToolSchemas, repairJsonReplyArgs, ToolArgsSse } from "./tool-args.js";
-import { convertTextAnswer } from "./tool-args-convert.js";
-import { activeRules, RulesStore } from "./tool-call-rules.js";
-import { ruleHits } from "./tool-call-hits.js";
-import { paiHomeDir } from "../config/pai-home.js";
-import { hasMalformedToolCall } from "../workers/malformed-toolcall.js";
+import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { sharedParker } from "./parking.js";
 import { createUpstreamStreak } from "./preflight.js";
@@ -243,16 +237,6 @@ export interface RouterOptions {
    * spelling. Default: router log line + a [model] record in tool-errors.jsonl.
    */
   onToolCaseFix?: (info: { from: string; to: string; model: string; provider: string; session?: string }) => void;
-  /**
-   * A tool call's arguments were repaired by the rules file (or a tool call was
-   * parsed out of answer text). Default: router log line, hit counters, and a
-   * [model] record in tool-errors.jsonl.
-   */
-  onToolArgsFix?: (info: { tool: string; rules: string[]; model: string; provider: string; session?: string }) => void;
-  /** Rules store of the tool-call repair; default: one per process from config router.toolCallRules. */
-  toolCallRules?: RulesStore;
-  /** True for a provider whose engine leaves tool calls as text, so the router parses them; default: workers.yaml toolParsing "router". */
-  toolParsing?: (provider: string) => boolean;
   /** managed instances of local models; default: local-instances.json, live pids only, cached 2 s. Registered endpoints (providers with characteristics) are merged in per request. */
   instances?: () => LocalInstance[];
   /** health of an endpoint (the probe cache); default: every endpoint is up. An unhealthy one is skipped like a dead pid. */
@@ -344,7 +328,7 @@ export function prepare(
   providers: Record<string, WorkerProvider>,
   claudeBase: string = claudeUpstream(),
   hints: Omit<ResolveHints, "provider"> = {}
-): { ok: true; up: Upstream; target: Target; requested: string; body: Record<string, unknown> } | { ok: false; status: number; message: string } {
+): { ok: true; up: Upstream; target: Target; requested: string } | { ok: false; status: number; message: string } {
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(rawBody.toString("utf8"));
@@ -393,7 +377,7 @@ export function prepare(
   }
   const buf = Buffer.from(JSON.stringify(out));
   headers["content-length"] = String(buf.length);
-  return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model, body: out };
+  return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model };
 }
 
 const blockHash = (v: unknown): string =>
@@ -439,29 +423,6 @@ export function modelsReply(
 /** chars/4 over the request body, for providers without count_tokens. */
 export function estimateTokens(rawBody: Buffer): number {
   return Math.ceil(rawBody.length / 4);
-}
-
-let sharedRules: RulesStore | undefined;
-/** The process-wide rules store: files from config router.toolCallRules under the PAI home, hot-reloaded. */
-function sharedRulesStore(log: (line: string) => void): RulesStore {
-  sharedRules ??= new RulesStore({ config: () => loadConfig().router.toolCallRules, homeDir: paiHomeDir, log });
-  return sharedRules;
-}
-
-/** Log line, hit counters and a [model] tool-errors record for one repaired tool call. */
-function defaultToolArgsFix(log: (line: string) => void): NonNullable<RouterOptions["onToolArgsFix"]> {
-  return (i) => {
-    ruleHits.record(i.rules);
-    const text = `tool arguments repaired: ${i.tool} [${i.rules.join(", ")}]`;
-    log(`${new Date().toISOString()} ${i.model} ${i.provider} ${text}`);
-    recordToolError(workersLogDir(readWorkersSection().workers), {
-      worker: i.session ?? "router",
-      provider: i.provider,
-      label: "router",
-      tool: "router",
-      text,
-    });
-  };
 }
 
 /** Log line plus a [model] tool-errors record, so `pai worker errors` keeps the data. */
@@ -515,13 +476,6 @@ export function routerHandler(
   const busts = new BustDetector();
   const gaps = new GapTracker();
   const warned = new Set<string>();
-  /** turns and retry bodies that already had their one degenerate retry (bounded, oldest dropped) */
-  const retriedTurns = new Set<string>();
-  const retriedBodies = new Set<string>();
-  const rememberRetry = (set: Set<string>, key: string): void => {
-    set.add(key);
-    if (set.size > 1000) set.delete(set.values().next().value as string);
-  };
   const instancesOf = options?.instances ?? stateFileInstances();
   const launched = launchedConfig();
   const health = options?.health;
@@ -626,7 +580,7 @@ export function routerHandler(
         onDuplicate,
       });
       if (!prep.ok) return fail(prep.status, prep.message);
-      const { up, target, requested, body: sent } = prep;
+      const { up, target, requested } = prep;
       const prov = target.kind === "claude" ? ANTHROPIC_NATIVE : target.name;
       // scheduler / parker engine: one per running instance (n=1 keeps the bare provider name)
       let engine = prov;
@@ -659,7 +613,7 @@ export function routerHandler(
       const sessionId = headerValue(req.headers["x-claude-code-session-id"], 64);
       const gap = onUsage && !isCount ? gaps.gap(sessionId, started) : undefined;
       const changed =
-        onUsage && !isCount ? busts.check(session, fingerprint(sent)) : [];
+        onUsage && !isCount ? busts.check(session, fingerprint(JSON.parse(up.body.toString("utf8")))) : [];
       const record = (status: number, usage: Usage, timing: { ttftMs?: number; decodeMs?: number; promptMs?: number; predictedMs?: number } = {}) => {
         if (!onUsage || isCount) return;
         const row: UsageRow = {
@@ -721,17 +675,10 @@ export function routerHandler(
         res.on("close", () => q.destroy());
         q.end(b);
       };
-      // A provider whose engine leaves tool calls as text: the router parses them (tool-args.ts).
-      const parseOn =
-        target.kind === "provider" && !isCount && isLocal(up.url) && (options?.toolParsing ? options.toolParsing(prov) : target.provider.toolParsing === "router");
-      const argsFix = (info: { tool: string; rules: string[] }): void =>
-        (options?.onToolArgsFix ?? defaultToolArgsFix(log))({ ...info, model: target.model, provider: prov, session });
-      const rulesNow = (): readonly import("./tool-call-rules.js").Rule[] =>
-        activeRules((options?.toolCallRules ?? sharedRulesStore(log)).get(prov, target.model));
       // Local 200 answers are held until complete so a damaged tool call never reaches the client as text.
       const gate = (ures0: http.IncomingMessage): void => {
         const ct = String(ures0.headers["content-type"] ?? "");
-        if (!(retryOn || parseOn) || ures0.statusCode !== 200 || ures0.headers["content-encoding"]) return respond(ures0);
+        if (!retryOn || ures0.statusCode !== 200 || ures0.headers["content-encoding"]) return respond(ures0);
         let pings: NodeJS.Timeout | undefined;
         if (/text\/event-stream/i.test(ct) && !res.headersSent) {
           const rh0 = { ...ures0.headers };
@@ -758,36 +705,15 @@ export function routerHandler(
             respond(src);
           };
           const ans = readAnswer(first.toString("utf8"), ct);
-          if (parseOn && !ans.toolUse && hasMalformedToolCall(ans.text)) {
-            const conv = convertTextAnswer(first.toString("utf8"), ct, declaredToolSchemas(up.body), rulesNow());
-            if (conv) {
-              conv.calls.forEach((c) => argsFix({ tool: c.name, rules: ["parsed-from-text", ...c.hits] }));
-              return deliver(200, ures0.headers, Buffer.from(conv.body));
-            }
-          }
-          if (!retryOn) return deliver(200, ures0.headers, first);
           const degenerate = isDegenerate(ans, up.body);
           if (!isDamaged(ans) && !degenerate) return deliver(200, ures0.headers, first);
           const what = degenerate ? "degenerate-answer" : "malformed-tool-call";
-          const tools = toolWork(up.body);
           let nb: Buffer;
           try {
             nb = retryBody(up.body, ans.text, degenerate ? DEGENERATE_RETRY_TEXT : undefined);
           } catch {
             return deliver(200, ures0.headers, first);
           }
-          // at most one degenerate retry per turn, and never the same retry body twice
-          const bodyKey = createHash("sha256").update(nb).digest("hex");
-          const tk = turnKey(up.body);
-          if (degenerate && (retriedTurns.has(tk) || retriedBodies.has(bodyKey))) {
-            log(`${new Date().toISOString()} ${what} retry-skipped provider=${prov} reason=already-retried tools=${tools}`);
-            return deliver(200, ures0.headers, first);
-          }
-          if (degenerate) {
-            rememberRetry(retriedTurns, tk);
-            rememberRetry(retriedBodies, bodyKey);
-          }
-          log(`${new Date().toISOString()} ${what} retry provider=${prov} reason=${degenerate ? "empty-answer-no-tool-work" : "damaged-tool-call"} tools=${tools}`);
           again(nb, (status, headers, raw) => {
             const again2 = readAnswer(raw.toString("utf8"), String(headers["content-type"] ?? ""));
             const ok = status === 200 && !isDamaged(again2) && !isDegenerate(again2, up.body);
@@ -826,38 +752,27 @@ export function routerHandler(
             });
             return;
           }
-          const declared = isCount || ures.statusCode !== 200 ? [] : declaredToolNames(up.body);
-          const ctype = String(ures.headers["content-type"] ?? "");
-          const plainSse = /text\/event-stream/i.test(ctype) && !ures.headers["content-encoding"];
-          const jsonReply = target.kind === "provider" && declared.length > 0 && /json/i.test(ctype) && !plainSse && !ures.headers["content-encoding"];
-          if (jsonReply) delete rh["content-length"];
           if (!res.headersSent) res.writeHead(ures.statusCode ?? 502, rh);
+          const declared = isCount || ures.statusCode !== 200 ? [] : declaredToolNames(up.body);
+          const plainSse = /text\/event-stream/i.test(String(ures.headers["content-type"] ?? "")) && !ures.headers["content-encoding"];
           const fixer =
             declared.length && plainSse
               ? new ToolCaseSse(declared, (from, to) =>
                   (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
                 )
               : undefined;
-          const schemas = declared.length ? declaredToolSchemas(up.body) : undefined;
-          const argsFixer = target.kind === "provider" && schemas?.size && plainSse ? new ToolArgsSse(schemas, rulesNow, argsFix) : undefined;
           const fill = mayCount && plainSse ? new InputTokensSse(() => counted) : undefined;
-          if (jsonReply && schemas) {
-            // non-streaming reply: held whole, tool names and arguments corrected, sent as one body
-            const bits: Buffer[] = [];
-            ures.on("data", (c: Buffer) => bits.push(c));
-            ures.on("end", () => {
-              let text = Buffer.concat(bits).toString("utf8");
-              text = fixJsonReply(text, declared, (from, to) =>
-                (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
-              );
-              res.end(repairJsonReplyArgs(text, schemas, rulesNow, argsFix));
-            });
+          // ures -> [input fill] -> [tool-case fix] -> res
+          if (fill && fixer) {
+            ures.pipe(fill);
+            fill.pipe(fixer);
+            fixer.pipe(res);
+          } else if (fill) {
+            ures.pipe(fill).pipe(res);
+          } else if (fixer) {
+            ures.pipe(fixer).pipe(res);
           } else {
-            // ures -> [input fill] -> [tool-case fix] -> [tool-args repair] -> res
-            const chain = [fill, fixer, argsFixer].filter((x): x is NonNullable<typeof x> => !!x);
-            let tail: NodeJS.ReadableStream = ures;
-            for (const t of chain) tail = tail.pipe(t);
-            tail.pipe(res);
+            ures.pipe(res);
           }
           ures.on("end", () => {
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);

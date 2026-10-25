@@ -7,9 +7,8 @@
  * (the AIBroker identity of the launching session, see scope.ts).
  */
 
-import { ledgerStamp, parseStamp } from "./ledger.js";
+import { ledgerStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
-import { processStartMs } from "./proc-start.js";
 import {
   existsSync,
   mkdirSync,
@@ -22,7 +21,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { shortText } from "./args.js";
-import { archiveDir, statusPath, withArchive } from "./paths.js";
+import { statusPath } from "./paths.js";
 import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
@@ -64,18 +63,6 @@ export interface WorkerStatus {
   tools: number;
   last: string;
   rc: number | null;
-  /** uhp engine: id of the last response (what `resume` sends as previous_response_id). */
-  uhpResponseId?: string | null;
-  /** uhp engine: metadata.session_id of the harness thread. */
-  uhpSessionId?: string | null;
-  /** uhp engine: protocol version the server answered with (UHP-Version header). */
-  uhpVersion?: string;
-  /** uhp engine: harness id the run went to. */
-  uhpHarnessId?: string;
-  /** Model asked for, recorded only when the effective `model` differs (see uhp-vocab modelRecord). */
-  requestedModel?: string;
-  modelFallback?: boolean;
-  modelFallbackReason?: string;
   secs: number | null;
   /** Launching session resolved through AIBroker, when it was. */
   session?: WorkerSessionRef | null;
@@ -184,8 +171,6 @@ export interface WorkerStatus {
   progressAt?: string;
   /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */
   promptFile?: string;
-  /** The claude args the run was started with (-p, --allowedTools, --output-format, ...): a reroute restarts the task with them, headless as before. */
-  claudeArgs?: string[];
   /** The --class the run was started with. */
   className?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
@@ -424,14 +409,31 @@ export function setWorkerNote(logDir: string, id: string, note: string): WorkerS
   return status;
 }
 
-const statusCache = new Map<string, { mtimeMs: number; ctimeMs: number; ino: number; size: number; status: WorkerStatus | null }>();
+/** Load every status file in the logDir, oldest id first, skipping damage. */
+export function loadStatuses(logDir: string): WorkerStatus[] {
+  if (!existsSync(logDir)) return [];
+  const out: WorkerStatus[] = [];
+  for (const name of readdirSync(logDir).sort()) {
+    if (!name.endsWith(".status")) continue;
+    try {
+      out.push(JSON.parse(readFileSync(join(logDir, name), "utf8")) as WorkerStatus);
+    } catch {
+      // a half-written or damaged status file is not worth a crash
+    }
+  }
+  return out;
+}
+
+const statusCache = new Map<string, { mtimeMs: number; size: number; status: WorkerStatus | null; checked: number }>();
+/** A cached terminal status is trusted this long without a stat: a finished worker's file no longer changes. */
+export const TERMINAL_RECHECK_MS = 5 * 60_000;
 
 /**
- * Load every status file in the logDir, oldest id first, skipping damage. A file is parsed again only when its
- * mtime or size changed (a deleted one is dropped), so a call over thousands of historical workers costs one
- * readdir and one stat each. Callers get fresh shallow copies, so mutating a returned status never reaches the cache.
+ * loadStatuses for the daemon's periodic tasks: a status file is parsed again only when its mtime or size
+ * changed, so a tick over thousands of historical workers costs one readdir and one stat each, not a parse.
+ * The returned objects are shared with the cache: read-only.
  */
-export function loadStatuses(logDir: string): WorkerStatus[] {
+export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStatus[] {
   if (!existsSync(logDir)) return [];
   const out: WorkerStatus[] = [];
   const seen = new Set<string>();
@@ -440,59 +442,34 @@ export function loadStatuses(logDir: string): WorkerStatus[] {
     const path = join(logDir, name);
     seen.add(path);
     try {
-      const st = statSync(path);
       let hit = statusCache.get(path);
-      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.ctimeMs !== st.ctimeMs || hit.ino !== st.ino || hit.size !== st.size) {
+      if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) {
+        out.push(hit.status);
+        continue;
+      }
+      const st = statSync(path);
+      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
         let status: WorkerStatus | null = null;
         try {
           status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
         } catch {
           // a half-written or damaged status file is not worth a crash
         }
-        hit = { mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, ino: st.ino, size: st.size, status };
+        hit = { mtimeMs: st.mtimeMs, size: st.size, status, checked: now };
         statusCache.set(path, hit);
       }
-      if (hit.status) out.push({ ...hit.status });
+      hit.checked = now;
+      if (hit.status) out.push(hit.status);
     } catch {
       statusCache.delete(path);
     }
   }
-  const prefix = join(logDir, "/");
-  for (const k of statusCache.keys()) if (k.startsWith(prefix) && !seen.has(k)) statusCache.delete(k);
-  return out;
-}
-
-/** Statuses the gc moved to archive/YYYY-MM/ (uncached; for history readers such as usage totals). */
-export function loadArchivedStatuses(logDir: string): WorkerStatus[] {
-  const out: WorkerStatus[] = [];
-  const root = archiveDir(logDir);
-  let months: string[];
-  try {
-    months = readdirSync(root).sort();
-  } catch {
-    return out;
-  }
-  for (const m of months) {
-    let names: string[];
-    try {
-      names = readdirSync(join(root, m)).sort();
-    } catch {
-      continue;
-    }
-    for (const name of names) {
-      if (!name.endsWith(".status")) continue;
-      try {
-        out.push(JSON.parse(readFileSync(join(root, m, name), "utf8")) as WorkerStatus);
-      } catch {
-        // damaged: skip
-      }
-    }
-  }
+  for (const k of statusCache.keys()) if (k.startsWith(logDir) && !seen.has(k)) statusCache.delete(k);
   return out;
 }
 
 export function loadStatus(logDir: string, id: string): WorkerStatus | null {
-  const path = withArchive(logDir, statusPath(logDir, id));
+  const path = statusPath(logDir, id);
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
@@ -595,7 +572,8 @@ export const realProcTable: ProcTable = {
   alive,
   startMs: (pid) => {
     try {
-      return processStartMs(pid);
+      const t = Date.parse(psOut(["-o", "lstart=", "-p", String(pid)]));
+      return Number.isNaN(t) ? undefined : t;
     } catch {
       return undefined;
     }
@@ -627,7 +605,7 @@ export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
     if (status.pool) return status.pid > 0 && t.alive(status.pid) && t.parentPid(status.pid) === status.pool.hostPid;
     if (status.pid <= 0 || !t.alive(status.pid)) return false;
     const psStart = t.startMs(status.pid);
-    const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? parseStamp(status.started) : NaN);
+    const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? Date.parse(status.started.replace(" ", "T")) : NaN);
     if (psStart === undefined || Number.isNaN(started)) return t.alive(status.pid);
     if (Math.abs(psStart - started) <= 120_000) return true;
     const cmd = t.command(status.pid);
@@ -694,7 +672,7 @@ export function reconcileStatuses(
   const lost: string[] = [];
   for (const s of loadStatuses(logDir)) {
     if ((s.state !== "running" && s.state !== "queued") || owns(s)) continue;
-    const upd = parseStamp(s.updated ?? "");
+    const upd = Date.parse((s.updated ?? "").replace(" ", "T"));
     if (Number.isNaN(upd) || now.getTime() - upd < graceMs) continue;
     saveStatus(logDir, { ...s, state: "lost", rc: null, last: "process ended without a final status" }, now);
     lost.push(s.id);
@@ -712,7 +690,7 @@ export function markStartFailed(logDir: string, status: WorkerStatus, err: unkno
 
 /** "42s" under 90s, "7m" above — the coarse age the table and bar show. */
 export function ageOf(ts: string, now: Date = new Date()): string {
-  const t = parseStamp(ts);
+  const t = Date.parse(ts.replace(" ", "T"));
   if (Number.isNaN(t)) return "?";
   const s = Math.max(0, Math.floor((now.getTime() - t) / 1000));
   return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m`;
@@ -720,7 +698,7 @@ export function ageOf(ts: string, now: Date = new Date()): string {
 
 /** Precise elapsed time: "45s", "1m 23s", "12m 05s", "1h 02m 05s" — seconds zero-padded after a larger unit. */
 export function elapsedOf(ts: string, now: Date = new Date()): string {
-  const t = parseStamp(ts);
+  const t = Date.parse(ts.replace(" ", "T"));
   if (Number.isNaN(t)) return "?";
   const secs = Math.max(0, Math.floor((now.getTime() - t) / 1000));
   const hours = Math.floor(secs / 3600);

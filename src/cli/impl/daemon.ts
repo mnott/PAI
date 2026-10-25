@@ -34,7 +34,6 @@ import { readClaudeJson, writeClaudeJson, registerMcpScript } from "../../config
 import { daemonLogPath } from "../../runtime-paths.js";
 import { resolveFromModule } from "../../module-paths.js";
 import { serviceManagerAllowed } from "../../service-manager.js";
-import { formatLeftovers, listLeftovers } from "../../daemon/leftovers.js";
 import { formatStorageHealth, type StorageHealthStatus } from "./daemon-status.js";
 import {
   loadSessionKeepaliveState,
@@ -237,9 +236,6 @@ async function cmdStatus(): Promise<number> {
         )
       );
     }
-    const left = formatLeftovers(listLeftovers(resolveDaemonPid() ?? null));
-    console.log(dim(`    Leftovers:   ${left.length ? "" : "none"}`));
-    for (const line of left) console.log(dim(`      ${line}`));
     console.log();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

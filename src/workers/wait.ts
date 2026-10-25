@@ -7,7 +7,6 @@
  * with exit 1 naming whoever failed or timed out.
  */
 
-import { parseStamp } from "./ledger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { eventsPath } from "./paths.js";
 import { parseWorkerReport, verifyReportChanges, type WorkerReport } from "./report.js";
@@ -81,7 +80,7 @@ function unconfirmedClaims(st: WorkerStatus, report: WorkerReport | null): strin
   if (!report?.changed?.length) return [];
   const dir = st.worktreeDir ?? st.cwd;
   if (!dir || !existsSync(dir)) return [];
-  const startMs = parseStamp(st.started);
+  const startMs = Date.parse(st.started);
   const v = verifyReportChanges(report.changed, dir, Number.isNaN(startMs) ? 0 : startMs);
   return v.failures.map((f) => f.path);
 }

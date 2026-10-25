@@ -18,7 +18,6 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { capContent } from "./rules/cap.js";
 
@@ -125,9 +124,7 @@ function tokenize(segment: string): string[] {
 
 /** A path against `base`; `~` and `$` expansions cannot be resolved here and count as unresolved. */
 function resolveDir(base: string, p: string): string {
-  if (/\$|`/.test(p)) return UNKNOWN_DIR;
-  if (p === "~" || p.startsWith("~/")) return resolve(process.env.HOME || homedir(), p.slice(2));
-  return p.startsWith("~") ? UNKNOWN_DIR : resolve(base, p);
+  return /^~|\$|`/.test(p) ? UNKNOWN_DIR : resolve(base, p);
 }
 
 /** The work tree a git dir belongs to: `<tree>/.git` is `<tree>`. */

@@ -7,18 +7,16 @@
 
 import { isCi } from "../../utils/ci.js";
 import { currentWorkerId } from "../../workers/worker-id.js";
-import { resumePlan } from "../../workers/resume-args.js";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
-import { appendLedger } from "../../workers/ledger.js";
-import { eventsPath, ledgerPath, withArchive, workersLogDir } from "../../workers/paths.js";
+import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
 import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
 import { runChain } from "../../workers/chain.js";
-import { realDeps as waitOnDeps, statusMarker, statusQueue, treeBusy, waitOn } from "../../workers/wait-on.js";
+import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../../workers/wait-on.js";
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
@@ -172,7 +170,6 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
   return {
     kind: "run",
     run: {
-      harnessFlag: str(o.harness),
       providerFlag: str(o.provider),
       localFlag: o.local === true || typeof o.local === "string" ? true : undefined,
       localName: typeof o.local === "string" ? o.local : undefined,
@@ -206,23 +203,12 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
   };
 }
 
-function ledgerFallback(fields: Record<string, string>): void {
-  try {
-    appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "WORKER-FALLBACK", fields);
-  } catch {
-    // no readable config: nothing to log to
-  }
-}
-
 /** --where / --model / --now through resolveTarget (target.ts), the one resolver every delegation entry point uses. */
-export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget, logFallback: (fields: Record<string, string>) => void = ledgerFallback): Promise<void> {
+export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget): Promise<void> {
   let where = str(ctx.opts.where);
   const model = str(ctx.opts.model);
   const now = flag(ctx, "now");
   const target = plan.kind === "chain" ? plan.chain : plan.run;
-  // an explicit --provider is the caller's choice: --model default/fast resolves against it, never replaces it
-  const explicitProvider = target.providerFlag;
-  if (!where && explicitProvider) where = explicitProvider;
   const forceLocal = flag(ctx, "force-local");
   const task = plan.kind === "chain" ? plan.chain.brief : parseRunnerArgs(plan.run.claudeArgs).prompt ?? undefined;
   const label = plan.kind === "run" ? plan.run.label : plan.chain.label;
@@ -246,10 +232,7 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   if (where && ctx.opts.local) throw new Error("--where and --local both name where to run; use one");
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
-  if (t.provider && !explicitProvider) {
-    target.providerFlag = t.provider;
-    logFallback({ from: "default routing", to: t.provider, reason: t.description });
-  }
+  if (t.provider) target.providerFlag = t.provider;
   // "default" / "fast" are aliases, never a raw model id
   target.modelFlag = model === "default" || model === "fast" ? t.model : (t.model ?? target.modelFlag);
   if (plan.kind === "run") {
@@ -271,7 +254,6 @@ const runCommand: CommandDef = {
   allowUnknown: true,
   options: [
     { ...OPT.provider, summary: "Provider to run on (default: the active one, else the routing order)" },
-    { name: "harness", type: "string", value: "uhp:ID", summary: "Run on a Unified Harness Protocol harness: resolves the engine-uhp provider and sets its harness id (docs/uhp.md)" },
     { name: "class", type: "string", value: "NAME", summary: "Use the provider set for this kind of work (draft, implement, review, research, spotcheck, simple, complex, image)" },
     { name: "role", type: "string", value: "NAME", summary: "Old name of --class" },
     { name: "capability", type: "string", value: "NAME", summary: "Run on whichever provider serves this capability (see `pai worker capability`), e.g. image" },
@@ -361,20 +343,16 @@ const resumeCommand: CommandDef = {
           `worker ${id} recorded no Claude session id — it predates resume support or ran through an engine that does not expose one`
         );
       }
-      const plan = resumePlan(old, text);
-      if (plan.note) process.stderr.write(`pai worker: ${plan.note}\n`);
-      const claudeArgs = plan.claudeArgs;
+      const claudeArgs = ["--resume", old.claudeSession, "-p", text];
       const fmt = str(ctx.opts["output-format"]);
       if (fmt !== undefined) claudeArgs.push("--output-format", fmt);
       let newId = "";
       const rc = await runWorker({
         providerFlag: old.provider,
-        ...(old.uhpHarnessId ? { harnessId: old.uhpHarnessId } : {}),
         modelFlag: old.model,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
         resumeOf: id,
-        ...(plan.cwd ? { cwd: plan.cwd } : {}),
         onWorkerStart: (wid) => {
           newId = wid;
         },
@@ -593,7 +571,7 @@ const logCommand: CommandDef = {
         return void out(readFileSync(ledger, "utf8").trim().split("\n").slice(-20).join("\n"));
       }
       if (what) {
-        const path = withArchive(dir, eventsPath(dir, what));
+        const path = eventsPath(dir, what);
         if (!existsSync(path)) throw new Error(`no event log for ${what}`);
         return void out(readFileSync(path, "utf8").trim().split("\n").slice(-30).join("\n"));
       }
@@ -995,7 +973,7 @@ const waitOnCommand: CommandDef = {
       }
       return await waitOn(
         { pid: Number(ctx.args.PID), log: str(ctx.opts.log), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail), maxMinutes: num(ctx.opts["max-minutes"]), stallMinutes: num(ctx.opts["stall-minutes"]) },
-        { ...waitOnDeps, mark, queue: statusQueue(logDir()), busy: (p) => treeBusy(p, logDir()) }
+        { ...waitOnDeps, mark, queue: statusQueue(logDir()) }
       );
     }),
 };

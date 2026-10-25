@@ -14,7 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
@@ -80,8 +80,6 @@ export interface RuntimeOpDeps {
   getUrl: (url: string) => Promise<boolean>;
   /** a ready command: resolves its exit code */
   runCmd: (cmd: string, timeoutMs?: number) => Promise<number | null>;
-  /** model ids a server on this loopback port reports on /v1/models; null when it does not answer */
-  servedModels?: (port: number) => Promise<string[] | null>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
 }
@@ -165,16 +163,6 @@ export const liveRuntimeOpDeps: RuntimeOpDeps = {
       });
     });
   },
-  async servedModels(port) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: AbortSignal.timeout(LOCAL_PROBE_TIMEOUT_MS) });
-      if (!r.ok) return null;
-      const body = (await r.json()) as { data?: Array<{ id?: string }> };
-      return (body.data ?? []).map((d) => d.id).filter((x): x is string => !!x);
-    } catch {
-      return null;
-    }
-  },
   now: () => Date.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
@@ -252,57 +240,4 @@ export function embeddingRuntimeName(): string {
   } catch {
     return "pai";
   }
-}
-
-/** The port a runtime's commands name: the ready URL, else `--port N` of start, else the `-iTCP:N` of stop. */
-export function runtimePort(c: RuntimeCommands | undefined): number | undefined {
-  if (!c) return undefined;
-  const m =
-    /^https?:\/\/[^/:\s]+:(\d+)/i.exec(c.ready?.trim() ?? "") ??
-    /--port[ =](\d+)/.exec(c.start ?? "") ??
-    /-iTCP:(\d+)/.exec(c.stop ?? "");
-  return m ? Number(m[1]) : undefined;
-}
-
-/** The model a Strata runtime serves: `model_name` of the JSON its start command names with `--config`.
- *  undefined when the command names no readable config or the config names no model. */
-export function expectedRuntimeModel(c: RuntimeCommands | undefined, readText: (path: string) => string = (p) => readFileSync(p, "utf8")): string | undefined {
-  const m = /--config[ =]\s*(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(c?.start ?? "");
-  const raw = m?.[1] ?? m?.[2] ?? m?.[3];
-  if (!raw) return undefined;
-  const home = process.env.HOME ?? "";
-  const path = raw.replace(/^~(?=\/)/, home).replace(/\$\{HOME\}|\$HOME/g, home);
-  try {
-    const name = (JSON.parse(readText(path)) as { model_name?: unknown }).model_name;
-    return typeof name === "string" && name ? name : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** Among runtimes sharing a port, the one whose expected model is among the served ids; undefined when none can be told. */
-export function portHolder(names: string[], commands: Record<string, RuntimeCommands>, served: string[], readText?: (path: string) => string): string | undefined {
-  const ids = new Set(served.map((s) => s.toLowerCase()));
-  return names.find((n) => {
-    const e = expectedRuntimeModel(commands[n], readText);
-    return !!e && ids.has(e.toLowerCase());
-  });
-}
-
-/** The runtime whose server answers on `runtime`'s port when that is a different runtime sharing the port; null otherwise
- *  (own server, nothing running, no peers, or no model to tell them apart). */
-export async function foreignPortHolder(
-  runtime: string,
-  commands: Record<string, RuntimeCommands>,
-  servedModels: ((port: number) => Promise<string[] | null>) | undefined,
-  readText?: (path: string) => string
-): Promise<string | null> {
-  const port = runtimePort(commands[runtime]);
-  if (port === undefined || !servedModels) return null;
-  const peers = Object.keys(commands).filter((n) => n !== runtime && runtimePort(commands[n]) === port);
-  if (!peers.length) return null;
-  const served = await servedModels(port);
-  if (!served) return null;
-  const holder = portHolder([runtime, ...peers], commands, served, readText);
-  return holder && holder !== runtime ? holder : null;
 }

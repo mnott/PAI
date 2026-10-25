@@ -186,22 +186,3 @@ export function shortText(s: unknown, n: number): string {
   const t = String(s ?? "").split(/\s+/).filter(Boolean).join(" ");
   return t.length <= n ? t : t.slice(0, n - 1) + "…";
 }
-
-/**
- * Replace the caller's -p value with `prompt`, dropping every existing
- * -p/--print pair first (two -p flags on one claude command line are an error,
- * so the chain must never leave the brief in place when swapping prompts).
- */
-export function swapPromptArg(claudeArgs: string[], prompt: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < claudeArgs.length; i++) {
-    const a = claudeArgs[i];
-    if (a === "-p" || a === "--print") {
-      if (i + 1 < claudeArgs.length && !isFlagToken(claudeArgs[i + 1])) i += 1;
-      continue;
-    }
-    out.push(a);
-  }
-  out.push("-p", prompt);
-  return out;
-}

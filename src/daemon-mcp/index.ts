@@ -78,7 +78,6 @@ import {
 } from "./resources/index.js";
 import { CAPABILITY_NAME_RE, MODEL_CAPABILITIES, readWorkersSection } from "../workers/config.js";
 import { workersLogDir, ledgerPath } from "../workers/paths.js";
-import { resumePlan } from "../workers/resume-args.js";
 import { ledgerSummary } from "../workers/ledger.js";
 import {
   addProvider,
@@ -1838,15 +1837,12 @@ async function startShim(): Promise<void> {
             )
           );
         }
-        const plan = resumePlan(old, text);
         let newId = "";
         const rc = await runWorker({
           providerFlag: old.provider,
           modelFlag: old.model,
           label: `↩ ${old.label}`,
-          claudeArgs: plan.claudeArgs,
-          ...(plan.cwd ? { cwd: plan.cwd } : {}),
-          ...(old.uhpHarnessId ? { harnessId: old.uhpHarnessId } : {}),
+          claudeArgs: ["--resume", old.claudeSession, "-p", text],
           resumeOf: args.id,
           onWorkerStart: (wid) => {
             newId = wid;

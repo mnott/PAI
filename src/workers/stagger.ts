@@ -8,7 +8,6 @@
  * A predecessor must actually be on the engine: a run parked at the capacity
  * gate (queued, held) or paused never warms a cache, so it is no predecessor.
  */
-import { parseStamp } from "./ledger.js";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { alive, isLive, loadStatuses, type WorkerStatus } from "./status.js";
@@ -104,7 +103,7 @@ export function findPredecessor(
     if (!prev || s.id > prev.id) prev = s;
   }
   if (!prev || prev.turns > 0) return null;
-  const started = parseStamp(prev.started);
+  const started = Date.parse(prev.started.replace(" ", "T"));
   if (Number.isFinite(started) && now - started > limitSec * 1000) return null;
   return prev;
 }

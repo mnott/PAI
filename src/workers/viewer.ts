@@ -27,7 +27,7 @@ import { poolSlots } from "../builds/config.js";
 import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
-import { eventsPath, ledgerPath, withArchive } from "./paths.js";
+import { eventsPath, ledgerPath } from "./paths.js";
 import { loadPaneRunStatuses, renderPaneRunLines } from "./pane-run.js";
 import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
@@ -39,7 +39,7 @@ import { formatWorktreesStats, worktreesStats } from "./worktree.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
 import { clickrControlsArgv, markControlsHeld } from "./controls.js";
-import { appendLedger, parseStamp } from "./ledger.js";
+import { appendLedger } from "./ledger.js";
 import { closeOwnPane } from "./pane.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
 import {
@@ -381,14 +381,13 @@ export function replayOutput(
   color = process.stdout.isTTY === true,
   tailLines?: number
 ): string {
-  const path = withArchive(logDir, eventsPath(logDir, wid));
+  const path = eventsPath(logDir, wid);
   if (!existsSync(path)) {
     throw new Error(`no event log for ${wid}`);
   }
   const c = makeColor(color);
   const st =
     loadStatuses(logDir).find((s) => s.id === wid) ??
-    loadStatus(logDir, wid) ??
     ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
   const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : FALLBACK_COLUMNS;
   const out: string[] = [headerLine(c, st), ...denialLines(st)];
@@ -682,7 +681,7 @@ export async function followWorkers(
   // context meter, turns, tools, runtime — frozen with ✓/✗ once it finished
   const statusRowOf = (st: WorkerStatus, secs: number): StatusRow => {
     const fin = finished.has(st.id);
-    const startedAt = parseStamp(st.started ?? "");
+    const startedAt = Date.parse((st.started ?? "").replace(" ", "T"));
     const elapsed =
       fin && st.secs !== null
         ? st.secs
@@ -1129,7 +1128,7 @@ export async function followWorkers(
     const pre = multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  ";
     out(`${pre}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`);
     const why = endLabel(st) ?? "";
-    const secs = st.secs ?? Math.max(0, Math.floor((Date.now() - parseStamp(st.started ?? "")) / 1000));
+    const secs = st.secs ?? Math.max(0, Math.floor((Date.now() - Date.parse((st.started ?? "").replace(" ", "T"))) / 1000));
     out(
       c(
         "dim",

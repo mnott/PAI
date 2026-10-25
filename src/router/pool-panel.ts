@@ -12,8 +12,8 @@ import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostProbe, 
 import type { PoolMetricRow, PoolSlotRecord, PoolState, SpareMissReason } from "../workers/pool.js";
 import { diskBundleMtime, ensurePoolHost } from "../workers/pool-cli.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
-import { readWorkersCached } from "../workers/config.js";
-import { parseLedger, type LedgerLine, parseStamp } from "../workers/ledger.js";
+import { readWorkersSection } from "../workers/config.js";
+import { parseLedger, type LedgerLine } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 
 export interface PoolPanelSlot {
@@ -89,7 +89,7 @@ export interface PoolPanelInput {
 
 /** Ledger stamps are local wall time. */
 function stampMs(stamp: string): number {
-  return parseStamp(stamp);
+  return new Date(stamp.replace(" ", "T")).getTime();
 }
 
 const DAY_MS = 24 * 3600_000;
@@ -266,7 +266,7 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
     if (Date.now() - at < 15_000) return cached;
     at = Date.now();
     try {
-      const workers = readWorkersCached();
+      const { workers } = readWorkersSection();
       const logDir = workersLogDir(workers);
       const s = poolSettings(workers);
       void ensurePoolHost(logDir).catch(() => undefined); // a lost host heals itself (bounded, logged)

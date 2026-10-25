@@ -77,21 +77,8 @@ export function portListeners(port: number): number[] {
   }
 }
 
-const LISTEN_TTL_MS = 5000;
-const listenMemo = new Map<number, { at: number; up: boolean }>();
-
-/** portListeners as a yes/no, remembered for a few seconds: readLiveInstances runs on every cockpit poll and lsof is a synchronous child process. */
-function listeningCached(port: number): boolean {
-  const now = Date.now();
-  const hit = listenMemo.get(port);
-  if (hit && now - hit.at < LISTEN_TTL_MS) return hit.up;
-  const up = portListeners(port).length > 0;
-  listenMemo.set(port, { at: now, up });
-  return up;
-}
-
 /** The recorded rows minus managed ones that are gone: the pid is dead (killed outside PAI) or, for a ready row, nothing listens on its port any more. Failed rows stay until dismissed. Readers that report or route use this; writers read the raw file. */
-export function readLiveInstances(logDir: string, listening: (port: number) => boolean = listeningCached): LocalInstance[] {
+export function readLiveInstances(logDir: string, listening: (port: number) => boolean = (port) => portListeners(port).length > 0): LocalInstance[] {
   return readInstances(logDir).filter((r) => {
     if (r.origin !== "managed" || r.state === "failed") return true;
     if (r.pid && !pidAlive(r.pid)) return false;

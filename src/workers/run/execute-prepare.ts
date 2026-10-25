@@ -173,7 +173,6 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // a resume takes over the old id's tree and runs against its repo
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
-  if (adopted?.revived) process.stderr.write(`pai worker: resume base is branch ${adopted.branch} (tip of ${a.resumeOf}), not HEAD\n`);
   const term = (await resolveHostSession()).term;
   await a.paneOpening;
   if (a.paneError) throw a.paneError;
@@ -287,8 +286,8 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // A local server prefix-caches system prompt + tools, and a worktree's id,
   // path, branch and the deadline minute differ per unit: left in the system
   // prompt they cut the shared prefix before the tool definitions (measured
-  // 2026-10-17: 3.1k of 38k tokens shared). They go in the task
-  // message instead (placeVolatile: after the shared text, at the tail without markers). Anthropic and remote providers keep them in the system prompt.
+  // 2026-10-17: 3.1k of 38k tokens shared). They go at the head of the task
+  // message instead. Anthropic and remote providers keep them in the system prompt.
   const volatileInTask = headless && !target.provider.native && isLoopbackProvider(target.provider);
   const volatileParts = volatileInTask
     ? [

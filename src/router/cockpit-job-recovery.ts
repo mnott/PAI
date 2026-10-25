@@ -6,7 +6,7 @@
  * job whose runner is gone is set to "interrupted"; an index/embed pass is never auto-resumed
  * (the operator re-runs it). The same liveness test tells the self-restart a job is running.
  */
-import { processStartMs as psStartMs } from "../workers/proc-start.js";
+import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { readCockpitJob, writeCockpitJob, type LocalJobState } from "./cockpit-actions.js";
 
@@ -16,9 +16,15 @@ export type RunnerAlive = (pid: number, startedAtMs: number) => boolean;
 /** Slack between the job's own timestamp and the runner's start time (ps has whole seconds). */
 const START_SLACK_MS = 5_000;
 
-/** Start time of a process in ms (ps etime), null when unreadable. */
+/** Start time of a process in ms (ps lstart), null when unreadable. */
 function processStartMs(pid: number): number | null {
-  return psStartMs(pid) ?? null;
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 3000 }).trim();
+    const t = Date.parse(out);
+    return Number.isNaN(t) ? null : t;
+  } catch {
+    return null;
+  }
 }
 
 export const runnerAlive: RunnerAlive = (pid, startedAtMs) => {

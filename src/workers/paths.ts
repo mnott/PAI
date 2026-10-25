@@ -6,13 +6,10 @@
  * disposable and configurable: `workers.logDir`, default ~/.claude/logs/workers.
  */
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { defaultWorkersConfig, expandHome, type WorkersConfig } from "./config.js";
 import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
-
-/** The shipped default logDir (a YAML parse), read once. */
-let shippedLogDir: string | undefined;
 
 /**
  * Absolute logDir for the given config. An explicit `logDir` in workers.yaml
@@ -24,7 +21,7 @@ export function workersLogDir(config: Pick<WorkersConfig, "logDir">): string {
   const expanded = expandHome(config.logDir);
   // the shipped default is the sentinel: an explicit user logDir (whatever it
   // says) is honored verbatim; only the unset default resolves through PAI_HOME
-  if (config.logDir !== (shippedLogDir ??= defaultWorkersConfig().logDir)) return expanded;
+  if (config.logDir !== defaultWorkersConfig().logDir) return expanded;
   // the old ~/.claude/logs/workers belongs to the default home only: a
   // PAI_HOME override (temp home, second install) never owns it, so no hint
   if (process.env.PAI_HOME) return paiHomePath("logs", "workers");
@@ -76,28 +73,4 @@ export function noMcpConfigPath(logDir: string): string {
 /** Job id a pooled slot is serving right now (one line); absent while the slot is idle. */
 export function slotCurrentPath(logDir: string, slot: string): string {
   return join(logDir, "slots", `${slot}.current`);
-}
-
-/** Where the hourly gc moves finished workers' files: <logDir>/archive/YYYY-MM/. */
-export function archiveDir(logDir: string): string {
-  return join(logDir, "archive");
-}
-
-/**
- * `path` (a file directly in logDir) when it exists, else the same file name from the newest
- * archive/YYYY-MM/ holding it, else `path` unchanged. For readers of one old worker id; writers keep the live path.
- */
-export function withArchive(logDir: string, path: string): string {
-  if (existsSync(path)) return path;
-  const root = archiveDir(logDir);
-  const name = basename(path);
-  try {
-    for (const m of readdirSync(root).sort().reverse()) {
-      const p = join(root, m, name);
-      if (existsSync(p)) return p;
-    }
-  } catch {
-    // no archive yet
-  }
-  return path;
 }

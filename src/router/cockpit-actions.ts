@@ -23,7 +23,7 @@ import { dirname } from "node:path";
 import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
-import { readWorkersCached, readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { readInventory } from "../workers/model-inventory.js";
 import { setClass } from "../workers/providers.js";
@@ -39,7 +39,7 @@ import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
 import type { JobRunProgress } from "../memory/job-progress.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
 import { cockpitLayout } from "./cockpit-layout.js";
-import { RUNTIME_READY_TIMEOUT_MS, foreignPortHolder, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
+import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
 export const RUNTIME_START_EVENT = "RUNTIME-START";
@@ -247,14 +247,12 @@ export async function runtimeOpRefusal(
   home: string,
   ops: RuntimeOpDeps = liveRuntimeOpDeps,
   exceptJobId = "",
-  kind = "",
-  /** another runtime's server holds this runtime's shared port: the ready URL answers for it, not for this one */
-  portHeldByOther = false
+  kind = ""
 ): Promise<string | null> {
   const running = runningRuntimeJob(home, runtime, op, exceptJobId);
   if (running) return op === "start" ? `${runtime} is already starting (job ${running.id})` : `${runtime} is already stopping (job ${running.id})`;
   const c = commands[runtime];
-  if (op === "start" && c?.ready && kind !== "docker-model-runner" && !portHeldByOther) {
+  if (op === "start" && c?.ready && kind !== "docker-model-runner") {
     const up = readyIsUrl(c.ready) ? await ops.getUrl(c.ready) : (await ops.runCmd(c.ready)) === 0;
     if (up) return `${runtime} is already running (${c.ready})`;
   }
@@ -410,25 +408,12 @@ export async function runtimeStartStop(
   runtime: string,
   op: "start" | "stop",
   deps: ActionDeps,
-  opts: { model?: string; jobId?: string; force?: boolean } = {}
+  opts: { model?: string; jobId?: string } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
-  const ops = deps.runtimeOps ?? liveRuntimeOpDeps;
-  // runtimes sharing a port: the server there belongs to the one whose model it reports
-  const holder = await foreignPortHolder(runtime, commands, ops.servedModels);
-  if (holder && op === "stop" && !opts.force) {
-    return { ok: false, message: `${runtime} is not running: the server on its port belongs to ${holder}; pai models stop ${holder} (or --force to run ${runtime}'s stop command anyway)` };
-  }
-  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime], !!holder);
+  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime]);
   if (refused) return { ok: false, message: refused };
-  let note = "";
-  if (holder && op === "start") {
-    const stopped = await runRuntimeOp(holder, "stop", commands, ops, deps.home);
-    if (!stopped.ok) return { ok: false, message: `stopping ${holder} (holds the port of ${runtime}) failed: ${stopped.message}` };
-    note = `stopped ${holder} first (it held the port of ${runtime}); `;
-  }
-  const r0 = await runRuntimeOp(runtime, op, commands, ops, deps.home, opts);
-  const r = note ? { ...r0, message: note + r0.message } : r0;
+  const r = await runRuntimeOp(runtime, op, commands, deps.runtimeOps ?? liveRuntimeOpDeps, deps.home, opts);
   appendLedger(deps.ledger, op === "start" ? RUNTIME_START_EVENT : RUNTIME_STOP_EVENT, {
     who: "cockpit",
     runtime,
@@ -839,7 +824,7 @@ async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string
 
 async function defaultRefreshInventory(): Promise<void> {
   const { computeInventory, readInventoryInput, writeInventory } = await import("../workers/model-inventory.js");
-  writeInventory(workersLogDir(readWorkersCached()), await computeInventory(readInventoryInput()));
+  writeInventory(workersLogDir(readWorkersSection().workers), await computeInventory(readInventoryInput()));
 }
 
 /** Runs the injected local job, records its outcome in the job file and ledger. */

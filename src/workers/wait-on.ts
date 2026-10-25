@@ -10,11 +10,9 @@
  * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
  */
 
-import { parseStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
-import { psTableOrNull } from "./ps-table.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { loadStatus, loadStatuses, pidAlive, saveStatus, statusPids, type WorkerStatus } from "./status.js";
+import { loadStatus, loadStatuses, pidAlive, saveStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
 
 export const WAIT_DEFAULT_SECS = 110;
@@ -68,7 +66,7 @@ export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
       (w) => (w.pid === pid || w.runPid === pid) && (w.state === "running" || w.state === "queued")
     );
     if (!s) return null;
-    const t = parseStamp(s.started);
+    const t = Date.parse(s.started);
     // the state says it outright now; `capacity` stays for older status files
     return { queued: s.state === "queued" || !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
   };
@@ -94,10 +92,14 @@ function isZombie(pid: number): boolean {
 
 /** `pid` followed by all its live descendants, parents first (from one `ps` snapshot). */
 export function processTree(pid: number): number[] {
-  const table = psTableOrNull("pid=,ppid=");
-  if (table === null) return [pid];
+  let rows: string[] = [];
+  try {
+    rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).split("\n");
+  } catch {
+    return [pid];
+  }
   const kids = new Map<number, number[]>();
-  for (const r of table.split("\n")) {
+  for (const r of rows) {
     const [c, pp] = r.trim().split(/\s+/).map(Number);
     if (Number.isInteger(c) && Number.isInteger(pp)) kids.set(pp, [...(kids.get(pp) ?? []), c]);
   }
@@ -150,19 +152,10 @@ function treeWorkerRun(tree: number[]): boolean {
   }
 }
 
-/**
- * A running or queued worker whose client, writer or wrapper-shell pid is in the tree. The command-line scan misses
- * a client that is not argv-visible as `pai worker run` (a wrapper, a renamed binary); the status files name it anyway.
- */
-export function treeOwnsWorker(tree: number[], statuses: Pick<WorkerStatus, "pid" | "runPid" | "parentPid" | "state" | "pool">[]): boolean {
-  return statuses.some((s) => (s.state === "running" || s.state === "queued") && statusPids(s).some((p) => tree.includes(p)));
-}
-
-/** Silent is not hung: a worker run client or a live worker owned by the tree, CPU time advanced over a one-second sample, or an open loopback connection. */
-export async function treeBusy(pid: number, logDir?: string): Promise<{ busy: boolean; why: string }> {
+/** Silent is not hung: a worker run client in the tree, CPU time advanced over a one-second sample, or an open loopback connection. */
+export async function treeBusy(pid: number): Promise<{ busy: boolean; why: string }> {
   const tree = processTree(pid);
   if (treeWorkerRun(tree)) return { busy: true, why: "worker run in tree" };
-  if (logDir && treeOwnsWorker(tree, loadStatuses(logDir))) return { busy: true, why: "live worker owned by tree" };
   const before = treeCpuSecs(tree);
   await new Promise((r) => setTimeout(r, 1000));
   const after = treeCpuSecs(processTree(pid));
@@ -277,8 +270,6 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
   try {
     let nextBeat = t0 + HEARTBEAT_MS;
     let sayBusy = false;
-    // A busy sample is activity: silence is measured from the last of log write, start and busy sample.
-    let lastBusy = 0;
     // The ceiling counts from the process start, so it holds across repeated wait-on calls.
     const born0 = ranSince ?? t0;
     // A `pai worker run` queued behind the provider cap is waiting, not hung: no stall kill, and the
@@ -314,10 +305,9 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
       }
       if (d.now() - born >= ceilMs) return await killed(`still running after ${fmtMinutes(ceilMs)}`);
       const m = o.log ? d.logMtime?.(o.log) : null;
-      if (m != null && d.now() - Math.max(m, born, lastBusy) >= stallMs) {
+      if (m != null && d.now() - Math.max(m, born) >= stallMs) {
         const b = d.busy ? await d.busy(o.pid) : null;
         if (!b?.busy) return await killed(`no output for ${fmtMinutes(stallMs)}`);
-        lastBusy = d.now();
         if (!sayBusy || d.now() >= nextBeat) {
           sayBusy = true;
           d.out(`running ${Math.round((d.now() - t0) / 1000)}s, silent but busy (${b.why}), not stalled`);

@@ -9,11 +9,10 @@
  * prompt-tokens.ts makes the router fill what the server never reported).
  */
 
-import { parseStamp } from "./ledger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { maxOf } from "../utils/min-max.js";
-import { eventsPath, withArchive } from "./paths.js";
-import { loadArchivedStatuses, loadStatuses, type WorkerStatus } from "./status.js";
+import { eventsPath } from "./paths.js";
+import { loadStatuses, type WorkerStatus } from "./status.js";
 import { isLocalProvider } from "./config.js";
 import { effectiveWorkersYamlRaw } from "../config/shipped-defaults.js";
 import { workersYamlPath } from "./workers-config.js";
@@ -220,7 +219,7 @@ export function parseWhen(s: string, now = new Date()): Date {
 
 /** Status `started` is local "YYYY-MM-DD HH:MM:SS" (or ISO). */
 function startedAt(s: WorkerStatus): Date | null {
-  const d = new Date(parseStamp(s.started));
+  const d = new Date(s.started.includes("T") ? s.started : s.started.replace(" ", "T"));
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -237,11 +236,8 @@ export function selectWorkers(statuses: WorkerStatus[], sel: WorkerSelect): Work
 /** Tally the selected workers; `baseUrls` maps provider name to its baseUrl (for the local mark). */
 export function workerUsage(logDir: string, sel: WorkerSelect, baseUrls: Record<string, string>): UsageReport {
   const groups = new Map<string, UsageRow>();
-  // finished workers older than a week live in archive/: totals over a longer window read them too
-  const weekAgo = Date.now() - 7 * 24 * 3_600_000;
-  const all = !sel.since || sel.since.getTime() < weekAgo ? [...loadStatuses(logDir), ...loadArchivedStatuses(logDir)] : loadStatuses(logDir);
-  for (const st of selectWorkers(all, sel)) {
-    const path = withArchive(logDir, eventsPath(logDir, st.id));
+  for (const st of selectWorkers(loadStatuses(logDir), sel)) {
+    const path = eventsPath(logDir, st.id);
     if (!existsSync(path)) continue;
     const { byModel, costUsd } = sumRunUsage(readFileSync(path, "utf8"), st.model);
     if (byModel.size === 0) continue;

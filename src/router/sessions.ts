@@ -10,7 +10,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { parseStamp } from "../workers/ledger.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { claudeHomeDir, claudeProjectsDir } from "../config/pai-home.js";
 import { aibrokerHomeDir } from "../runtime-paths.js";
@@ -375,7 +374,7 @@ export interface WorkerWindow {
 }
 
 function parseLocalTs(v: unknown): number | undefined {
-  return typeof v === "string" && parseStamp(v) ? parseStamp(v) : undefined;
+  return typeof v === "string" && Date.parse(v) ? Date.parse(v) : undefined;
 }
 
 /** Every status file as a run window; running runs end at `now`. */

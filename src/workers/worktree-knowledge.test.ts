@@ -6,7 +6,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addWorktree, discardWorker, formatKnowledge, gcWorktrees, git, ignoredKnowledge, recordWorktree, worktreeKnowledge } from "./worktree.js";
+import { addWorktree, discardWorker, formatKnowledge, gcWorktrees, git, recordWorktree, worktreeKnowledge } from "./worktree.js";
 import { saveStatus, type WorkerStatus } from "./status.js";
 
 function setup(name: string) {
@@ -64,20 +64,6 @@ describe("worktree knowledge", () => {
     expect(readFileSync(join(repo, "Notes", "tier.md"), "utf8")).toBe("knowledge\n");
     expect(existsSync(join(repo, "node_modules"))).toBe(false);
     expect(existsSync(join(repo, "run.log"))).toBe(false);
-  });
-
-  it("ignores Python build output, keeps only the Notes file", () => {
-    const { repo, logDir } = setup("pycache");
-    const info = worker(logDir, repo, "k6");
-    writeFileSync(join(info.dir, ".gitignore"), "Notes/\n__pycache__/\n.venv/\n*.pyc\n", "utf8");
-    mkdirSync(join(info.dir, "Notes"), { recursive: true });
-    writeFileSync(join(info.dir, "Notes", "x.md"), "knowledge\n");
-    mkdirSync(join(info.dir, "serve", "__pycache__"), { recursive: true });
-    writeFileSync(join(info.dir, "serve", "__pycache__", "a.cpython-312.pyc"), "bytecode\n");
-    mkdirSync(join(info.dir, ".venv", "lib"), { recursive: true });
-    writeFileSync(join(info.dir, ".venv", "lib", "y.py"), "lib\n");
-    writeFileSync(join(info.dir, "z.pyc"), "bytecode\n");
-    expect(ignoredKnowledge(info.dir)).toEqual(["Notes/x.md"]);
   });
 
   it("archives a dirty worktree instead of losing it", () => {

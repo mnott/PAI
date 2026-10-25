@@ -15,15 +15,14 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptJxa, saveEntry, type PaneEntry } from "./pane.js";
-import { processStartMs } from "./proc-start.js";
 import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
-import { appendLedger, parseStamp } from "./ledger.js";
+import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
 import { appendStopEvent, requestKill } from "./endreason.js";
-import { loadStatuses, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
+import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import type { Messenger } from "./run-events.js";
@@ -73,7 +72,7 @@ export type SizeMap = Map<string, { cols: number; rows: number; mark?: "NOT SELE
 
 const norm = (id: string): string => itermUuid(id) || id;
 
-const stampMs = (t: string | undefined, utc: boolean): number => (t ? (utc ? Date.parse(t.replace(" ", "T") + "Z") : parseStamp(t)) : NaN);
+const stampMs = (t: string | undefined, utc: boolean): number => (t ? Date.parse(t.replace(" ", "T") + (utc ? "Z" : "")) : NaN);
 
 export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number, sizes?: SizeMap): PaneVerdict[] {
   const tabOf = (id: string | undefined): string | undefined => (id ? tabs.get(norm(id)) : undefined);
@@ -111,7 +110,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
 /** Everything running now that must own a pane. A run that was refused/allowed hidden (pane.opened false) is exempt. */
 export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
-  for (const s of loadStatuses(logDir)) {
+  for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
     procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
@@ -410,8 +409,8 @@ export function launchPidFresh(startMs: number, r: Pick<LaunchRecord, "openedMs"
 function ownsLaunchPid(pid: number, r: LaunchRecord, side: "wrapper" | "child"): boolean {
   try {
     const env = { ...process.env, LC_ALL: "C" };
-    const start = processStartMs(pid);
-    if (start === undefined || !launchPidFresh(start, r, side)) return false;
+    const start = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env }).trim());
+    if (Number.isNaN(start) || !launchPidFresh(start, r, side)) return false;
     if (side === "wrapper") return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", env }).includes(r.id);
     return true;
   } catch {
@@ -583,7 +582,7 @@ const defaultClose = (logDir: string) => (id: string) => closePaneForWorker(logD
 
 function runningWorkers(logDir: string): Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> {
   const out: Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> = [];
-  for (const s of loadStatuses(logDir)) {
+  for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state !== "running" || !isLive(s, ownsPidCached)) continue;
     out.push({ id: s.id, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), exec: s.pane?.exec === true, exempt: s.pane?.opened === false });
   }

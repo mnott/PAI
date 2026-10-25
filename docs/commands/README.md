@@ -68,7 +68,6 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai task`](task.md) | Cross-session task list: list, add, dispatch, done |
 | [`pai tasks`](tasks.md) | Same as task |
 | [`pai topic`](topic.md) | Detect when a conversation moved to another project |
-| [`pai uhp`](uhp.md) | PAI as a Unified Harness Protocol server: serve, token |
 | [`pai update`](update.md) | Update PAI (or another package) to the latest GitHub Release |
 | [`pai worker`](worker.md) | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | [`pai zettel`](zettel.md) | Explore the links between your notes |
@@ -403,12 +402,6 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai tasks schedule uninstall` | Remove the timer |
 | `pai topic` | Detect when a conversation moved to another project |
 | `pai topic check` | Check whether a text belongs to a different project than the current one |
-| `pai uhp` | PAI as a Unified Harness Protocol server: serve, token |
-| `pai uhp serve` | Serve PAI's workers over the Unified Harness Protocol |
-| `pai uhp token` | Create, list and revoke UHP bearer tokens |
-| `pai uhp token create` | Mint a token |
-| `pai uhp token list` | List tokens (never their values) |
-| `pai uhp token revoke` | Revoke a token by id or name |
 | `pai update` | Update PAI (or another package) to the latest GitHub Release |
 | `pai worker` | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | `pai worker bench` | Compare providers on a set of real tasks |

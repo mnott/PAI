@@ -18,7 +18,7 @@ import {
   providerHostPort,
   type PortCheck,
 } from "../local-provider.js";
-import { appendLedger, parseStamp } from "../ledger.js";
+import { appendLedger } from "../ledger.js";
 import { ledgerPath } from "../paths.js";
 import {
   type WorkerStatus,
@@ -75,7 +75,6 @@ import { type ExecuteArgs } from "./types.js";
 import { requireVisiblePane, announcePane, spawnOwned, pooledFollowSpawn } from "./pane-handles.js";
 import { SIGNAL_SALVAGE_MS, printResult, identityExtras } from "./finalise.js";
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
-import { followRerouteOnSignal } from "./follow-reroute.js";
 import { executeRun } from "./execute.js";
 
 /** A named local provider that is disabled or whose server does not answer. */
@@ -405,7 +404,7 @@ function finaliseHostDeath(a: ExecuteArgs, wid: string, st: WorkerStatus, why: s
   st.last = shortText(`pool slot died mid-task: ${why}`, 90);
   st.updated = nowStamp();
   saveStatus(logDir, st);
-  const started = parseStamp(st.started);
+  const started = Date.parse(st.started.replace(" ", "T"));
   appendLedger(ledger, "WORKER-END", {
     id: wid,
     provider: st.provider,
@@ -785,7 +784,6 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
     ...(a.className ? { className: a.className } : {}),
     ...promptCopy(a.logDir, wid, a.parsed.prompt),
-    ...(a.claudeArgs.length ? { claudeArgs: a.claudeArgs } : {}),
   };
   saveStatus(a.logDir, status);
   // the follow pane opens now, not after the queue (a run parked at a cap shows
@@ -811,12 +809,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     markStartFailed(a.logDir, status, a.paneError);
   });
   const gateT0 = Date.now();
-  const unfollow = followRerouteOnSignal(a.logDir, wid, a.parsed.outputFormat);
-  try {
-    await runGates(a, wid, status);
-  } finally {
-    unfollow();
-  }
+  await runGates(a, wid, status);
   a.admissionMs = Date.now() - gateT0;
   // waiting for a slot is not work: the limit counts from the grant (active time)
   const queued = Date.now() - gateT0;

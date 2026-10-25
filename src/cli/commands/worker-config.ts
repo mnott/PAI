@@ -68,7 +68,6 @@ import {
 } from "../../workers/providers.js";
 import { clearLocalStart, failLocalStart, readLocalStarts, writeLocalStart } from "../../workers/local-start.js";
 import { instanceNumber, instancesFromProcesses, readInstances, reconcileInstances, writeInstances, type LocalInstance } from "../../workers/local-instances.js";
-import { uhpProviderProblems } from "../../workers/uhp.js";
 import { allocatePort, checkStart, freeMemoryGb, neededGb, sizeOnDiskGb } from "../../workers/local-memory.js";
 import { fetchServedModels, fmtRss, healthUrl, listensOnPort, LocalTierError, stopCommandFor, parseServers, planStart, readLocalConfig, resolveModelPath, stopLines, type LocalConfig, type LocalTier, type RunningServer, type StartPlan } from "../../workers/local-tiers.js";
 import { PROMPTS, aggregate, planArms, positiveNumber,readSuiteRows, runBench, suiteTasks, writeResults, type Prompt } from "../../workers/bench.js";
@@ -235,7 +234,7 @@ const providersAddCommand: CommandDef = {
     { name: "note", type: "string", value: "TEXT", summary: "Short note shown in the provider list" },
     { name: "protocol", type: "string", value: "KIND", summary: "anthropic (default) or openai" },
     { name: "upstream-url", type: "string", value: "URL", summary: "Chat Completions base URL (required for --protocol openai)" },
-    { name: "engine", type: "string", value: "KIND", summary: "claude (default), codex, image, or uhp" },
+    { name: "engine", type: "string", value: "KIND", summary: "claude (default), codex, or image" },
     { name: "context-window", type: "number", value: "TOKENS", summary: "Context window for the usage meter (default 200000)" },
     { name: "quota-probe", type: "string", value: "URL", summary: "URL whose JSON first number is the quota percent (0-100)" },
     { ...costTierOpt },
@@ -251,13 +250,13 @@ const providersAddCommand: CommandDef = {
       const o = ctx.opts;
       const name = ctx.args.NAME as string;
       const protocol = o.protocol as "anthropic" | "openai" | undefined;
-      const engine = o.engine as "claude" | "codex" | "image" | "uhp" | undefined;
+      const engine = o.engine as "claude" | "codex" | "image" | undefined;
       if (o.model === undefined) throw new WorkersConfigError("--model is required (the default model id for this provider)");
       if (protocol && protocol !== "anthropic" && protocol !== "openai") {
         throw new WorkersConfigError(`--protocol must be anthropic or openai, got "${protocol}"`);
       }
-      if (engine && engine !== "claude" && engine !== "codex" && engine !== "image" && engine !== "uhp") {
-        throw new WorkersConfigError(`--engine must be claude, codex, image, or uhp, got "${engine}"`);
+      if (engine && engine !== "claude" && engine !== "codex" && engine !== "image") {
+        throw new WorkersConfigError(`--engine must be claude, codex, or image, got "${engine}"`);
       }
       const baseUrl = (o["base-url"] ?? o.url) as string | undefined;
       if (protocol !== "openai" && !baseUrl) {
@@ -732,11 +731,6 @@ const configCheckCommand: CommandDef = {
       if (doc.errors.length) throw new WorkersConfigError(`${target}: ${doc.errors[0]!.message}`);
       const data = parseWorkersYamlDocument(doc, target);
       out(ok(`${target} OK — ${Object.keys(data.providers).length} provider(s), ${Object.keys(data.classes).length} class(es)`));
-      const uhpProblems = Object.entries(data.providers).flatMap(([n, p]) => (p.engine === "uhp" ? uhpProviderProblems(n, p) : []));
-      if (uhpProblems.length) throw new WorkersConfigError(`${target}: ${uhpProblems.join("; ")}`);
-      for (const [n, p] of Object.entries(data.providers)) {
-        if (p.engine === "uhp" && !p.harnessId) out(warn(`  warning: provider ${n} (engine uhp) has no harnessId — pass --harness uhp:<id> on every run`));
-      }
       const both = Object.entries(data.providers).filter(([, p]) => p.key && p.keyFile).map(([n]) => n);
       if (both.length) out(dim(`  note: ${both.join(", ")} — both key and key_file set; key wins`));
       for (const d of duplicateModelIds(data.providers)) {

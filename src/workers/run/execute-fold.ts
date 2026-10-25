@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { openSync, closeSync, writeSync } from "node:fs";
 import { shortText } from "../args.js";
-import { appendLedger, parseStamp } from "../ledger.js";
+import { appendLedger } from "../ledger.js";
 import { parentInfo } from "../endreason.js";
 import { peekLoopStop } from "../loop-stop.js";
 import { TroubleWatcher } from "../worker-trouble.js";
@@ -82,7 +82,6 @@ import {
   identityExtras,
   reaskAg2Report,
   printResult,
-  loopStopResult,
 } from "./finalise.js";
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
@@ -99,8 +98,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // a gate that already ran (gateStart) rewrote `started` at the slot grant;
   // keep that stamp so the deadline and ps age count from the grant
   const gated = a.gated ? loadStatus(logDir, wid) : null;
-  const started = gated && Number.isFinite(parseStamp(gated.started))
-    ? new Date(parseStamp(gated.started))
+  const started = gated && Number.isFinite(Date.parse(gated.started.replace(" ", "T")))
+    ? new Date(Date.parse(gated.started.replace(" ", "T")))
     : new Date();
   let status: WorkerStatus = {
     id: wid,
@@ -126,7 +125,6 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     outputFormat: parsed.outputFormat,
     ...(a.route ? { route: a.route } : {}),
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),
-    ...(a.modelRecord ?? {}),
     ...(target.via === "auto" && target.switchReason ? { switchReason: target.switchReason } : {}),
     ...(a.fallThroughOf ? { fallThroughOf: a.fallThroughOf } : {}),
     ...(headless ? { reportFormat: a.reportFormat } : {}),
@@ -616,9 +614,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         return rerunOn(a, wid, why, st);
       }
       if (headless && !a.quiet) {
-        // a loop-stop kills claude before it emits a result: print the stop reason and usage so far, not nothing
-        const stop = resultEvent ? null : st.loopStopped ? { reason: st.last.replace(/^loop-stopped: /, "") } : null;
-        printResult(parsed.outputFormat, stop ? loopStopResult(logDir, wid, stop.reason, status.turns, secs) : resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
+        printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
       }
 
     // Empty response: one automatic re-launch of the same spec in the same cwd.

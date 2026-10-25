@@ -321,24 +321,6 @@ describe("worker run: applyTarget (--where / --model / --now)", () => {
     expect(seen).toEqual([]);
     expect(p.kind === "run" && p.run.modelFlag).toBe("claude-x");
   });
-  it("explicit --provider with --model default is never replaced by the resolver's provider", async () => {
-    const logged: Record<string, string>[] = [];
-    seen.length = 0;
-    const ctx = parse("run", ["-p", "x", "--provider", "coder-l", "--model", "default"]);
-    const p = buildRunPlan(ctx);
-    await applyTarget(ctx, p, fake({ provider: "anthropic", model: "sonnet", description: "session profile" }), (f) => logged.push(f));
-    expect(seen[0].where).toBe("coder-l");
-    expect(p.kind === "run" && p.run.providerFlag).toBe("coder-l");
-    expect(logged).toEqual([]);
-  });
-  it("no --provider: the resolver's provider is used and the fallback is logged with from/to/reason", async () => {
-    const logged: Record<string, string>[] = [];
-    const ctx = parse("run", ["-p", "x", "--model", "default"]);
-    const p = buildRunPlan(ctx);
-    await applyTarget(ctx, p, fake({ provider: "anthropic", model: "sonnet", description: "session profile fallback" }), (f) => logged.push(f));
-    expect(p.kind === "run" && p.run.providerFlag).toBe("anthropic");
-    expect(logged).toEqual([{ from: "default routing", to: "anthropic", reason: "session profile fallback" }]);
-  });
   it("--where with --local is refused", async () => {
     await expect(apply(["--where", "cloud", "--local"], { description: "x" })).rejects.toThrow(/use one/);
   });

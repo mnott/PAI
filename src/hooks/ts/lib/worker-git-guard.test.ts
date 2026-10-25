@@ -201,29 +201,3 @@ describe("worktree escape", () => {
     expect(deny("cd /main && git log; git commit -m x")).toBe(true);
   });
 });
-
-describe("decideWorkerGitGuard tilde paths", () => {
-  const home = "/home/u";
-  const root = `${home}/.claude/pai/logs/workers/worktrees`;
-  const wt = `${root}/w1`;
-  const run = (cmd: string) => {
-    const saved = process.env.HOME;
-    process.env.HOME = home;
-    try {
-      return decideWorkerGitGuard(cmd, true, wt, root).blocked;
-    } finally {
-      if (saved === undefined) delete process.env.HOME;
-      else process.env.HOME = saved;
-    }
-  };
-  it("allows cd ~/ into its own worktree then commit", () => {
-    expect(run("cd ~/.claude/pai/logs/workers/worktrees/w1; git status --short | head; git add src && git commit -qm x")).toBe(false);
-  });
-  it("blocks cd ~/elsewhere", () => {
-    expect(run("cd ~/elsewhere && git commit -m x")).toBe(true);
-  });
-  it("blocks cd ~other and $HOME", () => {
-    expect(run("cd ~other/x && git commit -m x")).toBe(true);
-    expect(run("cd $HOME/x && git commit -m x")).toBe(true);
-  });
-});

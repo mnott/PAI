@@ -140,15 +140,6 @@ export interface RouterConfig {
   /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
   localToolCallRetry?: boolean;
   /**
-   * Rules files of the tool-call repair (src/router/tool-call-rules.ts): `dir`
-   * under the PAI home (default tool-call-rules), `file` for providers not
-   * mapped, `providers` provider → file or provider → { model | "*" → file }.
-   * Unset = the shipped rules.
-   */
-  toolCallRules?: { dir?: string; file?: string; providers?: Record<string, string | Record<string, string>> };
-  /** `pai models rules list` calls a rule stale when it has not hit for this many days. Default: 14. */
-  toolCallRulesStaleDays?: number;
-  /**
    * Listen scope: "loopback" (default — 127.0.0.1 only, as always), or beyond
    * it: "tailscale" (the utun address inside 100.64.0.0/10) or an explicit
    * IPv4 — never 0.0.0.0. A wider bind adds a second listener on that address

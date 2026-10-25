@@ -10,9 +10,7 @@ import { buildRunEnv } from "../run-env.js";
 import { appendLedger } from "../ledger.js";
 import { appendStopEvent, decideEndReason, endFields, type EndInfo } from "../endreason.js";
 import { takeLoopStop } from "../loop-stop.js";
-import { readFileSync } from "node:fs";
 import { eventsPath } from "../paths.js";
-import { sumRunUsage } from "../usage.js";
 import { type WorkerStatus, saveStatus, UNLABELED } from "../status.js";
 import { committedFallThrough, invalidCloudReport } from "../policy.js";
 import { checkOrphanedChildren, isWorkerId } from "../tree.js";
@@ -328,24 +326,6 @@ export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
 // ---------------------------------------------------------------------------
 // codex engine (2d)
 // ---------------------------------------------------------------------------
-
-/**
- * The result a loop-stopped run prints when the killed claude never emitted one: the stop reason with the usage
- * (summed from the run's event log), turns and duration so far, so `--output-format json` is not empty.
- */
-export function loopStopResult(logDir: string, wid: string, reason: string, turns: number, secs: number): StreamEvent {
-  let usage: StreamEvent["usage"];
-  try {
-    const t = [...sumRunUsage(readFileSync(eventsPath(logDir, wid), "utf8")).byModel.values()].reduce(
-      (a, m) => ({ i: a.i + m.input, r: a.r + m.cacheRead, w: a.w + m.cacheWrite5m + m.cacheWrite1h, o: a.o + m.output }),
-      { i: 0, r: 0, w: 0, o: 0 }
-    );
-    usage = { input_tokens: t.i, output_tokens: t.o, cache_read_input_tokens: t.r, cache_creation_input_tokens: t.w };
-  } catch {
-    // no event log: usage stays absent
-  }
-  return { type: "result", subtype: "loop-stopped", is_error: true, result: `loop-stopped: ${reason}`, num_turns: turns, duration_ms: secs * 1000, ...(usage ? { usage } : {}) };
-}
 
 export function printResult(
   fmt: "text" | "json" | "stream-json",

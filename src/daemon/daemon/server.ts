@@ -44,8 +44,6 @@ import { startWorker, stopWorker } from "../../daemon/work-queue-worker.js";
 import { startMemoryStatus, stopMemoryStatus } from "./dashboard-live.js";
 import { batteryGuardTimer, registryBackend } from "./state.js";
 import { startBatteryGuard } from "./scheduler.js";
-import { startDaemonStallMonitor } from "../stall.js";
-import { listLeftovers, formatLeftovers } from "../leftovers.js";
 import { migrateFtsConfig } from "../../storage/postgres/fts-migration.js";
 
 // ---------------------------------------------------------------------------
@@ -152,11 +150,6 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
   setNotificationConfig(loadNotificationConfig());
 
   process.stderr.write("[pai-daemon] Starting daemon...\n");
-  startDaemonStallMonitor();
-  {
-    const left = formatLeftovers(listLeftovers(process.pid));
-    process.stderr.write(`[pai-daemon] Leftovers: ${left.length ? "\n  " + left.join("\n  ") : "none"}\n`);
-  }
   process.stderr.write(`[pai-daemon] Socket: ${config.socketPath}\n`);
   process.stderr.write(`[pai-daemon] Storage backend: ${config.storageBackend}\n`);
   process.stderr.write(

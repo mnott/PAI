@@ -26,7 +26,6 @@ import { gitCommand } from "./commands/git.js";
 import { lessonsCommand } from "./commands/lessons.js";
 import { harnessCommand } from "./commands/harness.js";
 import { rulesCommand } from "./commands/rules.js";
-import { uhpCommand } from "./commands/uhp.js";
 import { releaseCmd } from "./commands/release.js";
 import { handoffCommand } from "./commands/handoff.js";
 
@@ -75,5 +74,5 @@ export const GROUPS: GroupDef[] = [
 // Memory, knowledge and audit commands (one file per group in ./commands).
 GROUPS.find((g) => g.id === "memory")!.commands.push(memoryCommand, kgCommand, zettelCommand, observationCommand, obsidianCommand, skillCommand, lessonsCommand);
 GROUPS.find((g) => g.id === "workers")!.commands.push(modelsCommand);
-GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, harnessCommand, reloadCommand, rulesCommand, releaseCmd, uhpCommand);
+GROUPS.find((g) => g.id === "daemon")!.commands.push(auditCommand, harnessCommand, reloadCommand, rulesCommand, releaseCmd);
 GROUPS.find((g) => g.id === "memory")!.commands.push(gitCommand);

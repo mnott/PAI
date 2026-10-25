@@ -8,7 +8,6 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { psTableOrNull } from "./ps-table.js";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -81,19 +80,21 @@ function realSlotPids(dir: string): number[] {
   }
 }
 
-/** `pids` plus all their descendants (one ps call through the shared reader). */
+/** `pids` plus all their descendants (one ps call). */
 function withDescendants(pids: number[]): number[] {
-  const out = psTableOrNull("pid=,ppid=");
-  if (out === null) return pids;
-  const rows = out
-    .split("\n")
-    .map((l) => l.trim().split(/\s+/).map(Number));
-  const all = new Set(pids);
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const [pid, ppid] of rows) if (pid && ppid !== undefined && all.has(ppid) && !all.has(pid)) (all.add(pid), (grew = true));
+  try {
+    const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" })
+      .split("\n")
+      .map((l) => l.trim().split(/\s+/).map(Number));
+    const all = new Set(pids);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const [pid, ppid] of rows) if (pid && ppid !== undefined && all.has(ppid) && !all.has(pid)) (all.add(pid), (grew = true));
+    }
+    return [...all];
+  } catch {
+    return pids;
   }
-  return [...all];
 }
 
 /** Identities under which a worker's owner session can appear: launching session name/key, spawner Claude session. */
@@ -286,7 +287,6 @@ function markKilled(logDir: string, recorded: WorkerStatus, stop: Stop, how: str
  */
 async function killPooled(logDir: string, recorded: WorkerStatus, status: WorkerStatus, d: KillTreeDeps, stop: Stop): Promise<string> {
   const id = recorded.id;
-  await cancelUhpWorker(recorded);
   d.request(logDir, ledgerPath(logDir), id, stop.forced, stop.by, stop.reason);
   appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
   if (stop.foreign) {
@@ -469,18 +469,4 @@ export async function killWorker(
     throw new Error(`worker ${id} is not running (state: ${status.state})`);
   if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
   return killTree(logDir, id, opts);
-}
-
-/** A uhp worker's response is cancelled upstream (POST .../cancel, 5 s bound) before its run process is signalled; failure never blocks the kill. */
-export async function cancelUhpWorker(s: WorkerStatus): Promise<boolean> {
-  if (!s.uhpResponseId) return false;
-  try {
-    const { readWorkersSection } = await import("./config.js");
-    const provider = readWorkersSection().workers.providers[s.provider];
-    if (provider?.engine !== "uhp") return false;
-    const { cancelUhp } = await import("./uhp.js");
-    return await cancelUhp(provider, s.uhpResponseId, s.id);
-  } catch {
-    return false;
-  }
 }

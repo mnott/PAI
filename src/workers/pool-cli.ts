@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkersSection, writeWorkersSection } from "./config.js";
 import { ledgerPath } from "./paths.js";
-import { appendLedger, parseLedger, parseStamp } from "./ledger.js";
+import { appendLedger, parseLedger } from "./ledger.js";
 import { openHostLog } from "./pool-host-run.js";
 import { fmtTokens } from "./status.js";
 import {
@@ -267,7 +267,7 @@ export function skipReasonLine(ledgerText: string, nowMs: number, windowMs = 24 
   const counts = new Map<string, number>();
   for (const l of parseLedger(ledgerText)) {
     if (l.event !== "WORKER-POOL-SKIP") continue;
-    if (nowMs - parseStamp(l.stamp) > windowMs) continue;
+    if (nowMs - new Date(l.stamp.replace(" ", "T")).getTime() > windowMs) continue;
     const r = l.fields.reason ?? "unknown";
     counts.set(r, (counts.get(r) ?? 0) + 1);
   }
