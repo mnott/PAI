@@ -736,3 +736,17 @@ describe("router: degenerate retry is once per turn", () => {
     up.close();
   });
 });
+
+describe("prepare forwarded body", () => {
+  it("returns the object whose serialisation is the forwarded bytes", () => {
+    const raw = body({
+      model: "qwen3-coder-30b",
+      system: [{ type: "text", text: "x-anthropic-billing-header: a" }, { type: "text", text: "sys", cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    const r = prepare("/v1/messages", hdr, raw, providers);
+    if (!r.ok) throw new Error(r.message);
+    expect(r.up.body.equals(Buffer.from(JSON.stringify(r.body)))).toBe(true);
+    expect(JSON.parse(r.up.body.toString("utf8"))).toEqual(JSON.parse(JSON.stringify(r.body)));
+  });
+});
