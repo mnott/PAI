@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { shortText } from "./args.js";
-import { statusPath } from "./paths.js";
+import { archiveDir, statusPath, withArchive } from "./paths.js";
 import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
@@ -458,8 +458,37 @@ export function loadStatuses(logDir: string): WorkerStatus[] {
   return out;
 }
 
+/** Statuses the gc moved to archive/YYYY-MM/ (uncached; for history readers such as usage totals). */
+export function loadArchivedStatuses(logDir: string): WorkerStatus[] {
+  const out: WorkerStatus[] = [];
+  const root = archiveDir(logDir);
+  let months: string[];
+  try {
+    months = readdirSync(root).sort();
+  } catch {
+    return out;
+  }
+  for (const m of months) {
+    let names: string[];
+    try {
+      names = readdirSync(join(root, m)).sort();
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".status")) continue;
+      try {
+        out.push(JSON.parse(readFileSync(join(root, m, name), "utf8")) as WorkerStatus);
+      } catch {
+        // damaged: skip
+      }
+    }
+  }
+  return out;
+}
+
 export function loadStatus(logDir: string, id: string): WorkerStatus | null {
-  const path = statusPath(logDir, id);
+  const path = withArchive(logDir, statusPath(logDir, id));
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;

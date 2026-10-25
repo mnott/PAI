@@ -11,25 +11,36 @@
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "./worktree.js";
+import { archiveDir } from "./paths.js";
 import { isTerminal, loadStatuses, type WorkerStatus } from "./status.js";
 
 export const ARCHIVE_AFTER_MS = 7 * 24 * 3_600_000;
+/** One pass moves at most this many workers; the hourly tick takes the rest. */
+export const ARCHIVE_MAX_PER_PASS = 500;
 
-function branchAlive(st: WorkerStatus): boolean {
-  if (!st.branch || !st.cwd || !existsSync(st.cwd)) return false;
-  try {
-    git(st.cwd, ["rev-parse", "--verify", "-q", `refs/heads/${st.branch}`]);
-    return true;
-  } catch {
-    return false;
-  }
+/** Worker branches per repo root, one `git for-each-ref` per distinct cwd for the whole pass. */
+function branchLookup(): (st: WorkerStatus) => boolean {
+  const byCwd = new Map<string, Set<string>>();
+  return (st) => {
+    if (!st.branch || !st.cwd || !existsSync(st.cwd)) return false;
+    let set = byCwd.get(st.cwd);
+    if (!set) {
+      try {
+        set = new Set(git(st.cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads/worker/"]).split("\n").filter(Boolean));
+      } catch {
+        set = new Set();
+      }
+      byCwd.set(st.cwd, set);
+    }
+    return set.has(st.branch);
+  };
 }
 
 /** Move old finished workers' files into archive/YYYY-MM/; returns the archived ids. `dryRun` only reports. */
 export function archiveOldStatuses(
   logDir: string,
   now = Date.now(),
-  opts: { dryRun?: boolean; olderThanMs?: number } = {}
+  opts: { dryRun?: boolean; olderThanMs?: number; max?: number } = {}
 ): string[] {
   const cutoff = now - (opts.olderThanMs ?? ARCHIVE_AFTER_MS);
   const candidates: { st: WorkerStatus; mtime: number }[] = [];
@@ -47,13 +58,16 @@ export function archiveOldStatuses(
   if (!candidates.length) return [];
   const names = readdirSync(logDir);
   const moved: string[] = [];
+  const branchAlive = branchLookup();
+  const max = opts.max ?? ARCHIVE_MAX_PER_PASS;
   for (const { st, mtime } of candidates) {
+    if (moved.length >= max) break;
     if (st.worktreeDir && existsSync(st.worktreeDir)) continue;
     if (branchAlive(st)) continue;
     moved.push(st.id);
     if (opts.dryRun) continue;
     const d = new Date(mtime);
-    const dest = join(logDir, "archive", `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    const dest = join(archiveDir(logDir), `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     mkdirSync(dest, { recursive: true });
     for (const name of names) {
       if (!name.startsWith(`${st.id}.`)) continue;
