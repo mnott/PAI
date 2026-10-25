@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as yamlParse } from "yaml";
 import type { WorkerProvider } from "./config.js";
+import { isBenchmarkLabel } from "../daemon/battery-guard.js";
 import { projectConfigFile } from "./preamble.js";
 import { isLoopbackProvider } from "./run-env.js";
 
@@ -53,8 +54,9 @@ export function withLocalContract(prompt: string, cwd: string): string {
   return `${localContract(loadChecks(cwd))}\n\n${prompt}`;
 }
 
-/** The task for a worker on `provider`: the contract in front on a local (loopback) provider, unchanged on any cloud one. */
-export function taskForProvider(prompt: string, provider: WorkerProvider, cwd: string): string {
+/** The task for a worker on `provider`: the contract in front on a local (loopback) provider, unchanged on any cloud one or a benchmark run (every model gets the identical task). */
+export function taskForProvider(prompt: string, provider: WorkerProvider, cwd: string, label?: string): string {
+  if (isBenchmarkLabel(label)) return prompt;
   const local = !provider.native && provider.engine !== "image" && isLoopbackProvider(provider);
   return local ? withLocalContract(prompt, cwd) : prompt;
 }
