@@ -57,13 +57,28 @@ export function ownedTree(st: WorkerStatus): { dir: string; branch: string } | n
 /**
  * `pai worker resume`: the resuming id takes over the old id's tree. Returns
  * the tree as a WorktreeInfo for the new run, or null when the old id owns
- * none (or its directory is gone). Nothing is written until `markResumed`.
+ * no branch. When the directory is gone (or was a shared slot) but the
+ * unmerged branch survives, a fresh worktree is made on that branch's tip
+ * (`revived`), never from HEAD. Nothing is written until `markResumed`.
  */
-export function adoptTree(logDir: string, oldId: string): (WorktreeInfo & { cwd: string }) | null {
+export function adoptTree(logDir: string, oldId: string): (WorktreeInfo & { cwd: string; revived?: boolean }) | null {
   const old = loadStatus(logDir, oldId);
   const t = old && ownedTree(old);
-  if (!old || !t || !existsSync(t.dir)) return null;
-  return { dir: t.dir, branch: t.branch, base: old.worktreeBase ?? "", snapshot: !!old.worktreeSnapshot, cwd: old.cwd };
+  if (!old || !t) return null;
+  if (existsSync(t.dir) && !isSlotWorktree(t.dir)) {
+    return { dir: t.dir, branch: t.branch, base: old.worktreeBase ?? "", snapshot: !!old.worktreeSnapshot, cwd: old.cwd };
+  }
+  try {
+    if (!branchExists(old.cwd, t.branch) || branchCheckedOut(old.cwd, t.branch)) return null;
+    const dir = worktreePath(logDir, oldId);
+    if (existsSync(dir)) return null;
+    git(old.cwd, ["worktree", "add", dir, t.branch]);
+    const base = old.worktreeBase ?? git(old.cwd, ["merge-base", "HEAD", t.branch]);
+    provisionDeps(logDir, oldId, old.cwd, dir);
+    return { dir, branch: t.branch, base, snapshot: !!old.worktreeSnapshot, cwd: old.cwd, revived: true };
+  } catch {
+    return null;
+  }
 }
 
 /** Hand the old id's tree over: it records `resumedBy` and no longer owns anything. */

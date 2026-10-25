@@ -173,6 +173,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // a resume takes over the old id's tree and runs against its repo
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
+  if (adopted?.revived) process.stderr.write(`pai worker: resume base is branch ${adopted.branch} (tip of ${a.resumeOf}), not HEAD\n`);
   const term = (await resolveHostSession()).term;
   await a.paneOpening;
   if (a.paneError) throw a.paneError;
