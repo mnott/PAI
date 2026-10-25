@@ -297,3 +297,44 @@ describe("worker Chrome", () => {
     expect(go(`${CH} --user-data-dir=/tmp/x about:blank`)).toBe("deny");
   });
 });
+
+describe("recursive search rooted at home or /", () => {
+  const H = "/Users/someone";
+  const run = (command: string, cwd = WT) =>
+    decideWorkerGuard(bash(command), WORKER, () => wtCtx({ cwd, home: H }));
+
+  it.each([
+    `cd ${H}; timeout 100 grep -rl "TQP5 / TQP6 / TQP7" --include=ggml-quants.c . | head`,
+    "cd ~; grep -r x .",
+    `cd ${H} && rg x`,
+    "cd / ; find . -name x",
+    "cd ~ && rg foo",
+    "grep -rn foo ~",
+    "rg foo ~/",
+    "find / -name x",
+    "fd x $HOME",
+    "cd ~ && cd .. && find . -name x",
+  ])("denies: %s", (cmd) => {
+    const d = run(cmd);
+    expect(d.decision).toBe("deny");
+    expect((d as { reason: string }).reason).toContain("rg -n PATTERN ~/strata-020");
+  });
+
+  it("denies a path-less search when the hook cwd is home", () => {
+    expect(run("rg foo", H).decision).toBe("deny");
+  });
+
+  it.each([
+    "rg foo ~/strata-020",
+    "grep -rn foo src/",
+    "find /tmp/build -name x",
+    "mdfind -name x",
+    "grep foo ~/file.txt",
+    "grep foo",
+    `rg x ${H}/dev/ai/PAI`,
+    "cd ~/strata-020 && rg foo",
+    "cd ~ && cd strata-020 && grep -rn foo .",
+  ])("allows: %s", (cmd) => {
+    expect(run(cmd).decision).toBe("allow");
+  });
+});

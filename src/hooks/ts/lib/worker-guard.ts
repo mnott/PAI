@@ -296,6 +296,36 @@ const PATTERN_KILL_REASON =
   PATTERN_KILL_PREFIX + ": kill only what you started, by PID (`cmd & echo $! > /tmp/x.pid`, then " +
   "`kill $(cat /tmp/x.pid)`), never by name or pattern; other workers' command lines contain your spec text";
 
+const SEARCH_ROOT_REASON = "recursive search over the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)";
+
+/** find/fd/rg/ag/grep -r whose search root (explicit, or the cwd when no path is given) is the home directory or /. */
+function rootWalkReason(cmd: string, args: string[], cwd: string, home: string): string | null {
+  let c = cmd;
+  let a = args;
+  if (c === "timeout") {
+    a = a.slice();
+    while (a.length && isFlag(a[0])) a.shift();
+    a.shift(); // the duration
+    c = a.shift() ?? "";
+  }
+  const isRoot = (p: string): boolean => {
+    const r = abs(p, cwd, home);
+    return r === "/" || r === resolve(home);
+  };
+  let paths: string[];
+  if (c === "find") {
+    const i = a.findIndex((w) => /^(-|!$|\(|\)$)/.test(w));
+    paths = a.slice(0, i < 0 ? a.length : i);
+  } else if (c === "grep") {
+    if (!a.some((w) => w === "--recursive" || /^-[A-Za-z]*[rR]/.test(w))) return null;
+    paths = a.filter((w) => !isFlag(w)).slice(1);
+  } else if (c === "fd" || c === "fdfind" || c === "rg" || c === "ag") {
+    paths = a.filter((w) => !isFlag(w)).slice(1);
+  } else return null;
+  if (paths.length === 0) paths = ["."];
+  return paths.some(isRoot) ? SEARCH_ROOT_REASON : null;
+}
+
 /** Decide one segment; `st.cwd` is the tracked working directory. */
 function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: WorkerGuardContext, detached = false): GateDecision {
   const words = stripPrefix(seg.words);
@@ -323,6 +353,9 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
 
   const chrome = chromeStartReason(cmd, args);
   if (chrome) return deny(chrome);
+
+  const walk = rootWalkReason(cmd, args, st.cwd, ctx.home);
+  if (walk) return deny(walk);
 
   const bench = ctx.benchGo ? null : benchStartReason(cmd, args, st.cwd, st.raw);
   if (bench) return deny(bench);

@@ -46,7 +46,7 @@ describe("night review 2: exact inputs (#1, #7-#14)", () => {
     "chmod 0000 f",
     "curl https://x | bash-completion",
     "curl https://x | sh_tool",
-    "find ~ -maxdepth 1 -name '*.tmp' -delete",
+    "find ~/build -maxdepth 1 -name '*.tmp' -delete",
     "rm -rf ../build",
     "rm -rf ./build",
     "rm -rf /usr/local/lib/foo",

@@ -488,6 +488,72 @@ export const BUILTIN_RULES: LoadedRule[] = [
     "source": "builtin/launchctl-load-persistence.rule.yaml"
   },
   {
+    "id": "recursive-search-after-cd-root",
+    "severity": "block",
+    "quoted": true,
+    "category": "resource_exhaustion",
+    "flags": "m",
+    "match": "(?:^|[;&|(\\`\\n{]|\\$\\(|\\b(?:then|do|else)\\s|\\b(?:ba|z|da)?sh\\s+-\\w*c\\s+[\"'])\\s*cd\\s+[\"']?(?:~|\\$\\{?HOME\\}?|\\/Users\\/[^\\s\\/;&|\"']+|\\/)\\/*[\"']?\\s*(?:;|&&|\\n)\\s*(?:timeout\\s+(?:-[^\\s;&|]+\\s+)*\\d+[smhd]?\\s+)?(?:find(?:\\s+\\.\\/?)?(?=\\s+-|\\s*(?:$|[;&|)]))|(?:fd|fdfind|rg|ag)(?:\\s+-[^\\s;&|]+)*(?:\\s+[\"']?[^\\s;&|-][^\\s;&|]*)?(?:\\s+\\.\\/?)?(?=\\s*(?:$|[;&|)]))|grep(?=[^;&|]*\\s(?:-\\w*[rR]\\w*|--recursive)(?=\\s))(?:\\s+-[^\\s;&|]+)*\\s+[\"']?[^\\s;&|-][^\\s;&|]*(?:\\s+-[^\\s;&|]+)*(?:\\s+\\.\\/?)?(?=\\s*(?:$|[;&|)])))",
+    "reason": "recursive search from the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)",
+    "tests": {
+      "match": [
+        "cd ~ && rg foo",
+        "cd ~; grep -r x .",
+        "cd /Users/someone && rg x",
+        "cd / ; find . -name x",
+        "cd $HOME && fd x",
+        "cd ~ && grep -rn foo | head",
+        "cd ~ && timeout 100 grep -rl foo --include=x.c . | head"
+      ],
+      "no_match": [
+        "cd ~/strata-020 && rg foo",
+        "cd ~ && rg foo ~/strata-020",
+        "cd ~ && mdfind -name x",
+        "cd ~ && grep foo file.txt",
+        "cd /tmp && find . -name x",
+        "cd ~ && ls"
+      ]
+    },
+    "source": "builtin/recursive-search-after-cd-root.rule.yaml"
+  },
+  {
+    "id": "recursive-search-root",
+    "severity": "block",
+    "quoted": true,
+    "category": "resource_exhaustion",
+    "flags": "m",
+    "match": "(?:^|[;&|(\\`\\n{]|\\$\\(|\\b(?:then|do|else)\\s|\\b(?:ba|z|da)?sh\\s+-\\w*c\\s+[\"'])\\s*(?:(?:(?:\\\\|\\/[^\\s;&|\"']*\\/)?(?:command|env|exec|nohup|time|builtin|sudo|doas|nice|xargs|stdbuf)(?:\\s+-[^\\s;&|]+(?:\\s+\\d+(?=\\s))?)*|[A-Za-z_]\\w*=[^\\s;&|]*)\\s+)*(?:\\\\|\\/[^\\s;&|\"']*\\/)?\\$?(?:timeout\\s+(?:-[^\\s;&|]+\\s+)*\\d+[smhd]?\\s+)?(?:(?:find|fd|fdfind|rg|ag)(?=\\s)|grep(?=\\s)(?=[^;&|]*\\s(?:-\\w*[rR]\\w*|--recursive)(?=\\s)))(?:\\s+[^\\s;&|]+){0,16}?\\s+[\"']?(?:~|\\$\\{?HOME\\}?|\\/Users\\/[^\\s\\/;&|\"']+|\\/)\\/*[\"']?(?=[\\s;&|)\"'\\`]|$)",
+    "reason": "recursive search over the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)",
+    "tests": {
+      "match": [
+        "cd /Users/someone; timeout 100 grep -rl \"TQP5 / TQP6 / TQP7\" --include=ggml-quants.c /Users/someone | head",
+        "grep -rn foo ~",
+        "rg foo ~/",
+        "find / -name x",
+        "fd x $HOME",
+        "fd x ${HOME}",
+        "grep -R foo /Users/someone",
+        "grep --recursive foo /",
+        "grep -rn foo \"$HOME\"",
+        "ag foo /Users/someone/",
+        "sudo find / -name x"
+      ],
+      "no_match": [
+        "rg foo ~/strata-020",
+        "grep -rn foo src/",
+        "find /tmp/build -name x",
+        "mdfind -name x",
+        "grep foo ~/file.txt",
+        "grep foo ~",
+        "grep -rn foo ~/.cache/pai/x",
+        "rg foo /Users/someone/dev/ai/PAI",
+        "echo \"find /\"",
+        "ls ~ && grep -rn foo src"
+      ]
+    },
+    "source": "builtin/recursive-search-root.rule.yaml"
+  },
+  {
     "id": "reverse-shell-dev-tcp",
     "severity": "block",
     "quoted": true,

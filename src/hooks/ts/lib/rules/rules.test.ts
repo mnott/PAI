@@ -165,7 +165,7 @@ describe("night review: false positives (#9)", () => {
     "rm -r build && ls ~",
     "curl -s https://x/api > out; cat f | sh",
     "curl https://x -o f && cat f | bash",
-    "find ~ -name '*.tmp' -delete",
+    "find ~/build -name '*.tmp' -delete",
   ])("allows %s", (cmd) => {
     expect(hitsOf(cmd)).toBeNull();
   });
