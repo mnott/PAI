@@ -17,7 +17,7 @@ import { resolveHostSession } from "../pane.js";
 import { parseWorkerReport, type WorkerReport } from "../report.js";
 import { armDeadline, deadlinePromptLine } from "../deadline.js";
 import { blockedMsOf } from "../active-time.js";
-import { cancelUhp, discoverUhpVersion, emptyUhpResult, runUhp, uhpVersionWarning, UhpProtocolError, type UhpResult } from "../uhp.js";
+import { cancelUhp, discoverUhp, emptyUhpResult, runUhp, uhpVersionWarning, UhpProtocolError, type UhpResult } from "../uhp.js";
 import { modelRecord, uhpErrorReason, uhpStatusToState, type Ag2Result } from "../uhp-vocab.js";
 import { type StreamEvent, type CodexArgs } from "./types.js";
 import { isoStamp } from "./stream.js";
@@ -112,10 +112,10 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
   if (paneVerified) status.pane = { opened: true, exec: true };
   else await announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
-  // the pin is a record, not a negotiation: a different advertised version only warns
+  // the pin is sent as UHP-Version; one the server does not list only warns here (the server decides)
   const warnings: string[] = [];
   if (provider.uhpProtocol) {
-    const w = uhpVersionWarning(provider.uhpProtocol, await discoverUhpVersion(provider));
+    const w = uhpVersionWarning(provider.uhpProtocol, await discoverUhp(provider));
     if (w) {
       warnings.push(w);
       appendLedger(ledger, "WORKER-NOTE", { id: wid, note: `uhp version: ${w}` });
@@ -194,6 +194,7 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
         Object.assign(fold, r);
         if (r.responseId) status.uhpResponseId = r.responseId;
         if (r.sessionId) status.uhpSessionId = r.sessionId;
+        if (r.uhpVersion) status.uhpVersion = r.uhpVersion;
         if (!status.claudeSession && (r.sessionId ?? r.responseId)) status.claudeSession = r.sessionId ?? r.responseId;
         status.turns = r.turns;
         status.tools = r.tools;

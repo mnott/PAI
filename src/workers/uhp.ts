@@ -45,8 +45,12 @@ export function buildUhpHeaders(provider: WorkerProvider, workerId: string): Rec
     Accept: "text/event-stream",
     ...(key ? { Authorization: `Bearer ${key}` } : {}),
     "Idempotency-Key": workerId,
+    ...(provider.uhpProtocol ? { "UHP-Version": provider.uhpProtocol } : {}),
   };
 }
+
+/** Protocol versions are dates (`2026-10-19`) and sort lexically. */
+export const UHP_VERSION_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function uhpUrl(provider: WorkerProvider, path: string): string {
   return provider.baseUrl.replace(/\/+$/, "") + path;
@@ -152,46 +156,69 @@ function errorOf(e: Record<string, unknown>): { code: string; message: string } 
 }
 
 /** The `{error:{type,code,message,param,detail}}` body of a non-2xx reply; empty when it is not that shape. */
-export function httpErrorOf(raw: string): { code?: string; message?: string } {
+export function httpErrorOf(raw: string): { type?: string; code?: string; message?: string; supported?: string[] } {
   try {
     const e = (JSON.parse(raw) as { error?: Record<string, unknown> }).error;
     if (!e || typeof e !== "object") return {};
+    const supported = (e.detail as { supported?: unknown } | null)?.supported;
     return {
+      ...(typeof e.type === "string" ? { type: e.type } : {}),
       ...(typeof e.code === "string" ? { code: e.code } : {}),
       ...(typeof e.message === "string" ? { message: e.message.slice(0, 200) } : {}),
+      ...(Array.isArray(supported) ? { supported: supported.filter((v): v is string => typeof v === "string") } : {}),
     };
   } catch {
     return {};
   }
 }
 
-/** The warning for an advertised protocol version that differs from the pin; null when equal or either is unknown. */
-export function uhpVersionWarning(pin: string | undefined, advertised: string | null): string | null {
-  if (!pin || !advertised || pin === advertised) return null;
-  return `server advertises UHP ${advertised}, provider pins ${pin}`;
+/** The warning when the pin is not among the versions the server supports (or its default); null when fine or unknown. */
+export function uhpVersionWarning(pin: string | undefined, d: UhpDiscovery | null): string | null {
+  if (!pin || !d) return null;
+  if (d.versions.length ? d.versions.includes(pin) : pin === d.default_version) return null;
+  return `provider pins UHP ${pin}, server supports ${d.versions.join(", ") || d.default_version}`;
+}
+
+export interface UhpDiscovery {
+  default_version: string;
+  versions: string[];
+  conformance_class: string;
+  capabilities: Record<string, boolean>;
 }
 
 /**
- * GET {baseUrl}/v1/uhp (the unauthenticated discovery endpoint): the advertised
- * protocol version, or null when unreachable or the body names none. The body
- * shape is not pinned down, so the usual version fields are tried.
+ * GET {baseUrl}/v1/uhp (the unauthenticated discovery endpoint). Null when
+ * unreachable or the body is not a UHP discovery object (`protocol` "uhp" and a
+ * string `default_version`). Absent capabilities count as false.
  */
-export async function discoverUhpVersion(
+export async function discoverUhp(
   provider: WorkerProvider,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = UHP_DISCOVERY_TIMEOUT_MS,
-): Promise<string | null> {
+): Promise<UhpDiscovery | null> {
   try {
     const res = await fetchImpl(uhpUrl(provider, "/v1/uhp"), { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
     const j = (await res.json()) as Record<string, unknown>;
-    for (const k of ["version", "protocol_version", "uhp_version", "protocol"]) {
-      if (typeof j[k] === "string") return j[k] as string;
+    if (j.protocol !== "uhp" || typeof j.default_version !== "string") return null;
+    const caps: Record<string, boolean> = {};
+    if (typeof j.capabilities === "object" && j.capabilities !== null) {
+      for (const [k, v] of Object.entries(j.capabilities)) caps[k] = v === true;
     }
-    return null;
+    return {
+      default_version: j.default_version,
+      versions: Array.isArray(j.versions) ? j.versions.filter((v): v is string => typeof v === "string") : [],
+      conformance_class: typeof j.conformance_class === "string" ? j.conformance_class : "",
+      capabilities: caps,
+    };
   } catch {
     return null;
   }
+}
+
+/** The server's default protocol version, or null (see discoverUhp). */
+export async function discoverUhpVersion(provider: WorkerProvider, fetchImpl: typeof fetch = fetch, timeoutMs = UHP_DISCOVERY_TIMEOUT_MS): Promise<string | null> {
+  return (await discoverUhp(provider, fetchImpl, timeoutMs))?.default_version ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +241,8 @@ export interface UhpResult {
   errorMessage: string | null;
   /** Model the harness reports having used (response.model), when it did. */
   model: string | null;
+  /** UHP-Version response header: the version the server used. */
+  uhpVersion: string | null;
   downloadUrls: string[];
   text: string;
   /** Protocol deviations that did not fail the run (e.g. no metadata.session_id). */
@@ -233,6 +262,7 @@ export const emptyUhpResult = (): UhpResult => ({
   errorCode: null,
   errorMessage: null,
   model: null,
+  uhpVersion: null,
   downloadUrls: [],
   text: "",
   warnings: [],
@@ -380,15 +410,20 @@ export async function runUhp(o: RunUhpOpts): Promise<UhpResult> {
     const err = httpErrorOf(raw);
     const fallback: UhpErrorCode = res.status === 429 ? "rate_limited" : res.status >= 500 ? "harness_unavailable" : "provider_error";
     const r = emptyUhpResult();
+    r.uhpVersion = res.headers.get("UHP-Version");
     r.status = "failed";
     r.result = "-";
-    r.errorCode = err.code ? uhpErrorReason(err.code) : fallback;
+    // an unknown code is treated as its type (VERSIONING rule 4)
+    const byType: UhpErrorCode | null = err.type === "rate_limit_error" ? "rate_limited" : err.type === "server_error" ? "harness_unavailable" : null;
+    r.errorCode = err.code && isUhpErrorCode(err.code) ? err.code : byType ?? (err.code ? "provider_error" : fallback);
     r.errorMessage = `HTTP ${res.status}: ${err.message ?? raw.slice(0, 200)}`;
+    if (err.code === "unsupported_protocol_version" && err.supported?.length) r.errorMessage += ` (server supports: ${err.supported.join(", ")})`;
     return r;
   }
   if (!res.body) throw new UhpProtocolError("empty response body");
   const parser = new UhpSseParser();
   const r = emptyUhpResult();
+  r.uhpVersion = res.headers.get("UHP-Version");
   const dec = new TextDecoder();
   const reader = res.body.getReader();
   for (;;) {
@@ -433,6 +468,9 @@ export function uhpProviderProblems(name: string, p: WorkerProvider): string[] {
   const out: string[] = [];
   if (!p.baseUrl || !/^https?:\/\//.test(p.baseUrl)) out.push(`provider "${name}" (engine uhp): baseUrl must be an http(s) URL`);
   if (!p.key && !providerKeyPath(p)) out.push(`provider "${name}" (engine uhp): no key — set keyFile (or key)`);
+  if (p.uhpProtocol && !UHP_VERSION_RE.test(p.uhpProtocol)) {
+    out.push(`provider "${name}" (engine uhp): uhpProtocol must be a date like 2026-10-19, got "${p.uhpProtocol}"`);
+  }
   return out;
 }
 
