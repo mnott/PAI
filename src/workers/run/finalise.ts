@@ -303,7 +303,7 @@ export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
   let cmd: string[] = [...(a.claudeCmd ?? ["claude"])];
   cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));
   cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag, ...(a.slimArgs ?? []));
-  cmd.push("--resume", a.sessionId, "-p", AG2_REASK_TEXT, "--output-format", "json");
+  cmd.push("--resume", a.sessionId, "-p", a.prompt ?? AG2_REASK_TEXT, "--output-format", "json");
   cmd = ensureToolSearch(cmd);
   const proc = spawn(cmd[0], cmd.slice(1), { env: a.env, cwd: a.cwd, stdio: ["ignore", "pipe", "inherit"] });
   const timer = setTimeout(() => {
