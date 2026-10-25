@@ -231,7 +231,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
     opts.label ??
     shortText(parsed.prompt ?? UNLABELED, 70);
   // local contract (local-contract.ts): headless local workers only, never a cloud one
-  if (parsed.headless && parsed.prompt) parsed.prompt = taskForProvider(parsed.prompt, target.provider, opts.cwd ?? process.cwd());
+  if (parsed.headless && parsed.prompt) parsed.prompt = taskForProvider(parsed.prompt, target.provider, opts.cwd ?? process.cwd(), opts.label);
 
   let model = capabilityResolution
     ? capabilityResolution.model

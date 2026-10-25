@@ -153,6 +153,12 @@ describe("contract only for local workers", () => {
     expect(taskForProvider("TASK", p("http://127.0.0.1:8035"), dir)).toContain("Local worker rules");
     expect(taskForProvider("TASK", p("https://glm.example.invalid"), dir)).toBe("TASK");
   });
+  it("leaves the prompt unchanged on a benchmark run, even on a loopback provider", () => {
+    const dir = mkdtempSync(join(tmpdir(), "chk-"));
+    expect(taskForProvider("TASK", p("http://127.0.0.1:8035"), dir, "eval k set rep1 bench")).toBe("TASK");
+    expect(taskForProvider("TASK", p("http://127.0.0.1:8035"), dir, "fix the parser")).toContain("Local worker rules");
+    expect(taskForProvider("TASK", p("https://glm.example.invalid"), dir, "eval k set rep1 bench")).toBe("TASK");
+  });
 });
 
 function execSyncMkdir(dir: string) {
