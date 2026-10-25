@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { processStartMs } from "./proc-start.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,12 +20,7 @@ let server: Server | null = null;
 // process's real ps start time, so fixtures posing as "alive" (pid:
 // process.pid) need that real stamp, not an arbitrary fixed date.
 const REAL_STARTED = nowStamp(
-  new Date(
-    execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], {
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C" },
-    }).trim()
-  )
+  new Date(processStartMs(process.pid)!)
 );
 
 function runningWorker(id: string, state: WorkerStatus["state"] = "running", pid = process.pid): WorkerStatus {

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { processStartMs } from "./proc-start.js";
 /**
  * Tests for killTree: the worker plus every live descendant, leaves first.
  * Status files in a tmp dir and fake pids/signals — nothing is signalled.
@@ -136,8 +137,7 @@ describe("killTree pid ownership (real ownsPid)", () => {
   const idFor = (pid: number, d: Date) =>
     `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}-${pid}`;
   const ownStart = (): Date => {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-    return new Date(out.trim());
+    return new Date(processStartMs(process.pid)!);
   };
 
   async function run(id: string, started: Date): Promise<{ signalled: number[]; lines: string[] }> {

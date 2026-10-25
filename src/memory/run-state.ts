@@ -8,7 +8,7 @@
  * gone is stale and ignored.
  */
 
-import { execFileSync } from "node:child_process";
+import { processStartMs as psStartMs } from "../workers/proc-start.js";
 import { mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
@@ -79,13 +79,7 @@ function alive(pid: number): boolean {
 
 /** Start time of a process (epoch ms) from `ps`; undefined when unknown. */
 export function processStartMs(pid: number): number | undefined {
-  try {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-    const t = Date.parse(out.trim());
-    return Number.isNaN(t) ? undefined : t;
-  } catch {
-    return undefined;
-  }
+  return psStartMs(pid);
 }
 
 /** The running run, null when there is none or its marker is stale (pid gone, or reused by another process). */

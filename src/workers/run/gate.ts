@@ -18,7 +18,7 @@ import {
   providerHostPort,
   type PortCheck,
 } from "../local-provider.js";
-import { appendLedger } from "../ledger.js";
+import { appendLedger, parseStamp } from "../ledger.js";
 import { ledgerPath } from "../paths.js";
 import {
   type WorkerStatus,
@@ -404,7 +404,7 @@ function finaliseHostDeath(a: ExecuteArgs, wid: string, st: WorkerStatus, why: s
   st.last = shortText(`pool slot died mid-task: ${why}`, 90);
   st.updated = nowStamp();
   saveStatus(logDir, st);
-  const started = Date.parse(st.started.replace(" ", "T"));
+  const started = parseStamp(st.started);
   appendLedger(ledger, "WORKER-END", {
     id: wid,
     provider: st.provider,

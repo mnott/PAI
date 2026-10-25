@@ -4,6 +4,7 @@
  * child processes of this same binary (PAI_BIN, else `pai`).
  */
 
+import { parseStamp } from "./ledger.js";
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -115,7 +116,7 @@ export async function stopLaunchedWorkers(logDir: string, kill: typeof killTree 
   const stopped: string[] = [];
   for (const l of launched) {
     for (const s of loadStatuses(logDir)) {
-      if (s.label !== l.label || (s.state !== "running" && s.state !== "queued") || Date.parse(s.started) < l.t0) continue;
+      if (s.label !== l.label || (s.state !== "running" && s.state !== "queued") || parseStamp(s.started) < l.t0) continue;
       try {
         await kill(logDir, s.id, { by: "plan", reason: "plan run stopped" });
         stopped.push(s.id);
@@ -135,7 +136,7 @@ export async function launchWorker(req: Pick<StartRequest, "label" | "provider" 
   launched.add(mark);
   const r = await capture(pai(), workerArgs(req, specFile, repo), repo, false, undefined, process.env).finally(() => launched.delete(mark));
   const st = loadStatuses(logDir)
-    .filter((s) => s.label === req.label && Date.parse(s.started) >= t0)
+    .filter((s) => s.label === req.label && parseStamp(s.started) >= t0)
     .sort((a, b) => b.started.localeCompare(a.started))[0];
   if (!st) return { id: "", ok: false, spawnRefused: true, failure: tail(r.err || r.out) || `worker did not start (exit ${r.code})` };
   const problem = checkoutProblem(st.id, before, await checkoutState(repo), mergedHeads.get(repo));
@@ -257,7 +258,7 @@ export function realRunnerDeps(plan: Plan, logDir: string, logPath: string, trac
       const t0 = Date.now() - 1000;
       const watch = tracker
         ? setInterval(() => {
-            const st = loadStatuses(logDir).find((s) => s.label === req.label && Date.parse(s.started) >= t0);
+            const st = loadStatuses(logDir).find((s) => s.label === req.label && parseStamp(s.started) >= t0);
             if (!st) return;
             tracker.setWorker(req.part.id, st.id);
             tracker.phase(`running ${req.part.id} (${st.id})`);
