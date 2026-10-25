@@ -11,6 +11,9 @@ import { basename, join } from "node:path";
 import { defaultWorkersConfig, expandHome, type WorkersConfig } from "./config.js";
 import { paiHomePath, resolvePaiFile } from "../config/pai-home.js";
 
+/** The shipped default logDir (a YAML parse), read once. */
+let shippedLogDir: string | undefined;
+
 /**
  * Absolute logDir for the given config. An explicit `logDir` in workers.yaml
  * is honored verbatim (the user chose it). Otherwise this resolves like every
@@ -21,7 +24,7 @@ export function workersLogDir(config: Pick<WorkersConfig, "logDir">): string {
   const expanded = expandHome(config.logDir);
   // the shipped default is the sentinel: an explicit user logDir (whatever it
   // says) is honored verbatim; only the unset default resolves through PAI_HOME
-  if (config.logDir !== defaultWorkersConfig().logDir) return expanded;
+  if (config.logDir !== (shippedLogDir ??= defaultWorkersConfig().logDir)) return expanded;
   // the old ~/.claude/logs/workers belongs to the default home only: a
   // PAI_HOME override (temp home, second install) never owns it, so no hint
   if (process.env.PAI_HOME) return paiHomePath("logs", "workers");
