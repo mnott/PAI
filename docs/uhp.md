@@ -36,7 +36,7 @@ pai worker run --provider harness -p 'task'
 
 ## Behaviour
 
-- The request is streamed (`stream: true`) with `Idempotency-Key` = worker id. The SSE reply is parsed strictly: `sequence_number` starts at 0 and rises by 1 with no gaps, and exactly one terminal event ends it (`response.completed|incomplete|failed|cancelled`). A non-terminal `error` must be followed by a terminal event. A violation fails the run.
+- The request is streamed (`stream: true`) with `Idempotency-Key` = worker id. The SSE reply is parsed strictly: `sequence_number` starts at 0 and rises by 1 with no gaps, and exactly one terminal event ends it (`response.completed|incomplete|failed`; a cancelled task ends with `response.failed` and `status: "cancelled"`, the response status is authoritative). A non-terminal `error` must be followed by a terminal event. A violation fails the run.
 - Terminal status maps to the AG2 result: completed `+`, incomplete `~`, failed `-`, cancelled `!` (state killed). `error.code` (`timeout`, `cancelled`, `provider_error`, `harness_unavailable`, `model_unavailable`, `rate_limited`, `quota_exhausted`) becomes the ledger reason.
 - Text deltas and function calls are written to the worker `.jsonl` in Claude-shaped lines.
 - The worker status keeps the last response id and `metadata.session_id`. `pai worker resume <id> 'text'` sends `previous_response_id`.
