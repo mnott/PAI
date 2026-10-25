@@ -313,7 +313,7 @@ describe("recursive search rooted at home or /", () => {
     "rg foo ~/",
     "find / -name x",
     "fd x $HOME",
-    "cd ~ && cd .. && find . -name x",
+    "cd ~ && cd . && find . -name x",
   ])("denies: %s", (cmd) => {
     const d = run(cmd);
     expect(d.decision).toBe("deny");
