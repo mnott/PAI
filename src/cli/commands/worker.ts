@@ -11,6 +11,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
+import { appendLedger } from "../../workers/ledger.js";
 import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
@@ -203,12 +204,23 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
   };
 }
 
+function ledgerFallback(fields: Record<string, string>): void {
+  try {
+    appendLedger(ledgerPath(workersLogDir(readWorkersSection().workers)), "WORKER-FALLBACK", fields);
+  } catch {
+    // no readable config: nothing to log to
+  }
+}
+
 /** --where / --model / --now through resolveTarget (target.ts), the one resolver every delegation entry point uses. */
-export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget): Promise<void> {
+export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: TargetResolver = resolveTarget, logFallback: (fields: Record<string, string>) => void = ledgerFallback): Promise<void> {
   let where = str(ctx.opts.where);
   const model = str(ctx.opts.model);
   const now = flag(ctx, "now");
   const target = plan.kind === "chain" ? plan.chain : plan.run;
+  // an explicit --provider is the caller's choice: --model default/fast resolves against it, never replaces it
+  const explicitProvider = target.providerFlag;
+  if (!where && explicitProvider) where = explicitProvider;
   const forceLocal = flag(ctx, "force-local");
   const task = plan.kind === "chain" ? plan.chain.brief : parseRunnerArgs(plan.run.claudeArgs).prompt ?? undefined;
   const label = plan.kind === "run" ? plan.run.label : plan.chain.label;
@@ -232,7 +244,10 @@ export async function applyTarget(ctx: RunContext, plan: RunPlan, resolveIt: Tar
   if (where && ctx.opts.local) throw new Error("--where and --local both name where to run; use one");
   const t = await resolveIt({ where, model, now, task, label, forceLocal });
   process.stderr.write(`pai worker: ${t.description}\n`);
-  if (t.provider) target.providerFlag = t.provider;
+  if (t.provider && !explicitProvider) {
+    target.providerFlag = t.provider;
+    logFallback({ from: "default routing", to: t.provider, reason: t.description });
+  }
   // "default" / "fast" are aliases, never a raw model id
   target.modelFlag = model === "default" || model === "fast" ? t.model : (t.model ?? target.modelFlag);
   if (plan.kind === "run") {
