@@ -15,6 +15,7 @@
  * and only to the fallback (`where: cloud`).
  */
 
+import { swapPromptArg } from "./args.js";
 import { parseStamp } from "./ledger.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -70,6 +71,8 @@ export interface SpawnSpec {
   provider: string;
   model?: string;
   specFile: string;
+  /** The old run's claude args with the task text swapped in: the restart is headless with the same tools and flags. */
+  claudeArgs: string[];
 }
 
 export interface RerouteDeps {
@@ -121,7 +124,7 @@ function defaultSpawn(logDir: string): (s: SpawnSpec) => void {
     void import("./run/escalate.js")
       .then(({ rerunOn }) =>
         rerunOn(
-          { logDir, cwd: st.cwd, label: st.label, specPath: s.specFile, claudeArgs: [], className: st.className, quiet: true },
+          { logDir, cwd: st.cwd, label: st.label, specPath: s.specFile, claudeArgs: s.claudeArgs, className: st.className, quiet: true },
           s.id,
           s.why,
           st,
@@ -161,8 +164,10 @@ export async function rerouteWorker(id: string, where: string, d: RerouteDeps): 
   await (d.kill ?? ((x, r) => defaultKill(d.logDir, x, r, by)))(id, `rerouted to ${target.provider} (${reason})`);
   const branch = old.state === "running" ? (load(id)?.branch ?? old.branch ?? undefined) : undefined;
   const specFile = join(d.logDir, `${id}.reroute.prompt`);
-  writeFileSync(specFile, branch ? `${continuedNote(id, branch)}\n\n${text}` : text, "utf8");
-  await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile });
+  const task = branch ? `${continuedNote(id, branch)}\n\n${text}` : text;
+  writeFileSync(specFile, task, "utf8");
+  const claudeArgs = old.claudeArgs?.length ? swapPromptArg(old.claudeArgs, task) : [];
+  await (d.spawn ?? defaultSpawn(d.logDir))({ id, why: `rerouted by ${by}${d.reason ? `: ${d.reason}` : ""}`, provider: target.provider, model: target.model, specFile, claudeArgs });
   return { id, provider: target.provider, was: old.state, ...(branch ? { branch } : {}), specFile, description: target.description };
 }
 

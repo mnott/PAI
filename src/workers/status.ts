@@ -182,6 +182,8 @@ export interface WorkerStatus {
   progressAt?: string;
   /** Copy of the task text (<id>.prompt), kept so the run can be started again elsewhere (reroute.ts). */
   promptFile?: string;
+  /** The claude args the run was started with (-p, --allowedTools, --output-format, ...): a reroute restarts the task with them, headless as before. */
+  claudeArgs?: string[];
   /** The --class the run was started with. */
   className?: string;
   /** Set once the run was rerouted to the fallback provider ("cloud: queued 16m"): never rerouted again. */
