@@ -1,7 +1,9 @@
 /** `pai home` — where PAI's home is, and the one-time move out of ~/.claude/pai. Behaviour lives here; src/cli/commands/home.ts declares help. */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { paiHomeDir, paiHomePath } from "../../config/pai-home.js";
+import { commitHomeChange, gitignoreWithRequired } from "../../config/home-git.js";
 import { applyHomeMigration, planHomeMigration, renderTable, sizeOf, type HomeMigrationPlan } from "../../config/home-migrate.js";
 import { resolveDaemonPid } from "../../daemon/daemon-pid.js";
 import { routerRunningPid } from "../../router/supervisor.js";
@@ -75,4 +77,30 @@ export function homeMigrateCmd(opts: { dryRun?: boolean }, home: string = homedi
     console.log(err(`  ${(e as Error).message}`));
     return 1;
   }
+}
+
+/** `pai home git-setup`: make the PAI_HOME .gitignore whitelist antipatterns/ (minus firings) and commit it. Dry run unless write. */
+export function homeGitSetupCmd(opts: { write?: boolean }, home: string = paiHomeDir()): number {
+  if (!existsSync(`${home}/.git`)) {
+    console.log(warn(`  ${home} is not a git repository; nothing to do (git init there to version PAI's config)`));
+    return 0;
+  }
+  const file = `${home}/.gitignore`;
+  const before = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const after = gitignoreWithRequired(before);
+  const added = after === before ? [] : after.slice(before.length).split("\n").filter((l) => l !== "");
+  if (!added.length) {
+    console.log(ok("  .gitignore already up to date"));
+    return 0;
+  }
+  console.log(dim(`  ${file}`));
+  for (const l of added) console.log(`+${l}`);
+  if (!opts.write) {
+    console.log(dim("  dry run; apply with --write"));
+    return 0;
+  }
+  writeFileSync(file, after);
+  commitHomeChange([file], "git-setup: whitelist antipatterns");
+  console.log(ok("  .gitignore updated"));
+  return 0;
 }

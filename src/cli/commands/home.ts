@@ -4,7 +4,7 @@
  */
 
 import type { CommandDef } from "../define.js";
-import { homeMigrateCmd, homePathCmd } from "../impl/home.js";
+import { homeGitSetupCmd, homeMigrateCmd, homePathCmd } from "../impl/home.js";
 
 export const homeSubcommands: CommandDef[] = [
   {
@@ -25,12 +25,22 @@ export const homeSubcommands: CommandDef[] = [
     seeAlso: ["pai home path", "pai config migrate"],
     run: (ctx) => homeMigrateCmd({ dryRun: ctx.opts["dry-run"] === true }),
   },
+  {
+    name: "git-setup",
+    summary: "Whitelist antipatterns/ in the PAI home .gitignore",
+    description:
+      "Whitelist antipatterns/ in the PAI home .gitignore.\n\nWhen PAI_HOME is a git repository, PAI commits its own config writes (switch: home.autoCommit, default true). This appends the missing lines `!/antipatterns/` and `/antipatterns/firings.jsonl*` to .gitignore (existing lines and comments untouched) and commits it. Idempotent. Dry run by default: prints the lines to add.",
+    options: [{ name: "write", type: "boolean", summary: "Apply and commit (default: print only)" }],
+    examples: ["pai home git-setup", "pai home git-setup --write"],
+    seeAlso: ["pai home path", "pai config set"],
+    run: (ctx) => homeGitSetupCmd({ write: ctx.opts.write === true }),
+  },
 ];
 
 export const homeCommand: CommandDef = {
   name: "home",
   summary: "Where PAI keeps its files; move them out of ~/.claude",
   description: "Where PAI keeps its files; move them out of ~/.claude.",
-  examples: ["pai home path", "pai home migrate --dry-run"],
+  examples: ["pai home path", "pai home migrate --dry-run", "pai home git-setup"],
   subcommands: homeSubcommands,
 };

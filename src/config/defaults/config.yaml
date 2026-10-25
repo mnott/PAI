@@ -167,6 +167,11 @@ power:
     benchmarkSaveSecs: 120
 
 # Worker settings.
+# PAI_HOME versioning: when PAI_HOME is a git repository, commit PAI's own
+# config writes (config set, antipatterns set/promote/enforce/retire/label,
+# workers.yaml edits) as "config: <what changed>". Set autoCommit false to stop.
+home:
+  autoCommit: true
 workers:
   merge:
     # Globs of generated files. When a `pai worker merge` conflicts only in

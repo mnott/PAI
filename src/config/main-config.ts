@@ -16,6 +16,7 @@ import { existsSync, readFileSync, renameSync, chmodSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import { Document, parseDocument } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "./json-store.js";
+import { commitHomeChange } from "./home-git.js";
 import { writeYamlFileAtomic, syncPlainObjectIntoYamlDoc, deepEqualJson, setYamlKeyComment } from "./yaml-store.js";
 
 export class MainConfigError extends Error {}
@@ -88,9 +89,11 @@ export function writeDualFormatConfigRaw(
     } catch (e) {
       throw new MainConfigError(e instanceof Error ? e.message : String(e));
     }
+    commitHomeChange([yamlPath], "update config.yaml");
     return;
   }
   writeJsonAtomic(jsonPath, raw, { label: jsonPath });
+  commitHomeChange([jsonPath], "update config.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +138,7 @@ export const MAIN_CONFIG_SECTION_COMMENTS: Record<string, string> = {
   tasks: "Task bus — optional external tracker for cross-session work.",
   identity:
     'Who "me" is — addresses that count as the user\'s own. Empty by default and never guessed: nothing is self-addressed until this is set.',
+  home: "PAI_HOME versioning: { autoCommit } (default true) commits PAI's own config writes when PAI_HOME is a git repository (`pai home git-setup`).",
   workers:
     "Non-provider worker settings (pane, routing, tree, cache keepalive, fallback). Providers/classes/mcp_sets live in workers.yaml, not here.",
 };

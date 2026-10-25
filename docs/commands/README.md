@@ -161,6 +161,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai harness sessions` | List sessions, newest first |
 | `pai help` | Explain a command (same as `pai <command> --help`) |
 | `pai home` | Where PAI keeps its files; move them out of ~/.claude |
+| `pai home git-setup` | Whitelist antipatterns/ in the PAI home .gitignore |
 | `pai home migrate` | Move PAI's home from ~/.claude/pai to ~/.pai |
 | `pai home path` | Print where PAI's home is |
 | `pai hooks-db` | Registry updates for the stop and pre-compact hooks |

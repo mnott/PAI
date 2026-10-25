@@ -12,10 +12,11 @@ import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { SHIPPED_ANTIPATTERNS } from "../hooks/ts/lib/antipatterns.generated.js";
 import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
+import { commitHomeChange } from "../config/home-git.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { CATEGORIES, loadAntipatterns, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
 import { lifecycleDoc, type Lifecycle, type Mode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
-import { candidatesDir, readFirings, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
+import { candidatesDir, labelsPath, readFirings, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
 import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import { allRuleDirs, listRules, projectRuleDirs, ruleLifecycle, userAntipatternShellDir } from "../hooks/ts/lib/rules/load.js";
 import type { LoadedRule } from "../hooks/ts/lib/rules/types.js";
@@ -212,6 +213,7 @@ export function promote(id: string, now = Date.now()): string {
   renameSync(c.file, `${c.file}.promoted`);
   resetAntipatternCache();
   recordGovernance({ action: "promote", id: c.id, category: c.category, path: target }, now);
+  commitHomeChange([target, `${c.file}.promoted`, c.file, governancePath()], `antipatterns promote ${c.id}`);
   return target;
 }
 
@@ -264,6 +266,7 @@ function override(action: string, id: string, change: { mode?: Mode; status?: St
   writeFileSync(path, stringify(doc));
   resetAntipatternCache();
   recordGovernance({ action, id, ...(change.mode ? { mode: change.mode } : {}), ...(change.reason ? { reason: change.reason } : {}) }, o.now);
+  commitHomeChange([path, governancePath()], `antipatterns ${action} ${id}`);
   return { path, entry: next };
 }
 
@@ -276,6 +279,7 @@ export function label(target: string, disposition: Disposition): number {
   const hits = readFirings().filter((f) => f.ts === target || f.id === target);
   for (const f of hits) recordLabel(f.ts, f.id, disposition);
   if (!hits.length) throw new Error(`no firing with ts or id ${target}`);
+  commitHomeChange([labelsPath()], `antipatterns label ${target} ${disposition}`);
   return hits.length;
 }
 
@@ -311,6 +315,7 @@ export function setParam(id: string, param: string, value: unknown, reason: stri
   writeFileSync(path, stringify(next));
   resetAntipatternCache();
   recordGovernance({ action: "set", id, param, from, to, reason }, o.now);
+  commitHomeChange([path, governancePath()], `antipatterns set ${id} ${param}=${JSON.stringify(to)}`);
   return { path, from, to, version: a.version + 1 };
 }
 

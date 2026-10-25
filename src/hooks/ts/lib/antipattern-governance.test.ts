@@ -384,6 +384,22 @@ describe("set", () => {
     expect(existsSync(userFile("governance.jsonl"))).toBe(false);
     expect(activeAntipattern("identical-write").detector.params.stop_at).toBe(20);
   });
+  it("commits the YAML and governance.jsonl in one commit when PAI_HOME is a git repo, never firings", () => {
+    const g = (...a: string[]) => execFileSync("git", ["-C", home, ...a], { encoding: "utf8" });
+    g("init", "-q");
+    g("config", "user.email", "t@example.com");
+    g("config", "user.name", "t");
+    writeFileSync(join(home, ".gitignore"), "/*\n");
+    g("add", "-f", ".gitignore");
+    g("commit", "-q", "-m", "init");
+    mkdirSync(join(home, "antipatterns"), { recursive: true });
+    writeFileSync(firingsPath(), "{}\n");
+    setParam("identical-write", "stop_at", "8", "loops cost too much");
+    expect(g("rev-list", "--count", "HEAD").trim()).toBe("2");
+    expect(g("log", "-1", "--format=%s").trim()).toMatch(/^config: antipatterns set identical-write stop_at=8/);
+    expect(g("show", "--name-only", "--format=", "HEAD").trim().split("\n").sort()).toEqual(["antipatterns/governance.jsonl", "antipatterns/tool-loop/identical-write.yaml"]);
+    expect(g("ls-files")).not.toContain("firings");
+  });
   it("enforce, monitor and retire write governance lines", () => {
     setMode("revert", "monitor");
     setMode("revert", "enforce");
