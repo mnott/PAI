@@ -1,0 +1,19 @@
+# A Read/Edit/Write file_path that does not exist and cannot be repaired.
+# Detection stays in path-repair.ts (repair rules run first); this file owns the wording.
+id: does-not-exist
+category: paths
+detector:
+  kind: missing-path
+  params: {}
+action: deny
+message: "does not exist: {path}. Do not guess paths.{near} Use Glob to find it."
+tests:
+  match:
+    - /nonexistent-dir-for-antipattern-test/file.ts
+  no_match:
+    - package.json
+provenance:
+  date: 2026-10-25
+  model: various local models
+  observed: workers guessing file paths and looping on "File does not exist"
+  ref: moved from src/hooks/ts/lib/path-repair.ts

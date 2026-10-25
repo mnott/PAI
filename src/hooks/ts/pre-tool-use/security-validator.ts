@@ -25,7 +25,7 @@ import { isSharedCheckout } from '../lib/shared-checkout.js';
 import { maskSecrets } from '../lib/loop-guard.js';
 import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
 import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
-import { loadRules, projectRuleDirs, userRuleDirs } from '../lib/rules/load.js';
+import { loadRules, projectRuleDirs, allRuleDirs } from '../lib/rules/load.js';
 import { evaluateRules } from '../lib/rules/eval.js';
 import { readWorkersSection } from '../../../workers/config.js';
 import { workersLogDir } from '../../../workers/paths.js';
@@ -34,7 +34,7 @@ import { worktreesDir } from '../../../workers/worktree.js';
 // ============================================================================
 // ATTACK RULES
 // ============================================================================
-// Patterns live in *.rule.yaml files: built-ins under lib/rules/builtin/
+// Patterns live in *.rule.yaml files: built-ins under antipatterns/shell/
 // (embedded at build time), user rules under PAI_HOME/rules and .pai/rules.
 // Loaded once per hook process; a broken rule file is skipped, never fatal.
 
@@ -175,7 +175,7 @@ async function main(): Promise<void> {
 
   // Rules load against the hook input's cwd (the session's project), not the
   // hook process's; a project file that tried to disable a rule is logged.
-  const loaded = loadRules(userRuleDirs(input.cwd || process.cwd()), { projectDirs: projectRuleDirs(input.cwd || process.cwd()) });
+  const loaded = loadRules(allRuleDirs(input.cwd || process.cwd()), { projectDirs: projectRuleDirs(input.cwd || process.cwd()) });
   RULES = loaded.rules;
   for (const note of loaded.ignored) {
     logSecurityEvent({ type: 'project_rule_ignored', note, session_id: input.session_id });

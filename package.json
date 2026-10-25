@@ -16,6 +16,7 @@
     "!dist/**/*.map",
     "!dist/.prune-manifest.json",
     "templates",
+    "antipatterns",
     "plugins",
     "user-extensions",
     ".claude-plugin",

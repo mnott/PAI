@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type { Finding } from "../audit/scan.js";
-import { loadRules, projectRuleDirs, userRuleDirs } from "../hooks/ts/lib/rules/load.js";
+import { loadRules, projectRuleDirs, allRuleDirs } from "../hooks/ts/lib/rules/load.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
 import { eventsPath } from "./paths.js";
 import { type WorkerStatus, saveStatus } from "./status.js";
@@ -121,7 +121,7 @@ export async function scanWorkerRun(
       if (t) paths.push(t);
     }
     if (!paths.length) return null;
-    const { rules } = loadRules(userRuleDirs(opts.cwd ?? status.cwd), { projectDirs: projectRuleDirs(opts.cwd ?? status.cwd) });
+    const { rules } = loadRules(allRuleDirs(opts.cwd ?? status.cwd), { projectDirs: projectRuleDirs(opts.cwd ?? status.cwd) });
     const found = await scanInThread(paths, rules, opts.budgetMs ?? 5000);
     if (found === "over") {
       if (!status.last) status.last = "scan stopped: over budget";
