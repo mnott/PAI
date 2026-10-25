@@ -9,6 +9,7 @@
  * queue counts too: the router mirrors per-worker accounting to
  * <logDir>/router-sched.json (routerWaitMs); blockedMsOf sums both.
  */
+import { parseStamp } from "./ledger.js";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -62,7 +63,7 @@ export function activeText(
 ): string | null {
   if (!s.maxMinutes) return null;
   const blocked = s.blockedMs ?? 0;
-  const startedAt = Date.parse(s.started.replace(" ", "T"));
+  const startedAt = parseStamp(s.started);
   const active = Number.isFinite(startedAt) ? Math.max(0, now - startedAt - blocked) : 0;
   const m = (ms: number): number => Math.floor(ms / 60_000);
   return `active ${m(active)} of ${s.maxMinutes} min, waited ${m(blocked + (s.queueWaitedMs ?? 0))}`;
