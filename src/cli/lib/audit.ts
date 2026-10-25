@@ -61,7 +61,7 @@ import { auditSubagents, type SubagentsReport } from "../../audit/subagents.js";
 import { auditMcp, type McpReport } from "../../audit/mcp.js";
 import { shortenPath } from "./utils.js";
 import { readWorkersSection } from "../../workers/config.js";
-import { workersLogDir, eventsPath, withArchive } from "../../workers/paths.js";
+import { workersLogDir, eventsPath } from "../../workers/paths.js";
 import { fmtSeenLocal } from "../../utils/fmt-age.js";
 
 function severityColor(sev: Severity, text: string): string {
@@ -723,7 +723,7 @@ export async function auditScanCmd(
       console.error(err(`  No worker named ${opts.worker}.`));
       return 1;
     }
-    target = st.claudeSession ? claudeSessionTranscript(st.claudeSession, st.cwd) : withArchive(logDir, eventsPath(logDir, opts.worker));
+    target = st.claudeSession ? claudeSessionTranscript(st.claudeSession, st.cwd) : eventsPath(logDir, opts.worker);
     if (target && !existsSync(target)) target = null;
   } else if (opts.session) {
     target = newestSessionLog(opts.session);

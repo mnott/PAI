@@ -27,7 +27,7 @@ import { poolSlots } from "../builds/config.js";
 import { existsSync, openSync, readSync, closeSync, readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { execFileSync, spawn, type SpawnOptions } from "node:child_process";
-import { eventsPath, ledgerPath, withArchive } from "./paths.js";
+import { eventsPath, ledgerPath } from "./paths.js";
 import { loadPaneRunStatuses, renderPaneRunLines } from "./pane-run.js";
 import { loadPlanStatuses, renderPlanLines } from "./plan-status.js";
 import { readAudit } from "./pane-audit.js";
@@ -381,14 +381,13 @@ export function replayOutput(
   color = process.stdout.isTTY === true,
   tailLines?: number
 ): string {
-  const path = withArchive(logDir, eventsPath(logDir, wid));
+  const path = eventsPath(logDir, wid);
   if (!existsSync(path)) {
     throw new Error(`no event log for ${wid}`);
   }
   const c = makeColor(color);
   const st =
     loadStatuses(logDir).find((s) => s.id === wid) ??
-    loadStatus(logDir, wid) ??
     ({ id: wid, label: "", cwd: "", provider: "" } as WorkerStatus);
   const wrapWidth = typeof process.stdout.columns === "number" ? process.stdout.columns : FALLBACK_COLUMNS;
   const out: string[] = [headerLine(c, st), ...denialLines(st)];
