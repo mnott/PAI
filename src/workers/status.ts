@@ -7,7 +7,7 @@
  * (the AIBroker identity of the launching session, see scope.ts).
  */
 
-import { ledgerStamp } from "./ledger.js";
+import { ledgerStamp, parseStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -605,7 +605,7 @@ export function makeOwnsPid(t: ProcTable): (status: OwnerFields) => boolean {
     if (status.pool) return status.pid > 0 && t.alive(status.pid) && t.parentPid(status.pid) === status.pool.hostPid;
     if (status.pid <= 0 || !t.alive(status.pid)) return false;
     const psStart = t.startMs(status.pid);
-    const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? Date.parse(status.started.replace(" ", "T")) : NaN);
+    const started = status.procStart ?? spawnTimeOf(status) ?? (status.started ? parseStamp(status.started) : NaN);
     if (psStart === undefined || Number.isNaN(started)) return t.alive(status.pid);
     if (Math.abs(psStart - started) <= 120_000) return true;
     const cmd = t.command(status.pid);
@@ -672,7 +672,7 @@ export function reconcileStatuses(
   const lost: string[] = [];
   for (const s of loadStatuses(logDir)) {
     if ((s.state !== "running" && s.state !== "queued") || owns(s)) continue;
-    const upd = Date.parse((s.updated ?? "").replace(" ", "T"));
+    const upd = parseStamp(s.updated ?? "");
     if (Number.isNaN(upd) || now.getTime() - upd < graceMs) continue;
     saveStatus(logDir, { ...s, state: "lost", rc: null, last: "process ended without a final status" }, now);
     lost.push(s.id);
@@ -690,7 +690,7 @@ export function markStartFailed(logDir: string, status: WorkerStatus, err: unkno
 
 /** "42s" under 90s, "7m" above — the coarse age the table and bar show. */
 export function ageOf(ts: string, now: Date = new Date()): string {
-  const t = Date.parse(ts.replace(" ", "T"));
+  const t = parseStamp(ts);
   if (Number.isNaN(t)) return "?";
   const s = Math.max(0, Math.floor((now.getTime() - t) / 1000));
   return s < 90 ? `${s}s` : `${Math.floor(s / 60)}m`;
@@ -698,7 +698,7 @@ export function ageOf(ts: string, now: Date = new Date()): string {
 
 /** Precise elapsed time: "45s", "1m 23s", "12m 05s", "1h 02m 05s" — seconds zero-padded after a larger unit. */
 export function elapsedOf(ts: string, now: Date = new Date()): string {
-  const t = Date.parse(ts.replace(" ", "T"));
+  const t = parseStamp(ts);
   if (Number.isNaN(t)) return "?";
   const secs = Math.max(0, Math.floor((now.getTime() - t) / 1000));
   const hours = Math.floor(secs / 3600);
