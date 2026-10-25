@@ -158,8 +158,16 @@ You want a confirmation before anyone runs `terraform destroy`.
 3. Run `pai rules list`. The rule appears with its source.
 4. To disable a built-in you find too strict, add a file with the same id and `severity: off` under `<PAI home>/rules`.
 
+## Lifecycle, firings and candidates
+
+Every pattern in `antipatterns/<category>/` (shell rules and the loop-guard, final-text and path categories) carries lifecycle fields: `status` (experimental, test, stable, deprecated), `mode` (enforce, or monitor: record the firing, take no action), `version`, `created`, `modified`, `supersedes`, `falsepositives`, and optionally `exceptions` (with an `expires` date) and `applies_to` (providers, models). Defaults are stable, enforce, version 1. A deprecated pattern does nothing.
+
+Each place that acts on a pattern appends one line to `<PAI home>/antipatterns/firings.jsonl` (rotated at 10 MB): time, id, version, action, mode, provider, model, worker or session, project name, a sha1 of the matched input and its first 120 characters with home paths as `~`. When a worker run ends, one outcome line per firing goes to `outcomes.jsonl`. A guard stop no pattern covers becomes an inactive file under `antipatterns/_candidates/` for review.
+
+`pai antipatterns` reads these: `list`, `stats` (counts, last fired, per model, outcome mix, false-positive rate, flags), `candidates`, `promote`, `enforce`, `monitor`, `retire`, `label`, `conflicts`. Changes are user override files with the same id; shipped files are never edited. The same operations are MCP tools named `antipatterns_*`.
+
 ## Related
 
 - [Safety and audit in the feature map](../features.md#safety-and-audit)
 - [Worker rules](../worker-rules.md)
-- [`pai rules`](../commands/rules.md), [`pai audit`](../commands/audit.md)
+- [`pai rules`](../commands/rules.md), [`pai antipatterns`](../commands/antipatterns.md), [`pai audit`](../commands/audit.md)

@@ -168,6 +168,8 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     if (!viaRouter) process.stderr.write(`pai: router down, ${target.providerName} runs direct (no router prefix fix)\n`);
   }
   const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter, a.orchestrate);
+  // read by the anti-pattern firing record (which model a pattern fired on)
+  if (headless && typeof model === "string" && model) env.PAI_WORKER_MODEL = model;
 
   const wid = a.id ?? newWorkerId();
   // a resume takes over the old id's tree and runs against its repo

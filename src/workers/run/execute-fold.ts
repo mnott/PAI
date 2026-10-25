@@ -87,7 +87,8 @@ import {
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
-import { unparsedToolCall, unparsedCallPrompt } from "./unparsed-call.js";
+import { unparsedCallDecision, unparsedCallPrompt } from "./unparsed-call.js";
+import { recordFiring } from "../../hooks/ts/lib/antipattern-log.js";
 import type { PreparedRun } from "./execute-prepare.js";
 
 export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
@@ -480,7 +481,10 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = state.resultEvent;
   // a final text that is an unparsed tool call ends the run early: continue the same session, at most config times
-  const unparsedName = headless && config.unparsedCallContinuations > 0 && status.claudeSession ? unparsedToolCall(resultEvent?.result) : null;
+  const unparsed = headless && config.unparsedCallContinuations > 0 && status.claudeSession ? unparsedCallDecision(resultEvent?.result) : null;
+  if (unparsed) recordFiring({ id: "unparsed-tool-call", version: unparsed.version, category: "final-text", action: "continue", mode: unparsed.mode, input: resultEvent?.result ?? "", cwd, env });
+  // monitor mode records the firing and leaves the run as it ended
+  const unparsedName = unparsed?.mode === "enforce" ? unparsed.name : null;
   if (unparsedName && resultEvent) {
     appendLedger(ledger, "WORKER-CONTINUED", { id: wid, reason: `unparsed tool call ${unparsedName}` });
     status.last = `continued: unparsed tool call ${unparsedName}`;

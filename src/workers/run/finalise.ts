@@ -42,6 +42,7 @@ import { modelFlagArgs } from "./model.js";
 import { ensureToolSearch } from "./argv.js";
 import { hasMalformedToolCall, MALFORMED_TOOL_CALL, DEGENERATE_ANSWER } from "../malformed-toolcall.js";
 import { redactSecrets } from "../../utils/redact.js";
+import { recordRunOutcomes } from "../../hooks/ts/lib/antipattern-log.js";
 
 /**
  * The finalisation every engine shares: orphaned-children check, state, the
@@ -204,6 +205,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   status.state = succeeded ? "done" : "failed";
   status.rc = rc;
   status.secs = f.secs;
+  // one outcome line per anti-pattern firing of this run
+  recordRunOutcomes(wid, loopStop ? "stopped" : succeeded ? "succeeded" : "failed");
   if (orphanReason) {
     status.last = shortText(orphanReason, 90);
     report = { ...(report ?? {}), notes: orphanReason, result: "-" };

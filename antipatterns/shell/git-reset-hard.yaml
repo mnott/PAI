@@ -1,5 +1,9 @@
 # git reset --hard throws away uncommitted work.
 id: git-reset-hard
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 category: dangerous_git
 flags: i

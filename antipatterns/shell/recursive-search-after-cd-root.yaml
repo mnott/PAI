@@ -2,6 +2,10 @@
 # the search root is the directory the command line just changed into.
 # Workers also get the cwd-aware check in worker-guard.ts.
 id: recursive-search-after-cd-root
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 quoted: true
 category: resource_exhaustion

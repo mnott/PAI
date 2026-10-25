@@ -2,6 +2,10 @@
 # in commit messages, grep/rg patterns, echo/printf and heredocs written to a
 # file (see instruction-override-ignore).
 id: instruction-override-disregard
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 quoted: true
 text_ok: true

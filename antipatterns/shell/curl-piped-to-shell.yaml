@@ -2,6 +2,10 @@
 # behind prefix wrappers or an absolute path (| env sh, | sudo -E bash,
 # | /bin/dash, | (sh)); up to three filters may sit in between (| tee f | sh).
 id: curl-or-wget-piped-to-shell
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 quoted: true
 flags: m

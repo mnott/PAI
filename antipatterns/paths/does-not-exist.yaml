@@ -1,6 +1,10 @@
 # A Read/Edit/Write file_path that does not exist and cannot be repaired.
 # Detection stays in path-repair.ts (repair rules run first); this file owns the wording.
 id: does-not-exist
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 category: paths
 detector:
   kind: missing-path

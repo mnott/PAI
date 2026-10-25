@@ -4,6 +4,7 @@
  */
 
 import { activeAntipattern, fillMessage } from "../../hooks/ts/lib/antipatterns.js";
+import { dispositionOf } from "../../hooks/ts/lib/antipattern-lifecycle.js";
 
 const FENCE = /```[\s\S]*?```/g;
 
@@ -39,4 +40,13 @@ export function unparsedToolCall(text: string | undefined): string | null {
 /** The continuation prompt: names the tool that was not available, lists the ones that are. */
 export function unparsedCallPrompt(name: string, allowedTools: string): string {
   return fillMessage(activeAntipattern("unparsed-tool-call").message, { name, allowed: allowedTools });
+}
+
+/** The unparsed call in the text and what the pattern does about it now (monitor: record only); null when none, or the pattern is off. */
+export function unparsedCallDecision(text: string | undefined): { name: string; mode: "enforce" | "monitor"; version: number } | null {
+  const name = unparsedToolCall(text);
+  if (!name) return null;
+  const ap = activeAntipattern("unparsed-tool-call");
+  const mode = dispositionOf(ap, text ?? "");
+  return mode === "off" ? null : { name, mode, version: ap.version };
 }

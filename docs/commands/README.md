@@ -8,6 +8,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 
 | Area | Description |
 |---|---|
+| [`pai antipatterns`](antipatterns.md) | Anti-patterns: status, firings, candidates, retirement |
 | [`pai audit`](audit.md) | Find out where tokens are being spent |
 | [`pai backup`](backup.md) | Back up the registry, config and Postgres database |
 | [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync |
@@ -76,6 +77,16 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 
 | Command | Description |
 |---|---|
+| `pai antipatterns` | Anti-patterns: status, firings, candidates, retirement |
+| `pai antipatterns candidates` | Cases a guard stopped that no pattern covers |
+| `pai antipatterns conflicts` | Duplicate ids and patterns that match each other's fixtures with different actions |
+| `pai antipatterns enforce` | Switch a pattern to enforce mode |
+| `pai antipatterns label` | Label a firing (or all firings of a pattern) tp, fp or benign_tp |
+| `pai antipatterns list` | Every pattern with status, mode and version |
+| `pai antipatterns monitor` | Switch a pattern to monitor mode (record, take no action) |
+| `pai antipatterns promote` | Make a candidate a pattern (status test, mode monitor) |
+| `pai antipatterns retire` | Retire a pattern (status deprecated) |
+| `pai antipatterns stats` | Firing counts, models, outcomes and health flags per pattern |
 | `pai audit` | Find out where tokens are being spent |
 | `pai audit scan` | After-the-fact security scan of a session or worker transcript |
 | `pai audit tokens` | Token-waste report (all checks, or pick one below) |

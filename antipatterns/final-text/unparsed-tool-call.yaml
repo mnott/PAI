@@ -2,6 +2,10 @@
 # text because the tool was not declared. Claude Code takes it as the final answer and
 # the run ends; the worker is continued once with the prompt below.
 id: unparsed-tool-call
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-24
 category: final-text
 detector:
   kind: unparsed-tool-call
