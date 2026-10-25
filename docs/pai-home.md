@@ -62,3 +62,9 @@ What it does:
 
 `--dry-run` prints the same plan and table and changes nothing, and still lists
 what is running.
+
+## Versioning config changes
+
+When PAI_HOME is a git repository, PAI commits its own config writes (`pai config set`, `pai antipatterns set|promote|enforce|monitor|retire|label`, `pai worker providers ...`) as `config: <what changed>`. Only the changed files are staged; firings, databases and logs are never committed. Turn it off with `home.autoCommit: false` in `config.yaml` (default `true`).
+
+`pai home git-setup` appends the missing `.gitignore` lines (`!/antipatterns/`, `/antipatterns/firings.jsonl*`) and commits them. It prints the lines first and applies only with `--write`; running it again changes nothing.

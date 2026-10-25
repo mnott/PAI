@@ -15,6 +15,7 @@
  * byte-for-byte across `add`, `use`, `disable`, and every other mutation.
  */
 
+import { commitHomeChange } from "../config/home-git.js";
 import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -697,6 +698,7 @@ export function writeWorkersYamlText(yamlPath: string, text: string): void {
   } catch (e) {
     throw new WorkersConfigError(e instanceof YamlStoreError ? e.message : String(e instanceof Error ? e.message : e));
   }
+  commitHomeChange([yamlPath], "update workers.yaml");
 }
 
 // ---------------------------------------------------------------------------
