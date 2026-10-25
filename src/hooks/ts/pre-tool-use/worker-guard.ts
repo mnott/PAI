@@ -25,6 +25,7 @@ import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { decideOrchestratorBash } from "../lib/edit-gate.js";
+import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { loopDenyReason, actionKey, stepLoopGuard, worktreeFingerprint } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { recordToolError } from "../../../workers/tool-errors.js";
@@ -97,6 +98,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
       readWorkersSection().workers.loopGuard,
     );
     if (r.state !== state) saveLoopState(file, r.state);
+    recordLoopTelemetry(r, { cwd: input.cwd, sessionId: (input as { session_id?: string }).session_id, fallbackText: input.tool_name });
     if (r.deny) {
       recordToolError(logDir, {
         worker: id,

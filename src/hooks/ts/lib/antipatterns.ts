@@ -16,13 +16,14 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { SHIPPED_ANTIPATTERNS } from "./antipatterns.generated.js";
+import { parseLifecycle, type Lifecycle } from "./antipattern-lifecycle.js";
 
 export const CATEGORIES = ["shell", "tool-loop", "final-text", "paths"] as const;
 export type Category = (typeof CATEGORIES)[number];
 export const ACTIONS = ["note", "deny", "continue", "stop"] as const;
 export type Action = (typeof ACTIONS)[number];
 
-export interface Antipattern {
+export interface Antipattern extends Lifecycle {
   id: string;
   category: Category;
   detector: { kind: string; params: Record<string, unknown> };
@@ -56,6 +57,8 @@ const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null
     return null;
   },
   "missing-path": () => null,
+  /** A recorded case with no live detector (a promoted candidate): fixtures only, nothing acts on it. */
+  observed: () => null,
 };
 
 /** The pattern, or the reason it is not one. */
@@ -77,7 +80,10 @@ export function validateAntipattern(raw: unknown, dirCategory: string | null, so
   if (typeof message !== "string" || !message) return "message missing";
   const t = isObj(tests) ? tests : {};
   const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
+  const lc = parseLifecycle(raw);
+  if (typeof lc === "string") return lc;
   return {
+    ...lc,
     id,
     category: category as Category,
     detector: { kind: detector.kind, params },

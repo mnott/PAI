@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, parse as parsePath, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
+import { parseLifecycle, type Lifecycle } from "../antipattern-lifecycle.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
 import type { LoadedRule, Rule, RuleSequence, RuleSequenceStep, RuleSeverity } from "./types.js";
 
@@ -246,12 +247,17 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
   }
   // `severity: off` disables the id; it needs no match.
   if (severity === "off") return { id, severity, reason };
+  const lc = parseLifecycle(raw);
+  if (typeof lc === "string") {
+    errors.push(`${source} (${id}): ${lc}`);
+    return null;
+  }
   const match = typeof raw.match === "string" ? raw.match : "";
   // A sequence rule carries its patterns in `sequence.steps` instead of `match`.
   if (raw.sequence !== undefined) {
     const sequence = asSequence(raw, id, source, errors);
     if (!sequence) return null;
-    return { id, severity, sequence, category: typeof raw.category === "string" ? raw.category : undefined, reason, tests: asTests(raw) };
+    return { ...lc, id, severity, sequence, category: typeof raw.category === "string" ? raw.category : undefined, reason, tests: asTests(raw) };
   }
   if (!match) {
     errors.push(`${source} (${id}): missing match`);
@@ -269,6 +275,7 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     return null;
   }
   return {
+    ...lc,
     id,
     severity,
     tool: typeof raw.tool === "string" ? raw.tool : undefined,
@@ -281,6 +288,12 @@ function asRule(value: unknown, source: string, errors: string[]): Rule | null {
     reason,
     tests: asTests(raw),
   };
+}
+
+/** The rule's lifecycle with defaults filled in (built-ins embed the raw YAML fields). */
+export function ruleLifecycle(rule: Rule): Lifecycle {
+  const lc = parseLifecycle(rule as unknown as Record<string, unknown>);
+  return typeof lc === "string" ? parseLifecycle({}) as Lifecycle : lc;
 }
 
 /** Fixtures: plain strings for a single-step rule, lists of step contents for a sequence rule. */
@@ -387,7 +400,7 @@ export function loadRules(dirs: string[], opts: LoadOptions = {}): { rules: Rule
   const { byId, errors, ignored } = mergeRules(dirs, opts);
   const rules: Rule[] = [];
   for (const rule of byId.values()) {
-    if (rule.severity === "off") continue;
+    if (rule.severity === "off" || rule.status === "deprecated") continue;
     const { source: _source, ...rest } = rule;
     rules.push(rest);
   }

@@ -1,6 +1,10 @@
 # A Write that puts an earlier version of a file back (A,B,A,B,...): the current
 # content never repeats, so the identical-write count never trips.
 id: revert
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 category: tool-loop
 detector:
   kind: revert

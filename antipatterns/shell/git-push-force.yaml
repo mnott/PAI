@@ -1,5 +1,9 @@
 # git push -f / --force, also inside combined short flags (-vf). --force-with-lease and --follow-tags pass.
 id: git-push-force
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 category: dangerous_git
 flags: i

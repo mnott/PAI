@@ -3,6 +3,10 @@
 # quiet where the phrase is only being written about: a commit message, a
 # grep/rg pattern, echo/printf, a heredoc written to a file (text_ok).
 id: instruction-override-ignore
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 quoted: true
 text_ok: true

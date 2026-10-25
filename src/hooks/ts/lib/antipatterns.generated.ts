@@ -3,6 +3,10 @@
 export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   {
     "id": "unparsed-tool-call",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-24",
     "category": "final-text",
     "detector": {
       "kind": "unparsed-tool-call",
@@ -41,6 +45,10 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "does-not-exist",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-25",
     "category": "paths",
     "detector": {
       "kind": "missing-path",
@@ -66,6 +74,10 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "growing-command",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
       "kind": "growing-command",
@@ -99,6 +111,10 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "identical-write",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
       "kind": "identical-write",
@@ -130,6 +146,10 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "repeated-failure",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
       "kind": "repeated-failure",
@@ -159,6 +179,10 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "revert",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
       "kind": "revert",

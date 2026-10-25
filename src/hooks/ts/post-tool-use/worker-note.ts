@@ -13,6 +13,7 @@ import { readWorkersSection } from "../../../workers/config.js";
 import { NOTE_TOKEN_ENV, noteContext, takePendingNotes } from "../../../workers/note-delivery.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
+import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { recordLoopFailure, recordLoopResult } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
@@ -30,6 +31,7 @@ function recordResult(raw: string, logDir: string, id: string): string | undefin
       // a failure that never reached PreToolUse (input validation) is counted here; the 4th identical one is told to stop
       const r = recordLoopFailure(state, j.tool_name, input, j.error ?? j.tool_response);
       if (r.state !== state) saveLoopState(file, r.state);
+      recordLoopTelemetry(r, { fallbackText: j.tool_name });
       if (!r.deny) return r.note;
       if (r.stop) requestLoopStop(logDir, id, `${j.tool_name} failed ${r.count} times with the same error`);
       return r.reason;

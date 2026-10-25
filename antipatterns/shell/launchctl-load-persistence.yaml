@@ -1,5 +1,9 @@
 # Loading a launchd agent persists a background job.
 id: launchctl-load-persistence
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 flags: m
 match: /{{CMD}}launchctl\s+(?:load|bootstrap)\b/

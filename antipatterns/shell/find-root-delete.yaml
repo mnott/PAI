@@ -1,5 +1,9 @@
 # find / -delete wipes the filesystem; find ~ with only depth/type limits does too.
 id: find-root-delete
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 quoted: true
 category: catastrophic_deletion

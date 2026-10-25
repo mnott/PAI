@@ -1,6 +1,10 @@
 # Two-step, strict order: a file is downloaded, then the same file is made
 # executable or run. Downloading is fine; running what was just fetched is not.
 id: download-then-execute
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 reason: a downloaded file is made executable or run straight afterwards
 sequence:

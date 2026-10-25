@@ -1,5 +1,9 @@
 # Installing a crontab persists a scheduled command.
 id: crontab-persistence
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 flags: m
 match: /{{CMD}}crontab\s+(?:-\S+\s+)*[^\s|;&]+\.\w+(?:\s|$)/

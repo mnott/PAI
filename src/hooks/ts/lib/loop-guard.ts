@@ -24,6 +24,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
+import { dispositionOf } from "./antipattern-lifecycle.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 // Thresholds and message texts live in antipatterns/tool-loop/*.yaml (user overrides in PAI_HOME/antipatterns).
@@ -523,6 +524,10 @@ export interface LoopStep {
   note?: string;
   /** True when this call is a nudge-prefixed repeat of a command the guard already blocked (LOOP-GUARD-EVASION). */
   evasion?: boolean;
+  /** The anti-pattern that produced a deny or note; absent for a stop no pattern covers (a candidate). */
+  id?: string;
+  /** Set when the pattern is in monitor mode: the step is neutralised (no deny, stop or note) and this is what it would have done. */
+  monitored?: { action: "note" | "deny" | "stop" };
 }
 
 function runnerEcho(prior: string | undefined, echo: EchoConfig): string {
@@ -537,7 +542,7 @@ function hangNote(state: LoopState, command: string): string {
 }
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
+function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
   if (EDIT_TOOLS.has(tool)) {
     const ek = callKey(tool, input);
     if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes }, deny: false };
@@ -558,6 +563,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
         state: { ...emptyLoopState(), writes },
         deny: true,
         stop: true,
+        id: "identical-write",
         key: ek.split("\t")[1],
         count: n,
         reason: fillMessage(iw.params.stop_message as string, { file, n }),
@@ -567,6 +573,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
         state: { ...emptyLoopState(), writes },
         deny: true,
         stop: true,
+        id: "revert",
         key: ek.split("\t")[1],
         count: reverts,
         reason: fillMessage(rv.params.stop_message as string, { file, n: reverts }),
@@ -574,7 +581,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     const ordinal = `${reverts}${reverts % 10 === 3 && reverts !== 13 ? "rd" : reverts % 10 === 2 && reverts !== 12 ? "nd" : "th"}`;
     const revertNote = revert && reverts >= (rv.params.note_at as number) ? fillMessage(rv.message, { file, ordinal, n: reverts }) : undefined;
     const note = revertNote ?? (n >= (iw.params.note_at as number) ? fillMessage(iw.message, { file, tool, n }) : undefined);
-    return { state: { ...emptyLoopState(), writes, window: [ek], outs: [null] }, deny: false, ...(note ? { note } : {}) };
+    return { state: { ...emptyLoopState(), writes, window: [ek], outs: [null] }, deny: false, ...(note ? { note, id: revertNote ? "revert" : "identical-write" } : {}) };
   }
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
@@ -653,6 +660,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
           state,
           deny: true,
           stop: n >= (rf.params.stop_at as number),
+          id: "repeated-failure",
           key: ak,
           count: n,
           reason: fillMessage(rf.message, { key: ak, deny_at: rf.params.deny_at as number, hang: hangNote(state, cmd as string), echo: runnerEcho(state.runLast?.[ak], echo) }),
@@ -679,6 +687,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
       state: { ...state, denials },
       deny: true,
       stop: denials[head] >= (gc.stop_denials as number),
+      id: "growing-command",
       evasion: typeof cmd === "string" && loopGuardEvasion(cmd, head.split("\t")[1] ?? ""),
       reason: hung || echoed ? `${loopDenyReason(tool)}${hung ? HANG_SUFFIX : ""}${echoed}` : undefined,
       key: head.split("\t")[1],
@@ -690,7 +699,24 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
   const nextOuts = [...outs];
   while (nextOuts.length < state.window.length) nextOuts.push(null);
   nextOuts.push(null);
-  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: gc.note_message as string } : {}) };
+  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: gc.note_message as string, id: "growing-command" } : {}) };
+}
+
+/**
+ * One step of the loop guard. A pattern in monitor mode (or retired, or excepted) is neutralised here, in one place:
+ * the step still counts, but nothing is denied, stopped or noted; a monitored one says what it would have done.
+ */
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
+  return applyLifecycle(stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo));
+}
+
+function applyLifecycle(r: LoopStep): LoopStep {
+  if (!r.id || !(r.deny || r.note)) return r;
+  const ap = activeAntipattern(r.id);
+  const disp = dispositionOf(ap, r.key ?? "");
+  if (disp === "enforce") return r;
+  const { reason: _reason, note: _note, evasion: _evasion, ...rest } = r;
+  return { ...rest, deny: false, stop: false, ...(disp === "monitor" ? { monitored: { action: r.stop ? "stop" : r.deny ? "deny" : "note" } } : {}) } as LoopStep;
 }
 
 /**

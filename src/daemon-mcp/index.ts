@@ -116,6 +116,7 @@ import { workerModel } from "./tools/worker-model.js";
 import { realSessionProfileDeps, sessionProfileGet, sessionProfileSet } from "./tools/session-profile.js";
 import { configList, configGet, configSet, configUnset } from "./tools/config.js";
 import { workerCapability } from "./tools/worker-capability.js";
+import { candidates as apCandidates, conflicts as apConflicts, label as apLabel, listPatterns as apList, parseSince as apSince, promote as apPromote, retire as apRetire, setMode as apSetMode, stats as apStats } from "../antipatterns/govern.js";
 import { currentLocalStatus } from "../workers/local-provider.js";
 import { localStatusReport } from "../workers/local-status.js";
 import { currentInventory, inventoryRows, INVENTORY_HEADERS } from "../workers/model-inventory.js";
@@ -755,6 +756,34 @@ async function startShim(): Promise<void> {
     },
     async (args) => proxyTool("memory_lessons", args)
   );
+
+  // -------------------------------------------------------------------------
+  // Tools: antipatterns_* (governance of the anti-pattern directory)
+  // -------------------------------------------------------------------------
+
+  const apTool = (name: string, description: string, shape: Record<string, z.ZodTypeAny>, run: (args: any) => unknown): void => {
+    server.tool(name, description, shape, async (args: any) => {
+      try {
+        const r = run(args);
+        return { content: [{ type: "text" as const, text: typeof r === "string" ? r : JSON.stringify(r, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `${name} error: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      }
+    });
+  };
+  apTool("antipatterns_list", "List anti-patterns with status, mode and version (shell rules and the other categories).", { category: z.string().optional(), status: z.enum(["experimental", "test", "stable", "deprecated"]).optional() }, (a) => apList({ category: a.category, status: a.status }));
+  apTool(
+    "antipatterns_stats",
+    "Per pattern: firings, last fired, per model, actions, outcome mix, false-positive rate, flags (false-positive suspect, model-quirk, retire candidate).",
+    { since: z.string().optional().describe("e.g. 12h, 7d, 2w"), model: z.string().optional() },
+    (a) => apStats({ sinceMs: a.since ? apSince(a.since) : undefined, model: a.model }),
+  );
+  apTool("antipatterns_candidates", "Cases a guard stopped that no pattern covers, waiting for review.", {}, () => apCandidates());
+  apTool("antipatterns_promote", "Promote a candidate into the user directory (status test, mode monitor).", { id: z.string() }, (a) => apPromote(a.id));
+  apTool("antipatterns_mode", "Switch a pattern between enforce and monitor (writes a user override).", { id: z.string(), mode: z.enum(["enforce", "monitor"]) }, (a) => apSetMode(a.id, a.mode).path);
+  apTool("antipatterns_retire", "Retire a pattern: status deprecated via a user override; shipped files are never deleted.", { id: z.string(), reason: z.string().optional() }, (a) => apRetire(a.id, a.reason).path);
+  apTool("antipatterns_label", "Label a firing (by ts) or all firings of a pattern (by id) tp, fp or benign_tp.", { target: z.string(), disposition: z.enum(["tp", "fp", "benign_tp", "undetermined"]) }, (a) => ({ labelled: apLabel(a.target, a.disposition) }));
+  apTool("antipatterns_conflicts", "Duplicate ids and active patterns matching each other's fixtures with different actions.", {}, () => apConflicts());
 
   // -------------------------------------------------------------------------
   // Tool: memory_taxonomy

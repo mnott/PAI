@@ -16,6 +16,9 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
+import { activeAntipattern } from "../lib/antipatterns.js";
+import { dispositionOf } from "../lib/antipattern-lifecycle.js";
+import { recordFiring } from "../lib/antipattern-log.js";
 import { type PathRepairCtx, renderPathDeny, renderPathRepair, repairFilePath } from "../lib/path-repair.js";
 import { renderRepair, repairToolName, type ToolNameRepairInput, reportToolDenial, renderToolDenial, inventedToolDirective, repairParams, renderParamRepair } from "../lib/tool-name-repair.js";
 
@@ -88,11 +91,17 @@ async function main(): Promise<void> {
   const fixed = { ...next, tool_input: params?.updatedInput ?? next.tool_input };
   const pathFix = repairFilePath(fixed, process.env, pathCtx(input.cwd ?? process.cwd()));
   if (pathFix?.kind === "deny") {
-    logRepair(`[model]\tpath deny\t${String(fixed.tool_input?.file_path)}`);
-    process.stdout.write(renderPathDeny(pathFix) + "\n");
-    return;
-  }
-  if (pathFix) {
+    const path = String(fixed.tool_input?.file_path);
+    const ap = activeAntipattern("does-not-exist");
+    const disp = dispositionOf(ap, path);
+    if (disp !== "off") recordFiring({ id: ap.id, version: ap.version, category: ap.category, action: "deny", mode: disp, input: path, cwd: input.cwd });
+    // monitor mode records the firing and lets the call through
+    if (disp === "enforce") {
+      logRepair(`[model]\tpath deny\t${path}`);
+      process.stdout.write(renderPathDeny(pathFix) + "\n");
+      return;
+    }
+  } else if (pathFix) {
     logRepair(`path-repair ${pathFix.rule} ${pathFix.from} -> ${pathFix.to}`);
     process.stdout.write(renderPathRepair(pathFix) + "\n");
     return;

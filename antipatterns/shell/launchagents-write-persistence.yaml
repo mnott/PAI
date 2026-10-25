@@ -1,5 +1,9 @@
 # Writing a plist into LaunchAgents registers a startup item.
 id: launchagents-write-persistence
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 flags: m
 match: /(?:>>?|{{CMD}}(?:tee|cp|mv)\b[^|;&]*)\s*(?:~\/Library\/LaunchAgents\/|\$HOME\/Library\/LaunchAgents\/|\/Library\/LaunchAgents\/)/

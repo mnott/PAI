@@ -38,6 +38,7 @@ import { NOTE_TOKEN_ENV, newNoteToken } from "./note-delivery.js";
 import { resolveLocalProvider } from "./local-provider.js";
 import { routeRun } from "./policy.js";
 import { takeLoopStop } from "./loop-stop.js";
+import { recordRunOutcomes } from "../hooks/ts/lib/antipattern-log.js";
 import { ensureNoMcpConfig, eventsPath, ledgerPath, workersLogDir } from "./paths.js";
 import { nowStamp, saveStatus, loadStatus, describeTool, parseSleepSecs, type WorkerStatus } from "./status.js";
 import { loadContractAddendum } from "./contract-addendum.js";
@@ -1376,6 +1377,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const empty = resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
     const ok = !status.timedOut && !clientGoneFired && !loopStop && rc === 0 && !empty;
     status.state = ok ? "done" : "failed";
+    recordRunOutcomes(wid, loopStop ? "stopped" : ok ? "succeeded" : "failed");
     status.rc = rc;
     status.secs = secs;
     if (status.timedOut) status.endReason = "deadline";

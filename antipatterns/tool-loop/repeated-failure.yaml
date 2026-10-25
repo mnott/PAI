@@ -1,6 +1,10 @@
 # A test/build runner run again and again on the same target with no change to the
 # worktree in between: the result cannot change.
 id: repeated-failure
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 category: tool-loop
 detector:
   kind: repeated-failure

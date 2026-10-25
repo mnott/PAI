@@ -1,6 +1,10 @@
 # Obfuscated payload decoded straight into a shell (or interpreter): through a
 # pipe, a process substitution, or a command substitution handed to sh -c/eval.
 id: base64-decode-to-shell
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 quoted: true
 flags: m

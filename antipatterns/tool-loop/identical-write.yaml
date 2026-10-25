@@ -1,6 +1,10 @@
 # The same Write/Edit of one file, byte for byte, again and again. A rewrite costs
 # nothing, so it is only told plainly (note) and stopped at a runaway count.
 id: identical-write
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 category: tool-loop
 detector:
   kind: identical-write

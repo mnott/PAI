@@ -5,6 +5,8 @@
  * every rule carries its own fixtures.
  */
 
+import type { Lifecycle } from "../antipattern-lifecycle.js";
+
 export type RuleSeverity = "block" | "confirm" | "warn" | "off";
 
 /** One step of a sequence rule: a regex on the tool's content, optionally pinned to a tool. */
@@ -28,7 +30,7 @@ export interface RuleSequence {
   order: "strict" | "any";
 }
 
-export interface Rule {
+export interface Rule extends Partial<Lifecycle> {
   id: string;
   severity: RuleSeverity;
   /** Regex on the tool name; default "Bash". */

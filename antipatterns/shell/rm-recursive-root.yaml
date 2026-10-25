@@ -4,6 +4,10 @@
 # env, command, a leading backslash or an absolute path), so `~`, `/` and `-`
 # inside awk programs or python strings never match on their own.
 id: rm-recursive-root
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 quoted: true
 category: catastrophic_deletion

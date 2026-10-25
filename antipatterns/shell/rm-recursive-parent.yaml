@@ -1,5 +1,9 @@
 # Recursive deletion of the parent directory.
 id: rm-recursive-parent
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: block
 quoted: true
 category: catastrophic_deletion

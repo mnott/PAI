@@ -1,5 +1,9 @@
 # Making / or ~ world-writable exposes the whole tree.
 id: world-writable-chmod
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-25
 severity: confirm
 flags: m
 match: /{{CMD}}chmod\s+(?:-R\s+)?(?:777|a\+rwx|o\+w)\s+(?:\/|~\/?|\$HOME)(?:\s|$)/
