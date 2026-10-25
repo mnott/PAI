@@ -39,7 +39,7 @@ import { formatWorktreesStats, worktreesStats } from "./worktree.js";
 import { readInbox } from "./handoff.js";
 import { sayToWorker } from "./operator.js";
 import { clickrControlsArgv, markControlsHeld } from "./controls.js";
-import { appendLedger } from "./ledger.js";
+import { appendLedger, parseStamp } from "./ledger.js";
 import { closeOwnPane } from "./pane.js";
 import { paneTitle, writePaneTitle } from "./pane-title.js";
 import {
@@ -681,7 +681,7 @@ export async function followWorkers(
   // context meter, turns, tools, runtime — frozen with ✓/✗ once it finished
   const statusRowOf = (st: WorkerStatus, secs: number): StatusRow => {
     const fin = finished.has(st.id);
-    const startedAt = Date.parse((st.started ?? "").replace(" ", "T"));
+    const startedAt = parseStamp(st.started ?? "");
     const elapsed =
       fin && st.secs !== null
         ? st.secs
@@ -1128,7 +1128,7 @@ export async function followWorkers(
     const pre = multi ? c("cyan", wid.slice(-4)) + c("dim", " ┃ ") : "  ";
     out(`${pre}${c("red", "✗ " + (st.state || "ended"))} · ${st.last ?? ""}`);
     const why = endLabel(st) ?? "";
-    const secs = st.secs ?? Math.max(0, Math.floor((Date.now() - Date.parse((st.started ?? "").replace(" ", "T"))) / 1000));
+    const secs = st.secs ?? Math.max(0, Math.floor((Date.now() - parseStamp(st.started ?? "")) / 1000));
     out(
       c(
         "dim",

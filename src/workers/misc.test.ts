@@ -316,7 +316,7 @@ describe("ledger", () => {
     appendLedger(file, "WORKER-START", { id: "ab12", provider: "glm", label: "fix buttons" });
     const lines = readFileSync(file, "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} WORKER-START id=ab12 provider=glm label=fix buttons$/);
+    expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})? WORKER-START id=ab12 provider=glm label=fix buttons$/);
     const parsed = parseLedgerLine(lines[0]);
     expect(parsed?.event).toBe("WORKER-START");
     expect(parsed?.fields.provider).toBe("glm");
