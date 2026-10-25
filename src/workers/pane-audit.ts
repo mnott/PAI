@@ -23,7 +23,7 @@ import { appendLedger, parseStamp } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
 import { appendStopEvent, requestKill } from "./endreason.js";
-import { loadStatuses, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
+import { loadStatusesCached, loadStatus, isLive, isChatPane, ownsPid, ownsPidCached, spawnTimeOf } from "./status.js";
 import { loadPlanStatuses } from "./plan-status.js";
 import { isPaneRunId, loadPaneRunStatuses } from "./pane-run.js";
 import type { Messenger } from "./run-events.js";
@@ -111,7 +111,7 @@ export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabM
 /** Everything running now that must own a pane. A run that was refused/allowed hidden (pane.opened false) is exempt. */
 export function runningProcs(logDir: string): AuditProc[] {
   const procs: AuditProc[] = [];
-  for (const s of loadStatuses(logDir)) {
+  for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state === "queued" || (s.pane?.opened === false && !s.pane.failed)) continue;
     procs.push({ id: s.id, kind: "worker", host: s.term || undefined, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), live: isLive(s, ownsPidCached), ...(s.state !== "running" ? { endedMs: stampMs(s.updated, false) } : {}), ...(s.pane?.failed && s.pane.reason ? { noPaneReason: s.pane.reason } : {}) });
   }
@@ -583,7 +583,7 @@ const defaultClose = (logDir: string) => (id: string) => closePaneForWorker(logD
 
 function runningWorkers(logDir: string): Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> {
   const out: Array<{ id: string; startedMs: number; exec: boolean; exempt: boolean }> = [];
-  for (const s of loadStatuses(logDir)) {
+  for (const s of loadStatusesCached(logDir)) {
     if (isChatPane(s) || s.state !== "running" || !isLive(s, ownsPidCached)) continue;
     out.push({ id: s.id, startedMs: spawnTimeOf(s) ?? stampMs(s.started, false), exec: s.pane?.exec === true, exempt: s.pane?.opened === false });
   }

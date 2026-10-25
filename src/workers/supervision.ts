@@ -56,7 +56,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { dirname, join } from "node:path";
-import { alive, isChatPane, loadStatuses, nowStamp, type WorkerStatus } from "./status.js";
+import { alive, isChatPane, loadStatusesCached, nowStamp, type WorkerStatus } from "./status.js";
 import { readWorkersSection } from "./config.js";
 import { itermForClaudeSession, itermUuid } from "./scope.js";
 // Static on purpose: a lazy import() of a dist chunk first hit after a rebuild
@@ -547,7 +547,7 @@ export interface TickResult {
  */
 export async function runSupervisionTick(logDir: string, opts: TickOptions = {}): Promise<TickResult> {
   const now = opts.now ?? new Date();
-  const statuses = opts.statuses ?? loadStatuses(logDir);
+  const statuses = opts.statuses ?? loadStatusesCached(logDir);
   const statePath = supervisionStatePath(logDir);
   const loaded = loadSupervisionState(statePath);
   let state = loaded.state;
