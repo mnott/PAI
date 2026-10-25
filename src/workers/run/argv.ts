@@ -31,13 +31,14 @@ export function headlessPromptText(
  * Where a loopback run's per-worker lines (worktree path, id, deadline, note
  * token) go in the task: after a `--- shared ---` section, right before the
  * `--- unit ---` marker, so the shared section stays inside the cached prefix;
- * a task without both markers gets them at its head.
+ * a task without both markers gets them at its tail, so the task text (rules,
+ * spec, report trailer) stays inside the prefix shared by runs of the same task.
  */
 export function placeVolatile(task: string, volatile: string): string {
   const lines = task.split("\n");
   const a = lines.findIndex((l) => l.trim() === SHARED_MARKER);
   const b = lines.findIndex((l, i) => i > a && l.trim() === UNIT_MARKER);
-  if (a < 0 || b < 0) return volatile + "\n\n" + task;
+  if (a < 0 || b < 0) return task + "\n\n" + volatile;
   return [...lines.slice(0, b), volatile, "", ...lines.slice(b)].join("\n");
 }
 
