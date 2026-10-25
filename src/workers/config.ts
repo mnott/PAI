@@ -608,6 +608,8 @@ export interface WorkersConfig {
   escalate: EscalateConfig;
   /** Loop guard echo size (workers.loopGuard); see hooks/ts/lib/loop-guard.ts. */
   loopGuard: LoopGuardConfig;
+  /** Continuations of a run whose final text is an unparsed tool call (workers.unparsedCallContinuations; 0 disables). */
+  unparsedCallContinuations: number;
   /** Runs strip browser tools unless --browser is passed (workers.noBrowserByDefault). */
   noBrowserByDefault: boolean;
   /** Hourly gc archives finished workers' worktrees older than this many hours (workers.gcOlderThanHours). */
@@ -734,6 +736,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     },
     escalate,
     loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000), echoRunnerLines: num(loopGuard.echoRunnerLines, 40) },
+    unparsedCallContinuations: num(w.unparsedCallContinuations, 1),
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
     worktreesMaxGb: num(w.worktreesMaxGb, 20),
@@ -1485,6 +1488,9 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       loopGuard[k] = t[k] as number;
     }
   }
+  if (w.unparsedCallContinuations !== undefined && (typeof w.unparsedCallContinuations !== "number" || !Number.isInteger(w.unparsedCallContinuations) || w.unparsedCallContinuations < 0)) {
+    bad(".unparsedCallContinuations", "must be a non-negative integer");
+  }
   if (w.noBrowserByDefault !== undefined && typeof w.noBrowserByDefault !== "boolean") {
     bad(".noBrowserByDefault", "must be true or false");
   }
@@ -1573,6 +1579,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
     loopGuard,
+    unparsedCallContinuations: (w.unparsedCallContinuations as number | undefined) ?? d.unparsedCallContinuations,
     noBrowserByDefault,
     gcOlderThanHours,
     worktreesMaxGb,
@@ -1740,6 +1747,7 @@ export function writeWorkersSection(
         localIdle: workers.localIdle,
         escalate: workers.escalate,
         loopGuard: workers.loopGuard,
+        unparsedCallContinuations: workers.unparsedCallContinuations,
         tiers: workers.tiers,
         noBrowserByDefault: workers.noBrowserByDefault,
         gcOlderThanHours: workers.gcOlderThanHours,

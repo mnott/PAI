@@ -87,6 +87,7 @@ import {
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
+import { unparsedToolCall, unparsedCallPrompt } from "./unparsed-call.js";
 import type { PreparedRun } from "./execute-prepare.js";
 
 export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
@@ -478,6 +479,36 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
 
   const secs = Math.floor((Date.now() - t0) / 1000);
   const resultEvent = state.resultEvent;
+  // a final text that is an unparsed tool call ends the run early: continue the same session, at most config times
+  const unparsedName = headless && config.unparsedCallContinuations > 0 && status.claudeSession ? unparsedToolCall(resultEvent?.result) : null;
+  if (unparsedName && resultEvent) {
+    appendLedger(ledger, "WORKER-CONTINUED", { id: wid, reason: `unparsed tool call ${unparsedName}` });
+    status.last = `continued: unparsed tool call ${unparsedName}`;
+    saveStatus(logDir, status);
+    try {
+      const text = await reaskAg2Report({
+        env,
+        cwd: worktree?.dir ?? cwd,
+        model,
+        callerPinnedModel: Boolean(parsed.callerModel),
+        chromeArgs,
+        mcpArgs,
+        toolArgs,
+        toolsFlag,
+        slimArgs,
+        sessionId: status.claudeSession,
+        claudeCmd,
+        prompt: unparsedCallPrompt(unparsedName, grantedToolNames(toolsFlag.slice(1), parsed.allowedTools).join(", ")),
+        timeoutMs: 30 * 60_000,
+      });
+      if (text) {
+        resultEvent.result = text;
+        state.resultReport = parseWorkerReport(text);
+      }
+    } catch {
+      // best effort; the original text stands
+    }
+  }
   const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
   if (resultEvent) status.last = shortText(resultEvent.result ?? "", 90);

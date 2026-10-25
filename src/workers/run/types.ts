@@ -286,6 +286,8 @@ export interface Ag2ReaskArgs {
   slimArgs?: string[];
   sessionId: string;
   timeoutMs?: number;
+  /** The resume prompt; defaults to AG2_REASK_TEXT. */
+  prompt?: string;
   /** Argv head of the original launch (claudeCommand); defaults to plain claude. */
   claudeCmd?: string[];
 }
