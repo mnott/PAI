@@ -290,6 +290,8 @@ export interface Ag2ReaskArgs {
   prompt?: string;
   /** Argv head of the original launch (claudeCommand); defaults to plain claude. */
   claudeCmd?: string[];
+  /** Streams the resumed session (stream-json) event by event; set only by the unparsed-call continuation. */
+  onEvent?: (e: StreamEvent) => void;
 }
 
 export interface CodexArgs extends Omit<ExecuteArgs, "reroutes" | "mcpFlag" | "opts"> {}
