@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
-import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, callKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, LOOP_MAX_REPEATS, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, type LoopState } from "./loop-guard.js";
+import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, callKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, LOOP_MAX_REPEATS, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, IDENTICAL_WRITE_STOP_AT, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 import { fakeUrl, fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
 
@@ -180,18 +180,46 @@ describe("loop guard, all tools", () => {
     expect(a).not.toBe(callKey("Write", { file_path: "/x/a.py", content: "other" }));
     expect(a).not.toBe(callKey("Write", { file_path: "/x/b.py", content: "same" }));
   });
-  it("264 identical Writes with an unchanged worktree: denied at the repeat limit", () => {
-    const input = { file_path: "/tmp/verify_all.py", content: "print(1)\n" };
+  const W = { file_path: "/tmp/verify_all.py", content: "print(1)\n" };
+  /** Steps `calls` through the guard, recording each allowed one; returns every step. */
+  function writes(calls: Array<[string, Record<string, unknown>]>) {
     let s: LoopState = emptyLoopState();
-    const denied: number[] = [];
-    for (let i = 0; i < LOOP_MAX_REPEATS + 3; i++) {
-      const r = stepLoopGuard(s, "Write", input, "fp");
+    return calls.map(([tool, input]) => {
+      const r = stepLoopGuard(s, tool, input, "fp");
       s = r.state;
-      if (r.deny) denied.push(i);
-      else s = recordLoopResult(s, "Write", input, "ok");
+      if (!r.deny) s = recordLoopResult(s, tool, input, "ok");
+      return r;
+    });
+  }
+  it("identical Write x 10: all allowed, told plainly from the 2nd on", () => {
+    const rs = writes(Array.from({ length: 10 }, () => ["Write", W] as [string, Record<string, unknown>]));
+    expect(rs.every((r) => !r.deny)).toBe(true);
+    expect(rs[0].note).toBeUndefined();
+    for (const r of rs.slice(1)) {
+      expect(r.note).toContain("already contains exactly this content");
+      expect(r.note).toContain(W.file_path);
+      expect(r.note).not.toMatch(/commit|R report/);
     }
-    expect(denied[0]).toBe(LOOP_MAX_REPEATS);
-    expect(denied.length).toBe(3);
+  });
+  it("identical Write x 20 with a Read of the file in between: stopped at the 20th", () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    for (let i = 0; i < 20; i++) calls.push(["Write", W], ["Read", { file_path: W.file_path }]);
+    const rs = writes(calls).filter((_, i) => i % 2 === 0);
+    expect(rs.findIndex((r) => r.deny)).toBe(IDENTICAL_WRITE_STOP_AT - 1);
+    expect(rs[IDENTICAL_WRITE_STOP_AT - 1].stop).toBe(true);
+    expect(rs.slice(0, IDENTICAL_WRITE_STOP_AT - 1).every((r) => !r.deny)).toBe(true);
+  });
+  it("a Write with changed content resets the identical-write count", () => {
+    const other = { ...W, content: "print(2)\n" };
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ...Array.from({ length: 15 }, () => ["Write", W] as [string, Record<string, unknown>]),
+      ["Write", other],
+      ...Array.from({ length: 15 }, () => ["Write", W] as [string, Record<string, unknown>]),
+    ];
+    const rs = writes(calls);
+    expect(rs.every((r) => !r.deny)).toBe(true);
+    expect(rs[16].note).toBeUndefined();
+    expect(rs[17].note).toContain("already contains");
   });
   it("Bash via object input behaves as before and denial reason names the tool", () => {
     expect(loopDenyReason("Read", 5)).toMatch(/called Read with similar input 5 times/);
