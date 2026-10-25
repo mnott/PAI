@@ -351,6 +351,12 @@ export function callKey(tool: string, input: string | Record<string, unknown> | 
     const { start, end } = readRange(input);
     return `Read\tRead@${String(input.file_path ?? "")}#${start}-${Number.isFinite(end) ? end : "inf"}`;
   }
+  if (tool === "Write") {
+    // a rewrite with different content is a different call; only the same file with the same bytes repeats
+    const content = typeof input.content === "string" ? input.content : stable(input.content);
+    const hash = createHash("sha1").update(content).digest("hex").slice(0, 12);
+    return `Write\t${String(input.file_path ?? "")}#${hash}`;
+  }
   return `${tool}\t${tokenSet(stable(input)).join(" ")}`;
 }
 
@@ -459,8 +465,8 @@ function trimTail(text: string, lines: number, chars: number): string {
 
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
-  if (EDIT_TOOLS.has(tool)) return emptyLoopState();
   const key = callKey(tool, input);
+  if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? emptyLoopState() : { ...emptyLoopState(), window: [key], outs: [null] };
   if (key !== null && tool === "Bash") {
     const waits = { ...(state.waits ?? {}) };
     const pd = { ...(state.pollDone ?? {}) };
@@ -523,7 +529,12 @@ function hangNote(state: LoopState, command: string): string {
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
-  if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
+  if (EDIT_TOOLS.has(tool)) {
+    // an exact repeat of the previous edit (same file, same content) is a repeat, not progress: fall through to the generic counting below
+    const ek = callKey(tool, input);
+    if (ek === null) return { state: emptyLoopState(), deny: false };
+    if (state.window[state.window.length - 1] !== ek) return { state: { ...emptyLoopState(), window: [ek], outs: [null] }, deny: false };
+  }
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
     const pk = typeof c === "string" ? callKey(tool, c) : null;
