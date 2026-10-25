@@ -10,7 +10,7 @@ import { parseRunnerArgs, shortText } from "../args.js";
 import { assertProviderRunnable, getProviderOrNative, readWorkersSection } from "../config.js";
 import { isLoopbackProvider } from "../run-env.js";
 import { LOCAL_MECHANISM_LINE, NoLocalServerError, isLocalCandidate, resolveLocalProvider, tierProviderNames } from "../local-provider.js";
-import { ledgerPath, workersLogDir } from "../paths.js";
+import { workersLogDir } from "../paths.js";
 import { UNLABELED } from "../status.js";
 import { returnControlsIfHeld } from "../controls.js";
 import { routeRun } from "../policy.js";
@@ -58,15 +58,12 @@ import { executeImageRun, executeRun, executeCodexRun } from "./execute.js";
 import { modelRecord, type ModelRecord } from "../uhp-vocab.js";
 import { executeUhpRun } from "./execute-uhp.js";
 import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
-import { claimIdempotency } from "../idempotency.js";
-import { appendLedger } from "../ledger.js";
 
 /**
  * Run one worker. Returns the process exit code to pass through.
  * Throws WorkersConfigError-shaped Errors for configuration problems.
  */
 export async function runWorker(opts: RunOptions): Promise<number> {
-  if (opts.idempotencyKey) return runIdempotent(opts);
   const runT0 = Date.now();
   const { raw: _raw, workers: config } = readWorkersSection();
   // the session's own routing rows replace the global ones for this run (routeRun and resolveTarget read config.classes)
@@ -424,27 +421,3 @@ export async function runWorker(opts: RunOptions): Promise<number> {
 }
 
 setRunWorker(runWorker);
-
-/**
- * `--idempotency-key`: the first call with a key runs the worker; a repeat with the same request returns
- * that worker's id (onWorkerStart) and its recorded exit without spawning another; the same key with a
- * different request fails with `invalid_input`.
- */
-async function runIdempotent(opts: RunOptions): Promise<number> {
-  const key = opts.idempotencyKey as string;
-  const logDir = workersLogDir(readWorkersSection().workers);
-  const req = { claudeArgs: opts.claudeArgs, className: opts.className, providerFlag: opts.providerFlag, modelFlag: opts.modelFlag, harnessFlag: opts.harnessFlag, capabilityFlag: opts.capabilityFlag, cwd: opts.cwd };
-  const claim = await claimIdempotency(logDir, key, req);
-  if (claim.kind === "replay") {
-    if (!opts.quiet) process.stderr.write(`pai worker: idempotency key already used — worker ${claim.workerId}, not starting another\n`);
-    opts.onWorkerStart?.(claim.workerId);
-    appendLedger(ledgerPath(logDir), "WORKER-IDEMPOTENT-REPLAY", { id: claim.workerId });
-    return 0;
-  }
-  try {
-    return await runWorker({ ...opts, idempotencyKey: undefined, onWorkerStart: (wid) => { claim.record(wid); opts.onWorkerStart?.(wid); } });
-  } catch (e) {
-    claim.release();
-    throw e;
-  }
-}

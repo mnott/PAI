@@ -172,7 +172,6 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
   return {
     kind: "run",
     run: {
-      idempotencyKey: str(o["idempotency-key"]),
       harnessFlag: str(o.harness),
       providerFlag: str(o.provider),
       localFlag: o.local === true || typeof o.local === "string" ? true : undefined,
@@ -303,7 +302,6 @@ const runCommand: CommandDef = {
     { name: "no-worktree", type: "boolean", summary: "Work in place, no worktree" },
     { name: "max-minutes", type: "number", value: "N", summary: "Stop after N minutes and keep the work (0 = no limit; default from the config, 60)" },
     { name: "deadline", type: "string", value: "HH:MM", summary: "Stop at this local time (tomorrow if already past); not with --max-minutes" },
-    { name: "idempotency-key", type: "string", value: "KEY", summary: "Start once per key: a repeat with the same request returns the first worker and spawns nothing (24 h); a different request with the key fails (invalid_input)" },
     { name: "no-pool", type: "boolean", summary: "Start fresh, never use the worker pool. Without it a run whose flags keep it out of the pool (own tool set, MCP, system prompt, stream-json, browser) runs unpooled anyway and says so on stderr" },
     { name: "browser", type: "boolean", summary: "Allow browser tools" },
     { name: "no-browser", type: "boolean", summary: "Remove every browser tool from this worker" },
@@ -358,7 +356,7 @@ const resumeCommand: CommandDef = {
       }
       const old = loadStatus(dir, id);
       if (!old) throw new Error(`no worker named "${id}"`);
-      if (!old.claudeSession && !old.engine) {
+      if (!old.claudeSession) {
         throw new Error(
           `worker ${id} recorded no Claude session id — it predates resume support or ran through an engine that does not expose one`
         );

@@ -1407,7 +1407,6 @@ async function startShim(): Promise<void> {
             className: args.class,
             capabilityFlag: args.capability,
             label: args.label,
-            ...(args.idempotency_key ? { idempotencyKey: args.idempotency_key } : {}),
             ...(args.no_pool ? { noPool: true } : {}),
             ...(args.priority ? { queuePriority: args.priority } : {}),
             mcpFlag: args.mcp,
@@ -1831,7 +1830,7 @@ async function startShim(): Promise<void> {
             new Error(`worker ${args.id} is still running — send messages with worker_say`)
           );
         }
-        if (!old.claudeSession && !old.engine) {
+        if (!old.claudeSession) {
           return workerError(
             new Error(
               `worker ${args.id} recorded no Claude session id — it predates resume support ` +

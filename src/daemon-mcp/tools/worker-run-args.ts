@@ -32,7 +32,6 @@ export const workerRunShape = {
     .optional()
     .describe("Priority when the provider is full or its local engine is shared (default normal). Change it live with worker_priority."),
   mcp: z.string().optional().describe("MCP servers/sets the worker may use (comma-separated)."),
-  idempotency_key: z.string().min(1).optional().describe("Start once per key: a repeat with the same request returns the first worker id and starts nothing (24 h); the same key with a different request is refused (invalid_input)."),
 };
 
 export type WorkerRunArgs = z.infer<z.ZodObject<typeof workerRunShape>>;

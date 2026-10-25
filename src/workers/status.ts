@@ -220,11 +220,7 @@ export interface WorkerStatus {
   parentComm?: string;
   parentBackground?: boolean;
   /** Why the run ended (endreason.ts): exit, deadline, pai-worker-kill, parent-gone, external-signal. */
-  /** Engine without a resumable transcript (image, codex); unset for claude/uhp runs. */
-  engine?: string;
   endReason?: string;
-  /** The end as a coded error (errors.ts: UHP code or `pai_` vendor code); absent on a normal exit. */
-  error?: import("./errors.js").PaiError | null;
   /** Who asked for the stop, when known (kill caller, daemon:<reason>). */
   endBy?: string;
   /** Detail for the reason (signal, sender note). */

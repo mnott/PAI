@@ -23,12 +23,3 @@ describe("resumePlan", () => {
     expect(p.claudeArgs).toEqual(["--resume", "sess-1", "-p", "go"]);
   });
 });
-
-describe("resumePlan for engines without a transcript", () => {
-  it.each(["codex", "image"])("%s starts a fresh thread, never --resume", (engine) => {
-    const p = resumePlan({ ...old, claudeSession: undefined, engine }, "go", () => "/x.jsonl");
-    expect(p.claudeArgs).not.toContain("--resume");
-    expect(p.claudeArgs[1]).toContain("go");
-    expect(p.note).toMatch(new RegExp(engine));
-  });
-});

@@ -5,7 +5,6 @@
  */
 
 import { applyScratchEnv, scratchPromptLine } from "../scratch.js";
-import { applyTraceEnv, traceId } from "../../utils/tracecontext.js";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { openSync, closeSync, writeSync } from "node:fs";
@@ -70,7 +69,6 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
 
   const status: WorkerStatus = {
     id: wid,
-    engine: "image",
     pid: process.pid,
     runPid: process.pid,
     procStart: selfProcStart(),
@@ -180,7 +178,6 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
   env.PAI_WORKER_ID = wid;
   const scratch = applyScratchEnv(env, wid);
-  applyTraceEnv(env);
   // codex takes instructions through the prompt, not a system prompt flag
   const prompt =
     scratchPromptLine(scratch) + "\n\n" +
@@ -190,7 +187,6 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
 
   let status: WorkerStatus = {
     id: wid,
-    engine: "codex",
     pid: process.pid,
     runPid: process.pid,
     procStart: selfProcStart(),
@@ -238,7 +234,6 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     provider: target.providerName,
     mode: "headless",
     engine: "codex",
-    trace_id: traceId(env.TRACEPARENT),
     model,
     cwd,
     label,

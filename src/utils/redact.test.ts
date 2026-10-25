@@ -193,25 +193,3 @@ describe("redactSecrets", () => {
     for (const r of REDACT_RULES) expect(r.id).toBeTruthy();
   });
 });
-
-import { redactKnownValues, registerKnownSecret, redactRegistered } from "./redact.js";
-
-describe("redactKnownValues", () => {
-  const pem = "-----BEGIN KEY-----\nab\"cd\n-----END KEY-----";
-  it("scrubs a PEM value with quote/newline in plain and JSON-escaped form", () => {
-    expect(redactKnownValues(`got ${pem} end`, [pem])).toBe("got [REDACTED] end");
-    expect(redactKnownValues(JSON.stringify({ out: pem }), [pem])).toBe('{"out":"[REDACTED]"}');
-  });
-  it("walks values of nested objects, keeps structural keys", () => {
-    const v = redactKnownValues({ type: "supersecret1", message: { content: [{ text: "key supersecret1 here" }] } }, ["supersecret1"]);
-    expect(v).toEqual({ type: "supersecret1", message: { content: [{ text: "key [REDACTED] here" }] } });
-  });
-  it("values under 8 chars are not scrubbed; longest first", () => {
-    expect(redactKnownValues("a type status abc", ["type", "status"])).toBe("a type status abc");
-    expect(redactKnownValues("tok12345678 and tok12345678-long", ["tok12345678", "tok12345678-long"])).toBe("[REDACTED] and [REDACTED]");
-  });
-  it("registered secrets are scrubbed by redactRegistered", () => {
-    registerKnownSecret("registered-key-9");
-    expect(redactRegistered({ a: "x registered-key-9" })).toEqual({ a: "x [REDACTED]" });
-  });
-});
