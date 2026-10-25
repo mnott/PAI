@@ -26,6 +26,8 @@ import { redactSecrets } from "../../../utils/redact.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 export const LOOP_MAX_REPEATS = 4;
+/** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */
+export const IDENTICAL_WRITE_STOP_AT = 20;
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
 export const LOOP_STOP_DENIALS = 3;
 /** Consecutive same-template read-only Bash calls without a worktree change after which the next one is denied (env PAI_LOOP_READ_STREAK overrides). */
@@ -63,6 +65,8 @@ export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string 
 }
 
 export interface LoopState {
+  /** File -> key of its last Write/Edit and how many times in a row that exact call was made; a Read in between does not reset it. */
+  writes?: Record<string, { key: string; n: number }>;
   /** Call keys (`Tool\tnormalised input`) since the last edit, oldest first. */
   window: string[];
   /** Normalised result text per window entry; null while unknown. */
@@ -349,6 +353,12 @@ export function callKey(tool: string, input: string | Record<string, unknown> | 
     const { start, end } = readRange(input);
     return `Read\tRead@${String(input.file_path ?? "")}#${start}-${Number.isFinite(end) ? end : "inf"}`;
   }
+  if (tool === "Write") {
+    // a rewrite with different content is a different call; only the same file with the same bytes repeats
+    const content = typeof input.content === "string" ? input.content : stable(input.content);
+    const hash = createHash("sha1").update(content).digest("hex").slice(0, 12);
+    return `Write\t${String(input.file_path ?? "")}#${hash}`;
+  }
   return `${tool}\t${tokenSet(stable(input)).join(" ")}`;
 }
 
@@ -453,8 +463,8 @@ function trimTail(text: string, lines: number, chars: number): string {
 
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
-  if (EDIT_TOOLS.has(tool)) return emptyLoopState();
   const key = callKey(tool, input);
+  if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes } : { ...emptyLoopState(), writes: state.writes, window: [key], outs: [null] };
   if (key !== null && tool === "Bash") {
     const waits = { ...(state.waits ?? {}) };
     const pd = { ...(state.pollDone ?? {}) };
@@ -517,7 +527,27 @@ function hangNote(state: LoopState, command: string): string {
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
-  if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
+  if (EDIT_TOOLS.has(tool)) {
+    const ek = callKey(tool, input);
+    if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes }, deny: false };
+    // an identical rewrite is allowed (it costs nothing) and told plainly; only a runaway count is stopped
+    const file = String((input as Record<string, unknown>).file_path ?? (input as Record<string, unknown>).notebook_path ?? "");
+    const prev = state.writes?.[file];
+    const n = prev && prev.key === ek ? prev.n + 1 : 1;
+    const writes = { ...(state.writes ?? {}), [file]: { key: ek, n } };
+    for (const k of Object.keys(writes).slice(0, -LAST_CAP * 8)) delete writes[k];
+    if (n >= IDENTICAL_WRITE_STOP_AT)
+      return {
+        state: { ...emptyLoopState(), writes },
+        deny: true,
+        stop: true,
+        key: ek.split("\t")[1],
+        count: n,
+        reason: `loop guard: you wrote ${file} with exactly the same content ${n} times. It already contains this content; stop rewriting it. ${SELF}`,
+      };
+    const note = n >= 2 ? `${file} already contains exactly this content; your earlier ${tool} succeeded. No need to write it again. Continue with the next task, or finish if none is left.` : undefined;
+    return { state: { ...emptyLoopState(), writes, window: [ek], outs: [null] }, deny: false, ...(note ? { note } : {}) };
+  }
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
     const pk = typeof c === "string" ? callKey(tool, c) : null;

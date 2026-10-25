@@ -82,6 +82,7 @@ import {
   identityExtras,
   reaskAg2Report,
   printResult,
+  loopStopResult,
 } from "./finalise.js";
 import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
@@ -614,7 +615,9 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         return rerunOn(a, wid, why, st);
       }
       if (headless && !a.quiet) {
-        printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
+        // a loop-stop kills claude before it emits a result: print the stop reason and usage so far, not nothing
+        const stop = resultEvent ? null : st.loopStopped ? { reason: st.last.replace(/^loop-stopped: /, "") } : null;
+        printResult(parsed.outputFormat, stop ? loopStopResult(logDir, wid, stop.reason, status.turns, secs) : resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
       }
 
     // Empty response: one automatic re-launch of the same spec in the same cwd.
