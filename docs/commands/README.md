@@ -86,7 +86,6 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai antipatterns monitor` | Switch a pattern to monitor mode (record, take no action) |
 | `pai antipatterns promote` | Make a candidate a pattern (status test, mode monitor) |
 | `pai antipatterns retire` | Retire a pattern (status deprecated) |
-| `pai antipatterns set` | Change one detector parameter of a pattern |
 | `pai antipatterns stats` | Firing counts, models, outcomes and health flags per pattern |
 | `pai audit` | Find out where tokens are being spent |
 | `pai audit scan` | After-the-fact security scan of a session or worker transcript |
