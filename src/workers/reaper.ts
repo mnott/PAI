@@ -23,7 +23,8 @@ import { slotsDir } from "./slots.js";
 import { loadStatus, saveStatus } from "./status.js";
 import { killProcessTree } from "./wait-on.js";
 import { worktreesDir } from "./worktree.js";
-import { truncateLines } from "./ps-table.js";
+import { psTableOrNull, type PsRunner } from "./ps-table.js";
+import { parseEtime } from "./proc-start.js";
 
 export const REAP_TICK_MS = 30_000;
 export const REAP_MIN_AGE_SECS = 120;
@@ -72,13 +73,6 @@ export function isWorkerChrome(row: ProcRow, logDir: string): boolean {
   return [dir, row.cwd].some((p) => p !== "" && SCRATCH_DIRS.some((r) => under(p, r)));
 }
 
-export function parseEtime(s: string): number {
-  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(s.trim());
-  if (!m) return 0;
-  const [d, h, mi, se] = [m[1], m[2], m[3], m[4]].map((x) => Number(x ?? 0));
-  return ((d * 24 + h) * 60 + mi) * 60 + se;
-}
-
 function under(path: string, dir: string): boolean {
   return path === dir || path.startsWith(dir.endsWith(sep) ? dir : dir + sep);
 }
@@ -99,12 +93,10 @@ const spawnRunner: Runner = (cmd, args) => {
 };
 
 export function realSnapshot(run: Runner = spawnRunner, uid: number = process.getuid?.() ?? -1): ProcRow[] {
-  let out: string;
-  try {
-    out = truncateLines(run("ps", ["-axo", "pid=,ppid=,uid=,pcpu=,etime=,command="]));
-  } catch {
-    return [];
-  }
+  // the table through the shared reader (psTable); the lsof follow-up keeps its own runner
+  const ps: PsRunner = (args) => run("ps", args);
+  const out = psTableOrNull("pid=,ppid=,uid=,pcpu=,etime=,command=", ps);
+  if (out === null) return [];
   const rows: ProcRow[] = [];
   for (const line of out.split("\n")) {
     const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(\S+)\s+(.*)$/.exec(line);

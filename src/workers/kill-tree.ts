@@ -8,6 +8,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { psTableOrNull } from "./ps-table.js";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -80,21 +81,19 @@ function realSlotPids(dir: string): number[] {
   }
 }
 
-/** `pids` plus all their descendants (one ps call). */
+/** `pids` plus all their descendants (one ps call through the shared reader). */
 function withDescendants(pids: number[]): number[] {
-  try {
-    const rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" })
-      .split("\n")
-      .map((l) => l.trim().split(/\s+/).map(Number));
-    const all = new Set(pids);
-    for (let grew = true; grew; ) {
-      grew = false;
-      for (const [pid, ppid] of rows) if (pid && ppid !== undefined && all.has(ppid) && !all.has(pid)) (all.add(pid), (grew = true));
-    }
-    return [...all];
-  } catch {
-    return pids;
+  const out = psTableOrNull("pid=,ppid=");
+  if (out === null) return pids;
+  const rows = out
+    .split("\n")
+    .map((l) => l.trim().split(/\s+/).map(Number));
+  const all = new Set(pids);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [pid, ppid] of rows) if (pid && ppid !== undefined && all.has(ppid) && !all.has(pid)) (all.add(pid), (grew = true));
   }
+  return [...all];
 }
 
 /** Identities under which a worker's owner session can appear: launching session name/key, spawner Claude session. */

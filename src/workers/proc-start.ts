@@ -2,11 +2,17 @@ import { execFileSync } from "node:child_process";
 
 const HOUR_MS = 3_600_000;
 
-/** Seconds in a `ps etime` value (`[[dd-]hh:]mm:ss`); NaN when unreadable. */
+/**
+ * Seconds in a `ps etime` value (`[[dd-]hh:]mm:ss`); NaN when unreadable. The one
+ * parseEtime: builds/reap.ts, workers/reaper.ts and daemon/leftovers.ts import this.
+ * A day part is 86400 s (not 24 h worth of hours — the old reap.ts copy read it the same,
+ * the old reaper.ts copy read "4" as 0 and the old leftovers.ts copy matched only the
+ * four-field forms; this one takes the union of what they all accepted).
+ */
 export function parseEtime(v: string): number {
-  const m = v.trim().match(/^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/);
+  const m = v.trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
   if (!m) return NaN;
-  return ((+(m[1] ?? 0) * 24 + +(m[2] ?? 0)) * 60 + +m[3]!) * 60 + +m[4]!;
+  return (+(m[1] ?? 0) * 24 + +(m[2] ?? 0)) * 3600 + +m[3]! * 60 + +m[4]!;
 }
 
 /**

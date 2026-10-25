@@ -10,6 +10,7 @@
  */
 
 import { psTableOrNull } from "../workers/ps-table.js";
+import { parseEtime } from "../workers/proc-start.js";
 
 export interface ProcRow {
   pid: number;
@@ -32,14 +33,6 @@ const procName = (command: string): string => {
   const first = command.trimStart().split(/\s/, 1)[0] ?? "";
   return first.slice(first.lastIndexOf("/") + 1);
 };
-
-/** "[[dd-]hh:]mm:ss" to seconds. */
-export function parseEtime(s: string): number {
-  const [d, rest] = s.includes("-") ? s.split("-") : ["0", s];
-  const p = rest.split(":").map(Number);
-  while (p.length < 3) p.unshift(0);
-  return Number(d) * 86400 + p[0] * 3600 + p[1] * 60 + p[2];
-}
 
 export function parseTable(text: string): ProcRow[] {
   const rows: ProcRow[] = [];

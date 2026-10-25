@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseEtime, reapOrphansOnce, realSnapshot, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
+import { reapOrphansOnce, realSnapshot, type ProcRow, type ReaperDeps, type ReaperState } from "./reaper.js";
+import { parseEtime } from "./proc-start.js";
 
 const LOG = "/logs/workers";
 const row = (o: Partial<ProcRow> = {}): ProcRow => ({
