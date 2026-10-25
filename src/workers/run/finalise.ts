@@ -6,6 +6,7 @@
 
 import { spawn } from "node:child_process";
 import { shortText } from "../args.js";
+import { endError, endReasonCode } from "../errors.js";
 import { buildRunEnv } from "../run-env.js";
 import { appendLedger } from "../ledger.js";
 import { appendStopEvent, decideEndReason, endFields, type EndInfo } from "../endreason.js";
@@ -41,7 +42,7 @@ import {
 import { modelFlagArgs } from "./model.js";
 import { ensureToolSearch } from "./argv.js";
 import { hasMalformedToolCall, MALFORMED_TOOL_CALL, DEGENERATE_ANSWER } from "../malformed-toolcall.js";
-import { redactSecrets } from "../../utils/redact.js";
+import { redactRegistered, redactSecrets } from "../../utils/redact.js";
 
 /**
  * The finalisation every engine shares: orphaned-children check, state, the
@@ -129,6 +130,7 @@ export function recordSignalEnd(logDir: string, status: WorkerStatus, signal: st
     parentBackground: status.parentBackground,
   });
   status.endReason = end.reason;
+  status.error = endError(end.reason, end.note);
   status.endBy = end.by;
   status.endNote = end.note;
   if (end.killReason) status.endKillReason = end.killReason;
@@ -212,6 +214,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   const end = decideEndReason({ logDir, id: wid, timedOut: f.timedOut !== undefined, loopStopped: !!loopStop });
   status.endReason = end.reason;
   if (end.reason === "exit" && hasMalformedToolCall(report?.notes ?? f.fallbackText)) status.endReason = MALFORMED_TOOL_CALL;
+  status.error = endError(status.endReason, end.note);
   // PAI itself stopped the child (not the deadline, not a signal): the report says which timer or check did
   if (end.reason === "pai-worker-kill" && !f.timedOut && end.killReason && !succeeded) {
     status.last = shortText(end.killReason, 90);
@@ -220,7 +223,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   // r=~ (partial) means the work continues: saveStatus then keeps the issue claims
   status.claimsContinue = report?.result === "~";
   saveStatus(logDir, status);
-  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end), ...(status.endReason === MALFORMED_TOOL_CALL ? { instrument: MALFORMED_TOOL_CALL } : {}) });
+  appendLedger(ledger, "WORKER-END", { id: wid, ...f.end, rc, secs: f.secs, ...endFields(end), code: endReasonCode(status.endReason), ...(status.endReason === MALFORMED_TOOL_CALL ? { instrument: MALFORMED_TOOL_CALL } : {}) });
 
   if (f.worktree) status = recordWorktree(logDir, status, f.worktree, ok);
 
@@ -361,7 +364,7 @@ export function printResult(
     const payload = report
       ? { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), report, ...extras }
       : { ...(resultEvent ?? { is_error: true, result: "no result event", rc }), ...extras };
-    console.log(redactSecrets(JSON.stringify(payload)));
+    console.log(redactSecrets(JSON.stringify(redactRegistered(payload))));
     return;
   }
   if (resultEvent) {

@@ -71,6 +71,13 @@ export const UHP_ERROR_CODES = [
   "missing_credential",
   "invalid_credential",
   "unsupported_protocol_version",
+  "invalid_input",
+  "session_not_found",
+  "file_not_found",
+  "file_too_large",
+  "harness_error",
+  "insufficient_scope",
+  "unsupported_base",
 ] as const;
 export type UhpErrorCode = (typeof UHP_ERROR_CODES)[number];
 

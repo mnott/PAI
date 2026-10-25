@@ -18,6 +18,8 @@ import { type ModelRecord } from "../uhp-vocab.js";
 import { type UsageBlock } from "../../utils/input-side-tokens.js";
 
 export interface RunOptions {
+  /** --idempotency-key: a repeat of this key with the same request returns the first run, spawning nothing (idempotency.ts). */
+  idempotencyKey?: string;
   providerFlag?: string;
   /** --class value (the old --role): a task class from workers.classes. */
   className?: string;
