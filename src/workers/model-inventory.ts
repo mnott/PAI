@@ -109,7 +109,7 @@ export interface InventoryInput {
   commands?: Record<string, RuntimeCommands>;
   consumers: DeclaredConsumer[];
   /** the `local_tiers` set: the tier's provider and its button label; its running server is the active tier */
-  tiers?: Array<{ provider: string; label: string; tier?: string }>;
+  tiers?: Array<{ provider: string; label: string; tier?: string; /** the tier's Strata config / location JSON: its model_name is the model the tier serves */ config?: string }>;
 }
 
 const exec = (cmd: string, args: string[]): Promise<string | null> =>
@@ -308,6 +308,8 @@ async function detectDocker(deps: InventoryDeps): Promise<InventoryRuntime | nul
 async function detectProviders(input: InventoryInput, deps: InventoryDeps): Promise<InventoryRuntime[]> {
   const byPort = new Map<string, { host: string; port: number; names: string[]; enabled: string[]; configured: number; defaults: string[]; wanted: Array<{ name: string; model?: string }> }>();
   const tierProviders = (input.tiers ?? []).map((t) => t.provider);
+  const tierCommands: Record<string, RuntimeCommands> = {};
+  for (const t of input.tiers ?? []) if (t.config) tierCommands[t.provider] = { start: `--config "${t.config}"` };
   // every loopback provider keeps its port slot; a DISABLED one (workers.yaml
   // provider enabled:false) contributes no user, no model and enabled:false —
   // the runtime is then not listed at all, not as a red "down, N consumers waiting" card
@@ -341,7 +343,8 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         // DISABLED in workers.yaml: keep the runtime, attach no worker user
         const decl = input.runtimes.find((r) => r.url && Number(new URL(r.url).port) === e.port);
         // runtimes sharing this port: the running one is the runtime whose expected model the server reports
-        const cmds = input.commands ?? {};
+        // a tier's config JSON stands in for a runtime's `--config` start command: one helper tells both apart
+        const cmds: Record<string, RuntimeCommands> = { ...tierCommands, ...input.commands };
         const sharing = e.names.filter((n) => expectedRuntimeModel(cmds[n], deps.readText));
         const holder = running && ids.length && sharing.length > 1 ? portHolder(sharing, cmds, ids, deps.readText) : undefined;
         const rt: InventoryRuntime = {
@@ -497,7 +500,7 @@ export function readInventoryInput(): InventoryInput {
     Array.isArray(v) ? (v.filter((x) => x && typeof x === "object" && ok(x as Record<string, unknown>)) as T[]) : [];
   let tiers: InventoryInput["tiers"];
   try {
-    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => ({ provider: t.provider, label: t.label, tier: t.tier }));
+    tiers = Object.values(readLocalConfig(workersYamlPath()).tiers).map((t) => ({ provider: t.provider, label: t.label, tier: t.tier, config: t.config ?? t.location }));
   } catch {
     tiers = [];
   }
