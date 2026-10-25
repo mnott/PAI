@@ -23,7 +23,7 @@ import {
 } from "./uhp.js";
 import { modelRecord, resultToUhpStatus, uhpErrorReason, uhpStatusToResult, uhpStatusToState, workerStateToUhpStatus } from "./uhp-vocab.js";
 import { uhpReport } from "./run/execute-uhp.js";
-import { discoverUhpVersion, httpErrorOf, uhpVersionWarning } from "./uhp.js";
+import { discoverUhp, discoverUhpVersion, httpErrorOf, uhpVersionWarning } from "./uhp.js";
 
 const sse = (events: Array<Record<string, unknown>>): string =>
   events.map((e, i) => `data: ${JSON.stringify({ sequence_number: i, ...e })}\n\n`).join("");
@@ -74,10 +74,11 @@ describe("request", () => {
     expect(buildUhpRequest("hi")).toEqual({ input: "hi", stream: true, metadata: {} });
   });
   it("builds the headers", () => {
-    const h = buildUhpHeaders(provider("http://x", { uhpProtocol: "1.0" }), "w-1");
+    const h = buildUhpHeaders(provider("http://x", { uhpProtocol: "2026-10-19" }), "w-1");
     expect(h.Authorization).toBe("Bearer k-secret");
     expect(h["Idempotency-Key"]).toBe("w-1");
-    expect(Object.keys(h).some((k) => /version/i.test(k))).toBe(false);
+    expect(h["UHP-Version"]).toBe("2026-10-19");
+    expect(Object.keys(buildUhpHeaders(provider("http://x"), "w-1")).some((k) => /version/i.test(k))).toBe(false);
   });
 });
 
@@ -178,12 +179,12 @@ describe("report", () => {
 });
 
 describe("config", () => {
-  const base = { baseUrl: "http://h", models: { default: "m" }, engine: "uhp", harnessId: "h1", uhpProtocol: "1.0" };
+  const base = { baseUrl: "http://h", models: { default: "m" }, engine: "uhp", harnessId: "h1", uhpProtocol: "2026-10-19" };
   it("parses uhp keys", () => {
     const p = parseProvider("u", base);
     expect(p.engine).toBe("uhp");
     expect(p.harnessId).toBe("h1");
-    expect(p.uhpProtocol).toBe("1.0");
+    expect(p.uhpProtocol).toBe("2026-10-19");
   });
   it("reports problems", () => {
     expect(uhpProviderProblems("u", { ...parseProvider("u", base), keyFile: "~/k" })).toEqual([]);
@@ -250,19 +251,68 @@ describe("fake server", () => {
     expect(Date.now() - t0).toBeLessThan(3000);
   });
 
-  it("discovers the advertised version without auth and warns on a differing pin", async () => {
+  const discovery = {
+    object: "uhp.discovery", protocol: "uhp", versions: ["2026-10-19", "2026-10-04"], default_version: "2026-10-19",
+    conformance_class: "full", capabilities: { streaming: true, sessions: true, plugins: false },
+  };
+  it("discovers the real body without auth and warns on a pin the server does not list", async () => {
     const seen: Array<Record<string, unknown>> = [];
     const url = await start((req, res) => {
       seen.push(req.headers);
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "2026-10-19" }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(discovery));
     });
-    const v = await discoverUhpVersion(provider(url));
-    expect(v).toBe("2026-10-19");
+    const d = await discoverUhp(provider(url));
+    expect(d).toEqual({ default_version: "2026-10-19", versions: ["2026-10-19", "2026-10-04"], conformance_class: "full", capabilities: { streaming: true, sessions: true, plugins: false } });
+    expect(await discoverUhpVersion(provider(url))).toBe("2026-10-19");
     expect(seen[0].authorization).toBeUndefined();
-    expect(uhpVersionWarning("2026-09-12", v)).toMatch(/advertises UHP 2026-10-19, provider pins 2026-09-12/);
-    expect(uhpVersionWarning("2026-10-19", v)).toBeNull();
-    expect(uhpVersionWarning(undefined, v)).toBeNull();
-    expect(await discoverUhpVersion(provider("http://127.0.0.1:1"))).toBeNull();
+    expect(uhpVersionWarning("2026-09-12", d)).toMatch(/pins UHP 2026-09-12, server supports 2026-10-19, 2026-10-04/);
+    expect(uhpVersionWarning("2026-10-04", d)).toBeNull();
+    expect(uhpVersionWarning(undefined, d)).toBeNull();
+    expect(await discoverUhp(provider("http://127.0.0.1:1"))).toBeNull();
+  });
+
+  it("rejects a discovery body that is not UHP", async () => {
+    const url = await start((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "2026-10-19", protocol: "other" }));
+    });
+    expect(await discoverUhp(provider(url))).toBeNull();
+  });
+
+  it("sends UHP-Version and records the answered version", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const url = await start((req, res) => {
+      seen.push(req.headers);
+      res.writeHead(200, { "Content-Type": "text/event-stream", "UHP-Version": "2026-10-19" }).end(completed);
+    });
+    const r = await runUhp({ provider: provider(url, { uhpProtocol: "2026-10-19" }), workerId: "w", prompt: "x" });
+    expect(seen[0]["uhp-version"]).toBe("2026-10-19");
+    expect(r.uhpVersion).toBe("2026-10-19");
+  });
+
+  it("names the supported versions on unsupported_protocol_version", async () => {
+    const url = await start((_req, res) => {
+      res.writeHead(400, { "Content-Type": "application/json", "UHP-Version": "2026-10-19" }).end(JSON.stringify({
+        error: { type: "invalid_request_error", code: "unsupported_protocol_version", message: "no", param: null, detail: { supported: ["2026-10-19"] } },
+      }));
+    });
+    const r = await runUhp({ provider: provider(url, { uhpProtocol: "1.0" }), workerId: "w", prompt: "x" });
+    expect(r.errorMessage).toContain("server supports: 2026-10-19");
+    expect(r.uhpVersion).toBe("2026-10-19");
+  });
+
+  it("maps an unknown error code to its type", async () => {
+    const url = await start((_req, res) => {
+      res.writeHead(429, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { type: "rate_limit_error", code: "acme_slow_down", message: "m" } }));
+    });
+    const r = await runUhp({ provider: provider(url), workerId: "w", prompt: "x" });
+    expect(r.errorCode).toBe("rate_limited");
+    expect(httpErrorOf('{"error":{"type":"server_error","code":"c","message":"m"}}')).toMatchObject({ type: "server_error" });
+  });
+
+  it("requires a date as uhpProtocol", () => {
+    const p = (v: string) => uhpProviderProblems("u", provider("http://h", { uhpProtocol: v })).join();
+    expect(p("1.0")).toMatch(/uhpProtocol must be a date/);
+    expect(p("2026-10-19")).not.toMatch(/uhpProtocol/);
   });
 
   it("reads the coded error body of a 409 session_busy", async () => {

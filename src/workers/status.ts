@@ -68,6 +68,8 @@ export interface WorkerStatus {
   uhpResponseId?: string | null;
   /** uhp engine: metadata.session_id of the harness thread. */
   uhpSessionId?: string | null;
+  /** uhp engine: protocol version the server answered with (UHP-Version header). */
+  uhpVersion?: string;
   /** uhp engine: harness id the run went to. */
   uhpHarnessId?: string;
   /** Model asked for, recorded only when the effective `model` differs (see uhp-vocab modelRecord). */

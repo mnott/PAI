@@ -10,8 +10,8 @@ providers:
     engine: uhp
     baseUrl: https://harness.example.com
     keyFile: ~/.pai/keys/harness
-    harnessId: claude-code        # sent as metadata.harness_id
-    uhpProtocol: "1.0"            # optional pin; GET /v1/uhp is compared to it, a difference only warns
+    harnessId: chrn_0123abcd      # the server's harness id (not a base such as claude-code); sent as metadata.harness_id
+    uhpProtocol: "2026-10-19"     # optional pin, sent as UHP-Version; must be a date
     models:
       default: sonnet
 ```
@@ -21,14 +21,18 @@ providers:
 | `baseUrl` | Harness root; PAI calls `POST {baseUrl}/v1/responses`. |
 | `keyFile` / `key` | Bearer token (`Authorization: Bearer ...`). |
 | `harnessId` | Harness to run. Optional when every run passes `--harness`. |
-| `uhpProtocol` | Pinned protocol version label. |
+| `uhpProtocol` | Pinned protocol version (`YYYY-MM-DD`), sent as the `UHP-Version` request header. `pai worker config check` rejects other shapes. A server that does not support it answers `400 unsupported_protocol_version` with `detail.supported`, which PAI prints. The version the server answered with (response `UHP-Version`) is recorded in the status as `uhpVersion`. |
 
 `pai worker config check` fails on a uhp provider with a non-http baseUrl or no key, and warns when `harnessId` is missing.
+
+## Discovery
+
+`GET {baseUrl}/v1/uhp` needs no key and returns `{object, protocol: "uhp", versions[], default_version, conformance_class, capabilities{...}}`. PAI requires `protocol: "uhp"` and reads `default_version`, `versions`, `conformance_class` and `capabilities` (absent capability = false). With a pin set, a pin missing from `versions` logs a warning before the run.
 
 ## Running
 
 ```
-pai worker run --harness uhp:claude-code -p 'task'
+pai worker run --harness uhp:chrn_0123abcd -p 'task'
 pai worker run --provider harness -p 'task'
 ```
 
