@@ -10,8 +10,8 @@
  *            rails — has no no-sudo alternative (powermetrics needs sudo), so
  *            it stays as an optional extra: one-shot
  *            `mactop --headless --count 2 --format json` (count 1 can return
- *            an empty frame) measures over an interval and takes ~10 s, so it
- *            runs as a background probe at the 1-min ring cadence, never
+ *            an empty frame) with a 1 s interval takes ~2 s, so it
+ *            runs as a background probe every probeMs (5 s), never
  *            blocking a request; its values are served from the last good
  *            probe for up to 5 min
  *
@@ -37,6 +37,8 @@ const CMD_TIMEOUT = 8_000;
 const MACTOP_TIMEOUT = 15_000;
 /** count 1 often emits an empty frame before the first IOReport interval closes */
 const MACTOP_COUNT = 2;
+/** sample window per frame (mactop -i, ms): count 2 finishes in ~2 s */
+const MACTOP_INTERVAL_MS = 1000;
 /** last-known mactop values are served this long while the probe retries */
 const SLOW_TTL = 5 * MIN;
 /** CPU load refresh cadence; a `top -l 2` pass costs ~2 s */
@@ -347,8 +349,10 @@ export interface SystemDeps {
   telemetryFile?: string;
   /** minimum distance between direct-source polls (the page asks every 5 s) */
   ttlMs?: number;
-  /** ring cadence; the mactop probe rides it */
+  /** ring append cadence (1 min) */
   ringMs?: number;
+  /** mactop probe cadence, independent of the ring */
+  probeMs?: number;
   /** ring retention */
   keepMs?: number;
   /** how old a served mactop value may be while the probe retries */
@@ -378,6 +382,7 @@ export class SystemMonitor {
   private readonly telemetryPath: string;
   private readonly ttlMs: number;
   private readonly ringMs: number;
+  private readonly probeMs: number;
   private readonly keepMs: number;
   private readonly staleMs: number;
   private readonly topTtlMs: number;
@@ -401,6 +406,7 @@ export class SystemMonitor {
     this.telemetryPath = deps.telemetryFile ?? telemetryFile();
     this.ttlMs = deps.ttlMs ?? 5_000;
     this.ringMs = deps.ringMs ?? MIN;
+    this.probeMs = deps.probeMs ?? 5_000;
     this.keepMs = deps.keepMs ?? 7 * DAY;
     this.staleMs = deps.staleMs ?? SLOW_TTL;
     this.topTtlMs = deps.topTtlMs ?? TOP_TTL;
@@ -499,11 +505,11 @@ export class SystemMonitor {
     return { sample, why: "" };
   }
 
-  /** Runs the mactop probe if none is in flight and the ring cadence allows it. */
+  /** Runs the mactop probe if none is in flight and probeMs has elapsed. */
   probe(): Promise<void> {
     if (this.slowP) return this.slowP;
     const now = this.now();
-    if (this.slow && now - this.slowAt < this.ringMs) return Promise.resolve();
+    if (this.slow && now - this.slowAt < this.probeMs) return Promise.resolve();
     const p = this.mactop()
       .then((s) => {
         this.slow = s;
@@ -525,7 +531,7 @@ export class SystemMonitor {
     for (const bin of MACTOP_CANDIDATES) {
       try {
         return parseMactopSample(
-          await this.run(bin, ["--headless", "--count", String(MACTOP_COUNT), "--format", "json"]),
+          await this.run(bin, ["--headless", "--interval", String(MACTOP_INTERVAL_MS), "--count", String(MACTOP_COUNT), "--format", "json"]),
           this.now()
         );
       } catch (e) {
