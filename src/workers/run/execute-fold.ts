@@ -496,7 +496,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         toolArgs,
         toolsFlag,
         slimArgs,
-        sessionId: status.claudeSession,
+        sessionId: status.claudeSession as string,
         claudeCmd,
         prompt: unparsedCallPrompt(unparsedName, grantedToolNames(toolsFlag.slice(1), parsed.allowedTools).join(", ")),
         timeoutMs: 30 * 60_000,
