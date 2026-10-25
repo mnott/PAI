@@ -1212,6 +1212,15 @@ export function mergeWorker(
   id: string,
   opts: { noCommit?: boolean; verify?: string; merge?: MergeSettings; verifyTests?: boolean; rebuild?: boolean; build?: BuildRunner; cliRoot?: string | null } = {}
 ): string {
+  const cwd = mustHaveBranch(logDir, id).cwd;
+  return withMergeLock(cwd, () => mergeWorkerLocked(logDir, id, opts), { log: (m) => console.log(m) });
+}
+
+function mergeWorkerLocked(
+  logDir: string,
+  id: string,
+  opts: NonNullable<Parameters<typeof mergeWorker>[2]>
+): string {
   const st = mustHaveBranch(logDir, id);
   if (st.merged) return `worker ${id}: branch ${st.branch} already merged`;
   if (st.escalatedTo && escalationState(logDir, st) === "running") {
@@ -1248,6 +1257,7 @@ export function mergeWorker(
   const [scanFrom, scanTo] = reapply ? [`${reapply.merge}^1`, reapply.merge] : [mergeBase, st.branch!];
   assertStaticScans(st.cwd, scanFrom, scanTo);
   const oldHead = git(st.cwd, ["rev-parse", "HEAD"]);
+  let mergeCommit = "";
   let autoNote: string | null = null;
   try {
     if (reapply) git(st.cwd, ["revert", "--no-edit", reapply.revert]);
@@ -1287,17 +1297,16 @@ export function mergeWorker(
     throw files.length ? new MergeConflictError(msg, files) : new Error(msg);
     }
   }
+  mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
   const verifyLine = gateLines(
     st.cwd,
     opts.verify,
-    () => revertMerge(st.cwd, oldHead),
+    () => revertMerge(st.cwd, mergeCommit),
     () => null
   );
   let related: RelatedResult | null = null;
-  let mergeCommit = "";
   if (opts.verifyTests !== false) {
     const cfg = opts.merge ?? mergeSettings();
-    mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
     related = runRelatedTests(st.cwd, oldHead, { ...cfg, flakyDir: flakyDir(logDir) }, git);
     appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", {
       id,
@@ -1309,7 +1318,7 @@ export function mergeWorker(
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
       throw new Error(
-        `related tests failed: ${files}: reverted ${revertMerge(st.cwd, oldHead)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
+        `related tests failed: ${files}: reverted ${revertMerge(st.cwd, mergeCommit)}; branch kept: fix it and merge again (PAI_MERGE_KEEP_ON_FAIL=1 keeps the merge)`
       );
     }
   }
@@ -1529,15 +1538,55 @@ function gateLines(
  * work can be fixed and re-merged.
  */
 export function runVerify(cwd: string, cmd: string, oldHead: string): string {
-  return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null);
+  return gateLines(cwd, cmd, () => revertMerge(cwd), () => null);
 }
 
-/** Revert the merge just made (a new commit, never a reset — the checkout is shared); returns the reverted head. */
-function revertMerge(cwd: string, oldHead: string): string {
-  const head = git(cwd, ["rev-parse", "HEAD"]);
-  const isMergeCommit = git(cwd, ["rev-list", "--parents", "-n", "1", "HEAD"]).split(" ").length > 2;
-  git(cwd, isMergeCommit ? ["revert", "-m", "1", "--no-edit", head] : ["revert", "--no-edit", `${oldHead}..HEAD`]);
-  return head;
+/**
+ * Revert exactly the commit a merge created (a new commit, never a reset or a range — the checkout is shared and HEAD
+ * may have moved on); `sha` defaults to HEAD for callers that run right after the merge. Returns the reverted sha.
+ */
+export function revertMerge(cwd: string, sha?: string): string {
+  const target = sha ?? git(cwd, ["rev-parse", "HEAD"]);
+  const isMergeCommit = git(cwd, ["rev-list", "--parents", "-n", "1", target]).split(" ").length > 2;
+  git(cwd, isMergeCommit ? ["revert", "-m", "1", "--no-edit", target] : ["revert", "--no-edit", target]);
+  return target;
+}
+
+export interface MergeLockOpts { waitMs?: number; pollMs?: number; log?: (line: string) => void }
+
+/**
+ * Run `fn` holding <git-dir>/pai-merge.lock (holder pid inside), so two merges into one checkout never interleave.
+ * A second merge waits (default max 15 min, says so once); a lock whose pid is gone is taken over.
+ */
+export function withMergeLock<T>(cwd: string, fn: () => T, opts: MergeLockOpts = {}): T {
+  let lock: string;
+  try { lock = resolve(cwd, git(cwd, ["rev-parse", "--git-dir"]), "pai-merge.lock"); } catch { return fn(); }
+  const waitMs = opts.waitMs ?? 15 * 60_000;
+  const pollMs = opts.pollMs ?? 250;
+  const t0 = Date.now();
+  let told = false;
+  for (;;) {
+    try {
+      writeFileSync(lock, String(process.pid), { flag: "wx" });
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    let holder = NaN;
+    try { holder = parseInt(readFileSync(lock, "utf8"), 10); } catch { continue; }
+    if (!pidAlive(holder)) {
+      rmSync(lock, { force: true });
+      continue;
+    }
+    if (Date.now() - t0 >= waitMs) throw new Error(`another merge (pid ${holder}) holds ${lock}; waited ${Math.round((Date.now() - t0) / 1000)}s: retry when it finishes`);
+    if (!told) (opts.log ?? (() => {}))(`another merge into ${cwd} is running (pid ${holder}); waiting for it (max ${Math.round(waitMs / 60_000)} min)`), (told = true);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, pollMs);
+  }
+  try {
+    return fn();
+  } finally {
+    rmSync(lock, { force: true });
+  }
 }
 
 /** Lines a merge may not add under src/: placeholders that pass tsc and tests but do nothing. */
@@ -1592,7 +1641,7 @@ export function scanDiffForTestLoss(diff: string): string | null {
 
 /** Built-in stub scan after a merge: a hit reverts it exactly like a failed verify. */
 export function stubScan(cwd: string, oldHead: string): string {
-  return gateLines(cwd, undefined, () => revertMerge(cwd, oldHead), () => findAddedStub(cwd, oldHead), () =>
+  return gateLines(cwd, undefined, () => revertMerge(cwd), () => findAddedStub(cwd, oldHead), () =>
     scanDiffForTestLoss(git(cwd, ["diff", "-U0", "--no-color", "--no-renames", oldHead, "HEAD"])),
     () => findNewDuplicates(cwd)
   );

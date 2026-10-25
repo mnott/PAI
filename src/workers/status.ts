@@ -422,7 +422,7 @@ export function setWorkerNote(logDir: string, id: string, note: string): WorkerS
   return status;
 }
 
-const statusCache = new Map<string, { mtimeMs: number; size: number; status: WorkerStatus | null }>();
+const statusCache = new Map<string, { mtimeMs: number; ctimeMs: number; ino: number; size: number; status: WorkerStatus | null }>();
 
 /**
  * Load every status file in the logDir, oldest id first, skipping damage. A file is parsed again only when its
@@ -440,14 +440,14 @@ export function loadStatuses(logDir: string): WorkerStatus[] {
     try {
       const st = statSync(path);
       let hit = statusCache.get(path);
-      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
+      if (!hit || hit.mtimeMs !== st.mtimeMs || hit.ctimeMs !== st.ctimeMs || hit.ino !== st.ino || hit.size !== st.size) {
         let status: WorkerStatus | null = null;
         try {
           status = JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;
         } catch {
           // a half-written or damaged status file is not worth a crash
         }
-        hit = { mtimeMs: st.mtimeMs, size: st.size, status };
+        hit = { mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, ino: st.ino, size: st.size, status };
         statusCache.set(path, hit);
       }
       if (hit.status) out.push({ ...hit.status });

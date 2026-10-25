@@ -46,7 +46,7 @@ describe("session max_parallel on the real gate path", () => {
     const logDir = join(d, "logs");
     const target = resolveTarget(config, { provider: "cloudy" } as never) as never;
     const args = (id: string) =>
-      ({ config, logDir, quiet: true, id, label: id, model: "m", cwd: d, worktreeFlag: false, noStagger: true, target, parsed: parseRunnerArgs(["-p", "x", "--output-format", "json"]) }) as never;
+      ({ config, logDir, quiet: true, id, label: id, model: "m", cwd: d, worktreeFlag: false, noStagger: true, target, claudeArgs: [], parsed: parseRunnerArgs(["-p", "x", "--output-format", "json"]) }) as never;
     const spy = vi.spyOn(process.stderr, "write").mockImplementation((() => true) as never);
 
     await gateStart(args("first"));

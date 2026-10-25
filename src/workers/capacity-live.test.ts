@@ -75,6 +75,7 @@ describe("capacity gate on the real config + argument path", () => {
       worktreeFlag: false,
       noStagger: true,
       target,
+      claudeArgs: [],
       parsed,
     } as never;
 
