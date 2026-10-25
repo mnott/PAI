@@ -47,6 +47,7 @@ const args = (logDir: string, port: number, id: string) =>
     noBrowser: true,
     noStagger: true,
     target: { providerName: "loc", provider: { models: { default: "m" }, maxConcurrent: 1 } },
+    claudeArgs: [],
     parsed: { headless: true, prompt: "hi", callerSystemPrompt: false, callerMcpConfig: false, mcp: [], allowedTools: [], outputFormat: "json" },
   }) as never;
 
