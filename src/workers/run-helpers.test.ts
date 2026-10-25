@@ -1258,9 +1258,14 @@ describe("placeVolatile", () => {
   it("puts the per-worker lines between the shared and the unit part", () => {
     expect(placeVolatile(task, "V")).toBe("pre\n--- shared ---\nS1\nS2\nV\n\n--- unit ---\nU1");
   });
-  it("a task without both markers gets them at its head", () => {
-    expect(placeVolatile("plain", "V")).toBe("V\n\nplain");
-    expect(placeVolatile("--- shared ---\nonly", "V")).toBe("V\n\n--- shared ---\nonly");
+  it("a task without both markers gets them at its tail", () => {
+    expect(placeVolatile("plain", "V")).toBe("plain\n\nV");
+    expect(placeVolatile("--- shared ---\nonly", "V")).toBe("--- shared ---\nonly\n\nV");
+  });
+  it("two runs of a marker-less task share everything before the volatile block", () => {
+    const t = "rules\nspec\ntrailer";
+    const [a, b] = [placeVolatile(t, "id-1 03:21"), placeVolatile(t, "id-2 03:24")];
+    expect(a.slice(0, t.length)).toBe(b.slice(0, t.length));
   });
   it("two workers differ only inside the volatile block", () => {
     const strip = (t: string) => t.replace(/<v>[\s\S]*?<\/v>/, "");
