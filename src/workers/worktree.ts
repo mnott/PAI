@@ -443,8 +443,8 @@ export function salvageOnExit(
 }
 
 /** Build and dependency output that is never knowledge; extend this list as needed. */
-export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache"];
-const KNOWLEDGE_IGNORE_SUFFIXES = [".log"];
+export const KNOWLEDGE_IGNORE_NAMES = ["node_modules", "dist", ".pai-scratch", "coverage", ".DS_Store", ".turbo", ".cache", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv", ".tox"];
+const KNOWLEDGE_IGNORE_SUFFIXES = [".log", ".pyc", ".pyo"];
 
 function isBuildOutput(rel: string): boolean {
   const parts = rel.split("/").filter(Boolean);
