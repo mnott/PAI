@@ -79,6 +79,8 @@ export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string 
 export interface LoopState {
   /** File -> key of its last Write/Edit and how many times in a row that exact call was made; a Read in between does not reset it. */
   writes?: Record<string, { key: string; n: number; /** Keys of the last versions written (oldest first, current last). */ seen?: string[]; /** Writes that went back to an earlier version. */ reverts?: number }>;
+  /** File -> Writes since the last Read/Bash/Grep of anything: count, distinct content hashes, and whether distinct-rewrites already fired. */
+  rewrites?: Record<string, { n: number; hashes: string[]; fired?: boolean }>;
   /** Call keys (`Tool\tnormalised input`) since the last edit, oldest first. */
   window: string[];
   /** Normalised result text per window entry; null while unknown. */
@@ -268,6 +270,7 @@ export function emptyLoopState(): LoopState {
 }
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+const READ_TOOLS = new Set(["Read", "Bash", "Grep"]);
 const TMP_PATH = /(?:\/private)?\/tmp\/[^\s'";|&<>)]*|\$\{?TMPDIR\}?(?:\/[^\s'";|&<>)]*)?/g;
 const WAIT_VERB = /\bpai worker (?:wait|wait-on|wait-url|wait-file)\b/;
 
@@ -476,7 +479,7 @@ function trimTail(text: string, lines: number, chars: number): string {
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
   const key = callKey(tool, input);
-  if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes } : { ...emptyLoopState(), writes: state.writes, window: [key], outs: [null] };
+  if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites } : { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, window: [key], outs: [null] };
   if (key !== null && tool === "Bash") {
     const waits = { ...(state.waits ?? {}) };
     const pd = { ...(state.pollDone ?? {}) };
@@ -545,7 +548,7 @@ function hangNote(state: LoopState, command: string): string {
 function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
   if (EDIT_TOOLS.has(tool)) {
     const ek = callKey(tool, input);
-    if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes }, deny: false };
+    if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites }, deny: false };
     // an identical rewrite is allowed (it costs nothing) and told plainly; only a runaway count is stopped
     const file = String((input as Record<string, unknown>).file_path ?? (input as Record<string, unknown>).notebook_path ?? "");
     const prev = state.writes?.[file];
@@ -580,8 +583,25 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
       };
     const ordinal = `${reverts}${reverts % 10 === 3 && reverts !== 13 ? "rd" : reverts % 10 === 2 && reverts !== 12 ? "nd" : "th"}`;
     const revertNote = revert && reverts >= (rv.params.note_at as number) ? fillMessage(rv.message, { file, ordinal, n: reverts }) : undefined;
-    const note = revertNote ?? (n >= (iw.params.note_at as number) ? fillMessage(iw.message, { file, tool, n }) : undefined);
-    return { state: { ...emptyLoopState(), writes, window: [ek], outs: [null] }, deny: false, ...(note ? { note, id: revertNote ? "revert" : "identical-write" } : {}) };
+    // distinct-rewrites: many different Writes of one file with no tool result bringing new information in between
+    const dr = live("distinct-rewrites");
+    const rewrites = { ...(state.rewrites ?? {}) };
+    let rewriteNote: string | undefined;
+    // the revert / identical-write notes of the same step take precedence; the firing waits for the next step
+    const idNote = revertNote ?? (n >= (iw.params.note_at as number) ? fillMessage(iw.message, { file, tool, n }) : undefined);
+    if (tool === "Write") {
+      const cur = rewrites[file] ?? { n: 0, hashes: [] };
+      const hash = ek.slice(ek.lastIndexOf("#") + 1);
+      const next = { n: cur.n + 1, hashes: cur.hashes.includes(hash) ? cur.hashes : [...cur.hashes, hash], fired: cur.fired };
+      if (!next.fired && !idNote && next.n >= (dr.params.same_file_writes as number) && next.hashes.length >= (dr.params.distinct_versions as number)) {
+        next.fired = true;
+        rewriteNote = fillMessage(dr.message, { file, n: next.n });
+      }
+      rewrites[file] = next;
+      for (const k of Object.keys(rewrites).slice(0, -LAST_CAP * 8)) delete rewrites[k];
+    }
+    const note = idNote ?? rewriteNote;
+    return { state: { ...emptyLoopState(), writes, rewrites, window: [ek], outs: [null] }, deny: false, ...(note ? { note, id: idNote ? (revertNote ? "revert" : "identical-write") : "distinct-rewrites", ...(idNote ? {} : { key: file }) } : {}) };
   }
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
@@ -707,7 +727,9 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
  * the step still counts, but nothing is denied, stopped or noted; a monitored one says what it would have done.
  */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
-  return applyLifecycle(stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo));
+  const r = stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
+  // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file
+  return applyLifecycle(READ_TOOLS.has(tool) && r.state.rewrites ? { ...r, state: { ...r.state, rewrites: undefined } } : r);
 }
 
 function applyLifecycle(r: LoopStep): LoopStep {

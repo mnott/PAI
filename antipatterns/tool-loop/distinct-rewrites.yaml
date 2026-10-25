@@ -1,0 +1,32 @@
+# One file Written again and again with different content and no new information in between
+# (no Read, Bash or Grep result): neither identical-write (same bytes) nor revert (an earlier
+# version) sees it. Counts Writes of one file since the last Read/Bash/Grep of anything.
+id: distinct-rewrites
+status: experimental
+mode: monitor
+version: 1
+created: 2026-10-25
+category: tool-loop
+detector:
+  kind: distinct-rewrites
+  params:
+    same_file_writes: 8
+    distinct_versions: 6
+action: note
+message: "You have rewritten {file} {n} times with different content and nothing new to check it against. Keep the best version, move on to the remaining tasks, and come back only if time is left."
+falsepositives:
+  - genuine iterative refinement when each write is followed by a test run or a Read of new information
+blind_spots:
+  - rewrites spread across Edit calls instead of Write
+tests:
+  match:
+    - "A B C D E F G H I"
+    - "A B C D E F G H"
+  no_match:
+    - "A B C D E F G"
+    - "A A A A A A A A A"
+    - "A B A B A B A B A"
+provenance:
+  date: 2026-10-25
+  model: Gyro-M
+  observed: out/27.py written 10 times with 9 distinct contents and no Read or test result in between, while the rest of the set waited
