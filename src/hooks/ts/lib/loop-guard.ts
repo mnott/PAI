@@ -529,7 +529,11 @@ function hangNote(state: LoopState, command: string): string {
 
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
-  if (EDIT_TOOLS.has(tool)) return { state: emptyLoopState(), deny: false };
+  if (EDIT_TOOLS.has(tool)) {
+    // an exact repeat of the previous edit (same file, same content) is a repeat, not progress: fall through to the generic counting below
+    const ek = callKey(tool, input);
+    if (ek === null || state.window[state.window.length - 1] !== ek) return { state: emptyLoopState(), deny: false };
+  }
   if (tool === "Bash") {
     const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
     const pk = typeof c === "string" ? callKey(tool, c) : null;
