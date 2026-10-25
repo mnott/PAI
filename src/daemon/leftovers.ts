@@ -7,6 +7,8 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { psTableOrNull } from "../workers/ps-table.js";
+import { parseEtime } from "../workers/proc-start.js";
 import { alive, isTerminal, loadStatuses, ownsPid, type WorkerStatus } from "../workers/status.js";
 import { poolPidPath, readPoolState, type PoolState } from "../workers/pool.js";
 import { readWorkersSection } from "../workers/config.js";
@@ -32,19 +34,15 @@ export interface PsRow {
   command: string;
 }
 
-/** `ps -axww -o pid=,ppid=,etime=,command=` output to rows. */
+/** `ps -axww -o pid=,ppid=,etime=,command=` output to rows; the etime goes through the shared parseEtime. */
 export function parsePs(out: string): PsRow[] {
   const rows: PsRow[] = [];
   for (const line of out.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s+(.*)$/.exec(line);
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
     if (!m) continue;
-    const [, pid, ppid, d, h, mi, s, command] = m;
-    rows.push({
-      pid: Number(pid),
-      ppid: Number(ppid),
-      ageSecs: Number(d ?? 0) * 86400 + Number(h ?? 0) * 3600 + Number(mi) * 60 + Number(s),
-      command: command!,
-    });
+    const ageSecs = parseEtime(m[3]!);
+    if (Number.isNaN(ageSecs)) continue;
+    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), ageSecs, command: m[4]! });
   }
   return rows;
 }
@@ -134,7 +132,7 @@ export function listLeftovers(daemonPid: number | null): Leftover[] {
     } catch {
       /* no pid file */
     }
-    const ps = execFileSync("ps", ["-axww", "-o", "pid=,ppid=,etime=,command="], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" }, maxBuffer: 16 << 20 });
+    const ps = psTableOrNull("pid=,ppid=,etime=,command=") ?? "";
     return collectLeftovers({
       ps,
       poolState: readPoolState(logDir),

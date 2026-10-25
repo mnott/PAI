@@ -12,6 +12,7 @@
 
 import { parseStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
+import { psTableOrNull } from "./ps-table.js";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { loadStatus, loadStatuses, pidAlive, saveStatus, statusPids, type WorkerStatus } from "./status.js";
 import { fmtElapsed, realProc, type ProcInfo, type WaitingOn } from "./waiting.js";
@@ -93,14 +94,10 @@ function isZombie(pid: number): boolean {
 
 /** `pid` followed by all its live descendants, parents first (from one `ps` snapshot). */
 export function processTree(pid: number): number[] {
-  let rows: string[] = [];
-  try {
-    rows = execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8" }).split("\n");
-  } catch {
-    return [pid];
-  }
+  const table = psTableOrNull("pid=,ppid=");
+  if (table === null) return [pid];
   const kids = new Map<number, number[]>();
-  for (const r of rows) {
+  for (const r of table.split("\n")) {
     const [c, pp] = r.trim().split(/\s+/).map(Number);
     if (Number.isInteger(c) && Number.isInteger(pp)) kids.set(pp, [...(kids.get(pp) ?? []), c]);
   }
