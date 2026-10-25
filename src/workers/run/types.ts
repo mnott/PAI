@@ -14,6 +14,7 @@ import { resolveTarget } from "../routing.js";
 import { type WorktreeInfo } from "../worktree.js";
 import { type WorkerReport } from "../report.js";
 import { type RunLimit } from "../deadline.js";
+import { type ModelRecord } from "../uhp-vocab.js";
 import { type UsageBlock } from "../../utils/input-side-tokens.js";
 
 export interface RunOptions {
@@ -58,6 +59,10 @@ export interface RunOptions {
   worktreeFlag?: boolean;
   /** Resume: the id whose worktree this run takes over (see adoptTree). */
   resumeOf?: string;
+  /** --harness uhp:<id>: the UHP harness id; resolves the uhp provider when no --provider is given. */
+  /** --harness value as typed (uhp:<id>); runWorker resolves it into providerFlag + harnessId. */
+  harnessFlag?: string;
+  harnessId?: string;
   /** --max-minutes: stop the run after N minutes (0 = no limit; default workers.defaultMaxMinutes). */
   maxMinutes?: number;
   /** --deadline HH:MM (local): stop the run then; exclusive with maxMinutes. */
@@ -243,6 +248,8 @@ export interface ExecuteArgs {
   printCmd?: boolean;
   /** "provider/model (why)" — one line on how the provider was chosen. */
   routeWhy?: string;
+  /** requested_model / model_fallback fields when the effective model differs from the requested one. */
+  modelRecord?: ModelRecord;
   reportFormat: "json" | "ag2";
   noReportRetry?: boolean;
   /** --orchestrate: PAI_WORKER_ORCHESTRATOR=1 in the env and the orchestrator addendum in the contract. */

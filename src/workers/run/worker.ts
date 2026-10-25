@@ -55,6 +55,9 @@ import {
   gateStart,
 } from "./gate.js";
 import { executeImageRun, executeRun, executeCodexRun } from "./execute.js";
+import { modelRecord, type ModelRecord } from "../uhp-vocab.js";
+import { executeUhpRun } from "./execute-uhp.js";
+import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
 
 /**
  * Run one worker. Returns the process exit code to pass through.
@@ -68,6 +71,10 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const sessionRoutes = sessionName ? getProfile(sessionName)?.routes : undefined;
   if (sessionRoutes) config.tiers = applyRouteOverrides(config.tiers, sessionRoutes);
   void _raw;
+  if (opts.harnessFlag) {
+    const harnessId = parseHarnessFlag(opts.harnessFlag);
+    opts = { ...opts, harnessId, providerFlag: resolveHarnessProvider(config.providers, harnessId, opts.providerFlag), harnessFlag: undefined };
+  }
   if (!config.enabled) {
     throw new Error(
       `workers are off. Turn them on with: pai worker on` +
@@ -236,6 +243,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   let model = capabilityResolution
     ? capabilityResolution.model
     : resolveRunModel(target, opts.className, modelFlag);
+  let stepRecord: ModelRecord = {};
   if (!capabilityResolution) {
     // capability runs pin their model on purpose (an image prompt on the
     // image model); the step-down guards the class/provider resolution only
@@ -246,6 +254,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       modelFlag,
       callerPinned: parsed.callerModel,
     });
+    stepRecord = modelRecord(model, step.model, "stepped down from the orchestrator's model");
     model = step.model;
     if (step.notice && !opts.quiet) process.stderr.write(`${step.notice}\n`);
   }
@@ -290,6 +299,31 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         quiet: opts.quiet,
         onWorkerStart: engineSkip,
         id: opts.id,
+      });
+    } else if (target.provider.engine === "uhp") {
+      rc = await executeUhpRun({
+        config,
+        logDir,
+        target,
+        model,
+        label,
+        parsed,
+        claudeArgs: opts.claudeArgs,
+        systemWaiver: opts.systemWaiver,
+        cwd: opts.cwd,
+        specPath: opts.specPath,
+        parent: parent ?? undefined,
+        stage: opts.stage,
+        quiet: opts.quiet,
+        onWorkerStart: engineSkip,
+        id: opts.id,
+        resumeOf: opts.resumeOf,
+        className: opts.className,
+        reportFormat,
+        capability: capability ?? undefined,
+        limit,
+        noBrowser,
+        harnessId: opts.harnessId,
       });
     } else if (target.provider.engine === "codex") {
       rc = await executeCodexRun({
@@ -345,6 +379,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         emptyRetried: opts._emptyRetried ?? false,
         route,
         routeWhy,
+        modelRecord: stepRecord,
         fallThroughOf: opts._fallThroughOf,
         escalatedFrom: opts._escalatedFrom,
         priorIds: opts._priorIds,

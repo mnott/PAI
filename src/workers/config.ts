@@ -50,7 +50,7 @@ export type WorkerProtocol = "anthropic" | "openai";
  * "image" engine (src/workers/engines/image.ts — an OpenAI-compatible
  * images API, not a claude/codex spawn).
  */
-export type WorkerEngine = "claude" | "codex" | "image";
+export type WorkerEngine = "claude" | "codex" | "image" | "uhp";
 
 /** One quota window the statusline renders for a provider (e.g. "5h", "7d"). */
 export interface UsageWindow {
@@ -140,6 +140,10 @@ export interface WorkerProvider {
   upstreamUrl?: string;
   /** Runner for this provider; "codex" goes through the Codex CLI. */
   engine?: WorkerEngine;
+  /** engine "uhp": the harness id sent as metadata.harness_id (`--harness uhp:<id>` overrides per run). */
+  harnessId?: string;
+  /** engine "uhp": pinned protocol version label (recorded; compared to GET /v1/uhp, a difference only warns). */
+  uhpProtocol?: string;
   /** Optional shell command printing 0–100 (percent of quota used). */
   quotaProbe?: string;
   /** Auto-routing skips the provider at or above this percentage. Unset falls
@@ -818,8 +822,8 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     bad(`.providers.${name}.protocol`, `"${str(p.protocol)}" is neither "anthropic" nor "openai"`);
   }
   const engine = p.engine === undefined ? "claude" : str(p.engine);
-  if (engine !== "claude" && engine !== "codex" && engine !== "image") {
-    bad(`.providers.${name}.engine`, `"${str(p.engine)}" is none of "claude", "codex", "image"`);
+  if (engine !== "claude" && engine !== "codex" && engine !== "image" && engine !== "uhp") {
+    bad(`.providers.${name}.engine`, `"${str(p.engine)}" is none of "claude", "codex", "image", "uhp"`);
   }
 
   const baseUrl = str(p.baseUrl);
@@ -1029,6 +1033,8 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(str(p.contract) ? { contract: str(p.contract) } : {}),
     ...(upstreamUrl ? { upstreamUrl } : {}),
     ...(engine !== "claude" ? { engine } : {}),
+    ...(engine === "uhp" && str(p.harnessId) ? { harnessId: str(p.harnessId) } : {}),
+    ...(engine === "uhp" && str(p.uhpProtocol) ? { uhpProtocol: str(p.uhpProtocol) } : {}),
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
     ...(p.workerModel === "fast" ? { workerModel: "fast" as const } : {}),
     ...(p.toolParsing === "router" ? { toolParsing: "router" as const } : {}),

@@ -64,6 +64,16 @@ export interface WorkerStatus {
   tools: number;
   last: string;
   rc: number | null;
+  /** uhp engine: id of the last response (what `resume` sends as previous_response_id). */
+  uhpResponseId?: string | null;
+  /** uhp engine: metadata.session_id of the harness thread. */
+  uhpSessionId?: string | null;
+  /** uhp engine: harness id the run went to. */
+  uhpHarnessId?: string;
+  /** Model asked for, recorded only when the effective `model` differs (see uhp-vocab modelRecord). */
+  requestedModel?: string;
+  modelFallback?: boolean;
+  modelFallbackReason?: string;
   secs: number | null;
   /** Launching session resolved through AIBroker, when it was. */
   session?: WorkerSessionRef | null;
