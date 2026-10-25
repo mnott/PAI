@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody } from "./malformed-retry.js";
+import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody, toolWork, turnKey } from "./malformed-retry.js";
 import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
@@ -515,6 +515,13 @@ export function routerHandler(
   const busts = new BustDetector();
   const gaps = new GapTracker();
   const warned = new Set<string>();
+  /** turns and retry bodies that already had their one degenerate retry (bounded, oldest dropped) */
+  const retriedTurns = new Set<string>();
+  const retriedBodies = new Set<string>();
+  const rememberRetry = (set: Set<string>, key: string): void => {
+    set.add(key);
+    if (set.size > 1000) set.delete(set.values().next().value as string);
+  };
   const instancesOf = options?.instances ?? stateFileInstances();
   const launched = launchedConfig();
   const health = options?.health;
@@ -762,12 +769,25 @@ export function routerHandler(
           const degenerate = isDegenerate(ans, up.body);
           if (!isDamaged(ans) && !degenerate) return deliver(200, ures0.headers, first);
           const what = degenerate ? "degenerate-answer" : "malformed-tool-call";
+          const tools = toolWork(up.body);
           let nb: Buffer;
           try {
             nb = retryBody(up.body, ans.text, degenerate ? DEGENERATE_RETRY_TEXT : undefined);
           } catch {
             return deliver(200, ures0.headers, first);
           }
+          // at most one degenerate retry per turn, and never the same retry body twice
+          const bodyKey = createHash("sha256").update(nb).digest("hex");
+          const tk = turnKey(up.body);
+          if (degenerate && (retriedTurns.has(tk) || retriedBodies.has(bodyKey))) {
+            log(`${new Date().toISOString()} ${what} retry-skipped provider=${prov} reason=already-retried tools=${tools}`);
+            return deliver(200, ures0.headers, first);
+          }
+          if (degenerate) {
+            rememberRetry(retriedTurns, tk);
+            rememberRetry(retriedBodies, bodyKey);
+          }
+          log(`${new Date().toISOString()} ${what} retry provider=${prov} reason=${degenerate ? "empty-answer-no-tool-work" : "damaged-tool-call"} tools=${tools}`);
           again(nb, (status, headers, raw) => {
             const again2 = readAnswer(raw.toString("utf8"), String(headers["content-type"] ?? ""));
             const ok = status === 200 && !isDamaged(again2) && !isDegenerate(again2, up.body);

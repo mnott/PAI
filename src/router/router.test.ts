@@ -593,7 +593,7 @@ describe("router: malformed local tool call", () => {
   const msg = (content: object[], stop: string) => JSON.stringify({ type: "message", role: "assistant", content, stop_reason: stop, usage: { input_tokens: 1, output_tokens: 1 } });
   const GOOD = msg([{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }], "tool_use");
   const BAD = msg([{ type: "text", text: DAMAGED }], "end_turn");
-  const run = async (answers: string[], retry = true, userText = "hi") => {
+  const run = async (answers: string[], retry = true, userText = "hi", messages?: object[]) => {
     const seen: string[] = [];
     const up = http.createServer((req, res) => {
       const bits: Buffer[] = [];
@@ -615,7 +615,7 @@ describe("router: malformed local tool call", () => {
         x.on("data", (c) => bits.push(c));
         x.on("end", () => resolve(Buffer.concat(bits).toString()));
       });
-      q.end(JSON.stringify({ model: "gyro-m", messages: [{ role: "user", content: userText }] }));
+      q.end(JSON.stringify({ model: "gyro-m", messages: messages ?? [{ role: "user", content: userText }] }));
     });
     r.close();
     up.close();
@@ -666,6 +666,27 @@ describe("router: malformed local tool call", () => {
     expect(logs.some((l) => l.includes("degenerate-answer retried provider=gyro ok"))).toBe(true);
   });
 
+  it("empty final answer after 20 completed tool calls: a normal end, no retry", async () => {
+    const EMPTY = msg([{ type: "text", text: "" }], "end_turn");
+    const messages: object[] = [{ role: "user", content: "x".repeat(300) }];
+    for (let i = 1; i <= 20; i++) {
+      messages.push({ role: "assistant", content: [{ type: "tool_use", id: `w${i}`, name: "Write", input: { file_path: `out/${i}.txt`, content: "a" } }] });
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: `w${i}`, content: "ok" }] });
+    }
+    const { out, seen, logs } = await run([EMPTY, GOOD], true, "", messages);
+    expect(JSON.parse(out).content[0].text).toBe("");
+    expect(seen).toHaveLength(1);
+    expect(logs.some((l) => l.includes("retry"))).toBe(false);
+  });
+
+  it("genuinely empty first answer: one retry (logged with tool count); a second empty is delivered", async () => {
+    const EMPTY = msg([{ type: "text", text: "" }], "end_turn");
+    const { out, seen, logs } = await run([EMPTY, EMPTY, GOOD], true, "x".repeat(300));
+    expect(JSON.parse(out).content[0].text).toBe("");
+    expect(seen).toHaveLength(2);
+    expect(logs.some((l) => l.includes("degenerate-answer retry provider=gyro reason=empty-answer-no-tool-work tools=0"))).toBe(true);
+  });
+
   it("short answer to a short task: delivered, no retry", async () => {
     const COMMA = msg([{ type: "text", text: "," }], "end_turn");
     const { out, seen } = await run([COMMA, GOOD]);
@@ -677,5 +698,41 @@ describe("router: malformed local tool call", () => {
     const { out, seen } = await run([BAD, GOOD], false);
     expect(JSON.parse(out).content[0].text).toBe(DAMAGED);
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe("router: degenerate retry is once per turn", () => {
+  it("the same turn arriving again is not retried a second time", async () => {
+    const EMPTY = JSON.stringify({ type: "message", role: "assistant", content: [{ type: "text", text: "" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } });
+    let n = 0;
+    const up = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        n++;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(EMPTY);
+      });
+    });
+    const listen = (s: http.Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as { port: number }).port)));
+    const upPort = await listen(up);
+    const prov = parseWorkersConfig({ providers: { gyro: { baseUrl: `http://127.0.0.1:${upPort}`, models: { default: "gyro-m" } } } }).providers;
+    const logs: string[] = [];
+    const r = createRouter(() => prov, "http://127.0.0.1:1", (l) => logs.push(l), undefined, undefined, { instances: () => [], localToolCallRetry: true });
+    const port = await listen(r);
+    const post = () =>
+      new Promise<void>((resolve) => {
+        const q = http.request({ port, host: "127.0.0.1", path: "/v1/messages", method: "POST", headers: { "x-pai-provider": "gyro" } }, (x) => {
+          x.resume();
+          x.on("end", () => resolve());
+        });
+        q.end(JSON.stringify({ model: "gyro-m", messages: [{ role: "user", content: "y".repeat(300) }] }));
+      });
+    await post();
+    expect(n).toBe(2);
+    await post();
+    expect(n).toBe(3);
+    expect(logs.some((l) => l.includes("retry-skipped") && l.includes("already-retried"))).toBe(true);
+    r.close();
+    up.close();
   });
 });
