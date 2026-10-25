@@ -12,7 +12,7 @@
  */
 
 import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./config.js";
-import { uhpErrorReason, uhpStatusToResult, type Ag2Result, type UhpErrorCode } from "./uhp-vocab.js";
+import { isUhpErrorCode, uhpErrorReason, uhpStatusToResult, type Ag2Result, type UhpErrorCode } from "./uhp-vocab.js";
 
 export const UHP_CANCEL_TIMEOUT_MS = 5000;
 export const UHP_DISCOVERY_TIMEOUT_MS = 3000;
