@@ -309,7 +309,7 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
   }
   if (!cmd) return ALLOW;
 
-  if ((cmd === "bash" || cmd === "sh" || cmd === "zsh") && args[0] === "-c" && args[1]) {
+  if ((cmd === "bash" || cmd === "sh" || cmd === "zsh") && /^-\w*c$/.test(args[0] ?? "") && args[1]) {
     return decideCommand(args[1], { ...ctx, cwd: st.cwd }, detached);
   }
 
