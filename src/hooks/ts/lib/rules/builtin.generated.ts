@@ -657,6 +657,29 @@ export const BUILTIN_RULES: LoadedRule[] = [
     "source": "builtin/rm-trailing-tilde.rule.yaml"
   },
   {
+    "id": "sed-gnu-plus-range",
+    "severity": "block",
+    "category": "portability",
+    "quoted": true,
+    "flags": "m",
+    "match": "(?:^|[;&|(\\`\\n{]|\\$\\(|\\b(?:then|do|else)\\s|\\b(?:ba|z|da)?sh\\s+-\\w*c\\s+[\"'])\\s*(?:(?:(?:\\\\|\\/[^\\s;&|\"']*\\/)?(?:command|env|exec|nohup|time|builtin|sudo|doas|nice|xargs|stdbuf)(?:\\s+-[^\\s;&|]+(?:\\s+\\d+(?=\\s))?)*|[A-Za-z_]\\w*=[^\\s;&|]*)\\s+)*(?:\\\\|\\/[^\\s;&|\"']*\\/)?\\$?sed\\b[^\\n]*?[\\d$)\\x2f],\\+\\d+\\s*[a-zA-Z](?![\\w])",
+    "reason": "macOS sed has no ADDR,+N range. Use awk: awk -v a=START 'NR>=a && NR<=a+N' FILE, or sed -n 'START,ENDp' FILE with an absolute end line, or the Read tool with offset/limit.",
+    "tests": {
+      "match": [
+        "sed -n \"$(grep -n \"export function withTierProviders\" src/workers/local-provider.ts | cut -d: -f1),+25p\" src/workers/local-provider.ts",
+        "sed -n '10,+5p' f",
+        "sed -n '/foo/,+3p' f"
+      ],
+      "no_match": [
+        "sed -n '10,20p' f",
+        "sed -i '' 's/a,+1/b/' f",
+        "awk 'NR>=10 && NR<=15' f",
+        "echo \"sed -n 1,+2p\""
+      ]
+    },
+    "source": "builtin/sed-gnu-plus-range.rule.yaml"
+  },
+  {
     "id": "sudoers-nopasswd",
     "severity": "block",
     "quoted": true,
