@@ -21,6 +21,17 @@ function fires(ap: Antipattern, sample: string): boolean {
       }
       return !!last && (last.deny || !!last.note);
     }
+    case "distinct-rewrites": {
+      // monitor mode: the firing shows as `monitored` on whichever step reached the thresholds
+      let state: LoopState = emptyLoopState();
+      let any = false;
+      for (const tok of sample.split(" ")) {
+        const r = stepLoopGuard(state, "Write", { file_path: "f.txt", content: tok });
+        state = r.state;
+        any ||= r.id === "distinct-rewrites";
+      }
+      return any;
+    }
     case "growing-command":
     case "repeated-failure": {
       let state: LoopState = emptyLoopState();
@@ -44,7 +55,7 @@ describe("shipped anti-patterns run their own tests", () => {
   const shipped = loadAntipatterns().filter((a) => a.source === "shipped");
   it("ships the four non-shell categories", () => {
     expect(new Set(shipped.map((a) => a.category))).toEqual(new Set(["tool-loop", "final-text", "paths"]));
-    expect(shipped.map((a) => a.id).sort()).toEqual(["does-not-exist", "growing-command", "identical-write", "repeated-failure", "revert", "unparsed-tool-call"]);
+    expect(shipped.map((a) => a.id).sort()).toEqual(["distinct-rewrites", "does-not-exist", "growing-command", "identical-write", "repeated-failure", "revert", "unparsed-tool-call"]);
   });
   it.each(shipped.map((a) => [a.id, a] as const))("%s", (_id, ap) => {
     expect(ap.tests.match.length).toBeGreaterThan(0);

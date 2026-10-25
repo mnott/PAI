@@ -45,6 +45,7 @@ const num = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v)
 const PARAM_CHECKS: Record<string, (p: Record<string, unknown>) => string | null> = {
   "identical-write": (p) => (num(p.note_at) && num(p.stop_at) && typeof p.stop_message === "string" ? null : "needs note_at, stop_at (numbers) and stop_message"),
   revert: (p) => (num(p.note_at) && num(p.stop_at) && num(p.seen_cap) && typeof p.stop_message === "string" ? null : "needs note_at, stop_at, seen_cap (numbers) and stop_message"),
+  "distinct-rewrites": (p) => (num(p.same_file_writes) && num(p.distinct_versions) ? null : "needs same_file_writes and distinct_versions (numbers)"),
   "growing-command": (p) => (num(p.max_repeats) && num(p.stop_denials) && typeof p.note_message === "string" && typeof p.tool_message === "string" ? null : "needs max_repeats, stop_denials (numbers), note_message and tool_message"),
   "repeated-failure": (p) => (num(p.deny_at) && num(p.stop_at) ? null : "needs deny_at and stop_at (numbers)"),
   "unparsed-tool-call": (p) => {

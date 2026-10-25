@@ -38,7 +38,8 @@ const noop = () => undefined;
 describe("lifecycle fields", () => {
   it("every shipped pattern and shell rule is stable, enforce, version 1, with a created date", () => {
     for (const a of loadAntipatterns().filter((x) => x.source === "shipped")) {
-      expect([a.status, a.mode, a.version]).toEqual(["stable", "enforce", 1]);
+      // distinct-rewrites ships experimental, in monitor mode
+      expect([a.status, a.mode, a.version]).toEqual(a.id === "distinct-rewrites" ? ["experimental", "monitor", 1] : ["stable", "enforce", 1]);
       expect(a.created).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
     for (const r of BUILTIN_RULES) {
@@ -188,6 +189,41 @@ describe("monitor mode in the loop guard", () => {
     }
     expect(last.deny).toBe(true);
     expect(last.monitored).toBeUndefined();
+  });
+});
+
+describe("distinct-rewrites", () => {
+  const W = (i: number) => ({ file_path: "out/27.py", content: `v${i}` });
+  const run = (n: number, between?: (i: number) => void) => {
+    let state: LoopState = emptyLoopState();
+    const steps: ReturnType<typeof stepLoopGuard>[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = stepLoopGuard(state, "Write", W(i));
+      steps.push(r);
+      state = r.state;
+      if (between && i % 2 === 1) state = stepLoopGuard(state, "Bash", { command: `pytest t${i}` }).state;
+    }
+    return steps;
+  };
+  it("monitor: 9 distinct writes without a read record one firing and add no note", () => {
+    const steps = run(9);
+    for (const r of steps) recordLoopTelemetry(r, { fallbackText: "Write" });
+    expect(steps.every((r) => !r.note && !r.deny)).toBe(true);
+    const f = readFirings().filter((x) => x.id === "distinct-rewrites");
+    expect(f).toHaveLength(1);
+    expect(f[0]).toMatchObject({ action: "note", mode: "monitor", version: 1 });
+  });
+  it("writes interleaved with a Bash test run do not fire", () => {
+    expect(run(20, () => undefined).some((r) => r.monitored || r.note)).toBe(false);
+  });
+  it("enforce (user override): the note is emitted once", () => {
+    setMode("distinct-rewrites", "enforce");
+    const steps = run(9);
+    const notes = steps.filter((r) => r.note);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].note).toContain("out/27.py");
+    expect(notes[0].note).toContain("8 times");
+    expect(notes[0].id).toBe("distinct-rewrites");
   });
 });
 
