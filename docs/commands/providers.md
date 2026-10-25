@@ -77,7 +77,7 @@ ChatGPT plan through the Codex CLI: --engine codex. Image generation: --engine i
 | `--note TEXT` | string | — | Short note shown in the provider list |
 | `--protocol KIND` | string | — | anthropic (default) or openai |
 | `--upstream-url URL` | string | — | Chat Completions base URL (required for --protocol openai) |
-| `--engine KIND` | string | — | claude (default), codex, or image |
+| `--engine KIND` | string | — | claude (default), codex, image, or uhp |
 | `--context-window TOKENS` | number | — | Context window for the usage meter (default 200000) |
 | `--quota-probe URL` | string | — | URL whose JSON first number is the quota percent (0-100) |
 | `--cost-tier 1-5` | string | — | Cost tier: 1 (cheapest) to 5 (most expensive; default 3) |
