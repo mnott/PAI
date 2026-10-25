@@ -28,6 +28,11 @@ import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./
 export const LOOP_MAX_REPEATS = 4;
 /** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */
 export const IDENTICAL_WRITE_STOP_AT = 20;
+/** Reverts of one file (a Write whose content equals an earlier, not the current, version) at which a note is added / the write is denied and the session stopped. */
+export const REVERT_NOTE_AT = 2;
+export const REVERT_STOP_AT = 6;
+/** Content hashes remembered per file for revert detection. */
+const SEEN_CAP = 8;
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
 export const LOOP_STOP_DENIALS = 3;
 /** Consecutive same-template read-only Bash calls without a worktree change after which the next one is denied (env PAI_LOOP_READ_STREAK overrides). */
@@ -66,7 +71,7 @@ export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string 
 
 export interface LoopState {
   /** File -> key of its last Write/Edit and how many times in a row that exact call was made; a Read in between does not reset it. */
-  writes?: Record<string, { key: string; n: number }>;
+  writes?: Record<string, { key: string; n: number; /** Keys of the last versions written (oldest first, current last). */ seen?: string[]; /** Writes that went back to an earlier version. */ reverts?: number }>;
   /** Call keys (`Tool\tnormalised input`) since the last edit, oldest first. */
   window: string[];
   /** Normalised result text per window entry; null while unknown. */
@@ -534,7 +539,11 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     const file = String((input as Record<string, unknown>).file_path ?? (input as Record<string, unknown>).notebook_path ?? "");
     const prev = state.writes?.[file];
     const n = prev && prev.key === ek ? prev.n + 1 : 1;
-    const writes = { ...(state.writes ?? {}), [file]: { key: ek, n } };
+    // a Write back to an earlier version (not the current one) is a revert: A,B,A,B,... never repeats the current content
+    const revert = tool === "Write" && !!prev && prev.key !== ek && !!prev.seen?.includes(ek);
+    const reverts = (prev?.reverts ?? 0) + (revert ? 1 : 0);
+    const seen = [...(prev?.seen ?? []).filter((k) => k !== ek), ...(tool === "Write" ? [ek] : [])].slice(-SEEN_CAP);
+    const writes = { ...(state.writes ?? {}), [file]: { key: ek, n, seen, reverts } };
     for (const k of Object.keys(writes).slice(0, -LAST_CAP * 8)) delete writes[k];
     if (n >= IDENTICAL_WRITE_STOP_AT)
       return {
@@ -545,7 +554,17 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
         count: n,
         reason: `loop guard: you wrote ${file} with exactly the same content ${n} times. It already contains this content; stop rewriting it. ${SELF}`,
       };
-    const note = n >= 2 ? `${file} already contains exactly this content; your earlier ${tool} succeeded. No need to write it again. Continue with the next task, or finish if none is left.` : undefined;
+    if (reverts >= REVERT_STOP_AT)
+      return {
+        state: { ...emptyLoopState(), writes },
+        deny: true,
+        stop: true,
+        key: ek.split("\t")[1],
+        count: reverts,
+        reason: `loop guard: you switched ${file} back to a version you already wrote ${reverts} times. Both versions are on record; pick one and keep it. ${SELF}`,
+      };
+    const revertNote = revert && reverts >= REVERT_NOTE_AT ? `${file}: you are switching back to a version you already wrote (this is the ${reverts}${reverts % 10 === 3 && reverts !== 13 ? "rd" : reverts % 10 === 2 && reverts !== 12 ? "nd" : "th"} time). Both versions are on record; pick one, keep it, and move on to the next task or finish.` : undefined;
+    const note = revertNote ?? (n >= 2 ? `${file} already contains exactly this content; your earlier ${tool} succeeded. No need to write it again. Continue with the next task, or finish if none is left.` : undefined);
     return { state: { ...emptyLoopState(), writes, window: [ek], outs: [null] }, deny: false, ...(note ? { note } : {}) };
   }
   if (tool === "Bash") {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
-import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, callKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, LOOP_MAX_REPEATS, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, IDENTICAL_WRITE_STOP_AT, type LoopState } from "./loop-guard.js";
+import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, callKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, LOOP_MAX_REPEATS, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, IDENTICAL_WRITE_STOP_AT, REVERT_STOP_AT, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 import { fakeUrl, fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
 
@@ -220,6 +220,24 @@ describe("loop guard, all tools", () => {
     expect(rs.every((r) => !r.deny)).toBe(true);
     expect(rs[16].note).toBeUndefined();
     expect(rs[17].note).toContain("already contains");
+  });
+  const ver = (c: string): [string, Record<string, unknown>] => ["Write", { file_path: "/tmp/out/27.py", content: c }];
+  it("A,B,A,B,...: note at the 2nd revert, deny+stop at the 6th", () => {
+    const rs = writes(Array.from({ length: 10 }, (_, i) => ver(i % 2 ? "B" : "A")));
+    expect(rs.slice(0, 3).every((r) => !r.note)).toBe(true);
+    expect(rs[3].note).toContain("switching back to a version you already wrote (this is the 2nd time)");
+    expect(rs[3].note).toContain("/tmp/out/27.py");
+    expect(rs.findIndex((r) => r.deny)).toBe(REVERT_STOP_AT + 1);
+    expect(rs[REVERT_STOP_AT + 1].stop).toBe(true);
+    expect(rs.slice(0, REVERT_STOP_AT + 1).every((r) => !r.deny)).toBe(true);
+  });
+  it("A,B,C,D (progress) gives no note", () => {
+    const rs = writes(["A", "B", "C", "D"].map(ver));
+    expect(rs.every((r) => !r.note && !r.deny)).toBe(true);
+  });
+  it("A,A keeps the identical-write note, not the revert note", () => {
+    const rs = writes([ver("A"), ver("A")]);
+    expect(rs[1].note).toContain("already contains exactly this content");
   });
   it("Bash via object input behaves as before and denial reason names the tool", () => {
     expect(loopDenyReason("Read", 5)).toMatch(/called Read with similar input 5 times/);
