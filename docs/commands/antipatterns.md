@@ -153,6 +153,30 @@ Writes a user override with status: deprecated; a deprecated pattern does nothin
 pai antipatterns retire revert --reason 'never fired in 60 days'
 ```
 
+### pai antipatterns set
+
+Change one detector parameter of a pattern
+
+```
+pai antipatterns set ID PARAM VALUE [options]
+```
+
+Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.
+
+| Argument | Required | Description |
+|---|---|---|
+| `ID` | yes | Pattern id (see: pai antipatterns list) |
+| `PARAM` | yes | Detector parameter, e.g. stop_at |
+| `VALUE` | yes | New value |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--reason TEXT` | string | — | Why (required) |
+
+```sh
+pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'
+```
+
 ### pai antipatterns label
 
 Label a firing (or all firings of a pattern) tp, fp or benign_tp
@@ -201,6 +225,7 @@ pai antipatterns conflicts
 | `pai antipatterns enforce` | Switch a pattern to enforce mode |
 | `pai antipatterns monitor` | Switch a pattern to monitor mode (record, take no action) |
 | `pai antipatterns retire` | Retire a pattern (status deprecated) |
+| `pai antipatterns set` | Change one detector parameter of a pattern |
 | `pai antipatterns label` | Label a firing (or all firings of a pattern) tp, fp or benign_tp |
 | `pai antipatterns conflicts` | Duplicate ids and patterns that match each other's fixtures with different actions |
 
