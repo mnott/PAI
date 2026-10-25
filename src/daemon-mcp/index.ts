@@ -116,7 +116,7 @@ import { workerModel } from "./tools/worker-model.js";
 import { realSessionProfileDeps, sessionProfileGet, sessionProfileSet } from "./tools/session-profile.js";
 import { configList, configGet, configSet, configUnset } from "./tools/config.js";
 import { workerCapability } from "./tools/worker-capability.js";
-import { candidates as apCandidates, conflicts as apConflicts, label as apLabel, listPatterns as apList, parseSince as apSince, promote as apPromote, retire as apRetire, setMode as apSetMode, setParam as apSetParam, stats as apStats } from "../antipatterns/govern.js";
+import { candidates as apCandidates, conflicts as apConflicts, label as apLabel, listPatterns as apList, parseSince as apSince, promote as apPromote, retire as apRetire, setMode as apSetMode, stats as apStats } from "../antipatterns/govern.js";
 import { currentLocalStatus } from "../workers/local-provider.js";
 import { localStatusReport } from "../workers/local-status.js";
 import { currentInventory, inventoryRows, INVENTORY_HEADERS } from "../workers/model-inventory.js";
@@ -782,12 +782,6 @@ async function startShim(): Promise<void> {
   apTool("antipatterns_promote", "Promote a candidate into the user directory (status test, mode monitor).", { id: z.string() }, (a) => apPromote(a.id));
   apTool("antipatterns_mode", "Switch a pattern between enforce and monitor (writes a user override).", { id: z.string(), mode: z.enum(["enforce", "monitor"]) }, (a) => apSetMode(a.id, a.mode).path);
   apTool("antipatterns_retire", "Retire a pattern: status deprecated via a user override; shipped files are never deleted.", { id: z.string(), reason: z.string().optional() }, (a) => apRetire(a.id, a.reason).path);
-  apTool(
-    "antipatterns_set",
-    "Change one detector parameter of a pattern (user override, version bump, changes entry, governance log). Unknown params and type mismatches are refused.",
-    { id: z.string(), param: z.string(), value: z.union([z.number(), z.boolean(), z.string()]), reason: z.string() },
-    (a) => apSetParam(a.id, a.param, a.value, a.reason),
-  );
   apTool("antipatterns_label", "Label a firing (by ts) or all firings of a pattern (by id) tp, fp or benign_tp.", { target: z.string(), disposition: z.enum(["tp", "fp", "benign_tp", "undetermined"]) }, (a) => ({ labelled: apLabel(a.target, a.disposition) }));
   apTool("antipatterns_conflicts", "Duplicate ids and active patterns matching each other's fixtures with different actions.", {}, () => apConflicts());
 

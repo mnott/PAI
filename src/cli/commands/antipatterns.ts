@@ -3,7 +3,7 @@
 import { CliError, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { renderTable } from "../lib/utils.js";
 import { DISPOSITIONS, type Disposition } from "../../hooks/ts/lib/antipattern-log.js";
-import { candidates, conflicts, label, listPatterns, parseSince, promote, retire, setMode, setParam, stats } from "../../antipatterns/govern.js";
+import { candidates, conflicts, label, listPatterns, parseSince, promote, retire, setMode, stats } from "../../antipatterns/govern.js";
 
 const ID: ArgDef = { name: "ID", summary: "Pattern id (see: pai antipatterns list)", required: true };
 const JSON_OPT: OptDef = { name: "json", type: "boolean", default: false, summary: "Machine-readable JSON output" };
@@ -118,21 +118,6 @@ export const antipatternsCommand: CommandDef = {
       examples: ["pai antipatterns retire revert --reason 'never fired in 60 days'"],
       run: (ctx) => {
         console.log(wrap(() => retire(ctx.args.ID as string, ctx.opts.reason as string | undefined)).path);
-        return 0;
-      },
-    },
-    {
-      name: "set",
-      summary: "Change one detector parameter of a pattern",
-      description:
-        "Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), " +
-        "bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.",
-      args: [ID, { name: "PARAM", summary: "Detector parameter, e.g. stop_at", required: true }, { name: "VALUE", summary: "New value", required: true }],
-      options: [{ name: "reason", type: "string", value: "TEXT", summary: "Why (required)" }],
-      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'"],
-      run: (ctx) => {
-        const r = wrap(() => setParam(ctx.args.ID as string, ctx.args.PARAM as string, ctx.args.VALUE as string, (ctx.opts.reason as string | undefined) ?? ""));
-        console.log(`${ctx.args.PARAM}: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
         return 0;
       },
     },

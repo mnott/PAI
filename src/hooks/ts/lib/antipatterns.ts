@@ -31,8 +31,6 @@ export interface Antipattern extends Lifecycle {
   message: string;
   tests: { match: string[]; no_match: string[] };
   provenance?: { date?: string; model?: string; observed?: string; ref?: string };
-  /** Parameter changes made with `pai antipatterns set`, oldest first. */
-  changes?: Record<string, unknown>[];
   /** `shipped` or the file the pattern came from. */
   source: string;
 }
@@ -93,7 +91,6 @@ export function validateAntipattern(raw: unknown, dirCategory: string | null, so
     message,
     tests: { match: list(t.match), no_match: list(t.no_match) },
     provenance: isObj(provenance) ? (provenance as Antipattern["provenance"]) : undefined,
-    changes: Array.isArray(raw.changes) ? raw.changes.filter(isObj) : undefined,
     source,
   };
 }

@@ -7,12 +7,11 @@
  * (hooks/ts/lib/antipattern-log.ts).
  */
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
 import { SHIPPED_ANTIPATTERNS } from "../hooks/ts/lib/antipatterns.generated.js";
 import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
-import { paiHomePath } from "../config/pai-home.js";
 import { CATEGORIES, loadAntipatterns, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
 import { lifecycleDoc, type Lifecycle, type Mode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
 import { candidatesDir, readFirings, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
@@ -211,20 +210,7 @@ export function promote(id: string, now = Date.now()): string {
   writeFileSync(target, stringify(doc));
   renameSync(c.file, `${c.file}.promoted`);
   resetAntipatternCache();
-  recordGovernance({ action: "promote", id: c.id, category: c.category, path: target }, now);
   return target;
-}
-
-// ---------------------------------------------------------------------------
-// governance log
-
-export const governancePath = (): string => paiHomePath("antipatterns", "governance.jsonl");
-
-/** One append-only line per governance action: who changed what, when. */
-export function recordGovernance(entry: { action: string; id: string; [k: string]: unknown }, now = Date.now()): void {
-  const path = governancePath();
-  mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify({ ts: new Date(now).toISOString(), ...entry })}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +220,7 @@ function entryDoc(e: Entry, cwd: string): { doc: Record<string, unknown>; path: 
   const lc = lifecycleDoc(e);
   if (e.kind === "pattern") {
     const a = loadAntipatterns().find((x) => x.id === e.id) as Antipattern;
-    const doc: Record<string, unknown> = { id: a.id, ...lc, category: a.category, detector: a.detector, action: a.action, message: a.message, tests: a.tests, ...(a.provenance ? { provenance: a.provenance } : {}), ...(a.changes?.length ? { changes: a.changes } : {}) };
+    const doc: Record<string, unknown> = { id: a.id, ...lc, category: a.category, detector: a.detector, action: a.action, message: a.message, tests: a.tests, ...(a.provenance ? { provenance: a.provenance } : {}) };
     const own = a.source !== "shipped" ? a.source : join(userAntipatternsDir(), a.category, `${a.id}.yaml`);
     return { doc, path: own };
   }
@@ -253,7 +239,7 @@ function entryDoc(e: Entry, cwd: string): { doc: Record<string, unknown>; path: 
   return { doc, path: inUserDir ? r.source : join(userAntipatternShellDir(), `${r.id}.yaml`) };
 }
 
-function override(action: string, id: string, change: { mode?: Mode; status?: Status; reason?: string }, o: { cwd?: string; now?: number } = {}): { path: string; entry: Entry } {
+function override(id: string, change: { mode?: Mode; status?: Status; reason?: string }, o: { cwd?: string; now?: number } = {}): { path: string; entry: Entry } {
   const cwd = o.cwd ?? process.cwd();
   const e = allEntries(cwd).find((x) => x.id === id);
   if (!e) throw new Error(`unknown pattern ${id} (see: pai antipatterns list)`);
@@ -263,12 +249,11 @@ function override(action: string, id: string, change: { mode?: Mode; status?: St
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, stringify(doc));
   resetAntipatternCache();
-  recordGovernance({ action, id, ...(change.mode ? { mode: change.mode } : {}), ...(change.reason ? { reason: change.reason } : {}) }, o.now);
   return { path, entry: next };
 }
 
-export const setMode = (id: string, mode: Mode, o: { cwd?: string; now?: number } = {}) => override(mode, id, { mode }, o);
-export const retire = (id: string, reason?: string, o: { cwd?: string; now?: number } = {}) => override("retire", id, { status: "deprecated", ...(reason ? { reason } : {}) }, o);
+export const setMode = (id: string, mode: Mode, o: { cwd?: string; now?: number } = {}) => override(id, { mode }, o);
+export const retire = (id: string, reason?: string, o: { cwd?: string; now?: number } = {}) => override(id, { status: "deprecated", ...(reason ? { reason } : {}) }, o);
 
 /** Label one firing (by its ts) or every firing of a pattern (by id). Returns the number labelled. */
 export function label(target: string, disposition: Disposition): number {
@@ -277,41 +262,6 @@ export function label(target: string, disposition: Disposition): number {
   for (const f of hits) recordLabel(f.ts, f.id, disposition);
   if (!hits.length) throw new Error(`no firing with ts or id ${target}`);
   return hits.length;
-}
-
-/** `20` -> 20, `true` -> true, anything else stays a string; a non-string value passes through. */
-function parseValue(v: unknown): unknown {
-  if (typeof v !== "string") return v;
-  const t = v.trim();
-  if (t === "true" || t === "false") return t === "true";
-  if (t !== "" && Number.isFinite(Number(t))) return Number(t);
-  return v;
-}
-
-const kindOf = (v: unknown): string => (Array.isArray(v) ? "list" : typeof v);
-
-/** Change one detector parameter of a non-shell pattern in the user override (a full copy on first use). */
-export function setParam(id: string, param: string, value: unknown, reason: string, o: { now?: number } = {}): { path: string; from: unknown; to: unknown; version: number } {
-  if (!reason || !reason.trim()) throw new Error("--reason is required");
-  const a = loadAntipatterns().find((x) => x.id === id);
-  if (!a) throw new Error(`unknown pattern ${id}: set works on detector patterns (see: pai antipatterns list; shell rules have no parameters)`);
-  const params = a.detector.params;
-  const valid = Object.keys(params);
-  if (!(param in params)) throw new Error(`${id} has no param ${param}; valid params: ${valid.join(", ") || "(none)"}`);
-  const from = params[param];
-  const to = parseValue(value);
-  if (kindOf(to) !== kindOf(from)) throw new Error(`param ${param} of ${id} is a ${kindOf(from)} (now ${JSON.stringify(from)}), not a ${kindOf(to)}`);
-  const date = today(o.now);
-  const { doc, path } = entryDoc(allEntries().find((x) => x.id === id && x.kind === "pattern") as Entry, process.cwd());
-  const changes = [...(a.changes ?? []), { date, param, from, to, reason }];
-  const next = { ...doc, version: a.version + 1, modified: date, detector: { ...a.detector, params: { ...params, [param]: to } }, changes };
-  const bad = validateAntipattern(next, a.category, path);
-  if (typeof bad === "string") throw new Error(`${param}=${JSON.stringify(to)} is not valid for ${id}: ${bad}`);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, stringify(next));
-  resetAntipatternCache();
-  recordGovernance({ action: "set", id, param, from, to, reason }, o.now);
-  return { path, from, to, version: a.version + 1 };
 }
 
 // ---------------------------------------------------------------------------

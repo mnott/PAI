@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { activeAntipattern, shippedAntipattern, getAntipattern, loadAntipatterns, resetAntipatternCache, validateAntipattern } from "./antipatterns.js";
+import { activeAntipattern, getAntipattern, loadAntipatterns, resetAntipatternCache, validateAntipattern } from "./antipatterns.js";
 import { dispositionOf, parseLifecycle, type Lifecycle } from "./antipattern-lifecycle.js";
 import { candidatesDir, excerptOf, firingsPath, outcomesPath, readFirings, readOutcomes, recordFiring, recordRunOutcomes, writeCandidate } from "./antipattern-log.js";
 import { recordLoopTelemetry } from "./loop-guard-telemetry.js";
@@ -14,7 +14,7 @@ import { unparsedCallDecision } from "../../../workers/run/unparsed-call.js";
 import { finaliseRun } from "../../../workers/run.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { saveStatus, type WorkerStatus } from "../../../workers/status.js";
-import { candidates, conflicts, label, promote, retire, setMode, setParam, stats } from "../../../antipatterns/govern.js";
+import { candidates, conflicts, label, promote, retire, setMode, stats } from "../../../antipatterns/govern.js";
 
 let home: string;
 let prevHome: string | undefined;
@@ -356,40 +356,3 @@ describe("stats", () => {
     expect(stats().find((r) => r.id === "growing-command")!.falsePositiveSuspect).toBe(true);
   });
 });
-
-describe("set", () => {
-  const govLines = (): any[] => lines(userFile("governance.jsonl"));
-  it("changes a detector param through a full override, hot, with version, changes and governance line", () => {
-    expect(activeAntipattern("identical-write").detector.params.stop_at).toBe(20);
-    const r = setParam("identical-write", "stop_at", "8", "loops cost too much");
-    expect(r).toMatchObject({ from: 20, to: 8, version: 2 });
-    const a = activeAntipattern("identical-write");
-    expect(a.detector.params.stop_at).toBe(8);
-    expect(a.version).toBe(2);
-    expect(a.detector.params.note_at).toBe(shippedAntipatternParam("note_at"));
-    const doc = parse(readFileSync(userFile("tool-loop", "identical-write.yaml"), "utf8"));
-    expect(doc.modified).toBe(new Date().toISOString().slice(0, 10));
-    expect(doc.changes).toEqual([{ date: doc.modified, param: "stop_at", from: 20, to: 8, reason: "loops cost too much" }]);
-    expect(govLines()).toEqual([expect.objectContaining({ action: "set", id: "identical-write", param: "stop_at", from: 20, to: 8, reason: "loops cost too much" })]);
-    // a second change keeps the first entry
-    setParam("identical-write", "stop_at", "9", "too tight");
-    expect(activeAntipattern("identical-write")).toMatchObject({ version: 3 });
-    expect(parse(readFileSync(userFile("tool-loop", "identical-write.yaml"), "utf8")).changes).toHaveLength(2);
-  });
-  it("refuses an unknown id, an unknown param and a type mismatch", () => {
-    expect(() => setParam("nope", "stop_at", "1", "r")).toThrow(/unknown pattern/);
-    expect(() => setParam("identical-write", "bogus", "1", "r")).toThrow(/valid params: .*stop_at/);
-    expect(() => setParam("identical-write", "stop_at", "many", "r")).toThrow(/number/);
-    expect(() => setParam("identical-write", "stop_at", "8", "")).toThrow(/reason/);
-    expect(existsSync(userFile("governance.jsonl"))).toBe(false);
-    expect(activeAntipattern("identical-write").detector.params.stop_at).toBe(20);
-  });
-  it("enforce, monitor and retire write governance lines", () => {
-    setMode("revert", "monitor");
-    setMode("revert", "enforce");
-    retire("revert", "unused");
-    expect(govLines().map((l) => [l.action, l.id])).toEqual([["monitor", "revert"], ["enforce", "revert"], ["retire", "revert"]]);
-    expect(govLines()[2].reason).toBe("unused");
-  });
-});
-const shippedAntipatternParam = (k: string): unknown => shippedAntipattern("identical-write").detector.params[k];
