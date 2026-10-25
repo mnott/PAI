@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { loadConfig, readMainConfigRaw } from "../daemon/config.js";
 import { readWorkersSection, type WorkersConfig } from "./config.js";
+import { expectedRuntimeModel, portHolder, readRuntimeCommands, type RuntimeCommands } from "./model-runtimes.js";
 import { workersLogDir } from "./paths.js";
 import { isLoopbackProvider } from "./run-env.js";
 import { isLocalCandidate, providerHostPort } from "./local-provider.js";
@@ -65,6 +66,8 @@ export interface InventoryRuntime {
   users: string[];
   /** consumers whose model is not the one this server reports on /v1/models */
   notServed?: string[];
+  /** a stopped runtime whose shared port another runtime holds: "port in use by <runtime>" */
+  portNote?: string;
 }
 
 export interface ModelInventory {
@@ -94,12 +97,16 @@ export interface InventoryDeps {
   run: (cmd: string, args: string[]) => Promise<string | null>;
   /** memory of the process tree listening on a port (the engine child, not only the listener) */
   memory: (port: number) => Promise<{ footprintMb: number; mappedMb?: number } | undefined>;
+  /** file read for a runtime's --config JSON (tests inject); defaults to the file system */
+  readText?: (path: string) => string;
 }
 
 export interface InventoryInput {
   providers: WorkersConfig["providers"];
   embedding: { backend: string; model?: string; ollamaUrl: string; inProcessModel: string };
   runtimes: DeclaredRuntime[];
+  /** the `models.runtimes` start/stop commands by runtime name: tells runtimes sharing a port apart by their model */
+  commands?: Record<string, RuntimeCommands>;
   consumers: DeclaredConsumer[];
   /** the `local_tiers` set: the tier's provider and its button label; its running server is the active tier */
   tiers?: Array<{ provider: string; label: string; tier?: string }>;
@@ -333,8 +340,12 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
         // a declared endpoint (e.g. strata) can sit behind a provider that is
         // DISABLED in workers.yaml: keep the runtime, attach no worker user
         const decl = input.runtimes.find((r) => r.url && Number(new URL(r.url).port) === e.port);
+        // runtimes sharing this port: the running one is the runtime whose expected model the server reports
+        const cmds = input.commands ?? {};
+        const sharing = e.names.filter((n) => expectedRuntimeModel(cmds[n], deps.readText));
+        const holder = running && ids.length && sharing.length > 1 ? portHolder(sharing, cmds, ids, deps.readText) : undefined;
         const rt: InventoryRuntime = {
-          name: decl?.name ?? e.enabled[0] ?? e.names[0],
+          name: decl?.name ?? holder ?? e.enabled[0] ?? e.names[0],
           kind: decl?.kind ?? "openai-server",
           status: running ? "running" : "stopped",
           port: e.port,
@@ -358,6 +369,12 @@ async function detectProviders(input: InventoryInput, deps: InventoryDeps): Prom
           if (tier.tier) rt.tier = tier.tier;
         }
         out.push(rt);
+        // the other runtimes on a shared port whose model is not the loaded one: stopped
+        if (holder) {
+          for (const n of sharing.filter((x) => x !== holder)) {
+            out.push({ name: n, kind: rt.kind, status: "stopped", port: e.port, enabled: e.enabled.includes(n), models: [], users: [], portNote: `port in use by ${holder}` });
+          }
+        }
       })
   );
   // a stopped catalogue model is simply not running; it stays listed (startable) while any catalogue model runs
@@ -489,6 +506,7 @@ export function readInventoryInput(): InventoryInput {
     providers: readWorkersSection().workers.providers,
     embedding: { backend: cfg.embedding.backend, model: cfg.embedding.model, ollamaUrl: cfg.embedding.ollama.baseUrl, inProcessModel: cfg.embeddingModel },
     runtimes: list<DeclaredRuntime>(m.runtimes, (x) => typeof x.name === "string" && typeof x.kind === "string"),
+    commands: readRuntimeCommands(),
     consumers: list<DeclaredConsumer>(m.consumers, (x) => typeof x.name === "string" && typeof x.runtime === "string"),
     // DeclaredConsumer.label comes from consumers[].label; list() keeps the whole object
   };

@@ -39,7 +39,7 @@ import { readRun, type RunKind, type RunState } from "../memory/run-state.js";
 import type { JobRunProgress } from "../memory/job-progress.js";
 import { memoryRunLog, runningMemoryJob } from "./cockpit-memory.js";
 import { cockpitLayout } from "./cockpit-layout.js";
-import { RUNTIME_READY_TIMEOUT_MS, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
+import { RUNTIME_READY_TIMEOUT_MS, foreignPortHolder, liveRuntimeOpDeps, readRuntimeCommands, readyIsUrl, runRuntimeOp, runtimeLogFile, type RuntimeCommands, type RuntimeOpDeps } from "../workers/model-runtimes.js";
 
 export const COCKPIT_ACTION_EVENT = "COCKPIT-ACTION";
 export const RUNTIME_START_EVENT = "RUNTIME-START";
@@ -247,12 +247,14 @@ export async function runtimeOpRefusal(
   home: string,
   ops: RuntimeOpDeps = liveRuntimeOpDeps,
   exceptJobId = "",
-  kind = ""
+  kind = "",
+  /** another runtime's server holds this runtime's shared port: the ready URL answers for it, not for this one */
+  portHeldByOther = false
 ): Promise<string | null> {
   const running = runningRuntimeJob(home, runtime, op, exceptJobId);
   if (running) return op === "start" ? `${runtime} is already starting (job ${running.id})` : `${runtime} is already stopping (job ${running.id})`;
   const c = commands[runtime];
-  if (op === "start" && c?.ready && kind !== "docker-model-runner") {
+  if (op === "start" && c?.ready && kind !== "docker-model-runner" && !portHeldByOther) {
     const up = readyIsUrl(c.ready) ? await ops.getUrl(c.ready) : (await ops.runCmd(c.ready)) === 0;
     if (up) return `${runtime} is already running (${c.ready})`;
   }
@@ -408,12 +410,25 @@ export async function runtimeStartStop(
   runtime: string,
   op: "start" | "stop",
   deps: ActionDeps,
-  opts: { model?: string; jobId?: string } = {}
+  opts: { model?: string; jobId?: string; force?: boolean } = {}
 ): Promise<{ ok: boolean; message: string }> {
   const commands = deps.runtimeCommands ?? readRuntimeCommands(deps.configPath);
-  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime]);
+  const ops = deps.runtimeOps ?? liveRuntimeOpDeps;
+  // runtimes sharing a port: the server there belongs to the one whose model it reports
+  const holder = await foreignPortHolder(runtime, commands, ops.servedModels);
+  if (holder && op === "stop" && !opts.force) {
+    return { ok: false, message: `${runtime} is not running: the server on its port belongs to ${holder}; pai models stop ${holder} (or --force to run ${runtime}'s stop command anyway)` };
+  }
+  const refused = await runtimeOpRefusal(runtime, op, commands, deps.home, deps.runtimeOps, opts.jobId, deps.runtimeKinds?.[runtime], !!holder);
   if (refused) return { ok: false, message: refused };
-  const r = await runRuntimeOp(runtime, op, commands, deps.runtimeOps ?? liveRuntimeOpDeps, deps.home, opts);
+  let note = "";
+  if (holder && op === "start") {
+    const stopped = await runRuntimeOp(holder, "stop", commands, ops, deps.home);
+    if (!stopped.ok) return { ok: false, message: `stopping ${holder} (holds the port of ${runtime}) failed: ${stopped.message}` };
+    note = `stopped ${holder} first (it held the port of ${runtime}); `;
+  }
+  const r0 = await runRuntimeOp(runtime, op, commands, ops, deps.home, opts);
+  const r = note ? { ...r0, message: note + r0.message } : r0;
   appendLedger(deps.ledger, op === "start" ? RUNTIME_START_EVENT : RUNTIME_STOP_EVENT, {
     who: "cockpit",
     runtime,
