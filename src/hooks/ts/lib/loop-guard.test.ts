@@ -750,3 +750,43 @@ describe("loop guard: every tool, errors, and the report nudge", () => {
     expect(loopDenyReason()).toMatch(/^Stop\. Write your R report now \(r=~ if something is unverified, list it in x=\)\./);
   });
 });
+
+describe("loop guard: a command that only grows its context flags and file list is one command", () => {
+  const SRC = "src/workers/session-profile.test.ts";
+  const MORE = ["session-profile-cli.ts", "slim-profile.ts", "profile-implicit-pin.ts", "route-table.ts", "budget.ts", "session-profile-cli.test.ts", "slim-profile.test.ts", "profile-implicit-pin.test.ts", "session-profile-store.test.ts"];
+  const BASE = "src/workers/session-profile-store.ts src/workers/session-profile.ts src/workers/routing.ts";
+  /** The nth grow of the model's grep: -B/-A + 2 and one more file per repeat. */
+  const growing = (n: number): string => {
+    const ctx = 14 + 2 * n;
+    const files = [BASE, ...MORE.slice(0, n + 1).map((f) => `src/workers/${f}`)].join(" ");
+    return `grep -rn "priority" ${SRC} -B${ctx} -A${ctx}; echo ===; grep -rn "priority" ${files} 2>/dev/null`;
+  };
+  /** grep output: wider context shows more neighbouring lines, so every repeat prints new words. */
+  const output = (n: number): string => {
+    const ctx = 14 + 2 * n;
+    const lines = Array.from({ length: 40 + ctx * 4 }, (_, i) => `${SRC}-${i + 1}-  const w${i} = pick${i * 7}(profile, "tier${i}");`);
+    return `Exit code 2\n${lines.join("\n")}\n===\n${MORE.slice(0, n + 1).map((f) => `src/workers/${f}:3:priority`).join("\n")}`;
+  };
+
+  it("denies the 5th of the 9 growing greps (LOOP_MAX_REPEATS=4 prior similar calls) with an unchanged worktree", () => {
+    let s: LoopState = emptyLoopState();
+    const denied: number[] = [];
+    for (let n = 0; n < 9; n++) {
+      const cmd = growing(n);
+      const r = stepLoopGuard(s, "Bash", cmd, "fp");
+      s = r.state;
+      if (r.deny) {
+        denied.push(n + 1);
+        continue;
+      }
+      s = recordLoopFailure(s, "Bash", cmd, output(n)).state;
+    }
+    expect(denied).toEqual([5, 6, 7, 8, 9]);
+  });
+  it("still keeps git status and git log apart, and two unrelated greps", () => {
+    expect(feed([bash("git status"), bash("git log"), bash("git status"), bash("git log"), bash("git status"), bash("git log")])).toEqual([]);
+    const a = (i: number) => bash(`grep -rn "alpha" src/router/sessions.ts -B${i} -A${i}`);
+    const b = (i: number) => bash(`rg --files-with-matches "needle${i}" docs ./README.md | wc -l`);
+    expect(feed([a(1), b(1), a(2), b(2), a(3), b(3)], (i) => `${"word".repeat(i)} out${i}`)).toEqual([]);
+  });
+});

@@ -35,6 +35,8 @@ export const LOOP_READ_STOP_DENIALS = 3;
 const SIMILARITY = 0.9;
 const READ_OVERLAP = 0.8;
 const RESULT_CHARS = 2000;
+/** Cap on the distinct-word form of a result longer than RESULT_CHARS. */
+const RESULT_WORD_CHARS = 8000;
 const WINDOW_CAP = 64;
 /** Last results kept for echo (read-only calls only): entries and chars each. */
 const LAST_CAP = 8;
@@ -391,8 +393,11 @@ export function resultSig(response: unknown): string {
     text = `${typeof r.stdout === "string" ? r.stdout : ""}\n${typeof r.stderr === "string" ? r.stderr : ""}`;
   } else text = stable(response);
   text = text.replace(TMP_PATH, "TMP").replace(/\s+/g, " ").trim();
+  // a long result keeps each distinct word once, in first-seen order: output that grows with more context lines
+  // (grep -B/-A, a longer tail) repeats the words it had, so the earlier result stays a subset of the later one
+  if (text.length > RESULT_CHARS) text = [...new Set(text.split(" "))].join(" ");
   // head and tail: a growing log keeps its head, a progress line changes its tail
-  return text.length > RESULT_CHARS ? `${text.slice(0, RESULT_CHARS / 2)} ${text.slice(-RESULT_CHARS / 2)}` : text;
+  return text.length > RESULT_WORD_CHARS ? `${text.slice(0, RESULT_WORD_CHARS / 2)} ${text.slice(-RESULT_WORD_CHARS / 2)}` : text;
 }
 
 function resultsSimilar(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -402,7 +407,8 @@ function resultsSimilar(a: string | null | undefined, b: string | null | undefin
   const y = new Set(b.split(" "));
   let inter = 0;
   for (const t of x) if (y.has(t)) inter++;
-  return inter / (x.size + y.size - inter) >= SIMILARITY;
+  const small = Math.min(x.size, y.size);
+  return inter / (small >= 3 ? small : x.size + y.size - inter) >= SIMILARITY;
 }
 
 /** Result text with secret values replaced by [REDACTED] (labels kept); see src/utils/redact.ts. */
