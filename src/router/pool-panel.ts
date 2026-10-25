@@ -12,7 +12,7 @@ import { warmOrCold, poolCarry, poolHostStale, bundleBuildStamp, poolHostProbe, 
 import type { PoolMetricRow, PoolSlotRecord, PoolState, SpareMissReason } from "../workers/pool.js";
 import { diskBundleMtime, ensurePoolHost } from "../workers/pool-cli.js";
 import { cockpitProbeSettings } from "./cockpit-layout.js";
-import { readWorkersSection } from "../workers/config.js";
+import { readWorkersCached } from "../workers/config.js";
 import { parseLedger, type LedgerLine, parseStamp } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
 
@@ -266,7 +266,7 @@ export function cachedPoolPanel(): () => Promise<PoolPanelData | null> {
     if (Date.now() - at < 15_000) return cached;
     at = Date.now();
     try {
-      const { workers } = readWorkersSection();
+      const workers = readWorkersCached();
       const logDir = workersLogDir(workers);
       const s = poolSettings(workers);
       void ensurePoolHost(logDir).catch(() => undefined); // a lost host heals itself (bounded, logged)

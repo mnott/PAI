@@ -344,7 +344,7 @@ export function prepare(
   providers: Record<string, WorkerProvider>,
   claudeBase: string = claudeUpstream(),
   hints: Omit<ResolveHints, "provider"> = {}
-): { ok: true; up: Upstream; target: Target; requested: string } | { ok: false; status: number; message: string } {
+): { ok: true; up: Upstream; target: Target; requested: string; body: Record<string, unknown> } | { ok: false; status: number; message: string } {
   let body: Record<string, unknown>;
   try {
     body = JSON.parse(rawBody.toString("utf8"));
@@ -393,7 +393,7 @@ export function prepare(
   }
   const buf = Buffer.from(JSON.stringify(out));
   headers["content-length"] = String(buf.length);
-  return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model };
+  return { ok: true, up: { url: joinUrl(base, path), headers, body: buf }, target: res, requested: body.model, body: out };
 }
 
 const blockHash = (v: unknown): string =>
@@ -626,7 +626,7 @@ export function routerHandler(
         onDuplicate,
       });
       if (!prep.ok) return fail(prep.status, prep.message);
-      const { up, target, requested } = prep;
+      const { up, target, requested, body: sent } = prep;
       const prov = target.kind === "claude" ? ANTHROPIC_NATIVE : target.name;
       // scheduler / parker engine: one per running instance (n=1 keeps the bare provider name)
       let engine = prov;
@@ -659,7 +659,7 @@ export function routerHandler(
       const sessionId = headerValue(req.headers["x-claude-code-session-id"], 64);
       const gap = onUsage && !isCount ? gaps.gap(sessionId, started) : undefined;
       const changed =
-        onUsage && !isCount ? busts.check(session, fingerprint(JSON.parse(up.body.toString("utf8")))) : [];
+        onUsage && !isCount ? busts.check(session, fingerprint(sent)) : [];
       const record = (status: number, usage: Usage, timing: { ttftMs?: number; decodeMs?: number; promptMs?: number; predictedMs?: number } = {}) => {
         if (!onUsage || isCount) return;
         const row: UsageRow = {

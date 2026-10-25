@@ -23,7 +23,7 @@ import { dirname } from "node:path";
 import { parseEnginePriority, setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
 import { appendLedger, parseLedger } from "../workers/ledger.js";
 import { ledgerPath, workersLogDir } from "../workers/paths.js";
-import { readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
+import { readWorkersCached, readWorkersSection, ANTHROPIC_NATIVE } from "../workers/config.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
 import { readInventory } from "../workers/model-inventory.js";
 import { setClass } from "../workers/providers.js";
@@ -839,7 +839,7 @@ async function finishRuntimeJob(deps: ActionDeps, hooks: ActionHooks, id: string
 
 async function defaultRefreshInventory(): Promise<void> {
   const { computeInventory, readInventoryInput, writeInventory } = await import("../workers/model-inventory.js");
-  writeInventory(workersLogDir(readWorkersSection().workers), await computeInventory(readInventoryInput()));
+  writeInventory(workersLogDir(readWorkersCached()), await computeInventory(readInventoryInput()));
 }
 
 /** Runs the injected local job, records its outcome in the job file and ledger. */

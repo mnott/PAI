@@ -22,7 +22,7 @@ import { weightsBytes } from "./cockpit-weights.js";
 import { setProviderCap } from "../workers/providers.js";
 import { HideRuleError, hideMatcher, parseHideRules, readHideRules, writeHideRules } from "./cockpit-hide.js";
 import { cockpitLayout } from "./cockpit-layout.js";
-import { readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
+import { readWorkersCached, readWorkersSection, type WorkersConfig, ANTHROPIC_NATIVE, isLocalProvider } from "../workers/config.js";
 import { buildsDir, listBuildsSync, ticketKind, waitReason } from "../builds/queue.js";
 import { buildSlots, testSlots } from "../builds/config.js";
 import { WORKER_ID_RE, ledgerPath, workersLogDir } from "../workers/paths.js";
@@ -207,7 +207,7 @@ export function enabledLocalLimits(ls: ProviderLimits[], providers: Record<strin
 
 function configuredProviders(): Record<string, { enabled?: boolean; baseUrl?: string; models?: Record<string, unknown> }> {
   try {
-    return readWorkersSection().workers.providers;
+    return readWorkersCached().providers;
   } catch {
     return {};
   }
@@ -750,7 +750,7 @@ function registryLogDir(yamlPath: string): string {
   };
   const cfg = paiConfigFilePath();
   const key = `${cfg}:${mt(cfg)}:${yamlPath}:${mt(yamlPath)}`;
-  if (registryLogDirMemo?.key !== key) registryLogDirMemo = { key, dir: workersLogDir(readWorkersSection().workers) };
+  if (registryLogDirMemo?.key !== key) registryLogDirMemo = { key, dir: workersLogDir(readWorkersCached()) };
   return registryLogDirMemo.dir;
 }
 
@@ -817,7 +817,7 @@ export async function cockpitModelsPayload(): Promise<unknown> {
 /** Every registry model with its live instances, stopped ones included (the model cards). */
 function registryModelsNow(): RegistryModel[] {
   try {
-    const providers = readWorkersSection().workers.providers;
+    const providers = readWorkersCached().providers;
     const { concurrencyMin, concurrencyMax } = cockpitLayout();
     const cfg = readLocalConfig(workersYamlPath());
     return registryModels(cfg, localInstanceRows(), weightsBytes, (t) => providers[t.provider]?.maxConcurrent).map((m) => {
@@ -882,7 +882,7 @@ function consumersFor(): Array<{ name: string; runtime: string; purpose: string;
 /** The local starts in flight (loading) or failed, one view per instance, from the records startInstance keeps; empty when none. */
 function currentStarts(): LocalStartView[] {
   try {
-    return Object.values(readLocalStarts(workersLogDir(readWorkersSection().workers)))
+    return Object.values(readLocalStarts(workersLogDir(readWorkersCached())))
       .sort((a, b) => a.startedAt - b.startedAt)
       .map((s) => localStartView(s)!);
   } catch {
@@ -982,7 +982,7 @@ function localTierNames(): { tier: string; label: string; memoryGb?: number; max
 /** The managed instances (id, model, port, pid, state) with the requests running or queued on each, for the model cards' per-instance rows. */
 function localInstanceRows(): Array<{ id: string; model: string; port: number; pid?: number; state: string; error?: string; inflight: number }> {
   try {
-    const logDir = workersLogDir(readWorkersSection().workers);
+    const logDir = workersLogDir(readWorkersCached());
     const engines = sharedScheduler().snapshot().engines;
     return readLiveInstances(logDir).map((i) => {
       const e = engines[instanceEngineKey(i)];
@@ -996,7 +996,7 @@ function localInstanceRows(): Array<{ id: string; model: string; port: number; p
 /** The tier of the running model local work goes to: the owner's pick (local-provider.ts pickLocal), null when none runs. */
 async function localDefaultTier(): Promise<string | null> {
   try {
-    const { workers } = readWorkersSection();
+    const workers = readWorkersCached();
     const logDir = workersLogDir(workers);
     const st = readLocalStatus(logDir);
     if (!st?.running.length) return null;
@@ -1010,7 +1010,7 @@ async function localDefaultTier(): Promise<string | null> {
 /** The running local models, one per tier provider that answers; `tier` is the tier of that provider. */
 async function localRunningInfo(): Promise<Array<{ tier: string; label: string; model: string; memGb: string; provider: string }>> {
   try {
-    const logDir = workersLogDir(readWorkersSection().workers);
+    const logDir = workersLogDir(readWorkersCached());
     const st = readLocalStatus(logDir);
     if (!st?.running.length) return [];
     const tiers = Object.values(readLocalConfig(workersYamlPath()).tiers);
@@ -1035,7 +1035,7 @@ export function setEndpointHealth(h: EndpointHealth): void {
 /** The routing table with the selectors a row can take and the endpoint registry (per tier the ordered models with their live state, read from the same limits the gauges show) and the flow line of what each tier resolves to now. */
 async function routingPayload(ls: ProviderLimits[]): Promise<{ rows: RouteRow[]; flow: string; choices: { entry: string; label: string }[]; endpoints: EndpointRow[] }> {
   try {
-    const { workers } = readWorkersSection();
+    const workers = readWorkersCached();
     const budgets: BudgetMap = {};
     for (const l of ls) {
       if (l.kind === "local" || !l.windows.length) continue;
@@ -1106,7 +1106,7 @@ export function cachedPoolCarry(): () => PoolCarry | null {
       at = Date.now();
       carry = null;
       try {
-        const { workers } = readWorkersSection();
+        const workers = readWorkersCached();
         carry = poolCarry(readPoolMetrics(poolMetricsPath(join(workersLogDir(workers)))));
       } catch {
         carry = null;
@@ -1393,7 +1393,7 @@ export function handleCockpit(
       const move = url.pathname.endsWith("/move");
       if (move && !(typeof position === "number" && Number.isFinite(position) && position >= 1)) return send(400, "application/json", JSON.stringify({ ok: false, message: "position (>= 1) required", error: "position (>= 1) required" }));
       try {
-        const { workers } = readWorkersSection();
+        const workers = readWorkersCached();
         const logDir = queueLogDir(workers);
         const status = loadStatus(logDir, id);
         if (!status) return send(404, "application/json", JSON.stringify({ ok: false, message: `no worker named "${id}"`, error: `no worker named "${id}"` }));
@@ -1438,7 +1438,7 @@ export function handleCockpit(
       const { delta } = b as { delta?: unknown };
       if (delta !== 1 && delta !== -1) return send(400, "application/json", JSON.stringify({ ok: false, message: "delta must be +1 or -1" }));
       try {
-        const cur = readWorkersSection().workers.providers[name]?.maxConcurrent;
+        const cur = readWorkersCached().providers[name]?.maxConcurrent;
         if (cur === undefined) return send(404, "application/json", JSON.stringify({ ok: false, message: `provider "${name}" has no concurrency cap` }));
         const { concurrencyMin, concurrencyMax } = cockpitLayout();
         // a stored cap above max stays there: "+" must not lower it, only "-" steps down
@@ -1537,7 +1537,7 @@ export function handleCockpit(
     );
   } else if (url.pathname === "/cockpit/queue") {
     try {
-      const { workers } = readWorkersSection();
+      const workers = readWorkersCached();
       send(200, "application/json", JSON.stringify(cockpitQueue(queueLogDir(workers), workers)));
     } catch (e) {
       send(500, "application/json", JSON.stringify({ error: (e as Error).message }));
