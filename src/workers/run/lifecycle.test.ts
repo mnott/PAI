@@ -128,6 +128,13 @@ describe("run lifecycle: claude engine", () => {
     expect(process.listenerCount("SIGTERM")).toBe(before);
   });
 
+  it("records requested_model / model_fallback from the step-down in the status", async () => {
+    hoisted.spawnOwned.mockRejectedValue(new Error("no pane"));
+    const modelRecord = { requestedModel: "big", modelFallback: true, modelFallbackReason: "stepped down" };
+    await expect(foldRun(args({ model: "small", modelRecord }), prepared())).rejects.toThrow("no pane");
+    expect(loadStatus(logDir, "w-lc")).toMatchObject({ model: "small", ...modelRecord });
+  });
+
   it("a spawn rejection is cleaned up the same way", async () => {
     hoisted.spawnOwned.mockRejectedValue(new Error("no pane"));
     await expect(foldRun(args(), prepared())).rejects.toThrow("no pane");

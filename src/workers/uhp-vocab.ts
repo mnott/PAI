@@ -63,6 +63,14 @@ export const UHP_ERROR_CODES = [
   "model_unavailable",
   "rate_limited",
   "quota_exhausted",
+  "session_busy",
+  "session_expired",
+  "response_not_found",
+  "harness_mismatch",
+  "harness_not_found",
+  "missing_credential",
+  "invalid_credential",
+  "unsupported_protocol_version",
 ] as const;
 export type UhpErrorCode = (typeof UHP_ERROR_CODES)[number];
 

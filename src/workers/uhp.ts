@@ -15,8 +15,7 @@ import { providerKeyPath, resolveProviderKey, type WorkerProvider } from "./conf
 import { uhpErrorReason, uhpStatusToResult, type Ag2Result, type UhpErrorCode } from "./uhp-vocab.js";
 
 export const UHP_CANCEL_TIMEOUT_MS = 5000;
-/** Header carrying the pinned protocol version label, when the provider sets uhpProtocol. */
-export const UHP_PROTOCOL_HEADER = "UHP-Version";
+export const UHP_DISCOVERY_TIMEOUT_MS = 3000;
 
 export interface UhpRequestOpts {
   harnessId?: string;
@@ -46,7 +45,6 @@ export function buildUhpHeaders(provider: WorkerProvider, workerId: string): Rec
     Accept: "text/event-stream",
     ...(key ? { Authorization: `Bearer ${key}` } : {}),
     "Idempotency-Key": workerId,
-    ...(provider.uhpProtocol ? { [UHP_PROTOCOL_HEADER]: provider.uhpProtocol } : {}),
   };
 }
 
@@ -65,7 +63,8 @@ export class UhpProtocolError extends Error {
   }
 }
 
-export const UHP_TERMINAL_TYPES = ["response.completed", "response.incomplete", "response.failed", "response.cancelled"] as const;
+/** The terminal events; a cancelled task ends with response.failed and status "cancelled". */
+export const UHP_TERMINAL_TYPES = ["response.completed", "response.incomplete", "response.failed"] as const;
 
 export interface UhpEvent {
   type: string;
@@ -152,6 +151,49 @@ function errorOf(e: Record<string, unknown>): { code: string; message: string } 
   };
 }
 
+/** The `{error:{type,code,message,param,detail}}` body of a non-2xx reply; empty when it is not that shape. */
+export function httpErrorOf(raw: string): { code?: string; message?: string } {
+  try {
+    const e = (JSON.parse(raw) as { error?: Record<string, unknown> }).error;
+    if (!e || typeof e !== "object") return {};
+    return {
+      ...(typeof e.code === "string" ? { code: e.code } : {}),
+      ...(typeof e.message === "string" ? { message: e.message.slice(0, 200) } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** The warning for an advertised protocol version that differs from the pin; null when equal or either is unknown. */
+export function uhpVersionWarning(pin: string | undefined, advertised: string | null): string | null {
+  if (!pin || !advertised || pin === advertised) return null;
+  return `server advertises UHP ${advertised}, provider pins ${pin}`;
+}
+
+/**
+ * GET {baseUrl}/v1/uhp (the unauthenticated discovery endpoint): the advertised
+ * protocol version, or null when unreachable or the body names none. The body
+ * shape is not pinned down, so the usual version fields are tried.
+ */
+export async function discoverUhpVersion(
+  provider: WorkerProvider,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = UHP_DISCOVERY_TIMEOUT_MS,
+): Promise<string | null> {
+  try {
+    const res = await fetchImpl(uhpUrl(provider, "/v1/uhp"), { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    const j = (await res.json()) as Record<string, unknown>;
+    for (const k of ["version", "protocol_version", "uhp_version", "protocol"]) {
+      if (typeof j[k] === "string") return j[k] as string;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Folding events into a run result
 // ---------------------------------------------------------------------------
@@ -174,6 +216,8 @@ export interface UhpResult {
   model: string | null;
   downloadUrls: string[];
   text: string;
+  /** Protocol deviations that did not fail the run (e.g. no metadata.session_id). */
+  warnings: string[];
 }
 
 export const emptyUhpResult = (): UhpResult => ({
@@ -191,6 +235,7 @@ export const emptyUhpResult = (): UhpResult => ({
   model: null,
   downloadUrls: [],
   text: "",
+  warnings: [],
 });
 
 function collectUrls(v: unknown, out: string[], depth = 0): void {
@@ -291,15 +336,18 @@ export function foldUhpEvent(e: UhpEvent, r: UhpResult): void {
     r.text = "";
     adoptResponse(r, e.response);
     collectUrls(e.response, r.downloadUrls);
-    r.status = type.slice("response.".length);
-    r.result = uhpStatusToResult(r.status);
     const resp = (typeof e.response === "object" && e.response !== null ? e.response : {}) as Record<string, unknown>;
+    // the response's `status` is authoritative; the event type only decides when it is missing
+    r.status = typeof resp.status === "string" && resp.status !== "in_progress" ? resp.status : type.slice("response.".length);
+    r.result = uhpStatusToResult(r.status);
+    if (!r.sessionId) r.warnings.push("response has no metadata.session_id (required by the protocol): resume may not work");
     if (resp.error && typeof resp.error === "object") {
       const { code, message } = errorOf({ error: resp.error });
       r.errorCode = uhpErrorReason(code);
       r.errorMessage = message;
     }
     if (r.status === "cancelled" && !r.errorCode) r.errorCode = "cancelled";
+    if (type === "response.failed" && r.status === "completed") r.warnings.push("response.failed carried status completed");
     if (r.status === "failed" && !r.errorCode) r.errorCode = "provider_error";
   }
 }
@@ -328,13 +376,14 @@ export async function runUhp(o: RunUhpOpts): Promise<UhpResult> {
     signal: o.signal,
   });
   if (!res.ok) {
-    const body = (await res.text().catch(() => "")).slice(0, 200);
-    const code: UhpErrorCode = res.status === 429 ? "rate_limited" : res.status >= 500 ? "harness_unavailable" : "provider_error";
+    const raw = await res.text().catch(() => "");
+    const err = httpErrorOf(raw);
+    const fallback: UhpErrorCode = res.status === 429 ? "rate_limited" : res.status >= 500 ? "harness_unavailable" : "provider_error";
     const r = emptyUhpResult();
     r.status = "failed";
     r.result = "-";
-    r.errorCode = code;
-    r.errorMessage = `HTTP ${res.status}: ${body}`;
+    r.errorCode = err.code ? uhpErrorReason(err.code) : fallback;
+    r.errorMessage = `HTTP ${res.status}: ${err.message ?? raw.slice(0, 200)}`;
     return r;
   }
   if (!res.body) throw new UhpProtocolError("empty response body");

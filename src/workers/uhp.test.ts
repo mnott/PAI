@@ -23,6 +23,7 @@ import {
 } from "./uhp.js";
 import { modelRecord, resultToUhpStatus, uhpErrorReason, uhpStatusToResult, uhpStatusToState, workerStateToUhpStatus } from "./uhp-vocab.js";
 import { uhpReport } from "./run/execute-uhp.js";
+import { discoverUhpVersion, httpErrorOf, uhpVersionWarning } from "./uhp.js";
 
 const sse = (events: Array<Record<string, unknown>>): string =>
   events.map((e, i) => `data: ${JSON.stringify({ sequence_number: i, ...e })}\n\n`).join("");
@@ -76,7 +77,7 @@ describe("request", () => {
     const h = buildUhpHeaders(provider("http://x", { uhpProtocol: "1.0" }), "w-1");
     expect(h.Authorization).toBe("Bearer k-secret");
     expect(h["Idempotency-Key"]).toBe("w-1");
-    expect(h["UHP-Version"]).toBe("1.0");
+    expect(Object.keys(h).some((k) => /version/i.test(k))).toBe(false);
   });
 });
 
@@ -103,10 +104,42 @@ describe("SSE parser", () => {
     expect(r.errorCode).toBe("provider_error");
     expect(r.errorMessage).toBe("boom");
   });
-  it("maps cancelled", () => {
-    const r = parseAll(sse([{ type: "response.cancelled", response: resp() }]));
+  it("maps a cancelled task: response.failed with status cancelled", () => {
+    const r = parseAll(sse([
+      { type: "response.created", response: resp({ status: "in_progress" }) },
+      { type: "response.in_progress", response: resp({ status: "in_progress" }) },
+      { type: "response.failed", response: resp({ status: "cancelled", error: null }) },
+    ]));
+    expect(r.status).toBe("cancelled");
     expect(r.result).toBe("!");
     expect(r.errorCode).toBe("cancelled");
+  });
+  it("the response status is authoritative over the event type", () => {
+    const r = parseAll(sse([{ type: "response.failed", response: resp({ status: "incomplete" }) }]));
+    expect(r.result).toBe("~");
+  });
+  it("response.cancelled is not a terminal event", () => {
+    expect(() => parseAll(sse([{ type: "response.cancelled", response: resp() }]))).toThrow(/without a terminal/);
+  });
+  it("warns when the response has no metadata.session_id", () => {
+    const r = parseAll(sse([{ type: "response.completed", response: { id: "resp_2", metadata: {} } }]));
+    expect(r.warnings.join()).toMatch(/session_id/);
+  });
+  it("folds the text/part/arguments events without disturbing the result", () => {
+    const r = parseAll(sse([
+      { type: "response.created", response: resp() },
+      { type: "response.in_progress", response: resp() },
+      { type: "response.output_item.added", output_index: 0, item: { type: "message" } },
+      { type: "response.content_part.added", output_index: 0, content_index: 0 },
+      { type: "response.output_text.delta", delta: "ok", item_id: "i", output_index: 0, content_index: 0 },
+      { type: "response.output_text.done", text: "ok" },
+      { type: "response.content_part.done" },
+      { type: "response.function_call_arguments.delta", delta: "{" },
+      { type: "response.function_call_arguments.done", arguments: "{}" },
+      { type: "response.completed", response: resp({ status: "completed" }) },
+    ]));
+    expect(r.finalText).toBe("ok");
+    expect(r.result).toBe("+");
   });
   it("rejects a sequence gap", () => {
     const bad = `data: ${JSON.stringify({ type: "response.created", sequence_number: 0 })}\n\ndata: ${JSON.stringify({ type: "response.completed", sequence_number: 2 })}\n\n`;
@@ -215,6 +248,31 @@ describe("fake server", () => {
     const t0 = Date.now();
     expect(await cancelUhp(provider(url), "r", "w", fetch, 300)).toBe(false);
     expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
+  it("discovers the advertised version without auth and warns on a differing pin", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const url = await start((req, res) => {
+      seen.push(req.headers);
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "2026-10-19" }));
+    });
+    const v = await discoverUhpVersion(provider(url));
+    expect(v).toBe("2026-10-19");
+    expect(seen[0].authorization).toBeUndefined();
+    expect(uhpVersionWarning("2026-09-12", v)).toMatch(/advertises UHP 2026-10-19, provider pins 2026-09-12/);
+    expect(uhpVersionWarning("2026-10-19", v)).toBeNull();
+    expect(uhpVersionWarning(undefined, v)).toBeNull();
+    expect(await discoverUhpVersion(provider("http://127.0.0.1:1"))).toBeNull();
+  });
+
+  it("reads the coded error body of a 409 session_busy", async () => {
+    const url = await start((_req, res) => {
+      res.writeHead(409, { "Content-Type": "application/json" }).end(JSON.stringify({ error: { type: "invalid_request_error", code: "session_busy", message: "busy", param: null, detail: null } }));
+    });
+    const r = await runUhp({ provider: provider(url), workerId: "w", prompt: "x" });
+    expect(r.errorCode).toBe("session_busy");
+    expect(r.errorMessage).toBe("HTTP 409: busy");
+    expect(httpErrorOf("not json")).toEqual({});
   });
 
   it("fails a stream with a gap", async () => {

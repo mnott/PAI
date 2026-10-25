@@ -17,7 +17,7 @@ import { resolveHostSession } from "../pane.js";
 import { parseWorkerReport, type WorkerReport } from "../report.js";
 import { armDeadline, deadlinePromptLine } from "../deadline.js";
 import { blockedMsOf } from "../active-time.js";
-import { cancelUhp, emptyUhpResult, runUhp, UhpProtocolError, type UhpResult } from "../uhp.js";
+import { cancelUhp, discoverUhpVersion, emptyUhpResult, runUhp, uhpVersionWarning, UhpProtocolError, type UhpResult } from "../uhp.js";
 import { modelRecord, uhpErrorReason, uhpStatusToState, type Ag2Result } from "../uhp-vocab.js";
 import { type StreamEvent, type CodexArgs } from "./types.js";
 import { isoStamp } from "./stream.js";
@@ -27,18 +27,19 @@ import { fireDeadline, trackBlocked, recordKilledEnd, finaliseRun, identityExtra
 export type UhpArgs = CodexArgs & { harnessId?: string };
 
 /** The report for a uhp run: the worker's own AG2/JSON report when parseable, else one built from the terminal status. */
-export function uhpReport(r: UhpResult, finalText: string): WorkerReport | null {
+export function uhpReport(r: UhpResult, finalText: string, warnings: string[] = []): WorkerReport | null {
   const parsed = parseWorkerReport(finalText);
   const result: Ag2Result = r.result ?? "?";
   const files = r.downloadUrls.length ? `files: ${r.downloadUrls.join(" ")}` : "";
-  if (!parsed && result === "+" && !files) return null;
+  const warn = [...warnings, ...r.warnings].map((w) => `uhp warning: ${w}`).join("\n");
+  if (!parsed && result === "+" && !files && !warn) return null;
   const base: WorkerReport = parsed ?? { notes: finalText.slice(0, 500) };
   const why = result === "+" ? undefined : [r.errorCode, r.errorMessage].filter(Boolean).join(": ") || r.status || undefined;
   return {
     ...base,
     result: base.result ?? result,
     ...(why && !base.why ? { why } : {}),
-    notes: [base.notes, files].filter(Boolean).join("\n"),
+    notes: [base.notes, files, warn].filter(Boolean).join("\n"),
   };
 }
 
@@ -111,6 +112,16 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
   if (paneVerified) status.pane = { opened: true, exec: true };
   else await announcePane(logDir, config, wid, term, systemWaiver, ledger, status);
 
+  // the pin is a record, not a negotiation: a different advertised version only warns
+  const warnings: string[] = [];
+  if (provider.uhpProtocol) {
+    const w = uhpVersionWarning(provider.uhpProtocol, await discoverUhpVersion(provider));
+    if (w) {
+      warnings.push(w);
+      appendLedger(ledger, "WORKER-NOTE", { id: wid, note: `uhp version: ${w}` });
+    }
+  }
+
   const t0 = Date.now();
   const ctl = new AbortController();
   const fold = emptyUhpResult();
@@ -151,7 +162,9 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
     : null;
   const stopTrack = trackBlocked(logDir, status, a.limit);
 
+  let killed = false;
   const onSignal = (sig: string) => {
+    killed = true;
     recordKilledEnd({ logDir, status, sig, t0, ledger, wid, providerName: target.providerName, model, label });
     stopDeadline?.();
     stopTrack?.();
@@ -208,7 +221,12 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
 
   const secs = Math.floor((Date.now() - t0) / 1000);
   const finalText = fold.finalText ?? "";
-  if (failure) {
+  if (killed) {
+    // a kill ends the run as cancelled whatever the aborted stream looked like
+    fold.status = "cancelled";
+    fold.result = "!";
+    fold.errorCode = "cancelled";
+  } else if (failure) {
     fold.status = fold.status ?? "failed";
     fold.result = fold.result ?? "-";
     fold.errorCode = fold.errorCode ?? failureCode;
@@ -217,7 +235,7 @@ export async function executeUhpRun(a: UhpArgs): Promise<number> {
   const state = uhpStatusToState(fold.status ?? "failed");
   const ok = state === "done";
   const rc = ok ? 0 : state === "killed" ? 143 : 1;
-  const report = uhpReport(fold, finalText);
+  const report = uhpReport(fold, finalText, warnings);
   Object.assign(status, modelRecord(model, fold.model ?? undefined, "harness used another model"));
   if (fold.errorCode) status.last = shortText(`${fold.errorCode}: ${fold.errorMessage ?? ""}`, 90);
   else status.last = shortText(report?.notes ?? finalText, 90) || (ok ? "done" : "failed");
