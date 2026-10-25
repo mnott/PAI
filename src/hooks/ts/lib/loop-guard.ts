@@ -353,6 +353,12 @@ export function callKey(tool: string, input: string | Record<string, unknown> | 
     const { start, end } = readRange(input);
     return `Read\tRead@${String(input.file_path ?? "")}#${start}-${Number.isFinite(end) ? end : "inf"}`;
   }
+  if (tool === "Write") {
+    // a rewrite with different content is a different call; only the same file with the same bytes repeats
+    const content = typeof input.content === "string" ? input.content : stable(input.content);
+    const hash = createHash("sha1").update(content).digest("hex").slice(0, 12);
+    return `Write\t${String(input.file_path ?? "")}#${hash}`;
+  }
   return `${tool}\t${tokenSet(stable(input)).join(" ")}`;
 }
 
