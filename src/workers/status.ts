@@ -22,7 +22,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { shortText } from "./args.js";
-import { statusPath } from "./paths.js";
+import { archiveDir, statusPath, withArchive } from "./paths.js";
 import { releaseClaims, type ClaimRecord } from "../session/forge-sink.js";
 import type { WaitingOn } from "./waiting.js";
 import type { Denial } from "./denials.js";
@@ -422,31 +422,14 @@ export function setWorkerNote(logDir: string, id: string, note: string): WorkerS
   return status;
 }
 
-/** Load every status file in the logDir, oldest id first, skipping damage. */
-export function loadStatuses(logDir: string): WorkerStatus[] {
-  if (!existsSync(logDir)) return [];
-  const out: WorkerStatus[] = [];
-  for (const name of readdirSync(logDir).sort()) {
-    if (!name.endsWith(".status")) continue;
-    try {
-      out.push(JSON.parse(readFileSync(join(logDir, name), "utf8")) as WorkerStatus);
-    } catch {
-      // a half-written or damaged status file is not worth a crash
-    }
-  }
-  return out;
-}
-
-const statusCache = new Map<string, { mtimeMs: number; size: number; status: WorkerStatus | null; checked: number }>();
-/** A cached terminal status is trusted this long without a stat: a finished worker's file no longer changes. */
-export const TERMINAL_RECHECK_MS = 5 * 60_000;
+const statusCache = new Map<string, { mtimeMs: number; size: number; status: WorkerStatus | null }>();
 
 /**
- * loadStatuses for the daemon's periodic tasks: a status file is parsed again only when its mtime or size
- * changed, so a tick over thousands of historical workers costs one readdir and one stat each, not a parse.
- * The returned objects are shared with the cache: read-only.
+ * Load every status file in the logDir, oldest id first, skipping damage. A file is parsed again only when its
+ * mtime or size changed (a deleted one is dropped), so a call over thousands of historical workers costs one
+ * readdir and one stat each. Callers get fresh shallow copies, so mutating a returned status never reaches the cache.
  */
-export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStatus[] {
+export function loadStatuses(logDir: string): WorkerStatus[] {
   if (!existsSync(logDir)) return [];
   const out: WorkerStatus[] = [];
   const seen = new Set<string>();
@@ -455,12 +438,8 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
     const path = join(logDir, name);
     seen.add(path);
     try {
-      let hit = statusCache.get(path);
-      if (hit?.status && isTerminal(hit.status.state) && now - hit.checked < TERMINAL_RECHECK_MS) {
-        out.push(hit.status);
-        continue;
-      }
       const st = statSync(path);
+      let hit = statusCache.get(path);
       if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
         let status: WorkerStatus | null = null;
         try {
@@ -468,21 +447,50 @@ export function loadStatusesCached(logDir: string, now = Date.now()): WorkerStat
         } catch {
           // a half-written or damaged status file is not worth a crash
         }
-        hit = { mtimeMs: st.mtimeMs, size: st.size, status, checked: now };
+        hit = { mtimeMs: st.mtimeMs, size: st.size, status };
         statusCache.set(path, hit);
       }
-      hit.checked = now;
-      if (hit.status) out.push(hit.status);
+      if (hit.status) out.push({ ...hit.status });
     } catch {
       statusCache.delete(path);
     }
   }
-  for (const k of statusCache.keys()) if (k.startsWith(logDir) && !seen.has(k)) statusCache.delete(k);
+  const prefix = join(logDir, "/");
+  for (const k of statusCache.keys()) if (k.startsWith(prefix) && !seen.has(k)) statusCache.delete(k);
+  return out;
+}
+
+/** Statuses the gc moved to archive/YYYY-MM/ (uncached; for history readers such as usage totals). */
+export function loadArchivedStatuses(logDir: string): WorkerStatus[] {
+  const out: WorkerStatus[] = [];
+  const root = archiveDir(logDir);
+  let months: string[];
+  try {
+    months = readdirSync(root).sort();
+  } catch {
+    return out;
+  }
+  for (const m of months) {
+    let names: string[];
+    try {
+      names = readdirSync(join(root, m)).sort();
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".status")) continue;
+      try {
+        out.push(JSON.parse(readFileSync(join(root, m, name), "utf8")) as WorkerStatus);
+      } catch {
+        // damaged: skip
+      }
+    }
+  }
   return out;
 }
 
 export function loadStatus(logDir: string, id: string): WorkerStatus | null {
-  const path = statusPath(logDir, id);
+  const path = withArchive(logDir, statusPath(logDir, id));
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as WorkerStatus;

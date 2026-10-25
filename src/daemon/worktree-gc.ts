@@ -7,6 +7,7 @@
 
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
+import { archiveOldStatuses } from "../workers/archive-statuses.js";
 import { gcWorktreesThrottled } from "../workers/worktree.js";
 
 export const WORKTREE_GC_TICK_MS = 60 * 60_000;
@@ -20,6 +21,8 @@ export function runWorktreeGcHourly(): void {
       olderThanHours: workers.gcOlderThanHours,
       maxGb: workers.worktreesMaxGb,
     });
+    const archived = archiveOldStatuses(workersLogDir(workers));
+    if (archived.length) process.stderr.write(`[pai-daemon] status archive: moved ${archived.length} finished workers\n`);
     if (!res) return;
     const kept = res.filter((r) => r.skipped);
     process.stderr.write(
