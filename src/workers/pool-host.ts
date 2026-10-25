@@ -33,7 +33,7 @@ import { stripContextSuffix } from "../router/router.js";
 import { getProviderOrNative, readWorkersSection, workersConfigStamp, type WorkerProvider, type WorkersConfig } from "./config.js";
 import { buildRunEnv, claudeCommand, claudeSettingsExtra, isLoopbackProvider, loopbackRouterChoice, pinnedSettings } from "./run-env.js";
 import { probeRouter } from "../router/supervisor.js";
-import { appendLedger, parseStamp } from "./ledger.js";
+import { appendLedger } from "./ledger.js";
 import { NOTE_TOKEN_ENV, newNoteToken } from "./note-delivery.js";
 import { resolveLocalProvider } from "./local-provider.js";
 import { routeRun } from "./policy.js";
@@ -1070,7 +1070,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     // Keep that stamp — the deadline counts from the slot grant, not from the
     // host's pickup.
     const prior = loadStatus(logDir, wid);
-    const priorStart = prior ? parseStamp(prior.started) : NaN;
+    const priorStart = prior ? Date.parse(prior.started.replace(" ", "T")) : NaN;
     const started = Number.isFinite(priorStart) ? new Date(priorStart) : now();
     const t0 = started.getTime();
     const status: WorkerStatus = {

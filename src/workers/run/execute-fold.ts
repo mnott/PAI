@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { openSync, closeSync, writeSync } from "node:fs";
 import { shortText } from "../args.js";
-import { appendLedger, parseStamp } from "../ledger.js";
+import { appendLedger } from "../ledger.js";
 import { parentInfo } from "../endreason.js";
 import { peekLoopStop } from "../loop-stop.js";
 import { TroubleWatcher } from "../worker-trouble.js";
@@ -98,8 +98,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   // a gate that already ran (gateStart) rewrote `started` at the slot grant;
   // keep that stamp so the deadline and ps age count from the grant
   const gated = a.gated ? loadStatus(logDir, wid) : null;
-  const started = gated && Number.isFinite(parseStamp(gated.started))
-    ? new Date(parseStamp(gated.started))
+  const started = gated && Number.isFinite(Date.parse(gated.started.replace(" ", "T")))
+    ? new Date(Date.parse(gated.started.replace(" ", "T")))
     : new Date();
   let status: WorkerStatus = {
     id: wid,

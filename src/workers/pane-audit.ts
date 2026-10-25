@@ -18,7 +18,7 @@ import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osa
 import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
-import { appendLedger, parseStamp } from "./ledger.js";
+import { appendLedger } from "./ledger.js";
 import { ledgerPath } from "./paths.js";
 import { killTree } from "./kill-tree.js";
 import { appendStopEvent, requestKill } from "./endreason.js";
@@ -72,7 +72,7 @@ export type SizeMap = Map<string, { cols: number; rows: number; mark?: "NOT SELE
 
 const norm = (id: string): string => itermUuid(id) || id;
 
-const stampMs = (t: string | undefined, utc: boolean): number => (t ? (utc ? Date.parse(t.replace(" ", "T") + "Z") : parseStamp(t)) : NaN);
+const stampMs = (t: string | undefined, utc: boolean): number => (t ? Date.parse(t.replace(" ", "T") + (utc ? "Z" : "")) : NaN);
 
 export function auditPanes(procs: AuditProc[], registry: PaneEntry[], tabs: TabMap, nowMs?: number, sizes?: SizeMap): PaneVerdict[] {
   const tabOf = (id: string | undefined): string | undefined => (id ? tabs.get(norm(id)) : undefined);

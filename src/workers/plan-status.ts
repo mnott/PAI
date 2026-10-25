@@ -9,7 +9,6 @@
  * to know about it.
  */
 
-import { parseStamp } from "./ledger.js";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { nowStamp, pidAlive } from "./status.js";
@@ -86,7 +85,7 @@ export function idleLine(idleMs: number, wallMs: number, overlaps: number): stri
 export function renderPlanLines(statuses: PlanRunStatus[], now = Date.now()): string[] {
   return statuses
     .filter((s) => s.state === "running")
-    .map((s) => `plan ${s.job}  ${s.parts.merged}/${s.parts.total} merged  ${s.phase} (${fmtElapsed(now - s.phaseSince)})${s.running.length ? `  workers: ${s.running.join(", ")}` : ""}${s.idleMs !== undefined ? `  ${idleLine(s.idleMs, now - parseStamp(s.started), s.overlaps ?? 0)}` : ""}`);
+    .map((s) => `plan ${s.job}  ${s.parts.merged}/${s.parts.total} merged  ${s.phase} (${fmtElapsed(now - s.phaseSince)})${s.running.length ? `  workers: ${s.running.join(", ")}` : ""}${s.idleMs !== undefined ? `  ${idleLine(s.idleMs, now - Date.parse(s.started.replace(" ", "T")), s.overlaps ?? 0)}` : ""}`);
 }
 
 /** Cockpit rows of the running plans. */
@@ -98,7 +97,7 @@ export function planRows(statuses: PlanRunStatus[], now = Date.now()): Array<{ i
       job: s.job,
       phase: s.phase,
       phaseSec: Math.max(0, Math.round((now - s.phaseSince) / 1000)),
-      ageSec: Math.max(0, Math.round((now - parseStamp(s.started)) / 1000)) || 0,
+      ageSec: Math.max(0, Math.round((now - Date.parse(s.started.replace(" ", "T"))) / 1000)) || 0,
       merged: s.parts.merged,
       total: s.parts.total,
       running: s.running,

@@ -15,7 +15,6 @@
  * and only to the fallback (`where: cloud`).
  */
 
-import { parseStamp } from "./ledger.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { escalationPolicy } from "./config.js";
@@ -34,7 +33,7 @@ export function providerPinned(s: Pick<WorkerStatus, "routeWhy">): boolean {
 }
 
 const stampMs = (stamp: string | undefined): number | null => {
-  const t = stamp ? parseStamp(stamp) : NaN;
+  const t = stamp ? Date.parse(stamp.replace(" ", "T")) : NaN;
   return Number.isFinite(t) ? t : null;
 };
 

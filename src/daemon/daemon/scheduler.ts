@@ -4,7 +4,6 @@
  * and the start* functions invoked once at daemon startup.
  */
 
-import { parseStamp } from "../../workers/ledger.js";
 import { existsSync } from "node:fs";
 import { readWorkersSection } from "../../workers/config.js";
 import { keepaliveSecs, runKeepaliveBeat, type BeatMetrics } from "../../workers/keepalive.js";
@@ -631,7 +630,7 @@ const PANE_REAP_TICK_MS = 2_000;
 export function paneReapable(st: WorkerStatus | null, now = Date.now()): boolean {
   // every end closes its pane alike (replay shows a failure's error)
   if (!st || st.state === "running" || st.state === "queued") return false;
-  const at = parseStamp(st.updated);
+  const at = Date.parse(st.updated.replace(" ", "T"));
   return Number.isNaN(at) || now - at > PANE_REAP_GRACE_MS;
 }
 

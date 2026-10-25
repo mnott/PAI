@@ -4,7 +4,6 @@
  * gets numbers and display names, never keys, bodies or prompt content.
  */
 
-import { parseStamp } from "../workers/ledger.js";
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type http from "node:http";
@@ -1228,7 +1227,7 @@ export function cockpitQueue(
     return p;
   };
   const waited = (s: WorkerStatus): number => {
-    const t = parseStamp(s.started ?? "");
+    const t = Date.parse((s.started ?? "").replace(" ", "T"));
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
   const sessionMax: SessionLimits = {};

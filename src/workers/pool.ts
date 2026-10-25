@@ -49,7 +49,7 @@ import type { StreamEvent } from "./run.js";
 import { inputSideTokens, type UsageBlock } from "../utils/input-side-tokens.js";
 import { noteTokenSentence, type WorkerReport } from "./report.js";
 import type { WorkerStatus } from "./status.js";
-import { parseLedger, parseStamp } from "./ledger.js";
+import { parseLedger } from "./ledger.js";
 import { writeFileAtomic } from "../config/atomic-file.js";
 import { LOOPBACK_HOST } from "../utils/loopback.js";
 
@@ -870,7 +870,7 @@ export function recentWarmKeys(ledgerText: string, nowMs: number): WarmKey[] {
   const seen = new Map<string, WarmKey>();
   for (const l of parseLedger(ledgerText).reverse()) {
     if (l.event !== "WORKER-START" || l.fields.mode !== "headless") continue;
-    const t = parseStamp(l.stamp);
+    const t = Date.parse(l.stamp.replace(" ", "T"));
     if (!Number.isFinite(t) || nowMs - t > SPARE_WARM_WINDOW_MS) continue;
     const { provider, model, cwd } = l.fields;
     if (!provider || !model || !cwd) continue;

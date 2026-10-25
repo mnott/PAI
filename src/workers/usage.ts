@@ -9,7 +9,6 @@
  * prompt-tokens.ts makes the router fill what the server never reported).
  */
 
-import { parseStamp } from "./ledger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { maxOf } from "../utils/min-max.js";
 import { eventsPath } from "./paths.js";
@@ -220,7 +219,7 @@ export function parseWhen(s: string, now = new Date()): Date {
 
 /** Status `started` is local "YYYY-MM-DD HH:MM:SS" (or ISO). */
 function startedAt(s: WorkerStatus): Date | null {
-  const d = new Date(parseStamp(s.started));
+  const d = new Date(s.started.includes("T") ? s.started : s.started.replace(" ", "T"));
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

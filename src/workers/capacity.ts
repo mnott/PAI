@@ -16,7 +16,6 @@
  * on the next check. Running workers are never interrupted — only the order
  * of the waiting ones changes.
  */
-import { parseStamp } from "./ledger.js";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
@@ -195,7 +194,7 @@ function lastServed(all: WorkerStatus[], provider: string): Map<string, number> 
   const out = new Map<string, number>();
   for (const s of all) {
     if (s.provider !== provider || s.state === "queued") continue;
-    const t = parseStamp(s.started ?? "");
+    const t = Date.parse((s.started ?? "").replace(" ", "T"));
     if (Number.isFinite(t)) out.set(sessionOf(s), Math.max(out.get(sessionOf(s)) ?? 0, t));
   }
   return out;

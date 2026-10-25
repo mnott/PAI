@@ -15,21 +15,12 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-/** Local wall clock plus UTC offset, so the repeated autumn hour stays unambiguous. */
 export function ledgerStamp(d: Date = new Date()): string {
   const p = (n: number) => String(n).padStart(2, "0");
-  const off = -d.getTimezoneOffset();
-  const abs = Math.abs(off);
   return (
     `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}` +
-    `${off < 0 ? "-" : "+"}${p(Math.floor(abs / 60))}:${p(abs % 60)}`
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
   );
-}
-
-/** Epoch ms of a ledger stamp (offset-carrying, or an old zone-less local one); NaN when unreadable. */
-export function parseStamp(ts: string): number {
-  return Date.parse(ts.replace(" ", "T"));
 }
 
 export interface LedgerLine {
@@ -40,7 +31,7 @@ export interface LedgerLine {
 
 /** Parse `2026-09-17 12:00:00 TAG key=value …` into its parts. */
 export function parseLedgerLine(line: string): LedgerLine | null {
-  const m = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2})?) (\S+)(?: (.*))?$/);
+  const m = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (\S+)(?: (.*))?$/);
   if (!m) return null;
   const fields: Record<string, string> = {};
   // values are whitespace-collapsed by the writers, so spaces safely delimit

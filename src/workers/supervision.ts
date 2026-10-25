@@ -51,7 +51,6 @@
  * that way: supervision that bills tokens to watch tokens is a bug.
  */
 
-import { parseStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFileAtomic } from "../config/atomic-file.js";
@@ -126,8 +125,8 @@ function isTerminal(s: WorkerStatus): boolean {
 }
 
 /** Age of a "YYYY-MM-DD HH:MM:SS" stamp in ms, NaN-safe (unparsable → 0). */
-export function ageMs(ts: string, now: Date): number {
-  const t = parseStamp(ts);
+function ageMs(ts: string, now: Date): number {
+  const t = Date.parse(ts.replace(" ", "T"));
   if (Number.isNaN(t)) return 0;
   return Math.max(0, now.getTime() - t);
 }
@@ -886,7 +885,7 @@ async function pointPass(
       try {
         const ev = JSON.parse(l) as SupervisionEvent;
         if (ev.session && ev.session !== session) continue; // foreign event: never this session's
-        const age = now.getTime() - parseStamp(ev.ts);
+        const age = now.getTime() - new Date(ev.ts.replace(" ", "T")).getTime();
         if (receipts.has(ev.id) || pointered[ev.id]) continue;
         if (age > BACKLOG_AGE_MS) stale.push(ev);
         else if (age > POINTER_AFTER_MS) due.push(ev);
