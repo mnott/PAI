@@ -16,7 +16,7 @@ import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
 import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
 import { runChain } from "../../workers/chain.js";
-import { realDeps as waitOnDeps, statusMarker, statusQueue, waitOn } from "../../workers/wait-on.js";
+import { realDeps as waitOnDeps, statusMarker, statusQueue, treeBusy, waitOn } from "../../workers/wait-on.js";
 import { readSpecPrompt, resolveSpecPath } from "../../workers/specfile.js";
 import { agentClaudeArgs, agentLabel, deriveLabel, loadAgent, modelToClass } from "../../workers/agents.js";
 import { followTailOutput, followWorkers,psOutput, replayOutput, statusLineOutput } from "../../workers/viewer.js";
@@ -973,7 +973,7 @@ const waitOnCommand: CommandDef = {
       }
       return await waitOn(
         { pid: Number(ctx.args.PID), log: str(ctx.opts.log), maxSecs: num(ctx.opts.max), tail: num(ctx.opts.tail), maxMinutes: num(ctx.opts["max-minutes"]), stallMinutes: num(ctx.opts["stall-minutes"]) },
-        { ...waitOnDeps, mark, queue: statusQueue(logDir()) }
+        { ...waitOnDeps, mark, queue: statusQueue(logDir()), busy: (p) => treeBusy(p, logDir()) }
       );
     }),
 };

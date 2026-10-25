@@ -177,6 +177,25 @@ describe("waitOn ceiling and stall kill", () => {
     }
   });
 
+  it("a busy sample counts as activity: one idle sample does not kill, a full idle stall window does", async () => {
+    const f = fake({});
+    const killedAt: number[] = [];
+    const busyUntil = 1_000_000 + 20_000;
+    f.deps.logMtime = () => 1_000_000;
+    f.deps.killTree = async () => void killedAt.push(f.deps.now());
+    let lastBusy = 0;
+    f.deps.busy = async () => {
+      const busy = f.deps.now() < busyUntil;
+      if (busy) lastBusy = f.deps.now();
+      return { busy, why: "cpu" };
+    };
+    const rc = await waitOn({ pid: 42, log: join(dir, "g.log"), maxSecs: 590, stallMinutes: 0.2, maxMinutes: 100, tail: 0 }, f.deps);
+    expect(rc).toBe(4);
+    expect(killedAt).toHaveLength(1);
+    // stallMs is 12 s: silence counts from the last busy sample, so the kill waits a full window after it
+    expect(killedAt[0]! - lastBusy).toBeGreaterThanOrEqual(12_000);
+  });
+
   it("leaves a quick process alone", async () => {
     const c = spawn("sleep", ["1"], { stdio: "ignore" });
     const out: string[] = [];
@@ -247,4 +266,27 @@ describe("statusQueue", () => {
     expect(q(111)?.queued).toBe(true);
     expect(q(333)).toBeNull();
   });
+});
+
+describe("treeBusy: a tree that drives a live worker", () => {
+  it("treeOwnsWorker matches a running worker by client, writer or wrapper pid, not a finished one", async () => {
+    const { treeOwnsWorker } = await import("./wait-on.js");
+    const tree = [100, 101, 102];
+    expect(treeOwnsWorker(tree, [{ pid: 900, parentPid: 101, state: "running" }])).toBe(true);
+    expect(treeOwnsWorker(tree, [{ pid: 900, runPid: 102, state: "queued" }])).toBe(true);
+    expect(treeOwnsWorker(tree, [{ pid: 900, pool: { clientPid: 100 } as never, state: "running" }])).toBe(true);
+    expect(treeOwnsWorker(tree, [{ pid: 900, parentPid: 101, state: "done" }])).toBe(false);
+    expect(treeOwnsWorker(tree, [{ pid: 900, parentPid: 555, state: "running" }])).toBe(false);
+  });
+
+  it("an idle tree whose pid is the parent of a running worker status is busy", async () => {
+    const { treeBusy } = await import("./wait-on.js");
+    const c = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    const logDir = mkdtempSync(join(tmpdir(), "waiton-own-"));
+    expect((await treeBusy(c.pid!, logDir)).busy).toBe(false);
+    saveStatus(logDir, { id: "w-own", pid: 999999, parentPid: c.pid!, state: "running" } as WorkerStatus);
+    const r = await treeBusy(c.pid!, logDir);
+    c.kill();
+    expect(r).toEqual({ busy: true, why: "live worker owned by tree" });
+  }, 15_000);
 });
