@@ -229,6 +229,26 @@ describe("SystemMonitor", () => {
     rmSync(d, { recursive: true, force: true });
   });
 
+  it("probes mactop on its own probeMs cadence, not the ring cadence", async () => {
+    const d = dir();
+    let t = NOW;
+    const { run, calls } = runner(true);
+    const m = new SystemMonitor({ file: join(d, "ring.jsonl"), ttlMs: 1000, probeMs: 5_000, run, now: () => t });
+    await m.probe();
+    const n = () => calls.filter((c) => /mactop/.test(c)).length;
+    expect(n()).toBe(1);
+    t += 3_000;
+    await m.current();
+    await m.probe();
+    expect(n()).toBe(1); // inside probeMs
+    t += 3_000; // 6 s since the last probe
+    await m.current();
+    await m.probe();
+    expect(n()).toBe(2);
+    expect(calls.find((c) => /mactop/.test(c))).toContain("--interval 1000");
+    rmSync(d, { recursive: true, force: true });
+  });
+
   it("answers every direct field while the probe is still warming up", async () => {
     const d = dir();
     let release!: (v: string) => void;
