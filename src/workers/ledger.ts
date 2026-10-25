@@ -14,6 +14,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { redactRegistered } from "../utils/redact.js";
 
 /** Local wall clock plus UTC offset, so the repeated autumn hour stays unambiguous. */
 export function ledgerStamp(d: Date = new Date()): string {
@@ -73,7 +74,7 @@ export function appendLedger(
   const parts: string[] = [];
   for (const [k, v] of Object.entries(kv)) {
     if (v === undefined || v === null) continue;
-    parts.push(`${k}=${String(v).replace(/\s+/g, " ")}`);
+    parts.push(`${k}=${redactRegistered(String(v)).replace(/\s+/g, " ")}`);
   }
   const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

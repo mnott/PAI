@@ -19,12 +19,20 @@ export interface ResumePlan {
 }
 
 export function resumePlan(
-  old: Pick<WorkerStatus, "id" | "claudeSession" | "cwd" | "uhpResponseId">,
+  old: Pick<WorkerStatus, "id" | "claudeSession" | "cwd" | "uhpResponseId"> & { engine?: string },
   text: string,
   transcriptFor: (session: string, cwd: string) => string | null = claudeSessionTranscript,
 ): ResumePlan {
   const session = old.claudeSession ?? "";
   const cwd = old.cwd && existsSync(old.cwd) ? old.cwd : undefined;
+  // engines with no resumable transcript (codex, image) never get --resume: always a fresh thread
+  if (old.engine) {
+    return {
+      claudeArgs: ["-p", `(Continuing worker ${old.id}: its ${old.engine} conversation cannot be resumed, so this is a fresh thread.)\n\n${text}`],
+      ...(cwd ? { cwd } : {}),
+      note: `resume: ${old.engine} sessions are not resumable — starting a fresh thread in the same workspace`,
+    };
+  }
   if (old.uhpResponseId || transcriptFor(session, old.cwd ?? process.cwd())) {
     return { claudeArgs: ["--resume", session, "-p", text], ...(cwd ? { cwd } : {}) };
   }

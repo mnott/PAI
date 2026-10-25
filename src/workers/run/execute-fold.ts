@@ -88,6 +88,7 @@ import { tryEscalate, rerunOn, ranLocal } from "./escalate.js";
 import { runWorker } from "./worker-ref.js";
 import { runGates } from "./gate.js";
 import type { PreparedRun } from "./execute-prepare.js";
+import { traceId } from "../../utils/tracecontext.js";
 
 export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const { config, logDir, target, model, label, parsed, limit, systemWaiver } = a;

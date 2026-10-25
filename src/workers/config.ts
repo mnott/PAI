@@ -34,6 +34,7 @@ import {
   type WorkersYamlData,
 } from "./workers-config.js";
 import { isLoopbackHostname } from "../utils/loopback.js";
+import { registerKnownSecret } from "../utils/redact.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1802,7 +1803,10 @@ export function providerKeyPath(p: WorkerProvider): string | null {
  * readFileSync, so inline keys work everywhere a key file already did.
  */
 export function resolveProviderKey(p: WorkerProvider): string | null {
-  if (p.key) return p.key;
+  if (p.key) {
+    registerKnownSecret(p.key);
+    return p.key;
+  }
   const keyPath = providerKeyPath(p);
   if (!keyPath) return null;
   let content: string;
@@ -1813,6 +1817,7 @@ export function resolveProviderKey(p: WorkerProvider): string | null {
   }
   const token = content.trim();
   if (!token) throw new WorkersConfigError(`key file is empty: ${keyPath}`);
+  registerKnownSecret(token);
   return token;
 }
 

@@ -70,6 +70,7 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
 
   const status: WorkerStatus = {
     id: wid,
+    engine: "image",
     pid: process.pid,
     runPid: process.pid,
     procStart: selfProcStart(),
@@ -189,6 +190,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
 
   let status: WorkerStatus = {
     id: wid,
+    engine: "codex",
     pid: process.pid,
     runPid: process.pid,
     procStart: selfProcStart(),
