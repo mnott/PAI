@@ -39,6 +39,7 @@ Give a worker an MCP tool by naming mcp__server__tool in --allowedTools; the ser
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--provider NAME` | string | — | Provider to run on (default: the active one, else the routing order) |
+| `--harness uhp:ID` | string | — | Run on a Unified Harness Protocol harness: resolves the engine-uhp provider and sets its harness id (docs/uhp.md) |
 | `--class NAME` | string | — | Use the provider set for this kind of work (draft, implement, review, research, spotcheck, simple, complex, image) |
 | `--role NAME` | string | — | Old name of --class |
 | `--capability NAME` | string | — | Run on whichever provider serves this capability (see `pai worker capability`), e.g. image |
@@ -955,7 +956,7 @@ ChatGPT plan through the Codex CLI: --engine codex. Image generation: --engine i
 | `--note TEXT` | string | — | Short note shown in the provider list |
 | `--protocol KIND` | string | — | anthropic (default) or openai |
 | `--upstream-url URL` | string | — | Chat Completions base URL (required for --protocol openai) |
-| `--engine KIND` | string | — | claude (default), codex, or image |
+| `--engine KIND` | string | — | claude (default), codex, image, or uhp |
 | `--context-window TOKENS` | number | — | Context window for the usage meter (default 200000) |
 | `--quota-probe URL` | string | — | URL whose JSON first number is the quota percent (0-100) |
 | `--cost-tier 1-5` | string | — | Cost tier: 1 (cheapest) to 5 (most expensive; default 3) |

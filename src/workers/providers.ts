@@ -59,7 +59,7 @@ export interface AddProviderInput {
   note?: string;
   protocol?: "anthropic" | "openai";
   upstreamUrl?: string;
-  engine?: "claude" | "codex" | "image";
+  engine?: "claude" | "codex" | "image" | "uhp";
   quotaProbe?: string;
   contextWindow?: number;
   costTier?: number;
@@ -538,6 +538,9 @@ export function describeProviders(
     }
     if (p.engine === "codex") {
       lines.push(`    engine codex (runs through the Codex CLI)`);
+    }
+    if (p.engine === "uhp") {
+      lines.push(`    engine uhp (Unified Harness Protocol: POST ${p.baseUrl}/v1/responses)`);
     }
     if (p.engine === "image") {
       lines.push(`    engine image (no process spawn — POSTs {url}/images/generations directly)`);
