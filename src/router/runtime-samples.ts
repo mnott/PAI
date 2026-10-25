@@ -23,7 +23,7 @@ import { execFile } from "node:child_process";
 import { capacityOf, providerCap } from "../workers/capacity.js";
 import { isLocalCandidate, providerHostPort, tierProviderNames } from "../workers/local-provider.js";
 import { isLoopbackProvider } from "../workers/run-env.js";
-import { loadStatusesCached, isLive, type WorkerStatus } from "../workers/status.js";
+import { loadStatuses, isLive, type WorkerStatus } from "../workers/status.js";
 import { ownerSessionName } from "../workers/scope.js";
 import { poolSettings, readPoolState, type PoolSettings, type PoolState } from "../workers/pool.js";
 import type { WorkersConfig } from "../workers/config.js";
@@ -142,7 +142,7 @@ export interface RuntimeLive {
 export interface RuntimeSamplerInput {
   inventory: ModelInventory;
   sched: SchedSnapshot | null;
-  /** live worker status files (loadStatusesCached) */
+  /** live worker status files (loadStatuses) */
   statuses: WorkerStatus[];
   poolState: PoolState | null;
   pool: PoolSettings;
@@ -391,7 +391,7 @@ export function routerSamplerDeps(sched: () => SchedSnapshot | null, engineStatu
       return currentInventory();
     },
     sched,
-    statuses: (logDir) => loadStatusesCached(logDir),
+    statuses: (logDir) => loadStatuses(logDir),
     poolState: (logDir) => readPoolState(logDir),
     async getJson(url) {
       try {

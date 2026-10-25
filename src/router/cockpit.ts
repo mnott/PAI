@@ -50,7 +50,7 @@ import { loadPlanStatuses, planRows } from "../workers/plan-status.js";
 import { readAudit } from "../workers/pane-audit.js";
 import { localIdleLine, readLocalIdle } from "../workers/local-idle.js";
 import { readSchedFile, schedPlain, sharedScheduler } from "./scheduler.js";
-import { isLive, loadStatus, loadStatusesCached, ownsPidCached, type WorkerStatus } from "../workers/status.js";
+import { isLive, loadStatus, loadStatuses, ownsPidCached, type WorkerStatus } from "../workers/status.js";
 import { isLoopbackUrl } from "../utils/loopback.js";
 import { buildSpeed, percentile } from "./speed.js";
 import { createRuntimeSampler, routerSamplerDeps, type RuntimeSampler } from "./runtime-samples.js";
@@ -1167,7 +1167,7 @@ function schedNames(logDir: string): Record<string, string> {
     /* a broken registry: the 8-char fallback stands */
   }
   try {
-    for (const s of loadStatusesCached(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
+    for (const s of loadStatuses(logDir)) if (s.session?.id && s.session.name) out[s.session.id] = s.session.name;
   } catch {
     /* no statuses: the 8-char fallback stands */
   }
@@ -1232,7 +1232,7 @@ export function cockpitQueue(
     return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 1000)) : 0;
   };
   const sessionMax: SessionLimits = {};
-  const statuses = loadStatusesCached(logDir);
+  const statuses = loadStatuses(logDir);
   for (const s of statuses) {
     // only a queued or live run needs its profile read: thousands of finished statuses would each reread the file
     if (!s.sessionKey || !(s.state === "queued" || (s.state === "running" && isLive(s, owns)))) continue;
