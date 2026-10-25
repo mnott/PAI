@@ -167,6 +167,21 @@ describe("the shared restart (rerunOn)", () => {
   });
 });
 
+describe("the default restart is headless", () => {
+  it("passes -p <task> to rerunOn (without it the restart is an interactive launch that exits rc 1)", async () => {
+    vi.resetModules();
+    const rerunOn = vi.fn().mockResolvedValue(0);
+    vi.doMock("./run/escalate.js", () => ({ rerunOn }));
+    const { defaultSpawn } = await import("./reroute.js");
+    const st = mkStatus();
+    saveStatus(dir, st);
+    defaultSpawn(dir)({ id: "w1", why: "rerouted by escalation", provider: "anthropic", specFile: promptFile });
+    await vi.waitFor(() => expect(rerunOn).toHaveBeenCalled());
+    expect(rerunOn.mock.calls[0]![0]).toMatchObject({ claudeArgs: ["-p", "Do the thing."], specPath: promptFile });
+    vi.doUnmock("./run/escalate.js");
+  });
+});
+
 describe("reroutePolicy", () => {
   it("defaults: queuedMaxMin 15, stallMaxMin 10, stallFailedCalls 6", () => {
     const old = process.env.PAI_CONFIG_FILE;

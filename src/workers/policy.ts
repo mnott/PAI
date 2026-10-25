@@ -25,7 +25,8 @@ import {
 } from "./config.js";
 import { isBenchmarkLabel } from "../daemon/battery-guard.js";
 import { budgetCache } from "./budget.js";
-import { isLocalCandidate, tierProviderNames } from "./local-provider.js";
+import { httpModelsCheck, isLocalCandidate, providerHostPort, tierProviderNames } from "./local-provider.js";
+import { providerModelIds } from "../cli/lib/setups.js";
 import { classRoute, entryProvider } from "./route-lists.js";
 import { endpointRegistry, readLiveInstances, type LocalInstance } from "./local-instances.js";
 import type { LocalConfig } from "./local-tiers.js";
@@ -151,11 +152,17 @@ export async function pingLocal(baseUrl: string, timeoutMs = 4000): Promise<bool
   }
 }
 
+/** The served-model probe of `pai worker local` (httpModelsCheck): the server answers AND lists one of the provider's model ids. */
+export async function pingServed(baseUrl: string, models: string[] = [], timeoutMs = 4000): Promise<boolean> {
+  const hp = providerHostPort({ baseUrl } as never);
+  return hp ? httpModelsCheck(hp.host, hp.port, timeoutMs, models).catch(() => false) : false;
+}
+
 /** First enabled, loopback, answering provider: in config order, or in the order of `only` (a route list's local entries) when given. */
 export async function findLocal(
   config: WorkersConfig,
   logDir: string,
-  ping: (url: string) => Promise<boolean> = pingLocal,
+  ping: (url: string, models?: string[]) => Promise<boolean> = pingServed,
   only?: string[]
 ): Promise<{ name: string | null; why: string }> {
   const state = readRoutingState(logDir);
@@ -167,7 +174,7 @@ export async function findLocal(
     )
     .sort(([a], [b]) => (only ? only.indexOf(a) - only.indexOf(b) : 0));
   if (!candidates.length) return { name: null, why: "no local provider" };
-  for (const [name, p] of candidates) if (await ping(p.baseUrl)) return { name, why: "" };
+  for (const [name, p] of candidates) if (await ping(p.baseUrl, providerModelIds(p))) return { name, why: "" };
   return { name: null, why: "local down" };
 }
 
@@ -210,7 +217,7 @@ async function listRoute(
   logDir: string,
   list: string[],
   flags: RouteFlags,
-  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] }
+  deps: { ping?: (url: string, models?: string[]) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] }
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const policyMode = readPolicy(logDir)?.mode;
   const isLocal = (name: string) => isLocalProvider(config.providers[name]?.baseUrl ?? "");
@@ -259,7 +266,7 @@ export async function routeRun(
   config: WorkersConfig,
   logDir: string,
   flags: RouteFlags,
-  deps: { ping?: (url: string) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] } = {}
+  deps: { ping?: (url: string, models?: string[]) => Promise<boolean>; battery?: () => boolean; instances?: () => LocalInstance[] } = {}
 ): Promise<{ providerFlag: string | null; route: RouteInfo } | null> {
   const list = classRoute(config.tiers ?? [], flags.className ?? "implement");
   if (list.length) return listRoute(config, logDir, list, flags, deps);

@@ -113,14 +113,16 @@ async function defaultKill(logDir: string, id: string, reason: string, by: strin
 }
 
 /** The restart is the run's own fall-through path, fed from the status the old run left (it may live in another process). */
-function defaultSpawn(logDir: string): (s: SpawnSpec) => void {
+export function defaultSpawn(logDir: string): (s: SpawnSpec) => void {
   return (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) return;
+    // the restart is headless: without -p <task> runWorker launches an interactive session that exits rc 1 at once
+    const claudeArgs = ["-p", readFileSync(s.specFile, "utf8")];
     void import("./run/escalate.js")
       .then(({ rerunOn }) =>
         rerunOn(
-          { logDir, cwd: st.cwd, label: st.label, specPath: s.specFile, claudeArgs: [], className: st.className, quiet: true },
+          { logDir, cwd: st.cwd, label: st.label, specPath: s.specFile, claudeArgs, className: st.className, quiet: true },
           s.id,
           s.why,
           st,
