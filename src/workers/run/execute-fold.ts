@@ -160,6 +160,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     id: wid,
     provider: target.providerName,
     mode: headless ? "headless" : "interactive",
+    trace_id: traceId(env.TRACEPARENT),
     model,
     cwd,
     label,
