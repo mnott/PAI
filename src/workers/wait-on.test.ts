@@ -177,6 +177,25 @@ describe("waitOn ceiling and stall kill", () => {
     }
   });
 
+  it("a busy sample counts as activity: one idle sample does not kill, a full idle stall window does", async () => {
+    const f = fake({});
+    const killedAt: number[] = [];
+    const busyUntil = 1_000_000 + 20_000;
+    f.deps.logMtime = () => 1_000_000;
+    f.deps.killTree = async () => void killedAt.push(f.deps.now());
+    let lastBusy = 0;
+    f.deps.busy = async () => {
+      const busy = f.deps.now() < busyUntil;
+      if (busy) lastBusy = f.deps.now();
+      return { busy, why: "cpu" };
+    };
+    const rc = await waitOn({ pid: 42, log: join(dir, "g.log"), maxSecs: 590, stallMinutes: 0.2, maxMinutes: 100, tail: 0 }, f.deps);
+    expect(rc).toBe(4);
+    expect(killedAt).toHaveLength(1);
+    // stallMs is 12 s: silence counts from the last busy sample, so the kill waits a full window after it
+    expect(killedAt[0]! - lastBusy).toBeGreaterThanOrEqual(12_000);
+  });
+
   it("leaves a quick process alone", async () => {
     const c = spawn("sleep", ["1"], { stdio: "ignore" });
     const out: string[] = [];

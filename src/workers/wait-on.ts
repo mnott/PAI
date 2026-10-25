@@ -280,6 +280,8 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
   try {
     let nextBeat = t0 + HEARTBEAT_MS;
     let sayBusy = false;
+    // A busy sample is activity: silence is measured from the last of log write, start and busy sample.
+    let lastBusy = 0;
     // The ceiling counts from the process start, so it holds across repeated wait-on calls.
     const born0 = ranSince ?? t0;
     // A `pai worker run` queued behind the provider cap is waiting, not hung: no stall kill, and the
@@ -315,9 +317,10 @@ export async function waitOn(o: WaitOnOpts, d: WaitOnDeps = realDeps): Promise<n
       }
       if (d.now() - born >= ceilMs) return await killed(`still running after ${fmtMinutes(ceilMs)}`);
       const m = o.log ? d.logMtime?.(o.log) : null;
-      if (m != null && d.now() - Math.max(m, born) >= stallMs) {
+      if (m != null && d.now() - Math.max(m, born, lastBusy) >= stallMs) {
         const b = d.busy ? await d.busy(o.pid) : null;
         if (!b?.busy) return await killed(`no output for ${fmtMinutes(stallMs)}`);
+        lastBusy = d.now();
         if (!sayBusy || d.now() >= nextBeat) {
           sayBusy = true;
           d.out(`running ${Math.round((d.now() - t0) / 1000)}s, silent but busy (${b.why}), not stalled`);
