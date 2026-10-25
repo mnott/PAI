@@ -22,6 +22,7 @@ One table of what runs on this machine: runtime, status, model, kind, memory, wh
 | `--name STRING` | string | — | add: registry name of the new model (default: from the id or path) |
 | `--download` | flag | — | add: fetch an HF id that is not on disk (otherwise the weights must exist locally) |
 | `--try` | flag | — | add: smoke test (start, health, one 16-token completion, stop; reports tok/s and memory) |
+| `--force` | flag | — | stop: run the stop command even when the server on the port belongs to another runtime |
 | `--model STRING` | string | — | start/stop: the model to load or unload (docker model run|unload) |
 
 ```sh

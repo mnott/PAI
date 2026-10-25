@@ -31,6 +31,7 @@ export const modelsCommand: CommandDef = {
     { name: "name", type: "string", summary: "add: registry name of the new model (default: from the id or path)" },
     { name: "download", type: "boolean", summary: "add: fetch an HF id that is not on disk (otherwise the weights must exist locally)" },
     { name: "try", type: "boolean", summary: "add: smoke test (start, health, one 16-token completion, stop; reports tok/s and memory)" },
+    { name: "force", type: "boolean", summary: "stop: run the stop command even when the server on the port belongs to another runtime" },
     { name: "model", type: "string", summary: "start/stop: the model to load or unload (docker model run|unload)" },
   ],
   examples: ["pai models add mlx-community/Qwen3-4B-4bit --try", "pai models add ~/models/x.gguf --name x", "pai models", "pai models --fresh --json", "pai models start ollama", "pai models stop docker-model-runner --model e5"],
@@ -51,7 +52,7 @@ export const modelsCommand: CommandDef = {
       const runtime = words[1];
       if (!runtime) throw new Error(`usage: pai models ${op} <runtime> (configured: ${Object.keys(readRuntimeCommands()).join(", ") || "none"})`);
       const { defaultDeps, runtimeStartStop } = await import("../../router/cockpit-actions.js");
-      const r = await runtimeStartStop(runtime, op, defaultDeps(), { model: typeof ctx.opts.model === "string" ? ctx.opts.model : undefined });
+      const r = await runtimeStartStop(runtime, op, defaultDeps(), { model: typeof ctx.opts.model === "string" ? ctx.opts.model : undefined, force: !!ctx.opts.force });
       process.stdout.write(r.message + "\n");
       if (!r.ok) process.exitCode = 1;
       return;
