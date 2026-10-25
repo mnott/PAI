@@ -116,6 +116,13 @@ export interface WorkerProvider {
    * where/model) still wins. workers.yaml `worker_model`.
    */
   workerModel?: "default" | "fast";
+  /**
+   * Who parses the model's tool calls: "engine" (default) or "router" for a
+   * local engine that leaves them as answer text; the router then turns that
+   * markup into tool_use blocks (src/router/tool-args.ts). workers.yaml
+   * `toolParsing`.
+   */
+  toolParsing?: "engine" | "router";
   /** Extra environment variables for runs through this provider (string values). */
   env: Record<string, string>;
   note?: string;
@@ -865,6 +872,9 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
   if (p.workerModel !== undefined && p.workerModel !== "default" && p.workerModel !== "fast") {
     bad(`.providers.${name}.worker_model`, 'must be "default" or "fast"');
   }
+  if (p.toolParsing !== undefined && p.toolParsing !== "engine" && p.toolParsing !== "router") {
+    bad(`.providers.${name}.toolParsing`, 'must be "engine" or "router"');
+  }
   const quotaSkipAt = p.quotaSkipAt === undefined ? undefined : p.quotaSkipAt;
   if (quotaSkipAt !== undefined) {
     if (typeof quotaSkipAt !== "number" || quotaSkipAt < 0 || quotaSkipAt > 100) {
@@ -1021,6 +1031,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(engine !== "claude" ? { engine } : {}),
     ...(str(p.quotaProbe) ? { quotaProbe: str(p.quotaProbe) } : {}),
     ...(p.workerModel === "fast" ? { workerModel: "fast" as const } : {}),
+    ...(p.toolParsing === "router" ? { toolParsing: "router" as const } : {}),
     ...(quotaSkipAt !== undefined ? { quotaSkipAt } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
