@@ -11,7 +11,7 @@ providers:
     baseUrl: https://harness.example.com
     keyFile: ~/.pai/keys/harness
     harnessId: claude-code        # sent as metadata.harness_id
-    uhpProtocol: "1.0"            # optional; sent as the UHP-Version header
+    uhpProtocol: "1.0"            # optional pin; GET /v1/uhp is compared to it, a difference only warns
     models:
       default: sonnet
 ```

@@ -142,7 +142,7 @@ export interface WorkerProvider {
   engine?: WorkerEngine;
   /** engine "uhp": the harness id sent as metadata.harness_id (`--harness uhp:<id>` overrides per run). */
   harnessId?: string;
-  /** engine "uhp": pinned protocol version label, sent as the UHP-Version header. */
+  /** engine "uhp": pinned protocol version label (recorded; compared to GET /v1/uhp, a difference only warns). */
   uhpProtocol?: string;
   /** Optional shell command printing 0–100 (percent of quota used). */
   quotaProbe?: string;
