@@ -12,8 +12,8 @@
 import { parseStamp } from "./ledger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { maxOf } from "../utils/min-max.js";
-import { eventsPath } from "./paths.js";
-import { loadStatuses, type WorkerStatus } from "./status.js";
+import { eventsPath, withArchive } from "./paths.js";
+import { loadArchivedStatuses, loadStatuses, type WorkerStatus } from "./status.js";
 import { isLocalProvider } from "./config.js";
 import { effectiveWorkersYamlRaw } from "../config/shipped-defaults.js";
 import { workersYamlPath } from "./workers-config.js";
@@ -237,8 +237,11 @@ export function selectWorkers(statuses: WorkerStatus[], sel: WorkerSelect): Work
 /** Tally the selected workers; `baseUrls` maps provider name to its baseUrl (for the local mark). */
 export function workerUsage(logDir: string, sel: WorkerSelect, baseUrls: Record<string, string>): UsageReport {
   const groups = new Map<string, UsageRow>();
-  for (const st of selectWorkers(loadStatuses(logDir), sel)) {
-    const path = eventsPath(logDir, st.id);
+  // finished workers older than a week live in archive/: totals over a longer window read them too
+  const weekAgo = Date.now() - 7 * 24 * 3_600_000;
+  const all = !sel.since || sel.since.getTime() < weekAgo ? [...loadStatuses(logDir), ...loadArchivedStatuses(logDir)] : loadStatuses(logDir);
+  for (const st of selectWorkers(all, sel)) {
+    const path = withArchive(logDir, eventsPath(logDir, st.id));
     if (!existsSync(path)) continue;
     const { byModel, costUsd } = sumRunUsage(readFileSync(path, "utf8"), st.model);
     if (byModel.size === 0) continue;

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readTail } from "./loop-watch.js";
-import { loadStatusesCached, TERMINAL_RECHECK_MS } from "./status.js";
+import { loadStatuses } from "./status.js";
 
 const dirs: string[] = [];
 const mk = (): string => {
@@ -30,25 +30,26 @@ describe("readTail", () => {
   });
 });
 
-describe("loadStatusesCached", () => {
+describe("loadStatuses cache", () => {
   const st = (id: string, state: string, note = "") => JSON.stringify({ id, state, note });
-  it("re-parses a running status on change, trusts a terminal one until the recheck, drops removed files", () => {
+  it("re-reads a rewritten status, picks up a new file, drops a deleted one, and never leaks caller mutation", () => {
     const d = mk();
-    const run = join(d, "a.status");
-    const done = join(d, "b.status");
-    writeFileSync(run, st("a", "running"));
-    writeFileSync(done, st("b", "done"));
-    const t0 = Date.now();
-    expect(loadStatusesCached(d, t0).map((s) => s.id)).toEqual(["a", "b"]);
-    writeFileSync(run, st("a", "done", "longer so the size differs"));
-    utimesSync(run, new Date(t0 + 5000), new Date(t0 + 5000));
-    writeFileSync(done, st("b", "done", "rewritten"));
-    const r = loadStatusesCached(d, t0 + 1000);
+    const a = join(d, "a.status");
+    const b = join(d, "b.status");
+    writeFileSync(a, st("a", "running"));
+    writeFileSync(b, st("b", "done"));
+    expect(loadStatuses(d).map((s) => s.id)).toEqual(["a", "b"]);
+    loadStatuses(d)[0]!.state = "failed";
+    expect(loadStatuses(d)[0]!.state).toBe("running");
+    writeFileSync(a, st("a", "done", "longer so the size differs"));
+    writeFileSync(b, st("b", "done", "rewritten"));
+    utimesSync(b, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+    const r = loadStatuses(d);
     expect(r.find((s) => s.id === "a")!.state).toBe("done");
-    expect((r.find((s) => s.id === "b") as { note?: string }).note).toBe(""); // terminal: served from cache
-    const r2 = loadStatusesCached(d, t0 + TERMINAL_RECHECK_MS + 1);
-    expect((r2.find((s) => s.id === "b") as { note?: string }).note).toBe("rewritten");
-    rmSync(done);
-    expect(loadStatusesCached(d, t0 + 2).map((s) => s.id)).toEqual(["a"]);
+    expect((r.find((s) => s.id === "b") as { note?: string }).note).toBe("rewritten");
+    writeFileSync(join(d, "c.status"), st("c", "running"));
+    expect(loadStatuses(d).map((s) => s.id)).toEqual(["a", "b", "c"]);
+    rmSync(b);
+    expect(loadStatuses(d).map((s) => s.id)).toEqual(["a", "c"]);
   });
 });

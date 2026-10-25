@@ -13,7 +13,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { QUEUE_PRIORITIES, escalationCloud, getProviderOrNative, isModelCapability, readWorkersSection, WorkersConfigError, type ModelCapability, type QueuePriority, type WorkerProvider, type WorkersConfig } from "../../workers/config.js";
 import { appendLedger } from "../../workers/ledger.js";
-import { eventsPath, ledgerPath, workersLogDir } from "../../workers/paths.js";
+import { eventsPath, ledgerPath, withArchive, workersLogDir } from "../../workers/paths.js";
 import { longInlinePromptHint, parseRunnerArgs } from "../../workers/args.js";
 import { LocalProviderRefusedError, runWorker, type RunOptions } from "../../workers/run.js";
 import { LOCAL_MECHANISM_LINE } from "../../workers/local-provider.js";
@@ -593,7 +593,7 @@ const logCommand: CommandDef = {
         return void out(readFileSync(ledger, "utf8").trim().split("\n").slice(-20).join("\n"));
       }
       if (what) {
-        const path = eventsPath(dir, what);
+        const path = withArchive(dir, eventsPath(dir, what));
         if (!existsSync(path)) throw new Error(`no event log for ${what}`);
         return void out(readFileSync(path, "utf8").trim().split("\n").slice(-30).join("\n"));
       }
