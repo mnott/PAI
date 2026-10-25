@@ -9,6 +9,7 @@
 
 import { ledgerStamp, parseStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
+import { processStartMs } from "./proc-start.js";
 import {
   existsSync,
   mkdirSync,
@@ -572,8 +573,7 @@ export const realProcTable: ProcTable = {
   alive,
   startMs: (pid) => {
     try {
-      const t = Date.parse(psOut(["-o", "lstart=", "-p", String(pid)]));
-      return Number.isNaN(t) ? undefined : t;
+      return processStartMs(pid);
     } catch {
       return undefined;
     }

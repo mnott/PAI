@@ -11,6 +11,7 @@ import { readFileSync, writeFileSync, statSync, unlinkSync, mkdirSync } from "no
 import { dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { userInfo } from "node:os";
+import { parseEtime, resolveStart } from "../workers/proc-start.js";
 import { daemonPidPath } from "../runtime-paths.js";
 
 /** Real uid, or undefined when neither process.getuid() nor os.userInfo() answers
@@ -50,8 +51,8 @@ const run: Run = (cmd, args) => {
 function processStart(pid: number, sh: Run): number | undefined {
   const r = sh("ps", ["-o", "lstart=", "-p", String(pid)]);
   if (r.status !== 0 || !r.stdout.trim()) return undefined;
-  const t = Date.parse(r.stdout.trim());
-  return Number.isNaN(t) ? undefined : t;
+  const e = sh("ps", ["-o", "etime=", "-p", String(pid)]);
+  return resolveStart(r.stdout, e.status === 0 ? parseEtime(e.stdout) : NaN);
 }
 
 /**

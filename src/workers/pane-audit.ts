@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { closePaneForWorker, dropPaneEntry, loadRegistry, openPaneForWorker, osascriptJxa, saveEntry, type PaneEntry } from "./pane.js";
+import { processStartMs } from "./proc-start.js";
 import { readWorkersSection } from "./config.js";
 import { exitFilePath, listRecords, pidAlive, readExit, readRecord, recordPath, type ExitRecord, type LaunchRecord } from "./pane-exec.js";
 import { itermUuid, scopeKey } from "./scope.js";
@@ -409,8 +410,8 @@ export function launchPidFresh(startMs: number, r: Pick<LaunchRecord, "openedMs"
 function ownsLaunchPid(pid: number, r: LaunchRecord, side: "wrapper" | "child"): boolean {
   try {
     const env = { ...process.env, LC_ALL: "C" };
-    const start = Date.parse(execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env }).trim());
-    if (Number.isNaN(start) || !launchPidFresh(start, r, side)) return false;
+    const start = processStartMs(pid);
+    if (start === undefined || !launchPidFresh(start, r, side)) return false;
     if (side === "wrapper") return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8", env }).includes(r.id);
     return true;
   } catch {

@@ -10,6 +10,7 @@
  * A `pai worker run` process (queued or running) is exempt from both: it has its own deadline; use `pai worker wait <id>`.
  */
 
+import { parseStamp } from "./ledger.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { loadStatus, loadStatuses, pidAlive, saveStatus } from "./status.js";
@@ -66,7 +67,7 @@ export function statusQueue(logDir: string): NonNullable<WaitOnDeps["queue"]> {
       (w) => (w.pid === pid || w.runPid === pid) && (w.state === "running" || w.state === "queued")
     );
     if (!s) return null;
-    const t = Date.parse(s.started);
+    const t = parseStamp(s.started);
     // the state says it outright now; `capacity` stays for older status files
     return { queued: s.state === "queued" || !!s.capacity, started: Number.isFinite(t) ? t : null, id: s.id };
   };

@@ -1,14 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { processStartMs } from "./proc-start.js";
 import { describe, expect, it } from "vitest";
 import { elapsedOf, isLive, longestSleepSecs, nowStamp, ownsPid } from "./status.js";
 
 /** This test process's own `ps` start time, formatted as `saveStatus` would. */
 function ownStartedStamp(): string {
-  const out = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], {
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-  }).trim();
-  return nowStamp(new Date(out));
+  return nowStamp(new Date(processStartMs(process.pid)!));
 }
 
 describe("ownsPid", () => {

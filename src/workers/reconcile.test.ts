@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { processStartMs } from "./proc-start.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,8 +87,7 @@ describe("dead pid is lost without waiting for the grace", () => {
 
 describe("reconcileStatuses with a queued-then-started worker (real ownsPid)", () => {
   it("does not mark it lost when slot-acquired started is later than process start", () => {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LC_ALL: "C" } });
-    const t = new Date(out.trim());
+    const t = new Date(processStartMs(process.pid)!);
     const p = (n: number) => String(n).padStart(2, "0");
     const id = `${t.getFullYear()}${p(t.getMonth() + 1)}${p(t.getDate())}-${p(t.getHours())}${p(t.getMinutes())}${p(t.getSeconds())}-${process.pid}`;
     saveStatus(dir, { ...mk(id, process.pid), started: nowStamp(new Date(t.getTime() + 5 * 60_000)), updated: nowStamp(T0) }, T0);
