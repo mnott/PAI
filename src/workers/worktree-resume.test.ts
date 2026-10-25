@@ -126,6 +126,22 @@ describe("resume chain ownership", () => {
   });
 });
 
+describe("resume of a worker whose worktree dir is gone", () => {
+  it("revives a worktree on the unmerged branch tip, not HEAD", () => {
+    const info = addWorktree(logDir, "v1", repo);
+    writeFileSync(join(info.dir, "v1.txt"), "v1\n", "utf8");
+    git(info.dir, ["add", "."]);
+    git(info.dir, ["commit", "-q", "-m", "work v1"]);
+    recordWorktree(logDir, status("v1"), info, true);
+    git(repo, ["worktree", "remove", "--force", info.dir]);
+    expect(existsSync(info.dir)).toBe(false);
+    const adopted = adoptTree(logDir, "v1")!;
+    expect(adopted.revived).toBe(true);
+    expect(adopted.branch).toBe("worker/v1");
+    expect(existsSync(join(adopted.dir, "v1.txt"))).toBe(true);
+  });
+});
+
 describe("gc of resume chains", () => {
   const age = (id: string, ms: number) => {
     const t = new Date(Date.now() - ms);
