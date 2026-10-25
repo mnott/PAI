@@ -29,6 +29,26 @@ const DENIED = [
   `kill -9 $(lsof -ti:8035)`,
   `bash -c 'source ${SB}/r3/run.sh'`,
   `PAI_BENCH_GO=1 ${SB}/r3/run.sh`,
+  // 2026-10-25 incident: detached CPU inference via a diag script
+  `cd ${SB}/diag; nohup sh -c './01-fork-cpu-oracle.sh > 01.out 2>&1; echo $? > 01.rc' > /dev/null 2>&1 & echo $! > 01.pid`,
+  `cd ${SB}/diag && sh -c './x.sh'`,
+  `${SB}/diag/anything.sh`,
+  `llama-completion -m x.gguf`,
+  `/opt/homebrew/bin/llama-cli -m x.gguf -t 16`,
+  `llama-server -m x.gguf`,
+  `llama-bench -m x.gguf`,
+  `/path/strata --pack p --tokens 1`,
+  `nohup strata --pack p &`,
+  `ollama run qwen`,
+  `ollama serve`,
+  `ollama pull qwen`,
+  `mlx_lm.generate --model m`,
+  `python3 -m mlx_lm.server --model m`,
+  `python -m mlx_lm generate`,
+  `vllm serve m`,
+  `vllm-mlx serve m`,
+  `bash -c "llama-perplexity -m x.gguf"`,
+  `nohup sh -c 'time /path/strata --pack p'`,
 ];
 
 describe("benchmark and model-server guard", () => {
@@ -56,6 +76,13 @@ describe("benchmark and model-server guard", () => {
     `pai models list`,
     `pai worker run --local -p x`,
     `lsof -ti :8035`,
+    `ls ${SB}/diag`,
+    `cat ${SB}/diag/01.out`,
+    `grep -n strata README.md`,
+    `echo llama-cli`,
+    `ollama list`,
+    `llama-completion --dry-run -m x.gguf`,
+    `pip install mlx_lm`,
   ]) {
     it(`allows without the flag: ${c}`, () => {
       expect(run(c).decision).toBe("allow");
