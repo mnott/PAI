@@ -1,0 +1,371 @@
+# Shipped tool-call repair rules (src/router/tool-args.ts, src/router/tool-call-rules.ts).
+#
+# The router repairs local models' tool calls before Claude Code sees them:
+# values that swallowed the next parameter, junk tails, numbers and booleans
+# spelled as strings, parameter names with markup. Which forms are repaired is
+# decided here, not in code. Your own files live in <PAI home>/tool-call-rules/
+# (config router.toolCallRules maps provider/model to a file); start them with
+# `inherits: default` and add or replace rules by id. Edits are picked up
+# within 5 s, or at once with `pai models rules reload`; a file with a bad
+# regex is refused and the previous rules stay.
+#
+# Rule kinds:
+#   opener     group 1 = parameter name; a value holding an opener of another
+#              DECLARED, not yet set parameter is split there
+#   closer     a whole line that ends the value; it and everything after go
+#   junk_line  a whole line stripped from the tail of a value (anywhere in a
+#              number/boolean value; typed_only: true = never from strings)
+#   name_cut   group 1 = the parameter name kept from a name with markup
+#   bool_true / bool_false   whole-value spellings coerced for boolean parameters
+# `{params}` in a pattern stands for the tool's declared parameter names.
+# Every rule carries an example (the broken tool_use input) and its expect
+# (the repaired input); `pai models rules test` runs them. A `text` example
+# is raw tool-call markup parsed out of answer text instead of an input.
+
+version: 1
+rules:
+  - id: open-parameter-eq
+    kind: opener
+    pattern: '<[ \t]*parameter[ \t]*=[ \t]*([\w\-]+)[ \t]*>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: af04af55f0e2
+    note: "the value swallowed the closing tag and the next <parameter=NAME> opener"
+    example:
+      tool: Grep
+      input:
+        pattern: "functionName"
+        "-n": "true\n</parameter\n<parameter=-C>\n15"
+    expect:
+      pattern: "functionName"
+      "-n": true
+      "-C": 15
+    probe:
+      prompt: "Use the Grep tool: search src for the word TODO, with line numbers and 15 lines of context, output mode content."
+      tool: &grep
+        name: Grep
+        description: "Search file contents"
+        input_schema:
+          type: object
+          properties:
+            pattern: { type: string }
+            path: { type: string }
+            output_mode: { type: string }
+            "-n": { type: boolean }
+            "-C": { type: number }
+            head_limit: { type: number }
+          required: [pattern]
+
+  - id: open-eq-only
+    kind: opener
+    pattern: '<=([\w\-]+)>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: 446ef0463298
+    note: "<=NAME> instead of <parameter=NAME>"
+    example:
+      tool: Grep
+      input:
+        pattern: "pruneDist\n</parameter>\n<=output_mode>\nfiles_with_matches\n</parameter>\n</head_after>\n"
+    expect:
+      pattern: "pruneDist"
+      output_mode: files_with_matches
+    probe:
+      prompt: "Use the Grep tool: list only the files in src that mention pruneDist (output mode files_with_matches)."
+      tool: *grep
+
+  - id: open-slash-eq
+    kind: opener
+    pattern: '</=([\w\-]+)>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: dd8582b06ffb
+    note: "</=NAME> where the opener should be"
+    example:
+      tool: Grep
+      input:
+        pattern: "resolveSessionArg"
+        output_mode: "content\n</parameter>\n</=-n>\ntrue"
+    expect:
+      pattern: "resolveSessionArg"
+      output_mode: content
+      "-n": true
+    probe:
+      prompt: "Use the Grep tool: find resolveSessionArg in src, show matching lines with line numbers."
+      tool: *grep
+
+  - id: open-parameter-name-attr
+    kind: opener
+    pattern: '<[ \t]*\r?\n?[ \t]*parameter[ \t]+name[ \t]*=[ \t]*["'']([\w\-]+)["''][ \t]*>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: 054e23da5b2c
+    note: "Anthropic-style <parameter name=\"NAME\"> inside a <parameter=...> call, '<' split from the tag by a newline"
+    example:
+      tool: Grep
+      input:
+        pattern: "pruneDist\n</parameter>\n<\nparameter name=\"path\">/repo/src"
+    expect:
+      pattern: "pruneDist"
+      path: "/repo/src"
+
+  - id: open-lt-newline-name
+    kind: opener
+    pattern: '<[ \t]*\r?\n([\w\-]+)>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: 4434dedc1569
+    note: "'<' and the parameter name on two lines: <⏎description>"
+    example:
+      tool: Bash
+      input:
+        command: "sed -n 1,25p src/a.ts\n</parameter>\n<\ndescription>\nRe\n</\n>\n</\n>"
+    expect:
+      command: "sed -n 1,25p src/a.ts"
+      description: "Re"
+
+  - id: open-bare-tag
+    kind: opener
+    scope: text
+    pattern: '<([\w\-]+)>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: 11c153082121
+    note: "stub <file_path> without parameter=; only read from tool-call markup in answer text"
+    example:
+      tool: Read
+      text: "<tool_call>\n<function=Read>\n<file_path>\n/repo/a.ts\n</parameter>\n</function>\n</tool_call>"
+    expect:
+      file_path: "/repo/a.ts"
+
+  - id: open-close-tag-as-opener
+    kind: opener
+    scope: text
+    pattern: '</([\w\-]+)>[ \t]*\r?\n?'
+    added: 2026-10-25
+    sample: bb3bd980d555
+    note: "a closing tag </NAME> where the opener of the next parameter should be; only read from markup in answer text (the name must be a declared, unset parameter)"
+    example:
+      tool: Grep
+      text: "<tool_call>\n<function=Grep>\n<parameter=pattern>\nx\n</parameter>\n</glob>\n*.ts\n</parameter>\n</head_limit>\n80\n</parameter>\n</function>\n</tool_call>"
+    expect:
+      pattern: "x"
+      glob: "*.ts"
+      head_limit: 80
+
+  - id: close-parameter
+    kind: closer
+    pattern: '^[ \t\r]*</parameter[ \t\r]*>?[ \t\r]*$'
+    added: 2026-10-25
+    sample: 4dfb28c7c64f
+    note: "the model's own </parameter> (with or without the final >) ends the value; the junk after it is dropped"
+    example:
+      tool: Bash
+      input:
+        command: "ls"
+        timeout: "60000\n</parameter>"
+    expect:
+      command: "ls"
+      timeout: 60000
+    probe:
+      prompt: "Use the Bash tool: run `ls -la` with a timeout of 60000 milliseconds."
+      tool: &bash
+        name: Bash
+        description: "Run a shell command"
+        input_schema:
+          type: object
+          properties:
+            command: { type: string }
+            description: { type: string }
+            timeout: { type: number }
+          required: [command]
+
+  - id: close-parameter-inline
+    kind: closer
+    scope: text
+    pattern: '</parameter[ \t]*>'
+    added: 2026-10-25
+    note: "Anthropic-style <parameter name=\"x\">value</parameter> on one line; only read from markup in answer text"
+    example:
+      tool: Bash
+      text: "<invoke name=\"Bash\">\n<parameter name=\"command\">ls</parameter>\n</invoke>"
+    expect:
+      command: "ls"
+
+  - id: close-param-name
+    kind: closer
+    scope: text
+    pattern: '^[ \t\r]*</(?:{params})>[ \t\r]*$'
+    added: 2026-10-25
+    sample: ade55f549bab
+    note: "a closing tag named after a declared parameter (</limit>); {params} stands for the tool's parameter names. Only read from markup in answer text"
+    example:
+      tool: Read
+      text: "<tool_call>\n<function=Read>\n<parameter=file_path>\n/a.ts\n</parameter>\n<parameter=limit>\n125\n</limit>\n<offset>\n199\n</offset>\n<allow_large>\ntrue\n</parameter>\n</function>\n</tool_call>"
+    expect:
+      file_path: "/a.ts"
+      limit: 125
+      offset: 199
+      allow_large: true
+
+  - id: close-bare-slash
+    kind: closer
+    pattern: '^[ \t\r]*</[ \t\r]*$'
+    added: 2026-10-25
+    sample: 96493fcfb19f
+    note: "a closing tag cut off after '</'"
+    example:
+      tool: Bash
+      input:
+        command: "ls"
+        description: "List files\n</\n>\n</\n>"
+    expect:
+      command: "ls"
+      description: "List files"
+
+  - id: close-bare-lt
+    kind: closer
+    pattern: '^[ \t\r]*<[<=]?[ \t\r]*$'
+    added: 2026-10-25
+    sample: d493cbac2f80
+    note: "a tag cut off after '<' (also '<<', '<=')"
+    example:
+      tool: Bash
+      input:
+        command: "ls"
+        description: "Run it\n<<"
+    expect:
+      command: "ls"
+      description: "Run it"
+
+  - id: close-function
+    kind: closer
+    pattern: '^[ \t\r]*</(?:function|invoke|tool_call)[ \t\r]*>?[ \t\r]*$'
+    added: 2026-10-25
+    sample: ef55331d9303
+    note: "the call's own closing tag ends the last value"
+    example:
+      tool: Read
+      input:
+        file_path: "/repo/a.ts\n</function>\n</tool_call>"
+    expect:
+      file_path: "/repo/a.ts"
+
+  - id: close-tool-call-open
+    kind: closer
+    pattern: '^[ \t]*<tool_call>[ \t]*$'
+    added: 2026-10-25
+    note: "a second <tool_call> opened before the first value was closed"
+    example:
+      tool: Read
+      input:
+        file_path: "/repo/a.ts\n<tool_call>"
+    expect:
+      file_path: "/repo/a.ts"
+
+  - id: close-special-token
+    kind: closer
+    pattern: '^[ \t\r]*<\|[^|\n]*\|>[ \t\r]*$'
+    added: 2026-10-25
+    sample: 8bc2cdb7518e
+    note: "a chat special token (<|im_end|>) ends the value"
+    example:
+      tool: Read
+      input:
+        file_path: "/repo/a.ts\n<|im_end|>"
+    expect:
+      file_path: "/repo/a.ts"
+
+  - id: junk-lone-gt
+    kind: junk_line
+    typed_only: true
+    pattern: '^[ \t\r]*>[ \t\r]*$'
+    added: 2026-10-25
+    sample: 679ffd573391
+    note: "a stray '>' line (the rest of a tag cut across lines)"
+    example:
+      tool: Grep
+      input:
+        pattern: "identify the build"
+        "-C": ">\n2"
+    expect:
+      pattern: "identify the build"
+      "-C": 2
+
+  - id: junk-hallucinated-close
+    kind: junk_line
+    pattern: '^[ \t\r]*</(?:end_\w+|head\w*|max_attempts|string|red|output\w*|home|\w*_mode)>[ \t\r]*$'
+    added: 2026-10-25
+    sample: e2a3eae2a3ed
+    note: "closing tags the model invented (</end_of_turn>, </head_after>, </max_attempts>, ...)"
+    example:
+      tool: Grep
+      input:
+        pattern: "salvaged"
+        glob: "*.ts\n</end_of_turn>"
+    expect:
+      pattern: "salvaged"
+      glob: "*.ts"
+
+  - id: name-cut-markup
+    kind: name_cut
+    pattern: '^([\w\-]+)[ \t\r\n]*[<>][\s\S]*$'
+    added: 2026-10-25
+    note: "parameter name that swallowed markup: \"command </parameter\""
+    example:
+      tool: Bash
+      input:
+        "command </parameter": "ls"
+    expect:
+      command: "ls"
+
+  - id: bool-true
+    kind: bool_true
+    pattern: '^(?:true|True|TRUE)$'
+    added: 2026-10-25
+    sample: b7a64cba009e
+    example:
+      tool: Grep
+      input:
+        pattern: "x"
+        "-n": "True"
+    expect:
+      pattern: "x"
+      "-n": true
+
+  - id: bool-true-word
+    kind: bool_true
+    pattern: '^(?:yes|Yes|YES|on|1)$'
+    added: 2026-10-25
+    example:
+      tool: Grep
+      input:
+        pattern: "x"
+        "-i": "yes"
+    expect:
+      pattern: "x"
+      "-i": true
+
+  - id: bool-false
+    kind: bool_false
+    pattern: '^(?:false|False|FALSE)$'
+    added: 2026-10-25
+    example:
+      tool: Edit
+      input:
+        file_path: "/a"
+        old_string: "a"
+        new_string: "b"
+        replace_all: "False"
+    expect:
+      file_path: "/a"
+      old_string: "a"
+      new_string: "b"
+      replace_all: false
+
+  - id: bool-false-word
+    kind: bool_false
+    pattern: '^(?:no|No|NO|off|0)$'
+    added: 2026-10-25
+    example:
+      tool: Bash
+      input:
+        command: "ls"
+        run_in_background: "no"
+    expect:
+      command: "ls"
+      run_in_background: false

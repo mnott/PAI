@@ -30,7 +30,13 @@ import {
 } from "./usage.js";
 import { workersLogDir } from "../workers/paths.js";
 import { recordToolError } from "../workers/tool-errors.js";
-import { declaredToolNames, ToolCaseSse } from "./tool-case.js";
+import { declaredToolNames, fixJsonReply, ToolCaseSse } from "./tool-case.js";
+import { declaredToolSchemas, repairJsonReplyArgs, ToolArgsSse } from "./tool-args.js";
+import { convertTextAnswer } from "./tool-args-convert.js";
+import { activeRules, RulesStore } from "./tool-call-rules.js";
+import { ruleHits } from "./tool-call-hits.js";
+import { paiHomeDir } from "../config/pai-home.js";
+import { hasMalformedToolCall } from "../workers/malformed-toolcall.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
 import { sharedParker } from "./parking.js";
 import { createUpstreamStreak } from "./preflight.js";
@@ -237,6 +243,16 @@ export interface RouterOptions {
    * spelling. Default: router log line + a [model] record in tool-errors.jsonl.
    */
   onToolCaseFix?: (info: { from: string; to: string; model: string; provider: string; session?: string }) => void;
+  /**
+   * A tool call's arguments were repaired by the rules file (or a tool call was
+   * parsed out of answer text). Default: router log line, hit counters, and a
+   * [model] record in tool-errors.jsonl.
+   */
+  onToolArgsFix?: (info: { tool: string; rules: string[]; model: string; provider: string; session?: string }) => void;
+  /** Rules store of the tool-call repair; default: one per process from config router.toolCallRules. */
+  toolCallRules?: RulesStore;
+  /** True for a provider whose engine leaves tool calls as text, so the router parses them; default: workers.yaml toolParsing "router". */
+  toolParsing?: (provider: string) => boolean;
   /** managed instances of local models; default: local-instances.json, live pids only, cached 2 s. Registered endpoints (providers with characteristics) are merged in per request. */
   instances?: () => LocalInstance[];
   /** health of an endpoint (the probe cache); default: every endpoint is up. An unhealthy one is skipped like a dead pid. */
@@ -423,6 +439,29 @@ export function modelsReply(
 /** chars/4 over the request body, for providers without count_tokens. */
 export function estimateTokens(rawBody: Buffer): number {
   return Math.ceil(rawBody.length / 4);
+}
+
+let sharedRules: RulesStore | undefined;
+/** The process-wide rules store: files from config router.toolCallRules under the PAI home, hot-reloaded. */
+function sharedRulesStore(log: (line: string) => void): RulesStore {
+  sharedRules ??= new RulesStore({ config: () => loadConfig().router.toolCallRules, homeDir: paiHomeDir, log });
+  return sharedRules;
+}
+
+/** Log line, hit counters and a [model] tool-errors record for one repaired tool call. */
+function defaultToolArgsFix(log: (line: string) => void): NonNullable<RouterOptions["onToolArgsFix"]> {
+  return (i) => {
+    ruleHits.record(i.rules);
+    const text = `tool arguments repaired: ${i.tool} [${i.rules.join(", ")}]`;
+    log(`${new Date().toISOString()} ${i.model} ${i.provider} ${text}`);
+    recordToolError(workersLogDir(readWorkersSection().workers), {
+      worker: i.session ?? "router",
+      provider: i.provider,
+      label: "router",
+      tool: "router",
+      text,
+    });
+  };
 }
 
 /** Log line plus a [model] tool-errors record, so `pai worker errors` keeps the data. */
@@ -675,10 +714,17 @@ export function routerHandler(
         res.on("close", () => q.destroy());
         q.end(b);
       };
+      // A provider whose engine leaves tool calls as text: the router parses them (tool-args.ts).
+      const parseOn =
+        target.kind === "provider" && !isCount && isLocal(up.url) && (options?.toolParsing ? options.toolParsing(prov) : target.provider.toolParsing === "router");
+      const argsFix = (info: { tool: string; rules: string[] }): void =>
+        (options?.onToolArgsFix ?? defaultToolArgsFix(log))({ ...info, model: target.model, provider: prov, session });
+      const rulesNow = (): readonly import("./tool-call-rules.js").Rule[] =>
+        activeRules((options?.toolCallRules ?? sharedRulesStore(log)).get(prov, target.model));
       // Local 200 answers are held until complete so a damaged tool call never reaches the client as text.
       const gate = (ures0: http.IncomingMessage): void => {
         const ct = String(ures0.headers["content-type"] ?? "");
-        if (!retryOn || ures0.statusCode !== 200 || ures0.headers["content-encoding"]) return respond(ures0);
+        if (!(retryOn || parseOn) || ures0.statusCode !== 200 || ures0.headers["content-encoding"]) return respond(ures0);
         let pings: NodeJS.Timeout | undefined;
         if (/text\/event-stream/i.test(ct) && !res.headersSent) {
           const rh0 = { ...ures0.headers };
@@ -705,6 +751,14 @@ export function routerHandler(
             respond(src);
           };
           const ans = readAnswer(first.toString("utf8"), ct);
+          if (parseOn && !ans.toolUse && hasMalformedToolCall(ans.text)) {
+            const conv = convertTextAnswer(first.toString("utf8"), ct, declaredToolSchemas(up.body), rulesNow());
+            if (conv) {
+              conv.calls.forEach((c) => argsFix({ tool: c.name, rules: ["parsed-from-text", ...c.hits] }));
+              return deliver(200, ures0.headers, Buffer.from(conv.body));
+            }
+          }
+          if (!retryOn) return deliver(200, ures0.headers, first);
           const degenerate = isDegenerate(ans, up.body);
           if (!isDamaged(ans) && !degenerate) return deliver(200, ures0.headers, first);
           const what = degenerate ? "degenerate-answer" : "malformed-tool-call";
@@ -752,27 +806,38 @@ export function routerHandler(
             });
             return;
           }
-          if (!res.headersSent) res.writeHead(ures.statusCode ?? 502, rh);
           const declared = isCount || ures.statusCode !== 200 ? [] : declaredToolNames(up.body);
-          const plainSse = /text\/event-stream/i.test(String(ures.headers["content-type"] ?? "")) && !ures.headers["content-encoding"];
+          const ctype = String(ures.headers["content-type"] ?? "");
+          const plainSse = /text\/event-stream/i.test(ctype) && !ures.headers["content-encoding"];
+          const jsonReply = target.kind === "provider" && declared.length > 0 && /json/i.test(ctype) && !plainSse && !ures.headers["content-encoding"];
+          if (jsonReply) delete rh["content-length"];
+          if (!res.headersSent) res.writeHead(ures.statusCode ?? 502, rh);
           const fixer =
             declared.length && plainSse
               ? new ToolCaseSse(declared, (from, to) =>
                   (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
                 )
               : undefined;
+          const schemas = declared.length ? declaredToolSchemas(up.body) : undefined;
+          const argsFixer = target.kind === "provider" && schemas?.size && plainSse ? new ToolArgsSse(schemas, rulesNow, argsFix) : undefined;
           const fill = mayCount && plainSse ? new InputTokensSse(() => counted) : undefined;
-          // ures -> [input fill] -> [tool-case fix] -> res
-          if (fill && fixer) {
-            ures.pipe(fill);
-            fill.pipe(fixer);
-            fixer.pipe(res);
-          } else if (fill) {
-            ures.pipe(fill).pipe(res);
-          } else if (fixer) {
-            ures.pipe(fixer).pipe(res);
+          if (jsonReply && schemas) {
+            // non-streaming reply: held whole, tool names and arguments corrected, sent as one body
+            const bits: Buffer[] = [];
+            ures.on("data", (c: Buffer) => bits.push(c));
+            ures.on("end", () => {
+              let text = Buffer.concat(bits).toString("utf8");
+              text = fixJsonReply(text, declared, (from, to) =>
+                (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
+              );
+              res.end(repairJsonReplyArgs(text, schemas, rulesNow, argsFix));
+            });
           } else {
-            ures.pipe(res);
+            // ures -> [input fill] -> [tool-case fix] -> [tool-args repair] -> res
+            const chain = [fill, fixer, argsFixer].filter((x): x is NonNullable<typeof x> => !!x);
+            let tail: NodeJS.ReadableStream = ures;
+            for (const t of chain) tail = tail.pipe(t);
+            tail.pipe(res);
           }
           ures.on("end", () => {
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);

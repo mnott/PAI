@@ -15,7 +15,7 @@ import { join, resolve } from "node:path";
 
 const SRC_DIR = resolve("src/config/defaults");
 const DIST_DIR = resolve(process.argv[2] ?? "dist", "config/defaults");
-const FILES = ["config.yaml", "workers.yaml"];
+const FILES = ["config.yaml", "workers.yaml", "tool-call-rules.default.yaml"];
 
 mkdirSync(DIST_DIR, { recursive: true });
 for (const name of FILES) {

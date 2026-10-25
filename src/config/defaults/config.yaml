@@ -231,6 +231,13 @@ router:
   # Bare aliases (besides ids starting with claude-) that also go to claudeUpstream.
   claudeModelAliases: [sonnet, opus, haiku, default, opusplan]
   bind: loopback
+  # Tool-call repair rules (src/router/tool-call-rules.ts). Files live in <PAI home>/<dir>/;
+  # providers maps a provider (or provider -> model, "*" = any) to a file that starts with
+  # `inherits: default`. Unmapped providers use the shipped rules. See docs/commands/models.md.
+  toolCallRules:
+    dir: tool-call-rules
+  # `pai models rules list` marks a rule stale after this many days without a hit.
+  toolCallRulesStaleDays: 14
   # Extra Host headers the router accepts beyond loopback and the bind address
   # (tailnet/MagicDNS names the cockpit is opened by). Empty by default; a
   # request whose Host matches none of these is refused with 403.
