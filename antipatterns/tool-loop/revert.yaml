@@ -1,0 +1,25 @@
+# A Write that puts an earlier version of a file back (A,B,A,B,...): the current
+# content never repeats, so the identical-write count never trips.
+id: revert
+category: tool-loop
+detector:
+  kind: revert
+  params:
+    note_at: 2
+    stop_at: 6
+    seen_cap: 8
+    stop_message: "loop guard: you switched {file} back to a version you already wrote {n} times. Both versions are on record; pick one and keep it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
+action: note
+message: "{file}: you are switching back to a version you already wrote (this is the {ordinal} time). Both versions are on record; pick one, keep it, and move on to the next task or finish."
+tests:
+  match:
+    - "A B A B"
+    - "A B A B A B A B A B A B A B"
+  no_match:
+    - "A B A"
+    - "A B C D"
+provenance:
+  date: 2026-10-25
+  model: various local models
+  observed: workers alternating a file between two versions
+  ref: 7a3e7033

@@ -1,0 +1,24 @@
+# The same Write/Edit of one file, byte for byte, again and again. A rewrite costs
+# nothing, so it is only told plainly (note) and stopped at a runaway count.
+id: identical-write
+category: tool-loop
+detector:
+  kind: identical-write
+  params:
+    note_at: 2
+    stop_at: 20
+    stop_message: "loop guard: you wrote {file} with exactly the same content {n} times. It already contains this content; stop rewriting it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
+action: note
+message: "{file} already contains exactly this content; your earlier {tool} succeeded. No need to write it again. Continue with the next task, or finish if none is left."
+tests:
+  match:
+    - "A A"
+    - "A A A"
+  no_match:
+    - "A"
+    - "A B"
+provenance:
+  date: 2026-10-25
+  model: various local models
+  observed: workers rewriting a file with unchanged content in a loop
+  ref: moved from src/hooks/ts/lib/loop-guard.ts

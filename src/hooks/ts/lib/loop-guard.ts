@@ -23,18 +23,24 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
+import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
-export const LOOP_MAX_REPEATS = 4;
+// Thresholds and message texts live in antipatterns/tool-loop/*.yaml (user overrides in PAI_HOME/antipatterns).
+// The exported constants are the shipped values; the step functions read the active pattern on every call.
+const shipped = (id: string, key: string): number => shippedAntipattern(id).detector.params[key] as number;
+const live = (id: string): { params: Record<string, unknown>; message: string } => {
+  const ap = activeAntipattern(id);
+  return { params: ap.detector.params, message: ap.message };
+};
+export const LOOP_MAX_REPEATS = shipped("growing-command", "max_repeats");
 /** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */
-export const IDENTICAL_WRITE_STOP_AT = 20;
+export const IDENTICAL_WRITE_STOP_AT = shipped("identical-write", "stop_at");
 /** Reverts of one file (a Write whose content equals an earlier, not the current, version) at which a note is added / the write is denied and the session stopped. */
-export const REVERT_NOTE_AT = 2;
-export const REVERT_STOP_AT = 6;
-/** Content hashes remembered per file for revert detection. */
-const SEEN_CAP = 8;
+export const REVERT_NOTE_AT = shipped("revert", "note_at");
+export const REVERT_STOP_AT = shipped("revert", "stop_at");
 /** Denials of one cluster after which the session is stopped (the 7th attempt). */
-export const LOOP_STOP_DENIALS = 3;
+export const LOOP_STOP_DENIALS = shipped("growing-command", "stop_denials");
 /** Consecutive same-template read-only Bash calls without a worktree change after which the next one is denied (env PAI_LOOP_READ_STREAK overrides). */
 export const LOOP_READ_STREAK = Number(process.env.PAI_LOOP_READ_STREAK) > 0 ? Number(process.env.PAI_LOOP_READ_STREAK) : 15;
 /** Piecewise-read denials in a row after which the session is stopped (the 2nd denial after the first). */
@@ -51,10 +57,9 @@ export const DEFAULT_ECHO = { echoLines: 40, echoChars: 3000, echoRunnerLines: 4
 export type EchoConfig = { echoLines: number; echoChars: number; echoRunnerLines?: number };
 
 const SELF = "If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available).";
-const STOP_LEAD = "Stop. Write your R report now (r=~ if something is unverified, list it in x=).";
 /** Non-blocking note after the 2nd identical repeat. */
-export const LOOP_NUDGE = "Same result as before. If your change is complete and its checks passed, stop checking: commit and write your R report now.";
-export const LOOP_DENY_REASON = `${STOP_LEAD} loop guard: you ran this command ${LOOP_MAX_REPEATS} times with the same result and nothing changed. Stop repeating it. ${SELF}`;
+export const LOOP_NUDGE = shippedAntipattern("growing-command").detector.params.note_message as string;
+export const LOOP_DENY_REASON = fillMessage(shippedAntipattern("growing-command").message, { count: LOOP_MAX_REPEATS });
 
 const HANG_SUFFIX = " This command hung before (see the hang probe line in its output for where); running it unchanged will hang again. Fix the code at that location first.";
 
@@ -64,9 +69,10 @@ function hungBefore(state: LoopState, idx: number[]): boolean {
 }
 
 export function loopDenyReason(tool = "Bash", count = LOOP_MAX_REPEATS): string {
+  const { params, message } = live("growing-command");
   return tool === "Bash"
-    ? LOOP_DENY_REASON
-    : `${STOP_LEAD} loop guard: you called ${tool} with similar input ${count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. ${SELF}`;
+    ? fillMessage(message, { count: params.max_repeats as number })
+    : fillMessage(params.tool_message as string, { tool, count });
 }
 
 export interface LoopState {
@@ -151,8 +157,8 @@ export function isPollCommand(command: string, cwd: string = process.cwd()): boo
 }
 
 /** Runs of one action key without an edit at which the call is denied / the session stopped. */
-export const RUN_DENY_AT = 3;
-export const RUN_STOP_AT = 5;
+export const RUN_DENY_AT = shipped("repeated-failure", "deny_at");
+export const RUN_STOP_AT = shipped("repeated-failure", "stop_at");
 
 const RUNNER = /^(?:npx\s+|bunx\s+|pnpm (?:exec\s+)?|yarn\s+)?(vitest|jest|pytest|tsdown|tsc|xcodebuild|npm (?:run )?test|npm run build|swift test|cargo test|go test|bun test)\b\s*(.*)$/;
 
@@ -542,29 +548,32 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     // a Write back to an earlier version (not the current one) is a revert: A,B,A,B,... never repeats the current content
     const revert = tool === "Write" && !!prev && prev.key !== ek && !!prev.seen?.includes(ek);
     const reverts = (prev?.reverts ?? 0) + (revert ? 1 : 0);
-    const seen = [...(prev?.seen ?? []).filter((k) => k !== ek), ...(tool === "Write" ? [ek] : [])].slice(-SEEN_CAP);
+    const rv = live("revert");
+    const iw = live("identical-write");
+    const seen = [...(prev?.seen ?? []).filter((k) => k !== ek), ...(tool === "Write" ? [ek] : [])].slice(-(rv.params.seen_cap as number));
     const writes = { ...(state.writes ?? {}), [file]: { key: ek, n, seen, reverts } };
     for (const k of Object.keys(writes).slice(0, -LAST_CAP * 8)) delete writes[k];
-    if (n >= IDENTICAL_WRITE_STOP_AT)
+    if (n >= (iw.params.stop_at as number))
       return {
         state: { ...emptyLoopState(), writes },
         deny: true,
         stop: true,
         key: ek.split("\t")[1],
         count: n,
-        reason: `loop guard: you wrote ${file} with exactly the same content ${n} times. It already contains this content; stop rewriting it. ${SELF}`,
+        reason: fillMessage(iw.params.stop_message as string, { file, n }),
       };
-    if (reverts >= REVERT_STOP_AT)
+    if (reverts >= (rv.params.stop_at as number))
       return {
         state: { ...emptyLoopState(), writes },
         deny: true,
         stop: true,
         key: ek.split("\t")[1],
         count: reverts,
-        reason: `loop guard: you switched ${file} back to a version you already wrote ${reverts} times. Both versions are on record; pick one and keep it. ${SELF}`,
+        reason: fillMessage(rv.params.stop_message as string, { file, n: reverts }),
       };
-    const revertNote = revert && reverts >= REVERT_NOTE_AT ? `${file}: you are switching back to a version you already wrote (this is the ${reverts}${reverts % 10 === 3 && reverts !== 13 ? "rd" : reverts % 10 === 2 && reverts !== 12 ? "nd" : "th"} time). Both versions are on record; pick one, keep it, and move on to the next task or finish.` : undefined;
-    const note = revertNote ?? (n >= 2 ? `${file} already contains exactly this content; your earlier ${tool} succeeded. No need to write it again. Continue with the next task, or finish if none is left.` : undefined);
+    const ordinal = `${reverts}${reverts % 10 === 3 && reverts !== 13 ? "rd" : reverts % 10 === 2 && reverts !== 12 ? "nd" : "th"}`;
+    const revertNote = revert && reverts >= (rv.params.note_at as number) ? fillMessage(rv.message, { file, ordinal, n: reverts }) : undefined;
+    const note = revertNote ?? (n >= (iw.params.note_at as number) ? fillMessage(iw.message, { file, tool, n }) : undefined);
     return { state: { ...emptyLoopState(), writes, window: [ek], outs: [null] }, deny: false, ...(note ? { note } : {}) };
   }
   if (tool === "Bash") {
@@ -638,23 +647,26 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
       const changed = inlineEdit(cmd as string) || !!fingerprint && state.prints?.[ak] !== undefined && state.prints[ak] !== fingerprint;
       const n = (changed ? 0 : (state.runs?.[ak] ?? 0)) + 1;
       state = { ...state, runs: { ...(state.runs ?? {}), [ak]: n }, ...(fingerprint ? { prints: { ...(state.prints ?? {}), [ak]: fingerprint } } : {}) };
-      if (n >= RUN_DENY_AT)
+      const rf = live("repeated-failure");
+      if (n >= (rf.params.deny_at as number))
         return {
           state,
           deny: true,
-          stop: n >= RUN_STOP_AT,
+          stop: n >= (rf.params.stop_at as number),
           key: ak,
           count: n,
-          reason: `loop guard: you ran ${ak} ${RUN_DENY_AT} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker.${hangNote(state, cmd as string)}${runnerEcho(state.runLast?.[ak], echo)} ${SELF}`,
+          reason: fillMessage(rf.message, { key: ak, deny_at: rf.params.deny_at as number, hang: hangNote(state, cmd as string), echo: runnerEcho(state.runLast?.[ak], echo) }),
         };
     }
   }
   const key = callKey(tool, input);
   if (key === null) return { state, deny: false };
   const idx = clusterOf(state.window, key);
-  const lastN = idx.slice(-LOOP_MAX_REPEATS);
+  const gc = live("growing-command").params;
+  const maxRepeats = gc.max_repeats as number;
+  const lastN = idx.slice(-maxRepeats);
   const outs = state.outs ?? [];
-  const stalled = lastN.length >= LOOP_MAX_REPEATS && lastN.every((i, n) => n === 0 || resultsSimilar(outs[lastN[n - 1]], outs[i]));
+  const stalled = lastN.length >= maxRepeats && lastN.every((i, n) => n === 0 || resultsSimilar(outs[lastN[n - 1]], outs[i]));
   if (stalled) {
     const head = state.window[idx[0]];
     const denials = { ...(state.denials ?? {}) };
@@ -666,11 +678,11 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
     return {
       state: { ...state, denials },
       deny: true,
-      stop: denials[head] >= LOOP_STOP_DENIALS,
+      stop: denials[head] >= (gc.stop_denials as number),
       evasion: typeof cmd === "string" && loopGuardEvasion(cmd, head.split("\t")[1] ?? ""),
       reason: hung || echoed ? `${loopDenyReason(tool)}${hung ? HANG_SUFFIX : ""}${echoed}` : undefined,
       key: head.split("\t")[1],
-      count: LOOP_MAX_REPEATS + denials[head],
+      count: maxRepeats + denials[head],
     };
   }
   const nudge = idx.length >= 2 && resultsSimilar(outs[idx[idx.length - 2]], outs[idx[idx.length - 1]]);
@@ -678,7 +690,7 @@ export function stepLoopGuard(state: LoopState, tool: string, input?: string | R
   const nextOuts = [...outs];
   while (nextOuts.length < state.window.length) nextOuts.push(null);
   nextOuts.push(null);
-  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: LOOP_NUDGE } : {}) };
+  return { state: { ...state, window: window.slice(-WINDOW_CAP), outs: nextOuts.slice(-WINDOW_CAP) }, deny: false, ...(nudge ? { note: gc.note_message as string } : {}) };
 }
 
 /**

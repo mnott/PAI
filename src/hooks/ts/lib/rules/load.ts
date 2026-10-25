@@ -1,5 +1,5 @@
 /**
- * load.ts — read `*.rule.yaml` files from directories into rules.
+ * load.ts — read `*.rule.yaml` files (and `<id>.yaml` in an antipatterns/shell dir) from directories into rules.
  *
  * One rule per file, or a top-level list of rules. A bad regex or a missing
  * field is reported in `errors` and the rule is skipped — this never throws,
@@ -16,7 +16,7 @@
 
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, parse as parsePath, resolve, sep } from "node:path";
+import { basename, dirname, join, parse as parsePath, resolve, sep } from "node:path";
 import { parse } from "yaml";
 import { defaultPaiHomeDir, legacyPaiHomeDir } from "../../../../config/pai-home.js";
 import { BUILTIN_RULES } from "./builtin.generated.js";
@@ -100,13 +100,27 @@ export function userRuleDirs(cwd: string = process.cwd()): string[] {
   return [homeRulesDir(), ...projectRuleDirs(cwd)];
 }
 
+/** Every rule directory in load order: PAI_HOME/rules, PAI_HOME/antipatterns/shell, then the project dir. */
+export function allRuleDirs(cwd: string = process.cwd()): string[] {
+  const [home, ...project] = userRuleDirs(cwd);
+  return [home, userAntipatternShellDir(), ...project];
+}
+
+/** The user's own shell anti-patterns (PAI_HOME/antipatterns/shell/<id>.yaml): same schema, loaded after PAI_HOME/rules. */
+export function userAntipatternShellDir(): string {
+  return join(homePaiDir(), "antipatterns", "shell");
+}
+
 function homeRulesDir(): string {
-  const home = process.env.PAI_HOME
+  return join(homePaiDir(), "rules");
+}
+
+function homePaiDir(): string {
+  return process.env.PAI_HOME
     ? process.env.PAI_HOME
     : !existsSync(join(defaultPaiHomeDir(), "config.yaml")) && existsSync(join(legacyPaiHomeDir(), "config.yaml"))
       ? legacyPaiHomeDir()
       : defaultPaiHomeDir();
-  return join(home, "rules");
 }
 
 function realOrResolved(p: string): string {
@@ -285,7 +299,9 @@ function loadDir(dir: string, errors: string[]): LoadedRule[] {
   const out: LoadedRule[] = [];
   let names: string[];
   try {
-    names = readdirSync(dir).filter((f) => f.endsWith(".rule.yaml")).sort();
+    // the anti-pattern directory names its files <id>.yaml (antipatterns/shell/)
+    const idNamed = basename(dir) === "shell" && basename(dirname(dir)) === "antipatterns";
+    names = readdirSync(dir).filter((f) => f.endsWith(".rule.yaml") || (idNamed && f.endsWith(".yaml"))).sort();
   } catch {
     return out; // missing directory is not an error
   }

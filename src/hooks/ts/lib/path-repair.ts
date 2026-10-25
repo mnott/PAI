@@ -18,6 +18,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
+import { activeAntipattern, fillMessage } from "./antipatterns.js";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { dropHeredocBodies } from "./heredoc.js";
 import { renderDecision } from "./render-decision.js";
@@ -529,10 +530,10 @@ export function repairFilePath(
   const near = closestTracked(cut || raw, ctx.tracked());
   return {
     kind: "deny",
-    reason:
-      `does not exist: ${cut || raw}. Do not guess paths.` +
-      (near.length ? ` Closest tracked files: ${near.join(", ")}.` : "") +
-      " Use Glob to find it.",
+    reason: fillMessage(activeAntipattern("does-not-exist").message, {
+      path: cut || raw,
+      near: near.length ? ` Closest tracked files: ${near.join(", ")}.` : "",
+    }),
   };
 }
 

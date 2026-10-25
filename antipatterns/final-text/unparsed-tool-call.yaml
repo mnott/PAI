@@ -1,0 +1,35 @@
+# The final assistant text is (or ends with) a tool call the server returned as plain
+# text because the tool was not declared. Claude Code takes it as the final answer and
+# the run ends; the worker is continued once with the prompt below.
+id: unparsed-tool-call
+category: final-text
+detector:
+  kind: unparsed-tool-call
+  params:
+    tail_chars: 1500
+    json_window_lines: 12
+    # tried in order against the last tail_chars; group 1 is the tool name
+    regexes:
+      # qwen3-coder XML
+      - '<tool_call>\s*<function=([\w.:-]+)>[\s\S]*?(?:<\/tool_call>\s*)?$'
+      # Anthropic XML, wrapped
+      - '<function_calls>\s*<invoke name="([^"]+)">[\s\S]*?(?:<\/function_calls>)?$'
+      # Anthropic XML, bare
+      - '<invoke name="([^"]+)">[\s\S]*?(?:<\/invoke>\s*)?(?:<\/function_calls>)?$'
+action: continue
+message: "Your last message was a call to the tool {name}, which is not available in this task. Available tools: {allowed}. The call was not run. Continue the task with the available tools; when done, send your final report."
+tests:
+  match:
+    - "Files written.\n<tool_call>\n<function=Bash>\n<parameter=command>\nls run\n</parameter>\n</function>\n</tool_call>"
+    - "ok\n<function_calls>\n<invoke name=\"Grep\">\n<parameter name=\"pattern\">x</parameter>\n</invoke>\n</function_calls>"
+    - "<invoke name=\"Bash\"><parameter name=\"command\">ls</parameter></invoke>"
+    - "Next:\n{\"name\": \"Bash\",\n \"arguments\": {\"command\": \"ls\"}}"
+  no_match:
+    - "R\nr=+\nz=done"
+    - "Example:\n```\n<tool_call>\n<function=Bash>\n</function>\n</tool_call>\n```\nThat is the form."
+    - "The config {\"name\": \"x\", \"other\": 1} is fine"
+provenance:
+  date: 2026-10-24
+  model: qwen3-coder
+  observed: a worker run ended with an undeclared tool call as its final text
+  ref: 7630e01b

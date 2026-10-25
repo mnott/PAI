@@ -1,0 +1,22 @@
+# A test/build runner run again and again on the same target with no change to the
+# worktree in between: the result cannot change.
+id: repeated-failure
+category: tool-loop
+detector:
+  kind: repeated-failure
+  params:
+    deny_at: 3
+    stop_at: 5
+action: deny
+message: "loop guard: you ran {key} {deny_at} times without changing anything in the worktree; the result will not change. Read the failure, change code or the test, or report the blocker.{hang}{echo} If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
+tests:
+  match:
+    - "npx vitest run a.test.ts\nnpx vitest run a.test.ts\nnpx vitest run a.test.ts"
+  no_match:
+    - "npx vitest run a.test.ts\nnpx vitest run a.test.ts"
+    - "npx vitest run a.test.ts\nnpx vitest run b.test.ts\nnpx vitest run c.test.ts"
+provenance:
+  date: 2026-10-25
+  model: various local models
+  observed: workers re-running a failing test without editing anything
+  ref: moved from src/hooks/ts/lib/loop-guard.ts

@@ -1,0 +1,26 @@
+# Similar commands (>= 0.9) returning similar results with nothing changed in between:
+# a note from the 3rd call (2nd repeat), a deny at max_repeats, the session stopped after stop_denials denials.
+id: growing-command
+category: tool-loop
+detector:
+  kind: growing-command
+  params:
+    max_repeats: 4
+    stop_denials: 3
+    note_message: "Same result as before. If your change is complete and its checks passed, stop checking: commit and write your R report now."
+    tool_message: "Stop. Write your R report now (r=~ if something is unverified, list it in x=). loop guard: you called {tool} with similar input {count} times with the same result and nothing changed. Stop repeating it; the earlier result is still valid. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
+action: deny
+message: "Stop. Write your R report now (r=~ if something is unverified, list it in x=). loop guard: you ran this command {count} times with the same result and nothing changed. Stop repeating it. If your part is done, commit and write your R report. If you are stuck, report the blocker in R x= (or use pai worker help if available)."
+tests:
+  match:
+    - "grep -rn foo src\ngrep -rn foo src\ngrep -rn foo src"
+    - "grep -rn foo src\ngrep -rn foo src\ngrep -rn foo src\ngrep -rn foo src\ngrep -rn foo src"
+  no_match:
+    - "grep -rn foo src"
+    - "grep -rn foo src\ngrep -rn foo src"
+    - "grep -rn foo src\nls docs\ngit status"
+provenance:
+  date: 2026-10-25
+  model: various local models
+  observed: workers re-running a search whose output no longer changes
+  ref: moved from src/hooks/ts/lib/loop-guard.ts
