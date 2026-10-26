@@ -611,7 +611,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   }
   if (state.resultReport && status.denials?.length) state.resultReport.denials = status.denials;
   if (headless && state.resultReport?.changed?.length) {
-    const verify = verifyReportChanges(state.resultReport.changed, worktree?.dir ?? cwd, t0);
+    const verify = verifyReportChanges(state.resultReport.changed, worktree?.dir ?? cwd, t0, worktree?.base);
     if (!verify.ok) {
       status.reportValid = false;
       const note = verifyFailNote(verify);

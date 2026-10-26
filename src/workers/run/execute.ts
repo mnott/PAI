@@ -455,7 +455,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   // a failed run with no final text keeps the fold's last line (the error)
   status.last = shortText(report?.notes ?? finalText, 90) || (!ok ? shortText(fold.last ?? "failed", 90) : "done");
   if (report?.changed?.length) {
-    const verify = verifyReportChanges(report.changed, worktree?.dir ?? cwd, t0);
+    const verify = verifyReportChanges(report.changed, worktree?.dir ?? cwd, t0, worktree?.base);
     if (!verify.ok) {
       status.reportValid = false;
       const note = verifyFailNote(verify);
