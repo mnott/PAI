@@ -625,6 +625,32 @@ pai worker gc --pool --dry-run
 
 See also: `pai worker discard`, `pai worker pending`
 
+### pai worker keep
+
+Protect a worktree from gc
+
+```
+pai worker keep TARGET [options]
+```
+
+Writes .pai-keep (first line = reason) into the worktree; every gc path then leaves it alone and logs WORKER-GC-KEEP. Use it for a tree something still builds from or runs out of. --release removes the marker.
+
+| Argument | Required | Description |
+|---|---|---|
+| `TARGET` | yes | Worker id or worktree path |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--reason TEXT` | string | — | Why the worktree is kept (required unless --release) |
+| `--release` | flag | — | Remove the .pai-keep marker |
+
+```sh
+pai worker keep w-20260101-abc --reason "source tree of build-x"
+pai worker keep w-20260101-abc --release
+```
+
+See also: `pai worker gc`
+
 ### pai worker kill
 
 Stop a running worker
@@ -1873,6 +1899,7 @@ See also: `pai worker providers`
 | `pai worker pending` | Finished workers whose work is not merged yet |
 | `pai worker discard` | Throw away a worker's branch and worktree |
 | `pai worker gc` | Archive leftover worker worktrees |
+| `pai worker keep` | Protect a worktree from gc |
 | `pai worker kill` | Stop a running worker |
 | `pai worker queue` | Show or reorder the workers waiting for a provider slot |
 | `pai worker wait-on` | Wait for a background job to finish |
