@@ -14,7 +14,8 @@ import { unparsedCallDecision } from "../../../workers/run/unparsed-call.js";
 import { finaliseRun } from "../../../workers/run.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { saveStatus, type WorkerStatus } from "../../../workers/status.js";
-import { candidates, conflicts, label, promote, retire, setMode, setParam, stats } from "../../../antipatterns/govern.js";
+import { candidates, conflicts, label, promote, retire, setMode, setParam, setProxy, stats } from "../../../antipatterns/govern.js";
+import { allRuleDirs, loadRules, projectRuleDirs } from "./rules/load.js";
 
 let home: string;
 let prevHome: string | undefined;
@@ -41,10 +42,12 @@ describe("lifecycle fields", () => {
       // distinct-rewrites went stable/enforce as version 2 (the Bash-write blind spot closed)
       expect([a.status, a.mode, a.version]).toEqual(["stable", "enforce", a.id === "distinct-rewrites" ? 2 : 1]);
       expect(a.created).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(a.proxy).toBe("monitor"); // shipped patterns never act on the proxy until a user override says so
     }
     for (const r of BUILTIN_RULES) {
       expect([r.status, r.mode, r.version]).toEqual(["stable", "enforce", 1]);
       expect(r.created).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(r.proxy).toBe("monitor");
     }
   });
   it("defaults keep today's behaviour and bad values are rejected", () => {
@@ -52,13 +55,16 @@ describe("lifecycle fields", () => {
     expect(lc).toMatchObject({ status: "stable", mode: "enforce", version: 1, supersedes: [], falsepositives: [] });
     expect(parseLifecycle({ status: "wip" })).toMatch(/status/);
     expect(parseLifecycle({ mode: "dry" })).toMatch(/mode/);
+    expect(parseLifecycle({})).toMatchObject({ proxy: "monitor" });
+    expect(parseLifecycle({ proxy: "enforce" })).toMatchObject({ proxy: "enforce" });
+    expect(parseLifecycle({ proxy: "dry" })).toMatch(/proxy/);
     expect(parseLifecycle({ version: 0 })).toMatch(/version/);
     expect(parseLifecycle({ exceptions: [{ match: "(", reason: "x" }] })).toMatch(/regex/);
     const raw = { id: "x", category: "tool-loop", detector: { kind: "observed" }, action: "note", message: "m", status: "nope" };
     expect(validateAntipattern(raw, null, "t")).toMatch(/status/);
   });
   it("monitor, deprecated, expired and live exceptions, applies_to", () => {
-    const base: Pick<Lifecycle, "status" | "mode" | "exceptions"> = { status: "stable", mode: "enforce", exceptions: [] };
+    const base: Pick<Lifecycle, "status" | "mode" | "proxy" | "exceptions"> = { status: "stable", mode: "enforce", proxy: "monitor", exceptions: [] };
     expect(dispositionOf({ ...base, mode: "monitor" })).toBe("monitor");
     expect(dispositionOf({ ...base, status: "deprecated" })).toBe("off");
     const ex = (expires?: string): typeof base => ({ ...base, exceptions: [{ match: "safe", reason: "r", expires }] });
@@ -66,6 +72,16 @@ describe("lifecycle fields", () => {
     expect(dispositionOf(ex("2000-01-01"), "a safe thing")).toBe("enforce");
     expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("off");
     expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "glm-5" })).toBe("enforce");
+  });
+  it("the proxy path: proxy off records nothing, proxy monitor records only, proxy enforce acts only with lifecycle enforce", () => {
+    const base: Pick<Lifecycle, "status" | "mode" | "proxy" | "exceptions"> = { status: "stable", mode: "enforce", proxy: "monitor", exceptions: [] };
+    expect(dispositionOf(base, "", {}, Date.now(), "proxy")).toBe("monitor");
+    expect(dispositionOf({ ...base, proxy: "off" }, "", {}, Date.now(), "proxy")).toBe("off");
+    expect(dispositionOf({ ...base, proxy: "enforce" }, "", {}, Date.now(), "proxy")).toBe("enforce");
+    expect(dispositionOf({ ...base, mode: "monitor", proxy: "enforce" }, "", {}, Date.now(), "proxy")).toBe("monitor");
+    expect(dispositionOf({ ...base, status: "deprecated", proxy: "enforce" }, "", {}, Date.now(), "proxy")).toBe("off");
+    // the hook path ignores proxy entirely
+    expect(dispositionOf({ ...base, proxy: "off" })).toBe("enforce");
   });
 });
 
@@ -421,6 +437,21 @@ describe("set", () => {
     setParam("identical-write", "stop_at", "9", "too tight");
     expect(activeAntipattern("identical-write")).toMatchObject({ version: 3 });
     expect(parse(readFileSync(userFile("tool-loop", "identical-write.yaml"), "utf8")).changes).toHaveLength(2);
+  });
+  it("proxy: a shell rule gets a full override copy with the new proxy value, hot without a restart", () => {
+    expect(loadRules(allRuleDirs(process.cwd()), { projectDirs: projectRuleDirs(process.cwd()) }).rules.find((r) => r.id === "git-reset-hard")!.proxy).toBe("monitor");
+    const r = setProxy("git-reset-hard", "enforce", "protect Joule behind the router");
+    expect(r).toMatchObject({ from: "monitor", to: "enforce", version: 2 });
+    const doc = parse(readFileSync(userFile("shell", "git-reset-hard.yaml"), "utf8"));
+    expect(doc.proxy).toBe("enforce");
+    expect(doc.match).toBeTruthy();
+    expect(doc.version).toBe(2);
+    expect(govLines()).toEqual([expect.objectContaining({ action: "set", id: "git-reset-hard", param: "proxy", from: "monitor", to: "enforce" })]);
+    expect(loadRules(allRuleDirs(process.cwd()), { projectDirs: projectRuleDirs(process.cwd()) }).rules.find((x) => x.id === "git-reset-hard")!.proxy).toBe("enforce");
+  });
+  it("proxy refuses an unknown id and a missing reason", () => {
+    expect(() => setProxy("nope", "enforce", "r")).toThrow(/unknown pattern/);
+    expect(() => setProxy("git-reset-hard", "enforce", "")).toThrow(/reason/);
   });
   it("refuses an unknown id, an unknown param and a type mismatch", () => {
     expect(() => setParam("nope", "stop_at", "1", "r")).toThrow(/unknown pattern/);
