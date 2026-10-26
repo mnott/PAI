@@ -13,7 +13,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { join } from "node:path";
-import { armGuardReason, denyReason, renderDeny, repairPath, renderRepair, type PathRepairInput } from "../lib/path-repair.js";
+import { repairMangledScratch, armGuardReason, denyReason, renderDeny, repairPath, renderRepair, type PathRepairInput } from "../lib/path-repair.js";
 
 async function main(): Promise<void> {
   let text = "";
@@ -28,6 +28,12 @@ async function main(): Promise<void> {
   try {
     input = JSON.parse(text) as PathRepairInput;
   } catch {
+    return;
+  }
+
+  const mangled = repairMangledScratch(input, process.env, existsSync);
+  if (mangled) {
+    process.stdout.write(mangled + "\n");
     return;
   }
 

@@ -56,7 +56,7 @@ export function commitHomeChange(paths: string[], message: string): void {
 }
 
 /** Lines `pai home git-setup` makes sure the PAI_HOME .gitignore has. */
-export const GITIGNORE_REQUIRED = ["!/antipatterns/", "/antipatterns/firings.jsonl*"];
+export const GITIGNORE_REQUIRED = ["!/antipatterns/", "/antipatterns/firings.jsonl*", "/antipatterns/outcomes.jsonl*"];
 
 /** The .gitignore text with the missing required lines appended (unchanged text when none are missing). */
 export function gitignoreWithRequired(text: string): string {

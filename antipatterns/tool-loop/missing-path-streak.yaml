@@ -1,0 +1,39 @@
+# K consecutive Read/Glob/Grep calls on paths that do not exist, with no successful tool call in
+# between. Every path is distinct, so the repeat-based guards never fire and the does-not-exist
+# rule only denies each call. Any other tool call, or a Read of a path that exists, resets the count.
+id: missing-path-streak
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-26
+category: tool-loop
+title: Streak of Reads on paths that do not exist (invented ids), no write in between
+description: >
+  A worker started with Read out/102414.py and counted down one id per call (102413, 102412, ...): 79 consecutive
+  "does not exist" denials, 0 writes, never read the task file.
+detector:
+  kind: denial-streak
+  params:
+    rule: does-not-exist
+    streak: 10
+action: stop
+message: "loop guard: {streak} Reads in a row hit paths that do not exist; stop guessing paths. Glob or read the task file, or report the blocker."
+level: medium
+falsepositives:
+  - a worker probing for optional config files (rarely more than 5 in a row)
+blind_spots:
+  - Bash cat on invented paths (counted by the Bash rule, not this one)
+  - a path the path repair would have fixed also counts as missing
+tests:
+  match:
+    - "M10"
+    - "E M10"
+  no_match:
+    - "M9"
+    - "M3 W M3"
+    - "M5 E M5"
+    - "E10"
+provenance:
+  date: 2026-10-25
+  model: Gyro-L
+  observed: easy rep1, Read out/102414.py counted down to 102336, 79 denials, 0 writes; killed by the orchestrator

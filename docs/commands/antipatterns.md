@@ -46,7 +46,7 @@ Firing counts, models, outcomes and health flags per pattern
 pai antipatterns stats [options]
 ```
 
-Per pattern: firings, last fired, firings per model, actions, outcome mix, false-positive rate (fp/(tp+fp) over labelled firings), override rate. Flags: false-positive suspect (a deny or stop followed by a successful run, or a monitor hit with no bad outcome), model-quirk (over 90% of at least 5 firings on one model), retire candidate (no firing in 30 days, or false-positive rate over 50% across at least 10 labelled firings).
+Per pattern: firings, last fired, firings per model, actions, outcome mix, false-positive rate (fp/(tp+fp) over labelled firings), override rate. Flags: false-positive suspect (a deny or stop followed by a successful run, except in the paths category where that is the rule working, or a monitor hit with no bad outcome), model-quirk (over 90% of at least 5 firings on one model), retire candidate (no firing in 30 days, or false-positive rate over 50% across at least 10 labelled firings).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

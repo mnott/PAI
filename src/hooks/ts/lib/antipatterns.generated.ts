@@ -73,10 +73,52 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "paths/does-not-exist.yaml"
   },
   {
-    "id": "distinct-rewrites",
-    "status": "experimental",
-    "mode": "monitor",
+    "id": "mangled-var-folders-path",
+    "status": "stable",
+    "mode": "enforce",
     "version": 1,
+    "created": "2026-10-26",
+    "category": "paths",
+    "title": "Scratch path written as /Users/folders/... instead of /var/folders/...",
+    "description": "A worker wrote the scratch dir (/var/folders/<x>/<y>/T/pai-scratch/<id>/...) as /Users/folders/<x>/<y>/pai-scratch/... (dropped \"var\" and \"T\"); the Write failed with EACCES mkdir /Users/folders.\n",
+    "detector": {
+      "kind": "path-rewrite",
+      "params": {
+        "from": "^/(?:Users|var)/folders/([^/]+)/([^/]+)/pai-scratch/",
+        "to": "/var/folders/$1/$2/T/pai-scratch/",
+        "only_if_target_dir_exists": true,
+        "deny_message": "{from} is not a real path: the scratch dir lives under /var/folders/<x>/<y>/T/pai-scratch/ (with var and T) and {to} does not exist. Use $TMPDIR."
+      }
+    },
+    "action": "note",
+    "message": "path repaired: {from} -> {to} (the scratch dir lives under /var/folders/.../T/)",
+    "level": "low",
+    "blind_spots": [
+      "other mangled forms of the scratch path",
+      "Bash commands (only file-tool paths are repaired)"
+    ],
+    "tests": {
+      "match": [
+        "/Users/folders/ab/cdef/pai-scratch/x/a.sh",
+        "/var/folders/ab/cdef/pai-scratch/x/a.sh"
+      ],
+      "no_match": [
+        "/Users/someone/folders/a.sh",
+        "/var/folders/ab/cdef/T/pai-scratch/x/a.sh"
+      ]
+    },
+    "provenance": {
+      "date": "2026-10-25",
+      "model": "Gyro-L",
+      "observed": "real task prune-dist-rerun, a Write into the scratch dir without var and T failed with EACCES on mkdir of the parent"
+    },
+    "source": "paths/mangled-var-folders-path.yaml"
+  },
+  {
+    "id": "distinct-rewrites",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 2,
     "created": "2026-10-25",
     "category": "tool-loop",
     "detector": {
@@ -92,14 +134,19 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "genuine iterative refinement when each write is followed by a test run or a Read of new information"
     ],
     "blind_spots": [
-      "rewrites spread across Edit calls instead of Write"
+      "rewrites spread across Edit calls instead of Write",
+      "a heredoc write followed by a run in the same Bash call (`cat > f <<EOF ... EOF && node f`) is a test run, so it resets"
     ],
     "tests": {
       "match": [
         "A B C D E F G H I",
-        "A B C D E F G H"
+        "A B C D E F G H",
+        "bash:A bash:B bash:C bash:D bash:E bash:F bash:G bash:H",
+        "A B C D bash:E bash:F bash:G bash:H"
       ],
       "no_match": [
+        "bash:A bash:B bash:C bash:D bash:E bash:F bash:G",
+        "A B C D run E F G H",
         "A B C D E F G",
         "A A A A A A A A A",
         "A B A B A B A B A"
@@ -108,7 +155,8 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "provenance": {
       "date": "2026-10-25",
       "model": "Gyro-M",
-      "observed": "out/27.py written 10 times with 9 distinct contents and no Read or test result in between, while the rest of the set waited"
+      "observed": "out/27.py written 10 times with 9 distinct contents and no Read or test result in between, while the rest of the set waited",
+      "ref": "Gyro-M hard run 2026-10-25 (out/1.py written 16x, 10 distinct versions, 3 recurring 3x); a runaway wrote 272 debug scripts through Bash heredocs"
     },
     "source": "tool-loop/distinct-rewrites.yaml"
   },
@@ -185,6 +233,51 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
     "source": "tool-loop/identical-write.yaml"
   },
   {
+    "id": "missing-path-streak",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-26",
+    "category": "tool-loop",
+    "title": "Streak of Reads on paths that do not exist (invented ids), no write in between",
+    "description": "A worker started with Read out/102414.py and counted down one id per call (102413, 102412, ...): 79 consecutive \"does not exist\" denials, 0 writes, never read the task file.\n",
+    "detector": {
+      "kind": "denial-streak",
+      "params": {
+        "rule": "does-not-exist",
+        "streak": 10
+      }
+    },
+    "action": "stop",
+    "message": "loop guard: {streak} Reads in a row hit paths that do not exist; stop guessing paths. Glob or read the task file, or report the blocker.",
+    "level": "medium",
+    "falsepositives": [
+      "a worker probing for optional config files (rarely more than 5 in a row)"
+    ],
+    "blind_spots": [
+      "Bash cat on invented paths (counted by the Bash rule, not this one)",
+      "a path the path repair would have fixed also counts as missing"
+    ],
+    "tests": {
+      "match": [
+        "M10",
+        "E M10"
+      ],
+      "no_match": [
+        "M9",
+        "M3 W M3",
+        "M5 E M5",
+        "E10"
+      ]
+    },
+    "provenance": {
+      "date": "2026-10-25",
+      "model": "Gyro-L",
+      "observed": "easy rep1, Read out/102414.py counted down to 102336, 79 denials, 0 writes; killed by the orchestrator"
+    },
+    "source": "tool-loop/missing-path-streak.yaml"
+  },
+  {
     "id": "repeated-failure",
     "status": "stable",
     "mode": "enforce",
@@ -252,5 +345,52 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "ref": "7a3e7033"
     },
     "source": "tool-loop/revert.yaml"
+  },
+  {
+    "id": "runaway-new-files",
+    "status": "stable",
+    "mode": "enforce",
+    "version": 1,
+    "created": "2026-10-26",
+    "category": "tool-loop",
+    "title": "Writing ever new files beyond the task with no new input",
+    "description": "After finishing a 40-task set the model kept going and invented tasks 41..807, writing one new file per invented id (807 files, 880 turns in 26 min). The signal is a long streak of Writes to NEW paths without any Read, Bash, Grep or Glob in between. The thresholds are absolute (60 / 150): the shipped detector does not compare against the number of items the task read last.\n",
+    "detector": {
+      "kind": "new-file-streak",
+      "params": {
+        "note_at": 60,
+        "stop_at": 150,
+        "stop_message": "loop guard: you wrote {n} new files in a row without reading anything. This is far more than the task can need; your work is done or you are inventing files. Stop and send your final report."
+      }
+    },
+    "action": "note",
+    "message": "You have written {n} new files in a row without reading anything. Check whether these files are part of the task; if the task is done, stop and send your final report.",
+    "level": "medium",
+    "falsepositives": [
+      "scaffolding a project from one spec in a single run (more than 60 files on purpose); raise note_at and stop_at with `pai antipatterns set`"
+    ],
+    "blind_spots": [
+      "runaways that interleave a Read, Grep or a test run now and then",
+      "the task's own item count is not compared (the candidate's ratioToReadInput was not implemented)"
+    ],
+    "tests": {
+      "match": [
+        "R W61",
+        "W200",
+        "W30 W31 bash:W1"
+      ],
+      "no_match": [
+        "R W30",
+        "W59",
+        "W40 R W40",
+        "W40 run W40"
+      ]
+    },
+    "provenance": {
+      "date": "2026-10-25",
+      "model": "Gyro-M",
+      "observed": "hard set rep3, out/41.py .. out/807.py for a 40-task tasks.jsonl, killed by the orchestrator after 26 min"
+    },
+    "source": "tool-loop/runaway-new-files.yaml"
   }
 ];

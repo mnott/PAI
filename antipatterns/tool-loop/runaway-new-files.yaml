@@ -1,0 +1,44 @@
+# A long streak of Writes to files that do not exist yet, with no Read, Bash, Grep or Glob in
+# between: nothing repeats, so identical-write, revert and distinct-rewrites stay silent. The
+# signal is the streak itself, far above what one task needs. Notes at note_at, stops at stop_at
+# (both tunable with `pai antipatterns set`). A Bash call that only writes files counts as a Write.
+id: runaway-new-files
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-26
+category: tool-loop
+title: Writing ever new files beyond the task with no new input
+description: >
+  After finishing a 40-task set the model kept going and invented tasks 41..807, writing one new file per invented
+  id (807 files, 880 turns in 26 min). The signal is a long streak of Writes to NEW paths without any Read, Bash, Grep
+  or Glob in between. The thresholds are absolute (60 / 150): the shipped detector does not compare against the number
+  of items the task read last.
+detector:
+  kind: new-file-streak
+  params:
+    note_at: 60
+    stop_at: 150
+    stop_message: "loop guard: you wrote {n} new files in a row without reading anything. This is far more than the task can need; your work is done or you are inventing files. Stop and send your final report."
+action: note
+message: "You have written {n} new files in a row without reading anything. Check whether these files are part of the task; if the task is done, stop and send your final report."
+level: medium
+falsepositives:
+  - scaffolding a project from one spec in a single run (more than 60 files on purpose); raise note_at and stop_at with `pai antipatterns set`
+blind_spots:
+  - runaways that interleave a Read, Grep or a test run now and then
+  - the task's own item count is not compared (the candidate's ratioToReadInput was not implemented)
+tests:
+  match:
+    - "R W61"
+    - "W200"
+    - "W30 W31 bash:W1"
+  no_match:
+    - "R W30"
+    - "W59"
+    - "W40 R W40"
+    - "W40 run W40"
+provenance:
+  date: 2026-10-25
+  model: Gyro-M
+  observed: hard set rep3, out/41.py .. out/807.py for a 40-task tasks.jsonl, killed by the orchestrator after 26 min

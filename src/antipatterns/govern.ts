@@ -147,7 +147,10 @@ export function stats(o: { sinceMs?: number; model?: string; now?: number; cwd?:
       if (acted && d === "fp") overridden++;
       const final = outcomes.get(key);
       // fired and the run went on to succeed anyway (an operator override or a needless block), or a monitor hit with no bad outcome
-      if ((acted && final === "succeeded" && d !== "tp") || (f.mode === "monitor" && final !== "failed" && final !== "stopped" && d !== "tp")) row.falsePositiveSuspect = true;
+      // A deny of an invented path followed by a successful run is the rule working, and the firing log keeps no input to tell
+      // whether the same path was later executed, so the deny-after-success signal is dropped for the paths category.
+      const denyOk = acted && final === "succeeded" && d !== "tp" && row.category !== "paths";
+      if (denyOk || (f.mode === "monitor" && final !== "failed" && final !== "stopped" && d !== "tp")) row.falsePositiveSuspect = true;
     }
     const tp = (row.dispositions.tp ?? 0) + (row.dispositions.benign_tp ?? 0);
     const fp = row.dispositions.fp ?? 0;

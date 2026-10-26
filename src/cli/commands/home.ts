@@ -29,7 +29,7 @@ export const homeSubcommands: CommandDef[] = [
     name: "git-setup",
     summary: "Whitelist antipatterns/ in the PAI home .gitignore",
     description:
-      "Whitelist antipatterns/ in the PAI home .gitignore.\n\nWhen PAI_HOME is a git repository, PAI commits its own config writes (switch: home.autoCommit, default true). This appends the missing lines `!/antipatterns/` and `/antipatterns/firings.jsonl*` to .gitignore (existing lines and comments untouched) and commits it. Idempotent. Dry run by default: prints the lines to add.",
+      "Whitelist antipatterns/ in the PAI home .gitignore.\n\nWhen PAI_HOME is a git repository, PAI commits its own config writes (switch: home.autoCommit, default true). This appends the missing lines `!/antipatterns/`, `/antipatterns/firings.jsonl*` and `/antipatterns/outcomes.jsonl*` to .gitignore (existing lines and comments untouched) and commits it. Idempotent. Dry run by default: prints the lines to add.",
     options: [{ name: "write", type: "boolean", summary: "Apply and commit (default: print only)" }],
     examples: ["pai home git-setup", "pai home git-setup --write"],
     seeAlso: ["pai home path", "pai config set"],

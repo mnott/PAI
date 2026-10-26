@@ -16,7 +16,7 @@ import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
 import { stepLoopGuard, type EchoConfig, type LoopState, type LoopStep } from "../hooks/ts/lib/loop-guard.js";
 import { unparsedCallDecision } from "../workers/run/unparsed-call.js";
-import { decidePreGates, decideWorkerGate, type GateSet } from "./gates.js";
+import { decidePreGates, decideWorkerGate, scannedCommand, type GateSet } from "./gates.js";
 
 export type GuardEvent =
   | { kind: "tool_call"; tool: string; input: unknown; cwd: string; workerId?: string; model?: string; sessionId?: string }
@@ -118,7 +118,7 @@ function decideLayers(event: Extract<GuardEvent, { kind: "tool_call" }>, ctx: Gu
   if (ctx.shellRules && event.tool === "Bash") {
     const command = typeof event.input === "string" ? event.input : (event.input as { command?: unknown } | undefined)?.command;
     if (typeof command === "string" && command) {
-      const d = decideShell(command, event, ctx);
+      const d = decideShell(scannedCommand(command)!, event, ctx);
       if (d.mode === "enforce" || !ctx.loop) return d;
     }
   }
