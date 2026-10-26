@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { psTable } from "./ps-table.js";
+import { acquireTestSlot, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 
 /** Marker line every diagnosis carries; the loop guard keys on it. */
 export const HANG_MARKER = "[pai hang probe]";
@@ -176,6 +177,8 @@ export async function runProbed(o: ProbeOptions): Promise<number> {
   const out = o.out ?? ((s) => process.stdout.write(s));
   const err = o.err ?? ((s) => process.stderr.write(s));
   mkdirSync(o.reportDir, { recursive: true });
+  // one test run per machine slot; a nested run inside a holder's tree does not wait on its parent
+  const lease = holdsTestSlot() ? null : await acquireTestSlot({ log: err });
   const t = timeoutSecs(o.command);
   // probe before a `timeout N` in the command kills the run
   const idle = Math.max(2, Math.min(o.idleSecs ?? DEFAULT_IDLE_SECS, t !== null ? t - 8 : Infinity));
@@ -184,6 +187,7 @@ export async function runProbed(o: ProbeOptions): Promise<number> {
   const env = {
     ...process.env,
     PAI_HANG_PROBE_DIR: o.reportDir,
+    [SLOT_HELD_ENV]: "1",
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${preload}`.trim(),
   };
   const child = spawn("bash", ["-c", o.command], { cwd: o.cwd, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -218,6 +222,7 @@ export async function runProbed(o: ProbeOptions): Promise<number> {
   return await new Promise<number>((resolve) => {
     child.on("close", (code, sig) => {
       clearInterval(timer);
+      lease?.release();
       void pending.then(() => resolve(spun ? 124 : (code ?? (sig ? 128 + (sig === "SIGKILL" ? 9 : 15) : 1))));
     });
   });

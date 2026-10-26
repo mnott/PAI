@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Document, Scalar, parseDocument, isScalar, isSeq, isMap, type Node } from "yaml";
 import { readJsonStrict, writeJsonAtomic } from "../config/json-store.js";
+import { cachedParse } from "../config/parse-cache.js";
 import { writeYamlFileAtomic, YamlStoreError } from "../config/yaml-store.js";
 import { parseTiersValue, type TierDef } from "./route-lists.js";
 import { paiHomePath, resolvePaiFile, migratePaiFile, type MigrateFileResult } from "../config/pai-home.js";
@@ -29,6 +30,7 @@ import {
   effectiveWorkersYamlDoc,
   effectiveWorkersYamlRaw,
   shippedWorkersDefaults,
+  shippedWorkersDefaultsPath,
   userWorkersYamlRaw,
 } from "../config/shipped-defaults.js";
 import {
@@ -444,7 +446,12 @@ export function readWorkersYaml(yamlPath: string): { doc: Document; data: Worker
  *  nativeModels via parseBuiltinAnthropic, never into the providers map, so
  *  the writers never persist it as a user provider. */
 export function effectiveWorkersYamlData(yamlPath: string): WorkersYamlData {
-  return parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath);
+  return cachedParse(
+    yamlPath,
+    () => parseWorkersYamlDocument(effectiveWorkersYamlDoc(yamlPath), yamlPath),
+    "workers-data",
+    [shippedWorkersDefaultsPath()]
+  );
 }
 
 // ---------------------------------------------------------------------------

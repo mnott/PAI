@@ -173,6 +173,10 @@ power:
 home:
   autoCommit: true
 workers:
+  tests:
+    # Test runs allowed at once on the machine (merge gate, `pai worker test-run`, guarded Bash
+    # vitest/npm test calls); more wait for a free slot under PAI_HOME/locks.
+    maxConcurrent: 1
   merge:
     # Globs of generated files. When a `pai worker merge` conflicts only in
     # these (plus pure-addition clashes, which are union-merged), the merge
