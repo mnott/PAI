@@ -4,12 +4,15 @@
  * Rules enforced in Claude Code hooks only protect Claude Code. The router sees every /v1/messages reply, so it
  * maps each completed tool_use block and each final assistant text into a GuardEvent (source "proxy") and calls
  * evaluate(). Monitor only: the caller taps a copy of the reply bytes and runs this after the response ended, so
- * the client's bytes are never modified, delayed or blocked; every failure is caught here. Only pure decisions
- * apply (shell rules, unparsed final text): the context has no pane, no loop state, no worker gates.
+ * the client's bytes are never modified, delayed or blocked; every failure is caught here. When the request is
+ * given, a per-conversation loop state (proxy-loop.ts, in memory) joins the shell rules; there is no pane and no
+ * worker gate.
  */
 
 import { evaluate as realEvaluate, type Decision, type GuardContext, type GuardEvent } from "../guard/evaluate.js";
 import { allRuleDirs, loadRules, projectRuleDirs } from "../hooks/ts/lib/rules/load.js";
+import { recordLoopTelemetry } from "../hooks/ts/lib/loop-guard-telemetry.js";
+import { applyToolResults, conversationKey, defaultLoopStore, type LoopStore } from "./proxy-loop.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
 
 /** Cap on the bytes kept per reply; a longer reply is not evaluated. */
@@ -72,6 +75,10 @@ export interface ProxyGuardDeps {
   evaluate?: (e: GuardEvent, c: GuardContext) => Decision;
   rules?: () => Rule[];
   log?: (line: string) => void;
+  /** Per-conversation loop state; defaults to the process-wide store. */
+  loops?: LoopStore;
+  /** Firing sink (tests); defaults to the antipattern log. */
+  record?: GuardContext["record"];
 }
 
 let cachedRules: Rule[] | null = null;
@@ -84,13 +91,13 @@ function defaultRules(): Rule[] {
  * Evaluate one finished reply: one event per tool_use block, and a final_text event when the reply has text and no
  * tool use. Non-allow decisions are recorded by evaluate() (source "proxy"). Returns the decisions; never throws.
  */
-export function monitorReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}, provider?: string): Decision[] {
-  return monitorParsed(() => parseReply(raw, contentType), model, deps, provider);
+export function monitorReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}, provider?: string, request?: unknown): Decision[] {
+  return monitorParsed(() => parseReply(raw, contentType), model, deps, provider, request);
 }
 
 /** monitorReply for an OpenAI Chat Completions reply (JSON or SSE) behind the worker proxy. */
-export function monitorOpenAiReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}, provider?: string): Decision[] {
-  return monitorParsed(() => parseOpenAiReply(raw, contentType), model, deps, provider);
+export function monitorOpenAiReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}, provider?: string, request?: unknown): Decision[] {
+  return monitorParsed(() => parseOpenAiReply(raw, contentType), model, deps, provider, request);
 }
 
 /** Tool arguments as the model sent them: parsed JSON, or the raw string when it is not valid JSON. */
@@ -155,21 +162,31 @@ export function parseOpenAiReply(raw: string, contentType: string): Reply {
   return out;
 }
 
-function monitorParsed(parse: () => Reply, model: string, deps: ProxyGuardDeps, provider?: string): Decision[] {
+function monitorParsed(parse: () => Reply, model: string, deps: ProxyGuardDeps, provider?: string, request?: unknown): Decision[] {
   const decisions: Decision[] = [];
   try {
     const reply = parse();
     const ev = deps.evaluate ?? realEvaluate;
-    const ctx: GuardContext = { env: process.env, shellRules: (deps.rules ?? defaultRules)() };
+    const ctx: GuardContext = { env: process.env, shellRules: (deps.rules ?? defaultRules)(), record: deps.record };
     const events: GuardEvent[] = reply.tools.map((t) => ({ kind: "tool_call", tool: t.name, input: t.input, cwd: PROXY_CWD, model, provider, source: "proxy" }));
     if (!reply.tools.length && reply.text) events.push({ kind: "final_text", text: reply.text, cwd: PROXY_CWD, model, provider, source: "proxy" });
+    const store = deps.loops ?? defaultLoopStore;
+    const key = request ? conversationKey(request) : null;
+    let state = key ? applyToolResults(store.get(key), request) : null;
     for (const e of events) {
       try {
-        decisions.push(ev(e, ctx));
+        if (state) ctx.loop = { state };
+        const d = ev(e, ctx);
+        if (state && d.loop) {
+          state = d.loop.state;
+          if (e.kind === "tool_call") recordLoopTelemetry(d.loop, { cwd: e.cwd, fallbackText: e.tool, source: "proxy", model, provider, record: ctx.record });
+        }
+        decisions.push(d);
       } catch (err) {
         deps.log?.(`${new Date().toISOString()} proxy-guard: evaluation failed: ${(err as Error).message}`);
       }
     }
+    if (key && state) store.set(key, state);
   } catch (err) {
     deps.log?.(`${new Date().toISOString()} proxy-guard: ${(err as Error).message}`);
   }

@@ -7,15 +7,15 @@
  */
 
 import { activeAntipattern } from "./antipatterns.js";
-import { recordFiring, writeCandidate } from "./antipattern-log.js";
+import { recordFiring, writeCandidate, type FiringInput } from "./antipattern-log.js";
 import type { LoopStep } from "./loop-guard.js";
 
-export function recordLoopTelemetry(r: LoopStep, ctx: { cwd?: string; sessionId?: string; fallbackText: string }): void {
+export function recordLoopTelemetry(r: LoopStep, ctx: { cwd?: string; sessionId?: string; fallbackText: string; source?: "hook" | "proxy"; model?: string; provider?: string; record?: (f: FiringInput) => unknown }): void {
   try {
     const text = r.key ?? ctx.fallbackText;
     if (r.id && (r.monitored || r.deny || r.note)) {
       const ap = activeAntipattern(r.id);
-      recordFiring({
+      (ctx.record ?? recordFiring)({
         id: r.id,
         version: ap.version,
         category: ap.category,
@@ -24,8 +24,11 @@ export function recordLoopTelemetry(r: LoopStep, ctx: { cwd?: string; sessionId?
         input: text,
         cwd: ctx.cwd,
         sessionId: ctx.sessionId,
+        source: ctx.source,
+        model: ctx.model,
+        provider: ctx.provider,
       });
-    } else if (!r.id && r.deny) {
+    } else if (!r.id && r.deny && ctx.source !== "proxy") {
       writeCandidate({ category: "tool-loop", action: r.stop ? "stop" : "deny", message: r.reason ?? "", input: text });
     }
   } catch {
