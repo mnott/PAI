@@ -36,7 +36,15 @@ import {
   foldCodexLine,
   parseCodexLine,
 } from "../codex.js";
-import { type StreamEvent, type ImageExecuteArgs, type ExecuteArgs, type CodexArgs } from "./types.js";
+import {
+  buildOpencodeArgs,
+  buildOpencodeEnv,
+  opencodeDroppedFlags,
+  emptyOpencodeResult,
+  foldOpencodeLine,
+  parseOpencodeLine,
+} from "../opencode.js";
+import { type StreamEvent, type ImageExecuteArgs, type ExecuteArgs, type CodexArgs, type OpencodeArgs } from "./types.js";
 import { isoStamp, bumpContextTokens } from "./stream.js";
 import { requireVisiblePane, spawnOwned, announcePane } from "./pane-handles.js";
 import {
@@ -154,15 +162,54 @@ export async function executeRun(a: ExecuteArgs): Promise<number> {
   return foldRun(a, prepared);
 }
 
-export async function executeCodexRun(a: CodexArgs): Promise<number> {
+/**
+ * The CLI-engine run (codex / opencode): the whole spawn-and-fold path both
+ * non-Claude spawn engines share — pane gate, worktree, status, ledger,
+ * signal/fail guards, spawn, line-by-line fold, exit handling, finalise.
+ * `engine` names it in the ledger/status/end line; the fold (parse + fold +
+ * counters + session field) is the engine module's own; `envThunk`/`buildCmd`
+ * run after the scratch env is applied (opencode writes its config into it).
+ */
+/** The fold both CLI-engine folds carry: counters + normalised events. */
+interface EngineFold {
+  events: Array<Record<string, unknown>>;
+  turns: number;
+  tools: number;
+  last: string | null;
+  isError: boolean;
+  contextTokens: number | null;
+  finalText: string | null;
+}
+
+interface CliEngineRun {
+  engine: "codex" | "opencode";
+  /** Env from the engine module (before worker identity/scratch are applied). */
+  env: NodeJS.ProcessEnv;
+  /** Env built once the scratch dir exists (opencode writes its config into it). */
+  envThunk?: (scratch: string) => NodeJS.ProcessEnv;
+  /** Flags the engine drops from the claude argv (ledgered as a WORKER-NOTE). */
+  dropped: string[];
+  /** Spawn argv (binary first), called with the run's prompt. */
+  buildCmd: (prompt: string) => string[];
+  /** Line parser + fold of the engine's JSONL stream, with its counters. */
+  parse: (line: string) => unknown | null;
+  foldLine: (parsedLine: unknown, fold: EngineFold) => void;
+  emptyFold: () => EngineFold;
+  /** The fold's session/thread id, stored as status.claudeSession. */
+  sessionId: (fold: EngineFold) => string | null;
+}
+
+async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineRun): Promise<number> {
   const { config, logDir, target, model, label, parsed, systemWaiver } = a;
   if (!parsed.headless || parsed.prompt === null) {
     throw new Error(
-      `provider "${target.providerName}" (engine codex) supports headless runs only: ` +
+      `provider "${target.providerName}" (engine ${spec.engine}) supports headless runs only: ` +
         `pass the task with -p '<prompt>'`
     );
   }
-  const env = buildCodexEnv(target.provider);
+  // opencode's config file lands in the scratch dir, so its env is built
+  // after applyScratchEnv below; codex's env is ready here
+  const env = spec.envThunk ? {} : spec.env;
   const wid = a.id ?? newWorkerId();
   const cwd = a.cwd ?? process.cwd();
   const term = (await resolveHostSession()).term;
@@ -178,7 +225,8 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   }
   env.PAI_WORKER_ID = wid;
   const scratch = applyScratchEnv(env, wid, worktree?.dir ?? cwd);
-  // codex takes instructions through the prompt, not a system prompt flag
+  if (spec.envThunk) Object.assign(env, spec.envThunk(scratch));
+  // CLI engines take instructions through the prompt, not a system prompt flag
   const prompt =
     scratchPromptLine(scratch) + "\n\n" +
     (a.limit ? deadlinePromptLine(a.limit) + "\n\n" : "") +
@@ -206,12 +254,12 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     secs: null,
     origin: "spawn",
     outputFormat: parsed.outputFormat,
-    // codex takes instructions through the prompt, not the AG2 contract flag
+    // CLI engines take instructions through the prompt, not the AG2 contract flag
     reportFormat: "json",
     ...(session ? { session } : {}),
     ...(spawnerSession ? { spawnerSession } : {}),
-    // codex has no init event of its own: the synthetic one below announces
-    // an explicitly configured window (never a guessed default)
+    // a CLI engine has no init event of its own: the synthetic one below
+    // announces an explicitly configured window (never a guessed default)
     ...(target.provider.contextWindow ? { contextWindow: target.provider.contextWindow } : {}),
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
     ...(worktree
@@ -233,17 +281,16 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     id: wid,
     provider: target.providerName,
     mode: "headless",
-    engine: "codex",
+    engine: spec.engine,
     model,
     cwd,
     label,
     ...(a.capability ? { capability: a.capability } : {}),
   });
-  const dropped = codexDroppedFlags(a.claudeArgs);
-  if (dropped.length) {
+  if (spec.dropped.length) {
     appendLedger(ledger, "WORKER-NOTE", {
       id: wid,
-      note: `dropped for codex: ${dropped.join(", ")}`,
+      note: `dropped for ${spec.engine}: ${spec.dropped.join(", ")}`,
     });
   }
 
@@ -269,7 +316,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
       eventsFd = null;
     }
   };
-  const onCodexSignal = (sig: string) => {
+  const onEngineSignal = (sig: string) => {
     killed = true;
     recordKilledEnd({ logDir, status, sig, t0, ledger, wid, providerName: target.providerName, model, label });
     // same as the claude path: a killed run's worktree and branch go now
@@ -287,11 +334,11 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     } catch {
       /* already gone */
     }
-    // the codex tree goes with it (finaliseRun, which reaps, never runs on this path)
+    // the engine's tree goes with it (finaliseRun, which reaps, never runs on this path)
     void reapRunTree(worktree?.dir).finally(() => process.exit(143));
     setTimeout(() => process.exit(143), 2000).unref();
   };
-  const sigHandlers = (["SIGTERM", "SIGINT", "SIGHUP"] as const).map((sig) => [sig, () => onCodexSignal(sig)] as const);
+  const sigHandlers = (["SIGTERM", "SIGINT", "SIGHUP"] as const).map((sig) => [sig, () => onEngineSignal(sig)] as const);
   for (const [sig, h] of sigHandlers) process.once(sig, h);
   // A start that dies (spawn, process "error"): the same end as a normal exit — cleanup, status failed with the error, tree reaped, worktree salvaged.
   const failRun = async (e: unknown): Promise<void> => {
@@ -315,7 +362,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   };
 
   try {
-    spawned = await spawnOwned(wid, ["codex", ...buildCodexArgs(prompt, parsed.callerModel ? undefined : model)], {
+    spawned = await spawnOwned(wid, spec.buildCmd(prompt), {
       env,
       cwd: worktree?.dir ?? cwd,
       stdio: ["ignore", "pipe", "inherit"],
@@ -331,7 +378,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   proc.once("error", (e) => (earlyError = e));
   t0 = Date.now();
 
-  const fold = emptyCodexResult();
+  const fold = spec.emptyFold();
   eventsFd = openSync(eventsPath(logDir, wid), "a");
   const writeEvent = (obj: Record<string, unknown>) => {
     if (eventsFd === null) return;
@@ -355,10 +402,11 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
   const rl = createInterface({ input: proc.stdout! });
   rl.on("line", (line) => {
     if (parsed.outputFormat === "stream-json") process.stdout.write(line + "\n");
-    const parsedLine = parseCodexLine(line);
+    const parsedLine = spec.parse(line);
     if (parsedLine === null) return;
-    foldCodexLine(parsedLine, fold);
-    if (fold.threadId && !status.claudeSession) status.claudeSession = fold.threadId;
+    spec.foldLine(parsedLine, fold);
+    const sid = spec.sessionId(fold);
+    if (sid && !status.claudeSession) status.claudeSession = sid;
     status.turns = fold.turns;
     status.tools = fold.tools;
     if (fold.last) status.last = shortText(fold.last, 90);
@@ -413,7 +461,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     end: {
       provider: target.providerName,
       mode: "headless",
-      engine: "codex",
+      engine: spec.engine,
       model,
       turns: status.turns,
       tools: status.tools,
@@ -426,5 +474,35 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     beforeHandoff: (st, rep) => {
       if (!a.quiet) printResult(parsed.outputFormat, resultEvent, rc, logDir, wid, rep, { ...worktreeExtras(st), ...identityExtras(wid, a.priorIds, st) });
     },
+  });
+}
+
+export async function executeCodexRun(a: CodexArgs): Promise<number> {
+  return executeCliEngineRun(a, {
+    engine: "codex",
+    env: buildCodexEnv(a.target.provider),
+    dropped: codexDroppedFlags(a.claudeArgs),
+    buildCmd: (prompt) => ["codex", ...buildCodexArgs(prompt, a.parsed.callerModel ? undefined : a.model)],
+    parse: parseCodexLine,
+    foldLine: foldCodexLine as (p: unknown, f: EngineFold) => void,
+    emptyFold: emptyCodexResult as () => EngineFold,
+    sessionId: (f) => (f as unknown as { threadId: string | null }).threadId,
+  });
+}
+
+export async function executeOpencodeRun(a: OpencodeArgs): Promise<number> {
+  // the env builder writes OPENCODE_CONFIG into the scratch dir — build it
+  // where the scratch dir is known (executeCliEngineRun calls buildCmd after
+  // applyScratchEnv, so the env goes through a thunk the spec runs at spawn)
+  return executeCliEngineRun(a, {
+    engine: "opencode",
+    env: {},
+    envThunk: (scratch) => buildOpencodeEnv(a.target.provider, a.target.providerName, a.model, scratch),
+    dropped: opencodeDroppedFlags(a.claudeArgs),
+    buildCmd: (prompt) => ["opencode", ...buildOpencodeArgs(prompt, a.parsed.callerModel ? undefined : a.model)],
+    parse: parseOpencodeLine,
+    foldLine: foldOpencodeLine as (p: unknown, f: EngineFold) => void,
+    emptyFold: emptyOpencodeResult as () => EngineFold,
+    sessionId: (f) => (f as unknown as { sessionId: string | null }).sessionId,
   });
 }

@@ -103,9 +103,9 @@ function assertFallbackCapable(name: string, p: WorkerProvider): void {
         `fallback needs an anthropic-protocol provider every process can reach directly.`
     );
   }
-  if (p.engine === "codex") {
+  if (p.engine === "codex" || p.engine === "opencode") {
     throw new WorkersConfigError(
-      `provider "${name}" runs through the Codex CLI — fallback switches Claude Code itself and needs a claude-engine provider.`
+      `provider "${name}" runs through the ${p.engine === "codex" ? "Codex" : "OpenCode"} CLI — fallback switches Claude Code itself and needs a claude-engine provider.`
     );
   }
   if (!p.baseUrl) {
