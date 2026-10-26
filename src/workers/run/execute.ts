@@ -436,10 +436,8 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   cleanup();
 
   const ok = rc === 0 && !fold.isError;
-  status.last =
-    shortText(report?.notes ?? finalText, 90) ||
-    (!ok && fold.last ? shortText(fold.last, 90) : "") ||
-    (ok ? "done" : "failed");
+  // a failed run with no final text keeps the fold's last line (the error)
+  status.last = shortText(report?.notes ?? finalText, 90) || (!ok ? shortText(fold.last ?? "failed", 90) : "done");
   if (report?.changed?.length) {
     const verify = verifyReportChanges(report.changed, worktree?.dir ?? cwd, t0);
     if (!verify.ok) {
