@@ -561,6 +561,8 @@ export interface CapacityOpts {
   onWait?: (info: CapacityInfo | null) => void;
   /** Called at the start and after every poll with the pane's queue fields; null once the slot is granted (the pane's queue file). */
   onQueued?: (q: QueuedFile | null) => void;
+  /** True once the run was handed to another process (a reroute's follower): the wait ends without a grant and never returns. */
+  aborted?: () => boolean;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   load?: (logDir: string) => WorkerStatus[];
@@ -661,6 +663,10 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     queued(paneQueued(info()));
     for (let n = 0; ; n++) {
       await sleep(backoffMs(n));
+      if (o.aborted?.()) {
+        rmSync(entry, { force: true });
+        await new Promise<never>(() => undefined);
+      }
       const fresh = o.capOf?.();
       if (fresh !== undefined && fresh > 0) cap = fresh;
       held = holdReason();

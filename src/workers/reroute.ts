@@ -187,7 +187,7 @@ export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnS
   return (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) return;
-    const args = ["worker", "run", "--provider", s.provider, ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
+    const args = ["worker", "run", "--provider", s.provider, ...(st.outputFormat && st.outputFormat !== "text" ? ["--output-format", st.outputFormat] : []), ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
     mkdirSync(join(logDir, "runs"), { recursive: true });
     start(process.env.PAI_BIN || "pai", args, {
       cwd: st.cwd || process.cwd(),
