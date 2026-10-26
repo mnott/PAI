@@ -1,52 +1,25 @@
 /**
- * merge-tests.ts — the related-tests check `pai worker merge` runs after a
- * successful merge: every test that imports a source file the merge changed
- * (`vitest related`), so a worker that reverses a codified rule is caught at
- * merge time, not by the full suite later. A failure never reverts the merge;
- * the operator decides.
+ * merge-tests.ts — the verify check `pai worker merge` runs after a
+ * successful merge: the configured command (default: a typecheck). The repo
+ * keeps only the governed core in tests/KEPT.md. A failure reverts the merge like the other gates.
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { saveFlakyLog } from "./flaky-log.js";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
 
 export interface RelatedSettings {
-  /** Command template with `{files}`; empty = off. */
+  /** Command run in the checkout; empty = off. */
   verify: string;
   verifyTimeoutSec: number;
-  /** Repo-guard test paths/globs (config `workers.merge.alwaysTests`), appended to every run. */
-  alwaysTests?: string[];
-  /** Where batch output of load-only flakes is kept; unset = not kept. */
-  flakyDir?: string;
 }
 
 export interface RelatedResult {
-  status: "passed" | "failed" | "skipped" | "flaky";
+  status: "passed" | "failed" | "skipped";
   /** The one line printed and recorded in the ledger. */
   line: string;
   failing: string[];
-  /** Paths of the saved batch output of each flaky file. */
   flakyLogs?: string[];
-}
-
-const SOURCE = /\.(ts|tsx|mjs)$/;
-const TEST = /\.test\.[^/]*$/;
-/** A changed test file runs itself, not only the tests related to changed sources. */
-const TEST_FILE = /(\.test\.|\.spec\.)[^/]*$/;
-/** A test-fixtures directory: files here are test inputs, so they run as part of the run set. */
-const FIXTURE_DIR = /(^|\/)test-fixtures\//;
-
-/** Changed source files (ts/tsx/mjs, no tests) from a `git diff --name-only` listing. */
-export function filterSourceFiles(names: string[]): string[] {
-  return names.filter((f) => SOURCE.test(f) && !TEST.test(f));
-}
-
-/** Changed test files (`*.test.*` / `*.spec.*`) and files under a test-fixtures dir. */
-export function filterTestFiles(names: string[]): string[] {
-  return names.filter((f) => TEST_FILE.test(f) || FIXTURE_DIR.test(f));
 }
 
 /** Every file the merge changed (any type), from a `git diff --name-only` listing. */
@@ -54,33 +27,12 @@ export function changedFiles(cwd: string, oldHead: string, git: (cwd: string, ar
   return git(cwd, ["diff", "-z", "--name-only", oldHead, "HEAD"]).split("\0").filter(Boolean);
 }
 
-export function changedSourceFiles(cwd: string, oldHead: string, git: (cwd: string, args: string[]) => string): string[] {
-  return filterSourceFiles(changedFiles(cwd, oldHead, git));
-}
-
-const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
-
-/** A name starting with `-` would reach the test runner as an option. */
-const operand = (f: string): string => (f.startsWith("-") ? `./${f}` : f);
-
-/** The template with `{files}` replaced by the shell-quoted file list (verbatim: `$&` in a name is not a replacement pattern). */
-export function buildRelatedCommand(template: string, files: string[]): string {
-  const list = files.map((f) => shq(operand(f))).join(" ");
-  return template.replace(/\{files\}/g, () => list);
-}
-
-/** Files per command line, far below any argv limit (E2BIG). */
-export const FILES_PER_COMMAND = 100;
-
 /**
  * Runs shell commands in order and prints one JSON result on stdout. Each
- * command gets its own process group; on timeout the whole group is killed,
- * so the test tree (npx, node, workers) cannot outlive the check. Stops at
- * the first command that does not exit 0. Input arrives on stdin (it can be
- * larger than an env var or argv allows). A command is done on `exit`, not
- * `close`: a background process still holding the pipes would otherwise pin
- * a passing run until the timeout; after a short grace for the last output
- * the pipes are destroyed and the group killed.
+ * command gets its own process group; on timeout the whole group is killed.
+ * Stops at the first command that does not exit 0. A command is done on
+ * `exit`, not `close`: after a short grace for the last output the pipes
+ * are destroyed and the group killed.
  */
 const RUNNER = `
 const { spawn } = require("node:child_process");
@@ -143,164 +95,35 @@ function runCommands(cwd: string, env: NodeJS.ProcessEnv, cmds: string[], timeou
   }
 }
 
-/** A config glob matched against repo-relative paths (`**` crosses directories). */
-function globMatches(glob: string, path: string): boolean {
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === "*" && glob[i + 1] === "*") { re += ".*"; i++; continue; }
-    if (c === "*") { re += "[^/]*"; continue; }
-    if (c === "?") { re += "[^/]"; continue; }
-    re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  }
-  return new RegExp(`^${re}$`).test(path);
-}
-
-/**
- * The always-tests entries expanded against the checkout: literal paths that
- * exist, globs matched against every tracked `*.test.*`. Deduped, sorted;
- * entries matching nothing are skipped (the caller notes them).
- */
-export function resolveAlwaysTests(cwd: string, entries: string[]): { files: string[]; missing: string[] } {
-  const files = new Set<string>();
-  const missing: string[] = [];
-  let testFiles: string[] | null = null;
-  const allTestFiles = (): string[] => {
-    if (testFiles === null) testFiles = trackedTestFiles(cwd);
-    return testFiles;
-  };
-  for (const raw of entries) {
-    const entry = raw.trim();
-    if (!entry) continue;
-    if (!entry.includes("*") && !entry.includes("?")) {
-      if (existsSync(join(cwd, entry))) files.add(entry);
-      else missing.push(entry);
-      continue;
-    }
-    const hits = allTestFiles().filter((f) => globMatches(entry, f));
-    if (hits.length) hits.forEach((f) => files.add(f));
-    else missing.push(entry);
-  }
-  return { files: [...files].sort(), missing };
-}
-
-/** Every tracked `*.test.*` file in the repo at `cwd`, repo-relative; [] if git fails. */
-function trackedTestFiles(cwd: string): string[] {
-  try {
-    const r = spawnSync("git", ["ls-files", "--", "*.test.ts", "*.test.tsx", "*.test.mjs"], { cwd, encoding: "utf8", timeout: 15_000 });
-    if (r.status !== 0) return [];
-    return r.stdout.split("\n").filter(Boolean).sort();
-  } catch {
-    return [];
-  }
-}
-
-/** Does the repo at `cwd` declare vitest in its devDependencies? */
-export function hasVitest(cwd: string): boolean {
-  try {
-    const pj = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")) as { devDependencies?: Record<string, string> };
-    return !!pj.devDependencies?.vitest;
-  } catch {
-    return false;
-  }
-}
-
-const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
-
-/** Failing test files named in vitest output (`FAIL  path/x.test.ts > ...`). */
-export function failingFiles(output: string): string[] {
-  const set = new Set<string>();
-  for (const m of stripAnsi(output).matchAll(/^\s*(?:FAIL|❯)\s+(\S+\.test\.\w+)/gm)) set.add(m[1]);
-  return [...set];
-}
-
-/** "14 files, 212 passed" summed over every vitest summary line (chunked runs print one per command), or null. */
-export function passSummary(output: string): string | null {
-  const text = stripAnsi(output);
-  let files = 0;
-  let tests = 0;
-  let seen = false;
-  for (const m of text.matchAll(/Test Files\s+(?:.*?,\s*)?(\d+) passed/g)) { files += Number(m[1]); seen = true; }
-  for (const m of text.matchAll(/Tests\s+(?:.*?,\s*)?(\d+) passed/g)) { tests += Number(m[1]); seen = true; }
-  if (!seen) {
-    const f = /Test Files\s+(\d+)/.exec(text);
-    if (f) return `${f[1]} files`;
-    return null;
-  }
-  return `${files} files, ${tests} passed`;
-}
-
-/** Run the related tests for the merge `oldHead..HEAD`; never throws. */
+/** Run the verify command for the merge `oldHead..HEAD`; never throws. */
 export function runRelatedTests(
   cwd: string,
   oldHead: string,
   settings: RelatedSettings,
   git: (cwd: string, args: string[]) => string,
-  /** Test hook: shorten the runner's pipe-drain grace. */
   pipeGraceMs?: number,
-  /** Test hook: replaces the command runner (parallel run and serial re-run). */
   runner: typeof runCommands = runCommands
 ): RelatedResult {
-  const skip = (why: string): RelatedResult => ({ status: "skipped", line: `related tests: skipped (${why})`, failing: [] });
+  const skip = (why: string): RelatedResult => ({ status: "skipped", line: `verify: skipped (${why})`, failing: [] });
   if (!settings.verify.trim()) return skip("workers.merge.verify is empty");
-  if (!hasVitest(cwd) && settings.verify === DEFAULT_VERIFY) return skip("no vitest in package.json devDependencies");
-  let all: string[];
   try {
-    all = changedFiles(cwd, oldHead, git);
+    if (!changedFiles(cwd, oldHead, git).length) return skip("nothing changed in the merge");
   } catch (e) {
     return skip(`cannot list changed files: ${(e as Error).message.split("\n")[0]}`);
   }
-  if (!all.length) return skip("nothing changed in the merge");
-  // Changed test files run themselves; changed sources pull the tests related
-  // to them; any change runs the always-tests (a docs-only merge still needs
-  // the repo guards). "skipped (no source change)" only when neither source
-  // nor test files changed (docs-only).
-  const files = filterSourceFiles(all);
-  const tests = filterTestFiles(all);
-  const always = resolveAlwaysTests(cwd, settings.alwaysTests ?? []);
-  if (!files.length && !tests.length && !always.files.length) return skip("no source files changed, no always-tests configured");
-  const run = [...new Set([...files, ...tests, ...always.files])];
-  const skipped = files.length ? "" : "related tests: skipped (no source change); always-tests: ";
-  const note = always.missing.length ? ` (always-tests skipped: ${always.missing.join(", ")})` : "";
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
-  const cmds: string[] = [];
-  for (let i = 0; i < run.length; i += FILES_PER_COMMAND) cmds.push(buildRelatedCommand(settings.verify, run.slice(i, i + FILES_PER_COMMAND)));
-  const r = runner(cwd, env, cmds, timeoutSec, pipeGraceMs);
-  const output = r.output;
-  if (r.timedOut) {
-    return { status: "failed", line: `${skipped}timed out after ${timeoutSec}s`, failing: [] };
-  }
-  if (r.code === 0 && !r.signal && !r.error) {
-    // No vitest summary (a custom verify command): name the files that ran.
-    const summary = passSummary(output) ?? `${run.length} files, passed`;
-    return { status: "passed", line: `${skipped}${summary}${note}`, failing: [] };
-  }
-  let failing = failingFiles(output);
-  // Load-only flakes: a parallel run on a busy machine misses timing deadlines.
-  // Re-run just the failing files once, serially; only files that fail again count.
-  if (failing.length && !r.error && !r.signal) {
-    const serial = settings.verify.includes("vitest") ? `${settings.verify} --no-file-parallelism` : settings.verify;
-    const again = runner(cwd, env, [buildRelatedCommand(serial, failing)], timeoutSec, pipeGraceMs);
-    if (again.code === 0 && !again.signal && !again.error && !again.timedOut) {
-      const summary = passSummary(again.output) ?? `${failing.length} files, passed`;
-      const at = new Date();
-      const flakyLogs = settings.flakyDir
-        ? failing.map((f) => saveFlakyLog(settings.flakyDir!, f, output, { files: run.length, at })).filter((p): p is string => !!p)
-        : [];
-      return { status: "flaky", line: `${skipped}${summary}; flaky under load (passed alone): ${failing.join(", ")}${note}`, failing: [], flakyLogs };
-    }
-    const still = failingFiles(again.output).filter((f) => failing.includes(f));
-    if (still.length) failing = still;
-  }
-  const exit =r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
-  const why = failing.length ? `failed: ${failing.join(", ")}` : `failed (${exit})`;
-  return { status: "failed", line: `${skipped}${why}${note}`, failing };
+  const r = runner(cwd, env, [settings.verify], timeoutSec, pipeGraceMs);
+  if (r.timedOut) return { status: "failed", line: `timed out after ${timeoutSec}s`, failing: [] };
+  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (${settings.verify})`, failing: [] };
+  const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
+  const tail = r.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);
+  return { status: "failed", line: `failed (${exit}): ${tail}`, failing: [] };
 }
 
-/** The shipped default template; a repo without vitest skips only when running this one. */
-export const DEFAULT_VERIFY = "npx vitest related --run {files}";
+/** The shipped default gate: typecheck plus the kept test core (tests/KEPT.md). */
+export const DEFAULT_VERIFY = "npx tsc --noEmit && PAI_VITEST_MAX_WORKERS=2 npx vitest run";
 
 /** Hint lines printed under a failed check. */
 export function failureHints(r: RelatedResult, mergeCommit: string): string[] {

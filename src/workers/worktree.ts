@@ -25,7 +25,6 @@ import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
 import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
-import { flakyDir } from "./flaky-log.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
@@ -1108,12 +1107,11 @@ export interface MergeSettings {
   union: string[];
   verify: string;
   verifyTimeoutSec: number;
-  alwaysTests: string[];
 }
 
 function mergeSettings(): MergeSettings {
   const m = loadConfig().workers?.merge;
-  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [], verify: m?.verify ?? DEFAULT_VERIFY, verifyTimeoutSec: m?.verifyTimeoutSec ?? DEFAULT_VERIFY_TIMEOUT_SEC, alwaysTests: m?.alwaysTests ?? [] };
+  return { generated: m?.generated ?? [], regenerate: m?.regenerate ?? "", union: m?.union ?? [], verify: m?.verify ?? DEFAULT_VERIFY, verifyTimeoutSec: m?.verifyTimeoutSec ?? DEFAULT_VERIFY_TIMEOUT_SEC };
 }
 
 /** Glob to RegExp: `**` crosses directories, `*` and `?` stay inside one. */
@@ -1298,7 +1296,7 @@ export function mergeWorker(
   if (opts.verifyTests !== false) {
     const cfg = opts.merge ?? mergeSettings();
     mergeCommit = git(st.cwd, ["rev-parse", "HEAD"]);
-    related = runRelatedTests(st.cwd, oldHead, { ...cfg, flakyDir: flakyDir(logDir) }, git);
+    related = runRelatedTests(st.cwd, oldHead, { ...cfg }, git);
     appendLedger(ledgerPath(logDir), "WORKER-MERGE-TESTS", {
       id,
       status: related.status,
