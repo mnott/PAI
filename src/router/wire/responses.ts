@@ -10,7 +10,7 @@ import { randomBytes } from "node:crypto";
 import { parseToolCallText, repairJson, type ToolArgsFix, type ToolSchemas } from "../tool-args.js";
 import type { Rule } from "../tool-call-rules.js";
 import { hasMalformedToolCall } from "../../workers/malformed-toolcall.js";
-import { parseBody, SseMessages, sseData, toolSchemaOf, withData, type WireAdapter, type WireConverted } from "./types.js";
+import { GuardToolSse, parseBody, SseMessages, sseData, toolSchemaOf, withData, type GuardStreamCtx, type WireAdapter, type WireConverted } from "./types.js";
 
 const rand = (p: string): string => `${p}_${randomBytes(12).toString("hex")}`;
 
@@ -185,6 +185,57 @@ function convertSse(raw: string, schemas: ToolSchemas, rules: readonly Rule[]): 
   return { body: out.join("\n\n") + "\n\n", calls: parsed.calls };
 }
 
+/** A completed message item for output_index `oi` carrying the guard text. */
+function messageItem(oi: number, text: string, id?: string): object {
+  return { id: id ?? `msg_guard_${oi}`, type: "message", status: "completed", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] };
+}
+
+/**
+ * Enforce mode: a denied function_call item becomes a completed message item carrying the guard text (same
+ * output_index), its argument events dropped; response.completed's output follows the same replacement.
+ */
+class ResponsesGuardSse extends GuardToolSse {
+  /** output_index -> the guard text a denied call became, so response.completed carries the same item */
+  private readonly replaced = new Map<number, string>();
+
+  protected opensTool(d: any): { index: number; name: string } | null {
+    if (d?.type !== "response.output_item.added" || d.item?.type !== "function_call") return null;
+    return { index: typeof d.output_index === "number" ? d.output_index : 0, name: String(d.item.name ?? "") };
+  }
+
+  protected fragment(d: any): { index: number; part: string } | null {
+    if (d?.type !== "response.function_call_arguments.delta") return null;
+    return { index: typeof d.output_index === "number" ? d.output_index : 0, part: String(d.delta ?? "") };
+  }
+
+  /** The arguments.done event closes the call: the item.done event that follows is not held. */
+  protected closes(d: any): number | null {
+    if (d?.type !== "response.function_call_arguments.done") return null;
+    return typeof d.output_index === "number" ? d.output_index : 0;
+  }
+
+  protected replace(index: number, text: string): string {
+    this.replaced.set(index, text);
+    return `event: response.output_item.done\ndata: ${JSON.stringify({ type: "response.output_item.done", output_index: index, item: messageItem(index, text) })}\n\n`;
+  }
+
+  protected override finalize(msg: string, sep: string, json: any): string {
+    if (!/^response\.(completed|incomplete)$/.test(String(json?.type ?? "")) || !json?.response || !this.turnStopped) return msg + sep;
+    const resp = json.response;
+    const out: any[] = [];
+    for (const [i, it] of (Array.isArray(resp.output) ? resp.output : []).entries()) {
+      const oi: number = typeof it?.output_index === "number" ? it.output_index : i;
+      const blocked = it?.type === "function_call" ? this.replaced.get(oi) : undefined;
+      if (blocked === undefined) {
+        out.push(it);
+        continue;
+      }
+      out.push(messageItem(oi, blocked, it.id));
+    }
+    return withData(msg, { ...json, response: { ...resp, output: out } }) + sep;
+  }
+}
+
 export const responsesAdapter: WireAdapter = {
   id: "responses",
   matches: (method, path) => method === "POST" && /^\/v1\/responses(\?.*)?$/.test(path),
@@ -192,4 +243,5 @@ export const responsesAdapter: WireAdapter = {
   rewriteJson,
   rewriteStream: (schemas, rules, onFix) => new ResponsesToolArgsSse(schemas, rules, onFix),
   convertMarkup: (raw, ct, schemas, rules) => (/text\/event-stream/i.test(ct) ? convertSse(raw, schemas, rules) : convertJson(raw, schemas, rules)),
+  guardStream: (ctx) => new ResponsesGuardSse(ctx),
 };
