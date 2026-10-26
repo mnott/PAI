@@ -6,6 +6,7 @@
  * runner uses, instead of importing the whole runner into the daemon.
  */
 
+import { withBunOnPath } from "../bun-path.js";
 import { execFile, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -156,7 +157,7 @@ export function withLoginIdentity(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function nativeLaunchEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
-  return withLoginIdentity(env);
+  return withBunOnPath(withLoginIdentity(env), env.HOME ?? homedir());
 }
 
 /**

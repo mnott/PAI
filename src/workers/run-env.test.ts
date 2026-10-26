@@ -503,3 +503,17 @@ describe("route preflight", () => {
     expect(nativeRoutePreflight({ ANTHROPIC_BASE_URL: "https://p.invalid" }, undefined, () => ({ live: false }), true)).toEqual({ routerEnabled: true });
   });
 });
+
+describe("nativeLaunchEnv bun PATH", () => {
+  it("keeps a bun dir already on PATH single and never drops PATH entries", () => {
+    const saved = process.env.PATH;
+    try {
+      process.env.PATH = "/usr/bin:/bin";
+      const env = buildRunEnv(nativeAnthropicProvider(), true);
+      expect(env.PATH?.startsWith("/usr/bin:/bin")).toBe(true);
+      expect((env.PATH ?? "").split(":").filter((p) => p.endsWith("/.bun/bin")).length).toBeLessThanOrEqual(1);
+    } finally {
+      process.env.PATH = saved;
+    }
+  });
+});

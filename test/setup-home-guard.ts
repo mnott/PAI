@@ -25,10 +25,15 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { withBunOnPath } from "../src/bun-path.js";
 import { RUNTIME_PATH_ENV_VARS } from "../src/runtime-paths.js";
 
 const realHome = homedir();
 const sandbox = mkdtempSync(join(tmpdir(), "pai-test-home-"));
+
+// Hook tests spawn `bun`; a worker env often lacks its bin dir. Resolve it
+// from the real home before HOME is redirected.
+withBunOnPath(process.env, realHome);
 
 process.env.HOME = sandbox;
 // os.homedir() prefers these on their respective platforms and ignores HOME,
