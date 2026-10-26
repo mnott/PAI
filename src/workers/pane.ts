@@ -285,6 +285,8 @@ function run(argv) {
 /** Run a JXA script with argv. Rejects when osascript itself cannot run. */
 export { osascript as osascriptJxa };
 function osascript(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  // any non-listing script may change iTerm (split, close, rebalance): the next listing is fresh
+  if (!listingCache.has(script)) listingCache.clear();
   return new Promise((resolve, reject) => {
     const proc = spawn("osascript", ["-l", "JavaScript", "-", ...args], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -296,6 +298,38 @@ function osascript(script: string, args: string[]): Promise<{ stdout: string; st
     proc.stdin.write(script);
     proc.stdin.end();
   });
+}
+
+/** Read-only iTerm listings by script: one osascript per script per TTL, shared by every daemon task and concurrent caller. */
+const LISTING_TTL_MS = 5_000;
+const listingCache = new Map<string, { at: number; value?: { stdout: string; stderr: string }; pending?: Promise<{ stdout: string; stderr: string }> }>();
+
+/** Run a read-only listing script through the shared cache (a failure is never cached). */
+export function osascriptListing(script: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  const hit = listingCache.get(script);
+  if (hit?.pending) return hit.pending;
+  if (hit?.value && Date.now() - hit.at < LISTING_TTL_MS && !args.length) return Promise.resolve(hit.value);
+  const entry: NonNullable<typeof hit> = { at: Date.now() };
+  listingCache.set(script, entry);
+  const p = osascript(script, args).then(
+    (v) => {
+      delete entry.pending;
+      entry.value = v;
+      entry.at = Date.now();
+      return v;
+    },
+    (e: unknown) => {
+      if (listingCache.get(script) === entry) listingCache.delete(script);
+      throw e;
+    }
+  );
+  entry.pending = p;
+  return p;
+}
+
+/** Drop the cached listings (tests, and after a change the cache cannot see). */
+export function clearListingCache(): void {
+  listingCache.clear();
 }
 
 function psOutput(format: string): string {
@@ -667,7 +701,7 @@ export interface ItermSession {
 
 /** Every open iTerm session. [] when iTerm is not running; rejects when the script fails twice. */
 export async function listItermSessions(
-  run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascript
+  run: (script: string, args: string[]) => Promise<{ stdout: string }> = osascriptListing
 ): Promise<ItermSession[]> {
   let p: { stdout: string };
   try {
