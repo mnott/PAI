@@ -302,11 +302,20 @@ export function worktreeExtras(s: WorkerStatus): Record<string, unknown> | undef
  * only --resume and the fixed re-ask prompt are new — so the resumed turn
  * sees the same grants the worker ran with.
  */
+function emitEvent(onEvent: (e: StreamEvent) => void, line: string): void {
+  if (!line.startsWith("{")) return;
+  try {
+    onEvent(JSON.parse(line) as StreamEvent);
+  } catch {
+    // a torn or unparsable line is not an event
+  }
+}
+
 export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
   let cmd: string[] = [...(a.claudeCmd ?? ["claude"])];
   cmd.push(...modelFlagArgs(true, a.model, a.callerPinnedModel));
   cmd.push(...a.chromeArgs, ...a.mcpArgs, ...a.toolArgs, ...a.toolsFlag, ...(a.slimArgs ?? []));
-  cmd.push("--resume", a.sessionId, "-p", a.prompt ?? AG2_REASK_TEXT, "--output-format", "json");
+  cmd.push("--resume", a.sessionId, "-p", a.prompt ?? AG2_REASK_TEXT, ...(a.onEvent ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"]));
   cmd = ensureToolSearch(cmd);
   const proc = spawn(cmd[0], cmd.slice(1), { env: a.env, cwd: a.cwd, stdio: ["ignore", "pipe", "inherit"] });
   const timer = setTimeout(() => {
@@ -317,14 +326,21 @@ export async function reaskAg2Report(a: Ag2ReaskArgs): Promise<string> {
     }
   }, a.timeoutMs ?? 60_000);
   let out = "";
+  let pending = "";
   proc.stdout.on("data", (chunk: Buffer) => {
-    out += chunk.toString("utf8");
+    const text = chunk.toString("utf8");
+    out += text;
+    if (!a.onEvent) return;
+    const lines = (pending + text).split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) emitEvent(a.onEvent, line);
   });
   await new Promise<void>((resolve) => {
     proc.on("error", () => resolve());
     proc.on("close", () => resolve());
   });
   clearTimeout(timer);
+  if (a.onEvent) emitEvent(a.onEvent, pending);
   return resultFromOutput(out);
 }
 

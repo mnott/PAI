@@ -350,6 +350,83 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
 
   // setup ends when the worker process holds its first turn; the first answer is timed from there
   const timing: { readyAt: number; firstAt: number | null } = { readyAt: Date.now(), firstAt: null };
+  const toolUses = toolFold.uses;
+  // one stream event into status and the tool fold: the main run and the unparsed-call continuation share it
+  const foldEvent = (e: StreamEvent): void => {
+    if (e.type === "system" && e.subtype === "init") {
+      if (e.session_id) status.claudeSession = e.session_id;
+      adoptInitModel(status, e);
+      const cw =
+        initContextWindow(e) ?? target.provider.contextWindow ?? certainContextWindow(status.model);
+      if (cw) status.contextWindow = cw;
+      saveStatus(logDir, status);
+    } else if (isCompactBoundary(e)) {
+      resetContextTokensOnCompact(status, e);
+      state.lastFill = usageContextUsed(e.usage) ?? null;
+      saveStatus(logDir, status);
+    } else if (e.type === "assistant") {
+      status.turns += 1;
+      timing.firstAt ??= Date.now();
+      if (status.turns === 1) recordWarmup(logDir, status.provider, (Date.now() - t0) / 1000);
+      bumpContextTokens(status, usageContextUsed(e.message?.usage));
+      state.lastFill = usageContextUsed(e.message?.usage) ?? state.lastFill;
+      status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
+      for (const block of e.message?.content ?? []) {
+        if (block.type === "tool_use") {
+          status.tools += 1;
+          toolFold.onToolUse(block);
+          status.last = describeTool(block.name ?? "?", block.input);
+          // a long single sleep is worth seeing while it runs (supervision's
+          // "sleeping" kind) — set when issued, cleared when it completes
+          if (block.name === "Bash") status.sleepSec = parseSleepSecs(bashCommand(block.input));
+        } else if (block.type === "text" && (block.text ?? "").trim()) {
+          status.last = "says: " + shortText(block.text, 70);
+        }
+      }
+      saveStatus(logDir, status);
+    } else if (e.type === "user") {
+      // tool results arrive as user events: each one advances (or resets)
+      // the consecutive-failure counter supervision's thrashing detector
+      // reads, and retires a pending sleep observation. Plain user turns
+      // (operator input) have no tool_result blocks and change nothing.
+      const blocks = e.message?.content;
+      if (Array.isArray(blocks)) {
+        let sawResult = false;
+        for (const block of blocks) {
+          if (block.type !== "tool_result") continue;
+          sawResult = true;
+          status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
+          status.sleepSec = null;
+          if (recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString())) {
+            const d = parseDenialText(toolResultText(block.content), "?");
+            if (d) state.trouble?.onDenial(d.hook, d.reason);
+          }
+          toolFold.onToolResult(block);
+          const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
+          if (use && !toolResultFailed(block) && isProgressTool(use.name, use.input)) status.progressAt = nowStamp();
+        }
+        if (sawResult) saveStatus(logDir, status);
+      }
+    } else if (e.type === "result") {
+      // a result event's usage is the run's CUMULATIVE total (summed over
+      // all turns), never a turn fill: it must not raise the context meter
+      // (a 200k-window run once read "context 690%" from its 1.38M total).
+      // A compact result legitimately restarts the context lower: the meter
+      // drops to the last per-turn fill the assistant events recorded (the
+      // post-compact context), never to the result's cumulative usage.
+      if (e.is_compact) status.contextTokens = state.lastFill ?? status.contextTokens;
+      const report = parseWorkerReport(e.result ?? "");
+      if (report?.notes) status.last = shortText(report.notes, 90);
+      else if (e.result) status.last = shortText(e.result, 90);
+      saveStatus(logDir, status);
+      state.operatorInFlight = 0;
+      armStdinClose();
+      state.resultEvent = e;
+      state.resultReport = report;
+      resultGrace.onResult();
+    }
+  };
+
   if (headless) {
     // the first user message carries the prompt (the -p value was stripped)
     if (promptText !== null) {
@@ -370,7 +447,6 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     writeEvent({ type: "preamble", text: preambleLine(preamble), ...(preamble ? { hash: preamble.hash } : {}) });
     if (addendum) writeEvent({ type: "contract-addendum", text: `${addendum.path} sha ${addendum.sha}`, sha: addendum.sha });
     const rl = createInterface({ input: proc.stdout! });
-    const toolUses = toolFold.uses;
     rl.on("line", (line) => {
       state.trouble?.activity();
       if (parsed.outputFormat === "stream-json") {
@@ -384,78 +460,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         return;
       }
       writeEvent(e as Record<string, unknown>);
-      if (e.type === "system" && e.subtype === "init") {
-        if (e.session_id) status.claudeSession = e.session_id;
-        adoptInitModel(status, e);
-        const cw =
-          initContextWindow(e) ?? target.provider.contextWindow ?? certainContextWindow(status.model);
-        if (cw) status.contextWindow = cw;
-        saveStatus(logDir, status);
-      } else if (isCompactBoundary(e)) {
-        resetContextTokensOnCompact(status, e);
-        state.lastFill = usageContextUsed(e.usage) ?? null;
-        saveStatus(logDir, status);
-      } else if (e.type === "assistant") {
-        status.turns += 1;
-        timing.firstAt ??= Date.now();
-        if (status.turns === 1) recordWarmup(logDir, status.provider, (Date.now() - t0) / 1000);
-        bumpContextTokens(status, usageContextUsed(e.message?.usage));
-        state.lastFill = usageContextUsed(e.message?.usage) ?? state.lastFill;
-        status.contextUsed = usageContextUsed(e.message?.usage) ?? status.contextUsed;
-        for (const block of e.message?.content ?? []) {
-          if (block.type === "tool_use") {
-            status.tools += 1;
-            toolFold.onToolUse(block);
-            status.last = describeTool(block.name ?? "?", block.input);
-            // a long single sleep is worth seeing while it runs (supervision's
-            // "sleeping" kind) — set when issued, cleared when it completes
-            if (block.name === "Bash") status.sleepSec = parseSleepSecs(bashCommand(block.input));
-          } else if (block.type === "text" && (block.text ?? "").trim()) {
-            status.last = "says: " + shortText(block.text, 70);
-          }
-        }
-        saveStatus(logDir, status);
-      } else if (e.type === "user") {
-        // tool results arrive as user events: each one advances (or resets)
-        // the consecutive-failure counter supervision's thrashing detector
-        // reads, and retires a pending sleep observation. Plain user turns
-        // (operator input) have no tool_result blocks and change nothing.
-        const blocks = e.message?.content;
-        if (Array.isArray(blocks)) {
-          let sawResult = false;
-          for (const block of blocks) {
-            if (block.type !== "tool_result") continue;
-            sawResult = true;
-            status.consecFails = toolResultFailed(block) ? (status.consecFails ?? 0) + 1 : 0;
-            status.sleepSec = null;
-            if (recordDenial(status, block, toolResultText(block.content), toolUses, parsed.prompt, new Date().toISOString())) {
-              const d = parseDenialText(toolResultText(block.content), "?");
-              if (d) state.trouble?.onDenial(d.hook, d.reason);
-            }
-            toolFold.onToolResult(block);
-            const use = block.tool_use_id ? toolUses.get(block.tool_use_id) : undefined;
-            if (use && !toolResultFailed(block) && isProgressTool(use.name, use.input)) status.progressAt = nowStamp();
-          }
-          if (sawResult) saveStatus(logDir, status);
-        }
-      } else if (e.type === "result") {
-        // a result event's usage is the run's CUMULATIVE total (summed over
-        // all turns), never a turn fill: it must not raise the context meter
-        // (a 200k-window run once read "context 690%" from its 1.38M total).
-        // A compact result legitimately restarts the context lower: the meter
-        // drops to the last per-turn fill the assistant events recorded (the
-        // post-compact context), never to the result's cumulative usage.
-        if (e.is_compact) status.contextTokens = state.lastFill ?? status.contextTokens;
-        const report = parseWorkerReport(e.result ?? "");
-        if (report?.notes) status.last = shortText(report.notes, 90);
-        else if (e.result) status.last = shortText(e.result, 90);
-        saveStatus(logDir, status);
-        state.operatorInFlight = 0;
-        armStdinClose();
-        state.resultEvent = e;
-        state.resultReport = report;
-        resultGrace.onResult();
-      }
+      foldEvent(e);
     });
   }
 
@@ -489,6 +494,12 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     appendLedger(ledger, "WORKER-CONTINUED", { id: wid, reason: `unparsed tool call ${unparsedName}` });
     status.last = `continued: unparsed tool call ${unparsedName}`;
     saveStatus(logDir, status);
+    // the continuation's events reach the transcript and status like the main run's; its result is read from the return value
+    state.eventsFd = openSync(eventsPath(logDir, wid), "a");
+    const continuationEvent = (e: StreamEvent): void => {
+      writeEvent(e as Record<string, unknown>);
+      if (e.type !== "result") foldEvent(e);
+    };
     try {
       const text = await reaskAg2Report({
         env,
@@ -504,6 +515,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
         claudeCmd,
         prompt: unparsedCallPrompt(unparsedName, grantedToolNames(toolsFlag.slice(1), parsed.allowedTools).join(", ")),
         timeoutMs: 30 * 60_000,
+        onEvent: continuationEvent,
       });
       if (text) {
         resultEvent.result = text;
@@ -512,6 +524,8 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     } catch {
       // best effort; the original text stands
     }
+    closeSync(state.eventsFd);
+    state.eventsFd = null;
   }
   const empty = headless && rc === 0 && resultEvent !== null && isEmptyResponse(resultEvent.result, status.tools);
   const ok = !empty && runSucceeded(headless, rc, resultEvent);
