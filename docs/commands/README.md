@@ -49,6 +49,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai pane`](pane.md) | Run a command in a visible pane: run |
 | [`pai pause`](pause.md) | Save your place before leaving a session |
 | [`pai plan`](plan.md) | Run a planned job on local workers without a model in the loop |
+| [`pai power`](power.md) | Battery: status, keep-above wait for the next local job, charge-rate calibration |
 | [`pai project`](project.md) | Your registered projects: list, add, rename, check |
 | [`pai projects`](projects.md) | Same as project |
 | [`pai providers`](providers.md) | List providers (● = active); `providers use NAME` switches |
@@ -246,6 +247,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai plan status` | Summarise a plan's run log: done, running, waiting, needs-decision |
 | `pai plan stop` | Ask a running plan to stop after its in-flight parts |
 | `pai plan validate` | Check a plan file and list its parts |
+| `pai power` | Battery: status, keep-above wait for the next local job, charge-rate calibration |
+| `pai power calibrate` | Measure the charge rate (%/h) and store it in power.calibration |
+| `pai power status` | Battery %, charging state, thresholds, calibration, minutes until resume |
+| `pai power wait` | Block until the battery allows the next local job |
 | `pai project` | Your registered projects: list, add, rename, check |
 | `pai project add` | Register a folder as a project |
 | `pai project alias` | Give a project a second name that also finds it |

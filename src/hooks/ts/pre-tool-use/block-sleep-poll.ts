@@ -18,47 +18,23 @@
  * is tested there.
  */
 
-import { decideSleepPollGate, type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
+import { type SleepPollGateInput } from "../lib/sleep-poll-gate.js";
 import { renderDecision } from "../lib/render-decision.js";
 import { allow, deny, readGateInput } from "../lib/gate-io.js";
-import { mainSessionBashReason } from "../lib/main-session-git-gate.js";
-import { modelServerReason } from "../lib/model-server-guard.js";
 import { cachedLocalAnswer } from "../lib/local-answer.js";
-import { buildGateReason } from "../lib/build-gate.js";
-import { backgroundReason } from "../lib/background-gate.js";
-import { raiseWaitTimeout } from "../lib/wait-timeout.js";
+import { evaluate } from "../../../guard/evaluate.js";
 
 async function main(): Promise<void> {
   const input = await readGateInput<SleepPollGateInput>();
   if (!input) return allow();
 
-  const command = input.tool_input?.command;
-  if (process.env.PAI_WORKER !== "1" && typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
-    const why = mainSessionBashReason(command, (input as { cwd?: string }).cwd ?? process.cwd());
-    if (why) return deny(why);
-  }
-  // sessions and workers alike: heavy builders only through the machine-wide queue
-  if (typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
-    const why = buildGateReason(command, (input as { cwd?: string }).cwd ?? process.cwd());
-    if (why) return deny(why);
-  }
-  // sessions and workers alike: the operator starts model servers, PAI answers which one runs
-  if (typeof command === "string" && (input.tool_name ?? "Bash") === "Bash") {
-    const why = modelServerReason(command, process.env, cachedLocalAnswer());
-    if (why) return deny(why);
-  }
-  // interactive sessions: a background command runs in a visible pane
-  if ((input.tool_name ?? "Bash") === "Bash") {
-    const why = backgroundReason(input.tool_input, process.env);
-    if (why) return deny(why);
-  }
-  const decision = decideSleepPollGate(input, process.env);
-  if (decision.decision === "deny") return deny(decision.reason);
-  // the worker guard hook does this for workers; interactive sessions get it here
-  if (process.env.PAI_WORKER !== "1") {
-    const raised = raiseWaitTimeout(input.tool_input);
-    if (raised) process.stdout.write(renderDecision({ decision: "allow", updatedInput: raised }) + "\n");
-  }
+  // main-session git, build doors, model servers, background and sleep-poll: decided by evaluate()
+  const d = evaluate(
+    { kind: "tool_call", tool: input.tool_name ?? "Bash", input: input.tool_input, cwd: (input as { cwd?: string }).cwd ?? process.cwd() },
+    { env: process.env, gates: { bash: { localAnswer: cachedLocalAnswer } } },
+  );
+  if (d.action === "deny") return deny(d.message!);
+  if (d.updatedInput) process.stdout.write(renderDecision({ decision: "allow", updatedInput: d.updatedInput }) + "\n");
   return allow();
 }
 

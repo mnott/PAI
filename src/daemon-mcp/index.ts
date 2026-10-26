@@ -1920,8 +1920,15 @@ async function startShim(): Promise<void> {
 
   server.tool(
     "battery_status",
-    "The battery guard (power.batteryGuard.*): last reading, whether new local-model work is paused or stopped and why, a benchmark last-resort stop, and the live <PAI home>/state/benchmark-run.json marker. Also the latest power telemetry line and, over a window, max/average system power in and load, max battery drain and minimum charge.",
-    { window_hours: z.number().min(0).max(336).optional().describe("Telemetry window in hours (default 12, max 14 days = 336).") },
+    "The battery guard (power.batteryGuard.*): last reading, whether new local-model work is paused or stopped and why, a benchmark last-resort stop, and the live <PAI home>/state/benchmark-run.json marker. Also the latest power telemetry line and, over a window, max/average system power in and load, max battery drain and minimum charge. Also the keep-above gate (power.batteryGuard.keepAbovePct/resumeAtPct) and the stored charge-rate calibration; action=calibrate measures the idle charge rate over `minutes` (refused while a local worker runs; load=true measures under load) and stores it, action=wait pauses up to `minutes` one-minute steps until the battery allows the next local job.",
+    {
+      window_hours: z.number().min(0).max(336).optional().describe("Telemetry window in hours (default 12, max 14 days = 336)."),
+      action: z.enum(["status", "calibrate", "wait"]).optional().describe("status (default), calibrate or wait."),
+      minutes: z.number().min(0).max(30).optional().describe("calibrate: window in minutes (default 10); wait: at most this many 1-minute pauses (default 0 = check only)."),
+      load: z.boolean().optional().describe("calibrate: measure under the current load instead of idle."),
+      above: z.number().optional().describe("wait: keep-above level (default config)."),
+      resume: z.number().optional().describe("wait: resume level (default config)."),
+    },
     async (args) => batteryStatus(args)
   );
 

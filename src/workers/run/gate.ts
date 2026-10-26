@@ -63,6 +63,7 @@ import { extendLimit } from "../deadline.js";
 import { aibrokerMessenger } from "../run-events.js";
 import { ownerOf } from "../local-idle.js";
 import { batteryGateRefusal, isBenchmarkLabel } from "../../daemon/battery-guard.js";
+import { gateThresholds, liveGateDeps, readPowerConfig, waitForBattery, type Calibration, type GateDeps, type GateThresholds } from "../../daemon/battery-gate.js";
 import {
   poolIneligibleReason,
   poolSettings,
@@ -821,4 +822,38 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   // spawn stamp; one that queued already flipped back to "running" with the
   // grant stamp (runGates onWait)
   a.gated = true;
+}
+
+/**
+ * The keep-above gate for NEW local workers (power.batteryGuard.keepAbovePct,
+ * src/daemon/battery-gate.ts): below it the run waits — queued, in 10-minute
+ * steps — until resumeAtPct; running workers are never touched. Cloud runs
+ * and an unset keepAbovePct pass at once. Returns the number of pauses.
+ */
+export async function keepAboveHold(
+  local: boolean,
+  logDir: string,
+  name: string,
+  deps: { thresholds?: GateThresholds | null; gate?: GateDeps; stepMs?: number } = {}
+): Promise<number> {
+  if (!local) return 0;
+  const t = deps.thresholds !== undefined ? deps.thresholds : gateThresholds(readPowerConfig().cfg);
+  if (!t) return 0;
+  const gate = deps.gate ?? liveGateDeps((line) => process.stderr.write(`[pai worker] ${line}\n`));
+  const { pauses } = await waitForBattery(t, readCal(), {
+    ...gate,
+    out: (line) => {
+      gate.out(line);
+      appendLedger(ledgerPath(logDir), "BATTERY-KEEP-ABOVE-WAIT", { provider: name, keep: t.keep, resume: t.resume });
+    },
+  }, { stepMs: deps.stepMs });
+  return pauses;
+}
+
+function readCal(): Calibration | null {
+  try {
+    return readPowerConfig().calibration;
+  } catch {
+    return null;
+  }
 }

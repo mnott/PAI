@@ -295,6 +295,16 @@ export interface PaiDaemonConfig {
       benchmarkProjectMins?: number;
       /** Seconds a stopped benchmark item gets to write its result/progress files. */
       benchmarkSaveSecs?: number;
+      /** New local work waits below this percent (pai power wait; off when unset). */
+      keepAbovePct?: number;
+      /** ... and starts again at this percent (default keepAbovePct + 5). */
+      resumeAtPct?: number;
+    };
+    /** Stored by `pai power calibrate`. */
+    calibration?: {
+      idlePctPerHour?: number | null;
+      loadPctPerHour?: number | null;
+      measuredAt?: string;
     };
   };
 

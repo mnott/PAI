@@ -21,7 +21,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { allow, deny as block, readGateInput } from "../lib/gate-io.js";
-import { decideEditGate, decideOrchestratorEdit, type EditGateContext } from "../lib/edit-gate.js";
+import { evaluate } from "../../../guard/evaluate.js";
 
 function isUnder(p: string, prefix: string): boolean {
   return p === prefix || p.startsWith(prefix + sep);
@@ -55,27 +55,11 @@ async function main(): Promise<void> {
   const input = await readGateInput<{ cwd?: string; tool_input?: { file_path?: string; notebook_path?: string } }>();
   if (!input) return allow();
 
-  const target = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
-  const filePath = typeof target === "string" ? target : "";
-  if (!filePath) return allow();
-
-  const abs = resolve(input.cwd ?? process.cwd(), filePath);
-
-  // a --orchestrate worker plans and reviews: the main-session rule applies to it
-  if (process.env.PAI_WORKER_ORCHESTRATOR === "1") {
-    const d = decideOrchestratorEdit(abs);
-    return d.decision === "block" ? block(d.reason) : allow();
-  }
-
-  const ctx: EditGateContext = {
-    filePath: abs,
-    isPaiWorker: process.env.PAI_WORKER === "1",
-    isExemptPrefix: exemptPrefixes().some((p) => isUnder(abs, p)),
-    isGitWorkTree: inGitWorkTree(abs),
-  };
-
-  const decision = decideEditGate(ctx);
-  if (decision.decision === "block") return block(decision.reason);
+  const d = evaluate(
+    { kind: "tool_call", tool: "Edit", input: input.tool_input, cwd: input.cwd ?? process.cwd() },
+    { env: process.env, gates: { edit: { isExemptPrefix: (abs) => exemptPrefixes().some((p) => isUnder(abs, p)), isGitWorkTree: inGitWorkTree } } },
+  );
+  if (d.action === "deny") return block(d.message!);
   return allow();
 }
 
