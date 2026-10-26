@@ -26,6 +26,7 @@ import { newWorkerId } from "../status.js";
 import { itermUuid, resolveSession, resolveSpawnerSession } from "../scope.js";
 import { applySessionProviderEnv } from "../session-provider.js";
 import { detectSessionName } from "../session-name.js";
+import { resolveHostSession } from "../pane.js";
 import {
   addWorktree,
   adoptTree,
@@ -55,7 +56,7 @@ import {
   chromeGrantArgs,
   interactiveMcpTools,
 } from "./argv.js";
-import { requireVisiblePane, runTerm } from "./pane-handles.js";
+import { requireVisiblePane } from "./pane-handles.js";
 
 /**
  * The mutable state of one run. Only the readline / signal callbacks assign most of it and the code after the
@@ -174,7 +175,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // a resume takes over the old id's tree and runs against its repo
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
-  const term = await runTerm(a.opts._hostTerm);
+  const term = (await resolveHostSession()).term;
   await a.paneOpening;
   if (a.paneError) throw a.paneError;
   const paneVerified = a.panePrepared

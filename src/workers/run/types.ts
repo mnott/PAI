@@ -83,8 +83,6 @@ export interface RunOptions {
   /** Internal: the policy already decided (fall-through re-run); carries its route and the run it repeats. */
   _route?: RouteInfo;
   _fallThroughOf?: string;
-  /** Internal: the terminal identity of the run this one repeats (reroute); the pane anchors there when this process has no terminal of its own. */
-  _hostTerm?: string;
   /** Internal: tiers this task already escalated out of (escalation.ts); an escalated re-run is not escalated again from them. */
   _escalatedFrom?: string[];
   /** Internal: PAI ids of the runs this one repeats (escalation, fall-through, empty retry), in order. */
