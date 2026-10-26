@@ -52,11 +52,13 @@ Per pattern: firings, last fired, firings per model, actions, outcome mix, false
 |---|---|---|---|
 | `--since AGE` | string | — | Only firings newer than this, e.g. 12h, 7d, 2w |
 | `--model ID` | string | — | Only firings on this model |
+| `--source hook|proxy` | string | — | Only firings decided by the hooks or by the model-API proxy |
 | `--json` | flag | — | Machine-readable JSON output |
 
 ```sh
 pai antipatterns stats --since 7d
 pai antipatterns stats --model glm-5
+pai antipatterns stats --source proxy
 ```
 
 ### pai antipatterns candidates

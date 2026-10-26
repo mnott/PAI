@@ -78,6 +78,8 @@ export interface PatternStats {
   count: number;
   lastFired: string | null;
   byModel: Record<string, number>;
+  /** Firings per origin: hook (Claude Code hooks, worker runner) or proxy (model-API path). */
+  bySource: Record<string, number>;
   actions: Record<string, number>;
   outcomes: Record<string, number>;
   dispositions: Record<string, number>;
@@ -98,7 +100,7 @@ function effectiveDisposition(f: Firing, labels: Map<string, Disposition>): Disp
   return labels.get(`${f.ts}\t${f.id}`) ?? f.disposition ?? "undetermined";
 }
 
-export function stats(o: { sinceMs?: number; model?: string; now?: number; cwd?: string } = {}): PatternStats[] {
+export function stats(o: { sinceMs?: number; model?: string; source?: "hook" | "proxy"; now?: number; cwd?: string } = {}): PatternStats[] {
   const now = o.now ?? Date.now();
   const firings = readFiringsResolved();
   const outcomes = new Map<string, string>();
@@ -114,7 +116,7 @@ export function stats(o: { sinceMs?: number; model?: string; now?: number; cwd?:
   for (const id of ids) {
     const e = entries.get(id);
     const all = firings.filter((f) => f.id === id);
-    const win = all.filter((f) => (o.sinceMs === undefined || Date.parse(f.ts) >= now - o.sinceMs) && (!o.model || f.model === o.model));
+    const win = all.filter((f) => (o.sinceMs === undefined || Date.parse(f.ts) >= now - o.sinceMs) && (!o.model || f.model === o.model) && (!o.source || (f.source ?? "hook") === o.source));
     if (!win.length && (o.model || !e)) continue;
     const row: PatternStats = {
       id,
@@ -124,6 +126,7 @@ export function stats(o: { sinceMs?: number; model?: string; now?: number; cwd?:
       count: win.length,
       lastFired: all.length ? all.map((f) => f.ts).sort().at(-1)! : null,
       byModel: {},
+      bySource: {},
       actions: {},
       outcomes: {},
       dispositions: {},
@@ -136,6 +139,7 @@ export function stats(o: { sinceMs?: number; model?: string; now?: number; cwd?:
     let overridden = 0;
     for (const f of win) {
       bump(row.byModel, f.model);
+      bump(row.bySource, f.source ?? "hook");
       bump(row.actions, f.action);
       const key = `${f.ts}\t${f.id}`;
       const kind = outcomeKind.get(key) ?? "none";

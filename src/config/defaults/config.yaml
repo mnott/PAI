@@ -235,6 +235,10 @@ router:
   claudeUpstream: https://api.anthropic.com
   # Bare aliases (besides ids starting with claude-) that also go to claudeUpstream.
   claudeModelAliases: [sonnet, opus, haiku, default, opusplan]
+  # Guard rules on model replies (tool_use blocks, final text): off | monitor. Monitor records firings with source proxy
+  # (see `pai antipatterns stats --source proxy`) and never changes, delays or blocks a reply.
+  guard:
+    mode: off
   bind: loopback
   # Extra Host headers the router accepts beyond loopback and the bind address
   # (tailnet/MagicDNS names the cockpit is opened by). Empty by default; a

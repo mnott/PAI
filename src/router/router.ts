@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import { GUARD_MAX_BYTES, monitorReply, type ProxyGuardDeps } from "./proxy-guard.js";
 import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody } from "./malformed-retry.js";
 import http from "node:http";
 import https from "node:https";
@@ -229,6 +230,8 @@ export interface RouterOptions {
    */
   /** Retry a local answer that carries an unparsed tool-call block once; default router.localToolCallRetry (true). */
   localToolCallRetry?: boolean;
+  /** Monitor-only guard on replies; default router.guard.mode (off). `deps` replaces evaluate/rules (tests). */
+  guard?: { mode?: "off" | "monitor"; deps?: ProxyGuardDeps };
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
   /** cached up/down of a provider (limits poll); breaks ties between providers declaring one model id */
   isUp?: (provider: string) => boolean | undefined;
@@ -773,6 +776,20 @@ export function routerHandler(
             ures.pipe(fixer).pipe(res);
           } else {
             ures.pipe(res);
+          }
+          // Monitor only: a copy of the reply is evaluated after the client got it all; the pipes above are untouched.
+          if (!isCount && ures.statusCode === 200 && !ures.headers["content-encoding"] && (options?.guard?.mode ?? loadConfig().router.guard?.mode) === "monitor") {
+            const copy: Buffer[] = [];
+            let kept = 0;
+            ures.on("data", (c: Buffer) => {
+              if (kept <= GUARD_MAX_BYTES) copy.push(c);
+              kept += c.length;
+            });
+            ures.on("end", () => {
+              if (kept > GUARD_MAX_BYTES) return;
+              const ct = String(ures.headers["content-type"] ?? "");
+              setImmediate(() => monitorReply(Buffer.concat(copy).toString("utf8"), ct, target.model, { log, ...options?.guard?.deps }));
+            });
           }
           ures.on("end", () => {
             log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);

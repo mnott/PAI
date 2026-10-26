@@ -139,6 +139,8 @@ export interface RouterConfig {
   claudeModelAliases: string[];
   /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
   localToolCallRetry?: boolean;
+  /** Guard rules on the model replies passing the router (/v1/messages). "monitor" records firings with source proxy and never alters, delays or blocks a reply. Default: off. */
+  guard?: { mode?: "off" | "monitor" };
   /**
    * Listen scope: "loopback" (default — 127.0.0.1 only, as always), or beyond
    * it: "tailscale" (the utun address inside 100.64.0.0/10) or an explicit
