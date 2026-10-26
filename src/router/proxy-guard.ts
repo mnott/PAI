@@ -84,13 +84,13 @@ function defaultRules(): Rule[] {
  * Evaluate one finished reply: one event per tool_use block, and a final_text event when the reply has text and no
  * tool use. Non-allow decisions are recorded by evaluate() (source "proxy"). Returns the decisions; never throws.
  */
-export function monitorReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}): Decision[] {
-  return monitorParsed(() => parseReply(raw, contentType), model, deps);
+export function monitorReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}, provider?: string): Decision[] {
+  return monitorParsed(() => parseReply(raw, contentType), model, deps, provider);
 }
 
 /** monitorReply for an OpenAI Chat Completions reply (JSON or SSE) behind the worker proxy. */
-export function monitorOpenAiReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}): Decision[] {
-  return monitorParsed(() => parseOpenAiReply(raw, contentType), model, deps);
+export function monitorOpenAiReply(raw: string, contentType: string, model: string, deps: ProxyGuardDeps = {}, provider?: string): Decision[] {
+  return monitorParsed(() => parseOpenAiReply(raw, contentType), model, deps, provider);
 }
 
 /** Tool arguments as the model sent them: parsed JSON, or the raw string when it is not valid JSON. */
@@ -155,14 +155,14 @@ export function parseOpenAiReply(raw: string, contentType: string): Reply {
   return out;
 }
 
-function monitorParsed(parse: () => Reply, model: string, deps: ProxyGuardDeps): Decision[] {
+function monitorParsed(parse: () => Reply, model: string, deps: ProxyGuardDeps, provider?: string): Decision[] {
   const decisions: Decision[] = [];
   try {
     const reply = parse();
     const ev = deps.evaluate ?? realEvaluate;
     const ctx: GuardContext = { env: process.env, shellRules: (deps.rules ?? defaultRules)() };
-    const events: GuardEvent[] = reply.tools.map((t) => ({ kind: "tool_call", tool: t.name, input: t.input, cwd: PROXY_CWD, model, source: "proxy" }));
-    if (!reply.tools.length && reply.text) events.push({ kind: "final_text", text: reply.text, cwd: PROXY_CWD, model, source: "proxy" });
+    const events: GuardEvent[] = reply.tools.map((t) => ({ kind: "tool_call", tool: t.name, input: t.input, cwd: PROXY_CWD, model, provider, source: "proxy" }));
+    if (!reply.tools.length && reply.text) events.push({ kind: "final_text", text: reply.text, cwd: PROXY_CWD, model, provider, source: "proxy" });
     for (const e of events) {
       try {
         decisions.push(ev(e, ctx));
