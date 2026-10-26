@@ -32,7 +32,6 @@ Runs the sets one after another (local models serve one run at a time) through b
 | `--reps N` | number | 1 | Reps per set |
 | `--real N` | number | 0 | Reps of the 5 real PAI tasks (0 = skip) |
 | `--key K` | string | — | Results key (default: the provider) |
-| `--tools LIST` | string | Read,Write | Tools of the eval-set runs (comma list, or 'real' = the tools a production worker gets, so the model can run code and check answers); real tasks always get the production tools |
 | `--real-cap MIN` | number | 30 | Minutes one real task may run |
 | `--idle SEC` | number | 900 | Stop the series after this many seconds without worker activity |
 | `--max-writes N` | number | 15 | Stop the series when one answer file is written this many times |
