@@ -9,7 +9,7 @@ import { shortText } from "../args.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { saveStatus, type WorkerStatus } from "../status.js";
-import { headlessAllowed, resolveHostSession } from "../pane.js";
+import { frontmostItermSession, headlessAllowed, resolveHostSession } from "../pane.js";
 import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
 import { type OwnedPane } from "../pane-exec.js";
@@ -63,7 +63,23 @@ export async function requireVisiblePane(
     throw new Error(`no pane: ${reason}`);
   };
   try {
-    const pane = await launchPane({ logDir, config, id: wid, kind: "worker", term });
+    let pane: OwnedPane | null;
+    try {
+      pane = await launchPane({ logDir, config, id: wid, kind: "worker", term });
+    } catch (e) {
+      if (!restart) throw e;
+      // the inherited session is gone (closed tab, iTerm restart): anchor to the operator's frontmost window, else run headless
+      const err = (e instanceof Error ? e.message : String(e)).slice(0, 300);
+      process.stderr.write(`[pai worker] ${wid}: restart pane failed (${err}); trying the frontmost iTerm window\n`);
+      pane = null;
+      try {
+        const front = await frontmostItermSession();
+        if (front && front !== term) pane = await launchPane({ logDir, config, id: wid, kind: "worker", term: front });
+      } catch (e2) {
+        noTerminalReasons.set(wid, `${err}; frontmost window: ${(e2 instanceof Error ? e2.message : String(e2)).slice(0, 200)}`);
+      }
+      if (!pane && !noTerminalReasons.has(wid)) noTerminalReasons.set(wid, err);
+    }
     if (!pane) {
       const why = noTerminalReasons.get(wid) ?? "no terminal to open one in";
       // a restart of an earlier run (reroute, fall-through) must not drop the work: with no terminal anywhere it runs headless

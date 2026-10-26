@@ -327,6 +327,21 @@ export function osascriptListing(script: string, args: string[]): Promise<{ stdo
   return p;
 }
 
+const FRONTMOST_SESSION_SCRIPT = `function run() {
+    var app = Application("iTerm2");
+    if (!app.running()) return "";
+    return app.currentWindow().currentSession().id();
+}`;
+
+/** The iTerm session id (bare uuid) in the operator's frontmost window, "" when there is none. Read-only. */
+export async function frontmostItermSession(): Promise<string> {
+  try {
+    return (await osascript(FRONTMOST_SESSION_SCRIPT, [])).stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
 /** Drop the cached listings (tests, and after a change the cache cannot see). */
 export function clearListingCache(): void {
   listingCache.clear();
