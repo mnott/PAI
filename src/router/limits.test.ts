@@ -426,6 +426,8 @@ describe("local server up/down and prefix cache", () => {
       expect([r.up, r.downReason]).toEqual([false, "no HTTP answer"]);
     });
     it("fresh state: a first timeout is unknown, not down; timeoutStrikes timeouts from start are down", async () => {
+      // port 9 is discard (sink): connect is accepted instantly, so the served probe always times out
+      // deterministically — no real TCP connect timeout racing the machine load
       const t = stub("open", { alive: false, timeout: true });
       const r = [await run("busy-f", t), await run("busy-f", t), await run("busy-f", t)];
       expect(r.map((x) => x.up)).toEqual([true, true, false]);
