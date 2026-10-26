@@ -17,7 +17,7 @@ for t in $TASKS; do
   log=$log0/$t; t0=$(date +%s)
   ( cd "$TREE" && env -u ITERM_SESSION_ID -u TERM_SESSION_ID -u TMUX -u TMUX_PANE -u ANTHROPIC_API_KEY \
       pai worker run --provider "$provider" ${margs[@]+"${margs[@]}"} --class implement --no-worktree --cwd . --max-minutes "$cap" \
-      --label "real $t $label bench" --spec "$BENCH/tasks/$t/spec.md" --allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json \
+      --label "real $t $label bench" --spec "$BENCH/tasks/$t/spec.md" --output-format json \
       > "$log.worker.json" 2> "$log.worker.err" )
   wrc=$?; secs=$(( $(date +%s) - t0 ))
   ( cd "$TREE" && git diff --stat > "$log.diff.stat"; git diff > "$log.diff"; git checkout -q "$FIX" -- $TESTS )
