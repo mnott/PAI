@@ -30,7 +30,7 @@ const SHORT_CONTRACT_CLASSES = new Set(["spotcheck", "simple"]);
  * it; r=+ needs G=+ and non-empty p too, not just all-t-passing; R has no
  * `u`/out field at all — u is T-only — so the answer goes in z instead).
  */
-function ag2ReportBlock(): string[] {
+function ag2ReportBlock(proofNote = false): string[] {
   const spec = ag2Spec();
   return [
     spec.spec,
@@ -41,7 +41,7 @@ function ag2ReportBlock(): string[] {
     "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
     "y= one line why when r is not +.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
-    "p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx vitest run src/foo → 12 passed",
+    ...(proofNote ? ["p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx vitest run src/foo → 12 passed"] : []),
     "Example:",
     "R",
     "i=count-audit-ts",
@@ -156,7 +156,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
   ];
   lines.push(
     ...(format === "ag2"
-      ? ag2ReportBlock()
+      ? ag2ReportBlock(true)
       : jsonReportBlock(
           "Your ONE final message is a JSON object and nothing else — no prose before or after, no code fence:"
         ))
