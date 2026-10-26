@@ -16,10 +16,15 @@ import { basename } from "node:path";
 import { parseCommand } from "./worker-guard.js";
 import { dropHeredocBodies } from "./heredoc.js";
 
-const SERVER_BINARIES = new Set(["vllm-mlx", "vllm", "mlx_lm.server", "llama-server", "llama-cpp-server"]);
+const SERVER_BINARIES = new Set([
+  "vllm-mlx", "vllm", "mlx_lm.server", "llama-server", "llama-cpp-server", "sglang", "text-generation-launcher",
+  "tabbyapi", "koboldcpp", "mlx_lm.server.py",
+]);
+/** Python modules that serve models (`python -m <module>`), matched by prefix. */
+const SERVER_MODULES = /^(?:vllm(?:[.-]|$)|mlx_lm\.server|mlx_vlm\.server|llama_cpp\.server|sglang\.launch_server|tabbyapi|koboldcpp)/;
 const PREFIXES = new Set(["nohup", "sudo", "exec", "env", "setsid", "time", "command", "caffeinate", "nice"]);
 const SHELLS = new Set(["sh", "bash", "zsh", "source", "."]);
-const LAUNCHER_SCRIPT = /(?:^|\/)(?:run|serve)-[^/\s]*\.sh$/;
+const LAUNCHER_SCRIPT = /(?:^|\/)(?:serve-[^/\s]*\.sh|(?:[^\s]*\/)?(?:model|strata|vllm|mlx|llama)[^\s]*\/run-[^/\s]*\.sh)$|(?:^|\/)strata\/serve\/server\.py$/;
 /** `pai worker local` verbs that start nothing; start, scale and the deprecated `<tier>` alias do. */
 const READ_ONLY_LOCAL = new Set(["status", "stop", "off", "help"]);
 const MODEL_AGENT = /mlx|vllm|llama|ollama|strata|flashnext|model|local\d/i;
@@ -36,8 +41,12 @@ function startsServer(words: string[], depth: number): boolean {
   const bin = basename(w[0]);
   if (SERVER_BINARIES.has(bin)) return true;
   if (bin === "ollama" && w[1] === "serve") return true;
+  if ((bin === "lms" || bin === "lmstudio") && w[1] === "server") return true;
+  if (bin === "sglang" || bin === "tabbyAPI") return true;
   if (bin === "strata" && (w[1] === "serve" || w[1] === "run")) return true;
-  if (/^python[\d.]*$/.test(bin) && w[1] === "-m" && SERVER_BINARIES.has(w[2] ?? "")) return true;
+  if (/^python[\d.]*$/.test(bin) && w[1] === "-m" && (SERVER_BINARIES.has(w[2] ?? "") || SERVER_MODULES.test(w[2] ?? ""))) return true;
+  if (/^python[\d.]*$/.test(bin) && LAUNCHER_SCRIPT.test(w[1] ?? "")) return true;
+  if (/(?:^|\s)(?:--port[= ]|-p )(?:8010|8011|8020|8034|8035)\b/.test(w.join(" ")) && /serv|model|gguf|llama|mlx|vllm/i.test(w.join(" "))) return true;
   if (LAUNCHER_SCRIPT.test(w[0])) return true;
   if (SHELLS.has(bin)) {
     const c = w.indexOf("-c");
