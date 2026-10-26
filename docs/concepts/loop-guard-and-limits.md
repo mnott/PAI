@@ -93,3 +93,13 @@ worker is told when denials pile up, see [notifications](notifications.md).
 Details: [../worker-denials.md](../worker-denials.md).
 
 Setting this up for the first time: [first workers](../install/first-workers.md).
+
+## FAIL ledger (experiment)
+
+Off by default. With `workers.failLedger.enabled: true` (or `PAI_FAIL_LEDGER=1` for one run; `0` forces it off), the
+loop guard keeps a per-run list of dead ends: a Bash command that failed again with the same exit code and first error
+line, a Read/Glob of a path that does not exist, and a Write that restores a file version a failed run had on disk.
+Each entry has a kind, scope (command or file), evidence (first error line, at most 160 characters, secrets masked)
+and turn. In the turn that adds an entry, the tool result gets "Already failed in this run (do not repeat):" with the
+last `workers.failLedger.maxEntries` (default 5) entries; a turn without a new entry adds nothing. Each injection is
+logged as pattern `fail-ledger` (action `note`), so `pai antipatterns stats` shows how often it fired.

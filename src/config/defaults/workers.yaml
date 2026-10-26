@@ -184,6 +184,14 @@ workers:
     # A denied re-run of a test/build command gets the last N lines of its
     # previous output (within echoChars), where failures and summaries are.
     echoRunnerLines: 40
+  # Experiment: a per-run FAIL ledger. When on, a tool result that adds a dead
+  # end (same command failing the same way, a missing path, a file version a
+  # run failed with) gets "Already failed in this run (do not repeat): ..."
+  # appended. PAI_FAIL_LEDGER=1 / 0 overrides this for one run.
+  failLedger:
+    enabled: false
+    # Entries shown in the block.
+    maxEntries: 5
   # Throwaway clones made by bench/realset.sh live here; a standalone clone
   # under this dir (not registered as a worker's tree) is not a shared
   # checkout, so the worker git guard lets it stash/reset.

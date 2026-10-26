@@ -382,6 +382,13 @@ export interface LoopGuardConfig {
   echoRunnerLines: number;
 }
 
+/** workers.failLedger (experiment, off by default): tell the model each turn what already failed in this run; see hooks/ts/lib/fail-ledger.ts. */
+export interface FailLedgerConfig {
+  enabled: boolean;
+  /** Entries shown in the block. */
+  maxEntries: number;
+}
+
 /** workers.supervision: pointer = type "N worker alerts pending" lines into session panes; default off. */
 export interface WorkersSupervisionConfig {
   pointer: boolean;
@@ -608,6 +615,8 @@ export interface WorkersConfig {
   escalate: EscalateConfig;
   /** Loop guard echo size (workers.loopGuard); see hooks/ts/lib/loop-guard.ts. */
   loopGuard: LoopGuardConfig;
+  /** FAIL ledger (workers.failLedger), per-run override PAI_FAIL_LEDGER=1. */
+  failLedger: FailLedgerConfig;
   /** Throwaway bench clones live under this dir (workers.benchTreesDir, ~ expanded); a standalone clone there is not a shared checkout. */
   benchTreesDir: string;
   /** Continuations of a run whose final text is an unparsed tool call (workers.unparsedCallContinuations; 0 disables). */
@@ -666,6 +675,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`);
   });
   const loopGuard = obj(w.loopGuard);
+  const failLedger = obj(w.failLedger);
   return {
     enabled: bool(w.enabled, false),
     active: null,
@@ -739,6 +749,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     escalate,
     benchTreesDir: typeof w.benchTreesDir === "string" ? w.benchTreesDir : "~/.cache/pai/realtask-trees",
     loopGuard: { echoLines: num(loopGuard.echoLines, 40), echoChars: num(loopGuard.echoChars, 3000), echoRunnerLines: num(loopGuard.echoRunnerLines, 40) },
+    failLedger: { enabled: bool(failLedger.enabled, false), maxEntries: num(failLedger.maxEntries, 5) },
     unparsedCallContinuations: num(w.unparsedCallContinuations, 1),
     noBrowserByDefault: bool(w.noBrowserByDefault, false),
     gcOlderThanHours: num(w.gcOlderThanHours, 6),
@@ -1491,6 +1502,19 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
       loopGuard[k] = t[k] as number;
     }
   }
+  const failLedger = { ...d.failLedger };
+  if (w.failLedger !== undefined) {
+    if (typeof w.failLedger !== "object" || w.failLedger === null || Array.isArray(w.failLedger)) bad(".failLedger", "must be an object");
+    const t = w.failLedger as Record<string, unknown>;
+    if (t.enabled !== undefined) {
+      if (typeof t.enabled !== "boolean") bad(".failLedger.enabled", "must be true or false");
+      failLedger.enabled = t.enabled as boolean;
+    }
+    if (t.maxEntries !== undefined) {
+      if (typeof t.maxEntries !== "number" || !Number.isInteger(t.maxEntries) || t.maxEntries < 1) bad(".failLedger.maxEntries", "must be a positive integer");
+      failLedger.maxEntries = t.maxEntries as number;
+    }
+  }
   if (w.benchTreesDir !== undefined && (typeof w.benchTreesDir !== "string" || !w.benchTreesDir)) bad(".benchTreesDir", "must be a non-empty path");
   if (w.unparsedCallContinuations !== undefined && (typeof w.unparsedCallContinuations !== "number" || !Number.isInteger(w.unparsedCallContinuations) || w.unparsedCallContinuations < 0)) {
     bad(".unparsedCallContinuations", "must be a non-negative integer");
@@ -1583,6 +1607,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
     loopGuard,
+    failLedger,
     benchTreesDir: (w.benchTreesDir as string | undefined) ?? d.benchTreesDir,
     unparsedCallContinuations: (w.unparsedCallContinuations as number | undefined) ?? d.unparsedCallContinuations,
     noBrowserByDefault,
@@ -1752,6 +1777,7 @@ export function writeWorkersSection(
         localIdle: workers.localIdle,
         escalate: workers.escalate,
         loopGuard: workers.loopGuard,
+        failLedger: workers.failLedger,
         benchTreesDir: workers.benchTreesDir,
         unparsedCallContinuations: workers.unparsedCallContinuations,
         tiers: workers.tiers,

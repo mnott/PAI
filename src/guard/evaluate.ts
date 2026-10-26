@@ -45,7 +45,7 @@ export interface GuardContext {
   /** Shell rules to test a Bash command against; absent: the shell layer is skipped. */
   shellRules?: Rule[];
   /** Loop-guard state access; absent: the loop layer is skipped. */
-  loop?: { state: LoopState; fingerprint?: string | null; now?: number; echo?: EchoConfig };
+  loop?: { state: LoopState; fingerprint?: string | null; now?: number; echo?: EchoConfig; /** Record FAIL ledger entries (workers.failLedger / PAI_FAIL_LEDGER). */ failLedger?: boolean };
   /** Pure command gates (plutil, worker git, Bash chain, worker guard); absent: skipped. */
   gates?: GateSet;
   /** Firing sink; defaults to the antipattern log. */
@@ -86,7 +86,7 @@ function decideLoop(ev: Extract<GuardEvent, { kind: "tool_call" }>, ctx: GuardCo
   const l = ctx.loop!;
   const command = (ev.input as { command?: unknown } | undefined)?.command;
   const input = ev.tool === "Bash" ? (typeof command === "string" ? command : undefined) : ((ev.input ?? {}) as Record<string, unknown>);
-  const r = stepLoopGuard(l.state, ev.tool, input, l.fingerprint, l.now ?? Date.now(), ev.cwd, l.echo);
+  const r = stepLoopGuard(l.state, ev.tool, input, l.fingerprint, l.now ?? Date.now(), ev.cwd, l.echo, l.failLedger);
   if (r.monitored) return { action: "allow", patternId: r.id, mode: "monitor", loop: r };
   if (r.deny) return { action: r.stop ? "stop" : "deny", patternId: r.id, message: r.reason, mode: "enforce", loop: r };
   if (r.note) return { action: "note", patternId: r.id, message: r.note, mode: "enforce", loop: r };
