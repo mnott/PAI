@@ -10,10 +10,20 @@ describe("Watchdog", () => {
     expect(feedAll(wd, Array.from({ length: 40 }, (_, i) => w(`out/t${i}.py`)))).toBeNull();
   });
 
-  it("stops on the 4th write of one file (REWRITE)", () => {
+  it("has the night-run defaults", () => {
+    expect(DEFAULT_LIMITS).toEqual({ maxWrites: 15, idleMs: 900_000, maxFiles: 60 });
+  });
+
+  it("tolerates the 6-11 writes Gyro models make, stops on the 15th (REWRITE)", () => {
     const wd = new Watchdog(DEFAULT_LIMITS, 0);
+    expect(feedAll(wd, Array.from({ length: 14 }, () => w("out/a.py")))).toBeNull();
+    expect(wd.feed(w("out/a.py"), 0)).toEqual({ reason: "REWRITE", detail: "out/a.py x15 in r1" });
+  });
+
+  it("honours a custom maxWrites", () => {
+    const wd = new Watchdog({ ...DEFAULT_LIMITS, maxWrites: 4 }, 0);
     expect(feedAll(wd, [w("out/a.py"), w("out/a.py"), w("out/a.py")])).toBeNull();
-    expect(wd.feed(w("out/a.py"), 0)).toEqual({ reason: "REWRITE", detail: "out/a.py x4 in r1" });
+    expect(wd.feed(w("out/a.py"), 0)?.detail).toBe("out/a.py x4 in r1");
   });
 
   it("counts rewrites per run, not across runs", () => {
@@ -40,6 +50,16 @@ describe("Watchdog", () => {
     const wd = new Watchdog(DEFAULT_LIMITS, 0);
     wd.reset(500_000);
     expect(wd.check(560_000)).toBeNull();
+  });
+
+  it("is not idle across a 10 minute power wait followed by reset", () => {
+    const wd = new Watchdog(DEFAULT_LIMITS, 0);
+    wd.feed({ type: "activity" }, 100_000);
+    // pai power wait blocks 10 min x several steps; no ticks run, then the series resets the clock
+    const afterWait = 100_000 + 3 * 600_000;
+    wd.reset(afterWait);
+    expect(wd.check(afterWait + 60_000)).toBeNull();
+    expect(wd.check(afterWait + 901_000)?.reason).toBe("IDLE");
   });
 });
 
