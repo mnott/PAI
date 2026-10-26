@@ -26,6 +26,7 @@ export function projectRoot(cwd: string): string {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], {
       cwd,
       encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   } catch {
@@ -48,6 +49,7 @@ export function projectConfigFile(cwd: string, rel: string): string {
     const list = execFileSync("git", ["worktree", "list", "--porcelain"], {
       cwd,
       encoding: "utf8",
+      maxBuffer: 256 * 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
     });
     const first = list.split(/\n\s*\n/)[0].split("\n");

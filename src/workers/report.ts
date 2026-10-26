@@ -488,7 +488,7 @@ export function newUntracked(cwd: string, before: ReadonlySet<string>): string[]
 
 export function untrackedPaths(cwd: string): string[] {
   try {
-    return execFileSync("git", ["status", "--porcelain", "-uall"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+    return execFileSync("git", ["status", "--porcelain", "-uall"], { cwd, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] })
       .split("\n")
       .filter((l) => l.startsWith("?? "))
       .map((l) => l.slice(3));

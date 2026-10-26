@@ -81,12 +81,16 @@ export function markResumed(logDir: string, oldId: string, newId: string): void 
   invalidatePendingCache(logDir, old.cwd);
 }
 
+/** One git call's stdout ceiling: a merge's -U0 diff spans every changed file, so the 1 MB default died with ENOBUFS. */
+const GIT_MAX_BUFFER = 256 * 1024 * 1024;
+
 /** Run git in `cwd` with an optional env override, trimmed stdout, stderr on failure. */
 function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv, timeout = 30_000): string {
   try {
     return execFileSync("git", ["-C", cwd, ...args], {
       encoding: "utf8",
       timeout,
+      maxBuffer: GIT_MAX_BUFFER,
       stdio: ["ignore", "pipe", "pipe"],
       ...(env ? { env } : {}),
     }).trim();
@@ -758,6 +762,7 @@ function dirtyPaths(cwd: string): string[] {
   const raw = execFileSync("git", ["-C", cwd, "status", "--porcelain", "-z"], {
     encoding: "utf8",
     timeout: 30_000,
+    maxBuffer: GIT_MAX_BUFFER,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const fields = raw.split("\0");
@@ -892,7 +897,7 @@ function mergeSnapshotWorker(
   const diff = execFileSync("git", ["-C", st.cwd, "diff", "--binary", snapshot, branch], {
     encoding: "buffer",
     timeout: 30_000,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: GIT_MAX_BUFFER,
   });
   if (diff.length > 0) {
     try {
@@ -971,7 +976,7 @@ function applyNoCommit(cwd: string, id: string, branch: string, worktreeDir: str
   const diff = execFileSync("git", ["-C", cwd, "diff", "--binary", `${base}..${branch}`], {
     encoding: "buffer",
     timeout: 30_000,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: GIT_MAX_BUFFER,
     env: { ...process.env, LC_ALL: "C" },
   });
   try {
@@ -1023,7 +1028,7 @@ export function verifyWorker(logDir: string, id: string, opts: { against?: strin
       return execFileSync("git", ["-C", st.cwd, ...args], {
         env,
         timeout: 30_000,
-        maxBuffer: 256 * 1024 * 1024,
+        maxBuffer: GIT_MAX_BUFFER,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch {
@@ -1132,7 +1137,7 @@ function globToRegExp(glob: string): RegExp {
 
 /** Does the diff from `base` to `side` only add lines (nothing removed or changed)? */
 function onlyAdds(dir: string, base: string, side: string): boolean {
-  const r = spawnSync("git", ["diff", "--no-index", "--numstat", "--", base, side], { cwd: dir, encoding: "utf8" });
+  const r = spawnSync("git", ["diff", "--no-index", "--numstat", "--", base, side], { cwd: dir, encoding: "utf8", maxBuffer: GIT_MAX_BUFFER });
   const m = /^(\d+)\t(\d+)\t/.exec(r.stdout ?? "");
   return !!m && m[2] === "0";
 }
@@ -1156,7 +1161,7 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
   try {
     for (const f of rest) {
       const stage = (n: number, name: string): string | null => {
-        const r = spawnSync("git", ["show", `:${n}:${f}`], { cwd, encoding: "buffer" });
+        const r = spawnSync("git", ["show", `:${n}:${f}`], { cwd, encoding: "buffer", maxBuffer: GIT_MAX_BUFFER });
         if (r.status !== 0) return null;
         writeFileSync(join(tmp, name), r.stdout);
         return join(tmp, name);
@@ -1165,7 +1170,7 @@ function autoResolveMerge(cwd: string, files: string[], cfg: MergeSettings): str
       const ours = stage(2, "ours");
       const theirs = stage(3, "theirs");
       if (!base || !ours || !theirs || !onlyAdds(cwd, base, ours) || !onlyAdds(cwd, base, theirs)) return null;
-      const m = spawnSync("git", ["merge-file", "-p", "--union", ours, base, theirs], { cwd, encoding: "buffer" });
+      const m = spawnSync("git", ["merge-file", "-p", "--union", ours, base, theirs], { cwd, encoding: "buffer", maxBuffer: GIT_MAX_BUFFER });
       if (m.status !== 0) return null;
       unions.push({ file: f, content: m.stdout.toString("utf8") });
     }
