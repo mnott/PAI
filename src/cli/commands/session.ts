@@ -33,6 +33,8 @@ import {
 import { getProfile } from "../../workers/session-profile-store.js";
 import { prepareDir } from "../lib/new-dir.js";
 import { legacy } from "../lib/legacy.js";
+import { resolveSessionFolder, type FolderResolution } from "../lib/folder-resolve.js";
+import type { TtyIn, TtyOut } from "../lib/picker.js";
 import { cmdRename } from "./session/commands.js";
 import { getProviderOrNative } from "../../workers/config.js";
 
@@ -65,6 +67,68 @@ export function sessionDir(s: Pick<ScannedSession, "clcDirectory" | "registryRoo
 }
 
 const projectOf = (s: ScannedSession) => basename(sessionDir(s) ?? s.decodedPath) || s.decodedPath;
+
+/**
+ * Resolve a session's folder, moving it when the stored path is gone: the
+ * registry's moved-project detection, a tolerant segment match against the
+ * real directory entries, then the Claude project-dir encoding. A unique
+ * match rebinds the registry and returns the new folder; several matches are
+ * returned as candidates; none keeps the caller's old error.
+ */
+async function resolveFolder(s: Pick<ScannedSession, "clcDirectory" | "registryRootPath" | "decodedPath" | "encodedDir">): Promise<FolderResolution> {
+  return resolveSessionFolder([s.clcDirectory, s.registryRootPath, s.decodedPath], s.encodedDir);
+}
+
+/**
+ * The folder a session opens in, resolving a stale one first: a unique match
+ * rebinds the registry and prints one "folder moved" line; several matches
+ * get picked; none keeps the caller's old error, naming the deepest existing
+ * ancestor. Exported for `pai open` and the picker's `openRow`.
+ */
+export async function openableDir(
+  name: string,
+  stored: Pick<ScannedSession, "clcDirectory" | "registryRootPath" | "decodedPath" | "encodedDir">,
+  knownDir: string | undefined,
+  term: { isTTY: boolean; st: Style; input: TtyIn; output: TtyOut },
+  out: (s: string) => void
+): Promise<string> {
+  if (knownDir) return knownDir;
+  const r = await resolveFolder(stored);
+  if (r.dir) {
+    if (r.rebound) out(term.st.yellow(`folder moved: ${stored.decodedPath} -> ${r.dir}`));
+    return r.dir;
+  }
+  if (r.candidates && r.candidates.length > 1) {
+    if (!term.isTTY) {
+      const listed = r.candidates.map((c) => `\n  ${c}`).join("");
+      throw new CliError(
+        `the folder of "${name}" no longer exists; several folders match (${listed})`,
+        `pai project rebind <slug> <one of the listed folders>`
+      );
+    }
+    const { runPicker } = await import("../lib/picker.js");
+    const picked = await runPicker(
+      {
+        title: "Several folders match — pick one",
+        headers: ["Folder"],
+        items: r.candidates,
+        cells: (c) => [c],
+        searchText: (c) => c,
+        footer: "Enter picks, Esc quits",
+      },
+      term.st,
+      term.input,
+      term.output
+    );
+    if (!picked) throw new CliError(`nothing picked — the folder of "${name}" no longer exists`, `cd <an existing folder> && pai new --name ${JSON.stringify(name)}`);
+    return picked;
+  }
+  throw new CliError(
+    `the folder of "${name}" no longer exists (${r.ancestor} is the deepest folder that still exists)`,
+    `cd <an existing folder> && pai new --name ${JSON.stringify(name)}`
+  );
+}
+
 const nameOf = (s: ScannedSession) => s.friendlyName ?? s.aiTitle ?? projectOf(s);
 
 export interface SessionRow {
@@ -81,6 +145,8 @@ export interface SessionRow {
   message: string;
   /** Working directory the session opens in, when it still exists. */
   dir?: string;
+  /** The paths the session record carries, for resolving a folder that moved. */
+  stored: { clcDirectory?: string; registryRootPath?: string; decodedPath: string; encodedDir: string };
   /** Can the provider it last ran on be used right now? */
   health: Health;
   /** The session already carries this name (set with /Name), so starting it must not send /Name. */
@@ -148,30 +214,41 @@ export async function collectView(opts: {
     .sort((a, b) => b.mtime - a.mtime)
     .filter((s, i) => i < limit || (opts.includeNamed && !!s.persistentName));
 
-  const build = (live: Awaited<ReturnType<typeof fetchLiveSessions>>, budget: Record<string, BudgetReading | undefined>): SessionRow[] => {
+  const build = async (live: Awaited<ReturnType<typeof fetchLiveSessions>>, budget: Record<string, BudgetReading | undefined>): Promise<SessionRow[]> => {
     const liveIds = new Set(live.filter((l) => l.kind === "claude").map((l) => l.sessionId));
-    return picked.map((s) => {
+    // one resolution per session: a stale folder is relocated before the row
+    // shows its project name, so the list names the folder that exists
+    const resolutions = await Promise.all(picked.map((s) => resolveFolder(s)));
+    return picked.map((s, i) => {
       const origin = originOf(s, workers);
+      const dir = resolutions[i]?.dir ?? sessionDir(s);
+      const project = dir ? basename(dir) || dir : projectOf(s);
       return {
         id: s.shortId,
         uuid: s.uuid,
-        name: nameOf(s),
-        project: projectOf(s),
+        name: s.friendlyName ?? s.aiTitle ?? project,
+        project,
         provider: origin?.provider ?? "—",
         model: origin?.model ?? "—",
         lastActive: `${fmtAge(s.mtime)}${fmtAge(s.mtime) === "now" ? "" : " ago"}`,
         lastActiveMs: s.mtime,
         status: liveIds.has(s.uuid) ? "live" : s.sessionStatus,
         message: oneLine(s.lastUserPrompt),
-        dir: sessionDir(s),
-        named: !!s.persistentName && s.persistentName === nameOf(s),
+        dir,
+        stored: {
+          clcDirectory: s.clcDirectory,
+          registryRootPath: s.registryRootPath,
+          decodedPath: s.decodedPath,
+          encodedDir: s.encodedDir,
+        },
+        named: !!s.persistentName && s.persistentName === (s.friendlyName ?? s.aiTitle ?? project),
         health: origin && workers ? providerHealth(origin.provider, workers, budget) : ({ state: "ok", reason: "ok" } as Health),
       };
     });
   };
 
   const budget0 = deferred ? readBudgetSnapshot() : workers && !opts.offline ? await readBudget(workers) : {};
-  const rows = build(live0, budget0);
+  const rows = await build(live0, budget0);
   const refresh = async (): Promise<SessionRow[]> => {
     if (!deferred) return rows;
     const [live, budget] = await Promise.all([
@@ -314,13 +391,13 @@ const openCommand: CommandDef = {
       throw new CliError(String(e instanceof Error ? e.message : e).split("\n\n")[0], "pai ls   (shows names and ids)");
     }
     name = name ?? nameOf(session);
-    const cwd = sessionDir(session);
-    if (!cwd) {
-      throw new CliError(
-        `the folder of session "${name}" no longer exists (${session.decodedPath})`,
-        `cd <an existing folder> && pai new --name "${name}"`
-      );
-    }
+    const cwd = await openableDir(
+      name,
+      session,
+      sessionDir(session),
+      { isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true, st, input: process.stdin, output: process.stdout },
+      out
+    );
 
     const origin = originOf(session, workers);
     const choice = planOpen({

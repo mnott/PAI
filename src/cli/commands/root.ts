@@ -23,7 +23,7 @@ import { probeResume } from "../lib/launch.js";
 import { readOneKey, runPicker, type TtyIn, type TtyOut } from "../lib/picker.js";
 import { assertAvailable, modelFor } from "../lib/provider-choice.js";
 import { allSetups, downLocalProviders, findSetup, httpModelsCheck, loadSaved, orchestratorLabel, setupProfile, setupWorkersLabel, shortModel, workersLabel, type PortCheck, type Setup } from "../lib/setups.js";
-import { collectView, type SessionRow } from "./session.js";
+import { collectView, openableDir, type SessionRow } from "./session.js";
 import { writeFileSync } from "node:fs";
 
 export const CANCELLED = 130;
@@ -320,10 +320,7 @@ async function openRow(row: SessionRow, workers: WorkersConfig, withName: string
   const out = (s: string) => term.output.write(s + "\n");
   const budget = await readBudget(workers);
   const last = lastSetup(row, workers);
-  const cwd = row.dir;
-  if (!cwd) {
-    throw new CliError(`the folder of "${row.name}" no longer exists`, `cd <an existing folder> && pai new --name ${JSON.stringify(row.name)}`);
-  }
+  const cwd = await openableDir(row.name, row.stored, row.dir, term, out);
   const go = (setup: Setup, fresh: boolean) => startSession({ workers, setup, name: row.name, cwd, resume: fresh ? undefined : row, dryRun, term });
 
   if (withName) {
