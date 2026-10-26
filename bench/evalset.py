@@ -28,6 +28,11 @@ def grade(s, d, res, key, rep, wall, wrc, wjson, inst="unknown"):
     tasks, rows = load(s), []
     for t in tasks:
         p = os.path.join(d, "out", f"{t['id']}.{'txt' if s == 'short' else 'py'}")
+        by_entry = False
+        if not os.path.exists(p) and s != "short" and t.get("entry"):
+            q = os.path.join(d, "out", f"{t['entry']}.py")   # bench v2: a file named by entry point still counts, flagged
+            if os.path.exists(q):
+                p, by_entry = q, True
         if not os.path.exists(p):
             rows.append({"id": t["id"], "ok": False, "err": "missing"}); continue
         txt = open(p, errors="replace").read()
@@ -40,7 +45,10 @@ def grade(s, d, res, key, rep, wall, wrc, wjson, inst="unknown"):
             except SyntaxError:
                 code = extract(txt) or txt
             ok, err = run_tests(code, t["tests"])
-        rows.append({"id": t["id"], "ok": bool(ok), "err": (err or "")[:160]})
+        row = {"id": t["id"], "ok": bool(ok), "err": (err or "")[:160]}
+        if by_entry:
+            row["named_by_entry"] = True
+        rows.append(row)
     try:
         w = json.load(open(wjson))
     except Exception:

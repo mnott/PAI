@@ -19,7 +19,7 @@ python3 -I "$E/evalset.py" prep "$set" "$d" || exit 2
 if [ "$set" = short ]; then
   what="write ONLY the exact final answer (no explanation, no extra text) to out/<id>.txt"; fields="id, prompt"
 else
-  what="write ONLY the complete, self-contained Python solution (imports included, entry point named in the task, no tests, no input()) to out/<id>.py"; fields="id, entry, prompt"
+  what="write ONLY the complete, self-contained Python solution (imports included, entry point named in the task, no tests, no input()) to out/<id>.py; the file name is the task NUMBER, e.g. out/7.py, not the function name"; fields="id, entry, prompt"
 fi
 cat > "$d/spec.txt" <<SPEC
 Solve every task in tasks.jsonl (one JSON object per line: $fields). For task i, $what.
