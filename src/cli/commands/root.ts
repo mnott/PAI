@@ -409,6 +409,8 @@ export async function runRoot(
     return (await import("./session.js")).runNewDefault({ dir: args.name, dryRun: args.dryRun });
   }
   const workers = loadWorkers();
+  // Looking up a session scans the transcripts: say so at once, never a silent wait.
+  if (args.name) process.stderr.write(`starting session "${args.name}" …\n`);
 
   if (!args.name && args.with) {
     const setup = await resolveSetup(workers, lastSetup(null, workers), args.with);

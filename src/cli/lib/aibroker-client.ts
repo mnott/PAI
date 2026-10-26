@@ -73,6 +73,13 @@ export interface CallerStamp {
 const SEND_TIMEOUT_MS = 30_000;
 
 /**
+ * The live-session lookup is optional (it only decides switch-vs-open), so a
+ * wedged or stale broker socket must cost a few seconds, not the generic 8s,
+ * before the launcher carries on without it.
+ */
+const LIVE_LOOKUP_TIMEOUT_MS = 3_000;
+
+/**
  * Call an AIBroker IPC method and return the result.
  *
  * Resolves with the `result` field of a successful response.
@@ -176,11 +183,15 @@ export function callAiBroker(
  */
 export async function fetchLiveSessions(): Promise<AiBrokerSessionMeta[]> {
   try {
-    const result = await callAiBroker("sessions", {});
+    const result = await callAiBroker("sessions", {}, LIVE_LOOKUP_TIMEOUT_MS);
     const sessions = (result as unknown as AiBrokerSessionsResult).sessions;
     if (!Array.isArray(sessions)) return [];
     return sessions;
-  } catch {
+  } catch (e) {
+    // A dead broker is normal and silent; a wedged one is worth one line.
+    if (e instanceof Error && /timed out/.test(e.message)) {
+      process.stderr.write(`pai: AIBroker did not answer within ${LIVE_LOOKUP_TIMEOUT_MS / 1000}s — skipping the live-session lookup\n`);
+    }
     return [];
   }
 }

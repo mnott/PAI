@@ -139,8 +139,20 @@ function decodeEncodedName(encoded: string): string | undefined {
   return current;
 }
 
-/** Every ~/.claude/projects/ entry that decodes tolerantly to a unique real folder. */
+/**
+ * Every ~/.claude/projects/ entry that decodes tolerantly to a unique real folder.
+ *
+ * The scan reads a directory per path segment of every project entry (10s of
+ * CPU on a machine with thousands of them), and a listing resolves every stale
+ * session, so an unmemoized scan made `pai <name>` (which lists up to 500
+ * rows) look hung for minutes. Once per process: a CLI run is short-lived.
+ */
+let decodedCache: string[] | undefined;
 function decodedClaudeDirs(): string[] {
+  return (decodedCache ??= scanDecodedClaudeDirs());
+}
+
+function scanDecodedClaudeDirs(): string[] {
   const root = join(homedir(), ".claude", "projects");
   let entries: string[];
   try {
@@ -154,6 +166,12 @@ function decodedClaudeDirs(): string[] {
     if (decoded && existsSync(decoded)) out.push(decoded);
   }
   return out;
+}
+
+/** Registry root paths, read once per process (every stale session asks). */
+let rootsCache: Promise<string[]> | undefined;
+function registryRoots(backend: Awaited<ReturnType<typeof getRegistryBackend>>): Promise<string[]> {
+  return (rootsCache ??= backend.listProjects().catch(() => []).then((ps) => ps.map((p) => p.root_path)));
 }
 
 /** The same update `pai project rebind` makes: new root path + new encoded dir. */
@@ -187,7 +205,6 @@ export async function resolveSessionFolder(
 ): Promise<FolderResolution> {
   let last: FolderResolution = { ancestor: sep };
   const ambiguous = new Set<string>();
-  let decoded: string[] | undefined; // the Claude-dir scan, at most once per call
   for (const stored of candidates) {
     if (!stored) continue;
     if (existsSync(stored)) return { dir: safeReal(stored), ancestor: safeReal(stored) };
@@ -202,7 +219,7 @@ export async function resolveSessionFolder(
     // (a) the registry's moved-project detection (relocate.ts)
     try {
       const backend = await getRegistryBackend();
-      const otherRoots = (await backend.listProjects().catch(() => [])).map((p) => p.root_path);
+      const otherRoots = await registryRoots(backend);
       const moved = suggestMovedPath(stored, otherRoots);
       if (moved) return hit(moved);
     } catch {
@@ -215,8 +232,7 @@ export async function resolveSessionFolder(
     if (tolerant.ambiguous) for (const name of tolerant.ambiguous.names) ambiguous.add(join(tolerant.ambiguous.parent, name));
 
     // (c) the Claude project-dir encoding, decoded the tolerant way
-    decoded ??= decodedClaudeDirs();
-    const viaClaude = decoded.filter((d) => norm(d) === norm(stored));
+    const viaClaude = decodedClaudeDirs().filter((d) => norm(d) === norm(stored));
     if (viaClaude.length === 1) return hit(viaClaude[0]!);
     if (viaClaude.length > 1) for (const d of viaClaude) ambiguous.add(d);
 
