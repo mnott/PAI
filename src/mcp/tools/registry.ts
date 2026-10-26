@@ -23,25 +23,26 @@ export async function toolRegistrySearch(
   params: RegistrySearchParams
 ): Promise<ToolResult> {
   try {
-    // Same query `pai project names --all` runs: one row per (project, alias).
-    const rows = await registry.listNamedProjects({ includeUnnamed: true });
+    // All statuses (what `pai project list --all` reads); curated names come from
+    // listNamedProjects for active rows and listAliasesForProject for the rest.
+    const all = await registry.listProjectsWithSessionStats({ orderBy: "updated_desc" });
     const needle = normalize(params.query);
 
-    const byId = new Map<number, { slug: string; status: string; root_path: string; display_name: string; names: string[] }>();
-    for (const r of rows) {
-      let p = byId.get(r.id);
-      if (!p) {
-        p = { slug: r.slug, status: r.status, root_path: r.root_path, display_name: r.display_name, names: [] };
-        byId.set(r.id, p);
-      }
-      if (r.name) p.names.push(r.name);
+    const activeNames = new Map<number, string[]>();
+    for (const r of await registry.listNamedProjects({ includeUnnamed: false })) {
+      if (r.name) activeNames.set(r.id, [...(activeNames.get(r.id) ?? []), r.name]);
     }
 
-    const projects = needle
-      ? [...byId.values()]
-          .filter((p) => [p.slug, p.display_name, p.root_path, ...p.names].some((f) => normalize(f ?? "").includes(needle)))
-          .slice(0, 20)
-      : [];
+    const matches = [];
+    for (const p of all) {
+      if (!needle) break;
+      const names = p.status === "active" ? activeNames.get(p.id) ?? [] : await registry.listAliasesForProject(p.id);
+      if ([p.slug, p.display_name, p.root_path, ...names].some((f) => normalize(f ?? "").includes(needle))) {
+        matches.push({ ...p, names });
+      }
+    }
+    // Active first, archived after; each group stays newest-first.
+    const projects = [...matches.filter((p) => p.status === "active"), ...matches.filter((p) => p.status !== "active")].slice(0, 20);
 
     if (projects.length === 0) {
       return {
@@ -55,7 +56,7 @@ export async function toolRegistrySearch(
     }
 
     const lines = projects.map(
-      (p) => `${p.slug}  [${p.status}]  names: ${p.names.length ? p.names.join(", ") : "-"}  ${p.root_path}`
+      (p) => `${p.slug}  [${p.status === "archived" ? `archived${p.archived_at ? " " + new Date(p.archived_at).toISOString().slice(0, 10) : ""}` : p.status}]  names: ${p.names.length ? p.names.join(", ") : "-"}  ${p.root_path}`
     );
 
     return {
