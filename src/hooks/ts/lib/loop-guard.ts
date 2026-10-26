@@ -250,7 +250,7 @@ export function worktreeFingerprint(cwd: string): string | null {
 
 /** The command itself edits files before it runs the runner (the fingerprint is taken before the command runs). */
 function inlineEdit(command: string): boolean {
-  return /\b(?:sed|perl)\s+(?:-\w+\s+)*-i|\bgit apply\b|\bpatch\s+-?\w*\s*-?p\d|\btee\s+(?!\/tmp)\S|(?:^|[;&|]\s*)cat\s*>>?\s*(?!\/tmp)[\w.]/.test(command.split(/&&|;|\|/).slice(0, -1).join(";") || "");
+  return /\b(?:sed|perl)\s+(?:-\w+\s+)*-i|\bgit (?:apply|checkout|restore|reset|rm|mv|stash|merge|cherry-pick|revert|rebase|pull|clean|switch)\b|\bpatch\s+-?\w*\s*-?p\d|\btee\s+(?!\/tmp)\S|(?:^|[;&|]\s*)cat\s*>>?\s*(?!\/tmp)[\w.]/.test(command.split(/&&|;|\|/).slice(0, -1).join(";") || "");
 }
 
 const READ_VERB = /^(?:sed|head|tail|cat|grep|egrep|rg|awk|nl|wc|od|echo|printf|true)$/;
