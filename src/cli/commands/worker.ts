@@ -5,6 +5,7 @@
  * exit codes are the ones hooks, prompts, skills and shims already call.
  */
 
+import { lowPowerActive } from "../../daemon/low-power.js";
 import { isCi } from "../../utils/ci.js";
 import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
@@ -420,6 +421,7 @@ const psCommand: CommandDef = {
       if (pending) out(`${pending} unmerged result(s) — pai worker pending`);
       const left = leftoverWorktrees(dir);
       if (left) out(`worktrees: ${left} finished, not merged; pai worker gc --dry-run`);
+      await lowPowerActive(); // warm the cached reading behind the "low power xN" mark
       out(psOutput(dir, flag(ctx, "all"), process.env));
     }),
 };

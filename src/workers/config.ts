@@ -23,6 +23,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_FILE, expandHome, homeRel, paiConfigFilePath, readMainConfigRaw, writeMainConfigRaw } from "../daemon/config.js";
+import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { effectiveMainConfig, shippedMainDefaults, shippedWorkersDefaults, userWorkersYamlRaw } from "../config/shipped-defaults.js";
 import { contextWindowFromModelId, DEFAULT_CONTEXT_WINDOW } from "../utils/model-window.js";
@@ -2023,13 +2024,29 @@ export function escalationCloud(): CloudTarget {
   }
 }
 
-/** The time-bound escalation numbers (workers.escalate.queuedMaxMin/stallMaxMin/stallFailedCalls); the shipped ones when the config cannot be read. */
-export function escalationPolicy(): Pick<EscalateConfig, "queuedMaxMin" | "stallMaxMin" | "stallFailedCalls"> {
+/**
+ * The time-bound escalation numbers (workers.escalate.queuedMaxMin/stallMaxMin/stallFailedCalls);
+ * the shipped ones when the config cannot be read. While macOS Low Power Mode
+ * is on the minute thresholds scale by power.lowPower.factor (a slow machine
+ * is not stalled); `lowPower` resolves synchronously from the cached reading —
+ * off until the first pmset sample lands.
+ */
+export function escalationPolicy(
+  lowPower: () => boolean = cachedLowPowerActive,
+  factor: () => number = lowPowerFactor
+): Pick<EscalateConfig, "queuedMaxMin" | "stallMaxMin" | "stallFailedCalls"> {
+  let base: Pick<EscalateConfig, "queuedMaxMin" | "stallMaxMin" | "stallFailedCalls">;
   try {
     const { queuedMaxMin, stallMaxMin, stallFailedCalls } = readWorkersSection().workers.escalate;
-    return { queuedMaxMin, stallMaxMin, stallFailedCalls };
+    base = { queuedMaxMin, stallMaxMin, stallFailedCalls };
   } catch {
-    const { queuedMaxMin, stallMaxMin, stallFailedCalls } = DEFAULT_ESCALATE;
-    return { queuedMaxMin, stallMaxMin, stallFailedCalls };
+    base = { queuedMaxMin: DEFAULT_ESCALATE.queuedMaxMin, stallMaxMin: DEFAULT_ESCALATE.stallMaxMin, stallFailedCalls: DEFAULT_ESCALATE.stallFailedCalls };
   }
+  const f = factor();
+  if (!lowPower() || f <= 1) return base;
+  return {
+    queuedMaxMin: base.queuedMaxMin * f,
+    stallMaxMin: base.stallMaxMin * f,
+    stallFailedCalls: base.stallFailedCalls,
+  };
 }

@@ -8,7 +8,7 @@ Battery: status, keep-above wait for the next local job, charge-rate calibration
 pai power <command>
 ```
 
-The battery guard's toolkit (config power.batteryGuard). `status` shows the reading, thresholds, the stored calibration and the estimated minutes until the keep-above gate opens. `wait` blocks until the battery allows the next local job: at or above keepAbovePct it returns at once, below it it pauses in 10-minute steps (one line each) until resumeAtPct, then exits 0. `calibrate` measures the idle charge rate (%/h) over N minutes and stores it in power.calibration; it refuses while a worker runs on a local provider. New local workers honour keepAbovePct by queueing; running ones are never stopped by it.
+The battery guard's toolkit (config power.batteryGuard). `status` shows the reading, thresholds, the stored calibration, the estimated minutes until the keep-above gate opens, and whether macOS Low Power Mode is on (power.lowPower.factor stretches worker time limits while it is). `wait` blocks until the battery allows the next local job: at or above keepAbovePct it returns at once, below it it pauses in 10-minute steps (one line each) until resumeAtPct, then exits 0. `calibrate` measures the idle charge rate (%/h) over N minutes and stores it in power.calibration; it refuses while a worker runs on a local provider. New local workers honour keepAbovePct by queueing; running ones are never stopped by it.
 
 ```sh
 pai power status
@@ -21,13 +21,13 @@ See also: `pai config set power.batteryGuard.keepAbovePct 40`
 
 ### pai power status
 
-Battery %, charging state, thresholds, calibration, minutes until resume
+Battery %, charging state, thresholds, calibration, minutes until resume, Low Power Mode
 
 ```
 pai power status
 ```
 
-Reads the battery once and prints the guard thresholds, the keep-above gate state and the stored calibration.
+Reads the battery once and prints the guard thresholds, the keep-above gate state, the stored calibration and whether Low Power Mode is on.
 
 ```sh
 pai power status
@@ -79,7 +79,7 @@ pai power calibrate --load --minutes 10
 
 | Command | Description |
 |---|---|
-| `pai power status` | Battery %, charging state, thresholds, calibration, minutes until resume |
+| `pai power status` | Battery %, charging state, thresholds, calibration, minutes until resume, Low Power Mode |
 | `pai power wait` | Block until the battery allows the next local job |
 | `pai power calibrate` | Measure the charge rate (%/h) and store it in power.calibration |
 
