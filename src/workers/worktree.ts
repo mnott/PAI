@@ -2151,47 +2151,6 @@ export function busyPid(dir: string): number {
   return 0;
 }
 
-export const KEEP_FILE = ".pai-keep";
-
-/** First line of `<dir>/.pai-keep` (the reason; "kept" when empty), or null when the file is absent. */
-export function keepMarker(dir: string): string | null {
-  try {
-    return readFileSync(join(dir, KEEP_FILE), "utf8").split("\n")[0]!.trim() || "kept";
-  } catch {
-    return null;
-  }
-}
-
-/** `pai worker keep`: write (reason) or remove (null) the `.pai-keep` marker of a worktree given by worker id or path. Returns the directory. */
-export function setKeep(logDir: string, target: string, reason: string | null): string {
-  let dir = target;
-  if (!target.includes("/")) {
-    const st = loadStatuses(logDir).find((x) => x.id === target);
-    dir = (st && ownedTree(st)?.dir) || worktreePath(logDir, target);
-  }
-  dir = resolve(dir);
-  if (!existsSync(dir)) throw new Error(`no worktree at ${dir}`);
-  if (reason === null) rmSync(join(dir, KEEP_FILE), { force: true });
-  else writeFileSync(join(dir, KEEP_FILE), `${reason.replace(/\n+/g, " ")}\n`, "utf8");
-  return dir;
-}
-
-/**
- * Why gc must leave `dir` alone: a `.pai-keep` marker, or a running process with its cwd inside.
- * The one check every gc path calls; logs WORKER-GC-KEEP unless `dryRun`.
- */
-export function gcKeepReason(logDir: string, id: string, dir: string, dryRun: boolean): string | null {
-  let reason: string | null = null;
-  const marker = keepMarker(dir);
-  if (marker !== null) reason = `kept: .pai-keep: ${marker}`;
-  else {
-    const pid = busyPid(dir);
-    if (pid) reason = `busy: pid ${pid} has its cwd inside`;
-  }
-  if (reason && !dryRun) appendLedger(ledgerPath(logDir), "WORKER-GC-KEEP", { id, reason });
-  return reason;
-}
-
 /** gc for a finished slot worker: archive the branch tip under refs/pai-archive/<id>, delete the branch. */
 function archiveSlotBranch(
   logDir: string,
@@ -2462,8 +2421,11 @@ export function gcWorktrees(
   const archive = (id: string, dir: string, branch: string, st: WorkerStatus | null): void => {
     const target = `refs/pai-archive/${id}`;
     if (!isRealWorktree(dir)) return void out.push({ id, skipped: "not a worktree" });
-    const why = gcKeepReason(logDir, id, dir, dryRun);
-    if (why) return void out.push({ id, skipped: why });
+    const pid = busyPid(dir);
+    if (pid) {
+      if (!dryRun) appendLedger(ledgerPath(logDir), "WORKER-GC-SKIP", { id, reason: "busy", pid: String(pid) });
+      return void out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
+    }
     if (dryRun) return void out.push(report ? { id, archive: target, knowledge: worktreeKnowledge(logDir, id, dir) } : { id, archive: target });
     try {
       const adopted = adoptDetachedHead(dir, branch);
@@ -2667,16 +2629,10 @@ export function gcPoolWorktrees(logDir: string, dryRun = false): GcEntry[] {
     }
     // A spare-* tree named by no live pool state is an orphan even when a process sits in it:
     // a host that died without cleanup leaves its spare's claude parked in the tree.
-    const marked = keepMarker(dir);
-    if (marked !== null) {
-      const why = gcKeepReason(logDir, id, dir, dryRun);
-      out.push({ id, skipped: why! });
-      continue;
-    }
     if (!id.startsWith("spare-") || stateUnknown) {
-      const why = gcKeepReason(logDir, id, dir, dryRun);
-      if (why) {
-        out.push({ id, skipped: why });
+      const pid = busyPid(dir);
+      if (pid) {
+        out.push({ id, skipped: `busy: pid ${pid} has its cwd inside` });
         continue;
       }
     }
