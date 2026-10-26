@@ -315,3 +315,30 @@ export async function updateCheck(args: UpdateCheckArgs): Promise<WorkerToolResu
     return error(e);
   }
 }
+
+export interface TestsArgs {
+  repo?: string;
+  apply?: boolean;
+}
+
+/** pai tests audit: classify a repo's test files (read-only; git and file reads). */
+export async function testsAudit(args: TestsArgs): Promise<WorkerToolResult> {
+  try {
+    const { auditRepo, formatAudit } = await import("../../testgov/audit.js");
+    const { resolve } = await import("node:path");
+    return text(formatAudit(auditRepo(resolve(args.repo ?? process.cwd())), true));
+  } catch (e) {
+    return error(e);
+  }
+}
+
+/** pai tests prune: the plan, or with apply=true a worker that prunes the suite on its own branch. */
+export async function testsPrune(args: TestsArgs): Promise<WorkerToolResult> {
+  try {
+    const { prune } = await import("../../testgov/prune.js");
+    const { resolve } = await import("node:path");
+    return text(prune(resolve(args.repo ?? process.cwd()), args.apply === true, { cmd: process.execPath, args: [cliEntry()] }).lines.join("\n"));
+  } catch (e) {
+    return error(e);
+  }
+}
