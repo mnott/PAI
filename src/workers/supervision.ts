@@ -73,6 +73,7 @@ import {
   pushable,
 } from "./tool-errors.js";
 import { callAiBroker, sendToSession } from "../cli/lib/aibroker-client.js";
+import { cachedLowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import { escalateOverdue, escalationMessage } from "./reroute.js";
 import { checkLoops, type LoopDeps } from "./loop-watch.js";
 
@@ -797,13 +798,21 @@ function pointerText(n: number): string {
  */
 let pointerRunning = false;
 
-/** workers.supervision.stallMinutes; any config trouble counts as the default. */
-function stallMinutesFromConfig(): number {
+/**
+ * workers.supervision.stallMinutes; any config trouble counts as the default.
+ * While macOS Low Power Mode is on it scales by workers.lowPower.factor (a
+ * slow machine is not stalled); off until the first cached pmset reading lands.
+ */
+export function stallMinutesFromConfig(lowPower: () => boolean = cachedLowPowerActive): number {
+  let minutes = DEFAULT_STALL_MINUTES;
   try {
-    return readWorkersSection().workers.supervision.stallMinutes;
+    minutes = readWorkersSection().workers.supervision.stallMinutes;
   } catch {
-    return DEFAULT_STALL_MINUTES;
+    /* default */
   }
+  if (!lowPower()) return minutes;
+  const factor = lowPowerFactor();
+  return factor > 1 ? minutes * factor : minutes;
 }
 
 /** workers.supervision.push; any config trouble counts as the default, "harness". */

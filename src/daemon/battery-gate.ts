@@ -17,6 +17,7 @@
 
 import { batteryGuardConfig, localKillTargets, liveBenchmarkMarker, readBattery, type BatteryGuardConfig, type BatteryReading } from "./battery-guard.js";
 import { readMainConfigRaw, writeMainConfigRaw } from "./config.js";
+import { lowPowerActive, lowPowerFactor } from "./low-power.js";
 
 export interface Calibration {
   idlePctPerHour: number | null;
@@ -166,6 +167,10 @@ export interface PowerStatus {
   calibration: Calibration | null;
   thresholds: GateThresholds | null;
   minutesToResume: number | null;
+  /** macOS Low Power Mode right now (pmset "powermode 1"). */
+  lowPower?: boolean;
+  /** The worker-limit stretch factor (workers.lowPower.factor). */
+  lowPowerFactor?: number;
 }
 
 export async function powerStatus(deps: Pick<GateDeps, "read">, path?: string): Promise<PowerStatus> {
@@ -173,7 +178,15 @@ export async function powerStatus(deps: Pick<GateDeps, "read">, path?: string): 
   const reading = await deps.read();
   const thresholds = gateThresholds(cfg);
   const held = keepAboveReason(reading, thresholds) !== null;
-  return { reading, cfg, calibration, thresholds, minutesToResume: held && thresholds ? minutesToResume(reading, thresholds.resume, calibration) : null };
+  return {
+    reading,
+    cfg,
+    calibration,
+    thresholds,
+    minutesToResume: held && thresholds ? minutesToResume(reading, thresholds.resume, calibration) : null,
+    lowPower: await lowPowerActive(),
+    lowPowerFactor: lowPowerFactor(path),
+  };
 }
 
 export function powerStatusLines(s: PowerStatus): string[] {
@@ -186,5 +199,8 @@ export function powerStatusLines(s: PowerStatus): string[] {
     `guard: ${s.cfg.enabled ? "on" : "off"}; pause below ${s.cfg.pauseBelowPct} % (resume above ${s.cfg.pauseBelowPct + s.cfg.hysteresisPct} %), stop below ${s.cfg.stopBelowPct} %`,
     `keep-above: ${s.thresholds ? `${s.thresholds.keep} % (resume at ${s.thresholds.resume} %)${held ? ` — new local work waits${s.minutesToResume === null ? "" : `, about ${s.minutesToResume} min to resume`}` : " — open"}` : "off"}`,
     `calibration: idle ${rate(s.calibration?.idlePctPerHour)}, load ${rate(s.calibration?.loadPctPerHour)}${s.calibration ? ` (measured ${s.calibration.measuredAt})` : ""}`,
+    ...(s.lowPower !== undefined
+      ? [`low power: ${s.lowPower ? `on — worker limits stretch x${s.lowPowerFactor ?? 1}` : `off (factor ${s.lowPowerFactor ?? 1})`}`]
+      : []),
   ];
 }

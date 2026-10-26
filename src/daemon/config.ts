@@ -285,6 +285,11 @@ export interface PaiDaemonConfig {
    * shipped file under `power.batteryGuard`.
    */
   power?: {
+    /** Low Power Mode stretch of worker time limits (src/daemon/low-power.ts). */
+    lowPower?: {
+      /** Minutes in Low Power Mode count as 1/factor minutes; 1 = off. Default 2. */
+      factor?: number;
+    };
     batteryGuard?: {
       /** Off = no sampling, no gate, no stops. */
       enabled?: boolean;

@@ -5,6 +5,7 @@
  * the child (SIGTERM, then SIGKILL after a grace period).
  */
 
+import { LOW_POWER_SAMPLE_SEC, lowPowerActive, lowPowerFactor } from "../daemon/low-power.js";
 import type { WorkerStatus } from "./status.js";
 
 export interface RunLimit {
@@ -19,6 +20,31 @@ export interface RunLimit {
 /** Slide a minutes-based limit by time spent waiting (queue); an absolute one stays. */
 export function extendLimit(limit: RunLimit, waitedMs: number): RunLimit {
   return limit.absolute || waitedMs <= 0 ? limit : { ...limit, deadlineAt: limit.deadlineAt + waitedMs };
+}
+
+/**
+ * Low Power Mode stretches a minutes-based deadline: while it is on, every
+ * tick adds the elapsed wall time minus the fraction it counts as (1/factor),
+ * so 30 min in low power at factor 2 push a 60-min deadline 15 min later. An
+ * absolute --deadline stays fixed: a wall-clock time is not stretched.
+ */
+export function stretchDeadline(
+  limit: RunLimit,
+  active: boolean,
+  factor: number,
+  elapsedMs: number,
+  now: number = Date.now()
+): RunLimit {
+  if (limit.absolute || !active || factor <= 1 || elapsedMs <= 0) return limit;
+  return { ...limit, deadlineAt: limit.deadlineAt + elapsedMs * (1 - 1 / factor), minutes: Math.max(1, Math.round((limit.deadlineAt + elapsedMs - now) / 60_000)) };
+}
+
+/** The deadline timer's low-power options; the live pmset/config readers are the default. */
+export interface LowPowerOpts {
+  /** Whether macOS is currently in Low Power Mode (cached, sampled ≤ once per 30 s). */
+  active?: () => Promise<boolean>;
+  /** The stretch factor (workers.lowPower.factor). */
+  factor?: () => number;
 }
 
 /** Local HH:MM → epoch ms: today, or tomorrow when already past. */
@@ -56,9 +82,13 @@ const pad = (n: number): string => String(n).padStart(2, "0");
 /** The one line injected into the worker's system prompt. */
 export function deadlinePromptLine(limit: RunLimit): string {
   const d = new Date(limit.deadlineAt);
+  const stretch = limit.absolute
+    ? ""
+    : " While macOS Low Power Mode is on this deadline moves later (minutes there count as 1/factor).";
   return (
     `Hard deadline ${pad(d.getHours())}:${pad(d.getMinutes())} (${limit.minutes} min). ` +
-    "Finish and report before it; at the deadline the run is stopped and whatever you have is salvaged."
+    "Finish and report before it; at the deadline the run is stopped and whatever you have is salvaged." +
+    stretch
   );
 }
 
@@ -97,16 +127,22 @@ export function armDeadline(
   graceMs: number = DEADLINE_GRACE_MS,
   /** ms the run spent blocked (build-gate waits) so far; they push the deadline out. Absolute limits ignore it. */
   blocked: () => number = () => 0,
-  now: () => number = Date.now
+  now: () => number = Date.now,
+  /** Low Power Mode stretch (minutes-based limits only); the live pmset/config readers by default. */
+  lp: LowPowerOpts = {}
 ): () => void {
   let kill: NodeJS.Timeout | null = null;
   let t: NodeJS.Timeout;
-  const left = (): number => limit.deadlineAt + (limit.absolute ? 0 : blocked()) - now();
+  let cur = limit;
+  /** Last stretch sample: wall ms and whether low power was on then. */
+  let lastAt = now();
+  let lastActive = false;
+  const left = (): number => cur.deadlineAt + (cur.absolute ? 0 : blocked()) - now();
   const arm = (): void => {
     t = setTimeout(fire, Math.max(0, left()));
   };
   const fire = (): void => {
-    // a wait in progress moved the deadline since the timer was set
+    // a wait or a low-power tick moved the deadline since the timer was set
     if (left() > 0) return arm();
     onFire();
     try {
@@ -125,9 +161,30 @@ export function armDeadline(
     }, graceMs);
     kill.unref();
   };
+  // one stretch tick: add elapsed*(1-1/factor) while low power is on; the
+  // cached lowPowerActive() samples at most once per 30 s
+  const tick = async (): Promise<void> => {
+    if (!cur.absolute) {
+      try {
+        const active = await (lp.active ?? lowPowerActive)();
+        const at = now();
+        if (active && lastActive) {
+          cur = stretchDeadline(cur, true, (lp.factor ?? lowPowerFactor)(), at - lastAt, at);
+        }
+        lastAt = at;
+        lastActive = active;
+      } catch {
+        /* a failing pmset or config read: no stretch */
+      }
+    }
+    if (left() > 0) arm();
+  };
   arm();
+  const timer = setInterval(() => void tick(), LOW_POWER_SAMPLE_SEC * 1000);
+  timer.unref();
   return () => {
     clearTimeout(t);
     if (kill) clearTimeout(kill);
+    clearInterval(timer);
   };
 }

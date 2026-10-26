@@ -9,6 +9,7 @@
  */
 
 import { deadlineLabel } from "./deadline.js";
+import { lowPowerFactor, lowPowerStretchActive } from "../daemon/low-power.js";
 import { activeText } from "./active-time.js";
 import { sessionOf } from "./capacity.js";
 import { ellipsize, queuedBarRow, queuedText, type QueuedFile } from "./capacity.js";
@@ -579,10 +580,12 @@ export function renderTable(
     const m = scanLine(s.findings);
     return m ? "  " + c(s.findings?.block ? "red" : "yellow", m) : "";
   };
+  // the stretch applies while low power is on and a run's limit is minutes-based
+  const lowPowerMark = lowPowerStretchActive() ? `  low power x${lowPowerFactor()}` : "";
   const timeMark = (s: WorkerStatus): string => {
     const l = deadlineLabel(s, now.getTime());
     const a = s.state === "running" ? activeText(s, now.getTime()) : null;
-    return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l + (a ? ` (${a})` : "")) : "";
+    return l ? "  " + c(l === "timed out" || l.startsWith("OVERDUE") ? "red" : "dim", l + (a ? ` (${a})` : "") + (l === "timed out" ? "" : lowPowerMark)) : "";
   };
 
   // engine controls: "paused" or a non-normal priority, only while set
