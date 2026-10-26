@@ -3,13 +3,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import { activeAntipattern, shippedAntipattern, getAntipattern, loadAntipatterns, resetAntipatternCache, validateAntipattern } from "./antipatterns.js";
-import { dispositionOf, parseLifecycle, type Lifecycle } from "./antipattern-lifecycle.js";
+import { dispositionOf, LAYERS, paramsForModel, parseLifecycle, perModelEntry, type Lifecycle } from "./antipattern-lifecycle.js";
 import { candidatesDir, excerptOf, firingsPath, outcomesPath, readFirings, readOutcomes, recordFiring, recordRunOutcomes, writeCandidate } from "./antipattern-log.js";
 import { recordLoopTelemetry } from "./loop-guard-telemetry.js";
 import { emptyLoopState, recordLoopResult, stepLoopGuard, type LoopState } from "./loop-guard.js";
 import { BUILTIN_RULES } from "./rules/builtin.generated.js";
+import { ruleLifecycle } from "./rules/load.js";
 import { unparsedCallDecision } from "../../../workers/run/unparsed-call.js";
 import { finaliseRun } from "../../../workers/run.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
@@ -67,8 +68,87 @@ describe("lifecycle fields", () => {
     // outside applies_to: a behaviour/quirk rule is recorded only (monitor), a baseline rule is off
     expect(dispositionOf({ ...base, layer: "behaviour", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("monitor");
     expect(dispositionOf({ ...base, layer: "quirk", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("monitor");
-    expect(dispositionOf({ ...base, layer: "baseline", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("off");
+    // a baseline rule ignores applies_to and stays as configured (it normally carries none)
+    expect(dispositionOf({ ...base, layer: "baseline", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("enforce");
     expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "glm-5" })).toBe("enforce");
+  });
+  it("layer defaults from the category and bad values are rejected", () => {
+    expect(parseLifecycle({ category: "tool-loop" })).toMatchObject({ layer: "behaviour" });
+    expect(parseLifecycle({ category: "final-text" })).toMatchObject({ layer: "behaviour" });
+    expect(parseLifecycle({ category: "paths" })).toMatchObject({ layer: "baseline" });
+    expect(parseLifecycle({ layer: "quirk" })).toMatchObject({ layer: "quirk" });
+    expect(parseLifecycle({ layer: "strict" })).toMatch(/layer/);
+    expect(parseLifecycle({ per_model: "x" })).toMatch(/per_model must be a mapping/);
+    expect(parseLifecycle({ per_model: { m: 3 } })).toMatch(/per_model m/);
+    expect(parseLifecycle({ per_model: { m: { mode: "dry" } } })).toMatch(/mode/);
+    // every shipped pattern carries its layer explicitly
+    for (const a of loadAntipatterns().filter((x) => x.source === "shipped")) {
+      expect(LAYERS.includes(a.layer)).toBe(true);
+      if (a.id === "mangled-var-folders-path") {
+        expect(a.layer).toBe("quirk");
+        expect(a.applies_to?.models).toEqual(["qwen3.8-flash-next-gyro-m", "qwen3.8-flash-next-gyro-l", "qwen3.8-flash-next-gyro-coder-l"]);
+      } else {
+        expect(a.applies_to).toBeUndefined();
+      }
+    }
+    for (const r of BUILTIN_RULES) expect(ruleLifecycle(r).layer).toBe("baseline");
+  });
+  it("disposition matrix: layer x in/out of applies_to scope", () => {
+    const base: Pick<Lifecycle, "status" | "mode" | "exceptions"> = { status: "stable", mode: "enforce", exceptions: [] };
+    const inScope = { PAI_WORKER_MODEL: "gyro-m" };
+    const outScope = { PAI_WORKER_MODEL: "other" };
+    const at = { models: ["gyro-m"] };
+    // a baseline rule with applies_to naming another model is likewise as configured
+    expect(dispositionOf({ ...base, layer: "baseline", applies_to: at }, "", outScope)).toBe("enforce");
+    for (const layer of ["baseline", "behaviour", "quirk"] as const) {
+      expect(dispositionOf({ ...base, layer }, "", inScope)).toBe("enforce");
+      expect(dispositionOf({ ...base, layer, mode: "monitor" }, "", inScope)).toBe("monitor");
+      // out of scope: behaviour/quirk are recorded only (monitor); a baseline rule ignores applies_to and stays as configured
+      expect(dispositionOf({ ...base, layer, applies_to: at }, "", outScope)).toBe(layer === "baseline" ? "enforce" : "monitor");
+      // a retired pattern is off everywhere
+      expect(dispositionOf({ ...base, layer, status: "deprecated" }, "", outScope)).toBe("off");
+      expect(dispositionOf({ ...base, layer, applies_to: at }, "", inScope)).toBe("enforce");
+      // out of scope by provider
+      expect(dispositionOf({ ...base, layer, applies_to: { providers: ["gyro"] } }, "", { PAI_WORKER_PROVIDER: "other" })).toBe(layer === "baseline" ? "enforce" : "monitor");
+    }
+  });
+  it("per_model: exact id beats a glob, the first glob wins, mode and params apply at evaluation time", () => {
+    const pm = { "gyro-*": { mode: "monitor" as const, params: { stop_at: 8 } }, "gyro-m": { mode: "enforce" as const } };
+    expect(perModelEntry(pm, "gyro-m")).toEqual({ mode: "enforce" });
+    expect(perModelEntry(pm, "gyro-l")).toEqual({ mode: "monitor", params: { stop_at: 8 } });
+    expect(perModelEntry(pm, "other")).toBeUndefined();
+    const lc: Pick<Lifecycle, "status" | "mode" | "exceptions" | "per_model"> = { status: "stable", mode: "enforce", exceptions: [], per_model: pm };
+    expect(dispositionOf(lc, "", { PAI_WORKER_MODEL: "gyro-l" })).toBe("monitor");
+    expect(dispositionOf(lc, "", { PAI_WORKER_MODEL: "gyro-m" })).toBe("enforce");
+    // a per_model off takes the pattern out entirely for that model
+    expect(dispositionOf({ ...lc, per_model: { "gyro-*": { mode: "off" as const } } }, "", { PAI_WORKER_MODEL: "gyro-l" })).toBe("off");
+    expect(paramsForModel({ note_at: 2, stop_at: 20 }, { per_model: pm }, "gyro-l")).toEqual({ note_at: 2, stop_at: 8 });
+    expect(paramsForModel({ note_at: 2, stop_at: 20 }, { per_model: pm }, "gyro-m")).toEqual({ note_at: 2, stop_at: 20 });
+    // the loop guard reads the per_model threshold for the model in the env
+    const prevModel = process.env.PAI_WORKER_MODEL;
+    process.env.PAI_WORKER_MODEL = "gyro-l";
+    try {
+      setParam("identical-write", "stop_at", "3", "tight for gyro", { model: "gyro-l" });
+      let state: LoopState = emptyLoopState();
+      let last = stepLoopGuard(state, "Write", { file_path: "g", content: "A" });
+      for (let i = 0; i < 2 && !last.stop; i++) {
+        state = last.state;
+        last = stepLoopGuard(state, "Write", { file_path: "g", content: "A" });
+      }
+      expect(last.stop).toBe(true);
+      // the same loop on another model keeps the shipped count
+      process.env.PAI_WORKER_MODEL = "other-model";
+      let s2: LoopState = emptyLoopState();
+      let l2 = stepLoopGuard(s2, "Write", { file_path: "g", content: "A" });
+      for (let i = 0; i < 2; i++) {
+        s2 = l2.state;
+        l2 = stepLoopGuard(s2, "Write", { file_path: "g", content: "A" });
+      }
+      expect(l2.stop).toBeUndefined();
+    } finally {
+      if (prevModel === undefined) delete process.env.PAI_WORKER_MODEL;
+      else process.env.PAI_WORKER_MODEL = prevModel;
+    }
   });
 });
 
@@ -373,6 +453,9 @@ describe("stats", () => {
     expect(rows.find((r) => r.id === "identical-write")!.flags).toEqual([]);
 
     expect(stats({ model: "qwen" }).map((r) => r.id)).toEqual(["growing-command"]);
+    // the layer column: shipped patterns carry theirs
+    expect(rows.find((r) => r.id === "revert")!.layer).toBe("behaviour");
+    expect(rows.find((r) => r.id === "git-reset-hard")!.layer).toBe("baseline");
     expect(stats({ sinceMs: 60_000 }).find((r) => r.id === "revert")!.count).toBe(6);
     expect(stats({ sinceMs: 1000, now: Date.now() + 3_600_000 }).find((r) => r.id === "revert")!.count).toBe(0);
   });
@@ -448,6 +531,33 @@ describe("set", () => {
     expect(g("log", "-1", "--format=%s").trim()).toMatch(/^config: antipatterns set identical-write stop_at=8/);
     expect(g("show", "--name-only", "--format=", "HEAD").trim().split("\n").sort()).toEqual(["antipatterns/governance.jsonl", "antipatterns/tool-loop/identical-write.yaml"]);
     expect(g("ls-files")).not.toContain("firings");
+  });
+  it("set --model writes per_model.<model>.params and the governance line carries the model", () => {
+    const r = setParam("identical-write", "stop_at", "8", "fired 11x on gyro-m", { model: "qwen3.8-flash-next-gyro-m" });
+    expect(r).toMatchObject({ from: 20, to: 8, version: 2 });
+    const doc = parse(readFileSync(userFile("tool-loop", "identical-write.yaml"), "utf8"));
+    expect(doc.per_model).toEqual({ "qwen3.8-flash-next-gyro-m": { params: { stop_at: 8 } } });
+    // the global detector params stay at the shipped value
+    expect(doc.detector.params.stop_at).toBe(20);
+    expect(activeAntipattern("identical-write").detector.params.stop_at).toBe(20);
+    expect(doc.changes).toEqual([{ date: doc.modified, param: "stop_at", from: 20, to: 8, reason: "fired 11x on gyro-m", model: "qwen3.8-flash-next-gyro-m" }]);
+    expect(govLines()).toEqual([expect.objectContaining({ action: "set", id: "identical-write", model: "qwen3.8-flash-next-gyro-m", param: "stop_at", from: 20, to: 8, reason: "fired 11x on gyro-m" })]);
+    // a second --model change on the same model keeps the entry and adds the param
+    setParam("identical-write", "note_at", "1", "warn early", { model: "qwen3.8-flash-next-gyro-m" });
+    expect(parse(readFileSync(userFile("tool-loop", "identical-write.yaml"), "utf8")).per_model).toEqual({ "qwen3.8-flash-next-gyro-m": { params: { stop_at: 8, note_at: 1 } } });
+  });
+  it("a user override's per_model entry replaces the shipped entry for the same key", () => {
+    mkdirSync(userFile("tool-loop"), { recursive: true });
+    const shippedDoc = parse(readFileSync("antipatterns/tool-loop/identical-write.yaml", "utf8"));
+    writeFileSync(
+      userFile("tool-loop", "identical-write.yaml"),
+      stringify({ ...shippedDoc, per_model: { "gyro-*": { mode: "monitor", params: { stop_at: 4 } }, "gyro-coder-*": { params: { stop_at: 99 } } } }),
+    );
+    resetAntipatternCache();
+    const a = getAntipattern("identical-write")!;
+    expect(a.per_model).toEqual({ "gyro-*": { mode: "monitor", params: { stop_at: 4 } }, "gyro-coder-*": { params: { stop_at: 99 } } });
+    expect(dispositionOf(a, "", { PAI_WORKER_MODEL: "gyro-m" })).toBe("monitor");
+    expect(paramsForModel(a.detector.params, a, "gyro-m")).toMatchObject({ stop_at: 4 });
   });
   it("enforce, monitor and retire write governance lines", () => {
     setMode("revert", "monitor");

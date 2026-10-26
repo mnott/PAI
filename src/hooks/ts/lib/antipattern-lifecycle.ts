@@ -157,18 +157,19 @@ export function perModelEntry(per_model: Lifecycle["per_model"], model: string):
 
 /**
  * What a firing means right now: `enforce` acts, `monitor` is recorded only, `off` is neither (deprecated, an unexpired
- * exception matching the input, or a quirk rule's applies_to excluding this provider/model). Outside a quirk rule's
- * applies_to the firing is only recorded (monitor); a baseline rule ignores applies_to and stays as configured.
+ * exception matching the input). Outside a behaviour/quirk rule's applies_to the firing is only recorded (monitor);
+ * a baseline rule ignores applies_to and stays as configured.
  * A per_model entry for the current model overrides the mode.
  */
 export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "exceptions" | "applies_to" | "layer" | "per_model">, input = "", env: NodeJS.ProcessEnv = process.env, now = Date.now()): Disposition {
   if (lc.status === "deprecated") return "off";
   const model = modelOf(env);
-  const at = lc.applies_to;
-  let inScope = true;
-  if (at?.providers?.length && !at.providers.includes(env.PAI_WORKER_PROVIDER ?? "session")) inScope = false;
-  if (at?.models?.length && !at.models.some((m) => globMatch(m, model))) inScope = false;
-  if (!inScope) return lc.layer === "baseline" ? "off" : "monitor";
+  if (lc.layer !== "baseline") {
+    // a behaviour/quirk rule outside its applies_to is recorded only; a baseline rule ignores applies_to and stays as configured
+    const at = lc.applies_to;
+    if (at?.providers?.length && !at.providers.includes(env.PAI_WORKER_PROVIDER ?? "session")) return "monitor";
+    if (at?.models?.length && !at.models.some((m) => globMatch(m, model))) return "monitor";
+  }
   const entry = perModelEntry(lc.per_model, model);
   if (entry?.mode) return entry.mode;
   for (const e of lc.exceptions) {
