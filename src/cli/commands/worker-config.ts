@@ -87,7 +87,7 @@ import { installWorkers } from "../../workers/install.js";
 import { describeMcp } from "../../workers/mcp.js";
 import { clickrControlsArgv, markControlsHeld } from "../../workers/controls.js";
 import { loadStatus } from "../../workers/status.js";
-import { applyPriority } from "../../workers/preempt.js";
+import { setWorkerPriority } from "../../workers/engine-control.js";
 import { proxyPort, ensureProxyRunning, stopProxy } from "../../workers/proxy/server.js";
 import { CliError, type CommandDef, type Io, type OptDef, type RunContext } from "../define.js";
 import { dim, err, ok, warn } from "../lib/utils.js";
@@ -1444,13 +1444,12 @@ export const workerPriorityCommand: CommandDef = {
   summary: "Priority of a worker at the local engine, and of a session in the queue",
   description:
     "`pai worker priority <id> <level>` changes a running worker's priority live (high, normal, low): at a serial local engine the router admits high before normal before low, FIFO inside a level, and reads the level at every request, so the change applies to the next one. Nothing running is interrupted.\n" +
-    "`now` makes the worker urgent like `pai worker run --now`: a queued one goes to the front of the queue and, once admitted, pauses the other local workers on its engine; a running one pauses them at once and its requests go first. They resume when it ends (or on any other level).\n" +
     "`list|set|clear` edit workers.yaml `workers.priority.sessions`: the queue priority of every run a named session starts. " +
     "When a provider is full, queued runs are admitted high before normal before low; running workers are never preempted. " +
     "Without arguments, lists the session entries.",
   args: [
     { name: "ID", summary: "Worker id (see `pai worker ps`)" },
-    { name: "LEVEL", summary: "high, normal, low or now" },
+    { name: "LEVEL", summary: "high, normal or low" },
   ],
   examples: ["pai worker priority w-20260101-abc low", "pai worker priority", "pai worker priority set Jobs high", "pai worker priority clear Jobs"],
   seeAlso: ["pai worker pause", "pai worker queue", "pai worker run"],
@@ -1459,10 +1458,10 @@ export const workerPriorityCommand: CommandDef = {
     const id = ctx.args.ID as string | undefined;
     if (id === undefined) return priorityListCommand.run!(ctx, io);
     try {
-      if (ctx.args.LEVEL === undefined) throw new WorkersConfigError("usage: pai worker priority <id> <high|normal|low|now>");
-      const level = ctx.args.LEVEL === "now" ? "now" : parseQueuePriority(ctx.args.LEVEL as string);
-      const { from, paused } = applyPriority(workersLogDir(readWorkersSection().workers), id, level);
-      out(ok(`${id}: ${from} -> ${level} (applies to its next engine request)${paused.length ? `; paused ${paused.join(", ")}` : ""}`));
+      if (ctx.args.LEVEL === undefined) throw new WorkersConfigError("usage: pai worker priority <id> <high|normal|low>");
+      const level = parseQueuePriority(ctx.args.LEVEL as string);
+      const from = setWorkerPriority(workersLogDir(readWorkersSection().workers), id, level);
+      out(ok(`${id}: ${from} -> ${level} (applies to its next engine request)`));
     } catch (e) {
       fail(e, "pai worker priority");
     }

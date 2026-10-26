@@ -97,7 +97,6 @@ import {
 } from "../workers/providers.js";
 import { testProvider, runWorker } from "../workers/run.js";
 import { probeLoopback } from "../workers/local-provider.js";
-import { applyUrgency, readUrgency } from "../workers/urgency.js";
 import { resolveTarget, withTarget } from "../workers/target.js";
 import { CONFIG_FILE } from "../daemon/config.js";
 import { fallbackOn, fallbackOff, fallbackStatus, fallbackStatusText } from "../workers/fallback.js";
@@ -105,8 +104,7 @@ import { runChain } from "../workers/chain.js";
 import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.js";
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
-import { setWorkerPaused } from "../workers/engine-control.js";
-import { applyPriority } from "../workers/preempt.js";
+import { setWorkerPaused, setWorkerPriority } from "../workers/engine-control.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../workers/scheduler.js";
 import { providerCaps } from "../cli/commands/worker.js";
@@ -1423,13 +1421,6 @@ async function startShim(): Promise<void> {
         const idArrived = new Promise<string>((resolve) => {
           startedIdResolve = resolve;
         });
-        // no where/now arguments here: the operator's urgency window (urgency.ts) is the only way to ask for them
-        const urgent = readUrgency() ? await resolveTarget(applyUrgency({}, false)) : undefined;
-        const urgentRun = {
-          ...(urgent?.provider ? { providerFlag: urgent.provider } : {}),
-          ...(urgent?.model ? { modelFlag: urgent.model } : {}),
-          ...(urgent?.priority ? { priority: urgent.priority } : {}),
-        };
         const background = async (): Promise<number> => {
           if (args.chain) {
             return runChain({
@@ -1448,7 +1439,6 @@ async function startShim(): Promise<void> {
             });
           }
           return runWorker({
-            ...urgentRun,
             className: args.class,
             capabilityFlag: args.capability,
             label: args.label,
@@ -1790,19 +1780,18 @@ async function startShim(): Promise<void> {
   server.tool(
     "worker_priority",
     [
-      "Change a worker's priority (high, normal, low, now) at the local engine.",
+      "Change a RUNNING worker's priority (high, normal, low) at the local engine.",
       "",
       "The router admits high before normal before low at a serial engine and reads the level at every request, so the change applies to the worker's next request. Nothing is interrupted.",
-      "Level \"now\": a queued worker goes to the front and, once admitted, pauses the other local workers on its engine (as --now does); a running one pauses them at once. They resume when it ends.",
     ].join("\n"),
     {
       id: z.string().describe("Worker id (as shown by worker_ps)."),
-      level: z.enum(["high", "normal", "low", "now"]).describe("The new priority."),
+      level: z.enum(["high", "normal", "low"]).describe("The new priority."),
     },
     async (args) => {
       try {
-        const { from, paused } = applyPriority(workersLogDir(readWorkersSection().workers), args.id, args.level, "mcp");
-        return workerText(`${args.id}: ${from} -> ${args.level}${paused.length ? ` (paused ${paused.join(", ")})` : ""}`);
+        const from = setWorkerPriority(workersLogDir(readWorkersSection().workers), args.id, args.level, "mcp");
+        return workerText(`${args.id}: ${from} -> ${args.level}`);
       } catch (e) {
         return workerError(e);
       }

@@ -587,7 +587,7 @@ export function renderTable(
 
   // engine controls: "paused" or a non-normal priority, only while set
   const engineMark = (s: WorkerStatus): string => {
-    const m = [s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? "now priority" : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    const m = [s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
     return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
   };
 
@@ -602,7 +602,7 @@ export function renderTable(
       const pos = cap?.held !== undefined
         ? `held: ${cap.held}, position ${cap.position} of ${cap.queued ?? cap.total}`
         : cap
-        ? `position ${cap.position} of ${cap.total}, cap ${cap.cap}${s.now ? ", now priority" : cap.priority ? `, ${cap.priority} priority` : ""}`
+        ? `position ${cap.position} of ${cap.total}, cap ${cap.cap}${cap.priority ? `, ${cap.priority} priority` : ""}`
         : `waiting for a ${s.provider} slot`;
       lines.push(
         `  ${c("cyan", s.id)} ${provTag(s)} ${c("yellow", pos)}  waited ${elapsedOf(s.started, now)}`

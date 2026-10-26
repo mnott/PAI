@@ -83,19 +83,6 @@ export const CONTINUE_NOTE = "The operator says continue: resume the task where 
 /** The pause reason the worker guard answers with. */
 export const PAUSE_DENY = "paused by the operator — answer, then wait for /continue";
 
-/** The pause reason for a worker the router parked because a --now run preempted it: not the operator's pause, nothing to answer or wait for. */
-export const preemptDeny = (by: string): string => `paused: preempted by ${by}, resumes automatically`;
-
-/** Who preempted the worker, when its pause is a preemption (status file). */
-export function workerPreemptedBy(logDir: string, id: string): string | undefined {
-  try {
-    const s = JSON.parse(readFileSync(statusPath(logDir, id), "utf8")) as { paused?: boolean; pausedBy?: string };
-    return s.paused === true && s.pausedBy ? s.pausedBy : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * The worker's pause, read straight from its status file (the pane bar and the worker guard share it):
  * `pai worker pause|resume` and /pause|/continue write it, the guard reads it per tool call.
