@@ -1,5 +1,6 @@
 # git reset --hard throws away uncommitted work.
 id: git-reset-hard
+layer: baseline
 status: stable
 mode: enforce
 version: 1

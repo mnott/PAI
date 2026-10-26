@@ -15,7 +15,7 @@ import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
 import { commitHomeChange } from "../config/home-git.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { CATEGORIES, loadAntipatterns, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
-import { lifecycleDoc, type Lifecycle, type Mode, type ProxyMode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
+import { lifecycleDoc, type Layer, type Lifecycle, type Mode, type ProxyMode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
 import { candidatesDir, labelsPath, readFirings, readFiringsResolved, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
 import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import { allRuleDirs, listRules, projectRuleDirs, ruleLifecycle, userAntipatternShellDir } from "../hooks/ts/lib/rules/load.js";
@@ -23,6 +23,9 @@ import type { LoadedRule } from "../hooks/ts/lib/rules/types.js";
 
 const DAY = 86_400_000;
 const today = (now = Date.now()): string => new Date(now).toISOString().slice(0, 10);
+
+/** The rule layer of a pattern with no explicit `layer` (a user file may omit it). */
+export const layerOf = (category: string): Layer => (category === "shell" || category === "paths" ? "baseline" : "behaviour");
 
 /** One pattern, shell or not, with its lifecycle. */
 export interface Entry extends Lifecycle {
@@ -45,8 +48,10 @@ export function allEntries(cwd = process.cwd()): Entry[] {
   const { rules } = listRules(allRuleDirs(cwd), { projectDirs: projectRuleDirs(cwd) });
   for (const r of rules) {
     if (r.severity === "off" && !r.reason) continue;
+    const lc = ruleLifecycle(r);
     out.push({
-      ...ruleLifecycle(r),
+      ...lc,
+      layer: r.layer ?? layerOf("shell"),
       id: r.id,
       category: "shell",
       action: r.severity,
@@ -57,7 +62,7 @@ export function allEntries(cwd = process.cwd()): Entry[] {
     });
   }
   for (const a of loadAntipatterns()) {
-    out.push({ ...a, action: a.action, kind: "pattern", fixtures: a.tests });
+    out.push({ ...a, layer: a.layer ?? layerOf(a.category), action: a.action, kind: "pattern", fixtures: a.tests });
   }
   return out;
 }
@@ -76,6 +81,7 @@ export function parseSince(s: string): number {
 export interface PatternStats {
   id: string;
   category: string;
+  layer: string;
   status: string;
   mode: string;
   count: number;
@@ -124,6 +130,7 @@ export function stats(o: { sinceMs?: number; model?: string; source?: "hook" | "
     const row: PatternStats = {
       id,
       category: e?.category ?? all[0]?.category ?? "?",
+      layer: e?.layer ?? layerOf(e?.category ?? all[0]?.category ?? ""),
       status: e?.status ?? "unknown",
       mode: e?.mode ?? "?",
       count: win.length,
@@ -336,29 +343,34 @@ function parseValue(v: unknown): unknown {
 
 const kindOf = (v: unknown): string => (Array.isArray(v) ? "list" : typeof v);
 
-/** Change one detector parameter of a non-shell pattern in the user override (a full copy on first use). */
-export function setParam(id: string, param: string, value: unknown, reason: string, o: { now?: number } = {}): { path: string; from: unknown; to: unknown; version: number } {
+/**
+ * Change one detector parameter of a non-shell pattern in the user override (a full copy on first use).
+ * With `model` the value goes to per_model.<model>.params.<param> instead of the global detector params.
+ */
+export function setParam(id: string, param: string, value: unknown, reason: string, o: { now?: number; model?: string } = {}): { path: string; from: unknown; to: unknown; version: number } {
   if (!reason || !reason.trim()) throw new Error("--reason is required");
   const a = loadAntipatterns().find((x) => x.id === id);
   if (!a) throw new Error(`unknown pattern ${id}: set works on detector patterns (see: pai antipatterns list; shell rules have no parameters)`);
   const params = a.detector.params;
   const valid = Object.keys(params);
   if (!(param in params)) throw new Error(`${id} has no param ${param}; valid params: ${valid.join(", ") || "(none)"}`);
-  const from = params[param];
   const to = parseValue(value);
-  if (kindOf(to) !== kindOf(from)) throw new Error(`param ${param} of ${id} is a ${kindOf(from)} (now ${JSON.stringify(from)}), not a ${kindOf(to)}`);
+  if (kindOf(to) !== kindOf(params[param])) throw new Error(`param ${param} of ${id} is a ${kindOf(params[param])} (now ${JSON.stringify(params[param])}), not a ${kindOf(to)}`);
   const date = today(o.now);
   const { doc, path } = entryDoc(allEntries().find((x) => x.id === id && x.kind === "pattern") as Entry, process.cwd());
-  const changes = [...(a.changes ?? []), { date, param, from, to, reason }];
-  const next = { ...doc, version: a.version + 1, modified: date, detector: { ...a.detector, params: { ...params, [param]: to } }, changes };
+  const changes = [...(a.changes ?? []), { date, param, from: params[param], to, reason, ...(o.model ? { model: o.model } : {}) }];
+  const perModel = (doc.per_model ?? {}) as Record<string, { params?: Record<string, unknown> }>;
+  const next = o.model
+    ? { ...doc, version: a.version + 1, modified: date, per_model: { ...perModel, [o.model]: { ...perModel[o.model], params: { ...(perModel[o.model]?.params ?? {}), [param]: to } } }, changes }
+    : { ...doc, version: a.version + 1, modified: date, detector: { ...a.detector, params: { ...params, [param]: to } }, changes };
   const bad = validateAntipattern(next, a.category, path);
   if (typeof bad === "string") throw new Error(`${param}=${JSON.stringify(to)} is not valid for ${id}: ${bad}`);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, stringify(next));
   resetAntipatternCache();
-  recordGovernance({ action: "set", id, param, from, to, reason }, o.now);
-  commitHomeChange([path, governancePath()], `antipatterns set ${id} ${param}=${JSON.stringify(to)}`);
-  return { path, from, to, version: a.version + 1 };
+  recordGovernance({ action: "set", id, ...(o.model ? { model: o.model } : {}), param, from: params[param], to, reason }, o.now);
+  commitHomeChange([path, governancePath()], `antipatterns set ${id} ${param}=${JSON.stringify(to)}${o.model ? ` model=${o.model}` : ""}`);
+  return { path, from: params[param], to, version: a.version + 1 };
 }
 
 // ---------------------------------------------------------------------------

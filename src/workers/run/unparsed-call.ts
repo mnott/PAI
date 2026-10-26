@@ -47,6 +47,6 @@ export function unparsedCallDecision(text: string | undefined): { name: string; 
   const name = unparsedToolCall(text);
   if (!name) return null;
   const ap = activeAntipattern("unparsed-tool-call");
-  const mode = dispositionOf(ap, text ?? "");
+  const mode = dispositionOf(ap, text ?? "", process.env);
   return mode === "off" ? null : { name, mode, version: ap.version };
 }

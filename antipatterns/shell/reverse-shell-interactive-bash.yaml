@@ -1,5 +1,6 @@
 # Interactive bash with its output redirected into a device or file.
 id: reverse-shell-interactive-bash
+layer: baseline
 status: stable
 mode: enforce
 version: 1

@@ -4,6 +4,7 @@
 # A Bash call that only writes files (`cat > f <<EOF`, `> f`, `tee f`) counts as a write of f and
 # brings no new information, so it does not reset the count.
 id: distinct-rewrites
+layer: behaviour
 status: stable
 mode: enforce
 version: 2

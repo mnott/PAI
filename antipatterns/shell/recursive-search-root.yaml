@@ -3,6 +3,7 @@
 # (find / at load 200, 2026-10-14). Deeper paths and mdfind (an index) are fine.
 # The `.`/no-path form under a cd to the home directory is caught in worker-guard.ts.
 id: recursive-search-root
+layer: baseline
 status: stable
 mode: enforce
 version: 1

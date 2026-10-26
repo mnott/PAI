@@ -43,7 +43,7 @@ export const antipatternsCommand: CommandDef = {
       examples: ["pai antipatterns list --category tool-loop"],
       run: (ctx) => {
         const rows = listPatterns({ category: ctx.opts.category as string | undefined, status: ctx.opts.status as string | undefined });
-        return show(ctx, rows, () => renderTable(["id", "category", "status", "mode", "v", "action", "source"], rows.map((e) => [e.id, e.category, e.status, e.mode, String(e.version), e.action, e.source])));
+        return show(ctx, rows, () => renderTable(["id", "category", "layer", "status", "mode", "v", "action", "source"], rows.map((e) => [e.id, e.category, e.layer, e.status, e.mode, String(e.version), e.action, e.source])));
       },
     },
     {
@@ -127,10 +127,11 @@ export const antipatternsCommand: CommandDef = {
       description:
         "Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), or sets the `proxy` field " +
         "(enforce | monitor | off: whether the pattern acts on the model-API proxy; enforce rewrites a denied tool call at the router). " +
-        "bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.",
+        "bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. With --model the value goes to per_model.<model>.params.PARAM " +
+        "and applies only to that model; without it the global param changes. Unknown params and type mismatches are refused. Takes effect without a restart.",
       args: [ID, { name: "PARAM", summary: "Detector parameter (or `proxy`), e.g. stop_at", required: true }, { name: "VALUE", summary: "New value", required: true }],
-      options: [{ name: "reason", type: "string", value: "TEXT", summary: "Why (required)" }],
-      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'", "pai antipatterns set git-reset-hard proxy enforce --reason 'protect Joule behind the router'"],
+      options: [{ name: "reason", type: "string", value: "TEXT", summary: "Why (required)" }, { name: "model", type: "string", value: "ID", summary: "Scope the change to this model (per_model entry) instead of the global param" }],
+      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'", "pai antipatterns set identical-write stop_at 8 --model qwen3.8-flash-next-gyro-m --reason 'fired 11x on gyro-m'", "pai antipatterns set git-reset-hard proxy enforce --reason 'protect Joule behind the router'"],
       run: (ctx) => {
         if (ctx.args.PARAM === "proxy") {
           const v = String(ctx.args.VALUE);
@@ -139,8 +140,8 @@ export const antipatternsCommand: CommandDef = {
           console.log(`proxy: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
           return 0;
         }
-        const r = wrap(() => setParam(ctx.args.ID as string, ctx.args.PARAM as string, ctx.args.VALUE as string, (ctx.opts.reason as string | undefined) ?? ""));
-        console.log(`${ctx.args.PARAM}: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
+        const r = wrap(() => setParam(ctx.args.ID as string, ctx.args.PARAM as string, ctx.args.VALUE as string, (ctx.opts.reason as string | undefined) ?? "", { model: ctx.opts.model as string | undefined }));
+        console.log(`${ctx.opts.model ? `${ctx.opts.model}: ` : ""}${ctx.args.PARAM}: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
         return 0;
       },
     },

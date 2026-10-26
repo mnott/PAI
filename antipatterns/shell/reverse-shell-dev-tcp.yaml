@@ -2,6 +2,7 @@
 # or exec into the device counts (>& > <> < &>, exec 3<>, bash -i); text that
 # merely names the path (an echo, a commit message) does not.
 id: reverse-shell-dev-tcp
+layer: baseline
 status: stable
 mode: enforce
 version: 1

@@ -1,5 +1,6 @@
 # Installing a crontab persists a scheduled command.
 id: crontab-persistence
+layer: baseline
 status: stable
 mode: enforce
 version: 1

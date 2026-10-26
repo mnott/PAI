@@ -3,6 +3,7 @@
 # signal is the streak itself, far above what one task needs. Notes at note_at, stops at stop_at
 # (both tunable with `pai antipatterns set`). A Bash call that only writes files counts as a Write.
 id: runaway-new-files
+layer: behaviour
 status: stable
 mode: enforce
 version: 1

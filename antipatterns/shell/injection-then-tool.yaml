@@ -2,6 +2,7 @@
 # override, and a shell call follows within the window — the injection had a
 # chance to act.
 id: injection-then-tool
+layer: baseline
 status: stable
 mode: enforce
 version: 1

@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   if (pathFix?.kind === "deny") {
     const path = String(fixed.tool_input?.file_path);
     const ap = activeAntipattern("does-not-exist");
-    const disp = dispositionOf(ap, path);
+    const disp = dispositionOf(ap, path, process.env);
     if (disp !== "off") recordFiring({ id: ap.id, version: ap.version, category: ap.category, action: "deny", mode: disp, input: path, cwd: input.cwd });
     // monitor mode records the firing and lets the call through
     if (disp === "enforce") {

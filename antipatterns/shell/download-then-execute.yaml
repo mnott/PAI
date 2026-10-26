@@ -1,6 +1,7 @@
 # Two-step, strict order: a file is downloaded, then the same file is made
 # executable or run. Downloading is fine; running what was just fetched is not.
 id: download-then-execute
+layer: baseline
 status: stable
 mode: enforce
 version: 1

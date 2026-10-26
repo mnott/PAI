@@ -1,5 +1,6 @@
 # Recursive deletion of the current directory or everything in it.
 id: rm-recursive-relative
+layer: baseline
 status: stable
 mode: enforce
 version: 1

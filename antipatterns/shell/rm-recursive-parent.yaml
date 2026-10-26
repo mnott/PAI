@@ -1,5 +1,6 @@
 # Recursive deletion of the parent directory.
 id: rm-recursive-parent
+layer: baseline
 status: stable
 mode: enforce
 version: 1

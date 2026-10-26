@@ -2,6 +2,7 @@
 # between. Every path is distinct, so the repeat-based guards never fire and the does-not-exist
 # rule only denies each call. Any other tool call, or a Read of a path that exists, resets the count.
 id: missing-path-streak
+layer: behaviour
 status: stable
 mode: enforce
 version: 1

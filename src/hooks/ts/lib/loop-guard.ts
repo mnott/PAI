@@ -25,16 +25,17 @@ import { dropHeredocBodies } from "./heredoc.js";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
-import { dispositionOf } from "./antipattern-lifecycle.js";
+import { dispositionOf, modelOf, paramsForModel } from "./antipattern-lifecycle.js";
 import { ledgerResult, ledgerStep, type FailLedgerState } from "./fail-ledger.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 // Thresholds and message texts live in antipatterns/tool-loop/*.yaml (user overrides in PAI_HOME/antipatterns).
 // The exported constants are the shipped values; the step functions read the active pattern on every call.
 const shipped = (id: string, key: string): number => shippedAntipattern(id).detector.params[key] as number;
+// per_model entries tune thresholds for one model (or a glob) at evaluation time, without touching the file's global params.
 const live = (id: string): { params: Record<string, unknown>; message: string } => {
   const ap = activeAntipattern(id);
-  return { params: ap.detector.params, message: ap.message };
+  return { params: paramsForModel(ap.detector.params, ap, modelOf()), message: ap.message };
 };
 export const LOOP_MAX_REPEATS = shipped("growing-command", "max_repeats");
 /** Identical writes of one file (same bytes) after which the write is denied and the session stopped; a rewrite costs nothing, so only a runaway loop trips it. */

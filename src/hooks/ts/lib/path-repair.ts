@@ -237,14 +237,16 @@ export function repairMangledScratch(
   const re = new RegExp(String(ap.detector.params.from));
   const m = re.exec(value);
   if (!m) return null;
-  const disp = dispositionOf(ap, value);
+  // a quirk rule outside its applies_to still repairs (a mangled path is wrong on any model); only the firing records the miss
+  const disp = dispositionOf(ap, value, env);
   if (disp === "off") return null;
+  const acts = disp === "enforce";
   const scratch = m[0].replace(re, String(ap.detector.params.to));
   const to = value.replace(re, String(ap.detector.params.to));
   const vars = { from: value, to };
   const fixable = ap.detector.params.only_if_target_dir_exists !== true || exists(scratch.replace(/\/+$/, ""));
-  record({ id: ap.id, version: ap.version, category: ap.category, action: fixable ? "note" : "deny", mode: disp, input: value, cwd: input.cwd });
-  if (disp !== "enforce") return null;
+  record({ id: ap.id, version: ap.version, category: ap.category, action: fixable ? "note" : "deny", mode: disp, input: value, cwd: input.cwd, env });
+  if (!acts) return null;
   if (!fixable) return renderDeny(fillMessage(String(ap.detector.params.deny_message), vars));
   const repair: PathRepair = { old: value, new: to, updatedInput: { ...input.tool_input, [spec.key]: to }, ...(input.tool_name === "Write" ? { create: true } : {}) };
   return renderRepair(repair, input.tool_name);
