@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import http from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRouter } from "./router.js";
@@ -44,7 +43,6 @@ afterEach(() => {
 });
 
 async function run(body: string, mode: "off" | "monitor" | "enforce", deps?: ProxyGuardDeps, req: object = { model: "gyro-m", stream: true, messages: [{ role: "user", content: "hi" }] }, ct = "text/event-stream"): Promise<string> {
-  process.env.PAI_PROXY_GUARD = mode; // deterministic across parallel test files sharing one process
   const up = http.createServer((_q, s) => {
     s.writeHead(200, { "content-type": ct });
     s.end(body);
@@ -114,7 +112,7 @@ describe("router proxy guard (monitor)", () => {
 const overrideFile = (id: string, proxy: string): void => {
   const dir = join(home, "antipatterns", "shell");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${id}.yaml`), `id: ${id}\nmode: enforce\nproxy: ${proxy}\nseverity: confirm\nmatch: "^\\\\\\\\\\\\\\\\s*git\\\\\\\\\\\\\\\\s+reset\\\\\\\\\\\\\\\\s+--hard"\nreason: test override\n`);
+  writeFileSync(join(dir, `${id}.yaml`), `id: ${id}\nmode: enforce\nproxy: ${proxy}\nseverity: confirm\nmatch: '^\\s*git\\s+reset\\s+--hard'\nreason: test override\n`);
 };
 
 /** The client-side parser: the same SSE shape a Messages client reads. */
@@ -212,14 +210,11 @@ describe("router proxy guard (enforce)", () => {
   });
 
   it("a user override proxy: off records nothing in enforce mode", async () => {
-    const dir = join(home, "antipatterns", "shell");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "git-reset-hard.yaml"), `id: git-reset-hard\nmode: enforce\nproxy: off\nseverity: confirm\nmatch: "^\\\\\\\\\\\\\\\\s*git\\\\\\\\\\\\\\\\s+reset\\\\\\\\\\\\\\\\s+--hard"\nreason: test override\n`);
+    overrideFile("git-reset-hard", "off");
     const body = toolStream("git reset --hard HEAD~1");
-    const before = readFirings().length;
     expect(await run(body, "enforce")).toBe(body);
     expect(readFirings().filter((f) => f.id === "git-reset-hard").length).toBe(0);
-    expect(readFirings().length).toBe(before);
+    expect(readFirings().filter((f) => f.category === "shell").length).toBe(0); // the loop guard may note a repeated command; the shell rule must not
   });
 
   it("counts rise across modes: monitor then enforce both record", async () => {

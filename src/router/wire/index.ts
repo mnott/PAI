@@ -56,7 +56,7 @@ class MessagesGuard extends Transform {
       const h = this.held.get(i);
       if (!h) return msg + sep;
       this.held.delete(i);
-      const block = h.events.join("");
+      const block = h.events.join("") + msg + sep;
       if (this.stoppedTurn) return this.replace(i, blockText({ action: "stop", patternId: "guard", message: "the turn was stopped by the PAI guard" }));
       let input: unknown;
       try {
