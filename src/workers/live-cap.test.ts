@@ -79,7 +79,8 @@ describe("readWorkersCached follows the config files", () => {
   beforeAll(() => {
     home = mkdtempSync(join(tmpdir(), "live-cap-home-"));
     process.env.HOME = home;
-    process.env.PAI_HOME = home;
+    // A PAI_HOME equal to HOME makes ~/.pai/<x> look like an old location of <home>/<x>.
+    process.env.PAI_HOME = join(home, "pai-home");
     process.env.PAI_CONFIG_FILE = join(home, "config.yaml");
     process.env.PAI_WORKERS_YAML = join(home, "workers.yaml");
     writeFileSync(process.env.PAI_CONFIG_FILE, "{}\n");

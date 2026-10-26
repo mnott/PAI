@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import BetterSqlite3 from "better-sqlite3";
 import {
   paiHomePath,
+  isUnderDefaultPaiHome,
   migratePaiFile,
   PaiFileMigrationError,
   type MigrateFileResult,
@@ -128,7 +129,7 @@ export function migrateRegistryDbFile(dryRun: boolean): MigrateFileResult {
   const oldPath = oldRegistryPath();
   const newPath = paiHomePath("registry.db");
 
-  if (!existsSync(oldPath) || dryRun) {
+  if (isUnderDefaultPaiHome(oldPath) || !existsSync(oldPath) || dryRun) {
     return migratePaiFile(newPath, [oldPath], { dryRun });
   }
 
@@ -165,12 +166,12 @@ export function migrateFederationDbFile(dryRun: boolean): MigrateFileResult {
   const oldPath = oldFederationPath();
   const newPath = paiHomePath("federation.db");
 
-  if (!dryRun && existsSync(newPath) && existsSync(oldPath) && statSync(newPath).size === 0) {
+  if (!dryRun && !isUnderDefaultPaiHome(oldPath) && existsSync(newPath) && existsSync(oldPath) && statSync(newPath).size === 0) {
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     renameSync(newPath, `${newPath}.empty-orphan-${stamp}`);
   }
 
-  if (!existsSync(oldPath) || dryRun) {
+  if (isUnderDefaultPaiHome(oldPath) || !existsSync(oldPath) || dryRun) {
     return migratePaiFile(newPath, [oldPath], { dryRun });
   }
 
