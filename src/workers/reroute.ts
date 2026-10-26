@@ -15,9 +15,13 @@
  * and only to the fallback (`where: cloud`).
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { escalationPolicy } from "./config.js";
+import { appendLedger } from "./ledger.js";
+import { ledgerPath } from "./paths.js";
+import type { RunOptions } from "./run/types.js";
 import { loadStatus, saveStatus, type WorkerStatus } from "./status.js";
 
 export type ReroutePolicy = ReturnType<typeof escalationPolicy>;
@@ -112,24 +116,54 @@ async function defaultKill(logDir: string, id: string, reason: string, by: strin
   return killWorker(logDir, id, { by, reason });
 }
 
-/** The restart is the run's own fall-through path, fed from the status the old run left (it may live in another process). */
-export function defaultSpawn(logDir: string): (s: SpawnSpec) => void {
+/** Env the restart process carries: the old run's id and why it moved (read back by `rerunFromEnv`). */
+export const RERUN_OF_ENV = "PAI_RERUN_OF";
+export const RERUN_WHY_ENV = "PAI_RERUN_WHY";
+
+/**
+ * Start `bin args` in its own session with output to `outPath`; it survives its parent. The daemon calls
+ * rerouteWorker, and a child in the daemon's process group dies with the job on `daemon restart` (launchd
+ * tears the group down), so the restart is never an in-process run or a same-group child.
+ */
+export function spawnSession(bin: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; outPath: string }): number {
+  const fd = openSync(o.outPath, "a");
+  const child = spawn(bin, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["ignore", fd, fd] });
+  child.unref();
+  closeSync(fd);
+  return child.pid ?? 0;
+}
+
+/** The restart is a detached `pai worker run` on the target, linked to the old run through the env (`rerunFromEnv`). */
+export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => void {
   return (s) => {
     const st = loadStatus(logDir, s.id);
     if (!st) return;
-    // the restart is headless: without -p <task> runWorker launches an interactive session that exits rc 1 at once
-    const claudeArgs = ["-p", readFileSync(s.specFile, "utf8")];
-    void import("./run/escalate.js")
-      .then(({ rerunOn }) =>
-        rerunOn(
-          { logDir, cwd: st.cwd, label: st.label, specPath: s.specFile, claudeArgs, className: st.className, quiet: true },
-          s.id,
-          s.why,
-          st,
-          { provider: s.provider, model: s.model }
-        )
-      )
-      .catch(() => undefined);
+    const args = ["worker", "run", "--provider", s.provider, ...(s.model ? ["--model", s.model] : []), "--label", `${st.label} (rerouted)`, "--spec", s.specFile, ...(st.className ? ["--class", st.className] : []), ...(st.cwd ? ["--cwd", st.cwd] : [])];
+    mkdirSync(join(logDir, "runs"), { recursive: true });
+    start(process.env.PAI_BIN || "pai", args, {
+      cwd: st.cwd || process.cwd(),
+      env: { ...process.env, [RERUN_OF_ENV]: s.id, [RERUN_WHY_ENV]: s.why },
+      outPath: join(logDir, "runs", `reroute-${s.id}.out`),
+    });
+  };
+}
+
+/** Make `run` the continuation of the run named in the env (ledger, fall-through links); no-op without it. */
+export function rerunFromEnv(run: RunOptions, logDir: string, env: NodeJS.ProcessEnv = process.env): void {
+  const of = env[RERUN_OF_ENV];
+  if (!of) return;
+  delete env[RERUN_OF_ENV]; // the run's own children must not read it as theirs
+  const why = env[RERUN_WHY_ENV] ?? "rerouted";
+  const old = loadStatus(logDir, of);
+  appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH", { id: of, reason: why, to: run.providerFlag });
+  run._route = { policy: "auto", reason: `rerouted (${why})`, local: false };
+  run._fallThroughOf = of;
+  run._priorIds = [of];
+  if (old?.term) run._hostTerm = old.term;
+  run.onWorkerStart = (id2) => {
+    if (!old) return;
+    old.fallThroughTo = id2;
+    saveStatus(logDir, old);
   };
 }
 
