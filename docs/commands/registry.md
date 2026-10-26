@@ -34,6 +34,7 @@ Walk ~/.claude/projects/ and configured scan_dirs, upsert all projects
 | `--show-dirs` | flag | — | Show currently configured scan directories |
 | `--quick` | flag | — | Minimal output mode (used by hooks and daemon) |
 | `--filter-report` | flag | — | Dry run: count existing registry rows that match the worker/temp/worktree filter; deletes nothing |
+| `--prune-ephemeral` | flag | — | Remove registry rows (not directories) for worktree/temp/bench-cache paths; rows with sessions or a curated name are kept and listed |
 
 ```sh
 pai registry scan

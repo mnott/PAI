@@ -98,6 +98,7 @@ export async function registryScanCmd(opts: {
   showDirs?: boolean;
   quick?: boolean;
   filterReport?: boolean;
+  pruneEphemeral?: boolean;
 }): Promise<number> {
   if (opts.showDirs) {
     const config = loadScanConfig();
@@ -145,6 +146,17 @@ export async function registryScanCmd(opts: {
     } else {
       console.log(warn(`Not found in config: ${display}`));
     }
+    return 0;
+  }
+  if (opts.pruneEphemeral) {
+    const { planEphemeralPrune } = await import("../../../registry/registrable.js");
+    const backend = await getRegistryBackend();
+    const plan = await planEphemeralPrune(backend);
+    console.log(`Removing ${plan.remove.length} registry row(s) (directories on disk untouched). First 10:`);
+    for (const r of plan.remove.slice(0, 10)) console.log(`  ${r.slug}  ${r.root_path}`);
+    for (const r of plan.remove) await backend.deleteProjectCascade(r.id);
+    console.log(`Kept ${plan.kept.length} matching row(s) (sessions > 0 or curated name):`);
+    for (const k of plan.kept) console.log(`  ${k.slug}  ${k.root_path}  sessions=${k.sessions}${k.curated ? " curated" : ""}`);
     return 0;
   }
   if (opts.filterReport) {

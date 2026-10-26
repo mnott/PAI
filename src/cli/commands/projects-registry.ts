@@ -24,7 +24,8 @@ const registryScanCommand: CommandDef = {
     { name: "remove-dir", type: "string", value: "PATH", summary: "Remove a directory from scan_dirs config" },
     { name: "show-dirs", type: "boolean", summary: "Show currently configured scan directories" },
     { name: "quick", type: "boolean", summary: "Minimal output mode (used by hooks and daemon)" },
-    { name: "filter-report", type: "boolean", summary: "Dry run: count existing registry rows that match the worker/temp/worktree filter; deletes nothing" }
+    { name: "filter-report", type: "boolean", summary: "Dry run: count existing registry rows that match the worker/temp/worktree filter; deletes nothing" },
+    { name: "prune-ephemeral", type: "boolean", summary: "Remove registry rows (not directories) for worktree/temp/bench-cache paths; rows with sessions or a curated name are kept and listed" }
   ],
   examples: ["pai registry scan","pai registry scan --show-dirs"],
   seeAlso: ["pai registry migrate"],
@@ -33,7 +34,8 @@ const registryScanCommand: CommandDef = {
     removeDir: ctx.opts["remove-dir"] as string | undefined,
     showDirs: ctx.opts["show-dirs"] === true,
     quick: ctx.opts.quick === true,
-    filterReport: ctx.opts["filter-report"] === true
+    filterReport: ctx.opts["filter-report"] === true,
+    pruneEphemeral: ctx.opts["prune-ephemeral"] === true
   }),
 };
 

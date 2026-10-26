@@ -24,8 +24,9 @@
  * Found by the AIBroker session while we were dividing up the dead-path work.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { readWorkersSection } from "../workers/config.js";
 import { workersLogDir } from "../workers/paths.js";
 import { worktreesDir } from "../workers/worktree.js";
@@ -108,6 +109,28 @@ export function worktreeReason(
   return undefined;
 }
 
+/** Marker file the bench harness writes into every clone/work dir it creates. */
+export const BENCH_MARKER = ".pai-bench";
+
+function realOrResolved(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+/** Why a path is bench/eval or PAI-cache material (under ~/.cache/pai, or carrying the bench marker). */
+export function benchCacheReason(rootPath: string): string | undefined {
+  const cache = realOrResolved(join(homedir(), ".cache", "pai"));
+  const real = realOrResolved(rootPath);
+  if (real === cache || real.startsWith(cache + sep) || resolve(rootPath).startsWith(join(homedir(), ".cache", "pai") + sep)) {
+    return "inside PAI's cache directory (bench/eval clones live there)";
+  }
+  if (existsSync(join(rootPath, BENCH_MARKER))) return "a bench/eval directory (carries a .pai-bench marker)";
+  return undefined;
+}
+
 /**
  * Why this path cannot be a project, or undefined if it can.
  *
@@ -121,6 +144,8 @@ export function unregistrableReason(
 ): string | undefined {
   const wt = worktreeReason(rootPath, worktreesRoot);
   if (wt) return wt;
+  const bench = benchCacheReason(rootPath);
+  if (bench) return bench;
 
   // Compare with trailing separators so a fragment cannot match a partial
   // directory name: `/tmp/` must not match `/tmpdir/`.
@@ -185,4 +210,27 @@ export async function reportUnregistrable(
     if (report.sample.length < sampleSize) report.sample.push(p.root_path);
   }
   return report;
+}
+
+export interface EphemeralPrunePlan {
+  /** Zero sessions, name not curated: safe to drop. */
+  remove: { id: number; slug: string; root_path: string }[];
+  /** Matching rows kept because they have sessions or a curated display name. */
+  kept: { slug: string; root_path: string; sessions: number; curated: boolean }[];
+}
+
+/** Rows matching unregistrableReason, split into removable and kept (sessions > 0 or curated name). */
+export async function planEphemeralPrune(
+  backend: RegistryBackend,
+  worktreesRoot: string | undefined = workerWorktreesRoot()
+): Promise<EphemeralPrunePlan> {
+  const plan: EphemeralPrunePlan = { remove: [], kept: [] };
+  for (const p of await backend.listProjects({})) {
+    if (!unregistrableReason(p.root_path, worktreesRoot)) continue;
+    const sessions = await backend.countSessionsForProject(p.id);
+    const curated = !!p.display_name && p.display_name !== p.slug && p.display_name.toLowerCase() !== basename(p.root_path).toLowerCase();
+    if (sessions > 0 || curated) plan.kept.push({ slug: p.slug, root_path: p.root_path, sessions, curated });
+    else plan.remove.push({ id: p.id, slug: p.slug, root_path: p.root_path });
+  }
+  return plan;
 }
