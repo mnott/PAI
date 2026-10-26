@@ -1528,12 +1528,13 @@ pai worker priority [ID] [LEVEL] [command]
 ```
 
 `pai worker priority <id> <level>` changes a running worker's priority live (high, normal, low): at a serial local engine the router admits high before normal before low, FIFO inside a level, and reads the level at every request, so the change applies to the next one. Nothing running is interrupted.
+`now` makes the worker urgent like `pai worker run --now`: a queued one goes to the front of the queue and, once admitted, pauses the other local workers on its engine; a running one pauses them at once and its requests go first. They resume when it ends (or on any other level).
 `list|set|clear` edit workers.yaml `workers.priority.sessions`: the queue priority of every run a named session starts. When a provider is full, queued runs are admitted high before normal before low; running workers are never preempted. Without arguments, lists the session entries.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ID` | no | Worker id (see `pai worker ps`) |
-| `LEVEL` | no | high, normal or low |
+| `LEVEL` | no | high, normal, low or now |
 
 ```sh
 pai worker priority w-20260101-abc low
