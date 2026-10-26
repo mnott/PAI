@@ -16,6 +16,7 @@ import { fmtElapsed, loadPlanStatus, planRunId } from "../../workers/plan-status
 import { workersLogDir } from "../../workers/paths.js";
 import { effectiveCap } from "../../workers/capacity.js";
 import { isLocalProvider } from "../../workers/config.js";
+import { applyUrgency } from "../../workers/urgency.js";
 import { resolveTarget, withTarget, type Target, type TargetArgs, type TargetResolver } from "../../workers/target.js";
 import { dirtyConflicts, loadPlan, PlanError, runLogPath, type Plan } from "../../workers/plan.js";
 import { dirtyPaths } from "../../workers/plan-deps.js";
@@ -107,7 +108,9 @@ function runTarget(t: Target | undefined, withProvider = true): Record<string, u
 
 /** Resolve the arguments once; undefined when the caller named nothing (today's routing). */
 async function resolveWhere(a: WhereArgs, deps: DelegationDeps, batch = false): Promise<Target | undefined> {
-  if (asked(a)) return deps.target({ ...targetArgs(a), ...(batch ? { batch } : {}) });
+  // the operator's urgency window (urgency.ts) counts as asking: now, and local when they said so
+  const ta = applyUrgency(targetArgs(a), false);
+  if (asked(a) || ta.now === true) return deps.target({ ...ta, ...(batch ? { batch } : {}) });
   // nothing named: the session's profile (workers, fallback) decides, when it has one
   const t = await deps.target({ ...(batch ? { batch } : {}) });
   return t.provider ? t : undefined;

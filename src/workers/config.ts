@@ -618,6 +618,8 @@ export interface WorkersConfig {
   capacity: CapacityConfig;
   /** Queue admission priority per session (workers.priority); see capacity.ts. */
   priority?: PriorityConfig;
+  /** Operator urgency window (workers.urgency); see urgency.ts. */
+  urgency?: { windowMinutes: number };
   /** Local-model idle watcher (workers.localIdle); see local-idle.ts. */
   localIdle: LocalIdleConfig;
   /** Escalation one tier up (workers.escalate); see escalation.ts. */
@@ -749,6 +751,7 @@ export function defaultWorkersConfig(): WorkersConfig {
       agingMs: num(capacity.agingMs, 15 * 60_000),
     },
     priority: { sessions: prioritySessions(prio.sessions, (path, msg) => { throw new WorkersConfigError(`defaults workers.yaml ${path}: ${msg}`); }) },
+    urgency: { windowMinutes: num(obj(w.urgency).windowMinutes, 30) },
     localIdle: {
       enabled: bool(localIdle.enabled, true),
       gpuBelowPct: num(localIdle.gpuBelowPct, 10),
@@ -1489,6 +1492,15 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     if (typeof w.priority !== "object" || w.priority === null || Array.isArray(w.priority)) bad(".priority", "must be an object");
     Object.assign(priority.sessions, prioritySessions((w.priority as Record<string, unknown>).sessions, bad));
   }
+  const urgency = { windowMinutes: d.urgency?.windowMinutes ?? 30 };
+  if (w.urgency !== undefined) {
+    const t = w.urgency as Record<string, unknown>;
+    if (typeof t !== "object" || t === null || Array.isArray(t)) bad(".urgency", "must be an object");
+    if (t.windowMinutes !== undefined) {
+      if (typeof t.windowMinutes !== "number" || !Number.isFinite(t.windowMinutes) || t.windowMinutes <= 0) bad(".urgency.windowMinutes", "must be a positive number");
+      urgency.windowMinutes = t.windowMinutes as number;
+    }
+  }
   const localIdle = { ...d.localIdle };
   if (w.localIdle !== undefined) {
     if (typeof w.localIdle !== "object" || w.localIdle === null || Array.isArray(w.localIdle)) {
@@ -1617,6 +1629,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     stagger,
     capacity,
     priority,
+    urgency,
     localIdle,
     escalate: parseEscalate(w.escalate, bad),
     loopGuard,
@@ -1787,6 +1800,7 @@ export function writeWorkersSection(
         stagger: workers.stagger,
         capacity: workers.capacity,
         priority: workers.priority,
+        ...(workers.urgency ? { urgency: workers.urgency } : {}),
         localIdle: workers.localIdle,
         escalate: workers.escalate,
         loopGuard: workers.loopGuard,
