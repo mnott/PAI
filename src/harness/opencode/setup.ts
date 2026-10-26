@@ -51,6 +51,7 @@ export interface SetupPlan {
 export const BRIDGED_HOOKS: { hook: string; tools: string[] }[] = [
   { hook: "route-agents-to-worker", tools: ["task"] },
   { hook: "route-edits-to-worker", tools: ["edit", "write", "multiedit", "patch"] },
+  { hook: "test-file-governance", tools: ["edit", "write", "multiedit", "patch"] },
   { hook: "block-sleep-poll", tools: ["bash"] },
   { hook: "security-validator", tools: ["bash"] },
 ];

@@ -624,6 +624,13 @@ export function formatKnowledge(k: Knowledge): string[] {
 
 /** Remove a worktree directory from git's books and the filesystem. */
 function removeWorktree(cwd: string, dir: string, force: boolean): void {
+  // one-time tests die with the tree: a worker's .pai-scratch/ (gitignored,
+  // never committed) is discarded here on merge, discard and gc alike
+  try {
+    rmSync(join(dir, ".pai-scratch"), { recursive: true, force: true });
+  } catch {
+    // best effort: a leftover scratch dir is gitignored and goes with the tree
+  }
   try {
     git(cwd, ["worktree", "remove", ...(force ? ["--force"] : []), dir]);
     return;
@@ -1323,6 +1330,14 @@ export function mergeWorker(
   // outside-pointing symlink (if anything) remains uncommitted
   if (!slot) for (const l of salvageNotes(st.cwd, st.worktreeDir!, id)) console.log(l);
   if (!slot) removeWorktree(st.cwd, st.worktreeDir!, true);
+  // a slot tree survives the merge: its scratch dir (one-time tests) is discarded explicitly
+  if (slot) {
+    try {
+      rmSync(join(st.worktreeDir!, ".pai-scratch"), { recursive: true, force: true });
+    } catch {
+      // best effort
+    }
+  }
   let branchGone = true;
   try {
     if (slot) {
@@ -1682,6 +1697,12 @@ export function discardWorker(logDir: string, id: string): string {
   removeScratch(id);
   if (isSlotWorktree(st.worktreeDir!)) {
     // The slot stays; its branch is archived and deleted in the repo that holds it.
+    // The slot tree survives, so its scratch dir is discarded here explicitly.
+    try {
+      rmSync(join(st.worktreeDir!, ".pai-scratch"), { recursive: true, force: true });
+    } catch {
+      // best effort
+    }
     const repo = repoHoldingBranch(st);
     if (!repo) throw new Error(`no repo holds branch ${st.branch} (tried ${[st.worktreeDir, st.cwd, process.cwd()].join(", ")}); nothing discarded`);
     try {

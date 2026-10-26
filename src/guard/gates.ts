@@ -18,6 +18,7 @@ import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { raiseWaitTimeout } from "../hooks/ts/lib/wait-timeout.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
 import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit } from "../hooks/ts/lib/edit-gate.js";
+import { decideTestGovernance } from "../hooks/ts/lib/test-governance.js";
 import { checkCredentialLiteral } from "../hooks/ts/lib/credential-guard.js";
 import { dropDataHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import type { Decision } from "./evaluate.js";
@@ -33,6 +34,8 @@ export interface GateSet {
   orchestrator?: boolean;
   /** Edit routing: code edits in a git work tree are delegated. The path facts are looked up by the caller. */
   edit?: { isExemptPrefix: (abs: string) => boolean; isGitWorkTree: (abs: string) => boolean };
+  /** Test governance: a new test file is one-time and lives in .pai-scratch/ unless promoted in tests/KEPT.md. */
+  testGovernance?: boolean;
   /** Worker write-time check for literal credentials in test files. */
   credential?: boolean;
   /** The worker guard (PAI_WORKER only): git/worktree context for its path, bench and config rules. */
@@ -64,6 +67,17 @@ export function decidePreGates(c: Call, g: GateSet): Decision | null {
   if (g.credential) {
     const why = checkCredentialLiteral({ tool_name: c.tool, tool_input: c.input as never }, c.env);
     if (why) return deny(why, "credential-literal");
+  }
+  if (g.testGovernance) {
+    const ti = c.input as { file_path?: unknown; notebook_path?: unknown; command?: unknown } | undefined;
+    const target = ti?.file_path ?? ti?.notebook_path;
+    const tg = decideTestGovernance({
+      tool: c.tool,
+      filePath: typeof target === "string" ? resolve(c.cwd, target) : undefined,
+      command: typeof ti?.command === "string" ? (command ?? ti.command) : undefined,
+      cwd: c.cwd,
+    });
+    if (tg.decision === "deny") return deny(tg.reason, "test-governance", { category: "test_governance" });
   }
   if (g.edit) {
     const ti = c.input as { file_path?: unknown; notebook_path?: unknown } | undefined;
