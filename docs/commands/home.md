@@ -67,7 +67,7 @@ pai home git-setup [options]
 
 Whitelist antipatterns/ in the PAI home .gitignore.
 
-When PAI_HOME is a git repository, PAI commits its own config writes (switch: home.autoCommit, default true). This appends the missing lines `!/antipatterns/` and `/antipatterns/firings.jsonl*` to .gitignore (existing lines and comments untouched) and commits it. Idempotent. Dry run by default: prints the lines to add.
+When PAI_HOME is a git repository, PAI commits its own config writes (switch: home.autoCommit, default true). This appends the missing lines `!/antipatterns/`, `/antipatterns/firings.jsonl*` and `/antipatterns/outcomes.jsonl*` to .gitignore (existing lines and comments untouched) and commits it. Idempotent. Dry run by default: prints the lines to add.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

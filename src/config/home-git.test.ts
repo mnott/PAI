@@ -92,7 +92,7 @@ describe("git-setup", () => {
   it("appends only missing lines, keeps comments, is idempotent", () => {
     const before = "# mine\n/*\n!/antipatterns/\n!/config.yaml";
     const once = gitignoreWithRequired(before);
-    expect(once).toBe("# mine\n/*\n!/antipatterns/\n!/config.yaml\n/antipatterns/firings.jsonl*\n");
+    expect(once).toBe("# mine\n/*\n!/antipatterns/\n!/config.yaml\n/antipatterns/firings.jsonl*\n/antipatterns/outcomes.jsonl*\n");
     expect(gitignoreWithRequired(once)).toBe(once);
   });
 
@@ -104,7 +104,7 @@ describe("git-setup", () => {
     homeGitSetupCmd({ write: true }, home);
     const text = readFileSync(join(home, ".gitignore"), "utf8");
     expect(text.startsWith("# mine\n/*\n")).toBe(true);
-    expect(text).toContain("!/antipatterns/\n/antipatterns/firings.jsonl*\n");
+    expect(text).toContain("!/antipatterns/\n/antipatterns/firings.jsonl*\n/antipatterns/outcomes.jsonl*\n");
     expect(count()).toBe(2);
     homeGitSetupCmd({ write: true }, home);
     expect(count()).toBe(2);

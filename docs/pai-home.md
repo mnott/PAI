@@ -67,4 +67,4 @@ what is running.
 
 When PAI_HOME is a git repository, PAI commits its own config writes (`pai config set`, `pai antipatterns set|promote|enforce|monitor|retire|label`, `pai worker providers ...`) as `config: <what changed>`. Only the changed files are staged; firings, databases and logs are never committed. Turn it off with `home.autoCommit: false` in `config.yaml` (default `true`).
 
-`pai home git-setup` appends the missing `.gitignore` lines (`!/antipatterns/`, `/antipatterns/firings.jsonl*`) and commits them. It prints the lines first and applies only with `--write`; running it again changes nothing.
+`pai home git-setup` appends the missing `.gitignore` lines (`!/antipatterns/`, `/antipatterns/firings.jsonl*`, `/antipatterns/outcomes.jsonl*`) and commits them. It prints the lines first and applies only with `--write`; running it again changes nothing.

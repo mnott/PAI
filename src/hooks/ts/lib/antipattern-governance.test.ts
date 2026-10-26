@@ -386,6 +386,16 @@ describe("stats", () => {
     expect(() => label("nothing", "tp")).toThrow(/no firing/);
   });
 
+  it("a deny of an invented path followed by a successful run is not a suspect (paths category)", () => {
+    put({ id: "does-not-exist", category: "paths" }, "w-p", "m");
+    recordRunOutcomes("w-p", "succeeded");
+    expect(stats().find((r) => r.id === "does-not-exist")!.falsePositiveSuspect).toBe(false);
+    // the same shape in a non-path category still is
+    put({ id: "revert" }, "w-r", "m");
+    recordRunOutcomes("w-r", "succeeded");
+    expect(stats().find((r) => r.id === "revert")!.falsePositiveSuspect).toBe(true);
+  });
+
   it("a monitor hit with no bad outcome is a suspect", () => {
     put({ id: "growing-command", mode: "monitor" }, "w-1", "m");
     recordRunOutcomes("w-1", "succeeded");
