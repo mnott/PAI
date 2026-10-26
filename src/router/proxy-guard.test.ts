@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import http from "node:http";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRouter } from "./router.js";
@@ -143,33 +143,49 @@ describe("proxy guard per-conversation loop state", () => {
     expect(first!.turn).toBe(2); // the third identical run is the deny_at=3 one; turns 0 and 1 are clean
   });
 
+  // "missing" comes from the tool_result that answers the call, never from the proxy's disk: `home` exists on disk
+  // and is answered as not found; a path that does not exist on disk is answered with contents.
   const missingRun = () => {
-    const missing = (i: number) => ({ file_path: join(home, `nope-${i}.py`) });
-    const gone = { text: "File does not exist.", is_error: true };
-    const run = (okAt: number | null) => {
+    const onDisk = (i: number) => {
+      const file_path = join(home, `p-${i}.py`);
+      writeFileSync(file_path, "x");
+      return { file_path };
+    };
+    const gone = { text: "ENOENT: no such file or directory", is_error: true };
+    // turns of Reads; the result of turn i reaches the guard with the request of turn i+1, so the streak of 10
+    // results fires on the eleventh call
+    const run = (answer: (i: number) => { text: string; is_error?: boolean }, exists = true, turns = 11) => {
       const { fired, step } = setup();
       const calls: { name: string; input: object }[] = [];
       const results: { text: string; is_error?: boolean }[] = [];
-      for (let i = 0; i < 10; i++) {
-        const ok = i === okAt;
-        const input = ok ? { file_path: home } : missing(i);
+      for (let i = 0; i < turns; i++) {
+        const input = exists ? onDisk(i) : { file_path: join(home, `never-created-${i}.py`) };
         step("Read", input, calls, results);
         calls.push({ name: "Read", input });
-        results.push(ok ? { text: "contents" } : gone);
+        results.push(answer(i));
       }
       return fired.filter((f) => f.id === "missing-path-streak");
     };
-    return run;
+    return { run, gone };
   };
 
-  it("missing-path-streak: 10 Reads of nonexistent paths fire source proxy on the tenth turn", () => {
-    const streak = missingRun()(null);
+  it("missing-path-streak: 10 not-found results for paths that exist on disk fire source proxy on the eleventh turn", () => {
+    const { run, gone } = missingRun();
+    const streak = run(() => gone);
     expect(streak.length).toBe(1);
     expect(streak[0].source).toBe("proxy");
-    expect(streak[0].turn).toBe(9);
+    expect(streak[0].turn).toBe(10);
   });
 
-  it("missing-path-streak: a successful Read in between resets the streak, no firing", () => {
-    expect(missingRun()(5)).toEqual([]);
+  it("missing-path-streak: a successful Read result in between resets the streak, no firing", () => {
+    const { run, gone } = missingRun();
+    expect(run((i) => (i === 5 ? { text: "contents" } : gone))).toEqual([]);
+  });
+
+  it("missing-path-streak: nonexistent paths answered with contents, or an error without a not-found signature, never fire", () => {
+    const { run } = missingRun();
+    expect(run(() => ({ text: "contents" }), false)).toEqual([]);
+    expect(run(() => ({ text: "permission denied", is_error: true }), false)).toEqual([]);
+    expect(run(() => ({ text: "ENOENT: no such file or directory" }), false)).toEqual([]); // not is_error
   });
 });

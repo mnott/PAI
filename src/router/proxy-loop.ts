@@ -8,7 +8,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { emptyLoopState, recordLoopFailure, recordLoopResult, type LoopState } from "../hooks/ts/lib/loop-guard.js";
+import { emptyLoopState, probePath, recordLoopFailure, recordLoopResult, type LoopState } from "../hooks/ts/lib/loop-guard.js";
 
 export const LOOP_MAX_CONVERSATIONS = 200;
 export const LOOP_TTL_MS = 2 * 60 * 60 * 1000;
@@ -39,6 +39,16 @@ export function conversationKey(body: unknown): string | null {
   h.update("\0");
   h.update(typeof b.metadata?.user_id === "string" ? b.metadata.user_id : "");
   return h.digest("hex").slice(0, 32);
+}
+
+/**
+ * What a not-found tool_result says. The proxy cannot ask its own disk whether a path exists (the client may be
+ * another machine), so "missing" is decided from the result that answers the call: is_error AND one of these.
+ */
+export const NOT_FOUND_SIGNATURES: readonly RegExp[] = [/\bENOENT\b/, /no such file or directory/i, /does not exist/i, /not found/i];
+
+export function isNotFoundResult(isError: boolean | undefined, text: string): boolean {
+  return !!isError && NOT_FOUND_SIGNATURES.some((re) => re.test(text));
 }
 
 /** Bounded LRU of conversation key -> loop state with a TTL. Map insertion order is the recency order. */
@@ -91,7 +101,16 @@ export function applyToolResults(state: LoopState, body: unknown, now = Date.now
     if (!use?.name) continue;
     const input = use.name === "Bash" ? ((use.input as { command?: unknown } | undefined)?.command as string | undefined) : (use.input as Record<string, unknown> | undefined);
     const text = textOf(b.content);
-    state = b.is_error ? recordLoopFailure(state, use.name, input, text, now).state : recordLoopResult(state, use.name, input, text, now);
+    state = b.is_error ? recordLoopFailure(state, use.name, input, text, now, undefined, false, "proxy").state : recordLoopResult(state, use.name, input, text, now);
+    if (probePath(use.name, use.input)) state = countMissing(state, isNotFoundResult(b.is_error, text));
   }
   return state;
+}
+
+/** The missing-path streak after one Read/Glob/Grep result: one more when the path was answered as not found, else reset. */
+function countMissing(state: LoopState, missing: boolean): LoopState {
+  const n = missing ? (state.streaks?.missing ?? 0) + 1 : 0;
+  const { missing: _old, ...rest } = state.streaks ?? {};
+  const streaks = n ? { ...rest, missing: n } : rest;
+  return { ...state, streaks: Object.keys(streaks).length ? streaks : undefined };
 }
