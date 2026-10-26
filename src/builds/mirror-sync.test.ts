@@ -120,7 +120,7 @@ describe("mirror sync", () => {
     delete process.env.AIBROKER_FORGE_TOKEN;
     try {
       await expect(
-        syncMirrors(".", { fetch: scripted([], []).fetch, originUrl: "https://forge.example/acme/app.git", readConfig: () => ({}) })
+        syncMirrors(".", { fetch: scripted([], []).fetch, originUrl: "https://forge.example/acme/app.git", readConfig: () => ({}), tokenOpts: { envFile: "/nonexistent/pai-env" } })
       ).rejects.toThrow("AIBROKER_FORGE_TOKEN");
     } finally {
       if (saved !== undefined) process.env.AIBROKER_FORGE_TOKEN = saved;
@@ -129,7 +129,7 @@ describe("mirror sync", () => {
 
   it("default config reader: the env var named by the shipped default is found, and the name is printed verbatim", async () => {
     const saved = process.env.AIBROKER_FORGE_TOKEN;
-    const opts = { fetch: scripted([], []).fetch, originUrl: "https://forge.example/acme/app.git", now: (() => { let t = 0; return () => (t += 3000); })(), sleep: async () => {} };
+    const opts = { tokenOpts: { envFile: "/nonexistent/pai-env" }, fetch: scripted([], []).fetch, originUrl: "https://forge.example/acme/app.git", now: (() => { let t = 0; return () => (t += 3000); })(), sleep: async () => {} };
     try {
       delete process.env.AIBROKER_FORGE_TOKEN;
       await expect(syncMirrors(".", opts)).rejects.toThrow("set AIBROKER_FORGE_TOKEN (or");

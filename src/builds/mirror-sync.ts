@@ -5,10 +5,11 @@
  * trigger the sync, poll until each mirror's last_update changes, and print
  * one line per mirror — a GitHub push-protection refusal (GH013) comes out
  * as the short reason plus the unblock URL, not a raw JSON `last_error`.
- * Token: the env var named by config `release.forgeTokenEnv`; never printed.
+ * Token: the env var named by config `release.forgeTokenEnv`, else the AIBroker env file; never printed.
  */
 
 import { execFileSync } from "node:child_process";
+import { lookupForgeToken, type ForgeTokenOpts } from "./forge-token.js";
 import { deepMergeConfig, shippedMainDefaults } from "../config/shipped-defaults.js";
 
 export interface MirrorError {
@@ -26,6 +27,8 @@ export interface MirrorResult {
 
 export interface MirrorSyncResult {
   repo: string;
+  /** Env file the token was read from (path only); absent when it came from the process env. */
+  tokenFrom?: string;
   mirrors: MirrorResult[];
 }
 
@@ -137,6 +140,7 @@ export interface MirrorSyncDeps {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   readConfig?: ConfigReader;
+  tokenOpts?: ForgeTokenOpts;
 }
 
 const realFetch: FetchLike = async (url, init) => {
@@ -150,8 +154,11 @@ export async function syncMirrors(cwd: string, deps: MirrorSyncDeps = {}): Promi
   const now = deps.now ?? (() => Date.now());
   const wait = deps.sleep ?? sleep;
   const envName = forgeTokenEnvName(deps.readConfig ?? (await defaultConfigReader().catch((): ConfigReader => () => ({}))));
-  const token = deps.token ?? process.env[envName];
-  if (!token) throw new MirrorSyncFailed(`no forge token: set ${envName} (or config release.forgeTokenEnv)`);
+  const found = deps.token ? { token: deps.token } : lookupForgeToken(envName, deps.tokenOpts);
+  const token = found.token;
+  if (!token) {
+    throw new MirrorSyncFailed(`no forge token: set ${envName} (or config release.forgeTokenEnv)${found.permissionsIgnored ? "; token file ignored: permissions" : ""}`);
+  }
   let origin = deps.originUrl;
   if (!origin) {
     try {
@@ -176,6 +183,7 @@ export async function syncMirrors(cwd: string, deps: MirrorSyncDeps = {}): Promi
   }
   return {
     repo,
+    ...(found.from ? { tokenFrom: found.from } : {}),
     mirrors: mirrors.map((m) => {
       const name = m.name || "mirror";
       if (m.last_error) return { name, ok: false, error: parseMirrorError(m.last_error) };

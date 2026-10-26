@@ -343,10 +343,13 @@ export async function runRelease(opts: ReleaseOptions, deps: ReleaseDeps = {}): 
         try {
           sync = await (deps.syncMirrors ?? ((cwd: string) => realSyncMirrors(cwd)))(repo);
         } catch (e) {
-          const env = /^no forge token: set (\S+)/.exec(e instanceof Error ? e.message : "")?.[1];
-          if (env) throw new StepFailed(`no forge token (set $${env}) — sync the push mirror in the forge UI, then run: pai release --from mirror`);
+          const msg = e instanceof Error ? e.message : "";
+          const env = /^no forge token: set (\S+)/.exec(msg)?.[1];
+          const hint = msg.includes("token file ignored: permissions") ? " (token file ignored: permissions)" : "";
+          if (env) throw new StepFailed(`no forge token (set $${env})${hint} — sync the push mirror in the forge UI, then run: pai release --from mirror`);
           throw e;
         }
+        if (sync.tokenFrom) print(`forge token: from ${sync.tokenFrom}`);
         const bad = sync.mirrors.filter((m) => !m.ok);
         if (!sync.mirrors.length) throw new StepFailed("the forge has no push mirror to GitHub");
         if (bad.length) throw new StepFailed(bad.map(formatMirror).join("; "));
