@@ -28,7 +28,7 @@ import { ageOf, loadStatus, nowStamp, setWorkerNote } from "../../workers/status
 import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
-import { rerunFromEnv } from "../../workers/reroute.js";
+import { announceId, rerunFromEnv } from "../../workers/reroute.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
 import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
@@ -315,6 +315,20 @@ const runCommand: CommandDef = {
       if (flag(ctx, "batch")) process.env[BATCH_ENV] = "1";
       await applyTarget(ctx, plan);
       if (plan.kind === "run") rerunFromEnv(plan.run, logDir());
+      // a detached starter (startDetachedWorker) learns the id from here
+      if (plan.kind === "run") {
+        const prev = plan.run.onWorkerStart;
+        plan.run.onWorkerStart = (id) => {
+          announceId(id);
+          prev?.(id);
+        };
+      } else {
+        const prev = plan.chain.onChainStart;
+        plan.chain.onChainStart = (id) => {
+          announceId(id);
+          prev?.(id);
+        };
+      }
       return plan.kind === "chain" ? await runChain(plan.chain) : await runWorker(plan.run);
     }),
 };
@@ -364,6 +378,7 @@ const resumeCommand: CommandDef = {
         resumeOf: id,
         onWorkerStart: (wid) => {
           newId = wid;
+          announceId(wid);
         },
       });
       if (flag(ctx, "print-id") && newId) out(newId);

@@ -133,6 +133,54 @@ export function spawnSession(bin: string, args: string[], o: { cwd: string; env:
   return child.pid ?? 0;
 }
 
+/** Env naming a file the `pai worker run|resume` process writes its worker (or chain) id to the moment it exists. */
+export const ID_FILE_ENV = "PAI_WORKER_ID_FILE";
+
+/** Called by the CLI run/resume verbs: record the id for the detached starter (no-op without the env). */
+export function announceId(id: string, env: NodeJS.ProcessEnv = process.env): void {
+  const f = env[ID_FILE_ENV];
+  if (f) writeFileSync(f, id);
+}
+
+/**
+ * Start `pai worker <verb> args` detached (own session, survives a daemon restart) and return the worker id
+ * once the process has announced it. The caller's env (session identity, urgency window, pane anchoring) is
+ * inherited. Throws with the process output when it exits or times out before an id exists.
+ */
+export async function startDetachedWorker(
+  logDir: string,
+  args: string[],
+  o: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; start?: typeof spawnSession } = {}
+): Promise<string> {
+  const runs = join(logDir, "runs");
+  mkdirSync(runs, { recursive: true });
+  const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const idFile = join(runs, `start-${tag}.id`);
+  const outPath = join(runs, `start-${tag}.out`);
+  const pid = (o.start ?? spawnSession)(process.env.PAI_BIN || "pai", ["worker", ...args], {
+    cwd: o.cwd || process.cwd(),
+    env: { ...(o.env ?? process.env), [ID_FILE_ENV]: idFile },
+    outPath,
+  });
+  const alive = (): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const deadline = Date.now() + (o.timeoutMs ?? 15_000);
+  for (;;) {
+    const id = existsSync(idFile) ? readFileSync(idFile, "utf8").trim() : "";
+    if (id) return id;
+    const out = (): string => (existsSync(outPath) ? readFileSync(outPath, "utf8").trim().split("\n").slice(-5).join("\n") : "");
+    if (!alive()) throw new Error(out() || "worker failed to start");
+    if (Date.now() > deadline) throw new Error(`worker did not start within ${Math.round((o.timeoutMs ?? 15_000) / 1000)}s${out() ? `: ${out()}` : ""}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 /** The restart is a detached `pai worker run` on the target, linked to the old run through the env (`rerunFromEnv`). */
 export function defaultSpawn(logDir: string, start: typeof spawnSession = spawnSession): (s: SpawnSpec) => void {
   return (s) => {
