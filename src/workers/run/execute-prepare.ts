@@ -339,6 +339,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     ...appendSystemPromptArgs([
       ...(headless && !parsed.callerSystemPrompt ? [workerContractPrompt(a.className, a.reportFormat, a.orchestrate, volatileInTask ? undefined : noteToken, scratch)] : []),
       ...(addendum ? [addendum.text] : []),
+      ...(headless && target.provider.prompt ? [target.provider.prompt] : []),
       ...(slimArgs.length ? [WORKER_BRIEF] : []),
       ...(preamble ? [preambleBlock(preamble)] : []),
       ...(headless

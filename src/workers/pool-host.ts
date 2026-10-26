@@ -608,6 +608,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         // models it is what keeps their output in contract, and as slot system
         // prompt it is cached with the rest of the prefix instead of per task
         ...(addendum ? [addendum.text] : []),
+        ...(provider.prompt ? [provider.prompt] : []),
         ...(slim.length ? [WORKER_BRIEF] : []),
         // the spec's marked shared preamble: inside the cached prefix, not in the user turn
         ...(shared ? [shared] : []),
