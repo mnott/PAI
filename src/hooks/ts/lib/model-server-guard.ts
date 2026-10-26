@@ -9,7 +9,7 @@
  * Launchers are matched at command position (after env assignments, nohup,
  * sudo, ...), so `grep vllm-mlx notes.md` or `echo ollama serve` is text and
  * passes; `sh -c '<cmd>'` payloads are checked too. PAI_ALLOW_MODEL_SERVER=1
- * (set by the operator in their shell, never by PAI) disables the guard.
+ * in the process env, or as a leading assignment on the segment that starts the server, disables the guard.
  */
 
 import { basename } from "node:path";
@@ -31,6 +31,15 @@ const MODEL_AGENT = /mlx|vllm|llama|ollama|strata|flashnext|model|local\d/i;
 
 function isAssignment(w: string): boolean {
   return /^[A-Za-z_]\w*=/.test(w);
+}
+
+/** The segment opts in with a leading `PAI_ALLOW_MODEL_SERVER=1` assignment. */
+function allowsServer(words: string[]): boolean {
+  for (const w of words) {
+    if (!isAssignment(w)) return false;
+    if (/^PAI_ALLOW_MODEL_SERVER=["']?1["']?$/.test(w)) return true;
+  }
+  return false;
 }
 
 function startsServer(words: string[], depth: number): boolean {
@@ -80,10 +89,10 @@ function isPortScan(raw: string): boolean {
 
 export function modelServerReason(command: string, env: Record<string, string | undefined>, answer: string): string | null {
   if (env.PAI_ALLOW_MODEL_SERVER === "1") return null;
-  const starts = parseCommand(command).some((s) => startsServer(s.words, 0));
+  const starts = parseCommand(command).some((s) => !allowsServer(s.words) && startsServer(s.words, 0));
   if (!starts && !isPortScan(command)) return null;
   return (
-    "Local model servers are started by the operator, not by sessions. " +
+    "Local model servers are not started by sessions unless asked for: add PAI_ALLOW_MODEL_SERVER=1 in front of the command to start it on purpose. " +
     `Running now: ${answer}. Use \`pai worker run --local\`.`
   );
 }
