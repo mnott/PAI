@@ -16,6 +16,7 @@ import {
   discardWorker,
   gcWorktrees,
   gcWorktreesThrottled,
+  setKeep,
   git,
   isGitRepo,
   mergeWorker,
@@ -730,6 +731,39 @@ describe("gcWorktrees", () => {
     expect(refs()).not.toContain("refs/heads/worker/gc-aparent");
     expect(refs()).not.toContain("refs/heads/worker/gc-bchild");
     expect(git(repo, ["fsck", "--no-dangling"])).not.toMatch(/error/i);
+  });
+
+  it("keeps a worktree marked .pai-keep, logs WORKER-GC-KEEP; --release archives it (explicit and auto gc)", () => {
+    const ledger = () => (existsSync(join(gcLog, "ledger.log")) ? readFileSync(join(gcLog, "ledger.log"), "utf8") : "");
+    const kept = mk("gc-keep", {}, 3 * DAY);
+    const plain = mk("gc-nokeep", {}, 3 * DAY);
+    expect(setKeep(gcLog, "gc-keep", "source tree of build-x")).toBe(kept);
+    expect(readFileSync(join(kept, ".pai-keep"), "utf8")).toBe("source tree of build-x\n");
+    // dry run lists it as kept, writes nothing
+    const before = ledger();
+    const dry = gcWorktrees(gcLog, 24, true);
+    expect(dry.find((r) => r.id === "gc-keep")?.skipped).toContain("source tree of build-x");
+    expect(ledger()).toBe(before);
+    // auto-gc path (worker start / daemon)
+    const res = gcWorktreesThrottled(gcLog, 0, Date.now() + 5, { olderThanHours: 24 })!;
+    expect(res.find((r) => r.id === "gc-keep")?.skipped).toContain(".pai-keep");
+    expect(res.find((r) => r.id === "gc-nokeep")?.archive).toBe("refs/pai-archive/gc-nokeep");
+    expect(existsSync(kept)).toBe(true);
+    expect(existsSync(plain)).toBe(false);
+    expect(refs()).toContain("refs/heads/worker/gc-keep");
+    expect(ledger()).toMatch(/WORKER-GC-KEEP.*id=gc-keep.*reason=.*source tree of build-x/);
+    // explicit gc --all-finished age 0 also keeps it
+    expect(gcWorktrees(gcLog, 0).find((r) => r.id === "gc-keep")?.skipped).toBeTruthy();
+    expect(existsSync(kept)).toBe(true);
+    setKeep(gcLog, "gc-keep", null);
+    expect(gcWorktrees(gcLog, 24)).toEqual([{ id: "gc-keep", archive: "refs/pai-archive/gc-keep" }]);
+    expect(existsSync(kept)).toBe(false);
+  });
+
+  it("archives a worktree without .pai-keep and logs WORKER-GC", () => {
+    mk("gc-plain", {}, 3 * DAY);
+    expect(gcWorktrees(gcLog, 24)).toEqual([{ id: "gc-plain", archive: "refs/pai-archive/gc-plain" }]);
+    expect(readFileSync(join(gcLog, "ledger.log"), "utf8")).toMatch(/WORKER-GC .*id=gc-plain/);
   });
 
   it("throttles to once per interval", () => {
