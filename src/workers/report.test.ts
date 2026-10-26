@@ -449,6 +449,20 @@ describe("checkProof", () => {
     expect(v.rewritten).toBe(false);
     expect(v.text).toContain("r=+");
   });
+  const evidence = "env -u ITERM_SESSION_ID -u TERM_SESSION_ID -u TMUX -u TMUX_PANE npx vitest run src/workers src/cli/commands src/router/wire";
+  it.each([" → ", " -> ", " => ", " # "])("accepts a result after the command (%s)", async (sep) => {
+    const { checkProof } = await import("./report.js");
+    const r = R.replace("p=npm test", `p=${evidence}${sep}219+54+1 files, 2890+496+41 tests, all green`);
+    expect(checkProof(r, [{ command: evidence, failed: false, output: "Tests 3427 passed" }]).rewritten).toBe(false);
+    expect(checkProof(r, []).rewritten).toBe(true);
+    expect(checkProof(r, [{ command: "npm test", failed: false }]).rewritten).toBe(true);
+    expect(checkProof(r, [{ command: evidence, failed: true }]).rewritten).toBe(true);
+  });
+  it("still rejects a prose command part before the result", async () => {
+    const { checkProof } = await import("./report.js");
+    const v = checkProof(R.replace("p=npm test", "p=unittest over 6 modules: 47 tests → OK"), [{ command: "python3 -m unittest", failed: false }]);
+    expect(v.text).toContain("not a description");
+  });
   it.each([
     ["PROMPT=spec AB_PREPARE_ONLY=1 sh tools/ab/run.sh box-press local30", "cd /w && PROMPT=spec AB_PREPARE_ONLY=1 sh tools/ab/run.sh box-press local30 2>&1 | tail -5"],
     ["ls /tmp/x.md", "cd /tmp; ls /tmp/x.md; echo rc=$?"],
