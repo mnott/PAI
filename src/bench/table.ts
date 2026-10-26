@@ -9,7 +9,6 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { getProviderOrNative, isLocalProvider, readWorkersSection } from "../workers/config.js";
 
 export const SETS = ["easy", "hard", "short"] as const;
 export const REAL_SLOW_S = 900;
@@ -20,7 +19,7 @@ export interface TableRow {
   where: "local" | "cloud";
   /** Results key (directory under results/<set>/ and work/<set>/). */
   key: string;
-  /** Provider the runs must have been routed to, run on and ended on; "" = infer from the runs. */
+  /** Provider the runs must have been routed to, run on and ended on. */
   provider: string;
 }
 
@@ -65,31 +64,8 @@ const routeOk = (route: string, provider: string): boolean => route === provider
 export function parseRow(spec: string, where: TableRow["where"]): TableRow {
   const [head, prov] = spec.split(":");
   const [name, key] = head.includes("=") ? head.split("=") : [head, head];
-  return { name, where, key, provider: prov || "" };
+  return { name, where, key, provider: prov || key };
 }
-
-/** The provider most of a key's non-killed runs ended on (sets and real, all reps); "" when there are none. */
-export function inferProvider(base: string, key: string): string {
-  const counts = new Map<string, number>();
-  const add = (w: WorkerJson | null) => w?.provider && counts.set(w.provider, (counts.get(w.provider) ?? 0) + 1);
-  const ls = (d: string): string[] => (existsSync(d) ? readdirSync(d).sort() : []);
-  for (const set of SETS) {
-    for (const rep of ls(join(base, "work", set, key))) add(readJson<WorkerJson>(join(base, "work", set, key, rep, "worker.json")));
-  }
-  for (const d of ls(join(base, "work", "real")).filter((d) => d.startsWith(`${key}-rep`))) {
-    for (const w of ls(join(base, "work", "real", d)).filter((x) => x.endsWith(".worker.json"))) add(readJson<WorkerJson>(join(base, "work", "real", d, w)));
-  }
-  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
-}
-
-const providerIsLocal = (name: string): boolean => {
-  try {
-    const p = getProviderOrNative(readWorkersSection().workers, name);
-    return !p || isLocalProvider(p.baseUrl);
-  } catch {
-    return true;
-  }
-};
 
 export function setStats(base: string, row: TableRow, set: string, notes: string[]): SetStats | null {
   const dir = join(base, "results", set, row.key);
@@ -178,13 +154,7 @@ export function renderTable(base: string, rows: TableRow[]): string {
     "| Model | Where | easy | hard | short | real | t/s sets | t/s real | s/task sets | s/task real | reps |",
     "|---|---|---|---|---|---|---|---|---|---|---|",
   ];
-  for (const given of rows) {
-    let row = given;
-    if (!row.provider) {
-      const provider = inferProvider(base, row.key);
-      row = { ...row, provider, where: provider && !providerIsLocal(provider) ? "cloud" : row.where };
-      if (provider) notes.push(`${row.name}: provider ${provider} inferred from the runs; runs on another provider are excluded`);
-    }
+  for (const row of rows) {
     const sets = Object.fromEntries(SETS.map((s) => [s, setStats(base, row, s, notes)]));
     const real = realStats(base, row, notes);
     const tps = mean(SETS.map((s) => sets[s]?.tps).filter((x): x is number => x != null));
