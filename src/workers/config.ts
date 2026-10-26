@@ -14,8 +14,7 @@
  * `upstreamUrl` is their Chat Completions base, and `run` points
  * ANTHROPIC_BASE_URL at the local proxy with the provider name in the path.
  * `engine: "codex"` providers run through the Codex CLI instead of Claude
- * Code; `engine: "opencode"` through the OpenCode CLI, whose OpenAI-format
- * traffic goes through the PAI router (`/p/<provider>/v1/...`).
+ * Code.
  */
 
 import { DEFAULT_ESCALATE, parseEscalate, type CloudTarget, type EscalateConfig } from "./escalation.js";
@@ -47,12 +46,11 @@ import { isLoopbackHostname } from "../utils/loopback.js";
 export type WorkerProtocol = "anthropic" | "openai";
 
 /**
- * Runner executable behind a provider: Claude Code, the Codex CLI, the
- * OpenCode CLI (multi-provider; its OpenAI traffic goes through the PAI
- * router), or the "image" engine (src/workers/engines/image.ts — an
- * OpenAI-compatible images API, not a claude/codex/opencode spawn).
+ * Runner executable behind a provider: Claude Code, the Codex CLI, or the
+ * "image" engine (src/workers/engines/image.ts — an OpenAI-compatible
+ * images API, not a claude/codex spawn).
  */
-export type WorkerEngine = "claude" | "codex" | "opencode" | "image";
+export type WorkerEngine = "claude" | "codex" | "image";
 
 /** One quota window the statusline renders for a provider (e.g. "5h", "7d"). */
 export interface UsageWindow {
@@ -837,8 +835,8 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     bad(`.providers.${name}.protocol`, `"${str(p.protocol)}" is neither "anthropic" nor "openai"`);
   }
   const engine = p.engine === undefined ? "claude" : str(p.engine);
-  if (engine !== "claude" && engine !== "codex" && engine !== "opencode" && engine !== "image") {
-    bad(`.providers.${name}.engine`, `"${str(p.engine)}" is none of "claude", "codex", "opencode", "image"`);
+  if (engine !== "claude" && engine !== "codex" && engine !== "image") {
+    bad(`.providers.${name}.engine`, `"${str(p.engine)}" is none of "claude", "codex", "image"`);
   }
 
   const baseUrl = str(p.baseUrl);

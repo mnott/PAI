@@ -295,6 +295,3 @@ export interface Ag2ReaskArgs {
 }
 
 export interface CodexArgs extends Omit<ExecuteArgs, "reroutes" | "mcpFlag" | "opts"> {}
-
-/** Same shape as CodexArgs: the opencode engine dispatch takes no reroute/mcp/opts extras. */
-export interface OpencodeArgs extends CodexArgs {}

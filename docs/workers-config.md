@@ -49,7 +49,7 @@ pai worker config inline-keys      # rewrite every key_file as an inline, quoted
 | `key` / `key_file` | Token inline (wins, never printed back: `key ****` plus the last 4) or path to a 0600 file. Neither: a local server without auth (the placeholder token `local` is sent). |
 | `models` | Model id per capability. `default` is required; `fast`, `image` and any name matching `^[a-z][a-z0-9-]*$` are open and fall back to `default`. |
 | `protocol: openai` + `upstream_url` | Route through the local Anthropic-to-OpenAI proxy (remote OpenAI-style APIs and local servers such as Ollama, LM Studio, llama.cpp). |
-| `engine` | `claude` (default), `codex` (Codex CLI), `opencode` (OpenCode CLI, model via the PAI router), `image` (images API, no process). |
+| `engine` | `claude` (default), `codex` (Codex CLI), `image` (images API, no process). |
 | `tier` | Cost tier 1 cheapest to 5 dearest (default 3); used by `--max-cost-tier` class constraints. |
 | `tags` | `code`, `vision`, `image-gen`, `long-context`, `fast`, `reasoning`. |
 | `enabled: false` | Skip in routing without deleting the entry. |

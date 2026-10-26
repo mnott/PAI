@@ -221,7 +221,7 @@ const providersAddCommand: CommandDef = {
     "Adds a provider that workers can run on. The first provider you add also turns workers on and sets up the default classes.\n" +
     "Give the API token with --key (stored in workers.yaml, file kept private) or --key-file (path to a private file holding it), not both.\n" +
     "OpenAI-style APIs: --protocol openai --upstream-url URL (runs through the local proxy).\n" +
-    "ChatGPT plan through the Codex CLI: --engine codex. Any model PAI routes to through the OpenCode CLI (its traffic goes through the PAI router): --engine opencode. Image generation: --engine image.",
+    "ChatGPT plan through the Codex CLI: --engine codex. Image generation: --engine image.",
   args: [{ name: "NAME", required: true, summary: "Name for the new provider, e.g. glm" }],
   options: [
     { name: "base-url", type: "string", value: "URL", summary: "Anthropic-compatible API base URL (required unless --protocol openai)" },
@@ -234,7 +234,7 @@ const providersAddCommand: CommandDef = {
     { name: "note", type: "string", value: "TEXT", summary: "Short note shown in the provider list" },
     { name: "protocol", type: "string", value: "KIND", summary: "anthropic (default) or openai" },
     { name: "upstream-url", type: "string", value: "URL", summary: "Chat Completions base URL (required for --protocol openai)" },
-    { name: "engine", type: "string", value: "KIND", summary: "claude (default), codex, opencode, or image" },
+    { name: "engine", type: "string", value: "KIND", summary: "claude (default), codex, or image" },
     { name: "context-window", type: "number", value: "TOKENS", summary: "Context window for the usage meter (default 200000)" },
     { name: "quota-probe", type: "string", value: "URL", summary: "URL whose JSON first number is the quota percent (0-100)" },
     { ...costTierOpt },
@@ -250,13 +250,13 @@ const providersAddCommand: CommandDef = {
       const o = ctx.opts;
       const name = ctx.args.NAME as string;
       const protocol = o.protocol as "anthropic" | "openai" | undefined;
-      const engine = o.engine as "claude" | "codex" | "opencode" | "image" | undefined;
+      const engine = o.engine as "claude" | "codex" | "image" | undefined;
       if (o.model === undefined) throw new WorkersConfigError("--model is required (the default model id for this provider)");
       if (protocol && protocol !== "anthropic" && protocol !== "openai") {
         throw new WorkersConfigError(`--protocol must be anthropic or openai, got "${protocol}"`);
       }
-      if (engine && engine !== "claude" && engine !== "codex" && engine !== "opencode" && engine !== "image") {
-        throw new WorkersConfigError(`--engine must be claude, codex, opencode, or image, got "${engine}"`);
+      if (engine && engine !== "claude" && engine !== "codex" && engine !== "image") {
+        throw new WorkersConfigError(`--engine must be claude, codex, or image, got "${engine}"`);
       }
       const baseUrl = (o["base-url"] ?? o.url) as string | undefined;
       if (protocol !== "openai" && !baseUrl) {

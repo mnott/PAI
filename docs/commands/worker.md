@@ -963,7 +963,7 @@ pai worker providers add NAME [options]
 Adds a provider that workers can run on. The first provider you add also turns workers on and sets up the default classes.
 Give the API token with --key (stored in workers.yaml, file kept private) or --key-file (path to a private file holding it), not both.
 OpenAI-style APIs: --protocol openai --upstream-url URL (runs through the local proxy).
-ChatGPT plan through the Codex CLI: --engine codex. Any model PAI routes to through the OpenCode CLI (its traffic goes through the PAI router): --engine opencode. Image generation: --engine image.
+ChatGPT plan through the Codex CLI: --engine codex. Image generation: --engine image.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -981,7 +981,7 @@ ChatGPT plan through the Codex CLI: --engine codex. Any model PAI routes to thro
 | `--note TEXT` | string | — | Short note shown in the provider list |
 | `--protocol KIND` | string | — | anthropic (default) or openai |
 | `--upstream-url URL` | string | — | Chat Completions base URL (required for --protocol openai) |
-| `--engine KIND` | string | — | claude (default), codex, opencode, or image |
+| `--engine KIND` | string | — | claude (default), codex, or image |
 | `--context-window TOKENS` | number | — | Context window for the usage meter (default 200000) |
 | `--quota-probe URL` | string | — | URL whose JSON first number is the quota percent (0-100) |
 | `--cost-tier 1-5` | string | — | Cost tier: 1 (cheapest) to 5 (most expensive; default 3) |

@@ -11,7 +11,6 @@ import {
 } from "../config.js";
 import { buildRunEnv, claudeCommand } from "../run-env.js";
 import { codexInstalled } from "../codex.js";
-import { opencodeInstalled } from "../opencode.js";
 import { ensureNoMcpConfig } from "../paths.js";
 import { proxyPort, ensureProxyRunning } from "../proxy/server.js";
 import { type StreamEvent } from "./types.js";
@@ -139,15 +138,13 @@ export async function testProvider(
 
   if (provider.native) return testNativeClaude(providerName, provider, logDir, timeoutMs, run);
 
-  if (provider.engine === "codex" || provider.engine === "opencode") {
-    const cli = provider.engine === "codex" ? "codex" : "opencode";
-    const installed = provider.engine === "codex" ? codexInstalled() : opencodeInstalled();
-    const skipped = installed ? undefined : `${cli} not installed`;
+  if (provider.engine === "codex") {
+    const skipped = codexInstalled() ? undefined : "codex not installed";
     return {
       provider: providerName,
       model,
       latencyMs: 0,
-      result: skipped ?? `${cli} engine: pong probe through ${cli} not implemented`,
+      result: skipped ?? "codex engine: pong probe through codex exec not implemented",
       ok: false,
       ...(skipped ? { skipped } : {}),
     };

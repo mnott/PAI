@@ -299,14 +299,6 @@ describe("assertProviderRunnable", () => {
     ).not.toThrow();
   });
 
-  it("accepts the opencode engine", () => {
-    expect(parseWorkersConfig({ providers: { oc: { ...GLM, engine: "opencode" } } }).providers.oc.engine).toBe(
-      "opencode"
-    );
-    expect(() => parseWorkersConfig({ providers: { oc: { ...GLM, engine: "opencode" } } })).not.toThrow();
-    expect(() => parseWorkersConfig({ providers: { oc: { ...GLM, engine: "nope" } } })).toThrow(/opencode/);
-  });
-
   it("accepts a plain anthropic provider", () => {
     expect(() => assertProviderRunnable("glm", GLM as never)).not.toThrow();
   });
