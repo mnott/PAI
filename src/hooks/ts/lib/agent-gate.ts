@@ -12,8 +12,8 @@
  * self-disabling. Observed 2026-09-19 with `workers.active = "anthropic"`:
  * two in-process subagents ran to completion, invisible to `pai worker ps`.
  * Visibility is the point of the gate, and it is worth just as much when the
- * work is meant to run on an Anthropic model — `pai worker run --provider
- * anthropic` delivers exactly that, and shows up in `pai worker ps`.
+ * work is meant to run on an Anthropic model — `pai worker run`
+ * delivers exactly that, and shows up in `pai worker ps`.
  */
 
 export interface AgentGateInput {
@@ -57,12 +57,11 @@ export function denyReason(label: string): string {
     "The in-process subagent tool is disabled: every subagent must run through " +
     "`pai worker run`, so that it shows up in `pai worker ps` and the status line and " +
     "can be followed, replayed and killed. Delegate with Bash instead, in the background:\n\n" +
-    `pai worker run --provider anthropic --label "${name}" -p '<full, self-contained task spec>' ` +
+    `pai worker run --label "${name}" -p '<full, self-contained task spec>' ` +
     "--allowedTools 'Read,Edit,Write,Bash,Grep,Glob' --output-format json\n\n" +
-    "- `--provider anthropic` is the supported way to get an Anthropic-model subagent, " +
-    "so there is never a reason to reach for the built-in tool.\n" +
-    "- Drop `--provider` to use the configured worker provider; pick the job with " +
-    "`--class draft|plan|implement|review|research|spotcheck`.\n" +
+    "- Workers use the default route: do not add `--provider` unless the operator asked for one. " +
+    "There is never a reason to reach for the built-in tool.\n" +
+    "- Pick the job with `--class draft|plan|implement|review|research|spotcheck`.\n" +
     "- Run it in the background and always with a timeout.\n" +
     "- Web research: add WebSearch,WebFetch to --allowedTools.\n" +
     "- The answer is in the `result` field of the JSON it prints. Review the diff yourself.\n" +
