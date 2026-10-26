@@ -16,7 +16,7 @@ import { delimiter, join } from "node:path";
 
 import { loadConfig } from "../daemon/config.js";
 import { routerPort } from "../router/router.js";
-import { resolveModelCapability, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "./config.js";
+import { resolveModelCapability, providerKeyPath, resolveProviderKey, type WorkerProvider, ANTHROPIC_NATIVE } from "./config.js";
 import { workersYamlPath } from "./workers-config.js";
 import { writePinFile } from "./settings-file.js";
 import { loopbackUrl } from "../utils/loopback.js";
@@ -173,7 +173,8 @@ export function buildRunEnv(
   proxyUrl?: string,
   providerName?: string,
   routerEnabled?: boolean,
-  orchestrate?: boolean
+  orchestrate?: boolean,
+  runToken?: string
 ): NodeJS.ProcessEnv {
   const env = nativeLaunchEnv();
   if (headless) {
@@ -222,6 +223,10 @@ export function buildRunEnv(
     env.ANTHROPIC_BASE_URL = routerUrl();
     // names the provider so the router can tell apart providers that declare the same model id
     if (providerName) env.ANTHROPIC_CUSTOM_HEADERS = `x-pai-provider: ${providerName}`;
+  } else if (runToken && providerName) {
+    // keyless: a registered per-run placeholder; the router swaps in the provider's key
+    token = runToken;
+    env.ANTHROPIC_BASE_URL = `${routerUrl()}/p/${providerName}`;
   } else {
     const resolved = resolveProviderKey(provider);
     if (resolved) token = resolved;
@@ -357,6 +362,13 @@ export function pinnedSettings(
 
 function onPath(bin: string, env: NodeJS.ProcessEnv): boolean {
   return (env.PATH ?? "").split(delimiter).some((d) => d && existsSync(join(d, bin)));
+}
+
+/** A Claude run is keyless when the router is on and the provider is a non-native, non-loopback API with a key. */
+export function claudeKeyless(provider: WorkerProvider, routerEnabled: boolean = loadConfig().router.enabled): boolean {
+  if (!routerEnabled || provider.native || isLoopbackProvider(provider) || provider.protocol === "openai") return false;
+  const keyPath = providerKeyPath(provider);
+  return !!(provider.key || (keyPath && existsSync(keyPath)));
 }
 
 export function isLoopbackProvider(p: WorkerProvider): boolean {

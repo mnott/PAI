@@ -16,8 +16,10 @@ import {
   claudeSettingsExtra,
   pinnedSettings,
   isLoopbackProvider,
+  claudeKeyless,
   routeLoopbackViaRouter,
 } from "../run-env.js";
+import { acquireRunToken } from "../run-token.js";
 import { probeRouter } from "../../router/supervisor.js";
 import { appendLedger } from "../ledger.js";
 import { ensureNoMcpConfig, ledgerPath } from "../paths.js";
@@ -166,11 +168,19 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     viaRouter = routeLoopbackViaRouter(target.provider, await probeRouter());
     if (!viaRouter) process.stderr.write(`pai: router down, ${target.providerName} runs direct (no router prefix fix)\n`);
   }
-  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter, a.orchestrate);
+  const wid = a.id ?? newWorkerId();
+  // a cloud provider's key stays with the router: the worker gets a per-run placeholder, or no run at all
+  let runToken: string | undefined;
+  if (!proxyUrl && claudeKeyless(target.provider)) {
+    runToken = (await acquireRunToken(target.providerName, wid, limit?.deadlineAt)) ?? undefined;
+    if (!runToken) {
+      throw new Error(`provider "${target.providerName}" needs the PAI router for a keyless run, but it did not take the run token — start it with \`pai router start\``);
+    }
+  }
+  const env = buildRunEnv(target.provider, headless, proxyUrl, target.providerName, viaRouter, a.orchestrate, runToken);
   // read by the anti-pattern firing record (which model a pattern fired on)
   if (headless && typeof model === "string" && model) env.PAI_WORKER_MODEL = model;
 
-  const wid = a.id ?? newWorkerId();
   // a resume takes over the old id's tree and runs against its repo
   const adopted = a.resumeOf ? adoptTree(logDir, a.resumeOf) : null;
   const cwd = adopted?.cwd ?? a.cwd ?? process.cwd();
