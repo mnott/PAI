@@ -28,6 +28,7 @@ import { providerCap, queueRows, reorderQueue } from "../../workers/capacity.js"
 import { schedulerLines, schedulerView } from "../../workers/scheduler.js";
 import { killWorker } from "../../workers/kill-tree.js";
 import { runWorkerGc } from "../../workers/gc-run.js";
+import { setKeep } from "../../workers/worktree.js";
 import { sayToWorker } from "../../workers/operator.js";
 import { handoffFromInside } from "../../workers/handoff.js";
 import { gitChangedFiles, HELP_REFUSED_EXIT, readHelpLedger, renderHelpReport, requestHelp, spawnPaiWorker } from "../../workers/help.js";
@@ -922,6 +923,27 @@ const gcCommand: CommandDef = {
     }),
 };
 
+const keepCommand: CommandDef = {
+  name: "keep",
+  summary: "Protect a worktree from gc",
+  description: "Writes .pai-keep (first line = reason) into the worktree; every gc path then leaves it alone and logs WORKER-GC-KEEP. Use it for a tree something still builds from or runs out of. --release removes the marker.",
+  args: [{ name: "TARGET", required: true, summary: "Worker id or worktree path" }],
+  options: [
+    { name: "reason", type: "string", value: "TEXT", summary: "Why the worktree is kept (required unless --release)" },
+    { name: "release", type: "boolean", summary: "Remove the .pai-keep marker" },
+  ],
+  examples: ['pai worker keep w-20260101-abc --reason "source tree of build-x"', "pai worker keep w-20260101-abc --release"],
+  seeAlso: ["pai worker gc"],
+  run: (ctx) =>
+    guard("pai worker keep --reason TEXT", async () => {
+      const release = ctx.opts.release === true;
+      const reason = str(ctx.opts.reason);
+      if (!release && !reason) throw new Error("--reason is required (or --release)");
+      const dir = setKeep(logDir(), ctx.args.TARGET as string, release ? null : reason!);
+      out(release ? `released ${dir}` : `kept ${dir}`);
+    }),
+};
+
 const killCommand: CommandDef = {
   name: "kill",
   summary: "Stop a running worker",
@@ -1254,6 +1276,7 @@ export const workerCommand: CommandDef = {
     pendingCommand,
     discardCommand,
     gcCommand,
+    keepCommand,
     killCommand,
     queueCommand,
     waitOnCommand,
