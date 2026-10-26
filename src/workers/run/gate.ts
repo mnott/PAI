@@ -57,6 +57,7 @@ import { resolveLocalProvider } from "../local-provider.js";
 import { routeRun } from "../policy.js";
 import { runWorker } from "./worker-ref.js";
 import { UNLABELED } from "../status.js";
+import { guardQueuedRun } from "./follow-reroute.js";
 import { followCommand } from "../pane.js";
 import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
@@ -636,16 +637,20 @@ function queuedOf(q: QueuedFile, label: string | undefined, logDir: string): Que
  * run's saved status; its capacity/warmup/last fields carry the queue line.
  */
 export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
+  // a reroute's SIGTERM turns this process into the restart's follower instead of ending it (follow-reroute.ts)
+  const guard = guardQueuedRun(a.logDir, wid);
   try {
-    await runGatesInner(a, wid, status);
+    await runGatesInner(a, wid, status, guard.aborted);
   } catch (e) {
     // a run that preempted others and then failed to start must give them back
     resumePreempted(a.logDir, wid);
     throw e;
+  } finally {
+    guard.dispose();
   }
 }
 
-async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus): Promise<void> {
+async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus, aborted: () => boolean): Promise<void> {
   const { logDir, target, config } = a;
   const saved = status.last;
   const tier = queuePriorityOf(a.queuePriority, status, config);
@@ -687,6 +692,7 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus):
       }
     },
     config: config.capacity,
+    aborted,
     disabled: a.noQueue,
     priority: a.priority,
     tier,
