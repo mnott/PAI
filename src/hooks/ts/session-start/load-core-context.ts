@@ -33,6 +33,15 @@ import { join } from 'path';
 import { SKILLS_DIR } from '../lib/pai-paths.js';
 import { isProbeSession } from '../lib/project-utils.js';
 import { stripFrontmatter } from '../lib/frontmatter.js';
+import { readHookInput } from '../lib/read-stdin.js';
+import { WAITER_NOTICE, deliverWaitingMail } from '../lib/session-mailbox.js';
+
+/** Waiter instruction plus any mail already waiting; same for fresh and resumed sessions. */
+async function mailboxStart(): Promise<void> {
+  console.log(`<system-reminder>\n${WAITER_NOTICE}\n</system-reminder>`);
+  const claudeId = (await readHookInput<{ session_id?: string }>())?.session_id;
+  await deliverWaitingMail(claudeId);
+}
 
 async function main() {
   if (isWorkerSession()) return; // disposable worker: no per-session bookkeeping
@@ -59,7 +68,10 @@ async function main() {
       .find(existsSync);
 
     // CORE is an optional, user-provided skill (PAI ships none): absent = silent no-op
-    if (!coreSkillPath) process.exit(0);
+    if (!coreSkillPath) {
+      await mailboxStart();
+      process.exit(0);
+    }
 
     console.error(`Reading CORE context from ${coreSkillPath}...`);
 
@@ -107,6 +119,7 @@ ${stripFrontmatter(coreContent)}
         `</system-reminder>`
     );
 
+    await mailboxStart();
     console.error('CORE context injected into session');
     process.exit(0);
   } catch (error) {

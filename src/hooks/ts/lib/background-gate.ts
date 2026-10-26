@@ -22,6 +22,8 @@ function allowedStart(command: string): boolean {
   let i = 0;
   while (i < first.words.length && isAssignment(first.words[i])) i++;
   const w = first.words.slice(i);
+  // the silent mailbox waiter is not work and has no pane
+  if (w[0] === "aibroker" && w[1] === "mailbox" && w[2] === "wait") return true;
   if (w[0] !== "pai" && !/(^|\/)pai$/.test(w[0] ?? "")) return false;
   return ALLOWED.some(([a, b]) => w[1] === a && w[2] === b);
 }
