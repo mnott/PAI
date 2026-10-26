@@ -694,7 +694,8 @@ export async function cmdArchiveTask(
           dim("Label it `pai:<project>` to give it a home.")
       );
     }
-    return false;
+    // Nothing to archive is a normal outcome, not a failure.
+    return true;
   }
 
   const comments = await provider.listComments(id);
