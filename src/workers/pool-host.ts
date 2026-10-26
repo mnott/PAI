@@ -80,6 +80,7 @@ import {
 } from "./slots.js";
 import { commitsSince, git, isPaiBookkeepingPath, salvageNotes, salvageOnExit, uncommittedPaths, worktreeBranch, worktreeSystemPrompt } from "./worktree.js";
 import { AG2_REASK_TEXT, noteTokenSentence, parseWorkerReport, untrackedPaths } from "./report.js";
+import { applyScratchEnv, scratchPromptLine } from "./scratch.js";
 import { createToolFold, proofNote, runProofCheck } from "./run/tool-fold.js";
 import {
   appendPoolMetric,
@@ -1174,6 +1175,9 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
         )
       : null;
 
+    // the task's own scratch dir: the slot spans tasks and carries no scratch
+    // env, so the dir is created here and stated in the task's boundary
+    const taskScratch = applyScratchEnv({}, wid, workDir);
     // the client hung up before the answer was written: nobody wants this
     // result, so cancel through the same kill the deadline uses
     let clientGoneFired = false;
@@ -1259,8 +1263,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     const unitSpec = session.shared && split.shared === session.shared ? split.unit : task.prompt;
     // a spare's task is the whole first turn: no boundary, it has no earlier turns to separate from
     const text = spareEntry
-      ? `${pooledUnitPrompt(unitSpec, wtNote)}${noteTokenSentence(session.noteToken)}\n\n${task.trailer}`
-      : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer, session.noteToken);
+      ? `${pooledUnitPrompt(unitSpec, wtNote)}${scratchPromptLine(taskScratch)}\n${noteTokenSentence(session.noteToken)}\n\n${task.trailer}`
+      : pooledTaskText(taskNo, workDir, pooledUnitPrompt(unitSpec, wtNote), task.trailer, session.noteToken, taskScratch);
     // the slot process and its earlier children outlive the task; whatever the task started does not
     const reapOpts = { rootPid: session.pid, ...(prep ? { dir: prep.dir } : {}) };
     const beforeTask = snapshotWorkerPids(reapOpts);

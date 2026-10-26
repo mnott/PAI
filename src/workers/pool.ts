@@ -497,15 +497,17 @@ export function poolIneligibleReason(input: PoolEligibilityInput): PoolIneligibl
  * previous task's context; this line (plus the contract's own no-restating
  * rule) is the boundary: the new task is unrelated, prior turns must not be
  * referenced, and the fixed slot cwd is restated so absolute-path specs stay
- * anchored.
+ * anchored. The task's scratch dir rides here too: the slot process spans
+ * tasks and carries no scratch env, so this is the only place a pooled worker
+ * learns its own dir (the execute path states it in the system prompt).
  */
-export function poolTaskBoundary(taskNo: number, cwd: string): string {
+export function poolTaskBoundary(taskNo: number, cwd: string, scratch?: string): string {
   return (
     `<system-reminder>NEW TASK ${taskNo} — this session is a worker pool slot; the ` +
     `preceding turns were other, unrelated tasks by other workers. Ignore them ` +
     `completely: never reference, reuse or continue anything from them. Your working ` +
     `directory is ${cwd}; relative paths in the spec resolve there. Work only on the task ` +
-    `below.</system-reminder>`
+    `below.${scratch ? ` Scratch dir: ${scratch} — use this absolute path in Write/Edit; the Write tool does not expand $TMPDIR (Bash does).` : ""}</system-reminder>`
   );
 }
 
@@ -541,10 +543,11 @@ export function pooledTaskText(
   cwd: string,
   prompt: string,
   trailer: string,
-  noteToken?: string
+  noteToken?: string,
+  scratch?: string
 ): string {
   const note = noteToken ? `${noteTokenSentence(noteToken)}\n\n` : "";
-  return `${poolTaskBoundary(taskNo, cwd)}\n\n${prompt}${note}${trailer}`;
+  return `${poolTaskBoundary(taskNo, cwd, scratch)}\n\n${prompt}${note}${trailer}`;
 }
 
 // ---------------------------------------------------------------------------

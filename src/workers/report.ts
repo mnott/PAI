@@ -161,7 +161,6 @@ function fullContractPrompt(format: "ag2" | "json", scratch?: string): string {
     "run_in_background is denied. Foreground Bash calls stay under 2 min (longer ones block operator messages and supervision and are denied);",
     WAIT_VERBS,
     `Prefer the project's own blocking command for builds and tests (e.g. a build script's --wait, repeated while it says to call again); for a long job that has none, run it detached: ${WAIT_RECIPE}.`,
-    "Kill only processes you started, by PID (`cmd & echo $! > \"$TMPDIR/x.pid\"`, then `kill $(cat \"$TMPDIR/x.pid\")`); never `pkill`/`killall`/`kill $(pgrep ...)` — other workers' command lines contain your spec text.",
     ...fileNotInlineBlock(),
     "",
     `Operator messages: a user turn starting with ${OPERATOR_MARK} was typed by the operator while you`,
