@@ -21,6 +21,7 @@ import { readRoutingState } from "../routing.js";
 import { detectSessionName } from "../session-name.js";
 import { getProfile, resolveWorkers } from "../session-profile.js";
 import { readSessionNameCache, sessionNameCachePath, writeSessionNameCache } from "./session-name-cache.js";
+import { readUrgency } from "../urgency.js";
 
 const term = process.argv[2] ?? process.env.ITERM_SESSION_ID ?? "";
 const cwd = process.argv[3] ?? process.cwd();
@@ -40,6 +41,13 @@ try {
   let out = statusLineOutput(logDir, term, cwd, claudeSession, new Date());
   const unmerged = pendingCountCached(logDir, cwd);
   if (unmerged) out = [out, `⚑${unmerged} unmerged`].filter(Boolean).join(" ");
+  // the operator's urgency window (urgency.ts): its workers run with now until the window closes.
+  const urgent = readUrgency();
+  if (urgent) {
+    const d = new Date(urgent.until);
+    const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    out = ["⚡now" + (urgent.where === "local" ? " local" : "") + ` until ${hhmm}`, out].filter(Boolean).join(" ");
+  }
   // where this session's next worker would run: the same resolver every spawn uses (no live budget poll in the bar).
   // The session name comes from detectSessionName — the one resolver — so a session not started by `pai`
   // (no PAI_SESSION_NAME) still shows its route; its slow paths sit behind a 5-min file cache keyed by

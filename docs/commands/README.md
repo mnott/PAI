@@ -43,6 +43,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai new`](new.md) | Start a new session in a new or existing folder |
 | [`pai notes`](notes.md) | List the markdown session notes |
 | [`pai notify`](notify.md) | Notification settings: status, set, test, send |
+| [`pai now`](now.md) | Urgency window: this session's workers run with now (front + preempt local) |
 | [`pai observation`](observation.md) | Notes the system took while you worked |
 | [`pai obsidian`](obsidian.md) | Mirror project notes into an Obsidian vault |
 | [`pai open`](open.md) | Reopen a session (on its own provider unless --provider is given) |
@@ -232,6 +233,10 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai notify set` | Change the notification mode or channels |
 | `pai notify status` | Show the notification mode and active channels |
 | `pai notify test` | Send a test notification |
+| `pai now` | Urgency window: this session's workers run with now (front + preempt local) |
+| `pai now clear` | Close the window now |
+| `pai now set` | Open (or extend) the window (default verb) |
+| `pai now status` | Show the open window (this session, or all on this machine) |
 | `pai observation` | Notes the system took while you worked |
 | `pai observation list` | Show recent observations |
 | `pai observation search` | Search observations by title or text |

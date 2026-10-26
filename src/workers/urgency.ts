@@ -1,9 +1,22 @@
 /**
- * urgency.ts — "now, but local" from the operator's words. The UserPromptSubmit
- * hook (hooks/ts/user-prompt/urgency.ts) records an urgency window for the
- * session when the prompt asks for urgency; every worker start path reads it
+ * urgency.ts — the operator's urgency window, by explicit instrumentation only.
+ *
+ * The window opens ONLY on the literal token `/now` (never on the word "now":
+ * prose, pasted reports and worker specs must not arm it — observed 2026-10-26:
+ * word matching armed 59 live windows from worker specs and pasted manager
+ * reports). Paths that open it:
+ *   - the UserPromptSubmit hook (hooks/ts/user-prompt/urgency.ts): any operator
+ *     prompt carrying `/now` — typed, or a channel/Todoist delivery whose text
+ *     carries the token (channel prefixes are allowed when they carry it);
+ *   - `pai now [--session] [--local] [--minutes] [--clear]`;
+ *   - the MCP tools urgency_set / urgency_clear (cockpit, PAILot).
+ * Workers never open a window (PAI_WORKER=1 -> no-op).
+ *
+ * Effect: the session's WORKERS. Every worker start path reads the window
  * (applyUrgency) and runs the worker with now=front, plus where=local when the
- * prompt said local, even when the model left the flag out. Explicit flags win.
+ * token said local, even when the model left the flag out. Explicit flags win.
+ * Workers already running when the window opens are made urgent by the hook
+ * (preempt.ts, like `pai worker priority <id> now`).
  *
  * State: <pai home>/state/urgency-<session>.json {until, where?}. The session
  * is the Claude session id (hook input / CLAUDE_CODE_SESSION_ID) and, when
@@ -11,7 +24,8 @@
  * A leaf: the hook bundle imports it.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { paiHomePath } from "../config/pai-home.js";
 import { currentSessionName } from "./session-profile-store.js";
 
@@ -23,23 +37,13 @@ export interface UrgencyState {
   where?: "local";
 }
 
-const URGENT = /(?<![\p{L}\p{N}_-])(now|immediately|right away|first|asap|jetzt|sofort|gleich)(?![\p{L}\p{N}_-])/iu;
-const LOCAL = /(?<![\p{L}\p{N}_-])(local|locally|lokal|lokale[nrs]?)(?![\p{L}\p{N}_-])/iu;
+/** The explicit marker: the literal token `/now`, anywhere in a line. `/now local` forces where=local. */
+const NOW_TOKEN = /(^|[^\w/])\/now(?![\w/])/;
+const LOCAL_AFTER = /\/now(?:\s+|-)local\b/i;
 
-/** Drop fenced and inline code and quoted text: a quoted "now" is not the operator asking. */
-function stripQuoted(prompt: string): string {
-  return prompt
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`[^`\n]*`/g, " ")
-    .replace(/"[^"\n]*"/g, " ")
-    .replace(/“[^”\n]*”/g, " ")
-    .replace(/(^|\s)'[^'\n]*'(?=\s|$|[.,;:!?])/g, " ");
-}
-
-/** Whether the operator's prompt asks for urgency, and for local. */
+/** Whether a delivered prompt carries the explicit `/now` marker, and asked for local. */
 export function urgencyOf(prompt: string): { urgent: boolean; local: boolean } {
-  const t = stripQuoted(prompt);
-  return { urgent: URGENT.test(t), local: LOCAL.test(t) };
+  return { urgent: NOW_TOKEN.test(prompt), local: LOCAL_AFTER.test(prompt) };
 }
 
 const stateFile = (key: string): string => paiHomePath("state", `urgency-${key.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
@@ -64,14 +68,61 @@ export function recordUrgency(keys: string[], windowMin: number, local: boolean,
 /** The calling session's open urgency window, if any. */
 export function readUrgency(env: NodeJS.ProcessEnv = process.env, now = Date.now()): UrgencyState | undefined {
   for (const k of urgencyKeys(env)) {
-    try {
-      const j = JSON.parse(readFileSync(stateFile(k), "utf8")) as Partial<UrgencyState>;
-      if (typeof j.until === "number" && j.until > now) return { until: j.until, ...(j.where === "local" ? { where: "local" as const } : {}) };
-    } catch {
-      /* no window for this key */
-    }
+    const u = readUrgencyFor(k, now);
+    if (u) return u;
   }
   return undefined;
+}
+
+/** One session's open window, by its exact key (a session id or name). */
+export function readUrgencyFor(key: string, now = Date.now()): UrgencyState | undefined {
+  try {
+    const j = JSON.parse(readFileSync(stateFile(key), "utf8")) as Partial<UrgencyState>;
+    if (typeof j.until === "number" && j.until > now) return { until: j.until, ...(j.where === "local" ? { where: "local" as const } : {}) };
+  } catch {
+    /* no window for this key */
+  }
+  return undefined;
+}
+
+/** Close the session's window (the keys it may be stored under). Returns how many files were removed. */
+export function clearUrgency(env: NodeJS.ProcessEnv = process.env, sessionId?: string): number {
+  let removed = 0;
+  for (const k of urgencyKeys(env, sessionId)) {
+    try {
+      unlinkSync(stateFile(k));
+      removed++;
+    } catch {
+      /* nothing stored under this key */
+    }
+  }
+  return removed;
+}
+
+/** Every open window on this machine, one row per stored key (expired files are dropped). For `pai now` with no session and the status line. */
+export function listUrgency(now = Date.now()): Array<{ key: string; until: number; where?: "local" }> {
+  const dir = paiHomePath("state");
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const rows: Array<{ key: string; until: number; where?: "local" }> = [];
+  for (const name of names) {
+    if (!name.startsWith("urgency-") || !name.endsWith(".json")) continue;
+    const key = name.slice("urgency-".length, -".json".length);
+    const u = readUrgencyFor(key, now);
+    if (u) rows.push({ key, ...u });
+    else {
+      try {
+        unlinkSync(join(dir, name));
+      } catch {
+        /* gone meanwhile */
+      }
+    }
+  }
+  return rows.sort((a, b) => a.until - b.until);
 }
 
 /**

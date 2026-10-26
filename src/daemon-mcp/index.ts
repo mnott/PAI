@@ -21,6 +21,7 @@
  *   resources    — reference docs read when needed (guides, constitution).
  */
 
+import { clearUrgency, DEFAULT_URGENCY_WINDOW_MIN, recordUrgency, urgencyKeys } from "../workers/urgency.js";
 import { lowPowerActive } from "../daemon/low-power.js";
 import { buildNext, buildsDir, listBuilds, renderBuildQueue } from "../builds/queue.js";
 import { poolSlots } from "../builds/config.js";
@@ -1767,6 +1768,42 @@ async function startShim(): Promise<void> {
         if (args.goal !== undefined) setWorkerLabel(logDir, args.id, args.goal);
         await sayToWorker(logDir, args.id, args.text);
         return workerText(`sent to ${args.id}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "urgency_set",
+    "Open the operator's urgency window for a session: its workers (running ones, and ones started in the window) run with now, plus local when asked. Same as `pai now`. Only for the operator's explicit request; never from a worker.",
+    {
+      session: z.string().optional().describe("Session name or id (default: this session)."),
+      local: z.boolean().optional().describe("Those workers also run local."),
+      minutes: z.number().positive().optional().describe("Window length in minutes (default workers.urgency.windowMinutes, 30)."),
+    },
+    async (args) => {
+      try {
+        if (process.env.PAI_WORKER === "1") return workerText("worker session: no window");
+        const keys = args.session ? [args.session] : urgencyKeys(process.env);
+        if (!keys.length) return workerError(new Error("no session; pass session"));
+        const min = args.minutes ?? readWorkersSection().workers.urgency?.windowMinutes ?? DEFAULT_URGENCY_WINDOW_MIN;
+        recordUrgency(keys, min, args.local === true);
+        return workerText(`urgent for ${keys.join(", ")}: ${min} min${args.local ? ", local" : ""}`);
+      } catch (e) {
+        return workerError(e);
+      }
+    }
+  );
+
+  server.tool(
+    "urgency_clear",
+    "Close the operator's urgency window for a session (default: this session). Same as `pai now --clear`.",
+    { session: z.string().optional().describe("Session name or id (default: this session).") },
+    async (args) => {
+      try {
+        const n = clearUrgency(process.env, args.session);
+        return workerText(n ? "urgency window cleared" : "no urgency window open");
       } catch (e) {
         return workerError(e);
       }
