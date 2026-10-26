@@ -1,9 +1,14 @@
 /** `pai harness ...`: sessions PAI can read from agent harnesses (read-only). */
 
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { CommandDef, RunContext } from "../define.js";
 import { ADAPTERS, enabledHarnessNames } from "../../harness/index.js";
 import type { HarnessSession } from "../../harness/types.js";
+import { applyOpenCodeSetup, planOpenCodeSetup } from "../../harness/opencode/setup.js";
+import { packageRoot } from "../../module-paths.js";
+import { CliError } from "../define.js";
 import { maskSecrets } from "../../hooks/ts/lib/loop-guard.js";
 import { dim, ok, renderTable, shortenPath } from "../lib/utils.js";
 
@@ -68,6 +73,43 @@ function sessionsCmd(opts: { harness?: string; cwd?: string; json?: boolean }): 
   return 0;
 }
 
+function setupCmd(harness: string, opts: RunContext["opts"]): number {
+  if (harness !== "opencode") throw new CliError(`no setup for harness "${harness}"`, "pai harness setup opencode");
+  const home = homedir();
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const configDir = (opts["config-dir"] as string | undefined) ?? join(xdg || join(home, ".config"), "opencode");
+  const provider = opts.provider as string | undefined;
+  const model = opts.model as string | undefined;
+  if (!!provider !== !!model) throw new CliError("--provider and --model go together", "pai harness setup opencode --provider glm --model glm-5");
+  const plan = planOpenCodeSetup({
+    home,
+    configDir,
+    packageRoot: packageRoot(import.meta.url),
+    allMcp: opts["all-mcp"] === true,
+    ...(provider && model && { routerProvider: { name: provider, model } }),
+  });
+  const write = opts.write === true;
+  console.log(`  OpenCode config dir: ${shortenPath(configDir, 60)}`);
+  for (const f of plan.files) {
+    const state = f.before === null ? "new" : f.before === f.content ? "unchanged" : "changed";
+    console.log(`  ${write ? "write" : "would write"} ${shortenPath(f.path, 70)} (${state})`);
+  }
+  console.log(`  MCP servers: ${plan.mcpServers.join(", ")}`);
+  console.log(`  commands (${plan.commands.length}): ${plan.commands.join(", ") || "none"}`);
+  console.log(`  skills OpenCode reads from ~/.claude/skills (${plan.skills.length}): ${plan.skills.join(", ") || "none"}`);
+  console.log(`  guards: ${plan.hooks.map((h) => `${h.hook} -> ${h.tools.join("/")}`).join(", ") || "none"}`);
+  if (plan.envRefs.length) console.log(`  needs these env vars exported before opencode starts: ${plan.envRefs.join(", ")}`);
+  for (const w of plan.warnings) console.log(dim(`  ! ${w}`));
+  if (!write) {
+    console.log(dim("  dry run: nothing written. Add --write to apply (changed files are backed up as <file>.bak-<stamp>)."));
+    return 0;
+  }
+  const done = applyOpenCodeSetup(plan);
+  for (const b of done.backups) console.log(dim(`  backup ${shortenPath(b, 70)}`));
+  console.log(ok(`  wrote ${done.written.length} file(s). Start OpenCode and ask it for pai_worker_ps.`));
+  return 0;
+}
+
 export const harnessCommand: CommandDef = {
   name: "harness",
   summary: "Sessions PAI can read from agent harnesses (Claude Code, Codex, ...)",
@@ -102,6 +144,22 @@ export const harnessCommand: CommandDef = {
         }
         return sessionsCmd({ harness: ctx.opts.harness as string | undefined, cwd, json: ctx.opts.json === true });
       },
+    },
+    {
+      name: "setup",
+      summary: "Make a harness a PAI frontend (opencode)",
+      description:
+        "Writes the OpenCode config that registers PAI's MCP server (as Claude Code has it), points OpenCode at PAI's instructions (rendered for OpenCode from the one source), exposes your Claude Code commands, and installs the bridge plugin that applies PAI's delegation and security guards. Dry run unless --write; changed files are backed up first. Never touches opencode.jsonc.",
+      args: [{ name: "HARNESS", required: true, summary: "opencode" }],
+      options: [
+        { name: "write", type: "boolean", default: false, summary: "Apply the plan (default: show it)" },
+        { name: "config-dir", type: "string", value: "DIR", summary: "OpenCode config dir (default: $XDG_CONFIG_HOME/opencode or ~/.config/opencode)" },
+        { name: "all-mcp", type: "boolean", default: false, summary: "Register every Claude Code MCP server, not only pai" },
+        { name: "provider", type: "string", value: "NAME", summary: "Run OpenCode's own model through the PAI router on this provider" },
+        { name: "model", type: "string", value: "MODEL", summary: "Model for --provider" },
+      ],
+      examples: ["pai harness setup opencode", "pai harness setup opencode --write", "pai harness setup opencode --write --provider glm --model glm-5"],
+      run: (ctx: RunContext) => setupCmd(String(ctx.args.HARNESS), ctx.opts),
     },
   ],
 };

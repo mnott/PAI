@@ -24,6 +24,7 @@ import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { refreshClaudeMd } from "./claude-md-refresh.js";
+import { renderInstructions } from "../../../harness/instructions.js";
 import { resolveDaemonPid } from "../../../daemon/daemon-pid.js";
 
 // ---------------------------------------------------------------------------
@@ -347,7 +348,7 @@ function stepRefreshClaudeMd(repoDir: string, newCommitsLog: string | null): voi
   }
 
   info("CLAUDE.md template was updated in this release.");
-  const render = (t: string) => t.replace(/\$\{HOME\}/g, homedir());
+  const render = (t: string) => renderInstructions("claude-code", t, homedir());
   const template = render(readFileSync(templatePath, "utf8"));
   const previous = capture("git show HEAD~1:templates/claude-md.template.md", repoDir);
   const outcome = refreshClaudeMd(claudeMd, template, previous === null ? null : render(previous));

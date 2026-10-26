@@ -164,6 +164,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai harness` | Sessions PAI can read from agent harnesses (Claude Code, Codex, ...) |
 | `pai harness list` | Each adapter: detected, enabled, session count |
 | `pai harness sessions` | List sessions, newest first |
+| `pai harness setup` | Make a harness a PAI frontend (opencode) |
 | `pai help` | Explain a command (same as `pai <command> --help`) |
 | `pai home` | Where PAI keeps its files; move them out of ~/.claude |
 | `pai home git-setup` | Whitelist antipatterns/ in the PAI home .gitignore |

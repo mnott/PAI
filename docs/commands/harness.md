@@ -59,12 +59,41 @@ pai harness sessions --harness codex
 pai harness sessions --cwd ~/proj
 ```
 
+### pai harness setup
+
+Make a harness a PAI frontend (opencode)
+
+```
+pai harness setup HARNESS [options]
+```
+
+Writes the OpenCode config that registers PAI's MCP server (as Claude Code has it), points OpenCode at PAI's instructions (rendered for OpenCode from the one source), exposes your Claude Code commands, and installs the bridge plugin that applies PAI's delegation and security guards. Dry run unless --write; changed files are backed up first. Never touches opencode.jsonc.
+
+| Argument | Required | Description |
+|---|---|---|
+| `HARNESS` | yes | opencode |
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--write` | flag | — | Apply the plan (default: show it) |
+| `--config-dir DIR` | string | — | OpenCode config dir (default: $XDG_CONFIG_HOME/opencode or ~/.config/opencode) |
+| `--all-mcp` | flag | — | Register every Claude Code MCP server, not only pai |
+| `--provider NAME` | string | — | Run OpenCode's own model through the PAI router on this provider |
+| `--model MODEL` | string | — | Model for --provider |
+
+```sh
+pai harness setup opencode
+pai harness setup opencode --write
+pai harness setup opencode --write --provider glm --model glm-5
+```
+
 ## Subcommands
 
 | Command | Description |
 |---|---|
 | `pai harness list` | Each adapter: detected, enabled, session count |
 | `pai harness sessions` | List sessions, newest first |
+| `pai harness setup` | Make a harness a PAI frontend (opencode) |
 
 ## See also
 
