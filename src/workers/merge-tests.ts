@@ -5,6 +5,9 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 
 export const DEFAULT_VERIFY_TIMEOUT_SEC = 600;
 
@@ -97,6 +100,60 @@ function runCommands(cwd: string, env: NodeJS.ProcessEnv, cmds: string[], timeou
   }
 }
 
+export interface ResolvedVerify {
+  /** Shell command; empty when the repo has nothing runnable. */
+  cmd: string;
+  /** Runner name printed in the gate output. */
+  runner: string;
+}
+
+const NODE_RUNNER = /(tsx\b.*\s--test\b|node\s+--test|\bjest\b|\bmocha\b)/;
+
+/**
+ * The verify command for one repo: `verify:` in <repo>/.pai/merge.yaml, else a
+ * non-default configured command, else the repo's own runner (vitest keeps the
+ * shipped default; node:test/jest/mocha run `npm test`; pytest; go), else a
+ * typecheck/build only.
+ */
+export function resolveVerify(cwd: string, configured: string): ResolvedVerify {
+  const own = (() => {
+    const f = join(cwd, ".pai", "merge.yaml");
+    if (!existsSync(f)) return "";
+    try {
+      const v = (parseYaml(readFileSync(f, "utf8")) as { verify?: unknown } | null)?.verify;
+      return typeof v === "string" ? v.trim() : "";
+    } catch {
+      return "";
+    }
+  })();
+  if (own) return { cmd: own, runner: ".pai/merge.yaml" };
+  if (configured.trim() && configured !== DEFAULT_VERIFY) return { cmd: configured, runner: "workers.merge.verify" };
+  if (!configured.trim()) return { cmd: "", runner: "off" };
+  const tsc = existsSync(join(cwd, "tsconfig.json")) ? "npx tsc --noEmit" : "";
+  const join2 = (...c: string[]) => c.filter(Boolean).join(" && ");
+  const pkgFile = join(cwd, "package.json");
+  if (existsSync(pkgFile)) {
+    let pkg: { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> } = {};
+    try {
+      pkg = JSON.parse(readFileSync(pkgFile, "utf8"));
+    } catch {
+      /* unreadable package.json: treated as no runner */
+    }
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const test = pkg.scripts?.test ?? "";
+    const hasTest = test.trim() !== "" && !/no test specified/.test(test);
+    if (/\bvitest\b/.test(test) || (deps.vitest !== undefined && !(hasTest && NODE_RUNNER.test(test)))) return { cmd: DEFAULT_VERIFY, runner: "vitest" };
+    if (hasTest) {
+      const runner = /(tsx\b.*\s--test\b|node\s+--test)/.test(test) ? "node:test" : (/\bjest\b/.test(test) ? "jest" : /\bmocha\b/.test(test) ? "mocha" : "npm test");
+      return { cmd: join2(tsc, "npm test"), runner };
+    }
+    return { cmd: join2(tsc, pkg.scripts?.build ? "npm run build" : ""), runner: "none (typecheck/build only; no test runner found)" };
+  }
+  if (existsSync(join(cwd, "pyproject.toml")) || existsSync(join(cwd, "pytest.ini")) || existsSync(join(cwd, "setup.py"))) return { cmd: "python3 -m pytest -q", runner: "pytest" };
+  if (existsSync(join(cwd, "go.mod"))) return { cmd: "go test ./...", runner: "go test" };
+  return { cmd: "", runner: "none (no package.json, pytest or go.mod; nothing to run)" };
+}
+
 /** Run the verify command for the merge `oldHead..HEAD`; never throws. */
 export function runRelatedTests(
   cwd: string,
@@ -108,6 +165,8 @@ export function runRelatedTests(
 ): RelatedResult {
   const skip = (why: string): RelatedResult => ({ status: "skipped", line: `verify: skipped (${why})`, failing: [] });
   if (!settings.verify.trim()) return skip("workers.merge.verify is empty");
+  const resolved = resolveVerify(cwd, settings.verify);
+  if (!resolved.cmd) return skip(`runner: ${resolved.runner}`);
   try {
     if (!changedFiles(cwd, oldHead, git).length) return skip("nothing changed in the merge");
   } catch (e) {
@@ -116,12 +175,12 @@ export function runRelatedTests(
   const env: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1" };
   for (const k of ["ITERM_SESSION_ID", "TERM_SESSION_ID", "TMUX", "TMUX_PANE", "PAI_WORKER", "PAI_WORKER_ORCHESTRATOR"]) delete env[k];
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
-  const r = runner(cwd, env, [settings.verify], timeoutSec, pipeGraceMs);
+  const r = runner(cwd, env, [resolved.cmd], timeoutSec, pipeGraceMs);
   if (r.timedOut) return { status: "failed", line: `timed out after ${timeoutSec}s`, failing: [] };
-  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (${settings.verify})`, failing: [], output: r.output.slice(-20_000) };
+  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (runner: ${resolved.runner}; ${resolved.cmd})`, failing: [], output: r.output.slice(-20_000) };
   const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const tail = r.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);
-  return { status: "failed", line: `failed (${exit}): ${tail}`, failing: [] };
+  return { status: "failed", line: `failed (runner: ${resolved.runner}; ${resolved.cmd}) (${exit}): ${tail}`, failing: [] };
 }
 
 /** The shipped default gate: typecheck plus the kept test core (tests/KEPT.md). */
