@@ -238,7 +238,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     }
     if (a.panePrepared) return;
     const paneT0 = Date.now();
-    const term = await runTerm(a.opts._hostTerm);
+    const term = await runTerm(a.opts?._hostTerm);
     const ledger = ledgerPath(a.logDir);
     const verified = await requireVisiblePane(a.logDir, a.config, wid, term, a.systemWaiver, false, ledger);
     a.panePrepared = { verified };
@@ -793,7 +793,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
   const ledger = ledgerPath(a.logDir);
   const paneT0 = Date.now();
   a.paneOpening = (async () => {
-    const term = await runTerm(a.opts._hostTerm);
+    const term = await runTerm(a.opts?._hostTerm);
     const hostSession = resolveSession(term);
     if (hostSession) {
       status.session = hostSession;
