@@ -63,6 +63,17 @@ export let notificationConfig: NotificationConfig;
  */
 export let shutdownRequested = false;
 
+/**
+ * IPC requests being served right now. Shutdown waits for this to reach zero
+ * before ending the pg pool, so a call accepted just before the restart is
+ * answered instead of failing with "Cannot use a pool after calling end".
+ */
+export let inflightRequests = 0;
+export function trackRequest<T>(work: Promise<T>): Promise<T> {
+  inflightRequests++;
+  return work.finally(() => { inflightRequests--; });
+}
+
 // ---------------------------------------------------------------------------
 // Setters (TypeScript requires assignment functions for exported `let` vars
 // that need to be mutated across module boundaries)
