@@ -10,7 +10,7 @@
 
 import { existsSync, mkdirSync, readFileSync, copyFileSync, renameSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 
 /**
@@ -81,6 +81,21 @@ export function paiHomePath(...segments: string[]): string {
   return join(paiHomeDir(), ...segments);
 }
 
+/**
+ * True when `p` is inside the current default PAI home (~/.pai). Such a path is
+ * never an "old" location: it is where PAI_HOME points by default, so a
+ * migration source there would move live data out of the current home.
+ */
+export function isUnderDefaultPaiHome(p: string): boolean {
+  const home = defaultPaiHomeDir();
+  return p === home || p.startsWith(home + sep);
+}
+
+/** Drop migration sources that live under the current default home. */
+function legacyOnly(oldCandidates: string[]): string[] {
+  return oldCandidates.filter((p) => !isUnderDefaultPaiHome(p));
+}
+
 const noticesPrinted = new Set<string>();
 
 /**
@@ -92,7 +107,7 @@ const noticesPrinted = new Set<string>();
  */
 export function resolvePaiFile(newPath: string, oldCandidates: string[], migrateHint: string): string {
   if (existsSync(newPath)) return newPath;
-  for (const old of oldCandidates) {
+  for (const old of legacyOnly(oldCandidates)) {
     if (old !== newPath && existsSync(old)) {
       if (!noticesPrinted.has(newPath)) {
         noticesPrinted.add(newPath);
@@ -127,7 +142,7 @@ export function migratePaiFile(
   oldCandidates: string[],
   opts: { dryRun?: boolean } = {}
 ): MigrateFileResult {
-  const fromPath = oldCandidates.find((p) => p !== newPath && existsSync(p)) ?? null;
+  const fromPath = legacyOnly(oldCandidates).find((p) => p !== newPath && existsSync(p)) ?? null;
   if (!fromPath) {
     const note = existsSync(newPath) ? "already at new location" : "nothing to migrate — file does not exist yet";
     return { fromPath: null, toPath: newPath, dryRun: !!opts.dryRun, note };
@@ -180,7 +195,7 @@ export function migratePaiDir(
   oldCandidates: string[],
   opts: { dryRun?: boolean } = {}
 ): MigrateDirResult {
-  const fromDir = oldCandidates.find((p) => p !== newDir && existsSync(p) && statSync(p).isDirectory()) ?? null;
+  const fromDir = legacyOnly(oldCandidates).find((p) => p !== newDir && existsSync(p) && statSync(p).isDirectory()) ?? null;
   if (!fromDir) {
     const note = existsSync(newDir) ? "already at new location" : "nothing to migrate — directory does not exist yet";
     return { fromDir: null, toDir: newDir, dryRun: !!opts.dryRun, note };

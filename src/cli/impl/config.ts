@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import {
   paiHomeDir,
   paiHomePath,
+  isUnderDefaultPaiHome,
   migratePaiFile,
   PaiFileMigrationError,
   type MigrateFileResult,
@@ -113,10 +114,13 @@ export interface MigrateBackupsLegacyResult {
  * before renaming the old dir aside — these snapshots include a 1.4GB
  * federation database and a 1GB pg_dump, worth the extra care.
  */
-function migrateBackupsLegacy(dryRun: boolean): MigrateBackupsLegacyResult {
+export function migrateBackupsLegacy(dryRun: boolean): MigrateBackupsLegacyResult {
   const oldDir = oldBackupsDir();
   const newDir = paiHomePath("backups", "legacy-pai-backups");
 
+  if (isUnderDefaultPaiHome(oldDir)) {
+    return { fromDir: null, toDir: newDir, dryRun, note: "no legacy backups location — ~/.pai/backups is the current default" };
+  }
   if (!existsSync(oldDir)) {
     return { fromDir: null, toDir: newDir, dryRun, note: "nothing to migrate — directory does not exist yet" };
   }
