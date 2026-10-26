@@ -513,6 +513,12 @@ function safeBody(raw: Buffer): Record<string, unknown> | null {
   }
 }
 
+/** PAI_PROXY_GUARD pins the guard mode (tests run several modes in one process; the option wins over it). */
+function envGuardMode(): "off" | "monitor" | "enforce" | undefined {
+  const v = process.env.PAI_PROXY_GUARD;
+  return v === "off" || v === "monitor" || v === "enforce" ? v : undefined;
+}
+
 /** A server on `routerHandler(...)`; takes exactly its parameters. */
 export function createRouter(...args: Parameters<typeof routerHandler>): http.Server {
   return http.createServer(routerHandler(...args));
@@ -849,7 +855,7 @@ export function routerHandler(
               : undefined;
           const argsFixer = target.kind === "provider" && schemas?.size && plainSse ? wire!.rewriteStream(schemas, rulesNow, argsFix) : undefined;
           const fill = mayCount && plainSse ? new InputTokensSse(() => counted) : undefined;
-          const guardMode = isCount || ures.statusCode !== 200 || ures.headers["content-encoding"] ? "off" : options?.guard?.mode ?? loadConfig().router.guard?.mode ?? "off";
+          const guardMode = isCount || ures.statusCode !== 200 || ures.headers["content-encoding"] ? "off" : options?.guard?.mode ?? envGuardMode() ?? loadConfig().router.guard?.mode ?? "off";
           const guardDeps = options?.guard?.deps;
           const guardLog = (line: string) => log(line);
           const onBlock = (tool: string, text: string) => log(`${new Date().toISOString()} ${target.model} ${prov} guard blocked ${tool}: ${text}`);

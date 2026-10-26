@@ -7,8 +7,10 @@ import { createRouter } from "./router.js";
 import { parseWorkersConfig } from "../workers/config.js";
 import { readFirings } from "../hooks/ts/lib/antipattern-log.js";
 import { stats } from "../antipatterns/govern.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { monitorReply, type ProxyGuardDeps } from "./proxy-guard.js";
 import { LoopStore } from "./proxy-loop.js";
+import { resetGuardCachesForTests } from "./proxy-guard.js";
 
 const ev = (type: string, body: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...body })}\n\n`;
 const toolStream = (command: string) =>
@@ -32,16 +34,19 @@ beforeEach(() => {
   prevHome = process.env.PAI_HOME;
   home = mkdtempSync(join(tmpdir(), "pai-proxy-guard-"));
   process.env.PAI_HOME = home;
+  resetGuardCachesForTests();
 });
 afterEach(() => {
+  resetGuardCachesForTests();
   if (prevHome === undefined) delete process.env.PAI_HOME;
   else process.env.PAI_HOME = prevHome;
   rmSync(home, { recursive: true, force: true });
 });
 
-async function run(body: string, mode: "off" | "monitor", deps?: ProxyGuardDeps): Promise<string> {
+async function run(body: string, mode: "off" | "monitor" | "enforce", deps?: ProxyGuardDeps, req: object = { model: "gyro-m", stream: true, messages: [{ role: "user", content: "hi" }] }, ct = "text/event-stream"): Promise<string> {
+  process.env.PAI_PROXY_GUARD = mode; // deterministic across parallel test files sharing one process
   const up = http.createServer((_q, s) => {
-    s.writeHead(200, { "content-type": "text/event-stream" });
+    s.writeHead(200, { "content-type": ct });
     s.end(body);
   });
   const upPort = await listen(up);
@@ -54,7 +59,7 @@ async function run(body: string, mode: "off" | "monitor", deps?: ProxyGuardDeps)
       x.on("data", (c) => bits.push(c));
       x.on("end", () => resolve(Buffer.concat(bits).toString()));
     });
-    q.end(JSON.stringify({ model: "gyro-m", stream: true, messages: [{ role: "user", content: "hi" }] }));
+    q.end(JSON.stringify(req));
   });
   await new Promise((r2) => setTimeout(r2, 50)); // evaluation runs after the response ended
   r.close();
@@ -100,6 +105,132 @@ describe("router proxy guard (monitor)", () => {
     expect(out).toBe(body);
     expect(logs.some((l) => l.includes("boom"))).toBe(true);
     expect(readFirings()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enforce mode
+
+const overrideFile = (id: string, proxy: string): void => {
+  const dir = join(home, "antipatterns", "shell");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.yaml`), `id: ${id}\nmode: enforce\nproxy: ${proxy}\nseverity: confirm\nmatch: "^\\\\\\\\\\\\\\\\s*git\\\\\\\\\\\\\\\\s+reset\\\\\\\\\\\\\\\\s+--hard"\nreason: test override\n`);
+};
+
+/** The client-side parser: the same SSE shape a Messages client reads. */
+function parseMessagesSse(raw: string): { blocks: Array<{ type: string; text?: string; name?: string }>; stop: string | null } {
+  const blocks = new Map<number, { type: string; text?: string; name?: string }>();
+  let stop: string | null = null;
+  for (const line of raw.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    let ev: any;
+    try {
+      ev = JSON.parse(line.slice(5));
+    } catch {
+      continue;
+    }
+    if (ev.type === "content_block_start") blocks.set(ev.index, { type: ev.content_block.type, name: ev.content_block.name, text: "" });
+    else if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") blocks.get(ev.index)!.text = (blocks.get(ev.index)?.text ?? "") + ev.delta.text;
+    else if (ev.type === "message_delta") stop = ev.delta?.stop_reason ?? null;
+  }
+  return { blocks: [...blocks.values()], stop };
+}
+
+const enforceText = (d: { patternId?: string }) => `Blocked by PAI guard ${d.patternId ?? "guard"}:`;
+
+describe("router proxy guard (enforce)", () => {
+  it("streamed tool_use denied by a proxy-enforce pattern: replaced by a text block, stop_reason end_turn, firing recorded", async () => {
+    overrideFile("git-reset-hard", "enforce");
+    const body = toolStream("git reset --hard HEAD~1");
+    const before = readFirings().length;
+    const out = await run(body, "enforce");
+    const parsed = parseMessagesSse(out);
+    expect(parsed.blocks).toEqual([{ type: "text", name: undefined, text: expect.stringContaining("git-reset-hard") }]);
+    expect(parsed.blocks[0].text).toContain("Blocked by PAI guard git-reset-hard");
+    expect(parsed.stop).toBe("end_turn");
+    expect(out).not.toContain("tool_use");
+    const f = readFirings();
+    expect(f.length).toBeGreaterThan(before);
+    expect(f.some((x) => x.source === "proxy" && x.mode === "enforce" && x.action === "deny" && x.id === "git-reset-hard")).toBe(true);
+    expect(stats({}).some((r) => (r.bySource.proxy ?? 0) > 0 && r.actions.deny > 0 && r.mode === "enforce")).toBe(true);
+  });
+
+  it("the same call with the shipped proxy monitor: forwarded unchanged, one monitor firing", async () => {
+    const body = toolStream("git reset --hard HEAD~1");
+    const before = readFirings().length;
+    expect(await run(body, "enforce")).toBe(body);
+    const f = readFirings().filter((x) => x.id === "git-reset-hard");
+    expect(f.length).toBeGreaterThan(0);
+    expect(f.every((x) => x.mode === "monitor")).toBe(true);
+    expect(readFirings().length).toBeGreaterThan(before);
+  });
+
+  it("monitor mode: bytes identical and one firing (unchanged behaviour)", async () => {
+    const body = toolStream("git reset --hard HEAD~1");
+    const before = readFirings().length;
+    expect(await run(body, "monitor")).toBe(body);
+    expect(readFirings().length).toBeGreaterThan(before);
+  });
+
+  it("non-streaming tool_use denied: the block becomes a text block, stop_reason end_turn, usage untouched", async () => {
+    overrideFile("git-reset-hard", "enforce");
+    const body = JSON.stringify({ id: "m", role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "git reset --hard HEAD~1" } }], stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 5 } });
+    const out = await run(body, "enforce", undefined, { model: "gyro-m", messages: [{ role: "user", content: "hi" }] }, "application/json");
+    const j = JSON.parse(out);
+    expect(j.content).toEqual([{ type: "text", text: expect.stringContaining("Blocked by PAI guard git-reset-hard") }]);
+    expect(j.stop_reason).toBe("end_turn");
+    expect(j.usage).toEqual({ input_tokens: 10, output_tokens: 5 });
+  });
+
+  it("an allowed call in enforce mode: bytes identical, no firing", async () => {
+    const body = toolStream("ls -la");
+    const before = readFirings().length;
+    expect(await run(body, "enforce")).toBe(body);
+    expect(readFirings().length).toBe(before);
+  });
+
+  it("evaluation throws in enforce mode: the original bytes go out, error logged", async () => {
+    const body = toolStream("git reset --hard HEAD~1");
+    const logs: string[] = [];
+    const out = await run(body, "enforce", {
+      evaluate: () => {
+        throw new Error("boom");
+      },
+      log: (l) => logs.push(l),
+    });
+    expect(out).toBe(body);
+    expect(logs.some((l) => l.includes("boom"))).toBe(true);
+  });
+
+  it("a user override proxy: monitor forwards the bytes with a firing even in enforce mode", async () => {
+    overrideFile("git-reset-hard", "monitor");
+    const body = toolStream("git reset --hard HEAD~1");
+    const before = readFirings().length;
+    expect(await run(body, "enforce")).toBe(body);
+    expect(readFirings().filter((f) => f.id === "git-reset-hard" && f.mode === "monitor").length).toBeGreaterThan(0);
+    expect(readFirings().length).toBeGreaterThan(before);
+  });
+
+  it("a user override proxy: off records nothing in enforce mode", async () => {
+    const dir = join(home, "antipatterns", "shell");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "git-reset-hard.yaml"), `id: git-reset-hard\nmode: enforce\nproxy: off\nseverity: confirm\nmatch: "^\\\\\\\\\\\\\\\\s*git\\\\\\\\\\\\\\\\s+reset\\\\\\\\\\\\\\\\s+--hard"\nreason: test override\n`);
+    const body = toolStream("git reset --hard HEAD~1");
+    const before = readFirings().length;
+    expect(await run(body, "enforce")).toBe(body);
+    expect(readFirings().filter((f) => f.id === "git-reset-hard").length).toBe(0);
+    expect(readFirings().length).toBe(before);
+  });
+
+  it("counts rise across modes: monitor then enforce both record", async () => {
+    const body = toolStream("git reset --hard HEAD~1");
+    const c0 = readFirings().length;
+    await run(body, "monitor");
+    const c1 = readFirings().length;
+    expect(c1).toBeGreaterThan(c0);
+    overrideFile("git-reset-hard", "enforce");
+    await run(body, "enforce");
+    expect(readFirings().length).toBeGreaterThan(c1);
   });
 });
 

@@ -17,6 +17,7 @@
 import { evaluate as realEvaluate, type Decision, type GuardContext, type GuardEvent } from "../guard/evaluate.js";
 export type { Decision, GuardContext, GuardEvent } from "../guard/evaluate.js";
 import { allRuleDirs, loadRules, projectRuleDirs } from "../hooks/ts/lib/rules/load.js";
+import { resetAntipatternCache } from "../hooks/ts/lib/antipatterns.js";
 import { recordLoopTelemetry } from "../hooks/ts/lib/loop-guard-telemetry.js";
 import { applyToolResults, conversationKey, defaultLoopStore, type LoopStore } from "./proxy-loop.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
@@ -128,6 +129,12 @@ let cachedRules: Rule[] | null = null;
 function defaultRules(): Rule[] {
   cachedRules ??= loadRules(allRuleDirs(process.cwd()), { projectDirs: projectRuleDirs(process.cwd()) }).rules;
   return cachedRules;
+}
+
+/** Tests that rewrite the rule directories and firing log between calls drop the caches. */
+export function resetGuardCachesForTests(): void {
+  cachedRules = null;
+  resetAntipatternCache();
 }
 
 /**
