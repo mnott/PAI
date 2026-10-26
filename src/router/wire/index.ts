@@ -11,6 +11,7 @@ import type { WireAdapter } from "./types.js";
 
 export const messagesAdapter: WireAdapter = {
   id: "messages",
+  keepalive: () => `event: ping\ndata: {"type":"ping"}\n\n`,
   matches: (method, path) => method === "POST" && /^\/v1\/messages(\/count_tokens)?(\?.*)?$/.test(path),
   schemas: declaredToolSchemas,
   rewriteJson: repairJsonReplyArgs,
