@@ -2,7 +2,7 @@
   "name": "pai",
   "displayName": "PAI Knowledge OS",
   "description": "Personal AI Infrastructure — persistent memory, session continuity, and knowledge graph for Claude Code",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "author": {
     "name": "Matthias Nott"
   },
