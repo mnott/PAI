@@ -87,6 +87,15 @@ function fileNotInlineBlock(): string[] {
   ];
 }
 
+/** The two guard rules workers hit first (pai worker errors 2026-10-26: /tmp 36 hits in 35 workers, cd 8 in 8) — stated before the first denial, kept in both contracts. */
+function guardRulesBlock(): string[] {
+  return [
+    "Scratch files go to \"$TMPDIR/<name>\" (private to this worker, Bash expands it): a literal /tmp/<name>",
+    "is shared by every concurrent worker and gets denied. Stay in the worktree with relative paths —",
+    "never cd into the main checkout.",
+  ];
+}
+
 /** The file-not-inline rule, condensed for the short contract's tight length budget. */
 function fileNotInlineBlockShort(): string[] {
   return [
@@ -96,13 +105,14 @@ function fileNotInlineBlockShort(): string[] {
   ];
 }
 
-/** spotcheck/simple: headless, bounded, no delegation language — under 1500 chars in ag2 format. */
+/** spotcheck/simple: headless, bounded, no delegation language — under 2100 chars in ag2 format. */
 function shortContractPrompt(format: "ag2" | "json"): string {
   const lines = [
     "You are a headless implementation worker, run non-interactively.",
     "This task is yours: answer the question or do the bounded task now. Run at most one command",
     "to confirm a result and never re-derive a number you already have. No child workers, no handoff.",
     ...fileNotInlineBlockShort(),
+    ...guardRulesBlock(),
   ];
   lines.push(
     ...(format === "ag2"
@@ -130,6 +140,7 @@ function fullContractPrompt(format: "ag2" | "json"): string {
     "will pick something up later, never leave a background command as your final action. Finish, then",
     "report.",
     "No narration, no timestamps, no greetings, no summaries of what you read; act, verify, then stop.",
+    ...guardRulesBlock(),
     "Never sleep-poll: no `sleep N` over 60 seconds, anywhere in a command — standalone, after `&&`/`||`/",
     "`;`/`|`, or inside a loop or subshell — and the sleeps of one command add up (`sleep 58; sleep 58` is",
     "116 s). Ending your turn ends this process, so a background job gets no later wake-up here:",
@@ -179,8 +190,8 @@ export const ORCHESTRATOR_CONTRACT =
 /**
  * The system prompt appended to every headless run, chosen by task class and
  * report format. `spotcheck`/`simple` get a short contract (no delegation
- * language, under 1200 chars in json format / 1500 in ag2); every other class (and no class) gets the
- * full contract. Both end with the AG2 report block unless `format` is
+ * language, under 1200 chars in json format / 2100 in ag2); every other class (and no class) gets the
+ * full contract; both carry the guard rules. Both end with the AG2 report block unless `format` is
  * "json", the pre-AG2 fallback. `orchestrate` appends ORCHESTRATOR_CONTRACT.
  */
 export function workerContractPrompt(
