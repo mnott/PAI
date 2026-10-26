@@ -158,7 +158,8 @@ describe("evaluate: missing-path-streak", () => {
 });
 
 describe("mangled-var-folders-path repair", () => {
-  const worker = { PAI_WORKER: "1" };
+  // a quirk rule: it applies only to the models its applies_to lists
+  const worker = { PAI_WORKER: "1", PAI_WORKER_MODEL: "qwen3.8-flash-next-gyro-m" };
   const call = (tool: string, file_path: string, exists: (p: string) => boolean, env: NodeJS.ProcessEnv = worker) => {
     const fired: FiringInput[] = [];
     const out = repairMangledScratch({ tool_name: tool, cwd: "/w", tool_input: { file_path, content: "x" } }, env, exists, (f) => fired.push(f));

@@ -160,7 +160,25 @@ You want a confirmation before anyone runs `terraform destroy`.
 
 ## Lifecycle, firings and candidates
 
-Every pattern in `antipatterns/<category>/` (shell rules and the loop-guard, final-text and path categories) carries lifecycle fields: `status` (experimental, test, stable, deprecated), `mode` (enforce, or monitor: record the firing, take no action), `version`, `created`, `modified`, `supersedes`, `falsepositives`, and optionally `exceptions` (with an `expires` date) and `applies_to` (providers, models). Defaults are stable, enforce, version 1. A deprecated pattern does nothing.
+Every pattern in `antipatterns/<category>/` (shell rules and the loop-guard, final-text and path categories) carries lifecycle fields: `status` (experimental, test, stable, deprecated), `mode` (enforce, or monitor: record the firing, take no action), `layer`, `version`, `created`, `modified`, `supersedes`, `falsepositives`, and optionally `exceptions` (with an `expires` date), `applies_to` (providers, models) and `per_model`. Defaults are stable, enforce, version 1; `layer` defaults from the category. A deprecated pattern does nothing.
+
+## Layers
+
+| layer | what | per model |
+|---|---|---|
+| `baseline` | security and environment: credential reads, destructive git, `rm -rf`, home/root search, path deny, bench/model-server guards | no: always acts as configured; `applies_to` is ignored |
+| `behaviour` | loops: identical-write, revert, distinct-rewrites, repeated-failure, growing-command, runaway-new-files, missing-path-streak, unparsed-tool-call | the same rule for every model; thresholds and mode may be tuned per model with `per_model` |
+| `quirk` | observed for specific models only: `mangled-var-folders-path` (Gyro family) and future model-specific patterns | enforce for the models in `applies_to`, monitor for every other model |
+
+Outside a behaviour or quirk rule's `applies_to` scope a firing is still recorded (monitor) but takes no action; a baseline rule outside any scope is off. A `per_model` block tunes one model (or a glob with `*`):
+
+```yaml
+per_model:
+  "qwen3.8-flash-next-gyro-*": { mode: monitor }
+  "qwen3.8-flash-next-gyro-m": { params: { stop_at: 8 } }
+```
+
+The first matching entry decides — an exact model id beats a glob, and among globs the first declared wins — and its `mode`/`params` override the file's global values at evaluation time. A user override's `per_model` entry replaces the shipped entry for the same key. `pai antipatterns set <id> <param> <value> --model <m>` writes `per_model.<model>.params.<param>` into the user override; without `--model` the global param changes.
 
 Each place that acts on a pattern appends one line to `<PAI home>/antipatterns/firings.jsonl` (rotated at 10 MB): time, id, version, action, mode, provider, model, worker or session, project name, a sha1 of the matched input and its first 120 characters with home paths as `~`. When a worker run ends, one outcome line per firing goes to `outcomes.jsonl`. A guard stop no pattern covers becomes an inactive file under `antipatterns/_candidates/` for review.
 

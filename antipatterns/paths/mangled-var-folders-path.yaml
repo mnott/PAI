@@ -2,6 +2,9 @@
 # (/Users/folders/<a>/<b>/pai-scratch/...) or without "T". Repaired to the real scratch dir when it
 # exists; otherwise denied with the hint. The repair lives in lib/path-repair.ts (repairMangledScratch).
 id: mangled-var-folders-path
+layer: quirk
+applies_to:
+  models: [qwen3.8-flash-next-gyro-m, qwen3.8-flash-next-gyro-l, qwen3.8-flash-next-gyro-coder-l]
 status: stable
 mode: enforce
 version: 1

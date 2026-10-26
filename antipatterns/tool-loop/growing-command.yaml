@@ -1,6 +1,7 @@
 # Similar commands (>= 0.9) returning similar results with nothing changed in between:
 # a note from the 3rd call (2nd repeat), a deny at max_repeats, the session stopped after stop_denials denials.
 id: growing-command
+layer: behaviour
 status: stable
 mode: enforce
 version: 1

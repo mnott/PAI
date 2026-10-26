@@ -1,6 +1,7 @@
 # A Write that puts an earlier version of a file back (A,B,A,B,...): the current
 # content never repeats, so the identical-write count never trips.
 id: revert
+layer: behaviour
 status: stable
 mode: enforce
 version: 1

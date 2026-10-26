@@ -3,6 +3,7 @@
 export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   {
     "id": "unparsed-tool-call",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -46,6 +47,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "does-not-exist",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -76,6 +78,14 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "mangled-var-folders-path",
+    "layer": "quirk",
+    "applies_to": {
+      "models": [
+        "qwen3.8-flash-next-gyro-m",
+        "qwen3.8-flash-next-gyro-l",
+        "qwen3.8-flash-next-gyro-coder-l"
+      ]
+    },
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -119,6 +129,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "distinct-rewrites",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 2,
@@ -166,6 +177,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "growing-command",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -204,6 +216,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "identical-write",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -240,6 +253,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "missing-path-streak",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -286,6 +300,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "repeated-failure",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -320,6 +335,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "revert",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -357,6 +373,7 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
   },
   {
     "id": "runaway-new-files",
+    "layer": "behaviour",
     "status": "stable",
     "mode": "enforce",
     "version": 1,

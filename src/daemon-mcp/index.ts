@@ -785,8 +785,8 @@ async function startShim(): Promise<void> {
   apTool(
     "antipatterns_set",
     "Change one detector parameter of a pattern (user override, version bump, changes entry, governance log). Unknown params and type mismatches are refused.",
-    { id: z.string(), param: z.string(), value: z.union([z.number(), z.boolean(), z.string()]), reason: z.string() },
-    (a) => apSetParam(a.id, a.param, a.value, a.reason),
+    { id: z.string(), param: z.string(), value: z.union([z.number(), z.boolean(), z.string()]), reason: z.string(), model: z.string().optional().describe("Scope the change to this model (per_model entry) instead of the global param") },
+    (a) => apSetParam(a.id, a.param, a.value, a.reason, { model: a.model }),
   );
   apTool("antipatterns_label", "Label a firing (by ts) or all firings of a pattern (by id) tp, fp or benign_tp.", { target: z.string(), disposition: z.enum(["tp", "fp", "benign_tp", "undetermined"]) }, (a) => ({ labelled: apLabel(a.target, a.disposition) }));
   apTool("antipatterns_conflicts", "Duplicate ids and active patterns matching each other's fixtures with different actions.", {}, () => apConflicts());

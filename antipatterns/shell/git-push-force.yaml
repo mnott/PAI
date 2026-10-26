@@ -1,5 +1,6 @@
 # git push -f / --force, also inside combined short flags (-vf). --force-with-lease and --follow-tags pass.
 id: git-push-force
+layer: baseline
 status: stable
 mode: enforce
 version: 1

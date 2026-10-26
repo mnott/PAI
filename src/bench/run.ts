@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { packageRoot } from "../module-paths.js";
+import { onboardingForRun, renderOnboarding } from "./onboarding.js";
 import { DEFAULT_LIMITS, LogTail, Watchdog, type Verdict } from "./watch.js";
 
 export const SET_NAMES = ["short", "easy", "hard"] as const;
@@ -120,5 +121,12 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
     }
   }
   log(`series ${o.key} complete`);
+  // onboarding: the anti-pattern firings of this provider's model during the series, and a suggested
+  // `pai antipatterns set ... --model` line per behaviour pattern that fired >= 5 times. Never applied here.
+  try {
+    for (const line of renderOnboarding(onboardingForRun(o.provider, start))) log(line);
+  } catch {
+    /* the summary is advisory; a broken firing log must not fail the series */
+  }
   return 0;
 }

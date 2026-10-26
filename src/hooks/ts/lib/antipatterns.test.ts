@@ -63,7 +63,8 @@ function fires(ap: Antipattern, sample: string): boolean {
     }
     case "path-rewrite": {
       const re = new RegExp(String(ap.detector.params.from));
-      return repairMangledScratch({ tool_name: "Write", cwd: "/w", tool_input: { file_path: sample } }, { PAI_WORKER: "1" }, () => true, () => undefined) !== null && re.test(sample);
+      // a quirk rule: the fixture model is one of its applies_to models (outside scope it only records)
+      return repairMangledScratch({ tool_name: "Write", cwd: "/w", tool_input: { file_path: sample } }, { PAI_WORKER: "1", PAI_WORKER_MODEL: "qwen3.8-flash-next-gyro-m" }, () => true, () => undefined) !== null && re.test(sample);
     }
     case "growing-command":
     case "repeated-failure": {

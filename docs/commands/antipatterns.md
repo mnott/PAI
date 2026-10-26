@@ -163,7 +163,7 @@ Change one detector parameter of a pattern
 pai antipatterns set ID PARAM VALUE [options]
 ```
 
-Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), or sets the `proxy` field (enforce | monitor | off: whether the pattern acts on the model-API proxy; enforce rewrites a denied tool call at the router). bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.
+Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), or sets the `proxy` field (enforce | monitor | off: whether the pattern acts on the model-API proxy; enforce rewrites a denied tool call at the router). bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. With --model the value goes to per_model.<model>.params.PARAM and applies only to that model; without it the global param changes. Unknown params and type mismatches are refused. Takes effect without a restart.
 
 | Argument | Required | Description |
 |---|---|---|
@@ -174,9 +174,11 @@ Writes the user override (a full copy of the active file on first use), sets det
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--reason TEXT` | string | — | Why (required) |
+| `--model ID` | string | — | Scope the change to this model (per_model entry) instead of the global param |
 
 ```sh
 pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'
+pai antipatterns set identical-write stop_at 8 --model qwen3.8-flash-next-gyro-m --reason 'fired 11x on gyro-m'
 pai antipatterns set git-reset-hard proxy enforce --reason 'protect Joule behind the router'
 ```
 

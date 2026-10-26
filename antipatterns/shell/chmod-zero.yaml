@@ -1,6 +1,7 @@
 # chmod to an empty mode locks out / ~ . .. or a whole tree. A single file
 # (a lock-down of one key file) is legitimate and stays allowed.
 id: chmod-zero
+layer: baseline
 status: stable
 mode: enforce
 version: 1
