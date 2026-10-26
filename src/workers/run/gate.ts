@@ -62,6 +62,7 @@ import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../wor
 import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
 import { preemptLocal, resumePreempted } from "../preempt.js";
+import { readUrgency } from "../urgency.js";
 import { aibrokerMessenger } from "../run-events.js";
 import { ownerOf } from "../local-idle.js";
 import { batteryGateRefusal, isBenchmarkLabel } from "../../daemon/battery-guard.js";
@@ -656,6 +657,9 @@ async function runGatesInner(a: ExecuteArgs, wid: string, status: WorkerStatus):
   const local = isLocalProvider(target.provider.baseUrl);
   // an urgent run (--now, the operator's urgency window): its engine requests go first and the others yield (preempt.ts)
   if (a.priority === "front" && !status.now) {
+    // started inside the session's urgency window: its now lasts only as long as the window (preempt.ts endExpiredWindowNow)
+    const win = readUrgency(process.env);
+    if (win) status.nowFrom = { until: win.until, prev: status.priority ?? "normal" };
     status.now = true;
     status.priority = "high";
     saveStatus(logDir, status);

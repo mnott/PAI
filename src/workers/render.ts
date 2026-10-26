@@ -590,7 +590,7 @@ export function renderTable(
 
   // engine controls: "paused" or a non-normal priority, only while set
   const engineMark = (s: WorkerStatus): string => {
-    const m = [s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? "now priority" : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
+    const m = [s.paused ? (s.pausedBy ? `paused (preempted by ${s.pausedBy})` : "paused") : "", s.now ? `now priority (${s.nowFrom ? `window until ${new Date(s.nowFrom.until).toTimeString().slice(0, 5)}` : "manual"})` : s.priority && s.priority !== "normal" ? `${s.priority} priority` : ""].filter(Boolean).join(", ");
     return m ? "  " + c(s.paused ? "yellow" : "dim", m) : "";
   };
 
