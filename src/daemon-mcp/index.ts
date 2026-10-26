@@ -110,6 +110,7 @@ import { resolveWorkerRunPrompt, workerRunShape } from "./tools/worker-run-args.
 import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { setWorkerPaused } from "../workers/engine-control.js";
+import { resumePlan } from "../workers/resume-args.js";
 import { applyPriority } from "../workers/preempt.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../workers/scheduler.js";

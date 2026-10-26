@@ -56,6 +56,8 @@ import {
   gateStart,
 } from "./gate.js";
 import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from "./execute.js";
+import { executeUhpRun } from "./execute-uhp.js";
+import { parseHarnessFlag, resolveHarnessProvider } from "../uhp.js";
 
 /**
  * Run one worker. Returns the process exit code to pass through.
@@ -69,6 +71,10 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   const sessionRoutes = sessionName ? getProfile(sessionName)?.routes : undefined;
   if (sessionRoutes) config.tiers = applyRouteOverrides(config.tiers, sessionRoutes);
   void _raw;
+  if (opts.harnessFlag) {
+    const harnessId = parseHarnessFlag(opts.harnessFlag);
+    opts = { ...opts, harnessId, providerFlag: resolveHarnessProvider(config.providers, harnessId, opts.providerFlag), harnessFlag: undefined };
+  }
   if (!config.enabled) {
     throw new Error(
       `workers are off. Turn them on with: pai worker on` +
@@ -293,6 +299,31 @@ export async function runWorker(opts: RunOptions): Promise<number> {
         quiet: opts.quiet,
         onWorkerStart: engineSkip,
         id: opts.id,
+      });
+    } else if (target.provider.engine === "uhp") {
+      rc = await executeUhpRun({
+        config,
+        logDir,
+        target,
+        model,
+        label,
+        parsed,
+        claudeArgs: opts.claudeArgs,
+        systemWaiver: opts.systemWaiver,
+        cwd: opts.cwd,
+        specPath: opts.specPath,
+        parent: parent ?? undefined,
+        stage: opts.stage,
+        quiet: opts.quiet,
+        onWorkerStart: engineSkip,
+        id: opts.id,
+        resumeOf: opts.resumeOf,
+        className: opts.className,
+        reportFormat,
+        capability: capability ?? undefined,
+        limit,
+        noBrowser,
+        harnessId: opts.harnessId,
       });
     } else if (target.provider.engine === "codex") {
       rc = await executeCodexRun({

@@ -287,6 +287,7 @@ function markKilled(logDir: string, recorded: WorkerStatus, stop: Stop, how: str
  */
 async function killPooled(logDir: string, recorded: WorkerStatus, status: WorkerStatus, d: KillTreeDeps, stop: Stop): Promise<string> {
   const id = recorded.id;
+  await cancelUhpWorker(recorded);
   d.request(logDir, ledgerPath(logDir), id, stop.forced, stop.by, stop.reason);
   appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
   if (stop.foreign) {
@@ -470,4 +471,18 @@ export async function killWorker(
     throw new Error(`worker ${id} is not running (state: ${status.state})`);
   if (!status.pid || status.pid <= 0) throw new Error(`worker ${id} has no pid recorded`);
   return killTree(logDir, id, opts);
+}
+
+/** A uhp worker's response is cancelled upstream (POST .../cancel, 5 s bound) before its run process is signalled; failure never blocks the kill. */
+export async function cancelUhpWorker(s: WorkerStatus): Promise<boolean> {
+  if (!s.uhpResponseId) return false;
+  try {
+    const { readWorkersSection } = await import("./config.js");
+    const provider = readWorkersSection().workers.providers[s.provider];
+    if (provider?.engine !== "uhp") return false;
+    const { cancelUhp } = await import("./uhp.js");
+    return await cancelUhp(provider, s.uhpResponseId, s.id);
+  } catch {
+    return false;
+  }
 }
