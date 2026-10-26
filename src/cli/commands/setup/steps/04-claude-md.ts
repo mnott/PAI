@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
 import { CONFIG_DIR } from "../../../../daemon/config.js";
+import { renderInstructions } from "../../../../harness/instructions.js";
 import { c, line, section, type Rl, promptYesNo, getTemplatesDir } from "../utils.js";
 
 export async function stepClaudeMd(rl: Rl): Promise<boolean> {
@@ -51,7 +52,7 @@ export async function stepClaudeMd(rl: Rl): Promise<boolean> {
   }
 
   let template = readFileSync(templatePath, "utf-8");
-  template = template.replace(/\$\{HOME\}/g, homedir());
+  template = renderInstructions("claude-code", template, homedir());
 
   if (!existsSync(claudeDir)) {
     mkdirSync(claudeDir, { recursive: true });
