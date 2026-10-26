@@ -551,6 +551,8 @@ export interface CapacityOpts {
   tier?: QueuePriority;
   /** A "front" run on a local provider: called once before the first check; it pauses the provider's other workers (preempt.ts), which then stop counting as holders. */
   preempt?: () => void;
+  /** Polled while waiting: true once the run was made urgent (`pai worker priority <id> now`); it then goes to the front and preempts like --now. */
+  urgent?: () => boolean;
   log?: (line: string) => void;
   /** Waited this long (default `config.maxTotalWaitMs`): call onAlarm once. The alarm only tells the owner; it never kills or skips the run. */
   alarmMs?: number;
@@ -589,7 +591,8 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, self.id);
   const t0 = now();
-  writeTicket(entry, `${self.pid ?? process.pid}${o.priority === "front" || (o.holdExempt && o.holdOf?.() !== undefined) ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`);
+  const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`;
+  writeTicket(entry, ticketText(o.priority === "front" || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
 
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
@@ -638,6 +641,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   };
   let lastBeat = t0;
   let alarmed = false;
+  let madeUrgent = false;
   // the pane opened before the wait shows its place in line until the slot is granted
   const paneQueued = (i: CapacityInfo): QueuedFile => ({
     provider: i.provider,
@@ -657,6 +661,11 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
       const fresh = o.capOf?.();
       if (fresh !== undefined && fresh > 0) cap = fresh;
       held = holdReason();
+      if (o.priority !== "front" && !madeUrgent && o.urgent?.()) {
+        madeUrgent = true;
+        writeTicket(entry, ticketText(true));
+        try { o.preempt?.(); } catch { /* best effort */ }
+      }
       c = check();
       if (c.position === 1 && c.holding < cap && held === undefined) break;
       o.onWait?.(info());

@@ -15,6 +15,7 @@ import { alive, loadStatus, type WorkerStatus } from "../../workers/status.js";
 import { runSupervisionTick, stallMinutesFromEnv, thrashFailsFromEnv } from "../../workers/supervision.js";
 import { sweepRuns } from "../../workers/run-events.js";
 import { panePolicy } from "../../workers/pane-policy.js";
+import { resumeOrphaned } from "../../workers/preempt.js";
 import { auditTick, closeFinishedPanes } from "../../workers/pane-audit.js";
 import { timedTask } from "../slow-task.js";
 import { localIdleTick } from "../../workers/local-idle.js";
@@ -686,6 +687,8 @@ export function startWorkerSupervisor(): void {
     const dir = workersLogDir(readWorkersSection().workers);
     void timedTask("pane-audit", () => auditTick(dir, runMessenger(dir))).catch(() => undefined);
     void timedTask("pane-close-finished", () => closeFinishedPanes(dir)).catch(() => undefined);
+    // workers paused by a --now run that is gone (killed, crashed) go on again
+    void timedTask("preempt-sweep", async () => { resumeOrphaned(dir); }).catch(() => undefined);
   }, 30_000);
   paneAudit.unref();
 
