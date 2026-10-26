@@ -4,9 +4,9 @@
  * One small-font pane per worker, stacked in a right-hand column: the first
  * worker of a scope splits the launching session vertically, every further
  * one splits the lowest live worker pane horizontally, so panes stack top to
- * bottom. The split never sizes the new session — that would grow the whole
- * window; instead the window's bounds are read before the split and restored
- * right after, so the panes share the space the window already had. The follow
+ * bottom. The split never sizes the new session or the window (setting rows
+ * or bounds makes iTerm resize the window in visible steps), so the panes share
+ * the space the window already had. The follow
  * command is part of the split itself — iTerm creates the new session already
  * running it — so no text is ever typed into any session afterwards; a separate
  * typing step raced the operator's keystrokes (focus briefly sits on the new
@@ -107,19 +107,6 @@ const RESTORE_ACTIVE = `try {
     } catch (e) {}`;
 
 
-// Equalise the follow panes' heights. iTerm exposes no pane position, so panes
-// are grouped by column count: panes stacked in one column share it, and a
-// group of equal width splits its summed rows evenly. ponytail: two columns of
-// equal width but unequal stack height are balanced as one group; upgrade to
-// real geometry if iTerm ever exposes it. Expects the `live` session list.
-const REBALANCE = `var groups = {};
-    live.forEach(function (o) { var c = o.columns(); (groups[c] = groups[c] || []).push([o, o.rows()]); });
-    Object.keys(groups).forEach(function (c) {
-        var g = groups[c];
-        var want = Math.floor(g.reduce(function (a, e) { return a + e[1]; }, 0) / g.length);
-        g.forEach(function (e) { try { e[0].rows = want; } catch (x) {} });
-    });`;
-
 // "id<TAB>columns<TAB>rows" of every session in the launching session's tab.
 export const TAB_SIZES_SCRIPT = `${FIND_SESSION}
 function run(argv) {
@@ -194,10 +181,6 @@ function run(argv) {
     var f = findSession(app, targetID);
     if (!f) return "notfound";
     ${CAPTURE_ACTIVE}
-    // sizing the new session would grow the whole window: pin the window's
-    // bounds now and restore them after the split, so the panes share the
-    // existing space
-    var winBounds = f.w.bounds();
     var sessIDs = f.all.map(function (o) { return o.id(); });
     var lived = [];
     var live = [];
@@ -228,9 +211,7 @@ function run(argv) {
     // the pane's purpose in the title bar; a session that vanished right after
     // the split must not fail the script
     if (paneTitle) { try { newS.name = paneTitle; } catch (e) {} }
-    ${REBALANCE}
     ${RESTORE_ACTIVE}
-    try { f.w.bounds = winBounds; } catch (e) {}
     return lived.map(function (l) { return l + ","; }).join("") + "|" + newS.id();
 }`;
 
@@ -745,30 +726,12 @@ function run(argv) {
     return "closed";
 }`;
 
-// Re-balance the follow panes (argv[0]: comma-joined session ids) after a close.
-export const REBALANCE_SCRIPT = `${FIND_SESSION}
-function run(argv) {
-    var ids = argv[0].split(",");
-    var app = Application("iTerm2");
-    if (!app.running()) return "notrunning";
-    var f = null;
-    for (var i = 0; i < ids.length && !f; i++) f = findSession(app, ids[i]);
-    if (!f) return "notfound";
-    var winBounds = f.w.bounds();
-    var live = f.all.filter(function (o) { return ids.indexOf(o.id()) >= 0; });
-    ${REBALANCE}
-    try { f.w.bounds = winBounds; } catch (e) {}
-    return "balanced";
-}`;
-
 /** The real iTerm / tmux calls, swappable so tests never touch either. */
 export interface PaneOps {
   listIterm(): Promise<Array<{ id: string; name: string }>>;
   closeIterm(id: string): Promise<boolean>;
   listTmux(): Array<{ id: string; command: string }>;
   closeTmux(id: string): boolean;
-  /** Equalise the heights of the given follow panes (optional: tests omit it). */
-  rebalanceIterm?(ids: string[]): Promise<void>;
 }
 
 /**
@@ -816,9 +779,6 @@ export const realPaneOps: PaneOps = {
     return sessions.map((x) => ({ id: x.id, name: `${x.name ?? ""} ${cmdByTty.get(x.tty) ?? ""}`.trim() }));
   },
   closeIterm: (id) => closeRegisteredIterm(id),
-  async rebalanceIterm(ids) {
-    if (ids.length) await osascript(REBALANCE_SCRIPT, [ids.join(",")]);
-  },
   listTmux() {
     try {
       const out = execFileSync("tmux", ["list-panes", "-a", "-F", "#{pane_id}\t#{pane_start_command}"], {
@@ -927,10 +887,6 @@ export async function closeEndedPanes(
   for (const t of ops.listTmux()) {
     const m = FOLLOW_ID.exec(t.command);
     if (m) await handle("tmux", t.id, m[1]);
-  }
-  // closed panes leave uneven neighbours: re-balance what is left
-  if (!dryRun && res.closed.length) {
-    await ops.rebalanceIterm?.(loadRegistry(logDir).map((e) => e.session)).catch(() => undefined);
   }
   return res;
 }
