@@ -72,6 +72,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai tasks`](tasks.md) | Same as task |
 | [`pai tests`](tests.md) | Test governance: audit a repo's tests, prune them to the governed core |
 | [`pai topic`](topic.md) | Detect when a conversation moved to another project |
+| [`pai uhp`](uhp.md) | Serve PAI workers over the Unified Harness Protocol |
 | [`pai update`](update.md) | Update PAI (or another package) to the latest GitHub Release |
 | [`pai worker`](worker.md) | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | [`pai zettel`](zettel.md) | Explore the links between your notes |
@@ -429,6 +430,12 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai tests prune` | Plan, or with --apply start a worker, that prunes the suite to the governed core |
 | `pai topic` | Detect when a conversation moved to another project |
 | `pai topic check` | Check whether a text belongs to a different project than the current one |
+| `pai uhp` | Serve PAI workers over the Unified Harness Protocol |
+| `pai uhp serve` | Serve the UHP API (discovery, harnesses, models) |
+| `pai uhp token` | Manage UHP bearer tokens |
+| `pai uhp token create` | Create a bearer token (shown once) |
+| `pai uhp token list` | List tokens (ids and hash prefixes, never the secret) |
+| `pai uhp token revoke` | Revoke a token (takes effect on the next request) |
 | `pai update` | Update PAI (or another package) to the latest GitHub Release |
 | `pai worker` | Run tasks on other providers: run, ps, follow, merge, providers, classes, config, ... |
 | `pai worker bench` | Compare providers on a set of real tasks |

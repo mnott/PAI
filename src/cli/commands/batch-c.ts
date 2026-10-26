@@ -17,9 +17,10 @@ import { projectAliasCommand, projectCommand } from "./project.js";
 import { registryCommand } from "./projects-registry.js";
 import { taskAliasCommand, taskCommand } from "./task.js";
 import { topicCommand } from "./topic.js";
+import { uhpCommand } from "./uhp.js";
 
 export const BATCH_C: Partial<Record<GroupId, CommandDef[]>> = {
-  workers: [planCommand, queueCommand, buildCommand, paneCommand],
+  workers: [planCommand, queueCommand, uhpCommand, buildCommand, paneCommand],
   memory: [projectCommand, projectAliasCommand, registryCommand, taskCommand, taskAliasCommand, issueCommand, identityCommand, topicCommand],
   daemon: [daemonCommand, configCommand, homeCommand, mcpCommand, notifyCommand, dbCommand],
 };

@@ -17,3 +17,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/config/home-migrate.test.ts | c | ~/.pai home migration (d1c1a781) |
 | src/cli/docs-sync.test.ts | c | docs/commands must match command definitions (89e74fa4, df809929) |
 | src/cli/docs-keys.test.ts | c | documented config keys and commands must exist (d7d4aa61, 9d37846c) |
+| src/uhp-server/contract.test.ts | c | UHP 2026-10-19 wire contract (discovery shape, error envelope, auth codes) that third-party UHP clients and the conformance suite depend on |
