@@ -16,7 +16,7 @@ import { commitHomeChange } from "../config/home-git.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { CATEGORIES, loadAntipatterns, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
 import { lifecycleDoc, type Lifecycle, type Mode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
-import { candidatesDir, labelsPath, readFirings, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
+import { candidatesDir, labelsPath, readFirings, readFiringsResolved, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
 import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import { allRuleDirs, listRules, projectRuleDirs, ruleLifecycle, userAntipatternShellDir } from "../hooks/ts/lib/rules/load.js";
 import type { LoadedRule } from "../hooks/ts/lib/rules/types.js";
@@ -100,7 +100,7 @@ function effectiveDisposition(f: Firing, labels: Map<string, Disposition>): Disp
 
 export function stats(o: { sinceMs?: number; model?: string; now?: number; cwd?: string } = {}): PatternStats[] {
   const now = o.now ?? Date.now();
-  const firings = readFirings();
+  const firings = readFiringsResolved();
   const outcomes = new Map<string, string>();
   for (const x of readOutcomes()) outcomes.set(`${x.firingTs}\t${x.id}`, x.final);
   const outcomeKind = new Map<string, string>();

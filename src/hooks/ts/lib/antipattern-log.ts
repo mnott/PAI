@@ -101,6 +101,22 @@ function uniqueTs(): string {
   return new Date(lastMs).toISOString();
 }
 
+/** The `model` of a worker's status file under PAI_HOME/logs/workers, or undefined when absent or unreadable. */
+export function workerStatusModel(workerId: string): string | undefined {
+  try {
+    const m = (JSON.parse(readFileSync(paiHomePath("logs", "workers", `${workerId}.status`), "utf8")) as { model?: unknown }).model;
+    return typeof m === "string" && m ? m : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Model of a firing: the env model, else the worker's status file model, else `session`. */
+export function firingModel(env: NodeJS.ProcessEnv): string {
+  const m = modelOf(env);
+  return m !== "session" || !env.PAI_WORKER_ID ? m : (workerStatusModel(env.PAI_WORKER_ID) ?? m);
+}
+
 export interface FiringInput {
   id: string;
   version?: number;
@@ -128,7 +144,7 @@ export function recordFiring(f: FiringInput): string | null {
       action: f.action,
       mode: f.mode,
       provider: env.PAI_WORKER_PROVIDER || "session",
-      model: modelOf(env),
+      model: firingModel(env),
       ...(env.PAI_WORKER_ID ? { workerId: env.PAI_WORKER_ID } : {}),
       ...(f.sessionId ? { sessionId: f.sessionId } : {}),
       project: basename(f.cwd ?? process.cwd()),
@@ -166,6 +182,17 @@ function readLines<T>(file: string): T[] {
 }
 
 export const readFirings = (): Firing[] => readLines<Firing>(firingsPath());
+
+/** Firings with the stored model `session` of a known worker resolved to that worker's model (read time only; the log is append-only). */
+export function readFiringsResolved(): Firing[] {
+  const cache = new Map<string, string | undefined>();
+  return readFirings().map((f) => {
+    if (f.model !== "session" || !f.workerId) return f;
+    if (!cache.has(f.workerId)) cache.set(f.workerId, workerStatusModel(f.workerId));
+    const m = cache.get(f.workerId);
+    return m ? { ...f, model: m } : f;
+  });
+}
 export const readOutcomes = (): OutcomeLine[] => readLines<OutcomeLine>(outcomesPath());
 export const readLabels = (): LabelLine[] => readLines<LabelLine>(labelsPath());
 
