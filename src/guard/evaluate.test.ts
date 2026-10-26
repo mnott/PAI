@@ -116,4 +116,35 @@ describe("evaluate: command gates", () => {
     expect(d.action).toBe("allow");
     expect(d.loop).toBeDefined();
   });
+
+  it("orchestrator bash: denies an in-place code write for an orchestrator worker, allows tests and other sessions", () => {
+    const orch = { PAI_WORKER: "1", PAI_WORKER_ORCHESTRATOR: "1" } as NodeJS.ProcessEnv;
+    const gates = { orchestrator: true };
+    const d = evaluate(call("sed -i s/a/b/ src/x.ts"), { ...base(), env: orch, gates });
+    expect(d).toMatchObject({ action: "deny", patternId: "orchestrator-bash" });
+    expect(evaluate(call("npx vitest run"), { ...base(), env: orch, gates }).action).toBe("allow");
+    expect(evaluate(call("sed -i s/a/b/ src/x.ts"), { ...base(), gates }).action).toBe("allow");
+  });
+
+  it("edit gate: denies a code edit in a git work tree, allows prose, exempt prefixes and non-repos", () => {
+    const edit = (file_path: string) => ({ kind: "tool_call" as const, tool: "Edit", input: { file_path }, cwd });
+    const gates = (exempt: boolean, repo: boolean) => ({ edit: { isExemptPrefix: () => exempt, isGitWorkTree: () => repo } });
+    const d = evaluate(edit("/r/src/a.ts"), { ...base(), gates: gates(false, true) });
+    expect(d).toMatchObject({ action: "deny", patternId: "edit-gate" });
+    expect(d.message).toContain("Code changes are delegated");
+    expect(evaluate(edit("/r/notes.md"), { ...base(), gates: gates(false, true) }).action).toBe("allow");
+    expect(evaluate(edit("/r/src/a.ts"), { ...base(), gates: gates(true, true) }).action).toBe("allow");
+    expect(evaluate(edit("/r/src/a.ts"), { ...base(), gates: gates(false, false) }).action).toBe("allow");
+  });
+
+  it("credential literal: denies a literal secret in a worker test file, allows other files and non-workers", () => {
+    const secret = ["xox", "b-1234567890-1234567890-abcdefghijklmnopqrstuvwx"].join("");
+    const write = (file_path: string) => ({ kind: "tool_call" as const, tool: "Write", input: { file_path, content: `const t = "${secret}";` }, cwd });
+    const gates = { credential: true };
+    const d = evaluate(write("/r/a.test.ts"), { ...base(), env: worker, gates });
+    expect(d).toMatchObject({ action: "deny", patternId: "credential-literal" });
+    expect(d.message).toContain("fake-secret.ts");
+    expect(evaluate(write("/r/a.ts"), { ...base(), env: worker, gates }).action).toBe("allow");
+    expect(evaluate(write("/r/a.test.ts"), { ...base(), gates }).action).toBe("allow");
+  });
 });

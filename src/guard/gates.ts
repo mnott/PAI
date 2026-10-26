@@ -16,6 +16,8 @@ import { backgroundReason } from "../hooks/ts/lib/background-gate.js";
 import { decideSleepPollGate } from "../hooks/ts/lib/sleep-poll-gate.js";
 import { raiseWaitTimeout } from "../hooks/ts/lib/wait-timeout.js";
 import { decideWorkerGuard, type WorkerGuardContext } from "../hooks/ts/lib/worker-guard.js";
+import { decideEditGate, decideOrchestratorBash, decideOrchestratorEdit } from "../hooks/ts/lib/edit-gate.js";
+import { checkCredentialLiteral } from "../hooks/ts/lib/credential-guard.js";
 import type { Decision } from "./evaluate.js";
 
 export interface GateSet {
@@ -25,6 +27,12 @@ export interface GateSet {
   workerGit?: { worktreesRoot: string | null; privateClone: (cwd: string) => boolean };
   /** The Bash gate chain; `localAnswer` is the daemon's cached local-model answer line. */
   bash?: { localAnswer: () => string };
+  /** Orchestrator worker (PAI_WORKER_ORCHESTRATOR=1): Bash may not write code in place. */
+  orchestrator?: boolean;
+  /** Edit routing: code edits in a git work tree are delegated. The path facts are looked up by the caller. */
+  edit?: { isExemptPrefix: (abs: string) => boolean; isGitWorkTree: (abs: string) => boolean };
+  /** Worker write-time check for literal credentials in test files. */
+  credential?: boolean;
   /** The worker guard (PAI_WORKER only): git/worktree context for its path, bench and config rules. */
   worker?: () => WorkerGuardContext;
 }
@@ -42,6 +50,26 @@ const commandOf = (input: unknown): string | undefined => {
 export function decidePreGates(c: Call, g: GateSet): Decision | null {
   const isBash = c.tool === "Bash";
   const command = isBash ? commandOf(c.input) : undefined;
+
+  if (g.orchestrator && isBash && c.env.PAI_WORKER_ORCHESTRATOR === "1" && c.env.PAI_WORKER === "1" && typeof (c.input as { command?: unknown } | undefined)?.command === "string") {
+    const o = decideOrchestratorBash((c.input as { command: string }).command);
+    if (o.decision === "block") return deny(o.reason, "orchestrator-bash");
+  }
+  if (g.credential) {
+    const why = checkCredentialLiteral({ tool_name: c.tool, tool_input: c.input as never }, c.env);
+    if (why) return deny(why, "credential-literal");
+  }
+  if (g.edit) {
+    const ti = c.input as { file_path?: unknown; notebook_path?: unknown } | undefined;
+    const target = ti?.file_path ?? ti?.notebook_path;
+    if (typeof target === "string" && target) {
+      const abs = resolve(c.cwd, target);
+      const e = c.env.PAI_WORKER_ORCHESTRATOR === "1"
+        ? decideOrchestratorEdit(abs)
+        : decideEditGate({ filePath: abs, isPaiWorker: c.env.PAI_WORKER === "1", isExemptPrefix: g.edit.isExemptPrefix(abs), isGitWorkTree: g.edit.isGitWorkTree(abs) });
+      if (e.decision === "block") return deny(e.reason, "edit-gate");
+    }
+  }
 
   if (g.plutil && command) {
     const p = detectUnsafePlutil(command);

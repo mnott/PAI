@@ -24,7 +24,6 @@ import { renderDecision } from "../lib/render-decision.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
-import { decideOrchestratorBash } from "../lib/edit-gate.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { evaluate } from "../../../guard/evaluate.js";
 import { loopDenyReason, actionKey, worktreeFingerprint } from "../lib/loop-guard.js";
@@ -154,13 +153,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (process.env.PAI_WORKER_ORCHESTRATOR === "1" && process.env.PAI_WORKER === "1" && input.tool_name === "Bash") {
-    const command = (input.tool_input as { command?: unknown } | undefined)?.command;
-    const d = typeof command === "string" ? decideOrchestratorBash(command) : { decision: "allow" as const };
-    if (d.decision === "block") {
-      process.stdout.write(renderDecision({ decision: "deny", reason: d.reason }) + "\n");
-      return;
-    }
+  const cwd = input.cwd || process.cwd();
+  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true } });
+  if (orch.action === "deny") {
+    process.stdout.write(renderDecision({ decision: "deny", reason: orch.message! }) + "\n");
+    return;
   }
 
   const loop = loopRepeat(input, process.env);
