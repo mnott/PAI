@@ -132,7 +132,8 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
     // Claude Code ignores "continue": false from a headless PreToolUse hook: end the worker ourselves
     if (r.stop)
       requestLoopStop(logDir, id, r.reason ?? `${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change`, {
-        claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : undefined,
+        // a loop dir override marks a probe run by hand from a worker's Bash: its parent chain leads to the real claude
+        claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : env.PAI_WORKER_LOOP_DIR ? () => undefined : undefined,
       });
     return {
       reason: r.reason ?? loopDenyReason(input.tool_name, r.count),
