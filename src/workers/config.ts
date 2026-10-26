@@ -2027,7 +2027,7 @@ export function escalationCloud(): CloudTarget {
 /**
  * The time-bound escalation numbers (workers.escalate.queuedMaxMin/stallMaxMin/stallFailedCalls);
  * the shipped ones when the config cannot be read. While macOS Low Power Mode
- * is on the minute thresholds scale by workers.lowPower.factor (a slow machine
+ * is on the minute thresholds scale by power.lowPower.factor (a slow machine
  * is not stalled); `lowPower` resolves synchronously from the cached reading —
  * off until the first pmset sample lands.
  */

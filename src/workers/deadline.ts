@@ -43,7 +43,7 @@ export function stretchDeadline(
 export interface LowPowerOpts {
   /** Whether macOS is currently in Low Power Mode (cached, sampled ≤ once per 30 s). */
   active?: () => Promise<boolean>;
-  /** The stretch factor (workers.lowPower.factor). */
+  /** The stretch factor (power.lowPower.factor). */
   factor?: () => number;
 }
 
@@ -139,6 +139,7 @@ export function armDeadline(
   let lastActive = false;
   const left = (): number => cur.deadlineAt + (cur.absolute ? 0 : blocked()) - now();
   const arm = (): void => {
+    clearTimeout(t);
     t = setTimeout(fire, Math.max(0, left()));
   };
   const fire = (): void => {

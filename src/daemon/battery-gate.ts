@@ -169,7 +169,7 @@ export interface PowerStatus {
   minutesToResume: number | null;
   /** macOS Low Power Mode right now (pmset "powermode 1"). */
   lowPower?: boolean;
-  /** The worker-limit stretch factor (workers.lowPower.factor). */
+  /** The worker-limit stretch factor (power.lowPower.factor). */
   lowPowerFactor?: number;
 }
 

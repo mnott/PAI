@@ -800,7 +800,7 @@ let pointerRunning = false;
 
 /**
  * workers.supervision.stallMinutes; any config trouble counts as the default.
- * While macOS Low Power Mode is on it scales by workers.lowPower.factor (a
+ * While macOS Low Power Mode is on it scales by power.lowPower.factor (a
  * slow machine is not stalled); off until the first cached pmset reading lands.
  */
 export function stallMinutesFromConfig(lowPower: () => boolean = cachedLowPowerActive): number {

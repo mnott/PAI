@@ -4,7 +4,7 @@
  * During the day the operator runs Low Power Mode for less fan noise; local
  * runs then take longer, so minutes spent in it count as 1/factor minutes
  * against a worker's limits. The factor lives in config under
- * `workers.lowPower.factor` (default 2; 1 turns the stretch off).
+ * `power.lowPower.factor` (default 2; 1 turns the stretch off).
  *
  * Detection reads the same pmset the battery guard uses: `pmset -g`'s
  * "powermode 1" line (also "lowpowermode 1", older macOS). Sampled at most
@@ -25,7 +25,7 @@ export function parseLowPowerMode(stdout: string): boolean {
   return /^\s*(powermode|lowpowermode)\s+1\s*$/im.test(stdout);
 }
 
-/** The config factor (workers.lowPower.factor); >= 1, non-finite or absent counts as the default. */
+/** The config factor (power.lowPower.factor); >= 1, non-finite or absent counts as the default. */
 export function lowPowerFactor(path?: string): number {
   try {
     const power = (readMainConfigRaw(...(path ? [path] : [])) as { power?: { lowPower?: { factor?: unknown } } }).power;

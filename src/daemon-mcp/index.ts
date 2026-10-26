@@ -21,6 +21,7 @@
  *   resources    — reference docs read when needed (guides, constitution).
  */
 
+import { lowPowerActive } from "../daemon/low-power.js";
 import { buildNext, buildsDir, listBuilds, renderBuildQueue } from "../builds/queue.js";
 import { poolSlots } from "../builds/config.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -1639,6 +1640,7 @@ async function startShim(): Promise<void> {
     async (args) => {
       try {
         const { workers } = readWorkersSection();
+        await lowPowerActive(); // warm the cached reading behind the "low power xN" mark
         return workerText(psOutput(workersLogDir(workers), args.all === true, {}, false));
       } catch (e) {
         return workerError(e);
