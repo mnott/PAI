@@ -13,7 +13,7 @@ if [ -n "${5:-}" ]; then key=$5; elif [ "$model" = - ]; then key=$provider; else
 T=$E/config-eval.template.yaml
 unset ANTHROPIC_API_KEY
 d=$OUT/work/$set/$key/rep$rep; res=$OUT/results/$set/$key/rep$rep.json
-mkdir -p "$OUT/results/$set/$key"; rm -rf "$d"; mkdir -p "$d"
+mkdir -p "$OUT/results/$set/$key"; rm -rf "$d"; mkdir -p "$d"; touch "$d/.pai-bench"
 sed "s/__PROVIDER__/$provider/g" "$T" > "$d/config.yaml.new" && mv -f "$d/config.yaml.new" "$d/config.yaml"; export PAI_CONFIG_FILE=$d/config.yaml   # private copy per run: pai_eval db, panes off, routing pinned to the provider, escalation and quota retry off
 python3 -I "$E/evalset.py" prep "$set" "$d" || exit 2
 if [ "$set" = short ]; then

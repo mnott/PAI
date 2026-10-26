@@ -15,6 +15,7 @@ mktree() {
   rm -rf "$TREE"; mkdir -p "$TREES/$label"
   git clone -q --shared --no-checkout "$REPO" "$TREE" || { echo "clone failed: $TREE" >&2; return 1; }
   ( cd "$TREE" && git checkout -q --detach "$BASE" && git config user.email bench@localhost && git config user.name bench ) || return 1
+  touch "$TREE/.pai-bench"   # registry refuses dirs carrying this marker
   ln -s "$REPO/node_modules" "$TREE/node_modules"
 }
 
