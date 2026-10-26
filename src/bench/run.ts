@@ -8,7 +8,6 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_WORKER_TOOLS } from "../workers/run/argv.js";
 import { packageRoot } from "../module-paths.js";
 import { onboardingForRun, renderOnboarding } from "./onboarding.js";
 import { DEFAULT_LIMITS, LogTail, Watchdog, type Verdict } from "./watch.js";
@@ -22,8 +21,6 @@ export interface BenchRunOpts {
   /** Real-task reps (0 = none). */
   real: number;
   key: string;
-  /** --allowedTools of the eval-set runs; "real" = what a production worker gets. */
-  tools?: string;
   /** Results root: <dir>/results, <dir>/work. */
   dir: string;
   /** Minutes one real task may run. */
@@ -33,11 +30,6 @@ export interface BenchRunOpts {
   maxWrites: number;
   out: (line: string) => void;
 }
-
-export const EVAL_TOOLS = "Read,Write";
-
-/** The eval-set tool list: "real" is the production worker default; ToolSearch is never added. */
-export const resolveTools = (t?: string): string => (!t ? EVAL_TOOLS : t === "real" ? DEFAULT_WORKER_TOOLS : t);
 
 export const defaultBenchDir = (): string => process.env.PAI_BENCH_DIR || join(homedir(), ".cache", "pai", "bench");
 
@@ -98,9 +90,8 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
     o.out(s);
   };
   const gate = powerGate();
-  const tools = resolveTools(o.tools);
-  log(`series ${o.key}: provider=${o.provider} sets=${o.sets.join(",")} tools=${tools} reps=${o.reps} real=${o.real} cap=${o.realCapMin}min power-gate=${gate ? "pai power wait" : "none"} results=${o.dir}`);
-  const env: NodeJS.ProcessEnv = { ...process.env, BENCH_DIR: o.dir, BENCH_TOOLS: tools, BENCH_REAL_MAX_MIN: String(o.realCapMin) };
+  log(`series ${o.key}: provider=${o.provider} sets=${o.sets.join(",")} reps=${o.reps} real=${o.real} cap=${o.realCapMin}min power-gate=${gate ? "pai power wait" : "none"} results=${o.dir}`);
+  const env: NodeJS.ProcessEnv = { ...process.env, BENCH_DIR: o.dir, BENCH_REAL_MAX_MIN: String(o.realCapMin) };
   delete env.ANTHROPIC_API_KEY;
   const start = Date.now();
   const wd = new Watchdog({ ...DEFAULT_LIMITS, idleMs: o.idleSec * 1000, maxWrites: o.maxWrites }, start);

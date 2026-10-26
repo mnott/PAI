@@ -21,21 +21,15 @@ if [ "$set" = short ]; then
 else
   what="write ONLY the complete, self-contained Python solution (imports included, entry point named in the task, no tests, no input()) to out/<id>.py"; fields="id, entry, prompt"
 fi
-tools=${BENCH_TOOLS:-Read,Write}   # pai bench run --tools; the default keeps old tables comparable
-if [ "$tools" = Read,Write ]; then
-  rules="Rules: no tests, no internet, no running code; you have only the Read and Write tools. Read nothing but tasks.jsonl."
-else
-  rules="Rules: no internet. You may run code to check your answers (scratch files go outside out/). Read nothing but tasks.jsonl."
-fi
 cat > "$d/spec.txt" <<SPEC
 Solve every task in tasks.jsonl (one JSON object per line: $fields). For task i, $what.
-$rules Write all files in out/ relative to the current directory, one file per task id (out/ holds only answer files), and do every task. Finish with a one-line report.
+Rules: no tests, no internet, no running code; you have only the Read and Write tools. Read nothing but tasks.jsonl. Write all files in out/ relative to the current directory, one file per task id, and do every task. Finish with a one-line report.
 SPEC
 margs=(); [ "$model" != - ] && margs=(--model "$model")
 t0=$(date +%s)
 run() { ( cd "$d" && env -u ITERM_SESSION_ID -u TERM_SESSION_ID -u TMUX -u TMUX_PANE -u ANTHROPIC_API_KEY \
   pai worker run --provider "$provider" ${margs[@]+"${margs[@]}"} --class implement --no-worktree --cwd . --max-minutes 120 \
-  --label "eval $key $set rep$rep bench" --spec spec.txt --allowedTools "$tools" --output-format json > worker.json 2> worker.err ); }
+  --label "eval $key $set rep$rep bench" --spec spec.txt --allowedTools 'Read,Write' --output-format json > worker.json 2> worker.err ); }
 run; wrc=$?
 wall=$(( $(date +%s) - t0 ))
 inst=$(instrument_of "$d/worker.json" "$d/worker.err")   # PAI classification; "unknown" = no id, evalset.py regex fallback
