@@ -230,9 +230,32 @@ export async function workerMerge(args: WorkerMergeArgs): Promise<WorkerToolResu
 }
 
 /** The battery guard's state: last reading, gate (pause/stop, benchmark stop) and the benchmark marker. */
-export async function batteryStatus(args: { window_hours?: number } = {}): Promise<WorkerToolResult> {
+export async function batteryStatus(
+  args: { window_hours?: number; action?: "status" | "calibrate" | "wait"; minutes?: number; load?: boolean; above?: number; resume?: number } = {}
+): Promise<WorkerToolResult> {
   try {
     const g = await import("../../daemon/battery-guard.js");
+    if (args.action === "calibrate" || args.action === "wait") {
+      const p = await import("../../daemon/battery-gate.js");
+      const lines: string[] = [];
+      const deps = p.liveGateDeps((l) => lines.push(l));
+      const { cfg, calibration } = p.readPowerConfig();
+      if (args.action === "wait") {
+        const t = p.gateThresholds(cfg, args.above, args.resume);
+        if (!t) return text("no keep-above level set (power.batteryGuard.keepAbovePct or above): nothing to wait for");
+        // bounded: `minutes` pauses of a minute at most, then report where it stands
+        const r = await p.waitForBattery(t, calibration, deps, { stepMs: 60_000, maxPauses: Math.min(Math.max(args.minutes ?? 0, 0), 30) });
+        return text([...lines, r.ok ? "battery OK for the next local job" : "still below the resume level; call again"].join("\n"));
+      }
+      const { readWorkersSection } = await import("../../workers/config.js");
+      const { workersLogDir } = await import("../../workers/paths.js");
+      const { workers } = readWorkersSection();
+      const r = await p.calibrate({ minutes: Math.min(Math.max(args.minutes ?? 10, 1), 30), load: args.load === true }, deps, () => p.localBusyReason(workersLogDir(workers), workers.providers));
+      const cal = p.saveCalibration(r.mode, r.pctPerHour);
+      return text([...lines, `${r.mode} rate: ${r.pctPerHour} %/h (${r.from} % -> ${r.to} %), stored in power.calibration (${cal.measuredAt})`].join("\n"));
+    }
+    const power = await import("../../daemon/battery-gate.js");
+    const powerLines = power.powerStatusLines(await power.powerStatus({ read: () => g.readBattery() }));
     const hours = Math.min(Math.max(args.window_hours ?? 12, 1 / 60), 14 * 24);
     const tel = g.summarizeTelemetry(hours * 3600_000);
     const w = (s: { max: number; avg: number } | null): string => (s ? `max ${s.max} W, avg ${s.avg} W` : "no data");
@@ -249,6 +272,7 @@ export async function batteryStatus(args: { window_hours?: number } = {}): Promi
     return text(
       [
         `battery: ${line || "no recent reading (guard off, not macOS, or daemon not running)"}`,
+        ...powerLines.slice(2),
         `gate: ${gate ? `${gate.phase}${gate.reason ? ` — ${gate.reason}` : ""}${gate.benchStop ? ` · benchmark stop: ${gate.benchReason ?? "battery low"}` : ""}` : "no gate file"}`,
         `benchmark marker: ${marker ? `${marker.label} (pid ${marker.pid})` : "none"}`,
         ...telLines,

@@ -50,6 +50,7 @@ import {
   LocalProviderRefusedError,
   assertLocalProviderAlive,
   batteryGuardRefusal,
+  keepAboveHold,
   tryPoolRun,
   recordPoolSkip,
   gateStart,
@@ -216,6 +217,8 @@ export async function runWorker(opts: RunOptions): Promise<number> {
   // with the reason; remote providers are untouched.
   const batteryWhy = batteryGuardRefusal(isLoopbackProvider(target.provider), logDir, target.providerName, Date.now(), undefined, isBenchmarkLabel(opts.label));
   if (batteryWhy) throw new BatteryGuardRefusedError(batteryWhy);
+  // keep-above gate: a new local worker queues below power.batteryGuard.keepAbovePct
+  if (!isBenchmarkLabel(opts.label)) await keepAboveHold(isLoopbackProvider(target.provider), logDir, target.providerName);
   if (opts.modelFast && !opts.modelFlag) target.modelAlias = "fast";
   if (opts.modelDefault && !opts.modelFlag) target.modelAlias = "default";
   const modelFlag = opts.modelFlag ?? target.modelId ?? (profileModel && profileModel !== "fast" && profileModel !== "default" ? profileModel : undefined);

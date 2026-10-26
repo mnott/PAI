@@ -86,6 +86,10 @@ export interface BatteryGuardConfig {
   benchmarkProjectMins: number;
   /** Seconds a stopped benchmark item gets to write its result/progress files. Default 120. */
   benchmarkSaveSecs: number;
+  /** Keep-above gate (battery-gate.ts): new local work waits below this percent. null = off. */
+  keepAbovePct: number | null;
+  /** ... and starts again at this percent. Default keepAbovePct + 5. */
+  resumeAtPct: number | null;
 }
 
 export const BATTERY_GUARD_DEFAULTS: BatteryGuardConfig = {
@@ -99,6 +103,8 @@ export const BATTERY_GUARD_DEFAULTS: BatteryGuardConfig = {
   benchmarkProjectFloorPct: 10,
   benchmarkProjectMins: 20,
   benchmarkSaveSecs: 120,
+  keepAbovePct: null,
+  resumeAtPct: null,
 };
 
 /** The effective config: the shipped/loaded `power.batteryGuard` block over the code defaults. */
@@ -117,6 +123,13 @@ export function batteryGuardConfig(power: unknown): BatteryGuardConfig {
     benchmarkProjectFloorPct: num("benchmarkProjectFloorPct", BATTERY_GUARD_DEFAULTS.benchmarkProjectFloorPct),
     benchmarkProjectMins: num("benchmarkProjectMins", BATTERY_GUARD_DEFAULTS.benchmarkProjectMins),
     benchmarkSaveSecs: num("benchmarkSaveSecs", BATTERY_GUARD_DEFAULTS.benchmarkSaveSecs),
+    keepAbovePct: typeof block.keepAbovePct === "number" && Number.isFinite(block.keepAbovePct) ? block.keepAbovePct : null,
+    resumeAtPct:
+      typeof block.resumeAtPct === "number" && Number.isFinite(block.resumeAtPct)
+        ? block.resumeAtPct
+        : typeof block.keepAbovePct === "number" && Number.isFinite(block.keepAbovePct)
+          ? block.keepAbovePct + 5
+          : null,
   };
 }
 
