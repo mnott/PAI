@@ -95,6 +95,47 @@ function isInsideWorktree(cwd: string, root: string): boolean {
 const GIT_WRITE = /\bgit\b[^&;|\n]*?\s(?:commit|add|am|cherry-pick|apply|push|tag|rm|mv)(?![\w-])/;
 const UNKNOWN_DIR = "/\0unresolved";
 
+const READONLY_GIT = new Set([
+  "log", "show", "diff", "rev-parse", "rev-list", "merge-base", "status", "ls-files", "ls-tree",
+  "cat-file", "blame", "describe", "shortlog", "grep", "for-each-ref", "name-rev",
+]);
+
+/** Global options that take a separate value argument. */
+const GIT_VALUE_OPTS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+
+/**
+ * True when the segment runs git with a subcommand that can modify a repo.
+ * Read-only subcommands (and read-only forms of tag/branch/config/remote/
+ * worktree) are not writes wherever they point. A segment with no parseable
+ * git invocation falls back to the keyword pattern.
+ */
+function segmentWritesGit(segment: string, rest: string[]): boolean {
+  const g = rest.indexOf("git");
+  if (g < 0) return GIT_WRITE.test(segment);
+  let k = g + 1;
+  while (k < rest.length && rest[k].startsWith("-")) k += GIT_VALUE_OPTS.has(rest[k]) ? 2 : 1;
+  const sub = rest[k];
+  if (sub === undefined) return false;
+  const args = rest.slice(k + 1).filter((a) => !/^[<>]|^\d*>/.test(a));
+  if (READONLY_GIT.has(sub)) return false;
+  const opts = (set: string[]) => args.every((a) => set.some((s) => a === s || a.startsWith(`${s}=`)));
+  const noPositional = args.every((a) => a.startsWith("-"));
+  switch (sub) {
+    case "tag":
+      return !(args.length === 0 || (noPositional && opts(["-l", "--list", "--sort", "--contains", "--points-at", "--merged", "--no-merged", "-n", "--format"])));
+    case "branch":
+      return !(args.length === 0 || (noPositional && opts(["--list", "-l", "-a", "-r", "--all", "--remotes", "--show-current", "--contains", "--merged", "--no-merged", "-v", "-vv", "--sort", "--format", "--points-at"])));
+    case "config":
+      return !(args[0] === "--get" || args[0] === "--get-all" || args[0] === "--list" || args[0] === "-l");
+    case "remote":
+      return !(args.length === 0 || args[0] === "-v" || args[0] === "show" || args[0] === "get-url");
+    case "worktree":
+      return args[0] !== "list";
+    default:
+      return true;
+  }
+}
+
 /** Splits on &&, ||, ;, | and newlines outside quotes. */
 export function splitSegments(command: string): string[] {
   const out: string[] = [];
@@ -169,7 +210,7 @@ function worktreeEscape(command: string, cwd: string, worktreesRoot: string): bo
       here = arg === undefined ? here : resolveDir(here, arg);
       continue;
     }
-    if (!GIT_WRITE.test(segment)) continue;
+    if (!segmentWritesGit(segment, rest)) continue;
     const targets = [here];
     const eff = { ...env, ...segEnv };
     if (eff.GIT_DIR) targets.push(treeOfGitDir(resolveDir(here, eff.GIT_DIR)));
