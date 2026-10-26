@@ -20,6 +20,8 @@ export interface RelatedResult {
   line: string;
   failing: string[];
   flakyLogs?: string[];
+  /** Tail of the gate output, for the test-growth alarm. */
+  output?: string;
 }
 
 /** Every file the merge changed (any type), from a `git diff --name-only` listing. */
@@ -116,7 +118,7 @@ export function runRelatedTests(
   const timeoutSec = settings.verifyTimeoutSec > 0 ? settings.verifyTimeoutSec : DEFAULT_VERIFY_TIMEOUT_SEC;
   const r = runner(cwd, env, [settings.verify], timeoutSec, pipeGraceMs);
   if (r.timedOut) return { status: "failed", line: `timed out after ${timeoutSec}s`, failing: [] };
-  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (${settings.verify})`, failing: [] };
+  if (r.code === 0 && !r.signal && !r.error) return { status: "passed", line: `passed (${settings.verify})`, failing: [], output: r.output.slice(-20_000) };
   const exit = r.error ? `error: ${r.error.split("\n")[0].slice(0, 200)}` : r.signal ? `killed by ${r.signal}` : `exit ${r.code ?? 1}`;
   const tail = r.output.trim().split("\n").slice(-5).join(" | ").slice(0, 400);
   return { status: "failed", line: `failed (${exit}): ${tail}`, failing: [] };

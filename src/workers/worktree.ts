@@ -1303,6 +1303,7 @@ export function mergeWorker(
       result: related.line.replace(/\s+/g, " ").slice(0, 300),
       ...(related.flakyLogs?.length ? { flakyLog: related.flakyLogs.join(",") } : {}),
     });
+    if (related.output) void growthAlarm(logDir, st.cwd, related.output);
     // "failed" already survived the serial re-run (flaky-under-load is its own status): revert like the other gates
     if (related.status === "failed" && process.env.PAI_MERGE_KEEP_ON_FAIL !== "1") {
       const files = related.failing.length ? related.failing.join(", ") : related.line;
@@ -1526,6 +1527,20 @@ function gateLines(
  * reset — the checkout is shared) and throw; branch and worktree stay so the
  * work can be fixed and re-merged.
  */
+/** Tell the merging session when the project's suite outgrew its governed core (src/testgov/alarm.ts); never throws. */
+async function growthAlarm(logDir: string, repo: string, output: string): Promise<void> {
+  try {
+    const { checkGrowth } = await import("../testgov/alarm.js");
+    const text = checkGrowth(repo, output);
+    if (!text) return;
+    process.stderr.write(text + "\n");
+    const { aibrokerMessenger, originFromEnv } = await import("./run-events.js");
+    await aibrokerMessenger(logDir).toSession(originFromEnv(), text);
+  } catch {
+    /* the alarm is advisory */
+  }
+}
+
 export function runVerify(cwd: string, cmd: string, oldHead: string): string {
   return gateLines(cwd, cmd, () => revertMerge(cwd, oldHead), () => null);
 }
