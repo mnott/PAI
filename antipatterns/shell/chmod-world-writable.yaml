@@ -1,5 +1,6 @@
 # Making / or ~ world-writable exposes the whole tree.
 id: world-writable-chmod
+layer: baseline
 status: stable
 mode: enforce
 version: 1

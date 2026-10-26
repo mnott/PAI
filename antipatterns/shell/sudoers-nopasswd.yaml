@@ -4,6 +4,7 @@
 # (here-string or heredoc body after), cat > it with a heredoc body, sed -i on it.
 # grep, cat and visudo -c only read, so they are not in the list.
 id: sudoers-nopasswd
+layer: baseline
 status: stable
 mode: enforce
 version: 1

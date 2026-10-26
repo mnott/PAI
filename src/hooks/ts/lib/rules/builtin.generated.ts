@@ -5,6 +5,7 @@ import type { LoadedRule } from "./types.js";
 export const BUILTIN_RULES: LoadedRule[] = [
   {
     "id": "base64-decode-to-shell",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -44,6 +45,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "world-writable-chmod",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -67,6 +69,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "chmod-zero",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -102,6 +105,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "credential-file-read",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -126,6 +130,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "credential-read-then-network",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -174,6 +179,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "crontab-persistence",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -194,6 +200,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "curl-or-wget-piped-to-shell",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -245,6 +252,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "download-then-execute",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -293,6 +301,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "find-root-delete",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -326,6 +335,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "git-push-force",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -363,6 +373,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "git-push-plus-refspec",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -385,6 +396,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "git-reset-hard",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -408,6 +420,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "injection-then-tool",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -460,6 +473,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "instruction-override-disregard",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -486,6 +500,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "instruction-override-ignore",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -515,6 +530,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "launchagents-write-persistence",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -537,6 +553,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "launchctl-load-persistence",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -557,6 +574,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "recursive-search-after-cd-root",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -590,6 +608,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "recursive-search-root",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -631,6 +650,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "reverse-shell-dev-tcp",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -659,6 +679,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "reverse-shell-interactive-bash",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -680,6 +701,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "rm-recursive-parent",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -708,6 +730,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "rm-recursive-relative",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -736,6 +759,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "rm-recursive-root",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -802,6 +826,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "rm-trailing-tilde",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,
@@ -824,6 +849,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
   },
   {
     "id": "sudoers-nopasswd",
+    "layer": "baseline",
     "status": "stable",
     "mode": "enforce",
     "version": 1,

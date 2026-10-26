@@ -64,7 +64,10 @@ describe("lifecycle fields", () => {
     const ex = (expires?: string): typeof base => ({ ...base, exceptions: [{ match: "safe", reason: "r", expires }] });
     expect(dispositionOf(ex("2999-01-01"), "a safe thing")).toBe("off");
     expect(dispositionOf(ex("2000-01-01"), "a safe thing")).toBe("enforce");
-    expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("off");
+    // outside applies_to: a behaviour/quirk rule is recorded only (monitor), a baseline rule is off
+    expect(dispositionOf({ ...base, layer: "behaviour", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("monitor");
+    expect(dispositionOf({ ...base, layer: "quirk", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("monitor");
+    expect(dispositionOf({ ...base, layer: "baseline", applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("off");
     expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "glm-5" })).toBe("enforce");
   });
 });

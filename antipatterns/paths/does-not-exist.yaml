@@ -1,6 +1,7 @@
 # A Read/Edit/Write file_path that does not exist and cannot be repaired.
 # Detection stays in path-repair.ts (repair rules run first); this file owns the wording.
 id: does-not-exist
+layer: baseline
 status: stable
 mode: enforce
 version: 1

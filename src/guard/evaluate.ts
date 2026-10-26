@@ -66,7 +66,7 @@ function decideShell(command: string, ev: Extract<GuardEvent, { kind: "tool_call
     const hit = evaluateRules(pool, "Bash", command);
     if (!hit) break;
     const lc = ruleLifecycle(hit.rule);
-    const mode = dispositionOf(lc, command);
+    const mode = dispositionOf(lc, command, ctx.env);
     const action = hit.rule.severity === "warn" ? "note" : "deny";
     if (mode !== "off") {
       record({ id: hit.rule.id, version: lc.version, category: "shell", action, mode, input: command, cwd: ev.cwd, sessionId: ev.sessionId, source: ev.source, model: ev.model, provider: ev.provider });

@@ -43,7 +43,7 @@ export const antipatternsCommand: CommandDef = {
       examples: ["pai antipatterns list --category tool-loop"],
       run: (ctx) => {
         const rows = listPatterns({ category: ctx.opts.category as string | undefined, status: ctx.opts.status as string | undefined });
-        return show(ctx, rows, () => renderTable(["id", "category", "status", "mode", "v", "action", "source"], rows.map((e) => [e.id, e.category, e.status, e.mode, String(e.version), e.action, e.source])));
+        return show(ctx, rows, () => renderTable(["id", "category", "layer", "status", "mode", "v", "action", "source"], rows.map((e) => [e.id, e.category, e.layer, e.status, e.mode, String(e.version), e.action, e.source])));
       },
     },
     {
@@ -126,13 +126,14 @@ export const antipatternsCommand: CommandDef = {
       summary: "Change one detector parameter of a pattern",
       description:
         "Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), " +
-        "bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.",
+        "bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. With --model the value goes to per_model.<model>.params.PARAM " +
+        "and applies only to that model; without it the global param changes. Unknown params and type mismatches are refused. Takes effect without a restart.",
       args: [ID, { name: "PARAM", summary: "Detector parameter, e.g. stop_at", required: true }, { name: "VALUE", summary: "New value", required: true }],
-      options: [{ name: "reason", type: "string", value: "TEXT", summary: "Why (required)" }],
-      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'"],
+      options: [{ name: "reason", type: "string", value: "TEXT", summary: "Why (required)" }, { name: "model", type: "string", value: "ID", summary: "Scope the change to this model (per_model entry) instead of the global param" }],
+      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'", "pai antipatterns set identical-write stop_at 8 --model qwen3.8-flash-next-gyro-m --reason 'fired 11x on gyro-m'"],
       run: (ctx) => {
-        const r = wrap(() => setParam(ctx.args.ID as string, ctx.args.PARAM as string, ctx.args.VALUE as string, (ctx.opts.reason as string | undefined) ?? ""));
-        console.log(`${ctx.args.PARAM}: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
+        const r = wrap(() => setParam(ctx.args.ID as string, ctx.args.PARAM as string, ctx.args.VALUE as string, (ctx.opts.reason as string | undefined) ?? "", { model: ctx.opts.model as string | undefined }));
+        console.log(`${ctx.opts.model ? `${ctx.opts.model}: ` : ""}${ctx.args.PARAM}: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
         return 0;
       },
     },

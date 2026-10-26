@@ -11,6 +11,14 @@ export type Status = (typeof STATUSES)[number];
 export const MODES = ["enforce", "monitor"] as const;
 export type Mode = (typeof MODES)[number];
 export const LEVELS = ["low", "medium", "high"] as const;
+/** The three rule layers: baseline (security/environment, always as configured), behaviour (loops, same rule for every model, tuning per model), quirk (observed for specific models only). */
+export const LAYERS = ["baseline", "behaviour", "quirk"] as const;
+export type Layer = (typeof LAYERS)[number];
+/** Layer derived from a pattern's category when the YAML sets no `layer` (shell and paths are baseline; tool-loop and final-text are behaviour). */
+export function layerOfCategory(category: unknown): Layer {
+  if (category === "shell" || category === "paths") return "baseline";
+  return "behaviour";
+}
 
 export interface PatternException {
   match: string;
@@ -35,7 +43,10 @@ export interface Lifecycle {
   references: string[];
   blind_spots: string[];
   exceptions: PatternException[];
+  layer: Layer;
   applies_to?: { providers?: string[]; models?: string[] };
+  /** Per-model tuning: the first matching entry (exact id beats a glob with `*`) overrides mode and/or detector params for that model. */
+  per_model?: Record<string, { mode?: Mode; params?: Record<string, unknown> }>;
   superseded_by?: string;
   deprecated?: string;
   reason?: string;
@@ -76,6 +87,19 @@ export function parseLifecycle(raw: Record<string, unknown>): Lifecycle | string
     if (!isObj(raw.applies_to)) return "applies_to must be a mapping";
     applies_to = { providers: strList(raw.applies_to.providers), models: strList(raw.applies_to.models) };
   }
+  const layer = raw.layer === undefined ? layerOfCategory(raw.category) : raw.layer;
+  if (typeof layer !== "string" || !(LAYERS as readonly string[]).includes(layer)) return `layer must be one of ${LAYERS.join(", ")}`;
+  let per_model: Lifecycle["per_model"];
+  if (raw.per_model !== undefined) {
+    if (!isObj(raw.per_model)) return "per_model must be a mapping";
+    per_model = {};
+    for (const [k, v] of Object.entries(raw.per_model)) {
+      if (!isObj(v)) return `per_model ${k} must be a mapping`;
+      if (v.mode !== undefined && !(MODES as readonly string[]).includes(v.mode)) return `per_model ${k}: mode must be one of ${MODES.join(", ")}`;
+      if (v.params !== undefined && !isObj(v.params)) return `per_model ${k}: params must be a mapping`;
+      per_model[k] = { ...(v.mode !== undefined ? { mode: v.mode as Mode } : {}), ...(v.params !== undefined ? { params: v.params as Record<string, unknown> } : {}) };
+    }
+  }
   return {
     status: status as Status,
     mode: mode as Mode,
@@ -91,7 +115,9 @@ export function parseLifecycle(raw: Record<string, unknown>): Lifecycle | string
     references: strList(raw.references),
     blind_spots: strList(raw.blind_spots),
     exceptions,
+    layer: layer as Layer,
     applies_to,
+    per_model,
     superseded_by: typeof raw.superseded_by === "string" ? raw.superseded_by : undefined,
     deprecated: dateStr(raw.deprecated),
     reason: typeof raw.reason === "string" ? raw.reason : undefined,
@@ -107,21 +133,44 @@ export function lifecycleDoc(lc: Lifecycle): Record<string, unknown> {
   };
   for (const k of ["created", "modified", "title", "description", "level", "author", "superseded_by", "deprecated", "reason"] as const) set(k, lc[k]);
   for (const k of ["supersedes", "falsepositives", "references", "blind_spots", "exceptions"] as const) set(k, lc[k]);
+  set("layer", lc.layer);
   set("applies_to", lc.applies_to);
+  set("per_model", lc.per_model);
   return out;
 }
 
 export type Disposition = "enforce" | "monitor" | "off";
 
+const globMatch = (glob: string, s: string): boolean => {
+  if (!glob.includes("*")) return glob === s;
+  const re = new RegExp(`^${glob.split("*").map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
+  return re.test(s);
+};
+
+/** The per_model entry that applies to `model`: an exact id beats a glob; among globs the first declared wins. */
+export function perModelEntry(per_model: Lifecycle["per_model"], model: string): { mode?: Mode; params?: Record<string, unknown> } | undefined {
+  if (!per_model) return undefined;
+  if (per_model[model]) return per_model[model];
+  for (const [k, v] of Object.entries(per_model)) if (k.includes("*") && globMatch(k, model)) return v;
+  return undefined;
+}
+
 /**
  * What a firing means right now: `enforce` acts, `monitor` is recorded only, `off` is neither (deprecated, an unexpired
- * exception matching the input, or applies_to excluding this provider/model).
+ * exception matching the input, or a quirk rule's applies_to excluding this provider/model). Outside a quirk rule's
+ * applies_to the firing is only recorded (monitor); a baseline rule ignores applies_to and stays as configured.
+ * A per_model entry for the current model overrides the mode.
  */
-export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "exceptions" | "applies_to">, input = "", env: NodeJS.ProcessEnv = process.env, now = Date.now()): Disposition {
+export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "exceptions" | "applies_to" | "layer" | "per_model">, input = "", env: NodeJS.ProcessEnv = process.env, now = Date.now()): Disposition {
   if (lc.status === "deprecated") return "off";
+  const model = modelOf(env);
   const at = lc.applies_to;
-  if (at?.providers?.length && !at.providers.includes(env.PAI_WORKER_PROVIDER ?? "session")) return "off";
-  if (at?.models?.length && !at.models.includes(modelOf(env))) return "off";
+  let inScope = true;
+  if (at?.providers?.length && !at.providers.includes(env.PAI_WORKER_PROVIDER ?? "session")) inScope = false;
+  if (at?.models?.length && !at.models.some((m) => globMatch(m, model))) inScope = false;
+  if (!inScope) return lc.layer === "baseline" ? "off" : "monitor";
+  const entry = perModelEntry(lc.per_model, model);
+  if (entry?.mode) return entry.mode;
   for (const e of lc.exceptions) {
     if (e.expires && Date.parse(e.expires) < now) continue;
     try {
@@ -131,6 +180,12 @@ export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "exception
     }
   }
   return lc.mode;
+}
+
+/** The detector params for one model: the pattern's params with the matching per_model entry's params merged over them. */
+export function paramsForModel(params: Record<string, unknown>, lc: Pick<Lifecycle, "per_model">, model: string): Record<string, unknown> {
+  const entry = perModelEntry(lc.per_model, model);
+  return entry?.params ? { ...params, ...entry.params } : params;
 }
 
 /** The model of the current run: the worker env, else `session`. */

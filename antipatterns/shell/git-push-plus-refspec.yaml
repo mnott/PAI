@@ -1,5 +1,6 @@
 # A plus-prefixed refspec forces the update without -f.
 id: git-push-plus-refspec
+layer: baseline
 status: stable
 mode: enforce
 version: 1
