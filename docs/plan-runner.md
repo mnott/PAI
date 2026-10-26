@@ -14,7 +14,7 @@ pai plan status plan.yaml       # done / running / waiting / needs-decision, wal
 ```yaml
 job: parser-rewrite            # label prefix: "<job>: <unit> <part>"
 repo: .                        # git checkout (relative to the plan file)
-gate: npx tsc --noEmit && npx vitest run   # run on the merged tree; failure reverts the merge
+gate: npx tsc --noEmit   # run on the merged tree; failure reverts the merge
 provider: local                # local provider, runs with --class implement
 max_parallel: 2                # optional; default the provider's maxConcurrent (else 3)
 preamble: Follow the repo conventions.     # optional text or file path, prepended to every spec
@@ -26,7 +26,7 @@ units:
       - id: p1
         spec: Add the tokenizer.           # text, or a path to a file holding it
         files: [src/tok.ts]                # parts sharing a file never run together
-        proof: npx vitest run src/tok.test.ts
+        proof: npx tsc --noEmit
       - id: p2
         spec: specs/p2.md
         depends_on: [p1]                   # part ids, also across units

@@ -190,18 +190,11 @@ workers:
       - "*.md"
       - "CHANGELOG.md"
       - "src/cli/registry.ts"
-    # Related tests, run in the checkout after a successful `pai worker merge`
-    # ({files} = the changed source files, shell-quoted). A failure keeps the
-    # merge and exits 3. Empty string = off; `--no-verify-tests` skips one merge.
-    verify: "npx vitest related --run {files}"
+    # Verify command run in the checkout after a successful `pai worker merge`
+    # (typecheck + the kept core in tests/KEPT.md). A failure reverts the merge.
+    # Empty string = off; `--no-verify-tests` skips one merge.
+    verify: "npx tsc --noEmit && PAI_VITEST_MAX_WORKERS=2 npx vitest run"
     verifyTimeoutSec: 600
-    # Repo-guard tests appended to every related-tests run: they guard the
-    # whole repo and import nothing a branch changes, so `vitest related`
-    # never selects them. Paths or globs; missing entries are skipped.
-    alwaysTests:
-      - "src/utils/no-token-literals.test.ts"
-      - "src/cli/docs-sync.test.ts"
-      - "src/cli/docs-keys.test.ts"
 # Obsidian sync into the PAI-generated vault. Gates only writing; vault
 # indexing is vaultIndex.
 obsidian:

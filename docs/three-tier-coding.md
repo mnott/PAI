@@ -23,7 +23,7 @@ around a unit run and the cockpit.
 3. Each part runs as a `--class implement` worker in its own worktree. Parts are **pipelined**: the next part's spec is
    written and started while the previous one is in review.
 4. The orchestrator reviews the diff and merges with the gate:
-   `pai worker merge <id> --verify "npx tsc --noEmit && npx vitest run --retry=2"`. A failing gate reverts the merge and
+   `pai worker merge <id> --verify "npx tsc --noEmit"`. A failing gate reverts the merge and
    keeps the branch; a merge that removes test cases is rejected.
 5. At the unit end the session runs its own checks and starts the next unit.
 

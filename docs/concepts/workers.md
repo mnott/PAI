@@ -27,16 +27,10 @@ pai worker gc                 # archive old worktrees under refs/pai-archive/ID
   `WORKER-SALVAGE`; the ledger is PAI's log of worker events) so nothing is lost. A loop stop or a time limit with saved work escalates one tier up at once. See [escalation](escalation.md).
 - **Merge.** `merge` runs the `--verify` command (or `merge.verify` from
   `workers.yaml`) on the merged tree; non-zero exit reverts the merge and keeps
-  the branch. A stub scan always runs. Then it runs the repo guards in
-  `workers.merge.alwaysTests` whenever the merge changed any file, plus the
-  related tests (`workers.merge.verify`, default `npx vitest related --run
-  {files}`, stopped after `workers.merge.verifyTimeoutSec`) when source files
-  changed; nothing runs only when the merge changed nothing. A failure keeps
-  the merge, exits 3 and prints the failing files and the revert command
-  (`--no-verify-tests` skips it once).
-  Failing test files are re-run alone once; files that pass alone are reported
-  as `flaky under load (passed alone)` and do not fail the merge. Test files
-  the worker changed always run. When the merge lands in the PAI checkout that
+  the branch. A stub scan always runs. Then it runs `workers.merge.verify`
+  (default: `npx tsc --noEmit` plus the kept test core in `tests/KEPT.md`,
+  stopped after `workers.merge.verifyTimeoutSec`); a failure reverts the merge
+  (`--no-verify-tests` skips it once). When the merge lands in the PAI checkout that
   is running, `dist/` is rebuilt (`--no-build` or `workers.merge.rebuild: false`
   skips it; ledger `WORKER-MERGE-BUILD`; a failed build never reverts the
   merge). Over MCP: `worker_merge`.

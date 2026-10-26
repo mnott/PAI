@@ -209,7 +209,7 @@ On a model card in the cockpit, **+** and **−** change the provider's `maxConc
 
 ### Merge a worker, with auto-resolve
 
-`pai worker merge ID` brings a worker's branch back. After the merge it runs the tests related to the changed files plus `workers.merge.alwaysTests`; on a failure the merge stands, the command exits 3, names the failing files and prints the revert command (`--no-verify-tests` skips the check once). Conflicts only in generated files are regenerated, and add-only clashes in the configured files are union-merged (`workers.merge.generated`, `regenerate`, `union`). See [workers](concepts/workers.md), [`pai worker`](commands/worker.md).
+`pai worker merge ID` brings a worker's branch back. After the merge it runs `workers.merge.verify` (typecheck plus the kept test core); on a failure the merge is reverted (`--no-verify-tests` skips the check once). Conflicts only in generated files are regenerated, and add-only clashes in the configured files are union-merged (`workers.merge.generated`, `regenerate`, `union`). See [workers](concepts/workers.md), [`pai worker`](commands/worker.md).
 
 ### Escalation on a stop
 
