@@ -28,6 +28,7 @@ import {
 import { parseWorkerReport, verifyReportChanges, verifyFailNote } from "../report.js";
 import { armDeadline, deadlinePromptLine } from "../deadline.js";
 import { acquireRunToken, revokeRunToken } from "../run-token.js";
+import { tenantForProject } from "../../tenants/tenants.js";
 import { routerUrl } from "../run-env.js";
 import { blockedMsOf } from "../active-time.js";
 import {
@@ -219,7 +220,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   // keyless: the engine gets a registered placeholder and the router base, the router holds the key
   let runToken: string | null = null;
   if (spec.keyless) {
-    runToken = await acquireRunToken(target.providerName, wid, a.limit?.deadlineAt);
+    runToken = await acquireRunToken(target.providerName, wid, a.limit?.deadlineAt, tenantForProject(process.cwd()));
     if (!runToken && spec.engine === "codex") {
       throw new Error(`provider "${target.providerName}" needs the PAI router for a keyless run, but it did not take the run token — start it with \`pai router start\``);
     }

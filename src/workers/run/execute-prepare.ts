@@ -20,6 +20,7 @@ import {
   routeLoopbackViaRouter,
 } from "../run-env.js";
 import { acquireRunToken } from "../run-token.js";
+import { tenantForProject } from "../../tenants/tenants.js";
 import { probeRouter } from "../../router/supervisor.js";
 import { appendLedger } from "../ledger.js";
 import { ensureNoMcpConfig, ledgerPath } from "../paths.js";
@@ -172,7 +173,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   // a cloud provider's key stays with the router: the worker gets a per-run placeholder, or no run at all
   let runToken: string | undefined;
   if (!proxyUrl && claudeKeyless(target.provider)) {
-    runToken = (await acquireRunToken(target.providerName, wid, limit?.deadlineAt)) ?? undefined;
+    runToken = (await acquireRunToken(target.providerName, wid, limit?.deadlineAt, tenantForProject(process.cwd()))) ?? undefined;
     if (!runToken) {
       throw new Error(`provider "${target.providerName}" needs the PAI router for a keyless run, but it did not take the run token — start it with \`pai router start\``);
     }

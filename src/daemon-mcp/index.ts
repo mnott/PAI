@@ -27,6 +27,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { PaiClient } from "../daemon/ipc-client.js";
+import { exportAudit } from "../tenants/audit-export.js";
 import { loadConfig } from "../daemon/config.js";
 import { issueClaim, issueClaims, issueStale } from "../session/issue-claims.js";
 import { formatCheck, initProject, isGitProject, projectChecks } from "../session/project-setup.js";
@@ -869,6 +870,26 @@ async function startShim(): Promise<void> {
         .describe("Maximum number of tunnels to return. Default: 20."),
     },
     async (args) => proxyTool("memory_tunnels", args)
+  );
+
+  // Tool: audit_export — a tenant's firings, decisions and outcomes with a manifest (read-only, in-process)
+  server.tool(
+    "audit_export",
+    "Export a tenant's audit trail (rule firings, decisions, run outcomes) with a manifest: rule ids with content versions, export time, PAI version and the sha256 of the export. Read-only; never deletes. Same as `pai audit export`.",
+    {
+      tenant: z.string().describe("Tenant name ('local' is the default tenant)."),
+      since: z.string().optional().describe("ISO timestamp: only lines at or after it."),
+      until: z.string().optional().describe("ISO timestamp: only lines at or before it."),
+      format: z.enum(["jsonl", "csv"]).optional().describe("Export format. Default: jsonl."),
+    },
+    async (args) => {
+      try {
+        const r = exportAudit(args);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ manifest: r.manifest, export: r.body }, null, 2) }] };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: (e as Error).message }], isError: true };
+      }
+    }
   );
 
   // -------------------------------------------------------------------------

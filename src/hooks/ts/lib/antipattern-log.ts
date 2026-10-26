@@ -19,6 +19,8 @@ import { basename, join } from "node:path";
 import { stringify } from "yaml";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { modelOf } from "./antipattern-lifecycle.js";
+import { getActiveTenant } from "./antipatterns.js";
+import { ruleVersionOf } from "../../../tenants/rules.js";
 
 export const ROTATE_BYTES = 10 * 1024 * 1024;
 export const EXCERPT_CHARS = 120;
@@ -26,6 +28,9 @@ export const OUTCOMES = ["run-continued", "run-stopped", "run-succeeded", "run-f
 export type Outcome = (typeof OUTCOMES)[number];
 export const DISPOSITIONS = ["tp", "fp", "benign_tp", "undetermined"] as const;
 export type Disposition = (typeof DISPOSITIONS)[number];
+
+/** Where the decision ran: a Claude Code hook / worker runner, the model-API proxy, the MCP server or the UHP server. */
+export type AuditSource = "hook" | "proxy" | "mcp" | "uhp";
 
 export interface Firing {
   ts: string;
@@ -43,7 +48,12 @@ export interface Firing {
   excerpt: string;
   disposition: Disposition;
   /** Where the decision ran: a Claude Code hook / worker runner (default, absent in old lines) or the model-API proxy. */
-  source?: "hook" | "proxy";
+  source?: AuditSource;
+  /** Audit identity (every line of a tenant's export carries these): the tenant whose rule set decided, the rule id and its content hash, who asked (token id, run id or session id; never a secret). */
+  tenant?: string;
+  ruleId?: string;
+  ruleVersion?: string;
+  principal?: string;
 }
 
 export interface OutcomeLine {
@@ -54,6 +64,10 @@ export interface OutcomeLine {
   outcome: Outcome;
   /** How the run ended after the firing, whatever the firing's own outcome says. */
   final: "succeeded" | "failed" | "stopped";
+  tenant?: string;
+  ruleId?: string;
+  ruleVersion?: string;
+  principal?: string;
 }
 
 export interface LabelLine {
@@ -61,6 +75,12 @@ export interface LabelLine {
   firingTs: string;
   id: string;
   disposition: Disposition;
+}
+
+let ambientPrincipal: string | undefined;
+/** The principal evaluate() is deciding for (set per decision; read by the firing sink). */
+export function setAuditPrincipal(p: string | undefined): void {
+  ambientPrincipal = p;
 }
 
 export const antipatternDir = (): string => paiHomePath("antipatterns");
@@ -131,7 +151,10 @@ export interface FiringInput {
   sessionId?: string;
   env?: NodeJS.ProcessEnv;
   disposition?: Disposition;
-  source?: "hook" | "proxy";
+  source?: AuditSource;
+  /** Tenant and principal of the decision; absent: the active tenant and the ambient principal. */
+  tenant?: string;
+  principal?: string;
   /** Model and provider the caller knows (proxy firings); absent: taken from the environment. */
   model?: string;
   provider?: string;
@@ -142,6 +165,7 @@ export function recordFiring(f: FiringInput): string | null {
   try {
     const env = f.env ?? process.env;
     const ts = uniqueTs();
+    const tenant = f.tenant ?? getActiveTenant();
     const line: Firing = {
       ts,
       id: f.id,
@@ -155,6 +179,10 @@ export function recordFiring(f: FiringInput): string | null {
       ...(f.sessionId ? { sessionId: f.sessionId } : {}),
       project: basename(f.cwd ?? process.cwd()),
       source: f.source ?? "hook",
+      tenant,
+      ruleId: f.id,
+      ruleVersion: ruleVersionOf(f.id, tenant, f.cwd),
+      ...((f.principal ?? ambientPrincipal ?? f.sessionId ?? env.PAI_WORKER_ID) ? { principal: f.principal ?? ambientPrincipal ?? (f.sessionId ? `session:${f.sessionId}` : `run:${env.PAI_WORKER_ID}`) } : {}),
       inputHash: hashOf(f.input),
       excerpt: excerptOf(f.input),
       // an operator who allowed what the guard would deny (PAI_ALLOW_* in the environment) marks the firing a false positive
@@ -219,7 +247,7 @@ export function recordRunOutcomes(workerId: string, end: "succeeded" | "failed" 
     for (const f of readFirings()) {
       if (f.workerId !== workerId || done.has(`${f.ts}\t${f.id}`)) continue;
       const outcome: Outcome = f.action === "continue" ? "run-continued" : end === "stopped" ? "run-stopped" : end === "succeeded" ? "run-succeeded" : "run-failed";
-      out.push({ ts: new Date().toISOString(), firingTs: f.ts, id: f.id, workerId, outcome, final: end });
+      out.push({ ts: new Date().toISOString(), firingTs: f.ts, id: f.id, workerId, outcome, final: end, ...(f.tenant ? { tenant: f.tenant, ruleId: f.ruleId ?? f.id, ruleVersion: f.ruleVersion, principal: f.principal } : {}) });
     }
     for (const o of out) appendLine(outcomesPath(), o);
     return out;

@@ -10,7 +10,10 @@
  */
 
 import { dispositionOf } from "../hooks/ts/lib/antipattern-lifecycle.js";
-import { recordFiring, type FiringInput } from "../hooks/ts/lib/antipattern-log.js";
+import { recordFiring, setAuditPrincipal, type AuditSource, type FiringInput } from "../hooks/ts/lib/antipattern-log.js";
+import { setActiveTenant } from "../hooks/ts/lib/antipatterns.js";
+import { tenantShellRules } from "../tenants/rules.js";
+import { LOCAL_TENANT, tenantForProject } from "../tenants/tenants.js";
 import { ruleLifecycle } from "../hooks/ts/lib/rules/load.js";
 import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
@@ -19,8 +22,8 @@ import { unparsedCallDecision } from "../workers/run/unparsed-call.js";
 import { decidePreGates, decideWorkerGate, scannedCommand, type GateSet } from "./gates.js";
 
 export type GuardEvent =
-  | { kind: "tool_call"; tool: string; input: unknown; cwd: string; workerId?: string; model?: string; provider?: string; sessionId?: string; source?: "hook" | "proxy" }
-  | { kind: "final_text"; text: string; cwd?: string; workerId?: string; model?: string; provider?: string; sessionId?: string; source?: "hook" | "proxy" };
+  | { kind: "tool_call"; tool: string; input: unknown; cwd: string; workerId?: string; model?: string; provider?: string; sessionId?: string; source?: AuditSource; tenant?: string; principal?: string }
+  | { kind: "final_text"; text: string; cwd?: string; workerId?: string; model?: string; provider?: string; sessionId?: string; source?: AuditSource; tenant?: string; principal?: string };
 
 export interface Decision {
   action: "allow" | "deny" | "note" | "stop" | "continue";
@@ -66,7 +69,7 @@ function decideShell(command: string, ev: Extract<GuardEvent, { kind: "tool_call
     const hit = evaluateRules(pool, "Bash", command);
     if (!hit) break;
     const lc = ruleLifecycle(hit.rule);
-    const mode = dispositionOf(lc, command, process.env, Date.now(), ev.source ?? "hook");
+    const mode = dispositionOf(lc, command, process.env, Date.now(), ev.source === "proxy" ? "proxy" : "hook");
     const action = hit.rule.severity === "warn" ? "note" : "deny";
     if (mode !== "off") {
       record({ id: hit.rule.id, version: lc.version, category: "shell", action, mode, input: command, cwd: ev.cwd, sessionId: ev.sessionId, source: ev.source, model: ev.model, provider: ev.provider });
@@ -86,15 +89,37 @@ function decideLoop(ev: Extract<GuardEvent, { kind: "tool_call" }>, ctx: GuardCo
   const l = ctx.loop!;
   const command = (ev.input as { command?: unknown } | undefined)?.command;
   const input = ev.tool === "Bash" ? (typeof command === "string" ? command : undefined) : ((ev.input ?? {}) as Record<string, unknown>);
-  const r = stepLoopGuard(l.state, ev.tool, input, l.fingerprint, l.now ?? Date.now(), ev.cwd, l.echo, l.failLedger, ev.source);
+  const r = stepLoopGuard(l.state, ev.tool, input, l.fingerprint, l.now ?? Date.now(), ev.cwd, l.echo, l.failLedger, ev.source === "proxy" ? "proxy" : "hook");
   if (r.monitored) return { action: "allow", patternId: r.id, mode: "monitor", loop: r };
   if (r.deny) return { action: r.stop ? "stop" : "deny", patternId: r.id, message: r.reason, mode: "enforce", loop: r };
   if (r.note) return { action: "note", patternId: r.id, message: r.note, mode: "enforce", loop: r };
   return { action: "allow", loop: r };
 }
 
-/** The decision for one event. Never throws on a missing layer: a layer the context does not supply does not decide. */
+/**
+ * The tenant an event is decided for: the one it names (proxy: the run's tenant), else, for a hook, the tenant of the
+ * session's project, else "local".
+ */
+function tenantOf(event: GuardEvent): string {
+  if (event.tenant) return event.tenant;
+  return event.cwd && (event.source ?? "hook") === "hook" ? tenantForProject(event.cwd) : LOCAL_TENANT;
+}
+
+/**
+ * The decision for one event, under the rule set of its tenant. The tenant stays selected (setActiveTenant) after the
+ * return so that a caller recording telemetry for this decision writes the same tenant; callers in a long-lived
+ * process reset it to "local" when their request is done (proxy-guard does).
+ */
 export function evaluate(event: GuardEvent, ctx: GuardContext): Decision {
+  const tenant = tenantOf(event);
+  setActiveTenant(tenant);
+  setAuditPrincipal(event.principal ?? (event.sessionId ? `session:${event.sessionId}` : event.workerId ? `run:${event.workerId}` : undefined));
+  if (tenant !== LOCAL_TENANT && ctx.shellRules) ctx = { ...ctx, shellRules: tenantShellRules(tenant, event.cwd) };
+  return decide(event, ctx);
+}
+
+/** Layers in order for one event; the tenant is already selected. */
+function decide(event: GuardEvent, ctx: GuardContext): Decision {
   if (event.kind === "final_text") {
     const u = unparsedCallDecision(event.text);
     if (!u) return ALLOW;

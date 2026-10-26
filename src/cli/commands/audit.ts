@@ -1,6 +1,8 @@
 /** `pai audit ...`: where tokens (and money) go. */
 
-import { OPT, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
+import { writeFileSync } from "node:fs";
+import { exportAudit } from "../../tenants/audit-export.js";
+import { CliError, OPT, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { auditFilesCmd, auditHooksCmd, auditSessionCmd, auditSpawnCmd, auditDaemonCmd, auditEnvCmd, auditScheduleCmd, auditSkillsCmd, auditSubagentsCmd, auditMcpCmd, auditLadderCmd, auditTokensCmd, auditScanCmd } from "../lib/audit.js";
 import { priceTableText, renderUsage, transcriptUsage, usageJson } from "../../workers/usage.js";
 
@@ -32,6 +34,41 @@ export const auditCommand: CommandDef = {
   examples: ["pai audit tokens", "pai audit tokens session", "pai audit tokens mcp"],
   seeAlso: ["pai skill telemetry"],
   subcommands: [
+    {
+      name: "export",
+      summary: "Export a tenant's audit trail (firings, decisions, outcomes) with a manifest",
+      description:
+        "Writes the tenant's firing and outcome lines in the time window as JSONL or CSV. Each line carries tenant, ruleId, ruleVersion (content hash of the rule file) and principal (token id, run id or session id, never a secret). The manifest lists the rule versions that fired in the window, the rule set as of the export, the PAI version, the export time and the sha256 of the export. Read-only. Without --out the export goes to stdout and the manifest to stderr; with --out the manifest is written to <file>.manifest.json.",
+      options: [
+        { name: "tenant", type: "string", value: "NAME", summary: "Tenant to export (required; \"local\" is the default tenant)" },
+        { name: "since", type: "string", value: "ISO", summary: "Only lines at or after this time" },
+        { name: "until", type: "string", value: "ISO", summary: "Only lines at or before this time" },
+        { name: "format", type: "string", value: "jsonl|csv", default: "jsonl", summary: "Output format" },
+        { name: "out", type: "string", value: "FILE", summary: "Write the export here (manifest beside it)" },
+      ],
+      examples: ["pai audit export --tenant acme", "pai audit export --tenant acme --since 2026-10-01T00:00:00Z --format csv --out acme.csv"],
+      seeAlso: ["docs/tenants.md"],
+      run: (ctx) => {
+        const tenant = typeof ctx.opts.tenant === "string" ? ctx.opts.tenant : "";
+        if (!tenant) throw new CliError("--tenant is required", "pai audit export --tenant <name>");
+        let r: ReturnType<typeof exportAudit>;
+        try {
+          r = exportAudit({ tenant, since: ctx.opts.since as string | undefined, until: ctx.opts.until as string | undefined, format: (ctx.opts.format as "jsonl" | "csv" | undefined) ?? "jsonl" });
+        } catch (e) {
+          throw new CliError((e as Error).message, "pai audit export --tenant <name> [--since ISO] [--until ISO] [--format jsonl|csv]");
+        }
+        const manifest = JSON.stringify(r.manifest, null, 2) + "\n";
+        if (typeof ctx.opts.out === "string" && ctx.opts.out) {
+          writeFileSync(ctx.opts.out, r.body);
+          writeFileSync(`${ctx.opts.out}.manifest.json`, manifest);
+          process.stdout.write(manifest);
+        } else {
+          process.stdout.write(r.body);
+          process.stderr.write(manifest);
+        }
+        return 0;
+      },
+    },
     {
       ...a({
         name: "tokens",

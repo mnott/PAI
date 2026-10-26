@@ -40,10 +40,10 @@ function control(method: "POST" | "DELETE", body: object): Promise<boolean> {
  * A registered placeholder for `provider`, valid until the run's deadline plus slack; null when the router
  * did not take it (not running) — the caller then has no keyless route and says so.
  */
-export async function acquireRunToken(provider: string, runId: string, deadlineAt?: number): Promise<string | null> {
+export async function acquireRunToken(provider: string, runId: string, deadlineAt?: number, tenant?: string): Promise<string | null> {
   const token = mintRunToken();
   const ttlMs = (deadlineAt ? Math.max(0, deadlineAt - Date.now()) : DEFAULT_RUN_MS) + RUN_TOKEN_SLACK_MS;
-  const ok = await control("POST", { token, provider, runId, ttlMs, pid: process.pid });
+  const ok = await control("POST", { token, provider, runId, ttlMs, pid: process.pid, ...(tenant ? { tenant } : {}) });
   if (!ok) return null;
   registered.add(runId);
   return token;
