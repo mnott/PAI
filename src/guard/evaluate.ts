@@ -16,6 +16,7 @@ import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
 import { stepLoopGuard, type EchoConfig, type LoopState, type LoopStep } from "../hooks/ts/lib/loop-guard.js";
 import { unparsedCallDecision } from "../workers/run/unparsed-call.js";
+import { decidePreGates, decideWorkerGate, type GateSet } from "./gates.js";
 
 export type GuardEvent =
   | { kind: "tool_call"; tool: string; input: unknown; cwd: string; workerId?: string; model?: string; sessionId?: string }
@@ -33,6 +34,10 @@ export interface Decision {
   loop?: LoopStep;
   /** Final text: the tool name of the unparsed call, and the pattern version. */
   unparsed?: { name: string; version: number };
+  /** Command gate hit: the category and matched invocation for the adapter's security log. */
+  guard?: { category: string; pattern?: string };
+  /** Allow that rewrites the call's input (clamped timeout, hang-probe, repaired edit). */
+  updatedInput?: Record<string, unknown>;
 }
 
 export interface GuardContext {
@@ -41,6 +46,8 @@ export interface GuardContext {
   shellRules?: Rule[];
   /** Loop-guard state access; absent: the loop layer is skipped. */
   loop?: { state: LoopState; fingerprint?: string | null; now?: number; echo?: EchoConfig };
+  /** Pure command gates (plutil, worker git, Bash chain, worker guard); absent: skipped. */
+  gates?: GateSet;
   /** Firing sink; defaults to the antipattern log. */
   record?: (f: FiringInput) => unknown;
 }
@@ -95,6 +102,19 @@ export function evaluate(event: GuardEvent, ctx: GuardContext): Decision {
     record({ id: "unparsed-tool-call", version: u.version, category: "final-text", action: "continue", mode: u.mode, input: event.text, cwd: event.cwd, env: ctx.env });
     return { action: u.mode === "enforce" ? "continue" : "allow", patternId: "unparsed-tool-call", mode: u.mode, unparsed: { name: u.name, version: u.version } };
   }
+  const call = { tool: event.tool, input: event.input, cwd: event.cwd, env: ctx.env };
+  const pre = ctx.gates ? decidePreGates(call, ctx.gates) : null;
+  if (pre?.action === "deny") return pre;
+  const d = decideLayers(event, ctx);
+  if (d.action !== "allow") return d;
+  const worker = ctx.gates ? decideWorkerGate(call, ctx.gates) : null;
+  if (worker?.action === "deny") return worker;
+  const updatedInput = worker?.updatedInput ?? pre?.updatedInput;
+  return { ...d, ...(updatedInput && { updatedInput }), ...(worker?.message && { message: worker.message }) };
+}
+
+/** Shell rules, then the loop guard. */
+function decideLayers(event: Extract<GuardEvent, { kind: "tool_call" }>, ctx: GuardContext): Decision {
   if (ctx.shellRules && event.tool === "Bash") {
     const command = typeof event.input === "string" ? event.input : (event.input as { command?: unknown } | undefined)?.command;
     if (typeof command === "string" && command) {

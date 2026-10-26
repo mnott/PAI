@@ -60,3 +60,60 @@ describe("evaluate", () => {
     expect(fired.slice(before)).toEqual([expect.objectContaining({ id: "demo-monitor", action: "deny", mode: "monitor" })]);
   });
 });
+
+describe("evaluate: command gates", () => {
+  const worker = { PAI_WORKER: "1" } as NodeJS.ProcessEnv;
+  const call = (command: string, extra: Record<string, unknown> = {}) => ({ kind: "tool_call" as const, tool: "Bash", input: { command, ...extra }, cwd });
+  const wctx = (): import("../hooks/ts/lib/worker-guard.js").WorkerGuardContext => ({ cwd, home: "/home/x", worktreeRoot: cwd, inWorktree: true, mainCheckout: "/home/x/main", testScript: () => "vitest run" });
+  const plu = (...args: string[]) => ["plu" + "til", ...args].join(" ");
+
+  it("plutil: denies an in-place edit verb with the guard message and category, allows -o", () => {
+    const d = evaluate(call(plu("-extract", "Key", "json", "/tmp/a.plist")), { ...base(), gates: { plutil: true } });
+    expect(d).toMatchObject({ action: "deny", patternId: "plutil-guard", guard: { category: "plutil_guard" } });
+    expect(d.message).toContain("rewrites the file in place");
+    expect(evaluate(call(plu("-extract", "Key", "raw", "-o", "-", "/tmp/a.plist")), { ...base(), gates: { plutil: true } }).action).toBe("allow");
+  });
+
+  it("worker git: denies a tree rewrite in a shared checkout, allows it in a private clone and for non-workers", () => {
+    const gates = (priv: boolean) => ({ workerGit: { worktreesRoot: "/nonexistent/worktrees", privateClone: () => priv } });
+    const d = evaluate(call("git stash"), { ...base(), env: worker, gates: gates(false) });
+    expect(d).toMatchObject({ action: "deny", guard: { category: "worker_git_guard", pattern: "git stash" } });
+    expect(d.message).toContain("in-place worker: git stash");
+    expect(evaluate(call("git stash"), { ...base(), env: worker, gates: gates(true) }).action).toBe("allow");
+    expect(evaluate(call("git stash"), { ...base(), gates: gates(false) }).action).toBe("allow");
+  });
+
+  it("model server / port scan: denies two 80xx ports with the cached answer, allows one port and the operator override", () => {
+    const gates = { bash: { localAnswer: () => "none running" } };
+    const d = evaluate(call("curl 127.0.0.1:8010/x; curl 127.0.0.1:8011/y"), { ...base(), gates });
+    expect(d.action).toBe("deny");
+    expect(d.message).toContain("Running now: none running");
+    expect(evaluate(call("curl 127.0.0.1:8010/x"), { ...base(), gates }).action).toBe("allow");
+    expect(evaluate(call("vllm-mlx serve m"), { ...base(), env: { PAI_ALLOW_MODEL_SERVER: "1" }, gates }).action).toBe("allow");
+  });
+
+  it("sleep-poll and background: denies a long sleep and a session background run, allows a short sleep", () => {
+    const gates = { bash: { localAnswer: () => "x" } };
+    expect(evaluate(call("sleep 120"), { ...base(), gates }).action).toBe("deny");
+    expect(evaluate(call("sleep 5"), { ...base(), gates }).action).toBe("allow");
+    expect(evaluate(call("make all", { run_in_background: true }), { ...base(), gates }).message).toContain("pai pane run");
+  });
+
+  it("worker guard: denies a live-config write and a bench start, allows a plain edit and a plain command", () => {
+    const gates = { worker: wctx };
+    const edit = (file_path: string) => ({ kind: "tool_call" as const, tool: "Write", input: { file_path, content: "x" }, cwd });
+    const d = evaluate(edit("/home/x/.pai/config.json"), { ...base(), env: worker, gates });
+    expect(d.action).toBe("deny");
+    expect(d.message).toContain("edit of /home/x/.pai/config.json blocked");
+    expect(evaluate(edit(`${cwd}/a.ts`), { ...base(), env: worker, gates }).action).toBe("allow");
+    expect(evaluate(call("pai models start"), { ...base(), env: worker, gates }).action).toBe("deny");
+    expect(evaluate(call("ls"), { ...base(), env: worker, gates }).action).toBe("allow");
+    expect(evaluate(call("pai models start"), { ...base(), gates }).action).toBe("allow");
+  });
+
+  it("worker guard: a loop-clean call reaches the worker gate and keeps its loop step", () => {
+    const d = evaluate(call("ls"), { ...base(), env: worker, gates: { worker: wctx }, loop: { state: emptyLoopState(), now: 1 } });
+    expect(d.action).toBe("allow");
+    expect(d.loop).toBeDefined();
+  });
+});

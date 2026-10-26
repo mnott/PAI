@@ -32,7 +32,7 @@ import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-s
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { isTestCommand, wrapTestCommand } from "../../../workers/hang-probe.js";
-import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
+import { type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
   try {
@@ -176,9 +176,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const decision = decideWorkerGuard(input, process.env, () => buildContext(input.cwd || process.cwd()));
-  if (decision.decision === "deny" || decision.updatedInput) {
-    process.stdout.write(renderDecision(decision) + "\n");
+  const decision = evaluate(
+    { kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd: input.cwd || process.cwd() },
+    { env: process.env, gates: { worker: () => buildContext(input.cwd || process.cwd()) } },
+  );
+  if (decision.action === "deny") {
+    process.stdout.write(renderDecision({ decision: "deny", reason: decision.message! }) + "\n");
+    return;
+  }
+  if (decision.updatedInput) {
+    process.stdout.write(renderDecision({ decision: "allow", updatedInput: decision.updatedInput, ...(decision.message && { context: decision.message }) }) + "\n");
     return;
   }
   // worker test runs go through the hang probe, which says where a silent run is stuck
