@@ -92,6 +92,14 @@ export abstract class GuardToolSse extends SseMessages {
     return this.stoppedTurn;
   }
 
+  /**
+   * Hold a tool call a subclass spotted in an opening message. `opening` is the message text to replay when the
+   * call survives (a subclass may have stripped the call's parts from it); null holds nothing.
+   */
+  protected holdCall(index: number, tool: string, opening: string): void {
+    this.held.set(index, { tool, json: "", events: [{ text: opening, sep: "\n\n" }], emit: (blocked) => (blocked ? this.replace(index, blocked) : opening + "\n\n") });
+  }
+
   /** One held tool call: the messages from the block's start to its stop, plus what to emit once decided. */
   private readonly held = new Map<number, { tool: string; json: string; events: Array<{ text: string; sep: string }>; emit: (blocked: string | null) => string }>();
 
@@ -123,12 +131,7 @@ export abstract class GuardToolSse extends SseMessages {
     if (!d) return msg + sep;
     const open = this.opensTool(d.json);
     if (open) {
-      this.held.set(open.index, {
-        tool: open.name,
-        json: "",
-        events: [{ text: msg, sep }],
-        emit: (blocked) => (blocked ? this.replace(open.index, blocked) : msg + sep),
-      });
+      this.holdCall(open.index, open.name, msg);
       return "";
     }
     const frag = this.fragment(d.json);

@@ -254,15 +254,34 @@ class ChatGuardSse extends GuardToolSse {
     return msg + sep;
   }
 
+  /**
+   * An opening message may carry other content (role, text) beside the call: those parts are emitted at once and
+   * the call's parts are held, so a blocked call never reaches the client. The surviving-call bookkeeping happens
+   * here, where the full message is still visible.
+   */
   protected override message(msg: string, sep: string): string {
-    // track surviving calls before the base class holds the ones being blocked
     const d = sseData(msg);
-    const ch = Array.isArray(d?.json?.choices) ? d.json.choices[0] : undefined;
-    if (ch && Array.isArray(ch.delta?.tool_calls) && ch.delta.tool_calls.length) {
+    const choices = Array.isArray(d?.json?.choices) ? d.json.choices : undefined;
+    if (choices?.length === 1 && Array.isArray(choices[0]?.delta?.tool_calls) && choices[0].delta.tool_calls.length) {
+      const ch = choices[0];
       const ci: number = typeof ch.index === "number" ? ch.index : 0;
       this.sawTool.set(ci, true);
+      // the call's parts (id, type, name) are dropped with it; only non-call content (role, text) survives
+      const keptDelta = { ...ch.delta };
+      delete keptDelta.tool_calls;
+      const kept = Object.keys(keptDelta).length ? withData(msg, { ...d!.json, choices: [{ ...ch, delta: keptDelta }] }) : null;
+      if (kept !== null) {
+        this.holdCall(ci, this.callName(ch), kept);
+        return kept + sep;
+      }
+      this.holdCall(ci, this.callName(ch), msg);
+      return "";
     }
     return super.message(msg, sep);
+  }
+
+  private callName(ch: any): string {
+    return (ch.delta.tool_calls as any[]).map((tc: any) => (typeof tc?.function?.name === "string" ? tc.function.name : "")).join("");
   }
 }
 
