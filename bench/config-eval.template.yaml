@@ -1,0 +1,14 @@
+# Bench config, one private copy per run (PAI_CONFIG_FILE). Everything not set here takes PAI's defaults.
+# __PROVIDER__ is replaced by the provider under test.
+# Never the live database: bench runs write sessions and memory to pai_eval.
+storageBackend: postgres
+postgres:
+  connectionString: postgresql://pai:pai@localhost:5432/pai_eval
+workers:
+  panes:
+    required: false          # headless workers have no terminal
+  routing:
+    order: [__PROVIDER__]    # pinned: no other provider is ever tried
+    retryOnQuota: false      # a run never moves to another provider
+  escalate:
+    enabled: false           # no cloud escalation

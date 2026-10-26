@@ -1,0 +1,20 @@
+{"id": 1, "difficulty": "easy", "prompt": "print(len(set([1,2,2,3,3,3])) + sum(range(4))) in Python prints what number?", "expected_regex": "(?<![\\d.])9(?![\\d.])", "max_tokens": 120}
+{"id": 2, "difficulty": "easy", "prompt": "What is 17 * 23?", "expected_regex": "(?<![\\d.,])391(?![\\d.])", "max_tokens": 120}
+{"id": 3, "difficulty": "easy", "prompt": "What is the capital city of Australia?", "expected_regex": "(?i)canberra", "max_tokens": 120}
+{"id": 4, "difficulty": "easy", "prompt": "What is the chemical symbol for gold?", "expected_regex": "^\\W*Au\\W*$", "max_tokens": 120}
+{"id": 5, "difficulty": "easy", "prompt": "In Python, what does print(7 // 2) output?", "expected_regex": "(?<![\\d.])3(?![\\d.])", "max_tokens": 120}
+{"id": 6, "difficulty": "easy", "prompt": "In Python, what does print('ab' * 3) output?", "expected_regex": "ababab", "max_tokens": 120}
+{"id": 7, "difficulty": "easy", "prompt": "What is 2 to the power of 10?", "expected_regex": "(?<![\\d.,])1,?024(?![\\d.])", "max_tokens": 120}
+{"id": 8, "difficulty": "easy", "prompt": "What is the square root of 144?", "expected_regex": "(?<![\\d.])12(?![\\d.])", "max_tokens": 120}
+{"id": 9, "difficulty": "medium", "prompt": "In Python, what does [x*x for x in range(5) if x%2==0] evaluate to?", "expected_regex": "\\[0,\\s*4,\\s*16\\]", "max_tokens": 200}
+{"id": 10, "difficulty": "medium", "prompt": "How many bits are needed to represent the unsigned integer 1000 in binary (no leading zeros)?", "expected_regex": "(?<![\\d.])10(?![\\d.])", "max_tokens": 200}
+{"id": 11, "difficulty": "medium", "prompt": "In JavaScript, what does [10,9,1].sort().join() return?", "expected_regex": "1,10,9", "max_tokens": 200}
+{"id": 12, "difficulty": "medium", "prompt": "In JavaScript, what does ['1','2','3'].map(parseInt).join() return?", "expected_regex": "1,\\s*NaN,\\s*NaN", "max_tokens": 200}
+{"id": 13, "difficulty": "medium", "prompt": "In Python, what does print(sum(range(1, 10, 3))) output?", "expected_regex": "(?<![\\d.])12(?![\\d.])", "max_tokens": 200}
+{"id": 14, "difficulty": "medium", "prompt": "In JavaScript, how many times does the body run in: for (let i = 0; i <= 5; i++) { ... }", "expected_regex": "(?<![\\d.])6(?![\\d.])|\\bsix\\b", "max_tokens": 200}
+{"id": 15, "difficulty": "medium", "prompt": "In Python, how many matches does re.findall(r'\\d+', 'a12b345c6') return? (give the number)", "expected_regex": "(?<![\\d.])3(?![\\d.])", "max_tokens": 200}
+{"id": 16, "difficulty": "medium", "prompt": "In JavaScript, what does console.log('5' + 3 - 2) print?", "expected_regex": "(?<![\\d.])51(?![\\d.])", "max_tokens": 200}
+{"id": 17, "difficulty": "hard", "prompt": "A bat and a ball cost $1.10 together. The bat costs $1.00 more than the ball. How many cents does the ball cost?", "expected_regex": "(?<![\\d.])5(?![\\d.])(?!\\s*\\d)", "max_tokens": 400}
+{"id": 18, "difficulty": "hard", "prompt": "If 5 machines take 5 minutes to make 5 widgets, how many minutes would 100 machines take to make 100 widgets?", "expected_regex": "(?<![\\d.])5(?![\\d.])", "max_tokens": 400}
+{"id": 19, "difficulty": "hard", "prompt": "A lily pad patch doubles in size every day. It takes 48 days to cover the whole lake. On which day does it cover half the lake?", "expected_regex": "(?<![\\d.])47(?![\\d.])", "max_tokens": 400}
+{"id": 20, "difficulty": "hard", "prompt": "Alice is 4 years older than Bob. Their ages sum to 30. How old will Bob be in 3 years?", "expected_regex": "(?<![\\d.])16(?![\\d.])", "max_tokens": 400}

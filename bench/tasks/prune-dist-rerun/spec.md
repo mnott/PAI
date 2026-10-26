@@ -1,0 +1,4 @@
+Bug report (operator): scripts/prune-dist.mjs deletes dist chunks it should keep. When `pruneDist` is run a second time on the very same build (no rebuild in between), the generation recorded by the first run is rotated out as if it were old, and the chunks of the current build's generation history are lost; a live process that started before the build also stops anchoring its generation, because the recorded build time gets re-stamped to "now".
+Expected: re-running prune on one unchanged build is idempotent for the kept generations (same chunks kept, original builtAt preserved, no extra rotation). A new build still rotates as before.
+Look at: scripts/prune-dist.mjs (pruneDist, the manifest stamp/generations logic) and scripts/dist-reachable.test.ts.
+Rule: existing tests must keep passing (`npx vitest run scripts/dist-reachable.test.ts`); never use bun test. Do not edit the test files' expectations to fit your change. Do not commit.

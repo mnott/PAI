@@ -11,6 +11,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | [`pai antipatterns`](antipatterns.md) | Anti-patterns: status, firings, candidates, retirement |
 | [`pai audit`](audit.md) | Find out where tokens are being spent |
 | [`pai backup`](backup.md) | Back up the registry, config and Postgres database |
+| [`pai bench`](bench.md) | Local-model quality check: run the eval sets and real tasks, print the comparison table |
 | [`pai build`](build.md) | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync |
 | [`pai cd`](cd.md) | Print a project's directory (the shell wrapper changes into it) |
 | [`pai clear-names`](clear-names.md) | Wipe the stored tab names (recovery) |
@@ -104,6 +105,9 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai audit tokens subagents` | Token cost of subagent definitions |
 | `pai audit tokens usage` | Exact token totals per model for one session transcript |
 | `pai backup` | Back up the registry, config and Postgres database |
+| `pai bench` | Local-model quality check: run the eval sets and real tasks, print the comparison table |
+| `pai bench run` | Run the sets for one provider under a watchdog |
+| `pai bench table` | Print the comparison table (markdown) from the results |
 | `pai build` | One machine-wide build queue: run, lock, queue, next, doctor, npm-auth, mirror-sync |
 | `pai build doctor` | Check the project's registered build doors and hook events |
 | `pai build lock` | Same lock as `run`, for a project's door script to call |
