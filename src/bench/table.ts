@@ -105,7 +105,7 @@ export function setStats(base: string, row: TableRow, set: string, notes: string
     const w = readJson<WorkerJson>(join(wdir, "worker.json")) ?? {};
     const killed = !w.provider; // killed run: worker.json empty, only the start route can be checked
     const endOk = killed || (w.provider === row.provider && workerCount(w) === 1);
-    const loopStopped = killed || (r.status === "error" && String(r.error ?? "").startsWith("loop-stopped"));
+    const loopStopped = killed || r.status === "stopped" || (r.status === "error" && String(r.error ?? "").startsWith("loop-stopped"));
     const graded = Array.isArray(r.tasks) && r.tasks.length > 0; // status "error" can just mean the model's own report said so
     const id = `${set}/${row.key}/${rep}`;
     if (!routeOk(route, row.provider) || !endOk || (r.status !== "ok" && !loopStopped && !graded)) {

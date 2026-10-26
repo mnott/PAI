@@ -35,6 +35,8 @@ export class Watchdog {
   /** A new run starts: the idle clock restarts (the gap between runs is grading, not idling). */
   reset(now: number): void {
     this.last = now;
+    this.writes.clear();
+    this.files.clear();
   }
 
   feed(ev: WatchEvent, now: number): Verdict | null {

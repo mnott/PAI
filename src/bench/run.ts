@@ -5,7 +5,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_WORKER_TOOLS } from "../workers/run/argv.js";
@@ -113,9 +113,35 @@ export function runScript(script: string, args: string[], env: NodeJS.ProcessEnv
   });
 }
 
-/** Returns 0 when every run finished, 1 when the watchdog stopped the series or a script failed. */
-export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai", "logs", "workers")): Promise<number> {
-  const benchDir = join(packageRoot(import.meta.url), "bench");
+/** Watchdog-stopped runs in a row that end the series: something is broken, not the model. */
+export const MAX_CONSECUTIVE_STOPS = 3;
+
+/**
+ * A stopped rep still gets a result file. When the set script did not write one: eval sets are graded by the
+ * set scripts' own grader (evalset.py grade) over whatever answer files exist; the real set cannot be graded
+ * from here (hidden tests run in throwaway trees), so it gets passed 0 and n = the task count.
+ */
+export function writeStoppedResult(o: Pick<BenchRunOpts, "dir" | "key">, benchDir: string, set: string, rep: number, v: Verdict, secs: number): void {
+  const res = join(o.dir, "results", set, o.key, `rep${rep}.json`);
+  if (existsSync(res)) return;
+  mkdirSync(join(o.dir, "results", set, o.key), { recursive: true });
+  const error = `watchdog-stopped: ${v.reason} ${v.detail}`;
+  if (set !== "real") {
+    const work = join(o.dir, "work", set, o.key, `rep${rep}`);
+    const g = spawnSync("python3", ["-I", join(benchDir, "evalset.py"), "grade", set, work, res, o.key, String(rep), String(secs), "1", join(work, "worker.json"), ""], { stdio: "ignore" });
+    if (g.status === 0 && existsSync(res)) {
+      const r = JSON.parse(readFileSync(res, "utf8"));
+      writeFileSync(res, JSON.stringify({ ...r, status: "stopped", error }, null, 1));
+      return;
+    }
+  }
+  const tasksDir = join(benchDir, "tasks");
+  const n = set === "real" && existsSync(tasksDir) ? readdirSync(tasksDir, { withFileTypes: true }).filter((e) => e.isDirectory()).length : 0;
+  writeFileSync(res, JSON.stringify({ set, model: o.key, rep, status: "stopped", n, passed: 0, wall_s: secs, error, graded: false, tasks: [] }, null, 1));
+}
+
+/** Returns 0 when the series ran through, 1 when a script failed or MAX_CONSECUTIVE_STOPS runs in a row were watchdog-stopped. */
+export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai", "logs", "workers"), benchDir = join(packageRoot(import.meta.url), "bench")): Promise<number> {
   mkdirSync(o.dir, { recursive: true });
   const seriesLog = join(o.dir, `series-${o.key}.log`);
   const log = (line: string): void => {
@@ -138,6 +164,7 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
     }
     return wd.check(Date.now());
   };
+  let stops = 0;
   for (const run of planRuns(o)) {
     gate?.(); // blocks (no ticks run) for as long as the battery pause lasts
     wd.reset(Date.now()); // the wait is not idling: the idle clock restarts after it
@@ -146,9 +173,16 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
     const res = await runScript(join(benchDir, run.script), run.args, env, tick);
     const secs = Math.round((Date.now() - t0) / 1000);
     if (res.stopped) {
-      log(`STOP ${run.label} after ${secs}s: ${res.stopped.reason} ${res.stopped.detail}; series ended`);
-      return 1;
+      log(`STOP ${run.label} after ${secs}s: ${res.stopped.reason} ${res.stopped.detail}; rep counted as failed, series continues`);
+      const m = /^(\w+) rep(\d+)$/.exec(run.label);
+      if (m) writeStoppedResult(o, benchDir, m[1], Number(m[2]), res.stopped, secs);
+      if (++stops >= MAX_CONSECUTIVE_STOPS) {
+        log(`STOP ${run.label}: ${stops} watchdog stops in a row; series ended`);
+        return 1;
+      }
+      continue;
     }
+    stops = 0;
     log(`done ${run.label} in ${secs}s rc=${res.code}`);
     if (res.code !== 0) {
       log(`STOP ${run.label}: script failed (rc=${res.code}); series ended`);
