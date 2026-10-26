@@ -22,7 +22,7 @@
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { loadStatuses, isLive } from "../../../workers/status.js";
-import { makeUrgent } from "../../../workers/preempt.js";
+import { endExpiredWindowNow, makeUrgent } from "../../../workers/preempt.js";
 import { isLocalProvider, getProviderOrNative } from "../../../workers/config.js";
 import { isWorkerSession } from "../lib/worker-session.js";
 import { readHookInput } from "../lib/read-stdin.js";
@@ -37,16 +37,20 @@ function windowMinutes(): number {
 }
 
 /** This session's running/queued workers, made urgent like `pai worker priority <id> now`. */
-function makeRunningUrgent(local: boolean, sessionKeys: string[]): number {
+function makeRunningUrgent(local: boolean, sessionKeys: string[], until: number): number {
   try {
     const { workers } = readWorkersSection();
     const logDir = workersLogDir(workers);
+    // other sessions' expired windows give their now back first, so they neither outrank nor shield from this one
+    endExpiredWindowNow(logDir);
     let count = 0;
     for (const s of loadStatuses(logDir)) {
-      if (!isLive(s) || s.now) continue;
-      if (s.spawnerSession && sessionKeys.includes(s.spawnerSession)) {
+      if (!isLive(s)) continue;
+      if (s.now && !s.nowFrom) continue; // manual now stays as it is
+      const mine = [s.spawnerSession, s.sessionKey].some((k) => !!k && sessionKeys.includes(k));
+      if (mine) {
         const p = getProviderOrNative(workers, s.provider);
-        makeUrgent(logDir, s.id, local && !!p && isLocalProvider(p.baseUrl), "urgency-token");
+        makeUrgent(logDir, s.id, local && !!p && isLocalProvider(p.baseUrl), "urgency-token", Date.now(), until);
         count++;
       }
     }
@@ -72,12 +76,13 @@ async function main(): Promise<void> {
   const keys = urgencyKeys(process.env, input?.session_id);
   if (!keys.length) return;
   const min = windowMinutes();
+  const until0 = Date.now();
   try {
-    recordUrgency(keys, min, u.local);
+    recordUrgency(keys, min, u.local, until0);
   } catch {
     return;
   }
-  const made = makeRunningUrgent(u.local, keys);
+  const made = makeRunningUrgent(u.local, keys, until0 + min * 60_000);
   process.stdout.write(
     `Urgent (operator /now): workers you start in the next ${min} min run with now${u.local ? ", local" : ""}${made ? ` · ${made} running worker${made > 1 ? "s" : ""} made urgent` : ""}\n`
   );

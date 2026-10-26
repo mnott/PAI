@@ -47,6 +47,8 @@ export interface WorkerStatus {
   priority?: "high" | "normal" | "low";
   /** Urgent ("now") run: its requests go first at the local engine and it preempts the other local workers (preempt.ts); set by --now, the operator's urgency window, or `pai worker priority <id> now`. */
   now?: boolean;
+  /** Set when the urgency window made this worker "now": the window's close (epoch ms) and the priority to fall back to. Absent on a manual now (`--now`, `pai worker priority <id> now`), which stays until changed by hand. */
+  nowFrom?: { until: number; prev: "high" | "normal" | "low" };
   /** `pai worker pause`: the router parks this worker's next engine request until `resume`. */
   paused?: boolean;
   /** Id of the `--now` run that preempted this worker (paused it and aborted its request in flight); set with `paused`, cleared on resume or when an operator pauses it separately. */
@@ -360,6 +362,7 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     if (onDisk.priority !== undefined) status.priority = onDisk.priority;
     if (onDisk.paused !== undefined) status.paused = onDisk.paused;
     if (onDisk.now) status.now = true;
+    if (onDisk.nowFrom) status.nowFrom = onDisk.nowFrom;
     for (const k of ["pausedBy", "pausedAt", "pausedMs"] as const) {
       if (onDisk[k] !== undefined) (status as unknown as Record<string, unknown>)[k] = onDisk[k];
       else delete status[k];
