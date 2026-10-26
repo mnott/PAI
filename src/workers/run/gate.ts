@@ -4,6 +4,7 @@
  * existing import path keeps working.
  */
 
+import { spawnOrigin } from "../pane-waiver.js";
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -802,7 +803,7 @@ export async function gateStart(a: ExecuteArgs): Promise<void> {
     last: "starting",
     rc: null,
     secs: null,
-    origin: "spawn",
+    origin: spawnOrigin(),
     outputFormat: a.parsed.outputFormat,
     ...(sessionKey ? { sessionKey } : {}),
     ...(spawner ? { spawnerSession: spawner } : {}),
