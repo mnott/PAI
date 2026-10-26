@@ -11,6 +11,7 @@ import {
   fallThroughReason,
   invalidCloudReport,
   findLocal,
+  routeRun,
   parseDuration,
   readPolicy,
   writePolicy,
@@ -123,6 +124,34 @@ describe("findLocal", () => {
     const c = cfg({ a: prov("http://127.0.0.1:8011"), b: prov("http://localhost:8012") });
     expect((await findLocal(c, dir, async (u) => u.includes("8012"))).name).toBe("b");
     expect(await findLocal(c, dir, async () => false)).toEqual({ name: null, why: "local down" });
+  });
+});
+
+describe("prefer-local only picks a local provider whose model is served", () => {
+  const prov = (url: string, model: string) => ({ enabled: true, baseUrl: url, keyFile: "~/k", models: { default: model }, env: {} });
+  const mk = () =>
+    parseWorkersConfig({
+      enabled: true,
+      active: null,
+      providers: {
+        "coder-l": prov("http://127.0.0.1:8011", "coder-l-model"),
+        "gyro-l": prov("http://127.0.0.1:8011", "gyro-l-model"),
+        glm: { enabled: true, baseUrl: "https://api.example.com", keyFile: "~/k", models: { default: "g" }, env: {} },
+      },
+      tiers: [{ id: "t2", name: "Worker", models: ["coder-l", "gyro-l", "glm"], classes: ["implement"] }],
+    } as never);
+  // one server on the shared port that lists only the given model ids (the probe's contract)
+  const serving = (ids: string[]) => async (_u: string, models: string[] = []) => models.length === 0 || models.some((m) => ids.includes(m));
+  it("two local providers, only one served -> the served one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-policy-served-"));
+    const r = await routeRun(mk(), dir, { className: "implement" }, { ping: serving(["gyro-l-model"]) });
+    expect(r?.providerFlag).toBe("gyro-l");
+  });
+  it("none served -> cloud route, nothing pinned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pai-policy-served-"));
+    const r = await routeRun(mk(), dir, { className: "implement" }, { ping: serving([]) });
+    expect(r?.providerFlag).toBeNull();
+    expect(r?.route.local).toBe(false);
   });
 });
 
