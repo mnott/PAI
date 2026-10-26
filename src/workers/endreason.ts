@@ -13,7 +13,7 @@ import { eventsPath } from "./paths.js";
 import { appendLedger } from "./ledger.js";
 import { pidAlive } from "./status.js";
 
-export type EndReason = "exit" | "deadline" | "loop-stopped" | "pai-worker-kill" | "parent-gone" | "external-signal" | "malformed-tool-call" | "degenerate-answer";
+export type EndReason = "exit" | "deadline" | "loop-stopped" | "pai-worker-kill" | "parent-gone" | "external-signal" | "external" | "pane-closed" | "malformed-tool-call" | "degenerate-answer";
 
 export interface EndInfo {
   reason: EndReason;
@@ -97,6 +97,23 @@ export function commOf(pid: number): string | undefined {
   }
 }
 
+/** "pid:comm" for `start` and its ancestors (one ps call per hop, at most 12), so an unattributed signal names who the runner hung under. */
+export function ppidChain(start: number = process.pid, hops = 12): string {
+  const out: string[] = [];
+  let pid = start;
+  for (let i = 0; i < hops && pid > 0; i++) {
+    try {
+      const row = execFileSync("ps", ["-o", "ppid=,tty=,comm=", "-p", String(pid)], { encoding: "utf8" }).trim().split(/\s+/);
+      if (row.length < 3) break;
+      out.push(`${pid}:${row.slice(2).join(" ").split("/").pop()}@${row[1]}`);
+      pid = Number(row[0]);
+    } catch {
+      break;
+    }
+  }
+  return out.join(" < ");
+}
+
 /** Parent facts recorded at start, for the end report ("parent: claude"). */
 export function parentInfo(): { parentPid: number; parentComm?: string; parentBackground?: boolean } {
   const parentPid = process.ppid;
@@ -122,12 +139,20 @@ export function decideEndReason(a: {
   parentPid?: number;
   parentComm?: string;
   parentBackground?: boolean;
+  /** Signal that ended the claude child while the runner itself got none. */
+  childSignal?: string;
   isAlive?: (pid: number) => boolean;
+  /** Ancestor chain of the runner, injected by tests. */
+  chain?: () => string;
 }): EndInfo {
   if (a.timedOut) return { reason: "deadline" };
   if (a.loopStopped) return { reason: "loop-stopped" };
   // a stop PAI made by SIGKILL of the child group (pane audit) leaves a marker but no signal reaches the runner
   const marker = a.signal || peekMarker(a.logDir, a.id)?.by === "pane audit" ? readMarker(a.logDir, a.id) : null;
+  const chain = () => (a.chain ?? (() => ppidChain()))();
+  if (!a.signal && !marker && a.childSignal) {
+    return { reason: "external", by: "external", note: `child ended by ${a.childSignal} with no PAI kill request; sender unknown; runner chain ${chain()}` };
+  }
   if (!a.signal && !marker) return { reason: "exit" };
   if (!a.signal && marker) {
     return { reason: "pai-worker-kill", by: marker.by, note: `killed by ${marker.by}${marker.reason ? `: ${marker.reason}` : ""}`, ...(marker.reason ? { killReason: marker.reason } : {}), forced: true };
@@ -141,15 +166,21 @@ export function decideEndReason(a: {
       ...(marker.forced ? { forced: true } : {}),
     };
   }
+  // a closed pane/terminal delivers SIGHUP to the foreground group; nothing in PAI sends it to a worker
+  if (a.signal === "SIGHUP") {
+    return { reason: "pane-closed", by: "pane-closed", note: `SIGHUP: the worker's pane or terminal was closed; runner chain ${chain()}` };
+  }
   const alive = (a.isAlive ?? ((p: number) => pidAlive(p, { epermAlive: true })))(a.parentPid ?? process.ppid);
   const parent = `parent ${a.parentPid ?? "?"}${a.parentComm ? ` (${a.parentComm})` : ""}`;
-  if (!alive) return { reason: "parent-gone", note: `${a.signal}; ${parent} not alive` };
+  if (!alive) return { reason: "parent-gone", by: "external", note: `${a.signal}; ${parent} not alive; runner chain ${chain()}` };
   return {
     reason: "external-signal",
+    by: "external",
     note:
       `${a.signal}; sender unknown (not deadline, not pai worker kill); a Claude Code background task stop ` +
       `(TaskStop, Bash timeout, session end) is the usual source; ${parent} alive` +
-      (a.parentBackground ? "; started from a Claude Code session" : ""),
+      (a.parentBackground ? "; started from a Claude Code session" : "") +
+      `; runner chain ${chain()}`,
   };
 }
 

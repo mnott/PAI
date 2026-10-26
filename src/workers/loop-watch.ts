@@ -7,7 +7,8 @@
  * - warns cloud workers (no say) when 3+ calls fail
  */
 
-import { eventsPath } from "./paths.js";
+import { eventsPath, ledgerPath } from "./paths.js";
+import { requestKill } from "./endreason.js";
 import { WorkerStatus } from "./status.js";
 import { detectEchoLoop, detectRepeatLoop, echoLoopAction, loopAction, type RepeatLoop } from "./repeat-loop.js";
 import { ANTHROPIC_NATIVE } from "./config.js";
@@ -116,6 +117,7 @@ export async function checkLoops(logDir: string, statuses: WorkerStatus[], sent:
       } else if (action === "stop") {
         try {
           await killChildren(logDir, status.id).catch(() => undefined);
+          requestKill(logDir, ledgerPath(logDir), status.id, "loop-guard", false, "worker stopped by the loop guard");
           kill(status.pid);
         } catch {
           // errors swallowed

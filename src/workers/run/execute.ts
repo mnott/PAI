@@ -435,7 +435,10 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     const onError = (e: Error) => void failRun(e).then(() => reject(e), () => reject(e));
     if (earlyError) onError(earlyError);
     else proc.on("error", onError);
-    proc.on("close", (code) => resolve(code ?? (killed ? 143 : 1)));
+    proc.on("close", (code, sig) => {
+      if (sig && !killed) status.childSignal = sig;
+      resolve(code ?? (killed ? 143 : 1));
+    });
   });
 
   const secs = Math.floor((Date.now() - t0) / 1000);
