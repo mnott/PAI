@@ -18,6 +18,31 @@ pai audit tokens mcp
 
 See also: `pai skill telemetry`
 
+### pai audit export
+
+Export a tenant's audit trail (firings, decisions, outcomes) with a manifest
+
+```
+pai audit export [options]
+```
+
+Writes the tenant's firing and outcome lines in the time window as JSONL or CSV. Each line carries tenant, ruleId, ruleVersion (content hash of the rule file) and principal (token id, run id or session id, never a secret). The manifest lists the rule versions that fired in the window, the rule set as of the export, the PAI version, the export time and the sha256 of the export. Read-only. Without --out the export goes to stdout and the manifest to stderr; with --out the manifest is written to <file>.manifest.json.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--tenant NAME` | string | — | Tenant to export (required; "local" is the default tenant) |
+| `--since ISO` | string | — | Only lines at or after this time |
+| `--until ISO` | string | — | Only lines at or before this time |
+| `--format jsonl|csv` | string | jsonl | Output format |
+| `--out FILE` | string | — | Write the export here (manifest beside it) |
+
+```sh
+pai audit export --tenant acme
+pai audit export --tenant acme --since 2026-10-01T00:00:00Z --format csv --out acme.csv
+```
+
+See also: `docs/tenants.md`
+
 ### pai audit tokens
 
 Token-waste report (all checks, or pick one below)
@@ -359,6 +384,7 @@ See also: `pai rules list`, `pai audit tokens session`
 
 | Command | Description |
 |---|---|
+| `pai audit export` | Export a tenant's audit trail (firings, decisions, outcomes) with a manifest |
 | `pai audit tokens` | Token-waste report (all checks, or pick one below) |
 | `pai audit scan` | After-the-fact security scan of a session or worker transcript |
 

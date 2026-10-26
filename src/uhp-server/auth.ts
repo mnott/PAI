@@ -19,11 +19,14 @@ export interface TokenRecord {
   revokedAt?: string;
   /** Harness ids this token may see; absent = all. Objects outside it answer 404. */
   scope?: string[];
+  /** Tenant whose rules and audit log this principal's decisions belong to; absent = local. */
+  tenant?: string;
 }
 
 export interface Principal {
   tokenId: string;
   scope: string[] | null;
+  tenant: string;
 }
 
 export function tokensFilePath(override?: string): string {
@@ -49,7 +52,7 @@ function writeTokens(path: string, tokens: TokenRecord[]): void {
 }
 
 /** Create a token; the plaintext is returned once and never stored. */
-export function createToken(path: string, label: string, scope?: string[]): { token: string; record: TokenRecord } {
+export function createToken(path: string, label: string, scope?: string[], tenant?: string): { token: string; record: TokenRecord } {
   const token = `uhp_${randomBytes(24).toString("hex")}`;
   const record: TokenRecord = {
     id: `tok_${randomBytes(4).toString("hex")}`,
@@ -57,6 +60,7 @@ export function createToken(path: string, label: string, scope?: string[]): { to
     label,
     createdAt: new Date().toISOString(),
     ...(scope && scope.length ? { scope } : {}),
+    ...(tenant ? { tenant } : {}),
   };
   writeTokens(path, [...readTokens(path), record]);
   return { token, record };
@@ -80,7 +84,7 @@ export function authenticate(req: IncomingMessage, tokensPath: string): Principa
   const hash = hashToken(m[1]);
   const rec = readTokens(tokensPath).find((t) => t.hash === hash && !t.revokedAt);
   if (!rec) throw uhpError(401, null, "invalid_credential", "The credential is not valid");
-  return { tokenId: rec.id, scope: rec.scope ?? null };
+  return { tokenId: rec.id, scope: rec.scope ?? null, tenant: rec.tenant ?? "local" };
 }
 
 export function inScope(p: Principal, harnessId: string): boolean {

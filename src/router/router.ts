@@ -539,7 +539,7 @@ function runTokenControl(req: http.IncomingMessage, res: http.ServerResponse, ra
     const runId = str(b.runId);
     const ttl = typeof b.ttlMs === "number" && b.ttlMs > 0 ? b.ttlMs : 0;
     if (!token?.startsWith(RUN_TOKEN_PREFIX) || !provider || !runId || !ttl) return reply(400, { error: "token (pai-run-…), provider, runId and ttlMs are required" });
-    tokens.register(token, provider, runId, ttl, typeof b.pid === "number" ? b.pid : undefined);
+    tokens.register(token, provider, runId, ttl, typeof b.pid === "number" ? b.pid : undefined, str(b.tenant));
     log(`${new Date().toISOString()} run-token registered ${provider} run ${runId}`);
     return reply(200, { ok: true });
   }
@@ -914,7 +914,9 @@ export function routerHandler(
           const argsFixer = target.kind === "provider" && schemas?.size && plainSse ? wire!.rewriteStream(schemas, rulesNow, argsFix) : undefined;
           const fill = mayCount && plainSse ? new InputTokensSse(() => counted) : undefined;
           const guardMode = isCount || ures.statusCode !== 200 || ures.headers["content-encoding"] ? "off" : options?.guard?.mode ?? loadConfig().router.guard?.mode ?? "off";
-          const guardDeps = options?.guard?.deps;
+          const runPrincipal = presented?.startsWith(RUN_TOKEN_PREFIX) ? tokens.principalOf(presented) : null;
+          // the run's tenant selects the rule set; its run id is the audit principal (never the token)
+          const guardDeps = runPrincipal ? { ...options?.guard?.deps, tenant: runPrincipal.tenant, principal: `run:${runPrincipal.runId}` } : options?.guard?.deps;
           const guardLog = (line: string) => log(line);
           const onBlock = (tool: string, text: string) => log(`${new Date().toISOString()} ${target.model} ${prov} guard blocked ${tool}: ${text}`);
           if (guardMode === "enforce" && !isCount && ures.statusCode === 200 && !ures.headers["content-encoding"]) {
@@ -1002,8 +1004,8 @@ export function routerHandler(
               const raw = Buffer.concat(copy).toString("utf8");
               setImmediate(() =>
                 wire!.id === "messages"
-                  ? monitorReply(raw, ct, target.model, { log, ...options?.guard?.deps }, prov, safeBody(up.body))
-                  : monitorOpenAiReply(raw, ct, target.model, { log, ...options?.guard?.deps }, prov, safeBody(up.body))
+                  ? monitorReply(raw, ct, target.model, { log, ...guardDeps }, prov, safeBody(up.body))
+                  : monitorOpenAiReply(raw, ct, target.model, { log, ...guardDeps }, prov, safeBody(up.body))
               );
             });
           }

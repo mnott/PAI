@@ -24,6 +24,8 @@ export function mintRunToken(): string {
 interface Entry {
   provider: string;
   runId: string;
+  /** Tenant of the run (its project's tenant); absent: local. */
+  tenant?: string;
   expiresAt: number;
   /** the run process; a dead one is swept */
   pid?: number;
@@ -37,8 +39,8 @@ export class RunTokens {
     private readonly alive: (pid: number) => boolean = pidAlive
   ) {}
 
-  register(token: string, provider: string, runId: string, ttlMs: number, pid?: number): void {
-    this.entries.set(token, { provider, runId, expiresAt: this.now() + ttlMs, ...(pid ? { pid } : {}) });
+  register(token: string, provider: string, runId: string, ttlMs: number, pid?: number, tenant?: string): void {
+    this.entries.set(token, { provider, runId, expiresAt: this.now() + ttlMs, ...(pid ? { pid } : {}), ...(tenant ? { tenant } : {}) });
   }
 
   /** The provider a live token belongs to; null when unknown, revoked or expired. */
@@ -50,6 +52,13 @@ export class RunTokens {
       return null;
     }
     return e.provider;
+  }
+
+  /** Tenant and run id of a live token (the principal of proxy requests carrying it); null when unknown or expired. */
+  principalOf(token: string): { tenant: string; runId: string } | null {
+    if (!this.resolve(token)) return null;
+    const e = this.entries.get(token)!;
+    return { tenant: e.tenant ?? "local", runId: e.runId };
   }
 
   /** Revoke by token or by run id; returns how many entries went. */

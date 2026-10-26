@@ -6,6 +6,7 @@
 import { cliVersion } from "../run.js";
 import { createToken, readTokens, revokeToken, tokensFilePath } from "../../uhp-server/auth.js";
 import { createUhpServer } from "../../uhp-server/server.js";
+import { tenantExists } from "../../tenants/tenants.js";
 import { CliError, type CommandDef } from "../define.js";
 
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -50,16 +51,19 @@ const serveCmd: CommandDef = {
 const createCmd: CommandDef = {
   name: "create",
   summary: "Create a bearer token (shown once)",
-  description: "Stores the sha256 of a new token; the plaintext is printed once. --scope limits the token to the named harness ids.",
+  description: "Stores the sha256 of a new token; the plaintext is printed once. --scope limits the token to the named harness ids; --tenant binds it to a tenant (its rules directory and audit log).",
   options: [
     { name: "label", type: "string", value: "TEXT", summary: "Free-text label" },
     { name: "scope", type: "string", value: "ID,ID", summary: "Harness ids the token may see (default: all)" },
+    { name: "tenant", type: "string", value: "NAME", summary: "Tenant whose rules and audit log the token's decisions use (default: local)" },
     tokensOpt,
   ],
   examples: ["pai uhp token create --label ci"],
   run: (ctx) => {
     const scope = typeof ctx.opts.scope === "string" ? ctx.opts.scope.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
-    const { token, record } = createToken(tokensFilePath(ctx.opts.tokens as string | undefined), String(ctx.opts.label ?? ""), scope);
+    const tenant = typeof ctx.opts.tenant === "string" && ctx.opts.tenant ? ctx.opts.tenant : undefined;
+    if (tenant && !tenantExists(tenant)) throw new CliError(`unknown tenant ${tenant}`, "add tenants.<name>.rulesDir to the config; see docs/tenants.md");
+    const { token, record } = createToken(tokensFilePath(ctx.opts.tokens as string | undefined), String(ctx.opts.label ?? ""), scope, tenant);
     out(`${record.id}  ${token}`);
   },
 };
@@ -90,7 +94,7 @@ const listCmd: CommandDef = {
       out("no tokens");
       return;
     }
-    for (const t of tokens) out(`${t.id}  ${t.revokedAt ? "revoked" : "active "}  ${t.hash.slice(0, 8)}  ${t.scope ? `scope=${t.scope.length}` : "scope=all"}  ${t.label}`);
+    for (const t of tokens) out(`${t.id}  ${t.revokedAt ? "revoked" : "active "}  ${t.hash.slice(0, 8)}  ${t.scope ? `scope=${t.scope.length}` : "scope=all"}  tenant=${t.tenant ?? "local"}  ${t.label}`);
   },
 };
 

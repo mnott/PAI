@@ -93,6 +93,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai antipatterns set` | Change one detector parameter of a pattern |
 | `pai antipatterns stats` | Firing counts, models, outcomes and health flags per pattern |
 | `pai audit` | Find out where tokens are being spent |
+| `pai audit export` | Export a tenant's audit trail (firings, decisions, outcomes) with a manifest |
 | `pai audit scan` | After-the-fact security scan of a session or worker transcript |
 | `pai audit tokens` | Token-waste report (all checks, or pick one below) |
 | `pai audit tokens daemon` | What the background service spent |

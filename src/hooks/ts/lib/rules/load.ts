@@ -308,12 +308,12 @@ function asTests(raw: Record<string, unknown>): Rule["tests"] {
 }
 
 /** Rules from one directory's `*.rule.yaml` files, in filename order. */
-function loadDir(dir: string, errors: string[]): LoadedRule[] {
+function loadDir(dir: string, errors: string[], idNamedDirs: Set<string> = new Set()): LoadedRule[] {
   const out: LoadedRule[] = [];
   let names: string[];
   try {
-    // the anti-pattern directory names its files <id>.yaml (antipatterns/shell/)
-    const idNamed = basename(dir) === "shell" && basename(dirname(dir)) === "antipatterns";
+    // the anti-pattern directory names its files <id>.yaml (antipatterns/shell/, and a tenant's <rulesDir>/shell/)
+    const idNamed = (basename(dir) === "shell" && basename(dirname(dir)) === "antipatterns") || idNamedDirs.has(resolve(dir));
     names = readdirSync(dir).filter((f) => f.endsWith(".rule.yaml") || (idNamed && f.endsWith(".yaml"))).sort();
   } catch {
     return out; // missing directory is not an error
@@ -359,6 +359,8 @@ const SEVERITY_RANK: Record<RuleSeverity, number> = { off: 0, warn: 1, confirm: 
 export interface LoadOptions {
   /** Directories among `dirs` whose rules may only add or raise (see the file header). */
   projectDirs?: string[];
+  /** Directories whose `<id>.yaml` files are rules (a tenant's `<rulesDir>/shell`), as antipatterns/shell is. */
+  idNamedDirs?: string[];
 }
 
 /** Built-ins, then each directory in order, with the project-directory restriction applied. */
@@ -366,11 +368,12 @@ function mergeRules(dirs: string[], opts: LoadOptions): { byId: Map<string, Load
   const errors: string[] = [];
   const ignored: string[] = [];
   const project = new Set((opts.projectDirs ?? []).map((d) => resolve(d)));
+  const idNamed = new Set((opts.idNamedDirs ?? []).map((d) => resolve(d)));
   const byId = new Map<string, LoadedRule>();
   for (const rule of BUILTIN_RULES) byId.set(rule.id, rule);
   for (const dir of dirs) {
     const isProject = project.has(resolve(dir));
-    for (const rule of loadDir(dir, errors)) {
+    for (const rule of loadDir(dir, errors, idNamed)) {
       const existing = byId.get(rule.id);
       if (isProject) {
         const problem = untrustedRuleProblem(rule);

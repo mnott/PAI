@@ -64,7 +64,8 @@ const dateStr = (v: unknown): string | undefined => (v instanceof Date ? v.toISO
 
 /** The lifecycle of a raw YAML mapping (defaults filled in), or the problem found. */
 export function parseLifecycle(raw: Record<string, unknown>): Lifecycle | string {
-  const status = raw.status === undefined ? "stable" : raw.status;
+  // `retired` (a tenant disabling a shipped rule) is the same state as `deprecated`
+  const status = raw.status === undefined ? "stable" : raw.status === "retired" ? "deprecated" : raw.status;
   if (typeof status !== "string" || !(STATUSES as readonly string[]).includes(status)) return `status must be one of ${STATUSES.join(", ")}`;
   const mode = raw.mode === undefined ? "enforce" : raw.mode;
   if (typeof mode !== "string" || !(MODES as readonly string[]).includes(mode)) return `mode must be one of ${MODES.join(", ")}`;

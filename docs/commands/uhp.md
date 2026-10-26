@@ -62,12 +62,13 @@ Create a bearer token (shown once)
 pai uhp token create [options]
 ```
 
-Stores the sha256 of a new token; the plaintext is printed once. --scope limits the token to the named harness ids.
+Stores the sha256 of a new token; the plaintext is printed once. --scope limits the token to the named harness ids; --tenant binds it to a tenant (its rules directory and audit log).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--label TEXT` | string | — | Free-text label |
 | `--scope ID,ID` | string | — | Harness ids the token may see (default: all) |
+| `--tenant NAME` | string | — | Tenant whose rules and audit log the token's decisions use (default: local) |
 | `--tokens FILE` | string | — | Tokens file (default: <PAI_HOME>/uhp/tokens.json) |
 
 ```sh

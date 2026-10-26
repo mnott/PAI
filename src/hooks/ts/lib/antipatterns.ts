@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { SHIPPED_ANTIPATTERNS } from "./antipatterns.generated.js";
+import { LOCAL_TENANT, tenantRulesDir } from "../../../tenants/tenants.js";
 import { parseLifecycle, type Lifecycle } from "./antipattern-lifecycle.js";
 
 export const CATEGORIES = ["shell", "tool-loop", "final-text", "paths"] as const;
@@ -128,15 +129,16 @@ export function userAntipatternsDir(): string {
   return paiHomePath("antipatterns");
 }
 
-interface UserCache {
+interface DirCache {
   dir: string;
   sig: string;
   patterns: Map<string, Antipattern>;
 }
-let userCache: UserCache | null = null;
+let userCache: DirCache | null = null;
+const tenantCaches = new Map<string, DirCache>();
 
-/** Regular files under the user dir by category, with their mtimes; categories starting with `_` (candidates) are inactive. */
-function userFiles(dir: string): { path: string; category: string; mtime: number }[] {
+/** Regular files under a pattern dir by category, with their mtimes; categories starting with `_` (candidates) are inactive. */
+function dirFiles(dir: string): { path: string; category: string; mtime: number }[] {
   const out: { path: string; category: string; mtime: number }[] = [];
   for (const category of CATEGORIES) {
     if (category === "shell") continue;
@@ -158,11 +160,11 @@ function userFiles(dir: string): { path: string; category: string; mtime: number
   return out;
 }
 
-function userMap(): Map<string, Antipattern> {
-  const dir = userAntipatternsDir();
-  const files = userFiles(dir);
+/** The patterns of one directory (user dir or a tenant's rulesDir), re-read when a file's mtime changes. */
+function mapOf(dir: string, cache: DirCache | undefined, store: (c: DirCache) => void): Map<string, Antipattern> {
+  const files = dirFiles(dir);
   const sig = files.map((f) => `${f.path}:${f.mtime}`).join("\n");
-  if (userCache && userCache.dir === dir && userCache.sig === sig) return userCache.patterns;
+  if (cache && cache.dir === dir && cache.sig === sig) return cache.patterns;
   const patterns = new Map<string, Antipattern>();
   for (const f of files) {
     try {
@@ -173,20 +175,45 @@ function userMap(): Map<string, Antipattern> {
       process.stderr.write(`pai: antipattern ${f.path} skipped: ${e instanceof Error ? e.message : String(e)}\n`);
     }
   }
-  userCache = { dir, sig, patterns };
+  store({ dir, sig, patterns });
   return patterns;
 }
 
-/** Every active non-shell pattern: shipped, with user patterns replacing the same id or adding new ones. */
+const userMap = (): Map<string, Antipattern> => mapOf(userAntipatternsDir(), userCache ?? undefined, (c) => (userCache = c));
+
+let activeTenant = LOCAL_TENANT;
+
+/** The tenant whose rules the loaders currently answer for. */
+export const getActiveTenant = (): string => activeTenant;
+
+/**
+ * Select the tenant whose rules the loaders below answer for; returns the previous one. evaluate() sets it for the
+ * duration of one (synchronous) decision, so every detector that asks activeAntipattern() sees the tenant's rule set.
+ */
+export function setActiveTenant(name: string): string {
+  const prev = activeTenant;
+  activeTenant = name;
+  return prev;
+}
+
+/** The active tenant's overlay (its rulesDir), empty for "local" or a tenant without a rules directory. */
+function tenantMap(): Map<string, Antipattern> {
+  const dir = activeTenant === LOCAL_TENANT ? undefined : tenantRulesDir(activeTenant);
+  if (!dir) return new Map();
+  return mapOf(dir, tenantCaches.get(activeTenant), (c) => tenantCaches.set(activeTenant, c));
+}
+
+/** Every non-shell pattern: shipped, user patterns replacing the same id or adding new ones, then the active tenant's. */
 export function loadAntipatterns(category?: Category): Antipattern[] {
   const all = new Map(SHIPPED);
   for (const [id, ap] of userMap()) all.set(id, ap);
+  for (const [id, ap] of tenantMap()) all.set(id, ap);
   return [...all.values()].filter((a) => !category || a.category === category);
 }
 
-/** The active pattern with this id (user override first), or undefined. */
+/** The pattern with this id (tenant override first, then user), or undefined. */
 export function getAntipattern(id: string): Antipattern | undefined {
-  return userMap().get(id) ?? SHIPPED.get(id);
+  return tenantMap().get(id) ?? userMap().get(id) ?? SHIPPED.get(id);
 }
 
 /** The shipped pattern with this id, ignoring the user dir: for constants that must not move with local overrides. */
@@ -209,4 +236,5 @@ export function fillMessage(template: string, vars: Record<string, string | numb
 /** Test hook: drop the user cache. */
 export function resetAntipatternCache(): void {
   userCache = null;
+  tenantCaches.clear();
 }

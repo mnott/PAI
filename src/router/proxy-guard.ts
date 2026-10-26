@@ -17,7 +17,8 @@
 import { evaluate as realEvaluate, type Decision, type GuardContext, type GuardEvent } from "../guard/evaluate.js";
 export type { Decision, GuardContext, GuardEvent } from "../guard/evaluate.js";
 import { allRuleDirs, loadRules, projectRuleDirs } from "../hooks/ts/lib/rules/load.js";
-import { resetAntipatternCache } from "../hooks/ts/lib/antipatterns.js";
+import { resetAntipatternCache, setActiveTenant } from "../hooks/ts/lib/antipatterns.js";
+import { LOCAL_TENANT } from "../tenants/tenants.js";
 import { recordLoopTelemetry } from "../hooks/ts/lib/loop-guard-telemetry.js";
 import { applyToolResults, conversationKey, defaultLoopStore, type LoopStore } from "./proxy-loop.js";
 import type { Rule } from "../hooks/ts/lib/rules/types.js";
@@ -99,7 +100,7 @@ export function evaluateStreamCall(c: StreamCall): Decision | null {
     const key = c.request ? conversationKey(c.request) : null;
     let state = key ? applyToolResults(store.get(key), c.request) : null;
     if (state) ctx.loop = { state };
-    const d = ev({ kind: "tool_call", tool: c.tool, input: c.input, cwd: PROXY_CWD, model: c.model, provider: c.provider, source: "proxy" }, ctx);
+    const d = ev({ kind: "tool_call", tool: c.tool, input: c.input, cwd: PROXY_CWD, model: c.model, provider: c.provider, source: "proxy", tenant: deps.tenant, principal: deps.principal }, ctx);
     if (state && d.loop) {
       if (key) store.set(key, d.loop.state);
       recordLoopTelemetry(d.loop, { cwd: PROXY_CWD, fallbackText: c.tool, source: "proxy", model: c.model, provider: c.provider, record: ctx.record });
@@ -108,6 +109,8 @@ export function evaluateStreamCall(c: StreamCall): Decision | null {
   } catch (err) {
     deps0Log(err, c.deps);
     return null;
+  } finally {
+    setActiveTenant(LOCAL_TENANT); // the long-lived router must not carry one run's rule set into the next call
   }
 }
 
@@ -123,6 +126,9 @@ export interface ProxyGuardDeps {
   loops?: LoopStore;
   /** Firing sink (tests); defaults to the antipattern log. */
   record?: GuardContext["record"];
+  /** Tenant of the calling run (its rule set) and the audit principal; absent: local. */
+  tenant?: string;
+  principal?: string;
 }
 
 let cachedRules: Rule[] | null = null;
@@ -226,8 +232,8 @@ export function evaluateReply(reply: Reply, model: string, deps: ProxyGuardDeps 
   try {
     const ev = deps.evaluate ?? realEvaluate;
     const ctx: GuardContext = { env: process.env, shellRules: (deps.rules ?? defaultRules)(), record: deps.record };
-    const events: GuardEvent[] = reply.tools.map((t) => ({ kind: "tool_call", tool: t.name, input: t.input, cwd: PROXY_CWD, model, provider, source: "proxy" }));
-    if (!reply.tools.length && reply.text) events.push({ kind: "final_text", text: reply.text, cwd: PROXY_CWD, model, provider, source: "proxy" });
+    const events: GuardEvent[] = reply.tools.map((t) => ({ kind: "tool_call", tool: t.name, input: t.input, cwd: PROXY_CWD, model, provider, source: "proxy", tenant: deps.tenant, principal: deps.principal }));
+    if (!reply.tools.length && reply.text) events.push({ kind: "final_text", text: reply.text, cwd: PROXY_CWD, model, provider, source: "proxy", tenant: deps.tenant, principal: deps.principal });
     const store = deps.loops ?? defaultLoopStore;
     const key = request ? conversationKey(request) : null;
     let state = key ? applyToolResults(store.get(key), request) : null;
@@ -248,6 +254,8 @@ export function evaluateReply(reply: Reply, model: string, deps: ProxyGuardDeps 
     if (key && state) store.set(key, state);
   } catch (err) {
     deps.log?.(`${new Date().toISOString()} proxy-guard: ${(err as Error).message}`);
+  } finally {
+    setActiveTenant(LOCAL_TENANT);
   }
   return decisions;
 }
