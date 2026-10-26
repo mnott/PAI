@@ -59,7 +59,7 @@ export interface AddProviderInput {
   note?: string;
   protocol?: "anthropic" | "openai";
   upstreamUrl?: string;
-  engine?: "claude" | "codex" | "image";
+  engine?: "claude" | "codex" | "opencode" | "image";
   quotaProbe?: string;
   contextWindow?: number;
   costTier?: number;
@@ -538,6 +538,9 @@ export function describeProviders(
     }
     if (p.engine === "codex") {
       lines.push(`    engine codex (runs through the Codex CLI)`);
+    }
+    if (p.engine === "opencode") {
+      lines.push(`    engine opencode (runs through the OpenCode CLI, model via the PAI router)`);
     }
     if (p.engine === "image") {
       lines.push(`    engine image (no process spawn — POSTs {url}/images/generations directly)`);

@@ -55,7 +55,7 @@ import {
   recordPoolSkip,
   gateStart,
 } from "./gate.js";
-import { executeImageRun, executeRun, executeCodexRun } from "./execute.js";
+import { executeImageRun, executeRun, executeCodexRun, executeOpencodeRun } from "./execute.js";
 
 /**
  * Run one worker. Returns the process exit code to pass through.
@@ -269,7 +269,7 @@ export async function runWorker(opts: RunOptions): Promise<number> {
 
   try {
     let rc: number;
-    // image and codex runs never go through the pool; the skip is recorded under the id they mint
+    // image, codex and opencode runs never go through the pool; the skip is recorded under the id they mint
     const engineSkip = (wid: string) => {
       recordPoolSkip({ logDir, quiet: opts.quiet }, target.providerName, "engine", { id: wid });
       trackStart(wid);
@@ -296,6 +296,30 @@ export async function runWorker(opts: RunOptions): Promise<number> {
       });
     } else if (target.provider.engine === "codex") {
       rc = await executeCodexRun({
+        config,
+        logDir,
+        target,
+        model,
+        label,
+        parsed,
+        claudeArgs: opts.claudeArgs,
+        systemWaiver: opts.systemWaiver,
+        cwd: opts.cwd,
+        specPath: opts.specPath,
+        parent: parent ?? undefined,
+        stage: opts.stage,
+        quiet: opts.quiet,
+        onWorkerStart: engineSkip,
+        id: opts.id,
+        worktreeFlag: opts.worktreeFlag,
+        className: opts.className,
+        reportFormat,
+        capability: capability ?? undefined,
+        limit,
+        noBrowser,
+      });
+    } else if (target.provider.engine === "opencode") {
+      rc = await executeOpencodeRun({
         config,
         logDir,
         target,
