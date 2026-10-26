@@ -344,7 +344,7 @@ export function parseToolCallText(text: string, schemas: ToolSchemas, rules: rea
 
 export type ToolArgsFix = (info: { tool: string; rules: string[] }) => void;
 
-function repairJson(json: string, tool: string, schemas: ToolSchemas, rules: () => readonly Rule[], onFix: ToolArgsFix): string {
+export function repairJson(json: string, tool: string, schemas: ToolSchemas, rules: () => readonly Rule[], onFix: ToolArgsFix): string {
   if (!json) return json;
   let parsed: unknown;
   try {
