@@ -42,3 +42,15 @@ The worker runs in `work/<set>/<key>/rep<k>/` (`--no-worktree --cwd .`, tools `R
 ## Adding a real task
 
 Create `tasks/<name>/spec.md` and `meta.env` with `FIX=<commit that fixed it>` and `TESTS="<test files>"`, and add the name to `TASKS` in `lib.sh`. The task starts at `FIX^`; the tests of `FIX` judge.
+
+## Changelog
+
+Tables from runs after 2026-10-26 are "bench v2"; older tables are v1 and differ only by these fixes.
+
+- 2026-10-26 hard 11 `tokenize`: spec states lparen/rparen/comma carry value None.
+- 2026-10-26 hard 12 `parse_expr`: spec no longer contradicts itself; `%` truncates toward zero like `/`, `-2^2 == -4` stated as the unary minus covering the power.
+- 2026-10-26 hard 17 `word_break_count`: spec states `word_break_count('', ...) == 1`.
+- 2026-10-26 easy 29 `camel_to_snake`: spec states the digit rule (`getID2Value` -> `get_id2_value`).
+- 2026-10-26 real `worker-priority`: spec gives the argument names SESSION PRIORITY and the exact message texts the hidden test asserts (test unchanged).
+- 2026-10-26 `evalset.py`: when `out/<id>.py` is missing, `out/<entry>.py` is graded and the task row carries `named_by_entry: true`.
+- 2026-10-26 `evalset.sh`: spec text says the file name is the task NUMBER (`out/7.py`), not the function name.

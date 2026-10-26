@@ -1,7 +1,7 @@
 Feature request (operator): queue priority per named session is stored in workers.yaml under workers.priority.sessions, and today it can only be changed by editing the file by hand. Add a `pai worker priority` command group:
-  pai worker priority [list]            show each session with a priority, then a "default: normal" line
-  pai worker priority set SESSION PRIO  PRIO is high|normal|low (anything else is refused with a clear message naming the valid values); setting normal removes the entry
-  pai worker priority clear SESSION     remove the entry; error if the session has none
+  pai worker priority [list]            show each session with a priority as `<SESSION>  <PRIORITY>` (two spaces), then a "default: normal" line
+  pai worker priority set SESSION PRIORITY  (the two declared argument names are exactly SESSION and PRIORITY) PRIORITY is high|normal|low; setting normal removes the entry. On success print the line `<SESSION>: <PRIORITY> priority` (e.g. `Jobs: high priority`). Anything else is refused with exit 1 and the message `priority must be high, normal or low`, leaving the file unchanged
+  pai worker priority clear SESSION     remove the entry; if the session has none, exit 1 with the message `no priority entry for session "<SESSION>"` (e.g. `no priority entry for session "Jobs"`)
 Writes must not clobber the rest of workers.yaml (comments, providers, classes). The workers.yaml location honours the PAI_WORKERS_YAML env var.
 Interfaces the tests import: `workerPriorityCommand` (a CommandDef with subcommands list/set/clear) exported from src/cli/commands/worker-config.ts; `readPrioritySessions()` and `writePrioritySessions(sessions)` exported from src/workers/workers-config.ts; the command group must be reachable through the CLI registry as `pai worker priority`. Existing: `queuePriorityOf` in src/workers/run/gate.ts, QUEUE_PRIORITIES in src/workers/config.ts.
 Look at: src/cli/commands/worker-config.ts (see how sibling commands like policy are written), src/workers/workers-config.ts (yaml read/write helpers), src/cli/commands/worker-priority.test.ts may not exist yet; write your own small test if useful.
