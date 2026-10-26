@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { renderDecision } from "../lib/render-decision.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
+import { expandHome } from "../../../daemon/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { evaluate } from "../../../guard/evaluate.js";
@@ -54,12 +55,15 @@ function buildContext(cwd: string): WorkerGuardContext {
     mainCheckout: inWorktree && common ? dirname(common) : null,
     sharedCheckout: () => {
       let logDir: string | null = null;
+      let benchTreesDir: string | null = null;
       try {
-        logDir = workersLogDir(readWorkersSection().workers);
+        const w = readWorkersSection().workers;
+        logDir = workersLogDir(w);
+        benchTreesDir = expandHome(w.benchTreesDir);
       } catch {
         // unresolvable: isSharedCheckout fails closed
       }
-      return isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir });
+      return isSharedCheckout({ cwd, selfId: currentWorkerId(process.env, logDir ?? undefined), logDir, benchTreesDir });
     },
     testScript: () => {
       try {
@@ -111,7 +115,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
         label: env.PAI_WORKER_LABEL ?? "?",
         tool: input.tool_name,
         text: r.stop
-          ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; session stopped`
+          ? r.reason ?? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; session stopped`
           : r.evasion
             ? `LOOP-GUARD-EVASION: loop guard: same command ${typeof command === "string" ? command : ""} (touching a file does not change the worktree)`
             : input.tool_name === "Bash"
@@ -123,13 +127,13 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
     if (!r.deny) return r.note ? { note: r.note } : null;
     // Claude Code ignores "continue": false from a headless PreToolUse hook: end the worker ourselves
     if (r.stop)
-      requestLoopStop(logDir, id, `${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change`, {
+      requestLoopStop(logDir, id, r.reason ?? `${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change`, {
         claudePid: env.PAI_LOOP_STOP_PID ? () => Number(env.PAI_LOOP_STOP_PID) : undefined,
       });
     return {
       reason: r.reason ?? loopDenyReason(input.tool_name, r.count),
       stopReason: r.stop
-        ? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; stopping so the orchestrator can decide`
+        ? r.reason ?? `loop guard: ${input.tool_name} ${shortKey(r.key)} repeated ${r.count} times without a change; stopping so the orchestrator can decide`
         : undefined,
     };
   } catch {

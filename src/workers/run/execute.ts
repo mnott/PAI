@@ -177,7 +177,7 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
     worktree = made;
   }
   env.PAI_WORKER_ID = wid;
-  const scratch = applyScratchEnv(env, wid);
+  const scratch = applyScratchEnv(env, wid, worktree?.dir ?? cwd);
   // codex takes instructions through the prompt, not a system prompt flag
   const prompt =
     scratchPromptLine(scratch) + "\n\n" +

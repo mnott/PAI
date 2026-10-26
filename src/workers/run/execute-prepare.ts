@@ -4,7 +4,7 @@
  * ends here (refused start, --print-cmd dry run).
  */
 
-import { applyScratchEnv, scratchPromptLine } from "../scratch.js";
+import { applyScratchEnv, linkScratchModules, scratchPromptLine } from "../scratch.js";
 import { NOTE_TOKEN_ENV, newNoteToken } from "../note-delivery.js";
 import { TroubleWatcher } from "../worker-trouble.js";
 import type { BashRun, WorkerReport } from "../report.js";
@@ -281,6 +281,7 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
     if (made === "refused") return 1;
     worktree = made;
   }
+  linkScratchModules(scratch, worktree?.dir ?? cwd);
   // In stdin mode the prompt moves to the first user message on stdin, so it
   // must come off the command line (bare -p stays: stream-json needs --print).
   const restArgs = headless ? stripPromptValues(parsed.rest) : parsed.rest;

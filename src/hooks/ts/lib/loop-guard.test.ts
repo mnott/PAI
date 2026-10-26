@@ -830,3 +830,24 @@ describe("bashWriteTargets", () => {
     expect(bashWriteTargets("cat a.txt 2>&1 >/dev/null")).toBeNull();
   });
 });
+
+describe("worker-guard hook: stop wording of the pattern", () => {
+  it("missing-path-streak stop shows the pattern's own message, not the generic repeat text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loopguard-missing-"));
+    try {
+      const outs = Array.from({ length: 12 }, (_, i) =>
+        spawnSync("node_modules/.bin/tsx", ["src/hooks/ts/pre-tool-use/worker-guard.ts"], {
+          input: JSON.stringify({ tool_name: "Read", tool_input: { file_path: join(dir, `no/such/${i}.py`) }, cwd: dir }),
+          env: { ...process.env, PAI_CONFIG_FILE: join(dir, "no-config.json"), PAI_WORKER_LOOP_DIR: dir, PAI_WORKER_ID: "w-miss", PAI_WORKER: "1" },
+          encoding: "utf8",
+        }).stdout,
+      );
+      const stopped = outs.map((o) => (o.trim() ? JSON.parse(o) : {})).find((j) => j.continue === false);
+      expect(stopped).toBeDefined();
+      expect(stopped.stopReason).toContain("Reads in a row hit paths that do not exist; stop guessing paths");
+      expect(stopped.stopReason).not.toContain("repeated");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 240000);
+});

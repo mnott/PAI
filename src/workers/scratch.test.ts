@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { applyScratchEnv, removeScratch, scratchDir, scratchPromptLine } from "./scratch.js";
@@ -25,6 +26,32 @@ describe("worker scratch dir", () => {
     } finally {
       removeScratch("w1-test");
       removeScratch("w2-test");
+    }
+  });
+});
+
+describe("scratch node_modules link", () => {
+  it("links the cwd's node_modules into the scratch dir; removing the scratch keeps the target; no link without node_modules", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "scratch-nm-"));
+    const bare = mkdtempSync(join(tmpdir(), "scratch-bare-"));
+    try {
+      mkdirSync(join(cwd, "node_modules", "yaml"), { recursive: true });
+      const a: Record<string, string | undefined> = {};
+      applyScratchEnv(a, "w-nm-test", cwd);
+      expect(lstatSync(join(a.TMPDIR!, "node_modules")).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(join(a.TMPDIR!, "node_modules"))).toBe(join(cwd, "node_modules"));
+      expect(existsSync(join(a.TMPDIR!, "node_modules", "yaml"))).toBe(true);
+      applyScratchEnv(a, "w-nm-test", cwd); // idempotent
+      removeScratch("w-nm-test");
+      expect(existsSync(join(cwd, "node_modules", "yaml"))).toBe(true);
+      const b: Record<string, string | undefined> = {};
+      applyScratchEnv(b, "w-nm-bare-test", bare);
+      expect(existsSync(join(b.TMPDIR!, "node_modules"))).toBe(false);
+    } finally {
+      removeScratch("w-nm-test");
+      removeScratch("w-nm-bare-test");
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(bare, { recursive: true, force: true });
     }
   });
 });
