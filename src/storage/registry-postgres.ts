@@ -495,16 +495,6 @@ export class PostgresRegistryBackend implements RegistryBackend {
     return r.rows.map((row) => ({ ...mapProjectWithStats(row), name: row.name as string | null }));
   }
 
-  async searchProjects(query: string, limit = 20): Promise<Project[]> {
-    const q = `%${query}%`;
-    const r = await this.pool.query(
-      `SELECT * FROM projects WHERE slug LIKE $1 OR display_name LIKE $1 OR root_path LIKE $1
-       ORDER BY updated_at DESC LIMIT $2`,
-      [q, limit]
-    );
-    return r.rows.map(mapProject);
-  }
-
   async countProjects(opts: { status?: ProjectStatus } = {}): Promise<number> {
     const r = opts.status
       ? await this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM projects WHERE status = $1", [

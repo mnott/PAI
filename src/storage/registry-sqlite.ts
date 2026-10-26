@@ -261,16 +261,6 @@ export class SQLiteRegistryBackend implements RegistryBackend {
     return this.db.prepare(sql).all() as Array<ProjectWithSessionStats & { name: string | null }>;
   }
 
-  async searchProjects(query: string, limit = 20): Promise<Project[]> {
-    const q = `%${query}%`;
-    return this.db
-      .prepare(
-        `SELECT * FROM projects WHERE slug LIKE ? OR display_name LIKE ? OR root_path LIKE ?
-         ORDER BY updated_at DESC LIMIT ?`
-      )
-      .all(q, q, q, limit) as Project[];
-  }
-
   async countProjects(opts: { status?: ProjectStatus } = {}): Promise<number> {
     const sql = opts.status
       ? "SELECT COUNT(*) AS n FROM projects WHERE status = ?"
