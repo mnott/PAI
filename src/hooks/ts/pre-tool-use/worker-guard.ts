@@ -191,9 +191,9 @@ async function main(): Promise<void> {
     process.stdout.write(renderDecision({ decision: "allow", updatedInput: decision.updatedInput, ...(decision.message && { context: decision.message }) }) + "\n");
     return;
   }
-  // worker test runs go through the hang probe, which says where a silent run is stuck
+  // test runs (worker or main session) go through test-run: it takes the machine-wide test slot and probes a silent run
   const command = (input.tool_input as { command?: unknown } | undefined)?.command;
-  if (process.env.PAI_WORKER === "1" && input.tool_name === "Bash" && typeof command === "string" && isTestCommand(command)) {
+  if (input.tool_name === "Bash" && typeof command === "string" && isTestCommand(command)) {
     process.stdout.write(renderDecision({ decision: "allow", updatedInput: { ...(input.tool_input as object), command: wrapTestCommand(command) } }) + "\n");
   }
 }

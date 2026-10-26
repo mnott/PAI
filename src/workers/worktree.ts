@@ -25,6 +25,7 @@ import { ledgerPath, statusPath } from "./paths.js";
 import { escalationState, invalidatePendingCache } from "./pending.js";
 import { poolStatePath, readPoolState } from "./pool.js";
 import { loadConfig } from "../daemon/config.js";
+import { acquireTestSlotSync, holdsTestSlot, SLOT_HELD_ENV } from "./test-slot.js";
 import { DEFAULT_VERIFY, DEFAULT_VERIFY_TIMEOUT_SEC, failureHints, runRelatedTests, type RelatedResult } from "./merge-tests.js";
 
 /** A slot worktree (<logDir>/slots/<name>): persistent, shared by many tasks, never removed per task. */
@@ -1501,7 +1502,15 @@ function gateLines(
     const env = { ...process.env };
     delete env.PAI_WORKER;
     delete env.PAI_WORKER_ORCHESTRATOR;
-    const status = process.env.PAI_GATE_EVENTS === "1" ? runGateTimed(cwd, verify, env) : spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" }).status;
+    // one test run per machine slot; the verify command's own test runs (wrapped by the guard) reuse it
+    const lease = holdsTestSlot() ? null : acquireTestSlotSync();
+    if (lease) env[SLOT_HELD_ENV] = "1";
+    let status: number | null;
+    try {
+      status = process.env.PAI_GATE_EVENTS === "1" ? runGateTimed(cwd, verify, env) : spawnSync("sh", ["-c", verify], { cwd, env, stdio: "inherit" }).status;
+    } finally {
+      lease?.release();
+    }
     if (status !== 0) throw new Error(`verify failed (exit ${status ?? 1}): reverted ${revert()}; the worker branch is kept`);
     lines.push(`verify passed: ${verify}`);
   }
