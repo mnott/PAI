@@ -10,6 +10,16 @@ $PAI_HOME/antipatterns/_candidates/            auto-caught cases, inactive
 
 Categories: `shell` (command rules), `tool-loop` (repeated tool calls), `final-text` (a worker's final answer), `paths` (file paths).
 
+Every pattern has a `layer` (defaults from the category):
+
+| layer | what | per model |
+|---|---|---|
+| `baseline` | security and environment (shell rules, path rules) | no: always as configured; `applies_to` is ignored |
+| `behaviour` | loop patterns (identical-write, revert, distinct-rewrites, repeated-failure, growing-command, runaway-new-files, missing-path-streak, unparsed-tool-call) | the same rule for all models; `per_model` tunes thresholds and mode |
+| `quirk` | observed for specific models only (`mangled-var-folders-path`, Gyro family) | enforce for the models in `applies_to`, monitor for the rest |
+
+Outside a behaviour/quirk rule's `applies_to` a firing is recorded only (monitor). A `per_model` block (`per_model: { "<id or glob with *>": { mode?, params? } }`) overrides mode and detector params for one model at evaluation time; the first matching entry wins, an exact id beats a glob. A user override's `per_model` entry replaces the shipped entry for the same key. See [Lifecycle and layers](concepts/security-rules.md#layers).
+
 ## Override rules
 
 - The same `id` in your directory replaces the shipped pattern completely (thresholds, regexes and message); a new `id` adds one.
