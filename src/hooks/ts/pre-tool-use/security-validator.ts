@@ -23,8 +23,6 @@ import { dirname, resolve } from 'path';
 import { securityEventsPath } from '../lib/pai-paths.js';
 import { isSharedCheckout } from '../lib/shared-checkout.js';
 import { maskSecrets } from '../lib/loop-guard.js';
-import { decideWorkerGitGuard, workerGitGuardMessage } from '../lib/worker-git-guard.js';
-import { detectUnsafePlutil, plutilGuardMessage } from '../lib/plutil-guard.js';
 import { loadRules, projectRuleDirs, allRuleDirs } from '../lib/rules/load.js';
 import { evaluate } from '../../../guard/evaluate.js';
 import { readWorkersSection } from '../../../workers/config.js';
@@ -198,41 +196,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  // plutil in-place rewrite guard: -extract/-replace/-insert/-remove/
-  // -convert/-create without -o write the result back into the source file
-  // instead of printing it. Applies in every session, not only workers.
-  const plutilGuard = detectUnsafePlutil(command);
-  if (plutilGuard.blocked) {
+  // plutil in-place rewrite guard and, for workers, the in-place git guard: decided by evaluate().
+  const gate = evaluate(
+    { kind: 'tool_call', tool: 'Bash', input: { command }, cwd: input.cwd || process.cwd(), sessionId: input.session_id },
+    { env: process.env, gates: { plutil: true, workerGit: { worktreesRoot: process.env.PAI_WORKER === '1' ? resolveWorktreesRoot() : null, privateClone } } },
+  );
+  if (gate.action === 'deny' && gate.guard) {
     logSecurityEvent({
       type: 'attack_blocked',
-      category: 'plutil_guard',
-      pattern: plutilGuard.invocation,
+      category: gate.guard.category,
+      pattern: gate.guard.pattern,
       command: command.slice(0, 200),
       session_id: input.session_id,
     });
 
-    deny(plutilGuardMessage(plutilGuard.verb || 'this verb'));
-  }
-
-  // In-place worker git guard: a worker with no worktree runs in the shared
-  // checkout, where a tree-rewriting git command (stash, reset, clean, ...)
-  // can drop or conflict with another worker's in-flight edits.
-  const isWorker = process.env.PAI_WORKER === '1';
-  if (isWorker) {
-    const cwd = input.cwd || process.cwd();
-    const guard = decideWorkerGitGuard(command, isWorker, resolve(cwd), resolveWorktreesRoot());
-    if (guard.blocked && privateClone(resolve(cwd))) guard.blocked = false;
-    if (guard.blocked) {
-      logSecurityEvent({
-        type: 'attack_blocked',
-        category: 'worker_git_guard',
-        pattern: guard.cmd,
-        command: command.slice(0, 200),
-        session_id: input.session_id,
-      });
-
-      deny(workerGitGuardMessage(guard.cmd || 'this git command'));
-    }
+    deny(gate.message!);
   }
 
   // Check all patterns

@@ -12,7 +12,7 @@ import { currentWorkerId } from "../../../workers/worker-id.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { paiHomePath } from "../../../config/pai-home.js";
 import { join } from "node:path";
-import { checkCredentialLiteral } from "../lib/credential-guard.js";
+import { evaluate } from "../../../guard/evaluate.js";
 import { REPAIR_NOTE, renderDeny, renderEditRepair, repairEdit, type EditRepairInput } from "../lib/edit-repair.js";
 
 function logRepair(tail: string): void {
@@ -41,10 +41,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const cred = checkCredentialLiteral(input, process.env);
-  if (cred) {
+  const cred = evaluate({ kind: "tool_call", tool: input.tool_name ?? "", input: input.tool_input, cwd: process.cwd() }, { env: process.env, gates: { credential: true } });
+  if (cred.action === "deny") {
     logRepair(`DENY\tliteral credential`);
-    process.stdout.write(renderDeny(cred) + "\n");
+    process.stdout.write(renderDeny(cred.message!) + "\n");
     return;
   }
 

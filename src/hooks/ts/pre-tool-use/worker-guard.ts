@@ -24,7 +24,6 @@ import { renderDecision } from "../lib/render-decision.js";
 import { isSharedCheckout } from "../lib/shared-checkout.js";
 import { readWorkersSection } from "../../../workers/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
-import { decideOrchestratorBash } from "../lib/edit-gate.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
 import { evaluate } from "../../../guard/evaluate.js";
 import { loopDenyReason, actionKey, worktreeFingerprint } from "../lib/loop-guard.js";
@@ -32,7 +31,7 @@ import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-s
 import { recordToolError } from "../../../workers/tool-errors.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { isTestCommand, wrapTestCommand } from "../../../workers/hang-probe.js";
-import { decideWorkerGuard, type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
+import { type WorkerGuardContext, type WorkerGuardInput } from "../lib/worker-guard.js";
 
 function git(cwd: string, args: string[]): string | null {
   try {
@@ -154,13 +153,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (process.env.PAI_WORKER_ORCHESTRATOR === "1" && process.env.PAI_WORKER === "1" && input.tool_name === "Bash") {
-    const command = (input.tool_input as { command?: unknown } | undefined)?.command;
-    const d = typeof command === "string" ? decideOrchestratorBash(command) : { decision: "allow" as const };
-    if (d.decision === "block") {
-      process.stdout.write(renderDecision({ decision: "deny", reason: d.reason }) + "\n");
-      return;
-    }
+  const cwd = input.cwd || process.cwd();
+  const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true } });
+  if (orch.action === "deny") {
+    process.stdout.write(renderDecision({ decision: "deny", reason: orch.message! }) + "\n");
+    return;
   }
 
   const loop = loopRepeat(input, process.env);
@@ -176,9 +173,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const decision = decideWorkerGuard(input, process.env, () => buildContext(input.cwd || process.cwd()));
-  if (decision.decision === "deny" || decision.updatedInput) {
-    process.stdout.write(renderDecision(decision) + "\n");
+  const decision = evaluate(
+    { kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd: input.cwd || process.cwd() },
+    { env: process.env, gates: { worker: () => buildContext(input.cwd || process.cwd()) } },
+  );
+  if (decision.action === "deny") {
+    process.stdout.write(renderDecision({ decision: "deny", reason: decision.message! }) + "\n");
+    return;
+  }
+  if (decision.updatedInput) {
+    process.stdout.write(renderDecision({ decision: "allow", updatedInput: decision.updatedInput, ...(decision.message && { context: decision.message }) }) + "\n");
     return;
   }
   // worker test runs go through the hang probe, which says where a silent run is stuck
