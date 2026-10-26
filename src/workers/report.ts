@@ -351,7 +351,8 @@ const DELETED_RE = /\b(delete|deleted|deleting|remove|removed|removing)\b/i;
 export function verifyReportChanges(
   changed: Array<{ path?: string; summary?: string }> | undefined,
   cwd: string,
-  startMs: number
+  startMs: number,
+  baseRef?: string | null
 ): ReportVerifyResult {
   const failures: ReportVerifyFailure[] = [];
   for (const ch of changed ?? []) {
@@ -359,23 +360,58 @@ export function verifyReportChanges(
     if (!raw) continue;
     // `delete: <file> (<reason>)`: a pending deletion a local worker left to its orchestrator; nothing to confirm.
     if (/^delete:/i.test(raw)) continue;
-    const abs = isAbsolute(raw) ? raw : resolve(cwd, raw);
-    let mtimeMs: number | null;
-    try {
-      mtimeMs = statSync(abs).mtimeMs;
-    } catch {
-      mtimeMs = null;
-    }
     const deleted = DELETED_RE.test(ch.summary ?? "");
-    if (deleted) {
-      if (mtimeMs !== null) failures.push({ path: raw, reason: "not-deleted" });
-    } else if (mtimeMs === null) {
-      failures.push({ path: raw, reason: "missing" });
-    } else if (mtimeMs < startMs) {
-      failures.push({ path: raw, reason: "stale" });
+    for (const path of claimedPaths(raw)) {
+      const abs = isAbsolute(path) ? path : resolve(cwd, path);
+      let mtimeMs: number | null;
+      try {
+        mtimeMs = statSync(abs).mtimeMs;
+      } catch {
+        mtimeMs = null;
+      }
+      if (deleted) {
+        if (mtimeMs !== null) failures.push({ path, reason: "not-deleted" });
+      } else if (mtimeMs === null) {
+        failures.push({ path, reason: "missing" });
+      } else if (mtimeMs < startMs && !differsFromBase(cwd, baseRef, path)) {
+        failures.push({ path, reason: "stale" });
+      }
     }
   }
   return { ok: failures.length === 0, failures };
+}
+
+/**
+ * The file paths a `changed` entry names. A report writes several files in one
+ * entry as `a/b.ts+c.ts` (later parts relative to the first's directory) or
+ * `dir/{x,y}.md`; trailing `,;)` and backticks are punctuation. A token with
+ * no `/` or `.` is not a path (a summary fragment a `|` in the summary split off).
+ */
+export function claimedPaths(raw: string): string[] {
+  const braces = (p: string): string[] => {
+    const m = p.match(/^(.*?)\{([^{}]*)\}(.*)$/);
+    return m ? m[2].split(",").flatMap((alt) => braces(m[1] + alt + m[3])) : [p];
+  };
+  const clean = raw.replace(/[`'"]/g, "").replace(/^[a-z]=/, "").replace(/[,;)]+$/, "");
+  const whole = braces(clean);
+  if (!clean.includes("+") || !clean.split("+")[0].includes("/") && !/\.\w+$/.test(clean.split("+")[0])) return whole.filter(isPathLike);
+  return braces(clean.split("+")[0]).flatMap((first) => {
+    const dir = first.includes("/") ? first.slice(0, first.lastIndexOf("/") + 1) : "";
+    return [first, ...clean.split("+").slice(1).flatMap(braces).map((rest) => (dir && rest.startsWith(first.split("/")[0] + "/") ? rest : dir + rest))];
+  }).filter(isPathLike);
+}
+
+const isPathLike = (p: string): boolean => /[/.]/.test(p) && !/[(),\s]/.test(p);
+
+/** Whether `path` differs between `baseRef` and the worktree's HEAD or working tree: the run's branch changed it even if the file was written before the run began. */
+function differsFromBase(cwd: string, baseRef: string | null | undefined, path: string): boolean {
+  if (!baseRef) return false;
+  try {
+    execFileSync("git", ["diff", "--quiet", baseRef, "--", path], { cwd, stdio: "ignore" });
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 /** The one-line note appended to a report/ledger when verify fails. */
@@ -423,13 +459,44 @@ function normaliseCommand(cmd: string): string {
   let c = squeeze(cmd).replace(/\bgit -C (?:"[^"]*"|'[^']*'|\S+) /g, "git ");
   for (let prev = ""; prev !== c; ) {
     prev = c;
-    c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^[A-Za-z_]\w*=\S*\s+/, "").replace(/^env\s+(?:(?:-u\s+\S+|-i|[A-Za-z_]\w*=\S*)\s+)*/, "");
+    c = c.replace(/^cd\s+\S+\s*(&&|;)\s*/, "").replace(/^(?:export\s+)?[A-Za-z_]\w*=\S*\s*(?:;\s*)?/, "").replace(/^timeout\s+\d+\S*\s+/, "").replace(/^env\s+(?:(?:-u\s+\S+|-i|[A-Za-z_]\w*=\S*)\s+)*/, "");
   }
   for (let prev = ""; prev !== c; ) {
     prev = c;
-    c = c.replace(/\s*;\s*echo\s+["']?rc=\$\?["']?\s*$/, "").replace(/\s*\|\s*(grep|wc|tail|head|cut|sort|uniq|awk|sed\s+-n|tee)\b[^|]*$/, "").replace(/\s*2>&1(?=\s*(\||$))/g, "");
+    c = c.replace(/\s*;\s*echo\s+["']?rc=\$\?["']?\s*$/, "").replace(/\s*\|\s*(grep|wc|tail|head|cut|sort|uniq|awk|sed\s+-n|tee)\b[^|;&]*$/, "").replace(/\s*2>&1(?=\s*(\||$))/g, "");
   }
   return c.trim();
+}
+
+/** Tokens of a command for fuzzy proof matching: redirections and quotes dropped, a path argument reduced to its basename. */
+function proofTokens(cmd: string): string[] {
+  return normaliseCommand(cmd)
+    .replace(/\s+\d?>>?\s*\S+/g, "")
+    .replace(/["']/g, "")
+    .split(" ")
+    .filter(Boolean)
+    .map((t) => (t.includes("/") && !t.endsWith("/") ? t.slice(t.lastIndexOf("/") + 1) : t).replace(/:$/, ""));
+}
+
+/** First word of what trails a matched command in a claim: commentary on its result, not another argument. */
+const CLAIM_COMMENTARY = /^(\(|[:=]|rc=|\d|(clean|ok|passes|passed|pass|green|fails|failed|exit|exits|prints|shows|x\d+)\b)/i;
+
+/**
+ * Whether claim part `c` is a command that `run` ran: its tokens, or a leading run of them,
+ * appear contiguously in the run's tokens (any directory prefix on an argument ignored), and
+ * whatever of `c` is left over reads as commentary on the result. A leading run needs two tokens.
+ */
+function fuzzyRan(run: string, c: string): boolean {
+  const rt = proofTokens(run);
+  const ct = proofTokens(c);
+  const at = (n: number): boolean => {
+    for (let i = 0; i + n <= rt.length; i++) if (ct.slice(0, n).every((t, k) => rt[i + k] === t || /^<[^>]+>$/.test(t))) return true;
+    return false;
+  };
+  for (let n = ct.length; n >= Math.min(2, ct.length); n--) {
+    if (at(n) && (n === ct.length || CLAIM_COMMENTARY.test(ct[n]))) return true;
+  }
+  return false;
 }
 
 /**
@@ -456,12 +523,18 @@ export function checkProof(
     // a result may trail the command (`cmd → 12 passed`); only the command part is matched
     const claimed = parsed.fields.p.split(/ (?:→|->|=>|⇒|#) /)[0].trim();
     // a compound claim (`a; b`, `a && b`) stands when every part ran, in order or not, in some passing call
-    const parts = claimed.split(/;|&&/).map(normaliseCommand).filter(Boolean);
+    const parts = claimed.split(/;|&&| \+ /).map(normaliseCommand).filter(Boolean);
+    const firstWords = new Set(runs.map((r) => normaliseCommand(r.command).split(" ")[0]));
+    const isProse = (c: string): boolean => !firstWords.has(c.split(" ")[0]) && (/: |\b\d+ [a-z]/i.test(c) || !/[/.\-]/.test(c));
     const match = (rs: BashRun[], unmasked: boolean): boolean => {
       const ok = rs.map((r) => ({ raw: squeeze(r.command), norm: normaliseCommand(r.command) }));
       const hit = (r: { raw: string; norm: string }, c: string): boolean => (r.norm.includes(c) || r.raw.includes(c)) && !(unmasked && exitMasked(r.raw, c));
       const whole = squeeze(claimed);
-      return ok.some((r) => r.raw.includes(whole) && !(unmasked && exitMasked(r.raw, whole))) || (parts.length > 0 && parts.every((c) => ok.some((r) => hit(r, c))));
+      const fuzzy = (r: { raw: string }, c: string): boolean => fuzzyRan(r.raw, c) && !(unmasked && (/;\s*(true|:)\s*$/.test(r.raw) || r.raw.includes("||")));
+      const ranPart = (c: string): boolean => ok.some((r) => hit(r, c) || fuzzy(r, c));
+      // a part that reads as prose and starts no run is commentary, not a command, when another part ran
+      const cmdPts = parts.filter((c) => !isProse(c));
+      return ok.some((r) => r.raw.includes(whole) && !(unmasked && exitMasked(r.raw, whole))) || (cmdPts.length > 0 && cmdPts.every(ranPart));
     };
     const passing = runs.filter((r) => !r.failed);
     const clean = passing.filter((r) => !OUTPUT_FAILURE.test(r.output ?? ""));
