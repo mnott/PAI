@@ -176,6 +176,7 @@ export function rerunOn(a: RerunSource, wid: string, why: string, st: WorkerStat
     className: a.className,
     _route: { policy: a.route?.policy ?? "auto", reason: `${to === CLOUD ? "fall-through" : "rerouted"} (${why})`, local: false },
     _fallThroughOf: wid,
+    ...(st.term ? { _hostTerm: st.term } : {}),
     _priorIds: [...(a.priorIds ?? []), wid],
     onWorkerStart: (id2) => {
       st.fallThroughTo = id2;
