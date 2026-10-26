@@ -296,6 +296,9 @@ const PATTERN_KILL_REASON =
   PATTERN_KILL_PREFIX + ": kill only what you started, by PID (`cmd & echo $! > /tmp/x.pid`, then " +
   "`kill $(cat /tmp/x.pid)`), never by name or pattern; other workers' command lines contain your spec text";
 
+const SED_INPLACE_REASON =
+  "`sed -i` without an explicit suffix argument is blocked on macOS: BSD sed takes the next word as the backup suffix and leaves a stray copy (e.g. file.ts-e); use `sed -i '' -e …` or the Edit tool";
+
 const SEARCH_ROOT_REASON = "recursive search over the home directory or / is blocked; search a named project or cache directory, e.g. rg -n PATTERN ~/strata-020 (mdfind uses the index and is fine)";
 
 /** find/fd/rg/ag/grep -r whose search root (explicit, or the cwd when no path is given) is the home directory or /. */
@@ -349,6 +352,12 @@ function decideSegment(seg: Segment, st: { cwd: string; raw: string }, ctx: Work
 
   if (PATTERN_KILL.has(cmd) || (seg.words.includes("xargs") && cmd === "kill") || (cmd === "kill" && /pgrep|pidof/.test(args.join(" ")))) {
     return deny(PATTERN_KILL_REASON);
+  }
+
+  if (cmd === "sed" && process.platform === "darwin") {
+    const i = args.indexOf("-i");
+    const next = i >= 0 ? args[i + 1] : undefined;
+    if (next !== undefined && next !== "" && (isFlag(next) || /^[sy]([/|#,]|$)/.test(next))) return deny(SED_INPLACE_REASON);
   }
 
   const chrome = chromeStartReason(cmd, args);
