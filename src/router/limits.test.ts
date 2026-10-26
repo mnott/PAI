@@ -406,15 +406,20 @@ describe("local server up/down and prefix cache", () => {
     // a sink that accepts the connection but never answers the request (no response written, socket kept):
     // the timeout comes from the injected servedTimeoutMs, not from machine load racing the 5 s default
     const sinkTimeout = async (n: string, strikes?: number): Promise<ProviderLimits[]> => {
-      // a sink that accepts the connection but never answers the request (no response written, socket kept):
-      // the timeout comes from the injected servedTimeoutMs, not from machine load racing the 5 s default
+      // an up (unknown) result also asks the sink for engine info, speed and cache stats: stub those and run the stats in the background, or each waits out its own 5 s
       const sockets = new Set<net.Socket>();
-      const sink = net.createServer((sock) => { sockets.add(sock); sock.on("close", () => sockets.delete(sock)); });
+      let closing = false;
+      const sink = net.createServer((sock) => {
+        // a connection accepted late (after the probe gave up) must not hold close() open
+        if (closing) return void sock.destroy();
+        sockets.add(sock);
+        sock.on("close", () => sockets.delete(sock));
+      });
       const port = await listen(sink);
       try {
         const runOnce = async () => {
           try {
-            return await localLimits(n, local(port), [], Date.now(), undefined, { listenerRssMb: noRss, servedTimeoutMs: 150, timeoutStrikes: strikes });
+            return await localLimits(n, local(port), [], Date.now(), () => {}, { listenerRssMb: noRss, engineInfo: async () => ({}), strataSpeed: async () => null, servedTimeoutMs: 150, timeoutStrikes: strikes });
           } finally {
             // drop the timed-out request socket so it cannot hold close() open
             for (const sock of sockets) sock.destroy();
@@ -424,6 +429,7 @@ describe("local server up/down and prefix cache", () => {
         for (let i = 0; i < (strikes === undefined ? 3 : 1); i++) out.push(await runOnce());
         return out;
       } finally {
+        closing = true;
         for (const sock of sockets) sock.destroy();
         await close(sink);
       }

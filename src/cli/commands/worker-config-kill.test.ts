@@ -50,7 +50,9 @@ afterEach(() => {
 
 const inst = (port: number, pid?: number) => ({ id: "t#1", model: "t", provider: "tp", url: `http://127.0.0.1:${port}`, origin: "managed" as const, port, ...(pid !== undefined ? { pid } : {}), state: "ready" as const, startedAt: 0, log: "" });
 
-describe("killInstance", () => {
+// Each test spawns real node processes (and lsof); under load that setup alone can pass vitest's 5 s default.
+// The outcome is decided by signals and the port state, not by this cap, so it only has to be generous.
+describe("killInstance", { timeout: 60_000 }, () => {
   it("kills a script and the detached child that holds the port, and the port is closed", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pai-kill-"));
     const port = await freePort();
