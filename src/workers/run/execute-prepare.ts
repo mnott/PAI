@@ -216,6 +216,10 @@ export async function prepareRun(a: ExecuteArgs): Promise<PreparedRun | number> 
   if (addendum && !a.quiet) process.stderr.write(`contract addendum: ${addendum.path} sha ${addendum.sha}\n`);
   // sub-workers detect themselves (and their parent) through this variable
   env.PAI_WORKER_ID = wid;
+  // the worker's cwd is a worktree outside the registered project root: the guard hook reads the tenant from here
+  const originTenant = tenantForProject(cwd);
+  if (originTenant === "local") delete env.PAI_WORKER_TENANT;
+  else env.PAI_WORKER_TENANT = originTenant;
   const scratch = applyScratchEnv(env, wid);
   // the router's fair queue shares a local engine between owning sessions
   addSchedulingHeaders(env, { session: session?.name || spawnerSession || itermUuid(term), worker: wid, priority: a.queuePriority });
