@@ -26,6 +26,7 @@ import { readWorkersSection } from "../../../workers/config.js";
 import { expandHome } from "../../../daemon/config.js";
 import { workersLogDir } from "../../../workers/paths.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
+import { failLedgerOn } from "../lib/fail-ledger.js";
 import { evaluate } from "../../../guard/evaluate.js";
 import { loopDenyReason, actionKey, worktreeFingerprint } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
@@ -102,6 +103,7 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
           fingerprint: bashCmd !== undefined && actionKey(bashCmd) !== null ? worktreeFingerprint(cwd) : null,
           now: Date.now(),
           echo: readWorkersSection().workers.loopGuard,
+          failLedger: !!failLedgerOn(env, readWorkersSection().workers.failLedger),
         },
       },
     );

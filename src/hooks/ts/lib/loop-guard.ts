@@ -26,6 +26,7 @@ import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
 import { dispositionOf } from "./antipattern-lifecycle.js";
+import { ledgerResult, ledgerStep, type FailLedgerState } from "./fail-ledger.js";
 import { loadBuildsConfig, runsDoor, splitSegments, type BuildsConfig } from "./build-gate.js";
 
 // Thresholds and message texts live in antipatterns/tool-loop/*.yaml (user overrides in PAI_HOME/antipatterns).
@@ -106,6 +107,8 @@ export interface LoopState {
   pollDone?: Record<string, number>;
   /** Streak of read-only Bash calls sharing one template and file set while the worktree stayed unchanged. */
   reads?: { key: string; files: string; print: string | null; n: number; denials: number };
+  /** Per-run FAIL ledger (workers.failLedger); absent while the experiment is off. */
+  fail?: FailLedgerState;
 }
 
 /** Total polling time per command key after which a "still running" helper is treated as an ordinary repeat again. */
@@ -480,7 +483,18 @@ function trimTail(text: string, lines: number, chars: number): string {
 }
 
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
-export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
+export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now(), ledger = false): LoopState {
+  const core = recordLoopResultCore(state, tool, input, response, now);
+  if (!ledger) return core;
+  // an edit resets the window and drops everything not carried over by hand: the ledger survives
+  const next = core.fail === state.fail ? core : { ...core, fail: state.fail };
+  const text = rawText(response);
+  const m = /Exit code (\d+)/.exec(text);
+  const code = exitCodeOf(response) ?? (m ? Number(m[1]) : null);
+  return ledgerResult(next, tool, bashCommand(input), text, code, typeof response === "string" && response.startsWith("error:"));
+}
+
+function recordLoopResultCore(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
   const key = callKey(tool, input);
   if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks } : { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks, window: [key], outs: [null] };
   if (key !== null && tool === "Bash") {
@@ -760,7 +774,15 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
  * One step of the loop guard. A pattern in monitor mode (or retired, or excepted) is neutralised here, in one place:
  * the step still counts, but nothing is denied, stopped or noted; a monitored one says what it would have done.
  */
-export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
+export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO, ledger = false): LoopStep {
+  const r = stepLoopGuardCore(state, tool, input, fingerprint, now, cwd, echo);
+  if (!ledger) return r;
+  const obj = typeof input === "object" ? input : undefined;
+  const file = tool === "Write" ? String(obj?.file_path ?? "") || null : null;
+  return { ...r, state: ledgerStep({ ...r.state, fail: state.fail }, tool, file ? callKey(tool, input) : null, file, missingProbe(tool, obj, cwd ?? process.cwd())) };
+}
+
+function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
   let r = stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
   const command = tool === "Bash" ? bashCommand(input) : undefined;
   const bashWrites = command !== undefined ? bashWriteTargets(command) : null;
@@ -840,15 +862,15 @@ function applyLifecycle(r: LoopStep): LoopStep {
  * so when Pre did not record this call (no pending window entry) the call is stepped here first.
  * `deny` then means the 4th identical failure: hand `reason` back as context and stop the session if `stop`.
  */
-export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string): LoopStep {
+export function recordLoopFailure(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, error: unknown, now = Date.now(), cwd?: string, ledger = false): LoopStep {
   const key = callKey(tool, input);
   if (key === null || EDIT_TOOLS.has(tool)) return { state, deny: false };
   const last = state.window.length - 1;
   const seenByPre = last >= 0 && state.window[last] === key && (state.outs?.[last] ?? null) === null;
   let step: LoopStep = { state, deny: false };
   if (!seenByPre) {
-    step = stepLoopGuard(state, tool, input, null, now, cwd);
+    step = stepLoopGuard(state, tool, input, null, now, cwd, undefined, ledger);
     if (step.deny) return { ...step, reason: step.reason ?? loopDenyReason(tool, step.count) };
   }
-  return { ...step, state: recordLoopResult(step.state, tool, input, `error: ${resultSig(error)}`, now) };
+  return { ...step, state: recordLoopResult(step.state, tool, input, `error: ${resultSig(error)}`, now, ledger) };
 }

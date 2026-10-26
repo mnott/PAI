@@ -14,10 +14,22 @@ import { NOTE_TOKEN_ENV, noteContext, takePendingNotes } from "../../../workers/
 import { workersLogDir } from "../../../workers/paths.js";
 import { currentWorkerId } from "../../../workers/worker-id.js";
 import { recordLoopTelemetry } from "../lib/loop-guard-telemetry.js";
+import { recordFiring } from "../lib/antipattern-log.js";
+import { failLedgerOn, ledgerNote } from "../lib/fail-ledger.js";
 import { recordLoopFailure, recordLoopResult } from "../lib/loop-guard.js";
+import type { LoopState } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
 import { isWorkerSession } from "../lib/worker-session.js";
+
+/** The FAIL ledger block when this turn added an entry; remembers it was shown and records the firing. */
+function failBlock(file: string, state: LoopState, max: number): string | undefined {
+  const n = ledgerNote(state, max);
+  if (!n) return;
+  saveLoopState(file, n.state);
+  recordFiring({ id: "fail-ledger", category: "tool-loop", action: "note", mode: "enforce", input: `${n.entry.kind}\t${n.entry.scope}` });
+  return n.note;
+}
 
 /** Feeds the tool result into the loop guard's repeated-result count. */
 function recordResult(raw: string, logDir: string, id: string): string | undefined {
@@ -26,18 +38,20 @@ function recordResult(raw: string, logDir: string, id: string): string | undefin
     if (!j.tool_name) return;
     const file = loopStateFile(logDir, id);
     const state = loadLoopState(file);
+    const ledger = failLedgerOn(process.env, readWorkersSection().workers.failLedger);
     const input = j.tool_name === "Bash" ? (j.tool_input?.command as string | undefined) : j.tool_input;
     if (j.hook_event_name === "PostToolUseFailure") {
       // a failure that never reached PreToolUse (input validation) is counted here; the 4th identical one is told to stop
-      const r = recordLoopFailure(state, j.tool_name, input, j.error ?? j.tool_response);
+      const r = recordLoopFailure(state, j.tool_name, input, j.error ?? j.tool_response, Date.now(), undefined, !!ledger);
       if (r.state !== state) saveLoopState(file, r.state);
       recordLoopTelemetry(r, { fallbackText: j.tool_name });
-      if (!r.deny) return r.note;
+      if (!r.deny) return [r.note, ledger && failBlock(file, r.state, ledger.maxEntries)].filter(Boolean).join("\n") || undefined;
       if (r.stop) requestLoopStop(logDir, id, `${j.tool_name} failed ${r.count} times with the same error`);
       return r.reason;
     }
-    const next = recordLoopResult(state, j.tool_name, input, j.tool_response);
+    const next = recordLoopResult(state, j.tool_name, input, j.tool_response, Date.now(), !!ledger);
     if (next !== state) saveLoopState(file, next);
+    if (ledger) return failBlock(file, next, ledger.maxEntries);
   } catch {
     // result tracking is best effort
   }

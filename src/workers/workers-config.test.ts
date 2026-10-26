@@ -910,6 +910,10 @@ describe("provider characteristics (registered endpoints)", () => {
     expect(w.workers.providers.box.characteristics).toEqual({ classes: ["t1"], contextTokens: 32000, tags: ["fast"] });
   });
 
+  it("failLedger is off by default with 5 entries", () => {
+    expect(load([]).workers.failLedger).toEqual({ enabled: false, maxEntries: 5 });
+  });
+
   it("rejects a bad context_tokens and an unknown key", () => {
     expect(() => load(["    characteristics:", "      context_tokens: -1"])).toThrow(/context_tokens/);
     expect(() => load(["    characteristics:", "      speed: 3"])).toThrow(/unknown key speed/);
