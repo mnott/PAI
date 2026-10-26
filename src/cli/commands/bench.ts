@@ -27,7 +27,7 @@ export const benchCommand: CommandDef = {
       name: "run",
       summary: "Run the sets for one provider under a watchdog",
       description:
-        "Runs the sets one after another (local models serve one run at a time) through bench/evalset.sh and bench/realset.sh. Routing is pinned to the provider, escalation and quota retry are off, so a run never falls back to a cloud model. A watchdog watches the worker transcripts and stops the series, logging why, on REWRITE (an answer file written 4 times), RUNAWAY (more than 60 distinct answer files in one run) or IDLE (no worker activity for --idle seconds). Real tasks are capped per task. Between runs `pai power wait` is called when that command exists. The series log is <results>/series-<key>.log.",
+        "Runs the sets one after another (local models serve one run at a time) through bench/evalset.sh and bench/realset.sh. Routing is pinned to the provider, escalation and quota retry are off, so a run never falls back to a cloud model. A watchdog watches the worker transcripts and stops the series, logging why, on REWRITE (an answer file written 15 times, see --max-writes), RUNAWAY (more than 60 distinct answer files in one run) or IDLE (no worker activity for --idle seconds, not counting the `pai power wait` between runs). Real tasks are capped per task. Between runs `pai power wait` is called when that command exists. The series log is <results>/series-<key>.log.",
       options: [
         { ...OPT.provider, summary: "Provider under test (required)" },
         { name: "sets", type: "string", value: "LIST", default: SET_NAMES.join(","), summary: "Comma list of short, easy, hard" },
@@ -35,7 +35,8 @@ export const benchCommand: CommandDef = {
         { name: "real", type: "number", value: "N", default: 0, summary: "Reps of the 5 real PAI tasks (0 = skip)" },
         { name: "key", type: "string", value: "K", summary: "Results key (default: the provider)" },
         { name: "real-cap", type: "number", value: "MIN", default: 30, summary: "Minutes one real task may run" },
-        { name: "idle", type: "number", value: "SEC", default: 90, summary: "Stop the series after this many seconds without worker activity" },
+        { name: "idle", type: "number", value: "SEC", default: 900, summary: "Stop the series after this many seconds without worker activity" },
+        { name: "max-writes", type: "number", value: "N", default: 15, summary: "Stop the series when one answer file is written this many times" },
         DIR_OPT,
       ],
       examples: ["pai bench run --provider gyro-m", "pai bench run --provider gyro-m --sets easy,hard --reps 3 --real 2 --key gyro-m-night"],
@@ -53,7 +54,8 @@ export const benchCommand: CommandDef = {
           key: typeof ctx.opts.key === "string" && ctx.opts.key ? ctx.opts.key : provider,
           dir: typeof ctx.opts.results === "string" ? ctx.opts.results : defaultBenchDir(),
           realCapMin: num(ctx.opts["real-cap"], "real-cap", 30),
-          idleSec: num(ctx.opts.idle, "idle", 90),
+          idleSec: num(ctx.opts.idle, "idle", 900),
+          maxWrites: num(ctx.opts["max-writes"], "max-writes", 15),
           out: (l: string) => void process.stdout.write(l + "\n"),
         };
         if (ctx.dryRun) {

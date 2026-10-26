@@ -23,7 +23,7 @@ Run the sets for one provider under a watchdog
 pai bench run [options]
 ```
 
-Runs the sets one after another (local models serve one run at a time) through bench/evalset.sh and bench/realset.sh. Routing is pinned to the provider, escalation and quota retry are off, so a run never falls back to a cloud model. A watchdog watches the worker transcripts and stops the series, logging why, on REWRITE (an answer file written 4 times), RUNAWAY (more than 60 distinct answer files in one run) or IDLE (no worker activity for --idle seconds). Real tasks are capped per task. Between runs `pai power wait` is called when that command exists. The series log is <results>/series-<key>.log.
+Runs the sets one after another (local models serve one run at a time) through bench/evalset.sh and bench/realset.sh. Routing is pinned to the provider, escalation and quota retry are off, so a run never falls back to a cloud model. A watchdog watches the worker transcripts and stops the series, logging why, on REWRITE (an answer file written 15 times, see --max-writes), RUNAWAY (more than 60 distinct answer files in one run) or IDLE (no worker activity for --idle seconds, not counting the `pai power wait` between runs). Real tasks are capped per task. Between runs `pai power wait` is called when that command exists. The series log is <results>/series-<key>.log.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -33,7 +33,8 @@ Runs the sets one after another (local models serve one run at a time) through b
 | `--real N` | number | 0 | Reps of the 5 real PAI tasks (0 = skip) |
 | `--key K` | string | — | Results key (default: the provider) |
 | `--real-cap MIN` | number | 30 | Minutes one real task may run |
-| `--idle SEC` | number | 90 | Stop the series after this many seconds without worker activity |
+| `--idle SEC` | number | 900 | Stop the series after this many seconds without worker activity |
+| `--max-writes N` | number | 15 | Stop the series when one answer file is written this many times |
 | `--results DIR` | string | — | Results root (default: $PAI_BENCH_DIR or ~/.cache/pai/bench); never inside the repo |
 
 ```sh

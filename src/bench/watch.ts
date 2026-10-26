@@ -21,7 +21,7 @@ export interface WatchLimits {
   maxFiles: number;
 }
 
-export const DEFAULT_LIMITS: WatchLimits = { maxWrites: 4, idleMs: 90_000, maxFiles: 60 };
+export const DEFAULT_LIMITS: WatchLimits = { maxWrites: 15, idleMs: 900_000, maxFiles: 60 };
 
 export class Watchdog {
   private writes = new Map<string, number>();

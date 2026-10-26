@@ -25,6 +25,8 @@ export interface BenchRunOpts {
   /** Minutes one real task may run. */
   realCapMin: number;
   idleSec: number;
+  /** An answer file written this many times ends the series (REWRITE). */
+  maxWrites: number;
   out: (line: string) => void;
 }
 
@@ -91,7 +93,7 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
   const env: NodeJS.ProcessEnv = { ...process.env, BENCH_DIR: o.dir, BENCH_REAL_MAX_MIN: String(o.realCapMin) };
   delete env.ANTHROPIC_API_KEY;
   const start = Date.now();
-  const wd = new Watchdog({ ...DEFAULT_LIMITS, idleMs: o.idleSec * 1000 }, start);
+  const wd = new Watchdog({ ...DEFAULT_LIMITS, idleMs: o.idleSec * 1000, maxWrites: o.maxWrites }, start);
   const tail = new LogTail(logDir, start, (cwd) => cwd.startsWith(join(o.dir, "work")) || cwd.includes(`${join(".cache", "pai", "realtask-trees")}/${o.key}-`));
   const tick = (): Verdict | null => {
     for (const ev of tail.poll()) {
@@ -101,8 +103,8 @@ export async function benchRun(o: BenchRunOpts, logDir = join(homedir(), ".pai",
     return wd.check(Date.now());
   };
   for (const run of planRuns(o)) {
-    gate?.();
-    wd.reset(Date.now());
+    gate?.(); // blocks (no ticks run) for as long as the battery pause lasts
+    wd.reset(Date.now()); // the wait is not idling: the idle clock restarts after it
     log(`start ${run.label}`);
     const t0 = Date.now();
     const res = await runScript(join(benchDir, run.script), run.args, env, tick);
