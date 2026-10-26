@@ -13,6 +13,7 @@
  * Hook-safe: reads the config through the parse cache (mtime-keyed) and nothing else.
  */
 
+import { realpathSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 import { readDualFormatConfigRaw } from "../config/main-config.js";
 import { paiHomePath } from "../config/pai-home.js";
@@ -65,13 +66,23 @@ export function tenantRulesDir(name: string): string | undefined {
   return name === LOCAL_TENANT ? undefined : getTenant(name)?.rulesDir;
 }
 
+/** resolve() plus symlinks (macOS /var -> /private/var): a worker's cwd and a configured project name the same dir either way. */
+function canonical(p: string): string {
+  const abs = resolve(p);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
 /** The tenant a hook session's project belongs to (longest matching project path wins), else "local". */
 export function tenantForProject(cwd: string): string {
-  const dir = resolve(cwd);
+  const dir = canonical(cwd);
   let best: { name: string; len: number } | null = null;
   for (const t of readTenants()) {
     for (const p of t.projects) {
-      const root = resolve(p);
+      const root = canonical(p);
       if ((dir === root || dir.startsWith(root.endsWith(sep) ? root : root + sep)) && (!best || root.length > best.len)) best = { name: t.name, len: root.length };
     }
   }
