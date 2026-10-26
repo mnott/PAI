@@ -167,6 +167,25 @@ describe("the shared restart (rerunOn)", () => {
   });
 });
 
+describe("the restart inherits the original run's terminal", () => {
+  const rerun = async (st: WorkerStatus) => {
+    const { rerunOn } = await import("./run/escalate.js");
+    saveStatus(dir, st);
+    const runner = vi.fn().mockImplementation(async (o: { onWorkerStart: (id: string) => void }) => (o.onWorkerStart("w2"), 0));
+    await rerunOn({ logDir: dir, cwd: "/repo", label: "fix it", specPath: promptFile, claudeArgs: [], runner: runner as never }, "w1", "rerouted by escalation", st, { provider: "anthropic" });
+    return runner.mock.calls[0]![0] as { _hostTerm?: string };
+  };
+
+  it("a status with a term starts the successor anchored to it", async () => {
+    expect((await rerun(mkStatus({ term: "w0t0p0:UUID-1" })))._hostTerm).toBe("w0t0p0:UUID-1");
+  });
+
+  it("a status without a term starts the successor with no anchor (paneless, not failed)", async () => {
+    const o = await rerun(mkStatus({ term: "" }));
+    expect(o._hostTerm).toBeUndefined();
+  });
+});
+
 describe("the default restart is headless", () => {
   it("passes -p <task> to rerunOn (without it the restart is an interactive launch that exits rc 1)", async () => {
     vi.resetModules();

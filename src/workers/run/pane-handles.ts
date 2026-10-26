@@ -9,7 +9,7 @@ import { shortText } from "../args.js";
 import { readWorkersSection } from "../config.js";
 import { appendLedger } from "../ledger.js";
 import { saveStatus, type WorkerStatus } from "../status.js";
-import { headlessAllowed } from "../pane.js";
+import { headlessAllowed, resolveHostSession } from "../pane.js";
 import { recordSystemWaiver, type SystemJob } from "../pane-waiver.js";
 import { launchPane, noTerminalReasons } from "../pane-launch.js";
 import { type OwnedPane } from "../pane-exec.js";
@@ -138,4 +138,9 @@ export async function announcePane(
   if (status?.pane?.opened !== false) process.stderr.write(`[pai worker] no pane for ${wid}: ${why}\n`);
   setPane({ opened: false, reason: why });
   void ledger;
+}
+
+/** The terminal identity a run's pane anchors to: the one a restart inherits from the run it repeats, else this process's host session ("" = none). */
+export async function runTerm(inherited?: string): Promise<string> {
+  return inherited ? inherited : (await resolveHostSession()).term;
 }
