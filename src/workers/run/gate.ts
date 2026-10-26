@@ -57,6 +57,7 @@ import { resolveLocalProvider } from "../local-provider.js";
 import { routeRun } from "../policy.js";
 import { runWorker } from "./worker-ref.js";
 import { UNLABELED } from "../status.js";
+import { handoffLimit } from "./handoff.js";
 import { guardQueuedRun } from "./follow-reroute.js";
 import { followCommand } from "../pane.js";
 import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
@@ -309,6 +310,7 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
       reportFormat: a.reportFormat,
       outputFormat: a.parsed.outputFormat === "json" ? "json" : "text",
       maxMinutes: limitMinutes,
+      handoffMinutes: a.route?.local && a.route.policy !== "local-only" && !isBenchmarkLabel(a.label) ? handoffLimit(a.config.localHandoffMinutes, a.limit)?.minutes ?? null : null,
       trailer: promptTrailer(a.reportFormat),
       worktree: a.parsed.headless && !a.printCmd && worktreeWanted(a.worktreeFlag, { cwd, allowedTools: a.parsed.allowedTools }),
       ...(claim ? { runStartedAt: a.runT0 ?? Date.now() } : {}),
@@ -367,8 +369,8 @@ export async function tryPoolRun(a: ExecuteArgs): Promise<number | null> {
     const commits = st.worktreeDir && st.worktreeBase ? commitLines(st.worktreeDir, st.worktreeBase) : [];
     const why = fallThroughReason(a.route, st, report, a.label, ranLocal(a, st)) ?? (st.loopStopped ? "loop-guard stop" : st.timedOut ? "max-minutes" : null);
     // kept for review (it committed) stays: no cloud re-run, no escalation
-    const reviewed = committedFallThrough(why, commits);
-    const escalated = await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why, !!reviewed);
+    const reviewed = st.handoffMin ? null : committedFallThrough(why, commits);
+    const escalated = st.handoffMin ? null : await tryEscalate(a, wid, st, report, resp.resultEvent?.result, commits, why, !!reviewed);
     if (escalated !== null) return escalated;
     if (reviewed) {
       process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);

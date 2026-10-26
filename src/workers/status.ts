@@ -226,6 +226,10 @@ export interface WorkerStatus {
   loopStopped?: boolean;
   /** The deadline stopped this run (state failed, `last` says why). */
   timedOut?: boolean;
+  /** Active minutes at which this local run was handed to a cloud worker (workers.localHandoffMinutes); timedOut is set with it. */
+  handoffMin?: number;
+  /** ps line of a handoff: "handed off to anthropic as <id> at 45 min". */
+  handoffNote?: string;
   /** Launching process (the parent of `pai worker run`) at start, and its command name. */
   parentPid?: number;
   parentComm?: string;

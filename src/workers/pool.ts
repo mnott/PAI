@@ -573,6 +573,8 @@ export interface PoolTaskRequest {
   worktree?: boolean;
   /** Task time limit in minutes; null/0 = none. */
   maxMinutes: number | null;
+  /** Active minutes after which the host stops the task for a cloud handoff (handoff.ts); null/0 = never. */
+  handoffMinutes?: number | null;
   trailer: string;
   /** Claim a spare (POST /claim): the host binds this id to a pre-started worker in its own worktree. */
   spare?: boolean;

@@ -18,6 +18,7 @@ import { type WorkerReport } from "../report.js";
 import { type ExecuteArgs } from "./types.js";
 import { relaunchOptions } from "./finalise.js";
 import { runWorker } from "./worker-ref.js";
+import { branchCommits, handoffSpec } from "./handoff.js";
 
 /**
  * Escalation one tier up (escalation.ts) for a run that just ended: context over the
@@ -160,17 +161,22 @@ export function rerunOn(a: RerunSource, wid: string, why: string, st: WorkerStat
   const where = to === CLOUD ? "the cloud" : to.provider;
   appendLedger(ledgerPath(logDir), "WORKER-FALLTHROUGH", { id: wid, reason: why, ...(to === CLOUD ? {} : { to: to.provider }) });
   process.stderr.write(`pai worker: ${wid} on ${a.target?.providerName ?? st.provider} ended badly (${why}) — re-running on ${where}\n`);
+  // a handed-off run: the original spec behind a header naming the branch it holds
+  const p0 = parseRunnerArgs(a.claudeArgs).prompt;
+  let swapped = false;
+  const claudeArgs = st.handoffMin && p0 ? a.claudeArgs.map((x) => (!swapped && x === p0 ? ((swapped = true), handoffSpec(p0, wid, st.branch ?? undefined, branchCommits(st))) : x)) : a.claudeArgs;
+  if (st.handoffMin) process.stderr.write(`pai worker: ${wid} handed off at ${st.handoffMin} min\n`);
   return (a.runner ?? runWorker)({
     providerFlag: to.provider,
     ...(to.model ? { modelFlag: to.model } : {}),
-    label: `${a.label} (${to === CLOUD ? "fall-through" : "rerouted"})`,
+    label: `${a.label} (${st.handoffMin ? "handed off" : to === CLOUD ? "fall-through" : "rerouted"})`,
     noPool: a.opts?.noPool,
     mcpFlag: a.mcpFlag,
     cwd: a.cwd,
     specPath: a.specPath,
     parent: a.parent,
     stage: a.stage,
-    claudeArgs: a.claudeArgs,
+    claudeArgs,
     quiet: a.quiet,
     worktreeFlag: a.worktreeFlag,
     className: a.className,
@@ -180,6 +186,7 @@ export function rerunOn(a: RerunSource, wid: string, why: string, st: WorkerStat
     _priorIds: [...(a.priorIds ?? []), wid],
     onWorkerStart: (id2) => {
       st.fallThroughTo = id2;
+      if (st.handoffMin) st.handoffNote = `handed off to ${to.provider} as ${id2} at ${st.handoffMin} min`;
       saveStatus(logDir, st);
       a.onWorkerStart?.(id2);
     },

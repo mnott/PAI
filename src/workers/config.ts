@@ -615,6 +615,8 @@ export interface WorkersConfig {
   cacheKeepaliveSecs: number;
   /** Default time limit of every run in minutes (workers.defaultMaxMinutes); 0 = none. */
   defaultMaxMinutes: number;
+  /** Active minutes after which a still-running local worker hands its branch to a cloud worker (workers.localHandoffMinutes); 0 = off. */
+  localHandoffMinutes: number;
   /** Minutes a run may queue for a slot before the owner is told (workers.waitAlarmMinutes); default 120. */
   waitAlarmMinutes: number;
   /** Milliseconds the end-of-run rule scan may take before it is skipped (workers.scanBudgetMs); default 5000. */
@@ -740,6 +742,7 @@ export function defaultWorkersConfig(): WorkersConfig {
     },
     cacheKeepaliveSecs: num(w.cacheKeepaliveSecs, 0),
     defaultMaxMinutes: num(w.defaultMaxMinutes, 60),
+    localHandoffMinutes: num(w.localHandoffMinutes, 45),
     waitAlarmMinutes: num(w.waitAlarmMinutes, 120),
     scanBudgetMs: num(w.scanBudgetMs, 5000),
     stagger: {
@@ -1448,6 +1451,13 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     }
     defaultMaxMinutes = w.defaultMaxMinutes;
   }
+  let localHandoffMinutes = d.localHandoffMinutes;
+  if (w.localHandoffMinutes !== undefined) {
+    if (typeof w.localHandoffMinutes !== "number" || !Number.isInteger(w.localHandoffMinutes) || w.localHandoffMinutes < 0) {
+      bad(".localHandoffMinutes", "must be a non-negative integer (minutes, 0 = off)");
+    }
+    localHandoffMinutes = w.localHandoffMinutes;
+  }
   let waitAlarmMinutes = d.waitAlarmMinutes;
   if (w.waitAlarmMinutes !== undefined) {
     if (typeof w.waitAlarmMinutes !== "number" || !Number.isInteger(w.waitAlarmMinutes) || w.waitAlarmMinutes < 1) {
@@ -1633,6 +1643,7 @@ export function parseWorkersConfig(raw: unknown, yamlProviders: Record<string, W
     proxy,
     cacheKeepaliveSecs,
     defaultMaxMinutes,
+    localHandoffMinutes,
     waitAlarmMinutes,
     scanBudgetMs,
     stagger,
@@ -1804,6 +1815,7 @@ export function writeWorkersSection(
         proxy: workers.proxy,
         cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
         defaultMaxMinutes: workers.defaultMaxMinutes,
+        localHandoffMinutes: workers.localHandoffMinutes,
         waitAlarmMinutes: workers.waitAlarmMinutes,
         scanBudgetMs: workers.scanBudgetMs,
         stagger: workers.stagger,
