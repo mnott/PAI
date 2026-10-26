@@ -17,7 +17,7 @@ pai uhp serve
 
 ### pai uhp serve
 
-Serve the UHP API (discovery, harnesses, models)
+Serve the UHP API (discovery, harnesses, models, responses, sessions)
 
 ```
 pai uhp serve [options]
@@ -30,6 +30,7 @@ Starts the UHP HTTP server. GET /v1/uhp is open; every other endpoint needs a be
 | `--port N` | number | 8791 | Port (0 picks a free one) |
 | `--bind ADDR` | string | 127.0.0.1 | Address to bind |
 | `--allow-remote` | flag | — | Permit a non-loopback --bind (requires tokens) |
+| `--cwd DIR` | string | — | Directory the workers run in (default: here) |
 | `--tokens FILE` | string | — | Tokens file (default: <PAI_HOME>/uhp/tokens.json) |
 
 ```sh
@@ -118,7 +119,7 @@ pai uhp token list
 
 | Command | Description |
 |---|---|
-| `pai uhp serve` | Serve the UHP API (discovery, harnesses, models) |
+| `pai uhp serve` | Serve the UHP API (discovery, harnesses, models, responses, sessions) |
 | `pai uhp token` | Manage UHP bearer tokens |
 
 ## See also

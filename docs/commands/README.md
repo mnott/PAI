@@ -431,7 +431,7 @@ Generated reference for every `pai` command. Read any page in the terminal with 
 | `pai topic` | Detect when a conversation moved to another project |
 | `pai topic check` | Check whether a text belongs to a different project than the current one |
 | `pai uhp` | Serve PAI workers over the Unified Harness Protocol |
-| `pai uhp serve` | Serve the UHP API (discovery, harnesses, models) |
+| `pai uhp serve` | Serve the UHP API (discovery, harnesses, models, responses, sessions) |
 | `pai uhp token` | Manage UHP bearer tokens |
 | `pai uhp token create` | Create a bearer token (shown once) |
 | `pai uhp token list` | List tokens (ids and hash prefixes, never the secret) |

@@ -333,6 +333,7 @@ const resumeCommand: CommandDef = {
     { name: "print-id", type: "boolean", summary: "Print the new worker id on its own line" },
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
+    { name: "model", type: "string", value: "MODEL", summary: "Model for the continued turn on the same provider (default: the old worker's)" },
   ],
   examples: ["pai worker resume w-20260101-abc","pai worker resume w-20260101-abc 'Also cover the edge case'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
   seeAlso: ["pai worker ps", "pai worker run"],
@@ -358,7 +359,7 @@ const resumeCommand: CommandDef = {
       let newId = "";
       const rc = await runWorker({
         providerFlag: old.provider,
-        modelFlag: old.model,
+        modelFlag: str(ctx.opts.model) || old.model,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
         resumeOf: id,
