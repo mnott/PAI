@@ -163,12 +163,12 @@ Change one detector parameter of a pattern
 pai antipatterns set ID PARAM VALUE [options]
 ```
 
-Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.
+Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), or sets the `proxy` field (enforce | monitor | off: whether the pattern acts on the model-API proxy; enforce rewrites a denied tool call at the router). bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.
 
 | Argument | Required | Description |
 |---|---|---|
 | `ID` | yes | Pattern id (see: pai antipatterns list) |
-| `PARAM` | yes | Detector parameter, e.g. stop_at |
+| `PARAM` | yes | Detector parameter (or `proxy`), e.g. stop_at |
 | `VALUE` | yes | New value |
 
 | Flag | Type | Default | Description |
@@ -177,6 +177,7 @@ Writes the user override (a full copy of the active file on first use), sets det
 
 ```sh
 pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'
+pai antipatterns set git-reset-hard proxy enforce --reason 'protect Joule behind the router'
 ```
 
 ### pai antipatterns label
