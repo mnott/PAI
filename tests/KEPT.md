@@ -18,3 +18,4 @@ Tests are governed: a test file stays only with evidence. (a) a real product bug
 | src/cli/docs-sync.test.ts | c | docs/commands must match command definitions (89e74fa4, df809929) |
 | src/cli/docs-keys.test.ts | c | documented config keys and commands must exist (d7d4aa61, 9d37846c) |
 | src/uhp-server/contract.test.ts | c | UHP 2026-10-19 wire contract (discovery shape, error envelope, auth codes) that third-party UHP clients and the conformance suite depend on |
+| src/workers/uhp.test.ts | c | UHP client wire contract: SSE strictness (gapless sequence_number, one terminal event), error-envelope mapping, request headers; third-party UHP servers depend on what the client sends and accepts |
