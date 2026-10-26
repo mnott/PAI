@@ -131,8 +131,9 @@ export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "proxy" | 
   if (lc.status === "deprecated") return "off";
   if (path === "proxy") {
     if (lc.proxy === "off") return "off";
-    // a proxy-enforced pattern still follows its lifecycle: a lifecycle monitor records only
-    if (lc.proxy === "enforce" && lc.mode !== "enforce") return "monitor";
+    if (lc.proxy === "monitor") return "monitor";
+    // proxy: enforce acts only when the lifecycle mode is enforce too; a lifecycle monitor records only
+    if (lc.mode !== "enforce") return "monitor";
   }
   const at = lc.applies_to;
   if (at?.providers?.length && !at.providers.includes(env.PAI_WORKER_PROVIDER ?? "session")) return "off";

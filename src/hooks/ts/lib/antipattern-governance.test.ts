@@ -52,13 +52,16 @@ describe("lifecycle fields", () => {
     expect(lc).toMatchObject({ status: "stable", mode: "enforce", version: 1, supersedes: [], falsepositives: [] });
     expect(parseLifecycle({ status: "wip" })).toMatch(/status/);
     expect(parseLifecycle({ mode: "dry" })).toMatch(/mode/);
+    expect(parseLifecycle({})).toMatchObject({ proxy: "monitor" });
+    expect(parseLifecycle({ proxy: "enforce" })).toMatchObject({ proxy: "enforce" });
+    expect(parseLifecycle({ proxy: "dry" })).toMatch(/proxy/);
     expect(parseLifecycle({ version: 0 })).toMatch(/version/);
     expect(parseLifecycle({ exceptions: [{ match: "(", reason: "x" }] })).toMatch(/regex/);
     const raw = { id: "x", category: "tool-loop", detector: { kind: "observed" }, action: "note", message: "m", status: "nope" };
     expect(validateAntipattern(raw, null, "t")).toMatch(/status/);
   });
   it("monitor, deprecated, expired and live exceptions, applies_to", () => {
-    const base: Pick<Lifecycle, "status" | "mode" | "exceptions"> = { status: "stable", mode: "enforce", exceptions: [] };
+    const base: Pick<Lifecycle, "status" | "mode" | "proxy" | "exceptions"> = { status: "stable", mode: "enforce", proxy: "monitor", exceptions: [] };
     expect(dispositionOf({ ...base, mode: "monitor" })).toBe("monitor");
     expect(dispositionOf({ ...base, status: "deprecated" })).toBe("off");
     const ex = (expires?: string): typeof base => ({ ...base, exceptions: [{ match: "safe", reason: "r", expires }] });
@@ -66,6 +69,16 @@ describe("lifecycle fields", () => {
     expect(dispositionOf(ex("2000-01-01"), "a safe thing")).toBe("enforce");
     expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "other" })).toBe("off");
     expect(dispositionOf({ ...base, applies_to: { models: ["glm-5"] } }, "", { PAI_WORKER_MODEL: "glm-5" })).toBe("enforce");
+  });
+  it("the proxy path: proxy off records nothing, proxy monitor records only, proxy enforce acts only with lifecycle enforce", () => {
+    const base: Pick<Lifecycle, "status" | "mode" | "proxy" | "exceptions"> = { status: "stable", mode: "enforce", proxy: "monitor", exceptions: [] };
+    expect(dispositionOf(base, "", {}, Date.now(), "proxy")).toBe("monitor");
+    expect(dispositionOf({ ...base, proxy: "off" }, "", {}, Date.now(), "proxy")).toBe("off");
+    expect(dispositionOf({ ...base, proxy: "enforce" }, "", {}, Date.now(), "proxy")).toBe("enforce");
+    expect(dispositionOf({ ...base, mode: "monitor", proxy: "enforce" }, "", {}, Date.now(), "proxy")).toBe("monitor");
+    expect(dispositionOf({ ...base, status: "deprecated", proxy: "enforce" }, "", {}, Date.now(), "proxy")).toBe("off");
+    // the hook path ignores proxy entirely
+    expect(dispositionOf({ ...base, proxy: "off" })).toBe("enforce");
   });
 });
 
