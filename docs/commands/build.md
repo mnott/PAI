@@ -137,7 +137,7 @@ Trigger the forge's push mirror to GitHub and report each mirror
 pai build mirror-sync [options]
 ```
 
-For forge-first repos (origin = a Gitea/Forgejo forge, a push mirror to GitHub): POSTs push_mirrors-sync, then polls push_mirrors (60 s, every 3 s) until each mirror's last_update changes, and prints one line per mirror. A GitHub push-protection refusal (GH013) comes out as the short reason plus the unblock URL. Exits 0 when every mirror is ok. Token: the env var named by config release.forgeTokenEnv (default AIBROKER_FORGE_TOKEN); never printed.
+For forge-first repos (origin = a Gitea/Forgejo forge, a push mirror to GitHub): POSTs push_mirrors-sync, then polls push_mirrors (60 s, every 3 s) until each mirror's last_update changes, and prints one line per mirror. A GitHub push-protection refusal (GH013) comes out as the short reason plus the unblock URL. Exits 0 when every mirror is ok. Token: the env var named by config release.forgeTokenEnv (default AIBROKER_FORGE_TOKEN), else the AIBroker env file (~/.aibroker/env, mode 0600); never printed.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|

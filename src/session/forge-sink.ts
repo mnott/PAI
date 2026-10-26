@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { projectRoot } from "../workers/preamble.js";
 import { readMainConfigRaw } from "../daemon/config.js";
+import { resolveForgeToken } from "../builds/forge-token.js";
 
 export const PROJECT_CONFIG_REL = ".pai/project.yaml";
 export const SECTION_OPEN = "<!-- pai:continue -->";
@@ -83,7 +84,7 @@ function resolveToken(): string | undefined {
     const t = (readMainConfigRaw().forge as { token?: unknown } | undefined)?.token;
     if (typeof t === "string" && t) return t;
   } catch { /* unreadable config: fall through to env */ }
-  return process.env.FORGE_TOKEN || process.env.AIBROKER_FORGE_TOKEN || undefined;
+  return resolveForgeToken("AIBROKER_FORGE_TOKEN");
 }
 
 /** Real transport: curl; the token goes in on stdin so it never shows in ps. */

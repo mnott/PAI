@@ -100,6 +100,7 @@ describe("writeContinueToForge", () => {
   });
   it("fails without token", () => {
     vi.stubEnv("FORGE_TOKEN", ""); vi.stubEnv("AIBROKER_FORGE_TOKEN", "");
+    vi.stubEnv("AIBROKER_ENV_FILE", join(tmpdir(), "pai-no-such-env"));
     vi.stubEnv("PAI_CONFIG_FILE", join(tmpdir(), "pai-no-such-config.json"));
     expect(() => writeContinueToForge(".", CFG, "MD", { http: fakeHttp({}), originUrl: ORIGIN })).toThrow(/no forge token/);
     vi.unstubAllEnvs();
@@ -120,6 +121,7 @@ describe("applyContinue sink", () => {
 
   it("falls back to TODO.md with one loud line", () => {
     vi.stubEnv("FORGE_TOKEN", ""); vi.stubEnv("AIBROKER_FORGE_TOKEN", "");
+    vi.stubEnv("AIBROKER_ENV_FILE", join(root, "no-env"));
     vi.stubEnv("PAI_CONFIG_FILE", join(root, "none.json"));
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = applyContinue({ rootPath: root, authored: "model", sessionLine: "s", cwd: root, body: "real body text here" });

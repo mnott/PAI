@@ -272,6 +272,20 @@ describe("runRelease --from / --skip", () => {
     expect(r.lines).toContain("mirror: FAILED — no forge token (set $AIBROKER_FORGE_TOKEN) — sync the push mirror in the forge UI, then run: pai release --from mirror");
   });
 
+  it("mirror step names the token file path (never the value) and passes the permissions hint", async () => {
+    const dir = tmpRepo();
+    const f = fake(dir, { headTag: "v1.2.4", tagVisibleAfter: 1 });
+    const lines: string[] = [];
+    const from = async (): Promise<MirrorSyncResult> => ({ ...(await mirrorOk()), tokenFrom: "/h/.aibroker/env" });
+    await runRelease({ repo: dir, from: "mirror" }, { ...common, run: f.run, syncMirrors: from, out: (l) => lines.push(l) });
+    expect(lines).toContain("forge token: from /h/.aibroker/env");
+    const perm = async (): Promise<MirrorSyncResult> => {
+      throw new Error("no forge token: set AIBROKER_FORGE_TOKEN (or config release.forgeTokenEnv); token file ignored: permissions");
+    };
+    const r = await runRelease({ repo: dir, from: "mirror", skip: ["mirror"] }, { ...common, run: fake(dir, { headTag: "v1.2.4", tagVisibleAfter: 99 }).run, syncMirrors: perm });
+    expect(r.lines.join("\n")).toContain("token file ignored: permissions");
+  });
+
   it("refuses --from after tag when HEAD has no v* tag", async () => {
     const dir = tmpRepo();
     const f = fake(dir);
