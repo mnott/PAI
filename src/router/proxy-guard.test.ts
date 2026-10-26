@@ -7,7 +7,8 @@ import { createRouter } from "./router.js";
 import { parseWorkersConfig } from "../workers/config.js";
 import { readFirings } from "../hooks/ts/lib/antipattern-log.js";
 import { stats } from "../antipatterns/govern.js";
-import type { ProxyGuardDeps } from "./proxy-guard.js";
+import { monitorReply, type ProxyGuardDeps } from "./proxy-guard.js";
+import { LoopStore } from "./proxy-loop.js";
 
 const ev = (type: string, body: object) => `event: ${type}\ndata: ${JSON.stringify({ type, ...body })}\n\n`;
 const toolStream = (command: string) =>
@@ -99,5 +100,76 @@ describe("router proxy guard (monitor)", () => {
     expect(out).toBe(body);
     expect(logs.some((l) => l.includes("boom"))).toBe(true);
     expect(readFirings()).toEqual([]);
+  });
+});
+
+describe("proxy guard per-conversation loop state", () => {
+  const reply = (id: string, name: string, input: object) => JSON.stringify({ content: [{ type: "tool_use", id, name, input }] });
+  // a request replaying the conversation so far; results[i] answers the tool call of turn i
+  const request = (calls: { name: string; input: object }[], results: { text: string; is_error?: boolean }[]) => {
+    const messages: object[] = [{ role: "user", content: "start" }];
+    results.forEach((r, i) => {
+      messages.push({ role: "assistant", content: [{ type: "tool_use", id: `t${i}`, name: calls[i].name, input: calls[i].input }] });
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: r.text, is_error: r.is_error }] });
+    });
+    return { system: "sys", messages };
+  };
+  const setup = () => {
+    const fired: { id: string; source?: string; turn: number }[] = [];
+    let turn = 0;
+    const deps: ProxyGuardDeps = { rules: () => [], loops: new LoopStore(), record: (f: any) => fired.push({ id: f.id, source: f.source, turn }) };
+    const step = (name: string, input: object, calls: { name: string; input: object }[], results: { text: string; is_error?: boolean }[]) => {
+      turn = calls.length;
+      monitorReply(reply(`t${calls.length}`, name, input), "application/json", "m", deps, "p", request(calls, results));
+    };
+    return { fired, step };
+  };
+
+  it("repeated-failure: same failing Bash command with the same error text fires source proxy on the right turn", () => {
+    const { fired, step } = setup();
+    const input = { command: "npx vitest run a.test.ts" };
+    const err = { text: "FAIL a.test.ts: expected 1 to be 2", is_error: true };
+    const calls: { name: string; input: object }[] = [];
+    const results: { text: string; is_error?: boolean }[] = [];
+    for (let t = 0; t < 4; t++) {
+      step("Bash", input, calls, results);
+      calls.push({ name: "Bash", input });
+      results.push(err);
+    }
+    expect(fired.length).toBeGreaterThan(0);
+    expect(fired.every((f) => f.source === "proxy")).toBe(true);
+    const first = fired.find((f) => f.id === "repeated-failure");
+    expect(first).toBeDefined();
+    expect(first!.turn).toBe(2); // the third identical run is the deny_at=3 one; turns 0 and 1 are clean
+  });
+
+  const missingRun = () => {
+    const missing = (i: number) => ({ file_path: join(home, `nope-${i}.py`) });
+    const gone = { text: "File does not exist.", is_error: true };
+    const run = (okAt: number | null) => {
+      const { fired, step } = setup();
+      const calls: { name: string; input: object }[] = [];
+      const results: { text: string; is_error?: boolean }[] = [];
+      for (let i = 0; i < 10; i++) {
+        const ok = i === okAt;
+        const input = ok ? { file_path: home } : missing(i);
+        step("Read", input, calls, results);
+        calls.push({ name: "Read", input });
+        results.push(ok ? { text: "contents" } : gone);
+      }
+      return fired.filter((f) => f.id === "missing-path-streak");
+    };
+    return run;
+  };
+
+  it("missing-path-streak: 10 Reads of nonexistent paths fire source proxy on the tenth turn", () => {
+    const streak = missingRun()(null);
+    expect(streak.length).toBe(1);
+    expect(streak[0].source).toBe("proxy");
+    expect(streak[0].turn).toBe(9);
+  });
+
+  it("missing-path-streak: a successful Read in between resets the streak, no firing", () => {
+    expect(missingRun()(5)).toEqual([]);
   });
 });
