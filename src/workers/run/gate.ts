@@ -60,6 +60,7 @@ import { followCommand, resolveHostSession } from "../pane.js";
 import { commitLines, commitsSince, salvageOnExit, worktreeWanted } from "../worktree.js";
 import { promptTrailer } from "../report.js";
 import { extendLimit } from "../deadline.js";
+import { preemptLocal } from "../preempt.js";
 import { aibrokerMessenger } from "../run-events.js";
 import { ownerOf } from "../local-idle.js";
 import { batteryGateRefusal, isBenchmarkLabel } from "../../daemon/battery-guard.js";
@@ -667,6 +668,9 @@ export async function runGates(a: ExecuteArgs, wid: string, status: WorkerStatus
     disabled: a.noQueue,
     priority: a.priority,
     tier,
+    ...(a.priority === "front" && isLocalProvider(target.provider.baseUrl)
+      ? { preempt: () => { preemptLocal(logDir, target.providerName, wid); } }
+      : {}),
     log: (line) => {
       process.stderr.write(`${line}\n`);
     },

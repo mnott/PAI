@@ -47,6 +47,12 @@ export interface WorkerStatus {
   priority?: "high" | "normal" | "low";
   /** `pai worker pause`: the router parks this worker's next engine request until `resume`. */
   paused?: boolean;
+  /** Id of the `--now` run that preempted this worker (paused it and aborted its request in flight); set with `paused`, cleared on resume or when an operator pauses it separately. */
+  pausedBy?: string;
+  /** Epoch ms the preemption pause began; open while set. */
+  pausedAt?: number;
+  /** Closed preemption-pause time (ms): not work, added to the deadline like queue wait. */
+  pausedMs?: number;
   /** Notes not yet handed to the worker; the PostToolUse hook drains them (note-delivery.ts). */
   notePending?: string[];
   /** When the last pending notes reached the worker (nowStamp). */
@@ -351,6 +357,10 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     // Written by `pai worker priority|pause|resume` (another process); the runner's copy only seeds the priority.
     if (onDisk.priority !== undefined) status.priority = onDisk.priority;
     if (onDisk.paused !== undefined) status.paused = onDisk.paused;
+    for (const k of ["pausedBy", "pausedAt", "pausedMs"] as const) {
+      if (onDisk[k] !== undefined) (status as unknown as Record<string, unknown>)[k] = onDisk[k];
+      else delete status[k];
+    }
     // Written by `pai worker wait-on` (another process); the runner's in-memory copy never knows it.
     if (status.waitingOn === undefined && onDisk.waitingOn) status.waitingOn = onDisk.waitingOn;
     // Recorded by `pai issue claim` (another process).
