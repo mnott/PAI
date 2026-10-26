@@ -111,7 +111,7 @@ import { psOutput, replayOutput } from "../workers/viewer.js";
 import { ageOf, loadStatus, loadStatuses, isLive, nowStamp, reconcileStatuses, setWorkerLabel } from "../workers/status.js";
 import { setWorkerPaused } from "../workers/engine-control.js";
 import { resumePlan } from "../workers/resume-args.js";
-import { applyPriority } from "../workers/preempt.js";
+import { applyPriority, endExpiredWindowNow } from "../workers/preempt.js";
 import { queueRows, reorderQueue } from "../workers/capacity.js";
 import { schedulerLines, schedulerView } from "../workers/scheduler.js";
 import { providerCaps } from "../cli/commands/worker.js";
@@ -1804,6 +1804,7 @@ async function startShim(): Promise<void> {
     async (args) => {
       try {
         const n = clearUrgency(process.env, args.session);
+        endExpiredWindowNow(workersLogDir(readWorkersSection().workers));
         return workerText(n ? "urgency window cleared" : "no urgency window open");
       } catch (e) {
         return workerError(e);

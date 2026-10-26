@@ -594,15 +594,19 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   const ticketText = (front: boolean): string => `${self.pid ?? process.pid}${front ? " front" : ""} @${t0}${o.tier && o.tier !== "normal" ? ` p:${o.tier}` : ""}`;
   writeTicket(entry, ticketText(o.priority === "front" || (o.holdExempt && o.holdOf?.() !== undefined) ? true : false));
 
+  let madeUrgent = false;
+
   // Runs holding a slot: live and running on this provider — a "queued" status
   // is a waiter, never a holder, whatever its queue entry says.
   const check = () => {
     const loaded = load(logDir);
     const queue = liveQueue(logDir, queueKey, isAlive, loaded, now(), cfg.agingMs);
     const owns = o.isAlive ? (w: { pid: number }) => isAlive(w.pid) : ownsPid;
-    // a worker paused by a --now run holds no slot while paused
+    // a worker paused by a --now run is queued behind the now runs: it frees its slot for them (the urgent
+    // waiter ignores it) but stays reserved against everyone else, so the freed slot never goes to a normal waiter
+    const urgentSelf = o.priority === "front" || madeUrgent;
     const holders = loaded.filter(
-      (s) => s.id !== self.id && holds(s) && s.state === "running" && !(s.paused && s.pausedBy) && isLive(s, owns),
+      (s) => s.id !== self.id && holds(s) && s.state === "running" && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
     return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };
@@ -641,7 +645,6 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
   };
   let lastBeat = t0;
   let alarmed = false;
-  let madeUrgent = false;
   // the pane opened before the wait shows its place in line until the slot is granted
   const paneQueued = (i: CapacityInfo): QueuedFile => ({
     provider: i.provider,

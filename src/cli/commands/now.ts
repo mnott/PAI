@@ -1,6 +1,8 @@
 /** `pai now`: open, show or clear the operator's urgency window (workers/urgency.ts). */
 
 import { CliError, type CommandDef, type RunContext } from "../define.js";
+import { workersLogDir } from "../../workers/paths.js";
+import { endExpiredWindowNow } from "../../workers/preempt.js";
 import { clearUrgency, DEFAULT_URGENCY_WINDOW_MIN, listUrgency, readUrgency, readUrgencyFor, recordUrgency } from "../../workers/urgency.js";
 import { detectSessionName } from "../../workers/session-name.js";
 import { readWorkersSection } from "../../workers/config.js";
@@ -62,14 +64,25 @@ function statusCmd(ctx: RunContext): number {
   return 0;
 }
 
+/** Workers the cleared window made "now" fall back at once (the daemon sweep would, within 30 s). */
+function releaseWindowNow(): void {
+  try {
+    endExpiredWindowNow(workersLogDir(readWorkersSection().workers));
+  } catch {
+    /* the daemon sweep catches up */
+  }
+}
+
 async function clearCmd(ctx: RunContext): Promise<number> {
   const session = (ctx.opts.session as string | undefined) ?? (ctx.args.SESSION as string | undefined);
   if (session?.trim()) {
     const removed = clearUrgency(process.env, session.trim());
+    releaseWindowNow();
     console.log(removed ? `urgency window for ${session.trim()} cleared` : `no urgency window for ${session.trim()}`);
     return 0;
   }
   const removed = clearUrgency(process.env);
+  releaseWindowNow();
   console.log(removed ? `urgency window cleared (${removed} file${removed > 1 ? "s" : ""})` : "no urgency window open for this session");
   return 0;
 }
