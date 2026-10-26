@@ -1,10 +1,12 @@
 # One file Written again and again with different content and no new information in between
 # (no Read, Bash or Grep result): neither identical-write (same bytes) nor revert (an earlier
 # version) sees it. Counts Writes of one file since the last Read/Bash/Grep of anything.
+# A Bash call that only writes files (`cat > f <<EOF`, `> f`, `tee f`) counts as a write of f and
+# brings no new information, so it does not reset the count.
 id: distinct-rewrites
-status: experimental
-mode: monitor
-version: 1
+status: stable
+mode: enforce
+version: 2
 created: 2026-10-25
 category: tool-loop
 detector:
@@ -18,11 +20,16 @@ falsepositives:
   - genuine iterative refinement when each write is followed by a test run or a Read of new information
 blind_spots:
   - rewrites spread across Edit calls instead of Write
+  - a heredoc write followed by a run in the same Bash call (`cat > f <<EOF ... EOF && node f`) is a test run, so it resets
 tests:
   match:
     - "A B C D E F G H I"
     - "A B C D E F G H"
+    - "bash:A bash:B bash:C bash:D bash:E bash:F bash:G bash:H"
+    - "A B C D bash:E bash:F bash:G bash:H"
   no_match:
+    - "bash:A bash:B bash:C bash:D bash:E bash:F bash:G"
+    - "A B C D run E F G H"
     - "A B C D E F G"
     - "A A A A A A A A A"
     - "A B A B A B A B A"
@@ -30,3 +37,4 @@ provenance:
   date: 2026-10-25
   model: Gyro-M
   observed: out/27.py written 10 times with 9 distinct contents and no Read or test result in between, while the rest of the set waited
+  ref: Gyro-M hard run 2026-10-25 (out/1.py written 16x, 10 distinct versions, 3 recurring 3x); a runaway wrote 272 debug scripts through Bash heredocs

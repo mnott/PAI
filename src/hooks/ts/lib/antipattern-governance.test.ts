@@ -38,8 +38,8 @@ const noop = () => undefined;
 describe("lifecycle fields", () => {
   it("every shipped pattern and shell rule is stable, enforce, version 1, with a created date", () => {
     for (const a of loadAntipatterns().filter((x) => x.source === "shipped")) {
-      // distinct-rewrites ships experimental, in monitor mode
-      expect([a.status, a.mode, a.version]).toEqual(a.id === "distinct-rewrites" ? ["experimental", "monitor", 1] : ["stable", "enforce", 1]);
+      // distinct-rewrites went stable/enforce as version 2 (the Bash-write blind spot closed)
+      expect([a.status, a.mode, a.version]).toEqual(["stable", "enforce", a.id === "distinct-rewrites" ? 2 : 1]);
       expect(a.created).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
     for (const r of BUILTIN_RULES) {
@@ -205,19 +205,19 @@ describe("distinct-rewrites", () => {
     }
     return steps;
   };
-  it("monitor: 9 distinct writes without a read record one firing and add no note", () => {
+  it("monitor (user override): 9 distinct writes without a read record one firing and add no note", () => {
+    setMode("distinct-rewrites", "monitor");
     const steps = run(9);
     for (const r of steps) recordLoopTelemetry(r, { fallbackText: "Write" });
     expect(steps.every((r) => !r.note && !r.deny)).toBe(true);
     const f = readFirings().filter((x) => x.id === "distinct-rewrites");
     expect(f).toHaveLength(1);
-    expect(f[0]).toMatchObject({ action: "note", mode: "monitor", version: 1 });
+    expect(f[0]).toMatchObject({ action: "note", mode: "monitor", version: 3 });
   });
   it("writes interleaved with a Bash test run do not fire", () => {
     expect(run(20, () => undefined).some((r) => r.monitored || r.note)).toBe(false);
   });
-  it("enforce (user override): the note is emitted once", () => {
-    setMode("distinct-rewrites", "enforce");
+  it("enforce (shipped): the note is emitted once", () => {
     const steps = run(9);
     const notes = steps.filter((r) => r.note);
     expect(notes).toHaveLength(1);

@@ -19,8 +19,9 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { dropHeredocBodies } from "./heredoc.js";
 import { HANG_MARKER } from "../../../workers/hang-probe.js";
 import { redactSecrets } from "../../../utils/redact.js";
 import { activeAntipattern, fillMessage, shippedAntipattern } from "./antipatterns.js";
@@ -81,6 +82,8 @@ export interface LoopState {
   writes?: Record<string, { key: string; n: number; /** Keys of the last versions written (oldest first, current last). */ seen?: string[]; /** Writes that went back to an earlier version. */ reverts?: number }>;
   /** File -> Writes since the last Read/Bash/Grep of anything: count, distinct content hashes, and whether distinct-rewrites already fired. */
   rewrites?: Record<string, { n: number; hashes: string[]; fired?: boolean }>;
+  /** Streak counters that survive edits: Writes of new files since the last Read/Bash/Grep/Glob, and Reads of missing paths in a row. */
+  streaks?: { newFiles?: { n: number; fired?: boolean }; missing?: number };
   /** Call keys (`Tool\tnormalised input`) since the last edit, oldest first. */
   window: string[];
   /** Normalised result text per window entry; null while unknown. */
@@ -479,7 +482,7 @@ function trimTail(text: string, lines: number, chars: number): string {
 /** PostToolUse: attaches the call's result to its window entry. An edit clears the state. */
 export function recordLoopResult(state: LoopState, tool: string, input: string | Record<string, unknown> | undefined, response: unknown, now = Date.now()): LoopState {
   const key = callKey(tool, input);
-  if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites } : { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, window: [key], outs: [null] };
+  if (EDIT_TOOLS.has(tool) && (key === null || state.window[state.window.length - 1] !== key)) return key === null ? { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks } : { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks, window: [key], outs: [null] };
   if (key !== null && tool === "Bash") {
     const waits = { ...(state.waits ?? {}) };
     const pd = { ...(state.pollDone ?? {}) };
@@ -544,11 +547,50 @@ function hangNote(state: LoopState, command: string): string {
   return key !== null && hungBefore(state, clusterOf(state.window, key)) ? HANG_SUFFIX : "";
 }
 
+/** Counts one write of `file` (content hash) in `rewrites`; the distinct-rewrites note when the thresholds are reached, once per file. `held`: another note of the step takes precedence, the firing waits. */
+function countRewrite(rewrites: NonNullable<LoopState["rewrites"]>, file: string, hash: string, held: boolean): string | undefined {
+  const dr = live("distinct-rewrites");
+  const cur = rewrites[file] ?? { n: 0, hashes: [] };
+  const next = { n: cur.n + 1, hashes: cur.hashes.includes(hash) ? cur.hashes : [...cur.hashes, hash], fired: cur.fired };
+  rewrites[file] = next;
+  if (next.fired || held || next.n < (dr.params.same_file_writes as number) || next.hashes.length < (dr.params.distinct_versions as number)) return undefined;
+  next.fired = true;
+  return fillMessage(dr.message, { file, n: next.n });
+}
+
+// commands whose segments may make up a pure file write (`mkdir -p d && cat > d/f <<EOF`)
+const WRITE_WORDS = new Set(["cat", "tee", "echo", "printf", "true", ":", "cd", "mkdir"]);
+const REDIRECT = /(?:^|[\s\d])>>?\s*(?!&)([^\s;&|<>]+)/g;
+const TEE = /\btee\s+(?:-\w+\s+)*([^\s;&|<>-][^\s;&|<>]*)/g;
+
+/**
+ * The files a Bash call writes when it does nothing else: every segment is cat/tee/echo/printf/cd/mkdir or a bare
+ * redirect, and at least one redirect (`> f`, `>> f`) or `tee f` names a file. A call that also runs something
+ * (a test, node f, grep) returns null: its result is new information, not a bare write.
+ */
+export function bashWriteTargets(command: string): string[] | null {
+  const body = dropHeredocBodies(command).replace(/<<-?\s*(?:'[^']+'|"[^"]+"|\w+)/g, " ");
+  const targets = new Set<string>();
+  for (const m of body.matchAll(REDIRECT)) if (!/^\/dev\/(?:null|stdout|stderr)$/.test(m[1])) targets.add(m[1]);
+  for (const m of body.matchAll(TEE)) targets.add(m[1]);
+  if (!targets.size) return null;
+  for (const seg of body.split(/[;&|\n]+/)) {
+    const first = seg.trim().split(/\s+/)[0] ?? "";
+    if (first && !WRITE_WORDS.has(first) && !/^\d?>>?/.test(first)) return null;
+  }
+  return [...targets];
+}
+
+const bashCommand = (input: string | Record<string, unknown> | undefined): string | undefined => {
+  const c = typeof input === "string" ? input : (input as { command?: unknown } | undefined)?.command;
+  return typeof c === "string" ? c : undefined;
+};
+
 /** Next state and whether this tool call is a loop repeat to deny. `input` is the Bash command or the tool input object. */
 function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
   if (EDIT_TOOLS.has(tool)) {
     const ek = callKey(tool, input);
-    if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites }, deny: false };
+    if (ek === null) return { state: { ...emptyLoopState(), writes: state.writes, rewrites: state.rewrites, streaks: state.streaks }, deny: false };
     // an identical rewrite is allowed (it costs nothing) and told plainly; only a runaway count is stopped
     const file = String((input as Record<string, unknown>).file_path ?? (input as Record<string, unknown>).notebook_path ?? "");
     const prev = state.writes?.[file];
@@ -584,20 +626,12 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
     const ordinal = `${reverts}${reverts % 10 === 3 && reverts !== 13 ? "rd" : reverts % 10 === 2 && reverts !== 12 ? "nd" : "th"}`;
     const revertNote = revert && reverts >= (rv.params.note_at as number) ? fillMessage(rv.message, { file, ordinal, n: reverts }) : undefined;
     // distinct-rewrites: many different Writes of one file with no tool result bringing new information in between
-    const dr = live("distinct-rewrites");
     const rewrites = { ...(state.rewrites ?? {}) };
     let rewriteNote: string | undefined;
     // the revert / identical-write notes of the same step take precedence; the firing waits for the next step
     const idNote = revertNote ?? (n >= (iw.params.note_at as number) ? fillMessage(iw.message, { file, tool, n }) : undefined);
     if (tool === "Write") {
-      const cur = rewrites[file] ?? { n: 0, hashes: [] };
-      const hash = ek.slice(ek.lastIndexOf("#") + 1);
-      const next = { n: cur.n + 1, hashes: cur.hashes.includes(hash) ? cur.hashes : [...cur.hashes, hash], fired: cur.fired };
-      if (!next.fired && !idNote && next.n >= (dr.params.same_file_writes as number) && next.hashes.length >= (dr.params.distinct_versions as number)) {
-        next.fired = true;
-        rewriteNote = fillMessage(dr.message, { file, n: next.n });
-      }
-      rewrites[file] = next;
+      rewriteNote = countRewrite(rewrites, file, ek.slice(ek.lastIndexOf("#") + 1), !!idNote);
       for (const k of Object.keys(rewrites).slice(0, -LAST_CAP * 8)) delete rewrites[k];
     }
     const note = idNote ?? rewriteNote;
@@ -727,9 +761,69 @@ function stepLoopGuardRaw(state: LoopState, tool: string, input?: string | Recor
  * the step still counts, but nothing is denied, stopped or noted; a monitored one says what it would have done.
  */
 export function stepLoopGuard(state: LoopState, tool: string, input?: string | Record<string, unknown>, fingerprint?: string | null, now = Date.now(), cwd?: string, echo: EchoConfig = DEFAULT_ECHO): LoopStep {
-  const r = stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
-  // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file
-  return applyLifecycle(READ_TOOLS.has(tool) && r.state.rewrites ? { ...r, state: { ...r.state, rewrites: undefined } } : r);
+  let r = stepLoopGuardRaw(state, tool, input, fingerprint, now, cwd, echo);
+  const command = tool === "Bash" ? bashCommand(input) : undefined;
+  const bashWrites = command !== undefined ? bashWriteTargets(command) : null;
+  // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file; a bare Bash write does not, it is a write
+  if (READ_TOOLS.has(tool) && !bashWrites && r.state.rewrites) r = { ...r, state: { ...r.state, rewrites: undefined } };
+  if (bashWrites && command !== undefined) r = countBashRewrites(r, bashWrites, command);
+  return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd));
+}
+
+/** distinct-rewrites for files written through Bash (heredoc, redirect, tee): the command text is the version. */
+function countBashRewrites(r: LoopStep, files: string[], command: string): LoopStep {
+  const hash = createHash("sha1").update(command).digest("hex").slice(0, 12);
+  const rewrites = { ...(r.state.rewrites ?? {}) };
+  let note: string | undefined;
+  let key = "";
+  for (const f of files) {
+    const n = countRewrite(rewrites, f, hash, !!note || !!r.note || r.deny);
+    if (n) {
+      note = n;
+      key = f;
+    }
+  }
+  for (const k of Object.keys(rewrites).slice(0, -LAST_CAP * 8)) delete rewrites[k];
+  return { ...r, state: { ...r.state, rewrites }, ...(note ? { note, id: "distinct-rewrites", key } : {}) };
+}
+
+/** A Read/Glob/Grep path argument that points at nothing; null when the call names no path or it exists. */
+function missingProbe(tool: string, input: Record<string, unknown> | undefined, cwd: string): string | null {
+  const p = tool === "Read" ? input?.file_path : tool === "Glob" || tool === "Grep" ? input?.path : undefined;
+  return typeof p === "string" && p && !existsSync(resolve(cwd, p)) ? p : null;
+}
+
+/**
+ * The two streak detectors, which count across edits and so live outside the window:
+ * runaway-new-files (Writes of paths that do not exist yet since the last Read/Bash/Grep/Glob) and
+ * missing-path-streak (Read/Glob/Grep of missing paths with no other tool call in between).
+ */
+function trackStreaks(r: LoopStep, prev: LoopState, tool: string, input: string | Record<string, unknown> | undefined, bashWrites: string[] | null, cwd = process.cwd()): LoopStep {
+  const obj = typeof input === "object" ? input : undefined;
+  let nf = prev.streaks?.newFiles ?? { n: 0 };
+  let missing = prev.streaks?.missing ?? 0;
+  const isNew = (f: unknown): boolean => typeof f === "string" && !!f && !existsSync(resolve(cwd, f));
+  if (tool === "Write") {
+    if (isNew(obj?.file_path)) nf = { ...nf, n: nf.n + 1 };
+  } else if (bashWrites) nf = { ...nf, n: nf.n + bashWrites.filter(isNew).length };
+  else if (READ_TOOLS.has(tool) || tool === "Glob") nf = { n: 0 };
+  const probe = missingProbe(tool, obj, cwd);
+  missing = probe ? missing + 1 : 0;
+
+  let out = r;
+  const rn = live("runaway-new-files");
+  const mp = live("missing-path-streak");
+  if (!out.deny && missing >= (mp.params.streak as number)) {
+    out = { ...out, deny: true, stop: true, id: "missing-path-streak", key: probe ?? "", count: missing, reason: fillMessage(mp.message, { streak: missing }), note: undefined };
+  } else if (!out.deny && tool === "Write" && nf.n >= (rn.params.stop_at as number)) {
+    out = { ...out, deny: true, stop: true, id: "runaway-new-files", key: String(obj?.file_path ?? ""), count: nf.n, reason: fillMessage(rn.params.stop_message as string, { n: nf.n }), note: undefined };
+  } else if (!out.deny && !out.note && !nf.fired && nf.n >= (rn.params.note_at as number)) {
+    nf = { ...nf, fired: true };
+    out = { ...out, note: fillMessage(rn.message, { n: nf.n }), id: "runaway-new-files", key: String(obj?.file_path ?? "") };
+  }
+  const next = nf.n || missing ? { ...(nf.n ? { newFiles: nf } : {}), ...(missing ? { missing } : {}) } : undefined;
+  if (JSON.stringify(next) === JSON.stringify(prev.streaks)) return out;
+  return { ...out, state: { ...out.state, streaks: next } };
 }
 
 function applyLifecycle(r: LoopStep): LoopStep {

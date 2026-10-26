@@ -1,0 +1,37 @@
+# The worker scratch dir /var/folders/<a>/<b>/T/pai-scratch/... written without "var" and "T"
+# (/Users/folders/<a>/<b>/pai-scratch/...) or without "T". Repaired to the real scratch dir when it
+# exists; otherwise denied with the hint. The repair lives in lib/path-repair.ts (repairMangledScratch).
+id: mangled-var-folders-path
+status: stable
+mode: enforce
+version: 1
+created: 2026-10-26
+category: paths
+title: Scratch path written as /Users/folders/... instead of /var/folders/...
+description: >
+  A worker wrote the scratch dir (/var/folders/<x>/<y>/T/pai-scratch/<id>/...) as /Users/folders/<x>/<y>/pai-scratch/...
+  (dropped "var" and "T"); the Write failed with EACCES mkdir /Users/folders.
+detector:
+  kind: path-rewrite
+  params:
+    from: "^/(?:Users|var)/folders/([^/]+)/([^/]+)/pai-scratch/"
+    to: "/var/folders/$1/$2/T/pai-scratch/"
+    only_if_target_dir_exists: true
+    deny_message: "{from} is not a real path: the scratch dir lives under /var/folders/<x>/<y>/T/pai-scratch/ (with var and T) and {to} does not exist. Use $TMPDIR."
+action: note
+message: "path repaired: {from} -> {to} (the scratch dir lives under /var/folders/.../T/)"
+level: low
+blind_spots:
+  - other mangled forms of the scratch path
+  - Bash commands (only file-tool paths are repaired)
+tests:
+  match:
+    - "/Users/folders/ab/cdef/pai-scratch/x/a.sh"
+    - "/var/folders/ab/cdef/pai-scratch/x/a.sh"
+  no_match:
+    - "/Users/someone/folders/a.sh"
+    - "/var/folders/ab/cdef/T/pai-scratch/x/a.sh"
+provenance:
+  date: 2026-10-25
+  model: Gyro-L
+  observed: real task prune-dist-rerun, a Write into the scratch dir without var and T failed with EACCES on mkdir of the parent

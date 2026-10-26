@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { buildGateReason, loadBuildsConfig } from "./build-gate.js";
-import { actionKey, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, callKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, LOOP_MAX_REPEATS, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, IDENTICAL_WRITE_STOP_AT, REVERT_STOP_AT, type LoopState } from "./loop-guard.js";
+import { actionKey, bashWriteTargets, isPollCommand, emptyLoopState, loopDenyReason, loopGuardEvasion, stepLoopGuard, loopKey, toolKey, callKey, recordLoopResult, recordLoopFailure, LOOP_NUDGE, LOOP_MAX_REPEATS, worktreeFingerprint, maskSecrets, WAIT_CAP_MS, LOOP_STOP_DENIALS, IDENTICAL_WRITE_STOP_AT, REVERT_STOP_AT, type LoopState } from "./loop-guard.js";
 import { classifyToolError, readToolErrors, recordToolError } from "../../../workers/tool-errors.js";
 import { fakeUrl, fake, fakeAnthropic, fakeAwsKey, fakeGithub } from "../../../utils/fake-secret.js";
 
@@ -813,5 +813,20 @@ describe("loop guard: every tool, errors, and the report nudge", () => {
     expect(rs[2].deny).toBe(false);
     expect(rs[4].deny).toBe(true);
     expect(loopDenyReason()).toMatch(/^Stop\. Write your R report now \(r=~ if something is unverified, list it in x=\)\./);
+  });
+});
+
+describe("bashWriteTargets", () => {
+  it("returns the files of a Bash call that only writes", () => {
+    expect(bashWriteTargets("cat > a.mjs <<'EOF'\nconsole.log(1)\nEOF")).toEqual(["a.mjs"]);
+    expect(bashWriteTargets("mkdir -p out && cat >> out/b.txt <<EOF\nx\nEOF")).toEqual(["out/b.txt"]);
+    expect(bashWriteTargets("echo hi | tee c.txt")).toEqual(["c.txt"]);
+    expect(bashWriteTargets("printf x > d.txt")).toEqual(["d.txt"]);
+  });
+  it("is null when the call also runs something or writes nothing", () => {
+    expect(bashWriteTargets("cat > a.mjs <<'EOF'\nx\nEOF\nnode a.mjs")).toBeNull();
+    expect(bashWriteTargets("node a.mjs > out.txt")).toBeNull();
+    expect(bashWriteTargets("ls -la")).toBeNull();
+    expect(bashWriteTargets("cat a.txt 2>&1 >/dev/null")).toBeNull();
   });
 });

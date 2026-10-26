@@ -19,6 +19,8 @@
 
 import { existsSync, realpathSync } from "node:fs";
 import { activeAntipattern, fillMessage } from "./antipatterns.js";
+import { dispositionOf } from "./antipattern-lifecycle.js";
+import { recordFiring, type FiringInput } from "./antipattern-log.js";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { dropHeredocBodies } from "./heredoc.js";
 import { renderDecision } from "./render-decision.js";
@@ -215,6 +217,38 @@ export function repairPath(
 }
 
 const FILE_TOOLS = new Set(["Read", "Edit", "MultiEdit", "NotebookEdit"]);
+
+/**
+ * mangled-var-folders-path: the worker scratch dir written as /Users/folders/<a>/<b>/pai-scratch/... (var and T dropped).
+ * Repaired to /var/folders/<a>/<b>/T/pai-scratch/... when that scratch dir exists, else denied with the hint. The
+ * firing is recorded; monitor mode records and lets the call through. Returns the hook output, or null for no action.
+ */
+export function repairMangledScratch(
+  input: PathRepairInput,
+  env: NodeJS.ProcessEnv,
+  exists: (p: string) => boolean,
+  record: (f: FiringInput) => unknown = recordFiring,
+): string | null {
+  if (env.PAI_WORKER !== "1") return null;
+  const spec = PATH_KEYS[input.tool_name ?? ""];
+  const value = input.tool_input?.[spec?.key ?? ""];
+  if (!spec || typeof value !== "string") return null;
+  const ap = activeAntipattern("mangled-var-folders-path");
+  const re = new RegExp(String(ap.detector.params.from));
+  const m = re.exec(value);
+  if (!m) return null;
+  const disp = dispositionOf(ap, value);
+  if (disp === "off") return null;
+  const scratch = m[0].replace(re, String(ap.detector.params.to));
+  const to = value.replace(re, String(ap.detector.params.to));
+  const vars = { from: value, to };
+  const fixable = ap.detector.params.only_if_target_dir_exists !== true || exists(scratch.replace(/\/+$/, ""));
+  record({ id: ap.id, version: ap.version, category: ap.category, action: fixable ? "note" : "deny", mode: disp, input: value, cwd: input.cwd });
+  if (disp !== "enforce") return null;
+  if (!fixable) return renderDeny(fillMessage(String(ap.detector.params.deny_message), vars));
+  const repair: PathRepair = { old: value, new: to, updatedInput: { ...input.tool_input, [spec.key]: to }, ...(input.tool_name === "Write" ? { create: true } : {}) };
+  return renderRepair(repair, input.tool_name);
+}
 
 /** Shell word characters split a command into candidate tokens. */
 const WORD = /[^\s;|&<>()`"'$=,:{}]+/g;
