@@ -102,7 +102,10 @@ function decideLoop(ev: Extract<GuardEvent, { kind: "tool_call" }>, ctx: GuardCo
  */
 function tenantOf(event: GuardEvent): string {
   if (event.tenant) return event.tenant;
-  return event.cwd && (event.source ?? "hook") === "hook" ? tenantForProject(event.cwd) : LOCAL_TENANT;
+  if ((event.source ?? "hook") !== "hook") return LOCAL_TENANT;
+  const byPath = event.cwd ? tenantForProject(event.cwd) : LOCAL_TENANT;
+  // a worker runs in a worktree outside its project root: the run's origin tenant (set at spawn) stands in
+  return byPath !== LOCAL_TENANT ? byPath : process.env.PAI_WORKER_TENANT || LOCAL_TENANT;
 }
 
 /**
