@@ -235,10 +235,8 @@ router:
   claudeUpstream: https://api.anthropic.com
   # Bare aliases (besides ids starting with claude-) that also go to claudeUpstream.
   claudeModelAliases: [sonnet, opus, haiku, default, opusplan]
-  # Guard rules on model replies (tool_use blocks, final text): off | monitor | enforce. Monitor records firings with source proxy
-  # (see `pai antipatterns stats --source proxy`) and never changes, delays or blocks a reply. Enforce additionally rewrites a
-  # tool call the rules deny — per pattern this happens only when the pattern's own `proxy` field is enforce
-  # (`pai antipatterns set <id> proxy enforce`); shipped patterns stay monitor.
+  # Guard rules on model replies (tool_use blocks, final text): off | monitor. Monitor records firings with source proxy
+  # (see `pai antipatterns stats --source proxy`) and never changes, delays or blocks a reply.
   guard:
     mode: off
   bind: loopback

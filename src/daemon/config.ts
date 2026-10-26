@@ -139,8 +139,8 @@ export interface RouterConfig {
   claudeModelAliases: string[];
   /** Retry once a local answer whose text is an unparsed tool-call block (the router holds local answers until complete). Default: true. */
   localToolCallRetry?: boolean;
-  /** Guard rules on the model replies passing the router. "monitor" records firings with source proxy and never alters, delays or blocks a reply; "enforce" additionally rewrites a tool call the rules deny (a pattern acts on the proxy only when its own `proxy` field is enforce). Default: off. */
-  guard?: { mode?: "off" | "monitor" | "enforce" };
+  /** Guard rules on the model replies passing the router (/v1/messages). "monitor" records firings with source proxy and never alters, delays or blocks a reply. Default: off. */
+  guard?: { mode?: "off" | "monitor" };
   /**
    * Rules files of the tool-call repair (src/router/tool-call-rules.ts): `dir`
    * under the PAI home (default tool-call-rules), `file` for providers not

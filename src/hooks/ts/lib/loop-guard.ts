@@ -789,7 +789,7 @@ function stepLoopGuardCore(state: LoopState, tool: string, input?: string | Reco
   // a result that brings new information (Read, Bash, Grep) resets the rewrite counts of every file; a bare Bash write does not, it is a write
   if (READ_TOOLS.has(tool) && !bashWrites && r.state.rewrites) r = { ...r, state: { ...r.state, rewrites: undefined } };
   if (bashWrites && command !== undefined) r = countBashRewrites(r, bashWrites, command);
-  return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source), source);
+  return applyLifecycle(trackStreaks(r, state, tool, input, bashWrites, cwd, source));
 }
 
 /** distinct-rewrites for files written through Bash (heredoc, redirect, tee): the command text is the version. */
@@ -859,12 +859,11 @@ function trackStreaks(r: LoopStep, prev: LoopState, tool: string, input: string 
   return { ...out, state: { ...out.state, streaks: next } };
 }
 
-function applyLifecycle(r: LoopStep, source: "hook" | "proxy" = "hook"): LoopStep {
+function applyLifecycle(r: LoopStep): LoopStep {
   if (!r.id || !(r.deny || r.note)) return r;
   const ap = activeAntipattern(r.id);
-  const disp = dispositionOf(ap, r.key ?? "", process.env, Date.now(), source);
+  const disp = dispositionOf(ap, r.key ?? "");
   if (disp === "enforce") return r;
-  if (disp === "off") return { ...r, deny: false, stop: false, note: undefined, id: undefined } as LoopStep;
   const { reason: _reason, note: _note, evasion: _evasion, ...rest } = r;
   return { ...rest, deny: false, stop: false, ...(disp === "monitor" ? { monitored: { action: r.stop ? "stop" : r.deny ? "deny" : "note" } } : {}) } as LoopStep;
 }

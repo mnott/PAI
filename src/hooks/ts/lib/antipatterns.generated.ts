@@ -41,7 +41,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "a worker run ended with an undeclared tool call as its final text",
       "ref": "7630e01b"
     },
-    "proxy": "monitor",
     "source": "final-text/unparsed-tool-call.yaml"
   },
   {
@@ -71,7 +70,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "workers guessing file paths and looping on \"File does not exist\"",
       "ref": "moved from src/hooks/ts/lib/path-repair.ts"
     },
-    "proxy": "monitor",
     "source": "paths/does-not-exist.yaml"
   },
   {
@@ -114,7 +112,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "model": "Gyro-L",
       "observed": "real task prune-dist-rerun, a Write into the scratch dir without var and T failed with EACCES on mkdir of the parent"
     },
-    "proxy": "monitor",
     "source": "paths/mangled-var-folders-path.yaml"
   },
   {
@@ -161,7 +158,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "out/27.py written 10 times with 9 distinct contents and no Read or test result in between, while the rest of the set waited",
       "ref": "Gyro-M hard run 2026-10-25 (out/1.py written 16x, 10 distinct versions, 3 recurring 3x); a runaway wrote 272 debug scripts through Bash heredocs"
     },
-    "proxy": "monitor",
     "source": "tool-loop/distinct-rewrites.yaml"
   },
   {
@@ -199,7 +195,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "workers re-running a search whose output no longer changes",
       "ref": "moved from src/hooks/ts/lib/loop-guard.ts"
     },
-    "proxy": "monitor",
     "source": "tool-loop/growing-command.yaml"
   },
   {
@@ -235,7 +230,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "workers rewriting a file with unchanged content in a loop",
       "ref": "moved from src/hooks/ts/lib/loop-guard.ts"
     },
-    "proxy": "monitor",
     "source": "tool-loop/identical-write.yaml"
   },
   {
@@ -281,7 +275,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "model": "Gyro-L",
       "observed": "easy rep1, Read out/102414.py counted down to 102336, 79 denials, 0 writes; killed by the orchestrator"
     },
-    "proxy": "monitor",
     "source": "tool-loop/missing-path-streak.yaml"
   },
   {
@@ -315,7 +308,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "workers re-running a failing test without editing anything",
       "ref": "moved from src/hooks/ts/lib/loop-guard.ts"
     },
-    "proxy": "monitor",
     "source": "tool-loop/repeated-failure.yaml"
   },
   {
@@ -352,7 +344,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "observed": "workers alternating a file between two versions",
       "ref": "7a3e7033"
     },
-    "proxy": "monitor",
     "source": "tool-loop/revert.yaml"
   },
   {
@@ -400,7 +391,6 @@ export const SHIPPED_ANTIPATTERNS: Record<string, unknown>[] = [
       "model": "Gyro-M",
       "observed": "hard set rep3, out/41.py .. out/807.py for a 40-task tasks.jsonl, killed by the orchestrator after 26 min"
     },
-    "proxy": "monitor",
     "source": "tool-loop/runaway-new-files.yaml"
   }
 ];

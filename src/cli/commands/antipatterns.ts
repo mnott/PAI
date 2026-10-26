@@ -3,7 +3,7 @@
 import { CliError, type ArgDef, type CommandDef, type OptDef, type RunContext } from "../define.js";
 import { renderTable } from "../lib/utils.js";
 import { DISPOSITIONS, type Disposition } from "../../hooks/ts/lib/antipattern-log.js";
-import { candidates, conflicts, label, listPatterns, parseSince, promote, retire, setMode, setParam, setProxy, stats } from "../../antipatterns/govern.js";
+import { candidates, conflicts, label, listPatterns, parseSince, promote, retire, setMode, setParam, stats } from "../../antipatterns/govern.js";
 
 const ID: ArgDef = { name: "ID", summary: "Pattern id (see: pai antipatterns list)", required: true };
 const JSON_OPT: OptDef = { name: "json", type: "boolean", default: false, summary: "Machine-readable JSON output" };
@@ -125,20 +125,12 @@ export const antipatternsCommand: CommandDef = {
       name: "set",
       summary: "Change one detector parameter of a pattern",
       description:
-        "Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), or sets the `proxy` field " +
-        "(enforce | monitor | off: whether the pattern acts on the model-API proxy; enforce rewrites a denied tool call at the router). " +
+        "Writes the user override (a full copy of the active file on first use), sets detector.params.PARAM to VALUE (numbers and booleans are parsed), " +
         "bumps version, sets modified and appends to the file's changes list and to antipatterns/governance.jsonl. Unknown params and type mismatches are refused. Takes effect without a restart.",
-      args: [ID, { name: "PARAM", summary: "Detector parameter (or `proxy`), e.g. stop_at", required: true }, { name: "VALUE", summary: "New value", required: true }],
+      args: [ID, { name: "PARAM", summary: "Detector parameter, e.g. stop_at", required: true }, { name: "VALUE", summary: "New value", required: true }],
       options: [{ name: "reason", type: "string", value: "TEXT", summary: "Why (required)" }],
-      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'", "pai antipatterns set git-reset-hard proxy enforce --reason 'protect Joule behind the router'"],
+      examples: ["pai antipatterns set identical-write stop_at 8 --reason 'loops cost too much'"],
       run: (ctx) => {
-        if (ctx.args.PARAM === "proxy") {
-          const v = String(ctx.args.VALUE);
-          if (v !== "enforce" && v !== "monitor" && v !== "off") throw new CliError("proxy must be enforce, monitor or off");
-          const r = wrap(() => setProxy(ctx.args.ID as string, v, (ctx.opts.reason as string | undefined) ?? ""));
-          console.log(`proxy: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
-          return 0;
-        }
         const r = wrap(() => setParam(ctx.args.ID as string, ctx.args.PARAM as string, ctx.args.VALUE as string, (ctx.opts.reason as string | undefined) ?? ""));
         console.log(`${ctx.args.PARAM}: ${JSON.stringify(r.from)} -> ${JSON.stringify(r.to)} (v${r.version}) ${r.path}`);
         return 0;

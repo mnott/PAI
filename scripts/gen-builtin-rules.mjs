@@ -90,8 +90,6 @@ for (const name of names) {
       : undefined;
     rules.push({
       ...item,
-      // shipped patterns act on the proxy path only when a user override sets `proxy: enforce`
-      proxy: item.proxy ?? "monitor",
       tests,
       match: regexNode ? m.slice(1, m.lastIndexOf("/")) : m,
       flags: flags || undefined,
@@ -117,7 +115,7 @@ const shipped = [];
 for (const cat of readdirSync(ROOT, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== "shell" && !d.name.startsWith("_")).map((d) => d.name).sort()) {
   for (const name of readdirSync(join(ROOT, cat)).filter((f) => f.endsWith(".yaml")).sort()) {
     const doc = parse(readFileSync(join(ROOT, cat, name), "utf8"));
-    shipped.push({ ...doc, proxy: doc.proxy ?? "monitor", source: `${cat}/${name}` });
+    shipped.push({ ...doc, source: `${cat}/${name}` });
   }
 }
 const APOUT = "src/hooks/ts/lib/antipatterns.generated.ts";

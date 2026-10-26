@@ -12,18 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import {
-  GUARD_MAX_BYTES,
-  enforceChatJson,
-  enforceMessagesJson,
-  enforceResponsesJson,
-  evaluateReply,
-  isEnforceDeny,
-  monitorReply,
-  parseOpenAiReply,
-  parseReply,
-  type ProxyGuardDeps,
-} from "./proxy-guard.js";
+import { GUARD_MAX_BYTES, monitorReply, type ProxyGuardDeps } from "./proxy-guard.js";
 import { DEGENERATE_RETRY_TEXT, isDamaged, isDegenerate, readAnswer, retryBody } from "./malformed-retry.js";
 import http from "node:http";
 import https from "node:https";
@@ -52,7 +41,7 @@ import { ruleHits } from "./tool-call-hits.js";
 import { paiHomeDir } from "../config/pai-home.js";
 import { hasMalformedToolCall } from "../workers/malformed-toolcall.js";
 import { InputTokensSse, promptTokenCount } from "./prompt-tokens.js";
-import { monitorOpenAiReply, type Decision, type GuardContext, type GuardEvent } from "./proxy-guard.js";
+import { monitorOpenAiReply } from "./proxy-guard.js";
 import { sharedParker } from "./parking.js";
 import { createUpstreamStreak } from "./preflight.js";
 import { newPrefill, schedEnabled, sharedScheduler } from "./scheduler.js";
@@ -250,8 +239,8 @@ export interface RouterOptions {
    */
   /** Retry a local answer that carries an unparsed tool-call block once; default router.localToolCallRetry (true). */
   localToolCallRetry?: boolean;
-  /** Guard on replies; default router.guard.mode (off). monitor records only; enforce rewrites a tool call the rules deny. `deps` replaces evaluate/rules (tests). */
-  guard?: { mode?: "off" | "monitor" | "enforce"; deps?: ProxyGuardDeps };
+  /** Monitor-only guard on replies; default router.guard.mode (off). `deps` replaces evaluate/rules (tests). */
+  guard?: { mode?: "off" | "monitor"; deps?: ProxyGuardDeps };
   remoteAllowed?: (remoteAddress: string | undefined) => boolean;
   /** cached up/down of a provider (limits poll); breaks ties between providers declaring one model id */
   isUp?: (provider: string) => boolean | undefined;
@@ -854,61 +843,6 @@ export function routerHandler(
               : undefined;
           const argsFixer = target.kind === "provider" && schemas?.size && plainSse ? wire!.rewriteStream(schemas, rulesNow, argsFix) : undefined;
           const fill = mayCount && plainSse ? new InputTokensSse(() => counted) : undefined;
-          const guardMode = isCount || ures.statusCode !== 200 || ures.headers["content-encoding"] ? "off" : options?.guard?.mode ?? loadConfig().router.guard?.mode ?? "off";
-          const guardDeps = options?.guard?.deps;
-          const guardLog = (line: string) => log(line);
-          const onBlock = (tool: string, text: string) => log(`${new Date().toISOString()} ${target.model} ${prov} guard blocked ${tool}: ${text}`);
-          if (guardMode === "enforce" && !isCount && ures.statusCode === 200 && !ures.headers["content-encoding"]) {
-            const request = safeBody(up.body) ?? undefined;
-            if (plainSse) {
-              // ures -> [input fill] -> [tool-case fix] -> [tool-args repair] -> [guard] -> res
-              const guard = wire!.guardStream({ model: target.model, provider: prov, request, deps: guardDeps, onBlock });
-              const chain = [fill, fixer, argsFixer, guard].filter((x): x is NonNullable<typeof x> => !!x);
-              let tail: NodeJS.ReadableStream = ures;
-              for (const t of chain) tail = tail.pipe(t);
-              tail.pipe(res);
-              ures.on("end", () => {
-                log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
-                const ended = Date.now();
-                const first = sniff?.firstContentAt;
-                const usage = sniff ? sniff.finish() : emptyUsage();
-                release(sniff ? usage : undefined, sniff?.buildCall ? { gate: true } : undefined);
-                record(ures.statusCode ?? 502, usage, { ...(first !== undefined && (ures.statusCode ?? 502) < 400 ? { ttftMs: first - started, decodeMs: ended - first } : {}), ...sniff?.serverTimings });
-              });
-              return;
-            }
-            // non-streaming: held whole, evaluated, denied calls replaced before the client sees a byte
-            const bits: Buffer[] = [];
-            ures.on("data", (c: Buffer) => bits.push(c));
-            ures.on("end", () => {
-              const raw = Buffer.concat(bits).toString("utf8");
-              let out = raw;
-              if (Buffer.byteLength(raw) <= GUARD_MAX_BYTES) {
-                let text = raw;
-                if (wire!.id === "messages") {
-                  text = fixJsonReply(text, declared, (from, to) =>
-                    (options?.onToolCaseFix ?? defaultToolCaseFix(log))({ from, to, model: target.model, provider: prov, session })
-                  );
-                }
-                if (schemas) text = wire!.rewriteJson(text, schemas, rulesNow, argsFix);
-                const reply = wire!.id === "messages" ? parseReply(text, ctype) : parseOpenAiReply(text, ctype);
-                const decisions = evaluateReply(reply, target.model, { log: guardLog, ...guardDeps }, prov, request);
-                let i = 0;
-                const deny = (name: string, input: unknown): Decision | null => {
-                  const d = decisions[i++];
-                  return isEnforceDeny(d) ? d : null;
-                };
-                out = wire!.id === "messages" ? enforceMessagesJson(text, deny, guardLog) : wire!.id === "chat" ? enforceChatJson(text, deny, guardLog) : enforceResponsesJson(text, deny, guardLog);
-                if (out !== text) log(`${new Date().toISOString()} ${target.model} ${prov} guard blocked ${reply.tools.length} call(s)`);
-              }
-              res.end(out);
-              log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
-              const usage = sniff ? sniff.finish() : emptyUsage();
-              release(sniff ? usage : undefined, sniff?.buildCall ? { gate: true } : undefined);
-              record(ures.statusCode ?? 502, usage, { ...sniff?.serverTimings });
-            });
-            return;
-          }
           if (jsonReply && schemas) {
             // non-streaming reply: held whole, tool names and arguments corrected, sent as one body
             const bits: Buffer[] = [];
@@ -930,7 +864,7 @@ export function routerHandler(
             tail.pipe(res);
           }
           // Monitor only: a copy of the reply is evaluated after the client got it all; the pipes above are untouched.
-          if (guardMode === "monitor") {
+          if (!isCount && ures.statusCode === 200 && !ures.headers["content-encoding"] && (options?.guard?.mode ?? loadConfig().router.guard?.mode) === "monitor") {
             const copy: Buffer[] = [];
             let kept = 0;
             ures.on("data", (c: Buffer) => {

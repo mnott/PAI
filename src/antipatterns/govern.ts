@@ -15,7 +15,7 @@ import { BUILTIN_RULES } from "../hooks/ts/lib/rules/builtin.generated.js";
 import { commitHomeChange } from "../config/home-git.js";
 import { paiHomePath } from "../config/pai-home.js";
 import { CATEGORIES, loadAntipatterns, resetAntipatternCache, userAntipatternsDir, validateAntipattern, type Antipattern } from "../hooks/ts/lib/antipatterns.js";
-import { lifecycleDoc, type Lifecycle, type Mode, type ProxyMode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
+import { lifecycleDoc, type Lifecycle, type Mode, type Status } from "../hooks/ts/lib/antipattern-lifecycle.js";
 import { candidatesDir, labelsPath, readFirings, readFiringsResolved, readLabels, readOutcomes, recordLabel, DISPOSITIONS, type Disposition, type Firing } from "../hooks/ts/lib/antipattern-log.js";
 import { evaluateRules } from "../hooks/ts/lib/rules/eval.js";
 import { allRuleDirs, listRules, projectRuleDirs, ruleLifecycle, userAntipatternShellDir } from "../hooks/ts/lib/rules/load.js";
@@ -33,8 +33,6 @@ export interface Entry extends Lifecycle {
   source: string;
   kind: "shell" | "pattern";
   fixtures: { match: string[]; no_match: string[] };
-  /** The active shell rule (shell entries only): a `proxy` change copies it whole into the user override. */
-  rule?: LoadedRule;
 }
 
 const fixtureStrings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
@@ -52,7 +50,6 @@ export function allEntries(cwd = process.cwd()): Entry[] {
       action: r.severity,
       source: r.source,
       kind: "shell",
-      rule: r,
       fixtures: { match: fixtureStrings(r.tests?.match), no_match: fixtureStrings(r.tests?.no_match) },
     });
   }
@@ -281,38 +278,6 @@ function override(action: string, id: string, change: { mode?: Mode; status?: St
 }
 
 export const setMode = (id: string, mode: Mode, o: { cwd?: string; now?: number } = {}) => override(mode, id, { mode }, o);
-
-/**
- * Set a pattern's `proxy` field (whether it acts on the model-API proxy path) in the user override. Shell rules
- * have no detector params, so `pai antipatterns set <id> proxy <value>` comes here: the active rule is copied
- * whole (match and fixtures included) with the new proxy value.
- */
-export function setProxy(id: string, proxy: ProxyMode, reason: string, o: { cwd?: string; now?: number } = {}): { path: string; from: unknown; to: unknown; version: number } {
-  if (!reason || !reason.trim()) throw new Error("--reason is required");
-  const cwd = o.cwd ?? process.cwd();
-  const e = allEntries(cwd).find((x) => x.id === id);
-  if (!e) throw new Error(`unknown pattern ${id} (see: pai antipatterns list)`);
-  const from = e.proxy;
-  const date = today(o.now);
-  let doc: Record<string, unknown>;
-  let path: string;
-  if (e.kind === "shell") {
-    const r = e.rule!;
-    doc = { ...r, proxy, version: e.version + 1, modified: date };
-    delete doc.source;
-    delete doc.untrusted;
-    path = r.source.startsWith(userAntipatternShellDir()) && r.source.endsWith(".yaml") && !r.source.endsWith(".rule.yaml") ? r.source : join(userAntipatternShellDir(), `${r.id}.yaml`);
-  } else {
-    const next: Entry = { ...e, proxy, version: e.version + 1, modified: date };
-    ({ doc, path } = entryDoc(next, cwd));
-  }
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, stringify(doc));
-  resetAntipatternCache();
-  recordGovernance({ action: "set", id, param: "proxy", from, to: proxy, reason }, o.now);
-  commitHomeChange([path, governancePath()], `antipatterns set ${id} proxy=${proxy}`);
-  return { path, from, to: proxy, version: e.version + 1 };
-}
 export const retire = (id: string, reason?: string, o: { cwd?: string; now?: number } = {}) => override("retire", id, { status: "deprecated", ...(reason ? { reason } : {}) }, o);
 
 /** Label one firing (by its ts) or every firing of a pattern (by id). Returns the number labelled. */

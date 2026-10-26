@@ -10,9 +10,6 @@ export const STATUSES = ["experimental", "test", "stable", "deprecated"] as cons
 export type Status = (typeof STATUSES)[number];
 export const MODES = ["enforce", "monitor"] as const;
 export type Mode = (typeof MODES)[number];
-/** Where the pattern acts on the model-API proxy path: enforce rewrites a denied reply, monitor only records, off is silent. */
-export const PROXY_MODES = ["enforce", "monitor", "off"] as const;
-export type ProxyMode = (typeof PROXY_MODES)[number];
 export const LEVELS = ["low", "medium", "high"] as const;
 
 export interface PatternException {
@@ -26,8 +23,6 @@ export interface PatternException {
 export interface Lifecycle {
   status: Status;
   mode: Mode;
-  /** Whether the pattern acts on the proxy path; default monitor (records only). */
-  proxy: ProxyMode;
   version: number;
   created?: string;
   modified?: string;
@@ -57,8 +52,6 @@ export function parseLifecycle(raw: Record<string, unknown>): Lifecycle | string
   if (typeof status !== "string" || !(STATUSES as readonly string[]).includes(status)) return `status must be one of ${STATUSES.join(", ")}`;
   const mode = raw.mode === undefined ? "enforce" : raw.mode;
   if (typeof mode !== "string" || !(MODES as readonly string[]).includes(mode)) return `mode must be one of ${MODES.join(", ")}`;
-  const proxy = raw.proxy === undefined ? "monitor" : raw.proxy;
-  if (typeof proxy !== "string" || !(PROXY_MODES as readonly string[]).includes(proxy)) return `proxy must be one of ${PROXY_MODES.join(", ")}`;
   const version = raw.version === undefined ? 1 : raw.version;
   if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return "version must be a positive integer";
   if (raw.level !== undefined && !(LEVELS as readonly unknown[]).includes(raw.level)) return `level must be one of ${LEVELS.join(", ")}`;
@@ -86,7 +79,6 @@ export function parseLifecycle(raw: Record<string, unknown>): Lifecycle | string
   return {
     status: status as Status,
     mode: mode as Mode,
-    proxy: proxy as ProxyMode,
     version,
     created: dateStr(raw.created),
     modified: dateStr(raw.modified),
@@ -108,7 +100,7 @@ export function parseLifecycle(raw: Record<string, unknown>): Lifecycle | string
 
 /** The lifecycle fields as they are written back to YAML (defaults included, empties dropped). */
 export function lifecycleDoc(lc: Lifecycle): Record<string, unknown> {
-  const out: Record<string, unknown> = { status: lc.status, mode: lc.mode, proxy: lc.proxy, version: lc.version };
+  const out: Record<string, unknown> = { status: lc.status, mode: lc.mode, version: lc.version };
   const set = (k: string, v: unknown): void => {
     if (v === undefined || (Array.isArray(v) && !v.length)) return;
     out[k] = v;
@@ -122,19 +114,11 @@ export function lifecycleDoc(lc: Lifecycle): Record<string, unknown> {
 export type Disposition = "enforce" | "monitor" | "off";
 
 /**
- * What a firing means right now on the path it came from: `enforce` acts, `monitor` is recorded only, `off` is neither
- * (deprecated, an unexpired exception matching the input, or applies_to excluding this provider/model). A proxy-path
- * firing acts only when the pattern's YAML lifecycle mode is enforce AND its `proxy` field is enforce; a proxy-path
- * `off` records nothing.
+ * What a firing means right now: `enforce` acts, `monitor` is recorded only, `off` is neither (deprecated, an unexpired
+ * exception matching the input, or applies_to excluding this provider/model).
  */
-export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "proxy" | "exceptions" | "applies_to">, input = "", env: NodeJS.ProcessEnv = process.env, now = Date.now(), path: "hook" | "proxy" = "hook"): Disposition {
+export function dispositionOf(lc: Pick<Lifecycle, "status" | "mode" | "exceptions" | "applies_to">, input = "", env: NodeJS.ProcessEnv = process.env, now = Date.now()): Disposition {
   if (lc.status === "deprecated") return "off";
-  if (path === "proxy") {
-    if (lc.proxy === "off") return "off";
-    if (lc.proxy === "monitor") return "monitor";
-    // proxy: enforce acts only when the lifecycle mode is enforce too; a lifecycle monitor records only
-    if (lc.mode !== "enforce") return "monitor";
-  }
   const at = lc.applies_to;
   if (at?.providers?.length && !at.providers.includes(env.PAI_WORKER_PROVIDER ?? "session")) return "off";
   if (at?.models?.length && !at.models.includes(modelOf(env))) return "off";

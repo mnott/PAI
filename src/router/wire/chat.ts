@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 import { parseToolCallText, repairJson, type ToolArgsFix, type ToolSchemas } from "../tool-args.js";
 import type { Rule } from "../tool-call-rules.js";
 import { hasMalformedToolCall } from "../../workers/malformed-toolcall.js";
-import { GuardToolSse, parseBody, SseMessages, sseData, toolSchemaOf, withData, type GuardStreamCtx, type WireAdapter, type WireConverted } from "./types.js";
+import { parseBody, SseMessages, sseData, toolSchemaOf, withData, type WireAdapter, type WireConverted } from "./types.js";
 
 const callId = (): string => `call_${randomBytes(12).toString("hex")}`;
 
@@ -195,96 +195,6 @@ function convertSse(raw: string, schemas: ToolSchemas, rules: readonly Rule[]): 
   return { body: out.join("\n\n") + "\n\n", calls: parsed.calls };
 }
 
-/**
- * Enforce mode: a tool call the guard denies is replaced by a content delta carrying the guard text; the
- * finish_reason becomes "stop" when no tool call survives the choice. The call's opening message (id, type) is
- * dropped with its fragments, so the client never sees a call that was blocked.
- */
-class ChatGuardSse extends GuardToolSse {
-  /** choice index -> whether a tool call of it reached the client */
-  private readonly sawTool = new Map<number, boolean>();
-
-  protected opensTool(d: any): { index: number; name: string } | null {
-    const choices: any[] | undefined = d?.choices;
-    if (!Array.isArray(choices) || choices.length !== 1) return null;
-    const tcs = choices[0]?.delta?.tool_calls;
-    if (!Array.isArray(tcs) || !tcs.length) return null;
-    const ci: number = typeof choices[0].index === "number" ? choices[0].index : 0;
-    const name = tcs.map((tc: any) => (typeof tc?.function?.name === "string" ? tc.function.name : "")).join("");
-    return { index: ci, name };
-  }
-
-  protected fragment(d: any): { index: number; part: string } | null {
-    const choices: any[] | undefined = d?.choices;
-    if (!Array.isArray(choices) || choices.length !== 1) return null;
-    const tcs = choices[0]?.delta?.tool_calls;
-    if (!Array.isArray(tcs) || !tcs.length) return null;
-    const ci: number = typeof choices[0].index === "number" ? choices[0].index : 0;
-    const part = tcs.map((tc: any) => (typeof tc?.function?.arguments === "string" ? tc.function.arguments : "")).join("");
-    return { index: ci, part };
-  }
-
-  /** The choice's finish_reason closes its calls (no per-call end event exists in chat completions). */
-  protected closes(d: any): number | null {
-    const choices: any[] | undefined = d?.choices;
-    if (!Array.isArray(choices) || choices.length !== 1) return null;
-    const ci: number = typeof choices[0].index === "number" ? choices[0].index : 0;
-    return choices[0]?.finish_reason ? ci : null;
-  }
-
-  protected replace(index: number, text: string): string {
-    return `data: ${JSON.stringify({ choices: [{ index, delta: { role: "assistant", content: text } }] })}\n\n`;
-  }
-
-  protected override stopTurn(): void {
-    this.sawTool.clear();
-    super.stopTurn();
-  }
-
-  protected override finalize(msg: string, sep: string, json: any): string {
-    const ch = Array.isArray(json?.choices) ? json.choices[0] : undefined;
-    const ci: number = typeof ch?.index === "number" ? ch.index : 0;
-    if (!ch?.finish_reason) return msg + sep;
-    if (ch.finish_reason === "tool_calls") {
-      // the turn ended on a guard block: the client sees a plain stop
-      if (this.turnStopped) return withData(msg, { ...json, choices: [{ ...ch, finish_reason: "stop" }] }) + sep;
-      // every call of this choice was denied (or none survived): also a stop
-      if (!this.sawTool.get(ci)) return withData(msg, { ...json, choices: [{ ...ch, finish_reason: "stop" }] }) + sep;
-    }
-    return msg + sep;
-  }
-
-  /**
-   * An opening message may carry other content (role, text) beside the call: those parts are emitted at once and
-   * the call's parts are held, so a blocked call never reaches the client. The surviving-call bookkeeping happens
-   * here, where the full message is still visible.
-   */
-  protected override message(msg: string, sep: string): string {
-    const d = sseData(msg);
-    const choices = Array.isArray(d?.json?.choices) ? d.json.choices : undefined;
-    if (choices?.length === 1 && Array.isArray(choices[0]?.delta?.tool_calls) && choices[0].delta.tool_calls.length) {
-      const ch = choices[0];
-      const ci: number = typeof ch.index === "number" ? ch.index : 0;
-      this.sawTool.set(ci, true);
-      // the call's parts (id, type, name) are dropped with it; only non-call content (role, text) survives
-      const keptDelta = { ...ch.delta };
-      delete keptDelta.tool_calls;
-      const kept = Object.keys(keptDelta).length ? withData(msg, { ...d!.json, choices: [{ ...ch, delta: keptDelta }] }) : null;
-      if (kept !== null) {
-        this.holdCall(ci, this.callName(ch), kept);
-        return kept + sep;
-      }
-      this.holdCall(ci, this.callName(ch), msg);
-      return "";
-    }
-    return super.message(msg, sep);
-  }
-
-  private callName(ch: any): string {
-    return (ch.delta.tool_calls as any[]).map((tc: any) => (typeof tc?.function?.name === "string" ? tc.function.name : "")).join("");
-  }
-}
-
 export const chatAdapter: WireAdapter = {
   id: "chat",
   keepalive: () => ": keep-alive\n\n",
@@ -293,5 +203,4 @@ export const chatAdapter: WireAdapter = {
   rewriteJson,
   rewriteStream: (schemas, rules, onFix) => new ChatToolArgsSse(schemas, rules, onFix),
   convertMarkup: (raw, ct, schemas, rules) => (/text\/event-stream/i.test(ct) ? convertSse(raw, schemas, rules) : convertJson(raw, schemas, rules)),
-  guardStream: (ctx) => new ChatGuardSse(ctx),
 };
