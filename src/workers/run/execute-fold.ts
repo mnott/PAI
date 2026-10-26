@@ -48,6 +48,7 @@ import { repairAndValidateAg2, validateAg2 } from "../agentish.js";
 import { preambleLine } from "../preamble.js";
 import { armResultGrace, leftoverNote } from "../result-grace.js";
 import { armDeadline } from "../deadline.js";
+import { fireHandoff, handoffLimit } from "./handoff.js";
 import { blockedMsOf } from "../active-time.js";
 import { createOperatorServer } from "../operator.js";
 import { reapRunTree } from "./lifecycle.js";
@@ -337,6 +338,14 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
   const resultGrace = armResultGrace(headless ? proc.pid : undefined);
   stopDeadline = limit ? armDeadline(proc, limit, () => fireDeadline(logDir, status, ledger, limit), undefined, () => blockedMsOf(logDir, wid)) : null;
   stopTrack = trackBlocked(logDir, status, limit);
+  // a local run past workers.localHandoffMinutes hands its branch to the cloud (handoff.ts)
+  const handoff = headless && a.route?.local && a.route.policy !== "local-only" && !isBenchmarkLabel(label) ? handoffLimit(config.localHandoffMinutes, limit) : null;
+  const stopHandoff = handoff ? armDeadline(proc, handoff, () => fireHandoff(logDir, status, ledger, handoff.minutes), undefined, () => blockedMsOf(logDir, wid)) : null;
+  const stopLimit = stopDeadline;
+  stopDeadline = () => {
+    stopLimit?.();
+    stopHandoff?.();
+  };
 
   const toolFold = createToolFold({
     logDir,
@@ -644,7 +653,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     report: state.resultReport,
     fallbackText: resultEvent?.result,
     worktree,
-    timedOut: status.timedOut ? limit?.minutes : undefined,
+    timedOut: status.timedOut ? (limit?.minutes ?? status.handoffMin) : undefined,
     cloudRun: (st) => headless && !isBenchmarkLabel(label) && !ranLocal(a, st),
     fallThroughWhy: (st, rep) => (headless ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) : null),
     onReviewed: () => {
@@ -656,7 +665,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
       // kept for review is not escalated either; escalation starts from the
       // salvaged branch instead).
       const failWhy = headless ? fallThroughReason(a.route, st, rep, label, ranLocal(a, st)) ?? (st.loopStopped ? "loop-guard stop" : null) : null;
-      const escalated = headless
+      const escalated = headless && !st.handoffMin
         ? await tryEscalate(a, wid, st, rep, resultEvent?.result, worktree ? commitLines(worktree.dir, worktree.base) : [], failWhy, reviewed)
         : null;
       if (escalated !== null) return escalated;

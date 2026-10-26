@@ -152,6 +152,7 @@ function workersMainConfigShape(): Record<string, unknown> {
     tree: workers.tree,
     cacheKeepaliveSecs: workers.cacheKeepaliveSecs,
     defaultMaxMinutes: workers.defaultMaxMinutes,
+    localHandoffMinutes: workers.localHandoffMinutes,
     noBrowserByDefault: workers.noBrowserByDefault,
     gcOlderThanHours: workers.gcOlderThanHours,
     worktreesMaxGb: workers.worktreesMaxGb,

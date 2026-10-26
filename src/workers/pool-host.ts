@@ -20,6 +20,9 @@
  * screens for.
  */
 
+import { armDeadline } from "./deadline.js";
+import { fireHandoff, handoffLimit } from "./run/handoff.js";
+import { blockedMsOf } from "./active-time.js";
 import { refuseUnlessLoopback } from "../utils/loopback-guard.js";
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import { spawn } from "node:child_process";
@@ -1159,6 +1162,18 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
           }, task.maxMinutes * 60_000)
         : null;
 
+    // a local task past its handoff threshold is stopped the way the deadline stops it (the client then continues it on the cloud)
+    const handoffLim = handoffLimit(task.handoffMinutes ?? 0, null, t0);
+    const stopHandoff = handoffLim
+      ? armDeadline(
+          { kill: (sig?: NodeJS.Signals) => (session.kill(sig ?? "SIGTERM"), true), exitCode: null, signalCode: null },
+          handoffLim,
+          () => fireHandoff(logDir, status, ledger, handoffLim.minutes),
+          undefined,
+          () => blockedMsOf(logDir, wid)
+        )
+      : null;
+
     // the client hung up before the answer was written: nobody wants this
     // result, so cancel through the same kill the deadline uses
     let clientGoneFired = false;
@@ -1255,6 +1270,7 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
     let resultEvent = await feeding;
     await reapNewSince(reapOpts, beforeTask, (l) => writeEvent({ type: "reap", note: l }));
     if (deadTimer) clearTimeout(deadTimer);
+    stopHandoff?.();
     clientGone?.removeEventListener("abort", onClientGone);
 
     // a spare whose task died on the login ("Failed to authenticate", "Not logged in"): its process
@@ -1285,8 +1301,8 @@ export function createPoolHost(opts: PoolHostOptions = {}): PoolHost {
 
     if (!resultEvent) {
       // slot died mid-task (crash, kill, deadline): the task ends here
-      rc = deadlineFired ? 143 : 1;
-      status.last = deadlineFired ? `deadline reached after ${task.maxMinutes} min` : "pool slot died mid-task";
+      rc = deadlineFired || status.handoffMin ? 143 : 1;
+      status.last = status.handoffMin ? `handed off after ${status.handoffMin} active min` : deadlineFired ? `deadline reached after ${task.maxMinutes} min` : "pool slot died mid-task";
       writeEvent({ type: "result", is_error: true, result: status.last });
     } else {
       rc = resultEvent.is_error ? 1 : 0;

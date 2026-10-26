@@ -199,7 +199,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
     report = { ...(report ?? {}), notes: [report?.notes ?? f.fallbackText, msg].filter(Boolean).join("\n"), result: report?.result ?? "-" };
   }
   if (f.timedOut) {
-    const reason = status.last.startsWith("deadline reached") ? status.last : `deadline reached after ${f.timedOut} min`;
+    const reason = status.last.startsWith("deadline reached") || status.handoffMin ? status.last : `deadline reached after ${f.timedOut} min`;
     status.timedOut = true;
     status.last = reason;
     // partial state = the salvage summary (r=~: stopped, not failed outright)
@@ -238,7 +238,7 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   // the status for ps/replay. Best effort: a scan never fails the run.
   await scanWithinBudget(logDir, status, ledger);
 
-  const reviewed = f.worktree ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
+  const reviewed = f.worktree && !status.handoffMin ? committedFallThrough(f.fallThroughWhy?.(status, report) ?? null, commitLines(f.worktree.dir, f.worktree.base)) : null;
   if (reviewed) {
     process.stderr.write(`pai worker: ${wid} ended badly but committed — kept for review, no cloud re-run\n`);
     appendLedger(ledger, "WORKER-FALLTHROUGH-REVIEW", { id: wid, reason: reviewed.why });

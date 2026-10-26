@@ -299,6 +299,7 @@ export async function routeRun(
 export interface EndedRun {
   reportValid?: boolean;
   timedOut?: boolean;
+  handoffMin?: number;
   rc?: number | null;
   state?: string;
   endReason?: string;
@@ -325,6 +326,7 @@ export function fallThroughReason(
   if (isBenchmarkLabel(label)) return null;
   if (status.endReason === "malformed-tool-call") return "instrument fault: malformed tool call";
   if (status.endReason === "degenerate-answer") return "instrument fault: degenerate answer";
+  if (status.handoffMin) return `handoff after ${status.handoffMin} min`;
   if (status.timedOut) return "max-minutes";
   if (status.rc === 143) return null;
   if (status.reportValid === false) return "invalid report";
