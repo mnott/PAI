@@ -3,15 +3,29 @@
 /**
  * urgency.ts — UserPromptSubmit (interactive sessions)
  *
- * The operator's words decide urgency, not a flag the model remembers: when the
- * prompt asks for "now", "immediately", "asap", "jetzt", ... (as words, outside
- * quotes and code), the session gets an urgency window (workers/urgency.ts) and
- * every worker it starts in that time runs with --now (and --local when the
- * prompt said local) unless it names its own target.
+ * The explicit marker opens the window, never prose: a prompt carrying the
+ * literal token `/now` (anywhere in a line) opens the session's urgency window
+ * (workers/urgency.ts) for `workers.urgency.windowMinutes` (default 30), and
+ * `/now local` also forces where=local. Every worker the session starts in
+ * that time runs with --now (and --local) unless it names its own target;
+ * workers already running are made urgent here, like `pai worker priority <id>
+ * now` (front + preempt the other local workers).
+ *
+ * The token rule is what makes pasted text safe: the bare word "now" — in a
+ * manager report, a log, a description — never arms anything (observed
+ * 2026-10-26). Channel/Todoist deliveries ([PAILot], [Inbound:...],
+ * [Session:...], [Task...]) count when their text carries the token — every
+ * channel ends up as a prompt here — but worker sessions (PAI_WORKER=1) never:
+ * a worker's spec is not the operator asking.
  */
 
-import { readFileSync } from "node:fs";
 import { readWorkersSection } from "../../../workers/config.js";
+import { workersLogDir } from "../../../workers/paths.js";
+import { loadStatuses, isLive } from "../../../workers/status.js";
+import { makeUrgent } from "../../../workers/preempt.js";
+import { isLocalProvider, getProviderOrNative } from "../../../workers/config.js";
+import { isWorkerSession } from "../lib/worker-session.js";
+import { readHookInput } from "../lib/read-stdin.js";
 import { DEFAULT_URGENCY_WINDOW_MIN, recordUrgency, urgencyKeys, urgencyOf } from "../../../workers/urgency.js";
 
 function windowMinutes(): number {
@@ -22,19 +36,39 @@ function windowMinutes(): number {
   }
 }
 
-function main(): void {
-  let prompt = "";
-  let sessionId: string | undefined;
+/** This session's running/queued workers, made urgent like `pai worker priority <id> now`. */
+function makeRunningUrgent(local: boolean): number {
   try {
-    const input = JSON.parse(readFileSync(0, "utf8")) as { prompt?: string; session_id?: string };
-    prompt = typeof input.prompt === "string" ? input.prompt : "";
-    sessionId = typeof input.session_id === "string" ? input.session_id : undefined;
+    const { workers } = readWorkersSection();
+    const logDir = workersLogDir(workers);
+    const sessionKeys = urgencyKeys(process.env);
+    let count = 0;
+    for (const s of loadStatuses(logDir)) {
+      if (!isLive(s) || s.now) continue;
+      if (s.spawnerSession && sessionKeys.includes(s.spawnerSession)) {
+        const p = getProviderOrNative(workers, s.provider);
+        makeUrgent(logDir, s.id, local && !!p && isLocalProvider(p.baseUrl), "urgency-token");
+        count++;
+      }
+    }
+    return count;
   } catch {
-    return;
+    return 0;
   }
+}
+
+interface HookInput {
+  prompt?: string;
+  session_id?: string;
+}
+
+async function main(): Promise<void> {
+  if (isWorkerSession()) return;
+  const input = await readHookInput<HookInput>();
+  const prompt = typeof input?.prompt === "string" ? input.prompt : "";
   const u = urgencyOf(prompt);
   if (!u.urgent) return;
-  const keys = urgencyKeys(process.env, sessionId);
+  const keys = urgencyKeys(process.env, input?.session_id);
   if (!keys.length) return;
   const min = windowMinutes();
   try {
@@ -42,7 +76,10 @@ function main(): void {
   } catch {
     return;
   }
-  process.stdout.write(`Urgent (operator): workers you start in the next ${min} min run with now${u.local ? ", local" : ""}\n`);
+  const made = makeRunningUrgent(u.local);
+  process.stdout.write(
+    `Urgent (operator /now): workers you start in the next ${min} min run with now${u.local ? ", local" : ""}${made ? ` · ${made} running worker${made > 1 ? "s" : ""} made urgent` : ""}\n`
+  );
 }
 
-main();
+main().catch(() => {});
