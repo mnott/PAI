@@ -183,6 +183,24 @@ function isOwnScratch(dir: string, id: string): boolean {
   return new RegExp(`^/(private/)?var/folders/[^/]+/[^/]+/T/pai-scratch/${id.replace(/[^\w-]/g, "")}(/|$)`).test(dir);
 }
 
+/**
+ * The directory a command is in after the `cd` segments of `prefix` ran, from
+ * `cwd`. `$TMPDIR` / `${TMPDIR}` expand to the hook's TMPDIR (kept literal
+ * when unset); other expansions leave the dir unresolved (UNKNOWN_DIR).
+ */
+export function cwdAfterCds(prefix: string, cwd: string): string {
+  let here = cwd;
+  for (const segment of splitSegments(prefix)) {
+    const rest = tokenize(segment);
+    if (rest[0] !== "cd") continue;
+    const arg = rest.slice(1).find((t) => !t.startsWith("-"));
+    if (arg === undefined) continue;
+    const m = /^\$\{?TMPDIR\}?(\/.*)?$/.exec(arg);
+    here = m ? (process.env.TMPDIR?.replace(/\/$/, "") ?? "$TMPDIR") + (m[1] ?? "") : resolveDir(here, arg);
+  }
+  return here;
+}
+
 /** The work tree a git dir belongs to: `<tree>/.git` is `<tree>`. */
 function treeOfGitDir(dir: string): string {
   return dir.endsWith("/.git") ? dir.slice(0, -5) : dir;

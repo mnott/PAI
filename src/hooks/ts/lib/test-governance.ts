@@ -37,6 +37,7 @@ import { ensureScratchExcluded, isGitRepo } from "../../../workers/worktree.js";
 import { isTestPath as auditIsTestPath } from "../../../testgov/audit.js";
 import { parseKept } from "../../../testgov/kept.js";
 import { parseCommand } from "./worker-guard.js";
+import { cwdAfterCds } from "./worker-git-guard.js";
 import { scriptWritesRepoCode } from "./orchestrator-script-writes.js";
 
 export const SCRATCH_DIR = ".pai-scratch";
@@ -90,15 +91,6 @@ function resolveVars(target: string, vars: Map<string, string>): string {
   return target.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, a, b) => vars.get(a ?? b) ?? whole);
 }
 
-/** The last literal `cd <dir>` before `index`, or null when none. */
-function lastCdBefore(command: string, index: number): string | null {
-  let dir: string | null = null;
-  for (const cd of command.slice(0, index).matchAll(/(?:^|[;&|\n]\s*)cd\s+("[^"$`]*"|'[^']*'|[^\s;&|$`()"']+)/g)) {
-    dir = cd[1].replace(/^["']|["']$/g, "");
-  }
-  return dir;
-}
-
 const ANY_REDIRECT = /(?<![>&\d])>>?\s*([^\s;&|)]+)/g;
 const ANY_TEE = /\btee\s+(?:-[a-z]+\s+)*([^\s;&|)]+)/g;
 const HEREDOC_START = /(?<!<)<<(?!<)-?\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_]\w*))/;
@@ -122,7 +114,7 @@ export function bashCreatesNewTest(command: string, cwd: string): string | null 
   const consider = (raw: string, at: number): boolean => {
     const t = resolveVars(raw.replace(/^["']|["']$/g, ""), vars);
     if (t.startsWith("&") || t.startsWith("(") || t.startsWith("/dev/")) return false;
-    const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(lastCdBefore(command, at) ?? cwd, t);
+    const base = t.startsWith("/") || t.startsWith("$") || t.startsWith("~") ? t : join(cwdAfterCds(command.slice(0, at), cwd), t);
     return looksLikeTest(base);
   };
   // heredoc bodies are data, not commands: a `cat > f <<EOF` start line writes f
