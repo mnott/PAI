@@ -138,6 +138,8 @@ export interface WorkerProvider {
   router?: boolean;
   /** Contract addendum file for this provider; default <PAI_HOME>/contracts/<name>.md. */
   contract?: string;
+  /** Short working-style nudge appended to the system prompt of every worker on this provider. */
+  prompt?: string;
   /**
    * OpenAI Chat Completions base (e.g. "https://api.openai.com/v1"). Required
    * for protocol "openai"; read by the PAI proxy, never by the runner.
@@ -860,6 +862,9 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
   if (p.router !== undefined && typeof p.router !== "boolean") {
     bad(`.providers.${name}.router`, "must be true or false");
   }
+  if (p.prompt !== undefined && typeof p.prompt !== "string") {
+    bad(`.providers.${name}.prompt`, "must be a string");
+  }
   if (p.contract !== undefined && typeof p.contract !== "string") {
     bad(`.providers.${name}.contract`, "must be a string path");
   }
@@ -1059,6 +1064,7 @@ export function parseProvider(name: string, raw: unknown): WorkerProvider {
     ...(str(p.note) ? { note: str(p.note) } : {}),
     ...(p.router === false ? { router: false } : {}),
     ...(str(p.contract) ? { contract: str(p.contract) } : {}),
+    ...(str(p.prompt) ? { prompt: str(p.prompt) } : {}),
     ...(upstreamUrl ? { upstreamUrl } : {}),
     ...(engine !== "claude" ? { engine } : {}),
     ...(engine === "uhp" && str(p.harnessId) ? { harnessId: str(p.harnessId) } : {}),

@@ -533,6 +533,7 @@ export function describeProviders(
     if (p.keyFile) lines.push(`    key file ${expandHome(p.keyFile)}`);
     if (!p.key && !p.keyFile) lines.push(`    no key file (token "local")`);
     if (p.note) lines.push(`    ${p.note}`);
+    if (p.prompt) lines.push(`    prompt: ${p.prompt.replace(/\s+/g, " ").slice(0, 60)}…`);
     if (p.protocol === "openai") {
       lines.push(`    via PAI proxy ← ${p.upstreamUrl ?? "(upstreamUrl missing)"}`);
     }
