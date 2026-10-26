@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { backoffMs } from "./stagger.js";
 import { isLocalProvider, QUEUE_PRIORITIES, type CapacityConfig, type QueuePriority } from "./config.js";
 import { fmtElapsed } from "./waiting.js";
-import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, type WorkerStatus } from "./status.js";
+import { alive, isLive, loadStatus, loadStatuses, ownsPid, reconcileStatuses, slotLent, type WorkerStatus } from "./status.js";
 
 export type { CapacityConfig, QueuePriority };
 
@@ -606,7 +606,7 @@ export async function capacityGate(o: CapacityOpts): Promise<CapacityResult | nu
     // waiter ignores it) but stays reserved against everyone else, so the freed slot never goes to a normal waiter
     const urgentSelf = o.priority === "front" || madeUrgent;
     const holders = loaded.filter(
-      (s) => s.id !== self.id && holds(s) && s.state === "running" && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
+      (s) => s.id !== self.id && holds(s) && s.state === "running" && !slotLent(s, now()) && !(urgentSelf && s.paused && s.pausedBy) && isLive(s, owns),
     );
     const position = queue.indexOf(self.id) + 1;
     return { holding: holders.length, behind: holders[0]?.label, position: position || queue.length + 1, queued: queue.length };

@@ -3,6 +3,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { installNowCommand } from "../../../../config/adapter-content.js";
 import { c, line, section, type Rl, promptYesNo, getTemplatesDir } from "../utils.js";
 
 /** `<file>.backup-<timestamp>`; never reuses an existing name, so earlier backups survive. */
@@ -68,6 +69,8 @@ export async function stepPaiSkill(rl: Rl): Promise<boolean> {
     mkdirSync(skillDir, { recursive: true });
   }
   writeFileSync(skillFile, template, "utf-8");
+  const nowCmd = installNowCommand(templatesDir);
+  if (nowCmd) console.log(c.ok("Installed " + nowCmd));
 
   line();
   console.log(c.ok("Installed ~/.claude/skills/PAI/SKILL.md"));

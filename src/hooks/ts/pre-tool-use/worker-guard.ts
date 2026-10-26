@@ -16,6 +16,8 @@
  */
 
 import { currentWorkerId } from "../../../workers/worker-id.js";
+import { markToolWait } from "../../../workers/tool-wait.js";
+import { isWorkerSession } from "../lib/worker-session.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -143,6 +145,18 @@ function loopRepeat(input: WorkerGuardInput, env: NodeJS.ProcessEnv): { reason: 
   }
 }
 
+/** A worker starting a Bash command: stamp it, so a long one lends the slot (tool-wait.ts). Best effort. */
+function markToolWaitOf(input: WorkerGuardInput): void {
+  try {
+    if (input.tool_name !== "Bash" || !isWorkerSession()) return;
+    const logDir = process.env.PAI_WORKER_LOOP_DIR || workersLogDir(readWorkersSection().workers);
+    const id = currentWorkerId(process.env, logDir);
+    if (id) markToolWait(logDir, id);
+  } catch {
+    /* a stamp that cannot be written never blocks the tool call */
+  }
+}
+
 async function main(): Promise<void> {
   let text = "";
   try {
@@ -159,6 +173,7 @@ async function main(): Promise<void> {
     return;
   }
 
+  markToolWaitOf(input);
   const cwd = input.cwd || process.cwd();
   const orch = evaluate({ kind: "tool_call", tool: input.tool_name as string, input: input.tool_input, cwd }, { env: process.env, gates: { orchestrator: true } });
   if (orch.action === "deny") {

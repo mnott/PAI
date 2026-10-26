@@ -24,6 +24,7 @@ import { execSync, spawnSync } from "node:child_process";
 import chalk from "chalk";
 import { ok, warn, err, dim, bold } from "../../lib/utils.js";
 import { refreshClaudeMd } from "./claude-md-refresh.js";
+import { installNowCommand } from "../../../config/adapter-content.js";
 import { renderInstructions } from "../../../harness/instructions.js";
 import { resolveDaemonPid } from "../../../daemon/daemon-pid.js";
 
@@ -433,6 +434,8 @@ export async function runUpdate(): Promise<void> {
 
   // Step 7: CLAUDE.md refresh
   stepRefreshClaudeMd(repoDir, newCommitsLog);
+  const nowCmd = installNowCommand(getTemplatesDir());
+  if (nowCmd) success(`Installed ${nowCmd}`);
 
   // Step 8: Registry scan
   stepRegistryScan(repoDir);

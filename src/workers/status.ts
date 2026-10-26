@@ -50,6 +50,8 @@ export interface WorkerStatus {
   /** Set when the urgency window made this worker "now": the window's close (epoch ms) and the priority to fall back to. Absent on a manual now (`--now`, `pai worker priority <id> now`), which stays until changed by hand. */
   nowFrom?: { until: number; prev: "high" | "normal" | "low" };
   /** `pai worker pause`: the router parks this worker's next engine request until `resume`. */
+  /** Epoch ms the worker started a Bash command it is still waiting on (tool-wait.ts); past 20 s its slot counts as lent. */
+  toolWaitSince?: number;
   paused?: boolean;
   /** Id of the `--now` run that preempted this worker (paused it and aborted its request in flight); set with `paused`, cleared on resume or when an operator pauses it separately. */
   pausedBy?: string;
@@ -373,6 +375,9 @@ export function saveStatus(logDir: string, status: WorkerStatus, d: Date = new D
     // Written by `pai worker priority|pause|resume` (another process); the runner's copy only seeds the priority.
     if (onDisk.priority !== undefined) status.priority = onDisk.priority;
     if (onDisk.paused !== undefined) status.paused = onDisk.paused;
+    // Stamped and cleared by the worker's tool hooks (another process).
+    if (onDisk.toolWaitSince !== undefined) status.toolWaitSince = onDisk.toolWaitSince;
+    else delete status.toolWaitSince;
     if (onDisk.now) status.now = true;
     if (onDisk.nowFrom) status.nowFrom = onDisk.nowFrom;
     for (const k of ["pausedBy", "pausedAt", "pausedMs"] as const) {
@@ -857,4 +862,11 @@ export function describeTool(name: string, inp: unknown): string {
   if (name === "WebSearch") return `${name}: ${shortText(get("query"), 50)}`;
   if (name === "WebFetch") return `${name}: ${shortText(get("url"), 60)}`;
   return name;
+}
+
+export const DEFAULT_TOOL_LEND_MS = 20_000;
+
+/** Whether `s` has waited on a Bash command long enough that its slot is lent to the next queued worker (tool-wait.ts). */
+export function slotLent(s: Pick<WorkerStatus, "toolWaitSince">, now = Date.now(), lendMs = DEFAULT_TOOL_LEND_MS): boolean {
+  return s.toolWaitSince !== undefined && now - s.toolWaitSince >= lendMs;
 }

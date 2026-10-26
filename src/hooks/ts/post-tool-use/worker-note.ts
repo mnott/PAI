@@ -20,6 +20,7 @@ import { recordLoopFailure, recordLoopResult } from "../lib/loop-guard.js";
 import type { LoopState } from "../lib/loop-guard.js";
 import { loadLoopState, loopStateFile, saveLoopState } from "../lib/loop-guard-state.js";
 import { requestLoopStop } from "../../../workers/loop-stop.js";
+import { returnFromToolWait } from "../../../workers/tool-wait.js";
 import { isWorkerSession } from "../lib/worker-session.js";
 
 /** The FAIL ledger block when this turn added an entry; remembers it was shown and records the firing. */
@@ -65,11 +66,17 @@ function readStdin(): string {
   }
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const logDir = process.argv[2] || workersLogDir(readWorkersSection().workers);
   const id = currentWorkerId(process.env, logDir);
   if (!isWorkerSession() || !id) return;
   const raw = readStdin();
+  // the command returned: give a lent slot back (waits for a free one, ahead of normal waiters)
+  try {
+    await returnFromToolWait(logDir, id);
+  } catch {
+    /* fail-open: the worker carries on */
+  }
   const loopNote = recordResult(raw, logDir, id);
   const event = raw.includes('"PostToolUseFailure"') ? "PostToolUseFailure" : "PostToolUse";
   // no token, no delivery: a note is never produced without the run's token (notes stay pending)
@@ -80,8 +87,6 @@ function main(): void {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: context } }) + "\n");
 }
 
-try {
-  main();
-} catch {
+main().catch(() => {
   // a note that cannot be delivered must never fail the tool call
-}
+});
