@@ -11,6 +11,7 @@ import { parseAg2Report } from "../workers/agentish.js";
 import { eventsPath } from "../workers/paths.js";
 import { spawnSession } from "../workers/reroute.js";
 import { WORKER_ID_ENV } from "../workers/tree.js";
+import { WORKER_ORIGIN_ENV } from "../workers/pane-waiver.js";
 import { loadStatus, pidAlive, type WorkerStatus } from "../workers/status.js";
 import { redactSecrets } from "../utils/redact.js";
 import { Assembler, splitLines, type UhpEventBody } from "./events.js";
@@ -38,6 +39,7 @@ export function launch(d: RunsDeps, rec: ResponseRecord, l: WorkerLaunch): numbe
   mkdirSync(runs, { recursive: true });
   const env = { ...process.env };
   delete env[WORKER_ID_ENV]; // a UHP response is a top-level worker, not a child of whatever started this server
+  env[WORKER_ORIGIN_ENV] = "uhp"; // headless under the typed waiver, no session notices (pane-waiver.ts)
   return (d.start ?? spawnSession)(d.bin ?? process.env.PAI_BIN ?? "pai", ["worker", l.verb, ...l.args], {
     cwd: d.cwd,
     env,

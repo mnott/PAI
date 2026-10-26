@@ -127,7 +127,7 @@ export interface WorkerStatus {
    * (the terminal's interactive pane itself, tracked like a worker). Absent
    * on statuses written before the flag existed — read as a spawn.
    */
-  origin?: "spawn" | "chat";
+  origin?: "spawn" | "chat" | "uhp";
   /**
    * Set while the start gate holds this run for the previous run on its
    * provider to warm the prompt cache (stagger.ts); state stays "running" so

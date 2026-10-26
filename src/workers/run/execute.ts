@@ -4,6 +4,7 @@
  * existing import path keeps working.
  */
 
+import { spawnOrigin } from "../pane-waiver.js";
 import { applyScratchEnv, scratchPromptLine } from "../scratch.js";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -96,7 +97,7 @@ export async function executeImageRun(a: ImageExecuteArgs & { config: ReturnType
     last: "generating image",
     rc: null,
     secs: null,
-    origin: "spawn",
+    origin: spawnOrigin(),
     outputFormat: parsed.outputFormat,
     reportFormat: "json",
     ...(a.parent ? { parent: a.parent, stage: a.stage } : {}),
@@ -265,7 +266,7 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
     last: "starting",
     rc: null,
     secs: null,
-    origin: "spawn",
+    origin: spawnOrigin(),
     outputFormat: parsed.outputFormat,
     // CLI engines take instructions through the prompt, not the AG2 contract flag
     reportFormat: "json",

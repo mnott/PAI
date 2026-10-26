@@ -288,6 +288,7 @@ export async function createResponse(d: ResponsesDeps, req: IncomingMessage, res
         "--class", entry.className,
         ...(requestedModel ? ["--model", requestedModel] : []),
         "--label", label,
+        "--no-pool",
         "--spec", specFile,
         "--cwd", d.cwd,
         ...(timeoutSeconds ? ["--max-minutes", String(Math.ceil(timeoutSeconds / 60))] : []),

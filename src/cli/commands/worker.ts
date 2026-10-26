@@ -5,6 +5,7 @@
  * exit codes are the ones hooks, prompts, skills and shims already call.
  */
 
+import { isUhpOrigin } from "../../workers/pane-waiver.js";
 import { isCi } from "../../utils/ci.js";
 import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
@@ -197,6 +198,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       reportFormatFlag: report as "json" | "ag2" | undefined,
       noReportRetry: o["no-report-retry"] === true,
       orchestrate: o.orchestrate === true ? true : undefined,
+      systemWaiver: isUhpOrigin() ? "uhp" : undefined,
       capabilityFlag: str(o.capability) ?? str(o.for),
       imageOut: str(o.out),
       imageSize: str(o.size),
@@ -360,6 +362,7 @@ const resumeCommand: CommandDef = {
       const rc = await runWorker({
         providerFlag: old.provider,
         modelFlag: str(ctx.opts.model) || old.model,
+        systemWaiver: isUhpOrigin() ? "uhp" : undefined,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
         resumeOf: id,

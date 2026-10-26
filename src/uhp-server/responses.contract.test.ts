@@ -160,3 +160,12 @@ describe("UHP task contract (2026-10-19)", () => {
     await post(`/v1/responses/${first.id}/cancel`, {});
   });
 });
+
+describe("UHP workers and the operator's session", () => {
+  it("claims no owner session for a worker of origin uhp, so no supervision notice is sent", async () => {
+    const { ownershipKey } = await import("../workers/supervision.js");
+    const s = { id: "w", spawnerSession: "sess-1", session: { id: "iterm-1", name: "n" } } as never;
+    expect(ownershipKey(s)).toBe("sess-1");
+    expect(ownershipKey({ ...(s as object), origin: "uhp" } as never)).toBeNull();
+  });
+});
