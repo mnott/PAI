@@ -4,6 +4,7 @@
  * lives on one RunState (see execute-prepare.ts).
  */
 
+import { spawnOrigin } from "../pane-waiver.js";
 import { grantedToolNames, recordToolError } from "../tool-errors.js";
 import { createToolFold, runProofCheck, proofNote } from "./tool-fold.js";
 import { spawn } from "node:child_process";
@@ -124,7 +125,7 @@ export async function foldRun(a: ExecuteArgs, p: PreparedRun): Promise<number> {
     rc: null,
     secs: null,
     // interactive runs ARE the chat pane, not a spawned subagent of it
-    origin: headless ? "spawn" : "chat",
+    origin: headless ? spawnOrigin() : "chat",
     outputFormat: parsed.outputFormat,
     ...(a.route ? { route: a.route } : {}),
     ...(a.routeWhy ? { routeWhy: a.routeWhy } : {}),

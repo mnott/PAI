@@ -6,6 +6,7 @@
  */
 
 import { lowPowerActive } from "../../daemon/low-power.js";
+import { isUhpOrigin } from "../../workers/pane-waiver.js";
 import { isCi } from "../../utils/ci.js";
 import { currentWorkerId } from "../../workers/worker-id.js";
 import { execFileSync, spawn } from "node:child_process";
@@ -198,6 +199,7 @@ export function buildRunPlan(ctx: RunContext): RunPlan {
       reportFormatFlag: report as "json" | "ag2" | undefined,
       noReportRetry: o["no-report-retry"] === true,
       orchestrate: o.orchestrate === true ? true : undefined,
+      systemWaiver: isUhpOrigin() ? "uhp" : undefined,
       capabilityFlag: str(o.capability) ?? str(o.for),
       imageOut: str(o.out),
       imageSize: str(o.size),
@@ -348,6 +350,7 @@ const resumeCommand: CommandDef = {
     { name: "print-id", type: "boolean", summary: "Print the new worker id on its own line" },
     { name: "output-format", type: "string", value: "FORMAT", summary: "text (default), json or stream-json, as for `run`" },
     { name: "label", type: "string", value: "TEXT", summary: "Short task label (default: the old label with a return arrow)" },
+    { name: "model", type: "string", value: "MODEL", summary: "Model for the continued turn on the same provider (default: the old worker's)" },
   ],
   examples: ["pai worker resume w-20260101-abc","pai worker resume w-20260101-abc 'Also cover the edge case'", "pai worker resume w-20260101-abc 'Continue' --print-id"],
   seeAlso: ["pai worker ps", "pai worker run"],
@@ -373,7 +376,8 @@ const resumeCommand: CommandDef = {
       let newId = "";
       const rc = await runWorker({
         providerFlag: old.provider,
-        modelFlag: old.model,
+        modelFlag: str(ctx.opts.model) || old.model,
+        systemWaiver: isUhpOrigin() ? "uhp" : undefined,
         label: str(ctx.opts.label) || `↩ ${old.label}`,
         claudeArgs,
         resumeOf: id,
