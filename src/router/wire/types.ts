@@ -19,9 +19,6 @@ export interface WireConverted {
 
 export interface WireAdapter {
   id: WireId;
-  /** Keepalive bytes for a queued stream in this format: an SSE comment every
-   *  client ignores on OpenAI wires; the named ping event Claude expects. */
-  keepalive(): string;
   matches(method: string, path: string): boolean;
   /** Declared tools with parameter types and required lists. */
   schemas(body: Buffer | string): ToolSchemas;

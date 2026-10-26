@@ -187,7 +187,6 @@ function convertSse(raw: string, schemas: ToolSchemas, rules: readonly Rule[]): 
 
 export const responsesAdapter: WireAdapter = {
   id: "responses",
-  keepalive: () => ": keep-alive\n\n",
   matches: (method, path) => method === "POST" && /^\/v1\/responses(\?.*)?$/.test(path),
   schemas: responsesSchemas,
   rewriteJson,

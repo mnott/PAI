@@ -197,7 +197,6 @@ function convertSse(raw: string, schemas: ToolSchemas, rules: readonly Rule[]): 
 
 export const chatAdapter: WireAdapter = {
   id: "chat",
-  keepalive: () => ": keep-alive\n\n",
   matches: (method, path) => method === "POST" && /^\/v1\/chat\/completions(\?.*)?$/.test(path),
   schemas: chatSchemas,
   rewriteJson,

@@ -744,7 +744,7 @@ export function routerHandler(
           delete rh0["keep-alive"];
           delete rh0["content-length"];
           res.writeHead(200, rh0);
-          pings = setInterval(() => !res.writableEnded && res.write(wire!.keepalive()), pingMs());
+          pings = setInterval(() => !res.writableEnded && res.write(`event: ping\ndata: {"type":"ping"}\n\n`), pingMs());
           pings.unref();
         }
         const bits: Buffer[] = [];
@@ -812,17 +812,12 @@ export function routerHandler(
           const sniff = (onUsage || scheduled) && !isCount ? new UsageSniffer(ures.headers["content-type"]) : undefined;
           if (sniff) ures.on("data", (c: Buffer) => sniff.push(c));
           if (res.headersSent && (ures.statusCode ?? 502) !== 200) {
-            // queued stream: 200 + keepalives already went out, so an upstream failure travels as an error
+            // queued stream: 200 + pings already went out, so an upstream failure travels as an SSE error event
             const bits: Buffer[] = [];
             ures.on("data", (c: Buffer) => bits.push(c));
             ures.on("end", () => {
               const text = Buffer.concat(bits).toString("utf8").trim();
-              const message = text.slice(0, 500) || `upstream ${ures.statusCode}`;
-              res.end(
-                wire!.id === "messages"
-                  ? `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })}\n\n`
-                  : `data: ${JSON.stringify({ error: { type: "api_error", message } })}\n\n`
-              );
+              res.end(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: text.slice(0, 500) || `upstream ${ures.statusCode}` } })}\n\n`);
               log(`${new Date().toISOString()} ${target.model} ${prov} ${ures.statusCode} ${Date.now() - started}ms`);
               release(sniff ? sniff.finish() : undefined);
             });
@@ -942,11 +937,11 @@ export function routerHandler(
             pings = undefined;
           };
           if (streaming) {
-            // keep the client's stream-idle timers quiet while queued: 200 + the wire's keepalive bytes
+            // keep Claude Code's stream-idle timers quiet while queued: 200 + SSE ping events
             pings = setInterval(() => {
               if (res.writableEnded || gone) return stopPings();
               if (!res.headersSent) res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-              res.write(wire!.keepalive());
+              res.write(`event: ping\ndata: {"type":"ping"}\n\n`);
             }, pingMs());
             pings.unref();
           }
