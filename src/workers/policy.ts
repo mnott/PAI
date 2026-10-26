@@ -154,7 +154,7 @@ export async function pingLocal(baseUrl: string, timeoutMs = 4000): Promise<bool
 
 /** The served-model probe of `pai worker local` (httpModelsCheck): the server answers AND lists one of the provider's model ids. */
 export async function pingServed(baseUrl: string, models: string[] = [], timeoutMs = 4000): Promise<boolean> {
-  const hp = providerHostPort({ baseUrl } as never);
+  const hp = providerHostPort({ baseUrl });
   return hp ? httpModelsCheck(hp.host, hp.port, timeoutMs, models).catch(() => false) : false;
 }
 

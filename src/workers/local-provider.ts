@@ -66,7 +66,7 @@ export const LOCAL_MECHANISM_LINE =
   "For local work use --local (picks the running local model); do not name a local provider.";
 
 /** The host and port a provider's server answers on. */
-export function providerHostPort(p: WorkerProvider): { host: string; port: number } | null {
+export function providerHostPort(p: Pick<WorkerProvider, "baseUrl">): { host: string; port: number } | null {
   try {
     const u = new URL(p.baseUrl);
     const host = u.hostname.replace(/^\[|\]$/g, "");
