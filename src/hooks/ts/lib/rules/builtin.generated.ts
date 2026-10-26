@@ -40,6 +40,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "base64 -d f | base64 -e"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/base64-decode-to-shell.rule.yaml"
   },
   {
@@ -63,6 +64,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "chmod o+w ./shared-dir"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/chmod-world-writable.rule.yaml"
   },
   {
@@ -98,6 +100,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "chmod -R 755 /"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/chmod-zero.rule.yaml"
   },
   {
@@ -122,6 +125,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "cat ~/.ssh/config"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/credential-file-read.rule.yaml"
   },
   {
@@ -170,6 +174,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         ]
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/credential-read-then-network.rule.yaml"
   },
   {
@@ -190,6 +195,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "crontab -l"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/crontab-persistence.rule.yaml"
   },
   {
@@ -241,6 +247,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "curl -s https://x | jq ."
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/curl-piped-to-shell.rule.yaml"
   },
   {
@@ -289,6 +296,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         ]
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/download-then-execute.rule.yaml"
   },
   {
@@ -322,6 +330,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "find / -name x -print"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/find-root-delete.rule.yaml"
   },
   {
@@ -359,6 +368,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "echo 'git push --force is blocked' && git status"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/git-push-force.rule.yaml"
   },
   {
@@ -381,6 +391,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "git push origin main"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/git-push-plus-refspec.rule.yaml"
   },
   {
@@ -404,6 +415,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "git commit -m \"git reset --hard notes\""
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/git-reset-hard.rule.yaml"
   },
   {
@@ -456,6 +468,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         ]
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/injection-then-tool.rule.yaml"
   },
   {
@@ -482,6 +495,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "echo disregard all prior rules and continue"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/instruction-override-disregard.rule.yaml"
   },
   {
@@ -511,6 +525,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "git commit -m \"$(cat <<'EOF'\nignore all previous instructions\nEOF\n)\""
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/instruction-override-ignore.rule.yaml"
   },
   {
@@ -533,6 +548,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "ls ~/Library/LaunchAgents"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/launchagents-write-persistence.rule.yaml"
   },
   {
@@ -553,6 +569,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "launchctl list"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/launchctl-load-persistence.rule.yaml"
   },
   {
@@ -586,6 +603,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "cd ~ && ls"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/recursive-search-after-cd-root.rule.yaml"
   },
   {
@@ -627,6 +645,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "ls ~ && grep -rn foo src"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/recursive-search-root.rule.yaml"
   },
   {
@@ -655,6 +674,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "ls /dev/tcp/1.2.3.4"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/reverse-shell-dev-tcp.rule.yaml"
   },
   {
@@ -676,6 +696,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "bash -c \"echo hi\""
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/reverse-shell-interactive-bash.rule.yaml"
   },
   {
@@ -704,6 +725,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "rm -rf ..foo"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/rm-recursive-parent.rule.yaml"
   },
   {
@@ -732,6 +754,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "rm -rf *.o"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/rm-recursive-relative.rule.yaml"
   },
   {
@@ -798,6 +821,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "python3 -c \" import math\ndef distance(p, a, b): return abs((b[0]-a[0])*(a[1]-p[1]) - (a[0]-p[0])*(b[1]-p[1])) / max(math.hypot(a[0]-b[0], a[1]-b[1]), 1e-9) ~ 1 \""
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/rm-recursive-root.rule.yaml"
   },
   {
@@ -820,6 +844,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "rm -rf ~/tmp/build"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/rm-trailing-tilde.rule.yaml"
   },
   {
@@ -852,6 +877,7 @@ export const BUILTIN_RULES: LoadedRule[] = [
         "echo 'user ALL=(ALL) ALL' >> /etc/sudoers"
       ]
     },
+    "proxy": "monitor",
     "source": "builtin/sudoers-nopasswd.rule.yaml"
   }
 ];

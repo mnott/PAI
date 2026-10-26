@@ -66,7 +66,7 @@ function decideShell(command: string, ev: Extract<GuardEvent, { kind: "tool_call
     const hit = evaluateRules(pool, "Bash", command);
     if (!hit) break;
     const lc = ruleLifecycle(hit.rule);
-    const mode = dispositionOf(lc, command);
+    const mode = dispositionOf(lc, command, process.env, Date.now(), ev.source ?? "hook");
     const action = hit.rule.severity === "warn" ? "note" : "deny";
     if (mode !== "off") {
       record({ id: hit.rule.id, version: lc.version, category: "shell", action, mode, input: command, cwd: ev.cwd, sessionId: ev.sessionId, source: ev.source, model: ev.model, provider: ev.provider });
@@ -99,8 +99,9 @@ export function evaluate(event: GuardEvent, ctx: GuardContext): Decision {
     const u = unparsedCallDecision(event.text);
     if (!u) return ALLOW;
     const record = ctx.record ?? recordFiring;
-    record({ id: "unparsed-tool-call", version: u.version, category: "final-text", action: "continue", mode: u.mode, input: event.text, cwd: event.cwd, env: ctx.env, source: event.source, model: event.model, provider: event.provider });
-    return { action: u.mode === "enforce" ? "continue" : "allow", patternId: "unparsed-tool-call", mode: u.mode, unparsed: { name: u.name, version: u.version } };
+    const mode = event.source === "proxy" && u.mode === "enforce" ? "monitor" : u.mode; // the proxy path never acts on final text
+    record({ id: "unparsed-tool-call", version: u.version, category: "final-text", action: "continue", mode, input: event.text, cwd: event.cwd, env: ctx.env, source: event.source, model: event.model, provider: event.provider });
+    return { action: mode === "enforce" ? "continue" : "allow", patternId: "unparsed-tool-call", mode, unparsed: { name: u.name, version: u.version } };
   }
   const call = { tool: event.tool, input: event.input, cwd: event.cwd, env: ctx.env };
   const pre = ctx.gates ? decidePreGates(call, ctx.gates) : null;

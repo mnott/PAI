@@ -30,7 +30,15 @@ import {
 } from "./translate.js";
 import { LOOPBACK_HOST } from "../../utils/loopback.js";
 import { loadConfig } from "../../daemon/config.js";
-import { GUARD_MAX_BYTES, monitorOpenAiReply, type ProxyGuardDeps } from "../../router/proxy-guard.js";
+import {
+  GUARD_MAX_BYTES,
+  enforceChatJson,
+  evaluateReply,
+  isEnforceDeny,
+  monitorOpenAiReply,
+  parseOpenAiReply,
+  type ProxyGuardDeps,
+} from "../../router/proxy-guard.js";
 
 /** The configured proxy port (workers.proxy.port; shipped default in defaults/workers.yaml). */
 export function proxyPort(): number {
@@ -56,11 +64,11 @@ interface ProxyServerOptions {
   resolveProvider?: ProviderResolver;
   /** Test hook: called with every (translated) upstream request body. */
   onUpstreamRequest?: (url: string, body: unknown) => void;
-  /** Monitor-only guard on replies; default router.guard.mode (off). `deps` replaces evaluate/rules (tests). */
-  guard?: { mode?: "off" | "monitor"; deps?: ProxyGuardDeps };
+  /** Guard on replies; default router.guard.mode (off). monitor records only; enforce rewrites a tool call the rules deny. `deps` replaces evaluate/rules (tests). */
+  guard?: { mode?: "off" | "monitor" | "enforce"; deps?: ProxyGuardDeps };
 }
 
-function guardMode(opts: ProxyServerOptions): "off" | "monitor" {
+function guardMode(opts: ProxyServerOptions): "off" | "monitor" | "enforce" {
   try {
     return opts.guard?.mode ?? loadConfig().router.guard?.mode ?? "off";
   } catch {
@@ -73,6 +81,20 @@ function tapReply(opts: ProxyServerOptions, raw: string, contentType: string, mo
   if (guardMode(opts) !== "monitor" || Buffer.byteLength(raw) > GUARD_MAX_BYTES) return;
   const log = (line: string) => console.error(line);
   setImmediate(() => monitorOpenAiReply(raw, contentType, model, { log, ...opts.guard?.deps }, provider, request));
+}
+
+/** Enforce mode on a buffered OpenAI reply: the denied calls become text; anything else (or any failure) is the original body. */
+function enforceReply(opts: ProxyServerOptions, raw: string, model: string, provider: string, request: unknown): string {
+  if (Buffer.byteLength(raw) > GUARD_MAX_BYTES) return raw;
+  const log = (line: string) => console.error(line);
+  const decisions = evaluateReply(parseOpenAiReply(raw, "application/json"), model, { log, ...opts.guard?.deps }, provider, request);
+  let i = 0;
+  const out = enforceChatJson(raw, () => {
+    const d = decisions[i++];
+    return isEnforceDeny(d) ? d : null;
+  }, log);
+  if (out !== raw) console.error(`${new Date().toISOString()} proxy guard blocked ${decisions.filter(isEnforceDeny).length} call(s)`);
+  return out;
 }
 
 /**
@@ -169,6 +191,7 @@ async function handleMessages(
     return;
   }
 
+  const mode = guardMode(opts);
   if (reqBody.stream) {
     res.writeHead(200, {
       "content-type": "text/event-stream",
@@ -176,6 +199,10 @@ async function handleMessages(
       connection: "keep-alive",
     });
     const translator = new OpenAiStreamTranslator(model);
+    // enforce: the OpenAI chunks pass through the guard transform before the translator sees them
+    // the adapter is imported lazily: wire/types.ts pulls the guard modules, which must not load with the proxy's own imports
+    const { chatAdapter } = await import("../../router/wire/chat.js");
+    const guard = mode === "enforce" ? chatAdapter.guardStream({ model, provider: providerName, request: openaiBody, deps: opts.guard?.deps, onBlock: (tool, text) => console.error(`${new Date().toISOString()} proxy guard blocked ${tool}: ${text}`) }) : null;
     let buf = "";
     let tapped = "";
     if (!upstream.body) {
@@ -184,6 +211,34 @@ async function handleMessages(
     }
     const reader = upstream.body.getReader();
     const decoder = new TextDecoder();
+    const feedLine = (line: string): void => {
+      const payload = line.slice(5).trim();
+      if (payload === "[DONE]") {
+        res.write(translator.finish());
+        return;
+      }
+      try {
+        res.write(translator.feed(JSON.parse(payload) as Parameters<typeof translator.feed>[0]));
+      } catch {
+        // skip a malformed chunk rather than kill the stream
+      }
+    };
+    /** One complete SSE message through the guard transform (enforce) or straight to the translator. */
+    const emitMessage = (msg: string, sep: string): void => {
+      if (!guard) {
+        for (const line of (msg + sep).split("\n")) if (line.trim().startsWith("data:")) feedLine(line.trim());
+        return;
+      }
+      guard.write(msg + sep);
+      drainGuard();
+    };
+    /** Drain the guard transform's readable side into the translator. */
+    const drainGuard = (): void => {
+      let c: Buffer | string | null;
+      while ((c = guard!.read()) !== null) {
+        for (const line of String(c).split("\n")) if (line.trim().startsWith("data:")) feedLine(line.trim());
+      }
+    };
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -191,27 +246,34 @@ async function handleMessages(
         const text = decoder.decode(value, { stream: true });
         if (tapped.length <= GUARD_MAX_BYTES) tapped += text;
         buf += text;
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line.startsWith("data:")) continue;
-          const payload = line.slice(5).trim();
-          if (payload === "[DONE]") {
-            res.write(translator.finish());
-          } else {
-            try {
-              res.write(translator.feed(JSON.parse(payload) as Parameters<typeof translator.feed>[0]));
-            } catch {
-              // skip a malformed chunk rather than kill the stream
-            }
+        if (!guard) {
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (line.startsWith("data:")) feedLine(line);
           }
+          continue;
         }
+        // enforce: only complete SSE messages (blank-line separated) go through the transform
+        let m: RegExpExecArray | null;
+        let last = 0;
+        const sep = /\r?\n\r?\n/g;
+        while ((m = sep.exec(buf))) {
+          emitMessage(buf.slice(last, m.index), m[0]);
+          last = m.index + m[0].length;
+        }
+        buf = buf.slice(last);
+      }
+      if (guard) {
+        if (buf) emitMessage(buf, "");
+        guard.end(); // _flush releases anything still held
+        drainGuard();
       }
     } finally {
       res.write(translator.finish()); // no-op when [DONE] already finished it
       res.end();
-      tapReply(opts, tapped, "text/event-stream", model, providerName, reqBody);
+      if (mode !== "enforce") tapReply(opts, tapped, "text/event-stream", model, providerName, reqBody);
     }
     return;
   }
@@ -228,9 +290,10 @@ async function handleMessages(
     fail(502, "upstream returned a non-JSON body");
     return;
   }
+  const body = mode === "enforce" ? enforceReply(opts, rawText, model, providerName, openaiBody) : rawText;
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify(openAiToAnthropic(json as Parameters<typeof openAiToAnthropic>[0], model)));
-  tapReply(opts, rawText, "application/json", model, providerName, reqBody);
+  res.end(JSON.stringify(openAiToAnthropic(JSON.parse(body) as Parameters<typeof openAiToAnthropic>[0], model)));
+  if (mode !== "enforce") tapReply(opts, rawText, "application/json", model, providerName, reqBody);
 }
 
 // ---------------------------------------------------------------------------
