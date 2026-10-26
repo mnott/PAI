@@ -291,6 +291,30 @@ export interface Ag2Repair {
 
 const looksLikePath = (s: string): boolean => !/\s/.test(s) && (s.includes("/") || /\.\w+$/.test(s));
 
+const GRAMMAR_TOKEN = /^\S+[+\-~?!]$/;
+
+/**
+ * Normalise a `t=` value to `Name+ Name-` tokens: parenthesised commentary is
+ * dropped, words without an outcome char that precede a token become its name
+ * ("move test 8/8+" -> "test-8/8+": the last two words), words after the last
+ * token are commentary. Outcome chars are kept verbatim, so a failure stays one.
+ */
+function repairTests(v: string): string {
+  const entries = v.split("|").map((s) => s.trim()).filter(Boolean);
+  if (entries.every((e) => e.split(/\s+/).every((t) => GRAMMAR_TOKEN.test(t)))) return v;
+  const out: string[] = [];
+  for (const e of entries) {
+    let pending: string[] = [];
+    for (const tok of e.replace(/\([^)]*\)/g, " ").split(/\s+/).filter(Boolean)) {
+      if (!GRAMMAR_TOKEN.test(tok)) { pending.push(tok.replace(/[;,]+$/, "")); continue; }
+      const name = [...pending.slice(-2), tok.slice(0, -1)].filter(Boolean).join("-");
+      out.push(`${name}${tok.slice(-1)}`);
+      pending = [];
+    }
+  }
+  return out.length ? out.join(" ") : v;
+}
+
 /**
  * Deterministic repair of the mechanical AG2 slips local models make, run
  * before validation. Fixes only: (1) `c=` as alternating path|summary|path|summary,
@@ -320,23 +344,60 @@ export function repairAg2(text: string): Ag2Repair {
     for (const i of noteIdx.slice(zIdx >= 0 ? 0 : 1).reverse()) lines.splice(i, 1);
   }
 
+  // (5) `w=none` says nothing and makes the validator demand y; R has no u/out field: fold it into z
+  for (let i = lines.length - 1; i > 0; i--) {
+    const k = keyOf(lines[i]);
+    if (k === "w" && /^(none|n\/a|-|\+)?$/i.test(val(lines[i]))) {
+      lines.splice(i, 1);
+      repairs.push("w none");
+    } else if (k === "u" || k === "out") {
+      const text = val(lines[i]);
+      lines.splice(i, 1);
+      const zi = lines.findIndex((l, j) => j > 0 && keyOf(l) === "z");
+      if (zi >= 0) lines[zi] = `${lines[zi]}; ${text}`;
+      else lines.push(`z=${text}`);
+      repairs.push("u->z");
+    }
+  }
+
+  // (4) a key repeated on several lines is one key: c/p join with " | ", t with " ", the rest with "; "
+  const seen = new Map<string, number>();
+  const drop: number[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const k = keyOf(lines[i]);
+    if (!k || k.startsWith("@") || !/^[cpt]$|^(?:x|u|w|y|z)$/.test(k)) continue;
+    const first = seen.get(k);
+    if (first === undefined) { seen.set(k, i); continue; }
+    const sep = k === "c" || k === "p" ? " | " : k === "t" ? " " : "; ";
+    lines[first] = `${k}=${[val(lines[first]), val(lines[i])].filter(Boolean).join(sep)}`;
+    drop.push(i);
+  }
+  if (drop.length) {
+    for (const i of drop.reverse()) lines.splice(i, 1);
+    repairs.push("duplicate keys");
+  }
+
   for (let i = 1; i < lines.length; i++) {
     const k = keyOf(lines[i]);
     if (k === "c") {
       const v = val(lines[i]);
-      const parts = v.split("|").map((s) => s.trim());
-      if (parts.length >= 2 && parts.length % 2 === 0 && parts.every((p, j) => (j % 2 === 0 ? looksLikePath(p) : !looksLikePath(p) && p))) {
-        const pairs: string[] = [];
-        for (let j = 0; j < parts.length; j += 2) pairs.push(`${parts[j]} ${parts[j + 1]}`);
-        lines[i] = `c=${pairs.join("|")}`;
+      if (v.toLowerCase() === "none") continue;
+      // entries split on | ; or ",c=", a path starts an entry, anything else is its summary
+      const parts = v.split(/\s*(?:\||;|,\s*c=)\s*/).map((s) => s.trim().replace(/^c=/, "")).filter(Boolean);
+      const entries: string[] = [];
+      for (const part of parts) {
+        if (looksLikePath(part.split(/\s/, 1)[0]) || !entries.length) entries.push(part);
+        else entries[entries.length - 1] += ` ${part}`;
+      }
+      const fixed = entries.join("|");
+      if (entries.length && fixed !== v.replace(/\s*\|\s*/g, "|")) {
+        lines[i] = `c=${fixed}`;
         repairs.push("c pairs");
       }
     } else if (k === "t") {
-      const entries = val(lines[i]).split("|").map((s) => s.trim());
-      const isGrammar = (e: string): boolean => e.split(/\s+/).every((tok) => /^\S+[+\-~?!]$/.test(tok));
-      const fixed = entries.map((e) => (isGrammar(e) ? e : e.replace(/\s+/g, "-")));
-      if (fixed.some((e, j) => e !== entries[j])) {
-        lines[i] = `t=${fixed.join("|")}`;
+      const fixed = repairTests(val(lines[i]));
+      if (fixed !== val(lines[i])) {
+        lines[i] = `t=${fixed}`;
         repairs.push("t names");
       }
     }
@@ -353,10 +414,14 @@ export function repairAndValidateAg2(
   text: string,
 ): { text: string; validation: Ag2ValidationResult; repairs: string[]; normalised?: boolean; details?: string } {
   const short = shortenAg2Note(text);
-  if (short.details === undefined) return repairAndValidateShaped(text);
-  const r = repairAndValidateShaped(short.text);
-  // an over-long note alone never makes a report invalid: the full text rides in `details`
-  return { ...r, details: short.details };
+  const first = short.details === undefined ? repairAndValidateShaped(text) : { ...repairAndValidateShaped(short.text), details: short.details };
+  if (first.validation.ok) return first;
+  // repairs can lengthen z (note/u folded in): repair first, then shorten, then validate
+  const fixed = repairAg2(text);
+  if (!fixed.repairs.length) return first;
+  const s2 = shortenAg2Note(fixed.text);
+  const v = validateAg2(s2.text);
+  return v.ok ? { text: s2.text, validation: v, repairs: fixed.repairs, details: s2.details } : first;
 }
 
 const NOTE_MAX = 200;

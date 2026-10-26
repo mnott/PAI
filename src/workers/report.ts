@@ -41,6 +41,8 @@ function ag2ReportBlock(proofNote = false): string[] {
     "t= is proof you ran (typecheck, probe, live run, before/after), not new committed test files: a new test is",
     "one-time (.pai-scratch/ only) unless promoted in the project's tests/KEPT.md.",
     "z= the answer/note, one line, always present. x= what is left (omit if nothing).",
+    "Form: each key once, on one line. Many files: c=a.ts what | b.ts what. Many checks: t=Tsc+ Unit+ (Name+ tokens, no spaces or comments inside; detail goes in z).",
+    "No u=/out=, no w=none (R has no such keys); a missing proof or an r not + needs y=, so say so instead of r=+.",
     "y= one line why when r is not +.",
     "Issue claims (`pai issue claim`) are released at end unless r=~ (work continues).",
     ...(proofNote ? ["p= is the command exactly as you ran it; a result may follow after →, e.g. p=npx tsc --noEmit → exit 0; p is the command you ran and its output (typecheck, probe, live run)"] : []),
