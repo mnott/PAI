@@ -109,6 +109,7 @@ Without TEXT: releases a worker paused with `pai worker pause`; its parked engin
 | `--print-id` | flag | — | Print the new worker id on its own line |
 | `--output-format FORMAT` | string | — | text (default), json or stream-json, as for `run` |
 | `--label TEXT` | string | — | Short task label (default: the old label with a return arrow) |
+| `--model MODEL` | string | — | Model for the continued turn on the same provider (default: the old worker's) |
 
 ```sh
 pai worker resume w-20260101-abc

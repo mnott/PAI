@@ -291,7 +291,7 @@ async function killPooled(logDir: string, recorded: WorkerStatus, status: Worker
   appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
   if (stop.foreign) {
     const owner = recorded.session?.id || recorded.session?.name || recorded.sessionKey;
-    if (owner) await d.notifyOwner(owner, `worker ${id} (${recorded.label}) stopped by ${stop.by}: ${stop.reason}`).catch(() => undefined);
+    if (owner && recorded.origin !== "uhp") await d.notifyOwner(owner, `worker ${id} (${recorded.label}) stopped by ${stop.by}: ${stop.reason}`).catch(() => undefined);
   }
   await releaseBuildsOf(buildsDir(), id).catch(() => []);
   let how = "pool host stop";
@@ -367,7 +367,8 @@ async function killOne(logDir: string, recorded: WorkerStatus, d: KillTreeDeps, 
   appendStopEvent(logDir, id, { killed_by: stop.by, forced: stop.forced, reason: stop.reason });
   if (stop.foreign) {
     const owner = recorded.session?.id || recorded.session?.name || recorded.sessionKey;
-    if (owner) {
+    // a uhp worker belongs to the API client, not to the session that started the server
+    if (owner && recorded.origin !== "uhp") {
       await d
         .notifyOwner(owner, `worker ${id} (${recorded.label}) stopped by ${stop.by}: ${stop.reason}`)
         .catch(() => undefined);

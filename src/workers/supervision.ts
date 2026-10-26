@@ -114,6 +114,7 @@ export interface SupervisionEvent {
  * the hook knows a session by — else the AIBroker iTerm uuid.
  */
 export function ownershipKey(s: WorkerStatus): string | null {
+  if (s.origin === "uhp") return null; // the UHP client owns the result, not the session that started the server
   if (s.spawnerSession) return s.spawnerSession;
   if (s.session?.id) return s.session.id;
   return null;
