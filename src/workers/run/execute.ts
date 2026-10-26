@@ -436,7 +436,10 @@ async function executeCliEngineRun(a: CodexArgs | OpencodeArgs, spec: CliEngineR
   cleanup();
 
   const ok = rc === 0 && !fold.isError;
-  status.last = shortText(report?.notes ?? finalText, 90) || (ok ? "done" : "failed");
+  status.last =
+    shortText(report?.notes ?? finalText, 90) ||
+    (!ok && fold.last ? shortText(fold.last, 90) : "") ||
+    (ok ? "done" : "failed");
   if (report?.changed?.length) {
     const verify = verifyReportChanges(report.changed, worktree?.dir ?? cwd, t0);
     if (!verify.ok) {
@@ -491,9 +494,8 @@ export async function executeCodexRun(a: CodexArgs): Promise<number> {
 }
 
 export async function executeOpencodeRun(a: OpencodeArgs): Promise<number> {
-  // the env builder writes OPENCODE_CONFIG into the scratch dir — build it
-  // where the scratch dir is known (executeCliEngineRun calls buildCmd after
-  // applyScratchEnv, so the env goes through a thunk the spec runs at spawn)
+  // buildOpencodeEnv writes OPENCODE_CONFIG into the scratch dir, so the env
+  // goes through envThunk — executeCliEngineRun runs it after applyScratchEnv
   return executeCliEngineRun(a, {
     engine: "opencode",
     env: {},
