@@ -86,7 +86,7 @@ Every worker has `PAI_WORKER_ID` in its environment; a `pai worker run` launched
 
 ## Talking to a worker
 
-`pai worker say ID TEXT` writes to the worker over `<logDir>/<id>.sock` while it runs; stdin closes two seconds after the result, after which `say` refuses and points at `resume`. `pai worker resume ID TEXT` continues the same Claude session on the same provider (not available for `engine: codex` workers). `pai worker goal ID TEXT` relabels a running worker without a message. In a `follow` pane on a terminal, typed lines are said or resumed; `/quit`, `/resume TEXT` and `/status` are the commands.
+`pai worker say ID TEXT` writes to the worker over `<logDir>/<id>.sock` while it runs; stdin closes two seconds after the result, after which `say` refuses and points at `resume`. `pai worker resume ID TEXT` continues the same Claude session on the same provider (not available for `engine: codex` or `engine: opencode` workers). `pai worker goal ID TEXT` relabels a running worker without a message. In a `follow` pane on a terminal, typed lines are said or resumed; `/quit`, `/resume TEXT` and `/status` are the commands.
 
 ## Worktrees, merge, gc
 
@@ -113,6 +113,7 @@ Never sleep-poll. Each wait verb returns within `--max` seconds (default about 1
 
 - **Proxy.** A provider with `protocol: openai` goes through a loopback translating proxy (default port 8797, started on demand; `pai worker proxy [--port N|stop]`). It holds the real token; the worker runs with a placeholder.
 - **Codex.** `engine: codex` runs `codex exec --json`. `--allowedTools` and MCP flags are dropped with a `WORKER-NOTE`; `resume` is unavailable.
+- **OpenCode.** `engine: opencode` runs `opencode run --format json --model pai/<model> --auto --pure`, so a worker can run any model PAI routes to. Its OpenAI-format traffic goes through the PAI router: a per-worker `OPENCODE_CONFIG` declares one `pai` provider with `baseURL = <router>/p/<provider>/v1` (the router routes by path prefix) and a placeholder key — the real key never enters the spawn env. `XDG_DATA_HOME` is per worker, so the session DB never lands in `~/.local/share/opencode`. `--allowedTools` and MCP flags are dropped with a `WORKER-NOTE`; `resume` is unavailable.
 - **Image.** `engine: image` plus `--capability image` POSTs to `{url}/images/generations` and writes the PNG (`--out`, `--size`); no process, worktree or pane. Capability preference: [workers-config.md](workers-config.md#capabilities).
 
 ## Budget routing

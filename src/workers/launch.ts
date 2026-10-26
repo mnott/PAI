@@ -192,9 +192,9 @@ export async function buildLaunchPlan(
   routerEnabled?: boolean
 ): Promise<LaunchPlan> {
   const provider = resolveLaunchProvider(workers, providerName);
-  if (provider.engine === "codex") {
+  if (provider.engine === "codex" || provider.engine === "opencode") {
     throw new LaunchError(
-      `provider "${providerName}" runs through the Codex CLI (engine: codex) — pai launch starts the Claude Code harness only`
+      `provider "${providerName}" runs through the ${provider.engine === "codex" ? "Codex" : "OpenCode"} CLI (engine: ${provider.engine}) — pai launch starts the Claude Code harness only`
     );
   }
   const model = resolveLaunchModel(provider, modelName);
