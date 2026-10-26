@@ -20,6 +20,8 @@ import {
   setStartTime,
   setNotificationConfig,
   setShutdownRequested,
+  inflightRequests,
+  trackRequest,
   indexInProgress,
   embedInProgress,
   indexSchedulerTimer,
@@ -108,7 +110,7 @@ async function startIpcServer(socketPath: string): Promise<Server> {
           return;
         }
 
-        handleRequest(request, socket).catch((e: unknown) => {
+        trackRequest(handleRequest(request, socket)).catch((e: unknown) => {
           const msg = e instanceof Error ? e.message : String(e);
           sendResponse(socket, { id: request.id, ok: false, error: msg });
           socket.destroy();
@@ -290,22 +292,25 @@ export async function serve(config: PaiDaemonConfig): Promise<void> {
 
     stopMemoryStatus();
     server.close();
+    // Stop advertising the socket now: new clients get a refusal they can
+    // retry against the next daemon, not a half-closed backend.
+    try { unlinkSync(config.socketPath); } catch { /* already gone */ }
 
     const SHUTDOWN_TIMEOUT_MS = 10_000;
     const POLL_INTERVAL_MS = 100;
     const deadline = Date.now() + SHUTDOWN_TIMEOUT_MS;
 
-    if (indexInProgress || embedInProgress) {
+    if (indexInProgress || embedInProgress || inflightRequests > 0) {
       process.stderr.write(
         `[pai-daemon] Waiting for in-progress operations to finish ` +
-          `(index=${indexInProgress}, embed=${embedInProgress})...\n`
+          `(index=${indexInProgress}, embed=${embedInProgress}, requests=${inflightRequests})...\n`
       );
 
-      while ((indexInProgress || embedInProgress) && Date.now() < deadline) {
+      while ((indexInProgress || embedInProgress || inflightRequests > 0) && Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
       }
 
-      if (indexInProgress || embedInProgress) {
+      if (indexInProgress || embedInProgress || inflightRequests > 0) {
         process.stderr.write("[pai-daemon] Shutdown timeout reached — forcing exit.\n");
       } else {
         process.stderr.write("[pai-daemon] In-progress operations finished.\n");
