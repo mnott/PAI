@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { maxOf } from "../utils/min-max.js";
 import { join } from "node:path";
+import { BENCH_MARKER } from "../registry/registrable.js";
 import { isLocalProvider, readWorkersSection } from "./config.js";
 import { dropHeredocBodies } from "../hooks/ts/lib/heredoc.js";
 import { GUARD_MARKER } from "../hooks/ts/lib/render-decision.js";
@@ -448,6 +449,16 @@ export function detectToolErrors(
     out.push(groupToolErrors(a || c ? recs : recent)[0]);
   }
   return out;
+}
+
+/**
+ * Bench workers (label ends " bench", or a cwd carrying the .pai-bench marker)
+ * never alert their spawner: the errors stay in tool-errors.jsonl for
+ * `pai worker errors`, but a series of runs would otherwise ping every minute.
+ */
+export function isBenchWorker(w: { label: string; cwd?: string }): boolean {
+  if (/ bench$/.test(w.label.trim())) return true;
+  return !!w.cwd && existsSync(join(w.cwd, BENCH_MARKER));
 }
 
 export function toolErrorText(g: ToolErrorGroup): string {

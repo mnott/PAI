@@ -271,11 +271,13 @@ export async function sendToSession(
   sessionId: string,
   text: string,
   timeoutMs = SEND_TIMEOUT_MS,
-  opts?: { noReply?: boolean; caller?: CallerStamp }
+  opts?: { noReply?: boolean; mailboxOnly?: boolean; caller?: CallerStamp }
 ): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
   try {
     const params: Record<string, unknown> = { target: sessionId, message: text };
     if (opts?.noReply) params.noReply = true;
+    // deposit in the target's mailbox only: nothing is typed into its pane
+    if (opts?.mailboxOnly) params.mailboxOnly = true;
     await callAiBroker("send_to_session", params, timeoutMs, opts?.caller);
     return { ok: true };
   } catch (e) {
