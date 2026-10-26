@@ -248,7 +248,7 @@ describe("proxy server guard tap", () => {
   });
 
   async function run(mode: "off" | "monitor", upstreamBody: unknown, stream: boolean, contentType = "application/json") {
-    const fired: Array<{ kind: string; tool?: string; input?: unknown; source?: string }> = [];
+    const fired: Array<{ kind: string; tool?: string; input?: unknown; source?: string; provider?: string }> = [];
     const up = createServer((req, res) => {
       req.resume();
       req.on("end", () => {
@@ -295,7 +295,7 @@ describe("proxy server guard tap", () => {
     const on = await run("monitor", body, false);
     expect(off.fired).toHaveLength(0);
     expect(on.fired).toHaveLength(1);
-    expect(on.fired[0]).toMatchObject({ kind: "tool_call", tool: "Bash", input: { command: "git reset --hard" }, source: "proxy" });
+    expect(on.fired[0]).toMatchObject({ kind: "tool_call", tool: "Bash", input: { command: "git reset --hard" }, source: "proxy", provider: "mockoai" });
     expect(on.text).toBe(off.text);
   });
 

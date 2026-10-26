@@ -70,6 +70,7 @@ describe("router proxy guard (monitor)", () => {
     expect(before).toBe(0);
     expect(f.length).toBeGreaterThan(before);
     expect(f.every((x) => x.source === "proxy")).toBe(true);
+    expect(f.every((x) => x.model === "gyro-m" && x.provider === "gyro")).toBe(true);
     expect(stats({}).some((r) => r.bySource.proxy === f.length)).toBe(true);
     expect(stats({ source: "hook" }).every((r) => !r.bySource.proxy)).toBe(true);
   });

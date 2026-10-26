@@ -69,10 +69,10 @@ function guardMode(opts: ProxyServerOptions): "off" | "monitor" {
 }
 
 /** Evaluate a finished upstream reply after the client got everything; never throws, never touches the response. */
-function tapReply(opts: ProxyServerOptions, raw: string, contentType: string, model: string): void {
+function tapReply(opts: ProxyServerOptions, raw: string, contentType: string, model: string, provider: string): void {
   if (guardMode(opts) !== "monitor" || Buffer.byteLength(raw) > GUARD_MAX_BYTES) return;
   const log = (line: string) => console.error(line);
-  setImmediate(() => monitorOpenAiReply(raw, contentType, model, { log, ...opts.guard?.deps }));
+  setImmediate(() => monitorOpenAiReply(raw, contentType, model, { log, ...opts.guard?.deps }, provider));
 }
 
 /**
@@ -211,7 +211,7 @@ async function handleMessages(
     } finally {
       res.write(translator.finish()); // no-op when [DONE] already finished it
       res.end();
-      tapReply(opts, tapped, "text/event-stream", model);
+      tapReply(opts, tapped, "text/event-stream", model, providerName);
     }
     return;
   }
@@ -230,7 +230,7 @@ async function handleMessages(
   }
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify(openAiToAnthropic(json as Parameters<typeof openAiToAnthropic>[0], model)));
-  tapReply(opts, rawText, "application/json", model);
+  tapReply(opts, rawText, "application/json", model, providerName);
 }
 
 // ---------------------------------------------------------------------------

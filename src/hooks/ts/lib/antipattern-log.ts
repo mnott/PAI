@@ -132,6 +132,9 @@ export interface FiringInput {
   env?: NodeJS.ProcessEnv;
   disposition?: Disposition;
   source?: "hook" | "proxy";
+  /** Model and provider the caller knows (proxy firings); absent: taken from the environment. */
+  model?: string;
+  provider?: string;
 }
 
 /** Record one firing. Returns its ts (the key outcomes and labels refer to), or null when writing failed. Never throws. */
@@ -146,8 +149,8 @@ export function recordFiring(f: FiringInput): string | null {
       category: f.category,
       action: f.action,
       mode: f.mode,
-      provider: env.PAI_WORKER_PROVIDER || "session",
-      model: firingModel(env),
+      provider: f.provider || env.PAI_WORKER_PROVIDER || "session",
+      model: f.model || firingModel(env),
       ...(env.PAI_WORKER_ID ? { workerId: env.PAI_WORKER_ID } : {}),
       ...(f.sessionId ? { sessionId: f.sessionId } : {}),
       project: basename(f.cwd ?? process.cwd()),

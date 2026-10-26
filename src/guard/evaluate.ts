@@ -19,8 +19,8 @@ import { unparsedCallDecision } from "../workers/run/unparsed-call.js";
 import { decidePreGates, decideWorkerGate, scannedCommand, type GateSet } from "./gates.js";
 
 export type GuardEvent =
-  | { kind: "tool_call"; tool: string; input: unknown; cwd: string; workerId?: string; model?: string; sessionId?: string; source?: "hook" | "proxy" }
-  | { kind: "final_text"; text: string; cwd?: string; workerId?: string; model?: string; sessionId?: string; source?: "hook" | "proxy" };
+  | { kind: "tool_call"; tool: string; input: unknown; cwd: string; workerId?: string; model?: string; provider?: string; sessionId?: string; source?: "hook" | "proxy" }
+  | { kind: "final_text"; text: string; cwd?: string; workerId?: string; model?: string; provider?: string; sessionId?: string; source?: "hook" | "proxy" };
 
 export interface Decision {
   action: "allow" | "deny" | "note" | "stop" | "continue";
@@ -69,7 +69,7 @@ function decideShell(command: string, ev: Extract<GuardEvent, { kind: "tool_call
     const mode = dispositionOf(lc, command);
     const action = hit.rule.severity === "warn" ? "note" : "deny";
     if (mode !== "off") {
-      record({ id: hit.rule.id, version: lc.version, category: "shell", action, mode, input: command, cwd: ev.cwd, sessionId: ev.sessionId, source: ev.source });
+      record({ id: hit.rule.id, version: lc.version, category: "shell", action, mode, input: command, cwd: ev.cwd, sessionId: ev.sessionId, source: ev.source, model: ev.model, provider: ev.provider });
     }
     const rule = { severity: hit.rule.severity, category: hit.rule.category ?? hit.rule.id, pattern: hit.rule.match, timedOut: hit.timedOut };
     if (mode !== "enforce") {
@@ -99,7 +99,7 @@ export function evaluate(event: GuardEvent, ctx: GuardContext): Decision {
     const u = unparsedCallDecision(event.text);
     if (!u) return ALLOW;
     const record = ctx.record ?? recordFiring;
-    record({ id: "unparsed-tool-call", version: u.version, category: "final-text", action: "continue", mode: u.mode, input: event.text, cwd: event.cwd, env: ctx.env, source: event.source });
+    record({ id: "unparsed-tool-call", version: u.version, category: "final-text", action: "continue", mode: u.mode, input: event.text, cwd: event.cwd, env: ctx.env, source: event.source, model: event.model, provider: event.provider });
     return { action: u.mode === "enforce" ? "continue" : "allow", patternId: "unparsed-tool-call", mode: u.mode, unparsed: { name: u.name, version: u.version } };
   }
   const call = { tool: event.tool, input: event.input, cwd: event.cwd, env: ctx.env };
