@@ -47,14 +47,14 @@ export function buildOpencodeArgs(prompt: string, model: string | undefined, ses
 
 /** The per-worker OPENCODE_CONFIG content: one "pai" provider on the router's
  *  OpenAI endpoint (path prefix names the provider), model declared, no MCP. */
-export function opencodeConfigJson(providerName: string, model: string, routerBase = routerUrl()): string {
+export function opencodeConfigJson(providerName: string, model: string, routerBase = routerUrl(), apiKey = "pai"): string {
   return JSON.stringify(
     {
       provider: {
         pai: {
           npm: "@ai-sdk/openai-compatible",
           name: "PAI router",
-          options: { baseURL: `${routerBase}/p/${providerName}/v1`, apiKey: "pai" },
+          options: { baseURL: `${routerBase}/p/${providerName}/v1`, apiKey },
           models: { [model]: { name: model } },
         },
       },
@@ -77,7 +77,8 @@ export function buildOpencodeEnv(
   providerName: string,
   model: string,
   scratch: string,
-  routerBase = routerUrl()
+  routerBase = routerUrl(),
+  token = "pai"
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.ANTHROPIC_API_KEY;
@@ -90,7 +91,7 @@ export function buildOpencodeEnv(
   delete env.OPENAI_BASE_URL;
   mkdirSync(scratch, { recursive: true, mode: 0o700 });
   const configPath = join(scratch, "opencode-config.json");
-  writeFileSync(configPath, opencodeConfigJson(providerName, model, routerBase), "utf8");
+  writeFileSync(configPath, opencodeConfigJson(providerName, model, routerBase, token), "utf8");
   env.OPENCODE_CONFIG = configPath;
   env.XDG_DATA_HOME = join(scratch, "xdg-data");
   // belt and braces: the real key never crosses into the env (the router

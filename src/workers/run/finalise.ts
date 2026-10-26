@@ -42,6 +42,7 @@ import {
 import { modelFlagArgs } from "./model.js";
 import { ensureToolSearch } from "./argv.js";
 import { hasMalformedToolCall, MALFORMED_TOOL_CALL, DEGENERATE_ANSWER } from "../malformed-toolcall.js";
+import { revokeRunToken } from "../run-token.js";
 import { redactSecrets } from "../../utils/redact.js";
 import { recordRunOutcomes } from "../../hooks/ts/lib/antipattern-log.js";
 
@@ -184,6 +185,8 @@ export async function finaliseRun(f: FinaliseArgs): Promise<number> {
   resumePreempted(logDir, wid);
   // the settings files carried the provider token: gone with the run
   removeRunSettings(logDir, wid);
+  // a keyless run's placeholder dies with it
+  await revokeRunToken(wid);
   // nothing the worker started outlives it: descendants and detached processes parked in its worktree
   await reapWorkerProcesses({ rootPid: process.pid, dir: f.worktree?.dir });
   // first, whatever the outcome (rc 143 included): uncommitted edits in the
