@@ -46,6 +46,7 @@ export function localContract(checks: Checks): string {
     "4. Stop after the first red test and report it; do not keep fixing.",
     "5. Never repeat a failing command unchanged; change something or report.",
     "6. A command that succeeded is done: never run it again unchanged. After the commit, write the report.",
+    "7. No new committed test files: prove the change with the command you ran and its output; throwaway checks go under .pai-scratch/.",
   ].join("\n");
 }
 

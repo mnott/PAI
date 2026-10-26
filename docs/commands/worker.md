@@ -112,7 +112,7 @@ Without TEXT: releases a worker paused with `pai worker pause`; its parked engin
 
 ```sh
 pai worker resume w-20260101-abc
-pai worker resume w-20260101-abc 'Also add a test'
+pai worker resume w-20260101-abc 'Also cover the edge case'
 pai worker resume w-20260101-abc 'Continue' --print-id
 ```
 

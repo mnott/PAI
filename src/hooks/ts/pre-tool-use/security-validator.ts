@@ -203,7 +203,7 @@ async function main(): Promise<void> {
   // plutil in-place rewrite guard and, for workers, the in-place git guard: decided by evaluate().
   const gate = evaluate(
     { kind: 'tool_call', tool: 'Bash', input: { command }, cwd: input.cwd || process.cwd(), sessionId: input.session_id },
-    { env: process.env, gates: { plutil: true, workerGit: { worktreesRoot: process.env.PAI_WORKER === '1' ? resolveWorktreesRoot() : null, privateClone } } },
+    { env: process.env, gates: { plutil: true, testGovernance: true, workerGit: { worktreesRoot: process.env.PAI_WORKER === '1' ? resolveWorktreesRoot() : null, privateClone } } },
   );
   if (gate.action === 'deny' && gate.guard) {
     logSecurityEvent({

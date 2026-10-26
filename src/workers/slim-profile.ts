@@ -30,6 +30,7 @@ const GUARD_HOOKS = [
   "block-taskoutput-wait",
   "route-edits-to-worker",
   "security-validator",
+  "test-file-governance",
   "ztk-auto.sh",
   "myapp-warm-builds",
   "block-sleep-poll",
